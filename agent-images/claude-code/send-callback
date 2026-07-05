@@ -1,0 +1,20 @@
+#!/bin/bash
+# send-callback — post the final execution result to the orchestrator.
+# Entrypoint-only; not intended for direct agent use.
+#
+# Arguments:
+#   $1  — JSON body to send
+set -euo pipefail
+
+CALLBACK_BODY="$1"
+
+HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+    -X POST "$CALLBACK_URL" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $JOB_SECRET" \
+    -d "$CALLBACK_BODY")
+
+if [ "$HTTP_STATUS" != "200" ]; then
+    echo "ERROR: Callback returned HTTP $HTTP_STATUS"
+    exit 1
+fi

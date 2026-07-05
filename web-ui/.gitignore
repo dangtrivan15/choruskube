@@ -1,0 +1,37 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+build/
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Playwright auth state (contains session cookies — never commit)
+e2e/.auth/
+
+# Playwright run artifacts (regenerated each run; uploaded as a CI artifact)
+e2e/playwright-report/
+e2e/test-results/
+
+# Gradle / Eclipse Buildship
+.gradle/
+.settings/
+.project

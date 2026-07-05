@@ -1,0 +1,16 @@
+{
+  "mappings": [
+    {
+      "request": {
+        "method": "POST",
+        "urlPathPattern": "/app/installations/[0-9]+/access_tokens",
+        "headers": { "Authorization": { "matches": "Bearer .+" } }
+      },
+      "response": {
+        "status": 201,
+        "headers": { "Content-Type": "application/json" },
+        "body": "{\"token\":\"ghs_stub_installation_token\",\"expires_at\":\"2099-12-31T23:59:59Z\",\"permissions\":{\"contents\":\"write\"}}"
+      }
+    }
+  ]
+}

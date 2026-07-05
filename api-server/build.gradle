@@ -1,0 +1,165 @@
+plugins {
+    id 'java-library'
+    id 'org.springframework.boot' version '3.4.5'
+    id 'io.spring.dependency-management' version '1.1.7'
+    id 'org.flywaydb.flyway' version '11.2.0'
+    id 'com.diffplug.spotless' version '7.0.2'
+    id 'jacoco'
+    id 'java-test-fixtures'
+}
+
+group = 'com.choruskube'
+version = '0.0.1-SNAPSHOT'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // Core. Spring framework starters are `api`, not `implementation`: core's public types
+    // (e.g. the AuthConfigurer interface exposes HttpSecurity, DTOs expose jakarta.validation)
+    // surface Spring on core's API, so a downstream module — which extends core with more beans —
+    // needs them on its compile classpath transitively. Runtime behaviour is unchanged.
+    api 'org.springframework.boot:spring-boot-starter'
+    api 'org.springframework.boot:spring-boot-starter-web'
+    api 'org.springframework.boot:spring-boot-starter-validation'
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+
+    // Data
+    api 'org.springframework.boot:spring-boot-starter-data-jpa'
+    runtimeOnly 'org.postgresql:postgresql'
+    implementation 'org.flywaydb:flyway-core'
+    implementation 'org.flywaydb:flyway-database-postgresql'
+
+    // WebSocket (STOMP over WebSocket for real-time UI updates)
+    api 'org.springframework.boot:spring-boot-starter-websocket'
+
+    // Security (single-tenant mode only)
+    api 'org.springframework.boot:spring-boot-starter-security'
+    // Nimbus JOSE+JWT: used by GitHubAppService to sign GitHub App JWTs (RSA/RS256).
+    // Pinned to Spring Boot 3.4.5's nimbus version (dependency-management does not manage
+    // this artifact directly).
+    implementation 'com.nimbusds:nimbus-jose-jwt:9.37.3'
+
+    // API docs
+    implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.7.0'
+
+    // Temporal client (for starting workflows)
+    implementation 'io.temporal:temporal-sdk:1.27.0'
+
+    // S3-compatible object storage client (artifacts). AWS SDK v2 talks to any
+    // S3-compatible backend (MinIO, Ceph, Cloudflare R2, AWS S3) via an endpoint
+    // override + path-style addressing — see ObjectStoreConfig.
+    implementation platform('software.amazon.awssdk:bom:2.46.21')
+    implementation 'software.amazon.awssdk:s3'
+
+    // Executor: Kubernetes (fabric8 client for K8s Job management).
+    // `api` (not `implementation`): TemplateRegistry stays in core and its public constructor
+    // exposes KubernetesClient, and the K8s executor/provisioner beans live in a downstream module
+    // — both need fabric8 on their compile classpath. Until
+    // the remaining K8s-aware core classes are evicted in a later
+    // phase, fabric8 is part of core's compile-time API surface. Runtime behaviour is unchanged.
+    api 'io.fabric8:kubernetes-client:7.3.0'
+
+    // Executor: Docker (docker-java for Docker container management)
+    implementation 'com.github.docker-java:docker-java-core:3.4.1'
+    implementation 'com.github.docker-java:docker-java-transport-zerodep:3.4.1'
+
+    // In-memory caching (public landing-page metrics)
+    implementation 'org.springframework.boot:spring-boot-starter-cache'
+    implementation 'com.github.ben-manes.caffeine:caffeine:3.1.8'
+
+    // Shared test harness (BaseTest @SpringBootTest + TestContainers Postgres) lives in
+    // the testFixtures source set so a downstream module can consume it via
+    // testImplementation(testFixtures(...)). core's own `test` source set depends on
+    // testFixtures automatically, so the ~78 BaseTest-extending core tests are unaffected.
+    // testFixturesApi (not -Implementation) so the harness's compile-time API — @SpringBootTest
+    // on BaseTest, PostgreSQLContainer in DBTestContainer — is visible to consuming test classes.
+    testFixturesApi 'org.springframework.boot:spring-boot-starter-test'
+    testFixturesApi 'org.testcontainers:testcontainers:2.0.3'
+    testFixturesApi 'org.testcontainers:testcontainers-postgresql:2.0.3'
+
+    // Testing
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.springframework.security:spring-security-test'
+    testImplementation 'org.testcontainers:testcontainers:2.0.3'
+    testImplementation 'org.testcontainers:testcontainers-postgresql:2.0.3'
+    testImplementation 'org.testcontainers:testcontainers-junit-jupiter:2.0.3'
+    testImplementation 'io.fabric8:kubernetes-server-mock:7.3.0'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+spotless {
+    java {
+        palantirJavaFormat('2.86.0')
+        removeUnusedImports()
+        trimTrailingWhitespace()
+        endWithNewline()
+    }
+}
+
+jacocoTestReport {
+    reports {
+        html.required = true
+        xml.required = true
+    }
+}
+
+jacocoTestCoverageVerification {
+    dependsOn test, jacocoTestReport
+
+    violationRules {
+        rule {
+            limit {
+                counter = 'LINE'
+                minimum = 0.60
+            }
+            excludes = [
+                'com.choruskube.ChorusKubeApplication',
+                'com.choruskube.core.config.*'
+            ]
+        }
+    }
+}
+
+tasks.register('coverageCheck') {
+    description = 'Enforce test coverage thresholds'
+    group = 'verification'
+    dependsOn jacocoTestCoverageVerification
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+    jvmArgs '-Dnet.bytebuddy.experimental=true'
+    finalizedBy jacocoTestReport
+}
+
+// core is BOTH a plain library consumed by a downstream module AND a standalone
+// bootable application. Both archive tasks are enabled:
+//   - `jar`     -> core-<ver>.jar       (plain library). We explicitly force the empty
+//                  classifier: Spring Boot's plugin, once `bootJar` is enabled, applies a
+//                  `plain` classifier *convention* to the `jar` task to avoid a same-name
+//                  collision with the bootJar. Since `bootJar` already carries the `boot`
+//                  classifier there is no collision, so we override that convention back to
+//                  empty to keep the plain library the conventional main artifact named
+//                  core-<ver>.jar. The downstream module's project(...) dependency resolves THIS
+//                  jar (the jar-task output stays the apiElements/runtimeElements artifact;
+//                  Spring Boot does not repoint them at bootJar) and nests it in its production
+//                  bootJar — never core's fat jar.
+//   - `bootJar` -> core-<ver>-boot.jar  (runnable fat jar). Spring Boot auto-detects the
+//                  single @SpringBootApplication (com.choruskube.ChorusKubeApplication) as the
+//                  main class.
+tasks.named('bootJar') {
+    enabled = true
+    archiveClassifier = 'boot'
+}
+tasks.named('jar') {
+    enabled = true
+    archiveClassifier = ''
+}

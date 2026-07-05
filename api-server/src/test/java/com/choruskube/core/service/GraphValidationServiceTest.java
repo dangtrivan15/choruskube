@@ -1,0 +1,232 @@
+package com.choruskube.core.service;
+
+import static org.assertj.core.api.Assertions.*;
+
+import com.choruskube.core.model.TemplateEdge;
+import com.choruskube.core.model.TemplateNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.List;
+import java.util.UUID;
+import org.junit.jupiter.api.Test;
+
+class GraphValidationServiceTest {
+
+    private final GraphValidationService service = new GraphValidationService(new ObjectMapper());
+
+    @Test
+    void validLinearGraph() {
+        UUID nodeA = UUID.randomUUID();
+        UUID nodeB = UUID.randomUUID();
+
+        var nodes = List.of(makeNode(nodeA, "A", true), makeNode(nodeB, "B", false));
+        var edges = List.of(makeEdge(nodeA, nodeB, null));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isTrue();
+        assertThat(result.errors()).isEmpty();
+    }
+
+    @Test
+    void noEntrypointDefined() {
+        UUID nodeA = UUID.randomUUID();
+        UUID nodeB = UUID.randomUUID();
+
+        var nodes = List.of(makeNode(nodeA, "A", false), makeNode(nodeB, "B", false));
+        var edges = List.of(makeEdge(nodeA, nodeB, null));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isFalse();
+        assertThat(result.errors()).anyMatch(e -> e.contains("entrypoint"));
+    }
+
+    @Test
+    void multipleEntrypoints() {
+        UUID nodeA = UUID.randomUUID();
+        UUID nodeB = UUID.randomUUID();
+        UUID nodeC = UUID.randomUUID();
+
+        var nodes = List.of(makeNode(nodeA, "A", true), makeNode(nodeB, "B", true), makeNode(nodeC, "C", false));
+        var edges = List.of(makeEdge(nodeA, nodeC, null), makeEdge(nodeB, nodeC, null));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isFalse();
+        assertThat(result.errors()).anyMatch(e -> e.contains("Multiple entrypoint"));
+    }
+
+    @Test
+    void unreachableNode() {
+        UUID nodeA = UUID.randomUUID();
+        UUID nodeB = UUID.randomUUID();
+        UUID nodeC = UUID.randomUUID();
+
+        var nodes = List.of(makeNode(nodeA, "A", true), makeNode(nodeB, "B", false), makeNode(nodeC, "C", false));
+        var edges = List.of(makeEdge(nodeA, nodeB, null), makeEdge(nodeC, nodeC, "retry"));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isFalse();
+        assertThat(result.errors()).anyMatch(e -> e.contains("C") && e.contains("terminal"));
+    }
+
+    @Test
+    void cycleWithExit() {
+        UUID nodeA = UUID.randomUUID();
+        UUID nodeB = UUID.randomUUID();
+        UUID nodeC = UUID.randomUUID();
+
+        var nodes = List.of(makeNode(nodeA, "A", true), makeNode(nodeB, "B", false), makeNode(nodeC, "C", false));
+        var edges = List.of(
+                makeEdge(nodeA, nodeB, null), makeEdge(nodeB, nodeC, "approved"), makeEdge(nodeB, nodeA, "rejected"));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isTrue();
+    }
+
+    @Test
+    void pureCycleNoTerminal() {
+        UUID nodeA = UUID.randomUUID();
+        UUID nodeB = UUID.randomUUID();
+
+        var nodes = List.of(makeNode(nodeA, "A", true), makeNode(nodeB, "B", false));
+        var edges = List.of(makeEdge(nodeA, nodeB, null), makeEdge(nodeB, nodeA, null));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isFalse();
+        assertThat(result.errors()).anyMatch(e -> e.contains("terminal"));
+    }
+
+    @Test
+    void unreachableFromEntrypoint() {
+        UUID nodeA = UUID.randomUUID();
+        UUID nodeB = UUID.randomUUID();
+        UUID nodeC = UUID.randomUUID();
+
+        // A is entrypoint, A→B. C exists but has no incoming edge from A or B.
+        // C→B exists, so C can reach terminal B, but C is unreachable from entrypoint A.
+        var nodes = List.of(makeNode(nodeA, "A", true), makeNode(nodeB, "B", false), makeNode(nodeC, "C", false));
+        var edges = List.of(makeEdge(nodeA, nodeB, null));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isFalse();
+        assertThat(result.errors()).anyMatch(e -> e.contains("C") && e.contains("not reachable from entrypoint"));
+    }
+
+    @Test
+    void configOverrides_validTimeoutSeconds() {
+        UUID nodeA = UUID.randomUUID();
+        UUID nodeB = UUID.randomUUID();
+
+        var a = makeNode(nodeA, "A", true);
+        a.setConfigOverrides("{\"timeout_seconds\": 300}");
+        var nodes = List.of(a, makeNode(nodeB, "B", false));
+        var edges = List.of(makeEdge(nodeA, nodeB, null));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isTrue();
+    }
+
+    @Test
+    void configOverrides_zeroTimeoutSecondsIsValid() {
+        UUID nodeA = UUID.randomUUID();
+        UUID nodeB = UUID.randomUUID();
+
+        var a = makeNode(nodeA, "A", true);
+        a.setConfigOverrides("{\"timeout_seconds\": 0}");
+        var nodes = List.of(a, makeNode(nodeB, "B", false));
+        var edges = List.of(makeEdge(nodeA, nodeB, null));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isTrue();
+    }
+
+    @Test
+    void configOverrides_tooLowTimeoutSeconds() {
+        UUID nodeA = UUID.randomUUID();
+        UUID nodeB = UUID.randomUUID();
+
+        var a = makeNode(nodeA, "A", true);
+        a.setConfigOverrides("{\"timeout_seconds\": 30}");
+        var nodes = List.of(a, makeNode(nodeB, "B", false));
+        var edges = List.of(makeEdge(nodeA, nodeB, null));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isFalse();
+        assertThat(result.errors()).anyMatch(e -> e.contains("timeout_seconds") && e.contains("60"));
+    }
+
+    @Test
+    void configOverrides_tooHighTimeoutSeconds() {
+        UUID nodeA = UUID.randomUUID();
+        UUID nodeB = UUID.randomUUID();
+
+        var a = makeNode(nodeA, "A", true);
+        a.setConfigOverrides("{\"timeout_seconds\": 100000}");
+        var nodes = List.of(a, makeNode(nodeB, "B", false));
+        var edges = List.of(makeEdge(nodeA, nodeB, null));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isFalse();
+        assertThat(result.errors()).anyMatch(e -> e.contains("timeout_seconds") && e.contains("86400"));
+    }
+
+    @Test
+    void configOverrides_nonNumericTimeoutSeconds() {
+        UUID nodeA = UUID.randomUUID();
+        UUID nodeB = UUID.randomUUID();
+
+        var a = makeNode(nodeA, "A", true);
+        a.setConfigOverrides("{\"timeout_seconds\": \"not_a_number\"}");
+        var nodes = List.of(a, makeNode(nodeB, "B", false));
+        var edges = List.of(makeEdge(nodeA, nodeB, null));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isFalse();
+        assertThat(result.errors()).anyMatch(e -> e.contains("timeout_seconds") && e.contains("number"));
+    }
+
+    @Test
+    void configOverrides_invalidJson() {
+        UUID nodeA = UUID.randomUUID();
+        UUID nodeB = UUID.randomUUID();
+
+        var a = makeNode(nodeA, "A", true);
+        a.setConfigOverrides("not valid json");
+        var nodes = List.of(a, makeNode(nodeB, "B", false));
+        var edges = List.of(makeEdge(nodeA, nodeB, null));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isFalse();
+        assertThat(result.errors()).anyMatch(e -> e.contains("invalid config_overrides JSON"));
+    }
+
+    @Test
+    void configOverrides_emptyOrNullSkipped() {
+        UUID nodeA = UUID.randomUUID();
+        UUID nodeB = UUID.randomUUID();
+
+        var a = makeNode(nodeA, "A", true);
+        a.setConfigOverrides("{}");
+        var b = makeNode(nodeB, "B", false);
+        b.setConfigOverrides(null);
+        var nodes = List.of(a, b);
+        var edges = List.of(makeEdge(nodeA, nodeB, null));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isTrue();
+    }
+
+    private TemplateNode makeNode(UUID id, String label, boolean entrypoint) {
+        var node = new TemplateNode();
+        node.setId(id);
+        node.setLabel(label);
+        node.setEntrypoint(entrypoint);
+        return node;
+    }
+
+    private TemplateEdge makeEdge(UUID sourceId, UUID targetId, String condition) {
+        var edge = new TemplateEdge();
+        edge.setSourceNodeId(sourceId);
+        edge.setTargetNodeId(targetId);
+        edge.setCondition(condition);
+        return edge;
+    }
+}

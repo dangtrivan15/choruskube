@@ -1,0 +1,177 @@
+package com.choruskube.core.service;
+
+import com.choruskube.core.dto.*;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.List;
+
+public final class AnalyticsResultMapper {
+
+    private AnalyticsResultMapper() {}
+
+    /**
+     * Parses a period string into an Instant cutoff. Supported formats: "7d", "30d", "90d", "24h".
+     * Defaults to 30d for null or unrecognized input.
+     */
+    public static Instant parsePeriod(String period) {
+        if (period == null || period.isBlank()) {
+            return Instant.now().minus(30, ChronoUnit.DAYS);
+        }
+        String trimmed = period.trim().toLowerCase();
+        try {
+            if (trimmed.endsWith("d")) {
+                int days = Integer.parseInt(trimmed.substring(0, trimmed.length() - 1));
+                if (days <= 0 || days > 365) {
+                    return Instant.now().minus(30, ChronoUnit.DAYS);
+                }
+                return Instant.now().minus(days, ChronoUnit.DAYS);
+            } else if (trimmed.endsWith("h")) {
+                int hours = Integer.parseInt(trimmed.substring(0, trimmed.length() - 1));
+                if (hours <= 0 || hours > 8760) {
+                    return Instant.now().minus(30, ChronoUnit.DAYS);
+                }
+                return Instant.now().minus(hours, ChronoUnit.HOURS);
+            }
+        } catch (NumberFormatException e) {
+            // fall through to default
+        }
+        return Instant.now().minus(30, ChronoUnit.DAYS);
+    }
+
+    /** Maps the single overview-stats row into the overview response. */
+    public static AnalyticsOverviewResponse toOverview(Object[] row) {
+        if (row == null || row.length == 0) {
+            return new AnalyticsOverviewResponse(0, 0, 0, 0.0, null, null, null);
+        }
+        Object[] data = unwrapRow(row);
+        long totalRuns = toLong(data[0]);
+        long completedRuns = toLong(data[1]);
+        long failedRuns = toLong(data[2]);
+        double avgDuration = toDouble(data[3]);
+        double p50Duration = toDouble(data[4]);
+        double p95Duration = toDouble(data[5]);
+
+        double successRate = totalRuns > 0 ? round((double) completedRuns / totalRuns * 100.0) : 0.0;
+
+        return new AnalyticsOverviewResponse(
+                totalRuns,
+                completedRuns,
+                failedRuns,
+                successRate,
+                avgDuration > 0 ? round(avgDuration) : null,
+                p50Duration > 0 ? round(p50Duration) : null,
+                p95Duration > 0 ? round(p95Duration) : null);
+    }
+
+    /** Maps the daily run-trend rows into the run-trend response. */
+    public static RunTrendResponse toRunTrend(List<Object[]> rows) {
+        List<RunTrendPoint> points = rows.stream()
+                .map(r -> new RunTrendPoint(
+                        (String) r[0], // day string
+                        toLong(r[1]), // total
+                        toLong(r[2]), // completed
+                        toLong(r[3]) // failed
+                        ))
+                .toList();
+        return new RunTrendResponse(points);
+    }
+
+    /** Maps the per-template rows into the template-analytics response. */
+    public static TemplateAnalyticsResponse toTemplateAnalytics(List<Object[]> rows) {
+        List<TemplateAnalytics> templates = rows.stream()
+                .map(r -> {
+                    String templateName = (String) r[0];
+                    long runCount = toLong(r[1]);
+                    long completedCount = toLong(r[2]);
+                    long failedCount = toLong(r[3]);
+                    double successRate = runCount > 0 ? round((double) completedCount / runCount * 100.0) : 0.0;
+                    return new TemplateAnalytics(templateName, runCount, completedCount, failedCount, successRate);
+                })
+                .toList();
+        return new TemplateAnalyticsResponse(templates);
+    }
+
+    /** Maps the per-node rows into the node-analytics response. */
+    public static NodeAnalyticsResponse toNodeAnalytics(List<Object[]> rows) {
+        List<NodeAnalytics> nodes = rows.stream()
+                .map(r -> {
+                    String label = (String) r[0];
+                    long executionCount = toLong(r[1]);
+                    long completedCount = toLong(r[2]);
+                    long failedCount = toLong(r[3]);
+                    double successRate =
+                            executionCount > 0 ? round((double) completedCount / executionCount * 100.0) : 0.0;
+                    return new NodeAnalytics(label, executionCount, completedCount, failedCount, successRate);
+                })
+                .toList();
+        return new NodeAnalyticsResponse(nodes);
+    }
+
+    /** Maps the bottleneck rows into the bottleneck response. */
+    public static BottleneckResponse toBottlenecks(List<Object[]> rows) {
+        List<BottleneckNode> bottlenecks = rows.stream()
+                .map(r -> new BottleneckNode(
+                        (String) r[0], // label
+                        round(toDouble(r[1])), // avg duration
+                        round(toDouble(r[2])), // p50 duration
+                        round(toDouble(r[3])), // p95 duration
+                        toLong(r[4]) // sample size
+                        ))
+                .toList();
+        return new BottleneckResponse(bottlenecks);
+    }
+
+    /** Maps the proposal status-count rows into the status-counts response. */
+    public static ProposalStatusCountsResponse toProposalStatusCounts(List<Object[]> rows) {
+        long total = 0;
+        List<ProposalStatusCount> statuses = new ArrayList<>();
+        for (Object[] r : rows) {
+            String status = (String) r[0];
+            long count = toLong(r[1]);
+            total += count;
+            statuses.add(new ProposalStatusCount(status, count));
+        }
+        return new ProposalStatusCountsResponse(total, statuses);
+    }
+
+    /** Maps the proposal throughput rows into the throughput response. */
+    public static ProposalThroughputResponse toProposalThroughput(List<Object[]> rows) {
+        List<ProposalThroughputPoint> points = rows.stream()
+                .map(r -> new ProposalThroughputPoint(
+                        (String) r[0], // day string
+                        toLong(r[1]) // count
+                        ))
+                .toList();
+        return new ProposalThroughputResponse(points);
+    }
+
+    /**
+     * Unwraps the result row. For single-row aggregate queries, some JPA implementations return
+     * Object[] directly while others wrap it.
+     */
+    private static Object[] unwrapRow(Object[] row) {
+        if (row.length == 1 && row[0] instanceof Object[]) {
+            return (Object[]) row[0];
+        }
+        return row;
+    }
+
+    static long toLong(Object value) {
+        if (value == null) return 0L;
+        if (value instanceof Number n) return n.longValue();
+        return Long.parseLong(value.toString());
+    }
+
+    static double toDouble(Object value) {
+        if (value == null) return 0.0;
+        if (value instanceof Number n) return n.doubleValue();
+        return Double.parseDouble(value.toString());
+    }
+
+    private static double round(double value) {
+        return BigDecimal.valueOf(value).setScale(2, RoundingMode.HALF_UP).doubleValue();
+    }
+}

@@ -1,0 +1,10 @@
+# Local-only design specs and implementation plans — never committed.
+# Kept on disk for reference but excluded from the (soon-public) repo history.
+docs/superpowers/
+
+# IntelliJ IDEA project metadata
+.idea/
+
+# Local secrets — written by scripts/setup.sh, never committed.
+.env
+.secrets/

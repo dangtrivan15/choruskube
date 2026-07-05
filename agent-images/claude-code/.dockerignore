@@ -1,0 +1,3 @@
+# Not needed in build context
+Dockerfile
+.dockerignore

@@ -1,0 +1,11 @@
+# Dependencies (reinstalled via npm ci)
+node_modules
+
+# Build output (regenerated in build stage)
+dist
+
+# Not needed in build context
+Dockerfile
+.dockerignore
+.gitignore
+README.md

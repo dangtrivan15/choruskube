@@ -1,0 +1,57 @@
+#!/bin/bash
+# fetch-github-token — fetch a fresh GitHub installation token from the API server.
+#
+# Usage: fetch-github-token
+#
+# Retrieves a short-lived GitHub installation token from the ChorusKube API
+# server. The token is printed to stdout and can be used for git operations
+# or the GitHub CLI (`gh`).
+#
+# Environment:
+#   GITHUB_TOKEN_URL  — GET endpoint that returns {"token":"..."}
+#                       (set by entrypoint.sh from config.json)
+#   JOB_SECRET        — Bearer token for authentication
+#
+# Examples:
+#   # Print the token
+#   fetch-github-token
+#
+#   # Use with gh CLI
+#   fetch-github-token | gh auth login --with-token
+#
+#   # Store in a variable
+#   TOKEN=$(fetch-github-token)
+#
+# Exit codes:
+#   0  Token printed successfully
+#   1  Missing environment, fetch failed, or no token returned
+set -euo pipefail
+
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+    sed -n '2,/^set -euo pipefail$/{ /^set -euo pipefail$/d; s/^# \?//; p }' "$0"
+    exit 0
+fi
+
+if [ -z "${GITHUB_TOKEN_URL:-}" ]; then
+    echo "ERROR: GITHUB_TOKEN_URL not set. This script must be run inside an agent pod." >&2
+    exit 1
+fi
+
+RESPONSE=$(curl -s -w "\n%{http_code}" \
+    -H "Authorization: Bearer ${JOB_SECRET:-}" \
+    "$GITHUB_TOKEN_URL")
+HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+BODY=$(echo "$RESPONSE" | sed '$d')
+
+if [ "$HTTP_CODE" != "200" ]; then
+    echo "ERROR: GitHub token request failed (HTTP $HTTP_CODE): $BODY" >&2
+    exit 1
+fi
+
+TOKEN=$(echo "$BODY" | jq -r '.token // empty')
+if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+    echo "ERROR: No token in response" >&2
+    exit 1
+fi
+
+echo "$TOKEN"

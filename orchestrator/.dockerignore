@@ -1,0 +1,8 @@
+# IDE metadata
+.project
+.settings
+
+# Not needed in build context
+Dockerfile
+.dockerignore
+.gitignore

@@ -1,0 +1,46 @@
+#!/bin/bash
+# list-decisions — print the valid routing decisions for the current node execution.
+#
+# Usage: list-decisions
+#
+# Queries the ChorusKube API server for the set of decisions that this node
+# execution may submit via `report-result`. Prints one decision per line.
+#
+# Environment:
+#   API_SERVER_URL      — Base URL of the ChorusKube API server
+#   RUN_ID              — Workflow run UUID
+#   NODE_EXECUTION_ID   — Node execution UUID
+#   JOB_SECRET          — Bearer token for authentication
+#
+# Exit codes:
+#   0  Decisions printed successfully (empty output if no conditional edges)
+#   1  Missing environment or API error
+set -euo pipefail
+
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+    sed -n '2,/^set -euo pipefail$/{ /^set -euo pipefail$/d; s/^# \?//; p }' "$0"
+    exit 0
+fi
+
+if [ -z "${API_SERVER_URL:-}" ]; then
+    echo "ERROR: API_SERVER_URL not set. This script must be run inside an agent pod." >&2
+    exit 1
+fi
+
+if [ -z "${RUN_ID:-}" ] || [ -z "${NODE_EXECUTION_ID:-}" ]; then
+    echo "ERROR: RUN_ID and NODE_EXECUTION_ID must be set." >&2
+    exit 1
+fi
+
+RESPONSE=$(curl -s -w "\n%{http_code}" \
+    -H "Authorization: Bearer ${JOB_SECRET:-}" \
+    "$API_SERVER_URL/internal/runs/$RUN_ID/node-executions/$NODE_EXECUTION_ID/valid-decisions")
+HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+BODY=$(echo "$RESPONSE" | sed '$d')
+
+if [ "$HTTP_CODE" != "200" ]; then
+    echo "ERROR: list-decisions failed (HTTP $HTTP_CODE): $BODY" >&2
+    exit 1
+fi
+
+echo "$BODY" | jq -r '.decisions[]'

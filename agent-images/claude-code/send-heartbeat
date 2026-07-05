@@ -1,0 +1,38 @@
+#!/bin/bash
+# send-heartbeat — post a liveness heartbeat to the orchestrator.
+# Entrypoint-only; not intended for direct agent use.
+#
+# Liveness is gated on Claude stream progress: we only POST when the event
+# count in $CLAUDE_STREAM_FILE has changed since the last tick. A stuck or
+# hung Claude run therefore stops heartbeating, letting Temporal's heartbeat
+# timeout fire instead of waiting out the full activity deadline.
+#
+# Fallback: if the stream file doesn't exist (setup phase or script-executor
+# path), we POST unconditionally so Temporal sees liveness for the pod.
+set -euo pipefail
+
+COUNTER_FILE="/tmp/claude_last_event_count"
+STREAM_FILE="${CLAUDE_STREAM_FILE:-}"
+
+send_unconditional=true
+count=0
+
+if [ -n "$STREAM_FILE" ] && [ -f "$STREAM_FILE" ]; then
+    count=$(wc -l < "$STREAM_FILE" 2>/dev/null | tr -d ' ')
+    last=$(cat "$COUNTER_FILE" 2>/dev/null || echo "")
+    if [ "$count" = "$last" ]; then
+        # Stream hasn't advanced — skip the heartbeat.
+        exit 0
+    fi
+    send_unconditional=false
+fi
+
+curl -s -X POST "$HEARTBEAT_URL" \
+    -H "Authorization: Bearer $JOB_SECRET" \
+    -H "Content-Type: application/json" \
+    -d "{\"node_execution_id\":\"$NODE_EXECUTION_ID\",\"run_id\":\"$RUN_ID\"}" \
+    || true
+
+if [ "$send_unconditional" = "false" ]; then
+    echo "$count" > "$COUNTER_FILE"
+fi

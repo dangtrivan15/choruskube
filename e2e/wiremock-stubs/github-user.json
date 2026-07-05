@@ -1,0 +1,44 @@
+{
+  "mappings": [
+    {
+      "priority": 1,
+      "request": {
+        "method": "GET",
+        "url": "/user",
+        "headers": {
+          "Authorization": { "equalTo": "token ghp_EXPIRED_E2ETEST_TOKEN" }
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": { "Content-Type": "application/json" },
+        "body": "{\"message\":\"Bad credentials\"}"
+      }
+    },
+    {
+      "priority": 5,
+      "request": {
+        "method": "GET",
+        "url": "/user",
+        "headers": { "Authorization": { "contains": "token " } }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json",
+          "X-OAuth-Scopes": "repo, read:org"
+        },
+        "body": "{\"login\":\"e2e-test-user\",\"id\":1}"
+      }
+    },
+    {
+      "priority": 10,
+      "request": { "method": "GET", "url": "/user" },
+      "response": {
+        "status": 401,
+        "headers": { "Content-Type": "application/json" },
+        "body": "{\"message\":\"Bad credentials\"}"
+      }
+    }
+  ]
+}

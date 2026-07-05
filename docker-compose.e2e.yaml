@@ -1,0 +1,286 @@
+# docker-compose.e2e.yaml — ChorusKube E2E stack (auth-free, single-tenant)
+#
+# Auth-free end-to-end stack for the OSS core. Runs on 2xxxx ports so it can
+# coexist with the canonical local stack (docker-compose.yaml, 3xxxx ports).
+# The api-server boots under the "e2e" Spring profile, which activates
+# E2eTestDataSeeder and seeds mock node definitions + graph templates at startup.
+# External API calls (GitHub, Anthropic) are intercepted by a WireMock service;
+# stub mappings are pushed in via WireMock's admin API after the container is
+# healthy (see scripts/e2e-up.sh).
+#
+# Usage:
+#   docker compose -f docker-compose.e2e.yaml up -d --build
+#   docker compose -f docker-compose.e2e.yaml down -v
+#
+# Ports (2xxxx range):
+#   23000  web-ui
+#   28080  api-server
+#   25432  postgres
+#   27233  temporal
+#   29000  object-storage API
+#   29001  object-storage console
+#   29090  orchestrator
+#   28085  wiremock (admin + stub API)
+
+name: choruskube-e2e
+
+# Docker-out-of-Docker staging dir — must be identical on host and container.
+x-agent-staging-dir: &agent-staging-dir /tmp/choruskube-e2e-staging
+
+networks:
+  choruskube-e2e:
+    name: choruskube-e2e
+    driver: bridge
+
+services:
+  # --- Infrastructure ---
+
+  postgres:
+    image: postgres:17-alpine
+    dns_search: .
+    environment:
+      POSTGRES_DB: choruskube
+      POSTGRES_USER: choruskube
+      POSTGRES_PASSWORD: choruskube
+    ports:
+      - "25432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - choruskube-e2e
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U choruskube"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  temporal:
+    image: temporalio/auto-setup:1.25
+    dns_search: .
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_SEEDS=postgres
+      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/docker.yaml
+      - POSTGRES_USER=choruskube
+      - POSTGRES_PWD=choruskube
+      - DEFAULT_NAMESPACE=default
+      - BIND_ON_IP=0.0.0.0
+    ports:
+      - "27233:7233"
+    networks:
+      - choruskube-e2e
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "localhost:7233"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  # S3-compatible object storage for run artifacts.
+  object-storage:
+    image: minio/minio:latest
+    dns_search: .
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "29000:9000"
+      - "29001:9001"
+    volumes:
+      - object-storage-data:/data
+    networks:
+      - choruskube-e2e
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  object-storage-setup:
+    image: minio/mc:latest
+    dns_search: .
+    networks:
+      - choruskube-e2e
+    depends_on:
+      object-storage:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://object-storage:9000 minioadmin minioadmin &&
+      mc mb --ignore-existing local/choruskube &&
+      echo 'Object storage bucket ready'
+      "
+
+  # WireMock intercepts external API calls (GitHub, Anthropic) — stubs are
+  # pushed in via the admin API after the container is healthy.
+  wiremock:
+    image: wiremock/wiremock:3.13.0
+    dns_search: .
+    command: ["--port", "8080", "--disable-banner"]
+    networks:
+      - choruskube-e2e
+    ports:
+      - "28085:8080"
+    # Stubs are pushed in by scripts/e2e-up.sh after the container is healthy
+    # (admin API), so no build-time mount is required.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/__admin/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # --- Application Services ---
+
+  api-server:
+    build:
+      context: ./api-server
+      dockerfile: Dockerfile
+    dns_search: .
+    environment:
+      DATABASE_URL: jdbc:postgresql://postgres:5432/choruskube
+      DATABASE_USERNAME: choruskube
+      DATABASE_PASSWORD: choruskube
+      SERVER_PORT: "8080"
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_NAMESPACE: default
+      TEMPORAL_TASK_QUEUE: choruskube
+      OBJECT_STORE_ENDPOINT: http://object-storage:9000
+      OBJECT_STORE_ACCESS_KEY: minioadmin
+      OBJECT_STORE_SECRET_KEY: minioadmin
+      OBJECT_STORE_BUCKET: choruskube
+      INTERNAL_AUTH_MODE: enforce
+      ARTIFACT_ENFORCEMENT_MODE: warn
+      # E2E must never emit anonymous telemetry to the production endpoint.
+      CHORUSKUBE_TELEMETRY: "off"
+      # Single-tenant OSS mode — no OIDC provider.
+      AUTH_ENABLED: "false"
+      # Activate the e2e Spring profile to trigger E2eTestDataSeeder at boot.
+      SPRING_PROFILES_ACTIVE: e2e
+      # api-server owns the workload executor; spawns agent containers via DooD.
+      EXECUTOR_TYPE: docker
+      DOCKER_HOST: unix:///var/run/docker.sock
+      DOCKER_NETWORK: choruskube-e2e
+      # Docker-out-of-Docker staging dir — must be identical on host and container.
+      AGENT_STAGING_DIR: *agent-staging-dir
+      CALLBACK_URL: http://orchestrator:9090/api/v1/callback
+      API_SERVER_URL: http://api-server:8080
+      ORCHESTRATOR_SECRET_HASH: fcb34c11ecbf6914ad43903e539ade6901f864d9772c36e63a78c2488cd0958a
+      # E2E agent image — used by E2eTestDataSeeder (no default; must be set).
+      E2E_AGENT_IMAGE: claude-code:e2e
+      # Load-bearing: overrides the seeder's broken default path.
+      E2E_MOCK_SCRIPT_PATH: /usr/local/bin/mock-agent.sh
+      # Override default agent images to use the local e2e image.
+      DEFAULT_AGENT_IMAGE: claude-code:e2e
+      CHORUSKUBE_REPO_AGENT_IMAGE: claude-code:e2e
+      # Route external API calls through WireMock so no real tokens are needed.
+      GITHUB_API_URL: http://wiremock:8080
+      ANTHROPIC_API_URL: http://wiremock:8080
+      # Dummy Claude token — exercises SystemOrgSeeder's env-seeding path;
+      # WireMock intercepts all Anthropic calls so no real Claude API is hit.
+      CLAUDE_CODE_OAUTH_TOKEN: e2e-dummy-claude-token-not-real
+      GITHUB_CREDENTIAL_ENCRYPTION_KEY: bMbAenxH2uTi5t+N0pN7CUxZ3g94FxCIVZniqRy2SdM=
+      # GitHub credentials — blank; WireMock stubs the GitHub API.
+      GITHUB_PAT: ""
+      GITHUB_APP_ID: ""
+      GITHUB_APP_INSTALLATION_ID: ""
+      GITHUB_APP_PRIVATE_KEY_PATH: ""
+      CORS_ALLOWED_ORIGINS: http://localhost:23000
+    ports:
+      - "28080:8080"
+    networks:
+      - choruskube-e2e
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./.secrets:/run/secrets:ro
+      - type: bind
+        source: *agent-staging-dir
+        target: *agent-staging-dir
+        bind:
+          create_host_path: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal:
+        condition: service_healthy
+      object-storage-setup:
+        condition: service_completed_successfully
+      wiremock:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q UP"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+
+  orchestrator:
+    build:
+      context: ./orchestrator
+      dockerfile: Dockerfile
+    dns_search: .
+    environment:
+      API_SERVER_URL: http://api-server:8080
+      ORCHESTRATOR_SECRET: choruskube-orchestrator
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_NAMESPACE: default
+      TEMPORAL_TASK_QUEUE: choruskube
+      CALLBACK_PORT: "9090"
+      CALLBACK_URL: http://orchestrator:9090/api/v1/callback
+      OBJECT_STORE_ENDPOINT: http://object-storage:9000
+      OBJECT_STORE_ACCESS_KEY: minioadmin
+      OBJECT_STORE_SECRET_KEY: minioadmin
+      OBJECT_STORE_BUCKET: choruskube
+    ports:
+      - "29090:9090"
+    networks:
+      - choruskube-e2e
+    depends_on:
+      api-server:
+        condition: service_healthy
+      temporal:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/healthz | grep -q healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  web-ui:
+    build:
+      context: ./web-ui
+      dockerfile: Dockerfile
+    dns_search: .
+    # nginx-e2e.conf is a generic api-server reverse proxy (not e2e-specific):
+    # it proxies /api, /internal, /ws, /swagger, /actuator to api-server:8080,
+    # so the SPA talks same-origin. Render config.js, then start nginx.
+    command: >
+      sh -c 'cp /etc/nginx/conf.d/e2e.conf.template /etc/nginx/conf.d/default.conf
+      && envsubst < /config.js.template > /usr/share/nginx/html/config.js
+      && exec nginx -g "daemon off;"'
+    environment:
+      API_BASE_URL: /api/v1
+      APP_HOST: ""
+      APP_MODE: production
+      DAG_PLAYGROUND_ENABLED: "true"
+      # OIDC auth is disabled in single-tenant mode; these are unused by the
+      # backend and left blank.
+      AUTH_URL: ""
+      AUTH_REALM: ""
+      AUTH_CLIENT_ID: ""
+    ports:
+      - "23000:80"
+    networks:
+      - choruskube-e2e
+    depends_on:
+      api-server:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  object-storage-data:

@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+# Runs the test suite of every git repo in the run, then aggregates pass/fail.
+#
+# Layouts handled:
+#   * Repo Group (multi-repo): /workspace/config.json has a non-empty `repos[]`,
+#     each entry has `name` (and optionally `test_command`); each repo's working
+#     copy lives under /workspace/repo/<name>/.
+#   * Single Git Repo: `repos[]` is absent; the run-level `test_command` is
+#     exposed at the top level of config.json and the working copy lives
+#     directly at /workspace/repo/.
+#
+# Repos with empty/null test_command are skipped (recorded in the report) — a
+# Repo Group with no test_commands configured is treated as a pass, matching
+# the "no test configured = pass" convention.
+#
+# Exit code: 0 if every repo with a test_command passed, 1 otherwise. The
+# entrypoint translates the exit code into the node decision (passed/failed).
+
+CONFIG=/workspace/config.json
+REPORT=/workspace/out/test_report.md
+mkdir -p /workspace/out
+
+if [ ! -f "$CONFIG" ]; then
+  echo "ERROR: $CONFIG not found" >&2
+  exit 1
+fi
+
+# tab-separated list of (name, dir, cmd) tuples
+PLAN_FILE=$(mktemp)
+trap 'rm -f "$PLAN_FILE"' EXIT
+
+REPOS_LEN=$(jq '(.repos // []) | length' "$CONFIG")
+
+if [ "$REPOS_LEN" -gt 0 ]; then
+  # Multi-repo: cd into /workspace/repo/<name> per entry. local_path is set by
+  # the orchestrator; fall back to /workspace/repo/<name> for safety.
+  jq -r '
+    .repos[]
+    | [
+        .name // "repo",
+        (.local_path // ("/workspace/repo/" + (.name // "repo"))),
+        (.test_command // "")
+      ]
+    | @tsv
+  ' "$CONFIG" > "$PLAN_FILE"
+else
+  # Single-repo: derive a display name from repo_url; cd is /workspace/repo.
+  TC=$(jq -r '.test_command // ""' "$CONFIG")
+  NAME=$(jq -r '.repo_url // "" | split("/") | last | sub("\\.git$"; "")' "$CONFIG")
+  [ -z "$NAME" ] && NAME="repo"
+  printf '%s\t%s\t%s\n' "$NAME" "/workspace/repo" "$TC" > "$PLAN_FILE"
+fi
+
+OVERALL_EXIT=0
+HAS_RUNNABLE=0
+
+{
+  echo "# Test Report"
+  echo ""
+} > "$REPORT"
+
+while IFS=$'\t' read -r NAME DIR CMD; do
+  if [ -z "$CMD" ] || [ "$CMD" = "null" ]; then
+    {
+      echo "## $NAME"
+      echo ""
+      echo "**Status:** SKIPPED (no test_command configured)"
+      echo ""
+    } >> "$REPORT"
+    continue
+  fi
+
+  if [ ! -d "$DIR" ]; then
+    {
+      echo "## $NAME"
+      echo ""
+      echo "**Status:** FAILED (working directory not found: \`$DIR\`)"
+      echo ""
+    } >> "$REPORT"
+    OVERALL_EXIT=1
+    HAS_RUNNABLE=1
+    continue
+  fi
+
+  HAS_RUNNABLE=1
+  echo "==> $NAME: cd $DIR && $CMD"
+  pushd "$DIR" > /dev/null
+  set +e
+  OUTPUT=$(eval "$CMD" 2>&1)
+  EXIT=$?
+  set -e
+  popd > /dev/null
+
+  if [ "$EXIT" -eq 0 ]; then
+    STATUS="PASSED"
+  else
+    STATUS="FAILED (exit $EXIT)"
+    OVERALL_EXIT=1
+  fi
+
+  {
+    echo "## $NAME"
+    echo ""
+    echo "**Directory:** \`$DIR\`"
+    echo "**Command:** \`$CMD\`"
+    echo "**Status:** $STATUS"
+    echo ""
+    echo "<details><summary>Last 100 lines of output</summary>"
+    echo ""
+    echo '```'
+    printf '%s\n' "$OUTPUT" | tail -100
+    echo '```'
+    echo ""
+    echo "</details>"
+    echo ""
+  } >> "$REPORT"
+done < "$PLAN_FILE"
+
+if [ "$HAS_RUNNABLE" -eq 0 ]; then
+  echo "No test_command configured for any repo — nothing to run."
+  echo ""
+  echo "_No test_command configured for any repo — treating as passed._" >> "$REPORT"
+fi
+
+if [ "$OVERALL_EXIT" -eq 0 ]; then
+  echo "All tests passed."
+else
+  echo "One or more repos failed tests; see $REPORT for details." >&2
+fi
+
+exit "$OVERALL_EXIT"

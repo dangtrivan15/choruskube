@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Usage: register-pr --repo-id <uuid> --pr-url <url> [--pr-number <n>] [--title <t>] [--repo-name <name>]
+# Registers a pull request with the ChorusKube API for tracking and display.
+
+REPO_ID=""
+PR_URL=""
+PR_NUMBER=""
+PR_TITLE=""
+REPO_NAME=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --repo-id)    REPO_ID="$2"; shift 2 ;;
+        --pr-url)     PR_URL="$2"; shift 2 ;;
+        --pr-number)  PR_NUMBER="$2"; shift 2 ;;
+        --title)      PR_TITLE="$2"; shift 2 ;;
+        --repo-name)  REPO_NAME="$2"; shift 2 ;;
+        --help)
+            echo "Usage: register-pr --repo-id <uuid> --pr-url <url> [--pr-number <n>] [--title <t>] [--repo-name <name>]"
+            exit 0 ;;
+        *) echo "Unknown argument: $1"; exit 1 ;;
+    esac
+done
+
+: "${REPO_ID:?--repo-id is required}"
+: "${PR_URL:?--pr-url is required}"
+
+RUN_ID=$(jq -r '.run_id' /workspace/config.json)
+NODE_EXEC_ID=$(jq -r '.node_execution_id' /workspace/config.json)
+API_URL=$(jq -r '.api_server_url' /workspace/config.json)
+
+BODY=$(jq -n \
+    --arg gitRepoId "$REPO_ID" \
+    --arg prUrl "$PR_URL" \
+    --argjson prNumber "${PR_NUMBER:-null}" \
+    --arg title "${PR_TITLE:-}" \
+    --arg repoName "${REPO_NAME:-}" \
+    '{gitRepoId: $gitRepoId, prUrl: $prUrl, prNumber: $prNumber, title: (if $title == "" then null else $title end), repoName: (if $repoName == "" then null else $repoName end)}')
+
+curl -sf -X POST \
+    "${API_URL}/internal/runs/${RUN_ID}/node-executions/${NODE_EXEC_ID}/pull-requests" \
+    -H "Authorization: Bearer ${JOB_SECRET}" \
+    -H "Content-Type: application/json" \
+    -d "$BODY"
+
+echo "Pull request registered: $PR_URL"

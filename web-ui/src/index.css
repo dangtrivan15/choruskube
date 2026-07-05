@@ -1,0 +1,258 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/geist";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+    --background: #fafaf7;
+    --foreground: #3e3859;
+    /* Translucent card surface — matches landing's bg-white/55 pattern so
+       cards pick up the body gradient instead of reading as opaque tiles.
+       Blur + shadow are applied globally to .bg-card below. */
+    --card: rgba(255, 255, 255, 0.55);
+    --card-foreground: #3e3859;
+    --popover: #fafaf7;
+    --popover-foreground: #3e3859;
+    --primary: #907aa9;
+    --primary-foreground: #faf4ed;
+    --secondary: #f1eef5;
+    --secondary-foreground: #3e3859;
+    --muted: #f1eef5;
+    --muted-foreground: #797593;
+    --accent: #f1eef5;
+    --accent-foreground: #3e3859;
+    --destructive: #b4637a;
+    --border: rgba(62,56,89,0.08);
+    --input: rgba(62,56,89,0.12);
+    --ring: #907aa9;
+    --chart-1: #56949f;
+    --chart-2: #907aa9;
+    --chart-3: #d7827e;
+    --chart-4: #286983;
+    --chart-5: #ea9d34;
+    --radius: 0.625rem;
+    --sidebar: #fafaf7;
+    --sidebar-foreground: #3e3859;
+    --sidebar-primary: #907aa9;
+    --sidebar-primary-foreground: #faf4ed;
+    --sidebar-accent: #e6dfee;
+    --sidebar-accent-foreground: #3e3859;
+    --sidebar-border: rgba(62,56,89,0.08);
+    --sidebar-ring: #907aa9;
+    --status-success: #56949f;
+    --status-error: #b4637a;
+    --status-info: #286983;
+    --status-warning: #ea9d34;
+    --status-accent: #907aa9;
+    --status-neutral: #797593;
+    /* Glass surface tokens — translucent overlays that let the body gradient
+       show through, matching choruskube-landing's bg-white/55 + backdrop-blur
+       pattern. Use these on shell chrome (sidebar, navbar) and decorative
+       pills, NOT on dense data surfaces where readability matters. */
+    --surface-glass: rgba(255, 255, 255, 0.65);
+    --surface-glass-strong: rgba(255, 255, 255, 0.78);
+    --surface-glass-border: rgba(144, 122, 169, 0.20);
+}
+
+.dark {
+    --background: #191724;
+    --foreground: #e0def4;
+    --card: #1f1d2e;
+    --card-foreground: #e0def4;
+    --popover: #1f1d2e;
+    --popover-foreground: #e0def4;
+    --primary: #c4a7e7;
+    --primary-foreground: #191724;
+    --secondary: #26233a;
+    --secondary-foreground: #e0def4;
+    --muted: #26233a;
+    --muted-foreground: #908caa;
+    --accent: #26233a;
+    --accent-foreground: #e0def4;
+    --destructive: #eb6f92;
+    --border: #403d52;
+    --input: #524f67;
+    --ring: #c4a7e7;
+    --chart-1: #9ccfd8;
+    --chart-2: #c4a7e7;
+    --chart-3: #ebbcba;
+    --chart-4: #31748f;
+    --chart-5: #f6c177;
+    --sidebar: #1f1d2e;
+    --sidebar-foreground: #e0def4;
+    --sidebar-primary: #c4a7e7;
+    --sidebar-primary-foreground: #e0def4;
+    --sidebar-accent: #26233a;
+    --sidebar-accent-foreground: #e0def4;
+    --sidebar-border: #403d52;
+    --sidebar-ring: #c4a7e7;
+    --status-success: #9ccfd8;
+    --status-error: #eb6f92;
+    --status-info: #31748f;
+    --status-warning: #f6c177;
+    --status-accent: #c4a7e7;
+    --status-neutral: #908caa;
+    /* Dark-mode glass: translucent rosepine overlay with subtle iris border. */
+    --surface-glass: rgba(38, 35, 58, 0.55);
+    --surface-glass-strong: rgba(38, 35, 58, 0.70);
+    --surface-glass-border: rgba(196, 167, 231, 0.15);
+}
+
+@theme inline {
+    --font-sans: 'Geist Variable', sans-serif;
+    --color-sidebar-ring: var(--sidebar-ring);
+    --color-sidebar-border: var(--sidebar-border);
+    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+    --color-sidebar-accent: var(--sidebar-accent);
+    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+    --color-sidebar-primary: var(--sidebar-primary);
+    --color-sidebar-foreground: var(--sidebar-foreground);
+    --color-sidebar: var(--sidebar);
+    --color-chart-5: var(--chart-5);
+    --color-chart-4: var(--chart-4);
+    --color-chart-3: var(--chart-3);
+    --color-chart-2: var(--chart-2);
+    --color-chart-1: var(--chart-1);
+    --color-ring: var(--ring);
+    --color-input: var(--input);
+    --color-border: var(--border);
+    --color-destructive: var(--destructive);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-accent: var(--accent);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-muted: var(--muted);
+    --color-secondary-foreground: var(--secondary-foreground);
+    --color-secondary: var(--secondary);
+    --color-primary-foreground: var(--primary-foreground);
+    --color-primary: var(--primary);
+    --color-popover-foreground: var(--popover-foreground);
+    --color-popover: var(--popover);
+    --color-card-foreground: var(--card-foreground);
+    --color-card: var(--card);
+    --color-foreground: var(--foreground);
+    --color-background: var(--background);
+    --color-status-success: var(--status-success);
+    --color-status-error: var(--status-error);
+    --color-status-info: var(--status-info);
+    --color-status-warning: var(--status-warning);
+    --color-status-accent: var(--status-accent);
+    --color-status-neutral: var(--status-neutral);
+    --color-surface-glass: var(--surface-glass);
+    --color-surface-glass-strong: var(--surface-glass-strong);
+    --color-surface-glass-border: var(--surface-glass-border);
+    --radius-sm: calc(var(--radius) * 0.6);
+    --radius-md: calc(var(--radius) * 0.8);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) * 1.4);
+    --radius-2xl: calc(var(--radius) * 1.8);
+    --radius-3xl: calc(var(--radius) * 2.2);
+    --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+    }
+  body {
+    @apply bg-background text-foreground;
+    }
+  html {
+    @apply font-sans;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    }
+}
+
+/* Light-mode: gradient background matching choruskube-landing (source of truth) */
+html:not(.dark) body {
+  background:
+    radial-gradient(ellipse 70% 50% at 15% 20%, rgba(144,122,169,0.22), transparent 70%),
+    radial-gradient(ellipse 60% 50% at 88% 75%, rgba(86,148,159,0.18), transparent 70%),
+    radial-gradient(ellipse 50% 40% at 50% 50%, rgba(234,157,52,0.06), transparent 70%),
+    linear-gradient(145deg, #faf4ed 0%, #f5ebef 45%, #eae3f0 100%);
+  background-attachment: fixed;
+}
+
+/* Light-mode: dot-grid texture overlay */
+html:not(.dark) body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background-image: radial-gradient(circle at 1px 1px, rgba(62,56,89,0.08) 1px, transparent 1px);
+  background-size: 24px 24px;
+  -webkit-mask-image: radial-gradient(ellipse at center, black 0%, transparent 90%);
+          mask-image: radial-gradient(ellipse at center, black 0%, transparent 90%);
+}
+
+/* Subtle scrollbars — thin, theme-tinted, hover-darken. Replaces heavy default
+   browser chrome with overlay-style scrollbars matching landing's quiet
+   aesthetic. Applies globally to any scrollable container. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(62, 56, 89, 0.18) transparent;
+}
+.dark * {
+  scrollbar-color: rgba(196, 167, 231, 0.20) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: rgba(62, 56, 89, 0.18);
+  border-radius: 4px;
+  transition: background-color 150ms ease;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(62, 56, 89, 0.35);
+}
+.dark *::-webkit-scrollbar-thumb {
+  background-color: rgba(196, 167, 231, 0.20);
+}
+.dark *::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(196, 167, 231, 0.40);
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Card surface — translucent paper that picks up the body gradient, with a
+   soft purple-tinted lift and a near-white edge highlight matching
+   choruskube-landing's pillar cards (bg-white/55 + backdrop-blur-md +
+   border-white/85 + shadow-[0_6px_24px_-12px_rgba(62,56,89,0.15)]).
+   Applied globally to any .bg-card so all card-shaped surfaces stay
+   consistent without touching individual component files. */
+@layer utilities {
+  .bg-card {
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-color: rgba(255, 255, 255, 0.85);
+    box-shadow: 0 6px 24px -12px rgba(62, 56, 89, 0.15);
+  }
+}
+.dark .bg-card {
+  /* Dark cards are opaque (#1f1d2e), so blur is a no-op; the shadow alone
+     gives subtle lift against the dark canvas. White edge highlight would
+     read wrong on dark — keep dark mode's default --border (#403d52). */
+  border-color: var(--border);
+  box-shadow: 0 6px 24px -12px rgba(0, 0, 0, 0.45);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* Sonner toast overrides to match the design system */
+[data-sonner-toaster] [data-sonner-toast] {
+  font-family: var(--font-sans);
+}
+
+[data-sonner-toaster] [data-sonner-toast] [data-close-button] {
+  border-color: var(--border);
+}

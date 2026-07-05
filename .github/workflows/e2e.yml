@@ -1,0 +1,89 @@
+name: E2E
+
+# Boots the auth-free e2e stack (api-server, orchestrator, web-ui, PostgreSQL, Temporal,
+# object storage, WireMock — all built from source) and runs the Playwright suite against it.
+# No real Claude token is needed: the agent runs the deterministic mock-agent and AI calls
+# are stubbed by WireMock with a dummy token.
+#
+# Runs on every PR to main and on push to main so it can serve as a REQUIRED status check.
+# It is intentionally NOT path-filtered: a required check that is skipped (e.g. on a docs-only
+# PR) is reported as pending and blocks the merge forever.
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# One e2e run per ref — supersede an in-flight run when new commits land.
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  e2e:
+    runs-on: arc-runner-choruskube
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # The e2e stack is driven by `docker compose`. The self-hosted runners provide it, so
+      # this only installs as a fallback when it is missing (idempotent — skips when present).
+      - name: Ensure Docker Compose v2
+        run: |
+          if docker compose version >/dev/null 2>&1; then
+            echo "docker compose already present: $(docker compose version)"
+            exit 0
+          fi
+          COMPOSE_VERSION=v2.29.7
+          arch="$(uname -m)"
+          mkdir -p "$HOME/.docker/cli-plugins"
+          dest="$HOME/.docker/cli-plugins/docker-compose"
+          curl -fsSL \
+            "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-${arch}" \
+            -o "$dest"
+          chmod +x "$dest"
+          docker compose version
+
+      # Playwright runs from the host against the composed stack, so the host needs the
+      # web-ui deps and the chromium browser (the suite's only project).
+      - name: Install web-ui deps and Playwright browser
+        working-directory: web-ui
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      # e2e.sh: build agent images → docker compose up --build → smoke → seed-verify →
+      # playwright. --no-teardown leaves the stack up so the steps below can collect
+      # diagnostics before it is torn down.
+      - name: Run e2e suite
+        env:
+          CI: "true"
+        run: scripts/e2e.sh --no-teardown
+
+      - name: Dump stack logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.e2e.yaml logs --no-color --tail=400 || true
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: web-ui/e2e/playwright-report
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Tear down stack
+        if: always()
+        run: scripts/e2e-down.sh --volumes || true

@@ -1,0 +1,59 @@
+#!/bin/bash
+# check-decision — read the current routing decision for this node execution.
+#
+# Usage: check-decision
+#
+# Queries the ChorusKube API server for the decision that has been submitted
+# (via `report-result`) for the current node execution. Prints the decision
+# to stdout, or prints "(none)" if no decision has been submitted yet.
+#
+# Environment:
+#   API_SERVER_URL      — Base URL of the ChorusKube API server
+#   RUN_ID              — Workflow run UUID
+#   NODE_EXECUTION_ID   — Node execution UUID
+#   JOB_SECRET          — Bearer token for authentication
+#
+# Examples:
+#   # Print current decision
+#   check-decision
+#
+#   # Use in a conditional
+#   if [ "$(check-decision)" = "approved" ]; then echo "Approved!"; fi
+#
+# Exit codes:
+#   0  Decision (or lack thereof) printed successfully
+#   1  Missing environment or API error
+set -euo pipefail
+
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+    sed -n '2,/^set -euo pipefail$/{ /^set -euo pipefail$/d; s/^# \?//; p }' "$0"
+    exit 0
+fi
+
+if [ -z "${API_SERVER_URL:-}" ]; then
+    echo "ERROR: API_SERVER_URL not set. This script must be run inside an agent pod." >&2
+    exit 1
+fi
+
+if [ -z "${RUN_ID:-}" ] || [ -z "${NODE_EXECUTION_ID:-}" ]; then
+    echo "ERROR: RUN_ID and NODE_EXECUTION_ID must be set." >&2
+    exit 1
+fi
+
+RESPONSE=$(curl -s -w "\n%{http_code}" \
+    -H "Authorization: Bearer ${JOB_SECRET:-}" \
+    "$API_SERVER_URL/internal/runs/$RUN_ID/node-executions/$NODE_EXECUTION_ID/decision")
+HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+BODY=$(echo "$RESPONSE" | sed '$d')
+
+if [ "$HTTP_CODE" != "200" ]; then
+    echo "ERROR: Decision check failed (HTTP $HTTP_CODE): $BODY" >&2
+    exit 1
+fi
+
+DECISION=$(echo "$BODY" | jq -r '.decision // empty')
+if [ -z "$DECISION" ] || [ "$DECISION" = "null" ]; then
+    echo "(none)"
+else
+    echo "$DECISION"
+fi

@@ -1,0 +1,34 @@
+{
+  "mappings": [
+    {
+      "priority": 1,
+      "request": {
+        "method": "GET",
+        "urlPathPattern": "/repos/[^/]+/missing-repo",
+        "headers": {
+          "Authorization": { "contains": "token " }
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": { "Content-Type": "application/json" },
+        "body": "{\"message\":\"Not Found\"}"
+      }
+    },
+    {
+      "priority": 5,
+      "request": {
+        "method": "GET",
+        "urlPathPattern": "/repos/[^/]+/[^/]+",
+        "headers": {
+          "Authorization": { "contains": "token " }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "body": "{}"
+      }
+    }
+  ]
+}

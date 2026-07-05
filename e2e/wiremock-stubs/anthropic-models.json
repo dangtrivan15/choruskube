@@ -1,0 +1,29 @@
+{
+  "mappings": [
+    {
+      "priority": 5,
+      "request": {
+        "method": "GET",
+        "url": "/v1/models",
+        "headers": {
+          "Authorization": { "contains": "Bearer " },
+          "anthropic-version": { "equalTo": "2023-06-01" }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "body": "{\"data\":[{\"id\":\"claude-haiku-4-5-20251001\",\"object\":\"model\"},{\"id\":\"claude-sonnet-4-6\",\"object\":\"model\"},{\"id\":\"claude-opus-4-7\",\"object\":\"model\"}],\"has_more\":false}"
+      }
+    },
+    {
+      "priority": 10,
+      "request": { "method": "GET", "url": "/v1/models" },
+      "response": {
+        "status": 401,
+        "headers": { "Content-Type": "application/json" },
+        "body": "{\"type\":\"error\",\"error\":{\"type\":\"authentication_error\",\"message\":\"invalid x-api-key\"}}"
+      }
+    }
+  ]
+}

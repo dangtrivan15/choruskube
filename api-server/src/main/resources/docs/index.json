@@ -1,0 +1,12 @@
+[
+  { "slug": "getting-started",             "title": "Getting Started",            "order": 1,  "description": "Step-by-step guide to set up your account and run your first workflow." },
+  { "slug": "features",                    "title": "Features Overview",           "order": 2,  "description": "A quick tour of all ChorusKube capabilities." },
+  { "slug": "workflow-templates",          "title": "Workflow Templates",          "order": 3,  "description": "Understand graph templates, node types, and edge-based routing." },
+  { "slug": "running-workflows",           "title": "Running Workflows",           "order": 4,  "description": "Start, monitor, and cancel workflow runs from the dashboard." },
+  { "slug": "human-gates-and-live-chat",   "title": "Human Gates & Live Chat",     "order": 5,  "description": "Pause workflows for human review and guide AI agents with Live Chat." },
+  { "slug": "ai-agent-nodes",              "title": "AI Agent Nodes",              "order": 6,  "description": "How AI agent pods work, report decisions, and open pull requests." },
+  { "slug": "multi-repo-support",          "title": "Multi-Repo Support",          "order": 7,  "description": "Run workflows across multiple repositories using Repository Groups." },
+  { "slug": "analytics",                   "title": "Analytics",                   "order": 8,  "description": "Track run trends, throughput, and bottlenecks on the Analytics dashboard." },
+  { "slug": "roadmap-and-proposals",       "title": "Roadmap & Proposals",         "order": 9,  "description": "Manage feature proposals and link them to workflow runs." },
+  { "slug": "best-practices",              "title": "Best Practices",              "order": 10, "description": "Recommended patterns for designing workflows and managing agents safely." }
+]

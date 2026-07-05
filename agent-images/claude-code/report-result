@@ -1,0 +1,33 @@
+#!/bin/bash
+# report-result — submit a routing decision to the ChorusKube API server.
+# Usage: report-result <decision>
+#
+# Environment (set by entrypoint.sh):
+#   REPORT_RESULT_URL — PUT endpoint for this node execution's decision
+#   JOB_SECRET        — Bearer token for authentication
+set -euo pipefail
+
+if [ -z "${1:-}" ]; then
+    echo "Usage: report-result <decision>" >&2
+    echo "Example: report-result approved" >&2
+    exit 1
+fi
+
+if [ -z "${REPORT_RESULT_URL:-}" ]; then
+    echo "ERROR: REPORT_RESULT_URL not set. This script must be run inside an agent pod." >&2
+    exit 1
+fi
+
+RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT \
+    "$REPORT_RESULT_URL" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $JOB_SECRET" \
+    -d "{\"decision\": \"$1\"}")
+HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+BODY=$(echo "$RESPONSE" | sed '$d')
+
+if [ "$HTTP_CODE" != "200" ]; then
+    echo "ERROR: $BODY" >&2
+    exit 1
+fi
+echo "Decision '$1' submitted successfully"

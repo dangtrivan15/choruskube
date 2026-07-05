@@ -1,0 +1,641 @@
+#!/bin/bash
+# agent-images/claude-code/entrypoint.sh
+set -euo pipefail
+
+# --- Configuration ---
+CONFIG_FILE="/workspace/config.json"
+WORKSPACE_IN="/workspace/in"
+WORKSPACE_OUT="/workspace/out"
+
+if [ ! -f "$CONFIG_FILE" ]; then
+  echo "ERROR: $CONFIG_FILE not found"
+  exit 1
+fi
+
+# Export variables used by helper scripts (report-result, fetch-github-token, check-decision, etc.)
+export NODE_EXECUTION_ID=$(jq -r '.node_execution_id' "$CONFIG_FILE")
+export RUN_ID=$(jq -r '.run_id' "$CONFIG_FILE")
+PROMPT=$(jq -r '.prompt' "$CONFIG_FILE")
+export CALLBACK_URL=$(jq -r '.callback_url' "$CONFIG_FILE")
+OUTPUT_PATH=$(jq -r '.output_path' "$CONFIG_FILE")
+REPO_URL=$(jq -r '.repo_url // empty' "$CONFIG_FILE")
+WORKING_BRANCH=$(jq -r '.working_branch // empty' "$CONFIG_FILE")
+export GITHUB_TOKEN_URL=$(jq -r '.github_token_url // empty' "$CONFIG_FILE")
+COMMAND=$(jq -r '.command // empty' "$CONFIG_FILE")
+EXECUTOR_TYPE=$(jq -r '.executor_type // "ai"' "$CONFIG_FILE")
+# Build system prompt from image-local template + run context
+SYSTEM_PROMPT_FILE="/usr/local/share/choruskube/system_prompt.md"
+if [ -f "$SYSTEM_PROMPT_FILE" ]; then
+  SYSTEM_PROMPT="$(cat "$SYSTEM_PROMPT_FILE")"
+else
+  SYSTEM_PROMPT=""
+fi
+RUN_LOG_PATH=$(jq -r '.run_log_path // empty' "$CONFIG_FILE")
+export API_SERVER_URL=$(jq -r '.api_server_url // empty' "$CONFIG_FILE")
+NEED_DECISION=$(jq -r '.need_decision // false' "$CONFIG_FILE")
+
+# JOB_SECRET is injected via K8s Secret as an environment variable
+if [ -z "${JOB_SECRET:-}" ]; then
+  echo "ERROR: JOB_SECRET environment variable not set"
+  exit 1
+fi
+
+# --- BuildKit builder setup (DinD + cache registry only) ---
+# Embedded BuildKit (dind 29 + containerd-snapshotter mode) does NOT honor
+# dockerd's daemon.json `insecure-registries` for its cache import/export
+# pipeline, and `/etc/containerd/certs.d/<host>/hosts.toml` is also unreliable
+# for that pipeline. The result: cache fetches against our plain-HTTP
+# in-cluster `cache-registry` default to HTTPS, fail the TLS handshake, and
+# wedge the buildx CLI on a Solve gRPC call that never returns.
+#
+# Switch to a `docker-container` driver builder whose `buildkitd.toml` we own.
+# That config IS the canonical one buildkitd reads, so HTTP trust is honored.
+# The buildkitd container runs INSIDE dind, so it talks to the cache-registry
+# over the same in-cluster network the embedded BuildKit was using.
+#
+# Side effect: the new buildkitd has its own registry config and does NOT
+# inherit dockerd's daemon.json mirrors, so we replicate the docker.io
+# pull-through mirror here too — otherwise build-time base-image pulls bypass
+# the mirror and risk Docker Hub rate limiting.
+if [ -n "${BUILDKIT_CACHE_REGISTRY:-}" ] && [ -n "${DOCKER_HOST:-}" ]; then
+  # The executor injects the upstream Docker registry mirror host as
+  # REGISTRY_MIRROR_HOST. When set, trust it over plain HTTP and use it as the
+  # docker.io pull-through mirror so base-image pulls go through the mirror
+  # instead of hitting Docker Hub directly; when unset, BuildKit pulls from
+  # docker.io directly (no mirror).
+  MIRROR_HOST="${REGISTRY_MIRROR_HOST:-}"
+
+  cat > /tmp/buildkitd.toml <<EOF
+debug = false
+
+[registry."${BUILDKIT_CACHE_REGISTRY}"]
+  http = true
+EOF
+
+  if [ -n "${MIRROR_HOST}" ]; then
+    cat >> /tmp/buildkitd.toml <<EOF
+
+[registry."${MIRROR_HOST}"]
+  http = true
+
+[registry."docker.io"]
+  mirrors = ["${MIRROR_HOST}"]
+EOF
+  fi
+
+  # The dind sidecar starts before this container but dockerd may still be
+  # initializing TLS certs. Poll briefly before creating the builder.
+  for _ in $(seq 1 30); do
+    if docker version >/dev/null 2>&1; then break; fi
+    sleep 1
+  done
+
+  if docker buildx create --use --bootstrap \
+      --name choruskube-builder \
+      --driver docker-container \
+      --buildkitd-config /tmp/buildkitd.toml >/dev/null 2>&1; then
+    echo "BuildKit builder ready: choruskube-builder (HTTP trust: ${BUILDKIT_CACHE_REGISTRY}${MIRROR_HOST:+, ${MIRROR_HOST}})"
+  else
+    # Don't fail the agent — e2e-up.sh's bake invocation has a no-cache
+    # fallback that still produces a working build, just slower.
+    echo "WARNING: docker-container builder bootstrap failed; falling back to embedded BuildKit (cache registry will not work)"
+  fi
+fi
+
+# Claude credentials are delivered via the CLAUDE_CODE_OAUTH_TOKEN env var (long-lived
+# OAuth token from `claude setup-token`). The Claude CLI reads it natively as a bearer
+# token — no credentials file to symlink, no hostpath to mount. For script-executor
+# nodes the API server omits the token from the Secret on purpose, so this check
+# only fails AI/human/both executors.
+if [ "$EXECUTOR_TYPE" != "script" ] && [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+  echo "ERROR: CLAUDE_CODE_OAUTH_TOKEN env var is empty for executor_type=$EXECUTOR_TYPE"
+  echo "       Generate one with \`claude setup-token\` and inject it into the api-server pod."
+  exit 1
+fi
+
+# --- Step 1: Pull input artifacts via presigned URLs ---
+mkdir -p "$WORKSPACE_IN"
+INPUT_KEYS=$(jq -r '.input_artifacts // {} | keys[]' "$CONFIG_FILE" 2>/dev/null || true)
+for key in $INPUT_KEYS; do
+  MINIO_PATH=$(jq -r ".input_artifacts.\"$key\"" "$CONFIG_FILE")
+  echo "Pulling input artifact: $key from $MINIO_PATH"
+  artifact get "$MINIO_PATH" "${WORKSPACE_IN}/${key}"
+done
+
+# Pull run log (may not exist for first iteration, that's OK)
+if [ -n "$RUN_LOG_PATH" ]; then
+  artifact get "$RUN_LOG_PATH" "${WORKSPACE_IN}/run_log.md" 2>/dev/null || true
+fi
+
+# --- Step 2: Configure git credentials (before clone, so private repos work) ---
+# Identity is required by `git rebase` (which rewrites commits and stamps
+# them with the current committer) and by any in-repo commits the agent
+# script makes. Set it unconditionally — it's harmless when unused, and
+# without it the rebase-on-clone step (Step 3) silently falls back.
+git config --global user.email "agent@choruskube.local"
+git config --global user.name "ChorusKube Agent"
+
+if [ -n "$GITHUB_TOKEN_URL" ]; then
+  git config --global credential.helper \
+    '!f() { echo "protocol=https"; echo "host=github.com"; echo "username=x-access-token"; echo "password=$(fetch-github-token)"; }; f'
+  # Configure gh CLI
+  TOKEN=$(fetch-github-token 2>/dev/null || true)
+  if [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ]; then
+    echo "$TOKEN" | gh auth login --with-token 2>/dev/null || true
+  fi
+  echo "Git credentials configured"
+fi
+
+# --- Step 3: Clone repo(s) if configured ---
+REPOS_JSON=$(jq -r '.repos // empty' /workspace/config.json)
+TARGET_REPO=$(jq -r '.target_repo // empty' /workspace/config.json)
+
+if [ -n "$REPOS_JSON" ] && [ "$REPOS_JSON" != "null" ]; then
+  # Multi-repo mode: clone each repo to /workspace/repo/{name}/
+  echo "Multi-repo mode: cloning repositories..."
+
+  # Launch all clones in parallel
+  PIDS=()
+  while IFS= read -r repo; do
+    repo_url=$(echo "$repo" | jq -r '.url')
+    repo_name=$(echo "$repo" | jq -r '.name')
+    repo_branch=$(echo "$repo" | jq -r '.working_branch // empty')
+    repo_path=$(echo "$repo" | jq -r '.local_path')
+
+    (
+      echo "Cloning $repo_name: $repo_url -> $repo_path"
+      git clone --depth 1 --no-single-branch "$repo_url" "$repo_path"
+      if [ -n "$repo_branch" ]; then
+        cd "$repo_path"
+        git checkout "$repo_branch" 2>/dev/null || git checkout -b "$repo_branch"
+        # Best-effort rebase onto current origin/main so safety-net commits
+        # (e.g. script timeouts) reach long-lived run branches cut from an
+        # older base. Depth=200 covers typical branch lifetimes; on conflict,
+        # abort and continue on the stale base rather than breaking the run.
+        if git fetch --depth=200 origin main "$repo_branch" 2>/dev/null; then
+          if ! git rebase origin/main; then
+            echo "WARNING: rebase onto origin/main failed for $repo_name; continuing on stale base" >&2
+            git rebase --abort 2>/dev/null || true
+          fi
+        else
+          echo "WARNING: could not fetch origin/main for $repo_name; continuing on stale base" >&2
+        fi
+        cd /workspace
+      fi
+      echo "Cloned $repo_name"
+    ) &
+    PIDS+=($!)
+  done < <(echo "$REPOS_JSON" | jq -c '.[]')
+
+  # Wait for all clones; fail if any clone failed
+  CLONE_FAILED=0
+  for pid in "${PIDS[@]}"; do
+    wait "$pid" || CLONE_FAILED=1
+  done
+  if [ "$CLONE_FAILED" = "1" ]; then
+    echo "ERROR: One or more repository clones failed" >&2
+    exit 1
+  fi
+
+  echo "Multi-repo workspace ready. $(echo "$REPOS_JSON" | jq length) repos cloned."
+
+  # Append each repo's CLAUDE.md to system prompt if it exists
+  for repo_dir in /workspace/repo/*/; do
+    repo_name=$(basename "$repo_dir")
+    if [ -f "$repo_dir/CLAUDE.md" ]; then
+      SYSTEM_PROMPT="${SYSTEM_PROMPT}
+
+## Repository: ${repo_name}
+$(cat "$repo_dir/CLAUDE.md")"
+      echo "Loaded CLAUDE.md from $repo_name"
+    fi
+  done
+
+  # Add multi-repo workspace description to system prompt
+  REPO_LIST=""
+  while IFS= read -r repo; do
+    repo_name=$(echo "$repo" | jq -r '.name')
+    repo_path=$(echo "$repo" | jq -r '.local_path')
+    if [ "$repo_name" = "$TARGET_REPO" ]; then
+      REPO_LIST="${REPO_LIST}\n- ${repo_path} (TARGET — implement changes here)"
+    else
+      REPO_LIST="${REPO_LIST}\n- ${repo_path}"
+    fi
+  done < <(echo "$REPOS_JSON" | jq -c '.[]')
+
+  SYSTEM_PROMPT="${SYSTEM_PROMPT}
+
+## Multi-Repository Workspace
+This is a multi-repository run. Repositories available:
+$(echo -e "$REPO_LIST")
+
+All repositories are cloned under /workspace/repo/. Navigate to each repo by name."
+
+elif [ -n "$REPO_URL" ]; then
+  # Single-repo mode (backwards compatible)
+  echo "Cloning $REPO_URL..."
+  git clone --depth 1 --no-single-branch "$REPO_URL" /workspace/repo/
+  if [ -n "$WORKING_BRANCH" ]; then
+    cd /workspace/repo
+    git checkout "$WORKING_BRANCH" 2>/dev/null || git checkout -b "$WORKING_BRANCH"
+    # See multi-repo path above for rationale.
+    if git fetch --depth=200 origin main "$WORKING_BRANCH" 2>/dev/null; then
+      if ! git rebase origin/main; then
+        echo "WARNING: rebase onto origin/main failed; continuing on stale base" >&2
+        git rebase --abort 2>/dev/null || true
+      fi
+    else
+      echo "WARNING: could not fetch origin/main; continuing on stale base" >&2
+    fi
+    cd /workspace
+  fi
+  echo "Repo ready at /workspace/repo/"
+  if [ -f /workspace/repo/CLAUDE.md ]; then
+    SYSTEM_PROMPT="${SYSTEM_PROMPT}
+
+$(cat /workspace/repo/CLAUDE.md)"
+    echo "Loaded CLAUDE.md from /workspace/repo/"
+  fi
+fi
+export SYSTEM_PROMPT
+
+# --- Live Chat mode: delegate to dedicated loop (after workspace setup) ---
+MODE=$(jq -r '.mode // empty' "$CONFIG_FILE")
+if [ "$MODE" = "live_chat" ]; then
+  SESSION_ID=$(jq -r '.session_id // empty' "$CONFIG_FILE")
+  if [ -z "$SESSION_ID" ]; then
+    echo "ERROR: session_id missing from config for live_chat mode"
+    exit 1
+  fi
+  export SESSION_ID RUN_ID NODE_EXECUTION_ID API_SERVER_URL JOB_SECRET
+  exec live-chat-loop
+fi
+
+# Derive heartbeat URL from callback URL (sibling endpoint on same server)
+export HEARTBEAT_URL="${CALLBACK_URL%/callback}/heartbeat"
+
+# Shared stream file that run_claude writes to and send-heartbeat reads from.
+# Liveness is tied to the number of stream events (tool_use, tool_result, assistant,
+# etc.) — send-heartbeat only POSTs when this count changes since the last tick,
+# so a stuck Claude session stops heartbeating and Temporal's heartbeat timeout
+# fires instead of silently running out the full activity deadline.
+export CLAUDE_STREAM_FILE="/tmp/claude_stream_current.jsonl"
+
+# --- Heartbeat loop (background) ---
+# Reports liveness to Temporal via orchestrator every 60s, but only if the
+# Claude stream has advanced. Killed on exit so it doesn't outlive the agent.
+heartbeat_loop() {
+    while true; do
+        sleep 60
+        send-heartbeat  # errors suppressed inside the script
+    done
+}
+heartbeat_loop &
+HEARTBEAT_PID=$!
+
+# Ensure heartbeat loop is killed on any exit (success, failure, signal)
+cleanup_heartbeat() {
+    kill $HEARTBEAT_PID 2>/dev/null || true
+}
+trap cleanup_heartbeat EXIT
+
+# --- Step 4: Execute ---
+mkdir -p "$WORKSPACE_OUT"
+RESULT_STATUS="completed"
+RESULT="completed"
+ERROR_MESSAGE=""
+CLAUDE_OUTPUT=""
+
+# --- Compose decisions suffix into the system prompt (AI nodes only) ---
+# Query the api-server for the set of decisions this node may submit via
+# report-result, then append a frame-setting suffix to SYSTEM_PROMPT so the
+# agent knows up-front what conclusions are available. Knowing the set primes
+# the agent's reasoning mode (e.g. presence/absence of alternative_proposal
+# determines whether architectural critique is in scope).
+#
+# Failure to fetch is fatal for AI decision-emitting nodes: starting an agent
+# that doesn't know its allowed decisions risks invented values that 400 at
+# submit time, wasting a full run. Surface as a normal failure via callback.
+SKIP_AGENT_INVOCATION=false
+if [ "$NEED_DECISION" = "true" ] && [ "$EXECUTOR_TYPE" != "script" ] && [ -n "${API_SERVER_URL:-}" ]; then
+  echo "Fetching valid decisions for this node execution..."
+  if VALID_DECISIONS=$(list-decisions); then
+    if [ -n "$VALID_DECISIONS" ]; then
+      DECISIONS_LIST="- ${VALID_DECISIONS//$'\n'/$'\n'- }"
+      SYSTEM_PROMPT="${SYSTEM_PROMPT}
+
+## Decisions you may submit for this node
+
+Submit exactly one of the following via \`report-result <decision>\`:
+
+${DECISIONS_LIST}
+
+Knowing this set up-front frames how to approach the work. The absence of a decision (e.g. \`need_human_decision:alternative_proposal\`) means this node is not authorized for that mode of conclusion — focus on the modes that are listed."
+      export SYSTEM_PROMPT
+      DECISION_COUNT=$(echo "$VALID_DECISIONS" | wc -l | tr -d ' ')
+      echo "Composed system prompt with $DECISION_COUNT valid decisions"
+    else
+      echo "list-decisions returned empty (node has no conditional edges)"
+    fi
+  else
+    echo "ERROR: list-decisions failed — cannot start agent without knowing valid decisions" >&2
+    SKIP_AGENT_INVOCATION=true
+    RESULT_STATUS="failed"
+    ERROR_MESSAGE="list-decisions failed at agent startup; aborting before invocation"
+  fi
+fi
+
+if [ "$SKIP_AGENT_INVOCATION" = "true" ]; then
+  echo "Skipping agent invocation: $ERROR_MESSAGE"
+elif [ "$EXECUTOR_TYPE" = "script" ]; then
+  echo "Running script: $COMMAND"
+  cd /workspace/repo 2>/dev/null || cd /workspace
+  set +e
+  SCRIPT_OUTPUT=$(eval "$COMMAND" 2>&1)
+  SCRIPT_EXIT=$?
+  set -e
+
+  if [ $SCRIPT_EXIT -eq 0 ]; then
+    SCRIPT_DECISION="passed"
+    echo "Script passed"
+  else
+    SCRIPT_DECISION="failed"
+    echo "Script failed (exit $SCRIPT_EXIT)"
+  fi
+
+  # Submit decision via API (same endpoint as report-result for AI nodes)
+  if [ -n "$API_SERVER_URL" ]; then
+    REPORT_RESULT_URL="$API_SERVER_URL/internal/runs/$RUN_ID/node-executions/$NODE_EXECUTION_ID/decision"
+    DECISION_RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT \
+        "$REPORT_RESULT_URL" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $JOB_SECRET" \
+        -d "{\"decision\": \"$SCRIPT_DECISION\"}")
+    DECISION_HTTP=$(echo "$DECISION_RESPONSE" | tail -1)
+    if [ "$DECISION_HTTP" = "200" ]; then
+      echo "Decision '$SCRIPT_DECISION' submitted successfully"
+    else
+      echo "WARNING: Decision submission returned HTTP $DECISION_HTTP (non-fatal)"
+    fi
+  fi
+
+  # Full output goes to artifact; result is a short reference to avoid ARG_MAX issues
+  mkdir -p /workspace/out
+  echo "$SCRIPT_OUTPUT" > /workspace/out/test_output.txt
+  RESULT="Read test_output.txt for full script output"
+else
+  # AI path — run Claude Code with retry on missing result
+
+  # Set up report-result URL for the helper script
+  if [ -n "$API_SERVER_URL" ]; then
+    export REPORT_RESULT_URL="$API_SERVER_URL/internal/runs/$RUN_ID/node-executions/$NODE_EXECUTION_ID/decision"
+  fi
+
+  if [ -n "$TARGET_REPO" ] && [ -d "/workspace/repo/$TARGET_REPO" ]; then
+    cd "/workspace/repo/$TARGET_REPO"
+  elif [ -d "/workspace/repo" ] && { [ -z "$REPOS_JSON" ] || [ "$REPOS_JSON" = "null" ]; }; then
+    cd /workspace/repo
+  fi
+
+  # Refresh GitHub token — installation tokens expire after 1 hour,
+  # and human review gates can delay execution by hours/days
+  if [ -n "$GITHUB_TOKEN_URL" ]; then
+    FRESH_TOKEN=$(fetch-github-token 2>/dev/null || true)
+    if [ -n "$FRESH_TOKEN" ] && [ "$FRESH_TOKEN" != "null" ]; then
+      echo "$FRESH_TOKEN" | gh auth login --with-token 2>/dev/null || true
+      export GH_TOKEN="$FRESH_TOKEN"
+      echo "GitHub token refreshed before AI execution"
+    fi
+  fi
+
+  # Helper: log tool_use events from a stream-json line.
+  # Writes to /dev/stderr directly to bypass subshell fd inheritance issues.
+  log_progress() {
+    local line="$1"
+    local msg_type
+    msg_type=$(echo "$line" | jq -r '.type // empty' 2>/dev/null) || return 0
+    if [ "$msg_type" = "assistant" ]; then
+      echo "$line" | jq -r '
+        .message.content[]? | select(.type == "tool_use") |
+        if .name == "Read" then "  → Read " + (.input.file_path // "")
+        elif .name == "Edit" then "  → Edit " + (.input.file_path // "")
+        elif .name == "Write" then "  → Write " + (.input.file_path // "")
+        elif .name == "Bash" then "  → Bash " + (.input.command // (.input.description // "") | .[0:80])
+        elif .name == "Glob" then "  → Glob " + (.input.pattern // "")
+        elif .name == "Grep" then "  → Grep " + (.input.pattern // "")
+        else "  → " + .name
+        end
+      ' 2>/dev/null > /dev/stderr || true
+    elif [ "$msg_type" = "result" ]; then
+      echo "$line" | jq -r '
+        "  ✓ Done: turns=" + (.num_turns // "?" | tostring) +
+        " cost=$" + (.total_cost_usd // 0 | tostring)
+      ' 2>/dev/null > /dev/stderr || true
+    fi
+  }
+
+  # Helper: run claude with streaming progress output
+  run_claude() {
+    local prompt="$1"
+    local extra_flags="${2:-}"
+    local sys_prompt="${3:-}"
+    local sys_args=""
+    if [ -n "$sys_prompt" ]; then
+      sys_args="--system-prompt"
+    fi
+    local stream_file="${CLAUDE_STREAM_FILE:-/tmp/claude_stream_$$.jsonl}"
+    # Truncate before each invocation so send-heartbeat's line-count comparison
+    # observes a fresh stream for every claude run (retries, decision retries).
+    : > "$stream_file"
+    # Stream JSON output: each line is a JSON event.
+    # tee saves to file (for parse_claude_output), while the loop logs progress to stderr.
+    # stdbuf -oL forces line-buffered stdout so stream-json events flow
+    # through the tee|while pipeline in real-time instead of block-buffering.
+    stdbuf -oL claude -p "$prompt" \
+      --output-format stream-json \
+      --verbose \
+      --dangerously-skip-permissions \
+      --disallowed-tools "AskUserQuestion" \
+      $sys_args ${sys_prompt:+"$sys_prompt"} \
+      $extra_flags \
+      2>/tmp/claude_stderr.log | stdbuf -oL tee "$stream_file" | while IFS= read -r line; do
+        log_progress "$line"
+      done || {
+      echo "Claude Code exited with non-zero status" >&2
+      cat /tmp/claude_stderr.log >&2
+    }
+    cat "$stream_file"
+  }
+
+  # Helper: extract fields from Claude stream-json output
+  parse_claude_output() {
+    local output="$1"
+    # Session ID from the init event
+    CLAUDE_SESSION_ID=$(echo "$output" | grep '"subtype":"init"' | head -1 | jq -r '.session_id // empty' 2>/dev/null || true)
+    # Result and metadata from the result event
+    local result_line
+    result_line=$(echo "$output" | grep '"type":"result"' | tail -1)
+    CLAUDE_RESULT=$(echo "$result_line" | jq -r '.result // empty' 2>/dev/null || true)
+    CLAUDE_SUBTYPE=$(echo "$result_line" | jq -r '.subtype // empty' 2>/dev/null || true)
+    CLAUDE_TURNS=$(echo "$result_line" | jq -r '.num_turns // empty' 2>/dev/null || true)
+    # Fallback: if result event has no .result, extract from last assistant message
+    if [ -z "$CLAUDE_RESULT" ]; then
+      CLAUDE_RESULT=$(echo "$output" | grep '"type":"assistant"' | tail -1 | \
+        jq -r '[.message.content[]? | select(.type == "text") | .text] | join("\n")' 2>/dev/null || true)
+    fi
+  }
+
+  MAX_RETRIES=3
+  ATTEMPT=1
+  CLAUDE_SESSION_ID=""
+  CLAUDE_RESULT=""
+
+  # Pre-invocation diagnostic: surface Claude auth state so auth failures can be
+  # distinguished from prompt/model issues. Safe: only reports presence and length
+  # of the OAuth token, never its value.
+  echo "=== Pre-claude auth diagnostic ==="
+  echo "HOME=$HOME  whoami=$(whoami)  id=$(id -u):$(id -g)"
+  if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+    echo "CLAUDE_CODE_OAUTH_TOKEN: present (length=${#CLAUDE_CODE_OAUTH_TOKEN})"
+  else
+    echo "CLAUDE_CODE_OAUTH_TOKEN: MISSING"
+  fi
+  echo "claude-version: $(claude --version 2>&1)"
+  echo "=== End diagnostic ==="
+
+  # Prepend Run ID to user message (keeps system prompt cache-stable across runs)
+  FULL_PROMPT="Run ID: ${RUN_ID}
+
+${PROMPT}"
+
+  # Attempt 1: run the original prompt
+  echo "=== AI attempt $ATTEMPT/$MAX_RETRIES ==="
+  CLAUDE_OUTPUT=$(run_claude "$FULL_PROMPT" "" "$SYSTEM_PROMPT")
+  parse_claude_output "$CLAUDE_OUTPUT"
+  echo "Attempt $ATTEMPT: subtype=$CLAUDE_SUBTYPE turns=$CLAUDE_TURNS result_length=${#CLAUDE_RESULT}"
+
+  # Retry loop: resume session if no result
+  while [ -z "$CLAUDE_RESULT" ] && [ $ATTEMPT -lt $MAX_RETRIES ] && [ -n "$CLAUDE_SESSION_ID" ]; do
+    ATTEMPT=$((ATTEMPT + 1))
+    echo "=== AI attempt $ATTEMPT/$MAX_RETRIES (resuming session $CLAUDE_SESSION_ID) ==="
+
+    RETRY_PROMPT="Your previous session was interrupted before producing a final result. Either you were cut off mid-task and should continue where you left off, or you completed the work but forgot to write your result as a final message. Please complete the task and provide your result as your final response."
+
+    CLAUDE_OUTPUT=$(run_claude "$RETRY_PROMPT" "--resume $CLAUDE_SESSION_ID")
+    parse_claude_output "$CLAUDE_OUTPUT"
+    echo "Attempt $ATTEMPT: subtype=$CLAUDE_SUBTYPE turns=$CLAUDE_TURNS result_length=${#CLAUDE_RESULT}"
+  done
+
+  if [ -n "$CLAUDE_RESULT" ]; then
+    RESULT="$CLAUDE_RESULT"
+    echo "AI result captured (${#RESULT} chars)"
+  else
+    echo "WARNING: No .result after $ATTEMPT attempts"
+    RESULT_STATUS="failed"
+    ERROR_MESSAGE="Claude produced no result after $ATTEMPT attempts (last subtype=$CLAUDE_SUBTYPE)"
+  fi
+
+  # NOTE: $ATTEMPT is shared across the main retry, artifact enforcement, and decision
+  # verification loops to cap total retries at $MAX_RETRIES across all phases.
+  # --- Artifact enforcement: verify required output files were produced ---
+  OUTPUT_SPEC=$(jq -r '.output_spec // ""' "$CONFIG_FILE")
+  if [ -n "$OUTPUT_SPEC" ] && [ "$OUTPUT_SPEC" != "{}" ] && [ -n "$CLAUDE_RESULT" ]; then
+    REQUIRED_FILES=$(echo "$OUTPUT_SPEC" | jq -r '.files[]? | select(.required == true) | .name' 2>/dev/null || true)
+    MISSING_FILES=""
+    while IFS= read -r fname; do
+      [ -z "$fname" ] && continue
+      if [ ! -f "$WORKSPACE_OUT/$fname" ]; then
+        MISSING_FILES="$MISSING_FILES $fname"
+      fi
+    done <<< "$REQUIRED_FILES"
+
+    while [ -n "$MISSING_FILES" ] && [ $ATTEMPT -lt $MAX_RETRIES ] && [ -n "$CLAUDE_SESSION_ID" ]; do
+      ATTEMPT=$((ATTEMPT + 1))
+      echo "=== Artifact retry $ATTEMPT/$MAX_RETRIES — missing:$MISSING_FILES ==="
+      ARTIFACT_RETRY_PROMPT="You completed your task but did not produce required output files:$MISSING_FILES. Write these files to /workspace/out/ before finishing."
+      CLAUDE_OUTPUT=$(run_claude "$ARTIFACT_RETRY_PROMPT" "--resume $CLAUDE_SESSION_ID")
+      parse_claude_output "$CLAUDE_OUTPUT"
+      MISSING_FILES=""
+      while IFS= read -r fname; do
+        [ -z "$fname" ] && continue
+        if [ ! -f "$WORKSPACE_OUT/$fname" ]; then
+          MISSING_FILES="$MISSING_FILES $fname"
+        fi
+      done <<< "$REQUIRED_FILES"
+    done
+
+    if [ -n "$MISSING_FILES" ]; then
+      echo "ERROR: Required output files still missing after $ATTEMPT attempts:$MISSING_FILES"
+      RESULT_STATUS="failed"
+      ERROR_MESSAGE="Required output files not produced after $ATTEMPT attempts: $MISSING_FILES"
+    fi
+  fi
+
+  # Decision verification: only for nodes that require a decision (conditional edges).
+  if [ "$NEED_DECISION" = "true" ] && [ -n "$API_SERVER_URL" ] && [ -n "$CLAUDE_RESULT" ]; then
+    DECISION=$(check-decision 2>/dev/null || echo "")
+    if [ "$DECISION" = "(none)" ]; then DECISION=""; fi
+
+    while [ -z "$DECISION" ] && [ $ATTEMPT -lt $MAX_RETRIES ] && [ -n "$CLAUDE_SESSION_ID" ]; do
+      ATTEMPT=$((ATTEMPT + 1))
+      echo "=== Decision retry $ATTEMPT/$MAX_RETRIES (resuming session $CLAUDE_SESSION_ID) ==="
+
+      DECISION_RETRY_PROMPT="You completed your task but did not submit a decision. You MUST call report-result with your decision before finishing. Run: report-result <decision>"
+
+      CLAUDE_OUTPUT=$(run_claude "$DECISION_RETRY_PROMPT" "--resume $CLAUDE_SESSION_ID")
+      parse_claude_output "$CLAUDE_OUTPUT"
+
+      DECISION=$(check-decision 2>/dev/null || echo "")
+      if [ "$DECISION" = "(none)" ]; then DECISION=""; fi
+    done
+
+    if [ -z "$DECISION" ]; then
+      echo "ERROR: Node requires a decision but none was submitted after $ATTEMPT attempts"
+      RESULT_STATUS="failed"
+      ERROR_MESSAGE="Node requires a decision but agent did not call report-result after $ATTEMPT attempts"
+    else
+      echo "Decision verified: $DECISION"
+    fi
+  fi
+fi
+
+# --- Step 5: Push output artifacts via presigned URLs ---
+ARTIFACT_REFS="{}"
+if [ -d "$WORKSPACE_OUT" ] && [ "$(ls -A "$WORKSPACE_OUT" 2>/dev/null)" ]; then
+  # Upload each file individually, preserving relative paths
+  (cd "$WORKSPACE_OUT" && find . -type f | while read -r file; do
+    rel_path="${file#./}"
+    artifact put "$WORKSPACE_OUT/$rel_path" "${OUTPUT_PATH}${rel_path}"
+  done)
+  ARTIFACT_REFS=$(jq -n --arg path "$OUTPUT_PATH" '{"output": $path}')
+fi
+
+# --- Step 6: POST callback to orchestrator ---
+CALLBACK_BODY=$(jq -n \
+  --arg id "$NODE_EXECUTION_ID" \
+  --arg run_id "$RUN_ID" \
+  --arg status "$RESULT_STATUS" \
+  --arg result "$RESULT" \
+  --argjson artifacts "$ARTIFACT_REFS" \
+  --arg error "$ERROR_MESSAGE" \
+  '{
+    node_execution_id: $id,
+    run_id: $run_id,
+    status: $status,
+    result: $result,
+    artifact_refs: $artifacts,
+    error_message: (if $error == "" then null else $error end)
+  }')
+
+send-callback "$CALLBACK_BODY"
+
+# --- Diagnostic logs ---
+echo "=== Agent Summary ==="
+echo "Status: $RESULT_STATUS | Result length: ${#RESULT} | Artifacts: $ARTIFACT_REFS"
+echo "=== Claude stderr ==="
+cat /tmp/claude_stderr.log 2>/dev/null || echo "(none)"
+echo "=== Claude JSON output (first 1000 chars) ==="
+echo "${CLAUDE_OUTPUT:0:1000}"
+echo "=== Output dir contents ==="
+ls -la "$WORKSPACE_OUT" 2>/dev/null || echo "(empty)"
+echo "=== End diagnostics ==="

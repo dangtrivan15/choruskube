@@ -1,0 +1,11 @@
+window.__APP_CONFIG__ = {
+  "apiBaseUrl": "${API_BASE_URL}",
+  "appHost": "${APP_HOST}",
+  "oidc": {
+    "url": "${AUTH_URL}",
+    "realm": "${AUTH_REALM}",
+    "clientId": "${AUTH_CLIENT_ID}"
+  },
+  "dagPlaygroundEnabled": "${DAG_PLAYGROUND_ENABLED}",
+  "mode": "${APP_MODE}"
+};

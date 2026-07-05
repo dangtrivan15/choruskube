@@ -1,0 +1,734 @@
+package com.choruskube.core.service;
+
+import com.choruskube.core.dto.*;
+import com.choruskube.core.exception.BadRequestException;
+import com.choruskube.core.exception.NotFoundException;
+import com.choruskube.core.model.*;
+import com.choruskube.core.model.enums.*;
+import com.choruskube.core.observability.UsageSink;
+import com.choruskube.core.repository.*;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Instant;
+import java.util.*;
+import java.util.Optional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
+
+@Service
+public class InternalRunService {
+
+    private static final Logger log = LoggerFactory.getLogger(InternalRunService.class);
+
+    private final WorkflowRunRepository runRepo;
+    private final NodeExecutionRepository execRepo;
+    private final ExecutionLogRepository logRepo;
+    private final GraphSnapshotBuilder snapshotBuilder;
+    private final RunEventPublisher eventPublisher;
+    private final ObjectMapper objectMapper;
+    private final FeatureProposalService featureProposalService;
+    private final RunService runService;
+    private final Optional<QuotaChecker> quotaService;
+    private final UsageSink usageSink;
+    private final GitRepoRepository gitRepoRepo;
+    private final RunPullRequestService runPullRequestService;
+    private final GraphTemplateRepository graphTemplateRepo;
+    private final SoftwareProjectRepository softwareProjectRepo;
+    private final TemplateNodeRepository templateNodeRepo;
+    private final NodeDefinitionRepository nodeDefinitionRepo;
+
+    @Value("${artifact.enforcement.mode:warn}")
+    private String artifactEnforcementMode;
+
+    public InternalRunService(
+            WorkflowRunRepository runRepo,
+            NodeExecutionRepository execRepo,
+            ExecutionLogRepository logRepo,
+            GraphSnapshotBuilder snapshotBuilder,
+            RunEventPublisher eventPublisher,
+            ObjectMapper objectMapper,
+            FeatureProposalService featureProposalService,
+            RunService runService,
+            Optional<QuotaChecker> quotaService,
+            UsageSink usageSink,
+            GitRepoRepository gitRepoRepo,
+            RunPullRequestService runPullRequestService,
+            GraphTemplateRepository graphTemplateRepo,
+            SoftwareProjectRepository softwareProjectRepo,
+            TemplateNodeRepository templateNodeRepo,
+            NodeDefinitionRepository nodeDefinitionRepo) {
+        this.runRepo = runRepo;
+        this.execRepo = execRepo;
+        this.logRepo = logRepo;
+        this.snapshotBuilder = snapshotBuilder;
+        this.eventPublisher = eventPublisher;
+        this.objectMapper = objectMapper;
+        this.featureProposalService = featureProposalService;
+        this.runService = runService;
+        this.quotaService = quotaService;
+        this.usageSink = usageSink;
+        this.gitRepoRepo = gitRepoRepo;
+        this.runPullRequestService = runPullRequestService;
+        this.graphTemplateRepo = graphTemplateRepo;
+        this.softwareProjectRepo = softwareProjectRepo;
+        this.templateNodeRepo = templateNodeRepo;
+        this.nodeDefinitionRepo = nodeDefinitionRepo;
+    }
+
+    public NodeExecutionResponse createNodeExecution(UUID runId, InternalCreateNodeExecutionRequest req) {
+        // Validate the run exists before exec creation; the quota check resolves the owning org from
+        // the run id (the agent path has no TenantContext).
+        runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
+
+        quotaService.ifPresent(svc -> svc.checkNodeExecutionQuota(runId)); // throws QuotaExceededException (429)
+
+        NodeExecution exec = new NodeExecution();
+        exec.setWorkflowRunId(runId);
+        exec.setTemplateNodeId(req.templateNodeId());
+        exec.setGraphVersion(req.graphVersion());
+        exec.setIteration(req.iteration() > 0 ? req.iteration() : 1);
+        exec.setIterationCapEpochStart(req.iterationCapEpochStart() > 0 ? req.iterationCapEpochStart() : 1);
+        exec.setLabel(req.label());
+        exec = execRepo.save(exec);
+
+        usageSink.record(UsageSink.EXECUTION_STARTED, "node_execution", exec.getId(), null);
+
+        eventPublisher.publishNodeStatusChanged(
+                runId, exec.getId(), exec.getStatus().name());
+        return toNodeExecResponse(exec);
+    }
+
+    public NodeExecutionResponse updateNodeExecutionStatus(
+            UUID runId, UUID nodeExecId, InternalUpdateNodeExecutionRequest req) {
+        NodeExecution exec = execRepo.findById(nodeExecId)
+                .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
+
+        // Defense-in-depth: reject completed status with empty result only on rejection,
+        // where the AI node must provide a reason. Human nodes approved without feedback
+        // legitimately have no result text.
+        if ("completed".equals(req.status())
+                && "rejected".equals(exec.getDecision())
+                && (req.result() == null || req.result().isBlank())) {
+            throw new IllegalArgumentException("Cannot mark rejected node completed with empty result");
+        }
+
+        exec.setStatus(NodeExecutionStatus.valueOf(req.status()));
+        if (req.result() != null) exec.setResult(req.result());
+        if (req.artifactRefs() != null) exec.setArtifactRefs(req.artifactRefs());
+        if (req.podName() != null) exec.setPodName(req.podName());
+        if (req.jobSecretHash() != null) exec.setJobSecretHash(req.jobSecretHash());
+        if (req.errorMessage() != null) exec.setErrorMessage(req.errorMessage());
+
+        String status = req.status();
+        Instant now = Instant.now();
+        if ("running".equals(status) && exec.getStartedAt() == null) exec.setStartedAt(now);
+        if ("completed".equals(status) || "failed".equals(status)) exec.setCompletedAt(now);
+
+        // Auto-set no_decision for nodes without conditional edges
+        if ("completed".equals(status) && exec.getDecision() == null) {
+            if (!hasConditionalEdges(runId, exec.getTemplateNodeId())) {
+                exec.setDecision("no_decision");
+            }
+        }
+
+        if ("completed".equals(status)) {
+            enforceOutputSpec(exec, exec.getArtifactRefs());
+        }
+
+        exec = execRepo.save(exec);
+
+        // Validates the run exists; org no longer needed (feeds published org-free, re-scoped downstream).
+        runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
+        eventPublisher.publishNodeStatusChanged(runId, nodeExecId, status);
+        return toNodeExecResponse(exec);
+    }
+
+    private void enforceOutputSpec(NodeExecution exec, String artifactRefs) {
+        TemplateNode templateNode =
+                templateNodeRepo.findById(exec.getTemplateNodeId()).orElse(null);
+        if (templateNode == null) {
+            return;
+        }
+        NodeDefinition nodeDefinition =
+                nodeDefinitionRepo.findById(templateNode.getNodeDefinitionId()).orElse(null);
+        if (nodeDefinition == null) {
+            return;
+        }
+        String outputSpecJson = nodeDefinition.getOutputSpec();
+        if (outputSpecJson == null || outputSpecJson.isBlank()) {
+            return;
+        }
+        try {
+            JsonNode outputSpec = objectMapper.readTree(outputSpecJson);
+            JsonNode filesNode = outputSpec.path("files");
+            if (!filesNode.isArray() || filesNode.isEmpty()) {
+                return;
+            }
+            boolean hasRequiredFiles = false;
+            for (JsonNode fileNode : filesNode) {
+                if (fileNode.path("required").asBoolean(false)) {
+                    hasRequiredFiles = true;
+                    break;
+                }
+            }
+            if (!hasRequiredFiles) {
+                return;
+            }
+            boolean missingArtifacts;
+            try {
+                missingArtifacts = artifactRefs == null
+                        || objectMapper.readTree(artifactRefs).isEmpty();
+            } catch (Exception parseEx) {
+                missingArtifacts = false; // malformed JSON—don't penalise
+            }
+            if (missingArtifacts) {
+                if ("enforce".equals(artifactEnforcementMode)) {
+                    throw new ResponseStatusException(
+                            HttpStatus.BAD_REQUEST,
+                            "Node execution completed without required output artifacts for node definition: "
+                                    + nodeDefinition.getName());
+                } else {
+                    log.warn(
+                            "Node execution {} completed without required output artifacts for node definition: {}",
+                            exec.getId(),
+                            nodeDefinition.getName());
+                }
+            }
+        } catch (ResponseStatusException e) {
+            throw e;
+        } catch (Exception e) {
+            log.warn("Failed to enforce output spec for node execution {}: {}", exec.getId(), e.getMessage());
+        }
+    }
+
+    public RunStatusResponse getRunStatus(UUID runId) {
+        WorkflowRun run =
+                runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
+        return new RunStatusResponse(run.getStatus().name());
+    }
+
+    public void updateRunStatus(UUID runId, InternalUpdateRunStatusRequest req) {
+        WorkflowRun run =
+                runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
+        run.setStatus(WorkflowRunStatus.valueOf(req.status()));
+
+        Instant now = Instant.now();
+        String status = req.status();
+        if ("running".equals(status) && run.getStartedAt() == null) run.setStartedAt(now);
+        if ("completed".equals(status) || "failed".equals(status) || "cancelled".equals(status)) {
+            run.setCompletedAt(now);
+        }
+
+        runRepo.save(run);
+        eventPublisher.publishRunStatusChanged(runId, status);
+
+        if ("completed".equals(status)) {
+            usageSink.record(UsageSink.RUN_COMPLETED, "workflow_run", runId, null);
+        } else if ("failed".equals(status)) {
+            usageSink.record(UsageSink.RUN_FAILED, "workflow_run", runId, null);
+        }
+    }
+
+    public void writeExecutionLog(UUID runId, UUID nodeExecId, InternalWriteLogRequest req) {
+        ExecutionLog log = new ExecutionLog();
+        log.setNodeExecutionId(nodeExecId);
+        log.setLevel(LogLevel.valueOf(req.level().toLowerCase()));
+        log.setMessage(req.message());
+        logRepo.save(log);
+        eventPublisher.publishNodeLogsUpdated(runId, nodeExecId);
+    }
+
+    /**
+     * Writes review metadata to the node_execution record.
+     * Decision is NOT set here — it's set by submitDecision (conditional nodes)
+     * or auto-set to "no_decision" by updateNodeExecutionStatus (unconditional nodes).
+     */
+    public void writeReviewHistory(UUID runId, InternalWriteReviewHistoryRequest req) {
+        NodeExecution exec = execRepo.findById(req.nodeExecutionId())
+                .orElseThrow(() -> new NotFoundException("Node execution not found: " + req.nodeExecutionId()));
+
+        exec.setLoopGroup(req.loopGroup());
+        exec.setReviewerType(ReviewerType.valueOf(req.reviewerType().toLowerCase()));
+        if (req.artifactRefs() != null && !req.artifactRefs().isBlank()) {
+            exec.setArtifactRefs(req.artifactRefs());
+        }
+
+        execRepo.save(exec);
+    }
+
+    public List<ReviewHistoryResponse> getReviewHistory(UUID runId, String loopGroup) {
+        return runService.getReviewHistoryInternal(runId, loopGroup);
+    }
+
+    /**
+     * Builds the graph snapshot on-demand from versioned template tables + workflow_run.inputs.
+     */
+    public JsonNode getGraphSnapshot(UUID runId) {
+        WorkflowRun run =
+                runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
+        try {
+            String snapshot = snapshotBuilder.buildSnapshotForRun(run);
+            return objectMapper.readTree(snapshot);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to build graph snapshot", e);
+        }
+    }
+
+    /**
+     * Builds a projected graph snapshot containing only workflow-execution fields.
+     * Infrastructure fields (image, secrets, namespace, docker config) are resolved
+     * by the API server during workload creation, not exposed to the orchestrator.
+     */
+    public GraphRuntimeSnapshotResponse getGraphRuntimeSnapshot(UUID runId) {
+        WorkflowRun run =
+                runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
+        try {
+            String snapshotJson = snapshotBuilder.buildSnapshotForRun(run);
+            JsonNode snapshot = objectMapper.readTree(snapshotJson);
+
+            List<GraphRuntimeSnapshotResponse.RuntimeNode> nodes = new ArrayList<>();
+            for (JsonNode n : snapshot.path("nodes")) {
+                Map<String, Object> configOverrides = Map.of();
+                if (n.has("config_overrides") && !n.get("config_overrides").isNull()) {
+                    configOverrides = objectMapper.convertValue(
+                            n.get("config_overrides"), new com.fasterxml.jackson.core.type.TypeReference<>() {});
+                }
+                nodes.add(new GraphRuntimeSnapshotResponse.RuntimeNode(
+                        UUID.fromString(n.get("template_node_id").asText()),
+                        n.path("label").asText(null),
+                        n.path("executor_type").asText(null),
+                        n.path("prompt_template").asText(null),
+                        n.path("model").asText(null),
+                        n.path("timeout_seconds").asInt(0),
+                        configOverrides,
+                        n.path("is_entrypoint").asBoolean(false),
+                        n.has("output_spec") && !n.get("output_spec").isNull()
+                                ? n.get("output_spec").toString()
+                                : null));
+            }
+
+            List<GraphRuntimeSnapshotResponse.RuntimeEdge> edges = new ArrayList<>();
+            for (JsonNode e : snapshot.path("edges")) {
+                edges.add(new GraphRuntimeSnapshotResponse.RuntimeEdge(
+                        UUID.fromString(e.get("template_edge_id").asText()),
+                        UUID.fromString(e.get("source_node_id").asText()),
+                        UUID.fromString(e.get("target_node_id").asText()),
+                        e.path("condition").asText(null)));
+            }
+
+            Map<String, Object> inputs = Map.of();
+            if (snapshot.has("inputs") && !snapshot.get("inputs").isNull()) {
+                inputs = objectMapper.convertValue(
+                        snapshot.get("inputs"), new com.fasterxml.jackson.core.type.TypeReference<>() {});
+            }
+
+            List<GraphRuntimeSnapshotResponse.RuntimeRepo> repos = new ArrayList<>();
+            if (snapshot.has("repos") && snapshot.get("repos").isArray()) {
+                for (JsonNode r : snapshot.get("repos")) {
+                    repos.add(new GraphRuntimeSnapshotResponse.RuntimeRepo(
+                            r.path("id").asText(),
+                            r.path("url").asText(),
+                            r.path("name").asText(),
+                            r.path("test_command").asText(null),
+                            r.path("agent_image").asText(null)));
+                }
+            }
+
+            return new GraphRuntimeSnapshotResponse(nodes, edges, inputs, repos);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to build graph runtime snapshot", e);
+        }
+    }
+
+    public JobSecretHashResponse getJobSecretHash(UUID runId, UUID nodeExecId) {
+        NodeExecution exec = execRepo.findById(nodeExecId)
+                .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
+        return new JobSecretHashResponse(exec.getJobSecretHash());
+    }
+
+    public void updateExternalRunId(UUID runId, InternalUpdateExternalRunIdRequest req) {
+        WorkflowRun run =
+                runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
+        run.setExternalRunId(req.externalRunId());
+        runRepo.save(run);
+    }
+
+    public NodeExecutionResponse getNodeExecution(UUID runId, UUID nodeExecId) {
+        NodeExecution exec = execRepo.findById(nodeExecId)
+                .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
+        return toNodeExecResponse(exec);
+    }
+
+    public List<NodeExecutionResponse> getNodeExecutionsByRun(UUID runId) {
+        return execRepo.findByWorkflowRunId(runId).stream()
+                .map(this::toNodeExecResponse)
+                .toList();
+    }
+
+    public List<PredecessorArtifactsResponse> getCompletedPredecessors(UUID runId, UUID nodeExecId) {
+        NodeExecution exec = execRepo.findById(nodeExecId)
+                .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
+        WorkflowRun run = runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Run not found: " + runId));
+
+        List<NodeExecution> allExecs = execRepo.findByWorkflowRunId(runId);
+        UUID targetNodeId = exec.getTemplateNodeId();
+
+        try {
+            var snapshot = objectMapper.readTree(snapshotBuilder.buildSnapshotForRun(run));
+            var edges = snapshot.get("edges");
+
+            // Transitive BFS — find all ancestors
+            Set<UUID> predecessorNodeIds = new HashSet<>();
+            Queue<UUID> queue = new LinkedList<>();
+            queue.add(targetNodeId);
+            while (!queue.isEmpty()) {
+                UUID current = queue.poll();
+                if (edges != null) {
+                    for (var edge : edges) {
+                        UUID tgtId = UUID.fromString(edge.get("target_node_id").asText());
+                        if (tgtId.equals(current)) {
+                            UUID srcId =
+                                    UUID.fromString(edge.get("source_node_id").asText());
+                            if (predecessorNodeIds.add(srcId)) {
+                                queue.add(srcId);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Build nodeId → label map from snapshot nodes
+            Map<UUID, String> nodeLabels = new HashMap<>();
+            var nodesArr = snapshot.get("nodes");
+            if (nodesArr != null) {
+                for (var n : nodesArr) {
+                    nodeLabels.put(
+                            UUID.fromString(n.get("template_node_id").asText()),
+                            n.get("label").asText());
+                }
+            }
+
+            return predecessorNodeIds.stream()
+                    .map(predNodeId -> allExecs.stream()
+                            .filter(e -> e.getTemplateNodeId().equals(predNodeId)
+                                    && "completed".equals(e.getStatus().name().toLowerCase()))
+                            .max(Comparator.comparingInt(NodeExecution::getIteration))
+                            .map(e -> new PredecessorArtifactsResponse(
+                                    e.getTemplateNodeId(),
+                                    nodeLabels.getOrDefault(predNodeId, ""),
+                                    e.getArtifactRefs(),
+                                    e.getResult()))
+                            .orElse(null))
+                    .filter(Objects::nonNull)
+                    .toList();
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
+    public String submitDecision(UUID runId, UUID nodeExecId, String decision) {
+        // Load exec first so it can be passed to buildValidDecisionsWithSnapshot
+        NodeExecution exec = execRepo.findById(nodeExecId)
+                .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
+
+        DecisionsWithSnapshot dws = buildValidDecisionsWithSnapshot(runId, exec);
+        List<String> validConditions = dws.validConditions();
+
+        if (validConditions.isEmpty()) {
+            throw new BadRequestException("This node has no conditional edges");
+        }
+
+        boolean matches = validConditions.stream().anyMatch(c -> c.equalsIgnoreCase(decision));
+        if (!matches) {
+            throw new BadRequestException("Invalid decision: '" + decision + "'. Valid options: " + validConditions);
+        }
+
+        // Store the canonical form matching the edge condition
+        String canonical = validConditions.stream()
+                .filter(c -> c.equalsIgnoreCase(decision))
+                .findFirst()
+                .orElse(decision);
+
+        // Cap override: if effective iteration has reached the cap, silently rewrite
+        // any non-approved decision to need_human_decision:iteration_cap.
+        // The stored decision will differ from the originally submitted value;
+        // operators can detect this by comparing the node execution record against
+        // the agent's last output in the run history.
+        Integer cap = findIterationCap(dws.snapshot(), exec.getTemplateNodeId());
+        if (cap != null
+                && cap > 0 // defensive: cap=0 is nonsensical and would fire on every iteration
+                && !canonical.equalsIgnoreCase("approved")
+                && validConditions.contains("need_human_decision:iteration_cap")) {
+            int epochStart = exec.getIterationCapEpochStart() > 0 ? exec.getIterationCapEpochStart() : 1;
+            int effectiveIteration = exec.getIteration() - epochStart + 1;
+            if (effectiveIteration >= cap) {
+                canonical = "need_human_decision:iteration_cap";
+            }
+        }
+
+        exec.setDecision(canonical);
+        execRepo.save(exec);
+
+        return canonical;
+    }
+
+    /**
+     * Returns the valid decision strings (edge conditions) for the given node execution, by
+     * walking the run's graph snapshot for outbound conditional edges from the execution's template
+     * node.
+     *
+     * @throws NotFoundException if the execution or run does not exist
+     */
+    public List<String> getValidDecisions(UUID runId, UUID nodeExecId) {
+        NodeExecution exec = execRepo.findById(nodeExecId)
+                .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
+        return buildValidDecisionsWithSnapshot(runId, exec).validConditions();
+    }
+
+    private record DecisionsWithSnapshot(
+            List<String> validConditions, com.fasterxml.jackson.databind.JsonNode snapshot) {}
+
+    private DecisionsWithSnapshot buildValidDecisionsWithSnapshot(UUID runId, NodeExecution exec) {
+        try {
+            WorkflowRun run =
+                    runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Run not found: " + runId));
+            var snapshot = objectMapper.readTree(snapshotBuilder.buildSnapshotForRun(run));
+            var edges = snapshot.get("edges");
+            List<String> validConditions = new ArrayList<>();
+            for (var edge : edges) {
+                if (edge.get("source_node_id")
+                                .asText()
+                                .equals(exec.getTemplateNodeId().toString())
+                        && edge.has("condition")
+                        && !edge.get("condition").isNull()) {
+                    validConditions.add(edge.get("condition").asText());
+                }
+            }
+            return new DecisionsWithSnapshot(validConditions, snapshot);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to build graph snapshot", e);
+        }
+    }
+
+    private Integer findIterationCap(com.fasterxml.jackson.databind.JsonNode snapshot, UUID templateNodeId) {
+        var nodes = snapshot.get("nodes");
+        if (nodes == null) {
+            return null;
+        }
+        for (var n : nodes) {
+            if (!n.has("template_node_id")
+                    || !n.get("template_node_id").asText().equals(templateNodeId.toString())) {
+                continue;
+            }
+            if (n.has("iteration_cap") && !n.get("iteration_cap").isNull()) {
+                return n.get("iteration_cap").asInt();
+            }
+            return null;
+        }
+        return null;
+    }
+
+    public String getDecision(UUID runId, UUID nodeExecId) {
+        NodeExecution exec = execRepo.findById(nodeExecId)
+                .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
+        return exec.getDecision();
+    }
+
+    /**
+     * Creates a feature proposal on behalf of an agent pod. The proposal target is resolved
+     * from the run's {@code software_project_id} input; agents do not pick a target directly.
+     *
+     * <p>These internal endpoints exist because agent pods authenticate with JOB_SECRET (scoped
+     * per-execution) and use /internal/ routes, whereas the public /api/v1/ endpoints use
+     * different auth. Removing these would break deployed agent images that depend on the
+     * create-proposal and list-proposals CLI scripts.
+     */
+    @Transactional
+    public FeatureProposalResponse createFeatureProposal(UUID runId, InternalCreateFeatureProposalRequest req) {
+        WorkflowRun run =
+                runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
+        UUID softwareProjectId = resolveSoftwareProjectIdFromRun(run);
+        FeatureProposalRequest proposalRequest =
+                new FeatureProposalRequest(req.title(), req.description(), req.motivation(), softwareProjectId);
+        return featureProposalService.create(proposalRequest, runId);
+    }
+
+    /**
+     * Updates a feature proposal on behalf of an agent pod. The proposal's ownership is validated
+     * against the run's resolved {@code software_project_id} and {@code organization_id} before
+     * delegating to {@link FeatureProposalService#updateInternal}.
+     *
+     * <p>See {@link #createFeatureProposal} for why these internal endpoints exist.
+     */
+    @Transactional
+    public FeatureProposalResponse updateFeatureProposal(
+            UUID runId, UUID proposalId, InternalUpdateFeatureProposalRequest req) {
+        WorkflowRun run =
+                runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
+        UUID softwareProjectId = resolveSoftwareProjectIdFromRun(run);
+        return featureProposalService.updateInternal(proposalId, softwareProjectId, runId, req);
+    }
+
+    /**
+     * Lists feature proposals targeting the run's resolved software project.
+     * See {@link #createFeatureProposal} for why these internal endpoints exist.
+     */
+    @Transactional(readOnly = true)
+    public List<FeatureProposalResponse> listFeatureProposals(UUID runId) {
+        WorkflowRun run =
+                runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
+        UUID softwareProjectId = resolveSoftwareProjectIdFromRun(run);
+        return featureProposalService.listBySoftwareProjectId(softwareProjectId);
+    }
+
+    /**
+     * Resolves a single {@code software_project_id} from a run's inputs. Resolution order:
+     * <ol>
+     *   <li>direct {@code software_project_id} field on inputs;</li>
+     *   <li>schema-driven discovery over fields typed {@code software_project_id};</li>
+     *   <li>legacy {@code git_repo_id} field (post-V45, git_repo.id IS the software_project.id);</li>
+     *   <li>schema-driven discovery over fields typed {@code git_repo} (legacy templates).</li>
+     * </ol>
+     * Throws {@link NotFoundException} if nothing resolves.
+     */
+    @Transactional(readOnly = true)
+    UUID resolveSoftwareProjectIdFromRun(WorkflowRun run) {
+        JsonNode inputs;
+        try {
+            inputs = objectMapper.readTree(run.getInputs());
+        } catch (JsonProcessingException e) {
+            throw new NotFoundException(
+                    "Could not parse run inputs JSON for run: " + run.getId() + " (" + e.getOriginalMessage() + ")");
+        }
+
+        JsonNode schema = null;
+        GraphTemplate template =
+                graphTemplateRepo.findById(run.getGraphTemplateId()).orElse(null);
+        if (template != null && template.getInputSchema() != null) {
+            try {
+                JsonNode parsed = objectMapper.readTree(template.getInputSchema());
+                if (parsed.isArray()) schema = parsed;
+            } catch (JsonProcessingException ignore) {
+                // malformed schema — treat as no schema
+            }
+        }
+
+        // 1. Direct software_project_id field.
+        UUID resolved = tryResolveDirect(inputs, "software_project_id");
+        if (resolved != null) return resolved;
+
+        // 2. Schema-driven discovery over software_project_id-typed fields (handles renamed inputs).
+        if (schema != null) {
+            resolved = tryResolveBySchemaType(schema, inputs, "software_project_id");
+            if (resolved != null) return resolved;
+        }
+
+        // 3. Legacy git_repo_id field. git_repo.id IS software_project.id post-V45.
+        resolved = tryResolveDirect(inputs, "git_repo_id");
+        if (resolved != null) return resolved;
+
+        // 4. Schema-driven git_repo-typed fields (legacy templates with renamed inputs).
+        if (schema != null) {
+            resolved = tryResolveBySchemaType(schema, inputs, "git_repo");
+            if (resolved != null) return resolved;
+        }
+
+        throw new NotFoundException("Could not resolve software_project_id from run inputs for run: " + run.getId());
+    }
+
+    private UUID tryResolveDirect(JsonNode inputs, String fieldName) {
+        JsonNode node = inputs.get(fieldName);
+        if (node == null || node.isNull() || node.asText().isBlank()) return null;
+        try {
+            UUID candidate = UUID.fromString(node.asText());
+            return softwareProjectRepo.existsById(candidate) ? candidate : null;
+        } catch (IllegalArgumentException ignore) {
+            return null;
+        }
+    }
+
+    private UUID tryResolveBySchemaType(JsonNode schema, JsonNode inputs, String typeName) {
+        for (JsonNode field : schema) {
+            if (typeName.equals(field.path("type").asText(""))) {
+                String name = field.path("name").asText("");
+                JsonNode val = inputs.get(name);
+                if (val == null || val.isNull() || val.asText().isBlank()) continue;
+                try {
+                    UUID candidate = UUID.fromString(val.asText());
+                    if (softwareProjectRepo.existsById(candidate)) return candidate;
+                } catch (IllegalArgumentException ignore) {
+                    // not a UUID — keep scanning
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Checks whether a node has any outgoing edge with a non-null condition.
+     * Reuses the same snapshot/edge logic as submitDecision.
+     */
+    private boolean hasConditionalEdges(UUID runId, UUID templateNodeId) {
+        try {
+            WorkflowRun run =
+                    runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Run not found: " + runId));
+            var snapshot = objectMapper.readTree(snapshotBuilder.buildSnapshotForRun(run));
+            var edges = snapshot.get("edges");
+            if (edges == null) return false;
+            for (var edge : edges) {
+                if (edge.get("source_node_id").asText().equals(templateNodeId.toString())
+                        && edge.has("condition")
+                        && !edge.get("condition").isNull()) {
+                    return true;
+                }
+            }
+            return false;
+        } catch (Exception e) {
+            return false; // fail open — don't block completion
+        }
+    }
+
+    private NodeExecutionResponse toNodeExecResponse(NodeExecution e) {
+        UUID[] edges = e.getTraversedEdgeIds();
+        List<UUID> edgeList = edges == null ? null : Arrays.asList(edges);
+        return new NodeExecutionResponse(
+                e.getId(),
+                e.getTemplateNodeId(),
+                e.getStatus().name(),
+                e.getResult(),
+                e.getDecision(),
+                e.getPodName(),
+                e.getIteration(),
+                e.getStartedAt(),
+                e.getCompletedAt(),
+                e.getErrorMessage(),
+                e.getGraphVersion(),
+                e.getArtifactRefs(),
+                e.getLabel(),
+                e.getLoopGroup(),
+                e.getReviewerType() != null ? e.getReviewerType().name() : null,
+                edgeList,
+                null);
+    }
+
+    public void setTraversedEdges(UUID runId, UUID nodeExecId, InternalSetTraversedEdgesRequest req) {
+        NodeExecution exec = execRepo.findById(nodeExecId)
+                .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
+        if (!exec.getWorkflowRunId().equals(runId)) {
+            throw new NotFoundException("Node execution not found: " + nodeExecId);
+        }
+        List<UUID> ids = req.edgeIds() == null ? List.of() : req.edgeIds();
+        exec.setTraversedEdgeIds(ids.toArray(new UUID[0]));
+        execRepo.save(exec);
+        // Validates the run exists; org no longer needed (feeds published org-free, re-scoped downstream).
+        runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
+        eventPublisher.publishNodeStatusChanged(
+                runId, nodeExecId, exec.getStatus().name());
+    }
+}
