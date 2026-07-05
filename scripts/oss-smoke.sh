@@ -24,7 +24,7 @@
 # to have this script bring it up (with a dummy token) / tear it down itself.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
 API_URL="${API_URL:-http://localhost:38080}"
 # The spawned container's image is one of the published OSS images under
@@ -39,8 +39,8 @@ if [ "$MANAGE_STACK" = true ]; then
     export CLAUDE_CODE_OAUTH_TOKEN="${CLAUDE_CODE_OAUTH_TOKEN:-oss-smoke-dummy-token-not-real}"
     # Smoke runs must not emit anonymous telemetry (overrides docker-compose.yaml default-on).
     export CHORUSKUBE_TELEMETRY=off
-    bash "$SCRIPT_DIR/up.sh"
-    cleanup() { echo "=== Tearing down ==="; bash "$SCRIPT_DIR/down.sh" || true; }
+    bash "$SCRIPTS_DIR/up.sh"
+    cleanup() { echo "=== Tearing down ==="; bash "$SCRIPTS_DIR/down.sh" || true; }
     trap cleanup EXIT
 fi
 
@@ -51,7 +51,7 @@ echo "=== OSS stack health ==="
 curl -sf "$API_URL/actuator/health" | grep -q UP || fail "api-server not healthy"
 echo "  PASS  api-server health"
 # /api/v1/** is open in single-tenant mode (no 401).
-curl -sf "$API_URL/api/v1/graph-templates?size=1" > /dev/null || fail "api /graph-templates not reachable (auth open?)"
+templates_open_probe "$API_URL" || fail "api /graph-templates not reachable (auth open?)"
 echo "  PASS  api /graph-templates reachable (no auth)"
 
 # --- 1b. Ensure the DinD sidecar image is present -----------------------------

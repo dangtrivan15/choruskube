@@ -8,8 +8,7 @@
 # against a target repo.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 ENV_FILE="$REPO_ROOT/.env"
 SECRETS_DIR="$REPO_ROOT/.secrets"
 
@@ -78,4 +77,4 @@ echo "Wrote $ENV_FILE:"
 
 echo
 read -r -p "Start the stack now with ./scripts/up.sh? [Y/n] " ans
-[[ "$ans" =~ ^[Nn]$ ]] || exec "$SCRIPT_DIR/up.sh"
+[[ "$ans" =~ ^[Nn]$ ]] || exec "$SCRIPTS_DIR/up.sh"

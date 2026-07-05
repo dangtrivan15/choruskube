@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # scripts/e2e-up.sh — build & start the auth-free e2e stack, then load wiremock stubs.
 set -euo pipefail
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-COMPOSE="docker compose -f ${REPO_ROOT}/docker-compose.e2e.yaml"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
 echo "--- Building agent images (claude-code:latest → claude-code:e2e) ---"
 docker build -t claude-code:latest "${REPO_ROOT}/agent-images/claude-code"
@@ -11,15 +10,10 @@ docker build --build-arg BASE_AGENT_IMAGE=claude-code:latest \
   -t claude-code:e2e "${REPO_ROOT}/agent-images/claude-code"
 
 echo "--- Starting stack ---"
-${COMPOSE} up -d --build
+compose_e2e up -d --build
 
 echo "--- Waiting for api-server health ---"
-healthy=0
-for _ in $(seq 1 60); do
-  if curl -sf http://localhost:28080/actuator/health 2>/dev/null | grep -q UP; then healthy=1; break; fi
-  sleep 2
-done
-if [ "$healthy" != "1" ]; then
+if ! wait_for_health http://localhost:28080/actuator/health; then
   echo "ERROR: api-server did not become healthy within ~120s" >&2
   echo "       Inspect: docker compose -f docker-compose.e2e.yaml logs api-server" >&2
   exit 1

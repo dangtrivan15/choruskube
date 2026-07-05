@@ -6,15 +6,16 @@
 #   ./scripts/setup.sh              # configure tokens first (writes .env), then runs this
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
+
 # Ensure the GitHub App PEM mount source exists and is user-owned before compose
 # (Docker would otherwise auto-create it as root). Harmless when empty.
-mkdir -p "$SCRIPT_DIR/../.secrets"
+mkdir -p "$REPO_ROOT/.secrets"
 
 # Build the agent images first. They are not Compose services (the executor pulls
 # them at run time), so `compose up --build` would not cover them. Docker layer
 # caching makes this cheap on repeat runs — consistent with how `--build` rebuilds
 # the Compose services below.
-"$SCRIPT_DIR/build-agent-images.sh"
+"$SCRIPTS_DIR/build-agent-images.sh"
 
-exec docker compose -f "$SCRIPT_DIR/../docker-compose.yaml" up --build --wait "$@"
+compose up --build --wait "$@"

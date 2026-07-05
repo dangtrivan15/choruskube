@@ -3,7 +3,7 @@
 #   ./scripts/e2e.sh                 full run, tears down at the end
 #   ./scripts/e2e.sh --no-teardown   leave the stack up for debugging
 set -euo pipefail
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 TEARDOWN=1
 [ "${1:-}" = "--no-teardown" ] && TEARDOWN=0
 

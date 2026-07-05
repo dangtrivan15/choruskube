@@ -14,8 +14,8 @@
 #   ./scripts/build-agent-images.sh        # build both images for the host arch
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-IMAGES_DIR="$SCRIPT_DIR/../agent-images"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
+IMAGES_DIR="$REPO_ROOT/agent-images"
 
 # Image refs the executor/run config expect. Override via env if needed.
 AGENT_IMAGE="${AGENT_IMAGE:-registry.choruskube.com/claude-code:latest}"
