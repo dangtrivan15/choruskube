@@ -34,11 +34,14 @@ server {
 }
 EOF
 
-# Copy E2E nginx config for optional use via volume mount or COPY override
-COPY nginx-e2e.conf /etc/nginx/conf.d/e2e.conf.template
+# Same-origin proxy config, staged (not auto-loaded). When NGINX_PROXY_API=true
+# the CMD swaps it in as default.conf so the SPA can reach the API same-origin.
+COPY nginx-proxy.conf /etc/nginx/nginx-proxy.conf
 
 EXPOSE 80
 
-# Render config.js from environment variables, then start nginx
-# Uses CMD (not ENTRYPOINT) so docker-compose `command` can override the startup
-CMD ["/bin/sh", "-c", "envsubst < /config.js.template > /usr/share/nginx/html/config.js && exec nginx -g 'daemon off;'"]
+# Self-composing startup: the image serves SPA-only by default (for deployments where
+# the API is reached on a different origin over an absolute URL). Set NGINX_PROXY_API=true
+# (the Docker Compose stacks do) to swap in the reverse-proxy config so the SPA reaches
+# the API same-origin. Then render config.js and run nginx — no `command:` override needed.
+CMD ["/bin/sh", "-c", "if [ \"${NGINX_PROXY_API:-false}\" = \"true\" ]; then cp /etc/nginx/nginx-proxy.conf /etc/nginx/conf.d/default.conf; fi; envsubst < /config.js.template > /usr/share/nginx/html/config.js && exec nginx -g 'daemon off;'"]
