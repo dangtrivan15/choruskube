@@ -35,7 +35,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
     // and executor changes here never retroactively mutate prior versions. To ship a
     // change, edit the constants in this file (prompt, executor, schema), increment
     // CURRENT_VERSION, and the next boot creates the new snapshot.
-    static final int CURRENT_VERSION = 24;
+    static final int CURRENT_VERSION = 25;
 
     private static final String TEMPLATE_NAME = "Feature Development";
 
@@ -613,7 +613,11 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
               push speculative commits. In `/workspace/out/review.md` write a
               structured "Uncertain flaw" section: describe the flaw, the
               candidate fixes you considered, and why none of them is clearly
-              correct.
+              correct. One more valid case of this decision is when the test is valid 
+              but the testing environment isn't leading to consistent test failure, 
+              and there is no clean way to fix the test without environmental workaround.
+              This decision will be escalated straight to Human without passing the Test Node, 
+              so be extra careful when making this decision.
 
             ## Reasoning requirement
 
@@ -975,7 +979,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
         createEdge(template, tnCodeReview, tnCodeReview, "revised");
         createEdge(template, tnCodeReview, tnTest, "approved");
         createEdge(template, tnCodeReview, tnTest, "need_human_decision:iteration_cap");
-        createEdge(template, tnCodeReview, tnTest, "need_human_decision:uncertainty");
+        createEdge(template, tnCodeReview, tnFinalApproval, "need_human_decision:uncertainty");
         createEdge(template, tnTest, tnFinalApproval, "passed");
         createEdge(template, tnTest, tnImplement, "failed");
         createEdge(template, tnFinalApproval, tnPushCreatePr, "approved");
