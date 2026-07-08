@@ -50,7 +50,12 @@ public class SingleTenantRepoSeeder implements ApplicationRunner {
         });
 
         repo.setDefaultBranch("main");
-        repo.setTestCommand("./gradlew test -Pe2e -Dtest.reports.dir=/workspace/out/reports/api-server");
+        // choruskube has no root Gradle wrapper (only api-server/gradlew) and no -Pe2e
+        // property — those were choruskube-cloud conventions that don't apply here. The
+        // documented full regression harness is ./scripts/e2e.sh (CONTRIBUTING.md
+        // "End-to-end tests": up -> smoke -> Playwright -> teardown), run from the repo
+        // root, which is exactly where the test node executes this command.
+        repo.setTestCommand("./scripts/e2e.sh");
         repo.setAgentImage(agentImage);
         repo.setEnableDocker(true);
         gitRepoRepository.save(repo);

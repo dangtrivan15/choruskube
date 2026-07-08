@@ -46,6 +46,11 @@ class SingleTenantRepoSeederTest {
         assertThat(saved.getDefaultBranch()).isEqualTo("main");
         assertThat(saved.getAgentImage()).isEqualTo("ghcr.io/test/agent:1");
         assertThat(saved.isEnableDocker()).isTrue();
+        // The choruskube repo has no root Gradle wrapper and no -Pe2e property; its
+        // documented full regression harness is ./scripts/e2e.sh (CONTRIBUTING.md
+        // "End-to-end tests"), run from the repo root. The test node executes this
+        // command verbatim from the clone root.
+        assertThat(saved.getTestCommand()).isEqualTo("./scripts/e2e.sh");
     }
 
     @Test
