@@ -57,6 +57,7 @@ class SingleTenantRepoSeederTest {
     void run_existingRepo_isUpdated() {
         GitRepo existing = new GitRepo();
         existing.setUrl("https://github.com/dangtrivan15/choruskube");
+        existing.setAgentImage("stale-image:old");
         when(gitRepoRepository.findByUrl(any())).thenReturn(Optional.of(existing));
 
         seeder.run(null);
@@ -66,5 +67,6 @@ class SingleTenantRepoSeederTest {
         GitRepo saved = captor.getValue();
         assertThat(saved.getDefaultBranch()).isEqualTo("main");
         assertThat(saved.isEnableDocker()).isTrue();
+        assertThat(saved.getAgentImage()).isEqualTo("ghcr.io/test/agent:1");
     }
 }
