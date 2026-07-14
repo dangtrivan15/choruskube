@@ -473,4 +473,3 @@ func TestCallback_RejectedForPausedExecution(t *testing.T) {
 	// Must not have updated the DB
 	assert.False(t, dbUpdateCalled, "DB status update must not be called for a paused execution")
 }
-

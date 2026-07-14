@@ -1,0 +1,107 @@
+name: Unit Tests
+
+# Per-component build, lint and unit tests. There is no root build — each component
+# is checked on its own, mirroring CONTRIBUTING.md's per-component commands.
+#
+# This closes the other half of the reliability gate: E2E covers the stack end to end,
+# but nothing ran the per-component suites, so a red unit test could sit on main while
+# CI stayed green.
+#
+# Runs on every PR to main and on push to main so it can serve as a REQUIRED status check.
+# It is intentionally NOT path-filtered: a required check that is skipped (e.g. on a
+# docs-only PR) is reported as pending and blocks the merge forever.
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# One run per ref — supersede an in-flight run when new commits land.
+concurrency:
+  group: unit-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  api-server:
+    runs-on: arc-runner-choruskube
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 25
+
+      # Tests use TestContainers (PostgreSQL) — the runner must provide a Docker daemon.
+      - name: Formatting (Palantir via Spotless)
+        working-directory: api-server
+        run: ./gradlew spotlessCheck
+
+      - name: Tests
+        working-directory: api-server
+        run: ./gradlew test
+
+  orchestrator:
+    runs-on: arc-runner-choruskube
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: orchestrator/go.sum
+
+      - name: Formatting (gofmt)
+        working-directory: orchestrator
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt-clean:" >&2
+            echo "$unformatted" >&2
+            exit 1
+          fi
+
+      - name: Build
+        working-directory: orchestrator
+        run: go build ./...
+
+      - name: Tests
+        working-directory: orchestrator
+        run: go test ./...
+
+  web-ui:
+    runs-on: arc-runner-choruskube
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web-ui/package-lock.json
+
+      - name: Install deps
+        working-directory: web-ui
+        run: npm ci
+
+      - name: Lint
+        working-directory: web-ui
+        run: npm run lint
+
+      - name: Tests
+        working-directory: web-ui
+        run: npm run test
+
+      - name: Build
+        working-directory: web-ui
+        run: npm run build
