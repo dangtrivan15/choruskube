@@ -23,6 +23,7 @@ WORKING_BRANCH=$(jq -r '.working_branch // empty' "$CONFIG_FILE")
 export GITHUB_TOKEN_URL=$(jq -r '.github_token_url // empty' "$CONFIG_FILE")
 COMMAND=$(jq -r '.command // empty' "$CONFIG_FILE")
 EXECUTOR_TYPE=$(jq -r '.executor_type // "ai"' "$CONFIG_FILE")
+MODEL=$(jq -r '.model // empty' "$CONFIG_FILE")
 # Build system prompt from image-local template + run context
 SYSTEM_PROMPT_FILE="/usr/local/share/choruskube/system_prompt.md"
 if [ -f "$SYSTEM_PROMPT_FILE" ]; then
@@ -148,7 +149,6 @@ fi
 
 # --- Step 3: Clone repo(s) if configured ---
 REPOS_JSON=$(jq -r '.repos // empty' /workspace/config.json)
-TARGET_REPO=$(jq -r '.target_repo // empty' /workspace/config.json)
 
 if [ -n "$REPOS_JSON" ] && [ "$REPOS_JSON" != "null" ]; then
   # Multi-repo mode: clone each repo to /workspace/repo/{name}/
@@ -199,28 +199,13 @@ if [ -n "$REPOS_JSON" ] && [ "$REPOS_JSON" != "null" ]; then
 
   echo "Multi-repo workspace ready. $(echo "$REPOS_JSON" | jq length) repos cloned."
 
-  # Append each repo's CLAUDE.md to system prompt if it exists
-  for repo_dir in /workspace/repo/*/; do
-    repo_name=$(basename "$repo_dir")
-    if [ -f "$repo_dir/CLAUDE.md" ]; then
-      SYSTEM_PROMPT="${SYSTEM_PROMPT}
-
-## Repository: ${repo_name}
-$(cat "$repo_dir/CLAUDE.md")"
-      echo "Loaded CLAUDE.md from $repo_name"
-    fi
-  done
-
-  # Add multi-repo workspace description to system prompt
+  # Add multi-repo workspace description to system prompt. Repos are peers —
+  # there is no primary. Each repo's CLAUDE.md, skills and subagents are loaded
+  # by Claude Code itself from the --add-dir set built below.
   REPO_LIST=""
   while IFS= read -r repo; do
-    repo_name=$(echo "$repo" | jq -r '.name')
     repo_path=$(echo "$repo" | jq -r '.local_path')
-    if [ "$repo_name" = "$TARGET_REPO" ]; then
-      REPO_LIST="${REPO_LIST}\n- ${repo_path} (TARGET — implement changes here)"
-    else
-      REPO_LIST="${REPO_LIST}\n- ${repo_path}"
-    fi
+    REPO_LIST="${REPO_LIST}\n- ${repo_path}"
   done < <(echo "$REPOS_JSON" | jq -c '.[]')
 
   SYSTEM_PROMPT="${SYSTEM_PROMPT}
@@ -229,7 +214,9 @@ $(cat "$repo_dir/CLAUDE.md")"
 This is a multi-repository run. Repositories available:
 $(echo -e "$REPO_LIST")
 
-All repositories are cloned under /workspace/repo/. Navigate to each repo by name."
+All repositories are cloned under /workspace/repo/. Your working directory is
+/workspace/repo, which is not itself a git repository — use absolute paths, and
+cd into a specific repo before running git commands."
 
 elif [ -n "$REPO_URL" ]; then
   # Single-repo mode (backwards compatible)
@@ -250,14 +237,25 @@ elif [ -n "$REPO_URL" ]; then
     cd /workspace
   fi
   echo "Repo ready at /workspace/repo/"
-  if [ -f /workspace/repo/CLAUDE.md ]; then
-    SYSTEM_PROMPT="${SYSTEM_PROMPT}
-
-$(cat /workspace/repo/CLAUDE.md)"
-    echo "Loaded CLAUDE.md from /workspace/repo/"
-  fi
 fi
 export SYSTEM_PROMPT
+
+# --- Step 3b: Declare the workspace roots to Claude Code ---
+# Claude Code discovers CLAUDE.md, .claude/skills/ and .claude/agents/ from its
+# set of working directories: the cwd plus every --add-dir. It does NOT descend
+# into subdirectories of the cwd on its own, so each repo must be named
+# explicitly even though they all sit under /workspace/repo.
+# CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD (set in the Dockerfile) is what
+# makes CLAUDE.md load from the added dirs rather than access alone.
+ADD_DIR_ARGS=()
+if [ -n "$REPOS_JSON" ] && [ "$REPOS_JSON" != "null" ]; then
+  for repo_dir in /workspace/repo/*/; do
+    [ -d "$repo_dir" ] && ADD_DIR_ARGS+=(--add-dir "$repo_dir")
+  done
+elif [ -d /workspace/repo ]; then
+  ADD_DIR_ARGS+=(--add-dir /workspace/repo)
+fi
+echo "Workspace roots: ${ADD_DIR_ARGS[*]:-none}"
 
 # --- Live Chat mode: delegate to dedicated loop (after workspace setup) ---
 MODE=$(jq -r '.mode // empty' "$CONFIG_FILE")
@@ -391,9 +389,10 @@ else
     export REPORT_RESULT_URL="$API_SERVER_URL/internal/runs/$RUN_ID/node-executions/$NODE_EXECUTION_ID/decision"
   fi
 
-  if [ -n "$TARGET_REPO" ] && [ -d "/workspace/repo/$TARGET_REPO" ]; then
-    cd "/workspace/repo/$TARGET_REPO"
-  elif [ -d "/workspace/repo" ] && { [ -z "$REPOS_JSON" ] || [ "$REPOS_JSON" = "null" ]; }; then
+  # /workspace/repo is the repo itself in single-repo mode, and the parent of the
+  # clones in multi-repo mode. Either way it is the root of the workspace; the
+  # repos themselves are declared via ADD_DIR_ARGS.
+  if [ -d /workspace/repo ]; then
     cd /workspace/repo
   fi
 
@@ -456,6 +455,8 @@ else
       --verbose \
       --dangerously-skip-permissions \
       --disallowed-tools "AskUserQuestion" \
+      ${MODEL:+--model "$MODEL"} \
+      ${ADD_DIR_ARGS[@]+"${ADD_DIR_ARGS[@]}"} \
       $sys_args ${sys_prompt:+"$sys_prompt"} \
       $extra_flags \
       2>/tmp/claude_stderr.log | stdbuf -oL tee "$stream_file" | while IFS= read -r line; do

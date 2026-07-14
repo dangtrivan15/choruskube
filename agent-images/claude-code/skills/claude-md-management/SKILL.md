@@ -1,8 +1,13 @@
-# CLAUDE.md Management Skill
+---
+name: claude-md-management
+description: Use when creating or editing a CLAUDE.md file, or when a change alters conventions that CLAUDE.md documents. Covers what belongs in CLAUDE.md versus CONTRIBUTING.md, the expected structure, and the size limit.
+---
+
+# CLAUDE.md Management
 
 You have deep expertise in maintaining `CLAUDE.md` files for software projects.
 
-## When managing CLAUDE.md files:
+## When managing CLAUDE.md files
 
 - Read the existing `CLAUDE.md` before making any changes to understand current conventions
 - Keep the file under 300 lines — it is loaded into every agent's context window

@@ -8,3 +8,6 @@ docs/superpowers/
 # Local secrets — written by scripts/setup.sh, never committed.
 .env
 .secrets/
+
+# Per-developer Claude Code settings. Shared agent config under .claude/ is committed.
+.claude/settings.local.json

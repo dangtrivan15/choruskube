@@ -87,12 +87,18 @@ RUN chmod +x /usr/local/bin/report-result \
 # Set via ENV (not settings.json) so it applies to all processes in the container.
 ENV CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
 
+# Without this, --add-dir grants filesystem access only; CLAUDE.md in the added
+# directory is not loaded. Skills and subagents are discovered either way.
+ENV CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1
+
 # Create ~/.claude/skills/ with agent ownership BEFORE switching to USER 1000.
 # chown -R ensures directories (not just files) are writable by uid 1000 at runtime.
 RUN mkdir -p /home/agent/.claude/skills \
     && chown -R agent:agent /home/agent/.claude
 
-# Marketplace skills (always-available capability context)
+# Generic, repo-agnostic skills. Repo-specific skills ship in each repo's own
+# .claude/skills/ and are discovered from the workspace clones at runtime.
+# Layout must be <name>/SKILL.md with YAML frontmatter, or they are not loaded.
 COPY --chown=agent:agent skills/ /home/agent/.claude/skills/
 
 # Agent configuration: max turns guard

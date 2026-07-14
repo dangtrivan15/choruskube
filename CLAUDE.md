@@ -88,12 +88,31 @@ When running inside a ChorusKube agent container, the filesystem is:
 ├── in/                  # Input artifacts from predecessor nodes
 │   └── run_log.md       # Accumulated results from all prior nodes
 ├── out/                 # Output artifacts (write here, uploaded to object storage)
-└── repo/                # Git clone of the target repository (if configured)
+└── repo/                # Single-repo run: the clone itself
+    ├── <repo-a>/        # Multi-repo run: one clone per repo, all peers
+    └── <repo-b>/
 ```
 
 - Read `config.json` for run context: `run_id`, `node_execution_id`, `prompt`, `system_prompt`
 - Write outputs to `/workspace/out/` — they are automatically uploaded to object storage
 - The run log at `/workspace/in/run_log.md` contains all prior node results
+- The agent's working directory is `/workspace/repo`. In a multi-repo run that is the *parent* of the clones, not a git repository — use absolute paths and `cd` into a repo before running git commands
+- Repos in a multi-repo run are **peers**; there is no primary or target repo. Branches, tests, and PRs are all per-repo
+
+## Per-Repo Agent Configuration
+
+The entrypoint passes every clone to Claude Code as a working directory (`--add-dir`), so each repo supplies its own agent configuration from its own tree:
+
+| Path in the repo | Effect |
+|---|---|
+| `CLAUDE.md` | Loaded as project memory |
+| `.claude/skills/<name>/SKILL.md` | Registered as a skill (needs YAML frontmatter: `name`, `description`) |
+| `.claude/agents/<name>.md` | Registered as a subagent |
+
+- Repo-specific agent guidance belongs in the repo, not in the agent image — that is how it reaches only the repos it applies to
+- Only generic, repo-agnostic skills are baked into the image at `agent-images/claude-code/skills/`
+- Claude Code does **not** descend into subdirectories of the working directory on its own; a repo is discovered only because the entrypoint names it explicitly
+- Loading `CLAUDE.md` from an added directory requires `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1` (set in the agent Dockerfile); skills and subagents are discovered without it
 
 ## Local Stack
 

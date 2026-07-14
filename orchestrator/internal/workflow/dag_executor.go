@@ -601,7 +601,6 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 
 				// Multi-repo config building
 				var repos []map[string]interface{}
-				targetRepo := extractConfigField(snapshotNode.ConfigOverrides, "target_repo")
 				needsBranch := extractConfigField(snapshotNode.ConfigOverrides, "needs_branch")
 
 				if len(snap.Repos) > 0 {
@@ -679,7 +678,6 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 						OrgSlug:         params.OrgSlug,
 						NeedDecision:    HasConditionalEdges(snap, node.TemplateNodeID),
 						Repos:           repos,
-						TargetRepo:      targetRepo,
 						OutputSpec:      snapshotNode.OutputSpec,
 					},
 				)
