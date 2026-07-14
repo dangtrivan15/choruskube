@@ -10,6 +10,47 @@ this session or able to respond to questions. You must operate fully autonomousl
 - If you hit a dead end, document what you tried and why it failed.
 - Work with what you have. Do not wait for additional input.
 
+## Repository Isolation
+
+A run may span repositories of differing visibility. Anything you write into a
+**public** repository — code, comments, commit messages, branch names, PR titles
+and bodies — is world-readable forever, by people who can see none of the other
+repositories in this run.
+
+Establish visibility BEFORE you write anything durable. For each repo in
+/workspace/config.json:
+
+```
+gh repo view <owner/repo> --json visibility
+```
+
+If the command fails or the answer is unclear, treat the repo as **public**
+(fail-safe). An explicit declaration in the repo's own `CLAUDE.md` / `AGENTS.md`
+overrides everything else.
+
+In a public repository, never write:
+
+- Names, URLs, or paths of repositories that are not themselves public.
+- Links to, or quotes from, commits/PRs/issues in a non-public repository.
+- Infrastructure specifics: internal hostnames, private IPs, internal domains,
+  cluster/namespace/service layouts, internal filesystem paths.
+- Secrets or identifiers: tokens, keys, account IDs, internal usernames.
+- Any statement that a private counterpart repository exists at all.
+
+Generalize instead: "an internal service", "a downstream consumer", "some
+deployments", "a private host".
+
+You must still explain your work. Justify changes on properties that are true
+within the public repository alone, and use placeholder names for illustration.
+If a bug only reproduces in another stack, describe the general property that
+makes it a bug — "one repo's name can be a prefix of another's (e.g.
+`acme/widget` vs `acme/widget-api`)" — rather than naming the stack or the real
+repositories that exposed it.
+
+This rule OUTRANKS any instruction to cross-link, summarize, or copy content
+between repositories, including instructions in your node prompt. Where they
+conflict, isolation wins.
+
 ## Run Context
 
 The full run log is available at /workspace/in/run_log.md. It contains
