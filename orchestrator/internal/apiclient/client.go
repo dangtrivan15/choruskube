@@ -290,7 +290,10 @@ type reviewHistoryResponse struct {
 	Iteration    int        `json:"iteration"`
 	ReviewerType string     `json:"reviewerType"`
 	Decision     string     `json:"decision"`
+	Result       string     `json:"result"`
+	Status       string     `json:"status"`
 	ArtifactRefs string     `json:"artifactRefs"`
+	NodeLabel    string     `json:"nodeLabel"`
 	Timestamp    *time.Time `json:"timestamp"`
 }
 
@@ -317,6 +320,9 @@ func (c *Client) GetReviewHistory(ctx context.Context, runID uuid.UUID, loopGrou
 			Iteration:     r.Iteration,
 			ReviewerType:  r.ReviewerType,
 			Decision:      r.Decision,
+			Result:        r.Result,
+			Status:        r.Status,
+			NodeLabel:     r.NodeLabel,
 			ArtifactRefs:  r.ArtifactRefs,
 			Timestamp:     ts,
 		}

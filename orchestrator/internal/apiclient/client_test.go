@@ -284,3 +284,63 @@ func TestCreateWorkload_SlimBody(t *testing.T) {
 	assert.Equal(t, "agent-xyz", resp.ExecutionHandle)
 	assert.Equal(t, "hash456", resp.JobSecretHash)
 }
+
+// TestGetReviewHistory_IncludesFeedbackFields is the regression test for the bug where
+// the orchestrator's review-history decode struct silently dropped the reviewer's
+// feedback text (and status/nodeLabel) before it ever reached the {review_history}
+// prompt variable. It also covers null-safety (an AI-authored entry with no human
+// feedback yet) and ordering (multiple loop iterations must accumulate in sequence).
+func TestGetReviewHistory_IncludesFeedbackFields(t *testing.T) {
+	runID := uuid.New()
+
+	_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodGet, r.Method)
+		assert.Contains(t, r.URL.Path, "/internal/runs/"+runID.String()+"/review-history")
+		assert.Equal(t, "proposal-review", r.URL.Query().Get("loopGroup"))
+
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `[
+			{
+				"id": "`+uuid.New().String()+`",
+				"loopGroup": "proposal-review",
+				"iteration": 1,
+				"reviewerType": "ai",
+				"decision": "",
+				"result": null,
+				"status": null,
+				"artifactRefs": "{}",
+				"nodeLabel": null,
+				"timestamp": "2026-01-01T00:00:00Z"
+			},
+			{
+				"id": "`+uuid.New().String()+`",
+				"loopGroup": "proposal-review",
+				"iteration": 1,
+				"reviewerType": "human",
+				"decision": "rejected",
+				"result": "Please avoid duplicating the CSV import epic",
+				"status": "completed",
+				"artifactRefs": "{}",
+				"nodeLabel": "roadmap_human_gate",
+				"timestamp": "2026-01-01T00:05:00Z"
+			}
+		]`)
+	})
+
+	reviews, err := client.GetReviewHistory(context.Background(), runID, "proposal-review")
+	require.NoError(t, err)
+	require.Len(t, reviews, 2)
+
+	// Entry 1: AI-authored, no human feedback yet — must decode nullable fields
+	// to "" without error, and must not be reordered relative to entry 2.
+	assert.Equal(t, "ai", reviews[0].ReviewerType)
+	assert.Empty(t, reviews[0].Result)
+	assert.Empty(t, reviews[0].Status)
+	assert.Empty(t, reviews[0].NodeLabel)
+
+	// Entry 2: human feedback — this is the seam that previously dropped the data.
+	assert.Equal(t, "human", reviews[1].ReviewerType)
+	assert.Equal(t, "Please avoid duplicating the CSV import epic", reviews[1].Result)
+	assert.Equal(t, "completed", reviews[1].Status)
+	assert.Equal(t, "roadmap_human_gate", reviews[1].NodeLabel)
+}
