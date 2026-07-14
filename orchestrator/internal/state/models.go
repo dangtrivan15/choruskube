@@ -71,6 +71,9 @@ type ReviewHistory struct {
 	Iteration     int
 	ReviewerType  string
 	Decision      string
+	Result        string
+	Status        string
+	NodeLabel     string
 	ArtifactRefs  string
 	Timestamp     time.Time
 }

@@ -1,8 +1,19 @@
 # agent-images/claude-code/Dockerfile
 FROM debian:bookworm-slim
 
+# Some networks restrict outbound traffic to 443, so apt has to reach the mirror
+# over HTTPS from its very first request. bookworm-slim ships no CA bundle (that is
+# what ca-certificates below installs), leaving nothing to verify the mirror against
+# on that first fetch, so seed a trust store here to break the cycle. Only this one
+# handshake depends on it: apt verifies package integrity via GPG signatures, and the
+# ca-certificates package then takes ownership of /etc/ssl/certs. Pinned to alpine's
+# multi-arch index digest so amd64 and arm64 builds resolve the same bundle.
+COPY --from=alpine:3@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b \
+    /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+
 # Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     git \

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -1076,6 +1077,71 @@ func TestExecuteAINodeFromSnapshot_ModelOmittedWhenEmpty(t *testing.T) {
 
 	_, hasModel := receivedConfigJSON["model"]
 	assert.False(t, hasModel, "config.json must omit model when not set on the snapshot")
+}
+
+// TestLoadReviewHistoryJSON_PreservesFeedbackText is the end-to-end regression test for
+// the bug where the reviewer's feedback never reached the Roadmap Analyzer's
+// {review_history} prompt variable. It exercises the full path from the API server's
+// HTTP response through GetReviewHistory's decode into the final JSON string handed to
+// the prompt resolver, covering both a combined live-chat+feedback entry and a
+// plain-approve entry with blank feedback.
+func TestLoadReviewHistoryJSON_PreservesFeedbackText(t *testing.T) {
+	runID := uuid.New()
+	combinedFeedback := "## Chat Transcript\nReviewer: what about CSV import?\n\n## Reviewer Feedback\nPlease avoid duplicating the CSV import epic"
+
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Contains(t, r.URL.Path, "/review-history")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, `[
+			{
+				"id": "%s",
+				"loopGroup": "proposal-review",
+				"iteration": 1,
+				"reviewerType": "human",
+				"decision": "rejected",
+				"result": %q,
+				"status": "completed",
+				"artifactRefs": "{}",
+				"nodeLabel": "roadmap_human_gate",
+				"timestamp": "2026-01-01T00:00:00Z"
+			},
+			{
+				"id": "%s",
+				"loopGroup": "proposal-review",
+				"iteration": 2,
+				"reviewerType": "human",
+				"decision": "approved",
+				"result": "",
+				"status": "completed",
+				"artifactRefs": "{}",
+				"nodeLabel": "roadmap_human_gate",
+				"timestamp": "2026-01-01T00:10:00Z"
+			}
+		]`, uuid.New().String(), combinedFeedback, uuid.New().String())
+	}))
+	defer apiServer.Close()
+
+	client := apiclient.NewClient(apiServer.URL)
+	acts := NewActivities(client, nil, nil, nil)
+
+	jsonStr, err := acts.LoadReviewHistoryJSON(context.Background(), LoadReviewHistoryJSONParams{
+		RunID:     runID,
+		LoopGroup: "proposal-review",
+	})
+	require.NoError(t, err)
+
+	// (a) the combined live-chat + feedback text must round-trip intact.
+	assert.Contains(t, jsonStr, "## Chat Transcript")
+	assert.Contains(t, jsonStr, "## Reviewer Feedback")
+	assert.Contains(t, jsonStr, "Please avoid duplicating the CSV import epic")
+
+	// (b) the blank-feedback entry must marshal as a clean empty string, not a bare
+	// null literal or an omitted key, and the whole blob must remain valid JSON.
+	var decoded []map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(jsonStr), &decoded))
+	require.Len(t, decoded, 2)
+	assert.Equal(t, "", decoded[1]["Result"])
+	assert.NotContains(t, jsonStr, `"Result":null`)
 }
 
 func testConfig() *config.Config {

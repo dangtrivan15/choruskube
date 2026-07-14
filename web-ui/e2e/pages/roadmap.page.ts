@@ -115,11 +115,17 @@ export class RoadmapPage {
   /**
    * Selects a SoftwareProject (a single git_repo or a repo_group) in the
    * Create Proposal dialog's grouped dropdown by visible name.
+   *
+   * Uses an exact match: option labels are `SoftwareProject.name` verbatim
+   * (see SoftwareProjectSelect.tsx), and a substring/regex match is
+   * ambiguous whenever one repo's full name is a prefix of another's (e.g.
+   * "acme/widget" vs. "acme/widget-api"), which throws a Playwright
+   * strict-mode violation.
    */
   async selectSoftwareProjectInCreateDialog(projectName: string) {
     await this.createSoftwareProjectSelect.click();
     await this.page
-      .getByRole("option", { name: new RegExp(projectName) })
+      .getByRole("option", { name: projectName, exact: true })
       .click();
   }
 
