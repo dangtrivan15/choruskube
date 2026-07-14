@@ -588,6 +588,94 @@ class V1TemplateSeederTest extends BaseTest {
     }
 
     @Test
+    void pushPrPromptEnforcesRepositoryVisibilityIsolation() {
+        // v26 regression guard. Before v26 the prompt ordered the agent to copy §8
+        // into every PR "do not filter by repo" and to cross-link every PR to every
+        // other one. In a run spanning repos of mixed visibility that mandates a
+        // leak: the public repo's PR ends up linking a non-public repo's PR and
+        // republishing its rollout steps. The agent was obeying its prompt, so the
+        // fix has to live in the prompt.
+        var template = templateRepo
+                .findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION)
+                .orElseThrow();
+        var nodes = templateNodeRepo.findByGraphTemplateId(template.getId());
+
+        var pushPrNode = nodes.stream()
+                .filter(n -> "push_create_pr".equals(n.getLabel()))
+                .findFirst()
+                .orElseThrow();
+        var prompt = nodeDefRepo
+                .findById(pushPrNode.getNodeDefinitionId())
+                .orElseThrow()
+                .getPromptTemplate();
+
+        assertThat(prompt)
+                .as("the agent cannot filter by visibility it never resolved")
+                .contains("gh repo view <owner/repo> --json visibility")
+                .as("visibility must be resolved before any PR text is written")
+                .contains("Resolve each repo's visibility FIRST")
+                // Asserted as two fragments: the prompt is a Java text block, so the
+                // sentence wraps and no single-line literal spans it.
+                .as("unknown visibility must fail safe to public, never to private")
+                .contains("Treat a repo as PUBLIC")
+                .contains("if the command fails or the answer is unclear (fail-safe)");
+
+        assertThat(prompt)
+                .as("the pre-v26 order that forced §8 into every PR must be gone")
+                .doesNotContain("do not filter by repo")
+                // The pre-v26 sentence wrapped across text-block lines, so assert on a
+                // fragment that lived on a single line — otherwise this passes vacuously.
+                .as("the pre-v26 order that cross-linked every PR to every other must be gone")
+                .doesNotContain("in the set must end up linking every other PR");
+
+        // §7 Caveats and the Open Decisions section derived from it are cross-repo
+        // content of exactly the same shape as §8 — a caveat can name a non-public
+        // repo just as easily as a rollout row can. Filtering §8 while leaving §7
+        // beside it unfiltered would reopen the hole at a different address.
+        assertThat(prompt)
+                .as("§7 Caveats must be visibility-filtered for a public repo, like §8")
+                .contains("§7 is cross-repo content, exactly like §8, so the same")
+                .as("a caveat that only exists because a non-public repo is involved must be dropped, not reworded")
+                .contains("hint that one exists")
+                .as("Open Decisions is derived from §7 and must inherit its filter")
+                .contains("it inherits §7's visibility");
+
+        assertThat(prompt)
+                .as("a public PR may only link other public PRs — a URL alone discloses a private repo")
+                .contains("list ONLY the other PRs whose repos are also")
+                .as("an empty companion section must be omitted, not narrated — a 'none'"
+                        + " note discloses that companions were withheld")
+                .contains("Do NOT write \"none\"")
+                .as("§8 must be scoped and generalized for a public repo, not copied verbatim")
+                .contains("include ONLY the operations that apply to");
+    }
+
+    @Test
+    void pushPrNodeIsNotTieredToACheaperModel() {
+        // Through v25 this node ran on Haiku, tiered down on the premise that it was
+        // mechanical. From v26 it must classify each repo's visibility and decide what
+        // to drop or generalize before writing a PR body — a judgment whose failure
+        // mode is publishing non-public detail irreversibly. If a future cost-tuning
+        // pass re-pins a cheaper model here, that tradeoff must be made deliberately,
+        // not by reflex — this test is what forces the conversation.
+        var template = templateRepo
+                .findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION)
+                .orElseThrow();
+        var nodes = templateNodeRepo.findByGraphTemplateId(template.getId());
+
+        var pushPrNode = nodes.stream()
+                .filter(n -> "push_create_pr".equals(n.getLabel()))
+                .findFirst()
+                .orElseThrow();
+        var pushPrDef = nodeDefRepo.findById(pushPrNode.getNodeDefinitionId()).orElseThrow();
+
+        assertThat(pushPrDef.getModel())
+                .as("Push & Create PR must run on the default model now that it makes"
+                        + " an irreversible visibility judgment")
+                .isNull();
+    }
+
+    @Test
     void implementPromptHasNoRoutingDecisionBlock() {
         // v24 inverts v23's regression guard: in v24, Implement has a single
         // unconditional outbound edge to Code Review, so the prompt must NOT

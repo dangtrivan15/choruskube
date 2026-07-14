@@ -35,7 +35,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
     // and executor changes here never retroactively mutate prior versions. To ship a
     // change, edit the constants in this file (prompt, executor, schema), increment
     // CURRENT_VERSION, and the next boot creates the new snapshot.
-    static final int CURRENT_VERSION = 25;
+    static final int CURRENT_VERSION = 26;
 
     private static final String TEMPLATE_NAME = "Feature Development";
 
@@ -613,10 +613,10 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
               push speculative commits. In `/workspace/out/review.md` write a
               structured "Uncertain flaw" section: describe the flaw, the
               candidate fixes you considered, and why none of them is clearly
-              correct. One more valid case of this decision is when the test is valid 
-              but the testing environment isn't leading to consistent test failure, 
+              correct. One more valid case of this decision is when the test is valid
+              but the testing environment isn't leading to consistent test failure,
               and there is no clean way to fix the test without environmental workaround.
-              This decision will be escalated straight to Human without passing the Test Node, 
+              This decision will be escalated straight to Human without passing the Test Node,
               so be extra careful when making this decision.
 
             ## Reasoning requirement
@@ -649,9 +649,9 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
     private static final String PUSH_PR_PROMPT = """
             You are creating pull requests for a completed multi-repository feature
             implementation. Create ONE pull request per affected repository, with
-            bidirectional companion-PR cross-links and explicit surfacing of (a)
-            manual operations the reviewer must perform and (b) caveats the spec
-            intentionally did not handle.
+            companion-PR cross-links (subject to the repository-visibility rules
+            below) and explicit surfacing of (a) manual operations the reviewer
+            must perform and (b) caveats the spec intentionally did not handle.
 
             Specification:
             {input.draft_spec_and_plan.result}
@@ -671,6 +671,18 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
 
             ## Steps
 
+            0. **Resolve each repo's visibility FIRST**, before writing any PR text.
+               For each repo in config.json, run
+               `gh repo view <owner/repo> --json visibility`. Treat a repo as PUBLIC
+               if the command fails or the answer is unclear (fail-safe). Carry this
+               classification through every step below — it governs what may appear
+               in each PR body. See "Repository Isolation" in your system prompt for
+               the full rule; it overrides any instruction here that conflicts with it.
+
+               A PUBLIC repo's PR must not name, link to, or otherwise reveal the
+               existence of any non-public repo in this run, and must not carry that
+               repo's infrastructure detail. Scope and generalize its content instead.
+
             1. **Per repo, push and open a PR**. For each repo with a committed working
                branch, in /workspace/repo/<name>/:
                - Ensure all changes are committed and the branch is pushed to origin.
@@ -679,18 +691,29 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                - PR body, in this exact order:
 
                  **a. Summary** — per-repo implementation summary scoped to this
-                 repo (from {input.implement.result}).
+                 repo (from {input.implement.result}). For a PUBLIC repo, describe
+                 only this repo's change and justify it on grounds that hold within
+                 this repo alone; do not explain it by reference to another repo.
 
                  **b. Code Review Findings** — relevant excerpt from
-                 {input.code_review.result}.
+                 {input.code_review.result}, scoped to this repo. Never paste the
+                 review verbatim into a PUBLIC repo's PR: review notes routinely
+                 discuss every repo in the run. Summarize only the findings that
+                 concern this repo, and generalize any cross-repo reasoning.
 
-                 **c. ⚠️ Manual Operations Required** — copy section §8 of the
+                 **c. ⚠️ Manual Operations Required** — from section §8 of the
                  specification (the Local/Production table AND the "Notes for
-                 production rollout" block) verbatim into the PR body under a
-                 top-level `## ⚠️ Manual Operations Required` heading. This is
-                 cross-repo content — include the SAME block in every per-repo PR;
-                 do not filter by repo. If §8 is empty or absent, write
-                 `_No manual operations required for this change._` instead.
+                 production rollout" block), under a top-level
+                 `## ⚠️ Manual Operations Required` heading.
+                   - For a NON-PUBLIC repo: copy §8 verbatim. It is cross-repo
+                     content — every non-public repo's PR gets the same full block.
+                   - For a PUBLIC repo: include ONLY the operations that apply to
+                     this repo, rewritten to remove other-repo names, internal
+                     hosts, cluster/namespace detail, and internal paths. Drop rows
+                     that describe work in a non-public repo entirely — do not
+                     replace them with a placeholder row that implies one exists.
+                   - If §8 is empty, absent, or nothing survives the filter, write
+                     `_No manual operations required for this change._` instead.
 
                  **d. Caveats & Known Limitations** — under a top-level
                  `## Caveats & Known Limitations` heading, list each Caveat from
@@ -705,7 +728,15 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                      blockquote with a one-line summary. Do not invent
                      resolutions; only include this when the review notes
                      clearly speak to the caveat.
-                 If §7 is empty, omit this section entirely.
+                 §7 is cross-repo content, exactly like §8, so the same
+                 visibility rule applies. For a NON-PUBLIC repo: list every
+                 Caveat. For a PUBLIC repo: list only the Caveats that concern
+                 this repo, generalized to remove other-repo names and
+                 infrastructure detail; DROP any Caveat that exists only because
+                 a non-public repo is involved, rather than rewording it into a
+                 hint that one exists.
+                 If §7 is empty, or nothing survives the filter, omit this
+                 section entirely.
 
                  **e. ❓ Open Decisions for Reviewer** — ONLY include this section
                  IF, after applying any review-note resolutions, there is at
@@ -717,12 +748,20 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                    - List the options the spec laid out (if any).
                    - Make clear that merging the PR implies accepting the
                      default behavior described in the Caveat's Reasoning.
+                 This section is derived from §7, so it inherits §7's visibility
+                 filter: a decision that was dropped or generalized for a PUBLIC
+                 repo above must be dropped or generalized here too. Never
+                 restate an open question that only makes sense if the reader
+                 knows a non-public repo exists.
                  If all "Needs human decision" caveats were resolved during
                  review, omit this section entirely. Its presence is a signal
                  that the merging reviewer must make a call before merging.
 
                  **f. Companion PRs placeholder** — a single line:
                  `_Companion PRs: (linked after all PRs are created)_`.
+                 OMIT this placeholder entirely if this repo will have no linkable
+                 companions under the step-3 rules (e.g. a PUBLIC repo in a run
+                 whose other repos are all non-public).
 
                - Record the PR URL and PR number.
 
@@ -735,13 +774,22 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
 
                Use the `id` from config.json's repos[] as `<gitRepoId>`.
 
-            3. **Cross-link all PRs bidirectionally**. After all PRs are created,
+            3. **Cross-link PRs, honoring visibility**. After all PRs are created,
                for each PR edit its body (via `gh pr edit <url> --body <new_body>`)
                to replace the Companion PRs placeholder with a `## Companion PRs`
-               section listing every OTHER PR's URL and one-line summary. Every PR
-               in the set must end up linking every other PR. PRESERVE the
-               ⚠️ Manual Operations Required, Caveats & Known Limitations, and
-               ❓ Open Decisions for Reviewer sections during this edit.
+               section. Which PRs may be listed depends on the visibility of the
+               repo whose body you are editing:
+                 - NON-PUBLIC repo's PR: list every OTHER PR in the set.
+                 - PUBLIC repo's PR: list ONLY the other PRs whose repos are also
+                   PUBLIC. Never link or name a non-public repo's PR from a public
+                   repo — the URL alone discloses that repo's existence.
+               If no companions remain listable for a public repo, omit the
+               `## Companion PRs` section entirely. Do NOT write "none", "not
+               applicable", or any note explaining why it is empty — such a note
+               discloses exactly what the rule exists to withhold.
+               PRESERVE the ⚠️ Manual Operations Required, Caveats & Known
+               Limitations, and ❓ Open Decisions for Reviewer sections during
+               this edit.
 
             4. **Save artifacts**:
                - /workspace/out/pr_urls.txt — one URL per line, in repo order.
@@ -844,9 +892,11 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
         NodeDefinition pushCreatePr = createNodeDef("Push & Create PR", ExecutorType.ai, PUSH_PR_PROMPT, 1800);
         pushCreatePr.setOutputSpec(
                 "{\"files\":[{\"name\":\"pr_summary.md\",\"required\":false,\"description\":\"PR creation confirmation and link\"}]}");
-        // Push & Create PR is mechanical (stitch caveats, push commits, open PR) — no
-        // multi-step reasoning. Tier down to Haiku to save cost without quality loss.
-        pushCreatePr.setModel("claude-haiku-4-5-20251001");
+        // Runs on the default model, NOT a cheaper tier. This node was tiered down to
+        // Haiku through v25 on the premise that it is mechanical (stitch caveats, push
+        // commits, open PR). That premise no longer holds: from v26 it must classify
+        // each repo's visibility and decide what to drop or generalize before writing a
+        // PR body, and a misjudgment publishes non-public detail irreversibly.
         nodeDefRepo.save(pushCreatePr);
         defs.put("Push & Create PR", pushCreatePr);
 
