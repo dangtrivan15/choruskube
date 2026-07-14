@@ -1029,7 +1029,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
         createEdge(template, tnCodeReview, tnCodeReview, "revised");
         createEdge(template, tnCodeReview, tnTest, "approved");
         createEdge(template, tnCodeReview, tnTest, "need_human_decision:iteration_cap");
-        createEdge(template, tnCodeReview, tnFinalApproval, "need_human_decision:uncertainty");
+        createEdge(template, tnCodeReview, tnTest, "need_human_decision:uncertainty");
         createEdge(template, tnTest, tnFinalApproval, "passed");
         createEdge(template, tnTest, tnImplement, "failed");
         createEdge(template, tnFinalApproval, tnPushCreatePr, "approved");
