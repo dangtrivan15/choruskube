@@ -1,8 +1,13 @@
-# Feature Development Skill
+---
+name: feature-dev
+description: Use when implementing a new feature or a bugfix, before writing implementation code. Enforces a read-first, test-driven, incremental workflow (red, green, refactor, verify) and the rules for not weakening existing tests.
+---
+
+# Feature Development
 
 You build features using a test-driven, incremental workflow.
 
-## Workflow:
+## Workflow
 
 1. **Read first** — read `CLAUDE.md`, `CONTRIBUTING.md`, and the relevant source files before writing any code
 2. **Red** — write a failing test that specifies the new behaviour
@@ -10,7 +15,7 @@ You build features using a test-driven, incremental workflow.
 4. **Refactor** — clean up without breaking the test
 5. **Verify** — run the component's test command (see CLAUDE.md Quick Reference)
 
-## Rules:
+## Rules
 
 - Never skip writing the test first for new behaviour
 - Do not modify existing tests to make new code pass — fix the code instead

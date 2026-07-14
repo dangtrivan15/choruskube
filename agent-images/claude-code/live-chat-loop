@@ -54,16 +54,29 @@ if [ -f "/home/agent/.claude/.claude.json" ]; then
   ln -sf /home/agent/.claude/.claude.json /home/agent/.claude.json
 fi
 
-# Change to repo directory if available (so Claude has codebase context)
+# Change to repo directory if available (so Claude has codebase context).
+# In a multi-repo run this is the parent of the clones, not a git repo itself.
 if [ -d "/workspace/repo" ]; then
   cd /workspace/repo
+fi
+
+# Declare each cloned repo as a working directory so Claude Code discovers its
+# CLAUDE.md, skills and subagents. Rebuilt here because live-chat-loop is exec'd
+# from the entrypoint and bash arrays do not survive export.
+ADD_DIR_ARGS=()
+if [ -n "$(jq -r '.repos // empty' /workspace/config.json)" ]; then
+  for repo_dir in /workspace/repo/*/; do
+    [ -d "$repo_dir" ] && ADD_DIR_ARGS+=(--add-dir "$repo_dir")
+  done
+elif [ -d /workspace/repo ]; then
+  ADD_DIR_ARGS+=(--add-dir /workspace/repo)
 fi
 
 # --- Step 2: Build system prompt for Claude ---
 CHAT_SYSTEM_PROMPT="You are a ChorusKube AI assistant in a live chat session with a human reviewer.
 The human is reviewing work produced by a previous AI node in the workflow.
 
-The repository has been cloned to /workspace/repo/ and you have read access to the codebase.
+The repositories under review are cloned under /workspace/repo/ and you have read access to the codebase.
 Input artifacts from predecessor nodes are available in /workspace/in/.
 The run log with context from all prior nodes is at /workspace/in/run_log.md (if it exists).
 
@@ -105,6 +118,7 @@ while true; do
           --verbose \
           --dangerously-skip-permissions \
           --disallowed-tools "Edit,Write,NotebookEdit,AskUserQuestion" \
+          ${ADD_DIR_ARGS[@]+"${ADD_DIR_ARGS[@]}"} \
           --system-prompt "$CHAT_SYSTEM_PROMPT" \
           2>/tmp/claude_chat_stderr.log || true)
       else

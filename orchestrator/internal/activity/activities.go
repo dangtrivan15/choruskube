@@ -26,9 +26,9 @@ import (
 // at the framework level to keep the activity "open" in Temporal.
 
 type Activities struct {
-	client      *apiclient.Client
-	resolver    *prompt.Resolver
-	config      *config.Config
+	client            *apiclient.Client
+	resolver          *prompt.Resolver
+	config            *config.Config
 	objectStoreClient objectstore.ObjectStore
 }
 
@@ -173,7 +173,6 @@ type ExecuteAINodeFromSnapshotParams struct {
 	NeedDecision    bool                     // true if node has conditional edges and is AI type
 	OutputSpec      string                   // JSON string describing required output files; "" or "{}" = no enforcement
 	Repos           []map[string]interface{} `json:"repos,omitempty"`
-	TargetRepo      string                   `json:"target_repo,omitempty"`
 	Model           string                   `json:"model,omitempty"` // optional override; empty = agent default
 }
 
@@ -265,9 +264,6 @@ func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params Execu
 	}
 	if len(params.Repos) > 0 {
 		configJSON["repos"] = params.Repos
-		if params.TargetRepo != "" {
-			configJSON["target_repo"] = params.TargetRepo
-		}
 	} else if tc, ok := vars["run.test_command"]; ok && tc != "" {
 		// Single-repo runs don't populate repos[]; expose the run-level test_command at the
 		// top level so run-all-tests can find it (the agent's repo content lives directly at

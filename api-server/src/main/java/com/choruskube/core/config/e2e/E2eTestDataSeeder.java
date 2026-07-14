@@ -257,7 +257,7 @@ public class E2eTestDataSeeder implements ApplicationRunner {
                 false,
                 "{\"command\": \""
                         + mockScriptPath
-                        + " success --artifact impl-repo1-done\", \"target_repo\": \"mock-repo\", \"needs_branch\": \"true\"}");
+                        + " success --artifact impl-repo1-done\", \"needs_branch\": \"true\"}");
         TemplateNode implRepo2 = createNode(
                 t,
                 mockSuccess,
@@ -265,7 +265,7 @@ public class E2eTestDataSeeder implements ApplicationRunner {
                 false,
                 "{\"command\": \""
                         + mockScriptPath
-                        + " success --artifact impl-repo2-done\", \"target_repo\": \"mock-frontend\", \"needs_branch\": \"true\"}");
+                        + " success --artifact impl-repo2-done\", \"needs_branch\": \"true\"}");
         TemplateNode codeReview = createNode(
                 t,
                 mockGate,
