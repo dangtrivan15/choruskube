@@ -36,6 +36,21 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: web-ui/package-lock.json
+
+      # Key the browser cache on the resolved Playwright version so a version bump
+      # busts it, but an unrelated dependency change does not.
+      - name: Resolve Playwright version
+        id: playwright
+        working-directory: web-ui
+        run: echo "version=$(node -p "require('./package-lock.json').packages['node_modules/playwright'].version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ steps.playwright.outputs.version }}
 
       # The e2e stack is driven by `docker compose`. The self-hosted runners provide it, so
       # this only installs as a fallback when it is missing (idempotent — skips when present).

@@ -39,6 +39,9 @@ jobs:
         with:
           distribution: temurin
           java-version: 25
+          # Persist the Gradle dependency cache and wrapper across runs. Without
+          # this the api-server job re-downloads every dependency each run.
+          cache: gradle
 
       # Tests use TestContainers (PostgreSQL) — the runner must provide a Docker daemon.
       - name: Formatting (Palantir via Spotless)
