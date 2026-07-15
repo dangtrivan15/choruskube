@@ -35,15 +35,18 @@ for fast iteration:
 
 ## End-to-end tests
 
-`./scripts/e2e.sh` is the full regression harness. It boots an auth-free Docker
+`./scripts/e2e.sh` is the full regression harness. It first runs the per-component
+unit suites (`api-server` `./gradlew test`, `orchestrator` `go test ./...`, `web-ui`
+`npm run test`) so a unit regression fails fast, then boots an auth-free Docker
 stack on `2xxxx` ports (web UI on 23000, API on 28080) — separate from the local
 development stack on `3xxxx` ports so the two can coexist — runs API smoke checks,
 loads WireMock stubs, seeds test data, then drives the Playwright suite end-to-end
 through Temporal, the orchestrator, object storage, and an agent pod. Requires
-Docker (same requirement as the dev stack).
+Docker (same requirement as the dev stack), plus Java 25 + Go 1.25 + Node 22 on the
+host for the unit step.
 
 ```bash
-./scripts/e2e.sh                # full run: up → smoke → Playwright → tear down
+./scripts/e2e.sh                # full run: unit → up → smoke → Playwright → tear down
 ./scripts/e2e.sh --no-teardown  # leave the stack up (useful for debugging failures)
 ```
 
@@ -54,10 +57,12 @@ Playwright specs against it:
 cd web-ui && npm run test:e2e
 ```
 
-This is distinct from the per-component unit tests (fast iteration) and from
+`e2e.sh` now supersets the per-component unit tests (which remain the fast-iteration
+path — run them directly while developing). It is also distinct from
 `scripts/oss-smoke.sh` (boots from published images, exercises one feature-dev run
 end-to-end). Use `e2e.sh` to validate changes that cross a component boundary
-before declaring them complete.
+before declaring them complete. In CI, the `E2E` workflow (`.github/workflows/e2e.yml`)
+runs this whole harness — unit suites included — on every PR and push to `main`.
 
 To tear down the e2e stack manually:
 
