@@ -39,6 +39,16 @@ jobs:
           cache: npm
           cache-dependency-path: web-ui/package-lock.json
 
+      - name: Apply dependency proxy (no-op when unset)
+        run: |
+          if [ -n "${DEP_PROXY_BASE:-}" ]; then echo "::add-mask::$DEP_PROXY_BASE"; fi
+          # Gradle reads init scripts from GRADLE_USER_HOME/init.d; default it for CI.
+          export GRADLE_USER_HOME="${GRADLE_USER_HOME:-$HOME/.gradle}"
+          source scripts/lib/dep-proxy.sh
+          apply_dep_proxy "$GRADLE_USER_HOME"
+          # Propagate the exported vars to later steps.
+          { echo "GOPROXY=${GOPROXY:-}"; echo "GOSUMDB=${GOSUMDB:-}"; echo "npm_config_registry=${npm_config_registry:-}"; echo "GRADLE_USER_HOME=$GRADLE_USER_HOME"; } >> "$GITHUB_ENV"
+
       # Key the browser cache on the resolved Playwright version so a version bump
       # busts it, but an unrelated dependency change does not.
       - name: Resolve Playwright version
@@ -89,9 +99,9 @@ jobs:
             echo "::add-mask::$BUILD_CACHE_REGISTRY"
             echo "BUILD_CACHE_REGISTRY=$BUILD_CACHE_REGISTRY" >> "$GITHUB_ENV"
           fi
-          if [ -n "${REGISTRY_MIRROR:-}" ]; then
-            echo "::add-mask::$REGISTRY_MIRROR"
-            echo "REGISTRY_MIRROR=$REGISTRY_MIRROR" >> "$GITHUB_ENV"
+          if [ -n "${REGISTRY_MIRROR_HOST:-}" ]; then
+            echo "::add-mask::$REGISTRY_MIRROR_HOST"
+            echo "REGISTRY_MIRROR_HOST=$REGISTRY_MIRROR_HOST" >> "$GITHUB_ENV"
           fi
 
       - name: Set up Docker Buildx
@@ -100,8 +110,8 @@ jobs:
         with:
           buildkitd-config-inline: |
             [registry."docker.io"]
-              mirrors = ["${{ env.REGISTRY_MIRROR }}"]
-            [registry."${{ env.REGISTRY_MIRROR }}"]
+              mirrors = ["${{ env.REGISTRY_MIRROR_HOST }}"]
+            [registry."${{ env.REGISTRY_MIRROR_HOST }}"]
               http = true
             [registry."${{ env.BUILD_CACHE_REGISTRY }}"]
               http = true
