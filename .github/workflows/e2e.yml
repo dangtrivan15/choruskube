@@ -103,18 +103,28 @@ jobs:
             echo "::add-mask::$REGISTRY_MIRROR_HOST"
             echo "REGISTRY_MIRROR_HOST=$REGISTRY_MIRROR_HOST" >> "$GITHUB_ENV"
           fi
+          # Generate the container-builder config. The docker.io pull-through mirror block
+          # is emitted ONLY when REGISTRY_MIRROR_HOST is set — an empty mirror host would
+          # yield `mirrors = [""]` and break base-image pulls. BUILD_CACHE_REGISTRY trust is
+          # always emitted (the builder below is only created when it is present).
+          if [ -n "${BUILD_CACHE_REGISTRY:-}" ]; then
+            {
+              if [ -n "${REGISTRY_MIRROR_HOST:-}" ]; then
+                echo '[registry."docker.io"]'
+                echo "  mirrors = [\"${REGISTRY_MIRROR_HOST}\"]"
+                echo "[registry.\"${REGISTRY_MIRROR_HOST}\"]"
+                echo '  http = true'
+              fi
+              echo "[registry.\"${BUILD_CACHE_REGISTRY}\"]"
+              echo '  http = true'
+            } > /tmp/buildkitd.toml
+          fi
 
       - name: Set up Docker Buildx
         if: env.BUILD_CACHE_REGISTRY != ''
         uses: docker/setup-buildx-action@v3
         with:
-          buildkitd-config-inline: |
-            [registry."docker.io"]
-              mirrors = ["${{ env.REGISTRY_MIRROR_HOST }}"]
-            [registry."${{ env.REGISTRY_MIRROR_HOST }}"]
-              http = true
-            [registry."${{ env.BUILD_CACHE_REGISTRY }}"]
-              http = true
+          buildkitd-config: /tmp/buildkitd.toml
 
       # e2e.sh: build agent images → app images → compose up → smoke → seed-verify →
       # playwright. --no-teardown leaves the stack up so the steps below can collect
