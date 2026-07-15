@@ -103,14 +103,6 @@ EOF
   fi
 fi
 
-# Dependency proxy: when DEP_PROXY_BASE is injected, route Gradle (init.d)/Go/npm
-# through it. GOPROXY/GOSUMDB/npm_config_registry are already injected as env; this
-# writes the Gradle init script the env vars can't express.
-if [ -n "${DEP_PROXY_BASE:-}" ] && [ -f /workspace/repo/scripts/lib/dep-proxy.sh ]; then
-  source /workspace/repo/scripts/lib/dep-proxy.sh
-  apply_dep_proxy "${GRADLE_USER_HOME:-$HOME/.gradle}"
-fi
-
 # Claude credentials are delivered via the CLAUDE_CODE_OAUTH_TOKEN env var (long-lived
 # OAuth token from `claude setup-token`). The Claude CLI reads it natively as a bearer
 # token — no credentials file to symlink, no hostpath to mount. For script-executor
@@ -247,6 +239,24 @@ elif [ -n "$REPO_URL" ]; then
   echo "Repo ready at /workspace/repo/"
 fi
 export SYSTEM_PROMPT
+
+# --- Dependency proxy (Gradle init script) ---
+# When DEP_PROXY_BASE is injected, write the Gradle init script that routes Maven
+# resolution through the in-cluster proxy. Runs AFTER the clone so the repo-shipped
+# helper exists. GOPROXY/GOSUMDB/npm_config_registry are already injected as env by
+# the executor; only the Gradle init script needs the helper. The helper ships at
+# /workspace/repo/scripts/lib/dep-proxy.sh (single-repo) or a child dir (multi-repo);
+# source the first match. No-op when DEP_PROXY_BASE is unset or no repo ships the
+# helper — graceful degradation.
+if [ -n "${DEP_PROXY_BASE:-}" ]; then
+  for _dp in /workspace/repo/scripts/lib/dep-proxy.sh /workspace/repo/*/scripts/lib/dep-proxy.sh; do
+    if [ -f "$_dp" ]; then
+      source "$_dp"
+      apply_dep_proxy "${GRADLE_USER_HOME:-$HOME/.gradle}"
+      break
+    fi
+  done
+fi
 
 # --- Step 3b: Declare the workspace roots to Claude Code ---
 # Claude Code discovers CLAUDE.md, .claude/skills/ and .claude/agents/ from its
