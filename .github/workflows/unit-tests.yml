@@ -35,10 +35,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # setup-java's default `distribution: temurin` resolves the JDK version by calling
+      # api.adoptium.net, whose TLS handshake is slow and high-variance from our CI egress
+      # (seconds per attempt) and intermittently exceeds the action's timeout. The JDK
+      # *binaries* live on the GitHub release and download fast, so fetch the pinned
+      # Temurin 25 tarball ourselves and install it via `distribution: jdkfile`, which
+      # never touches api.adoptium.net. Pinned by release tag + SHA256 for reproducibility.
+      #
+      # Cache the tarball across runs, keyed on the pinned version, so it is fetched once.
+      # The GitHub-hosted Actions cache manages its own eviction, so there is nothing to
+      # clean up and no shared cluster state.
+      - name: Cache Temurin 25 tarball
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/temurin25.tar.gz
+          key: temurin-jdk-25.0.3+9-x64-linux
+
+      - name: Fetch and verify Temurin 25
+        run: |
+          url="https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.3%2B9/OpenJDK25U-jdk_x64_linux_hotspot_25.0.3_9.tar.gz"
+          if [ ! -f "$RUNNER_TEMP/temurin25.tar.gz" ]; then
+            curl -fSL --retry 5 --retry-delay 3 -o "$RUNNER_TEMP/temurin25.tar.gz" "$url"
+          fi
+          echo "69264a7a211bf5029830d07bc3370f879769d62ebc5b5488e90c9343a2da0e1f  $RUNNER_TEMP/temurin25.tar.gz" | sha256sum -c -
+
       - uses: actions/setup-java@v4
         with:
-          distribution: temurin
-          java-version: 25
+          distribution: jdkfile
+          jdkFile: ${{ runner.temp }}/temurin25.tar.gz
+          java-version: 25.0.3
+          architecture: x64
           # Persist the Gradle dependency cache and wrapper across runs. Without
           # this the api-server job re-downloads every dependency each run.
           cache: gradle
