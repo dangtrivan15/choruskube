@@ -58,7 +58,7 @@ fi
 # inherit dockerd's daemon.json mirrors, so we replicate the docker.io
 # pull-through mirror here too — otherwise build-time base-image pulls bypass
 # the mirror and risk Docker Hub rate limiting.
-if [ -n "${BUILDKIT_CACHE_REGISTRY:-}" ] && [ -n "${DOCKER_HOST:-}" ]; then
+if [ -n "${BUILD_CACHE_REGISTRY:-}" ] && [ -n "${DOCKER_HOST:-}" ]; then
   # The executor injects the upstream Docker registry mirror host as
   # REGISTRY_MIRROR_HOST. When set, trust it over plain HTTP and use it as the
   # docker.io pull-through mirror so base-image pulls go through the mirror
@@ -69,7 +69,7 @@ if [ -n "${BUILDKIT_CACHE_REGISTRY:-}" ] && [ -n "${DOCKER_HOST:-}" ]; then
   cat > /tmp/buildkitd.toml <<EOF
 debug = false
 
-[registry."${BUILDKIT_CACHE_REGISTRY}"]
+[registry."${BUILD_CACHE_REGISTRY}"]
   http = true
 EOF
 
@@ -95,12 +95,20 @@ EOF
       --name choruskube-builder \
       --driver docker-container \
       --buildkitd-config /tmp/buildkitd.toml >/dev/null 2>&1; then
-    echo "BuildKit builder ready: choruskube-builder (HTTP trust: ${BUILDKIT_CACHE_REGISTRY}${MIRROR_HOST:+, ${MIRROR_HOST}})"
+    echo "BuildKit builder ready: choruskube-builder (HTTP trust: ${BUILD_CACHE_REGISTRY}${MIRROR_HOST:+, ${MIRROR_HOST}})"
   else
     # Don't fail the agent — e2e-up.sh's bake invocation has a no-cache
     # fallback that still produces a working build, just slower.
     echo "WARNING: docker-container builder bootstrap failed; falling back to embedded BuildKit (cache registry will not work)"
   fi
+fi
+
+# Dependency proxy: when DEP_PROXY_BASE is injected, route Gradle (init.d)/Go/npm
+# through it. GOPROXY/GOSUMDB/npm_config_registry are already injected as env; this
+# writes the Gradle init script the env vars can't express.
+if [ -n "${DEP_PROXY_BASE:-}" ] && [ -f /workspace/repo/scripts/lib/dep-proxy.sh ]; then
+  source /workspace/repo/scripts/lib/dep-proxy.sh
+  apply_dep_proxy "${GRADLE_USER_HOME:-$HOME/.gradle}"
 fi
 
 # Claude credentials are delivered via the CLAUDE_CODE_OAUTH_TOKEN env var (long-lived
