@@ -16,9 +16,13 @@ CACHE_REGISTRY="${BUILD_CACHE_REGISTRY:-}"
 build_image() {
   local cache_name="$1" tag="$2" context="$3" dockerfile="$4"
   if [ -n "$CACHE_REGISTRY" ]; then
-    docker buildx build \
-      --cache-from "type=registry,ref=${CACHE_REGISTRY}/${cache_name}:buildcache" \
-      --load -t "$tag" -f "$dockerfile" "$context"
+    local args=(--cache-from "type=registry,ref=${CACHE_REGISTRY}/${cache_name}:buildcache")
+    # BUILD_CACHE_PUSH=1 (dogfood pod): also write the cache back so the next run is warm.
+    # Requires a docker-container builder (the agent entrypoint creates 'choruskube-builder').
+    if [ "${BUILD_CACHE_PUSH:-0}" = "1" ]; then
+      args+=(--cache-to "type=registry,ref=${CACHE_REGISTRY}/${cache_name}:buildcache,mode=max")
+    fi
+    docker buildx build "${args[@]}" --load -t "$tag" -f "$dockerfile" "$context"
   else
     docker build -t "$tag" -f "$dockerfile" "$context"
   fi
