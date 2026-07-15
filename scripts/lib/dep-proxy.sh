@@ -18,16 +18,16 @@ apply_dep_proxy() {
 def mirror = "${base}/repository/maven-central/"
 settingsEvaluated { settings ->
     settings.pluginManagement.repositories {
-        maven { url mirror }
+        maven { url mirror; allowInsecureProtocol = true }
         gradlePluginPortal()
     }
     settings.dependencyResolutionManagement.repositories {
-        maven { url mirror }
+        maven { url mirror; allowInsecureProtocol = true }
     }
 }
 allprojects {
-    buildscript.repositories { maven { url mirror } }
-    repositories { maven { url mirror } }
+    buildscript.repositories { maven { url mirror; allowInsecureProtocol = true } }
+    repositories { maven { url mirror; allowInsecureProtocol = true } }
 }
 EOF
 }

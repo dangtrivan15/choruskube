@@ -19,5 +19,7 @@ fail() { echo "FAIL: $1" >&2; exit 1; }
   [ "${GOSUMDB:-}" = "off" ] || fail "GOSUMDB not off"
   [ "${npm_config_registry:-}" = "http://proxy.example:8081/repository/npm-proxy/" ] || fail "npm registry wrong"
   grep -q "http://proxy.example:8081/repository/maven-central/" "$tmp/init.d/dep-proxy.init.gradle" || fail "gradle mirror missing"
+  # The proxy is plain HTTP; Gradle rejects insecure Maven repos without this opt-in.
+  grep -q "allowInsecureProtocol = true" "$tmp/init.d/dep-proxy.init.gradle" || fail "allowInsecureProtocol missing (Gradle rejects http repos)"
 )
 echo "PASS"
