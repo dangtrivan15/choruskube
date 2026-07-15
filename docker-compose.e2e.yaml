@@ -137,6 +137,9 @@ services:
   # --- Application Services ---
 
   api-server:
+    # Named so CI can pre-build this image (with a registry layer cache) and have
+    # `compose up` consume it without rebuilding. Local `up --build` tags the same name.
+    image: choruskube-e2e-api-server:local
     build:
       context: ./api-server
       dockerfile: Dockerfile
@@ -219,6 +222,7 @@ services:
       start_period: 30s
 
   orchestrator:
+    image: choruskube-e2e-orchestrator:local
     build:
       context: ./orchestrator
       dockerfile: Dockerfile
@@ -252,6 +256,7 @@ services:
       start_period: 10s
 
   web-ui:
+    image: choruskube-e2e-web-ui:local
     build:
       context: ./web-ui
       dockerfile: Dockerfile

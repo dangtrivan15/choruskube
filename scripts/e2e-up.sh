@@ -3,14 +3,53 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
+# Optional build-layer cache. When BUILD_CACHE_REGISTRY is set (a CI runner supplies
+# it), each image imports its layer cache from ${BUILD_CACHE_REGISTRY}/<name>:buildcache
+# so unchanged build steps (dependency downloads, compiles) are reused across runs.
+# Import only — the cache is produced by the image-publishing pipeline; e2e never writes
+# it. Unset (local dev, forks) => plain `docker build` + `compose up --build`, unchanged.
+CACHE_REGISTRY="${BUILD_CACHE_REGISTRY:-}"
+
+# build_image <cache-name> <local-tag> <context> <dockerfile>
+# cache-name is the published image name whose :buildcache to import; local-tag is what
+# the resulting image is loaded as.
+build_image() {
+  local cache_name="$1" tag="$2" context="$3" dockerfile="$4"
+  if [ -n "$CACHE_REGISTRY" ]; then
+    docker buildx build \
+      --cache-from "type=registry,ref=${CACHE_REGISTRY}/${cache_name}:buildcache" \
+      --load -t "$tag" -f "$dockerfile" "$context"
+  else
+    docker build -t "$tag" -f "$dockerfile" "$context"
+  fi
+}
+
 echo "--- Building agent images (claude-code:latest → claude-code:e2e) ---"
-docker build -t claude-code:latest "${REPO_ROOT}/agent-images/claude-code"
+build_image claude-code claude-code:latest \
+  "${REPO_ROOT}/agent-images/claude-code" "${REPO_ROOT}/agent-images/claude-code/Dockerfile"
+# The e2e derivative just layers the mock-agent onto claude-code:latest; it has no
+# published :buildcache of its own, so it always builds locally (cheap).
 docker build --build-arg BASE_AGENT_IMAGE=claude-code:latest \
   -f "${REPO_ROOT}/agent-images/claude-code-e2e/Dockerfile" \
   -t claude-code:e2e "${REPO_ROOT}/agent-images/claude-code"
 
-echo "--- Starting stack ---"
-compose_e2e up -d --build
+if [ -n "$CACHE_REGISTRY" ]; then
+  # Pre-build the app images with the registry layer cache, tagged as the compose
+  # services expect, so `compose up` (no --build) consumes them.
+  echo "--- Pre-building app images with registry layer cache ---"
+  build_image api-server   choruskube-e2e-api-server:local \
+    "${REPO_ROOT}/api-server"   "${REPO_ROOT}/api-server/Dockerfile"
+  build_image orchestrator choruskube-e2e-orchestrator:local \
+    "${REPO_ROOT}/orchestrator" "${REPO_ROOT}/orchestrator/Dockerfile"
+  build_image web-ui       choruskube-e2e-web-ui:local \
+    "${REPO_ROOT}/web-ui"       "${REPO_ROOT}/web-ui/Dockerfile"
+
+  echo "--- Starting stack ---"
+  compose_e2e up -d
+else
+  echo "--- Starting stack (building images) ---"
+  compose_e2e up -d --build
+fi
 
 echo "--- Waiting for api-server health ---"
 if ! wait_for_health http://localhost:28080/actuator/health; then
