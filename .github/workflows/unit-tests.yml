@@ -69,6 +69,16 @@ jobs:
           # this the api-server job re-downloads every dependency each run.
           cache: gradle
 
+      - name: Apply dependency proxy (no-op when unset)
+        run: |
+          if [ -n "${DEP_PROXY_BASE:-}" ]; then echo "::add-mask::$DEP_PROXY_BASE"; fi
+          # Gradle reads init scripts from GRADLE_USER_HOME/init.d; default it for CI.
+          export GRADLE_USER_HOME="${GRADLE_USER_HOME:-$HOME/.gradle}"
+          source scripts/lib/dep-proxy.sh
+          apply_dep_proxy "$GRADLE_USER_HOME"
+          # Propagate the exported vars to later steps.
+          { echo "GOPROXY=${GOPROXY:-}"; echo "GOSUMDB=${GOSUMDB:-}"; echo "npm_config_registry=${npm_config_registry:-}"; echo "GRADLE_USER_HOME=$GRADLE_USER_HOME"; } >> "$GITHUB_ENV"
+
       # Tests use TestContainers (PostgreSQL) — the runner must provide a Docker daemon.
       - name: Formatting (Palantir via Spotless)
         working-directory: api-server
@@ -88,6 +98,16 @@ jobs:
         with:
           go-version: "1.25"
           cache-dependency-path: orchestrator/go.sum
+
+      - name: Apply dependency proxy (no-op when unset)
+        run: |
+          if [ -n "${DEP_PROXY_BASE:-}" ]; then echo "::add-mask::$DEP_PROXY_BASE"; fi
+          # Gradle reads init scripts from GRADLE_USER_HOME/init.d; default it for CI.
+          export GRADLE_USER_HOME="${GRADLE_USER_HOME:-$HOME/.gradle}"
+          source scripts/lib/dep-proxy.sh
+          apply_dep_proxy "$GRADLE_USER_HOME"
+          # Propagate the exported vars to later steps.
+          { echo "GOPROXY=${GOPROXY:-}"; echo "GOSUMDB=${GOSUMDB:-}"; echo "npm_config_registry=${npm_config_registry:-}"; echo "GRADLE_USER_HOME=$GRADLE_USER_HOME"; } >> "$GITHUB_ENV"
 
       - name: Formatting (gofmt)
         working-directory: orchestrator
@@ -118,6 +138,16 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: web-ui/package-lock.json
+
+      - name: Apply dependency proxy (no-op when unset)
+        run: |
+          if [ -n "${DEP_PROXY_BASE:-}" ]; then echo "::add-mask::$DEP_PROXY_BASE"; fi
+          # Gradle reads init scripts from GRADLE_USER_HOME/init.d; default it for CI.
+          export GRADLE_USER_HOME="${GRADLE_USER_HOME:-$HOME/.gradle}"
+          source scripts/lib/dep-proxy.sh
+          apply_dep_proxy "$GRADLE_USER_HOME"
+          # Propagate the exported vars to later steps.
+          { echo "GOPROXY=${GOPROXY:-}"; echo "GOSUMDB=${GOSUMDB:-}"; echo "npm_config_registry=${npm_config_registry:-}"; echo "GRADLE_USER_HOME=$GRADLE_USER_HOME"; } >> "$GITHUB_ENV"
 
       - name: Install deps
         working-directory: web-ui
