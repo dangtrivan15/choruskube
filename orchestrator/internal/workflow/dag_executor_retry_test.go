@@ -101,19 +101,21 @@ func (s *DAGExecutorTestSuite) TestCancelStep5ToleratesDeleteAgentJob404() {
 	s.env.OnActivity("LoadPredecessorInputs", mock.Anything, mock.Anything).Return(map[string]string{}, nil).Maybe()
 	s.env.OnActivity("LoadReviewHistoryJSON", mock.Anything, mock.Anything).Return("[]", nil).Maybe()
 
-	// Node runs with a 1-second virtual delay so that it is still in-flight
-	// (tracker.status == "running") when the cancel signal fires at 100 ms.
-	// Without .After(), the activity returns synchronously in the Temporal test
-	// environment and the node is already "completed" before the cancel signal is
-	// delivered — Step 5's cancel cleanup guards on status == "running", so
-	// DeleteAgentJob would never be dispatched and the test would vacuously pass.
+	// Fire the cancel from the node activity's own invocation. .Run executes when
+	// ExecuteAINodeFromSnapshot is dispatched — which only happens after the loop's
+	// top-of-iteration cancel drain — so the cancel can never precede dispatch. .After
+	// then holds the activity in-flight (tracker.status == "running") while the cancel
+	// is delivered, so Step 5's cleanup dispatches DeleteAgentJob.
+	//
+	// The previous form scheduled the cancel on a fixed virtual-time delay racing a
+	// real-clock activity delay; on a loaded runner the cancel fired before dispatch and
+	// ExecuteAINodeFromSnapshot was never called. Triggering the cancel from dispatch
+	// removes the race.
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.Anything).
+		Run(func(mock.Arguments) {
+			s.env.SignalWorkflow("cancel", nil)
+		}).
 		After(time.Second).Return(nil)
-
-	// Send cancel signal while the activity is in-flight (at 100 ms < 1 s)
-	s.env.RegisterDelayedCallback(func() {
-		s.env.SignalWorkflow("cancel", nil)
-	}, time.Millisecond*100)
 
 	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
 
