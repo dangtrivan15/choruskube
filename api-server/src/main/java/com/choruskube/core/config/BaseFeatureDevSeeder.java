@@ -35,7 +35,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
     // and executor changes here never retroactively mutate prior versions. To ship a
     // change, edit the constants in this file (prompt, executor, schema), increment
     // CURRENT_VERSION, and the next boot creates the new snapshot.
-    static final int CURRENT_VERSION = 26;
+    static final int CURRENT_VERSION = 27;
 
     private static final String TEMPLATE_NAME = "Feature Development";
 
@@ -285,11 +285,19 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
 
             ## Iteration awareness
 
-            Read `iteration` from /workspace/config.json. The iteration cap for
-            Spec Review is **3**. The cap exists because spec iterations are
-            expensive (cross-repo reasoning) and converging quickly matters. If
-            you reach iteration 3 with flaws still unresolved, escalate to a human
-            via `need_human_decision:iteration_cap` rather than guessing.
+            Read `iteration_in_epoch` from /workspace/config.json — NOT
+            `iteration`. `iteration` counts every run of this node across its
+            whole lifetime and never resets; `iteration_in_epoch` counts only
+            attempts since the current convergence attempt began, and resets
+            to 1 whenever a human routes the workflow back to Spec Review (so
+            you may see `iteration_in_epoch: 1` even when `iteration` is much
+            higher — that means you have a fresh budget). The iteration cap
+            for Spec Review is **3**, measured against `iteration_in_epoch`.
+            The cap exists because spec iterations are expensive (cross-repo
+            reasoning) and converging quickly matters. If you reach
+            iteration_in_epoch 3 with flaws still unresolved, escalate to a
+            human via `need_human_decision:iteration_cap` rather than
+            guessing.
 
             ## Inputs
 
@@ -370,18 +378,20 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
               `/workspace/out/spec_review.md` confirming approval.
 
             - **`revised`** — Flaws found AND fixable within the current
-              decomposition/architecture AND iteration < 3. Apply the fixes to
-              `/workspace/out/spec_and_plan.md`. In `/workspace/out/spec_review.md`
-              include a "Reasoning for fixes" section explaining WHY each fix was
-              chosen. The orchestrator will route this back to Spec Review for a
-              fresh-session re-review on the next iteration.
+              decomposition/architecture AND iteration_in_epoch < 3. Apply the
+              fixes to `/workspace/out/spec_and_plan.md`. In
+              `/workspace/out/spec_review.md` include a "Reasoning for fixes"
+              section explaining WHY each fix was chosen. The orchestrator will
+              route this back to Spec Review for a fresh-session re-review on
+              the next iteration.
 
-            - **`need_human_decision:iteration_cap`** — Flaws found AND iteration
-              >= 3. Do not invent fixes you are not confident about. In
-              `/workspace/out/spec_review.md` write a structured "Remaining
-              unresolved flaws" section listing each flaw with what you tried and
-              why it didn't resolve. Still write `spec_and_plan.md` with whatever
-              partial fixes you applied (or copy the input verbatim if you
+            - **`need_human_decision:iteration_cap`** — Flaws found AND
+              iteration_in_epoch >= 3. Do not invent fixes you are not
+              confident about. In `/workspace/out/spec_review.md` write a
+              structured "Remaining unresolved flaws" section listing each
+              flaw with what you tried and why it didn't resolve. Still write
+              `spec_and_plan.md` with whatever partial fixes you applied (or
+              copy the input verbatim if you
               applied none).
 
             - **`need_human_decision:uncertainty`** — A flaw is found but the
@@ -513,12 +523,19 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
 
             ## Iteration awareness
 
-            Read `iteration` from /workspace/config.json. The iteration cap for
-            Code Review is **5**. Code-level flaws tend to be incremental (typo,
-            missing test, wrong import) so the cap is more generous than Spec
-            Review's. If you reach iteration 5 with flaws still unresolved,
-            escalate to a human via `need_human_decision:iteration_cap` rather
-            than guessing.
+            Read `iteration_in_epoch` from /workspace/config.json — NOT
+            `iteration`. `iteration` counts every run of this node across its
+            whole lifetime and never resets; `iteration_in_epoch` counts only
+            attempts since the current convergence attempt began, and resets
+            to 1 whenever a human routes the workflow back to Code Review (so
+            you may see `iteration_in_epoch: 1` even when `iteration` is much
+            higher — that means you have a fresh budget). The iteration cap
+            for Code Review is **5**, measured against `iteration_in_epoch`.
+            Code-level flaws tend to be incremental (typo, missing test, wrong
+            import) so the cap is more generous than Spec Review's. If you
+            reach iteration_in_epoch 5 with flaws still unresolved, escalate
+            to a human via `need_human_decision:iteration_cap` rather than
+            guessing.
 
             Note: by the time code reaches you, the spec is already approved.
             Architectural alternatives are NOT in scope here — if you find the
@@ -592,20 +609,21 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             - **`approved`** — No flaws found. Write a short
               `/workspace/out/review.md` confirming approval (per-repo summary).
 
-            - **`revised`** — Flaws found AND fixable AND iteration < 5. Apply
-              the fixes via `git commit` + `git push origin HEAD` on the working
-              branch. Write `/workspace/out/review.md` documenting both what you
-              found and a "Reasoning for fixes" section explaining WHY each fix
-              was chosen and which commit(s) implement it. The orchestrator will
-              route this back to Code Review for a fresh-session re-review on
-              the next iteration.
+            - **`revised`** — Flaws found AND fixable AND iteration_in_epoch <
+              5. Apply the fixes via `git commit` + `git push origin HEAD` on
+              the working branch. Write `/workspace/out/review.md` documenting
+              both what you found and a "Reasoning for fixes" section
+              explaining WHY each fix was chosen and which commit(s) implement
+              it. The orchestrator will route this back to Code Review for a
+              fresh-session re-review on the next iteration.
 
             - **`need_human_decision:iteration_cap`** — Flaws found AND
-              iteration >= 5. Do not invent fixes you are not confident about.
-              In `/workspace/out/review.md` write a structured "Remaining
-              unresolved flaws" section listing each flaw with what you tried
-              and why it didn't resolve. You may have applied partial fixes
-              (already pushed to the branch) — note them.
+              iteration_in_epoch >= 5. Do not invent fixes you are not
+              confident about. In `/workspace/out/review.md` write a
+              structured "Remaining unresolved flaws" section listing each
+              flaw with what you tried and why it didn't resolve. You may
+              have applied partial fixes (already pushed to the branch) —
+              note them.
 
             - **`need_human_decision:uncertainty`** — A flaw is found but the
               correct fix is unclear, OR the implementation appears structurally

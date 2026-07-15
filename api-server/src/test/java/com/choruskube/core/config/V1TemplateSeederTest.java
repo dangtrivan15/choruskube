@@ -706,4 +706,59 @@ class V1TemplateSeederTest extends BaseTest {
                 .as("v24 Implement prompt must still forbid PR creation in this node")
                 .contains("Do NOT run `gh pr create`");
     }
+
+    @Test
+    void reviewNodeDefinitionCapPromptsReferenceEpochRelativeIteration() {
+        // Regression guard: the agent must reason about the iteration cap using
+        // iteration_in_epoch (epoch-relative, reset by a human "route back"), not
+        // the raw, ever-incrementing `iteration` field. Comparing against the raw
+        // field is exactly the bug this template version fixes — see
+        // BaseFeatureDevSeeder's Iteration awareness sections.
+        //
+        // The resolved prompt strings are Java text blocks; SPEC_REVIEW_PROMPT's
+        // cap=3 escalation sentence wraps so the comparison operator falls on its
+        // own line ("...AND iteration_in_epoch" / ">= 3." on the next line). A
+        // literal substring match against the raw resolved string would miss (or
+        // vacuously pass) that comparison, so whitespace is normalized to single
+        // spaces before any assertion below.
+        var template = templateRepo
+                .findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION)
+                .orElseThrow();
+        var nodes = templateNodeRepo.findByGraphTemplateId(template.getId());
+
+        var specReviewNode = nodes.stream()
+                .filter(n -> "spec_review".equals(n.getLabel()))
+                .findFirst()
+                .orElseThrow();
+        var specReviewDef =
+                nodeDefRepo.findById(specReviewNode.getNodeDefinitionId()).orElseThrow();
+        String normalizedSpecReviewPrompt = specReviewDef.getPromptTemplate().replaceAll("\\s+", " ");
+
+        var codeReviewNode = nodes.stream()
+                .filter(n -> "code_review".equals(n.getLabel()))
+                .findFirst()
+                .orElseThrow();
+        var codeReviewDef =
+                nodeDefRepo.findById(codeReviewNode.getNodeDefinitionId()).orElseThrow();
+        String normalizedCodeReviewPrompt = codeReviewDef.getPromptTemplate().replaceAll("\\s+", " ");
+
+        // Spec Review: cap = 3, references iteration_in_epoch alongside the cap
+        // threshold and the escalation decision.
+        assertThat(normalizedSpecReviewPrompt)
+                .contains("iteration_in_epoch")
+                .contains("iteration_in_epoch < 3")
+                .contains("iteration_in_epoch >= 3")
+                .contains("need_human_decision:iteration_cap");
+        // Raw-iteration comparison forms must not appear anywhere in the
+        // cap-related text — this is what would have masked the original bug.
+        assertThat(normalizedSpecReviewPrompt).doesNotContain("iteration < 3").doesNotContain("iteration >= 3");
+
+        // Code Review: cap = 5, same shape.
+        assertThat(normalizedCodeReviewPrompt)
+                .contains("iteration_in_epoch")
+                .contains("iteration_in_epoch < 5")
+                .contains("iteration_in_epoch >= 5")
+                .contains("need_human_decision:iteration_cap");
+        assertThat(normalizedCodeReviewPrompt).doesNotContain("iteration < 5").doesNotContain("iteration >= 5");
+    }
 }

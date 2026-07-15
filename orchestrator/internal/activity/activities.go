@@ -155,25 +155,26 @@ func (a *Activities) GetGraphRuntime(ctx context.Context, runID uuid.UUID) (stri
 // --- Activity: ExecuteAINodeFromSnapshot (Phase 2) ---
 
 type ExecuteAINodeFromSnapshotParams struct {
-	NodeExecutionID uuid.UUID
-	RunID           uuid.UUID
-	TemplateNodeID  uuid.UUID
-	Label           string
-	ExecutorType    string // "ai" or "script"
-	PromptTemplate  string
-	InputArtifacts  map[string]string
-	Variables       map[string]string
-	LoopGroup       string // from config_overrides, empty if not a review node
-	Iteration       int
-	RepoURL         string
-	WorkingBranch   string
-	Command         string                   // for script executor
-	RunLogPath      string                   // Deprecated: kept for Temporal activity history replay; activity builds from OrgSlug + RunID
-	OrgSlug         string                   // Org slug for object storage path isolation; empty = legacy paths
-	NeedDecision    bool                     // true if node has conditional edges and is AI type
-	OutputSpec      string                   // JSON string describing required output files; "" or "{}" = no enforcement
-	Repos           []map[string]interface{} `json:"repos,omitempty"`
-	Model           string                   `json:"model,omitempty"` // optional override; empty = agent default
+	NodeExecutionID        uuid.UUID
+	RunID                  uuid.UUID
+	TemplateNodeID         uuid.UUID
+	Label                  string
+	ExecutorType           string // "ai" or "script"
+	PromptTemplate         string
+	InputArtifacts         map[string]string
+	Variables              map[string]string
+	LoopGroup              string // from config_overrides, empty if not a review node
+	Iteration              int
+	IterationCapEpochStart int
+	RepoURL                string
+	WorkingBranch          string
+	Command                string                   // for script executor
+	RunLogPath             string                   // Deprecated: kept for Temporal activity history replay; activity builds from OrgSlug + RunID
+	OrgSlug                string                   // Org slug for object storage path isolation; empty = legacy paths
+	NeedDecision           bool                     // true if node has conditional edges and is AI type
+	OutputSpec             string                   // JSON string describing required output files; "" or "{}" = no enforcement
+	Repos                  []map[string]interface{} `json:"repos,omitempty"`
+	Model                  string                   `json:"model,omitempty"` // optional override; empty = agent default
 }
 
 func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params ExecuteAINodeFromSnapshotParams) error {
@@ -261,6 +262,14 @@ func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params Execu
 	}
 	if params.Iteration > 0 {
 		configJSON["iteration"] = params.Iteration
+		// Mirrors InternalRunService.submitDecision's effectiveIteration formula
+		// (api-server .../service/InternalRunService.java) — keep both in sync if
+		// the cap-reset trigger ever changes.
+		epochStart := params.IterationCapEpochStart
+		if epochStart <= 0 {
+			epochStart = 1
+		}
+		configJSON["iteration_in_epoch"] = params.Iteration - epochStart + 1
 	}
 	if len(params.Repos) > 0 {
 		configJSON["repos"] = params.Repos
