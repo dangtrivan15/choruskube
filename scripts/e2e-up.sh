@@ -16,13 +16,25 @@ CACHE_REGISTRY="${BUILD_CACHE_REGISTRY:-}"
 build_image() {
   local cache_name="$1" tag="$2" context="$3" dockerfile="$4"
   if [ -n "$CACHE_REGISTRY" ]; then
-    local args=(--cache-from "type=registry,ref=${CACHE_REGISTRY}/${cache_name}:buildcache")
+    local from_args=(--cache-from "type=registry,ref=${CACHE_REGISTRY}/${cache_name}:buildcache")
+    local args=("${from_args[@]}")
     # BUILD_CACHE_PUSH=1 (dogfood pod): also write the cache back so the next run is warm.
     # Requires a docker-container builder (the agent entrypoint creates 'choruskube-builder').
     if [ "${BUILD_CACHE_PUSH:-0}" = "1" ]; then
       args+=(--cache-to "type=registry,ref=${CACHE_REGISTRY}/${cache_name}:buildcache,mode=max")
     fi
-    docker buildx build "${args[@]}" --load -t "$tag" -f "$dockerfile" "$context"
+    # Cache export is a warm-next-run optimization, not correctness — if the registry
+    # rejects/mishandles the push (e.g. a builder that doesn't honor the in-cluster
+    # registry's plain-HTTP config), don't let that fail the whole e2e run. Retry once
+    # with cache-from only so the build still succeeds, just without writing cache back.
+    if ! docker buildx build "${args[@]}" --load -t "$tag" -f "$dockerfile" "$context"; then
+      if [ "${BUILD_CACHE_PUSH:-0}" = "1" ]; then
+        echo "WARNING: buildx build with cache export failed for ${cache_name}; retrying without --cache-to" >&2
+        docker buildx build "${from_args[@]}" --load -t "$tag" -f "$dockerfile" "$context"
+      else
+        return 1
+      fi
+    fi
   else
     docker build -t "$tag" -f "$dockerfile" "$context"
   fi

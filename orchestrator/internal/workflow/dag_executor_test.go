@@ -1263,9 +1263,11 @@ func (s *DAGExecutorTestSuite) TestEpochResetOnHumanBackEdge() {
 		return p.TemplateNodeID == aiNode && p.Iteration == 2 && p.IterationCapEpochStart == 2
 	})).Return(execAI2, nil).Once()
 
-	// AI node 2 executes with no more outgoing edges satisfied
+	// AI node 2 executes with no more outgoing edges satisfied. The activity params
+	// passed to ExecuteAINodeFromSnapshot MUST also carry the reset epoch start
+	// (this is what reaches the agent's config.json as iteration_in_epoch).
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == aiNode && p.Iteration == 2
+		return p.TemplateNodeID == aiNode && p.Iteration == 2 && p.IterationCapEpochStart == 2
 	})).Return(nil).Once()
 
 	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
@@ -1329,8 +1331,10 @@ func (s *DAGExecutorTestSuite) TestEpochCarriedForwardOnAIBackEdge() {
 		return p.TemplateNodeID == aiNode && p.Iteration == 2 && p.IterationCapEpochStart == 1
 	})).Return(exec2, nil).Once()
 
+	// The activity params passed to ExecuteAINodeFromSnapshot MUST also carry the
+	// carried-forward (not reset) epoch start.
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == aiNode && p.Iteration == 2
+		return p.TemplateNodeID == aiNode && p.Iteration == 2 && p.IterationCapEpochStart == 1
 	})).Return(nil).Once()
 
 	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
