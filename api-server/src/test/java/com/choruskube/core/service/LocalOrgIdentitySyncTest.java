@@ -38,6 +38,8 @@ public class LocalOrgIdentitySyncTest extends BaseTest {
                     orgIdentity.removeOrgMember(kcOrgId, kcUserId);
                     orgIdentity.assignGlobalRole(kcUserId, "org-admin");
                     orgIdentity.removeGlobalRole(kcUserId, "org-admin");
+                    orgIdentity.assignOrgRole(kcOrgId, kcUserId, "org-admin");
+                    orgIdentity.removeOrgRole(kcOrgId, kcUserId, "org-admin");
                 })
                 .doesNotThrowAnyException();
     }

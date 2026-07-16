@@ -95,4 +95,14 @@ public class LocalOrgIdentitySync implements OrgIdentitySync {
     public void removeGlobalRole(UUID userId, String roleName) {
         log.warn("removeGlobalRole({}, '{}') called in OSS mode — no-op", userId, roleName);
     }
+
+    @Override
+    public void assignOrgRole(UUID orgId, UUID userId, String role) {
+        log.warn("assignOrgRole({}, {}, '{}') called in OSS mode — no-op", orgId, userId, role);
+    }
+
+    @Override
+    public void removeOrgRole(UUID orgId, UUID userId, String role) {
+        log.warn("removeOrgRole({}, {}, '{}') called in OSS mode — no-op", orgId, userId, role);
+    }
 }

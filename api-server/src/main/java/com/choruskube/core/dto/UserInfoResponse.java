@@ -8,9 +8,11 @@ import java.util.UUID;
  * selected (empty {@code organization} JWT claim) — in that case {@code activeOrg} is
  * {@code null} and the web UI renders the workspace picker from {@code memberships}.
  *
- * <p>{@code role} is a global role ({@code admin}/{@code operator}/{@code viewer});
- * ChorusKube does not use per-org roles, so this is the user's role across every org they
- * belong to.
+ * <p>{@code role} is {@code admin}/{@code operator}/{@code viewer}, populated per {@code
+ * UserInfoProvider} implementation. In OSS / single-tenant mode it is the user's one global role,
+ * identical across the (single, synthetic) org they belong to. An auth-enabled implementation may
+ * instead populate it with the caller's role scoped to whichever organization is currently active,
+ * which can differ from their role in another organization they also belong to.
  */
 public record UserInfoResponse(
         UUID userId,
