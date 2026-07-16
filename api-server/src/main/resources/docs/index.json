@@ -7,6 +7,6 @@
   { "slug": "ai-agent-nodes",              "title": "AI Agent Nodes",              "order": 6,  "description": "How AI agent pods work, report decisions, and open pull requests." },
   { "slug": "multi-repo-support",          "title": "Multi-Repo Support",          "order": 7,  "description": "Run workflows across multiple repositories using Repository Groups." },
   { "slug": "analytics",                   "title": "Analytics",                   "order": 8,  "description": "Track run trends, throughput, and bottlenecks on the Analytics dashboard." },
-  { "slug": "roadmap-and-proposals",       "title": "Roadmap & Proposals",         "order": 9,  "description": "Manage feature proposals and link them to workflow runs." },
+  { "slug": "roadmap-and-proposals",       "title": "Roadmap",                     "order": 9,  "description": "Organize work as Epics, Stories, and Tasks, and start workflow runs from a Task." },
   { "slug": "best-practices",              "title": "Best Practices",              "order": 10, "description": "Recommended patterns for designing workflows and managing agents safely." }
 ]

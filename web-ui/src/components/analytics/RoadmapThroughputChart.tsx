@@ -7,18 +7,18 @@ import {
   CartesianGrid,
   Tooltip,
 } from "recharts";
-import type { ProposalThroughputPoint } from "@/lib/types";
+import type { RoadmapThroughputPoint } from "@/lib/types";
 
-interface ProposalThroughputChartProps {
-  points: ProposalThroughputPoint[];
+interface RoadmapThroughputChartProps {
+  points: RoadmapThroughputPoint[];
 }
 
 // NOTE: Recharts legend/tooltip swatches may not resolve CSS var() — see RunTrendChart.tsx
-export default function ProposalThroughputChart({ points }: ProposalThroughputChartProps) {
+export default function RoadmapThroughputChart({ points }: RoadmapThroughputChartProps) {
   if (points.length === 0) {
     return (
       <div className="flex h-48 items-center justify-center text-sm text-muted-foreground">
-        No proposals rolled out in this period
+        No tasks completed in this period
       </div>
     );
   }
@@ -43,7 +43,7 @@ export default function ProposalThroughputChart({ points }: ProposalThroughputCh
               fontSize: "0.875rem",
             }}
           />
-          <Bar dataKey="count" name="Rolled Out" fill="var(--status-success)" radius={[4, 4, 0, 0]} />
+          <Bar dataKey="count" name="Done" fill="var(--status-success)" radius={[4, 4, 0, 0]} />
         </BarChart>
       </ResponsiveContainer>
     </div>

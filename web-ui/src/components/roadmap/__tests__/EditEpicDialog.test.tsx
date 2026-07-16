@@ -2,13 +2,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "@/__tests__/test-utils";
-import EditProposalDialog from "@/components/roadmap/EditProposalDialog";
-import type { FeatureProposalResponse } from "@/lib/types";
+import EditEpicDialog from "@/components/roadmap/EditEpicDialog";
+import type { EpicResponse } from "@/lib/types";
 
 const mockMutate = vi.fn();
 const mockReset = vi.fn();
-vi.mock("@/hooks/useFeatureProposals", () => ({
-  useUpdateFeatureProposal: () => ({
+vi.mock("@/hooks/useEpics", () => ({
+  useUpdateEpic: () => ({
     mutate: mockMutate,
     isPending: false,
     isError: false,
@@ -61,15 +61,14 @@ beforeEach(() => {
   mockReset.mockReset();
 });
 
-function makeProposal(
-  overrides: Partial<FeatureProposalResponse> = {}
-): FeatureProposalResponse {
+function makeEpic(overrides: Partial<EpicResponse> = {}): EpicResponse {
   return {
-    id: "prop-1",
+    id: "epic-1",
     title: "Existing title",
     description: "Existing desc",
     motivation: null,
     status: "backlog",
+    progress: { totalTasks: 0, doneTasks: 0 },
     softwareProject: {
       id: "r1",
       type: "git_repo",
@@ -78,65 +77,63 @@ function makeProposal(
     repos: [
       { id: "r1", url: "https://github.com/acme/backend-api.git", name: "backend-api" },
     ],
-    workflowRunId: null,
-    workflowRunStatus: null,
     createdAt: "2026-04-01T00:00:00Z",
     updatedAt: "2026-04-01T00:00:00Z",
     ...overrides,
   };
 }
 
-describe("EditProposalDialog", () => {
-  it("pre-populates title, description, and software project from the proposal", () => {
+describe("EditEpicDialog", () => {
+  it("pre-populates title, description, and software project from the epic", () => {
     renderWithProviders(
-      <EditProposalDialog
-        proposal={makeProposal()}
+      <EditEpicDialog
+        epic={makeEpic()}
         open={true}
         onOpenChange={() => {}}
       />
     );
-    expect(screen.getByTestId("edit-proposal-title")).toHaveValue("Existing title");
-    expect(screen.getByTestId("edit-proposal-description")).toHaveValue(
+    expect(screen.getByTestId("edit-epic-title")).toHaveValue("Existing title");
+    expect(screen.getByTestId("edit-epic-description")).toHaveValue(
       "Existing desc"
     );
     // The currently selected SoftwareProject's name appears inside the trigger.
     expect(
-      screen.getByTestId("edit-proposal-software-project-select")
+      screen.getByTestId("edit-epic-software-project-select")
     ).toHaveTextContent("backend-api");
   });
 
   it("Save is disabled when title or description is empty", async () => {
     renderWithProviders(
-      <EditProposalDialog
-        proposal={makeProposal({ description: "" })}
+      <EditEpicDialog
+        epic={makeEpic({ description: "" })}
         open={true}
         onOpenChange={() => {}}
       />
     );
-    expect(screen.getByTestId("edit-proposal-save")).toBeDisabled();
+    expect(screen.getByTestId("edit-epic-save")).toBeDisabled();
     const user = userEvent.setup({ pointerEventsCheck: 0 });
-    await user.type(screen.getByTestId("edit-proposal-description"), "Filled");
-    expect(screen.getByTestId("edit-proposal-save")).toBeEnabled();
+    await user.type(screen.getByTestId("edit-epic-description"), "Filled");
+    expect(screen.getByTestId("edit-epic-save")).toBeEnabled();
   });
 
   it("changing the software project and saving sends softwareProjectId in the body", async () => {
     const onOpenChange = vi.fn();
     renderWithProviders(
-      <EditProposalDialog
-        proposal={makeProposal()}
+      <EditEpicDialog
+        epic={makeEpic()}
         open={true}
         onOpenChange={onOpenChange}
       />
     );
     const user = userEvent.setup({ pointerEventsCheck: 0 });
-    await user.click(screen.getByTestId("edit-proposal-software-project-select"));
+    await user.click(screen.getByTestId("edit-epic-software-project-select"));
     await user.click(screen.getByText("Backend Stack"));
 
-    await user.click(screen.getByTestId("edit-proposal-save"));
+    await user.click(screen.getByTestId("edit-epic-save"));
     expect(mockMutate).toHaveBeenCalledTimes(1);
     const [payload] = mockMutate.mock.calls[0];
     expect(payload).toEqual({
-      id: "prop-1",
+      id: "epic-1",
       body: {
         title: "Existing title",
         description: "Existing desc",

@@ -239,7 +239,7 @@ test.describe("DAG Interaction", () => {
     await expect(page.getByTestId("run-meta-panel")).not.toBeAttached();
 
     // The mobile top-strip run meta bar should be present in the DOM
-    // (may not have content if no promptText/proposal, but the component structure is there)
+    // (may not have content if no promptText/task, but the component structure is there)
     // Assert the DAG is visible to confirm page loaded correctly
     await expect(page.getByTestId("run-dag-container")).toBeVisible();
   });

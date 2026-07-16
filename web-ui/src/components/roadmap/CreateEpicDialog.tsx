@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useCreateFeatureProposal } from "@/hooks/useFeatureProposals";
+import { useCreateEpic } from "@/hooks/useEpics";
 import SoftwareProjectSelect from "@/components/software-projects/SoftwareProjectSelect";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,23 +19,23 @@ interface Props {
 }
 
 /**
- * Create-proposal dialog. The user picks a single SoftwareProject (a git repo
+ * Create-Epic dialog. The user picks a single SoftwareProject (a git repo
  * or a user-created repo group) — auto-groups are filtered out by
- * {@link SoftwareProjectSelect}. Multi-repo proposals are no longer expressed
- * as a list of repo ids; if the user wants two repos, they create (or pick) a
- * RepoGroup that bundles them.
+ * {@link SoftwareProjectSelect}. Multi-repo Epics are not expressed as a
+ * list of repo ids; if the user wants two repos, they create (or pick) a
+ * RepoGroup that bundles them (Decision 4).
  */
-export default function CreateProposalDialog({ open, onOpenChange }: Props) {
+export default function CreateEpicDialog({ open, onOpenChange }: Props) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [motivation, setMotivation] = useState("");
   const [softwareProjectId, setSoftwareProjectId] = useState<string>("");
 
-  const createProposal = useCreateFeatureProposal();
+  const createEpic = useCreateEpic();
 
   function handleCreate() {
     if (!title.trim() || !description.trim() || !softwareProjectId) return;
-    createProposal.mutate(
+    createEpic.mutate(
       {
         title: title.trim(),
         description: description.trim(),
@@ -56,7 +56,7 @@ export default function CreateProposalDialog({ open, onOpenChange }: Props) {
     setDescription("");
     setMotivation("");
     setSoftwareProjectId("");
-    createProposal.reset();
+    createEpic.reset();
   }
 
   function handleOpenChange(isOpen: boolean) {
@@ -68,22 +68,22 @@ export default function CreateProposalDialog({ open, onOpenChange }: Props) {
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent size="md">
         <DialogHeader>
-          <DialogTitle>New Feature Proposal</DialogTitle>
+          <DialogTitle>New Epic</DialogTitle>
           <DialogDescription>
-            Create a feature proposal. Select a software project to develop
-            against — when started, the proposal triggers a workflow run scoped
-            to that project.
+            Create an Epic. Select a software project to develop against —
+            its Stories and Tasks inherit this target, and starting a Task
+            triggers a workflow run scoped to it.
           </DialogDescription>
         </DialogHeader>
 
         <div className="min-h-0 flex-1 overflow-y-auto py-2 flex flex-col gap-4 -mx-4 px-4">
           <div className="flex flex-col gap-1">
-            <label htmlFor="proposal-title" className="text-sm font-medium">
+            <label htmlFor="epic-title" className="text-sm font-medium">
               Title <span className="text-destructive">*</span>
             </label>
             <Input
-              id="proposal-title"
-              data-testid="create-proposal-title"
+              id="epic-title"
+              data-testid="create-epic-title"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="Short feature name"
@@ -91,12 +91,12 @@ export default function CreateProposalDialog({ open, onOpenChange }: Props) {
           </div>
 
           <div className="flex flex-col gap-1">
-            <label htmlFor="proposal-desc" className="text-sm font-medium">
+            <label htmlFor="epic-desc" className="text-sm font-medium">
               Description <span className="text-destructive">*</span>
             </label>
             <Textarea
-              id="proposal-desc"
-              data-testid="create-proposal-description"
+              id="epic-desc"
+              data-testid="create-epic-description"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Detailed description of what to build..."
@@ -105,12 +105,12 @@ export default function CreateProposalDialog({ open, onOpenChange }: Props) {
           </div>
 
           <div className="flex flex-col gap-1">
-            <label htmlFor="proposal-motivation" className="text-sm font-medium">
+            <label htmlFor="epic-motivation" className="text-sm font-medium">
               Motivation
             </label>
             <Textarea
-              id="proposal-motivation"
-              data-testid="create-proposal-motivation"
+              id="epic-motivation"
+              data-testid="create-epic-motivation"
               value={motivation}
               onChange={(e) => setMotivation(e.target.value)}
               placeholder="Why this feature matters..."
@@ -126,28 +126,28 @@ export default function CreateProposalDialog({ open, onOpenChange }: Props) {
             <SoftwareProjectSelect
               value={softwareProjectId}
               onChange={setSoftwareProjectId}
-              testId="create-proposal-software-project-select"
+              testId="create-epic-software-project-select"
             />
           </div>
         </div>
 
         <DialogFooter>
-          {createProposal.isError && (
+          {createEpic.isError && (
             <p className="text-sm text-destructive mr-auto">
-              Failed to create proposal.
+              Failed to create epic.
             </p>
           )}
           <Button
-            data-testid="create-proposal-submit"
+            data-testid="create-epic-submit"
             onClick={handleCreate}
             disabled={
               !title.trim() ||
               !description.trim() ||
               !softwareProjectId ||
-              createProposal.isPending
+              createEpic.isPending
             }
           >
-            {createProposal.isPending ? "Creating..." : "Create"}
+            {createEpic.isPending ? "Creating..." : "Create"}
           </Button>
         </DialogFooter>
       </DialogContent>

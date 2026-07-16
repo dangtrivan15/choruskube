@@ -1,13 +1,13 @@
 import { test, expect } from "../fixtures";
 
-test.describe("Roadmap Proposals", () => {
+test.describe("Roadmap drill-down", () => {
   test("displays roadmap page with heading", async ({ roadmapPage }) => {
     await roadmapPage.goto();
     await expect(roadmapPage.heading).toHaveText("Roadmap");
-    await expect(roadmapPage.newProposalButton).toBeVisible();
+    await expect(roadmapPage.newEpicButton).toBeVisible();
   });
 
-  test("opens create proposal dialog", async ({ roadmapPage }) => {
+  test("opens create epic dialog", async ({ roadmapPage }) => {
     await roadmapPage.goto();
     await roadmapPage.openCreateDialog();
 
@@ -17,7 +17,7 @@ test.describe("Roadmap Proposals", () => {
     await expect(roadmapPage.createSubmitButton).toBeVisible();
   });
 
-  test("create proposal submit is disabled without required fields", async ({
+  test("create epic submit is disabled without required fields", async ({
     roadmapPage,
   }) => {
     await roadmapPage.goto();
@@ -27,8 +27,10 @@ test.describe("Roadmap Proposals", () => {
     await expect(roadmapPage.createSubmitButton).toBeDisabled();
   });
 
-  test("create and select a proposal", async ({ roadmapPage, api }) => {
-    // Find a git repo to associate with
+  test("create an Epic, drill into its Story, then its Task", async ({
+    roadmapPage,
+    api,
+  }) => {
     const repos = await api.listGitRepos();
     if (repos.content.length === 0) {
       test.skip();
@@ -40,33 +42,51 @@ test.describe("Roadmap Proposals", () => {
     const projectName = repo.url
       .replace(/^https?:\/\/[^/]+\//, "")
       .replace(/\.git$/, "");
-    const uniqueTitle = `E2E Proposal ${Date.now()}`;
+    const uniqueTitle = `E2E Epic ${Date.now()}`;
 
     await roadmapPage.goto();
-    await roadmapPage.createProposal(
+    await roadmapPage.createEpic(
       uniqueTitle,
-      "This is an E2E test proposal description",
+      "This is an E2E test epic description",
       projectName,
       "E2E test motivation",
     );
 
-    // Wait for the proposal to appear in the list
+    // Wait for the epic to appear in the list
     await roadmapPage.page.waitForTimeout(1000);
     await roadmapPage.goto();
 
-    // Select the proposal and verify details
-    await roadmapPage.selectProposal(uniqueTitle);
-    await expect(roadmapPage.detailTitle).toContainText(uniqueTitle);
-    await expect(roadmapPage.detailDescription).toBeVisible();
+    // Open the epic and verify details
+    await roadmapPage.openEpic(uniqueTitle);
+    await expect(roadmapPage.epicDetailTitle).toContainText(uniqueTitle);
+    await expect(roadmapPage.epicDetailDescription).toBeVisible();
 
-    // Clean up
-    await api.listProposals().then(async (proposals) => {
-      const created = proposals.content.find((p) => p.title === uniqueTitle);
-      if (created) await api.deleteProposal(created.id);
+    // Create a Story under it, then a Task under that Story.
+    const storyTitle = `E2E Story ${Date.now()}`;
+    await roadmapPage.newStoryButton.click();
+    await roadmapPage.createStoryTitleInput.fill(storyTitle);
+    await roadmapPage.createStoryDescriptionInput.fill("A story description");
+    await roadmapPage.createStorySubmitButton.click();
+
+    await roadmapPage.openStory(storyTitle);
+    const taskTitle = `E2E Task ${Date.now()}`;
+    await roadmapPage.newTaskButton.click();
+    await roadmapPage.createTaskTitleInput.fill(taskTitle);
+    await roadmapPage.createTaskDescriptionInput.fill("A task description");
+    await roadmapPage.createTaskSubmitButton.click();
+
+    await roadmapPage.openTask(taskTitle);
+    await expect(roadmapPage.taskDetailTitle).toContainText(taskTitle);
+    await expect(roadmapPage.taskStartButton).toBeVisible();
+
+    // Clean up — deleting the Epic cascades to its Story and Task.
+    await api.listEpics().then(async (epics) => {
+      const created = epics.content.find((e) => e.title === uniqueTitle);
+      if (created) await api.deleteEpic(created.id);
     });
   });
 
-  test("proposal detail shows action buttons for backlog status", async ({
+  test("task detail shows Start button for a backlog task", async ({
     roadmapPage,
     api,
   }) => {
@@ -78,25 +98,30 @@ test.describe("Roadmap Proposals", () => {
 
     const uniqueTitle = `E2E Actions ${Date.now()}`;
     // git_repo.id IS software_project.id post-V45 — pass it directly.
-    const proposal = await api.createProposal({
+    const epic = await api.createEpic({
       title: uniqueTitle,
       description: "Testing action buttons",
       softwareProjectId: repos.content[0].id,
     });
+    const story = await api.createStory(epic.id, {
+      title: "Story for action test",
+      description: "desc",
+    });
+    const task = await api.createTask(story.id, {
+      title: "Task for action test",
+      description: "desc",
+    });
 
-    await roadmapPage.goto();
-    await roadmapPage.selectProposal(uniqueTitle);
-
-    // Backlog proposals should have Edit, Start, Delete buttons
-    await expect(roadmapPage.editButton).toBeVisible();
-    await expect(roadmapPage.startButton).toBeVisible();
-    await expect(roadmapPage.deleteButton).toBeVisible();
+    await roadmapPage.page.goto(`/tasks/${task.id}`);
+    await expect(roadmapPage.taskDetailTitle).toContainText("Task for action test");
+    await expect(roadmapPage.taskStartButton).toBeVisible();
+    await expect(roadmapPage.taskDeleteButton).toBeVisible();
 
     // Clean up
-    await api.deleteProposal(proposal.id);
+    await api.deleteEpic(epic.id);
   });
 
-  test("delete confirmation dialog works", async ({ roadmapPage, api }) => {
+  test("delete confirmation dialog works for an Epic", async ({ roadmapPage, api }) => {
     const repos = await api.listGitRepos();
     if (repos.content.length === 0) {
       test.skip();
@@ -104,28 +129,36 @@ test.describe("Roadmap Proposals", () => {
     }
 
     const uniqueTitle = `E2E Delete ${Date.now()}`;
-    await api.createProposal({
+    await api.createEpic({
       title: uniqueTitle,
       description: "Will be deleted",
       softwareProjectId: repos.content[0].id,
     });
 
     await roadmapPage.goto();
-    await roadmapPage.selectProposal(uniqueTitle);
+    await roadmapPage.openEpic(uniqueTitle);
 
     // Click delete
-    await roadmapPage.deleteButton.click();
+    await roadmapPage.epicDeleteButton.click();
 
     // Confirmation dialog should appear
-    await expect(roadmapPage.deleteConfirmButton).toBeVisible();
-    await roadmapPage.deleteConfirmButton.click();
+    await expect(roadmapPage.deleteEpicConfirmButton).toBeVisible();
+    await roadmapPage.deleteEpicConfirmButton.click();
 
     // Wait and verify it's gone
     await roadmapPage.page.waitForTimeout(2000);
     await roadmapPage.goto();
 
-    // The proposal should no longer appear
-    const items = roadmapPage.proposalItems.filter({ hasText: uniqueTitle });
+    // The epic should no longer appear
+    const items = roadmapPage.epicItems.filter({ hasText: uniqueTitle });
     await expect(items).toHaveCount(0);
+  });
+
+  test("no route serves the old flat proposal list", async ({ page }) => {
+    const response = await page.goto("/proposals");
+    // The old flat list route no longer exists — it falls through to the
+    // catch-all NotFoundPage, not a 404 HTTP response (this is a client-side SPA route).
+    expect(response?.ok()).toBe(true);
+    await expect(page.getByTestId("epic-list")).toHaveCount(0);
   });
 });

@@ -38,10 +38,10 @@ export interface RunPullRequestResponse {
   createdAt: string;
 }
 
-export interface RunFeatureProposalSummary {
+export interface RunTaskSummary {
   id: string;
   title: string;
-  status: "backlog" | "in_progress" | "rolled_out";
+  status: "backlog" | "in_progress" | "done";
   softwareProject: SoftwareProjectRef | null;
 }
 
@@ -60,7 +60,7 @@ export interface RunResponse {
   nodeExecutions: NodeExecutionResponse[];
   pullRequests: RunPullRequestResponse[];
   promptText: string | null;
-  featureProposal: RunFeatureProposalSummary | null;
+  task: RunTaskSummary | null;
   softwareProject: SoftwareProjectRef | null;
 }
 
@@ -229,7 +229,7 @@ export interface PendingGateCountResponse {
 }
 
 /**
- * Lightweight git repo reference embedded in a FeatureProposalResponse. The
+ * Lightweight git repo reference embedded in an EpicResponse/TaskResponse. The
  * {@code name} is derived from {@code url} by the server (there is no
  * {@code git_repo.name} column).
  */
@@ -240,8 +240,8 @@ export interface RepoRef {
 }
 
 /**
- * Lightweight reference to the SoftwareProject (GitRepo or RepoGroup) backing a
- * FeatureProposal.
+ * Lightweight reference to the SoftwareProject (GitRepo or RepoGroup) backing an
+ * Epic (and, denormalized, its Tasks).
  */
 export interface SoftwareProjectRef {
   id: string;
@@ -249,37 +249,84 @@ export interface SoftwareProjectRef {
   name: string;
 }
 
-export interface FeatureProposalResponse {
+/**
+ * Rollup completion figure derived from descendant Tasks (Decision 2) — never
+ * stored, recomputed on every read. Carried on both EpicResponse and StoryResponse.
+ */
+export interface WorkItemProgress {
+  totalTasks: number;
+  doneTasks: number;
+}
+
+export interface EpicResponse {
   id: string;
   title: string;
   description: string;
   motivation: string | null;
-  status: "backlog" | "in_progress" | "rolled_out";
+  status: "backlog" | "in_progress" | "done";
+  progress: WorkItemProgress;
   softwareProject: SoftwareProjectRef;
   repos: RepoRef[];
-  workflowRunId: string | null;
-  workflowRunStatus: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
-export interface FeatureProposalRequest {
+export interface EpicRequest {
   title: string;
   description: string;
   motivation: string | null;
   softwareProjectId: string;
 }
 
+export interface StoryResponse {
+  id: string;
+  epicId: string;
+  title: string;
+  description: string;
+  status: "backlog" | "in_progress" | "done";
+  progress: WorkItemProgress;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StoryRequest {
+  title: string;
+  description: string;
+}
+
+export interface TaskResponse {
+  id: string;
+  storyId: string;
+  title: string;
+  description: string;
+  status: "backlog" | "in_progress" | "done";
+  softwareProject: SoftwareProjectRef;
+  repos: RepoRef[];
+  latestRunId: string | null;
+  latestRunStatus: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaskRequest {
+  title: string;
+  description: string;
+}
+
 // --- WebSocket Events ---
 
 /**
- * Matches the backend FeatureProposalEvent record.
- * - "proposal_changed": proposal lifecycle (create, update, start, rollOut, delete)
- * - "run_status_changed": bridge event when a linked workflow run reaches terminal status
+ * Matches the backend RoadmapItemEvent record.
+ * - `itemType` is `"epic_changed"` / `"story_changed"` / `"task_changed"` for a
+ *   lifecycle change on that item, or `"run_status_changed"` for the bridge event
+ *   published when a Task's linked run reaches a terminal status (`itemId` is
+ *   `null` in that case — see RunEventPublisher.publishRunStatusChanged).
+ * - `status` is the item's new `work_item_status` (`backlog`/`in_progress`/`done`),
+ *   `"deleted"` on delete, or the run's terminal status for the bridge event.
  */
-export interface FeatureProposalEvent {
-  type: "proposal_changed" | "run_status_changed";
-  proposalId: string | null;
+export interface RoadmapItemEvent {
+  itemType: "epic_changed" | "story_changed" | "task_changed" | "run_status_changed";
+  itemId: string | null;
   status: string;
 }
 
@@ -288,7 +335,7 @@ export interface FeatureProposalEvent {
  * Note: /topic/pending-gates also receives RunEvent objects,
  * so there is no separate PendingGateEvent type.
  */
-export type WebSocketEvent = RunEvent | FeatureProposalEvent;
+export type WebSocketEvent = RunEvent | RoadmapItemEvent;
 
 // --- Live Chat ---
 
@@ -422,23 +469,23 @@ export interface BottleneckResponse {
   bottlenecks: BottleneckNode[];
 }
 
-export interface ProposalStatusCount {
+export interface RoadmapStatusCount {
   status: string;
   count: number;
 }
 
-export interface ProposalStatusCountsResponse {
+export interface RoadmapStatusCountsResponse {
   total: number;
-  statuses: ProposalStatusCount[];
+  statuses: RoadmapStatusCount[];
 }
 
-export interface ProposalThroughputPoint {
+export interface RoadmapThroughputPoint {
   date: string;
   count: number;
 }
 
-export interface ProposalThroughputResponse {
-  points: ProposalThroughputPoint[];
+export interface RoadmapThroughputResponse {
+  points: RoadmapThroughputPoint[];
 }
 
 // --- Quota & Usage ---

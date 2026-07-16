@@ -28,21 +28,21 @@ vi.mock("@stomp/stompjs", () => {
   return { Client: MockClient };
 });
 
-import { useFeatureProposalSubscription } from "@/hooks/useFeatureProposalSubscription";
+import { useRoadmapSubscription } from "@/hooks/useRoadmapSubscription";
 
-describe("useFeatureProposalSubscription", () => {
+describe("useRoadmapSubscription", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("creates a STOMP client and subscribes to the org-free feature-proposals topic", () => {
+  it("creates a STOMP client and subscribes to the org-free roadmap-items topic", () => {
     const { wrapper } = createTestHookWrapper();
 
-    renderHook(() => useFeatureProposalSubscription(), { wrapper });
+    renderHook(() => useRoadmapSubscription(), { wrapper });
 
     expect(mockActivate).toHaveBeenCalled();
     expect(mockSubscribe).toHaveBeenCalledWith(
-      "/topic/feature-proposals",
+      "/topic/roadmap-items",
       expect.any(Function)
     );
   });
@@ -50,7 +50,7 @@ describe("useFeatureProposalSubscription", () => {
   it("deactivates the client on unmount", () => {
     const { wrapper } = createTestHookWrapper();
 
-    const { unmount } = renderHook(() => useFeatureProposalSubscription(), {
+    const { unmount } = renderHook(() => useRoadmapSubscription(), {
       wrapper,
     });
 
@@ -59,18 +59,18 @@ describe("useFeatureProposalSubscription", () => {
     expect(mockDeactivate).toHaveBeenCalled();
   });
 
-  it("invalidates feature-proposals queries on message", () => {
+  it("invalidates epics, stories, and tasks queries on message", () => {
     const { wrapper, queryClient } = createTestHookWrapper();
     const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
 
-    renderHook(() => useFeatureProposalSubscription(), { wrapper });
+    renderHook(() => useRoadmapSubscription(), { wrapper });
 
     // Get the callback that was passed to subscribe and invoke it
     const subscribeCallback = mockSubscribe.mock.calls[0][1];
-    subscribeCallback({});
+    subscribeCallback({ body: "{}" });
 
-    expect(invalidateSpy).toHaveBeenCalledWith({
-      queryKey: ["feature-proposals"],
-    });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["epics"] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["stories"] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["tasks"] });
   });
 });

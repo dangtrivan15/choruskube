@@ -2,12 +2,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "@/__tests__/test-utils";
-import CreateProposalDialog from "@/components/roadmap/CreateProposalDialog";
+import CreateEpicDialog from "@/components/roadmap/CreateEpicDialog";
 
 const mockMutate = vi.fn();
 const mockReset = vi.fn();
-vi.mock("@/hooks/useFeatureProposals", () => ({
-  useCreateFeatureProposal: () => ({
+vi.mock("@/hooks/useEpics", () => ({
+  useCreateEpic: () => ({
     mutate: mockMutate,
     isPending: false,
     isError: false,
@@ -62,48 +62,48 @@ beforeEach(() => {
   mockReset.mockReset();
 });
 
-describe("CreateProposalDialog", () => {
+describe("CreateEpicDialog", () => {
   it("renders the SoftwareProject selector trigger when open", () => {
-    renderWithProviders(<CreateProposalDialog open={true} onOpenChange={() => {}} />);
+    renderWithProviders(<CreateEpicDialog open={true} onOpenChange={() => {}} />);
     expect(
-      screen.getByTestId("create-proposal-software-project-select")
+      screen.getByTestId("create-epic-software-project-select")
     ).toBeInTheDocument();
   });
 
   it("Create button is disabled until title, description, and a software project are set", async () => {
-    renderWithProviders(<CreateProposalDialog open={true} onOpenChange={() => {}} />);
-    const submit = screen.getByTestId("create-proposal-submit");
+    renderWithProviders(<CreateEpicDialog open={true} onOpenChange={() => {}} />);
+    const submit = screen.getByTestId("create-epic-submit");
     expect(submit).toBeDisabled();
 
     const user = userEvent.setup({ pointerEventsCheck: 0 });
-    await user.type(screen.getByTestId("create-proposal-title"), "Feature");
-    await user.type(screen.getByTestId("create-proposal-description"), "Desc");
+    await user.type(screen.getByTestId("create-epic-title"), "Feature");
+    await user.type(screen.getByTestId("create-epic-description"), "Desc");
     // Still no software project selected — should remain disabled.
     expect(submit).toBeDisabled();
 
     // Open the dropdown and select a repo group.
     await user.click(
-      screen.getByTestId("create-proposal-software-project-select")
+      screen.getByTestId("create-epic-software-project-select")
     );
     await user.click(screen.getByText("Backend Stack"));
     expect(submit).toBeEnabled();
   });
 
   it("posts softwareProjectId on submit", async () => {
-    renderWithProviders(<CreateProposalDialog open={true} onOpenChange={() => {}} />);
+    renderWithProviders(<CreateEpicDialog open={true} onOpenChange={() => {}} />);
     // delay: null makes typing instantaneous to prevent 5000ms timeout in slow CI environments
     const user = userEvent.setup({ pointerEventsCheck: 0, delay: null });
-    await user.type(screen.getByTestId("create-proposal-title"), "Feature X");
+    await user.type(screen.getByTestId("create-epic-title"), "Feature X");
     await user.type(
-      screen.getByTestId("create-proposal-description"),
+      screen.getByTestId("create-epic-description"),
       "Desc Y"
     );
     await user.click(
-      screen.getByTestId("create-proposal-software-project-select")
+      screen.getByTestId("create-epic-software-project-select")
     );
     await user.click(screen.getByText("backend-api"));
 
-    await user.click(screen.getByTestId("create-proposal-submit"));
+    await user.click(screen.getByTestId("create-epic-submit"));
 
     expect(mockMutate).toHaveBeenCalledTimes(1);
     const [payload] = mockMutate.mock.calls[0];
@@ -116,19 +116,19 @@ describe("CreateProposalDialog", () => {
   });
 
   it("preserves a non-empty motivation in the post body", async () => {
-    renderWithProviders(<CreateProposalDialog open={true} onOpenChange={() => {}} />);
+    renderWithProviders(<CreateEpicDialog open={true} onOpenChange={() => {}} />);
     const user = userEvent.setup({ pointerEventsCheck: 0 });
-    await user.type(screen.getByTestId("create-proposal-title"), "F");
-    await user.type(screen.getByTestId("create-proposal-description"), "D");
+    await user.type(screen.getByTestId("create-epic-title"), "F");
+    await user.type(screen.getByTestId("create-epic-description"), "D");
     await user.type(
-      screen.getByTestId("create-proposal-motivation"),
+      screen.getByTestId("create-epic-motivation"),
       "Why this matters"
     );
     await user.click(
-      screen.getByTestId("create-proposal-software-project-select")
+      screen.getByTestId("create-epic-software-project-select")
     );
     await user.click(screen.getByText("web-ui"));
-    await user.click(screen.getByTestId("create-proposal-submit"));
+    await user.click(screen.getByTestId("create-epic-submit"));
 
     expect(mockMutate).toHaveBeenCalledTimes(1);
     const [payload] = mockMutate.mock.calls[0];

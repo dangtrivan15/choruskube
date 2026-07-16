@@ -1,20 +1,22 @@
 import { useQueryClient } from "@tanstack/react-query";
-import type { FeatureProposalEvent } from "@/lib/types";
+import type { RoadmapItemEvent } from "@/lib/types";
 import { showEventToast } from "@/lib/toast-messages";
 import { useActivityFeed } from "./useActivityFeed";
 import { useStompSubscription } from "./useStompSubscription";
 import { useResolveFeedTopic } from "@/FeedTopicContext";
 
-export function useFeatureProposalSubscription() {
+export function useRoadmapSubscription() {
   const queryClient = useQueryClient();
   const { addEntry } = useActivityFeed();
   const resolveFeedTopic = useResolveFeedTopic();
 
-  useStompSubscription(resolveFeedTopic("feature-proposals"), (message) => {
-    queryClient.invalidateQueries({ queryKey: ["feature-proposals"] });
+  useStompSubscription(resolveFeedTopic("roadmap-items"), (message) => {
+    queryClient.invalidateQueries({ queryKey: ["epics"] });
+    queryClient.invalidateQueries({ queryKey: ["stories"] });
+    queryClient.invalidateQueries({ queryKey: ["tasks"] });
 
     try {
-      const event: FeatureProposalEvent = JSON.parse(message.body);
+      const event: RoadmapItemEvent = JSON.parse(message.body);
       const entry = showEventToast(event);
       if (entry) addEntry(entry);
     } catch {

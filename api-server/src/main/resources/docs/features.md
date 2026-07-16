@@ -16,7 +16,7 @@ all major capabilities. Click any feature name to read the dedicated guide.
 | Multi-Repo Support | Run workflows across multiple repositories using Repository Groups | [Multi-Repo Support](multi-repo-support) |
 | Analytics | Run trend charts, throughput metrics, and bottleneck detection | [Analytics](analytics) |
 | Pull Request Tracking | Capture and display PR URLs opened by agent nodes in the run detail view | [Running Workflows](running-workflows) |
-| Roadmap & Proposals | Backlog management linked to workflow runs | [Roadmap & Proposals](roadmap-and-proposals) |
+| Roadmap | Epic → Story → Task backlog hierarchy, with Tasks startable as workflow runs | [Roadmap](roadmap-and-proposals) |
 
 ## AI-Powered Agents
 
@@ -65,13 +65,14 @@ See [Analytics](analytics) for interpretation guidance.
 When an AI agent opens a Pull Request, the PR URL is captured and displayed in the **Run Monitor**
 alongside the node that created it. All PR links are accessible from the run detail view.
 
-## Roadmap & Proposals
+## Roadmap
 
-The **Roadmap** page is a lightweight backlog of feature proposals. Each proposal has a title,
-optional description, and motivation field. Proposals can be linked to workflow runs, move through
-**Backlog → In Progress → Done** statuses, and be updated or closed as work completes.
+The **Roadmap** page organizes work as **Epics** containing **Stories** containing **Tasks**.
+Only a Task can be started as a workflow run; an Epic's and a Story's status and progress are
+derived automatically from their descendant Tasks rather than set by hand. Every run a Task
+launches — including restarts — stays visible as that Task's run history.
 
-See [Roadmap & Proposals](roadmap-and-proposals) for usage.
+See [Roadmap](roadmap-and-proposals) for usage.
 
 ## Single-Tenant Workspace
 

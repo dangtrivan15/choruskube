@@ -29,8 +29,8 @@ vi.mock("@/hooks/useAnalytics", () => ({
   useTemplateAnalytics: vi.fn(),
   useNodeAnalytics: vi.fn(),
   useBottlenecks: vi.fn(),
-  useProposalStatusCounts: vi.fn(),
-  useProposalThroughput: vi.fn(),
+  useRoadmapStatusCounts: vi.fn(),
+  useRoadmapThroughput: vi.fn(),
 }));
 
 import {
@@ -39,8 +39,8 @@ import {
   useTemplateAnalytics,
   useNodeAnalytics,
   useBottlenecks,
-  useProposalStatusCounts,
-  useProposalThroughput,
+  useRoadmapStatusCounts,
+  useRoadmapThroughput,
 } from "@/hooks/useAnalytics";
 
 const mockOverview = useAnalyticsOverview as ReturnType<typeof vi.fn>;
@@ -48,8 +48,8 @@ const mockRunTrend = useRunTrend as ReturnType<typeof vi.fn>;
 const mockTemplateAnalytics = useTemplateAnalytics as ReturnType<typeof vi.fn>;
 const mockNodeAnalytics = useNodeAnalytics as ReturnType<typeof vi.fn>;
 const mockBottlenecks = useBottlenecks as ReturnType<typeof vi.fn>;
-const mockProposalStatusCounts = useProposalStatusCounts as ReturnType<typeof vi.fn>;
-const mockProposalThroughput = useProposalThroughput as ReturnType<typeof vi.fn>;
+const mockRoadmapStatusCounts = useRoadmapStatusCounts as ReturnType<typeof vi.fn>;
+const mockRoadmapThroughput = useRoadmapThroughput as ReturnType<typeof vi.fn>;
 
 function setupMocks(overrides?: {
   overview?: Record<string, unknown>;
@@ -88,11 +88,11 @@ function setupMocks(overrides?: {
     data: overrides?.bottlenecks ?? { bottlenecks: [] },
     isLoading: false,
   });
-  mockProposalStatusCounts.mockReturnValue({
+  mockRoadmapStatusCounts.mockReturnValue({
     data: overrides?.statusCounts ?? { total: 0, statuses: [] },
     isLoading: false,
   });
-  mockProposalThroughput.mockReturnValue({
+  mockRoadmapThroughput.mockReturnValue({
     data: overrides?.throughput ?? { points: [] },
     isLoading: false,
   });
@@ -157,8 +157,8 @@ describe("AnalyticsPage", () => {
     mockTemplateAnalytics.mockReturnValue({ data: undefined, isLoading: true });
     mockNodeAnalytics.mockReturnValue({ data: undefined, isLoading: true });
     mockBottlenecks.mockReturnValue({ data: undefined, isLoading: true });
-    mockProposalStatusCounts.mockReturnValue({ data: undefined, isLoading: true });
-    mockProposalThroughput.mockReturnValue({ data: undefined, isLoading: true });
+    mockRoadmapStatusCounts.mockReturnValue({ data: undefined, isLoading: true });
+    mockRoadmapThroughput.mockReturnValue({ data: undefined, isLoading: true });
 
     renderWithProviders(<AnalyticsPage />, { initialEntries: ["/analytics"] });
 
@@ -230,12 +230,12 @@ describe("AnalyticsPage", () => {
     // Each sub-heading lives directly inside its column wrapper, which we
     // expect to carry min-w-0 for grid-item-shrink behavior.
     const statusColumn = screen
-      .getByText("Proposals by Status")
+      .getByText("Tasks by Status")
       .closest('[class*="min-w-0"]');
     expect(statusColumn).not.toBeNull();
 
     const throughputColumn = screen
-      .getByText("Rollout Throughput")
+      .getByText("Task Throughput")
       .closest('[class*="min-w-0"]');
     expect(throughputColumn).not.toBeNull();
   });

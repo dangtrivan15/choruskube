@@ -6,8 +6,8 @@ import type {
   TemplateAnalyticsResponse,
   NodeAnalyticsResponse,
   BottleneckResponse,
-  ProposalStatusCountsResponse,
-  ProposalThroughputResponse,
+  RoadmapStatusCountsResponse,
+  RoadmapThroughputResponse,
 } from "@/lib/types";
 
 const ANALYTICS_STALE_TIME = 5 * 60 * 1000; // 5 minutes
@@ -57,19 +57,19 @@ export function useBottlenecks(period: string) {
   });
 }
 
-export function useProposalStatusCounts() {
+export function useRoadmapStatusCounts() {
   return useQuery({
     queryKey: ["analytics", "roadmap", "status-counts"],
-    queryFn: () => api.get<ProposalStatusCountsResponse>("/analytics/roadmap/status-counts"),
+    queryFn: () => api.get<RoadmapStatusCountsResponse>("/analytics/roadmap/status-counts"),
     staleTime: ANALYTICS_STALE_TIME,
     placeholderData: (prev) => prev,
   });
 }
 
-export function useProposalThroughput(period: string) {
+export function useRoadmapThroughput(period: string) {
   return useQuery({
     queryKey: ["analytics", "roadmap", "throughput", period],
-    queryFn: () => api.get<ProposalThroughputResponse>(`/analytics/roadmap/throughput?period=${period}`),
+    queryFn: () => api.get<RoadmapThroughputResponse>(`/analytics/roadmap/throughput?period=${period}`),
     staleTime: ANALYTICS_STALE_TIME,
     placeholderData: (prev) => prev,
   });

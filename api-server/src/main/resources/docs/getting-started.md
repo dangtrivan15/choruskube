@@ -27,21 +27,25 @@ you land directly on the dashboard.
 
 Follow these steps to kick off your first automated workflow end-to-end.
 
-### Step 1 — Create a Feature Proposal
+### Step 1 — Create an Epic, a Story, and a Task
 
 1. Navigate to **Roadmap** in the left sidebar.
-2. Click **New Proposal**.
-3. Enter a title (e.g., "Add user authentication") and an optional description and motivation.
-4. Click **Save** — your proposal appears in the **Backlog** column.
+2. Click **New Epic**. Enter a title (e.g., "Add user authentication"), a description, an
+   optional motivation, and pick the **Git Repository** or **Repository Group** it targets.
+   Click **Create**.
+3. Open the Epic you just created, click **New Story**, and give it a title and description.
+4. Open that Story, click **New Task**, and give it a title and description. Only a Task can be
+   started as a workflow run — the Epic and Story around it are organizational containers.
 
 ### Step 2 — Start a Workflow Run
 
-1. From the **Roadmap** page, click **Start Run** next to your proposal, _or_ navigate to **Runs** and click the **Start** button.
-2. In the **Start Run** dialog:
-   - Select a **Workflow Template** (e.g., "Code Review", "Feature Implementation").
-   - Select the target **Git Repository** or **Repository Group**.
-   - The proposal you created is pre-linked; confirm and click **Start**.
-3. The run appears immediately on the **Runs** page with status **Running**.
+1. From the Task's detail view, click **Start**, _or_ navigate to **Runs** and click the **Start**
+   button.
+2. In the **Start Run** dialog, select a **Workflow Template** (e.g., "Code Review", "Feature
+   Implementation") — the target repository comes from the Task's Epic when started from the
+   Task detail view.
+3. Confirm and click **Start**. The run appears immediately on the **Runs** page with status
+   **Running**, and the Task itself moves to `in_progress`.
 
 ### Step 3 — Monitor the Run
 
@@ -80,7 +84,7 @@ Once all nodes complete:
 |---|---|
 | **Runs** | List all workflow runs; start a new run |
 | **Approvals** | Respond to pending human gate requests |
-| **Roadmap** | Manage feature proposals and backlog |
+| **Roadmap** | Organize work as Epics, Stories, and Tasks, and start runs from a Task |
 | **Analytics** | View run trends and performance metrics |
 | **Documentation** | This documentation (you are here) |
 | **Settings** | Repositories and preferences |
@@ -103,7 +107,9 @@ Once all nodes complete:
 | **Workflow Run** | A single execution of a graph template against a target repository |
 | **Node** | A unit of work within a run (AI agent, script, human gate, parallel split/join) |
 | **Graph Template** | The reusable workflow definition — a directed acyclic graph of nodes and edges |
-| **Feature Proposal** | A backlog item (title, description, motivation) that can be linked to a run |
+| **Epic** | The top-level backlog item (title, description, motivation) that targets a Software Project and contains Stories |
+| **Story** | A grouping of related Tasks underneath an Epic |
+| **Task** | The leaf of the Roadmap hierarchy — the only unit of work that can be started as a workflow run, and the only one with a settable status |
 | **Human Gate** | A workflow node that pauses execution and waits for a human approval decision |
 | **Agent Node** | A node that spawns an AI agent pod (Claude Code) to perform work autonomously |
 | **Repository Group** | A named collection of Git repositories targeted together in a multi-repo run |

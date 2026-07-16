@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { screen } from "@testing-library/react";
 import { renderWithProviders } from "@/__tests__/test-utils";
 import RunMetaPanel from "../RunMetaPanel";
-import type { RunResponse, RunFeatureProposalSummary } from "@/lib/types";
+import type { RunResponse, RunTaskSummary } from "@/lib/types";
 
 function makeRun(overrides: Partial<RunResponse> = {}): RunResponse {
   return {
@@ -20,15 +20,15 @@ function makeRun(overrides: Partial<RunResponse> = {}): RunResponse {
     nodeExecutions: [],
     pullRequests: [],
     promptText: null,
-    featureProposal: null,
+    task: null,
     softwareProject: null,
     ...overrides,
   };
 }
 
-function makeProposal(overrides: Partial<RunFeatureProposalSummary> = {}): RunFeatureProposalSummary {
+function makeTask(overrides: Partial<RunTaskSummary> = {}): RunTaskSummary {
   return {
-    id: "proposal-1",
+    id: "task-1",
     title: "Add dark mode",
     status: "backlog",
     softwareProject: { id: "sp-1", type: "git_repo", name: "my-repo" },
@@ -60,12 +60,12 @@ describe("RunMetaPanel", () => {
     expect(screen.getByTestId("run-meta-panel-software-project")).toHaveTextContent("my-repo");
   });
 
-  it("renders proposal link and status when featureProposal is provided", () => {
-    const proposal = makeProposal({ id: "p-1", title: "Dark Mode", status: "in_progress" });
+  it("renders task link and status when task is provided", () => {
+    const task = makeTask({ id: "t-1", title: "Dark Mode", status: "in_progress" });
     renderWithProviders(
-      <RunMetaPanel run={makeRun({ featureProposal: proposal })} />
+      <RunMetaPanel run={makeRun({ task })} />
     );
-    expect(screen.getByTestId("run-meta-panel-proposal-link")).toHaveTextContent("Dark Mode");
+    expect(screen.getByTestId("run-meta-panel-task-link")).toHaveTextContent("Dark Mode");
     expect(screen.getByTestId("run-meta-panel-status")).toHaveTextContent("in progress");
   });
 
@@ -97,7 +97,7 @@ describe("RunMetaPanel", () => {
         run={makeRun({
           promptText: null,
           softwareProject: null,
-          featureProposal: null,
+          task: null,
           pullRequests: [],
         })}
       />
