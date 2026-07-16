@@ -138,36 +138,64 @@ public class InternalRunController {
     }
 
     /**
-     * Internal endpoints for feature proposal management from agent pods.
+     * Internal endpoints for Epic/Story/Task management from agent pods.
      * Agent pods use JOB_SECRET auth and the /internal/ route prefix, which is
-     * different from the public /api/v1/feature-proposals endpoints that use
-     * user-facing auth. These endpoints also auto-resolve the gitRepoId
+     * different from the public /api/v1/epics|stories|tasks endpoints that use
+     * user-facing auth. These endpoints also auto-resolve the software project
      * from the run context so agents don't need to know it.
      *
-     * The agent-images/claude-code/create-proposal and list-proposals CLI scripts
-     * depend on these endpoints. Removing them would break deployed agent images.
+     * The create/list/update paths below are kept byte-for-byte unchanged from the retired
+     * flat-proposal model (Decision 6) — only their delegate calls now operate on Epics — because
+     * the agent-images/claude-code/create-proposal, list-proposals, and update-proposal CLI
+     * scripts depend on these exact paths. Removing or renaming them would break deployed agent
+     * images still running an older image during a rolling upgrade. The nested Story/Task-create
+     * paths are genuinely new, added under the same preserved segment so a rolling-upgrade agent
+     * pod on the old image never sees them.
      */
     @PostMapping("/{runId}/node-executions/{nodeExecId}/feature-proposals")
     @ResponseStatus(HttpStatus.CREATED)
-    public FeatureProposalResponse createFeatureProposal(
+    public EpicResponse createFeatureProposal(
             @PathVariable UUID runId,
             @PathVariable UUID nodeExecId,
-            @Valid @RequestBody InternalCreateFeatureProposalRequest request) {
-        return service.createFeatureProposal(runId, request);
+            @Valid @RequestBody InternalCreateEpicRequest request) {
+        return service.createEpic(runId, request);
     }
 
     @GetMapping("/{runId}/node-executions/{nodeExecId}/feature-proposals")
-    public List<FeatureProposalResponse> listFeatureProposals(@PathVariable UUID runId, @PathVariable UUID nodeExecId) {
-        return service.listFeatureProposals(runId);
+    public List<EpicResponse> listFeatureProposals(@PathVariable UUID runId, @PathVariable UUID nodeExecId) {
+        return service.listEpics(runId);
     }
 
     @PatchMapping("/{runId}/node-executions/{nodeExecId}/feature-proposals/{proposalId}")
-    public FeatureProposalResponse updateFeatureProposal(
+    public EpicResponse updateFeatureProposal(
             @PathVariable UUID runId,
             @PathVariable UUID nodeExecId,
             @PathVariable UUID proposalId,
-            @Valid @RequestBody InternalUpdateFeatureProposalRequest request) {
-        return service.updateFeatureProposal(runId, proposalId, request);
+            @Valid @RequestBody InternalUpdateEpicRequest request) {
+        return service.updateEpic(runId, proposalId, request);
+    }
+
+    /** New: create a Story under an Epic (Decision 6/3.6). */
+    @PostMapping("/{runId}/node-executions/{nodeExecId}/feature-proposals/{epicId}/stories")
+    @ResponseStatus(HttpStatus.CREATED)
+    public StoryResponse createStory(
+            @PathVariable UUID runId,
+            @PathVariable UUID nodeExecId,
+            @PathVariable UUID epicId,
+            @Valid @RequestBody InternalCreateStoryRequest request) {
+        return service.createStory(runId, epicId, request);
+    }
+
+    /** New: create a Task under a Story (Decision 6/3.6). */
+    @PostMapping("/{runId}/node-executions/{nodeExecId}/feature-proposals/{epicId}/stories/{storyId}/tasks")
+    @ResponseStatus(HttpStatus.CREATED)
+    public TaskResponse createTask(
+            @PathVariable UUID runId,
+            @PathVariable UUID nodeExecId,
+            @PathVariable UUID epicId,
+            @PathVariable UUID storyId,
+            @Valid @RequestBody InternalCreateTaskRequest request) {
+        return service.createTask(runId, storyId, request);
     }
 
     @PostMapping("/{runId}/node-executions/{nodeExecId}/pull-requests")

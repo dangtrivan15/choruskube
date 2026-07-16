@@ -1,18 +1,19 @@
 package com.choruskube.core.dto;
 
+import jakarta.annotation.Nullable;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
-public record FeatureProposalResponse(
+public record TaskResponse(
         UUID id,
+        UUID storyId,
         String title,
         String description,
-        String motivation,
         String status,
         SoftwareProjectRef softwareProject,
         List<RepoRef> repos,
-        UUID workflowRunId,
-        String workflowRunStatus,
+        @Nullable UUID latestRunId,
+        @Nullable String latestRunStatus,
         Instant createdAt,
         Instant updatedAt) {}

@@ -7,11 +7,11 @@ import static org.mockito.Mockito.*;
 import com.choruskube.core.dto.RunResponse;
 import com.choruskube.core.dto.RunSummary;
 import com.choruskube.core.dto.SoftwareProjectRef;
-import com.choruskube.core.model.FeatureProposal;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.RepoGroup;
+import com.choruskube.core.model.Task;
 import com.choruskube.core.model.WorkflowRun;
-import com.choruskube.core.model.enums.FeatureProposalStatus;
+import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -31,7 +31,9 @@ import org.springframework.data.jpa.domain.Specification;
 
 /**
  * Unit tests for RunService covering the softwareProject projection in both the listing
- * (listRuns → RunSummary) and detail (getRun → RunResponse) paths.
+ * (listRuns → RunSummary) and detail (getRun → RunResponse) paths, now sourced from the Task
+ * a run's forward {@code task_id} FK points at (Decision 1) rather than a reverse
+ * feature-proposal lookup.
  */
 @ExtendWith(MockitoExtension.class)
 class RunServiceSoftwareProjectDisplayTest {
@@ -67,7 +69,7 @@ class RunServiceSoftwareProjectDisplayTest {
     private GitRepoRepository gitRepoRepo;
 
     @Mock
-    private FeatureProposalRepository featureProposalRepo;
+    private TaskRepository taskRepo;
 
     @Mock
     private SoftwareProjectRepository softwareProjectRepo;
@@ -105,7 +107,7 @@ class RunServiceSoftwareProjectDisplayTest {
                 null, // repoGroupMemberRepo
                 null, // credentialService
                 null, // uploadService
-                featureProposalRepo,
+                taskRepo,
                 artifactResolutionService,
                 null, // applicationEventPublisher — not needed for listing/detail tests
                 new com.choruskube.core.scope.NoOpScopeProvider());
@@ -140,15 +142,14 @@ class RunServiceSoftwareProjectDisplayTest {
         return rg;
     }
 
-    private FeatureProposal makeProposal(UUID runId, UUID projectId) {
-        FeatureProposal fp = new FeatureProposal();
-        fp.setId(UUID.randomUUID());
-        fp.setWorkflowRunId(runId);
-        fp.setSoftwareProjectId(projectId);
-        fp.setStatus(FeatureProposalStatus.backlog);
-        fp.setTitle("Some feature");
-        fp.setDescription("desc");
-        return fp;
+    private Task makeTask(UUID id, UUID projectId) {
+        Task t = new Task();
+        t.setId(id);
+        t.setSoftwareProjectId(projectId);
+        t.setStatus(WorkItemStatus.backlog);
+        t.setTitle("Some task");
+        t.setDescription("desc");
+        return t;
     }
 
     @SuppressWarnings("unchecked")
@@ -161,19 +162,21 @@ class RunServiceSoftwareProjectDisplayTest {
     }
 
     // -------------------------------------------------------------------------
-    // listRuns() — softwareProject via proposal (GitRepo)
+    // listRuns() — softwareProject via task (GitRepo)
     // -------------------------------------------------------------------------
 
     @Test
-    void listRuns_proposalLinkedGitRepo_softwareProjectIsGitRepo() {
+    void listRuns_taskLinkedGitRepo_softwareProjectIsGitRepo() {
         UUID runId = UUID.randomUUID();
         UUID projectId = UUID.randomUUID();
+        UUID taskId = UUID.randomUUID();
         WorkflowRun run = makeRun(runId, "{}");
+        run.setTaskId(taskId);
         GitRepo repo = makeGitRepo(projectId, "my-api-repo");
-        FeatureProposal proposal = makeProposal(runId, projectId);
+        Task task = makeTask(taskId, projectId);
 
         stubListRuns(List.of(run));
-        when(featureProposalRepo.findAllByWorkflowRunIdIn(anyCollection())).thenReturn(List.of(proposal));
+        when(taskRepo.findAllById(anyCollection())).thenReturn(List.of(task));
         when(softwareProjectRepo.findAllById(anyCollection())).thenReturn(List.of(repo));
 
         Page<RunSummary> result = service.listRuns(null, null, PageRequest.of(0, 20));
@@ -187,19 +190,21 @@ class RunServiceSoftwareProjectDisplayTest {
     }
 
     // -------------------------------------------------------------------------
-    // listRuns() — softwareProject via proposal (RepoGroup)
+    // listRuns() — softwareProject via task (RepoGroup)
     // -------------------------------------------------------------------------
 
     @Test
-    void listRuns_proposalLinkedRepoGroup_softwareProjectTypeIsRepoGroup() {
+    void listRuns_taskLinkedRepoGroup_softwareProjectTypeIsRepoGroup() {
         UUID runId = UUID.randomUUID();
         UUID projectId = UUID.randomUUID();
+        UUID taskId = UUID.randomUUID();
         WorkflowRun run = makeRun(runId, "{}");
+        run.setTaskId(taskId);
         RepoGroup rg = makeRepoGroup(projectId, "my-monorepo");
-        FeatureProposal proposal = makeProposal(runId, projectId);
+        Task task = makeTask(taskId, projectId);
 
         stubListRuns(List.of(run));
-        when(featureProposalRepo.findAllByWorkflowRunIdIn(anyCollection())).thenReturn(List.of(proposal));
+        when(taskRepo.findAllById(anyCollection())).thenReturn(List.of(task));
         when(softwareProjectRepo.findAllById(anyCollection())).thenReturn(List.of(rg));
 
         Page<RunSummary> result = service.listRuns(null, null, PageRequest.of(0, 20));
@@ -211,18 +216,19 @@ class RunServiceSoftwareProjectDisplayTest {
     }
 
     // -------------------------------------------------------------------------
-    // listRuns() — softwareProject via inputs fallback (no proposal)
+    // listRuns() — softwareProject via inputs fallback (no task)
     // -------------------------------------------------------------------------
 
     @Test
-    void listRuns_noProposal_validUuidInInputs_softwareProjectFromInputs() {
+    void listRuns_noTask_validUuidInInputs_softwareProjectFromInputs() {
         UUID runId = UUID.randomUUID();
         UUID projectId = UUID.randomUUID();
         WorkflowRun run = makeRun(runId, "{\"software_project_id\":\"" + projectId + "\"}");
         GitRepo repo = makeGitRepo(projectId, "inputs-repo");
 
         stubListRuns(List.of(run));
-        when(featureProposalRepo.findAllByWorkflowRunIdIn(anyCollection())).thenReturn(List.of());
+        // No task linked (run.getTaskId() is null) — the batch fetch short-circuits before ever
+        // calling taskRepo.findAllById, so no stub is needed for it here.
         when(softwareProjectRepo.findAllById(anyCollection())).thenReturn(List.of(repo));
 
         Page<RunSummary> result = service.listRuns(null, null, PageRequest.of(0, 20));
@@ -235,16 +241,16 @@ class RunServiceSoftwareProjectDisplayTest {
     }
 
     // -------------------------------------------------------------------------
-    // listRuns() — null when no proposal and empty inputs
+    // listRuns() — null when no task and empty inputs
     // -------------------------------------------------------------------------
 
     @Test
-    void listRuns_noProposalEmptyInputs_softwareProjectIsNull() {
+    void listRuns_noTaskEmptyInputs_softwareProjectIsNull() {
         UUID runId = UUID.randomUUID();
         WorkflowRun run = makeRun(runId, "{}");
 
         stubListRuns(List.of(run));
-        when(featureProposalRepo.findAllByWorkflowRunIdIn(anyCollection())).thenReturn(List.of());
+        // No task linked — the batch fetch short-circuits before calling taskRepo.findAllById.
         when(softwareProjectRepo.findAllById(anyCollection())).thenReturn(List.of());
 
         Page<RunSummary> result = service.listRuns(null, null, PageRequest.of(0, 20));
@@ -257,12 +263,12 @@ class RunServiceSoftwareProjectDisplayTest {
     // -------------------------------------------------------------------------
 
     @Test
-    void listRuns_noProposal_nonUuidInInputs_softwareProjectIsNull() {
+    void listRuns_noTask_nonUuidInInputs_softwareProjectIsNull() {
         UUID runId = UUID.randomUUID();
         WorkflowRun run = makeRun(runId, "{\"software_project_id\":\"not-a-uuid\"}");
 
         stubListRuns(List.of(run));
-        when(featureProposalRepo.findAllByWorkflowRunIdIn(anyCollection())).thenReturn(List.of());
+        // No task linked — the batch fetch short-circuits before calling taskRepo.findAllById.
         when(softwareProjectRepo.findAllById(anyCollection())).thenReturn(List.of());
 
         Page<RunSummary> result = service.listRuns(null, null, PageRequest.of(0, 20));
@@ -282,32 +288,34 @@ class RunServiceSoftwareProjectDisplayTest {
         UUID run3Id = UUID.randomUUID();
         UUID project1Id = UUID.randomUUID();
         UUID project2Id = UUID.randomUUID();
+        UUID task1Id = UUID.randomUUID();
 
-        WorkflowRun run1 = makeRun(run1Id, "{}"); // has proposal
+        WorkflowRun run1 = makeRun(run1Id, "{}"); // has task
+        run1.setTaskId(task1Id);
         WorkflowRun run2 = makeRun(run2Id, "{\"software_project_id\":\"" + project2Id + "\"}"); // inputs only
         WorkflowRun run3 = makeRun(run3Id, "{}"); // no project at all
 
-        FeatureProposal proposal1 = makeProposal(run1Id, project1Id);
-        GitRepo repo1 = makeGitRepo(project1Id, "proposal-repo");
+        Task task1 = makeTask(task1Id, project1Id);
+        GitRepo repo1 = makeGitRepo(project1Id, "task-repo");
         GitRepo repo2 = makeGitRepo(project2Id, "inputs-repo");
 
         stubListRuns(List.of(run1, run2, run3));
-        when(featureProposalRepo.findAllByWorkflowRunIdIn(anyCollection())).thenReturn(List.of(proposal1));
+        when(taskRepo.findAllById(anyCollection())).thenReturn(List.of(task1));
         when(softwareProjectRepo.findAllById(anyCollection())).thenReturn(List.of(repo1, repo2));
 
         Page<RunSummary> result = service.listRuns(null, null, PageRequest.of(0, 20));
 
         // Batch fetches called exactly once each
-        verify(featureProposalRepo, times(1)).findAllByWorkflowRunIdIn(anyCollection());
+        verify(taskRepo, times(1)).findAllById(anyCollection());
         verify(softwareProjectRepo, times(1)).findAllById(anyCollection());
 
-        // run1 has proposal project
+        // run1 has task project
         RunSummary summary1 = result.getContent().stream()
                 .filter(s -> s.id().equals(run1Id))
                 .findFirst()
                 .orElseThrow();
         assertThat(summary1.softwareProject()).isNotNull();
-        assertThat(summary1.softwareProject().name()).isEqualTo("proposal-repo");
+        assertThat(summary1.softwareProject().name()).isEqualTo("task-repo");
 
         // run2 has inputs project
         RunSummary summary2 = result.getContent().stream()
@@ -326,21 +334,23 @@ class RunServiceSoftwareProjectDisplayTest {
     }
 
     // -------------------------------------------------------------------------
-    // getRun() / toResponse() — proposal wins
+    // getRun() / toResponse() — task wins
     // -------------------------------------------------------------------------
 
     @Test
-    void getRun_proposalLinkedProject_softwareProjectFromProposal() {
+    void getRun_taskLinkedProject_softwareProjectFromTask() {
         UUID runId = UUID.randomUUID();
         UUID projectId = UUID.randomUUID();
+        UUID taskId = UUID.randomUUID();
         WorkflowRun run = makeRun(runId, "{}");
-        GitRepo repo = makeGitRepo(projectId, "proposal-linked-repo");
-        FeatureProposal proposal = makeProposal(runId, projectId);
+        run.setTaskId(taskId);
+        GitRepo repo = makeGitRepo(projectId, "task-linked-repo");
+        Task task = makeTask(taskId, projectId);
 
         when(runRepo.findById(runId)).thenReturn(Optional.of(run));
         when(execRepo.findByWorkflowRunId(runId)).thenReturn(List.of());
         when(graphTemplateRepo.findById(run.getGraphTemplateId())).thenReturn(Optional.empty());
-        when(featureProposalRepo.findByWorkflowRunId(runId)).thenReturn(Optional.of(proposal));
+        when(taskRepo.findById(taskId)).thenReturn(Optional.of(task));
         when(softwareProjectRepo.findById(projectId)).thenReturn(Optional.of(repo));
 
         RunResponse response = service.getRun(runId);
@@ -348,19 +358,19 @@ class RunServiceSoftwareProjectDisplayTest {
         assertThat(response.softwareProject()).isNotNull();
         assertThat(response.softwareProject().id()).isEqualTo(projectId);
         assertThat(response.softwareProject().type()).isEqualTo("git_repo");
-        assertThat(response.softwareProject().name()).isEqualTo("proposal-linked-repo");
-        // featureProposal sub-field is still present and consistent
-        assertThat(response.featureProposal()).isNotNull();
-        assertThat(response.featureProposal().softwareProject()).isNotNull();
-        assertThat(response.featureProposal().softwareProject().id()).isEqualTo(projectId);
+        assertThat(response.softwareProject().name()).isEqualTo("task-linked-repo");
+        // task sub-field is still present and consistent
+        assertThat(response.task()).isNotNull();
+        assertThat(response.task().softwareProject()).isNotNull();
+        assertThat(response.task().softwareProject().id()).isEqualTo(projectId);
     }
 
     // -------------------------------------------------------------------------
-    // getRun() / toResponse() — inputs fallback when no proposal
+    // getRun() / toResponse() — inputs fallback when no task
     // -------------------------------------------------------------------------
 
     @Test
-    void getRun_noProposal_validUuidInInputs_softwareProjectFromInputs() {
+    void getRun_noTask_validUuidInInputs_softwareProjectFromInputs() {
         UUID runId = UUID.randomUUID();
         UUID projectId = UUID.randomUUID();
         WorkflowRun run = makeRun(runId, "{\"software_project_id\":\"" + projectId + "\"}");
@@ -369,7 +379,6 @@ class RunServiceSoftwareProjectDisplayTest {
         when(runRepo.findById(runId)).thenReturn(Optional.of(run));
         when(execRepo.findByWorkflowRunId(runId)).thenReturn(List.of());
         when(graphTemplateRepo.findById(run.getGraphTemplateId())).thenReturn(Optional.empty());
-        when(featureProposalRepo.findByWorkflowRunId(runId)).thenReturn(Optional.empty());
         when(softwareProjectRepo.findById(projectId)).thenReturn(Optional.of(repo));
 
         RunResponse response = service.getRun(runId);
@@ -377,26 +386,25 @@ class RunServiceSoftwareProjectDisplayTest {
         assertThat(response.softwareProject()).isNotNull();
         assertThat(response.softwareProject().id()).isEqualTo(projectId);
         assertThat(response.softwareProject().name()).isEqualTo("inputs-fallback-repo");
-        assertThat(response.featureProposal()).isNull();
+        assertThat(response.task()).isNull();
     }
 
     // -------------------------------------------------------------------------
-    // getRun() / toResponse() — null when neither proposal nor inputs
+    // getRun() / toResponse() — null when neither task nor inputs
     // -------------------------------------------------------------------------
 
     @Test
-    void getRun_noProposalNoInputs_softwareProjectIsNull() {
+    void getRun_noTaskNoInputs_softwareProjectIsNull() {
         UUID runId = UUID.randomUUID();
         WorkflowRun run = makeRun(runId, "{}");
 
         when(runRepo.findById(runId)).thenReturn(Optional.of(run));
         when(execRepo.findByWorkflowRunId(runId)).thenReturn(List.of());
         when(graphTemplateRepo.findById(run.getGraphTemplateId())).thenReturn(Optional.empty());
-        when(featureProposalRepo.findByWorkflowRunId(runId)).thenReturn(Optional.empty());
 
         RunResponse response = service.getRun(runId);
 
         assertThat(response.softwareProject()).isNull();
-        assertThat(response.featureProposal()).isNull();
+        assertThat(response.task()).isNull();
     }
 }

@@ -97,6 +97,8 @@ class InternalRunServiceGraphRuntimeTest {
                 objectMapper,
                 null,
                 null,
+                null,
+                null,
                 Optional.empty(),
                 null,
                 null,

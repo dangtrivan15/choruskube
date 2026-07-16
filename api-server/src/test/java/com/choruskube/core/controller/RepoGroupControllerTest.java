@@ -13,16 +13,20 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.choruskube.core.BaseTest;
+import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.RepoGroupRequest;
+import com.choruskube.core.dto.StoryRequest;
+import com.choruskube.core.dto.TaskRequest;
 import com.choruskube.core.exception.ForbiddenException;
-import com.choruskube.core.model.FeatureProposal;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.RepoGroup;
-import com.choruskube.core.repository.FeatureProposalRepository;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.service.AuthorizationService;
+import com.choruskube.core.service.EpicService;
 import com.choruskube.core.service.OrgIdentitySync;
 import com.choruskube.core.service.RepoGroupService;
+import com.choruskube.core.service.StoryService;
+import com.choruskube.core.service.TaskService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.temporal.client.WorkflowClient;
 import io.temporal.serviceclient.WorkflowServiceStubs;
@@ -56,7 +60,13 @@ class RepoGroupControllerTest extends BaseTest {
     private RepoGroupService repoGroupService;
 
     @Autowired
-    private FeatureProposalRepository proposalRepo;
+    private EpicService epicService;
+
+    @Autowired
+    private StoryService storyService;
+
+    @Autowired
+    private TaskService taskService;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -141,22 +151,22 @@ class RepoGroupControllerTest extends BaseTest {
     }
 
     @Test
-    void delete_repo_group_with_active_proposal_is_409() throws Exception {
-        GitRepo r1 = saveRepo("active-proposal-r1");
-        GitRepo r2 = saveRepo("active-proposal-r2");
+    void delete_repo_group_with_active_task_is_409() throws Exception {
+        GitRepo r1 = saveRepo("active-task-r1");
+        GitRepo r2 = saveRepo("active-task-r2");
         RepoGroup group = repoGroupService.create(
-                "g-active-prop-" + UUID.randomUUID().toString().substring(0, 8),
+                "g-active-task-" + UUID.randomUUID().toString().substring(0, 8),
                 null,
                 null,
                 List.of(r1.getId(), r2.getId()));
         entityManager.flush();
 
-        // Seed an active (non-rolled-out) proposal targeting this group.
-        FeatureProposal p = new FeatureProposal();
-        p.setTitle("Active proposal");
-        p.setDescription("Holds the group from delete");
-        p.setSoftwareProjectId(group.getId());
-        proposalRepo.save(p);
+        // Seed an Epic -> Story -> Task chain targeting this group, with the Task left non-done
+        // (Task carries software_project_id directly per Decision 4).
+        var epic = epicService.create(
+                new EpicRequest("Active epic", "Holds the group from delete", null, group.getId()), null);
+        var story = storyService.create(epic.id(), new StoryRequest("Story", "Desc"));
+        taskService.create(story.id(), new TaskRequest("Active task", "Holds the group from delete"));
         entityManager.flush();
 
         String body = mockMvc.perform(delete("/api/v1/repo-groups/{id}", group.getId()))
@@ -165,7 +175,7 @@ class RepoGroupControllerTest extends BaseTest {
                 .getResponse()
                 .getContentAsString();
 
-        assertThat(body).contains("active proposal");
+        assertThat(body).contains("active task");
     }
 
     @Test

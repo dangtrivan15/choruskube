@@ -67,6 +67,8 @@ COPY list-proposals /usr/local/bin/list-proposals
 COPY live-chat-loop /usr/local/bin/live-chat-loop
 COPY register-pr /usr/local/bin/register-pr
 COPY update-proposal /usr/local/bin/update-proposal
+COPY create-story /usr/local/bin/create-story
+COPY create-task /usr/local/bin/create-task
 COPY run-all-tests /usr/local/bin/run-all-tests
 COPY system_prompt.md /usr/local/share/choruskube/system_prompt.md
 RUN chmod +x /usr/local/bin/report-result \
@@ -81,6 +83,8 @@ RUN chmod +x /usr/local/bin/report-result \
     /usr/local/bin/live-chat-loop \
     /usr/local/bin/register-pr \
     /usr/local/bin/update-proposal \
+    /usr/local/bin/create-story \
+    /usr/local/bin/create-task \
     /usr/local/bin/run-all-tests
 
 # Disable telemetry, update checks, and other non-essential network traffic.

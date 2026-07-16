@@ -1,7 +1,7 @@
 package com.choruskube.core.model.enums;
 
-public enum FeatureProposalStatus {
+public enum WorkItemStatus {
     backlog,
     in_progress,
-    rolled_out
+    done
 }

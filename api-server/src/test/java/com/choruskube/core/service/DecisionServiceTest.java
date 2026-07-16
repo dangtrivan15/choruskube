@@ -54,6 +54,8 @@ class DecisionServiceTest {
                 new ObjectMapper(),
                 null,
                 null,
+                null,
+                null,
                 Optional.empty(),
                 null,
                 null,

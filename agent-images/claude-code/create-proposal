@@ -1,15 +1,22 @@
 #!/bin/bash
-# create-proposal — create a feature proposal via the ChorusKube API server.
+# create-proposal — create a roadmap Epic via the ChorusKube API server.
 #
 # Usage: create-proposal --title TITLE --description DESC [--motivation MOT]
 #
-# Creates a new feature proposal targeting the workflow run's software project.
-# The target is resolved server-side from the run's software_project_id input;
-# agents cannot pick a different target.
+# Creates a new Epic targeting the workflow run's software project. The target
+# is resolved server-side from the run's software_project_id input; agents
+# cannot pick a different target.
+#
+# This script keeps its original name and internal-endpoint path for backward
+# compatibility with deployed agent images (rolling-upgrade safety) even though
+# it now operates on Epics, the top level of the Epic -> Story -> Task work
+# hierarchy, rather than the old flat feature-proposal model. An Epic created
+# here is not yet startable on its own — chain create-story and create-task
+# afterwards to produce a startable Task.
 #
 # Options:
-#   --title TITLE         Proposal title (required, max 255 chars)
-#   --description DESC    Proposal description (required)
+#   --title TITLE         Epic title (required, max 255 chars)
+#   --description DESC    Epic description (required)
 #   --motivation MOT      Motivation / rationale (optional)
 #   -h, --help            Show this help message
 #
@@ -25,7 +32,7 @@
 #                   --motivation "Increase engagement"
 #
 # Exit codes:
-#   0  Proposal created successfully (JSON response printed to stdout)
+#   0  Epic created successfully (JSON response printed to stdout)
 #   1  Missing arguments, environment, or API error
 set -euo pipefail
 
@@ -76,8 +83,8 @@ if [ -z "$TITLE" ] || [ -z "$DESCRIPTION" ]; then
     exit 1
 fi
 
-# Build JSON body using jq for proper escaping. The server resolves the proposal's
-# software project from the run's inputs — there's no per-proposal override.
+# Build JSON body using jq for proper escaping. The server resolves the Epic's
+# software project from the run's inputs — there's no per-Epic override.
 BODY=$(jq -n \
     --arg title "$TITLE" \
     --arg description "$DESCRIPTION" \
@@ -93,7 +100,7 @@ HTTP_CODE=$(echo "$RESPONSE" | tail -1)
 BODY_RESPONSE=$(echo "$RESPONSE" | sed '$d')
 
 if [ "$HTTP_CODE" != "201" ]; then
-    echo "ERROR: Failed to create proposal (HTTP $HTTP_CODE): $BODY_RESPONSE" >&2
+    echo "ERROR: Failed to create Epic (HTTP $HTTP_CODE): $BODY_RESPONSE" >&2
     exit 1
 fi
 

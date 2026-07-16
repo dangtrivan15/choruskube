@@ -14,7 +14,7 @@ public interface AnalyticsService {
 
     BottleneckResponse getBottlenecks(String period);
 
-    ProposalStatusCountsResponse getProposalStatusCounts();
+    RoadmapStatusCountsResponse getRoadmapStatusCounts();
 
-    ProposalThroughputResponse getProposalThroughput(String period);
+    RoadmapThroughputResponse getRoadmapThroughput(String period);
 }

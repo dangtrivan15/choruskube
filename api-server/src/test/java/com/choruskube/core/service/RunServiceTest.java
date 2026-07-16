@@ -5,17 +5,17 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 import com.choruskube.core.config.SingleTenant;
-import com.choruskube.core.dto.RunFeatureProposalSummary;
 import com.choruskube.core.dto.RunResponse;
+import com.choruskube.core.dto.RunTaskSummary;
 import com.choruskube.core.dto.SignalRequest;
-import com.choruskube.core.model.FeatureProposal;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.GraphTemplate;
 import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.RepoGroup;
+import com.choruskube.core.model.Task;
 import com.choruskube.core.model.WorkflowRun;
-import com.choruskube.core.model.enums.FeatureProposalStatus;
 import com.choruskube.core.model.enums.NodeExecutionStatus;
+import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.*;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -85,7 +85,7 @@ class RunServiceTest {
     private WorkflowStub workflowStub;
 
     @Mock
-    private FeatureProposalRepository featureProposalRepo;
+    private TaskRepository taskRepo;
 
     @Mock
     private SoftwareProjectRepository softwareProjectRepo;
@@ -126,7 +126,7 @@ class RunServiceTest {
                 null,
                 null,
                 null,
-                featureProposalRepo,
+                taskRepo,
                 mock(ArtifactResolutionService.class),
                 mock(ApplicationEventPublisher.class),
                 new com.choruskube.core.scope.NoOpScopeProvider());
@@ -330,7 +330,8 @@ class RunServiceTest {
     }
 
     // -----------------------------------------------------------------------
-    // buildProposalSummary — via getRun()
+    // buildTaskSummary — via getRun(). Reads run.getTaskId() directly (Decision 1) — no
+    // reverse "find by run id" lookup, only a forward lookup of the Task itself by id.
     // -----------------------------------------------------------------------
 
     private WorkflowRun stubRunForGetRun() {
@@ -350,40 +351,40 @@ class RunServiceTest {
     }
 
     @Test
-    void getRun_noProposalLinked_featureProposalIsNull() {
+    void getRun_noTaskLinked_taskIsNull() {
         stubRunForGetRun();
-        when(featureProposalRepo.findByWorkflowRunId(runId)).thenReturn(Optional.empty());
 
         RunResponse response = service.getRun(runId);
 
-        assertThat(response.featureProposal()).isNull();
+        assertThat(response.task()).isNull();
     }
 
     @Test
-    void getRun_proposalFoundWithProject_returnsFullSummary() {
-        stubRunForGetRun();
+    void getRun_taskFoundWithProject_returnsFullSummary() {
+        WorkflowRun run = stubRunForGetRun();
 
-        UUID proposalId = UUID.randomUUID();
+        UUID taskId = UUID.randomUUID();
         UUID projectId = UUID.randomUUID();
+        run.setTaskId(taskId);
 
-        FeatureProposal proposal = new FeatureProposal();
-        proposal.setId(proposalId);
-        proposal.setTitle("Dark mode");
-        proposal.setStatus(FeatureProposalStatus.in_progress);
-        proposal.setSoftwareProjectId(projectId);
+        Task task = new Task();
+        task.setId(taskId);
+        task.setTitle("Dark mode");
+        task.setStatus(WorkItemStatus.in_progress);
+        task.setSoftwareProjectId(projectId);
 
         GitRepo gitRepo = new GitRepo();
         gitRepo.setId(projectId);
         gitRepo.setName("my-repo");
 
-        when(featureProposalRepo.findByWorkflowRunId(runId)).thenReturn(Optional.of(proposal));
+        when(taskRepo.findById(taskId)).thenReturn(Optional.of(task));
         when(softwareProjectRepo.findById(projectId)).thenReturn(Optional.of(gitRepo));
 
         RunResponse response = service.getRun(runId);
 
-        assertThat(response.featureProposal()).isNotNull();
-        RunFeatureProposalSummary summary = response.featureProposal();
-        assertThat(summary.id()).isEqualTo(proposalId);
+        assertThat(response.task()).isNotNull();
+        RunTaskSummary summary = response.task();
+        assertThat(summary.id()).isEqualTo(taskId);
         assertThat(summary.title()).isEqualTo("Dark mode");
         assertThat(summary.status()).isEqualTo("in_progress");
         assertThat(summary.softwareProject()).isNotNull();
@@ -393,52 +394,54 @@ class RunServiceTest {
     }
 
     @Test
-    void getRun_proposalFoundWithRepoGroup_returnsRepoGroupType() {
-        stubRunForGetRun();
+    void getRun_taskFoundWithRepoGroup_returnsRepoGroupType() {
+        WorkflowRun run = stubRunForGetRun();
 
-        UUID proposalId = UUID.randomUUID();
+        UUID taskId = UUID.randomUUID();
         UUID projectId = UUID.randomUUID();
+        run.setTaskId(taskId);
 
-        FeatureProposal proposal = new FeatureProposal();
-        proposal.setId(proposalId);
-        proposal.setTitle("Refactor services");
-        proposal.setStatus(FeatureProposalStatus.backlog);
-        proposal.setSoftwareProjectId(projectId);
+        Task task = new Task();
+        task.setId(taskId);
+        task.setTitle("Refactor services");
+        task.setStatus(WorkItemStatus.backlog);
+        task.setSoftwareProjectId(projectId);
 
         RepoGroup repoGroup = new RepoGroup();
         repoGroup.setId(projectId);
         repoGroup.setName("services-group");
 
-        when(featureProposalRepo.findByWorkflowRunId(runId)).thenReturn(Optional.of(proposal));
+        when(taskRepo.findById(taskId)).thenReturn(Optional.of(task));
         when(softwareProjectRepo.findById(projectId)).thenReturn(Optional.of(repoGroup));
 
         RunResponse response = service.getRun(runId);
 
-        assertThat(response.featureProposal()).isNotNull();
-        assertThat(response.featureProposal().softwareProject().type()).isEqualTo("repo_group");
+        assertThat(response.task()).isNotNull();
+        assertThat(response.task().softwareProject().type()).isEqualTo("repo_group");
     }
 
     @Test
-    void getRun_proposalFoundButProjectDeleted_softwareProjectIsNull() {
-        stubRunForGetRun();
+    void getRun_taskFoundButProjectDeleted_softwareProjectIsNull() {
+        WorkflowRun run = stubRunForGetRun();
 
-        UUID proposalId = UUID.randomUUID();
+        UUID taskId = UUID.randomUUID();
         UUID projectId = UUID.randomUUID();
+        run.setTaskId(taskId);
 
-        FeatureProposal proposal = new FeatureProposal();
-        proposal.setId(proposalId);
-        proposal.setTitle("Orphaned proposal");
-        proposal.setStatus(FeatureProposalStatus.backlog);
-        proposal.setSoftwareProjectId(projectId);
+        Task task = new Task();
+        task.setId(taskId);
+        task.setTitle("Orphaned task");
+        task.setStatus(WorkItemStatus.backlog);
+        task.setSoftwareProjectId(projectId);
 
-        when(featureProposalRepo.findByWorkflowRunId(runId)).thenReturn(Optional.of(proposal));
+        when(taskRepo.findById(taskId)).thenReturn(Optional.of(task));
         when(softwareProjectRepo.findById(projectId)).thenReturn(Optional.empty());
 
         RunResponse response = service.getRun(runId);
 
-        assertThat(response.featureProposal()).isNotNull();
-        assertThat(response.featureProposal().id()).isEqualTo(proposalId);
-        assertThat(response.featureProposal().softwareProject()).isNull();
+        assertThat(response.task()).isNotNull();
+        assertThat(response.task().id()).isEqualTo(taskId);
+        assertThat(response.task().softwareProject()).isNull();
     }
 
     // -----------------------------------------------------------------------
@@ -479,7 +482,6 @@ class RunServiceTest {
         template.setName("Feature Development");
         template.setPromptInputKey(promptInputKey);
         when(graphTemplateRepo.findById(any())).thenReturn(Optional.of(template));
-        when(featureProposalRepo.findByWorkflowRunId(any())).thenReturn(Optional.empty());
         return template;
     }
 

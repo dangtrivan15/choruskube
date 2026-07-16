@@ -5,7 +5,7 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import java.util.UUID;
 
-public record FeatureProposalRequest(
+public record EpicRequest(
         @NotBlank @Size(max = 255) String title,
         @NotBlank String description,
         String motivation,

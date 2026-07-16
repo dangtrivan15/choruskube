@@ -439,7 +439,7 @@ class V1TemplateSeederTest extends BaseTest {
 
     @Test
     void latestSeededVersionMatchesCurrentVersion() {
-        // FeatureProposalService.start() resolves the Feature Dev template via
+        // TaskService.start() resolves the Feature Dev template via
         // findFirstByGraphIdOrderByVersionDesc, so the highest-versioned seeded
         // row IS the default new runs use.
         var latest = templateRepo

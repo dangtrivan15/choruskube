@@ -56,6 +56,8 @@ class AutoDecisionTest {
                 objectMapper,
                 null,
                 null,
+                null,
+                null,
                 Optional.empty(),
                 null,
                 null,

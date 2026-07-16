@@ -1,8 +1,8 @@
 package com.choruskube.core.service;
 
 import com.choruskube.core.dto.*;
-import com.choruskube.core.repository.FeatureProposalRepository;
 import com.choruskube.core.repository.NodeExecutionRepository;
+import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import java.time.Instant;
 import java.util.List;
@@ -15,13 +15,13 @@ public class GlobalAnalyticsService implements AnalyticsService {
 
     private final WorkflowRunRepository runRepo;
     private final NodeExecutionRepository execRepo;
-    private final FeatureProposalRepository proposalRepo;
+    private final TaskRepository taskRepo;
 
     public GlobalAnalyticsService(
-            WorkflowRunRepository runRepo, NodeExecutionRepository execRepo, FeatureProposalRepository proposalRepo) {
+            WorkflowRunRepository runRepo, NodeExecutionRepository execRepo, TaskRepository taskRepo) {
         this.runRepo = runRepo;
         this.execRepo = execRepo;
-        this.proposalRepo = proposalRepo;
+        this.taskRepo = taskRepo;
     }
 
     @Override
@@ -60,15 +60,15 @@ public class GlobalAnalyticsService implements AnalyticsService {
     }
 
     @Override
-    public ProposalStatusCountsResponse getProposalStatusCounts() {
-        List<Object[]> rows = proposalRepo.getStatusCounts();
-        return AnalyticsResultMapper.toProposalStatusCounts(rows);
+    public RoadmapStatusCountsResponse getRoadmapStatusCounts() {
+        List<Object[]> rows = taskRepo.getStatusCounts();
+        return AnalyticsResultMapper.toRoadmapStatusCounts(rows);
     }
 
     @Override
-    public ProposalThroughputResponse getProposalThroughput(String period) {
+    public RoadmapThroughputResponse getRoadmapThroughput(String period) {
         Instant since = AnalyticsResultMapper.parsePeriod(period);
-        List<Object[]> rows = proposalRepo.getThroughput(since);
-        return AnalyticsResultMapper.toProposalThroughput(rows);
+        List<Object[]> rows = taskRepo.getThroughput(since);
+        return AnalyticsResultMapper.toRoadmapThroughput(rows);
     }
 }

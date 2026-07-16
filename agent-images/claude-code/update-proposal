@@ -1,14 +1,21 @@
 #!/bin/bash
-# update-proposal — update an existing feature proposal via the ChorusKube API server.
+# update-proposal — update an existing roadmap Epic via the ChorusKube API server.
 #
 # Usage: update-proposal --proposal-id UUID [--title TITLE] [--description DESC] [--motivation MOT]
 #
-# Updates the title, description, and/or motivation of a proposal in backlog status.
-# PATCH semantics: only fields you pass are changed; omitting a flag leaves the field unchanged.
-# Pass --motivation "" to clear the motivation field.
+# Updates the title, description, and/or motivation of an Epic that has no
+# descendant Task past backlog status. PATCH semantics: only fields you pass
+# are changed; omitting a flag leaves the field unchanged. Pass --motivation ""
+# to clear the motivation field.
+#
+# This script keeps its original name, flag names, and internal-endpoint path
+# for backward compatibility with deployed agent images (rolling-upgrade
+# safety) even though it now operates on Epics, the top level of the
+# Epic -> Story -> Task work hierarchy, rather than the old flat
+# feature-proposal model. --proposal-id takes the Epic's id.
 #
 # Options:
-#   --proposal-id UUID    Proposal UUID to update (required)
+#   --proposal-id UUID    Epic UUID to update (required)
 #   --title TITLE         New title (optional, max 255 chars)
 #   --description DESC    New description (optional)
 #   --motivation MOT      New motivation (optional; "" to clear)
@@ -25,7 +32,7 @@
 #   update-proposal --proposal-id <uuid> --description "..." --motivation ""
 #
 # Exit codes:
-#   0  Proposal updated successfully (JSON response printed to stdout)
+#   0  Epic updated successfully (JSON response printed to stdout)
 #   1  Missing arguments, environment, or API error
 set -euo pipefail
 
@@ -114,7 +121,7 @@ HTTP_CODE=$(echo "$RESPONSE" | tail -1)
 BODY_RESPONSE=$(echo "$RESPONSE" | sed '$d')
 
 if [ "$HTTP_CODE" != "200" ]; then
-    echo "ERROR: Failed to update proposal (HTTP $HTTP_CODE): $BODY_RESPONSE" >&2
+    echo "ERROR: Failed to update Epic (HTTP $HTTP_CODE): $BODY_RESPONSE" >&2
     exit 1
 fi
 

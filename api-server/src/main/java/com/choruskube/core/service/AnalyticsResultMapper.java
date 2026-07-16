@@ -124,28 +124,28 @@ public final class AnalyticsResultMapper {
         return new BottleneckResponse(bottlenecks);
     }
 
-    /** Maps the proposal status-count rows into the status-counts response. */
-    public static ProposalStatusCountsResponse toProposalStatusCounts(List<Object[]> rows) {
+    /** Maps the roadmap (Task) status-count rows into the status-counts response. */
+    public static RoadmapStatusCountsResponse toRoadmapStatusCounts(List<Object[]> rows) {
         long total = 0;
-        List<ProposalStatusCount> statuses = new ArrayList<>();
+        List<RoadmapStatusCount> statuses = new ArrayList<>();
         for (Object[] r : rows) {
             String status = (String) r[0];
             long count = toLong(r[1]);
             total += count;
-            statuses.add(new ProposalStatusCount(status, count));
+            statuses.add(new RoadmapStatusCount(status, count));
         }
-        return new ProposalStatusCountsResponse(total, statuses);
+        return new RoadmapStatusCountsResponse(total, statuses);
     }
 
-    /** Maps the proposal throughput rows into the throughput response. */
-    public static ProposalThroughputResponse toProposalThroughput(List<Object[]> rows) {
-        List<ProposalThroughputPoint> points = rows.stream()
-                .map(r -> new ProposalThroughputPoint(
+    /** Maps the roadmap (Task) throughput rows into the throughput response. */
+    public static RoadmapThroughputResponse toRoadmapThroughput(List<Object[]> rows) {
+        List<RoadmapThroughputPoint> points = rows.stream()
+                .map(r -> new RoadmapThroughputPoint(
                         (String) r[0], // day string
                         toLong(r[1]) // count
                         ))
                 .toList();
-        return new ProposalThroughputResponse(points);
+        return new RoadmapThroughputResponse(points);
     }
 
     /**

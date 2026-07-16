@@ -3,8 +3,8 @@ package com.choruskube.core.service;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.choruskube.core.dto.*;
-import com.choruskube.core.repository.FeatureProposalRepository;
 import com.choruskube.core.repository.NodeExecutionRepository;
+import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -26,15 +26,15 @@ class AnalyticsServiceTest {
 
     private WorkflowRunRepository runRepo;
     private NodeExecutionRepository execRepo;
-    private FeatureProposalRepository proposalRepo;
+    private TaskRepository taskRepo;
     private GlobalAnalyticsService service;
 
     @BeforeEach
     void setUp() {
         runRepo = Mockito.mock(WorkflowRunRepository.class);
         execRepo = Mockito.mock(NodeExecutionRepository.class);
-        proposalRepo = Mockito.mock(FeatureProposalRepository.class);
-        service = new GlobalAnalyticsService(runRepo, execRepo, proposalRepo);
+        taskRepo = Mockito.mock(TaskRepository.class);
+        service = new GlobalAnalyticsService(runRepo, execRepo, taskRepo);
     }
 
     // --- parsePeriod tests (shared mapper) ---
@@ -217,14 +217,14 @@ class AnalyticsServiceTest {
         assertThat(result.bottlenecks().get(1).sampleSize()).isEqualTo(40);
     }
 
-    // --- proposal tests ---
+    // --- roadmap (Task) tests ---
 
     @Test
-    void getProposalStatusCounts_withData_sumsTotal() {
-        List<Object[]> rows = List.of(new Object[] {"backlog", 4L}, new Object[] {"rolled_out", 2L});
-        Mockito.when(proposalRepo.getStatusCounts()).thenReturn(rows);
+    void getRoadmapStatusCounts_withData_sumsTotal() {
+        List<Object[]> rows = List.of(new Object[] {"backlog", 4L}, new Object[] {"done", 2L});
+        Mockito.when(taskRepo.getStatusCounts()).thenReturn(rows);
 
-        ProposalStatusCountsResponse result = service.getProposalStatusCounts();
+        RoadmapStatusCountsResponse result = service.getRoadmapStatusCounts();
 
         assertThat(result.total()).isEqualTo(6);
         assertThat(result.statuses()).hasSize(2);
@@ -232,11 +232,11 @@ class AnalyticsServiceTest {
     }
 
     @Test
-    void getProposalThroughput_withData_returnsPoints() {
+    void getRoadmapThroughput_withData_returnsPoints() {
         List<Object[]> rows = Collections.singletonList(new Object[] {"2026-03-01", 3L});
-        Mockito.when(proposalRepo.getThroughput(Mockito.any(Instant.class))).thenReturn(rows);
+        Mockito.when(taskRepo.getThroughput(Mockito.any(Instant.class))).thenReturn(rows);
 
-        ProposalThroughputResponse result = service.getProposalThroughput("30d");
+        RoadmapThroughputResponse result = service.getRoadmapThroughput("30d");
 
         assertThat(result.points()).hasSize(1);
         assertThat(result.points().get(0).date()).isEqualTo("2026-03-01");

@@ -68,7 +68,7 @@ public class RunService {
     private final RepoGroupMemberRepository repoGroupMemberRepo;
     private final CredentialPreflightChecker credentialPreflightChecker;
     private final UploadService uploadService;
-    private final FeatureProposalRepository featureProposalRepo;
+    private final TaskRepository taskRepo;
     private final ArtifactResolutionService artifactResolutionService;
     private final ApplicationEventPublisher applicationEventPublisher;
     private final ScopeProvider scopeProvider;
@@ -100,7 +100,7 @@ public class RunService {
             RepoGroupMemberRepository repoGroupMemberRepo,
             CredentialPreflightChecker credentialPreflightChecker,
             UploadService uploadService,
-            FeatureProposalRepository featureProposalRepo,
+            TaskRepository taskRepo,
             ArtifactResolutionService artifactResolutionService,
             ApplicationEventPublisher applicationEventPublisher,
             ScopeProvider scopeProvider) {
@@ -127,7 +127,7 @@ public class RunService {
         this.repoGroupMemberRepo = repoGroupMemberRepo;
         this.credentialPreflightChecker = credentialPreflightChecker;
         this.uploadService = uploadService;
-        this.featureProposalRepo = featureProposalRepo;
+        this.taskRepo = taskRepo;
         this.artifactResolutionService = artifactResolutionService;
         this.applicationEventPublisher = applicationEventPublisher;
         this.scopeProvider = scopeProvider;
@@ -223,8 +223,8 @@ public class RunService {
                 runRepo.findById(id).orElseThrow(() -> new NotFoundException("Workflow run not found: " + id));
         authService.checkOrgAccess("workflow_run", id);
         List<NodeExecution> execs = execRepo.findByWorkflowRunId(id);
-        RunFeatureProposalSummary proposalSummary = buildProposalSummary(run);
-        return toResponse(run, execs, proposalSummary);
+        RunTaskSummary taskSummary = buildTaskSummary(run);
+        return toResponse(run, execs, taskSummary);
     }
 
     public Page<RunSummary> listRuns(String status, String name, Pageable pageable) {
@@ -245,21 +245,22 @@ public class RunService {
         Map<UUID, String> templateNames = graphTemplateRepo.findAllById(templateIds).stream()
                 .collect(Collectors.toMap(GraphTemplate::getId, GraphTemplate::getName));
 
-        // Batch-fetch software-project info for the page (two queries, no N+1)
-        Set<UUID> runIds = page.stream().map(WorkflowRun::getId).collect(Collectors.toSet());
+        // Batch-fetch task info for the page (avoids N+1). task_id is a direct FK on WorkflowRun
+        // (Decision 1), so no reverse lookup is needed — just batch-load the referenced Task rows.
+        Set<UUID> taskIds = page.stream()
+                .map(WorkflowRun::getTaskId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<UUID, Task> taskById = taskIds.isEmpty()
+                ? Map.of()
+                : taskRepo.findAllById(taskIds).stream().collect(Collectors.toMap(Task::getId, t -> t));
 
-        // First-wins on duplicate proposals (feature_proposal has no unique constraint on
-        // workflow_run_id, so multiple rows for the same run are possible in practice).
-        Map<UUID, FeatureProposal> proposalByRunId = featureProposalRepo.findAllByWorkflowRunIdIn(runIds).stream()
-                .collect(Collectors.toMap(FeatureProposal::getWorkflowRunId, p -> p, (a, b) -> a));
-
-        // Resolve the project ID for each run: proposal wins; fall back to inputs.
+        // Resolve the project ID for each run: task wins; fall back to inputs.
         Map<UUID, UUID> projectIdByRunId = new HashMap<>();
         for (WorkflowRun run : page.getContent()) {
-            FeatureProposal proposal = proposalByRunId.get(run.getId());
-            UUID projectId = (proposal != null)
-                    ? proposal.getSoftwareProjectId()
-                    : extractSoftwareProjectIdFromInputs(run.getInputs());
+            Task task = run.getTaskId() != null ? taskById.get(run.getTaskId()) : null;
+            UUID projectId =
+                    (task != null) ? task.getSoftwareProjectId() : extractSoftwareProjectIdFromInputs(run.getInputs());
             if (projectId != null) projectIdByRunId.put(run.getId(), projectId);
         }
 
@@ -696,25 +697,27 @@ public class RunService {
         return params;
     }
 
-    private @Nullable RunFeatureProposalSummary buildProposalSummary(WorkflowRun run) {
-        return featureProposalRepo
-                .findByWorkflowRunId(run.getId())
-                .map(proposal -> {
+    /**
+     * Builds the run's Task summary directly from {@code run.getTaskId()} (Decision 1) — no
+     * reverse lookup, since {@code task_id} is a forward FK on {@code workflow_run} itself.
+     */
+    private @Nullable RunTaskSummary buildTaskSummary(WorkflowRun run) {
+        if (run.getTaskId() == null) {
+            return null;
+        }
+        return taskRepo.findById(run.getTaskId())
+                .map(task -> {
                     SoftwareProjectRef projectRef = softwareProjectRepo
-                            .findById(proposal.getSoftwareProjectId())
+                            .findById(task.getSoftwareProjectId())
                             .map(this::toSoftwareProjectRef)
                             .orElse(null);
-                    return new RunFeatureProposalSummary(
-                            proposal.getId(),
-                            proposal.getTitle(),
-                            proposal.getStatus().name(),
-                            projectRef);
+                    return new RunTaskSummary(
+                            task.getId(), task.getTitle(), task.getStatus().name(), projectRef);
                 })
                 .orElse(null);
     }
 
-    private RunResponse toResponse(
-            WorkflowRun run, List<NodeExecution> execs, @Nullable RunFeatureProposalSummary proposalSummary) {
+    private RunResponse toResponse(WorkflowRun run, List<NodeExecution> execs, @Nullable RunTaskSummary taskSummary) {
         GraphTemplate template =
                 graphTemplateRepo.findById(run.getGraphTemplateId()).orElse(null);
         String templateName = template != null ? template.getName() : "Unknown";
@@ -766,11 +769,11 @@ public class RunService {
         }
 
         // Resolve the top-level softwareProject reference.
-        // Proposal wins when present (even if its project was deleted → null is correct).
-        // Fall back to inputs.software_project_id only when no proposal is linked.
+        // Task wins when present (even if its project was deleted → null is correct).
+        // Fall back to inputs.software_project_id only when no Task is linked.
         SoftwareProjectRef softwareProjectRef;
-        if (proposalSummary != null) {
-            softwareProjectRef = proposalSummary.softwareProject();
+        if (taskSummary != null) {
+            softwareProjectRef = taskSummary.softwareProject();
         } else {
             UUID fromInputs = extractSoftwareProjectIdFromInputs(run.getInputs());
             softwareProjectRef = (fromInputs == null)
@@ -797,7 +800,7 @@ public class RunService {
                 pullRequests,
                 run.getInputArtifactRefs(),
                 promptText,
-                proposalSummary,
+                taskSummary,
                 softwareProjectRef);
     }
 
@@ -821,7 +824,7 @@ public class RunService {
     /**
      * Converts a {@link SoftwareProject} entity to its DTO reference, discriminating
      * between {@link RepoGroup} ("repo_group") and other implementations ("git_repo").
-     * Mirrors {@code FeatureProposalService.toProjectRef()}.
+     * Mirrors {@code DefaultEpicService.toProjectRef()}.
      */
     private SoftwareProjectRef toSoftwareProjectRef(SoftwareProject sp) {
         String type = (sp instanceof RepoGroup) ? "repo_group" : "git_repo";

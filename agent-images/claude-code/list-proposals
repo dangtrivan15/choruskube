@@ -1,10 +1,15 @@
 #!/bin/bash
-# list-proposals — list feature proposals for the current run's git repository.
+# list-proposals — list roadmap Epics for the current run's software project.
 #
 # Usage: list-proposals
 #
-# Queries the ChorusKube API server for all feature proposals associated with
-# the git repository of the current workflow run. Prints a JSON array to stdout.
+# Queries the ChorusKube API server for all Epics associated with the software
+# project of the current workflow run. Prints a JSON array to stdout.
+#
+# This script keeps its original name and internal-endpoint path for backward
+# compatibility with deployed agent images (rolling-upgrade safety) even though
+# it now lists Epics, the top level of the Epic -> Story -> Task work
+# hierarchy, rather than the old flat feature-proposal model.
 #
 # Environment:
 #   API_SERVER_URL      — Base URL of the ChorusKube API server
@@ -13,17 +18,17 @@
 #   JOB_SECRET          — Bearer token for authentication
 #
 # Examples:
-#   # Print all proposals as JSON
+#   # Print all Epics as JSON
 #   list-proposals
 #
-#   # Count proposals
+#   # Count Epics
 #   list-proposals | jq length
 #
 #   # Get titles only
 #   list-proposals | jq '.[].title'
 #
 # Exit codes:
-#   0  Proposals listed successfully (JSON array printed to stdout)
+#   0  Epics listed successfully (JSON array printed to stdout)
 #   1  Missing environment or API error
 set -euo pipefail
 
@@ -49,7 +54,7 @@ HTTP_CODE=$(echo "$RESPONSE" | tail -1)
 BODY=$(echo "$RESPONSE" | sed '$d')
 
 if [ "$HTTP_CODE" != "200" ]; then
-    echo "ERROR: Failed to list proposals (HTTP $HTTP_CODE): $BODY" >&2
+    echo "ERROR: Failed to list Epics (HTTP $HTTP_CODE): $BODY" >&2
     exit 1
 fi
 
