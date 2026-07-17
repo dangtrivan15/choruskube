@@ -22,10 +22,13 @@ import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.RepoGroupRepository;
 import com.choruskube.core.repository.SoftwareProjectRepository;
+import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.util.RepoNameUtil;
 import io.temporal.client.WorkflowClient;
 import io.temporal.serviceclient.WorkflowServiceStubs;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -57,6 +60,12 @@ public class DefaultEpicServiceTest extends BaseTest {
 
     @Autowired
     private TaskRepository taskRepo;
+
+    @Autowired
+    private StoryRepository storyRepo;
+
+    @PersistenceContext
+    private EntityManager entityManager;
 
     @MockitoBean
     private WorkflowServiceStubs workflowServiceStubs;
@@ -175,6 +184,32 @@ public class DefaultEpicServiceTest extends BaseTest {
         service.delete(epic.id());
 
         assertThatThrownBy(() -> service.get(epic.id())).isInstanceOf(NotFoundException.class);
+    }
+
+    @Test
+    void delete_withBacklogDescendants_cascadesToStoryAndTask() {
+        // Epic/Story/Task have plain UUID FK columns, not JPA @OneToMany associations, so
+        // service.delete() issues a single-table SQL DELETE on the epic row and relies entirely on
+        // the DB-level `ON DELETE CASCADE` declared in V2__work_hierarchy.sql (story.epic_id,
+        // task.story_id) to remove descendants. Assert that cascade actually happens end to end
+        // against the real database, rather than trusting the migration SQL by inspection alone.
+        GitRepo r = makeRepo("https://github.com/test/del-cascade.git");
+        EpicResponse epic = service.create(new EpicRequest("T", "D", null, r.getId()), null);
+        var story = storyService.create(epic.id(), new StoryRequest("S", "D"));
+        var task = taskService.create(story.id(), new TaskRequest("T", "D"));
+
+        service.delete(epic.id());
+        // repo.delete(epic) only removes the epic row from the JPA persistence context; Epic/Story
+        // have no mapped association, so Hibernate's auto-flush heuristics don't know a Task/Story
+        // query depends on the pending Epic delete. Flush explicitly so the DB-level ON DELETE
+        // CASCADE has actually fired, then clear the persistence context so the findById checks
+        // below hit the database instead of returning the still-managed, pre-cascade instances from
+        // the first-level cache.
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(storyRepo.findById(story.id())).isEmpty();
+        assertThat(taskRepo.findById(task.id())).isEmpty();
     }
 
     @Test

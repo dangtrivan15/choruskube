@@ -1,5 +1,6 @@
 package com.choruskube.core.service;
 
+import com.choruskube.core.dto.EpicResponse;
 import com.choruskube.core.dto.StoryRequest;
 import com.choruskube.core.dto.StoryResponse;
 import com.choruskube.core.event.MappableCreated;
@@ -165,7 +166,7 @@ public class DefaultStoryService implements StoryService {
                 s.getTitle(),
                 s.getDescription(),
                 rollup.status(),
-                new com.choruskube.core.dto.EpicResponse.Progress(rollup.totalTasks(), rollup.doneTasks()),
+                new EpicResponse.Progress(rollup.totalTasks(), rollup.doneTasks()),
                 s.getCreatedAt(),
                 s.getUpdatedAt());
     }

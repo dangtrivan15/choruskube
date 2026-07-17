@@ -20,6 +20,8 @@ import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.util.RepoNameUtil;
 import io.temporal.client.WorkflowClient;
 import io.temporal.serviceclient.WorkflowServiceStubs;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -44,6 +46,9 @@ public class DefaultStoryServiceTest extends BaseTest {
 
     @Autowired
     private TaskRepository taskRepo;
+
+    @PersistenceContext
+    private EntityManager entityManager;
 
     @MockitoBean
     private WorkflowServiceStubs workflowServiceStubs;
@@ -149,6 +154,29 @@ public class DefaultStoryServiceTest extends BaseTest {
         service.delete(story.id());
 
         assertThatThrownBy(() -> service.get(story.id())).isInstanceOf(NotFoundException.class);
+    }
+
+    @Test
+    void delete_withBacklogTask_cascadesToTask() {
+        // Story/Task have a plain UUID FK column (task.story_id), not a JPA @OneToMany
+        // association, so service.delete() issues a single-table SQL DELETE on the story row and
+        // relies entirely on the DB-level `ON DELETE CASCADE` declared in V2__work_hierarchy.sql to
+        // remove the Task. Assert that cascade actually happens against the real database.
+        EpicResponse epic = makeEpic("https://github.com/test/story-delete-cascade.git");
+        StoryResponse story = service.create(epic.id(), new StoryRequest("S", "D"));
+        var task = taskService.create(story.id(), new TaskRequest("T", "D"));
+
+        service.delete(story.id());
+        // repo.delete(story) only removes the story row from the JPA persistence context; Story/Task
+        // have no mapped association, so Hibernate's auto-flush heuristics don't know this Task
+        // query depends on the pending Story delete. Flush explicitly so the DB-level ON DELETE
+        // CASCADE has actually fired, then clear the persistence context so the findById check
+        // below hits the database instead of returning the still-managed, pre-cascade instance from
+        // the first-level cache.
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(taskRepo.findById(task.id())).isEmpty();
     }
 
     @Test
