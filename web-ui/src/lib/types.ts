@@ -603,6 +603,7 @@ export interface InvitationResponse {
   id: string;
   organizationId: string;
   email: string;
+  role: string;
   status: "pending" | "accepted" | "expired" | "revoked";
   invitedByEmail: string | null;
   token: string | null;
@@ -621,6 +622,7 @@ export interface InvitationPreviewResponse {
 
 export interface CreateInvitationRequest {
   email: string;
+  role: string;
 }
 
 export interface OrganizationCreateRequest {

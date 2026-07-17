@@ -160,4 +160,8 @@ public interface OrgIdentitySync {
     void assignGlobalRole(UUID userId, String roleName);
 
     void removeGlobalRole(UUID userId, String roleName);
+
+    void assignOrgRole(UUID orgId, UUID userId, String role);
+
+    void removeOrgRole(UUID orgId, UUID userId, String role);
 }
