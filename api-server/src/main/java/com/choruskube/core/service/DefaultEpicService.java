@@ -15,6 +15,7 @@ import com.choruskube.core.model.RepoGroup;
 import com.choruskube.core.model.SoftwareProject;
 import com.choruskube.core.model.Story;
 import com.choruskube.core.model.Task;
+import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.observability.AuditDetail;
 import com.choruskube.core.observability.AuditSink;
 import com.choruskube.core.repository.EpicRepository;
@@ -227,7 +228,7 @@ public class DefaultEpicService implements EpicService {
         if (stories.isEmpty()) return false;
         Set<UUID> storyIds = stories.stream().map(Story::getId).collect(Collectors.toSet());
         List<Task> tasks = taskRepo.findByStoryIdIn(storyIds);
-        return tasks.stream().anyMatch(t -> t.getStatus() != com.choruskube.core.model.enums.WorkItemStatus.backlog);
+        return tasks.stream().anyMatch(t -> t.getStatus() != WorkItemStatus.backlog);
     }
 
     /**
