@@ -62,5 +62,16 @@ JOIN public.story s ON s.id = t.story_id
 JOIN public.feature_proposal fp ON fp.id = s.epic_id
 WHERE fp.workflow_run_id = wr.id;
 
-DROP TABLE public.feature_proposal;
-DROP TYPE public.feature_proposal_status;
+-- NOTE: `feature_proposal` / `feature_proposal_status` are deliberately NOT dropped here,
+-- deviating from this migration's originally-planned SQL (which did `DROP TABLE`/`DROP TYPE`).
+-- A private downstream overlay's own already-shipped Flyway baseline (immutable per this repo's
+-- migration conventions) creates a `feature_proposal_ownership` table with a foreign key to
+-- `public.feature_proposal(id)`. Because that overlay always runs its entire migration sequence
+-- only after this repo's Flyway sequence has fully completed, dropping this table here would make
+-- the overlay's own baseline fail on every fresh install with "relation public.feature_proposal
+-- does not exist" — before the overlay's own later migration (which retires
+-- `feature_proposal_ownership` in favor of equivalent ownership tables for the new hierarchy)
+-- ever gets a chance to run. The table and enum are left in place, empty and unreferenced by any
+-- application code after this migration (FeatureProposal/FeatureProposalStatus are deleted from
+-- the Java model), as inert leftovers. Revisit only alongside a coordinated cross-repo
+-- migration-ordering change.
