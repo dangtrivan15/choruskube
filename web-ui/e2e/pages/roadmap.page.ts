@@ -100,7 +100,13 @@ export class RoadmapPage {
     this.taskRunHistoryList = page.getByTestId("task-run-history-list");
 
     // Create Epic dialog
-    this.createDialogTitle = page.getByText("New Epic");
+    //
+    // Scoped to the dialog heading (role=heading), not getByText("New Epic"):
+    // the roadmap empty state ("No epics yet. Click "New Epic" to create
+    // one.") and the "New Epic" button both also contain that text, so a
+    // plain text locator is a Playwright strict-mode violation once the
+    // dialog is open (three matches instead of one).
+    this.createDialogTitle = page.getByRole("heading", { name: "New Epic" });
     this.createTitleInput = page.getByTestId("create-epic-title");
     this.createDescriptionInput = page.getByTestId("create-epic-description");
     this.createMotivationInput = page.getByTestId("create-epic-motivation");
