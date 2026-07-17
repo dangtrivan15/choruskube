@@ -603,10 +603,22 @@ public class InternalRunService {
         return storyService.create(epicId, new StoryRequest(req.title(), req.description()), runId);
     }
 
-    /** Creates a Task under a Story on behalf of an agent pod. See {@link #createStory}. */
+    /**
+     * Creates a Task under a Story on behalf of an agent pod. See {@link #createStory}.
+     *
+     * <p>{@code epicId} comes from the URL's nested {@code .../{epicId}/stories/{storyId}/tasks}
+     * segment purely to mirror {@link #createStory}'s shape; the Task itself is parented on
+     * {@code storyId} alone (Decision 5). Validated against the Story's actual parent so a caller
+     * can't create a Task under a {@code storyId} that doesn't belong to the {@code epicId} the
+     * URL claims — a mismatch here almost certainly means the caller has a stale/wrong Epic id.
+     */
     @Transactional
-    public TaskResponse createTask(UUID runId, UUID storyId, InternalCreateTaskRequest req) {
+    public TaskResponse createTask(UUID runId, UUID epicId, UUID storyId, InternalCreateTaskRequest req) {
         runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
+        StoryResponse story = storyService.get(storyId);
+        if (!story.epicId().equals(epicId)) {
+            throw new NotFoundException("Story " + storyId + " does not belong to epic " + epicId);
+        }
         return taskService.create(storyId, new TaskRequest(req.title(), req.description()), runId);
     }
 

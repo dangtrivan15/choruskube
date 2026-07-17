@@ -462,4 +462,55 @@ public class InternalRunControllerTest extends BaseTest {
                 .andExpect(
                         jsonPath("$.softwareProject.id").value(gitRepo.getId().toString()));
     }
+
+    @Test
+    void createTask_withEpicIdNotMatchingStorysActualEpic_returns404() throws Exception {
+        NodeExecution exec = new NodeExecution();
+        exec.setWorkflowRunId(run.getId());
+        exec.setTemplateNodeId(templateNode.getId());
+        exec.setGraphVersion(1);
+        exec = execRepo.save(exec);
+
+        String createEpicResponse = mockMvc.perform(post("/internal/runs/" + run.getId() + "/node-executions/"
+                                + exec.getId() + "/feature-proposals")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("title", "Real epic", "description", "desc"))))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        String epicId = objectMapper.readTree(createEpicResponse).get("id").asText();
+
+        String createStoryResponse = mockMvc.perform(post("/internal/runs/" + run.getId() + "/node-executions/"
+                                + exec.getId() + "/feature-proposals/" + epicId + "/stories")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                Map.of("title", "Story under real epic", "description", "desc"))))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        String storyId = objectMapper.readTree(createStoryResponse).get("id").asText();
+
+        // A different, unrelated Epic id in the URL — the Story above does not belong to it.
+        String otherEpicResponse = mockMvc.perform(post("/internal/runs/" + run.getId() + "/node-executions/"
+                                + exec.getId() + "/feature-proposals")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                Map.of("title", "Unrelated epic", "description", "desc"))))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        String unrelatedEpicId =
+                objectMapper.readTree(otherEpicResponse).get("id").asText();
+
+        Map<String, Object> body = Map.of("title", "Should not be created", "description", "desc");
+
+        mockMvc.perform(post("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId()
+                                + "/feature-proposals/" + unrelatedEpicId + "/stories/" + storyId + "/tasks")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isNotFound());
+    }
 }

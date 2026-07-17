@@ -195,7 +195,7 @@ public class InternalRunController {
             @PathVariable UUID epicId,
             @PathVariable UUID storyId,
             @Valid @RequestBody InternalCreateTaskRequest request) {
-        return service.createTask(runId, storyId, request);
+        return service.createTask(runId, epicId, storyId, request);
     }
 
     @PostMapping("/{runId}/node-executions/{nodeExecId}/pull-requests")

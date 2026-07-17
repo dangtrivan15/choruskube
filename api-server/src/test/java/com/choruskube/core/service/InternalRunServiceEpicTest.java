@@ -264,9 +264,13 @@ class InternalRunServiceEpicTest {
     @Test
     void createTask_delegatesToTaskServiceWithRunId() {
         UUID runId = UUID.randomUUID();
+        UUID epicId = UUID.randomUUID();
         UUID storyId = UUID.randomUUID();
         WorkflowRun run = createRun(runId, TEMPLATE_ID, "{}");
         when(runRepo.findById(runId)).thenReturn(Optional.of(run));
+        when(storyService.get(storyId))
+                .thenReturn(
+                        new StoryResponse(storyId, epicId, "Story title", "Story desc", "backlog", null, null, null));
 
         var req = new InternalCreateTaskRequest("Task title", "Task desc");
         var expected = new TaskResponse(
@@ -283,7 +287,7 @@ class InternalRunServiceEpicTest {
                 null);
         when(taskService.create(eq(storyId), any(), eq(runId))).thenReturn(expected);
 
-        TaskResponse result = service.createTask(runId, storyId, req);
+        TaskResponse result = service.createTask(runId, epicId, storyId, req);
 
         assertThat(result.id()).isEqualTo(expected.id());
         verify(taskService)
@@ -301,9 +305,31 @@ class InternalRunServiceEpicTest {
 
         var req = new InternalCreateTaskRequest("T", "D");
 
-        assertThatThrownBy(() -> service.createTask(unknownRunId, UUID.randomUUID(), req))
+        assertThatThrownBy(() -> service.createTask(unknownRunId, UUID.randomUUID(), UUID.randomUUID(), req))
                 .isInstanceOf(NotFoundException.class)
                 .hasMessageContaining("Workflow run not found");
+    }
+
+    @Test
+    void createTask_withEpicIdNotMatchingStorysActualEpic_throwsNotFound() {
+        UUID runId = UUID.randomUUID();
+        UUID storyId = UUID.randomUUID();
+        UUID actualEpicId = UUID.randomUUID();
+        UUID wrongEpicId = UUID.randomUUID();
+        WorkflowRun run = createRun(runId, TEMPLATE_ID, "{}");
+        when(runRepo.findById(runId)).thenReturn(Optional.of(run));
+        when(storyService.get(storyId))
+                .thenReturn(new StoryResponse(
+                        storyId, actualEpicId, "Story title", "Story desc", "backlog", null, null, null));
+
+        var req = new InternalCreateTaskRequest("T", "D");
+
+        assertThatThrownBy(() -> service.createTask(runId, wrongEpicId, storyId, req))
+                .isInstanceOf(NotFoundException.class)
+                .hasMessageContaining(storyId.toString())
+                .hasMessageContaining(wrongEpicId.toString());
+
+        verify(taskService, never()).create(any(), any(), any());
     }
 
     private EpicResponse epicResponseFor(UUID projectId) {
