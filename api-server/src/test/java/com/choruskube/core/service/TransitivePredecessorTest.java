@@ -46,6 +46,7 @@ class TransitivePredecessorTest {
                 null,
                 null,
                 null,
+                null,
                 null);
     }
 

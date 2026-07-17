@@ -56,7 +56,8 @@ class InternalRunServiceOutputValidationTest {
                 null,
                 null,
                 templateNodeRepo,
-                nodeDefinitionRepo);
+                nodeDefinitionRepo,
+                null);
     }
 
     private NodeExecution stubExec(UUID id) {

@@ -44,6 +44,7 @@ public class InternalRunService {
     private final SoftwareProjectRepository softwareProjectRepo;
     private final TemplateNodeRepository templateNodeRepo;
     private final NodeDefinitionRepository nodeDefinitionRepo;
+    private final StoryRepository storyRepo;
 
     @Value("${artifact.enforcement.mode:warn}")
     private String artifactEnforcementMode;
@@ -66,7 +67,8 @@ public class InternalRunService {
             GraphTemplateRepository graphTemplateRepo,
             SoftwareProjectRepository softwareProjectRepo,
             TemplateNodeRepository templateNodeRepo,
-            NodeDefinitionRepository nodeDefinitionRepo) {
+            NodeDefinitionRepository nodeDefinitionRepo,
+            StoryRepository storyRepo) {
         this.runRepo = runRepo;
         this.execRepo = execRepo;
         this.logRepo = logRepo;
@@ -85,6 +87,7 @@ public class InternalRunService {
         this.softwareProjectRepo = softwareProjectRepo;
         this.templateNodeRepo = templateNodeRepo;
         this.nodeDefinitionRepo = nodeDefinitionRepo;
+        this.storyRepo = storyRepo;
     }
 
     public NodeExecutionResponse createNodeExecution(UUID runId, InternalCreateNodeExecutionRequest req) {
@@ -620,13 +623,21 @@ public class InternalRunService {
      * URL claims — a mismatch here almost certainly means the caller has a stale/wrong Epic id.
      * Also validated against the run's resolved {@code software_project_id}, same rationale as
      * {@link #createStory}.
+     *
+     * <p>The Story lookup goes through {@link StoryRepository} directly rather than
+     * {@link StoryService#get}, because {@code get} calls {@link AuthorizationService#checkOrgAccess},
+     * which reads the request-scoped tenant context. This method is reached only via the
+     * {@code /internal/**} JOB_SECRET agent path (see {@link #createEpic}), which never has a
+     * tenant context bound — the same reason every other internal-facing lookup in this class uses
+     * {@code assertSameOrg}/repository access instead of the request-scoped {@code checkOrgAccess}.
      */
     @Transactional
     public TaskResponse createTask(UUID runId, UUID epicId, UUID storyId, InternalCreateTaskRequest req) {
         WorkflowRun run =
                 runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
-        StoryResponse story = storyService.get(storyId);
-        if (!story.epicId().equals(epicId)) {
+        Story story =
+                storyRepo.findById(storyId).orElseThrow(() -> new NotFoundException("Story not found: " + storyId));
+        if (!story.getEpicId().equals(epicId)) {
             throw new NotFoundException("Story " + storyId + " does not belong to epic " + epicId);
         }
         UUID softwareProjectId = resolveSoftwareProjectIdFromRun(run);

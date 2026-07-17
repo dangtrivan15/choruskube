@@ -13,10 +13,12 @@ import com.choruskube.core.dto.StoryResponse;
 import com.choruskube.core.dto.TaskResponse;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.GraphTemplate;
+import com.choruskube.core.model.Story;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.SoftwareProjectRepository;
+import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
@@ -59,6 +61,9 @@ class InternalRunServiceEpicTest {
     @Mock
     private TaskService taskService;
 
+    @Mock
+    private StoryRepository storyRepo;
+
     private final ObjectMapper objectMapper = new ObjectMapper();
     private InternalRunService service;
 
@@ -86,7 +91,8 @@ class InternalRunServiceEpicTest {
                 graphTemplateRepo,
                 softwareProjectRepo,
                 null,
-                null);
+                null,
+                storyRepo);
     }
 
     @Test
@@ -273,9 +279,7 @@ class InternalRunServiceEpicTest {
                 runId, TEMPLATE_ID, "{\"software_project_id\":\"" + PROJECT_ID + "\",\"feature_request\":\"x\"}");
         when(runRepo.findById(runId)).thenReturn(Optional.of(run));
         when(softwareProjectRepo.existsById(PROJECT_ID)).thenReturn(true);
-        when(storyService.get(storyId))
-                .thenReturn(
-                        new StoryResponse(storyId, epicId, "Story title", "Story desc", "backlog", null, null, null));
+        when(storyRepo.findById(storyId)).thenReturn(Optional.of(storyWithEpic(storyId, epicId)));
 
         var req = new InternalCreateTaskRequest("Task title", "Task desc");
         var expected = new TaskResponse(
@@ -302,6 +306,28 @@ class InternalRunServiceEpicTest {
                                 && task.description().equals("Task desc")),
                         eq(runId),
                         eq(PROJECT_ID));
+        // The Story lookup must go through the repository, not StoryService#get: get() calls
+        // checkOrgAccess, which reads the request-scoped tenant context that doesn't exist on the
+        // JOB_SECRET agent path this method is reached from (see the javadoc on createTask).
+        verifyNoInteractions(storyService);
+    }
+
+    @Test
+    void createTask_withUnknownStoryId_throwsNotFound() {
+        UUID runId = UUID.randomUUID();
+        UUID storyId = UUID.randomUUID();
+        WorkflowRun run = createRun(runId, TEMPLATE_ID, "{}");
+        when(runRepo.findById(runId)).thenReturn(Optional.of(run));
+        when(storyRepo.findById(storyId)).thenReturn(Optional.empty());
+
+        var req = new InternalCreateTaskRequest("T", "D");
+
+        assertThatThrownBy(() -> service.createTask(runId, UUID.randomUUID(), storyId, req))
+                .isInstanceOf(NotFoundException.class)
+                .hasMessageContaining("Story not found")
+                .hasMessageContaining(storyId.toString());
+
+        verifyNoInteractions(taskService, storyService);
     }
 
     @Test
@@ -324,9 +350,7 @@ class InternalRunServiceEpicTest {
         UUID wrongEpicId = UUID.randomUUID();
         WorkflowRun run = createRun(runId, TEMPLATE_ID, "{}");
         when(runRepo.findById(runId)).thenReturn(Optional.of(run));
-        when(storyService.get(storyId))
-                .thenReturn(new StoryResponse(
-                        storyId, actualEpicId, "Story title", "Story desc", "backlog", null, null, null));
+        when(storyRepo.findById(storyId)).thenReturn(Optional.of(storyWithEpic(storyId, actualEpicId)));
 
         var req = new InternalCreateTaskRequest("T", "D");
 
@@ -336,6 +360,15 @@ class InternalRunServiceEpicTest {
                 .hasMessageContaining(wrongEpicId.toString());
 
         verify(taskService, never()).create(any(), any(), any(), any());
+    }
+
+    private Story storyWithEpic(UUID storyId, UUID epicId) {
+        Story story = new Story();
+        story.setId(storyId);
+        story.setEpicId(epicId);
+        story.setTitle("Story title");
+        story.setDescription("Story desc");
+        return story;
     }
 
     private EpicResponse epicResponseFor(UUID projectId) {
