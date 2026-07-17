@@ -6,6 +6,7 @@ import com.choruskube.core.dto.RepoGroupResponse;
 import com.choruskube.core.exception.ConflictException;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.RepoGroup;
+import com.choruskube.core.repository.EpicRepository;
 import com.choruskube.core.repository.RepoGroupRepository;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
@@ -36,6 +37,7 @@ public class RepoGroupController {
     private final RepoGroupRepository groups;
     private final WorkflowRunRepository runs;
     private final TaskRepository tasks;
+    private final EpicRepository epics;
     private final AuthorizationService authService;
     private final ScopeProvider scopeProvider;
 
@@ -44,12 +46,14 @@ public class RepoGroupController {
             RepoGroupRepository groups,
             WorkflowRunRepository runs,
             TaskRepository tasks,
+            EpicRepository epics,
             AuthorizationService authService,
             ScopeProvider scopeProvider) {
         this.service = service;
         this.groups = groups;
         this.runs = runs;
         this.tasks = tasks;
+        this.epics = epics;
         this.authService = authService;
         this.scopeProvider = scopeProvider;
     }
@@ -107,9 +111,15 @@ public class RepoGroupController {
         findInActiveOrg(id);
         long activeRuns = runs.countNonTerminalBySoftwareProjectId(id);
         long activeTasks = tasks.countNonDoneBySoftwareProjectId(id);
-        if (activeRuns > 0 || activeTasks > 0) {
-            throw new ConflictException(
-                    "Cannot delete RepoGroup: %d active run(s), %d active task(s)".formatted(activeRuns, activeTasks));
+        // Epic.software_project_id (like Task's) has no ON DELETE clause, so any existing Epic —
+        // even one with no Story/Task under it yet — would otherwise leave a dangling reference and
+        // turn the hard-delete below into an unhandled DataIntegrityViolationException instead of
+        // this clean 409. Epic has no status of its own to filter "active" vs "done" on, so any
+        // Epic for this project counts.
+        long existingEpics = epics.countBySoftwareProjectId(id);
+        if (activeRuns > 0 || activeTasks > 0 || existingEpics > 0) {
+            throw new ConflictException("Cannot delete RepoGroup: %d active run(s), %d active task(s), %d epic(s)"
+                    .formatted(activeRuns, activeTasks, existingEpics));
         }
         service.delete(id);
     }

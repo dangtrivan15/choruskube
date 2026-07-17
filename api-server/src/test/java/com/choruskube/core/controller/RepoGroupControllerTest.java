@@ -179,6 +179,46 @@ class RepoGroupControllerTest extends BaseTest {
     }
 
     @Test
+    void delete_repo_group_with_epic_and_no_story_or_task_is_409() throws Exception {
+        // Epic.software_project_id carries a FK to software_project (like Task's) with no ON
+        // DELETE clause, so an Epic that hasn't grown a Story/Task yet must still block the hard
+        // delete below the controller. Regression test for the gap where the delete guard only
+        // looked at TaskRepository#countNonDoneBySoftwareProjectId and missed this case entirely,
+        // turning it into an unhandled 500 instead of this 409.
+        GitRepo r1 = saveRepo("epic-only-r1");
+        RepoGroup group = repoGroupService.create(
+                "g-epic-only-" + UUID.randomUUID().toString().substring(0, 8), null, null, List.of(r1.getId()));
+        entityManager.flush();
+
+        epicService.create(new EpicRequest("Lonely epic", "No Story/Task yet", null, group.getId()), null);
+        entityManager.flush();
+
+        String body = mockMvc.perform(delete("/api/v1/repo-groups/{id}", group.getId()))
+                .andExpect(status().isConflict())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        assertThat(body).contains("epic");
+    }
+
+    @Test
+    void delete_repo_group_with_story_and_no_task_is_409() throws Exception {
+        // Same gap as above, one level deeper: a Story with no Task yet is only reachable through
+        // its Epic (epic_id is NOT NULL), so the Epic count above is what catches this case too.
+        GitRepo r1 = saveRepo("story-only-r1");
+        RepoGroup group = repoGroupService.create(
+                "g-story-only-" + UUID.randomUUID().toString().substring(0, 8), null, null, List.of(r1.getId()));
+        entityManager.flush();
+
+        var epic = epicService.create(new EpicRequest("Epic with story", "No Task yet", null, group.getId()), null);
+        storyService.create(epic.id(), new StoryRequest("Story", "No Task yet"));
+        entityManager.flush();
+
+        mockMvc.perform(delete("/api/v1/repo-groups/{id}", group.getId())).andExpect(status().isConflict());
+    }
+
+    @Test
     void delete_unknown_repo_group_is_404() throws Exception {
         UUID unknown = UUID.randomUUID();
         mockMvc.perform(delete("/api/v1/repo-groups/{id}", unknown)).andExpect(status().isNotFound());
