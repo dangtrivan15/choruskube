@@ -10,6 +10,7 @@ import com.choruskube.core.dto.TaskRequest;
 import com.choruskube.core.dto.TaskResponse;
 import com.choruskube.core.event.MappableCreated;
 import com.choruskube.core.exception.ConflictException;
+import com.choruskube.core.exception.ForbiddenException;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.Epic;
 import com.choruskube.core.model.GraphTemplate;
@@ -108,10 +109,15 @@ public class DefaultTaskService implements TaskService {
 
     @Override
     @Transactional
-    public TaskResponse create(UUID storyId, TaskRequest request, UUID runId) {
+    public TaskResponse create(UUID storyId, TaskRequest request, UUID runId, UUID runSoftwareProjectId) {
         Story story = findStoryOrThrow(storyId);
         authService.assertSameOrg("story", story.getId(), "workflow_run", runId);
         Epic epic = findEpicOrThrow(story.getEpicId());
+        // Cross-project guard: same org isn't enough on its own, since an org can span multiple
+        // SoftwareProjects (mirrors DefaultEpicService#updateInternal's equivalent check).
+        if (!epic.getSoftwareProjectId().equals(runSoftwareProjectId)) {
+            throw new ForbiddenException("Story " + storyId + " does not belong to the run's software project");
+        }
         Task task = persistTask(storyId, request, epic.getSoftwareProjectId());
         applicationEventPublisher.publishEvent(MappableCreated.withParent("task", task.getId(), "story", storyId));
         eventPublisher.publishRoadmapItemChanged(

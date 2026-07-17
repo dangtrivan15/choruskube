@@ -16,8 +16,14 @@ public interface StoryService {
 
     StoryResponse create(UUID epicId, StoryRequest request);
 
-    /** Agent/internal entry: no request-scoped TenantContext; org is asserted against {@code runId}. */
-    StoryResponse create(UUID epicId, StoryRequest request, UUID runId);
+    /**
+     * Agent/internal entry: no request-scoped TenantContext; org is asserted against {@code
+     * runId}, and the parent Epic must belong to {@code runSoftwareProjectId} — mirrors {@link
+     * EpicService#updateInternal}'s project guard, since a same-org check alone isn't enough: an
+     * org can have multiple SoftwareProjects, and a Story must not attach to an Epic outside the
+     * run's own target project.
+     */
+    StoryResponse create(UUID epicId, StoryRequest request, UUID runId, UUID runSoftwareProjectId);
 
     List<StoryResponse> list(UUID epicId);
 

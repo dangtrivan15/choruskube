@@ -20,8 +20,14 @@ public interface TaskService {
 
     TaskResponse create(UUID storyId, TaskRequest request);
 
-    /** Agent/internal entry: no request-scoped TenantContext; org is asserted against {@code runId}. */
-    TaskResponse create(UUID storyId, TaskRequest request, UUID runId);
+    /**
+     * Agent/internal entry: no request-scoped TenantContext; org is asserted against {@code
+     * runId}, and the ancestor Epic (via the Story's parent) must belong to {@code
+     * runSoftwareProjectId} — mirrors {@link EpicService#updateInternal}'s project guard, since a
+     * same-org check alone isn't enough: an org can have multiple SoftwareProjects, and a Task
+     * must not attach to a Story outside the run's own target project.
+     */
+    TaskResponse create(UUID storyId, TaskRequest request, UUID runId, UUID runSoftwareProjectId);
 
     List<TaskResponse> list(UUID storyId);
 

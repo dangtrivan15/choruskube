@@ -11,6 +11,7 @@ import com.choruskube.core.dto.StoryResponse;
 import com.choruskube.core.dto.TaskRequest;
 import com.choruskube.core.dto.TaskResponse;
 import com.choruskube.core.exception.ConflictException;
+import com.choruskube.core.exception.ForbiddenException;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.WorkflowRun;
@@ -86,6 +87,30 @@ public class DefaultTaskServiceTest extends BaseTest {
         UUID unknown = UUID.randomUUID();
         assertThatThrownBy(() -> service.create(unknown, new TaskRequest("T", "D")))
                 .isInstanceOf(NotFoundException.class);
+    }
+
+    @Test
+    void create_withRunId_underStoryInRunsSoftwareProject_succeeds() {
+        GitRepo r = makeRepo("https://github.com/test/task-runid-proj-ok.git");
+        StoryResponse story = makeStory(r.getId());
+
+        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"), UUID.randomUUID(), r.getId());
+
+        assertThat(task.storyId()).isEqualTo(story.id());
+        assertThat(task.title()).isEqualTo("T");
+    }
+
+    @Test
+    void create_withRunId_underStoryOutsideRunsSoftwareProject_throwsForbidden() {
+        GitRepo r1 = makeRepo("https://github.com/test/task-runid-proj-a.git");
+        GitRepo r2 = makeRepo("https://github.com/test/task-runid-proj-b.git");
+        StoryResponse story = makeStory(r1.getId());
+
+        // r2 is a real, different SoftwareProject in the same (only, OSS single-tenant) org — the
+        // run's resolved software_project_id must still match the ancestor Epic's own, or the
+        // Task would silently attach to a Story outside the run's actual target project.
+        assertThatThrownBy(() -> service.create(story.id(), new TaskRequest("T", "D"), UUID.randomUUID(), r2.getId()))
+                .isInstanceOf(ForbiddenException.class);
     }
 
     @Test

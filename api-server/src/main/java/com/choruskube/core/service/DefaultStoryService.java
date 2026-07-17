@@ -5,6 +5,7 @@ import com.choruskube.core.dto.StoryResponse;
 import com.choruskube.core.event.MappableCreated;
 import com.choruskube.core.exception.BadRequestException;
 import com.choruskube.core.exception.ConflictException;
+import com.choruskube.core.exception.ForbiddenException;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.Epic;
 import com.choruskube.core.model.Story;
@@ -72,10 +73,15 @@ public class DefaultStoryService implements StoryService {
 
     @Override
     @Transactional
-    public StoryResponse create(UUID epicId, StoryRequest request, UUID runId) {
+    public StoryResponse create(UUID epicId, StoryRequest request, UUID runId, UUID runSoftwareProjectId) {
         Epic epic = findEpicOrThrow(epicId);
         // Cross-org guard: the parent Epic and the originating run must belong to the same org.
         authService.assertSameOrg("epic", epic.getId(), "workflow_run", runId);
+        // Cross-project guard: same org isn't enough on its own, since an org can span multiple
+        // SoftwareProjects (mirrors DefaultEpicService#updateInternal's equivalent check).
+        if (!epic.getSoftwareProjectId().equals(runSoftwareProjectId)) {
+            throw new ForbiddenException("Epic " + epicId + " does not belong to the run's software project");
+        }
         Story story = persistStory(epicId, request);
         applicationEventPublisher.publishEvent(MappableCreated.withParent("story", story.getId(), "epic", epicId));
         eventPublisher.publishRoadmapItemChanged("story", story.getId(), "backlog");

@@ -596,11 +596,18 @@ public class InternalRunService {
      * Creates a Story under an Epic on behalf of an agent pod. New nested path added alongside
      * the preserved Epic-level trio (Decision 6/3.6) — a rolling-upgrade agent pod on an older
      * image never calls this, since it doesn't know the path exists.
+     *
+     * <p>The Epic's ownership is validated against the run's resolved {@code software_project_id}
+     * (see {@link #createEpic}) before delegating to {@link StoryService#create(UUID, StoryRequest,
+     * UUID, UUID)} — an org-only check isn't enough, since an org can span multiple
+     * SoftwareProjects and the URL's {@code epicId} could otherwise belong to one outside this run.
      */
     @Transactional
     public StoryResponse createStory(UUID runId, UUID epicId, InternalCreateStoryRequest req) {
-        runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
-        return storyService.create(epicId, new StoryRequest(req.title(), req.description()), runId);
+        WorkflowRun run =
+                runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
+        UUID softwareProjectId = resolveSoftwareProjectIdFromRun(run);
+        return storyService.create(epicId, new StoryRequest(req.title(), req.description()), runId, softwareProjectId);
     }
 
     /**
@@ -611,15 +618,19 @@ public class InternalRunService {
      * {@code storyId} alone (Decision 5). Validated against the Story's actual parent so a caller
      * can't create a Task under a {@code storyId} that doesn't belong to the {@code epicId} the
      * URL claims — a mismatch here almost certainly means the caller has a stale/wrong Epic id.
+     * Also validated against the run's resolved {@code software_project_id}, same rationale as
+     * {@link #createStory}.
      */
     @Transactional
     public TaskResponse createTask(UUID runId, UUID epicId, UUID storyId, InternalCreateTaskRequest req) {
-        runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
+        WorkflowRun run =
+                runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
         StoryResponse story = storyService.get(storyId);
         if (!story.epicId().equals(epicId)) {
             throw new NotFoundException("Story " + storyId + " does not belong to epic " + epicId);
         }
-        return taskService.create(storyId, new TaskRequest(req.title(), req.description()), runId);
+        UUID softwareProjectId = resolveSoftwareProjectIdFromRun(run);
+        return taskService.create(storyId, new TaskRequest(req.title(), req.description()), runId, softwareProjectId);
     }
 
     /**

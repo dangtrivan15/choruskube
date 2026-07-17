@@ -10,6 +10,7 @@ import com.choruskube.core.dto.StoryRequest;
 import com.choruskube.core.dto.StoryResponse;
 import com.choruskube.core.dto.TaskRequest;
 import com.choruskube.core.exception.ConflictException;
+import com.choruskube.core.exception.ForbiddenException;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.Task;
@@ -71,6 +72,30 @@ public class DefaultStoryServiceTest extends BaseTest {
         assertThatThrownBy(() -> service.create(unknown, new StoryRequest("T", "D")))
                 .isInstanceOf(NotFoundException.class)
                 .hasMessageContaining(unknown.toString());
+    }
+
+    @Test
+    void create_withRunId_underEpicInRunsSoftwareProject_succeeds() {
+        GitRepo r = makeRepo("https://github.com/test/story-runid-proj-ok.git");
+        EpicResponse epic = epicService.create(new EpicRequest("Epic", "Epic desc", null, r.getId()), null);
+
+        StoryResponse story = service.create(epic.id(), new StoryRequest("S", "D"), UUID.randomUUID(), r.getId());
+
+        assertThat(story.epicId()).isEqualTo(epic.id());
+        assertThat(story.title()).isEqualTo("S");
+    }
+
+    @Test
+    void create_withRunId_underEpicOutsideRunsSoftwareProject_throwsForbidden() {
+        GitRepo r1 = makeRepo("https://github.com/test/story-runid-proj-a.git");
+        GitRepo r2 = makeRepo("https://github.com/test/story-runid-proj-b.git");
+        EpicResponse epic = epicService.create(new EpicRequest("Epic", "Epic desc", null, r1.getId()), null);
+
+        // r2 is a real, different SoftwareProject in the same (only, OSS single-tenant) org — the
+        // run's resolved software_project_id must still match the Epic's own, or the Story would
+        // silently attach to an Epic outside the run's actual target project.
+        assertThatThrownBy(() -> service.create(epic.id(), new StoryRequest("S", "D"), UUID.randomUUID(), r2.getId()))
+                .isInstanceOf(ForbiddenException.class);
     }
 
     @Test
@@ -160,10 +185,14 @@ public class DefaultStoryServiceTest extends BaseTest {
     }
 
     private EpicResponse makeEpic(String url) {
+        GitRepo r = makeRepo(url);
+        return epicService.create(new EpicRequest("Epic", "Epic desc", null, r.getId()), null);
+    }
+
+    private GitRepo makeRepo(String url) {
         GitRepo r = new GitRepo();
         r.setUrl(url);
         r.setName(RepoNameUtil.deriveOwnerRepoName(url));
-        r = gitRepoRepo.save(r);
-        return epicService.create(new EpicRequest("Epic", "Epic desc", null, r.getId()), null);
+        return gitRepoRepo.save(r);
     }
 }

@@ -227,16 +227,18 @@ class InternalRunServiceEpicTest {
     // ── createStory / createTask: resolve through ancestor Epic/Story ────────────
 
     @Test
-    void createStory_delegatesToStoryServiceWithRunId() {
+    void createStory_delegatesToStoryServiceWithRunIdAndResolvedSoftwareProjectId() {
         UUID runId = UUID.randomUUID();
         UUID epicId = UUID.randomUUID();
-        WorkflowRun run = createRun(runId, TEMPLATE_ID, "{}");
+        WorkflowRun run = createRun(
+                runId, TEMPLATE_ID, "{\"software_project_id\":\"" + PROJECT_ID + "\",\"feature_request\":\"x\"}");
         when(runRepo.findById(runId)).thenReturn(Optional.of(run));
+        when(softwareProjectRepo.existsById(PROJECT_ID)).thenReturn(true);
 
         var req = new InternalCreateStoryRequest("Story title", "Story desc");
         var expected =
                 new StoryResponse(UUID.randomUUID(), epicId, "Story title", "Story desc", "backlog", null, null, null);
-        when(storyService.create(eq(epicId), any(), eq(runId))).thenReturn(expected);
+        when(storyService.create(eq(epicId), any(), eq(runId), eq(PROJECT_ID))).thenReturn(expected);
 
         StoryResponse result = service.createStory(runId, epicId, req);
 
@@ -246,7 +248,8 @@ class InternalRunServiceEpicTest {
                         eq(epicId),
                         argThat(story -> story.title().equals("Story title")
                                 && story.description().equals("Story desc")),
-                        eq(runId));
+                        eq(runId),
+                        eq(PROJECT_ID));
     }
 
     @Test
@@ -262,12 +265,14 @@ class InternalRunServiceEpicTest {
     }
 
     @Test
-    void createTask_delegatesToTaskServiceWithRunId() {
+    void createTask_delegatesToTaskServiceWithRunIdAndResolvedSoftwareProjectId() {
         UUID runId = UUID.randomUUID();
         UUID epicId = UUID.randomUUID();
         UUID storyId = UUID.randomUUID();
-        WorkflowRun run = createRun(runId, TEMPLATE_ID, "{}");
+        WorkflowRun run = createRun(
+                runId, TEMPLATE_ID, "{\"software_project_id\":\"" + PROJECT_ID + "\",\"feature_request\":\"x\"}");
         when(runRepo.findById(runId)).thenReturn(Optional.of(run));
+        when(softwareProjectRepo.existsById(PROJECT_ID)).thenReturn(true);
         when(storyService.get(storyId))
                 .thenReturn(
                         new StoryResponse(storyId, epicId, "Story title", "Story desc", "backlog", null, null, null));
@@ -285,7 +290,7 @@ class InternalRunServiceEpicTest {
                 null,
                 null,
                 null);
-        when(taskService.create(eq(storyId), any(), eq(runId))).thenReturn(expected);
+        when(taskService.create(eq(storyId), any(), eq(runId), eq(PROJECT_ID))).thenReturn(expected);
 
         TaskResponse result = service.createTask(runId, epicId, storyId, req);
 
@@ -295,7 +300,8 @@ class InternalRunServiceEpicTest {
                         eq(storyId),
                         argThat(task -> task.title().equals("Task title")
                                 && task.description().equals("Task desc")),
-                        eq(runId));
+                        eq(runId),
+                        eq(PROJECT_ID));
     }
 
     @Test
@@ -329,7 +335,7 @@ class InternalRunServiceEpicTest {
                 .hasMessageContaining(storyId.toString())
                 .hasMessageContaining(wrongEpicId.toString());
 
-        verify(taskService, never()).create(any(), any(), any());
+        verify(taskService, never()).create(any(), any(), any(), any());
     }
 
     private EpicResponse epicResponseFor(UUID projectId) {
