@@ -94,9 +94,9 @@ public class RepoGroupService {
 
     @Transactional
     public void delete(UUID groupId) {
-        // Active-run/proposal blocking belongs to the controller layer (returns 409) where the run
-        // and proposal repositories are in scope; here the group is hard-deleted and orphanRemoval
-        // cascades the members.
+        // Active-run/task blocking belongs to the controller layer (returns 409) where the
+        // WorkflowRunRepository and TaskRepository are in scope; here the group is hard-deleted and
+        // orphanRemoval cascades the members.
         groups.deleteById(groupId);
     }
 

@@ -5,7 +5,7 @@ package com.choruskube.core.util;
  *
  * <p>The derived name is used in UI chips, response DTOs, and graph snapshots.
  * This utility is the single source of truth for the derivation so that all
- * consumers — {@code GraphSnapshotBuilder}, {@code FeatureProposalService},
+ * consumers — {@code GraphSnapshotBuilder}, {@code DefaultEpicService},
  * etc. — stay consistent.
  */
 public final class RepoNameUtil {

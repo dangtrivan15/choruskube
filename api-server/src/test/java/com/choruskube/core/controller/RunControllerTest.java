@@ -5,18 +5,20 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 import com.choruskube.core.BaseTest;
-import com.choruskube.core.model.FeatureProposal;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.GraphTemplate;
 import com.choruskube.core.model.NodeDefinition;
+import com.choruskube.core.model.Story;
+import com.choruskube.core.model.Task;
 import com.choruskube.core.model.TemplateNode;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.ExecutorType;
-import com.choruskube.core.model.enums.FeatureProposalStatus;
-import com.choruskube.core.repository.FeatureProposalRepository;
+import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.NodeDefinitionRepository;
 import com.choruskube.core.repository.SoftwareProjectRepository;
+import com.choruskube.core.repository.StoryRepository;
+import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.TemplateNodeRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -57,7 +59,13 @@ public class RunControllerTest extends BaseTest {
     private WorkflowRunRepository runRepo;
 
     @Autowired
-    private FeatureProposalRepository featureProposalRepo;
+    private StoryRepository storyRepo;
+
+    @Autowired
+    private com.choruskube.core.repository.EpicRepository epicRepo;
+
+    @Autowired
+    private TaskRepository taskRepo;
 
     @Autowired
     private SoftwareProjectRepository softwareProjectRepo;
@@ -203,7 +211,7 @@ public class RunControllerTest extends BaseTest {
     }
 
     // -----------------------------------------------------------------------
-    // GET /api/v1/runs/{id} — featureProposal field
+    // GET /api/v1/runs/{id} — task field
     // -----------------------------------------------------------------------
 
     private GraphTemplate createTemplate(String name, String graphId) {
@@ -220,19 +228,42 @@ public class RunControllerTest extends BaseTest {
         return runRepo.save(run);
     }
 
+    /** Creates an Epic -> Story -> Task chain targeting {@code softwareProjectId} and returns the Task. */
+    private Task createTaskChain(java.util.UUID softwareProjectId, String title, WorkItemStatus status) {
+        com.choruskube.core.model.Epic epic = new com.choruskube.core.model.Epic();
+        epic.setTitle(title);
+        epic.setDescription("desc");
+        epic.setSoftwareProjectId(softwareProjectId);
+        epic = epicRepo.save(epic);
+
+        Story story = new Story();
+        story.setEpicId(epic.getId());
+        story.setTitle(title);
+        story.setDescription("desc");
+        story = storyRepo.save(story);
+
+        Task task = new Task();
+        task.setStoryId(story.getId());
+        task.setTitle(title);
+        task.setDescription("desc");
+        task.setSoftwareProjectId(softwareProjectId);
+        task.setStatus(status);
+        return taskRepo.save(task);
+    }
+
     @Test
-    void getRun_noLinkedProposal_featureProposalIsNull() throws Exception {
+    void getRun_noLinkedTask_taskIsNull() throws Exception {
         GraphTemplate template = createTemplate("FP Test Template", "fp-test-template");
         WorkflowRun run = createRun(template);
 
         mockMvc.perform(get("/api/v1/runs/" + run.getId()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.featureProposal").value(nullValue()));
+                .andExpect(jsonPath("$.task").value(nullValue()));
     }
 
     @Test
-    void getRun_withLinkedProposal_returnsFeatureProposalSummary() throws Exception {
-        GraphTemplate template = createTemplate("FP Template With Proposal", "fp-template-with-proposal");
+    void getRun_withLinkedTask_returnsRunTaskSummary() throws Exception {
+        GraphTemplate template = createTemplate("FP Template With Task", "fp-template-with-task");
         WorkflowRun run = createRun(template);
 
         GitRepo gitRepo = new GitRepo();
@@ -240,21 +271,17 @@ public class RunControllerTest extends BaseTest {
         gitRepo.setUrl("https://github.com/example/my-api-repo");
         gitRepo = (GitRepo) softwareProjectRepo.save(gitRepo);
 
-        FeatureProposal proposal = new FeatureProposal();
-        proposal.setTitle("Add dark mode");
-        proposal.setDescription("Support dark mode theme");
-        proposal.setStatus(FeatureProposalStatus.in_progress);
-        proposal.setSoftwareProjectId(gitRepo.getId());
-        proposal.setWorkflowRunId(run.getId());
-        featureProposalRepo.save(proposal);
+        Task task = createTaskChain(gitRepo.getId(), "Add dark mode", WorkItemStatus.in_progress);
+        run.setTaskId(task.getId());
+        runRepo.save(run);
 
         mockMvc.perform(get("/api/v1/runs/" + run.getId()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.featureProposal").isNotEmpty())
-                .andExpect(jsonPath("$.featureProposal.title").value("Add dark mode"))
-                .andExpect(jsonPath("$.featureProposal.status").value("in_progress"))
-                .andExpect(jsonPath("$.featureProposal.softwareProject.name").value("my-api-repo"))
-                .andExpect(jsonPath("$.featureProposal.softwareProject.type").value("git_repo"));
+                .andExpect(jsonPath("$.task").isNotEmpty())
+                .andExpect(jsonPath("$.task.title").value("Add dark mode"))
+                .andExpect(jsonPath("$.task.status").value("in_progress"))
+                .andExpect(jsonPath("$.task.softwareProject.name").value("my-api-repo"))
+                .andExpect(jsonPath("$.task.softwareProject.type").value("git_repo"));
     }
 
     // -----------------------------------------------------------------------
@@ -295,7 +322,7 @@ public class RunControllerTest extends BaseTest {
     // -----------------------------------------------------------------------
 
     @Test
-    void getRun_withLinkedProposal_includesSoftwareProject() throws Exception {
+    void getRun_withLinkedTask_includesSoftwareProject() throws Exception {
         GraphTemplate template = createTemplate("SP Test Template", "sp-test-template");
         WorkflowRun run = createRun(template);
 
@@ -304,23 +331,19 @@ public class RunControllerTest extends BaseTest {
         gitRepo.setUrl("https://github.com/example/my-software-repo");
         gitRepo = (GitRepo) softwareProjectRepo.save(gitRepo);
 
-        FeatureProposal proposal = new FeatureProposal();
-        proposal.setTitle("Feature from proposal");
-        proposal.setDescription("desc");
-        proposal.setStatus(FeatureProposalStatus.in_progress);
-        proposal.setSoftwareProjectId(gitRepo.getId());
-        proposal.setWorkflowRunId(run.getId());
-        featureProposalRepo.save(proposal);
+        Task task = createTaskChain(gitRepo.getId(), "Feature from task", WorkItemStatus.in_progress);
+        run.setTaskId(task.getId());
+        runRepo.save(run);
 
         mockMvc.perform(get("/api/v1/runs/" + run.getId()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.softwareProject.name").value("my-software-repo"))
                 .andExpect(jsonPath("$.softwareProject.type").value("git_repo"))
-                .andExpect(jsonPath("$.featureProposal.softwareProject.name").value("my-software-repo"));
+                .andExpect(jsonPath("$.task.softwareProject.name").value("my-software-repo"));
     }
 
     @Test
-    void listRuns_withProposal_includesSoftwareProject() throws Exception {
+    void listRuns_withTask_includesSoftwareProject() throws Exception {
         GraphTemplate template = createTemplate("SP List Template", "sp-list-template");
         WorkflowRun run = createRun(template);
 
@@ -329,13 +352,9 @@ public class RunControllerTest extends BaseTest {
         gitRepo.setUrl("https://github.com/example/list-software-repo");
         gitRepo = (GitRepo) softwareProjectRepo.save(gitRepo);
 
-        FeatureProposal proposal = new FeatureProposal();
-        proposal.setTitle("Feature for listing");
-        proposal.setDescription("desc");
-        proposal.setStatus(FeatureProposalStatus.backlog);
-        proposal.setSoftwareProjectId(gitRepo.getId());
-        proposal.setWorkflowRunId(run.getId());
-        featureProposalRepo.save(proposal);
+        Task task = createTaskChain(gitRepo.getId(), "Feature for listing", WorkItemStatus.backlog);
+        run.setTaskId(task.getId());
+        runRepo.save(run);
 
         mockMvc.perform(get("/api/v1/runs"))
                 .andExpect(status().isOk())
@@ -344,7 +363,7 @@ public class RunControllerTest extends BaseTest {
     }
 
     @Test
-    void getRun_noProposalNoInputs_softwareProjectIsNull() throws Exception {
+    void getRun_noTaskNoInputs_softwareProjectIsNull() throws Exception {
         GraphTemplate template = createTemplate("No-SP Template", "no-sp-template");
         WorkflowRun run = createRun(template);
 

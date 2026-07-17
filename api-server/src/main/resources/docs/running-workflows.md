@@ -4,16 +4,20 @@
 
 ### From the Roadmap Page
 
-1. Navigate to **Roadmap** and locate the feature proposal you want to implement.
-2. Click **Start Run** next to the proposal.
-3. In the **Start Run** dialog, select a **Workflow Template** and a **Git Repository** (or Repository Group).
-4. The proposal is automatically linked to the run. Click **Start**.
+1. Navigate to **Roadmap**, open the Epic and Story that contain the Task you want to implement,
+   and open that Task's detail view.
+2. Click **Start** on the Task.
+3. In the **Start Run** dialog, select a **Workflow Template** — the target **Git Repository** (or
+   Repository Group) comes from the Task's Epic.
+4. The run is automatically linked to the Task that started it, and appears in that Task's run
+   history. Click **Start**.
 
 ### From the Runs Page
 
 1. Navigate to **Runs** in the sidebar.
 2. Click the **Start** button in the top-right corner.
-3. Fill in the **Start Run** dialog — template, repository, and optional proposal link — then click **Start**.
+3. Fill in the **Start Run** dialog — template and repository — then click **Start**. A run
+   started this way is not linked to any Task.
 
 ### Selecting a Git Repository
 

@@ -1,6 +1,6 @@
 package com.choruskube.core.service;
 
-import com.choruskube.core.dto.FeatureProposalEvent;
+import com.choruskube.core.dto.RoadmapItemEvent;
 import com.choruskube.core.dto.RunEvent;
 import com.choruskube.core.event.OrgScopedFeedPublisher;
 import java.util.UUID;
@@ -27,17 +27,22 @@ public class RunEventPublisher {
             feedPublisher.pendingGatesChanged(runId, event);
         }
 
-        // Notify the feature-proposals dashboard when a run reaches a terminal status,
-        // so linked proposals reflect the latest workflow run state
+        // Notify the roadmap dashboard when a run reaches a terminal status,
+        // so linked Tasks reflect the latest workflow run state
         if ("completed".equals(status) || "failed".equals(status) || "cancelled".equals(status)) {
-            FeatureProposalEvent bridgeEvent = new FeatureProposalEvent("run_status_changed", null, status);
-            feedPublisher.featureProposalsChanged("workflow_run", runId, bridgeEvent);
+            RoadmapItemEvent bridgeEvent = new RoadmapItemEvent("run_status_changed", null, status);
+            feedPublisher.roadmapItemChanged("workflow_run", runId, bridgeEvent);
         }
     }
 
-    public void publishFeatureProposalChanged(UUID proposalId, String status) {
-        FeatureProposalEvent event = new FeatureProposalEvent("proposal_changed", proposalId, status);
-        feedPublisher.featureProposalsChanged("feature_proposal", proposalId, event);
+    /**
+     * Publishes a roadmap-item change for an Epic, Story, or Task. {@code itemType} is one of
+     * "epic"/"story"/"task" (Decision 7) and doubles as the resource-type key the feed is scoped
+     * by; the payload's own {@code itemType} field is {@code itemType + "_changed"}.
+     */
+    public void publishRoadmapItemChanged(String itemType, UUID itemId, String status) {
+        RoadmapItemEvent event = new RoadmapItemEvent(itemType + "_changed", itemId, status);
+        feedPublisher.roadmapItemChanged(itemType, itemId, event);
     }
 
     public void publishNodeStatusChanged(UUID runId, UUID nodeExecutionId, String status) {

@@ -12,14 +12,14 @@ interface RunMetaPanelProps {
   run: RunResponse;
 }
 
-function statusChip(status: "backlog" | "in_progress" | "rolled_out") {
+function statusChip(status: "backlog" | "in_progress" | "done") {
   switch (status) {
     case "backlog":
       return <Badge variant="outline">backlog</Badge>;
     case "in_progress":
       return <Badge variant="secondary">in progress</Badge>;
-    case "rolled_out":
-      return <Badge variant="default">rolled out</Badge>;
+    case "done":
+      return <Badge variant="default">done</Badge>;
   }
 }
 
@@ -29,7 +29,7 @@ export default function RunMetaPanel({ run }: RunMetaPanelProps) {
   const hasMetadata =
     !!run.promptText ||
     !!run.softwareProject ||
-    !!run.featureProposal ||
+    !!run.task ||
     (run.pullRequests?.length ?? 0) > 0;
 
   return (
@@ -71,21 +71,21 @@ export default function RunMetaPanel({ run }: RunMetaPanelProps) {
             <span className="font-medium">{run.softwareProject.name}</span>
           </div>
         )}
-        {run.featureProposal && (
+        {run.task && (
           <div className="flex flex-wrap items-center gap-x-6 gap-y-1.5">
             <div className="flex items-center gap-1.5">
               <span className="text-muted-foreground">Roadmap:</span>
               <Link
-                to={`/proposals/${run.featureProposal.id}`}
+                to={`/tasks/${run.task.id}`}
                 className="font-medium text-primary hover:underline"
-                data-testid="run-meta-panel-proposal-link"
+                data-testid="run-meta-panel-task-link"
               >
-                {run.featureProposal.title}
+                {run.task.title}
               </Link>
             </div>
             <div className="flex items-center gap-1.5">
               <span className="text-muted-foreground">Status:</span>
-              <span data-testid="run-meta-panel-status">{statusChip(run.featureProposal.status)}</span>
+              <span data-testid="run-meta-panel-status">{statusChip(run.task.status)}</span>
             </div>
           </div>
         )}

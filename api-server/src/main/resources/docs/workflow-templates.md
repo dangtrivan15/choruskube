@@ -76,7 +76,9 @@ When you click **Start Run**, the **Start Run dialog** prompts you to:
 
 1. **Choose a Workflow Template** — select from the list of available templates.
 2. **Select a Git Repository or Repository Group** — choose which codebase(s) the workflow operates on.
-3. **Optionally link a Feature Proposal** — associate the run with a backlog item.
+
+Starting a run from a Task's detail view on the **Roadmap** page links the run to that Task
+automatically instead — see [Roadmap](roadmap-and-proposals).
 
 The dialog validates that all required fields are filled before enabling the **Start** button.
 

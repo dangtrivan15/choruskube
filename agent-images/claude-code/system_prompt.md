@@ -75,11 +75,19 @@ The following helper scripts are available on the PATH:
   (one per line). Useful as a runtime fallback or for verification — the same
   list is appended to your system prompt at agent startup.
 - `create-proposal --title TITLE --description DESC [--motivation MOT]` —
-  Create a feature proposal for the current run's software project.
-- `list-proposals` — List all feature proposals for the current run's software project.
+  Create an Epic (the top level of the Epic -> Story -> Task roadmap hierarchy) for the
+  current run's software project. An Epic alone is not startable — chain create-story
+  and create-task below to produce a startable Task.
+- `list-proposals` — List all Epics for the current run's software project.
 - `update-proposal --proposal-id UUID [--title T] [--description D] [--motivation M]` —
-  Update an existing proposal in backlog status. PATCH semantics: only fields you pass
-  change; pass `--motivation ""` to clear motivation.
+  Update an existing Epic that has no descendant Task past backlog status. PATCH
+  semantics: only fields you pass change; pass `--motivation ""` to clear motivation.
+- `create-story --epic-id UUID --title TITLE --description DESC` —
+  Create a Story under an Epic (the second level of the hierarchy).
+- `create-task --epic-id UUID --story-id UUID --title TITLE --description DESC` —
+  Create a Task under a Story — the leaf of the hierarchy, and the only level that can
+  later be started as a workflow run. A feature you propose is not startable until you
+  create both its Story and its Task.
 - `register-pr --repo-id <uuid> --pr-url <url> [--pr-number <n>] [--title <t>] [--repo-name <name>]` —
   Register a pull request for tracking and display in the ChorusKube UI. Idempotent on
   `(run, pr_url)` — calling it twice with the same URL refreshes metadata in place.

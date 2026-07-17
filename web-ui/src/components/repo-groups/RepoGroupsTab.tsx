@@ -210,7 +210,7 @@ export default function RepoGroupsTab() {
             <DialogTitle>New Repo Group</DialogTitle>
             <DialogDescription>
               Group multiple repositories so they can be selected as a single
-              software project for runs and proposals.
+              software project for runs and Epics.
             </DialogDescription>
           </DialogHeader>
 

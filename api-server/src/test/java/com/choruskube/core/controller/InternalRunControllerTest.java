@@ -4,12 +4,12 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 import com.choruskube.core.BaseTest;
-import com.choruskube.core.dto.FeatureProposalRequest;
-import com.choruskube.core.dto.FeatureProposalResponse;
+import com.choruskube.core.dto.EpicRequest;
+import com.choruskube.core.dto.EpicResponse;
 import com.choruskube.core.model.*;
 import com.choruskube.core.model.enums.ExecutorType;
 import com.choruskube.core.repository.*;
-import com.choruskube.core.service.FeatureProposalService;
+import com.choruskube.core.service.EpicService;
 import com.choruskube.core.util.RepoNameUtil;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.temporal.client.WorkflowClient;
@@ -54,7 +54,7 @@ public class InternalRunControllerTest extends BaseTest {
     private GitRepoRepository gitRepoRepo;
 
     @Autowired
-    private FeatureProposalService featureProposalService;
+    private EpicService epicService;
 
     @MockitoBean
     private WorkflowServiceStubs workflowServiceStubs;
@@ -194,8 +194,10 @@ public class InternalRunControllerTest extends BaseTest {
                 .andExpect(status().isCreated());
     }
 
+    // ── existing feature-proposals path — now produces an Epic (Decision 6: path unchanged) ──
+
     @Test
-    void createFeatureProposal_returns201() throws Exception {
+    void createFeatureProposal_returns201_andProducesAnEpic() throws Exception {
         NodeExecution exec = new NodeExecution();
         exec.setWorkflowRunId(run.getId());
         exec.setTemplateNodeId(templateNode.getId());
@@ -341,9 +343,9 @@ public class InternalRunControllerTest extends BaseTest {
         gitRepo2.setName(RepoNameUtil.deriveOwnerRepoName("https://github.com/test/other-repo"));
         gitRepo2 = gitRepoRepo.save(gitRepo2);
 
-        // Create a proposal targeting gitRepo2 directly via the service (bypassing the run).
-        FeatureProposalResponse otherProposal = featureProposalService.create(
-                new FeatureProposalRequest("Other Project Proposal", "desc", null, gitRepo2.getId()), null);
+        // Create an Epic targeting gitRepo2 directly via the service (bypassing the run).
+        EpicResponse otherProposal =
+                epicService.create(new EpicRequest("Other Project Proposal", "desc", null, gitRepo2.getId()), null);
 
         // Try to update it via the run, which resolves to gitRepo (not gitRepo2) → 403.
         Map<String, Object> updateBody = Map.of("title", "Hijacked Title");
@@ -383,5 +385,132 @@ public class InternalRunControllerTest extends BaseTest {
                 .andExpect(jsonPath("$[0].title").value("Test proposal"))
                 .andExpect(jsonPath("$[0].description").value("Test description"))
                 .andExpect(jsonPath("$[0].repos[0].url").value("https://github.com/test/repo"));
+    }
+
+    // ── new nested Story/Task creation paths (Decision 6/3.6) ─────────────────────
+
+    @Test
+    void createStory_returns201() throws Exception {
+        NodeExecution exec = new NodeExecution();
+        exec.setWorkflowRunId(run.getId());
+        exec.setTemplateNodeId(templateNode.getId());
+        exec.setGraphVersion(1);
+        exec = execRepo.save(exec);
+
+        String createEpicResponse = mockMvc.perform(post("/internal/runs/" + run.getId() + "/node-executions/"
+                                + exec.getId() + "/feature-proposals")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                Map.of("title", "Epic for story", "description", "desc"))))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        String epicId = objectMapper.readTree(createEpicResponse).get("id").asText();
+
+        Map<String, Object> body = Map.of("title", "Agent-created story", "description", "Story description");
+
+        mockMvc.perform(post("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId()
+                                + "/feature-proposals/" + epicId + "/stories")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.epicId").value(epicId))
+                .andExpect(jsonPath("$.title").value("Agent-created story"));
+    }
+
+    @Test
+    void createTask_returns201() throws Exception {
+        NodeExecution exec = new NodeExecution();
+        exec.setWorkflowRunId(run.getId());
+        exec.setTemplateNodeId(templateNode.getId());
+        exec.setGraphVersion(1);
+        exec = execRepo.save(exec);
+
+        String createEpicResponse = mockMvc.perform(post("/internal/runs/" + run.getId() + "/node-executions/"
+                                + exec.getId() + "/feature-proposals")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                Map.of("title", "Epic for task", "description", "desc"))))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        String epicId = objectMapper.readTree(createEpicResponse).get("id").asText();
+
+        String createStoryResponse = mockMvc.perform(post("/internal/runs/" + run.getId() + "/node-executions/"
+                                + exec.getId() + "/feature-proposals/" + epicId + "/stories")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                Map.of("title", "Story for task", "description", "desc"))))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        String storyId = objectMapper.readTree(createStoryResponse).get("id").asText();
+
+        Map<String, Object> body = Map.of("title", "Agent-created task", "description", "Task description");
+
+        mockMvc.perform(post("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId()
+                                + "/feature-proposals/" + epicId + "/stories/" + storyId + "/tasks")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.storyId").value(storyId))
+                .andExpect(jsonPath("$.title").value("Agent-created task"))
+                .andExpect(jsonPath("$.status").value("backlog"))
+                .andExpect(
+                        jsonPath("$.softwareProject.id").value(gitRepo.getId().toString()));
+    }
+
+    @Test
+    void createTask_withEpicIdNotMatchingStorysActualEpic_returns404() throws Exception {
+        NodeExecution exec = new NodeExecution();
+        exec.setWorkflowRunId(run.getId());
+        exec.setTemplateNodeId(templateNode.getId());
+        exec.setGraphVersion(1);
+        exec = execRepo.save(exec);
+
+        String createEpicResponse = mockMvc.perform(post("/internal/runs/" + run.getId() + "/node-executions/"
+                                + exec.getId() + "/feature-proposals")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("title", "Real epic", "description", "desc"))))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        String epicId = objectMapper.readTree(createEpicResponse).get("id").asText();
+
+        String createStoryResponse = mockMvc.perform(post("/internal/runs/" + run.getId() + "/node-executions/"
+                                + exec.getId() + "/feature-proposals/" + epicId + "/stories")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                Map.of("title", "Story under real epic", "description", "desc"))))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        String storyId = objectMapper.readTree(createStoryResponse).get("id").asText();
+
+        // A different, unrelated Epic id in the URL — the Story above does not belong to it.
+        String otherEpicResponse = mockMvc.perform(post("/internal/runs/" + run.getId() + "/node-executions/"
+                                + exec.getId() + "/feature-proposals")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                Map.of("title", "Unrelated epic", "description", "desc"))))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        String unrelatedEpicId =
+                objectMapper.readTree(otherEpicResponse).get("id").asText();
+
+        Map<String, Object> body = Map.of("title", "Should not be created", "description", "desc");
+
+        mockMvc.perform(post("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId()
+                                + "/feature-proposals/" + unrelatedEpicId + "/stories/" + storyId + "/tasks")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isNotFound());
     }
 }

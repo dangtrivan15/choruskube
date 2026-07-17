@@ -28,6 +28,9 @@ public class WorkflowRun {
     @Column(name = "graph_template_id", nullable = false)
     private UUID graphTemplateId;
 
+    @Column(name = "task_id")
+    private UUID taskId;
+
     @Enumerated(EnumType.STRING)
     @JdbcTypeCode(SqlTypes.NAMED_ENUM)
     @Column(nullable = false)
@@ -81,6 +84,14 @@ public class WorkflowRun {
 
     public void setGraphTemplateId(UUID graphTemplateId) {
         this.graphTemplateId = graphTemplateId;
+    }
+
+    public UUID getTaskId() {
+        return taskId;
+    }
+
+    public void setTaskId(UUID taskId) {
+        this.taskId = taskId;
     }
 
     public WorkflowRunStatus getStatus() {

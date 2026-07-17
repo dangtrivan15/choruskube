@@ -11,23 +11,23 @@ interface RunMetaBarProps {
   run: RunResponse;
 }
 
-function statusChip(status: "backlog" | "in_progress" | "rolled_out") {
+function statusChip(status: "backlog" | "in_progress" | "done") {
   switch (status) {
     case "backlog":
       return <Badge variant="outline">backlog</Badge>;
     case "in_progress":
       return <Badge variant="secondary">in progress</Badge>;
-    case "rolled_out":
-      return <Badge variant="default">rolled out</Badge>;
+    case "done":
+      return <Badge variant="default">done</Badge>;
   }
 }
 
 export default function RunMetaBar({ run }: RunMetaBarProps) {
-  const proposal = run.featureProposal;
+  const task = run.task;
   const promptText = run.promptText;
   const [promptDialogOpen, setPromptDialogOpen] = useState(false);
 
-  if (!proposal && !promptText && !run.softwareProject) return null;
+  if (!task && !promptText && !run.softwareProject) return null;
 
   return (
     <div
@@ -64,21 +64,21 @@ export default function RunMetaBar({ run }: RunMetaBarProps) {
           <span className="font-medium">{run.softwareProject.name}</span>
         </div>
       )}
-      {proposal && (
+      {task && (
         <div className="flex flex-wrap items-center gap-x-6 gap-y-1.5">
           <div className="flex items-center gap-1.5">
             <span className="text-muted-foreground">Roadmap:</span>
             <Link
-              to={`/proposals/${proposal.id}`}
+              to={`/tasks/${task.id}`}
               className="font-medium text-primary hover:underline"
-              data-testid="run-meta-bar-proposal-link"
+              data-testid="run-meta-bar-task-link"
             >
-              {proposal.title}
+              {task.title}
             </Link>
           </div>
           <div className="flex items-center gap-1.5">
             <span className="text-muted-foreground">Status:</span>
-            <span data-testid="run-meta-bar-status">{statusChip(proposal.status)}</span>
+            <span data-testid="run-meta-bar-status">{statusChip(task.status)}</span>
           </div>
         </div>
       )}

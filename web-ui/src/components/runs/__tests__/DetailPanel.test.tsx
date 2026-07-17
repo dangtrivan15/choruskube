@@ -114,7 +114,7 @@ function makeRun(overrides: Partial<RunResponse> = {}): RunResponse {
     ],
     pullRequests: [],
     promptText: null,
-    featureProposal: null,
+    task: null,
     softwareProject: null,
     ...overrides,
   };

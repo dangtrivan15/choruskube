@@ -8,6 +8,9 @@ import ApprovalsPage from "@/pages/ApprovalsPage";
 import SoftwareProjectsPage from "@/pages/SoftwareProjectsPage";
 import AnalyticsPage from "@/pages/AnalyticsPage";
 import RoadmapPage from "@/pages/RoadmapPage";
+import EpicDetailPage from "@/pages/EpicDetailPage";
+import StoryDetailPage from "@/pages/StoryDetailPage";
+import TaskDetailPage from "@/pages/TaskDetailPage";
 import NotFoundPage from "@/pages/NotFoundPage";
 import DagPlaygroundPage from "@/pages/DagPlaygroundPage";
 import { config } from "@/config";
@@ -21,6 +24,9 @@ const coreChildren: RouteObject[] = [
   { path: "git-repos", element: <SoftwareProjectsPage /> },
   { path: "analytics", element: <AnalyticsPage /> },
   { path: "roadmap", element: <RoadmapPage /> },
+  { path: "roadmap/epics/:epicId", element: <EpicDetailPage /> },
+  { path: "roadmap/epics/:epicId/stories/:storyId", element: <StoryDetailPage /> },
+  { path: "tasks/:id", element: <TaskDetailPage /> },
   { path: "docs", element: <DocsPage /> },
   { path: "docs/:slug", element: <DocsPage /> },
 ];

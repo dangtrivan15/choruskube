@@ -75,7 +75,7 @@ cd api-server && ./gradlew jacocoTestCoverageVerification
 - Naming: `V{next}__{snake_case_description}.sql`
 - NEVER modify an existing migration file — always create a new one
 - NEVER use Flyway undo/rollback — write forward-only migrations
-- Custom enum types exist: `executor_type`, `workflow_run_status`, `node_execution_status`, `log_level`, `reviewer_type`, `provisioning_status`, `live_chat_status`, `feature_proposal_status`, `invitation_status`, `github_credential_health_status` — add new values with `ALTER TYPE ... ADD VALUE`
+- Custom enum types exist: `executor_type`, `workflow_run_status`, `node_execution_status`, `log_level`, `reviewer_type`, `provisioning_status`, `live_chat_status`, `work_item_status`, `invitation_status`, `github_credential_health_status` — add new values with `ALTER TYPE ... ADD VALUE`. `feature_proposal_status` also still exists in the schema (the `feature_proposal` table it types is retired/unreferenced by app code as of `V2__work_hierarchy.sql`, but not dropped — see that migration's file for why) — do not add new values to it or treat it as a live type for new work.
 - Migrations run automatically on API server startup
 
 ## Agent Pod Workspace Layout

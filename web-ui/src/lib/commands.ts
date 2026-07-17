@@ -63,7 +63,7 @@ export const staticCommands: Command[] = [
     label: "Go to Roadmap",
     category: "navigation",
     shortcut: "g m",
-    keywords: ["proposals", "features"],
+    keywords: ["epics", "stories", "tasks", "backlog", "features"],
   },
   {
     id: "nav:git-repos",

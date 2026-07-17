@@ -93,7 +93,7 @@ function snapshotRun(
     nodeExecutions,
     pullRequests: [],
     promptText: null,
-    featureProposal: null,
+    task: null,
     softwareProject: null,
   };
 }

@@ -6,6 +6,8 @@ import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Modifying;
@@ -16,6 +18,8 @@ public interface WorkflowRunRepository extends JpaRepository<WorkflowRun, UUID>,
     List<WorkflowRun> findByStatus(WorkflowRunStatus status);
 
     boolean existsByGraphTemplateIdAndStatusIn(UUID graphTemplateId, Collection<WorkflowRunStatus> statuses);
+
+    Page<WorkflowRun> findByTaskIdOrderByCreatedAtDesc(UUID taskId, Pageable pageable);
 
     /**
      * Count non-terminal runs whose {@code inputs} jsonb references the given SoftwareProject id

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { RunEvent, FeatureProposalEvent } from "@/lib/types";
+import type { RunEvent, RoadmapItemEvent } from "@/lib/types";
 
 // Mock sonner
 vi.mock("sonner", () => ({
@@ -124,64 +124,64 @@ describe("toast-messages", () => {
       expect(mapEventToToast(event)).toBeNull();
     });
 
-    // --- FeatureProposalEvent tests (matches backend shape) ---
+    // --- RoadmapItemEvent tests (matches backend shape) ---
 
-    it("maps proposal_changed with status backlog to info toast", () => {
-      const event: FeatureProposalEvent = {
-        type: "proposal_changed",
-        proposalId: "p1",
+    it("maps epic_changed with status backlog to info toast", () => {
+      const event: RoadmapItemEvent = {
+        itemType: "epic_changed",
+        itemId: "e1",
         status: "backlog",
       };
       const config = mapEventToToast(event);
       expect(config).toEqual({
-        message: "Proposal updated",
+        message: "Roadmap item updated",
         variant: "info",
         actionUrl: "/roadmap",
       });
     });
 
-    it("maps proposal_changed with status in_progress to info toast", () => {
-      const event: FeatureProposalEvent = {
-        type: "proposal_changed",
-        proposalId: "p1",
+    it("maps task_changed with status in_progress to info toast", () => {
+      const event: RoadmapItemEvent = {
+        itemType: "task_changed",
+        itemId: "t1",
         status: "in_progress",
       };
       const config = mapEventToToast(event);
       expect(config).toEqual({
-        message: "Proposal started",
+        message: "Roadmap item started",
         variant: "info",
         actionUrl: "/roadmap",
       });
     });
 
-    it("maps proposal_changed with status rolled_out to success toast", () => {
-      const event: FeatureProposalEvent = {
-        type: "proposal_changed",
-        proposalId: "p1",
-        status: "rolled_out",
+    it("maps task_changed with status done to success toast", () => {
+      const event: RoadmapItemEvent = {
+        itemType: "task_changed",
+        itemId: "t1",
+        status: "done",
       };
       const config = mapEventToToast(event);
       expect(config?.variant).toBe("success");
-      expect(config?.message).toBe("Proposal rolled out");
+      expect(config?.message).toBe("Roadmap item completed");
     });
 
-    it("maps proposal_changed with status deleted to info toast without actionUrl", () => {
-      const event: FeatureProposalEvent = {
-        type: "proposal_changed",
-        proposalId: "p1",
+    it("maps story_changed with status deleted to info toast without actionUrl", () => {
+      const event: RoadmapItemEvent = {
+        itemType: "story_changed",
+        itemId: "s1",
         status: "deleted",
       };
       const config = mapEventToToast(event);
       expect(config).toEqual({
-        message: "Proposal deleted",
+        message: "Roadmap item deleted",
         variant: "info",
       });
     });
 
     it("maps run_status_changed bridge event (completed) to success toast", () => {
-      const event: FeatureProposalEvent = {
-        type: "run_status_changed",
-        proposalId: null,
+      const event: RoadmapItemEvent = {
+        itemType: "run_status_changed",
+        itemId: null,
         status: "completed",
       };
       const config = mapEventToToast(event);
@@ -193,9 +193,9 @@ describe("toast-messages", () => {
     });
 
     it("maps run_status_changed bridge event (failed) to error toast", () => {
-      const event: FeatureProposalEvent = {
-        type: "run_status_changed",
-        proposalId: null,
+      const event: RoadmapItemEvent = {
+        itemType: "run_status_changed",
+        itemId: null,
         status: "failed",
       };
       const config = mapEventToToast(event);
@@ -204,9 +204,9 @@ describe("toast-messages", () => {
     });
 
     it("maps run_status_changed bridge event (cancelled) to warning toast", () => {
-      const event: FeatureProposalEvent = {
-        type: "run_status_changed",
-        proposalId: null,
+      const event: RoadmapItemEvent = {
+        itemType: "run_status_changed",
+        itemId: null,
         status: "cancelled",
       };
       const config = mapEventToToast(event);
@@ -250,10 +250,10 @@ describe("toast-messages", () => {
       expect(mapEventToToast(event)).toBeNull();
     });
 
-    it("returns null for unknown proposal status", () => {
-      const event: FeatureProposalEvent = {
-        type: "proposal_changed",
-        proposalId: "p1",
+    it("returns null for unknown roadmap item status", () => {
+      const event: RoadmapItemEvent = {
+        itemType: "epic_changed",
+        itemId: "e1",
         status: "some_unknown_status",
       };
       expect(mapEventToToast(event)).toBeNull();
@@ -323,17 +323,17 @@ describe("toast-messages", () => {
       expect(entry).toBeNull();
     });
 
-    it("shows toast for FeatureProposalEvent proposal_changed with dedup id", () => {
-      const event: FeatureProposalEvent = {
-        type: "proposal_changed",
-        proposalId: "p1",
-        status: "rolled_out",
+    it("shows toast for RoadmapItemEvent task_changed with dedup id", () => {
+      const event: RoadmapItemEvent = {
+        itemType: "task_changed",
+        itemId: "t1",
+        status: "done",
       };
       const entry = showEventToast(event);
       expect(toast.success).toHaveBeenCalledWith(
-        "Proposal rolled out",
+        "Roadmap item completed",
         expect.objectContaining({
-          id: "proposal:proposal_changed:p1:rolled_out",
+          id: "roadmap:task_changed:t1:done",
           duration: 4000,
         }),
       );
@@ -341,17 +341,17 @@ describe("toast-messages", () => {
       expect(entry?.variant).toBe("success");
     });
 
-    it("shows toast for FeatureProposalEvent bridge run_status_changed with dedup id", () => {
-      const event: FeatureProposalEvent = {
-        type: "run_status_changed",
-        proposalId: null,
+    it("shows toast for RoadmapItemEvent bridge run_status_changed with dedup id", () => {
+      const event: RoadmapItemEvent = {
+        itemType: "run_status_changed",
+        itemId: null,
         status: "failed",
       };
       const entry = showEventToast(event);
       expect(toast.error).toHaveBeenCalledWith(
         "Linked run failed",
         expect.objectContaining({
-          id: "proposal:run_status_changed::failed",
+          id: "roadmap:run_status_changed::failed",
           duration: 6000,
         }),
       );

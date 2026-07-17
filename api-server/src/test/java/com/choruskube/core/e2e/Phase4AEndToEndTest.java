@@ -9,7 +9,7 @@ import com.choruskube.core.config.GraphIds;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.enums.NodeExecutionStatus;
-import com.choruskube.core.repository.FeatureProposalRepository;
+import com.choruskube.core.repository.EpicRepository;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.NodeExecutionRepository;
@@ -59,7 +59,7 @@ public class Phase4AEndToEndTest extends BaseTest {
     private WorkflowRunRepository workflowRunRepo;
 
     @Autowired
-    private FeatureProposalRepository featureProposalRepo;
+    private EpicRepository epicRepo;
 
     @MockitoBean
     private io.temporal.serviceclient.WorkflowServiceStubs workflowServiceStubs;
@@ -71,11 +71,14 @@ public class Phase4AEndToEndTest extends BaseTest {
     void cleanUpRuns() {
         // Each test in this class commits WorkflowRun rows to the shared TestContainers
         // database. Without cleanup, those rows pollute tests like AnalyticsControllerTest
-        // that assert on an empty database. feature_proposal has a NO ACTION FK on
-        // workflow_run, so any proposals (none today, but future-proof) must be deleted
-        // before runs.
-        featureProposalRepo.deleteAll();
+        // that assert on an empty database. workflow_run.task_id has a plain (non-cascading) FK
+        // on task.id, so workflow_run rows must be deleted BEFORE epic — deleting epic first
+        // would try to cascade-delete a still-referenced task and violate that FK. Clearing epic
+        // alone (after runs are gone) suffices to clear the whole Epic -> Story -> Task chain
+        // (none today, but future-proof): story/task cascade via the migration's ON DELETE
+        // CASCADE FKs.
         workflowRunRepo.deleteAll();
+        epicRepo.deleteAll();
     }
 
     @BeforeEach

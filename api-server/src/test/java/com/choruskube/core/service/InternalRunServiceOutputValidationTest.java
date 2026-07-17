@@ -47,6 +47,8 @@ class InternalRunServiceOutputValidationTest {
                 new ObjectMapper(),
                 null,
                 null,
+                null,
+                null,
                 Optional.empty(),
                 null,
                 null,
@@ -54,7 +56,8 @@ class InternalRunServiceOutputValidationTest {
                 null,
                 null,
                 templateNodeRepo,
-                nodeDefinitionRepo);
+                nodeDefinitionRepo,
+                null);
     }
 
     private NodeExecution stubExec(UUID id) {

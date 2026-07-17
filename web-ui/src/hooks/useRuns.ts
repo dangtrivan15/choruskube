@@ -35,7 +35,7 @@ export function useRun(id: string) {
     queryKey: ["runs", id],
     queryFn: () => api.get<RunResponse>(`/runs/${id}`),
     refetchInterval: 5_000,
-    // Avoid firing `/runs/` when called with an empty id (eg. proposals with no linked run yet).
+    // Avoid firing `/runs/` when called with an empty id (eg. tasks with no linked run yet).
     enabled: !!id,
   });
 }

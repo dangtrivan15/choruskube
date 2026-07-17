@@ -59,16 +59,37 @@ export interface GitRepo {
   defaultBranch: string;
 }
 
-export interface FeatureProposal {
+export interface Epic {
   id: string;
   title: string;
   description: string;
   motivation: string | null;
   status: string;
+  progress: { totalTasks: number; doneTasks: number };
   softwareProject: SoftwareProjectRef;
   // Single source of truth for the shape — avoids drift with the production type.
   repos: RepoRef[];
-  workflowRunId: string | null;
+}
+
+export interface Story {
+  id: string;
+  epicId: string;
+  title: string;
+  description: string;
+  status: string;
+  progress: { totalTasks: number; doneTasks: number };
+}
+
+export interface Task {
+  id: string;
+  storyId: string;
+  title: string;
+  description: string;
+  status: string;
+  softwareProject: SoftwareProjectRef;
+  repos: RepoRef[];
+  latestRunId: string | null;
+  latestRunStatus: string | null;
 }
 
 export interface PageResponse<T> {
@@ -257,19 +278,19 @@ export class TestApiClient {
     return this.post(`/api/v1/runs/${runId}/nodes/${nodeExecId}/signal`, body);
   }
 
-  // ── Feature Proposals ────────────────────────────────────────────
+  // ── Epics / Stories / Tasks ────────────────────────────────────────
 
-  async listProposals(): Promise<PageResponse<FeatureProposal>> {
-    return this.get("/api/v1/feature-proposals?size=100");
+  async listEpics(): Promise<PageResponse<Epic>> {
+    return this.get("/api/v1/epics?size=100");
   }
 
-  async createProposal(body: {
+  async createEpic(body: {
     title: string;
     description: string;
     motivation?: string | null;
     softwareProjectId: string;
-  }): Promise<FeatureProposal> {
-    return this.post("/api/v1/feature-proposals", {
+  }): Promise<Epic> {
+    return this.post("/api/v1/epics", {
       title: body.title,
       description: body.description,
       motivation: body.motivation ?? null,
@@ -277,8 +298,34 @@ export class TestApiClient {
     });
   }
 
-  async deleteProposal(id: string): Promise<void> {
-    return this.delete(`/api/v1/feature-proposals/${id}`);
+  async deleteEpic(id: string): Promise<void> {
+    return this.delete(`/api/v1/epics/${id}`);
+  }
+
+  async listStories(epicId: string): Promise<Story[]> {
+    return this.get(`/api/v1/epics/${epicId}/stories`);
+  }
+
+  async createStory(
+    epicId: string,
+    body: { title: string; description: string },
+  ): Promise<Story> {
+    return this.post(`/api/v1/epics/${epicId}/stories`, body);
+  }
+
+  async listTasks(storyId: string): Promise<Task[]> {
+    return this.get(`/api/v1/stories/${storyId}/tasks`);
+  }
+
+  async createTask(
+    storyId: string,
+    body: { title: string; description: string },
+  ): Promise<Task> {
+    return this.post(`/api/v1/stories/${storyId}/tasks`, body);
+  }
+
+  async startTask(id: string): Promise<Task> {
+    return this.post(`/api/v1/tasks/${id}/start`);
   }
 
   // ── Repo Groups ──────────────────────────────────────────────────

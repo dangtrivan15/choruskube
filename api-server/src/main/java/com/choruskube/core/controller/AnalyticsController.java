@@ -48,14 +48,14 @@ public class AnalyticsController {
 
     @PreAuthorize("@orgSecurity.canRead()")
     @GetMapping("/roadmap/status-counts")
-    public ProposalStatusCountsResponse getProposalStatusCounts() {
-        return analyticsService.getProposalStatusCounts();
+    public RoadmapStatusCountsResponse getRoadmapStatusCounts() {
+        return analyticsService.getRoadmapStatusCounts();
     }
 
     @PreAuthorize("@orgSecurity.canRead()")
     @GetMapping("/roadmap/throughput")
-    public ProposalThroughputResponse getProposalThroughput(
+    public RoadmapThroughputResponse getRoadmapThroughput(
             @RequestParam(required = false, defaultValue = "30d") String period) {
-        return analyticsService.getProposalThroughput(period);
+        return analyticsService.getRoadmapThroughput(period);
     }
 }

@@ -21,7 +21,7 @@ public class DefaultOrgScopedFeedPublisher implements OrgScopedFeedPublisher {
     }
 
     @Override
-    public void featureProposalsChanged(String resourceType, UUID resourceId, Object payload) {
-        messagingTemplate.convertAndSend("/topic/feature-proposals", payload);
+    public void roadmapItemChanged(String resourceType, UUID resourceId, Object payload) {
+        messagingTemplate.convertAndSend("/topic/roadmap-items", payload);
     }
 }

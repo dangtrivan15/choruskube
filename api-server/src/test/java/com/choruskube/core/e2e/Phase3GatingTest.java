@@ -114,17 +114,24 @@ public class Phase3GatingTest extends BaseTest {
     }
 
     /**
-     * Static-analysis-style assertion: reads the FeatureProposalService source file from the
+     * Static-analysis-style assertion: reads the {@code DefaultEpicService} source file from the
      * filesystem and asserts it does not contain the legacy strings {@code git_repo_list} or
      * {@code repos":[}. Belt-and-braces — the DB-level tests above are the load-bearing ones.
+     *
+     * <p>Retargeted from {@code FeatureProposalService.java} (deleted by the work-hierarchy
+     * migration) to {@code DefaultEpicService.java} — the concrete implementation that now owns
+     * this response-building code path (Decision 4: Epic is the entity carrying the
+     * initiative-level software-project/repo relationship), not {@code DefaultStoryService.java}
+     * or {@code DefaultTaskService.java}, and not the {@code EpicService.java} interface file
+     * (Decision 8), which has no method bodies for this static analysis to inspect.
      */
     @Test
-    void feature_proposal_service_does_not_emit_git_repo_list() throws IOException {
+    void default_epic_service_does_not_emit_git_repo_list() throws IOException {
         // When gradle runs api-server tests, the working directory is api-server/
-        Path serviceFile = Paths.get("src/main/java/com/choruskube/core/service/FeatureProposalService.java");
+        Path serviceFile = Paths.get("src/main/java/com/choruskube/core/service/DefaultEpicService.java");
 
         if (!Files.exists(serviceFile)) {
-            fail("FeatureProposalService.java not found at expected path: "
+            fail("DefaultEpicService.java not found at expected path: "
                     + serviceFile.toAbsolutePath()
                     + " — check that tests are run from the api-server/ directory.");
         }

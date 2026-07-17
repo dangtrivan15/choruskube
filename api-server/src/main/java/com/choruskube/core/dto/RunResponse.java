@@ -22,5 +22,5 @@ public record RunResponse(
         List<RunPullRequestResponse> pullRequests,
         String inputArtifactRefs,
         @Nullable String promptText,
-        @Nullable RunFeatureProposalSummary featureProposal,
+        @Nullable RunTaskSummary task,
         @Nullable SoftwareProjectRef softwareProject) {}

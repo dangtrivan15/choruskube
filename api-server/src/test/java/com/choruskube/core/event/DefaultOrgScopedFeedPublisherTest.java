@@ -29,11 +29,11 @@ class DefaultOrgScopedFeedPublisherTest {
     }
 
     @Test
-    void featureProposalsChanged_publishesToOrgFreeTopic_ignoringResource() {
+    void roadmapItemChanged_publishesToOrgFreeTopic_ignoringResource() {
         Object payload = new Object();
-        publisher.featureProposalsChanged("feature_proposal", UUID.randomUUID(), payload);
+        publisher.roadmapItemChanged("task", UUID.randomUUID(), payload);
 
-        verify(messagingTemplate).convertAndSend("/topic/feature-proposals", payload);
+        verify(messagingTemplate).convertAndSend("/topic/roadmap-items", payload);
         verifyNoMoreInteractions(messagingTemplate);
     }
 }

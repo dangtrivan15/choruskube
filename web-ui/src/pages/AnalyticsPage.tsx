@@ -5,8 +5,8 @@ import {
   useTemplateAnalytics,
   useNodeAnalytics,
   useBottlenecks,
-  useProposalStatusCounts,
-  useProposalThroughput,
+  useRoadmapStatusCounts,
+  useRoadmapThroughput,
 } from "@/hooks/useAnalytics";
 import { Skeleton } from "@/components/ui/skeleton";
 import PeriodSelector from "@/components/analytics/PeriodSelector";
@@ -15,7 +15,7 @@ import RunTrendChart from "@/components/analytics/RunTrendChart";
 import BottleneckChart from "@/components/analytics/BottleneckChart";
 import TemplateTable from "@/components/analytics/TemplateTable";
 import NodeTable from "@/components/analytics/NodeTable";
-import ProposalThroughputChart from "@/components/analytics/ProposalThroughputChart";
+import RoadmapThroughputChart from "@/components/analytics/RoadmapThroughputChart";
 import UsageDashboard from "@/components/analytics/UsageDashboard";
 import PageHeader from "@/components/layout/PageHeader";
 import PageShell from "@/components/layout/PageShell";
@@ -30,7 +30,7 @@ function formatDuration(seconds: number | null): string {
 const STATUS_LABELS: Record<string, string> = {
   backlog: "Backlog",
   in_progress: "In Progress",
-  rolled_out: "Rolled Out",
+  done: "Done",
 };
 
 export default function AnalyticsPage() {
@@ -41,8 +41,8 @@ export default function AnalyticsPage() {
   const { data: templates, isLoading: templatesLoading } = useTemplateAnalytics(period);
   const { data: nodes, isLoading: nodesLoading } = useNodeAnalytics(period);
   const { data: bottlenecks, isLoading: bottlenecksLoading } = useBottlenecks(period);
-  const { data: statusCounts, isLoading: statusCountsLoading } = useProposalStatusCounts();
-  const { data: throughput, isLoading: throughputLoading } = useProposalThroughput(period);
+  const { data: statusCounts, isLoading: statusCountsLoading } = useRoadmapStatusCounts();
+  const { data: throughput, isLoading: throughputLoading } = useRoadmapThroughput(period);
 
   return (
     <PageShell spacing="relaxed">
@@ -145,7 +145,7 @@ export default function AnalyticsPage() {
         <div className="grid gap-6 lg:grid-cols-2">
           {/* Status Counts */}
           <div className="min-w-0">
-            <h3 className="mb-3 text-xs font-medium text-muted-foreground">Proposals by Status</h3>
+            <h3 className="mb-3 text-xs font-medium text-muted-foreground">Tasks by Status</h3>
             {statusCountsLoading ? (
               <div className="grid grid-cols-3 gap-3">
                 {Array.from({ length: 3 }).map((_, i) => (
@@ -157,7 +157,7 @@ export default function AnalyticsPage() {
               </div>
             ) : statusCounts ? (
               <div className="grid grid-cols-3 gap-3">
-                {(["backlog", "in_progress", "rolled_out"] as const).map((status) => {
+                {(["backlog", "in_progress", "done"] as const).map((status) => {
                   const entry = statusCounts.statuses.find((s) => s.status === status);
                   return (
                     <StatCard
@@ -173,11 +173,11 @@ export default function AnalyticsPage() {
 
           {/* Throughput Chart */}
           <div className="min-w-0">
-            <h3 className="mb-3 text-xs font-medium text-muted-foreground">Rollout Throughput</h3>
+            <h3 className="mb-3 text-xs font-medium text-muted-foreground">Task Throughput</h3>
             {throughputLoading ? (
               <Skeleton className="h-48 w-full" />
             ) : throughput ? (
-              <ProposalThroughputChart points={throughput.points} />
+              <RoadmapThroughputChart points={throughput.points} />
             ) : null}
           </div>
         </div>

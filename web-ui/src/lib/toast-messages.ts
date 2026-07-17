@@ -1,5 +1,5 @@
 import { toast } from "sonner";
-import type { RunEvent, FeatureProposalEvent, ActivityFeedEntry } from "./types";
+import type { RunEvent, RoadmapItemEvent, ActivityFeedEntry } from "./types";
 
 // --- Toast variant types ---
 
@@ -101,40 +101,10 @@ function mapRunEvent(event: RunEvent): ToastConfig | null {
   return null;
 }
 
-// --- Feature proposal event mapping ---
+// --- Roadmap item event mapping ---
 
-function mapFeatureProposalEvent(event: FeatureProposalEvent): ToastConfig | null {
-  if (event.type === "proposal_changed") {
-    switch (event.status) {
-      case "backlog":
-        return {
-          message: "Proposal updated",
-          variant: "info",
-          actionUrl: "/roadmap",
-        };
-      case "in_progress":
-        return {
-          message: "Proposal started",
-          variant: "info",
-          actionUrl: "/roadmap",
-        };
-      case "rolled_out":
-        return {
-          message: "Proposal rolled out",
-          variant: "success",
-          actionUrl: "/roadmap",
-        };
-      case "deleted":
-        return {
-          message: "Proposal deleted",
-          variant: "info",
-        };
-      default:
-        return null;
-    }
-  }
-
-  if (event.type === "run_status_changed") {
+function mapRoadmapItemEvent(event: RoadmapItemEvent): ToastConfig | null {
+  if (event.itemType === "run_status_changed") {
     switch (event.status) {
       case "completed":
         return {
@@ -159,42 +129,69 @@ function mapFeatureProposalEvent(event: FeatureProposalEvent): ToastConfig | nul
     }
   }
 
-  return null;
+  // epic_changed / story_changed / task_changed
+  switch (event.status) {
+    case "backlog":
+      return {
+        message: "Roadmap item updated",
+        variant: "info",
+        actionUrl: "/roadmap",
+      };
+    case "in_progress":
+      return {
+        message: "Roadmap item started",
+        variant: "info",
+        actionUrl: "/roadmap",
+      };
+    case "done":
+      return {
+        message: "Roadmap item completed",
+        variant: "success",
+        actionUrl: "/roadmap",
+      };
+    case "deleted":
+      return {
+        message: "Roadmap item deleted",
+        variant: "info",
+      };
+    default:
+      return null;
+  }
 }
 
 // --- Type guards ---
 // Discriminate by field presence: RunEvent always has `runId`,
-// FeatureProposalEvent always has `proposalId`.
+// RoadmapItemEvent always has `itemId`.
 
-function isRunEvent(event: RunEvent | FeatureProposalEvent): event is RunEvent {
+function isRunEvent(event: RunEvent | RoadmapItemEvent): event is RunEvent {
   return "runId" in event;
 }
 
-function isFeatureProposalEvent(event: RunEvent | FeatureProposalEvent): event is FeatureProposalEvent {
-  return "proposalId" in event;
+function isRoadmapItemEvent(event: RunEvent | RoadmapItemEvent): event is RoadmapItemEvent {
+  return "itemId" in event;
 }
 
 // --- Public API ---
 
 /** Determine the fingerprint for deduplication */
-function fingerprint(event: RunEvent | FeatureProposalEvent): string {
+function fingerprint(event: RunEvent | RoadmapItemEvent): string {
   if (isRunEvent(event)) {
     return `run:${event.type}:${event.runId}:${event.nodeExecutionId ?? ""}:${event.status ?? ""}`;
   }
-  if (isFeatureProposalEvent(event)) {
-    return `proposal:${event.type}:${event.proposalId ?? ""}:${event.status}`;
+  if (isRoadmapItemEvent(event)) {
+    return `roadmap:${event.itemType}:${event.itemId ?? ""}:${event.status}`;
   }
   return `unknown:${Date.now()}`;
 }
 
 export function mapEventToToast(
-  event: RunEvent | FeatureProposalEvent,
+  event: RunEvent | RoadmapItemEvent,
 ): ToastConfig | null {
   if (isRunEvent(event)) {
     return mapRunEvent(event);
   }
-  if (isFeatureProposalEvent(event)) {
-    return mapFeatureProposalEvent(event);
+  if (isRoadmapItemEvent(event)) {
+    return mapRoadmapItemEvent(event);
   }
   return null;
 }
@@ -204,7 +201,7 @@ export function mapEventToToast(
  * or is a duplicate within the dedup window).
  */
 export function showEventToast(
-  event: RunEvent | FeatureProposalEvent,
+  event: RunEvent | RoadmapItemEvent,
 ): ActivityFeedEntry | null {
   const config = mapEventToToast(event);
   if (!config) return null;

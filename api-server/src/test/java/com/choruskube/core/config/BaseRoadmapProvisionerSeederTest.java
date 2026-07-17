@@ -43,7 +43,7 @@ class BaseRoadmapProvisionerSeederTest extends BaseTest {
         var template = templateRepo.findByName("Roadmap Provisioner");
         assertThat(template).isPresent();
         assertThat(template.get().getGraphId()).isEqualTo("roadmap-provisioner");
-        assertThat(template.get().getVersion()).isEqualTo(11);
+        assertThat(template.get().getVersion()).isEqualTo(12);
     }
 
     @Test
@@ -143,6 +143,25 @@ class BaseRoadmapProvisionerSeederTest extends BaseTest {
         // v8 bump: the Feature Creator prompt must teach `--repo` for multi-repo proposals.
         assertThat(nd.getPromptTemplate()).contains("--repo");
         assertThat(nd.getPromptTemplate()).contains("ONE or TWO");
+    }
+
+    @Test
+    void featureCreatorPromptChainsCreateProposalThenCreateStoryThenCreateTask() {
+        var nd = nodeDefRepo.findAll().stream()
+                .filter(n -> "Roadmap Feature Creator".equals(n.getName()))
+                .findFirst()
+                .orElseThrow();
+        // v12 bump: the Feature Creator prompt must chain the full Epic -> Story -> Task
+        // creation sequence so an agent-proposed feature is immediately startable.
+        String prompt = nd.getPromptTemplate();
+        int createProposalIdx = prompt.indexOf("create-proposal --title");
+        int createStoryIdx = prompt.indexOf("create-story --epic-id");
+        int createTaskIdx = prompt.indexOf("create-task --epic-id");
+        assertThat(createProposalIdx).isPositive();
+        assertThat(createStoryIdx).isPositive();
+        assertThat(createTaskIdx).isPositive();
+        assertThat(createProposalIdx).isLessThan(createStoryIdx);
+        assertThat(createStoryIdx).isLessThan(createTaskIdx);
     }
 
     @Test

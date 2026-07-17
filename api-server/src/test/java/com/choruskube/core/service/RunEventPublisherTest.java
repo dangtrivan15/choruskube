@@ -4,7 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-import com.choruskube.core.dto.FeatureProposalEvent;
+import com.choruskube.core.dto.RoadmapItemEvent;
 import com.choruskube.core.dto.RunEvent;
 import com.choruskube.core.event.OrgScopedFeedPublisher;
 import java.util.UUID;
@@ -22,7 +22,7 @@ class RunEventPublisherTest {
     private static final UUID RUN_ID = UUID.randomUUID();
     private static final UUID NODE_EXEC_ID = UUID.randomUUID();
     private static final UUID SESSION_ID = UUID.randomUUID();
-    private static final UUID PROPOSAL_ID = UUID.randomUUID();
+    private static final UUID TASK_ID = UUID.randomUUID();
 
     @BeforeEach
     void setUp() {
@@ -32,22 +32,22 @@ class RunEventPublisherTest {
     }
 
     @Test
-    void publishRunStatusChanged_cancelled_sendsToRunAndPendingGatesAndFeatureProposals() {
+    void publishRunStatusChanged_cancelled_sendsToRunAndPendingGatesAndRoadmapItems() {
         publisher.publishRunStatusChanged(RUN_ID, "cancelled");
 
         verify(messagingTemplate).convertAndSend(eq("/topic/runs/" + RUN_ID), any(RunEvent.class));
         verify(feedPublisher).pendingGatesChanged(eq(RUN_ID), any(RunEvent.class));
-        verify(feedPublisher).featureProposalsChanged(eq("workflow_run"), eq(RUN_ID), any(FeatureProposalEvent.class));
+        verify(feedPublisher).roadmapItemChanged(eq("workflow_run"), eq(RUN_ID), any(RoadmapItemEvent.class));
     }
 
     @Test
-    void publishRunStatusChanged_completed_sendsToRunAndFeatureProposals_notPendingGates() {
+    void publishRunStatusChanged_completed_sendsToRunAndRoadmapItems_notPendingGates() {
         publisher.publishRunStatusChanged(RUN_ID, "completed");
 
         verify(messagingTemplate).convertAndSend(eq("/topic/runs/" + RUN_ID), any(RunEvent.class));
         // completed does NOT trigger pending-gates
         verify(feedPublisher, never()).pendingGatesChanged(any(), any());
-        verify(feedPublisher).featureProposalsChanged(eq("workflow_run"), eq(RUN_ID), any(FeatureProposalEvent.class));
+        verify(feedPublisher).roadmapItemChanged(eq("workflow_run"), eq(RUN_ID), any(RoadmapItemEvent.class));
     }
 
     @Test
@@ -56,7 +56,7 @@ class RunEventPublisherTest {
 
         verify(messagingTemplate).convertAndSend(eq("/topic/runs/" + RUN_ID), any(RunEvent.class));
         verify(feedPublisher, never()).pendingGatesChanged(any(), any());
-        verify(feedPublisher, never()).featureProposalsChanged(any(), any(), any());
+        verify(feedPublisher, never()).roadmapItemChanged(any(), any(), any());
     }
 
     @Test
@@ -76,11 +76,24 @@ class RunEventPublisherTest {
     }
 
     @Test
-    void publishFeatureProposalChanged_keyedByFeatureProposalResource() {
-        publisher.publishFeatureProposalChanged(PROPOSAL_ID, "backlog");
+    void publishRoadmapItemChanged_keyedByItemType() {
+        publisher.publishRoadmapItemChanged("epic", TASK_ID, "backlog");
 
-        verify(feedPublisher)
-                .featureProposalsChanged(eq("feature_proposal"), eq(PROPOSAL_ID), any(FeatureProposalEvent.class));
+        verify(feedPublisher).roadmapItemChanged(eq("epic"), eq(TASK_ID), any(RoadmapItemEvent.class));
+    }
+
+    @Test
+    void publishRoadmapItemChanged_task_keyedByTaskResource() {
+        publisher.publishRoadmapItemChanged("task", TASK_ID, "in_progress");
+
+        verify(feedPublisher).roadmapItemChanged(eq("task"), eq(TASK_ID), any(RoadmapItemEvent.class));
+    }
+
+    @Test
+    void publishRoadmapItemChanged_story_keyedByStoryResource() {
+        publisher.publishRoadmapItemChanged("story", TASK_ID, "backlog");
+
+        verify(feedPublisher).roadmapItemChanged(eq("story"), eq(TASK_ID), any(RoadmapItemEvent.class));
     }
 
     @Test

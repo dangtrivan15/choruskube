@@ -3,8 +3,8 @@ package com.choruskube.core.dto;
 import java.util.UUID;
 
 /**
- * Discriminated reference to a {@code SoftwareProject} embedded in a
- * {@link FeatureProposalResponse}. {@code type} is one of "git_repo" or
+ * Discriminated reference to a {@code SoftwareProject} embedded in an
+ * {@link EpicResponse}. {@code type} is one of "git_repo" or
  * "repo_group" — matches the {@code software_project.type} column.
  */
 public record SoftwareProjectRef(UUID id, String type, String name) {}

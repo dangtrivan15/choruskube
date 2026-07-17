@@ -32,7 +32,9 @@ public class InternalRunService {
     private final GraphSnapshotBuilder snapshotBuilder;
     private final RunEventPublisher eventPublisher;
     private final ObjectMapper objectMapper;
-    private final FeatureProposalService featureProposalService;
+    private final EpicService epicService;
+    private final StoryService storyService;
+    private final TaskService taskService;
     private final RunService runService;
     private final Optional<QuotaChecker> quotaService;
     private final UsageSink usageSink;
@@ -42,6 +44,7 @@ public class InternalRunService {
     private final SoftwareProjectRepository softwareProjectRepo;
     private final TemplateNodeRepository templateNodeRepo;
     private final NodeDefinitionRepository nodeDefinitionRepo;
+    private final StoryRepository storyRepo;
 
     @Value("${artifact.enforcement.mode:warn}")
     private String artifactEnforcementMode;
@@ -53,7 +56,9 @@ public class InternalRunService {
             GraphSnapshotBuilder snapshotBuilder,
             RunEventPublisher eventPublisher,
             ObjectMapper objectMapper,
-            FeatureProposalService featureProposalService,
+            EpicService epicService,
+            StoryService storyService,
+            TaskService taskService,
             RunService runService,
             Optional<QuotaChecker> quotaService,
             UsageSink usageSink,
@@ -62,14 +67,17 @@ public class InternalRunService {
             GraphTemplateRepository graphTemplateRepo,
             SoftwareProjectRepository softwareProjectRepo,
             TemplateNodeRepository templateNodeRepo,
-            NodeDefinitionRepository nodeDefinitionRepo) {
+            NodeDefinitionRepository nodeDefinitionRepo,
+            StoryRepository storyRepo) {
         this.runRepo = runRepo;
         this.execRepo = execRepo;
         this.logRepo = logRepo;
         this.snapshotBuilder = snapshotBuilder;
         this.eventPublisher = eventPublisher;
         this.objectMapper = objectMapper;
-        this.featureProposalService = featureProposalService;
+        this.epicService = epicService;
+        this.storyService = storyService;
+        this.taskService = taskService;
         this.runService = runService;
         this.quotaService = quotaService;
         this.usageSink = usageSink;
@@ -79,6 +87,7 @@ public class InternalRunService {
         this.softwareProjectRepo = softwareProjectRepo;
         this.templateNodeRepo = templateNodeRepo;
         this.nodeDefinitionRepo = nodeDefinitionRepo;
+        this.storyRepo = storyRepo;
     }
 
     public NodeExecutionResponse createNodeExecution(UUID runId, InternalCreateNodeExecutionRequest req) {
@@ -541,50 +550,98 @@ public class InternalRunService {
     }
 
     /**
-     * Creates a feature proposal on behalf of an agent pod. The proposal target is resolved
-     * from the run's {@code software_project_id} input; agents do not pick a target directly.
+     * Creates an Epic on behalf of an agent pod. The Epic's target is resolved from the run's
+     * {@code software_project_id} input; agents do not pick a target directly.
      *
      * <p>These internal endpoints exist because agent pods authenticate with JOB_SECRET (scoped
      * per-execution) and use /internal/ routes, whereas the public /api/v1/ endpoints use
      * different auth. Removing these would break deployed agent images that depend on the
-     * create-proposal and list-proposals CLI scripts.
+     * create-proposal and list-proposals CLI scripts (Decision 6 — the scripts keep their names
+     * and endpoint paths, now operating on Epics instead of the retired flat proposal).
      */
     @Transactional
-    public FeatureProposalResponse createFeatureProposal(UUID runId, InternalCreateFeatureProposalRequest req) {
+    public EpicResponse createEpic(UUID runId, InternalCreateEpicRequest req) {
         WorkflowRun run =
                 runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
         UUID softwareProjectId = resolveSoftwareProjectIdFromRun(run);
-        FeatureProposalRequest proposalRequest =
-                new FeatureProposalRequest(req.title(), req.description(), req.motivation(), softwareProjectId);
-        return featureProposalService.create(proposalRequest, runId);
+        EpicRequest epicRequest = new EpicRequest(req.title(), req.description(), req.motivation(), softwareProjectId);
+        return epicService.create(epicRequest, runId);
     }
 
     /**
-     * Updates a feature proposal on behalf of an agent pod. The proposal's ownership is validated
-     * against the run's resolved {@code software_project_id} and {@code organization_id} before
-     * delegating to {@link FeatureProposalService#updateInternal}.
+     * Updates an Epic on behalf of an agent pod. The Epic's ownership is validated against the
+     * run's resolved {@code software_project_id} and {@code organization_id} before delegating to
+     * {@link EpicService#updateInternal}.
      *
-     * <p>See {@link #createFeatureProposal} for why these internal endpoints exist.
+     * <p>See {@link #createEpic} for why these internal endpoints exist.
      */
     @Transactional
-    public FeatureProposalResponse updateFeatureProposal(
-            UUID runId, UUID proposalId, InternalUpdateFeatureProposalRequest req) {
+    public EpicResponse updateEpic(UUID runId, UUID epicId, InternalUpdateEpicRequest req) {
         WorkflowRun run =
                 runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
         UUID softwareProjectId = resolveSoftwareProjectIdFromRun(run);
-        return featureProposalService.updateInternal(proposalId, softwareProjectId, runId, req);
+        return epicService.updateInternal(epicId, softwareProjectId, runId, req);
     }
 
     /**
-     * Lists feature proposals targeting the run's resolved software project.
-     * See {@link #createFeatureProposal} for why these internal endpoints exist.
+     * Lists Epics targeting the run's resolved software project.
+     * See {@link #createEpic} for why these internal endpoints exist.
      */
     @Transactional(readOnly = true)
-    public List<FeatureProposalResponse> listFeatureProposals(UUID runId) {
+    public List<EpicResponse> listEpics(UUID runId) {
         WorkflowRun run =
                 runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
         UUID softwareProjectId = resolveSoftwareProjectIdFromRun(run);
-        return featureProposalService.listBySoftwareProjectId(softwareProjectId);
+        return epicService.listBySoftwareProjectId(softwareProjectId);
+    }
+
+    /**
+     * Creates a Story under an Epic on behalf of an agent pod. New nested path added alongside
+     * the preserved Epic-level trio (Decision 6/3.6) — a rolling-upgrade agent pod on an older
+     * image never calls this, since it doesn't know the path exists.
+     *
+     * <p>The Epic's ownership is validated against the run's resolved {@code software_project_id}
+     * (see {@link #createEpic}) before delegating to {@link StoryService#create(UUID, StoryRequest,
+     * UUID, UUID)} — an org-only check isn't enough, since an org can span multiple
+     * SoftwareProjects and the URL's {@code epicId} could otherwise belong to one outside this run.
+     */
+    @Transactional
+    public StoryResponse createStory(UUID runId, UUID epicId, InternalCreateStoryRequest req) {
+        WorkflowRun run =
+                runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
+        UUID softwareProjectId = resolveSoftwareProjectIdFromRun(run);
+        return storyService.create(epicId, new StoryRequest(req.title(), req.description()), runId, softwareProjectId);
+    }
+
+    /**
+     * Creates a Task under a Story on behalf of an agent pod. See {@link #createStory}.
+     *
+     * <p>{@code epicId} comes from the URL's nested {@code .../{epicId}/stories/{storyId}/tasks}
+     * segment purely to mirror {@link #createStory}'s shape; the Task itself is parented on
+     * {@code storyId} alone (Decision 5). Validated against the Story's actual parent so a caller
+     * can't create a Task under a {@code storyId} that doesn't belong to the {@code epicId} the
+     * URL claims — a mismatch here almost certainly means the caller has a stale/wrong Epic id.
+     * Also validated against the run's resolved {@code software_project_id}, same rationale as
+     * {@link #createStory}.
+     *
+     * <p>The Story lookup goes through {@link StoryRepository} directly rather than
+     * {@link StoryService#get}, because {@code get} calls {@link AuthorizationService#checkOrgAccess},
+     * which reads the request-scoped tenant context. This method is reached only via the
+     * {@code /internal/**} JOB_SECRET agent path (see {@link #createEpic}), which never has a
+     * tenant context bound — the same reason every other internal-facing lookup in this class uses
+     * {@code assertSameOrg}/repository access instead of the request-scoped {@code checkOrgAccess}.
+     */
+    @Transactional
+    public TaskResponse createTask(UUID runId, UUID epicId, UUID storyId, InternalCreateTaskRequest req) {
+        WorkflowRun run =
+                runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
+        Story story =
+                storyRepo.findById(storyId).orElseThrow(() -> new NotFoundException("Story not found: " + storyId));
+        if (!story.getEpicId().equals(epicId)) {
+            throw new NotFoundException("Story " + storyId + " does not belong to epic " + epicId);
+        }
+        UUID softwareProjectId = resolveSoftwareProjectIdFromRun(run);
+        return taskService.create(storyId, new TaskRequest(req.title(), req.description()), runId, softwareProjectId);
     }
 
     /**

@@ -26,7 +26,7 @@ public class BaseRoadmapProvisionerSeeder implements ApplicationRunner {
     private static final Logger log = LoggerFactory.getLogger(BaseRoadmapProvisionerSeeder.class);
 
     static final String GRAPH_ID = GraphIds.ROADMAP_PROVISIONER;
-    static final int VERSION = 11;
+    static final int VERSION = 12;
 
     private static final String TEMPLATE_NAME = "Roadmap Provisioner";
 
@@ -94,31 +94,49 @@ public class BaseRoadmapProvisionerSeeder implements ApplicationRunner {
             proposed features, each with the five sections above.""";
 
     private static final String FEATURE_CREATOR_PROMPT = """
-            You are creating feature proposals based on an approved analysis.
+            You are creating roadmap work items based on an approved analysis. Each
+            approved feature becomes a fully startable Epic -> Story -> Task chain:
+            one Epic, containing one Story, containing one Task (the same 1:1
+            decomposition depth used today — see Caveat 1 of the work-hierarchy spec).
 
             Approved analysis:
             {input.roadmap_analyzer.result}
 
             Repositories are cloned under /workspace/repo/<name>/.
 
-            For each approved feature in the analysis, create a feature proposal using
-            the create-proposal CLI:
+            For each approved feature in the analysis, run all three CLIs in
+            sequence — create-proposal, then create-story, then create-task:
 
-              create-proposal --title "Feature title" --description "Detailed description" --motivation "Why this matters"
+              1. create-proposal --title "Feature title" --description "Detailed description" --motivation "Why this matters"
+                 Creates the Epic. Capture its "id" from the JSON response.
+
+              2. create-story --epic-id <epic-id-from-step-1> --title "Feature title" --description "Detailed description"
+                 Creates a Story under that Epic. Capture its "id" from the JSON response.
+
+              3. create-task --epic-id <epic-id-from-step-1> --story-id <story-id-from-step-2> --title "Feature title" --description "Detailed description"
+                 Creates a Task under that Story. This is the level a human later
+                 starts as a workflow run — without this step the feature is
+                 recorded but not yet startable.
 
             IMPORTANT:
-            - Always use the create-proposal CLI. Do NOT call the API directly.
-            - The --description MUST include the user story AND acceptance criteria
-              from the analysis. Format them clearly with markdown headings.
-            - The --motivation MUST focus on user impact and business value,
+            - Always use the create-proposal, create-story, and create-task CLIs.
+              Do NOT call the API directly.
+            - The Epic's --description MUST include the user story AND acceptance
+              criteria from the analysis. Format them clearly with markdown headings.
+              Reuse the same description text for the Story and Task unless the
+              analysis suggests a more specific breakdown.
+            - The Epic's --motivation MUST focus on user impact and business value,
               NOT on technical benefits like "cleaner architecture" or "better performance".
             - Do NOT add implementation details, technology choices, or architectural
-              suggestions to the description or motivation. These will be determined
+              suggestions to any description or motivation. These will be determined
               by the Feature Development workflow.
-            - A proposal can span ONE or TWO repositories. If the approved analysis
+            - create-story and create-task do not take a --motivation flag — only
+              the Epic (create-proposal) carries motivation (Decision 4 of the
+              work-hierarchy spec: software_project_id and motivation live on Epic).
+            - An Epic can span ONE or TWO repositories. If the approved analysis
               identifies a feature that clearly needs changes in two repos (for
               example, "add push notifications" requiring backend + frontend changes),
-              pass `--repo` twice:
+              pass `--repo` twice on the create-proposal call:
                 create-proposal --title "..." --description "..." --motivation "..." \\
                   --repo <primary-repo-name> --repo <secondary-repo-name>
               Repo names are the subdirectory names under /workspace/repo/<name>/ and
@@ -131,9 +149,11 @@ public class BaseRoadmapProvisionerSeeder implements ApplicationRunner {
             2. For each feature, compose a description that includes:
                - The user story (As a... I want... So that...)
                - The acceptance criteria (Given/When/Then)
-            3. Create each feature proposal via create-proposal
-            4. Verify each creation was successful (exit code 0, JSON response)
-            5. Save a summary of created proposals as /workspace/out/feature_summary.md""";
+            3. Create the Epic via create-proposal, then the Story via create-story,
+               then the Task via create-task, threading the ids returned by each
+               step into the next
+            4. Verify each of the three creations was successful (exit code 0, JSON response)
+            5. Save a summary of created Epics/Stories/Tasks as /workspace/out/feature_summary.md""";
 
     private final GraphTemplateRepository templateRepo;
     private final NodeDefinitionRepository nodeDefRepo;

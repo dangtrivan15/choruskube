@@ -56,6 +56,8 @@ class AutoDecisionTest {
                 objectMapper,
                 null,
                 null,
+                null,
+                null,
                 Optional.empty(),
                 null,
                 null,
@@ -63,7 +65,8 @@ class AutoDecisionTest {
                 null,
                 null,
                 templateNodeRepo,
-                nodeDefinitionRepo);
+                nodeDefinitionRepo,
+                null);
     }
 
     private NodeExecution stubExec() {
