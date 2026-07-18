@@ -5,7 +5,7 @@ import { useActivityFeed } from "./useActivityFeed";
 import type {
   EpicResponse,
   EpicRequest,
-  EpicStage,
+  EpicStageUpdateRequest,
   PageResponse,
   PaginationParams,
 } from "@/lib/types";
@@ -87,8 +87,8 @@ export function useUpdateEpicStage() {
   const { addEntry } = useActivityFeed();
 
   return useMutation({
-    mutationFn: ({ id, stage }: { id: string; stage: EpicStage }) =>
-      api.patch<EpicResponse>(`/epics/${id}/stage`, { stage }),
+    mutationFn: ({ id, stage }: { id: string } & EpicStageUpdateRequest) =>
+      api.patch<EpicResponse>(`/epics/${id}/stage`, { stage } satisfies EpicStageUpdateRequest),
     onMutate: async ({ id, stage }) => {
       const queryKey = boardEpicsQueryKey();
       await queryClient.cancelQueries({ queryKey });
@@ -98,17 +98,24 @@ export function useUpdateEpicStage() {
       // then fails, rolling back the *entire* previously-fetched page would silently wipe
       // out B's already-applied optimistic move until the next refetch reconciles it.
       // Patching back just this epic's stage keeps each mutation's rollback independent.
-      const previousPage = queryClient.getQueryData<PageResponse<EpicResponse>>(queryKey);
-      const previousStage = previousPage?.content.find((epic) => epic.id === id)?.stage;
+      const previousStage = queryClient
+        .getQueryData<PageResponse<EpicResponse>>(queryKey)
+        ?.content.find((epic) => epic.id === id)?.stage;
 
-      if (previousPage) {
-        queryClient.setQueryData<PageResponse<EpicResponse>>(queryKey, {
-          ...previousPage,
-          content: previousPage.content.map((epic) =>
-            epic.id === id ? { ...epic, stage } : epic
-          ),
-        });
-      }
+      // Functional update (reads the live cache at write time) rather than closing over
+      // the snapshot read above: keeps this write independent of anything another
+      // in-flight mutation's onMutate/onError may have already applied to the same page,
+      // the same way onError's rollback below does.
+      queryClient.setQueryData<PageResponse<EpicResponse>>(queryKey, (current) =>
+        current
+          ? {
+              ...current,
+              content: current.content.map((epic) =>
+                epic.id === id ? { ...epic, stage } : epic
+              ),
+            }
+          : current
+      );
 
       return { previousStage, queryKey, id };
     },
