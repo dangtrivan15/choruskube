@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router";
 import { formatDistanceToNow } from "date-fns";
-import { Plus, GitBranch, Layers } from "lucide-react";
+import { Plus, GitBranch, Layers, LayoutGrid } from "lucide-react";
 import Authorized from "@/components/Authorized";
 import { useEpics } from "@/hooks/useEpics";
 import { useRoadmapSubscription } from "@/hooks/useRoadmapSubscription";
@@ -53,6 +53,14 @@ export default function RoadmapPage() {
   return (
     <div className="flex h-full min-w-0 flex-col p-4 md:p-6">
       <PageHeader title="Roadmap" data-testid="roadmap-heading">
+        <Link
+          to="/roadmap/board"
+          data-testid="roadmap-board-view-link"
+          className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-transparent px-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
+          <LayoutGrid className="size-4" />
+          Board view
+        </Link>
         <SortDropdown options={SORT_OPTIONS} currentSort={sort} onSort={setSort} />
         <Authorized require="canOperate">
           <Button data-testid="new-epic-button" size="sm" onClick={() => setCreateOpen(true)}>

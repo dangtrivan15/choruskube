@@ -36,6 +36,7 @@ function makeEpic(overrides: Partial<EpicResponse> = {}): EpicResponse {
     description: "Add a dark theme",
     motivation: null,
     status: "backlog",
+    stage: "backlog",
     progress: { totalTasks: 0, doneTasks: 0 },
     softwareProject: { id: "r1", type: "git_repo", name: "backend-api" },
     repos: [],
