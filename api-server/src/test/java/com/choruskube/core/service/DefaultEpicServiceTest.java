@@ -2,6 +2,10 @@ package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 
 import com.choruskube.core.BaseTest;
 import com.choruskube.core.config.SingleTenant;
@@ -19,6 +23,7 @@ import com.choruskube.core.model.RepoGroup;
 import com.choruskube.core.model.RepoGroupMember;
 import com.choruskube.core.model.Task;
 import com.choruskube.core.model.enums.WorkItemStatus;
+import com.choruskube.core.observability.AuditSink;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.RepoGroupRepository;
 import com.choruskube.core.repository.SoftwareProjectRepository;
@@ -33,6 +38,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
@@ -75,6 +81,9 @@ public class DefaultEpicServiceTest extends BaseTest {
 
     @MockitoBean
     private RunEventPublisher runEventPublisher;
+
+    @MockitoBean
+    private AuditSink auditSink;
 
     @Test
     void create_withGitRepoTarget_returnsSoftwareProjectRef_withType_git_repo() {
@@ -306,6 +315,77 @@ public class DefaultEpicServiceTest extends BaseTest {
                         unknownId, UUID.randomUUID(), SingleTenant.ID, new InternalUpdateEpicRequest("T", null, null)))
                 .isInstanceOf(NotFoundException.class)
                 .hasMessageContaining(unknownId.toString());
+    }
+
+    // ── updateStage: roadmap board stage moves ────────────────────────────────────
+
+    @Test
+    void create_defaultsStageToBacklog() {
+        GitRepo r = makeRepo("https://github.com/test/stage-default.git");
+
+        EpicResponse created = service.create(new EpicRequest("T", "D", null, r.getId()), null);
+
+        assertThat(created.stage()).isEqualTo("backlog");
+    }
+
+    @Test
+    void updateStage_persistsNewStage_leavesStatusAndProgressUnchanged() {
+        GitRepo r = makeRepo("https://github.com/test/stage-persist.git");
+        EpicResponse created = service.create(new EpicRequest("T", "D", null, r.getId()), null);
+        var story = storyService.create(created.id(), new StoryRequest("S", "D"));
+        var task = taskService.create(story.id(), new TaskRequest("T", "D"));
+        markTaskDone(task.id());
+        EpicResponse beforeStageMove = service.get(created.id());
+
+        EpicResponse updated = service.updateStage(created.id(), WorkItemStatus.rolled_out);
+
+        assertThat(updated.stage()).isEqualTo("rolled_out");
+        // Decision: stage is fully decoupled from the read-time status rollup.
+        assertThat(updated.status()).isEqualTo(beforeStageMove.status());
+        assertThat(updated.progress().totalTasks())
+                .isEqualTo(beforeStageMove.progress().totalTasks());
+        assertThat(updated.progress().doneTasks())
+                .isEqualTo(beforeStageMove.progress().doneTasks());
+
+        EpicResponse refetched = service.get(created.id());
+        assertThat(refetched.stage()).isEqualTo("rolled_out");
+    }
+
+    @Test
+    void updateStage_publishesRoadmapItemChangedEvent() {
+        GitRepo r = makeRepo("https://github.com/test/stage-event.git");
+        EpicResponse created = service.create(new EpicRequest("T", "D", null, r.getId()), null);
+
+        service.updateStage(created.id(), WorkItemStatus.in_progress);
+
+        verify(runEventPublisher).publishRoadmapItemChanged(eq("epic"), eq(created.id()), eq("in_progress"));
+    }
+
+    @Test
+    void updateStage_writesAuditEntryWithBeforeAfterStage() {
+        GitRepo r = makeRepo("https://github.com/test/stage-audit.git");
+        EpicResponse created = service.create(new EpicRequest("T", "D", null, r.getId()), null);
+
+        service.updateStage(created.id(), WorkItemStatus.rolled_out);
+
+        ArgumentCaptor<String> detailCaptor = ArgumentCaptor.forClass(String.class);
+        verify(auditSink)
+                .record(eq(AuditSink.EPIC_STAGE_UPDATED), eq("epic"), eq(created.id()), detailCaptor.capture());
+        assertThat(detailCaptor.getValue()).contains("\"backlog\"").contains("\"rolled_out\"");
+    }
+
+    @Test
+    void updateStage_withDoneValue_throwsAndHasNoSideEffects() {
+        GitRepo r = makeRepo("https://github.com/test/stage-done-rejected.git");
+        EpicResponse created = service.create(new EpicRequest("T", "D", null, r.getId()), null);
+
+        assertThatThrownBy(() -> service.updateStage(created.id(), WorkItemStatus.done))
+                .isInstanceOf(BadRequestException.class);
+
+        EpicResponse after = service.get(created.id());
+        assertThat(after.stage()).isEqualTo("backlog");
+        verify(auditSink, never()).record(eq(AuditSink.EPIC_STAGE_UPDATED), any(), any(), any());
+        verify(runEventPublisher, never()).publishRoadmapItemChanged(eq("epic"), eq(created.id()), eq("done"));
     }
 
     private void markTaskInProgress(UUID taskId) {

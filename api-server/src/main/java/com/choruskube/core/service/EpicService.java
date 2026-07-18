@@ -3,6 +3,7 @@ package com.choruskube.core.service;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
 import com.choruskube.core.dto.InternalUpdateEpicRequest;
+import com.choruskube.core.model.enums.WorkItemStatus;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
@@ -37,4 +38,11 @@ public interface EpicService {
 
     /** Updates an Epic on behalf of an agent pod (PATCH semantics). */
     EpicResponse updateInternal(UUID epicId, UUID runSoftwareProjectId, UUID runId, InternalUpdateEpicRequest req);
+
+    /**
+     * Moves an Epic to a new roadmap board stage. Exempt from the "no edit once started" guard
+     * that {@link #update} enforces — stage moves must succeed even after descendant Tasks have
+     * started.
+     */
+    EpicResponse updateStage(UUID id, WorkItemStatus stage);
 }

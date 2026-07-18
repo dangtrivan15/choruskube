@@ -3,18 +3,27 @@ package com.choruskube.core.controller;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 import com.choruskube.core.BaseTest;
+import com.choruskube.core.config.OrgSecurity;
+import com.choruskube.core.dto.StoryRequest;
+import com.choruskube.core.dto.TaskRequest;
 import com.choruskube.core.model.Epic;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.RepoGroup;
+import com.choruskube.core.model.Task;
+import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.repository.EpicRepository;
 import com.choruskube.core.repository.GitRepoRepository;
+import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.service.EpicService;
 import com.choruskube.core.service.RepoGroupService;
 import com.choruskube.core.service.RunEventPublisher;
+import com.choruskube.core.service.StoryService;
+import com.choruskube.core.service.TaskService;
 import com.choruskube.core.util.RepoNameUtil;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.temporal.client.WorkflowClient;
@@ -23,7 +32,10 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
@@ -53,6 +65,15 @@ public class EpicControllerTest extends BaseTest {
     @Autowired
     private RepoGroupService repoGroupService;
 
+    @Autowired
+    private StoryService storyService;
+
+    @Autowired
+    private TaskService taskService;
+
+    @Autowired
+    private TaskRepository taskRepo;
+
     @MockitoBean
     private WorkflowServiceStubs workflowServiceStubs;
 
@@ -61,6 +82,20 @@ public class EpicControllerTest extends BaseTest {
 
     @MockitoBean
     private RunEventPublisher runEventPublisher;
+
+    @MockitoBean
+    private OrgSecurity orgSecurity;
+
+    @BeforeEach
+    void allowAllByDefault() {
+        // Mirrors NoOpOrgSecurity (the un-mocked default): every level of access is allowed unless
+        // an individual test overrides it, so the permission mock doesn't break the other tests in
+        // this class.
+        when(orgSecurity.canRead()).thenReturn(true);
+        when(orgSecurity.canOperate()).thenReturn(true);
+        when(orgSecurity.canAdmin()).thenReturn(true);
+        when(orgSecurity.isPlatformAdmin()).thenReturn(true);
+    }
 
     @Test
     void createEpic_returns201_withSoftwareProjectIdShape() throws Exception {
@@ -205,6 +240,86 @@ public class EpicControllerTest extends BaseTest {
         mockMvc.perform(delete("/api/v1/epics/" + e.getId())).andExpect(status().isNoContent());
 
         verify(runEventPublisher).publishRoadmapItemChanged(eq("epic"), eq(e.getId()), eq("deleted"));
+    }
+
+    // --- PATCH /epics/{id}/stage ---
+
+    @ParameterizedTest
+    @ValueSource(strings = {"backlog", "in_progress", "rolled_out"})
+    void updateStage_withValidStage_returns200WithUpdatedStage(String stage) throws Exception {
+        GitRepo repo = createGitRepo("https://github.com/test/stage-" + stage + ".git");
+        Epic e = createEpic(repo, "Stage Epic " + stage);
+
+        mockMvc.perform(patch("/api/v1/epics/" + e.getId() + "/stage")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("stage", stage))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.stage").value(stage));
+    }
+
+    @Test
+    void updateStage_withSyntacticallyUnknownStage_returns400() throws Exception {
+        GitRepo repo = createGitRepo("https://github.com/test/stage-unknown.git");
+        Epic e = createEpic(repo, "Stage Epic Unknown");
+
+        mockMvc.perform(patch("/api/v1/epics/" + e.getId() + "/stage")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("stage", "not_a_real_stage"))))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void updateStage_withDoneValue_returns400() throws Exception {
+        // "done" is a syntactically valid WorkItemStatus (so Jackson deserializes it fine) but is
+        // not a valid board stage — this is a distinct, service-layer rejection from the Jackson
+        // enum-deserialization failure above.
+        GitRepo repo = createGitRepo("https://github.com/test/stage-done.git");
+        Epic e = createEpic(repo, "Stage Epic Done");
+
+        mockMvc.perform(patch("/api/v1/epics/" + e.getId() + "/stage")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("stage", "done"))))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void updateStage_onNonexistentEpic_returns404() throws Exception {
+        mockMvc.perform(patch("/api/v1/epics/" + UUID.randomUUID() + "/stage")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("stage", "in_progress"))))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void updateStage_withStartedDescendantTask_succeeds() throws Exception {
+        // Proves the "no edit once started" guard used by the full PUT edit endpoint does NOT
+        // apply to stage moves.
+        GitRepo repo = createGitRepo("https://github.com/test/stage-started-task.git");
+        Epic e = createEpic(repo, "Stage Epic Started Task");
+        var story = storyService.create(e.getId(), new StoryRequest("S", "D"));
+        var task = taskService.create(story.id(), new TaskRequest("T", "D"));
+        Task t = taskRepo.findById(task.id()).orElseThrow();
+        t.setStatus(WorkItemStatus.in_progress);
+        taskRepo.saveAndFlush(t);
+
+        mockMvc.perform(patch("/api/v1/epics/" + e.getId() + "/stage")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("stage", "rolled_out"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.stage").value("rolled_out"));
+    }
+
+    @Test
+    void updateStage_belowCanOperatePermission_returns403() throws Exception {
+        when(orgSecurity.canOperate()).thenReturn(false);
+
+        GitRepo repo = createGitRepo("https://github.com/test/stage-forbidden.git");
+        Epic e = createEpic(repo, "Stage Epic Forbidden");
+
+        mockMvc.perform(patch("/api/v1/epics/" + e.getId() + "/stage")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("stage", "in_progress"))))
+                .andExpect(status().isForbidden());
     }
 
     // --- Test helpers ---

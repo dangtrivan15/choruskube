@@ -40,6 +40,9 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class DefaultEpicService implements EpicService {
 
+    private static final Set<WorkItemStatus> VALID_BOARD_STAGES =
+            EnumSet.of(WorkItemStatus.backlog, WorkItemStatus.in_progress, WorkItemStatus.rolled_out);
+
     private final EpicRepository repo;
     private final StoryRepository storyRepo;
     private final TaskRepository taskRepo;
@@ -219,6 +222,26 @@ public class DefaultEpicService implements EpicService {
         return response;
     }
 
+    @Override
+    @Transactional
+    public EpicResponse updateStage(UUID id, WorkItemStatus stage) {
+        Epic epic = findOrThrow(id);
+        authService.checkOrgAccess("epic", id);
+        if (!VALID_BOARD_STAGES.contains(stage)) {
+            throw new BadRequestException("Invalid board stage: " + stage);
+        }
+        // Deliberately no hasStartedDescendantTasks(id) guard here: unlike the full PUT edit path,
+        // stage moves on the roadmap board must succeed even after descendant Tasks have started.
+        Map<String, Object> beforeSnapshot = snapshot(epic);
+        epic.setStage(stage);
+        epic = repo.save(epic);
+
+        EpicResponse response = toResponse(epic);
+        auditSink.record(AuditSink.EPIC_STAGE_UPDATED, "epic", id, detailJson(beforeSnapshot, snapshot(epic)));
+        eventPublisher.publishRoadmapItemChanged("epic", epic.getId(), stage.name());
+        return response;
+    }
+
     /**
      * True if any Task under any Story of this Epic has left {@code backlog}. Mirrors the
      * old proposal rule ("can only edit/delete while in backlog") one level down the hierarchy.
@@ -298,6 +321,7 @@ public class DefaultEpicService implements EpicService {
                 e.getDescription(),
                 e.getMotivation(),
                 rollup.status(),
+                e.getStage().name(),
                 new EpicResponse.Progress(rollup.totalTasks(), rollup.doneTasks()),
                 projectRef,
                 repos,
@@ -337,6 +361,7 @@ public class DefaultEpicService implements EpicService {
         snap.put(
                 "software_project_id",
                 e.getSoftwareProjectId() != null ? e.getSoftwareProjectId().toString() : null);
+        snap.put("stage", e.getStage() != null ? e.getStage().name() : null);
         return snap;
     }
 
