@@ -3,7 +3,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "@/__tests__/test-utils";
 import RoadmapBoardPage from "@/pages/RoadmapBoardPage";
-import type { EpicResponse, PageResponse, StoryResponse } from "@/lib/types";
+import type { EpicResponse, EpicStage, PageResponse, StoryResponse } from "@/lib/types";
 
 // --- @/lib/api ---------------------------------------------------------
 vi.mock("@/lib/api", () => ({
@@ -224,6 +224,34 @@ describe("RoadmapBoardPage", () => {
     expect(
       within(screen.getByTestId("board-column-in_progress")).queryByText("Rollback Epic")
     ).not.toBeInTheDocument();
+  });
+
+  it("an epic with an unrecognized stage is skipped from the board instead of crashing the page", async () => {
+    // `stage` is a Postgres enum extended via ALTER TYPE ... ADD VALUE (see backend CLAUDE.md);
+    // during a rolling deploy an older frontend build can receive a value it doesn't know about
+    // yet. The board must degrade gracefully (drop the card, keep rendering) rather than throw
+    // when indexing its per-column groups with an unrecognized key.
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const known = makeEpic({ id: "epic-1", title: "Known Epic", stage: "backlog" });
+    // Simulate a stage value the frontend's EpicStage union doesn't model yet — real API
+    // responses aren't statically typed at runtime, so an `as EpicStage` cast stands in for that.
+    const unknown = makeEpic({
+      id: "epic-2",
+      title: "Future-Stage Epic",
+      stage: "archived" as EpicStage,
+    });
+    mockApi.getPage.mockResolvedValueOnce(makePage([known, unknown]));
+
+    renderWithProviders(<RoadmapBoardPage />);
+
+    await waitFor(() => expect(screen.getByTestId("roadmap-board")).toBeInTheDocument());
+    expect(
+      within(screen.getByTestId("board-column-backlog")).getByText("Known Epic")
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Future-Stage Epic")).not.toBeInTheDocument();
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("epic-2"));
+
+    warnSpy.mockRestore();
   });
 
   it("a roadmap-items STOMP message triggers a refetch", async () => {

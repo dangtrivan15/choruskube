@@ -44,7 +44,16 @@ export default function RoadmapBoardPage() {
       in_progress: [],
       rolled_out: [],
     };
+    const knownStages = new Set(COLUMNS.map((c) => c.stage));
     for (const epic of epics ?? []) {
+      // `stage` is a Postgres enum extended via `ALTER TYPE ... ADD VALUE` (see CLAUDE.md); a
+      // value the backend has already shipped but this build predates (e.g. mid rolling-deploy)
+      // must not crash the whole app — skip it from the board rather than indexing `groups` with
+      // an unrecognized key.
+      if (!knownStages.has(epic.stage)) {
+        console.warn(`Roadmap Board: skipping epic ${epic.id} with unrecognized stage "${epic.stage}"`);
+        continue;
+      }
       groups[epic.stage].push(epic);
     }
     return groups;
