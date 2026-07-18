@@ -563,10 +563,13 @@ export interface OrganizationDetailResponse {
   updatedAt: string;
 }
 
+export type OrgRole = "viewer" | "operator" | "org-admin";
+
 export interface OrganizationMemberResponse {
   id: string;
   email: string | null;
   displayName: string | null;
+  role: OrgRole | null;
   createdAt: string;
 }
 

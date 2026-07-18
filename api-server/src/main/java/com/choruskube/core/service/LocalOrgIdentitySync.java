@@ -1,6 +1,7 @@
 package com.choruskube.core.service;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -38,6 +39,11 @@ public class LocalOrgIdentitySync implements OrgIdentitySync {
     @Override
     public List<IdentityUserRef> listOrgMembers(UUID orgId, int first, int max) {
         return List.of();
+    }
+
+    @Override
+    public Map<String, String> listOrgRoleMembers(UUID orgId) {
+        return Map.of();
     }
 
     @Override

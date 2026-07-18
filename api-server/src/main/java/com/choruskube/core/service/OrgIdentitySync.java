@@ -1,6 +1,7 @@
 package com.choruskube.core.service;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -136,6 +137,14 @@ public interface OrgIdentitySync {
     long countOrgMembers(UUID orgId);
 
     List<IdentityUserRef> listOrgMembers(UUID orgId, int first, int max);
+
+    /**
+     * Per-org role of every member holding one, as a {@code userId -> role} map (keys are the
+     * identity provider's user id in string form; values are {@code viewer}/{@code operator}/
+     * {@code org-admin}). Members with no org role are absent. A member somehow in more than one
+     * role resolves to the single highest-priority one. Empty in single-tenant / OSS mode.
+     */
+    Map<String, String> listOrgRoleMembers(UUID orgId);
 
     boolean isOrgMember(UUID orgId, String email);
 
