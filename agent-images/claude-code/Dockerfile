@@ -27,8 +27,14 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Claude Code via npm
-RUN npm install -g @anthropic-ai/claude-code
+# Install Claude Code via npm.
+# Pinned: agent semantics change between patch releases in ways that alter run
+# outcomes — 2.1.182 capped how long `claude -p` waits for background subagents,
+# and 2.1.198 made subagents run in the background by default. An unpinned
+# install adopts those on any rebuild, with no change in this repo. Bump
+# deliberately and re-run scripts/oss-smoke.sh.
+ARG CLAUDE_CODE_VERSION=2.1.209
+RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
 
 # Install GitHub CLI (gh)
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
@@ -95,6 +101,13 @@ ENV CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
 # directory is not loaded. Skills and subagents are discovered either way.
 ENV CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1
 
+# `claude -p` waits for background subagents because their output is part of the
+# final result, but that wait is capped at 10 minutes by default — past the cap
+# the process exits and the entrypoint reports whatever it has. A node's real
+# deadline is the Temporal activity timeout, which the heartbeat loop already
+# feeds from stream progress, so wait without a separate limit here.
+ENV CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0
+
 # Create ~/.claude/skills/ with agent ownership BEFORE switching to USER 1000.
 # chown -R ensures directories (not just files) are writable by uid 1000 at runtime.
 RUN mkdir -p /home/agent/.claude/skills \
@@ -104,9 +117,6 @@ RUN mkdir -p /home/agent/.claude/skills \
 # .claude/skills/ and are discovered from the workspace clones at runtime.
 # Layout must be <name>/SKILL.md with YAML frontmatter, or they are not loaded.
 COPY --chown=agent:agent skills/ /home/agent/.claude/skills/
-
-# Agent configuration: max turns guard
-COPY --chown=agent:agent settings.json /home/agent/.claude/settings.json
 
 # Own /workspace before dropping to uid 1000 — the entrypoint (running as the agent) creates
 # /workspace/in and /workspace/out at startup. WORKDIR alone creates the dir with

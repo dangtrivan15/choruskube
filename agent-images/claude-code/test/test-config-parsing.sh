@@ -27,12 +27,41 @@ RUN_ID=$(jq -r '.run_id' "$CONFIG")
 EXECUTOR=$(jq -r '.executor_type // "ai"' "$CONFIG")
 [ "$EXECUTOR" = "ai" ] && ok "executor_type parsed" || fail "executor_type parsed"
 
-# --- Test 2: settings.json has maxTurns=100 guard ---
-# The max-turns guard is enforced via settings.json (read natively by Claude Code),
-# not via a config.json field. Verify the actual deployed settings file is correct.
-SETTINGS_FILE="$(dirname "${BASH_SOURCE[0]}")/../settings.json"
-SETTINGS_MAX_TURNS=$(jq -r '.maxTurns' "$SETTINGS_FILE")
-[ "$SETTINGS_MAX_TURNS" = "100" ] && ok "settings.json maxTurns=100" || fail "settings.json maxTurns=100"
+# --- Test 2: the turn cap reaches claude as a CLI flag ---
+# settings.json has no maxTurns key, and user settings files are validated
+# strictly — one unrecognized key rejects the whole file, so a cap declared
+# there is silently never applied. --max-turns is the supported mechanism.
+ENTRYPOINT="$(dirname "${BASH_SOURCE[0]}")/../entrypoint.sh"
+grep -q -- '--max-turns "\$MAX_TURNS"' "$ENTRYPOINT" \
+  && ok "claude invoked with --max-turns" || fail "claude invoked with --max-turns"
+grep -qE '^  MAX_TURNS=[0-9]+' "$ENTRYPOINT" \
+  && ok "MAX_TURNS defined" || fail "MAX_TURNS defined"
+[ ! -f "$(dirname "${BASH_SOURCE[0]}")/../settings.json" ] \
+  && ok "no settings.json shipping an unsupported key" || fail "no settings.json shipping an unsupported key"
+
+# --- Test 2b: progress logging reaches stderr, not /dev/null ---
+# /dev/stderr is a symlink to /proc/self/fd/2, so `2>/dev/null > /dev/stderr`
+# resolves the target to /dev/null and silently discards every line. Assert the
+# ordering in the file, and that the ordering it uses actually emits.
+grep -q "2>/dev/null > /dev/stderr" "$ENTRYPOINT" \
+  && fail "log_progress redirect order discards output" || ok "log_progress redirect order preserved"
+EMITTED=$( ( echo '{"a":1}' | jq -r '.a' > /dev/stderr 2>/dev/null ) 2>&1 )
+[ "$EMITTED" = "1" ] && ok "chosen redirect order emits to stderr" || fail "chosen redirect order emits to stderr"
+
+# --- Test 2c: an errored result is distinguishable from a finished one ---
+# Error results carry is_error and no .result field at all. Folding the last
+# assistant message into CLAUDE_RESULT would make a truncated run look finished.
+ERR_RESULT='{"type":"result","subtype":"error_max_turns","is_error":true,"num_turns":2,"terminal_reason":"max_turns","errors":["Reached maximum number of turns (1)"]}'
+R=$(echo "$ERR_RESULT" | jq -r '.result // empty')
+IS_ERR=$(echo "$ERR_RESULT" | jq -r 'if .is_error == true then "true" else "false" end')
+ERRS=$(echo "$ERR_RESULT" | jq -r '(.errors // []) | join("; ")')
+[ -z "$R" ] && ok "error result has no .result" || fail "error result has no .result"
+[ "$IS_ERR" = "true" ] && ok "is_error extracted from error result" || fail "is_error extracted from error result"
+[ -n "$ERRS" ] && ok "errors[] joined for error message" || fail "errors[] joined for error message"
+
+OK_RESULT='{"type":"result","subtype":"success","is_error":false,"result":"done"}'
+[ "$(echo "$OK_RESULT" | jq -r 'if .is_error == true then "true" else "false" end')" = "false" ] \
+  && ok "is_error false on success result" || fail "is_error false on success result"
 
 # --- Test 3: // empty pattern returns blank for absent optional fields ---
 # entrypoint.sh uses `.field // empty` for repo_url, working_branch, etc.

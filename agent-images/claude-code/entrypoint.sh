@@ -426,7 +426,11 @@ else
   fi
 
   # Helper: log tool_use events from a stream-json line.
-  # Writes to /dev/stderr directly to bypass subshell fd inheritance issues.
+  # Writes to /dev/stderr directly to bypass subshell fd inheritance issues
+  # (run_claude is invoked inside $(...), which captures stdout).
+  # Redirection order matters: /dev/stderr is a symlink to /proc/self/fd/2, so
+  # `2>/dev/null` before `>/dev/stderr` resolves the target to /dev/null and
+  # discards every progress line. Point stdout at fd 2 first, silence jq second.
   log_progress() {
     local line="$1"
     local msg_type
@@ -442,12 +446,12 @@ else
         elif .name == "Grep" then "  → Grep " + (.input.pattern // "")
         else "  → " + .name
         end
-      ' 2>/dev/null > /dev/stderr || true
+      ' > /dev/stderr 2>/dev/null || true
     elif [ "$msg_type" = "result" ]; then
       echo "$line" | jq -r '
         "  ✓ Done: turns=" + (.num_turns // "?" | tostring) +
         " cost=$" + (.total_cost_usd // 0 | tostring)
-      ' 2>/dev/null > /dev/stderr || true
+      ' > /dev/stderr 2>/dev/null || true
     fi
   }
 
@@ -468,21 +472,34 @@ else
     # tee saves to file (for parse_claude_output), while the loop logs progress to stderr.
     # stdbuf -oL forces line-buffered stdout so stream-json events flow
     # through the tee|while pipeline in real-time instead of block-buffering.
+    # The turn cap is a CLI flag, not a settings.json key: settings.json has no
+    # maxTurns setting, and user settings files are validated strictly — one
+    # unrecognized key rejects the whole file. Hitting the cap exits non-zero
+    # and yields a result message with is_error set, which the caller gates on.
+    set +e
     stdbuf -oL claude -p "$prompt" \
       --output-format stream-json \
       --verbose \
       --dangerously-skip-permissions \
       --disallowed-tools "AskUserQuestion" \
+      --max-turns "$MAX_TURNS" \
       ${MODEL:+--model "$MODEL"} \
       ${ADD_DIR_ARGS[@]+"${ADD_DIR_ARGS[@]}"} \
       $sys_args ${sys_prompt:+"$sys_prompt"} \
       $extra_flags \
       2>/tmp/claude_stderr.log | stdbuf -oL tee "$stream_file" | while IFS= read -r line; do
         log_progress "$line"
-      done || {
-      echo "Claude Code exited with non-zero status" >&2
+      done
+    # PIPESTATUS[0] is claude's own status, not tee's or the read loop's. The
+    # caller runs run_claude inside $(...), so a variable cannot carry this out
+    # of the subshell — hand it over through a file instead.
+    local rc=${PIPESTATUS[0]}
+    set -e
+    echo "$rc" > /tmp/claude_exit_code
+    if [ "$rc" -ne 0 ]; then
+      echo "Claude Code exited with status $rc" >&2
       cat /tmp/claude_stderr.log >&2
-    }
+    fi
     cat "$stream_file"
   }
 
@@ -497,17 +514,29 @@ else
     CLAUDE_RESULT=$(echo "$result_line" | jq -r '.result // empty' 2>/dev/null || true)
     CLAUDE_SUBTYPE=$(echo "$result_line" | jq -r '.subtype // empty' 2>/dev/null || true)
     CLAUDE_TURNS=$(echo "$result_line" | jq -r '.num_turns // empty' 2>/dev/null || true)
-    # Fallback: if result event has no .result, extract from last assistant message
-    if [ -z "$CLAUDE_RESULT" ]; then
-      CLAUDE_RESULT=$(echo "$output" | grep '"type":"assistant"' | tail -1 | \
-        jq -r '[.message.content[]? | select(.type == "text") | .text] | join("\n")' 2>/dev/null || true)
-    fi
+    # is_error is the failure flag to branch on. It is documented on the result
+    # message across SDK surfaces, whereas the subtype enum is not stable: the
+    # published TypeScript and Python references list different members. Treat
+    # subtype/terminal_reason/errors as opaque strings for the message only.
+    CLAUDE_IS_ERROR=$(echo "$result_line" | jq -r 'if .is_error == true then "true" else "false" end' 2>/dev/null || true)
+    [ -n "$CLAUDE_IS_ERROR" ] || CLAUDE_IS_ERROR="false"
+    CLAUDE_ERRORS=$(echo "$result_line" | jq -r '(.errors // []) | join("; ")' 2>/dev/null || true)
+    CLAUDE_TERMINAL_REASON=$(echo "$result_line" | jq -r '.terminal_reason // empty' 2>/dev/null || true)
+    # Text of the last assistant message, held separately from CLAUDE_RESULT.
+    # An error result carries no .result field at all, so folding this into
+    # CLAUDE_RESULT would make a truncated run look finished and skip the retry
+    # loop below — the run would call back "completed" on a mid-task message.
+    CLAUDE_PARTIAL_TEXT=$(echo "$output" | grep '"type":"assistant"' | tail -1 | \
+      jq -r '[.message.content[]? | select(.type == "text") | .text] | join("\n")' 2>/dev/null || true)
   }
 
   MAX_RETRIES=3
+  MAX_TURNS=100
   ATTEMPT=1
   CLAUDE_SESSION_ID=""
   CLAUDE_RESULT=""
+  CLAUDE_PARTIAL_TEXT=""
+  CLAUDE_IS_ERROR="false"
 
   # Pre-invocation diagnostic: surface Claude auth state so auth failures can be
   # distinguished from prompt/model issues. Safe: only reports presence and length
@@ -545,13 +574,28 @@ ${PROMPT}"
     echo "Attempt $ATTEMPT: subtype=$CLAUDE_SUBTYPE turns=$CLAUDE_TURNS result_length=${#CLAUDE_RESULT}"
   done
 
-  if [ -n "$CLAUDE_RESULT" ]; then
+  CLAUDE_EXIT_CODE=$(cat /tmp/claude_exit_code 2>/dev/null || echo 0)
+
+  if [ "$CLAUDE_IS_ERROR" = "true" ]; then
+    # The run ended in a documented failure (turn cap, budget cap, execution
+    # error, ...). Carry whatever text it produced so the work isn't discarded,
+    # but never report it as completed — that is what let a truncated run look
+    # like a finished one downstream.
+    RESULT="${CLAUDE_RESULT:-$CLAUDE_PARTIAL_TEXT}"
+    RESULT_STATUS="failed"
+    ERROR_MESSAGE="Claude reported is_error after $ATTEMPT attempts (subtype=${CLAUDE_SUBTYPE:-unknown}${CLAUDE_TERMINAL_REASON:+, terminal_reason=$CLAUDE_TERMINAL_REASON})${CLAUDE_ERRORS:+: $CLAUDE_ERRORS}"
+    echo "ERROR: $ERROR_MESSAGE"
+  elif [ -n "$CLAUDE_RESULT" ]; then
     RESULT="$CLAUDE_RESULT"
     echo "AI result captured (${#RESULT} chars)"
+    if [ "$CLAUDE_EXIT_CODE" -ne 0 ]; then
+      echo "WARNING: result message reports success but claude exited $CLAUDE_EXIT_CODE" >&2
+    fi
   else
-    echo "WARNING: No .result after $ATTEMPT attempts"
+    echo "WARNING: No .result after $ATTEMPT attempts (exit=$CLAUDE_EXIT_CODE)"
+    RESULT="$CLAUDE_PARTIAL_TEXT"
     RESULT_STATUS="failed"
-    ERROR_MESSAGE="Claude produced no result after $ATTEMPT attempts (last subtype=$CLAUDE_SUBTYPE)"
+    ERROR_MESSAGE="Claude produced no result after $ATTEMPT attempts (last subtype=${CLAUDE_SUBTYPE:-none}, exit=$CLAUDE_EXIT_CODE)"
   fi
 
   # NOTE: $ATTEMPT is shared across the main retry, artifact enforcement, and decision
