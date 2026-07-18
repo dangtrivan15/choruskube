@@ -126,4 +126,60 @@ describe("useUpdateEpicStage", () => {
     const cached = queryClient.getQueryData<PageResponse<EpicResponse>>(boardQueryKey());
     expect(cached?.content[0].stage).toBe("backlog");
   });
+
+  it("rolling back a failed mutation does not clobber a different epic's concurrent optimistic move", async () => {
+    // Reproduces the interleaving that a whole-page rollback would get wrong: epic-1's
+    // move (A) is still in flight when epic-2's move (B) starts and applies its own
+    // optimistic update on top of A's. If A then fails, its rollback must restore only
+    // epic-1's stage — not the entire page snapshot A captured before B ever ran, which
+    // would silently erase B's already-applied move until the next refetch.
+    let rejectA: (err: Error) => void;
+    mockApi.patch.mockImplementationOnce(
+      () =>
+        new Promise<EpicResponse>((_resolve, reject) => {
+          rejectA = reject;
+        })
+    );
+    mockApi.patch.mockResolvedValueOnce(makeEpic({ id: "epic-2", stage: "rolled_out" }));
+
+    const { wrapper, queryClient } = createTestHookWrapper();
+    queryClient.setQueryDefaults(["epics"], { gcTime: Infinity });
+    const epic1 = makeEpic({ id: "epic-1", stage: "backlog" });
+    const epic2 = makeEpic({ id: "epic-2", stage: "backlog" });
+    queryClient.setQueryData(boardQueryKey(), makePage([epic1, epic2]));
+
+    const { result: resultA } = renderHook(() => useUpdateEpicStage(), { wrapper });
+    const { result: resultB } = renderHook(() => useUpdateEpicStage(), { wrapper });
+
+    // A: epic-1 -> in_progress (left pending).
+    act(() => {
+      resultA.current.mutate({ id: "epic-1", stage: "in_progress" });
+    });
+    await waitFor(() => {
+      const cached = queryClient.getQueryData<PageResponse<EpicResponse>>(boardQueryKey());
+      expect(cached?.content.find((e) => e.id === "epic-1")?.stage).toBe("in_progress");
+    });
+
+    // B: epic-2 -> rolled_out, starts and resolves while A is still pending.
+    act(() => {
+      resultB.current.mutate({ id: "epic-2", stage: "rolled_out" });
+    });
+    await waitFor(() => expect(resultB.current.isSuccess).toBe(true));
+    expect(
+      queryClient
+        .getQueryData<PageResponse<EpicResponse>>(boardQueryKey())
+        ?.content.find((e) => e.id === "epic-2")?.stage
+    ).toBe("rolled_out");
+
+    // A now fails — its rollback must restore only epic-1, leaving B's already-settled
+    // move on epic-2 intact.
+    act(() => {
+      rejectA!(new Error("boom"));
+    });
+    await waitFor(() => expect(resultA.current.isError).toBe(true));
+
+    const cached = queryClient.getQueryData<PageResponse<EpicResponse>>(boardQueryKey());
+    expect(cached?.content.find((e) => e.id === "epic-1")?.stage).toBe("backlog");
+    expect(cached?.content.find((e) => e.id === "epic-2")?.stage).toBe("rolled_out");
+  });
 });

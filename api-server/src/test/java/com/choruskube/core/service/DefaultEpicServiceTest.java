@@ -30,6 +30,8 @@ import com.choruskube.core.repository.SoftwareProjectRepository;
 import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.util.RepoNameUtil;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.temporal.client.WorkflowClient;
 import io.temporal.serviceclient.WorkflowServiceStubs;
 import jakarta.persistence.EntityManager;
@@ -371,7 +373,20 @@ public class DefaultEpicServiceTest extends BaseTest {
         ArgumentCaptor<String> detailCaptor = ArgumentCaptor.forClass(String.class);
         verify(auditSink)
                 .record(eq(AuditSink.EPIC_STAGE_UPDATED), eq("epic"), eq(created.id()), detailCaptor.capture());
-        assertThat(detailCaptor.getValue()).contains("\"backlog\"").contains("\"rolled_out\"");
+        // Parse and check the before/after fields structurally rather than just asserting both
+        // raw strings appear somewhere in the payload — a `contains` check alone wouldn't catch a
+        // bug that swapped before/after in detailJson(...).
+        JsonNode detail = readTree(detailCaptor.getValue());
+        assertThat(detail.path("before").path("stage").asText()).isEqualTo("backlog");
+        assertThat(detail.path("after").path("stage").asText()).isEqualTo("rolled_out");
+    }
+
+    private static JsonNode readTree(String json) {
+        try {
+            return new ObjectMapper().readTree(json);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 
     @Test

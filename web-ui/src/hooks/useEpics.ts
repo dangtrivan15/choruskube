@@ -93,21 +93,38 @@ export function useUpdateEpicStage() {
       const queryKey = boardEpicsQueryKey();
       await queryClient.cancelQueries({ queryKey });
 
-      const previous = queryClient.getQueryData<PageResponse<EpicResponse>>(queryKey);
-      if (previous) {
+      // Snapshot only this epic's previous stage, not the whole page: two epics can be
+      // dragged in quick succession (mutation A still in flight when B starts), and if A
+      // then fails, rolling back the *entire* previously-fetched page would silently wipe
+      // out B's already-applied optimistic move until the next refetch reconciles it.
+      // Patching back just this epic's stage keeps each mutation's rollback independent.
+      const previousPage = queryClient.getQueryData<PageResponse<EpicResponse>>(queryKey);
+      const previousStage = previousPage?.content.find((epic) => epic.id === id)?.stage;
+
+      if (previousPage) {
         queryClient.setQueryData<PageResponse<EpicResponse>>(queryKey, {
-          ...previous,
-          content: previous.content.map((epic) =>
+          ...previousPage,
+          content: previousPage.content.map((epic) =>
             epic.id === id ? { ...epic, stage } : epic
           ),
         });
       }
 
-      return { previous, queryKey };
+      return { previousStage, queryKey, id };
     },
     onError: (_err, _vars, context) => {
-      if (context?.previous) {
-        queryClient.setQueryData(context.queryKey, context.previous);
+      if (context?.previousStage) {
+        const { queryKey, id, previousStage } = context;
+        queryClient.setQueryData<PageResponse<EpicResponse>>(queryKey, (current) =>
+          current
+            ? {
+                ...current,
+                content: current.content.map((epic) =>
+                  epic.id === id ? { ...epic, stage: previousStage } : epic
+                ),
+              }
+            : current
+        );
       }
       addEntry(showMutationToast("Failed to move epic", "error"));
     },
