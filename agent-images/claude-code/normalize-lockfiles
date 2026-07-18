@@ -1,0 +1,45 @@
+#!/bin/bash
+# agent-images/claude-code/normalize-lockfiles
+# Rewrites dependency-proxy tarball URLs in npm lockfiles back to the canonical
+# public registry.
+#
+# npm records ABSOLUTE URLs in package-lock.json `resolved` fields, so a lockfile
+# written behind the dependency proxy hard-codes the proxy host. Two problems
+# follow. `npm ci` fetches `resolved` verbatim and ignores the configured
+# registry, so such a lockfile only installs on a host that can reach that same
+# proxy — it breaks anywhere else. And the proxy host travels to every consumer
+# of the repo, which for a public repo means publishing internal infrastructure.
+#
+# Rewriting costs no proxy caching: npm's `replace-registry-host` defaults to
+# `npmjs`, so npm substitutes the configured registry for the canonical
+# registry.npmjs.org host at fetch time. The proxy is still used to fetch; it
+# just stops being recorded in the lockfile.
+#
+# Usage: normalize-lockfiles <lockfile>...
+# No-op when DEP_PROXY_BASE is unset or no path contains proxy URLs.
+set -euo pipefail
+
+PUBLIC_REGISTRY="https://registry.npmjs.org/"
+
+[ -n "${DEP_PROXY_BASE:-}" ] || exit 0
+[ "$#" -gt 0 ] || exit 0
+
+# Mirrors the npm repository path that dep-proxy.sh feeds to npm_config_registry.
+proxy_npm="${DEP_PROXY_BASE%/}/repository/npm-proxy/"
+
+for f in "$@"; do
+  [ -f "$f" ] || continue
+  # -F: the URL is a literal, not a pattern. Skip untouched files so the script
+  # never rewrites mtimes it does not need to.
+  if grep -qF "$proxy_npm" "$f"; then
+    # Write via a temp file and copy back rather than `sed -i`: the in-place flag
+    # takes a mandatory suffix on BSD sed, so this keeps the script runnable on a
+    # developer's macOS checkout as well as in the Debian-based agent image.
+    # Copying back (not mv) preserves the file's inode and permissions.
+    tmp="$(mktemp)"
+    sed "s#${proxy_npm}#${PUBLIC_REGISTRY}#g" "$f" > "$tmp"
+    cat "$tmp" > "$f"
+    rm -f "$tmp"
+    echo "normalize-lockfiles: rewrote dependency-proxy URLs in $f to the public registry"
+  fi
+done

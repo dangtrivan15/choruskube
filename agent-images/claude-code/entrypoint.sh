@@ -256,6 +256,33 @@ if [ -n "${DEP_PROXY_BASE:-}" ]; then
       break
     fi
   done
+
+  # npm bakes the registry it fetched from into package-lock.json `resolved`
+  # URLs, so any dependency the agent adds records the proxy host and commits it.
+  # A global pre-commit hook normalizes staged lockfiles back to the canonical
+  # public registry (see normalize-lockfiles for why that keeps proxy caching).
+  # core.hooksPath is global so it covers every clone in a multi-repo run; a repo
+  # that sets its own hooksPath locally (husky) still wins, as local config beats
+  # global.
+  HOOKS_DIR="$HOME/.choruskube-git-hooks"
+  mkdir -p "$HOOKS_DIR"
+  cat > "$HOOKS_DIR/pre-commit" <<'HOOK'
+#!/bin/bash
+set -euo pipefail
+# A read loop rather than `mapfile`, which needs bash 4+ and so would not run on
+# a stock macOS shell if anyone exercises this hook outside the container.
+LOCKS=()
+while IFS= read -r f; do
+  [ -n "$f" ] && LOCKS+=("$f")
+done < <(git diff --cached --name-only --diff-filter=ACM \
+  | grep -E '(^|/)package-lock\.json$' || true)
+[ "${#LOCKS[@]}" -gt 0 ] || exit 0
+normalize-lockfiles "${LOCKS[@]}"
+# Re-stage so the rewrite lands in this commit rather than the working tree.
+git add -- "${LOCKS[@]}"
+HOOK
+  chmod +x "$HOOKS_DIR/pre-commit"
+  git config --global core.hooksPath "$HOOKS_DIR"
 fi
 
 # --- Step 3b: Declare the workspace roots to Claude Code ---

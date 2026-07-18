@@ -76,6 +76,7 @@ COPY update-proposal /usr/local/bin/update-proposal
 COPY create-story /usr/local/bin/create-story
 COPY create-task /usr/local/bin/create-task
 COPY run-all-tests /usr/local/bin/run-all-tests
+COPY normalize-lockfiles /usr/local/bin/normalize-lockfiles
 COPY system_prompt.md /usr/local/share/choruskube/system_prompt.md
 RUN chmod +x /usr/local/bin/report-result \
     /usr/local/bin/fetch-github-token \
@@ -91,7 +92,8 @@ RUN chmod +x /usr/local/bin/report-result \
     /usr/local/bin/update-proposal \
     /usr/local/bin/create-story \
     /usr/local/bin/create-task \
-    /usr/local/bin/run-all-tests
+    /usr/local/bin/run-all-tests \
+    /usr/local/bin/normalize-lockfiles
 
 # Disable telemetry, update checks, and other non-essential network traffic.
 # Set via ENV (not settings.json) so it applies to all processes in the container.
