@@ -182,4 +182,58 @@ describe("useUpdateEpicStage", () => {
     expect(cached?.content.find((e) => e.id === "epic-1")?.stage).toBe("backlog");
     expect(cached?.content.find((e) => e.id === "epic-2")?.stage).toBe("rolled_out");
   });
+
+  it("a stale failure on a re-dragged epic does not clobber its later successful move", async () => {
+    // The same epic can be dragged twice before the first PATCH settles: epic-1 moves
+    // backlog -> in_progress (A, left pending), then immediately in_progress -> rolled_out
+    // (B, which resolves first). If A then fails, its rollback must not blindly restore its
+    // pre-A snapshot ("backlog") over B's already-succeeded "rolled_out" — that would silently
+    // erase a confirmed server-side move using a stale snapshot captured before B ever ran.
+    let rejectA: (err: Error) => void;
+    mockApi.patch.mockImplementationOnce(
+      () =>
+        new Promise<EpicResponse>((_resolve, reject) => {
+          rejectA = reject;
+        })
+    );
+    mockApi.patch.mockResolvedValueOnce(makeEpic({ id: "epic-1", stage: "rolled_out" }));
+
+    const { wrapper, queryClient } = createTestHookWrapper();
+    queryClient.setQueryDefaults(["epics"], { gcTime: Infinity });
+    const epic1 = makeEpic({ id: "epic-1", stage: "backlog" });
+    queryClient.setQueryData(boardQueryKey(), makePage([epic1]));
+
+    const { result: resultA } = renderHook(() => useUpdateEpicStage(), { wrapper });
+    const { result: resultB } = renderHook(() => useUpdateEpicStage(), { wrapper });
+
+    // A: epic-1 backlog -> in_progress (left pending).
+    act(() => {
+      resultA.current.mutate({ id: "epic-1", stage: "in_progress" });
+    });
+    await waitFor(() => {
+      const cached = queryClient.getQueryData<PageResponse<EpicResponse>>(boardQueryKey());
+      expect(cached?.content.find((e) => e.id === "epic-1")?.stage).toBe("in_progress");
+    });
+
+    // B: epic-1 in_progress -> rolled_out, starts and resolves while A is still pending.
+    act(() => {
+      resultB.current.mutate({ id: "epic-1", stage: "rolled_out" });
+    });
+    await waitFor(() => expect(resultB.current.isSuccess).toBe(true));
+    expect(
+      queryClient
+        .getQueryData<PageResponse<EpicResponse>>(boardQueryKey())
+        ?.content.find((e) => e.id === "epic-1")?.stage
+    ).toBe("rolled_out");
+
+    // A now fails — its rollback targeted "in_progress" (what it applied), which the cache no
+    // longer holds, so it must be a no-op: epic-1 stays at B's confirmed "rolled_out".
+    act(() => {
+      rejectA!(new Error("boom"));
+    });
+    await waitFor(() => expect(resultA.current.isError).toBe(true));
+
+    const cached = queryClient.getQueryData<PageResponse<EpicResponse>>(boardQueryKey());
+    expect(cached?.content.find((e) => e.id === "epic-1")?.stage).toBe("rolled_out");
+  });
 });

@@ -117,17 +117,25 @@ export function useUpdateEpicStage() {
           : current
       );
 
-      return { previousStage, queryKey, id };
+      return { previousStage, queryKey, id, appliedStage: stage };
     },
     onError: (_err, _vars, context) => {
       if (context?.previousStage) {
-        const { queryKey, id, previousStage } = context;
+        const { queryKey, id, previousStage, appliedStage } = context;
+        // Only roll back if the cache still holds *this* mutation's optimistic write. The
+        // same epic can be dragged again before this call settles (e.g. backlog -> in_progress
+        // still in flight when a second drag moves it to rolled_out): that second mutation's
+        // onMutate rewrites the cache on top of this one, so if it's already committed a newer
+        // value by the time this call fails, blindly restoring `previousStage` here would erase
+        // the newer, already-succeeded move using a stale snapshot from before it ever ran.
         queryClient.setQueryData<PageResponse<EpicResponse>>(queryKey, (current) =>
           current
             ? {
                 ...current,
                 content: current.content.map((epic) =>
-                  epic.id === id ? { ...epic, stage: previousStage } : epic
+                  epic.id === id && epic.stage === appliedStage
+                    ? { ...epic, stage: previousStage }
+                    : epic
                 ),
               }
             : current
