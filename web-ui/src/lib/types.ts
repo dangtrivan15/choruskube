@@ -258,17 +258,29 @@ export interface WorkItemProgress {
   doneTasks: number;
 }
 
+/**
+ * Roadmap board column an Epic sits in. Persisted separately from the
+ * read-time {@code status} rollup (never "done" — a rolled-out Epic can
+ * still have in-progress descendant Tasks). See PATCH /epics/{id}/stage.
+ */
+export type EpicStage = "backlog" | "in_progress" | "rolled_out";
+
 export interface EpicResponse {
   id: string;
   title: string;
   description: string;
   motivation: string | null;
   status: "backlog" | "in_progress" | "done";
+  stage: EpicStage;
   progress: WorkItemProgress;
   softwareProject: SoftwareProjectRef;
   repos: RepoRef[];
   createdAt: string;
   updatedAt: string;
+}
+
+export interface EpicStageUpdateRequest {
+  stage: EpicStage;
 }
 
 export interface EpicRequest {

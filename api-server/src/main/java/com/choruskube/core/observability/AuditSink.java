@@ -13,6 +13,7 @@ public interface AuditSink {
     String EPIC_CREATED = "epic_created";
     String EPIC_UPDATED = "epic_updated";
     String EPIC_DELETED = "epic_deleted";
+    String EPIC_STAGE_UPDATED = "epic_stage_updated";
     String STORY_CREATED = "story_created";
     String STORY_UPDATED = "story_updated";
     String STORY_DELETED = "story_deleted";

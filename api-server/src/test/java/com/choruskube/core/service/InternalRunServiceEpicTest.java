@@ -378,6 +378,7 @@ class InternalRunServiceEpicTest {
                 "desc",
                 "motivation",
                 "backlog",
+                "backlog",
                 new EpicResponse.Progress(0, 0),
                 new SoftwareProjectRef(projectId, "git_repo", "name"),
                 List.of(),

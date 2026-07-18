@@ -2,6 +2,7 @@ package com.choruskube.core.controller;
 
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
+import com.choruskube.core.dto.EpicStageUpdateRequest;
 import com.choruskube.core.service.EpicService;
 import jakarta.validation.Valid;
 import java.util.UUID;
@@ -14,6 +15,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -63,5 +65,11 @@ public class EpicController {
     public ResponseEntity<Void> delete(@PathVariable UUID id) {
         service.delete(id);
         return ResponseEntity.noContent().build();
+    }
+
+    @PreAuthorize("@orgSecurity.canOperate()")
+    @PatchMapping("/{id}/stage")
+    public EpicResponse updateStage(@PathVariable UUID id, @Valid @RequestBody EpicStageUpdateRequest request) {
+        return service.updateStage(id, request.stage());
     }
 }
