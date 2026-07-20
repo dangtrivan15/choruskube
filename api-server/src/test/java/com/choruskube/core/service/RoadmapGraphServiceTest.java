@@ -117,6 +117,59 @@ public class RoadmapGraphServiceTest extends BaseTest {
     }
 
     @Test
+    void getGraph_blockedInDifferentEpic_appearsInExternalBlockersNotDependencies() {
+        // Mirror of getGraph_blockerInDifferentEpic_... above but with the inside/outside roles
+        // swapped: an item INSIDE the requested Epic is the *blocking* side, and the *blocked*
+        // side lives in a different Epic. Exercises the `blockingInside && !blockedInside` branch
+        // in getGraph, which the other external-blocker test above doesn't reach.
+        EpicResponse epicA = makeEpic("https://github.com/test/graph-external-blocked-a.git");
+        StoryResponse storyA = makeStory(epicA.id(), "Story A");
+        TaskResponse blockingInA = makeTask(storyA.id(), "Blocking in A");
+
+        EpicResponse epicB = makeEpic("https://github.com/test/graph-external-blocked-b.git");
+        StoryResponse storyB = makeStory(epicB.id(), "Story B");
+        TaskResponse blockedInB = makeTask(storyB.id(), "Blocked in B");
+
+        dependencyService.create(new CreateDependencyRequest("task", blockingInA.id(), "task", blockedInB.id()));
+
+        RoadmapGraphSnapshot snapshot = graphService.getGraph(epicA.id());
+
+        assertThat(snapshot.dependencies()).isEmpty();
+        assertThat(snapshot.externalBlockers()).hasSize(1);
+        var blocker = snapshot.externalBlockers().get(0);
+        assertThat(blocker.itemType()).isEqualTo("task");
+        assertThat(blocker.itemId()).isEqualTo(blockedInB.id());
+        assertThat(blocker.title()).isEqualTo("Blocked in B");
+        assertThat(blocker.epicId()).isEqualTo(epicB.id());
+        assertThat(blocker.epicTitle()).isEqualTo(epicB.title());
+    }
+
+    @Test
+    void getGraph_externalBlockerIsStory_resolvesStoryTitleAndOwningEpic() {
+        // The only prior external-blocker coverage used Task items; this exercises
+        // toExternalBlockerRef's `type == BlockableItemType.story` branch, which resolves the
+        // Story's own Epic directly rather than via an intermediate Story lookup.
+        EpicResponse epicA = makeEpic("https://github.com/test/graph-external-story-a.git");
+        StoryResponse storyA = makeStory(epicA.id(), "Story A");
+        TaskResponse blockedInA = makeTask(storyA.id(), "Blocked in A");
+
+        EpicResponse epicB = makeEpic("https://github.com/test/graph-external-story-b.git");
+        StoryResponse blockingStoryB = makeStory(epicB.id(), "Blocking Story B");
+
+        dependencyService.create(new CreateDependencyRequest("story", blockingStoryB.id(), "task", blockedInA.id()));
+
+        RoadmapGraphSnapshot snapshot = graphService.getGraph(epicA.id());
+
+        assertThat(snapshot.externalBlockers()).hasSize(1);
+        var blocker = snapshot.externalBlockers().get(0);
+        assertThat(blocker.itemType()).isEqualTo("story");
+        assertThat(blocker.itemId()).isEqualTo(blockingStoryB.id());
+        assertThat(blocker.title()).isEqualTo("Blocking Story B");
+        assertThat(blocker.epicId()).isEqualTo(epicB.id());
+        assertThat(blocker.epicTitle()).isEqualTo(epicB.title());
+    }
+
+    @Test
     void getGraph_unknownEpic_throwsNotFound() {
         UUID unknown = UUID.randomUUID();
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> graphService.getGraph(unknown))

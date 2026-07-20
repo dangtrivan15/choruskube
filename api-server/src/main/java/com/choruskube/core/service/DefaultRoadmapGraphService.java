@@ -35,9 +35,15 @@ public class DefaultRoadmapGraphService implements RoadmapGraphService {
     // Used only to resolve title/owning-Epic for items OUTSIDE the requested Epic (external
     // blockers) — everything belonging to the requested Epic itself goes through
     // epicService/storyService/taskService above, the same org-scoped path Epic-detail code uses.
+    // Reads through these repositories are gated by authService.checkOrgAccess below (the same
+    // per-item check DefaultWorkItemDependencyService#create/delete use) rather than the
+    // org-scoped service layer, because there is no single-item org-scoped read on
+    // Story/TaskService that doesn't also require the item's parent Epic/Story context this method
+    // doesn't have.
     private final StoryRepository storyRepo;
     private final TaskRepository taskRepo;
     private final EpicRepository epicRepo;
+    private final AuthorizationService authService;
 
     public DefaultRoadmapGraphService(
             EpicService epicService,
@@ -46,7 +52,8 @@ public class DefaultRoadmapGraphService implements RoadmapGraphService {
             WorkItemDependencyRepository dependencyRepo,
             StoryRepository storyRepo,
             TaskRepository taskRepo,
-            EpicRepository epicRepo) {
+            EpicRepository epicRepo,
+            AuthorizationService authService) {
         this.epicService = epicService;
         this.storyService = storyService;
         this.taskService = taskService;
@@ -54,6 +61,7 @@ public class DefaultRoadmapGraphService implements RoadmapGraphService {
         this.storyRepo = storyRepo;
         this.taskRepo = taskRepo;
         this.epicRepo = epicRepo;
+        this.authService = authService;
     }
 
     @Override
@@ -104,6 +112,13 @@ public class DefaultRoadmapGraphService implements RoadmapGraphService {
     }
 
     private ExternalBlockerRef toExternalBlockerRef(BlockableItemType type, UUID id) {
+        // Guards against leaking an external item's title/owning-Epic to a caller outside its org.
+        // Today every dependency edge is created with both endpoints in the same org as the
+        // caller (DefaultWorkItemDependencyService#create), so this never rejects in practice —
+        // but it closes the gap defensively for any future path (bulk import, admin
+        // ownership-transfer, direct repository writes) that could insert an edge without going
+        // through create()'s own checkOrgAccess pair.
+        authService.checkOrgAccess(type.name(), id);
         if (type == BlockableItemType.story) {
             Story story = storyRepo.findById(id).orElseThrow(() -> new NotFoundException("Story not found: " + id));
             Epic epic = findEpic(story.getEpicId());

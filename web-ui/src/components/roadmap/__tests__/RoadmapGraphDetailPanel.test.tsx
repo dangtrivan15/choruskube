@@ -270,4 +270,38 @@ describe("RoadmapGraphDetailPanel", () => {
 
     await waitFor(() => expect(mockApi.delete).toHaveBeenCalledWith("/dependencies/dep-1"));
   });
+
+  it("disables the remove button while the delete is pending, preventing a duplicate request", async () => {
+    let resolveDelete: () => void = () => {};
+    mockApi.delete.mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolveDelete = resolve;
+      }),
+    );
+    renderPanel({
+      detail: { itemType: "task", item: task },
+      dependencies: [
+        {
+          id: "dep-1",
+          blockingItemType: "task",
+          blockingItemId: otherTask.id,
+          blockedItemType: "task",
+          blockedItemId: task.id,
+          createdAt: "2026-04-01T00:00:00Z",
+        },
+      ],
+    });
+
+    const user = userEvent.setup();
+    const removeButton = screen.getByTestId("roadmap-blocking-dependency-remove");
+    await user.click(removeButton);
+
+    await waitFor(() => expect(removeButton).toBeDisabled());
+    // A second click while the first delete is still in flight must not fire a second request.
+    await user.click(removeButton);
+    expect(mockApi.delete).toHaveBeenCalledTimes(1);
+
+    resolveDelete();
+    await waitFor(() => expect(removeButton).not.toBeDisabled());
+  });
 });
