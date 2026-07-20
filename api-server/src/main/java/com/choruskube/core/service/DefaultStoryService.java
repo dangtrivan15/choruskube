@@ -11,6 +11,7 @@ import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.Epic;
 import com.choruskube.core.model.Story;
 import com.choruskube.core.model.Task;
+import com.choruskube.core.model.enums.BlockableItemType;
 import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.observability.AuditDetail;
 import com.choruskube.core.observability.AuditSink;
@@ -38,6 +39,7 @@ public class DefaultStoryService implements StoryService {
     private final AuditSink auditSink;
     private final ObjectMapper objectMapper;
     private final ApplicationEventPublisher applicationEventPublisher;
+    private final WorkItemDependencyService workItemDependencyService;
 
     public DefaultStoryService(
             StoryRepository repo,
@@ -47,7 +49,8 @@ public class DefaultStoryService implements StoryService {
             RunEventPublisher eventPublisher,
             AuditSink auditSink,
             ObjectMapper objectMapper,
-            ApplicationEventPublisher applicationEventPublisher) {
+            ApplicationEventPublisher applicationEventPublisher,
+            WorkItemDependencyService workItemDependencyService) {
         this.repo = repo;
         this.epicRepo = epicRepo;
         this.taskRepo = taskRepo;
@@ -56,6 +59,7 @@ public class DefaultStoryService implements StoryService {
         this.auditSink = auditSink;
         this.objectMapper = objectMapper;
         this.applicationEventPublisher = applicationEventPublisher;
+        this.workItemDependencyService = workItemDependencyService;
     }
 
     @Override
@@ -144,6 +148,9 @@ public class DefaultStoryService implements StoryService {
             throw new ConflictException("Can only delete a Story while all of its Tasks are still in backlog");
         }
         auditSink.record(AuditSink.STORY_DELETED, "story", id, detailJson(snapshot(story), null));
+        // work_item_dependency has no DB-level FK/ON DELETE CASCADE on this Story's id (it's a
+        // polymorphic Story-or-Task reference), so any edge referencing it must be cleaned up here.
+        workItemDependencyService.deleteAllReferencing(BlockableItemType.story, id);
         repo.delete(story);
         eventPublisher.publishRoadmapItemChanged("story", id, "deleted");
     }

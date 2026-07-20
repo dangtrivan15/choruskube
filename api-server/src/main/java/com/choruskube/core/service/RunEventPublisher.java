@@ -1,5 +1,6 @@
 package com.choruskube.core.service;
 
+import com.choruskube.core.dto.DependencyEdgeResponse;
 import com.choruskube.core.dto.RoadmapItemEvent;
 import com.choruskube.core.dto.RunEvent;
 import com.choruskube.core.event.OrgScopedFeedPublisher;
@@ -43,6 +44,21 @@ public class RunEventPublisher {
     public void publishRoadmapItemChanged(String itemType, UUID itemId, String status) {
         RoadmapItemEvent event = new RoadmapItemEvent(itemType + "_changed", itemId, status);
         feedPublisher.roadmapItemChanged(itemType, itemId, event);
+    }
+
+    /**
+     * Publishes a "blocking" dependency-edge change (create or delete; {@code status} is e.g.
+     * {@code "created"}/{@code "deleted"}, mirroring the literal {@code "deleted"} status {@link
+     * #publishRoadmapItemChanged} is passed on Epic/Story/Task delete). The payload's own {@code
+     * itemType} is {@code "dependency_changed"}, but — unlike {@link #publishRoadmapItemChanged},
+     * which uses its own {@code itemType} argument as both the payload field and the scoping key —
+     * a dependency edge has no resource type of its own to scope by. The scoping/routing key is
+     * therefore the BLOCKED item's existing type/id: a caller must already be authorized to read
+     * the blocked item to see that it just became (un)blocked.
+     */
+    public void publishDependencyChanged(DependencyEdgeResponse edge, String status) {
+        RoadmapItemEvent event = new RoadmapItemEvent("dependency_changed", edge.id(), status);
+        feedPublisher.roadmapItemChanged(edge.blockedItemType(), edge.blockedItemId(), event);
     }
 
     public void publishNodeStatusChanged(UUID runId, UUID nodeExecutionId, String status) {

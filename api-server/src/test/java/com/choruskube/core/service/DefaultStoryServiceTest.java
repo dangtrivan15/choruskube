@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.choruskube.core.BaseTest;
+import com.choruskube.core.dto.CreateDependencyRequest;
+import com.choruskube.core.dto.DependencyEdgeResponse;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
 import com.choruskube.core.dto.StoryRequest;
@@ -17,6 +19,7 @@ import com.choruskube.core.model.Task;
 import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.TaskRepository;
+import com.choruskube.core.repository.WorkItemDependencyRepository;
 import com.choruskube.core.util.RepoNameUtil;
 import io.temporal.client.WorkflowClient;
 import io.temporal.serviceclient.WorkflowServiceStubs;
@@ -46,6 +49,12 @@ public class DefaultStoryServiceTest extends BaseTest {
 
     @Autowired
     private TaskRepository taskRepo;
+
+    @Autowired
+    private WorkItemDependencyService dependencyService;
+
+    @Autowired
+    private WorkItemDependencyRepository dependencyRepo;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -177,6 +186,19 @@ public class DefaultStoryServiceTest extends BaseTest {
         entityManager.clear();
 
         assertThat(taskRepo.findById(task.id())).isEmpty();
+    }
+
+    @Test
+    void delete_withDependencyEdge_alsoRemovesDependency() {
+        EpicResponse epic = makeEpic("https://github.com/test/story-delete-dep.git");
+        StoryResponse story = service.create(epic.id(), new StoryRequest("S", "D"));
+        StoryResponse other = service.create(epic.id(), new StoryRequest("Other", "D"));
+        DependencyEdgeResponse edge =
+                dependencyService.create(new CreateDependencyRequest("story", other.id(), "story", story.id()));
+
+        service.delete(story.id());
+
+        assertThat(dependencyRepo.findById(edge.id())).isEmpty();
     }
 
     @Test
