@@ -271,6 +271,10 @@ export default function RoadmapGraphDetailPanel({
 
       {itemType !== "epic" && (
         <BlockingDependenciesSection
+          // Remount on item change so the uncommitted picker selection
+          // (selectedBlockerId) can't leak from one node to the next — see
+          // the regression test for the bug this prevents.
+          key={item.id}
           itemType={itemType}
           itemId={item.id}
           epicId={epicId}

@@ -271,6 +271,31 @@ describe("RoadmapGraphDetailPanel", () => {
     await waitFor(() => expect(mockApi.delete).toHaveBeenCalledWith("/dependencies/dep-1"));
   });
 
+  it("resets the uncommitted add-blocker picker selection when a different node is selected", async () => {
+    const { rerender } = renderPanel({ detail: { itemType: "task", item: task } });
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("roadmap-add-blocker-select"));
+    await user.click(await screen.findByText("Dark theme toggle (story)"));
+    expect(screen.getByTestId("roadmap-add-blocker-submit")).toBeEnabled();
+
+    // Switch to a different node (task-2) without ever clicking "Add blocker".
+    // The uncommitted selection for task-1 must not leak into task-2's picker
+    // and silently enable submitting an edge the user never chose here.
+    rerender(
+      <RoadmapGraphDetailPanel
+        detail={{ itemType: "task", item: otherTask }}
+        epicId="epic-1"
+        dependencies={[]}
+        blockableItems={blockableItems}
+        externalBlockers={[]}
+      />,
+    );
+
+    expect(screen.getByTestId("roadmap-add-blocker-submit")).toBeDisabled();
+    expect(screen.queryByText("Dark theme toggle (story)")).not.toBeInTheDocument();
+  });
+
   it("disables the remove button while the delete is pending, preventing a duplicate request", async () => {
     let resolveDelete: () => void = () => {};
     mockApi.delete.mockReturnValue(
