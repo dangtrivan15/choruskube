@@ -16,45 +16,50 @@ interface Props {
  * latest one.
  */
 export default function TaskRunHistoryList({ runs, isLoading }: Props) {
-  if (isLoading) {
-    return (
-      <div className="space-y-2">
-        {Array.from({ length: 2 }).map((_, i) => (
-          <Skeleton key={i} className="h-12 w-full" />
-        ))}
-      </div>
-    );
-  }
-
-  if (!runs || runs.length === 0) {
-    return (
-      <p className="text-sm text-muted-foreground">
-        No runs yet. Start the task to launch the first one.
-      </p>
-    );
-  }
-
+  // The container carries a stable testid across all three states (loading /
+  // empty / populated) so callers (e.g. the Roadmap Graph View detail panel)
+  // can assert the run-history region rendered at all, independent of which
+  // sub-state it's currently in — mirroring how other list/section
+  // components in this app expose their outer container's testid.
   return (
-    <ul data-testid="task-run-history-list" className="divide-y rounded-md border">
-      {runs.map((run) => (
-        <li key={run.id} data-testid="task-run-history-item" className="flex items-center justify-between gap-4 p-3">
-          <div className="min-w-0">
-            <Link
-              to={`/runs/${run.id}`}
-              className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
+    <div data-testid="task-run-history-list">
+      {isLoading ? (
+        <div className="space-y-2">
+          {Array.from({ length: 2 }).map((_, i) => (
+            <Skeleton key={i} className="h-12 w-full" />
+          ))}
+        </div>
+      ) : !runs || runs.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          No runs yet. Start the task to launch the first one.
+        </p>
+      ) : (
+        <ul className="divide-y rounded-md border">
+          {runs.map((run) => (
+            <li
+              key={run.id}
+              data-testid="task-run-history-item"
+              className="flex items-center justify-between gap-4 p-3"
             >
-              <ExternalLink className="size-3.5" />
-              {run.name ?? run.templateName}
-            </Link>
-            <div className="mt-1 text-xs text-muted-foreground">
-              {formatDistanceToNow(new Date(run.createdAt), { addSuffix: true })}
-            </div>
-          </div>
-          <Badge variant="outline" data-testid="task-run-history-status">
-            {run.status}
-          </Badge>
-        </li>
-      ))}
-    </ul>
+              <div className="min-w-0">
+                <Link
+                  to={`/runs/${run.id}`}
+                  className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
+                >
+                  <ExternalLink className="size-3.5" />
+                  {run.name ?? run.templateName}
+                </Link>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {formatDistanceToNow(new Date(run.createdAt), { addSuffix: true })}
+                </div>
+              </div>
+              <Badge variant="outline" data-testid="task-run-history-status">
+                {run.status}
+              </Badge>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }

@@ -81,12 +81,16 @@ export class RoadmapGraphPage {
 
   /**
    * Adds a blocking dependency on the currently-selected node via the detail
-   * panel's picker. `blockerItemId` is the id of the Story/Task that should
-   * block the selected item (the `<option value>` is the raw item id — see
-   * RoadmapGraphDetailPanel's BlockingDependenciesSection).
+   * panel's picker. `blockerItemTitle` is the title of the Story/Task that
+   * should block the selected item. The picker (BlockingDependenciesSection
+   * in RoadmapGraphDetailPanel) is the shared shadcn/Base UI `Select`, not a
+   * native `<select>` — open it by clicking the trigger, then click the
+   * matching option, mirroring the pattern other page objects use for the
+   * same component (e.g. run-list.page.ts's filterByStatus/startRun).
    */
-  async addBlocker(blockerItemId: string) {
-    await this.addBlockerSelect.selectOption(blockerItemId);
+  async addBlocker(blockerItemTitle: string) {
+    await this.addBlockerSelect.click();
+    await this.page.getByRole("option", { name: blockerItemTitle }).click();
     await this.addBlockerSubmit.click();
   }
 }

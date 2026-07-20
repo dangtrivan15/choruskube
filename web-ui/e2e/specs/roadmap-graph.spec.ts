@@ -96,7 +96,7 @@ test.describe("Roadmap Graph View", () => {
     try {
       await roadmapGraphPage.goto(epic.id);
       await roadmapGraphPage.selectNode(blockedTask.title);
-      await roadmapGraphPage.addBlocker(blockingTask.id);
+      await roadmapGraphPage.addBlocker(blockingTask.title);
 
       await expect(roadmapGraphPage.blockingDependencies).toBeVisible();
       await expect(roadmapGraphPage.blockingDependencyBadges).toContainText(blockingTask.title);
