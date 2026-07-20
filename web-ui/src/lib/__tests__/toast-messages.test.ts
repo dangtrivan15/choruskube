@@ -214,6 +214,43 @@ describe("toast-messages", () => {
       expect(config?.message).toBe("Linked run cancelled");
     });
 
+    it("maps dependency_changed -> created to info toast", () => {
+      const event: RoadmapItemEvent = {
+        itemType: "dependency_changed",
+        itemId: "dep1",
+        status: "created",
+      };
+      const config = mapEventToToast(event);
+      expect(config).toEqual({
+        message: "Blocking dependency added",
+        variant: "info",
+        actionUrl: "/roadmap",
+      });
+    });
+
+    it("maps dependency_changed -> deleted to info toast", () => {
+      const event: RoadmapItemEvent = {
+        itemType: "dependency_changed",
+        itemId: "dep1",
+        status: "deleted",
+      };
+      const config = mapEventToToast(event);
+      expect(config).toEqual({
+        message: "Blocking dependency removed",
+        variant: "info",
+        actionUrl: "/roadmap",
+      });
+    });
+
+    it("returns null for unknown dependency_changed status", () => {
+      const event: RoadmapItemEvent = {
+        itemType: "dependency_changed",
+        itemId: "dep1",
+        status: "some_unknown_status",
+      };
+      expect(mapEventToToast(event)).toBeNull();
+    });
+
     // --- Pending gates context (receives RunEvent objects) ---
 
     it("maps awaiting_human RunEvent (pending gates) to warning toast", () => {

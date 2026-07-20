@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import type { ReactNode } from "react";
 import type { RouteObject } from "react-router";
 import { buildRouter } from "@/router";
 
@@ -26,5 +27,15 @@ describe("buildRouter", () => {
     expect(paths).toContain("runs");
     expect(paths).not.toContain("admin/organizations");
     expect(paths).not.toContain("organizations/:id");
+  });
+
+  it("resolves the Roadmap Graph View route to RoadmapGraphPage", async () => {
+    const RoadmapGraphPage = (await import("@/pages/RoadmapGraphPage")).default;
+    const router = buildRouter();
+    const route = (router.routes[0].children ?? []).find(
+      (c: RouteObject) => c.path === "roadmap/epics/:epicId/graph",
+    ) as { path?: string; element?: ReactNode } | undefined;
+    expect(route).toBeDefined();
+    expect(route?.element).toEqual(<RoadmapGraphPage />);
   });
 });

@@ -9,6 +9,8 @@ import static org.mockito.Mockito.verify;
 
 import com.choruskube.core.BaseTest;
 import com.choruskube.core.config.SingleTenant;
+import com.choruskube.core.dto.CreateDependencyRequest;
+import com.choruskube.core.dto.DependencyEdgeResponse;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
 import com.choruskube.core.dto.InternalUpdateEpicRequest;
@@ -29,6 +31,7 @@ import com.choruskube.core.repository.RepoGroupRepository;
 import com.choruskube.core.repository.SoftwareProjectRepository;
 import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.repository.TaskRepository;
+import com.choruskube.core.repository.WorkItemDependencyRepository;
 import com.choruskube.core.util.RepoNameUtil;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -71,6 +74,12 @@ public class DefaultEpicServiceTest extends BaseTest {
 
     @Autowired
     private StoryRepository storyRepo;
+
+    @Autowired
+    private WorkItemDependencyService dependencyService;
+
+    @Autowired
+    private WorkItemDependencyRepository dependencyRepo;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -221,6 +230,45 @@ public class DefaultEpicServiceTest extends BaseTest {
 
         assertThat(storyRepo.findById(story.id())).isEmpty();
         assertThat(taskRepo.findById(task.id())).isEmpty();
+    }
+
+    @Test
+    void delete_withDependencyEdgeOnDescendantStory_alsoRemovesDependency() {
+        // Story/Task rows under this Epic are removed by the DB-level ON DELETE CASCADE (see
+        // delete_withBacklogDescendants_cascadesToStoryAndTask above), which bypasses
+        // DefaultStoryService#delete's/DefaultTaskService#delete's own work_item_dependency
+        // cleanup entirely. Assert that Epic delete cleans up dependency edges referencing its
+        // descendant Stories itself, otherwise the edge would dangle and break the Roadmap Graph
+        // endpoint for whichever other, unrelated Epic is on the other end of it.
+        GitRepo r = makeRepo("https://github.com/test/epic-delete-story-dep.git");
+        EpicResponse epic = service.create(new EpicRequest("T", "D", null, r.getId()), null);
+        var story = storyService.create(epic.id(), new StoryRequest("S", "D"));
+        GitRepo otherRepo = makeRepo("https://github.com/test/epic-delete-story-dep-other.git");
+        EpicResponse otherEpic = service.create(new EpicRequest("Other", "D", null, otherRepo.getId()), null);
+        var otherStory = storyService.create(otherEpic.id(), new StoryRequest("Other S", "D"));
+        DependencyEdgeResponse edge =
+                dependencyService.create(new CreateDependencyRequest("story", otherStory.id(), "story", story.id()));
+
+        service.delete(epic.id());
+
+        assertThat(dependencyRepo.findById(edge.id())).isEmpty();
+    }
+
+    @Test
+    void delete_withDependencyEdgeOnDescendantTask_alsoRemovesDependency() {
+        GitRepo r = makeRepo("https://github.com/test/epic-delete-task-dep.git");
+        EpicResponse epic = service.create(new EpicRequest("T", "D", null, r.getId()), null);
+        var story = storyService.create(epic.id(), new StoryRequest("S", "D"));
+        var task = taskService.create(story.id(), new TaskRequest("T", "D"));
+        GitRepo otherRepo = makeRepo("https://github.com/test/epic-delete-task-dep-other.git");
+        EpicResponse otherEpic = service.create(new EpicRequest("Other", "D", null, otherRepo.getId()), null);
+        var otherStory = storyService.create(otherEpic.id(), new StoryRequest("Other S", "D"));
+        DependencyEdgeResponse edge =
+                dependencyService.create(new CreateDependencyRequest("story", otherStory.id(), "task", task.id()));
+
+        service.delete(epic.id());
+
+        assertThat(dependencyRepo.findById(edge.id())).isEmpty();
     }
 
     @Test

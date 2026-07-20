@@ -1,0 +1,251 @@
+package com.choruskube.core.service;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.verify;
+
+import com.choruskube.core.BaseTest;
+import com.choruskube.core.dto.CreateDependencyRequest;
+import com.choruskube.core.dto.EpicRequest;
+import com.choruskube.core.dto.EpicResponse;
+import com.choruskube.core.dto.RoadmapGraphSnapshot;
+import com.choruskube.core.dto.StoryRequest;
+import com.choruskube.core.dto.StoryResponse;
+import com.choruskube.core.dto.TaskRequest;
+import com.choruskube.core.dto.TaskResponse;
+import com.choruskube.core.exception.ForbiddenException;
+import com.choruskube.core.model.GitRepo;
+import com.choruskube.core.repository.GitRepoRepository;
+import com.choruskube.core.util.RepoNameUtil;
+import io.temporal.client.WorkflowClient;
+import io.temporal.serviceclient.WorkflowServiceStubs;
+import java.util.List;
+import java.util.UUID;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.transaction.annotation.Transactional;
+
+@Transactional
+public class RoadmapGraphServiceTest extends BaseTest {
+
+    @Autowired
+    private RoadmapGraphService graphService;
+
+    @Autowired
+    private WorkItemDependencyService dependencyService;
+
+    @Autowired
+    private EpicService epicService;
+
+    @Autowired
+    private StoryService storyService;
+
+    @Autowired
+    private TaskService taskService;
+
+    @Autowired
+    private GitRepoRepository gitRepoRepo;
+
+    @MockitoBean
+    private WorkflowServiceStubs workflowServiceStubs;
+
+    @MockitoBean
+    private WorkflowClient workflowClient;
+
+    @MockitoBean
+    private RunEventPublisher runEventPublisher;
+
+    @MockitoBean
+    private AuthorizationService authService;
+
+    @Test
+    void getGraph_returnsAllStoriesAndTasksUnderEpic() {
+        EpicResponse epic = makeEpic("https://github.com/test/graph-nodes.git");
+        StoryResponse s1 = makeStory(epic.id(), "Story 1");
+        StoryResponse s2 = makeStory(epic.id(), "Story 2");
+        List<StoryResponse> stories = List.of(s1, s2);
+        List<TaskResponse> tasks = stories.stream()
+                .flatMap(s -> List.of(makeTask(s.id(), "T1"), makeTask(s.id(), "T2"), makeTask(s.id(), "T3")).stream())
+                .toList();
+
+        RoadmapGraphSnapshot snapshot = graphService.getGraph(epic.id());
+
+        assertThat(snapshot.epic().id()).isEqualTo(epic.id());
+        assertThat(snapshot.stories()).extracting(StoryResponse::id).containsExactlyInAnyOrder(s1.id(), s2.id());
+        assertThat(snapshot.tasks()).hasSize(6);
+        assertThat(snapshot.tasks())
+                .extracting(TaskResponse::id)
+                .containsExactlyInAnyOrderElementsOf(
+                        tasks.stream().map(TaskResponse::id).toList());
+        assertThat(snapshot.dependencies()).isEmpty();
+        assertThat(snapshot.externalBlockers()).isEmpty();
+    }
+
+    @Test
+    void getGraph_intraEpicDependency_appearsInDependenciesNotExternalBlockers() {
+        EpicResponse epic = makeEpic("https://github.com/test/graph-intra-dep.git");
+        StoryResponse story = makeStory(epic.id(), "Story");
+        TaskResponse blocking = makeTask(story.id(), "Blocking");
+        TaskResponse blocked = makeTask(story.id(), "Blocked");
+        dependencyService.create(new CreateDependencyRequest("task", blocking.id(), "task", blocked.id()));
+
+        RoadmapGraphSnapshot snapshot = graphService.getGraph(epic.id());
+
+        assertThat(snapshot.dependencies()).hasSize(1);
+        assertThat(snapshot.dependencies().get(0).blockingItemId()).isEqualTo(blocking.id());
+        assertThat(snapshot.dependencies().get(0).blockedItemId()).isEqualTo(blocked.id());
+        assertThat(snapshot.externalBlockers()).isEmpty();
+    }
+
+    @Test
+    void getGraph_blockerInDifferentEpic_appearsInExternalBlockersNotDependencies() {
+        EpicResponse epicA = makeEpic("https://github.com/test/graph-external-a.git");
+        StoryResponse storyA = makeStory(epicA.id(), "Story A");
+        TaskResponse blockedInA = makeTask(storyA.id(), "Blocked in A");
+
+        EpicResponse epicB = makeEpic("https://github.com/test/graph-external-b.git");
+        StoryResponse storyB = makeStory(epicB.id(), "Story B");
+        TaskResponse blockingInB = makeTask(storyB.id(), "Blocking in B");
+
+        dependencyService.create(new CreateDependencyRequest("task", blockingInB.id(), "task", blockedInA.id()));
+
+        RoadmapGraphSnapshot snapshot = graphService.getGraph(epicA.id());
+
+        assertThat(snapshot.dependencies()).isEmpty();
+        assertThat(snapshot.externalBlockers()).hasSize(1);
+        var blocker = snapshot.externalBlockers().get(0);
+        assertThat(blocker.itemType()).isEqualTo("task");
+        assertThat(blocker.itemId()).isEqualTo(blockingInB.id());
+        assertThat(blocker.title()).isEqualTo("Blocking in B");
+        assertThat(blocker.epicId()).isEqualTo(epicB.id());
+        assertThat(blocker.epicTitle()).isEqualTo(epicB.title());
+    }
+
+    @Test
+    void getGraph_blockedInDifferentEpic_appearsInExternalBlockersNotDependencies() {
+        // Mirror of getGraph_blockerInDifferentEpic_... above but with the inside/outside roles
+        // swapped: an item INSIDE the requested Epic is the *blocking* side, and the *blocked*
+        // side lives in a different Epic. Exercises the `blockingInside && !blockedInside` branch
+        // in getGraph, which the other external-blocker test above doesn't reach.
+        EpicResponse epicA = makeEpic("https://github.com/test/graph-external-blocked-a.git");
+        StoryResponse storyA = makeStory(epicA.id(), "Story A");
+        TaskResponse blockingInA = makeTask(storyA.id(), "Blocking in A");
+
+        EpicResponse epicB = makeEpic("https://github.com/test/graph-external-blocked-b.git");
+        StoryResponse storyB = makeStory(epicB.id(), "Story B");
+        TaskResponse blockedInB = makeTask(storyB.id(), "Blocked in B");
+
+        dependencyService.create(new CreateDependencyRequest("task", blockingInA.id(), "task", blockedInB.id()));
+
+        RoadmapGraphSnapshot snapshot = graphService.getGraph(epicA.id());
+
+        assertThat(snapshot.dependencies()).isEmpty();
+        assertThat(snapshot.externalBlockers()).hasSize(1);
+        var blocker = snapshot.externalBlockers().get(0);
+        assertThat(blocker.itemType()).isEqualTo("task");
+        assertThat(blocker.itemId()).isEqualTo(blockedInB.id());
+        assertThat(blocker.title()).isEqualTo("Blocked in B");
+        assertThat(blocker.epicId()).isEqualTo(epicB.id());
+        assertThat(blocker.epicTitle()).isEqualTo(epicB.title());
+    }
+
+    @Test
+    void getGraph_externalBlockerIsStory_resolvesStoryTitleAndOwningEpic() {
+        // The only prior external-blocker coverage used Task items; this exercises
+        // toExternalBlockerRef's `type == BlockableItemType.story` branch, which resolves the
+        // Story's own Epic directly rather than via an intermediate Story lookup.
+        EpicResponse epicA = makeEpic("https://github.com/test/graph-external-story-a.git");
+        StoryResponse storyA = makeStory(epicA.id(), "Story A");
+        TaskResponse blockedInA = makeTask(storyA.id(), "Blocked in A");
+
+        EpicResponse epicB = makeEpic("https://github.com/test/graph-external-story-b.git");
+        StoryResponse blockingStoryB = makeStory(epicB.id(), "Blocking Story B");
+
+        dependencyService.create(new CreateDependencyRequest("story", blockingStoryB.id(), "task", blockedInA.id()));
+
+        RoadmapGraphSnapshot snapshot = graphService.getGraph(epicA.id());
+
+        assertThat(snapshot.externalBlockers()).hasSize(1);
+        var blocker = snapshot.externalBlockers().get(0);
+        assertThat(blocker.itemType()).isEqualTo("story");
+        assertThat(blocker.itemId()).isEqualTo(blockingStoryB.id());
+        assertThat(blocker.title()).isEqualTo("Blocking Story B");
+        assertThat(blocker.epicId()).isEqualTo(epicB.id());
+        assertThat(blocker.epicTitle()).isEqualTo(epicB.title());
+    }
+
+    @Test
+    void getGraph_externalBlocker_checksOrgAccessForResolvedItem() {
+        // The mocked AuthorizationService is a no-op by default (see WorkItemDependencyServiceTest
+        // for the same pattern) so the happy-path tests above pass whether or not
+        // toExternalBlockerRef's checkOrgAccess call exists at all. This test proves the call is
+        // actually wired up — deleting it would still pass every other test in this class but
+        // fail this `verify`.
+        EpicResponse epicA = makeEpic("https://github.com/test/graph-external-authcheck-a.git");
+        StoryResponse storyA = makeStory(epicA.id(), "Story A");
+        TaskResponse blockedInA = makeTask(storyA.id(), "Blocked in A");
+
+        EpicResponse epicB = makeEpic("https://github.com/test/graph-external-authcheck-b.git");
+        StoryResponse storyB = makeStory(epicB.id(), "Story B");
+        TaskResponse blockingInB = makeTask(storyB.id(), "Blocking in B");
+
+        dependencyService.create(new CreateDependencyRequest("task", blockingInB.id(), "task", blockedInA.id()));
+        // create() itself calls checkOrgAccess on both endpoints — clear that invocation so the
+        // verify below isolates the call toExternalBlockerRef makes during getGraph.
+        clearInvocations(authService);
+
+        graphService.getGraph(epicA.id());
+
+        verify(authService).checkOrgAccess("task", blockingInB.id());
+    }
+
+    @Test
+    void getGraph_externalBlockerFailsOrgCheck_propagatesForbidden() {
+        // Simulates a future path (bulk import, admin ownership-transfer, direct repository
+        // writes — see toExternalBlockerRef's comment) that could insert a dependency edge whose
+        // external endpoint is genuinely out of the caller's org. Proves the checkOrgAccess call
+        // added in toExternalBlockerRef actually fails closed instead of only ever being a no-op.
+        EpicResponse epicA = makeEpic("https://github.com/test/graph-external-forbidden-a.git");
+        StoryResponse storyA = makeStory(epicA.id(), "Story A");
+        TaskResponse blockedInA = makeTask(storyA.id(), "Blocked in A");
+
+        EpicResponse epicB = makeEpic("https://github.com/test/graph-external-forbidden-b.git");
+        StoryResponse storyB = makeStory(epicB.id(), "Story B");
+        TaskResponse blockingInB = makeTask(storyB.id(), "Blocking in B");
+
+        dependencyService.create(new CreateDependencyRequest("task", blockingInB.id(), "task", blockedInA.id()));
+
+        doThrow(new ForbiddenException("org mismatch"))
+                .when(authService)
+                .checkOrgAccess(eq("task"), eq(blockingInB.id()));
+
+        assertThatThrownBy(() -> graphService.getGraph(epicA.id())).isInstanceOf(ForbiddenException.class);
+    }
+
+    @Test
+    void getGraph_unknownEpic_throwsNotFound() {
+        UUID unknown = UUID.randomUUID();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> graphService.getGraph(unknown))
+                .isInstanceOf(com.choruskube.core.exception.NotFoundException.class);
+    }
+
+    private EpicResponse makeEpic(String url) {
+        GitRepo r = new GitRepo();
+        r.setUrl(url);
+        r.setName(RepoNameUtil.deriveOwnerRepoName(url));
+        r = gitRepoRepo.save(r);
+        return epicService.create(new EpicRequest("Epic", "Epic desc", null, r.getId()), null);
+    }
+
+    private StoryResponse makeStory(UUID epicId, String title) {
+        return storyService.create(epicId, new StoryRequest(title, "Desc for " + title));
+    }
+
+    private TaskResponse makeTask(UUID storyId, String title) {
+        return taskService.create(storyId, new TaskRequest(title, "Desc for " + title));
+    }
+}

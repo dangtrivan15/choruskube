@@ -105,6 +105,33 @@ export interface RepoGroupSummary {
   members: { gitRepoId: string; name: string; position: number }[];
 }
 
+// Roadmap Graph View (Part 2) — mirrors the backend DTOs 1:1; see
+// src/lib/types.ts for the production-code equivalents.
+export interface DependencyEdge {
+  id: string;
+  blockingItemType: string;
+  blockingItemId: string;
+  blockedItemType: string;
+  blockedItemId: string;
+  createdAt: string;
+}
+
+export interface ExternalBlocker {
+  itemType: string;
+  itemId: string;
+  title: string;
+  epicId: string;
+  epicTitle: string;
+}
+
+export interface RoadmapGraphSnapshot {
+  epic: Epic;
+  stories: Story[];
+  tasks: Task[];
+  dependencies: DependencyEdge[];
+  externalBlockers: ExternalBlocker[];
+}
+
 export class TestApiClient {
   private readonly baseUrl: string;
   private readonly authUrl: string;
@@ -326,6 +353,25 @@ export class TestApiClient {
 
   async startTask(id: string): Promise<Task> {
     return this.post(`/api/v1/tasks/${id}/start`);
+  }
+
+  // ── Roadmap Graph View (Part 2) ────────────────────────────────────
+
+  async getGraph(epicId: string): Promise<RoadmapGraphSnapshot> {
+    return this.get(`/api/v1/epics/${epicId}/graph`);
+  }
+
+  async createDependency(body: {
+    blockingItemType: string;
+    blockingItemId: string;
+    blockedItemType: string;
+    blockedItemId: string;
+  }): Promise<DependencyEdge> {
+    return this.post("/api/v1/dependencies", body);
+  }
+
+  async deleteDependency(id: string): Promise<void> {
+    return this.delete(`/api/v1/dependencies/${id}`);
   }
 
   // ── Repo Groups ──────────────────────────────────────────────────

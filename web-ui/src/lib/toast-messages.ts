@@ -129,6 +129,25 @@ function mapRoadmapItemEvent(event: RoadmapItemEvent): ToastConfig | null {
     }
   }
 
+  if (event.itemType === "dependency_changed") {
+    switch (event.status) {
+      case "created":
+        return {
+          message: "Blocking dependency added",
+          variant: "info",
+          actionUrl: "/roadmap",
+        };
+      case "deleted":
+        return {
+          message: "Blocking dependency removed",
+          variant: "info",
+          actionUrl: "/roadmap",
+        };
+      default:
+        return null;
+    }
+  }
+
   // epic_changed / story_changed / task_changed
   switch (event.status) {
     case "backlog":

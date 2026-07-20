@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+import com.choruskube.core.dto.DependencyEdgeResponse;
 import com.choruskube.core.dto.RoadmapItemEvent;
 import com.choruskube.core.dto.RunEvent;
 import com.choruskube.core.event.OrgScopedFeedPublisher;
@@ -94,6 +95,34 @@ class RunEventPublisherTest {
         publisher.publishRoadmapItemChanged("story", TASK_ID, "backlog");
 
         verify(feedPublisher).roadmapItemChanged(eq("story"), eq(TASK_ID), any(RoadmapItemEvent.class));
+    }
+
+    @Test
+    void publishDependencyChanged_keyedByBlockedItemType() {
+        UUID edgeId = UUID.randomUUID();
+        UUID blockingTaskId = UUID.randomUUID();
+        UUID blockedTaskId = TASK_ID;
+        DependencyEdgeResponse edge =
+                new DependencyEdgeResponse(edgeId, "task", blockingTaskId, "task", blockedTaskId, null);
+
+        publisher.publishDependencyChanged(edge, "created");
+
+        // Scoping/routing key must be the BLOCKED item's own type/id, never a "dependency" type.
+        verify(feedPublisher).roadmapItemChanged(eq("task"), eq(blockedTaskId), any(RoadmapItemEvent.class));
+    }
+
+    @Test
+    void publishDependencyChanged_keyedByBlockedItemType_story() {
+        UUID edgeId = UUID.randomUUID();
+        UUID blockingTaskId = UUID.randomUUID();
+        UUID blockedStoryId = UUID.randomUUID();
+        DependencyEdgeResponse edge =
+                new DependencyEdgeResponse(edgeId, "task", blockingTaskId, "story", blockedStoryId, null);
+
+        publisher.publishDependencyChanged(edge, "deleted");
+
+        verify(feedPublisher).roadmapItemChanged(eq("story"), eq(blockedStoryId), any(RoadmapItemEvent.class));
+        verify(feedPublisher, never()).roadmapItemChanged(eq("dependency"), any(), any());
     }
 
     @Test

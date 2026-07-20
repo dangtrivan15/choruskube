@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.choruskube.core.BaseTest;
+import com.choruskube.core.dto.CreateDependencyRequest;
+import com.choruskube.core.dto.DependencyEdgeResponse;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
 import com.choruskube.core.dto.StoryRequest;
@@ -17,6 +19,7 @@ import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.GitRepoRepository;
+import com.choruskube.core.repository.WorkItemDependencyRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.util.RepoNameUtil;
 import io.temporal.client.WorkflowClient;
@@ -51,6 +54,12 @@ public class DefaultTaskServiceTest extends BaseTest {
 
     @Autowired
     private WorkflowRunRepository runRepo;
+
+    @Autowired
+    private WorkItemDependencyService dependencyService;
+
+    @Autowired
+    private WorkItemDependencyRepository dependencyRepo;
 
     @MockitoBean
     private WorkflowServiceStubs workflowServiceStubs;
@@ -124,6 +133,20 @@ public class DefaultTaskServiceTest extends BaseTest {
 
         assertThatThrownBy(() -> service.update(task.id(), new TaskRequest("New", "D")))
                 .isInstanceOf(ConflictException.class);
+    }
+
+    @Test
+    void delete_withDependencyEdge_alsoRemovesDependency() {
+        GitRepo r = makeRepo("https://github.com/test/task-delete-dep.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
+        TaskResponse other = service.create(story.id(), new TaskRequest("Other", "D"));
+        DependencyEdgeResponse edge =
+                dependencyService.create(new CreateDependencyRequest("task", other.id(), "task", task.id()));
+
+        service.delete(task.id());
+
+        assertThat(dependencyRepo.findById(edge.id())).isEmpty();
     }
 
     @Test

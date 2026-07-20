@@ -19,6 +19,7 @@ import com.choruskube.core.model.SoftwareProject;
 import com.choruskube.core.model.Story;
 import com.choruskube.core.model.Task;
 import com.choruskube.core.model.WorkflowRun;
+import com.choruskube.core.model.enums.BlockableItemType;
 import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.observability.AuditDetail;
@@ -64,6 +65,7 @@ public class DefaultTaskService implements TaskService {
     private final AuditSink auditSink;
     private final ObjectMapper objectMapper;
     private final ApplicationEventPublisher applicationEventPublisher;
+    private final WorkItemDependencyService workItemDependencyService;
 
     public DefaultTaskService(
             TaskRepository repo,
@@ -77,7 +79,8 @@ public class DefaultTaskService implements TaskService {
             RunEventPublisher eventPublisher,
             AuditSink auditSink,
             ObjectMapper objectMapper,
-            ApplicationEventPublisher applicationEventPublisher) {
+            ApplicationEventPublisher applicationEventPublisher,
+            WorkItemDependencyService workItemDependencyService) {
         this.repo = repo;
         this.storyRepo = storyRepo;
         this.epicRepo = epicRepo;
@@ -90,6 +93,7 @@ public class DefaultTaskService implements TaskService {
         this.auditSink = auditSink;
         this.objectMapper = objectMapper;
         this.applicationEventPublisher = applicationEventPublisher;
+        this.workItemDependencyService = workItemDependencyService;
     }
 
     @Override
@@ -181,6 +185,9 @@ public class DefaultTaskService implements TaskService {
             throw new ConflictException("Can only delete tasks in backlog status");
         }
         auditSink.record(AuditSink.TASK_DELETED, "task", id, detailJson(snapshot(task), null));
+        // work_item_dependency has no DB-level FK/ON DELETE CASCADE on this Task's id (it's a
+        // polymorphic Story-or-Task reference), so any edge referencing it must be cleaned up here.
+        workItemDependencyService.deleteAllReferencing(BlockableItemType.task, id);
         repo.delete(task);
         eventPublisher.publishRoadmapItemChanged("task", id, "deleted");
     }

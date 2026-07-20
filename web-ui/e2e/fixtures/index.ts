@@ -12,6 +12,7 @@ import { RunListPage } from "../pages/run-list.page";
 import { RunMonitorPage } from "../pages/run-monitor.page";
 import { RoadmapPage } from "../pages/roadmap.page";
 import { RoadmapBoardPage } from "../pages/roadmap-board.page";
+import { RoadmapGraphPage } from "../pages/roadmap-graph.page";
 import { ApprovalsPage } from "../pages/approvals.page";
 import { DocsPage } from "../pages/docs.page";
 
@@ -22,6 +23,7 @@ export interface TestFixtures {
   runMonitorPage: RunMonitorPage;
   roadmapPage: RoadmapPage;
   roadmapBoardPage: RoadmapBoardPage;
+  roadmapGraphPage: RoadmapGraphPage;
   approvalsPage: ApprovalsPage;
   docsPage: DocsPage;
 }
@@ -50,6 +52,10 @@ export const test = base.extend<TestFixtures>({
 
   roadmapBoardPage: async ({ page }, use) => {
     await use(new RoadmapBoardPage(page));
+  },
+
+  roadmapGraphPage: async ({ page }, use) => {
+    await use(new RoadmapGraphPage(page));
   },
 
   approvalsPage: async ({ page }, use) => {

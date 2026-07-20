@@ -15,6 +15,7 @@ import com.choruskube.core.model.RepoGroup;
 import com.choruskube.core.model.SoftwareProject;
 import com.choruskube.core.model.Story;
 import com.choruskube.core.model.Task;
+import com.choruskube.core.model.enums.BlockableItemType;
 import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.observability.AuditDetail;
 import com.choruskube.core.observability.AuditSink;
@@ -53,6 +54,7 @@ public class DefaultEpicService implements EpicService {
     private final ObjectMapper objectMapper;
     private final ApplicationEventPublisher applicationEventPublisher;
     private final ScopeProvider scopeProvider;
+    private final WorkItemDependencyService workItemDependencyService;
 
     public DefaultEpicService(
             EpicRepository repo,
@@ -64,7 +66,8 @@ public class DefaultEpicService implements EpicService {
             AuditSink auditSink,
             ObjectMapper objectMapper,
             ApplicationEventPublisher applicationEventPublisher,
-            ScopeProvider scopeProvider) {
+            ScopeProvider scopeProvider,
+            WorkItemDependencyService workItemDependencyService) {
         this.repo = repo;
         this.storyRepo = storyRepo;
         this.taskRepo = taskRepo;
@@ -75,6 +78,7 @@ public class DefaultEpicService implements EpicService {
         this.objectMapper = objectMapper;
         this.applicationEventPublisher = applicationEventPublisher;
         this.scopeProvider = scopeProvider;
+        this.workItemDependencyService = workItemDependencyService;
     }
 
     @Override
@@ -172,6 +176,23 @@ public class DefaultEpicService implements EpicService {
             throw new ConflictException("Can only delete an Epic while all of its Tasks are still in backlog");
         }
         auditSink.record(AuditSink.EPIC_DELETED, "epic", id, detailJson(snapshot(epic), null));
+        // Story/Task rows cascade-delete at the DB level (ON DELETE CASCADE on their FK to
+        // Epic/Story respectively) when repo.delete(epic) below runs, but work_item_dependency has
+        // no DB-level FK/ON DELETE CASCADE on its polymorphic blocking/blocked item columns, so any
+        // edge referencing a descendant Story or Task must be cleaned up here first — otherwise it
+        // dangles, referencing a now-deleted item id, and breaks the Roadmap Graph endpoint for
+        // whichever other, unrelated Epic is on the other end of that edge. Mirrors the same cleanup
+        // DefaultStoryService#delete and DefaultTaskService#delete already do for their own deletes.
+        List<Story> stories = storyRepo.findByEpicIdOrderByCreatedAtDesc(id);
+        for (Story story : stories) {
+            workItemDependencyService.deleteAllReferencing(BlockableItemType.story, story.getId());
+        }
+        if (!stories.isEmpty()) {
+            Set<UUID> storyIds = stories.stream().map(Story::getId).collect(Collectors.toSet());
+            for (Task task : taskRepo.findByStoryIdIn(storyIds)) {
+                workItemDependencyService.deleteAllReferencing(BlockableItemType.task, task.getId());
+            }
+        }
         repo.delete(epic);
         eventPublisher.publishRoadmapItemChanged("epic", id, "deleted");
     }
