@@ -4,7 +4,7 @@ import { ArrowLeft, X } from "lucide-react";
 import { useRoadmapGraph } from "@/hooks/useRoadmapGraph";
 import { useRoadmapSubscription } from "@/hooks/useRoadmapSubscription";
 import { useMobileBreakpoint } from "@/hooks/useMobileBreakpoint";
-import RoadmapGraph from "@/components/roadmap/RoadmapGraph";
+import RoadmapGraph, { findDetailItem } from "@/components/roadmap/RoadmapGraph";
 import RoadmapGraphDetailPanel, {
   type RoadmapDetailItem,
   type BlockableItemRef,
@@ -30,11 +30,21 @@ function buildBlockableItems(snapshot: RoadmapGraphSnapshot): BlockableItemRef[]
 export default function RoadmapGraphPage() {
   const { epicId } = useParams<{ epicId: string }>();
   const { data: snapshot, isLoading } = useRoadmapGraph(epicId);
-  const [selected, setSelected] = useState<RoadmapDetailItem | null>(null);
+  // Store only the selected node's id, not the detail object itself: `snapshot` is refetched
+  // whenever useRoadmapSubscription invalidates the `["epics"]` query (any roadmap-items STOMP
+  // event), but a snapshotted RoadmapDetailItem object would keep rendering its title/status/etc.
+  // from the moment it was clicked. Re-resolving from the latest `snapshot` on every render keeps
+  // the open detail panel in sync with the same live data the graph nodes already reflect, and
+  // gracefully closes the panel if the selected item is ever removed from the fresh snapshot.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const isMobile = useMobileBreakpoint();
   useRoadmapSubscription();
 
   const blockableItems = useMemo(() => (snapshot ? buildBlockableItems(snapshot) : []), [snapshot]);
+  const selected = useMemo<RoadmapDetailItem | null>(
+    () => (selectedId && snapshot ? findDetailItem(selectedId, snapshot) : null),
+    [selectedId, snapshot],
+  );
 
   if (isLoading) {
     return (
@@ -67,14 +77,14 @@ export default function RoadmapGraphPage() {
 
       <div className="relative flex flex-1 overflow-hidden">
         <div className="flex-1">
-          <RoadmapGraph snapshot={snapshot} onNodeSelect={setSelected} />
+          <RoadmapGraph snapshot={snapshot} onNodeSelect={(detail) => setSelectedId(detail?.item.id ?? null)} />
         </div>
 
         {!isMobile && selected && (
           <div className="w-[360px] shrink-0 overflow-y-auto overflow-x-hidden border-l">
             <div className="flex justify-end px-2 py-1 border-b">
               <button
-                onClick={() => setSelected(null)}
+                onClick={() => setSelectedId(null)}
                 data-testid="roadmap-graph-detail-close"
                 className="p-1 text-muted-foreground hover:text-foreground transition-colors"
                 aria-label="Close detail panel"
@@ -99,7 +109,7 @@ export default function RoadmapGraphPage() {
           className="fixed inset-x-0 bottom-0 z-40 flex h-[85vh] flex-col rounded-t-xl border-t bg-background shadow-lg"
         >
           <div className="flex items-center justify-end border-b px-4 py-2">
-            <Button variant="ghost" size="icon-sm" onClick={() => setSelected(null)} aria-label="Close detail panel">
+            <Button variant="ghost" size="icon-sm" onClick={() => setSelectedId(null)} aria-label="Close detail panel">
               <X className="h-4 w-4" />
             </Button>
           </div>

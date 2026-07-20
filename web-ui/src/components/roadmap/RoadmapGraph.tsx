@@ -93,7 +93,14 @@ function isVisible(node: InternalNode, byId: Map<string, InternalNode>, collapse
   return true;
 }
 
-function findDetailItem(nodeId: string, snapshot: RoadmapGraphSnapshot): RoadmapDetailItem | null {
+/**
+ * Resolves a graph node id to its detail-panel item from a given snapshot.
+ * Exported so callers (RoadmapGraphPage) can re-resolve the *currently
+ * selected* node against a freshly-refetched snapshot on every render,
+ * instead of holding on to the (possibly stale) object captured at click
+ * time — see RoadmapGraphPage's `selectedId` state for why that matters.
+ */
+export function findDetailItem(nodeId: string, snapshot: RoadmapGraphSnapshot): RoadmapDetailItem | null {
   if (nodeId === snapshot.epic.id) return { itemType: "epic", item: snapshot.epic };
   const story = snapshot.stories.find((s) => s.id === nodeId);
   if (story) return { itemType: "story", item: story };

@@ -1,6 +1,11 @@
 package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.verify;
 
 import com.choruskube.core.BaseTest;
 import com.choruskube.core.dto.CreateDependencyRequest;
@@ -11,6 +16,7 @@ import com.choruskube.core.dto.StoryRequest;
 import com.choruskube.core.dto.StoryResponse;
 import com.choruskube.core.dto.TaskRequest;
 import com.choruskube.core.dto.TaskResponse;
+import com.choruskube.core.exception.ForbiddenException;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.util.RepoNameUtil;
@@ -52,6 +58,9 @@ public class RoadmapGraphServiceTest extends BaseTest {
 
     @MockitoBean
     private RunEventPublisher runEventPublisher;
+
+    @MockitoBean
+    private AuthorizationService authService;
 
     @Test
     void getGraph_returnsAllStoriesAndTasksUnderEpic() {
@@ -167,6 +176,54 @@ public class RoadmapGraphServiceTest extends BaseTest {
         assertThat(blocker.title()).isEqualTo("Blocking Story B");
         assertThat(blocker.epicId()).isEqualTo(epicB.id());
         assertThat(blocker.epicTitle()).isEqualTo(epicB.title());
+    }
+
+    @Test
+    void getGraph_externalBlocker_checksOrgAccessForResolvedItem() {
+        // The mocked AuthorizationService is a no-op by default (see WorkItemDependencyServiceTest
+        // for the same pattern) so the happy-path tests above pass whether or not
+        // toExternalBlockerRef's checkOrgAccess call exists at all. This test proves the call is
+        // actually wired up — deleting it would still pass every other test in this class but
+        // fail this `verify`.
+        EpicResponse epicA = makeEpic("https://github.com/test/graph-external-authcheck-a.git");
+        StoryResponse storyA = makeStory(epicA.id(), "Story A");
+        TaskResponse blockedInA = makeTask(storyA.id(), "Blocked in A");
+
+        EpicResponse epicB = makeEpic("https://github.com/test/graph-external-authcheck-b.git");
+        StoryResponse storyB = makeStory(epicB.id(), "Story B");
+        TaskResponse blockingInB = makeTask(storyB.id(), "Blocking in B");
+
+        dependencyService.create(new CreateDependencyRequest("task", blockingInB.id(), "task", blockedInA.id()));
+        // create() itself calls checkOrgAccess on both endpoints — clear that invocation so the
+        // verify below isolates the call toExternalBlockerRef makes during getGraph.
+        clearInvocations(authService);
+
+        graphService.getGraph(epicA.id());
+
+        verify(authService).checkOrgAccess("task", blockingInB.id());
+    }
+
+    @Test
+    void getGraph_externalBlockerFailsOrgCheck_propagatesForbidden() {
+        // Simulates a future path (bulk import, admin ownership-transfer, direct repository
+        // writes — see toExternalBlockerRef's comment) that could insert a dependency edge whose
+        // external endpoint is genuinely out of the caller's org. Proves the checkOrgAccess call
+        // added in toExternalBlockerRef actually fails closed instead of only ever being a no-op.
+        EpicResponse epicA = makeEpic("https://github.com/test/graph-external-forbidden-a.git");
+        StoryResponse storyA = makeStory(epicA.id(), "Story A");
+        TaskResponse blockedInA = makeTask(storyA.id(), "Blocked in A");
+
+        EpicResponse epicB = makeEpic("https://github.com/test/graph-external-forbidden-b.git");
+        StoryResponse storyB = makeStory(epicB.id(), "Story B");
+        TaskResponse blockingInB = makeTask(storyB.id(), "Blocking in B");
+
+        dependencyService.create(new CreateDependencyRequest("task", blockingInB.id(), "task", blockedInA.id()));
+
+        doThrow(new ForbiddenException("org mismatch"))
+                .when(authService)
+                .checkOrgAccess(eq("task"), eq(blockingInB.id()));
+
+        assertThatThrownBy(() -> graphService.getGraph(epicA.id())).isInstanceOf(ForbiddenException.class);
     }
 
     @Test
