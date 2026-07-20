@@ -202,6 +202,24 @@ public class DefaultStoryServiceTest extends BaseTest {
     }
 
     @Test
+    void delete_withDescendantTaskDependencyEdge_alsoRemovesDependency() {
+        // The Task row itself is removed by the DB-level ON DELETE CASCADE (see
+        // delete_cascadesToTasks above), which bypasses DefaultTaskService#delete's own
+        // work_item_dependency cleanup entirely. Assert that Story delete cleans up dependency
+        // edges referencing its descendant Tasks too, not just edges on the Story's own id.
+        EpicResponse epic = makeEpic("https://github.com/test/story-delete-task-dep.git");
+        StoryResponse story = service.create(epic.id(), new StoryRequest("S", "D"));
+        var task = taskService.create(story.id(), new TaskRequest("T", "D"));
+        StoryResponse other = service.create(epic.id(), new StoryRequest("Other", "D"));
+        DependencyEdgeResponse edge =
+                dependencyService.create(new CreateDependencyRequest("story", other.id(), "task", task.id()));
+
+        service.delete(story.id());
+
+        assertThat(dependencyRepo.findById(edge.id())).isEmpty();
+    }
+
+    @Test
     void rollup_allTasksDone_statusIsDone() {
         EpicResponse epic = makeEpic("https://github.com/test/story-rollup-done.git");
         StoryResponse story = service.create(epic.id(), new StoryRequest("S", "D"));

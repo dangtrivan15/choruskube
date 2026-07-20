@@ -151,6 +151,13 @@ public class DefaultStoryService implements StoryService {
         // work_item_dependency has no DB-level FK/ON DELETE CASCADE on this Story's id (it's a
         // polymorphic Story-or-Task reference), so any edge referencing it must be cleaned up here.
         workItemDependencyService.deleteAllReferencing(BlockableItemType.story, id);
+        // The Task table's own FK to Story IS "ON DELETE CASCADE" at the DB level, so repo.delete(story)
+        // below removes descendant Tasks without going through DefaultTaskService#delete's own
+        // work_item_dependency cleanup. Clean up dependency edges for each descendant Task here too,
+        // otherwise they'd dangle referencing a Task id that no longer exists.
+        for (Task task : taskRepo.findByStoryIdOrderByCreatedAtDesc(id)) {
+            workItemDependencyService.deleteAllReferencing(BlockableItemType.task, task.getId());
+        }
         repo.delete(story);
         eventPublisher.publishRoadmapItemChanged("story", id, "deleted");
     }
