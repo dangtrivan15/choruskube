@@ -35,7 +35,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
     // and executor changes here never retroactively mutate prior versions. To ship a
     // change, edit the constants in this file (prompt, executor, schema), increment
     // CURRENT_VERSION, and the next boot creates the new snapshot.
-    static final int CURRENT_VERSION = 27;
+    static final int CURRENT_VERSION = 28;
 
     private static final String TEMPLATE_NAME = "Feature Development";
 
@@ -292,10 +292,10 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             to 1 whenever a human routes the workflow back to Spec Review (so
             you may see `iteration_in_epoch: 1` even when `iteration` is much
             higher — that means you have a fresh budget). The iteration cap
-            for Spec Review is **3**, measured against `iteration_in_epoch`.
+            for Spec Review is **5**, measured against `iteration_in_epoch`.
             The cap exists because spec iterations are expensive (cross-repo
             reasoning) and converging quickly matters. If you reach
-            iteration_in_epoch 3 with flaws still unresolved, escalate to a
+            iteration_in_epoch 5 with flaws still unresolved, escalate to a
             human via `need_human_decision:iteration_cap` rather than
             guessing.
 
@@ -378,7 +378,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
               `/workspace/out/spec_review.md` confirming approval.
 
             - **`revised`** — Flaws found AND fixable within the current
-              decomposition/architecture AND iteration_in_epoch < 3. Apply the
+              decomposition/architecture AND iteration_in_epoch < 5. Apply the
               fixes to `/workspace/out/spec_and_plan.md`. In
               `/workspace/out/spec_review.md` include a "Reasoning for fixes"
               section explaining WHY each fix was chosen. The orchestrator will
@@ -386,7 +386,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
               the next iteration.
 
             - **`need_human_decision:iteration_cap`** — Flaws found AND
-              iteration_in_epoch >= 3. Do not invent fixes you are not
+              iteration_in_epoch >= 5. Do not invent fixes you are not
               confident about. In `/workspace/out/spec_review.md` write a
               structured "Remaining unresolved flaws" section listing each
               flaw with what you tried and why it didn't resolve. Still write
@@ -877,12 +877,12 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
         NodeDefinition specReview = createNodeDef("Spec Review", ExecutorType.ai, SPEC_REVIEW_PROMPT, 1800);
         specReview.setOutputSpec(
                 "{\"files\":[{\"name\":\"spec_review.md\",\"required\":true,\"description\":\"AI reviewer assessment and recommendations\"}]}");
-        // At iteration 3, submitDecision() silently overrides any non-approved decision to
+        // At iteration 5, submitDecision() silently overrides any non-approved decision to
         // need_human_decision:iteration_cap, routing to the approve_spec_and_plan gate.
         // list-decisions always returns the full set; the cap fires transparently at submit time.
         // Without this the revised self-loop has no termination condition other than the AI
         // volunteering to stop.
-        specReview.setIterationCap(3);
+        specReview.setIterationCap(5);
         nodeDefRepo.save(specReview);
         defs.put("Spec Review", specReview);
 

@@ -133,7 +133,7 @@ class V1TemplateSeederTest extends BaseTest {
                 .filter(nd -> "Code Review".equals(nd.getName()))
                 .findFirst()
                 .orElseThrow();
-        assertThat(specReview.getIterationCap()).isEqualTo(3);
+        assertThat(specReview.getIterationCap()).isEqualTo(5);
         assertThat(codeReview.getIterationCap()).isEqualTo(5);
     }
 
@@ -716,8 +716,8 @@ class V1TemplateSeederTest extends BaseTest {
         // BaseFeatureDevSeeder's Iteration awareness sections.
         //
         // The resolved prompt strings are Java text blocks; SPEC_REVIEW_PROMPT's
-        // cap=3 escalation sentence wraps so the comparison operator falls on its
-        // own line ("...AND iteration_in_epoch" / ">= 3." on the next line). A
+        // cap=5 escalation sentence wraps so the comparison operator falls on its
+        // own line ("...AND iteration_in_epoch" / ">= 5." on the next line). A
         // literal substring match against the raw resolved string would miss (or
         // vacuously pass) that comparison, so whitespace is normalized to single
         // spaces before any assertion below.
@@ -742,16 +742,16 @@ class V1TemplateSeederTest extends BaseTest {
                 nodeDefRepo.findById(codeReviewNode.getNodeDefinitionId()).orElseThrow();
         String normalizedCodeReviewPrompt = codeReviewDef.getPromptTemplate().replaceAll("\\s+", " ");
 
-        // Spec Review: cap = 3, references iteration_in_epoch alongside the cap
+        // Spec Review: cap = 5, references iteration_in_epoch alongside the cap
         // threshold and the escalation decision.
         assertThat(normalizedSpecReviewPrompt)
                 .contains("iteration_in_epoch")
-                .contains("iteration_in_epoch < 3")
-                .contains("iteration_in_epoch >= 3")
+                .contains("iteration_in_epoch < 5")
+                .contains("iteration_in_epoch >= 5")
                 .contains("need_human_decision:iteration_cap");
         // Raw-iteration comparison forms must not appear anywhere in the
         // cap-related text — this is what would have masked the original bug.
-        assertThat(normalizedSpecReviewPrompt).doesNotContain("iteration < 3").doesNotContain("iteration >= 3");
+        assertThat(normalizedSpecReviewPrompt).doesNotContain("iteration < 5").doesNotContain("iteration >= 5");
 
         // Code Review: cap = 5, same shape.
         assertThat(normalizedCodeReviewPrompt)
