@@ -3,6 +3,13 @@ import { Link } from "react-router";
 import { ExternalLink, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import MarkdownViewer from "@/components/ui/MarkdownViewer";
 import TaskRunHistoryList from "@/components/roadmap/TaskRunHistoryList";
 import { useTaskRuns } from "@/hooks/useTaskRuns";
@@ -13,6 +20,7 @@ import type {
   TaskResponse,
   ExternalBlockerRef,
   DependencyEdgeResponse,
+  BlockableItemType,
 } from "@/lib/types";
 import type { RoadmapItemType } from "./RoadmapGraphNode";
 
@@ -24,7 +32,7 @@ export type RoadmapDetailItem =
 /** A Story or Task in the current Epic, in the shape the "add blocker" picker needs. */
 export interface BlockableItemRef {
   id: string;
-  itemType: "story" | "task";
+  itemType: BlockableItemType;
   title: string;
 }
 
@@ -109,7 +117,7 @@ function BlockingDependenciesSection({
   dependencies,
   blockableItems,
 }: {
-  itemType: "story" | "task";
+  itemType: BlockableItemType;
   itemId: string;
   epicId: string;
   dependencies: DependencyEdgeResponse[];
@@ -120,7 +128,13 @@ function BlockingDependenciesSection({
   const [selectedBlockerId, setSelectedBlockerId] = useState("");
 
   const blockedByEdges = dependencies.filter((d) => d.blockedItemId === itemId);
-  const pickerOptions = blockableItems.filter((i) => i.id !== itemId);
+  const alreadyBlockedByIds = new Set(blockedByEdges.map((d) => d.blockingItemId));
+  // Exclude the node itself (can't block itself) and any item that's already a
+  // blocker — offering it again would just round-trip to the backend's
+  // "dependency edge already exists" 400 with no useful explanation in the UI.
+  const pickerOptions = blockableItems.filter(
+    (i) => i.id !== itemId && !alreadyBlockedByIds.has(i.id),
+  );
 
   function titleFor(id: string): string {
     return blockableItems.find((i) => i.id === id)?.title ?? id;
@@ -168,19 +182,26 @@ function BlockingDependenciesSection({
 
       {pickerOptions.length > 0 && (
         <div className="flex items-center gap-2">
-          <select
-            data-testid="roadmap-add-blocker-select"
+          <Select
             value={selectedBlockerId}
-            onChange={(e) => setSelectedBlockerId(e.target.value)}
-            className="h-8 rounded-md border bg-background px-2 text-sm"
+            onValueChange={(v) => setSelectedBlockerId(v ?? "")}
           >
-            <option value="">Select an item…</option>
-            {pickerOptions.map((opt) => (
-              <option key={opt.id} value={opt.id}>
-                {opt.title} ({opt.itemType})
-              </option>
-            ))}
-          </select>
+            <SelectTrigger
+              data-testid="roadmap-add-blocker-select"
+              aria-label="Add blocking dependency"
+              size="sm"
+              className="w-auto"
+            >
+              <SelectValue placeholder="Select an item…" />
+            </SelectTrigger>
+            <SelectContent>
+              {pickerOptions.map((opt) => (
+                <SelectItem key={opt.id} value={opt.id}>
+                  {opt.title} ({opt.itemType})
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Button
             type="button"
             size="sm"

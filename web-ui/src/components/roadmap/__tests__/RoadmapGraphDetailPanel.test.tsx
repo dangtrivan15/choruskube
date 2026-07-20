@@ -211,7 +211,8 @@ describe("RoadmapGraphDetailPanel", () => {
     renderPanel({ detail: { itemType: "task", item: task } });
 
     const user = userEvent.setup();
-    await user.selectOptions(screen.getByTestId("roadmap-add-blocker-select"), story.id);
+    await user.click(screen.getByTestId("roadmap-add-blocker-select"));
+    await user.click(await screen.findByText("Dark theme toggle (story)"));
     await user.click(screen.getByTestId("roadmap-add-blocker-submit"));
 
     await waitFor(() =>
@@ -222,6 +223,30 @@ describe("RoadmapGraphDetailPanel", () => {
         blockedItemId: task.id,
       }),
     );
+  });
+
+  it("excludes an item already listed as a blocker from the add-blocker picker", async () => {
+    renderPanel({
+      detail: { itemType: "task", item: task },
+      dependencies: [
+        {
+          id: "dep-1",
+          blockingItemType: "task",
+          blockingItemId: otherTask.id,
+          blockedItemType: "task",
+          blockedItemId: task.id,
+          createdAt: "2026-04-01T00:00:00Z",
+        },
+      ],
+    });
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("roadmap-add-blocker-select"));
+
+    // otherTask is already a blocker of task-1, so it must not be offered again.
+    expect(screen.queryByText("Wire theme context (task)")).not.toBeInTheDocument();
+    // story-1 isn't blocking task-1 yet, so it's still a valid option.
+    expect(await screen.findByText("Dark theme toggle (story)")).toBeInTheDocument();
   });
 
   it("removes a blocking dependency via its remove button", async () => {

@@ -328,16 +328,20 @@ export interface TaskRequest {
 // --- Roadmap Graph View ---
 
 /**
+ * Matches the backend BlockableItemType enum — the only two work-item kinds
+ * that can participate in a blocking dependency edge (Epics can't).
+ */
+export type BlockableItemType = "story" | "task";
+
+/**
  * Matches the backend DependencyEdgeResponse record — a "blocking" dependency
  * edge with both endpoints inside the requested Epic's Story/Task tree.
- * `blockingItemType`/`blockedItemType` are `"story"` / `"task"` (lowercase,
- * matching CreateDependencyRequest's validated values).
  */
 export interface DependencyEdgeResponse {
   id: string;
-  blockingItemType: string;
+  blockingItemType: BlockableItemType;
   blockingItemId: string;
-  blockedItemType: string;
+  blockedItemType: BlockableItemType;
   blockedItemId: string;
   createdAt: string;
 }
@@ -350,7 +354,7 @@ export interface DependencyEdgeResponse {
  * Task in another Epic" without a follow-up lookup.
  */
 export interface ExternalBlockerRef {
-  itemType: string;
+  itemType: BlockableItemType;
   itemId: string;
   title: string;
   epicId: string;
@@ -372,9 +376,9 @@ export interface RoadmapGraphSnapshot {
 
 /** Matches the backend CreateDependencyRequest record — POST /api/v1/dependencies body. */
 export interface CreateDependencyRequest {
-  blockingItemType: string;
+  blockingItemType: BlockableItemType;
   blockingItemId: string;
-  blockedItemType: string;
+  blockedItemType: BlockableItemType;
   blockedItemId: string;
 }
 

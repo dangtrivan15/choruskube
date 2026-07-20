@@ -21,6 +21,7 @@ import com.choruskube.core.exception.BadRequestException;
 import com.choruskube.core.exception.ForbiddenException;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.GitRepo;
+import com.choruskube.core.model.enums.BlockableItemType;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.WorkItemDependencyRepository;
 import com.choruskube.core.util.RepoNameUtil;
@@ -140,6 +141,64 @@ public class WorkItemDependencyServiceTest extends BaseTest {
     @Test
     void delete_unknownId_throwsNotFound() {
         assertThatThrownBy(() -> service.delete(UUID.randomUUID())).isInstanceOf(NotFoundException.class);
+    }
+
+    @Test
+    void create_whenBlockingItemFailsOrgCheck_doesNotPersistOrPublish() {
+        TaskResponse blocking = makeTask("https://github.com/test/dep-create-org-check-blocking.git");
+        TaskResponse blocked = makeTask("https://github.com/test/dep-create-org-check-blocked.git");
+
+        // Simulate an org mismatch specifically on the blocking item's checkOrgAccess call — a
+        // regression that dropped this first call (e.g. reordering to check only the blocked item,
+        // or collapsing both into a single assertSameOrg(blocking, blocked) call) would let this
+        // pass since assertSameOrg never consults the mocked authService.checkOrgAccess at all.
+        doThrow(new ForbiddenException("org mismatch")).when(authService).checkOrgAccess(eq("task"), eq(blocking.id()));
+
+        assertThatThrownBy(
+                        () -> service.create(new CreateDependencyRequest("task", blocking.id(), "task", blocked.id())))
+                .isInstanceOf(ForbiddenException.class);
+
+        assertThat(dependencyRepo.findByBlockingItemTypeAndBlockingItemIdAndBlockedItemTypeAndBlockedItemId(
+                        BlockableItemType.task, blocking.id(), BlockableItemType.task, blocked.id()))
+                .isEmpty();
+        verify(runEventPublisher, never()).publishDependencyChanged(any(), eq("created"));
+    }
+
+    @Test
+    void create_whenBlockedItemFailsOrgCheck_doesNotPersistOrPublish() {
+        TaskResponse blocking = makeTask("https://github.com/test/dep-create-org-check-blocking-2.git");
+        TaskResponse blocked = makeTask("https://github.com/test/dep-create-org-check-blocked-2.git");
+
+        // Mirror of the above, but for the second checkOrgAccess call — proves create() doesn't
+        // short-circuit after the blocking item's check and skip the blocked item's.
+        doThrow(new ForbiddenException("org mismatch")).when(authService).checkOrgAccess(eq("task"), eq(blocked.id()));
+
+        assertThatThrownBy(
+                        () -> service.create(new CreateDependencyRequest("task", blocking.id(), "task", blocked.id())))
+                .isInstanceOf(ForbiddenException.class);
+
+        assertThat(dependencyRepo.findByBlockingItemTypeAndBlockingItemIdAndBlockedItemTypeAndBlockedItemId(
+                        BlockableItemType.task, blocking.id(), BlockableItemType.task, blocked.id()))
+                .isEmpty();
+        verify(runEventPublisher, never()).publishDependencyChanged(any(), eq("created"));
+    }
+
+    @Test
+    void delete_whenBlockingItemFailsOrgCheck_doesNotDeleteOrPublish() {
+        TaskResponse blocking = makeTask("https://github.com/test/dep-delete-org-check-blocking.git");
+        TaskResponse blocked = makeTask("https://github.com/test/dep-delete-org-check-blocked.git");
+        DependencyEdgeResponse edge =
+                service.create(new CreateDependencyRequest("task", blocking.id(), "task", blocked.id()));
+
+        // Mirror of delete_whenBlockedItemFailsOrgCheck_doesNotDeleteOrPublish, but for the
+        // blocking item's own check failing instead of the blocked item's — the existing test
+        // alone wouldn't catch a regression that dropped the blocking-item checkOrgAccess call.
+        doThrow(new ForbiddenException("org mismatch")).when(authService).checkOrgAccess(eq("task"), eq(blocking.id()));
+
+        assertThatThrownBy(() -> service.delete(edge.id())).isInstanceOf(ForbiddenException.class);
+
+        assertThat(dependencyRepo.findById(edge.id())).isPresent();
+        verify(runEventPublisher, never()).publishDependencyChanged(any(), eq("deleted"));
     }
 
     @Test
