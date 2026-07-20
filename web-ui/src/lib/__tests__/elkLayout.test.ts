@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { computeElkLayout, elkEdgeId } from "../elkLayout";
+import {
+  computeElkLayout,
+  elkEdgeId,
+  computeRoadmapTreeLayout,
+  buildRoadmapTopologyKey,
+  roadmapHierarchyEdgeId,
+  roadmapDependencyEdgeId,
+  type RoadmapTreeInput,
+} from "../elkLayout";
 import type { GraphSnapshot } from "../types";
 
 const linearSnapshot: GraphSnapshot = {
@@ -94,5 +102,91 @@ describe("computeElkLayout — labels", () => {
     const result = await computeElkLayout(cycleSnapshot);
     const ab = result.edges.get(elkEdgeId("a", "b", null));
     expect(ab?.label).toBeUndefined();
+  });
+});
+
+// --- Roadmap Graph View: tree layout ---------------------------------------
+
+const roadmapFixture: RoadmapTreeInput = {
+  nodes: [
+    { id: "epic-1", parentId: null },
+    { id: "story-1", parentId: "epic-1" },
+    { id: "story-2", parentId: "epic-1" },
+    { id: "task-1", parentId: "story-1" },
+    { id: "task-2", parentId: "story-1" },
+    { id: "task-3", parentId: "story-2" },
+  ],
+  dependencyEdges: [{ id: "dep-1", source: "task-1", target: "task-3" }],
+};
+
+describe("computeRoadmapTreeLayout", () => {
+  it("places every node and routes every hierarchy edge for a fixture tree", async () => {
+    const result = await computeRoadmapTreeLayout(roadmapFixture);
+
+    expect(result.nodes.size).toBe(6);
+    for (const node of roadmapFixture.nodes) {
+      expect(result.nodes.get(node.id)).toMatchObject({ x: expect.any(Number), y: expect.any(Number) });
+    }
+
+    expect(result.edges.get(roadmapHierarchyEdgeId("epic-1", "story-1"))).toBeDefined();
+    expect(result.edges.get(roadmapHierarchyEdgeId("epic-1", "story-2"))).toBeDefined();
+    expect(result.edges.get(roadmapHierarchyEdgeId("story-1", "task-1"))).toBeDefined();
+  });
+
+  it("routes a blocking dependency edge distinctly from hierarchy edges", async () => {
+    const result = await computeRoadmapTreeLayout(roadmapFixture);
+
+    const dependencyRoute = result.edges.get(roadmapDependencyEdgeId("dep-1"));
+    expect(dependencyRoute).toBeDefined();
+    expect(dependencyRoute!.points.length).toBeGreaterThanOrEqual(2);
+    // Distinct id namespace from hierarchy edges — never collides with `parent=>child`.
+    expect(roadmapDependencyEdgeId("dep-1")).not.toBe(roadmapHierarchyEdgeId("task-1", "task-3"));
+  });
+
+  it("produces stable output across repeated calls for the same fixture", async () => {
+    const first = await computeRoadmapTreeLayout(roadmapFixture);
+    const second = await computeRoadmapTreeLayout(roadmapFixture);
+
+    expect([...second.nodes.entries()]).toEqual([...first.nodes.entries()]);
+    expect([...second.edges.keys()].sort()).toEqual([...first.edges.keys()].sort());
+  });
+
+  it("omits a dependency edge whose endpoint has been filtered out (collapsed away)", async () => {
+    const withoutTask3: RoadmapTreeInput = {
+      nodes: roadmapFixture.nodes.filter((n) => n.id !== "task-3"),
+      dependencyEdges: roadmapFixture.dependencyEdges,
+    };
+    const result = await computeRoadmapTreeLayout(withoutTask3);
+    expect(result.edges.get(roadmapDependencyEdgeId("dep-1"))).toBeUndefined();
+  });
+});
+
+describe("buildRoadmapTopologyKey", () => {
+  it("is stable for the same topology and collapsed set regardless of set iteration order", () => {
+    const a = buildRoadmapTopologyKey(roadmapFixture, new Set(["story-1", "story-2"]));
+    const b = buildRoadmapTopologyKey(roadmapFixture, new Set(["story-2", "story-1"]));
+    expect(a).toBe(b);
+  });
+
+  it("does not change when only status-like data would change (topology + collapse set fixed)", () => {
+    const a = buildRoadmapTopologyKey(roadmapFixture, new Set());
+    const b = buildRoadmapTopologyKey(roadmapFixture, new Set());
+    expect(a).toBe(b);
+  });
+
+  it("changes when the collapsed-node set changes, with topology held fixed", () => {
+    const collapsed = buildRoadmapTopologyKey(roadmapFixture, new Set(["story-1"]));
+    const expanded = buildRoadmapTopologyKey(roadmapFixture, new Set());
+    expect(collapsed).not.toBe(expanded);
+  });
+
+  it("changes when the underlying topology changes, with collapse set held fixed", () => {
+    const withExtraTask: RoadmapTreeInput = {
+      nodes: [...roadmapFixture.nodes, { id: "task-4", parentId: "story-2" }],
+      dependencyEdges: roadmapFixture.dependencyEdges,
+    };
+    const before = buildRoadmapTopologyKey(roadmapFixture, new Set());
+    const after = buildRoadmapTopologyKey(withExtraTask, new Set());
+    expect(before).not.toBe(after);
   });
 });

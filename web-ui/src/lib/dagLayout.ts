@@ -12,7 +12,16 @@ const statusToToken: Record<string, string> = {
 let _cachedColors: Record<string, string> = {};
 let _cachedDarkFlag: boolean | null = null;
 
-function resolveStatusColors(): Record<string, string> {
+/**
+ * Resolve every known status CSS custom property (`--status-*`) to its
+ * currently computed value, cached per light/dark mode. Exported (beyond
+ * `getEdgeColor`'s own status-vocabulary lookup) so callers with a different
+ * status-like vocabulary — e.g. RoadmapDependencyEdge's fixed "blocking"
+ * color — can resolve a specific `--status-*` token themselves for an
+ * SVG marker `color`, which (unlike an inline `style` property) is set as a
+ * literal attribute by React Flow and does not reliably resolve `var(...)`.
+ */
+export function resolveStatusColors(): Record<string, string> {
   const isDark = document.documentElement.classList.contains("dark");
   if (_cachedDarkFlag === isDark && Object.keys(_cachedColors).length > 0) {
     return _cachedColors;

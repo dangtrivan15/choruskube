@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router";
 import { formatDistanceToNow } from "date-fns";
-import { Plus, GitBranch, Layers, LayoutGrid } from "lucide-react";
+import { Plus, GitBranch, Layers, LayoutGrid, Network } from "lucide-react";
 import Authorized from "@/components/Authorized";
 import { useEpics } from "@/hooks/useEpics";
 import { useRoadmapSubscription } from "@/hooks/useRoadmapSubscription";
@@ -82,13 +82,12 @@ export default function RoadmapPage() {
           const sp = epic.softwareProject;
           const Icon = sp.type === "repo_group" ? Layers : GitBranch;
           return (
-            <Link
+            <div
               key={epic.id}
-              to={`/roadmap/epics/${epic.id}`}
               data-testid="epic-item"
               className="flex items-center justify-between gap-4 p-3 border-b transition-colors hover:bg-muted/50"
             >
-              <div className="min-w-0 flex-1">
+              <Link to={`/roadmap/epics/${epic.id}`} className="min-w-0 flex-1">
                 <TruncatedText as="div" className="font-medium text-sm">
                   {epic.title}
                 </TruncatedText>
@@ -108,8 +107,17 @@ export default function RoadmapPage() {
                     {formatDistanceToNow(new Date(epic.createdAt), { addSuffix: true })}
                   </span>
                 </div>
-              </div>
-            </Link>
+              </Link>
+              <Link
+                to={`/roadmap/epics/${epic.id}/graph`}
+                data-testid="epic-graph-link"
+                aria-label={`View graph for ${epic.title}`}
+                className="inline-flex shrink-0 items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                <Network className="size-3.5" />
+                Graph
+              </Link>
+            </div>
           );
         })}
         {epics && epics.length === 0 && (

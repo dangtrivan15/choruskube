@@ -145,7 +145,62 @@ export async function computeElkLayout(
   };
 
   const laidOut = await elk.layout(elkGraph);
+  return extractLayoutResult(laidOut);
+}
 
+/**
+ * Stable identifier for an edge — must match what RunDag uses when keying.
+ */
+export function elkEdgeId(source: string, target: string, condition: string | null): string {
+  return condition ? `${source}->${target}:${condition}` : `${source}->${target}`;
+}
+
+// ---------------------------------------------------------------------------
+// Roadmap Graph View — tree layout (Epic root, Story/Task descendants, plus
+// distinct blocking-dependency edges).
+//
+// Reuses the same ELK options/ports/node size as the workflow-run DAG above
+// (computeElkLayout) so RoadmapGraphNode/RoadmapGraphEdge can share the same
+// visual grid, but the input shape is generic hierarchy + dependency edges
+// rather than a run's template-node snapshot.
+// ---------------------------------------------------------------------------
+
+/** One node in the Epic/Story/Task tree. `parentId` is `null` only for the Epic root. */
+export interface RoadmapTreeNode {
+  id: string;
+  parentId: string | null;
+}
+
+/** One "blocking" dependency edge, in the shape the layout needs (id + endpoints). */
+export interface RoadmapDependencyEdgeInput {
+  id: string;
+  source: string;
+  target: string;
+}
+
+export interface RoadmapTreeInput {
+  nodes: RoadmapTreeNode[];
+  dependencyEdges: RoadmapDependencyEdgeInput[];
+}
+
+/** Stable id for a hierarchy (tree) edge — parent -> child. */
+export function roadmapHierarchyEdgeId(parentId: string, childId: string): string {
+  return `${parentId}=>${childId}`;
+}
+
+/**
+ * Stable id for a dependency (blocking) edge. Prefixed and keyed by the
+ * dependency row's own id (not its endpoints) since — unlike the tree, where
+ * a child has exactly one parent — two Tasks could in principle be linked by
+ * more than one dependency row over time, and the row id is what
+ * useDeleteDependency needs to target anyway.
+ */
+export function roadmapDependencyEdgeId(dependencyId: string): string {
+  return `dep:${dependencyId}`;
+}
+
+/** Extract {@link ElkLayoutResult} from a resolved ELK layout — shared by both entry points. */
+function extractLayoutResult(laidOut: ElkNode): ElkLayoutResult {
   const nodes = new Map<string, NodePosition>();
   for (const c of laidOut.children ?? []) {
     nodes.set(c.id, { x: c.x ?? 0, y: c.y ?? 0 });
@@ -180,8 +235,84 @@ export async function computeElkLayout(
 }
 
 /**
- * Stable identifier for an edge — must match what RunDag uses when keying.
+ * Compute a layered layout for an Epic's Story/Task tree plus its blocking
+ * dependency edges. `input.nodes` should already be filtered down to the
+ * currently-visible set (i.e. the caller has removed the descendants of any
+ * collapsed node) — this function lays out exactly what it's given.
+ *
+ * Hierarchy edges route top-to-bottom the same way computeElkLayout's fired
+ * run edges do (source-bottom -> target-top); dependency edges reuse the same
+ * ports so ELK can route both kinds of edges (including cross-branch
+ * dependency edges) without a bespoke port scheme.
  */
-export function elkEdgeId(source: string, target: string, condition: string | null): string {
-  return condition ? `${source}->${target}:${condition}` : `${source}->${target}`;
+export async function computeRoadmapTreeLayout(input: RoadmapTreeInput): Promise<ElkLayoutResult> {
+  const nodeIds = new Set(input.nodes.map((n) => n.id));
+  const elkGraph: ElkNode = {
+    id: "root",
+    layoutOptions: ELK_OPTIONS,
+    children: input.nodes.map((n): ElkNode => ({
+      id: n.id,
+      width: ELK_NODE_WIDTH,
+      height: ELK_NODE_HEIGHT,
+      layoutOptions: {
+        "elk.portConstraints": "FIXED_POS",
+      },
+      ports: buildPortsFor(n.id),
+    })),
+    edges: [
+      ...input.nodes
+        .filter((n): n is RoadmapTreeNode & { parentId: string } => n.parentId !== null)
+        .map((n): ElkExtendedEdge => ({
+          id: roadmapHierarchyEdgeId(n.parentId, n.id),
+          sources: [`${n.parentId}__source-bottom`],
+          targets: [`${n.id}__target-top`],
+        })),
+      // Dependency edges whose endpoints are both currently visible. An edge
+      // touching a collapsed-away node is simply omitted from this layout —
+      // RoadmapGraph re-derives the visible dependency set alongside the
+      // visible node set before calling this function.
+      ...input.dependencyEdges
+        .filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target))
+        .map((e): ElkExtendedEdge => ({
+          id: roadmapDependencyEdgeId(e.id),
+          sources: [`${e.source}__source-bottom`],
+          targets: [`${e.target}__target-top`],
+        })),
+    ],
+  };
+
+  const laidOut = await elk.layout(elkGraph);
+  return extractLayoutResult(laidOut);
+}
+
+/**
+ * Stable hash of the roadmap tree's topology PLUS the current collapsed-node
+ * set. Mirrors RunDag's `buildTopologyKey` (used as a `useEffect` dependency
+ * to re-run ELK only when the graph actually changed shape), but lives here
+ * rather than in the consuming component because — unlike a workflow run,
+ * whose DAG shape never changes after a status update — collapsing/expanding
+ * a Story branch changes which nodes/edges are *visible* without changing the
+ * underlying data, and that's a layout-affecting change this hash must catch.
+ *
+ * Deliberately hashes the full (uncollapsed) node/edge set plus the collapsed
+ * id set, not the post-filter visible subgraph: two different collapse
+ * states can still coincidentally hide the same visible subgraph shape (e.g.
+ * collapsing two different empty Stories), and re-deriving "visible topology"
+ * here would risk drifting from whatever filtering RoadmapGraph actually
+ * applies before calling computeRoadmapTreeLayout.
+ */
+export function buildRoadmapTopologyKey(
+  input: RoadmapTreeInput,
+  collapsedNodeIds: ReadonlySet<string>,
+): string {
+  const nodes = input.nodes
+    .map((n) => `${n.id}:${n.parentId ?? ""}`)
+    .sort()
+    .join("|");
+  const deps = input.dependencyEdges
+    .map((e) => `${e.id}:${e.source}->${e.target}`)
+    .sort()
+    .join("|");
+  const collapsed = [...collapsedNodeIds].sort().join(",");
+  return `${nodes}#${deps}#collapsed:${collapsed}`;
 }

@@ -1,0 +1,248 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { renderWithProviders } from "@/__tests__/test-utils";
+import RoadmapGraphDetailPanel, {
+  type RoadmapDetailItem,
+  type BlockableItemRef,
+} from "@/components/roadmap/RoadmapGraphDetailPanel";
+import type {
+  EpicResponse,
+  StoryResponse,
+  TaskResponse,
+  ExternalBlockerRef,
+  DependencyEdgeResponse,
+} from "@/lib/types";
+
+vi.mock("@/lib/api", () => ({
+  api: {
+    get: vi.fn(),
+    getPage: vi.fn().mockResolvedValue({ content: [], totalElements: 0, totalPages: 0, number: 0 }),
+    post: vi.fn(),
+    put: vi.fn(),
+    patch: vi.fn(),
+    delete: vi.fn(),
+  },
+}));
+
+import { api } from "@/lib/api";
+
+const mockApi = api as unknown as {
+  post: ReturnType<typeof vi.fn>;
+  delete: ReturnType<typeof vi.fn>;
+};
+
+const epic: EpicResponse = {
+  id: "epic-1",
+  title: "Add dark mode",
+  description: "Epic description",
+  motivation: null,
+  status: "in_progress",
+  stage: "in_progress",
+  progress: { totalTasks: 2, doneTasks: 1 },
+  softwareProject: { id: "r1", type: "git_repo", name: "backend-api" },
+  repos: [],
+  createdAt: "2026-04-01T00:00:00Z",
+  updatedAt: "2026-04-01T00:00:00Z",
+};
+
+const story: StoryResponse = {
+  id: "story-1",
+  epicId: "epic-1",
+  title: "Dark theme toggle",
+  description: "Story description",
+  status: "backlog",
+  progress: { totalTasks: 1, doneTasks: 0 },
+  createdAt: "2026-04-01T00:00:00Z",
+  updatedAt: "2026-04-01T00:00:00Z",
+};
+
+const task: TaskResponse = {
+  id: "task-1",
+  storyId: "story-1",
+  title: "Implement toggle component",
+  description: "Task description",
+  status: "done",
+  softwareProject: { id: "r1", type: "git_repo", name: "backend-api" },
+  repos: [],
+  latestRunId: "run-1",
+  latestRunStatus: "completed",
+  createdAt: "2026-04-01T00:00:00Z",
+  updatedAt: "2026-04-01T00:00:00Z",
+};
+
+const otherTask: TaskResponse = {
+  ...task,
+  id: "task-2",
+  title: "Wire theme context",
+};
+
+const externalBlocker: ExternalBlockerRef = {
+  itemType: "task",
+  itemId: "other-task-1",
+  title: "Migrate auth service",
+  epicId: "other-epic-1",
+  epicTitle: "Auth Overhaul",
+};
+
+const blockableItems: BlockableItemRef[] = [
+  { id: story.id, itemType: "story", title: story.title },
+  { id: task.id, itemType: "task", title: task.title },
+  { id: otherTask.id, itemType: "task", title: otherTask.title },
+];
+
+function renderPanel(props: {
+  detail: RoadmapDetailItem;
+  dependencies?: DependencyEdgeResponse[];
+  externalBlockers?: ExternalBlockerRef[];
+}) {
+  return renderWithProviders(
+    <RoadmapGraphDetailPanel
+      detail={props.detail}
+      epicId="epic-1"
+      dependencies={props.dependencies ?? []}
+      blockableItems={blockableItems}
+      externalBlockers={props.externalBlockers ?? []}
+    />,
+  );
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+describe("RoadmapGraphDetailPanel", () => {
+  it.each<[string, RoadmapDetailItem]>([
+    ["epic", { itemType: "epic", item: epic }],
+    ["story", { itemType: "story", item: story }],
+    ["task", { itemType: "task", item: task }],
+  ])("shows title, status, and description for a %s node", (_label, detail) => {
+    renderPanel({ detail });
+
+    expect(screen.getByTestId("roadmap-detail-title")).toHaveTextContent(detail.item.title);
+    expect(screen.getByTestId("roadmap-detail-status")).toHaveTextContent(
+      detail.item.status.replace("_", " "),
+    );
+    expect(screen.getByTestId("roadmap-detail-description")).toHaveTextContent(
+      detail.item.description,
+    );
+  });
+
+  it("renders the run-history component only for a Task node", async () => {
+    const { rerender } = renderPanel({ detail: { itemType: "epic", item: epic } });
+    expect(screen.queryByTestId("task-run-history-list")).not.toBeInTheDocument();
+
+    rerender(
+      <RoadmapGraphDetailPanel
+        detail={{ itemType: "story", item: story }}
+        epicId="epic-1"
+        dependencies={[]}
+        blockableItems={blockableItems}
+        externalBlockers={[]}
+      />,
+    );
+    expect(screen.queryByTestId("task-run-history-list")).not.toBeInTheDocument();
+
+    rerender(
+      <RoadmapGraphDetailPanel
+        detail={{ itemType: "task", item: task }}
+        epicId="epic-1"
+        dependencies={[]}
+        blockableItems={blockableItems}
+        externalBlockers={[]}
+      />,
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByText("No runs yet. Start the task to launch the first one."),
+      ).toBeInTheDocument(),
+    );
+  });
+
+  it("renders no external-blocker badges when externalBlockers is empty", () => {
+    renderPanel({ detail: { itemType: "task", item: task } });
+    expect(screen.queryByTestId("roadmap-external-blockers")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("roadmap-external-blocker-badge")).not.toBeInTheDocument();
+  });
+
+  it("renders an external-blocker badge per entry when externalBlockers is non-empty", () => {
+    renderPanel({ detail: { itemType: "task", item: task }, externalBlockers: [externalBlocker] });
+    expect(screen.getByTestId("roadmap-external-blockers")).toBeInTheDocument();
+    expect(screen.getByTestId("roadmap-external-blocker-badge")).toHaveTextContent(
+      "Migrate auth service",
+    );
+    expect(screen.getByTestId("roadmap-external-blocker-badge")).toHaveTextContent("Auth Overhaul");
+  });
+
+  it("does not render a 'Blocked by' section for an Epic node", () => {
+    renderPanel({ detail: { itemType: "epic", item: epic } });
+    expect(screen.queryByTestId("roadmap-blocking-dependencies")).not.toBeInTheDocument();
+  });
+
+  it("lists an existing blocking dependency for a Task node", () => {
+    renderPanel({
+      detail: { itemType: "task", item: task },
+      dependencies: [
+        {
+          id: "dep-1",
+          blockingItemType: "task",
+          blockingItemId: otherTask.id,
+          blockedItemType: "task",
+          blockedItemId: task.id,
+          createdAt: "2026-04-01T00:00:00Z",
+        },
+      ],
+    });
+
+    expect(screen.getByTestId("roadmap-blocking-dependency-badge")).toHaveTextContent(
+      "Wire theme context",
+    );
+  });
+
+  it("creates a new blocking dependency via the picker + Add blocker button", async () => {
+    mockApi.post.mockResolvedValue({
+      id: "dep-new",
+      blockingItemType: "story",
+      blockingItemId: story.id,
+      blockedItemType: "task",
+      blockedItemId: task.id,
+      createdAt: "2026-04-01T00:00:00Z",
+    });
+    renderPanel({ detail: { itemType: "task", item: task } });
+
+    const user = userEvent.setup();
+    await user.selectOptions(screen.getByTestId("roadmap-add-blocker-select"), story.id);
+    await user.click(screen.getByTestId("roadmap-add-blocker-submit"));
+
+    await waitFor(() =>
+      expect(mockApi.post).toHaveBeenCalledWith("/dependencies", {
+        blockingItemType: "story",
+        blockingItemId: story.id,
+        blockedItemType: "task",
+        blockedItemId: task.id,
+      }),
+    );
+  });
+
+  it("removes a blocking dependency via its remove button", async () => {
+    mockApi.delete.mockResolvedValue(undefined);
+    renderPanel({
+      detail: { itemType: "task", item: task },
+      dependencies: [
+        {
+          id: "dep-1",
+          blockingItemType: "task",
+          blockingItemId: otherTask.id,
+          blockedItemType: "task",
+          blockedItemId: task.id,
+          createdAt: "2026-04-01T00:00:00Z",
+        },
+      ],
+    });
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("roadmap-blocking-dependency-remove"));
+
+    await waitFor(() => expect(mockApi.delete).toHaveBeenCalledWith("/dependencies/dep-1"));
+  });
+});

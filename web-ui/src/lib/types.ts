@@ -325,19 +325,76 @@ export interface TaskRequest {
   description: string;
 }
 
+// --- Roadmap Graph View ---
+
+/**
+ * Matches the backend DependencyEdgeResponse record — a "blocking" dependency
+ * edge with both endpoints inside the requested Epic's Story/Task tree.
+ * `blockingItemType`/`blockedItemType` are `"story"` / `"task"` (lowercase,
+ * matching CreateDependencyRequest's validated values).
+ */
+export interface DependencyEdgeResponse {
+  id: string;
+  blockingItemType: string;
+  blockingItemId: string;
+  blockedItemType: string;
+  blockedItemId: string;
+  createdAt: string;
+}
+
+/**
+ * Matches the backend ExternalBlockerRef record — a reference to a Story/Task
+ * OUTSIDE the requested Epic that participates in a dependency edge touching
+ * this Epic's tree (e.g. a Task in another Epic that blocks one of this
+ * Epic's Tasks). Carries enough context for the UI to render "blocked by a
+ * Task in another Epic" without a follow-up lookup.
+ */
+export interface ExternalBlockerRef {
+  itemType: string;
+  itemId: string;
+  title: string;
+  epicId: string;
+  epicTitle: string;
+}
+
+/**
+ * Matches the backend RoadmapGraphSnapshot record — the full graph view of an
+ * Epic's Story/Task tree plus its "blocking" dependency edges. Backing
+ * GET /api/v1/epics/{epicId}/graph.
+ */
+export interface RoadmapGraphSnapshot {
+  epic: EpicResponse;
+  stories: StoryResponse[];
+  tasks: TaskResponse[];
+  dependencies: DependencyEdgeResponse[];
+  externalBlockers: ExternalBlockerRef[];
+}
+
+/** Matches the backend CreateDependencyRequest record — POST /api/v1/dependencies body. */
+export interface CreateDependencyRequest {
+  blockingItemType: string;
+  blockingItemId: string;
+  blockedItemType: string;
+  blockedItemId: string;
+}
+
 // --- WebSocket Events ---
 
 /**
  * Matches the backend RoadmapItemEvent record.
  * - `itemType` is `"epic_changed"` / `"story_changed"` / `"task_changed"` for a
- *   lifecycle change on that item, or `"run_status_changed"` for the bridge event
+ *   lifecycle change on that item, `"run_status_changed"` for the bridge event
  *   published when a Task's linked run reaches a terminal status (`itemId` is
- *   `null` in that case — see RunEventPublisher.publishRunStatusChanged).
+ *   `null` in that case — see RunEventPublisher.publishRunStatusChanged), or
+ *   `"dependency_changed"` for a blocking-dependency edge create/delete (Roadmap
+ *   Graph View) — in that case `itemId` is the `work_item_dependency` row's own
+ *   id, not either endpoint's id.
  * - `status` is the item's new `work_item_status` (`backlog`/`in_progress`/`done`),
- *   `"deleted"` on delete, or the run's terminal status for the bridge event.
+ *   `"deleted"` on delete, the run's terminal status for the bridge event, or
+ *   `"created"`/`"deleted"` for a dependency-changed event.
  */
 export interface RoadmapItemEvent {
-  itemType: "epic_changed" | "story_changed" | "task_changed" | "run_status_changed";
+  itemType: "epic_changed" | "story_changed" | "task_changed" | "run_status_changed" | "dependency_changed";
   itemId: string | null;
   status: string;
 }

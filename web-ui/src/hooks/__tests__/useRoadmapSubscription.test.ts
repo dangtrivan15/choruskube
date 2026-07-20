@@ -73,4 +73,28 @@ describe("useRoadmapSubscription", () => {
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["stories"] });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["tasks"] });
   });
+
+  it("regression: a dependency_changed message invalidates a graph query via the ['epics'] prefix", () => {
+    // The hook invalidates the literal ["epics"] key (not scoped to a specific
+    // epic/graph query). TanStack Query's default `exact: false` matching means
+    // that invalidation also matches any query whose key starts with "epics" —
+    // including ["epics", epicId, "graph"] — without the hook needing to know
+    // about the Roadmap Graph View's query key shape at all. This test seeds a
+    // real graph query in the cache and asserts it gets marked invalid when a
+    // dependency_changed event arrives, so a future refactor of this hook (e.g.
+    // switching to more targeted invalidation) can't silently break that.
+    const { wrapper, queryClient } = createTestHookWrapper();
+
+    const graphQueryKey = ["epics", "epic-1", "graph"];
+    queryClient.setQueryData(graphQueryKey, { epic: { id: "epic-1" } });
+
+    renderHook(() => useRoadmapSubscription(), { wrapper });
+
+    const subscribeCallback = mockSubscribe.mock.calls[0][1];
+    subscribeCallback({
+      body: JSON.stringify({ itemType: "dependency_changed", itemId: "dep-1", status: "created" }),
+    });
+
+    expect(queryClient.getQueryState(graphQueryKey)?.isInvalidated).toBe(true);
+  });
 });

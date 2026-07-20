@@ -98,8 +98,23 @@ describe("RoadmapPage", () => {
       isLoading: false,
     });
     renderWithProviders(<RoadmapPage />);
-    const link = screen.getByTestId("epic-item");
-    expect(link).toHaveAttribute("href", "/roadmap/epics/epic-42");
+    // epic-item is the row container (holding both the detail link and the
+    // graph link below) — the detail link is the anchor wrapping the title.
+    const detailLink = screen.getByText("Support OAuth").closest("a");
+    expect(detailLink).toHaveAttribute("href", "/roadmap/epics/epic-42");
+  });
+
+  it("links each epic item's graph action to its Roadmap Graph View route", () => {
+    const epic = makeEpic({ id: "epic-42", title: "Support OAuth" });
+    mockUseEpics.mockReturnValue({
+      data: { ...emptyPage, content: [epic], totalElements: 1, empty: false },
+      isLoading: false,
+    });
+    renderWithProviders(<RoadmapPage />);
+    expect(screen.getByTestId("epic-graph-link")).toHaveAttribute(
+      "href",
+      "/roadmap/epics/epic-42/graph",
+    );
   });
 
   it("opens the create epic dialog when New Epic is clicked", async () => {
