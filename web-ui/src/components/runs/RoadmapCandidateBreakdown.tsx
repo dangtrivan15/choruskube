@@ -6,9 +6,15 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import type { CandidateEpicProposal, CandidateStoryProposal, CandidateTaskProposal } from "@/lib/types";
 
-// Mirrors the server-side cap (max 8 Stories per Epic, max 8 Tasks per Story).
-// This is a soft UI limit only — the server is the source of truth and will
-// reject an over-cap submission regardless of what the client allows.
+// Mirrors the server-side cap (max 8 Epics per breakdown, max 8 Stories per
+// Epic, max 8 Tasks per Story). These are soft UI limits only — the server is
+// the source of truth and will reject an over-cap submission regardless of
+// what the client allows. Unlike Stories/Tasks (added one at a time via an
+// "Add" button that we can disable), Epics originate entirely from the
+// analyzer, so there's no "Add Epic" affordance to gate — instead we warn the
+// reviewer up front so an over-cap Approve doesn't fail with a generic error
+// and no indication of why.
+const MAX_EPICS = 8;
 const MAX_STORIES_PER_EPIC = 8;
 const MAX_TASKS_PER_STORY = 8;
 
@@ -75,8 +81,17 @@ export default function RoadmapCandidateBreakdown({ value, onChange }: RoadmapCa
   return (
     <div data-testid="roadmap-candidate-breakdown" className="space-y-3">
       <h4 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-        Proposed Roadmap Breakdown
+        Proposed Roadmap Breakdown ({value.length})
       </h4>
+      {value.length > MAX_EPICS && (
+        <p
+          data-testid="candidate-epic-cap-warning"
+          className="rounded-md border border-destructive/50 bg-destructive/10 p-2 text-xs text-destructive"
+        >
+          {value.length} Epics proposed, but only {MAX_EPICS} are allowed per breakdown. Remove{" "}
+          {value.length - MAX_EPICS} before approving, or the submission will be rejected.
+        </p>
+      )}
       {value.map((epic, epicIdx) => (
         <Card key={epicIdx} data-testid={`candidate-epic-${epicIdx}`}>
           <CardHeader className="flex-row items-start justify-between gap-2">

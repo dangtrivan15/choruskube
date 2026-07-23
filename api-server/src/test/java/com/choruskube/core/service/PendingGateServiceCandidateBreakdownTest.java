@@ -13,6 +13,7 @@ import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.NodeExecutionRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.validation.Validation;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -50,8 +51,11 @@ class PendingGateServiceCandidateBreakdownTest {
         artifactService = Mockito.mock(ArtifactService.class);
         objectMapper = new ObjectMapper();
 
-        RoadmapCandidatesArtifactResolver candidatesArtifactResolver =
-                new RoadmapCandidatesArtifactResolver(artifactResolutionService, artifactService, objectMapper);
+        RoadmapCandidatesArtifactResolver candidatesArtifactResolver = new RoadmapCandidatesArtifactResolver(
+                artifactResolutionService,
+                artifactService,
+                objectMapper,
+                Validation.buildDefaultValidatorFactory().getValidator());
 
         service = new PendingGateService(
                 execRepo,
@@ -139,6 +143,33 @@ class PendingGateServiceCandidateBreakdownTest {
         assertThat(result).hasSize(1);
         assertThat(result.get(0).candidateBreakdown()).isNull();
         // The rest of the gate response still succeeds despite the malformed artifact.
+        assertThat(result.get(0).nodeLabel()).isEqualTo("roadmap_human_gate");
+    }
+
+    @Test
+    void artifactFailsBeanValidation_degradesToNullWithoutThrowing() {
+        // A well-formed-JSON but invalid artifact (blank title) must be rejected the same way a
+        // reviewer-submitted edit would be by SignalRequest's own @Valid cascade — not silently
+        // accepted just because it skipped the controller-bound validation path.
+        List<ResolvedArtifactGroup> requiredArtifacts = List.of(new ResolvedArtifactGroup(
+                analyzerExecId,
+                "roadmap_analyzer",
+                List.of(new ResolvedArtifactEntry("roadmap_candidates.json", "Structured breakdown"))));
+        stubGate(gateSnapshot(), requiredArtifacts);
+
+        String json = """
+                [
+                  {"title":"","description":"desc","motivation":"why","stories":[]}
+                ]
+                """;
+        Mockito.when(artifactService.getArtifactContent(runId, analyzerExecId, "roadmap_candidates.json"))
+                .thenReturn(json);
+
+        List<PendingGateResponse> result = service.getPendingGates();
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).candidateBreakdown()).isNull();
+        // The rest of the gate response still succeeds despite the invalid artifact.
         assertThat(result.get(0).nodeLabel()).isEqualTo("roadmap_human_gate");
     }
 

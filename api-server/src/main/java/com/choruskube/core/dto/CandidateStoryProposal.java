@@ -13,6 +13,6 @@ import java.util.List;
  * the cascade reaches two levels deep from {@code SignalRequest.editedCandidates}.
  */
 public record CandidateStoryProposal(
-        @NotBlank String title,
+        @NotBlank @Size(max = 255) String title,
         String description,
         @Valid @Size(max = 8) List<CandidateTaskProposal> tasks) {}

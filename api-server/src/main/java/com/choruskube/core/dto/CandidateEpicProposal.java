@@ -23,7 +23,7 @@ import java.util.List;
  * is validated (its own {@code @Valid} only cascades one level, into each {@code CandidateEpicProposal}).
  */
 public record CandidateEpicProposal(
-        @NotBlank String title,
+        @NotBlank @Size(max = 255) String title,
         String description,
         String motivation,
         List<String> repos,
