@@ -211,6 +211,42 @@ class RunServiceRoadmapMaterializationTest {
     }
 
     @Test
+    void approvedDecisionWithCandidatesEditedToEmpty_materializesEmptyListInsteadOfFallingBackToArtifact() {
+        stubExec();
+        stubRun(MATERIALIZE_GATE_CONFIG);
+        // The reviewer explicitly cleared every candidate (an empty, non-null list) rather than
+        // submitting no edits at all — this must NOT fall back to the original analyzer artifact.
+        when(roadmapCandidateMaterializer.materialize(runId, List.of()))
+                .thenReturn(new MaterializationSummary(List.of(), List.of()));
+
+        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, List.of()));
+
+        verify(roadmapCandidateMaterializer).materialize(runId, List.of());
+        verifyNoInteractions(roadmapCandidatesArtifactResolver);
+    }
+
+    @Test
+    void approvedDecisionWithNoEditsAndUnresolvableArtifact_skipsMaterializationWithoutError() {
+        stubExec();
+        stubRun(MATERIALIZE_GATE_CONFIG);
+        // RoadmapCandidatesArtifactResolver degrades to null (never throws) when the candidate
+        // breakdown artifact is missing or malformed — the signal must still succeed, and the
+        // gap must be visible in the result rather than silently doing nothing.
+        when(roadmapCandidatesArtifactResolver.resolve(runId, templateNodeId)).thenReturn(null);
+
+        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, null));
+
+        verify(roadmapCandidatesArtifactResolver).resolve(runId, templateNodeId);
+        verifyNoInteractions(roadmapCandidateMaterializer);
+        // HumanDecisionPayload is a private record internal to RunService; assert against its
+        // auto-generated toString() rather than reaching into the type directly.
+        org.mockito.ArgumentCaptor<Object> payloadCaptor = org.mockito.ArgumentCaptor.forClass(Object.class);
+        verify(workflowStub).signal(eq("human-decision-" + nodeExecId), payloadCaptor.capture());
+        assertThat(payloadCaptor.getValue().toString())
+                .contains("Materialization skipped: no candidate breakdown was found for this run");
+    }
+
+    @Test
     void rejectedDecision_neverMaterializes() {
         stubExec();
         stubRun(MATERIALIZE_GATE_CONFIG);

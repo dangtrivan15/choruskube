@@ -121,6 +121,14 @@ export interface NodeExecutionResponse {
    */
   traversedEdgeIds: string[] | null;
   requiredArtifacts: ResolvedArtifactGroup[] | null;
+  /**
+   * The Roadmap Provisioner analyzer's structured Epic/Story/Task breakdown for this
+   * node, if any (mirrors `PendingGateResponse.candidateBreakdown` — only populated
+   * while the node is `awaiting_human`/`live_chat`). Lets the Run Detail page's gate
+   * surface (`HumanGatePanel` via `DetailPanel`) render the same editable breakdown
+   * the Approvals dashboard does.
+   */
+  candidateBreakdown: CandidateEpicProposal[] | null;
 }
 
 export interface ExecutionLogResponse {

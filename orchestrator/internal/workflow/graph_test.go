@@ -381,6 +381,35 @@ func TestEvaluateEdges_TerminalDecisionNoMatchStillErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "no matching edge for result: gibberish")
 }
 
+func TestEvaluateEdges_RealEdgeWinsOverTerminalDecisionForSameDecisionString(t *testing.T) {
+	// A decision string that appears in both a real outgoing edge condition and the
+	// node's terminal_decisions config must route via the edge — the terminal check
+	// only ever runs when nothing matched a real edge (see EvaluateEdges: `hasConditional
+	// && len(targets) == 0`). This locks that precedence in as intentional.
+	humanGate := makeNodeID()
+	approvedTarget := makeNodeID()
+
+	snap := &state.GraphRuntimeSnapshot{
+		Nodes: []state.SnapshotNode{
+			{
+				TemplateNodeID: humanGate,
+				Label:          "roadmap_human_gate",
+				ConfigOverrides: map[string]interface{}{
+					"terminal_decisions": []interface{}{"approved"},
+				},
+			},
+		},
+		Edges: []state.SnapshotEdge{
+			{SourceNodeID: humanGate, TargetNodeID: approvedTarget, Condition: strPtr("approved")},
+		},
+	}
+
+	targets, firedEdgeIDs, err := EvaluateEdges(snap, humanGate, "approved")
+	require.NoError(t, err)
+	assert.Equal(t, []uuid.UUID{approvedTarget}, targets)
+	assert.NotEmpty(t, firedEdgeIDs)
+}
+
 func TestEvaluateEdges_NoTerminalDecisionsKeyUnchanged(t *testing.T) {
 	humanGate := makeNodeID()
 	rejectedTarget := makeNodeID()

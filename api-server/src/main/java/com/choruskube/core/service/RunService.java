@@ -489,18 +489,27 @@ public class RunService {
         // directly into Epic/Story/Task rows — through the same write path a human uses — in the
         // same request that handles the decision signal, rather than via a second AI agent.
         if ("approved".equalsIgnoreCase(validatedDecision) && isMaterializeNode(snapshot, exec.getTemplateNodeId())) {
+            // A present-but-empty editedCandidates means the reviewer deliberately cleared the
+            // breakdown (e.g. rejecting every candidate while still approving the gate for some
+            // other reason) and must NOT fall back to the original analyzer artifact — only a
+            // genuinely absent field (no edits submitted at all) does that.
             List<CandidateEpicProposal> source = request.editedCandidates() != null
-                            && !request.editedCandidates().isEmpty()
                     ? request.editedCandidates()
                     : roadmapCandidatesArtifactResolver.resolve(runId, exec.getTemplateNodeId());
-            if (source != null && !source.isEmpty()) {
+            String materializeNote;
+            if (source != null) {
                 MaterializationSummary summary = roadmapCandidateMaterializer.materialize(runId, source);
-                String materializeNote = "Materialized " + summary.materializedCount() + " Epics ("
-                        + summary.skippedCount() + " skipped)";
-                assembledResult = (assembledResult != null && !assembledResult.isBlank())
-                        ? assembledResult + "\n\n" + materializeNote
-                        : materializeNote;
+                materializeNote = "Materialized " + summary.materializedCount() + " Epics (" + summary.skippedCount()
+                        + " skipped)";
+            } else {
+                // The artifact resolver degrades to null (never throws) when the candidate
+                // breakdown is missing or malformed — surface that instead of silently
+                // approving the gate with no materialization and no trace of why.
+                materializeNote = "Materialization skipped: no candidate breakdown was found for this run";
             }
+            assembledResult = (assembledResult != null && !assembledResult.isBlank())
+                    ? assembledResult + "\n\n" + materializeNote
+                    : materializeNote;
         }
 
         WorkflowStub stub = workflowClient.newUntypedWorkflowStub(run.getExternalRunId());
@@ -790,6 +799,13 @@ public class RunService {
                                     || e.getStatus() == NodeExecutionStatus.live_chat
                             ? artifactResolutionService.resolveRequiredArtifacts(e.getTemplateNodeId(), run.getId())
                             : null;
+                    // Mirrors PendingGateService's resolution of the same artifact, reusing the
+                    // requiredArtifacts already computed above — so the Run Detail page's gate
+                    // surface (HumanGatePanel via DetailPanel) can render the same editable
+                    // breakdown the Approvals dashboard does, instead of silently having none.
+                    List<CandidateEpicProposal> candidateBreakdown = requiredArtifacts != null
+                            ? roadmapCandidatesArtifactResolver.resolve(run.getId(), requiredArtifacts)
+                            : null;
                     return new NodeExecutionResponse(
                             e.getId(),
                             e.getTemplateNodeId(),
@@ -807,7 +823,8 @@ public class RunService {
                             e.getLoopGroup(),
                             e.getReviewerType() != null ? e.getReviewerType().name() : null,
                             edgeList,
-                            requiredArtifacts);
+                            requiredArtifacts,
+                            candidateBreakdown);
                 })
                 .toList();
         List<RunPullRequestResponse> pullRequests;

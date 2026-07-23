@@ -110,6 +110,7 @@ function makeRun(overrides: Partial<RunResponse> = {}): RunResponse {
         reviewerType: null,
         traversedEdgeIds: null,
         requiredArtifacts: null,
+      candidateBreakdown: null,
       },
     ],
     pullRequests: [],
@@ -168,6 +169,7 @@ describe("DetailPanel", () => {
           reviewerType: null,
           traversedEdgeIds: null,
           requiredArtifacts,
+          candidateBreakdown: null,
         },
       ],
     });
@@ -177,6 +179,51 @@ describe("DetailPanel", () => {
     // ArtifactList is rendered with the requiredArtifacts groups
     expect(screen.getByTestId("artifact-list-mock")).toBeInTheDocument();
     expect(screen.getByText("ArtifactList (1 groups)")).toBeInTheDocument();
+  });
+
+  it("passes candidateBreakdown to HumanGatePanel when non-null and status is awaiting_human", () => {
+    // Regression coverage: HumanGatePanel accepts a candidateBreakdown prop (the Roadmap
+    // Provisioner editable breakdown), but DetailPanel previously never forwarded it from
+    // the node execution — this asserts the wiring end-to-end via the real breakdown editor.
+    const candidateBreakdown = [
+      {
+        title: "Add dark mode",
+        description: "Support a dark theme across the app",
+        motivation: "Users have asked for this repeatedly",
+        repos: ["repo-a"],
+        priority: "High",
+        stories: [],
+      },
+    ];
+    const run = makeRun({
+      nodeExecutions: [
+        {
+          id: "exec-1",
+          templateNodeId: "node-1",
+          status: "awaiting_human",
+          result: null,
+          decision: null,
+          podName: null,
+          iteration: 1,
+          startedAt: null,
+          completedAt: null,
+          errorMessage: null,
+          graphVersion: 1,
+          artifactRefs: "{}",
+          label: null,
+          loopGroup: null,
+          reviewerType: null,
+          traversedEdgeIds: null,
+          requiredArtifacts: null,
+          candidateBreakdown,
+        },
+      ],
+    });
+
+    renderWithProviders(<DetailPanel run={run} nodeId="node-1" />);
+
+    expect(screen.getByTestId("roadmap-candidate-breakdown")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Add dark mode")).toBeInTheDocument();
   });
 
   it("falls back to graph-walk predecessors when requiredArtifacts is null", () => {
@@ -271,6 +318,7 @@ describe("DetailPanel", () => {
           reviewerType: null,
           traversedEdgeIds: null,
           requiredArtifacts: null,
+      candidateBreakdown: null,
         },
         {
           id: "exec-pred",
@@ -290,6 +338,7 @@ describe("DetailPanel", () => {
           reviewerType: null,
           traversedEdgeIds: null,
           requiredArtifacts: null,
+      candidateBreakdown: null,
         },
       ],
     });

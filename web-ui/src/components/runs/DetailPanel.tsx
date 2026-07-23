@@ -401,6 +401,7 @@ export default function DetailPanel({ run, nodeId, onBackToRunMeta }: DetailPane
                 : findPredecessorOutputs(run, nodeId)
             }
             requiredArtifacts={latestExec.requiredArtifacts ?? null}
+            candidateBreakdown={latestExec.candidateBreakdown ?? null}
             nodeResult={latestExec.result}
             triggerDecision={findTriggerDecision(run, nodeId)}
             decisionOptions={findDecisionOptions(run, nodeId)}
