@@ -64,6 +64,9 @@ class InternalRunServiceEpicTest {
     @Mock
     private StoryRepository storyRepo;
 
+    @Mock
+    private RoadmapGraphService roadmapGraphService;
+
     private final ObjectMapper objectMapper = new ObjectMapper();
     private InternalRunService service;
 
@@ -92,7 +95,8 @@ class InternalRunServiceEpicTest {
                 softwareProjectRepo,
                 null,
                 null,
-                storyRepo);
+                storyRepo,
+                roadmapGraphService);
     }
 
     @Test
@@ -242,8 +246,8 @@ class InternalRunServiceEpicTest {
         when(softwareProjectRepo.existsById(PROJECT_ID)).thenReturn(true);
 
         var req = new InternalCreateStoryRequest("Story title", "Story desc");
-        var expected =
-                new StoryResponse(UUID.randomUUID(), epicId, "Story title", "Story desc", "backlog", null, null, null);
+        var expected = new StoryResponse(
+                UUID.randomUUID(), epicId, "Story title", "Story desc", "backlog", null, null, null, null);
         when(storyService.create(eq(epicId), any(), eq(runId), eq(PROJECT_ID))).thenReturn(expected);
 
         StoryResponse result = service.createStory(runId, epicId, req);
@@ -292,6 +296,9 @@ class InternalRunServiceEpicTest {
                 List.of(),
                 null,
                 null,
+                null,
+                List.of(),
+                0L,
                 null,
                 null);
         when(taskService.create(eq(storyId), any(), eq(runId), eq(PROJECT_ID))).thenReturn(expected);
@@ -360,6 +367,91 @@ class InternalRunServiceEpicTest {
                 .hasMessageContaining(wrongEpicId.toString());
 
         verify(taskService, never()).create(any(), any(), any(), any());
+    }
+
+    // ── getGraph / updateTaskStatus: agent-facing Roadmap Graph View mirror ──────
+
+    @Test
+    void getGraph_delegatesToRoadmapGraphServiceWithRunIdAndResolvedSoftwareProjectId() {
+        UUID runId = UUID.randomUUID();
+        UUID epicId = UUID.randomUUID();
+        WorkflowRun run = createRun(
+                runId, TEMPLATE_ID, "{\"software_project_id\":\"" + PROJECT_ID + "\",\"feature_request\":\"x\"}");
+        when(runRepo.findById(runId)).thenReturn(Optional.of(run));
+        when(softwareProjectRepo.existsById(PROJECT_ID)).thenReturn(true);
+
+        var expected = new com.choruskube.core.dto.RoadmapGraphSnapshot(
+                epicResponseFor(PROJECT_ID), List.of(), List.of(), List.of(), List.of());
+        when(roadmapGraphService.getGraph(epicId, runId, PROJECT_ID)).thenReturn(expected);
+
+        var result = service.getGraph(runId, epicId);
+
+        assertThat(result).isSameAs(expected);
+        verify(roadmapGraphService).getGraph(epicId, runId, PROJECT_ID);
+    }
+
+    @Test
+    void getGraph_withUnknownRunId_throwsNotFound() {
+        UUID unknownRunId = UUID.randomUUID();
+        when(runRepo.findById(unknownRunId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.getGraph(unknownRunId, UUID.randomUUID()))
+                .isInstanceOf(NotFoundException.class)
+                .hasMessageContaining("Workflow run not found");
+    }
+
+    @Test
+    void updateTaskStatus_delegatesToTaskServiceWithRunIdAndResolvedSoftwareProjectId() {
+        UUID runId = UUID.randomUUID();
+        UUID taskId = UUID.randomUUID();
+        UUID outcomeRunId = UUID.randomUUID();
+        WorkflowRun run = createRun(
+                runId, TEMPLATE_ID, "{\"software_project_id\":\"" + PROJECT_ID + "\",\"feature_request\":\"x\"}");
+        when(runRepo.findById(runId)).thenReturn(Optional.of(run));
+        when(softwareProjectRepo.existsById(PROJECT_ID)).thenReturn(true);
+
+        var req = new com.choruskube.core.dto.TaskStatusUpdateRequest(
+                com.choruskube.core.model.enums.WorkItemStatus.done, outcomeRunId, "done via agent");
+        var expected = new TaskResponse(
+                taskId,
+                UUID.randomUUID(),
+                "Task title",
+                "Task desc",
+                "done",
+                new SoftwareProjectRef(PROJECT_ID, "git_repo", "name"),
+                List.of(),
+                null,
+                null,
+                null,
+                List.of(),
+                0L,
+                null,
+                null);
+        when(taskService.updateStatusInternal(
+                        taskId,
+                        com.choruskube.core.model.enums.WorkItemStatus.done,
+                        runId,
+                        PROJECT_ID,
+                        outcomeRunId,
+                        "done via agent"))
+                .thenReturn(expected);
+
+        TaskResponse result = service.updateTaskStatus(runId, taskId, req);
+
+        assertThat(result).isSameAs(expected);
+    }
+
+    @Test
+    void updateTaskStatus_withUnknownRunId_throwsNotFound() {
+        UUID unknownRunId = UUID.randomUUID();
+        when(runRepo.findById(unknownRunId)).thenReturn(Optional.empty());
+
+        var req = new com.choruskube.core.dto.TaskStatusUpdateRequest(
+                com.choruskube.core.model.enums.WorkItemStatus.done, null, null);
+
+        assertThatThrownBy(() -> service.updateTaskStatus(unknownRunId, UUID.randomUUID(), req))
+                .isInstanceOf(NotFoundException.class)
+                .hasMessageContaining("Workflow run not found");
     }
 
     private Story storyWithEpic(UUID storyId, UUID epicId) {

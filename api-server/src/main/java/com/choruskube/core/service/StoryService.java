@@ -27,6 +27,15 @@ public interface StoryService {
 
     List<StoryResponse> list(UUID epicId);
 
+    /**
+     * Agent/internal mirror of {@link #list} for the Roadmap Graph View internal route (Decision
+     * 1): validated the same way as {@link #create(UUID, StoryRequest, UUID, UUID)} —
+     * {@code assertSameOrg} plus a direct project match — instead of {@link #list}'s
+     * {@code checkOrgAccess}, which reads a request-scoped tenant context that does not exist on
+     * the {@code /internal/**} JOB_SECRET path.
+     */
+    List<StoryResponse> listInternal(UUID epicId, UUID runId, UUID runSoftwareProjectId);
+
     StoryResponse get(UUID id);
 
     StoryResponse update(UUID id, StoryRequest request);

@@ -18,13 +18,22 @@ import com.choruskube.core.dto.TaskRequest;
 import com.choruskube.core.dto.TaskResponse;
 import com.choruskube.core.exception.ForbiddenException;
 import com.choruskube.core.model.GitRepo;
+import com.choruskube.core.model.WorkflowRun;
+import com.choruskube.core.model.enums.Readiness;
+import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.GitRepoRepository;
+import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.util.RepoNameUtil;
 import io.temporal.client.WorkflowClient;
+import io.temporal.client.WorkflowOptions;
+import io.temporal.client.WorkflowStub;
 import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.List;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
+import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
@@ -50,6 +59,9 @@ public class RoadmapGraphServiceTest extends BaseTest {
     @Autowired
     private GitRepoRepository gitRepoRepo;
 
+    @Autowired
+    private WorkflowRunRepository runRepo;
+
     @MockitoBean
     private WorkflowServiceStubs workflowServiceStubs;
 
@@ -61,6 +73,14 @@ public class RoadmapGraphServiceTest extends BaseTest {
 
     @MockitoBean
     private AuthorizationService authService;
+
+    @BeforeEach
+    void setUp() {
+        WorkflowStub mockStub = Mockito.mock(WorkflowStub.class);
+        Mockito.when(workflowClient.newUntypedWorkflowStub(
+                        ArgumentMatchers.anyString(), ArgumentMatchers.any(WorkflowOptions.class)))
+                .thenReturn(mockStub);
+    }
 
     @Test
     void getGraph_returnsAllStoriesAndTasksUnderEpic() {
@@ -231,6 +251,188 @@ public class RoadmapGraphServiceTest extends BaseTest {
         UUID unknown = UUID.randomUUID();
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> graphService.getGraph(unknown))
                 .isInstanceOf(com.choruskube.core.exception.NotFoundException.class);
+    }
+
+    // ── readiness (Decision 2) ────────────────────────────────────────────────
+
+    @Test
+    void getGraph_taskWithNoDependencyEdges_isReady() {
+        EpicResponse epic = makeEpic("https://github.com/test/readiness-no-edges.git");
+        StoryResponse story = makeStory(epic.id(), "Story");
+        TaskResponse task = makeTask(story.id(), "Task");
+
+        RoadmapGraphSnapshot snapshot = graphService.getGraph(epic.id());
+
+        assertThat(snapshot.tasks()).hasSize(1);
+        assertThat(snapshot.tasks().get(0).readiness()).isEqualTo(Readiness.READY);
+        assertThat(snapshot.stories()).hasSize(1);
+        assertThat(snapshot.stories().get(0).readiness()).isEqualTo(Readiness.READY);
+    }
+
+    @Test
+    void getGraph_taskWithNonDoneBlocker_isBlocked() {
+        EpicResponse epic = makeEpic("https://github.com/test/readiness-blocked.git");
+        StoryResponse story = makeStory(epic.id(), "Story");
+        TaskResponse blocking = makeTask(story.id(), "Blocking");
+        TaskResponse blocked = makeTask(story.id(), "Blocked");
+        dependencyService.create(new CreateDependencyRequest("task", blocking.id(), "task", blocked.id()));
+
+        RoadmapGraphSnapshot snapshot = graphService.getGraph(epic.id());
+
+        TaskResponse blockedResponse = snapshot.tasks().stream()
+                .filter(t -> t.id().equals(blocked.id()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(blockedResponse.readiness()).isEqualTo(Readiness.BLOCKED);
+        TaskResponse blockingResponse = snapshot.tasks().stream()
+                .filter(t -> t.id().equals(blocking.id()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(blockingResponse.readiness()).isEqualTo(Readiness.READY);
+    }
+
+    @Test
+    void getGraph_blockerBecomesDone_flipsBlockedToReady() {
+        EpicResponse epic = makeEpic("https://github.com/test/readiness-flip.git");
+        StoryResponse story = makeStory(epic.id(), "Story");
+        TaskResponse blocking = makeTask(story.id(), "Blocking");
+        TaskResponse blocked = makeTask(story.id(), "Blocked");
+        dependencyService.create(new CreateDependencyRequest("task", blocking.id(), "task", blocked.id()));
+
+        assertThat(graphService.getGraph(epic.id()).tasks().stream()
+                        .filter(t -> t.id().equals(blocked.id()))
+                        .findFirst()
+                        .orElseThrow()
+                        .readiness())
+                .isEqualTo(Readiness.BLOCKED);
+
+        markTaskDone(blocking.id());
+
+        assertThat(graphService.getGraph(epic.id()).tasks().stream()
+                        .filter(t -> t.id().equals(blocked.id()))
+                        .findFirst()
+                        .orElseThrow()
+                        .readiness())
+                .isEqualTo(Readiness.READY);
+    }
+
+    @Test
+    void getGraph_storyBlockedByExternalTask_isBlocked() {
+        EpicResponse epicA = makeEpic("https://github.com/test/readiness-external-a.git");
+        StoryResponse storyA = makeStory(epicA.id(), "Story A");
+
+        EpicResponse epicB = makeEpic("https://github.com/test/readiness-external-b.git");
+        StoryResponse storyB = makeStory(epicB.id(), "Story B");
+        TaskResponse blockingInB = makeTask(storyB.id(), "Blocking in B");
+
+        dependencyService.create(new CreateDependencyRequest("task", blockingInB.id(), "story", storyA.id()));
+
+        RoadmapGraphSnapshot snapshot = graphService.getGraph(epicA.id());
+
+        assertThat(snapshot.stories().get(0).readiness()).isEqualTo(Readiness.BLOCKED);
+    }
+
+    // ── recentRuns / totalRunCount (Decision 3) ───────────────────────────────
+
+    @Test
+    void getGraph_taskWithMoreThanFiveRuns_cappedRecentRunsWithCorrectTotalCount() {
+        EpicResponse epic = makeEpic("https://github.com/test/history-cap.git");
+        StoryResponse story = makeStory(epic.id(), "Story");
+        TaskResponse task = makeTask(story.id(), "Task");
+
+        for (int i = 0; i < 7; i++) {
+            TaskResponse started = taskService.start(task.id());
+            markRunTerminal(started.latestRunId(), WorkflowRunStatus.failed);
+            taskService.updateStatus(task.id(), com.choruskube.core.model.enums.WorkItemStatus.backlog, null, null);
+        }
+
+        RoadmapGraphSnapshot snapshot = graphService.getGraph(epic.id());
+
+        TaskResponse taskResponse = snapshot.tasks().get(0);
+        assertThat(taskResponse.recentRuns()).hasSize(5);
+        assertThat(taskResponse.totalRunCount()).isEqualTo(7);
+    }
+
+    @Test
+    void getGraph_taskWithNoRuns_emptyRecentRunsAndZeroTotalCount() {
+        EpicResponse epic = makeEpic("https://github.com/test/history-empty.git");
+        StoryResponse story = makeStory(epic.id(), "Story");
+        makeTask(story.id(), "Task");
+
+        RoadmapGraphSnapshot snapshot = graphService.getGraph(epic.id());
+
+        TaskResponse taskResponse = snapshot.tasks().get(0);
+        assertThat(taskResponse.recentRuns()).isEmpty();
+        assertThat(taskResponse.totalRunCount()).isZero();
+    }
+
+    // ── internal path (agent-facing mirror, Decision 1/Decision 5) ────────────
+
+    @Test
+    void getGraphInternal_sameRunSoftwareProject_returnsSameShapeAsPublicPath() {
+        EpicResponse epic = makeEpic("https://github.com/test/internal-graph-ok.git");
+        StoryResponse story = makeStory(epic.id(), "Story");
+        TaskResponse task = makeTask(story.id(), "Task");
+        UUID runId = UUID.randomUUID();
+
+        RoadmapGraphSnapshot snapshot =
+                graphService.getGraph(epic.id(), runId, epic.softwareProject().id());
+
+        assertThat(snapshot.epic().id()).isEqualTo(epic.id());
+        assertThat(snapshot.stories()).extracting(StoryResponse::id).containsExactly(story.id());
+        assertThat(snapshot.tasks()).extracting(TaskResponse::id).containsExactly(task.id());
+        assertThat(snapshot.tasks().get(0).readiness()).isEqualTo(Readiness.READY);
+    }
+
+    @Test
+    void getGraphInternal_foreignSoftwareProject_throwsForbidden() {
+        EpicResponse epic = makeEpic("https://github.com/test/internal-graph-foreign.git");
+        UUID runId = UUID.randomUUID();
+        UUID foreignProjectId = UUID.randomUUID();
+
+        assertThatThrownBy(() -> graphService.getGraph(epic.id(), runId, foreignProjectId))
+                .isInstanceOf(ForbiddenException.class);
+    }
+
+    @Test
+    void getGraphInternal_unknownEpic_throwsNotFound() {
+        assertThatThrownBy(() -> graphService.getGraph(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID()))
+                .isInstanceOf(com.choruskube.core.exception.NotFoundException.class);
+    }
+
+    @Test
+    void getGraphInternal_externalBlocker_usesAssertSameOrgNotCheckOrgAccess() {
+        // Mirrors getGraph_externalBlocker_checksOrgAccessForResolvedItem above, but for the
+        // internal path: proves the internal graph read authorizes cross-epic references via
+        // assertSameOrg (safe with no request-scoped tenant context) rather than checkOrgAccess.
+        EpicResponse epicA = makeEpic("https://github.com/test/internal-external-a.git");
+        StoryResponse storyA = makeStory(epicA.id(), "Story A");
+        TaskResponse blockedInA = makeTask(storyA.id(), "Blocked in A");
+
+        EpicResponse epicB = makeEpic("https://github.com/test/internal-external-b.git");
+        StoryResponse storyB = makeStory(epicB.id(), "Story B");
+        TaskResponse blockingInB = makeTask(storyB.id(), "Blocking in B");
+
+        dependencyService.create(new CreateDependencyRequest("task", blockingInB.id(), "task", blockedInA.id()));
+        org.mockito.Mockito.clearInvocations(authService);
+        UUID runId = UUID.randomUUID();
+
+        graphService.getGraph(epicA.id(), runId, epicA.softwareProject().id());
+
+        org.mockito.Mockito.verify(authService).assertSameOrg("task", blockingInB.id(), "workflow_run", runId);
+        org.mockito.Mockito.verify(authService, org.mockito.Mockito.never()).checkOrgAccess("task", blockingInB.id());
+    }
+
+    private void markRunTerminal(UUID runId, WorkflowRunStatus status) {
+        WorkflowRun run = runRepo.findById(runId).orElseThrow();
+        run.setStatus(status);
+        runRepo.saveAndFlush(run);
+    }
+
+    private void markTaskDone(UUID taskId) {
+        TaskResponse started = taskService.start(taskId);
+        markRunTerminal(started.latestRunId(), WorkflowRunStatus.completed);
+        taskService.complete(taskId);
     }
 
     private EpicResponse makeEpic(String url) {

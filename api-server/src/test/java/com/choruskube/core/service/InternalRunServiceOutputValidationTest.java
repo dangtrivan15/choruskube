@@ -57,6 +57,7 @@ class InternalRunServiceOutputValidationTest {
                 null,
                 templateNodeRepo,
                 nodeDefinitionRepo,
+                null,
                 null);
     }
 

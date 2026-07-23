@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router";
-import { ExternalLink, X } from "lucide-react";
+import { ExternalLink, Lock, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,7 +12,6 @@ import {
 } from "@/components/ui/select";
 import MarkdownViewer from "@/components/ui/MarkdownViewer";
 import TaskRunHistoryList from "@/components/roadmap/TaskRunHistoryList";
-import { useTaskRuns } from "@/hooks/useTaskRuns";
 import { useCreateDependency, useDeleteDependency } from "@/hooks/useDependencies";
 import type {
   EpicResponse,
@@ -21,6 +20,7 @@ import type {
   ExternalBlockerRef,
   DependencyEdgeResponse,
   BlockableItemType,
+  Readiness,
 } from "@/lib/types";
 import type { RoadmapItemType } from "./RoadmapGraphNode";
 
@@ -67,6 +67,24 @@ function statusBadge(status: string) {
     default:
       return <Badge variant="outline">{status}</Badge>;
   }
+}
+
+/**
+ * Dependency-readiness badge (Decision 2). Only rendered for an explicit
+ * "BLOCKED" — `null`/"READY" show nothing rather than a redundant "ready" pill.
+ */
+function readinessBadge(readiness: Readiness | null) {
+  if (readiness !== "BLOCKED") return null;
+  return (
+    <Badge
+      variant="outline"
+      data-testid="roadmap-detail-readiness-badge"
+      className="gap-1 border-status-warning/20 bg-status-warning/15 text-status-warning"
+    >
+      <Lock className="size-3" />
+      Blocked
+    </Badge>
+  );
 }
 
 function itemTypeLabel(itemType: RoadmapItemType): string {
@@ -232,8 +250,6 @@ export default function RoadmapGraphDetailPanel({
   externalBlockers,
 }: Props) {
   const { itemType, item } = detail;
-  const taskId = itemType === "task" ? item.id : undefined;
-  const { data: runsPage, isLoading: runsLoading } = useTaskRuns(taskId);
 
   return (
     <div data-testid="roadmap-detail-panel" className="p-4 space-y-4">
@@ -247,7 +263,10 @@ export default function RoadmapGraphDetailPanel({
         <h2 data-testid="roadmap-detail-title" className="text-lg font-semibold break-words">
           {item.title}
         </h2>
-        <div data-testid="roadmap-detail-status">{statusBadge(item.status)}</div>
+        <div data-testid="roadmap-detail-status" className="flex items-center gap-2">
+          {statusBadge(item.status)}
+          {itemType !== "epic" && readinessBadge(item.readiness)}
+        </div>
       </div>
 
       <div data-testid="roadmap-detail-description">
@@ -257,14 +276,23 @@ export default function RoadmapGraphDetailPanel({
 
       {itemType === "task" && (
         <div className="pt-3 border-t">
-          <h3 className="text-sm font-medium text-muted-foreground mb-2">Run history</h3>
-          <TaskRunHistoryList runs={runsPage?.content} isLoading={runsLoading} />
+          <h3 className="text-sm font-medium text-muted-foreground mb-2">
+            Run history
+            {item.totalRunCount > item.recentRuns.length && (
+              <span data-testid="roadmap-detail-run-history-total" className="ml-1 font-normal">
+                (showing {item.recentRuns.length} of {item.totalRunCount})
+              </span>
+            )}
+          </h3>
+          {/* Embedded on the graph response itself (Decision 3) — no follow-up
+              request needed just to show recent runs. */}
+          <TaskRunHistoryList runs={item.recentRuns} isLoading={false} />
           <Link
             to={`/tasks/${item.id}`}
             className="mt-2 inline-flex items-center gap-1 text-xs text-primary hover:underline"
           >
             <ExternalLink className="size-3" />
-            Open Task detail
+            Open Task detail{item.totalRunCount > item.recentRuns.length ? " for full run history" : ""}
           </Link>
         </div>
       )}

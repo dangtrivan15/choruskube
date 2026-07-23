@@ -131,6 +131,7 @@ function makeSnapshot(overrides: Partial<RoadmapGraphSnapshot> = {}): RoadmapGra
         title: "Dark theme toggle",
         description: "desc",
         status: "in_progress",
+        readiness: "READY",
         progress: { totalTasks: 2, doneTasks: 0 },
         createdAt: "2026-04-01T00:00:00Z",
         updatedAt: "2026-04-01T00:00:00Z",
@@ -141,6 +142,7 @@ function makeSnapshot(overrides: Partial<RoadmapGraphSnapshot> = {}): RoadmapGra
         title: "Persist preference",
         description: "desc",
         status: "backlog",
+        readiness: "READY",
         progress: { totalTasks: 0, doneTasks: 0 },
         createdAt: "2026-04-01T00:00:00Z",
         updatedAt: "2026-04-01T00:00:00Z",
@@ -157,6 +159,9 @@ function makeSnapshot(overrides: Partial<RoadmapGraphSnapshot> = {}): RoadmapGra
         repos: [],
         latestRunId: null,
         latestRunStatus: null,
+        readiness: "READY",
+        recentRuns: [],
+        totalRunCount: 0,
         createdAt: "2026-04-01T00:00:00Z",
         updatedAt: "2026-04-01T00:00:00Z",
       },
@@ -170,6 +175,9 @@ function makeSnapshot(overrides: Partial<RoadmapGraphSnapshot> = {}): RoadmapGra
         repos: [],
         latestRunId: null,
         latestRunStatus: null,
+        readiness: "READY",
+        recentRuns: [],
+        totalRunCount: 0,
         createdAt: "2026-04-01T00:00:00Z",
         updatedAt: "2026-04-01T00:00:00Z",
       },
@@ -203,6 +211,40 @@ describe("RoadmapGraph", () => {
 
     const nodes = screen.getAllByTestId("roadmap-graph-node");
     expect(nodes).toHaveLength(5); // 1 epic + 2 stories + 2 tasks
+  });
+
+  it("renders a blocked badge on a Task node whose readiness is BLOCKED", async () => {
+    const snapshot = makeSnapshot({
+      tasks: [
+        {
+          id: "task-1",
+          storyId: "story-1",
+          title: "Build toggle component",
+          description: "desc",
+          status: "backlog",
+          softwareProject: { id: "r1", type: "git_repo", name: "backend-api" },
+          repos: [],
+          latestRunId: null,
+          latestRunStatus: null,
+          readiness: "BLOCKED",
+          recentRuns: [],
+          totalRunCount: 0,
+          createdAt: "2026-04-01T00:00:00Z",
+          updatedAt: "2026-04-01T00:00:00Z",
+        },
+      ],
+    });
+    renderWithProviders(<RoadmapGraph snapshot={snapshot} onNodeSelect={vi.fn()} />);
+    await waitForGraphReady();
+
+    expect(screen.getByTestId("roadmap-graph-node-blocked-badge")).toBeInTheDocument();
+  });
+
+  it("does not render a blocked badge on a Task node whose readiness is READY", async () => {
+    renderWithProviders(<RoadmapGraph snapshot={makeSnapshot()} onNodeSelect={vi.fn()} />);
+    await waitForGraphReady();
+
+    expect(screen.queryByTestId("roadmap-graph-node-blocked-badge")).not.toBeInTheDocument();
   });
 
   it("renders a dependency edge visually distinct from a hierarchy edge", async () => {
@@ -294,6 +336,9 @@ describe("RoadmapGraph", () => {
       repos: [],
       latestRunId: null,
       latestRunStatus: null,
+      readiness: "READY",
+      recentRuns: [],
+      totalRunCount: 0,
       createdAt: "2026-04-01T00:00:00Z",
       updatedAt: "2026-04-01T00:00:00Z",
     }));

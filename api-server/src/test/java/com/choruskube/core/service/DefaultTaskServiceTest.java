@@ -235,6 +235,141 @@ public class DefaultTaskServiceTest extends BaseTest {
         assertThatThrownBy(() -> service.complete(task.id())).isInstanceOf(ConflictException.class);
     }
 
+    // ── updateStatus / updateStatusInternal (Decision 4) ─────────────────────────
+
+    @Test
+    void updateStatus_backlogToInProgress_delegatesToStartAndCreatesRun() {
+        GitRepo r = makeRepo("https://github.com/test/task-updatestatus-start.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
+
+        TaskResponse updated =
+                service.updateStatus(task.id(), com.choruskube.core.model.enums.WorkItemStatus.in_progress, null, null);
+
+        assertThat(updated.status()).isEqualTo("in_progress");
+        assertThat(updated.latestRunId()).isNotNull();
+    }
+
+    @Test
+    void updateStatus_inProgressToDone_afterMostRecentRunTerminal_transitionsToDone() {
+        GitRepo r = makeRepo("https://github.com/test/task-updatestatus-done.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
+        TaskResponse started = service.start(task.id());
+        markRunTerminal(started.latestRunId(), WorkflowRunStatus.completed);
+
+        TaskResponse updated = service.updateStatus(
+                task.id(), com.choruskube.core.model.enums.WorkItemStatus.done, null, "agent-reported success");
+
+        assertThat(updated.status()).isEqualTo("done");
+    }
+
+    @Test
+    void updateStatus_inProgressToDone_withMismatchedRunId_throwsConflict() {
+        GitRepo r = makeRepo("https://github.com/test/task-updatestatus-done-mismatch.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
+        TaskResponse started = service.start(task.id());
+        markRunTerminal(started.latestRunId(), WorkflowRunStatus.completed);
+
+        assertThatThrownBy(() -> service.updateStatus(
+                        task.id(), com.choruskube.core.model.enums.WorkItemStatus.done, UUID.randomUUID(), null))
+                .isInstanceOf(ConflictException.class);
+    }
+
+    @Test
+    void updateStatus_inProgressToBacklog_afterMostRecentRunTerminal_reopens() {
+        GitRepo r = makeRepo("https://github.com/test/task-updatestatus-reopen.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
+        TaskResponse started = service.start(task.id());
+        markRunTerminal(started.latestRunId(), WorkflowRunStatus.failed);
+
+        TaskResponse updated = service.updateStatus(
+                task.id(), com.choruskube.core.model.enums.WorkItemStatus.backlog, null, "agent-reported failure");
+
+        assertThat(updated.status()).isEqualTo("backlog");
+    }
+
+    @Test
+    void updateStatus_inProgressToBacklog_beforeMostRecentRunTerminal_throwsConflict() {
+        GitRepo r = makeRepo("https://github.com/test/task-updatestatus-reopen-blocked.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
+        service.start(task.id());
+
+        assertThatThrownBy(() -> service.updateStatus(
+                        task.id(), com.choruskube.core.model.enums.WorkItemStatus.backlog, null, null))
+                .isInstanceOf(ConflictException.class);
+    }
+
+    @Test
+    void updateStatus_backlogToDone_rejectedAsInvalidTransition() {
+        GitRepo r = makeRepo("https://github.com/test/task-updatestatus-invalid.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
+
+        assertThatThrownBy(() -> service.updateStatus(
+                        task.id(), com.choruskube.core.model.enums.WorkItemStatus.done, null, null))
+                .isInstanceOf(com.choruskube.core.exception.InvalidStatusTransitionException.class);
+    }
+
+    @Test
+    void updateStatusInternal_inProgressToDone_succeeds() {
+        GitRepo r = makeRepo("https://github.com/test/task-updatestatus-internal-done.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
+        TaskResponse started = service.start(task.id());
+        markRunTerminal(started.latestRunId(), WorkflowRunStatus.completed);
+
+        TaskResponse updated = service.updateStatusInternal(
+                task.id(),
+                com.choruskube.core.model.enums.WorkItemStatus.done,
+                UUID.randomUUID(),
+                r.getId(),
+                null,
+                "agent-reported success");
+
+        assertThat(updated.status()).isEqualTo("done");
+    }
+
+    @Test
+    void updateStatusInternal_backlogToInProgress_rejectedAsInvalidTransition() {
+        // Unlike the public updateStatus, the internal/agent mirror does NOT support
+        // backlog->in_progress: starting a Task creates a brand new workflow run, which isn't
+        // this endpoint's job (an agent reports the outcome of a run it is already inside).
+        GitRepo r = makeRepo("https://github.com/test/task-updatestatus-internal-invalid.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
+
+        assertThatThrownBy(() -> service.updateStatusInternal(
+                        task.id(),
+                        com.choruskube.core.model.enums.WorkItemStatus.in_progress,
+                        UUID.randomUUID(),
+                        r.getId(),
+                        null,
+                        null))
+                .isInstanceOf(com.choruskube.core.exception.InvalidStatusTransitionException.class);
+    }
+
+    @Test
+    void updateStatusInternal_outsideRunsSoftwareProject_throwsForbidden() {
+        GitRepo r1 = makeRepo("https://github.com/test/task-updatestatus-internal-proj-a.git");
+        GitRepo r2 = makeRepo("https://github.com/test/task-updatestatus-internal-proj-b.git");
+        StoryResponse story = makeStory(r1.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
+        service.start(task.id());
+
+        assertThatThrownBy(() -> service.updateStatusInternal(
+                        task.id(),
+                        com.choruskube.core.model.enums.WorkItemStatus.done,
+                        UUID.randomUUID(),
+                        r2.getId(),
+                        null,
+                        null))
+                .isInstanceOf(ForbiddenException.class);
+    }
+
     @Test
     void listRuns_emptyHistory_returnsEmptyPage() {
         GitRepo r = makeRepo("https://github.com/test/task-empty-history.git");

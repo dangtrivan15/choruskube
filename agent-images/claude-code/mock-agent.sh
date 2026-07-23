@@ -17,6 +17,9 @@
 #   gate_reject      Submit "rejected" decision via API (for human-type nodes)
 #   live_chat        Simulate a live chat session: submit transcript + decision
 #   multi_repo_pr    Register PRs for all repos in a multi-repo run
+#   roadmap_status_update  Fetch an Epic's Roadmap Graph View, then report a Task's outcome
+#                          via update-task-status (Decision 1/3/4) — same contract a real
+#                          agent uses; requires --epic-id and --task-id
 #   single_repo_claude_md  Verify SYSTEM_PROMPT is exported (tests the export fix)
 #   dind_isolation   Verify DinD isolation: DOCKER_HOST set, no ChorusKube services visible
 #   dind_network_connectivity  Verify API server is reachable from DinD agent
@@ -29,6 +32,9 @@
 #                             this filename, so gate templates that declare
 #                             requiredInputArtifacts by name must match it.
 #   --decision <value>        Custom decision value for gate scenarios
+#   --epic-id <uuid>          Epic UUID for 'roadmap_status_update'
+#   --task-id <uuid>          Task UUID for 'roadmap_status_update' (must already be
+#                             in_progress — e.g. this run was started via Task-start)
 set -euo pipefail
 
 # --- Defaults ---
@@ -37,6 +43,8 @@ DELAY=30
 SUCCEED_AFTER=3
 ARTIFACT_TEXT=""
 CUSTOM_DECISION=""
+EPIC_ID_ARG=""
+TASK_ID_ARG=""
 
 # --- Parse arguments ---
 shift || true
@@ -56,6 +64,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --decision)
       CUSTOM_DECISION="$2"
+      shift 2
+      ;;
+    --epic-id)
+      EPIC_ID_ARG="$2"
+      shift 2
+      ;;
+    --task-id)
+      TASK_ID_ARG="$2"
       shift 2
       ;;
     *)
@@ -236,6 +252,31 @@ case "$SCENARIO" in
 
     write_artifact "result.txt" "PRs created for all repositories"
     echo "Mock agent: multi_repo_pr completed"
+    exit 0
+    ;;
+
+  roadmap_status_update)
+    # Exercises the get-roadmap-graph / update-task-status CLI contract (Roadmap Graph View,
+    # Decision 1/3/4) the same way multi_repo_pr exercises register-pr's contract: calls the
+    # real API server so E2E drives the same protocol a real agent would, without a live
+    # Claude call. The Task is expected to already be in_progress (this run's own
+    # Task-start is what created it), matching the internal status endpoint's whitelist.
+    echo "Mock agent: roadmap_status_update scenario"
+    if [ -z "$EPIC_ID_ARG" ] || [ -z "$TASK_ID_ARG" ]; then
+      echo "ERROR: roadmap_status_update requires --epic-id and --task-id" >&2
+      exit 1
+    fi
+
+    GRAPH=$(get-roadmap-graph --epic-id "$EPIC_ID_ARG")
+    if ! echo "$GRAPH" | jq -e --arg id "$TASK_ID_ARG" '.tasks[] | select(.id == $id)' > /dev/null; then
+      echo "ERROR: Task $TASK_ID_ARG not found in Epic $EPIC_ID_ARG's graph" >&2
+      exit 1
+    fi
+
+    update-task-status --task-id "$TASK_ID_ARG" --status done --note "Completed by mock agent"
+
+    write_artifact "result.txt" "Task $TASK_ID_ARG marked done via update-task-status"
+    echo "Mock agent: roadmap_status_update completed"
     exit 0
     ;;
 

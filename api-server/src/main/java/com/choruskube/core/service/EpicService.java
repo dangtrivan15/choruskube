@@ -40,6 +40,15 @@ public interface EpicService {
     EpicResponse updateInternal(UUID epicId, UUID runSoftwareProjectId, UUID runId, InternalUpdateEpicRequest req);
 
     /**
+     * Reads an Epic on behalf of an agent pod (Roadmap Graph View internal mirror, Decision 1).
+     * Validated the same way as {@link #updateInternal}: {@code assertSameOrg} plus a direct
+     * {@code runSoftwareProjectId} match against the Epic's own project — NOT {@link #get}'s
+     * {@code checkOrgAccess}, which reads a request-scoped tenant context that does not exist on
+     * the {@code /internal/**} JOB_SECRET path.
+     */
+    EpicResponse getInternal(UUID epicId, UUID runId, UUID runSoftwareProjectId);
+
+    /**
      * Moves an Epic to a new roadmap board stage. Exempt from the "no edit once started" guard
      * that {@link #update} enforces — stage moves must succeed even after descendant Tasks have
      * started.

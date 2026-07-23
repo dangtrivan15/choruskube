@@ -75,6 +75,8 @@ COPY register-pr /usr/local/bin/register-pr
 COPY update-proposal /usr/local/bin/update-proposal
 COPY create-story /usr/local/bin/create-story
 COPY create-task /usr/local/bin/create-task
+COPY get-roadmap-graph /usr/local/bin/get-roadmap-graph
+COPY update-task-status /usr/local/bin/update-task-status
 COPY run-all-tests /usr/local/bin/run-all-tests
 COPY normalize-lockfiles /usr/local/bin/normalize-lockfiles
 COPY system_prompt.md /usr/local/share/choruskube/system_prompt.md
@@ -92,6 +94,8 @@ RUN chmod +x /usr/local/bin/report-result \
     /usr/local/bin/update-proposal \
     /usr/local/bin/create-story \
     /usr/local/bin/create-task \
+    /usr/local/bin/get-roadmap-graph \
+    /usr/local/bin/update-task-status \
     /usr/local/bin/run-all-tests \
     /usr/local/bin/normalize-lockfiles
 

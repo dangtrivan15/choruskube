@@ -1,0 +1,125 @@
+#!/bin/bash
+# update-task-status — report a Task's outcome via the ChorusKube API server.
+#
+# Usage: update-task-status --task-id UUID --status STATUS [--run-id UUID] [--note NOTE]
+#
+# Reports a Task's status directly, the same way a human dragging a Board
+# card would — the change flows through the same service method and appears
+# live on the Board/Graph views immediately, without polling.
+#
+# Only these transitions are allowed via this endpoint (an agent reports the
+# outcome of a run it is already inside, so this does NOT support
+# backlog->in_progress — that's what Task-start already does, and it creates
+# a brand new workflow run rather than just recording an outcome):
+#   in_progress -> done      Task completed successfully
+#   in_progress -> backlog   Task's run failed/was aborted; reopen for retry
+#
+# Options:
+#   --task-id UUID   Task UUID to update (required)
+#   --status STATUS  Target status: done | backlog (required)
+#   --run-id UUID    The run this outcome is being reported for (optional).
+#                    When supplied, it must match the Task's most recent
+#                    linked run, or the update is rejected (409) — this
+#                    guards against a stale/racing report. Defaults to the
+#                    calling run (RUN_ID) if omitted, since an agent is
+#                    almost always reporting on its own run.
+#   --note NOTE      Free-text outcome note, recorded on the audit trail
+#                    (optional).
+#   -h, --help       Show this help message
+#
+# Environment:
+#   API_SERVER_URL      — Base URL of the ChorusKube API server
+#   RUN_ID              — Workflow run UUID
+#   NODE_EXECUTION_ID   — Node execution UUID
+#   JOB_SECRET          — Bearer token for authentication
+#
+# Examples:
+#   # Report success for the run this agent is currently executing in
+#   update-task-status --task-id <uuid> --status done
+#
+#   # Report failure with a note, reopening the Task for retry
+#   update-task-status --task-id <uuid> --status backlog --note "tests failed on CI"
+#
+# Exit codes:
+#   0  Task status updated successfully (JSON response printed to stdout)
+#   1  Missing arguments, environment, or API error (including an invalid
+#      transition, returned by the server as HTTP 409)
+set -euo pipefail
+
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+    sed -n '2,/^set -euo pipefail$/{ /^set -euo pipefail$/d; s/^# \?//; p }' "$0"
+    exit 0
+fi
+
+if [ -z "${API_SERVER_URL:-}" ]; then
+    echo "ERROR: API_SERVER_URL not set. This script must be run inside an agent pod." >&2
+    exit 1
+fi
+
+if [ -z "${RUN_ID:-}" ] || [ -z "${NODE_EXECUTION_ID:-}" ]; then
+    echo "ERROR: RUN_ID and NODE_EXECUTION_ID must be set." >&2
+    exit 1
+fi
+
+TASK_ID=""
+STATUS=""
+RUN_ID_ARG=""
+NOTE=""
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --task-id)
+            TASK_ID="$2"
+            shift 2
+            ;;
+        --status)
+            STATUS="$2"
+            shift 2
+            ;;
+        --run-id)
+            RUN_ID_ARG="$2"
+            shift 2
+            ;;
+        --note)
+            NOTE="$2"
+            shift 2
+            ;;
+        *)
+            echo "ERROR: Unknown argument: $1" >&2
+            echo "Usage: update-task-status --task-id UUID --status STATUS [--run-id UUID] [--note NOTE]" >&2
+            exit 1
+            ;;
+    esac
+done
+
+if [ -z "$TASK_ID" ] || [ -z "$STATUS" ]; then
+    echo "ERROR: --task-id and --status are required." >&2
+    echo "Usage: update-task-status --task-id UUID --status STATUS [--run-id UUID] [--note NOTE]" >&2
+    exit 1
+fi
+
+# Default --run-id to the calling run: an agent is almost always reporting on
+# its own run, and the server verifies it matches the Task's most recent
+# linked run either way.
+EFFECTIVE_RUN_ID="${RUN_ID_ARG:-$RUN_ID}"
+
+BODY=$(jq -n \
+    --arg status "$STATUS" \
+    --arg runId "$EFFECTIVE_RUN_ID" \
+    --arg note "$NOTE" \
+    '{status: $status} + (if $runId != "" then {runId: $runId} else {} end) + (if $note != "" then {note: $note} else {} end)')
+
+RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer ${JOB_SECRET:-}" \
+    -d "$BODY" \
+    "$API_SERVER_URL/internal/runs/$RUN_ID/node-executions/$NODE_EXECUTION_ID/tasks/$TASK_ID/status")
+HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+BODY_RESPONSE=$(echo "$RESPONSE" | sed '$d')
+
+if [ "$HTTP_CODE" != "200" ]; then
+    echo "ERROR: Failed to update Task status (HTTP $HTTP_CODE): $BODY_RESPONSE" >&2
+    exit 1
+fi
+
+echo "$BODY_RESPONSE"

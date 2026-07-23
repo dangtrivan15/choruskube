@@ -112,6 +112,18 @@ public class DefaultStoryService implements StoryService {
 
     @Override
     @Transactional(readOnly = true)
+    public List<StoryResponse> listInternal(UUID epicId, UUID runId, UUID runSoftwareProjectId) {
+        Epic epic = findEpicOrThrow(epicId);
+        authService.assertSameOrg("epic", epic.getId(), "workflow_run", runId);
+        if (!epic.getSoftwareProjectId().equals(runSoftwareProjectId)) {
+            throw new ForbiddenException("Epic " + epicId + " does not belong to the run's software project");
+        }
+        List<Story> stories = repo.findByEpicIdOrderByCreatedAtDesc(epicId);
+        return toResponses(stories);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public StoryResponse get(UUID id) {
         Story story = findOrThrow(id);
         authService.checkOrgAccess("story", id);
@@ -180,6 +192,7 @@ public class DefaultStoryService implements StoryService {
                 s.getTitle(),
                 s.getDescription(),
                 rollup.status(),
+                null, // readiness: only computed by RoadmapGraphService (Decision 2)
                 new EpicResponse.Progress(rollup.totalTasks(), rollup.doneTasks()),
                 s.getCreatedAt(),
                 s.getUpdatedAt());

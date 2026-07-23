@@ -10,7 +10,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
-import type { RoadmapGraphSnapshot } from "@/lib/types";
+import type { Readiness, RoadmapGraphSnapshot } from "@/lib/types";
 import { resolveStatusColors } from "@/lib/dagLayout";
 import {
   computeRoadmapTreeLayout,
@@ -44,17 +44,40 @@ interface InternalNode {
   parentId: string | null;
   label: string;
   status: string;
+  /** Epics can't participate in a dependency edge, so this is always null for them. */
+  readiness: Readiness | null;
 }
 
 function buildInternalNodes(snapshot: RoadmapGraphSnapshot): InternalNode[] {
   const nodes: InternalNode[] = [
-    { id: snapshot.epic.id, itemType: "epic", parentId: null, label: snapshot.epic.title, status: snapshot.epic.status },
+    {
+      id: snapshot.epic.id,
+      itemType: "epic",
+      parentId: null,
+      label: snapshot.epic.title,
+      status: snapshot.epic.status,
+      readiness: null,
+    },
   ];
   for (const story of snapshot.stories) {
-    nodes.push({ id: story.id, itemType: "story", parentId: story.epicId, label: story.title, status: story.status });
+    nodes.push({
+      id: story.id,
+      itemType: "story",
+      parentId: story.epicId,
+      label: story.title,
+      status: story.status,
+      readiness: story.readiness,
+    });
   }
   for (const task of snapshot.tasks) {
-    nodes.push({ id: task.id, itemType: "task", parentId: task.storyId, label: task.title, status: task.status });
+    nodes.push({
+      id: task.id,
+      itemType: "task",
+      parentId: task.storyId,
+      label: task.title,
+      status: task.status,
+      readiness: task.readiness,
+    });
   }
   return nodes;
 }
@@ -208,6 +231,7 @@ export default function RoadmapGraph({ snapshot, onNodeSelect }: RoadmapGraphPro
           label: n.label,
           itemType: n.itemType,
           status: n.status,
+          readiness: n.readiness,
           childCount: childCounts.get(n.id) ?? 0,
           collapsed: collapsed.has(n.id),
           onToggleCollapse: handleToggleCollapse,
