@@ -386,6 +386,86 @@ describe("HumanGatePanel", () => {
     });
   });
 
+  describe("roadmap candidate breakdown", () => {
+    const candidateBreakdown = [
+      {
+        title: "Add dark mode",
+        description: "Support a dark theme across the app",
+        motivation: "Users have asked for this repeatedly",
+        repos: ["repo-a", "repo-b"],
+        priority: "High",
+        stories: [
+          {
+            title: "Theme toggle",
+            description: "Add a toggle in settings",
+            tasks: [{ title: "Build toggle component", description: "New UI component" }],
+          },
+        ],
+      },
+    ];
+
+    it("renders the breakdown editor when candidateBreakdown is present", () => {
+      renderWithProviders(
+        <HumanGatePanel {...defaultProps} candidateBreakdown={candidateBreakdown} />
+      );
+
+      expect(screen.getByTestId("roadmap-candidate-breakdown")).toBeInTheDocument();
+      expect(screen.getByDisplayValue("Add dark mode")).toBeInTheDocument();
+      expect(screen.getByDisplayValue("Theme toggle")).toBeInTheDocument();
+      expect(screen.getByDisplayValue("Build toggle component")).toBeInTheDocument();
+    });
+
+    it("does not render the breakdown editor when candidateBreakdown is null", () => {
+      renderWithProviders(
+        <HumanGatePanel {...defaultProps} candidateBreakdown={null} />
+      );
+
+      expect(screen.queryByTestId("roadmap-candidate-breakdown")).not.toBeInTheDocument();
+    });
+
+    it("does not render the breakdown editor when candidateBreakdown is absent (no visible change)", () => {
+      renderWithProviders(<HumanGatePanel {...defaultProps} />);
+
+      expect(screen.queryByTestId("roadmap-candidate-breakdown")).not.toBeInTheDocument();
+    });
+
+    it("includes editedCandidates in the signal payload on Approve, reflecting edits", async () => {
+      const user = userEvent.setup();
+      renderWithProviders(
+        <HumanGatePanel {...defaultProps} candidateBreakdown={candidateBreakdown} />
+      );
+
+      const titleInput = screen.getByDisplayValue("Add dark mode");
+      await user.clear(titleInput);
+      await user.type(titleInput, "Add dark and light mode");
+
+      await user.click(screen.getByText("Approve"));
+
+      expect(mockMutate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          nodeExecId: "exec-1",
+          decision: "approved",
+          editedCandidates: [
+            expect.objectContaining({ title: "Add dark and light mode" }),
+          ],
+        }),
+        expect.objectContaining({ onSuccess: expect.any(Function) })
+      );
+    });
+
+    it("does not include editedCandidates in the signal payload when candidateBreakdown was absent", async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<HumanGatePanel {...defaultProps} />);
+
+      await user.click(screen.getByText("Approve"));
+
+      expect(mockMutate).toHaveBeenCalledWith(
+        { nodeExecId: "exec-1", decision: "approved", feedback: "", files: [] },
+        expect.objectContaining({ onSuccess: expect.any(Function) })
+      );
+    });
+  });
+
   describe("v23 Final Approval gate", () => {
     const finalApprovalProps = {
       ...defaultProps,

@@ -129,7 +129,10 @@ class RunServiceTest {
                 taskRepo,
                 mock(ArtifactResolutionService.class),
                 mock(ApplicationEventPublisher.class),
-                new com.choruskube.core.scope.NoOpScopeProvider());
+                new com.choruskube.core.scope.NoOpScopeProvider(),
+                new DecisionOptionsResolver(),
+                null,
+                null);
     }
 
     // -----------------------------------------------------------------------
@@ -179,7 +182,7 @@ class RunServiceTest {
         stubRunWithEdges("approved", "rejected");
 
         String refs = "{\"doc.pdf\":\"acme/runs/123/gate-attachments/456/doc.pdf\"}";
-        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, refs));
+        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, refs, null));
 
         JsonNode payload = captureSignalPayload();
         assertThat(payload.get("attachmentRefs").asText()).isEqualTo(refs);
@@ -192,7 +195,7 @@ class RunServiceTest {
         stubExec();
         stubRunWithEdges("approved");
 
-        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null));
+        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, null));
 
         JsonNode payload = captureSignalPayload();
         assertThat(payload.get("attachmentRefs").asText()).isEqualTo("{}");
@@ -206,7 +209,7 @@ class RunServiceTest {
         service.signalHumanDecision(
                 runId,
                 nodeExecId,
-                new SignalRequest("approved", "Looks good", "{\"file.txt\":\"acme/gate/file.txt\"}"));
+                new SignalRequest("approved", "Looks good", "{\"file.txt\":\"acme/gate/file.txt\"}", null));
 
         JsonNode payload = captureSignalPayload();
         assertThat(payload.get("feedback").asText()).contains("Looks good");

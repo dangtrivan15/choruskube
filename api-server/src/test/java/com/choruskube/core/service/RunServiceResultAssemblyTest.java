@@ -102,7 +102,10 @@ class RunServiceResultAssemblyTest {
                 null,
                 null,
                 null,
-                new com.choruskube.core.scope.NoOpScopeProvider());
+                new com.choruskube.core.scope.NoOpScopeProvider(),
+                new DecisionOptionsResolver(),
+                null,
+                null);
     }
 
     private NodeExecution stubExec() {
@@ -154,7 +157,7 @@ class RunServiceResultAssemblyTest {
         exec.setResult("**Human:** Hello\n\n**AI:** Hi there");
         stubRunWithEdges("approved", "rejected");
 
-        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", "Looks good", null));
+        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", "Looks good", null, null));
 
         String feedback = captureSignalFeedback();
         assertThat(feedback)
@@ -167,7 +170,7 @@ class RunServiceResultAssemblyTest {
         stubExec(); // result is null
         stubRunWithEdges("approved", "rejected");
 
-        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", "Please fix X", null));
+        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", "Please fix X", null, null));
 
         String feedback = captureSignalFeedback();
         assertThat(feedback).isEqualTo("## Reviewer Feedback\n\nPlease fix X");
@@ -180,7 +183,7 @@ class RunServiceResultAssemblyTest {
         exec.setResult("some transcript");
         stubRunWithEdges("approved", "rejected");
 
-        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", "", null));
+        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", "", null, null));
 
         String feedback = captureSignalFeedback();
         // With blank feedback, the transcript is sent as-is without any headers
@@ -195,7 +198,7 @@ class RunServiceResultAssemblyTest {
         exec.setResult("   "); // whitespace-only result
         stubRunWithEdges("approved", "rejected");
 
-        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", "Some feedback", null));
+        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", "Some feedback", null, null));
 
         String feedback = captureSignalFeedback();
         assertThat(feedback).isEqualTo("## Reviewer Feedback\n\nSome feedback");

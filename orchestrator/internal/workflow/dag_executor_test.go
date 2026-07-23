@@ -447,6 +447,73 @@ func (s *DAGExecutorTestSuite) TestHumanGateSignal_EmptyAttachmentRefs() {
 	s.NoError(s.env.GetWorkflowError())
 }
 
+// TestHumanGateTerminalDecisionCompletesRun verifies the "roadmap_feature_creator
+// removal" scenario: a human gate node has only a "rejected" conditional outgoing
+// edge, plus "terminal_decisions": ["approved"] in its snapshot configOverrides.
+// When the human approves, EvaluateEdges must treat "approved" as a legitimate
+// end of this run branch (no matching edge, but a declared terminal decision) —
+// not as a routing error. The downstream node must never be created, and the
+// workflow (and run) must finish as "completed", not "failed".
+func (s *DAGExecutorTestSuite) TestHumanGateTerminalDecisionCompletesRun() {
+	nodeA := uuid.New()
+	nodeB := uuid.New()
+	execA := uuid.New()
+	runID := uuid.New()
+
+	snapshot := `{
+		"nodes": [
+			{"templateNodeId": "` + nodeA.String() + `", "label": "roadmap_human_gate", "executorType": "human", "timeoutSeconds": 3600, "isEntrypoint": true, "configOverrides": {"terminal_decisions": ["approved"]}},
+			{"templateNodeId": "` + nodeB.String() + `", "label": "roadmap_feature_creator", "executorType": "ai", "timeoutSeconds": 1800}
+		],
+		"edges": [
+			{"sourceNodeId": "` + nodeA.String() + `", "targetNodeId": "` + nodeB.String() + `", "condition": "rejected"}
+		]
+	}`
+
+	// Assert the final run status is "completed" — registered before the general
+	// catch-all below so it matches the terminal "completed" call specifically.
+	s.env.OnActivity("UpdateWorkflowRunStatus", mock.Anything, mock.MatchedBy(func(p activity.UpdateRunStatusParams) bool {
+		return p.RunID == runID && p.Status == "completed"
+	})).Return(nil).Once()
+	s.env.OnActivity("UpdateWorkflowRunStatus", mock.Anything, mock.Anything).Return(nil)
+
+	s.env.OnActivity("GetGraphRuntime", mock.Anything, runID).Return(snapshot, nil)
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("WriteExecutionLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("InitRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("AppendRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("SetTraversedEdges", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == nodeA
+	})).Return(execA, nil).Once()
+
+	s.env.OnActivity("SetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.SetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execA && p.Decision == "approved"
+	})).Return(nil).Once()
+
+	// Human approves the gate — with only a "rejected" conditional edge, this
+	// result would previously fail EvaluateEdges outright.
+	s.env.RegisterDelayedCallback(func() {
+		s.env.SignalWorkflow(SignalHumanDecisionPrefix+execA.String(), HumanDecisionSignal{
+			NodeExecutionID: execA.String(),
+			Decision:        "approved",
+			Feedback:        "Looks good",
+		})
+	}, 0)
+
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execA
+	})).Return("approved", nil).Once()
+
+	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
+		RunID: runID, GraphVersion: 1,
+	})
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+}
+
 // TestRunInputArtifactRefs_PassedToAINode verifies that when RunInputArtifactRefs is
 // set on DAGExecutorParams, ExecuteAINodeFromSnapshot is called with InputArtifacts
 // containing "run_input/" prefixed keys derived from the JSON.

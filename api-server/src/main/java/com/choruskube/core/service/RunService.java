@@ -29,6 +29,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
@@ -72,6 +73,14 @@ public class RunService {
     private final ArtifactResolutionService artifactResolutionService;
     private final ApplicationEventPublisher applicationEventPublisher;
     private final ScopeProvider scopeProvider;
+    private final DecisionOptionsResolver decisionOptionsResolver;
+    private final RoadmapCandidateMaterializer roadmapCandidateMaterializer;
+    private final RoadmapCandidatesArtifactResolver roadmapCandidatesArtifactResolver;
+
+    /** Config key on a gate's {@code config_overrides} that opts it into materialization (Decision 3). */
+    static final String MATERIALIZE_CONFIG_KEY = "materialize";
+
+    static final String MATERIALIZE_ROADMAP_CANDIDATES = "roadmap_candidates";
 
     @Value("${temporal.task-queue}")
     private String taskQueue;
@@ -103,7 +112,10 @@ public class RunService {
             TaskRepository taskRepo,
             ArtifactResolutionService artifactResolutionService,
             ApplicationEventPublisher applicationEventPublisher,
-            ScopeProvider scopeProvider) {
+            ScopeProvider scopeProvider,
+            DecisionOptionsResolver decisionOptionsResolver,
+            @Lazy RoadmapCandidateMaterializer roadmapCandidateMaterializer,
+            RoadmapCandidatesArtifactResolver roadmapCandidatesArtifactResolver) {
         this.runRepo = runRepo;
         this.execRepo = execRepo;
         this.edgeRepo = edgeRepo;
@@ -131,6 +143,9 @@ public class RunService {
         this.artifactResolutionService = artifactResolutionService;
         this.applicationEventPublisher = applicationEventPublisher;
         this.scopeProvider = scopeProvider;
+        this.decisionOptionsResolver = decisionOptionsResolver;
+        this.roadmapCandidateMaterializer = roadmapCandidateMaterializer;
+        this.roadmapCandidatesArtifactResolver = roadmapCandidatesArtifactResolver;
     }
 
     @Transactional
@@ -448,8 +463,10 @@ public class RunService {
         NodeExecution exec = execRepo.findById(nodeExecId)
                 .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
 
-        // Validate decision against edge conditions
-        String validatedDecision = validateDecisionAgainstEdges(run, exec.getTemplateNodeId(), request.decision());
+        JsonNode snapshot = readSnapshot(run);
+
+        // Validate decision against the union of edge conditions and terminal_decisions
+        String validatedDecision = validateDecisionAgainstEdges(snapshot, exec.getTemplateNodeId(), request.decision());
 
         // Assemble the full result for the signal — includes any existing content
         // (e.g. live chat transcript) plus human feedback. The orchestrator will
@@ -467,6 +484,25 @@ public class RunService {
             }
         }
 
+        // Deterministic materialization (Decision 3): on approval of a gate configured for it,
+        // turn the reviewed (possibly reviewer-edited) Roadmap Provisioner candidate breakdown
+        // directly into Epic/Story/Task rows — through the same write path a human uses — in the
+        // same request that handles the decision signal, rather than via a second AI agent.
+        if ("approved".equalsIgnoreCase(validatedDecision) && isMaterializeNode(snapshot, exec.getTemplateNodeId())) {
+            List<CandidateEpicProposal> source = request.editedCandidates() != null
+                            && !request.editedCandidates().isEmpty()
+                    ? request.editedCandidates()
+                    : roadmapCandidatesArtifactResolver.resolve(runId, exec.getTemplateNodeId());
+            if (source != null && !source.isEmpty()) {
+                MaterializationSummary summary = roadmapCandidateMaterializer.materialize(runId, source);
+                String materializeNote = "Materialized " + summary.materializedCount() + " Epics ("
+                        + summary.skippedCount() + " skipped)";
+                assembledResult = (assembledResult != null && !assembledResult.isBlank())
+                        ? assembledResult + "\n\n" + materializeNote
+                        : materializeNote;
+            }
+        }
+
         WorkflowStub stub = workflowClient.newUntypedWorkflowStub(run.getExternalRunId());
         HumanDecisionPayload payload = new HumanDecisionPayload(
                 nodeExecId.toString(),
@@ -478,24 +514,25 @@ public class RunService {
         eventPublisher.publishNodeStatusChanged(runId, nodeExecId, "signaled");
     }
 
+    private JsonNode readSnapshot(WorkflowRun run) {
+        try {
+            return objectMapper.readTree(snapshotBuilder.buildSnapshotForRun(run));
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to build graph snapshot", e);
+        }
+    }
+
     /**
-     * Validates a decision against the edge conditions for a node.
+     * Validates a decision against the union of a node's outgoing edge conditions and its
+     * configured {@code terminal_decisions} (Decision 2), via {@link DecisionOptionsResolver}.
      * Returns the canonical (case-matched) decision string.
      */
-    private String validateDecisionAgainstEdges(WorkflowRun run, UUID templateNodeId, String decision) {
+    private String validateDecisionAgainstEdges(JsonNode snapshot, UUID templateNodeId, String decision) {
         try {
-            var snapshot = objectMapper.readTree(snapshotBuilder.buildSnapshotForRun(run));
-            var edges = snapshot.get("edges");
-            List<String> validConditions = new ArrayList<>();
-            if (edges != null) {
-                for (var edge : edges) {
-                    if (edge.get("source_node_id").asText().equals(templateNodeId.toString())
-                            && edge.has("condition")
-                            && !edge.get("condition").isNull()) {
-                        validConditions.add(edge.get("condition").asText());
-                    }
-                }
-            }
+            JsonNode edges = snapshot.get("edges");
+            JsonNode nodeConfigOverrides =
+                    decisionOptionsResolver.findNodeConfigOverrides(snapshot.get("nodes"), templateNodeId);
+            List<String> validConditions = decisionOptionsResolver.resolve(edges, templateNodeId, nodeConfigOverrides);
             if (validConditions.isEmpty()) {
                 throw new BadRequestException("This node has no conditional edges");
             }
@@ -510,6 +547,19 @@ public class RunService {
         } catch (Exception e) {
             throw new RuntimeException("Failed to validate decision", e);
         }
+    }
+
+    /**
+     * Whether this node is configured to materialize its approved candidate breakdown (Decision
+     * 3) — i.e. its {@code config_overrides.materialize} equals {@code "roadmap_candidates"}.
+     */
+    private boolean isMaterializeNode(JsonNode snapshot, UUID templateNodeId) {
+        JsonNode nodeConfigOverrides =
+                decisionOptionsResolver.findNodeConfigOverrides(snapshot.get("nodes"), templateNodeId);
+        return nodeConfigOverrides != null
+                && nodeConfigOverrides.has(MATERIALIZE_CONFIG_KEY)
+                && MATERIALIZE_ROADMAP_CANDIDATES.equals(
+                        nodeConfigOverrides.get(MATERIALIZE_CONFIG_KEY).asText());
     }
 
     public List<ExecutionLogResponse> getExecutionLogs(UUID nodeExecId) {

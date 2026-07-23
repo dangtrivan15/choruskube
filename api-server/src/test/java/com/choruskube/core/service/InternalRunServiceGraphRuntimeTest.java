@@ -108,7 +108,8 @@ class InternalRunServiceGraphRuntimeTest {
                 null,
                 null,
                 null,
-                null);
+                null,
+                new DecisionOptionsResolver());
     }
 
     @Test

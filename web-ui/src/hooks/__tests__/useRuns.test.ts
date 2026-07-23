@@ -448,6 +448,60 @@ describe("useRuns hooks", () => {
       expect(result.current.error?.message).toBe("Upload failed");
       expect(mockApi.post).not.toHaveBeenCalled();
     });
+
+    it("includes editedCandidates in the request body when provided", async () => {
+      mockApi.post.mockResolvedValueOnce(undefined);
+      const { wrapper } = createTestHookWrapper();
+
+      const { result } = renderHook(() => useSignalNode("run-1"), { wrapper });
+
+      const editedCandidates = [
+        {
+          title: "Epic A",
+          description: "desc",
+          motivation: "why",
+          repos: null,
+          priority: null,
+          stories: [],
+        },
+      ];
+      result.current.mutate({
+        nodeExecId: "exec-1",
+        decision: "approved",
+        feedback: "looks good",
+        editedCandidates,
+      });
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(mockApi.post).toHaveBeenCalledWith("/runs/run-1/nodes/exec-1/signal", {
+        decision: "approved",
+        feedback: "looks good",
+        attachmentRefs: undefined,
+        editedCandidates,
+      });
+    });
+
+    it("omits editedCandidates from the request body when not provided", async () => {
+      mockApi.post.mockResolvedValueOnce(undefined);
+      const { wrapper } = createTestHookWrapper();
+
+      const { result } = renderHook(() => useSignalNode("run-1"), { wrapper });
+
+      result.current.mutate({
+        nodeExecId: "exec-1",
+        decision: "approved",
+        feedback: "looks good",
+      });
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(mockApi.post).toHaveBeenCalledWith("/runs/run-1/nodes/exec-1/signal", {
+        decision: "approved",
+        feedback: "looks good",
+        attachmentRefs: undefined,
+      });
+      const body = mockApi.post.mock.calls[0][1] as Record<string, unknown>;
+      expect(Object.prototype.hasOwnProperty.call(body, "editedCandidates")).toBe(false);
+    });
   });
 
   describe("useStartRun error handling", () => {

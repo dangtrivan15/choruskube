@@ -67,7 +67,8 @@ class AutoDecisionTest {
                 templateNodeRepo,
                 nodeDefinitionRepo,
                 null,
-                null);
+                null,
+                new DecisionOptionsResolver());
     }
 
     private NodeExecution stubExec() {

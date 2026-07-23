@@ -2,7 +2,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { showMutationToast } from "@/lib/toast-messages";
 import { useActivityFeed } from "./useActivityFeed";
-import type { PendingGateResponse, PendingGateCountResponse, PageResponse, PaginationParams, AttachmentRefsResponse } from "@/lib/types";
+import type {
+  PendingGateResponse,
+  PendingGateCountResponse,
+  PageResponse,
+  PaginationParams,
+  AttachmentRefsResponse,
+  CandidateEpicProposal,
+} from "@/lib/types";
 
 export function usePendingGates(pagination?: PaginationParams) {
   return useQuery({
@@ -32,12 +39,14 @@ export function useSignalFromDashboard() {
       decision,
       feedback,
       files,
+      editedCandidates,
     }: {
       runId: string;
       nodeExecId: string;
       decision: string;
       feedback: string;
       files?: File[];
+      editedCandidates?: CandidateEpicProposal[];
     }) => {
       let attachmentRefs: string | undefined;
       if (files && files.length > 0) {
@@ -52,6 +61,7 @@ export function useSignalFromDashboard() {
         decision,
         feedback,
         attachmentRefs,
+        ...(editedCandidates !== undefined ? { editedCandidates } : {}),
       });
     },
     onSuccess: () => {

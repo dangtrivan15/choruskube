@@ -44,7 +44,10 @@ class RunServiceInputValidationTest {
                 null,
                 null,
                 null,
-                new com.choruskube.core.scope.NoOpScopeProvider());
+                new com.choruskube.core.scope.NoOpScopeProvider(),
+                new DecisionOptionsResolver(),
+                null,
+                null);
     }
 
     @Test

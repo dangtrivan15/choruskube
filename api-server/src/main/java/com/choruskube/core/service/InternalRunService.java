@@ -46,6 +46,7 @@ public class InternalRunService {
     private final NodeDefinitionRepository nodeDefinitionRepo;
     private final StoryRepository storyRepo;
     private final RoadmapGraphService roadmapGraphService;
+    private final DecisionOptionsResolver decisionOptionsResolver;
 
     @Value("${artifact.enforcement.mode:warn}")
     private String artifactEnforcementMode;
@@ -70,7 +71,8 @@ public class InternalRunService {
             TemplateNodeRepository templateNodeRepo,
             NodeDefinitionRepository nodeDefinitionRepo,
             StoryRepository storyRepo,
-            RoadmapGraphService roadmapGraphService) {
+            RoadmapGraphService roadmapGraphService,
+            DecisionOptionsResolver decisionOptionsResolver) {
         this.runRepo = runRepo;
         this.execRepo = execRepo;
         this.logRepo = logRepo;
@@ -91,6 +93,7 @@ public class InternalRunService {
         this.nodeDefinitionRepo = nodeDefinitionRepo;
         this.storyRepo = storyRepo;
         this.roadmapGraphService = roadmapGraphService;
+        this.decisionOptionsResolver = decisionOptionsResolver;
     }
 
     public NodeExecutionResponse createNodeExecution(UUID runId, InternalCreateNodeExecutionRequest req) {
@@ -512,16 +515,10 @@ public class InternalRunService {
                     runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Run not found: " + runId));
             var snapshot = objectMapper.readTree(snapshotBuilder.buildSnapshotForRun(run));
             var edges = snapshot.get("edges");
-            List<String> validConditions = new ArrayList<>();
-            for (var edge : edges) {
-                if (edge.get("source_node_id")
-                                .asText()
-                                .equals(exec.getTemplateNodeId().toString())
-                        && edge.has("condition")
-                        && !edge.get("condition").isNull()) {
-                    validConditions.add(edge.get("condition").asText());
-                }
-            }
+            var nodeConfigOverrides =
+                    decisionOptionsResolver.findNodeConfigOverrides(snapshot.get("nodes"), exec.getTemplateNodeId());
+            List<String> validConditions =
+                    decisionOptionsResolver.resolve(edges, exec.getTemplateNodeId(), nodeConfigOverrides);
             return new DecisionsWithSnapshot(validConditions, snapshot);
         } catch (Exception e) {
             throw new RuntimeException("Failed to build graph snapshot", e);

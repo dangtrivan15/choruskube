@@ -1,5 +1,6 @@
 package com.choruskube.core.service;
 
+import com.choruskube.core.dto.CandidateEpicProposal;
 import com.choruskube.core.dto.PendingGateCountResponse;
 import com.choruskube.core.dto.PendingGateResponse;
 import com.choruskube.core.dto.PredecessorOutput;
@@ -35,6 +36,8 @@ public class PendingGateService {
     private final AuthorizationService authService;
     private final ArtifactResolutionService artifactResolutionService;
     private final ScopeProvider scopeProvider;
+    private final DecisionOptionsResolver decisionOptionsResolver;
+    private final RoadmapCandidatesArtifactResolver candidatesArtifactResolver;
 
     public PendingGateService(
             NodeExecutionRepository execRepo,
@@ -43,7 +46,9 @@ public class PendingGateService {
             ObjectMapper objectMapper,
             AuthorizationService authService,
             ArtifactResolutionService artifactResolutionService,
-            ScopeProvider scopeProvider) {
+            ScopeProvider scopeProvider,
+            DecisionOptionsResolver decisionOptionsResolver,
+            RoadmapCandidatesArtifactResolver candidatesArtifactResolver) {
         this.execRepo = execRepo;
         this.runRepo = runRepo;
         this.snapshotBuilder = snapshotBuilder;
@@ -51,6 +56,8 @@ public class PendingGateService {
         this.authService = authService;
         this.artifactResolutionService = artifactResolutionService;
         this.scopeProvider = scopeProvider;
+        this.decisionOptionsResolver = decisionOptionsResolver;
+        this.candidatesArtifactResolver = candidatesArtifactResolver;
     }
 
     private static final List<NodeExecutionStatus> GATE_STATUSES =
@@ -160,9 +167,12 @@ public class PendingGateService {
                 predecessorOutputs = findPredecessorOutputs(
                         exec.getTemplateNodeId(), edgesArr, nodeMap, execsByRun.getOrDefault(run.getId(), List.of()));
 
-                // Decision options come from outgoing edge conditions on this node — same
-                // source the validator uses, so the UI cannot drift from the contract.
-                decisionOptions = collectDecisionOptions(exec.getTemplateNodeId(), edgesArr);
+                // Decision options come from the union of outgoing edge conditions and this
+                // node's terminal_decisions config — same source RunService's validator uses,
+                // so the UI cannot drift from the contract.
+                JsonNode thisNodeConfigOverrides = thisNode != null ? thisNode.get("config_overrides") : null;
+                decisionOptions =
+                        decisionOptionsResolver.resolve(edgesArr, exec.getTemplateNodeId(), thisNodeConfigOverrides);
             } catch (Exception e) {
                 logger.warn("Failed to parse graph snapshot for run {}: {}", run.getId(), e.getMessage());
             }
@@ -170,6 +180,9 @@ public class PendingGateService {
 
         List<ResolvedArtifactGroup> requiredArtifacts =
                 artifactResolutionService.resolveRequiredArtifacts(exec.getTemplateNodeId(), exec.getWorkflowRunId());
+
+        List<CandidateEpicProposal> candidateBreakdown =
+                candidatesArtifactResolver.resolve(run.getId(), requiredArtifacts);
 
         return new PendingGateResponse(
                 exec.getId(),
@@ -183,22 +196,8 @@ public class PendingGateService {
                 exec.getStatus().name(),
                 predecessorOutputs,
                 requiredArtifacts,
-                decisionOptions);
-    }
-
-    private List<String> collectDecisionOptions(UUID sourceNodeId, JsonNode edgesArr) {
-        if (edgesArr == null) {
-            return List.of();
-        }
-        List<String> options = new ArrayList<>();
-        for (JsonNode edge : edgesArr) {
-            if (edge.get("source_node_id").asText().equals(sourceNodeId.toString())
-                    && edge.has("condition")
-                    && !edge.get("condition").isNull()) {
-                options.add(edge.get("condition").asText());
-            }
-        }
-        return options;
+                decisionOptions,
+                candidateBreakdown);
     }
 
     private List<PredecessorOutput> findPredecessorOutputs(
