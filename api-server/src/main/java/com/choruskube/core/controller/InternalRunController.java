@@ -198,6 +198,31 @@ public class InternalRunController {
         return service.createTask(runId, epicId, storyId, request);
     }
 
+    /**
+     * Agent-facing mirror of {@code GET /api/v1/epics/{epicId}/graph} (Roadmap Graph View,
+     * Decision 1) — same response shape (readiness, capped run history), scoped by the calling
+     * run's project rather than a JWT-derived org (Decision 5).
+     */
+    @GetMapping("/{runId}/node-executions/{nodeExecId}/feature-proposals/{epicId}/graph")
+    public RoadmapGraphSnapshot getGraph(
+            @PathVariable UUID runId, @PathVariable UUID nodeExecId, @PathVariable UUID epicId) {
+        return service.getGraph(runId, epicId);
+    }
+
+    /**
+     * Agent-facing mirror of {@code PATCH /api/v1/tasks/{id}/status} (Decision 1, Decision 4) —
+     * lets an agent report a Task's outcome (success or failure) from inside its own run, scoped
+     * by the calling run's project rather than a JWT-derived org (Decision 5).
+     */
+    @PatchMapping("/{runId}/node-executions/{nodeExecId}/tasks/{taskId}/status")
+    public TaskResponse updateTaskStatus(
+            @PathVariable UUID runId,
+            @PathVariable UUID nodeExecId,
+            @PathVariable UUID taskId,
+            @Valid @RequestBody TaskStatusUpdateRequest request) {
+        return service.updateTaskStatus(runId, taskId, request);
+    }
+
     @PostMapping("/{runId}/node-executions/{nodeExecId}/pull-requests")
     @ResponseStatus(HttpStatus.CREATED)
     public RunPullRequestResponse createPullRequest(

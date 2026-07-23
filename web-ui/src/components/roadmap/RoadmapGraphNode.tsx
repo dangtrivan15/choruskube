@@ -1,8 +1,9 @@
 import { memo } from "react";
 import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
-import { ChevronDown, ChevronRight, Milestone, BookOpen, ListTodo } from "lucide-react";
+import { ChevronDown, ChevronRight, Milestone, BookOpen, ListTodo, Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { statusColorTokens } from "@/lib/statusColors";
+import type { Readiness } from "@/lib/types";
 
 export type RoadmapItemType = "epic" | "story" | "task";
 
@@ -11,6 +12,12 @@ export interface RoadmapGraphNodeData {
   itemType: RoadmapItemType;
   /** Work-item status: "backlog" | "in_progress" | "done". */
   status: string;
+  /**
+   * Dependency-readiness (Decision 2). `null`/undefined (Epics, which can't
+   * participate in a dependency edge, or a not-yet-computed value) renders no
+   * indicator — only an explicit "BLOCKED" does.
+   */
+  readiness?: Readiness | null;
   /** Direct child count (Stories under an Epic, Tasks under a Story). Undefined/0 for a leaf Task. */
   childCount?: number;
   /** Whether this node's children are currently hidden. Ignored when `childCount` is falsy. */
@@ -61,6 +68,7 @@ const secondaryHandleClass = "!bg-transparent !size-0 !min-w-0 !min-h-0 !border-
 function RoadmapGraphNode({ id, data, selected }: NodeProps<RoadmapGraphNodeType>) {
   const colors = getStatusColors(data.status);
   const hasChildren = (data.childCount ?? 0) > 0;
+  const isBlocked = data.readiness === "BLOCKED";
 
   return (
     <>
@@ -111,14 +119,26 @@ function RoadmapGraphNode({ id, data, selected }: NodeProps<RoadmapGraphNodeType
           <span className={cn("text-xs font-medium capitalize", colors.text)}>
             {data.status.replace(/_/g, " ")}
           </span>
-          {hasChildren && (
-            <span
-              data-testid="roadmap-graph-node-child-count"
-              className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
-            >
-              {data.childCount}
-            </span>
-          )}
+          <div className="flex shrink-0 items-center gap-1">
+            {isBlocked && (
+              <span
+                data-testid="roadmap-graph-node-blocked-badge"
+                title="Blocked by an unfinished dependency"
+                className="inline-flex items-center gap-0.5 rounded-full bg-status-warning/15 px-1.5 py-0.5 text-[10px] font-medium text-status-warning"
+              >
+                <Lock className="size-2.5" />
+                Blocked
+              </span>
+            )}
+            {hasChildren && (
+              <span
+                data-testid="roadmap-graph-node-child-count"
+                className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+              >
+                {data.childCount}
+              </span>
+            )}
+          </div>
         </div>
       </div>
 

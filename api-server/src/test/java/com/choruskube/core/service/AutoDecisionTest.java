@@ -66,6 +66,7 @@ class AutoDecisionTest {
                 null,
                 templateNodeRepo,
                 nodeDefinitionRepo,
+                null,
                 null);
     }
 

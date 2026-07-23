@@ -45,6 +45,7 @@ public class InternalRunService {
     private final TemplateNodeRepository templateNodeRepo;
     private final NodeDefinitionRepository nodeDefinitionRepo;
     private final StoryRepository storyRepo;
+    private final RoadmapGraphService roadmapGraphService;
 
     @Value("${artifact.enforcement.mode:warn}")
     private String artifactEnforcementMode;
@@ -68,7 +69,8 @@ public class InternalRunService {
             SoftwareProjectRepository softwareProjectRepo,
             TemplateNodeRepository templateNodeRepo,
             NodeDefinitionRepository nodeDefinitionRepo,
-            StoryRepository storyRepo) {
+            StoryRepository storyRepo,
+            RoadmapGraphService roadmapGraphService) {
         this.runRepo = runRepo;
         this.execRepo = execRepo;
         this.logRepo = logRepo;
@@ -88,6 +90,7 @@ public class InternalRunService {
         this.templateNodeRepo = templateNodeRepo;
         this.nodeDefinitionRepo = nodeDefinitionRepo;
         this.storyRepo = storyRepo;
+        this.roadmapGraphService = roadmapGraphService;
     }
 
     public NodeExecutionResponse createNodeExecution(UUID runId, InternalCreateNodeExecutionRequest req) {
@@ -642,6 +645,36 @@ public class InternalRunService {
         }
         UUID softwareProjectId = resolveSoftwareProjectIdFromRun(run);
         return taskService.create(storyId, new TaskRequest(req.title(), req.description()), runId, softwareProjectId);
+    }
+
+    /**
+     * Reads an Epic's full Roadmap Graph View (Decision 1, Decision 3) on behalf of an agent pod.
+     * See {@link #createEpic} for why these internal endpoints exist; scoped the same way as
+     * {@link #createStory}/{@link #createTask} via the run's resolved software project.
+     */
+    @Transactional(readOnly = true)
+    public RoadmapGraphSnapshot getGraph(UUID runId, UUID epicId) {
+        WorkflowRun run =
+                runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
+        UUID softwareProjectId = resolveSoftwareProjectIdFromRun(run);
+        return roadmapGraphService.getGraph(epicId, runId, softwareProjectId);
+    }
+
+    /**
+     * Updates a Task's status (Decision 4) on behalf of an agent pod reporting a run's outcome.
+     * See {@link #createEpic} for why these internal endpoints exist; scoped the same way as
+     * {@link #createStory}/{@link #createTask} via the run's resolved software project. {@code
+     * request.runId()}, if supplied, is the run being reported ON (verified against the Task's
+     * most recent linked run) — separate from this method's own {@code runId}, which identifies
+     * the calling agent pod for auth/scoping purposes; in the common case these are the same run.
+     */
+    @Transactional
+    public TaskResponse updateTaskStatus(UUID runId, UUID taskId, TaskStatusUpdateRequest request) {
+        WorkflowRun run =
+                runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
+        UUID softwareProjectId = resolveSoftwareProjectIdFromRun(run);
+        return taskService.updateStatusInternal(
+                taskId, request.status(), runId, softwareProjectId, request.runId(), request.note());
     }
 
     /**

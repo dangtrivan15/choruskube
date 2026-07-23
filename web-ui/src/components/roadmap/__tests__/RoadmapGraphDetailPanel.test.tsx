@@ -30,6 +30,7 @@ import { api } from "@/lib/api";
 const mockApi = api as unknown as {
   post: ReturnType<typeof vi.fn>;
   delete: ReturnType<typeof vi.fn>;
+  getPage: ReturnType<typeof vi.fn>;
 };
 
 const epic: EpicResponse = {
@@ -52,6 +53,7 @@ const story: StoryResponse = {
   title: "Dark theme toggle",
   description: "Story description",
   status: "backlog",
+  readiness: "READY",
   progress: { totalTasks: 1, doneTasks: 0 },
   createdAt: "2026-04-01T00:00:00Z",
   updatedAt: "2026-04-01T00:00:00Z",
@@ -67,6 +69,9 @@ const task: TaskResponse = {
   repos: [],
   latestRunId: "run-1",
   latestRunStatus: "completed",
+  readiness: "READY",
+  recentRuns: [],
+  totalRunCount: 0,
   createdAt: "2026-04-01T00:00:00Z",
   updatedAt: "2026-04-01T00:00:00Z",
 };
@@ -157,6 +162,48 @@ describe("RoadmapGraphDetailPanel", () => {
         screen.getByText("No runs yet. Start the task to launch the first one."),
       ).toBeInTheDocument(),
     );
+  });
+
+  it("shows a readiness badge for a BLOCKED Story/Task but not an Epic", () => {
+    const blockedTask: TaskResponse = { ...task, readiness: "BLOCKED" };
+    renderPanel({ detail: { itemType: "task", item: blockedTask } });
+    expect(screen.getByTestId("roadmap-detail-readiness-badge")).toBeInTheDocument();
+  });
+
+  it("shows no readiness badge for a READY Story/Task", () => {
+    renderPanel({ detail: { itemType: "task", item: task } });
+    expect(screen.queryByTestId("roadmap-detail-readiness-badge")).not.toBeInTheDocument();
+  });
+
+  it("renders the embedded recentRuns directly, with no follow-up runs request", async () => {
+    const taskWithRuns: TaskResponse = {
+      ...task,
+      recentRuns: [
+        {
+          id: "run-1",
+          graphTemplateId: "tmpl-1",
+          templateName: "Feature Development",
+          name: null,
+          status: "completed",
+          startedAt: "2026-04-01T00:00:00Z",
+          completedAt: "2026-04-01T01:00:00Z",
+          createdAt: "2026-04-01T00:00:00Z",
+          softwareProject: null,
+        },
+      ],
+      totalRunCount: 1,
+    };
+    renderPanel({ detail: { itemType: "task", item: taskWithRuns } });
+
+    expect(await screen.findByTestId("task-run-history-item")).toBeInTheDocument();
+    expect(mockApi.getPage).not.toHaveBeenCalled();
+  });
+
+  it("shows the truncated-history count when totalRunCount exceeds the embedded recentRuns", () => {
+    const taskWithMoreRuns: TaskResponse = { ...task, recentRuns: [], totalRunCount: 7 };
+    renderPanel({ detail: { itemType: "task", item: taskWithMoreRuns } });
+
+    expect(screen.getByTestId("roadmap-detail-run-history-total")).toHaveTextContent("showing 0 of 7");
   });
 
   it("renders no external-blocker badges when externalBlockers is empty", () => {

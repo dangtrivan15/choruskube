@@ -244,6 +244,17 @@ public class DefaultEpicService implements EpicService {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public EpicResponse getInternal(UUID epicId, UUID runId, UUID runSoftwareProjectId) {
+        Epic epic = findOrThrow(epicId);
+        authService.assertSameOrg("epic", epic.getId(), "workflow_run", runId);
+        if (!epic.getSoftwareProjectId().equals(runSoftwareProjectId)) {
+            throw new ForbiddenException("Epic " + epicId + " does not belong to the run's software project");
+        }
+        return toResponse(epic);
+    }
+
+    @Override
     @Transactional
     public EpicResponse updateStage(UUID id, WorkItemStatus stage) {
         Epic epic = findOrThrow(id);

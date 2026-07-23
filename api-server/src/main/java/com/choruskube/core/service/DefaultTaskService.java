@@ -11,6 +11,7 @@ import com.choruskube.core.dto.TaskResponse;
 import com.choruskube.core.event.MappableCreated;
 import com.choruskube.core.exception.ConflictException;
 import com.choruskube.core.exception.ForbiddenException;
+import com.choruskube.core.exception.InvalidStatusTransitionException;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.Epic;
 import com.choruskube.core.model.GraphTemplate;
@@ -52,6 +53,22 @@ public class DefaultTaskService implements TaskService {
 
     private static final Set<WorkflowRunStatus> TERMINAL_STATUSES =
             Set.of(WorkflowRunStatus.completed, WorkflowRunStatus.failed, WorkflowRunStatus.cancelled);
+
+    /** Whitelist for {@link #updateStatus} (Decision 4) — the public/request-scoped path. */
+    private static final Set<Map.Entry<WorkItemStatus, WorkItemStatus>> PUBLIC_TRANSITIONS = Set.of(
+            Map.entry(WorkItemStatus.backlog, WorkItemStatus.in_progress),
+            Map.entry(WorkItemStatus.in_progress, WorkItemStatus.done),
+            Map.entry(WorkItemStatus.in_progress, WorkItemStatus.backlog));
+
+    /**
+     * Whitelist for {@link #updateStatusInternal} — narrower than {@link #PUBLIC_TRANSITIONS}:
+     * excludes {@code backlog->in_progress}, since starting a Task creates a brand new workflow
+     * run (see {@link #start}) rather than just recording an outcome, which isn't this endpoint's
+     * job (agents report on a run they are already inside).
+     */
+    private static final Set<Map.Entry<WorkItemStatus, WorkItemStatus>> INTERNAL_TRANSITIONS = Set.of(
+            Map.entry(WorkItemStatus.in_progress, WorkItemStatus.done),
+            Map.entry(WorkItemStatus.in_progress, WorkItemStatus.backlog));
 
     private final TaskRepository repo;
     private final StoryRepository storyRepo;
@@ -144,6 +161,20 @@ public class DefaultTaskService implements TaskService {
     public List<TaskResponse> list(UUID storyId) {
         findStoryOrThrow(storyId);
         authService.checkOrgAccess("story", storyId);
+        return repo.findByStoryIdOrderByCreatedAtDesc(storyId).stream()
+                .map(this::toResponse)
+                .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<TaskResponse> listInternal(UUID storyId, UUID runId, UUID runSoftwareProjectId) {
+        Story story = findStoryOrThrow(storyId);
+        Epic epic = findEpicOrThrow(story.getEpicId());
+        authService.assertSameOrg("story", story.getId(), "workflow_run", runId);
+        if (!epic.getSoftwareProjectId().equals(runSoftwareProjectId)) {
+            throw new ForbiddenException("Story " + storyId + " does not belong to the run's software project");
+        }
         return repo.findByStoryIdOrderByCreatedAtDesc(storyId).stream()
                 .map(this::toResponse)
                 .toList();
@@ -245,14 +276,72 @@ public class DefaultTaskService implements TaskService {
     public TaskResponse complete(UUID id) {
         Task task = findOrThrow(id);
         authService.checkOrgAccess("task", id);
+        return completeCore(task, null);
+    }
+
+    @Override
+    @Transactional
+    public TaskResponse updateStatus(UUID id, WorkItemStatus target, UUID runId, String note) {
+        Task task = findOrThrow(id);
+        authService.checkOrgAccess("task", id);
+        validateTransition(PUBLIC_TRANSITIONS, task.getStatus(), target);
+        TaskResponse response =
+                switch (target) {
+                    case in_progress -> start(id);
+                    case done -> completeCore(task, runId);
+                    case backlog -> reopenCore(task, runId);
+                    default -> throw new InvalidStatusTransitionException(task.getStatus(), target);
+                };
+        recordStatusChangeAudit(id, target, note);
+        return response;
+    }
+
+    @Override
+    @Transactional
+    public TaskResponse updateStatusInternal(
+            UUID id,
+            WorkItemStatus target,
+            UUID callingRunId,
+            UUID runSoftwareProjectId,
+            UUID outcomeRunId,
+            String note) {
+        Task task = findOrThrow(id);
+        authService.assertSameOrg("task", task.getId(), "workflow_run", callingRunId);
+        if (!task.getSoftwareProjectId().equals(runSoftwareProjectId)) {
+            throw new ForbiddenException("Task " + id + " does not belong to the run's software project");
+        }
+        validateTransition(INTERNAL_TRANSITIONS, task.getStatus(), target);
+        // Deliberately no recordStatusChangeAudit call here (unlike updateStatus): AuditSink is a
+        // request-scoped-only sink (see PersistentAuditSink in the cloud overlay, which enriches
+        // org/actor from TenantContext) — there is no tenant context on this JOB_SECRET path.
+        // Mirrors the same omission in create(storyId, request, runId, runSoftwareProjectId)'s
+        // internal overload above, which also skips auditSink.record for this reason.
+        return switch (target) {
+            case done -> completeCore(task, outcomeRunId);
+            case backlog -> reopenCore(task, outcomeRunId);
+            default -> throw new InvalidStatusTransitionException(task.getStatus(), target);
+        };
+    }
+
+    /**
+     * Shared {@code in_progress -> done} body for {@link #complete} (public, no runId check) and
+     * {@link #updateStatus}/{@link #updateStatusInternal} (optionally verify {@code outcomeRunId}
+     * matches the Task's most recent linked run before completing, guarding against a
+     * stale/racing caller).
+     */
+    private TaskResponse completeCore(Task task, UUID outcomeRunId) {
         if (task.getStatus() != WorkItemStatus.in_progress) {
             throw new ConflictException("Can only complete tasks that are in progress");
         }
         WorkflowRun mostRecent =
-                mostRecentRun(id).orElseThrow(() -> new ConflictException("Task has no linked workflow run"));
+                mostRecentRun(task.getId()).orElseThrow(() -> new ConflictException("Task has no linked workflow run"));
         if (!TERMINAL_STATUSES.contains(mostRecent.getStatus())) {
             throw new ConflictException(
                     "Cannot complete: most recent run is still active (status: " + mostRecent.getStatus() + ")");
+        }
+        if (outcomeRunId != null && !outcomeRunId.equals(mostRecent.getId())) {
+            throw new ConflictException(
+                    "runId " + outcomeRunId + " does not match the Task's most recent run " + mostRecent.getId());
         }
 
         task.setStatus(WorkItemStatus.done);
@@ -263,11 +352,67 @@ public class DefaultTaskService implements TaskService {
         return response;
     }
 
+    /**
+     * New {@code in_progress -> backlog} "reopen" transition (Decision 4) — lets a Task be
+     * retried after a failed/aborted run, gated the same way {@link #completeCore} gates
+     * completion: the most recent run must be terminal.
+     */
+    private TaskResponse reopenCore(Task task, UUID outcomeRunId) {
+        if (task.getStatus() != WorkItemStatus.in_progress) {
+            throw new ConflictException("Can only reopen tasks that are in progress");
+        }
+        WorkflowRun mostRecent =
+                mostRecentRun(task.getId()).orElseThrow(() -> new ConflictException("Task has no linked workflow run"));
+        if (!TERMINAL_STATUSES.contains(mostRecent.getStatus())) {
+            throw new ConflictException(
+                    "Cannot reopen: most recent run is still active (status: " + mostRecent.getStatus() + ")");
+        }
+        if (outcomeRunId != null && !outcomeRunId.equals(mostRecent.getId())) {
+            throw new ConflictException(
+                    "runId " + outcomeRunId + " does not match the Task's most recent run " + mostRecent.getId());
+        }
+
+        task.setStatus(WorkItemStatus.backlog);
+        task = repo.save(task);
+        TaskResponse response = toResponse(task);
+        eventPublisher.publishRoadmapItemChanged(
+                "task", task.getId(), task.getStatus().name());
+        return response;
+    }
+
+    private static void validateTransition(
+            Set<Map.Entry<WorkItemStatus, WorkItemStatus>> whitelist, WorkItemStatus current, WorkItemStatus target) {
+        if (!whitelist.contains(Map.entry(current, target))) {
+            throw new InvalidStatusTransitionException(current, target);
+        }
+    }
+
+    private void recordStatusChangeAudit(UUID id, WorkItemStatus target, String note) {
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("status", target.name());
+        if (note != null) {
+            detail.put("note", note);
+        }
+        auditSink.record(AuditSink.TASK_STATUS_CHANGED, "task", id, detailJson(null, detail));
+    }
+
     @Override
     @Transactional(readOnly = true)
     public Page<RunSummary> listRuns(UUID id, Pageable pageable) {
         Task task = findOrThrow(id);
         authService.checkOrgAccess("task", id);
+        return runsPage(task, pageable);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<RunSummary> listRunsInternal(UUID id, Pageable pageable) {
+        Task task = findOrThrow(id);
+        return runsPage(task, pageable);
+    }
+
+    private Page<RunSummary> runsPage(Task task, Pageable pageable) {
+        UUID id = task.getId();
         Page<WorkflowRun> page = runRepo.findByTaskIdOrderByCreatedAtDesc(id, pageable);
 
         Set<UUID> templateIds =
@@ -319,6 +464,9 @@ public class DefaultTaskService implements TaskService {
                 repos,
                 latestRunId,
                 latestRunStatus,
+                null, // readiness: only computed by RoadmapGraphService (Decision 2)
+                List.of(), // recentRuns: only embedded by RoadmapGraphService (Decision 3)
+                0L, // totalRunCount: ditto
                 t.getCreatedAt(),
                 t.getUpdatedAt());
     }

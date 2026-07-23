@@ -46,6 +46,7 @@ function makeStory(overrides: Partial<StoryResponse> = {}): StoryResponse {
     title: "Dark theme toggle",
     description: "desc",
     status: "backlog",
+    readiness: null,
     progress: { totalTasks: 2, doneTasks: 1 },
     createdAt: "2026-04-01T00:00:00Z",
     updatedAt: "2026-04-01T00:00:00Z",
@@ -83,6 +84,27 @@ describe("EpicBoardCard", () => {
     expect(screen.getByTestId("epic-board-card-story")).toHaveTextContent("Dark theme toggle");
     expect(screen.getByTestId("epic-board-card-story-progress")).toHaveTextContent("1/2");
     expect(mockApi.get).toHaveBeenCalledWith("/epics/epic-1/stories");
+  });
+
+  it("shows a blocked badge on a Story whose readiness is BLOCKED", async () => {
+    mockApi.get.mockResolvedValue([makeStory({ readiness: "BLOCKED" })]);
+    renderWithProviders(<EpicBoardCard epic={makeEpic()} />);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByTestId("epic-board-card-expand"));
+
+    await waitFor(() => expect(screen.getByTestId("epic-board-card-story-blocked")).toBeInTheDocument());
+  });
+
+  it("does not show a blocked badge on a Story whose readiness is READY", async () => {
+    mockApi.get.mockResolvedValue([makeStory({ readiness: "READY" })]);
+    renderWithProviders(<EpicBoardCard epic={makeEpic()} />);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByTestId("epic-board-card-expand"));
+
+    await waitFor(() => expect(screen.getByTestId("epic-board-card-story")).toBeInTheDocument());
+    expect(screen.queryByTestId("epic-board-card-story-blocked")).not.toBeInTheDocument();
   });
 
   it("collapsing hides Stories, and re-expanding reuses the cached query (fetched once)", async () => {

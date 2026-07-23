@@ -3,6 +3,7 @@ package com.choruskube.core.controller;
 import com.choruskube.core.dto.RunSummary;
 import com.choruskube.core.dto.TaskRequest;
 import com.choruskube.core.dto.TaskResponse;
+import com.choruskube.core.dto.TaskStatusUpdateRequest;
 import com.choruskube.core.service.TaskService;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -73,6 +74,17 @@ public class TaskController {
     @PatchMapping("/api/v1/tasks/{id}/complete")
     public TaskResponse complete(@PathVariable UUID id) {
         return service.complete(id);
+    }
+
+    /**
+     * Validated-transition status write (Decision 4) — generalizes {@link #start}/{@link
+     * #complete} to also cover reporting a failed/aborted outcome ({@code in_progress->backlog},
+     * for retry). {@code start}/{@code complete} remain as-is for backward compatibility.
+     */
+    @PreAuthorize("@orgSecurity.canOperate()")
+    @PatchMapping("/api/v1/tasks/{id}/status")
+    public TaskResponse updateStatus(@PathVariable UUID id, @Valid @RequestBody TaskStatusUpdateRequest request) {
+        return service.updateStatus(id, request.status(), request.runId(), request.note());
     }
 
     @PreAuthorize("@orgSecurity.canRead()")

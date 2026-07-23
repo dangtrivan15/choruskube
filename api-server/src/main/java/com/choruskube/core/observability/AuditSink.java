@@ -20,6 +20,7 @@ public interface AuditSink {
     String TASK_CREATED = "task_created";
     String TASK_UPDATED = "task_updated";
     String TASK_DELETED = "task_deleted";
+    String TASK_STATUS_CHANGED = "task_status_changed";
     String NODE_DEF_CREATED = "node_def_created";
     String NODE_DEF_UPDATED = "node_def_updated";
     String NODE_DEF_DELETED = "node_def_deleted";

@@ -290,12 +290,22 @@ export interface EpicRequest {
   softwareProjectId: string;
 }
 
+/**
+ * Dependency-readiness signal for a Story/Task node in the Roadmap Graph View
+ * (Decision 2) — computed at read time from that item's direct incoming
+ * "blocking" edges, never persisted. `null` on responses assembled outside
+ * the graph view (plain Story/Task CRUD reads have no reason to join
+ * dependency edges).
+ */
+export type Readiness = "READY" | "BLOCKED";
+
 export interface StoryResponse {
   id: string;
   epicId: string;
   title: string;
   description: string;
   status: "backlog" | "in_progress" | "done";
+  readiness: Readiness | null;
   progress: WorkItemProgress;
   createdAt: string;
   updatedAt: string;
@@ -316,6 +326,10 @@ export interface TaskResponse {
   repos: RepoRef[];
   latestRunId: string | null;
   latestRunStatus: string | null;
+  readiness: Readiness | null;
+  /** Most recent runs, newest first, capped (Decision 3) — see `totalRunCount` for the true count. */
+  recentRuns: RunSummary[];
+  totalRunCount: number;
   createdAt: string;
   updatedAt: string;
 }

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useDraggable } from "@dnd-kit/core";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, Lock } from "lucide-react";
 import { useStories } from "@/hooks/useStories";
 import type { EpicResponse } from "@/lib/types";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
@@ -91,12 +91,24 @@ export default function EpicBoardCard({ epic }: Props) {
               className="flex items-center justify-between gap-2 rounded border bg-background/50 px-2 py-1 text-xs"
             >
               <span className="min-w-0 flex-1 truncate">{story.title}</span>
-              <span
-                data-testid="epic-board-card-story-progress"
-                className="shrink-0 text-muted-foreground"
-              >
-                {story.progress.doneTasks}/{story.progress.totalTasks}
-              </span>
+              <div className="flex shrink-0 items-center gap-1.5">
+                {story.readiness === "BLOCKED" && (
+                  <span
+                    data-testid="epic-board-card-story-blocked"
+                    title="Blocked by an unfinished dependency"
+                    className="inline-flex items-center gap-0.5 rounded-full bg-status-warning/15 px-1.5 py-0.5 text-[10px] font-medium text-status-warning"
+                  >
+                    <Lock className="size-2.5" />
+                    Blocked
+                  </span>
+                )}
+                <span
+                  data-testid="epic-board-card-story-progress"
+                  className="text-muted-foreground"
+                >
+                  {story.progress.doneTasks}/{story.progress.totalTasks}
+                </span>
+              </div>
             </div>
           ))}
           {stories && stories.length === 0 && (
