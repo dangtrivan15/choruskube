@@ -114,6 +114,38 @@ class DefaultRoadmapCandidateMaterializerTest {
     }
 
     @Test
+    void storyFailsAfterEpicCreated_epicStillRecordedAsCreated_storyFailureReportedSeparately() {
+        UUID epicId = UUID.randomUUID();
+        UUID goodStoryId = UUID.randomUUID();
+        CandidateStoryProposal badStory = new CandidateStoryProposal("Bad Story", "d", List.of());
+        CandidateStoryProposal goodStory = new CandidateStoryProposal("Good Story", "d", List.of());
+        CandidateEpicProposal candidate =
+                new CandidateEpicProposal("Bulk Import", "d", "m", null, null, List.of(badStory, goodStory));
+
+        when(internalRunService.createEpic(eq(runId), any())).thenReturn(epicResponse(epicId));
+        when(internalRunService.createStory(
+                        eq(runId), eq(epicId), eq(new InternalCreateStoryRequest("Bad Story", "d"))))
+                .thenThrow(new RuntimeException("story boom"));
+        when(internalRunService.createStory(
+                        eq(runId), eq(epicId), eq(new InternalCreateStoryRequest("Good Story", "d"))))
+                .thenReturn(storyResponse(goodStoryId, epicId));
+
+        MaterializationSummary summary = materializer.materialize(runId, List.of(candidate));
+
+        // The Epic row was actually committed by createEpic() before the Story failure, so it must
+        // be recorded as created — otherwise the summary would tell the reviewer this candidate was
+        // entirely skipped while an orphaned, untracked Epic silently exists in the database.
+        assertThat(summary.createdEpicIds()).containsExactly(epicId);
+        assertThat(summary.errors()).hasSize(1);
+        assertThat(summary.errors().get(0))
+                .contains("Bad Story")
+                .contains("Bulk Import")
+                .contains("story boom");
+        verify(internalRunService)
+                .createStory(eq(runId), eq(epicId), eq(new InternalCreateStoryRequest("Good Story", "d")));
+    }
+
+    @Test
     void emptyCandidateList_producesEmptySummary() {
         MaterializationSummary summary = materializer.materialize(runId, List.of());
 
