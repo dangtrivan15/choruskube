@@ -28,6 +28,9 @@
 #   single_repo_claude_md  Verify SYSTEM_PROMPT is exported (tests the export fix)
 #   dind_isolation   Verify DinD isolation: DOCKER_HOST set, no ChorusKube services visible
 #   dind_network_connectivity  Verify API server is reachable from DinD agent
+#   many_artifacts   Write --count small output files (default: 40), for E2E fixtures
+#                    exercising the artifact viewer's many-files layout (see
+#                    ArtifactViewerDialog.tsx)
 #
 # Options:
 #   --delay <seconds>         Sleep duration for 'slow' scenario (default: 30)
@@ -40,6 +43,7 @@
 #   --epic-id <uuid>          Epic UUID for 'roadmap_status_update'
 #   --task-id <uuid>          Task UUID for 'roadmap_status_update' (must already be
 #                             in_progress — e.g. this run was started via Task-start)
+#   --count <n>               Number of files to write for 'many_artifacts' (default: 40)
 set -euo pipefail
 
 # --- Defaults ---
@@ -50,6 +54,7 @@ ARTIFACT_TEXT=""
 CUSTOM_DECISION=""
 EPIC_ID_ARG=""
 TASK_ID_ARG=""
+ARTIFACT_COUNT=40
 
 # --- Parse arguments ---
 shift || true
@@ -77,6 +82,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --task-id)
       TASK_ID_ARG="$2"
+      shift 2
+      ;;
+    --count)
+      ARTIFACT_COUNT="$2"
       shift 2
       ;;
     *)
@@ -396,16 +405,30 @@ JSON
     exit 0
     ;;
 
+  many_artifacts)
+    # Fixture scenario for the artifact viewer's "content pane collapses when a node
+    # has many files" layout regression. Writes $ARTIFACT_COUNT small distinct files
+    # so E2E can exercise the file-switcher pill row at realistic-to-large scale.
+    echo "Mock agent: many_artifacts scenario — writing ${ARTIFACT_COUNT} files"
+    mkdir -p /workspace/out
+    for ((i = 1; i <= ARTIFACT_COUNT; i++)); do
+      printf 'Mock artifact %d of %d\n' "$i" "$ARTIFACT_COUNT" \
+        > "/workspace/out/$(printf 'report-%03d.txt' "$i")"
+    done
+    echo "Mock agent: many_artifacts completed — wrote ${ARTIFACT_COUNT} files"
+    exit 0
+    ;;
+
   "")
     echo "ERROR: No scenario specified" >&2
     echo "Usage: mock-agent.sh <scenario> [options]" >&2
-    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, live_chat, multi_repo_pr, roadmap_status_update, roadmap_candidates, single_repo_claude_md, dind_isolation, dind_network_connectivity" >&2
+    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, live_chat, multi_repo_pr, roadmap_status_update, roadmap_candidates, single_repo_claude_md, dind_isolation, dind_network_connectivity, many_artifacts" >&2
     exit 1
     ;;
 
   *)
     echo "ERROR: Unknown scenario '$SCENARIO'" >&2
-    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, live_chat, multi_repo_pr, roadmap_status_update, roadmap_candidates, single_repo_claude_md, dind_isolation, dind_network_connectivity" >&2
+    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, live_chat, multi_repo_pr, roadmap_status_update, roadmap_candidates, single_repo_claude_md, dind_isolation, dind_network_connectivity, many_artifacts" >&2
     exit 1
     ;;
 esac
