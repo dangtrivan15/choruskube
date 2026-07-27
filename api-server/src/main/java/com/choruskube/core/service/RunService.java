@@ -4,6 +4,7 @@ import com.choruskube.core.credential.CredentialPreflightChecker;
 import com.choruskube.core.dto.*;
 import com.choruskube.core.event.MappableCreated;
 import com.choruskube.core.exception.BadRequestException;
+import com.choruskube.core.exception.ConflictException;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.exception.ValidationException;
 import com.choruskube.core.model.*;
@@ -29,6 +30,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
@@ -72,6 +74,15 @@ public class RunService {
     private final ArtifactResolutionService artifactResolutionService;
     private final ApplicationEventPublisher applicationEventPublisher;
     private final ScopeProvider scopeProvider;
+    private final DecisionOptionsResolver decisionOptionsResolver;
+    private final RoadmapCandidateMaterializer roadmapCandidateMaterializer;
+    private final RoadmapCandidatesArtifactResolver roadmapCandidatesArtifactResolver;
+    private final NodeExecutionClaimService nodeExecutionClaimService;
+
+    /** Config key on a gate's {@code config_overrides} that opts it into materialization (Decision 3). */
+    static final String MATERIALIZE_CONFIG_KEY = "materialize";
+
+    static final String MATERIALIZE_ROADMAP_CANDIDATES = "roadmap_candidates";
 
     @Value("${temporal.task-queue}")
     private String taskQueue;
@@ -103,7 +114,11 @@ public class RunService {
             TaskRepository taskRepo,
             ArtifactResolutionService artifactResolutionService,
             ApplicationEventPublisher applicationEventPublisher,
-            ScopeProvider scopeProvider) {
+            ScopeProvider scopeProvider,
+            DecisionOptionsResolver decisionOptionsResolver,
+            @Lazy RoadmapCandidateMaterializer roadmapCandidateMaterializer,
+            RoadmapCandidatesArtifactResolver roadmapCandidatesArtifactResolver,
+            NodeExecutionClaimService nodeExecutionClaimService) {
         this.runRepo = runRepo;
         this.execRepo = execRepo;
         this.edgeRepo = edgeRepo;
@@ -131,6 +146,10 @@ public class RunService {
         this.artifactResolutionService = artifactResolutionService;
         this.applicationEventPublisher = applicationEventPublisher;
         this.scopeProvider = scopeProvider;
+        this.decisionOptionsResolver = decisionOptionsResolver;
+        this.roadmapCandidateMaterializer = roadmapCandidateMaterializer;
+        this.roadmapCandidatesArtifactResolver = roadmapCandidatesArtifactResolver;
+        this.nodeExecutionClaimService = nodeExecutionClaimService;
     }
 
     @Transactional
@@ -448,54 +467,114 @@ public class RunService {
         NodeExecution exec = execRepo.findById(nodeExecId)
                 .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
 
-        // Validate decision against edge conditions
-        String validatedDecision = validateDecisionAgainstEdges(run, exec.getTemplateNodeId(), request.decision());
-
-        // Assemble the full result for the signal — includes any existing content
-        // (e.g. live chat transcript) plus human feedback. The orchestrator will
-        // write this as the node's result via UpdateNodeExecutionStatus, keeping
-        // a single authoritative write path for result.
-        String assembledResult = exec.getResult();
-        if (request.feedback() != null && !request.feedback().isBlank()) {
-            if (assembledResult != null && !assembledResult.isBlank()) {
-                assembledResult = "## Chat Transcript\n\n"
-                        + assembledResult
-                        + "\n\n## Reviewer Feedback\n\n"
-                        + request.feedback();
-            } else {
-                assembledResult = "## Reviewer Feedback\n\n" + request.feedback();
-            }
+        // Atomically claim the node before doing anything else. Two concurrent/duplicate
+        // submissions (double-click, two open tabs, a client retry) would otherwise both pass
+        // validation below and both independently materialize the Roadmap Provisioner candidate
+        // breakdown, silently creating duplicate Epic/Story/Task rows with nothing surfaced to the
+        // reviewer. This is a single atomic UPDATE ... WHERE status = awaiting_human — only one
+        // concurrent caller can win it; the other sees 0 rows affected and is rejected outright.
+        int claimed = nodeExecutionClaimService.compareAndSetStatus(
+                nodeExecId, NodeExecutionStatus.awaiting_human, NodeExecutionStatus.running);
+        if (claimed == 0) {
+            throw new ConflictException("Cannot signal decision: node execution is not awaiting a human decision "
+                    + "(already decided, or a concurrent request already claimed it)");
         }
 
-        WorkflowStub stub = workflowClient.newUntypedWorkflowStub(run.getExternalRunId());
-        HumanDecisionPayload payload = new HumanDecisionPayload(
-                nodeExecId.toString(),
-                validatedDecision,
-                assembledResult != null ? assembledResult : "",
-                request.attachmentRefs() != null ? request.attachmentRefs() : "{}");
-        stub.signal("human-decision-" + nodeExecId.toString(), payload);
+        // From here on, any failure (bad decision string, materialization error, Temporal signal
+        // failure) must release the claim back to awaiting_human so the request stays retryable —
+        // e.g. a typo'd decision string is a routine, expected error today and must not
+        // permanently strand the gate. This only reopens a (much narrower, pre-existing) window
+        // where a retry after materialization already succeeded but the signal itself then failed
+        // could re-materialize; the case this guard exists for — two concurrent/duplicate
+        // submissions racing each other — is fully closed by the claim above.
+        try {
+            JsonNode snapshot = readSnapshot(run);
 
-        eventPublisher.publishNodeStatusChanged(runId, nodeExecId, "signaled");
+            // Validate decision against the union of edge conditions and terminal_decisions
+            String validatedDecision =
+                    validateDecisionAgainstEdges(snapshot, exec.getTemplateNodeId(), request.decision());
+
+            // Assemble the full result for the signal — includes any existing content
+            // (e.g. live chat transcript) plus human feedback. The orchestrator will
+            // write this as the node's result via UpdateNodeExecutionStatus, keeping
+            // a single authoritative write path for result.
+            String assembledResult = exec.getResult();
+            if (request.feedback() != null && !request.feedback().isBlank()) {
+                if (assembledResult != null && !assembledResult.isBlank()) {
+                    assembledResult = "## Chat Transcript\n\n"
+                            + assembledResult
+                            + "\n\n## Reviewer Feedback\n\n"
+                            + request.feedback();
+                } else {
+                    assembledResult = "## Reviewer Feedback\n\n" + request.feedback();
+                }
+            }
+
+            // Deterministic materialization (Decision 3): on approval of a gate configured for it,
+            // turn the reviewed (possibly reviewer-edited) Roadmap Provisioner candidate breakdown
+            // directly into Epic/Story/Task rows — through the same write path a human uses — in
+            // the same request that handles the decision signal, rather than via a second AI
+            // agent.
+            if ("approved".equalsIgnoreCase(validatedDecision)
+                    && isMaterializeNode(snapshot, exec.getTemplateNodeId())) {
+                // A present-but-empty editedCandidates means the reviewer deliberately cleared the
+                // breakdown (e.g. rejecting every candidate while still approving the gate for some
+                // other reason) and must NOT fall back to the original analyzer artifact — only a
+                // genuinely absent field (no edits submitted at all) does that.
+                List<CandidateEpicProposal> source = request.editedCandidates() != null
+                        ? request.editedCandidates()
+                        : roadmapCandidatesArtifactResolver.resolve(runId, exec.getTemplateNodeId());
+                String materializeNote;
+                if (source != null) {
+                    MaterializationSummary summary = roadmapCandidateMaterializer.materialize(runId, source);
+                    materializeNote = "Materialized " + summary.materializedCount() + " Epics ("
+                            + summary.skippedCount() + " skipped)";
+                } else {
+                    // The artifact resolver degrades to null (never throws) when the candidate
+                    // breakdown is missing or malformed — surface that instead of silently
+                    // approving the gate with no materialization and no trace of why.
+                    materializeNote = "Materialization skipped: no candidate breakdown was found for this run";
+                }
+                assembledResult = (assembledResult != null && !assembledResult.isBlank())
+                        ? assembledResult + "\n\n" + materializeNote
+                        : materializeNote;
+            }
+
+            WorkflowStub stub = workflowClient.newUntypedWorkflowStub(run.getExternalRunId());
+            HumanDecisionPayload payload = new HumanDecisionPayload(
+                    nodeExecId.toString(),
+                    validatedDecision,
+                    assembledResult != null ? assembledResult : "",
+                    request.attachmentRefs() != null ? request.attachmentRefs() : "{}");
+            stub.signal("human-decision-" + nodeExecId.toString(), payload);
+
+            eventPublisher.publishNodeStatusChanged(runId, nodeExecId, "signaled");
+        } catch (RuntimeException e) {
+            nodeExecutionClaimService.compareAndSetStatus(
+                    nodeExecId, NodeExecutionStatus.running, NodeExecutionStatus.awaiting_human);
+            throw e;
+        }
+    }
+
+    private JsonNode readSnapshot(WorkflowRun run) {
+        try {
+            return objectMapper.readTree(snapshotBuilder.buildSnapshotForRun(run));
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to build graph snapshot", e);
+        }
     }
 
     /**
-     * Validates a decision against the edge conditions for a node.
+     * Validates a decision against the union of a node's outgoing edge conditions and its
+     * configured {@code terminal_decisions} (Decision 2), via {@link DecisionOptionsResolver}.
      * Returns the canonical (case-matched) decision string.
      */
-    private String validateDecisionAgainstEdges(WorkflowRun run, UUID templateNodeId, String decision) {
+    private String validateDecisionAgainstEdges(JsonNode snapshot, UUID templateNodeId, String decision) {
         try {
-            var snapshot = objectMapper.readTree(snapshotBuilder.buildSnapshotForRun(run));
-            var edges = snapshot.get("edges");
-            List<String> validConditions = new ArrayList<>();
-            if (edges != null) {
-                for (var edge : edges) {
-                    if (edge.get("source_node_id").asText().equals(templateNodeId.toString())
-                            && edge.has("condition")
-                            && !edge.get("condition").isNull()) {
-                        validConditions.add(edge.get("condition").asText());
-                    }
-                }
-            }
+            JsonNode edges = snapshot.get("edges");
+            JsonNode nodeConfigOverrides =
+                    decisionOptionsResolver.findNodeConfigOverrides(snapshot.get("nodes"), templateNodeId);
+            List<String> validConditions = decisionOptionsResolver.resolve(edges, templateNodeId, nodeConfigOverrides);
             if (validConditions.isEmpty()) {
                 throw new BadRequestException("This node has no conditional edges");
             }
@@ -510,6 +589,19 @@ public class RunService {
         } catch (Exception e) {
             throw new RuntimeException("Failed to validate decision", e);
         }
+    }
+
+    /**
+     * Whether this node is configured to materialize its approved candidate breakdown (Decision
+     * 3) — i.e. its {@code config_overrides.materialize} equals {@code "roadmap_candidates"}.
+     */
+    private boolean isMaterializeNode(JsonNode snapshot, UUID templateNodeId) {
+        JsonNode nodeConfigOverrides =
+                decisionOptionsResolver.findNodeConfigOverrides(snapshot.get("nodes"), templateNodeId);
+        return nodeConfigOverrides != null
+                && nodeConfigOverrides.has(MATERIALIZE_CONFIG_KEY)
+                && MATERIALIZE_ROADMAP_CANDIDATES.equals(
+                        nodeConfigOverrides.get(MATERIALIZE_CONFIG_KEY).asText());
     }
 
     public List<ExecutionLogResponse> getExecutionLogs(UUID nodeExecId) {
@@ -740,6 +832,13 @@ public class RunService {
                                     || e.getStatus() == NodeExecutionStatus.live_chat
                             ? artifactResolutionService.resolveRequiredArtifacts(e.getTemplateNodeId(), run.getId())
                             : null;
+                    // Mirrors PendingGateService's resolution of the same artifact, reusing the
+                    // requiredArtifacts already computed above — so the Run Detail page's gate
+                    // surface (HumanGatePanel via DetailPanel) can render the same editable
+                    // breakdown the Approvals dashboard does, instead of silently having none.
+                    List<CandidateEpicProposal> candidateBreakdown = requiredArtifacts != null
+                            ? roadmapCandidatesArtifactResolver.resolve(run.getId(), requiredArtifacts)
+                            : null;
                     return new NodeExecutionResponse(
                             e.getId(),
                             e.getTemplateNodeId(),
@@ -757,7 +856,8 @@ public class RunService {
                             e.getLoopGroup(),
                             e.getReviewerType() != null ? e.getReviewerType().name() : null,
                             edgeList,
-                            requiredArtifacts);
+                            requiredArtifacts,
+                            candidateBreakdown);
                 })
                 .toList();
         List<RunPullRequestResponse> pullRequests;

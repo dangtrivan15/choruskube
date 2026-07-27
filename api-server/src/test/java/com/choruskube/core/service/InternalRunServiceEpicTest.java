@@ -96,7 +96,8 @@ class InternalRunServiceEpicTest {
                 null,
                 null,
                 storyRepo,
-                roadmapGraphService);
+                roadmapGraphService,
+                new DecisionOptionsResolver());
     }
 
     @Test

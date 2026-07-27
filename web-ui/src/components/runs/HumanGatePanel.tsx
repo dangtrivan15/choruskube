@@ -14,8 +14,9 @@ import ArtifactList from "./ArtifactList";
 import PredecessorOutputDialog from "./PredecessorOutputDialog";
 import LiveChatPanel from "./LiveChatPanel";
 import DecisionButtons, { LEGACY_DECISION_OPTIONS } from "./DecisionButtons";
+import RoadmapCandidateBreakdown from "./RoadmapCandidateBreakdown";
 import { parseGateTrigger, type GateTrigger } from "@/lib/decisions";
-import type { ResolvedArtifactGroup } from "@/lib/types";
+import type { ResolvedArtifactGroup, CandidateEpicProposal } from "@/lib/types";
 
 interface PredecessorOutput {
   nodeLabel: string;
@@ -32,6 +33,13 @@ interface HumanGatePanelProps {
   predecessorOutputs?: PredecessorOutput[];
   nodeResult?: string | null;
   requiredArtifacts?: ResolvedArtifactGroup[] | null;
+  /**
+   * The Roadmap Provisioner analyzer's structured Epic/Story/Task breakdown for
+   * this gate, if any. `null`/`undefined` means no breakdown is available — the
+   * panel renders exactly what it renders today. When present, the reviewer's
+   * (possibly edited) copy is included as `editedCandidates` on the signal call.
+   */
+  candidateBreakdown?: CandidateEpicProposal[] | null;
   /** The triggering reviewer's decision string, e.g. `need_human_decision:iteration_cap`. */
   triggerDecision?: string | null;
   /**
@@ -96,6 +104,7 @@ export default function HumanGatePanel({
   predecessorOutputs = [],
   nodeResult,
   requiredArtifacts,
+  candidateBreakdown,
   triggerDecision,
   decisionOptions,
 }: HumanGatePanelProps) {
@@ -103,6 +112,9 @@ export default function HumanGatePanel({
   const [outputExpanded, setOutputExpanded] = useState(true);
   const [expandedPredIdx, setExpandedPredIdx] = useState<number | null>(null);
   const [attachmentFiles, setAttachmentFiles] = useState<File[]>([]);
+  const [editedCandidates, setEditedCandidates] = useState<CandidateEpicProposal[]>(
+    candidateBreakdown ?? []
+  );
   const signalMutation = useSignalNode(runId);
   const { canOperate } = usePermission();
 
@@ -122,7 +134,13 @@ export default function HumanGatePanel({
       files = [guidanceFile, ...attachmentFiles];
     }
     signalMutation.mutate(
-      { nodeExecId, decision, feedback, files },
+      {
+        nodeExecId,
+        decision,
+        feedback,
+        files,
+        ...(candidateBreakdown != null ? { editedCandidates } : {}),
+      },
       {
         onSuccess: () => {
           setFeedback("");
@@ -233,6 +251,14 @@ export default function HumanGatePanel({
             <Separator />
           </>
         )
+      )}
+
+      {/* Roadmap candidate breakdown (editable), when the analyzer produced one */}
+      {candidateBreakdown != null && (
+        <>
+          <RoadmapCandidateBreakdown value={editedCandidates} onChange={setEditedCandidates} />
+          <Separator />
+        </>
       )}
 
       {/* Review history */}

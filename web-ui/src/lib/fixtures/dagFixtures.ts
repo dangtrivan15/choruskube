@@ -75,6 +75,7 @@ function snapshotRun(
       reviewerType: null,
       traversedEdgeIds,
       requiredArtifacts: null,
+      candidateBreakdown: null,
     };
   });
 

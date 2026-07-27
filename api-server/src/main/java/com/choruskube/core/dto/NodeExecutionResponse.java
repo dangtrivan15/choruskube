@@ -21,4 +21,5 @@ public record NodeExecutionResponse(
         String loopGroup,
         String reviewerType,
         List<UUID> traversedEdgeIds,
-        List<ResolvedArtifactGroup> requiredArtifacts) {}
+        List<ResolvedArtifactGroup> requiredArtifacts,
+        List<CandidateEpicProposal> candidateBreakdown) {}

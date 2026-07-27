@@ -56,6 +56,11 @@ public class E2eTestDataSeeder implements ApplicationRunner {
     // cap_human_gate: exercises transparent AI iteration cap (iteration_cap=3 on AI node)
     // and human escalation gate with rereview back-edge (transparent-iteration-cap feature)
     private static final String GRAPH_ID_CAP_HUMAN_GATE = "e2e-cap-human-gate";
+    // roadmap_candidate_gate: mirrors BaseRoadmapProvisionerSeeder's v13 production shape
+    // (analyzer -> human gate with terminal_decisions + materialize) using a script node
+    // in place of the real AI analyzer, so roadmap-candidate-gate.spec.ts can exercise the
+    // structured candidate-breakdown gate (Decisions 1-5) without a live Claude call.
+    private static final String GRAPH_ID_ROADMAP_CANDIDATE_GATE = "e2e-roadmap-candidate-gate";
 
     private static final int VERSION = 2;
 
@@ -149,7 +154,9 @@ public class E2eTestDataSeeder implements ApplicationRunner {
                 createNodeDefWithIterationCap("mock-ai-capped", ExecutorType.script, null, 1800, 3);
         seedCapHumanGateTemplate(mockAiCapped, mockGate, mockSuccess);
 
-        log.info("E2eTestDataSeeder: seeded 3 git repos, 1 repo group, 11 node definitions, and 10 E2E templates");
+        seedRoadmapCandidateGate(mockSuccess, mockGate);
+
+        log.info("E2eTestDataSeeder: seeded 3 git repos, 1 repo group, 11 node definitions, and 11 E2E templates");
     }
 
     private void seedDemoRepoGroup() {
@@ -454,6 +461,41 @@ public class E2eTestDataSeeder implements ApplicationRunner {
         // Human gate edges: rereview sends back to AI, approve exits
         createEdge(t, humanGate, aiReview, "rereview");
         createEdge(t, humanGate, done, "approved");
+    }
+
+    // --- Roadmap Candidate Gate: draft_candidates -> review_candidates
+    //       --(approved)--> [terminal_decisions, no downstream node — Decision 2]
+    //       --(rejected)--> draft_candidates (back-edge)
+    //
+    // Mirrors BaseRoadmapProvisionerSeeder's real "roadmap_analyzer" / "roadmap_human_gate"
+    // v13 shape: the analyzer node uploads roadmap_analysis.md + the structured
+    // roadmap_candidates.json (Decision 1) that the human gate declares as required input
+    // artifacts; the gate's config_overrides carry the same "terminal_decisions": ["approved"]
+    // and "materialize": "roadmap_candidates" pair RunService.signalHumanDecision keys off of
+    // (Decisions 2/3), so approving here drives the SAME deterministic materialization path a
+    // real Roadmap Provisioner run does — just with a script-node analyzer stand-in
+    // (mock-agent.sh's "roadmap_candidates" scenario) instead of a live Claude call.
+
+    private void seedRoadmapCandidateGate(NodeDefinition mockSuccess, NodeDefinition mockGate) {
+        GraphTemplate t = createTemplate(
+                GRAPH_ID_ROADMAP_CANDIDATE_GATE,
+                "e2e-roadmap-candidate-gate",
+                "E2E test: structured Roadmap Provisioner candidate-breakdown gate with terminal-decision materialization");
+
+        TemplateNode analyzer = createNode(t, mockSuccess, "draft_candidates", true, cmd("roadmap_candidates"));
+        TemplateNode gate = createNode(
+                t,
+                mockGate,
+                "review_candidates",
+                false,
+                "{\"terminal_decisions\":[\"approved\"],\"materialize\":\"roadmap_candidates\"}",
+                "[{\"template_node_label\":\"draft_candidates\",\"artifacts\":[{\"name\":\"roadmap_analysis.md\",\"description\":\"Mock roadmap analysis\"},"
+                        + "{\"name\":\"roadmap_candidates.json\",\"description\":\"Structured candidate Epic/Story/Task breakdown\"}]}]");
+
+        createEdge(t, analyzer, gate, null);
+        createEdge(t, gate, analyzer, "rejected");
+        // Human Gate "approved" has no outgoing edge — it's a terminal_decisions entry
+        // (Decision 2) instead, so the run completes right here, same as production v13.
     }
 
     // --- Helpers ---

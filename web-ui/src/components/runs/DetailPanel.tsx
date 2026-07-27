@@ -390,6 +390,13 @@ export default function DetailPanel({ run, nodeId, onBackToRunMeta }: DetailPane
       <div className="flex-1 overflow-y-auto p-4">
         {status === "awaiting_human" && latestExec && (
           <HumanGatePanel
+            // Keyed by node execution id so switching the selected node in a run with
+            // multiple simultaneously-`awaiting_human` nodes (parallel DAG branches)
+            // remounts the panel instead of reusing it. Without this, React preserves
+            // the previous node's local state — including `editedCandidates` — across
+            // the prop swap, so a reviewer who edits node A's breakdown then selects
+            // node B would silently submit node A's edits against node B's decision.
+            key={latestExec.id}
             runId={run.id}
             nodeExecId={latestExec.id}
             loopGroup={loopGroup}
@@ -401,6 +408,7 @@ export default function DetailPanel({ run, nodeId, onBackToRunMeta }: DetailPane
                 : findPredecessorOutputs(run, nodeId)
             }
             requiredArtifacts={latestExec.requiredArtifacts ?? null}
+            candidateBreakdown={latestExec.candidateBreakdown ?? null}
             nodeResult={latestExec.result}
             triggerDecision={findTriggerDecision(run, nodeId)}
             decisionOptions={findDecisionOptions(run, nodeId)}

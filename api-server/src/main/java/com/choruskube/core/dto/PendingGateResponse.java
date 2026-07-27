@@ -16,4 +16,10 @@ public record PendingGateResponse(
         String status,
         List<PredecessorOutput> predecessorOutputs,
         List<ResolvedArtifactGroup> requiredArtifacts,
-        List<String> decisionOptions) {}
+        List<String> decisionOptions,
+        /**
+         * The analyzer's structured candidate Epic/Story/Task breakdown (Decision 1), parsed from
+         * {@code roadmap_candidates.json}, or {@code null} if this gate's template doesn't produce
+         * one, or the artifact is missing/malformed (falls back to the raw-artifact display).
+         */
+        List<CandidateEpicProposal> candidateBreakdown) {}

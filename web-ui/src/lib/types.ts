@@ -121,6 +121,14 @@ export interface NodeExecutionResponse {
    */
   traversedEdgeIds: string[] | null;
   requiredArtifacts: ResolvedArtifactGroup[] | null;
+  /**
+   * The Roadmap Provisioner analyzer's structured Epic/Story/Task breakdown for this
+   * node, if any (mirrors `PendingGateResponse.candidateBreakdown` — only populated
+   * while the node is `awaiting_human`/`live_chat`). Lets the Run Detail page's gate
+   * surface (`HumanGatePanel` via `DetailPanel`) render the same editable breakdown
+   * the Approvals dashboard does.
+   */
+  candidateBreakdown: CandidateEpicProposal[] | null;
 }
 
 export interface ExecutionLogResponse {
@@ -204,6 +212,44 @@ export interface PendingGatePredecessorOutput {
   nodeExecutionId: string | null;
 }
 
+/**
+ * A candidate Task within a `CandidateStoryProposal` — matches the backend
+ * CandidateTaskProposal record. `title`/`description` are reviewer-editable.
+ */
+export interface CandidateTaskProposal {
+  title: string;
+  description: string;
+}
+
+/**
+ * A candidate Story within a `CandidateEpicProposal` — matches the backend
+ * CandidateStoryProposal record. `title`/`description` are reviewer-editable;
+ * `tasks` is capped at 8 entries server-side (mirrored as a soft UI limit).
+ */
+export interface CandidateStoryProposal {
+  title: string;
+  description: string;
+  tasks: CandidateTaskProposal[];
+}
+
+/**
+ * A candidate Epic proposed by the Roadmap Provisioner's analyzer step — matches
+ * the backend CandidateEpicProposal record, itself the shape of an entry in the
+ * `roadmap_candidates.json` artifact. `title`/`description`/`motivation` and the
+ * nested `stories` are reviewer-editable; `repos`/`priority` are read-only
+ * decomposition context (materialization silently drops them server-side — there
+ * is no persisted destination for them). `stories` is capped at 8 entries
+ * server-side (mirrored as a soft UI limit).
+ */
+export interface CandidateEpicProposal {
+  title: string;
+  description: string;
+  motivation: string;
+  repos: string[] | null;
+  priority: string | null;
+  stories: CandidateStoryProposal[];
+}
+
 export interface PendingGateResponse {
   nodeExecutionId: string;
   runId: string;
@@ -222,6 +268,14 @@ export interface PendingGateResponse {
    * omit it — callers must fall back (typically to ["approved", "rejected"]).
    */
   decisionOptions?: string[];
+  /**
+   * The Roadmap Provisioner analyzer's structured Epic/Story/Task breakdown, parsed
+   * from the `roadmap_candidates.json` artifact. `null` means no breakdown is
+   * available (missing/malformed artifact, or a gate from a template that doesn't
+   * produce one) — callers should fall back to the existing markdown/artifact
+   * rendering in that case.
+   */
+  candidateBreakdown: CandidateEpicProposal[] | null;
 }
 
 export interface PendingGateCountResponse {

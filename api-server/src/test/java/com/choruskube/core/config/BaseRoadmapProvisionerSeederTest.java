@@ -3,10 +3,12 @@ package com.choruskube.core.config;
 import static org.assertj.core.api.Assertions.*;
 
 import com.choruskube.core.BaseTest;
+import com.choruskube.core.model.GraphTemplate;
 import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.NodeDefinitionRepository;
 import com.choruskube.core.repository.TemplateEdgeRepository;
 import com.choruskube.core.repository.TemplateNodeRepository;
+import com.choruskube.core.service.GraphValidationService;
 import io.temporal.client.WorkflowClient;
 import io.temporal.serviceclient.WorkflowServiceStubs;
 import org.junit.jupiter.api.Test;
@@ -36,6 +38,9 @@ class BaseRoadmapProvisionerSeederTest extends BaseTest {
     @Autowired
     private TemplateEdgeRepository edgeRepo;
 
+    @Autowired
+    private GraphValidationService graphValidationService;
+
     // --- Base template tests ---
 
     @Test
@@ -43,7 +48,9 @@ class BaseRoadmapProvisionerSeederTest extends BaseTest {
         var template = templateRepo.findByName("Roadmap Provisioner");
         assertThat(template).isPresent();
         assertThat(template.get().getGraphId()).isEqualTo("roadmap-provisioner");
-        assertThat(template.get().getVersion()).isEqualTo(12);
+        // v13 (Decision 6/2/3): terminal-decision human gate + deterministic materialization,
+        // replacing the v12 3-node analyzer → gate → feature-creator shape.
+        assertThat(template.get().getVersion()).isEqualTo(13);
     }
 
     @Test
@@ -84,7 +91,7 @@ class BaseRoadmapProvisionerSeederTest extends BaseTest {
     }
 
     @Test
-    void threeNodeDefinitionsAreCreated() {
+    void twoNodeDefinitionsAreCreated() {
         assertThat(nodeDefRepo.findAll().stream()
                         .filter(nd -> "Roadmap Analyzer".equals(nd.getName()))
                         .count())
@@ -93,17 +100,19 @@ class BaseRoadmapProvisionerSeederTest extends BaseTest {
                         .filter(nd -> "Roadmap Human Gate".equals(nd.getName()))
                         .count())
                 .isEqualTo(1);
+        // v13 removes the "Roadmap Feature Creator" node entirely (Decision 2/3) — its
+        // job (materializing approved candidates) is now a deterministic API server step.
         assertThat(nodeDefRepo.findAll().stream()
                         .filter(nd -> "Roadmap Feature Creator".equals(nd.getName()))
                         .count())
-                .isEqualTo(1);
+                .isEqualTo(0);
     }
 
     @Test
-    void templateHasThreeNodesAndThreeEdges() {
+    void templateHasTwoNodesAndTwoEdges() {
         var template = templateRepo.findByName("Roadmap Provisioner").orElseThrow();
-        assertThat(templateNodeRepo.findByGraphTemplateId(template.getId())).hasSize(3);
-        assertThat(edgeRepo.findByGraphTemplateId(template.getId())).hasSize(3);
+        assertThat(templateNodeRepo.findByGraphTemplateId(template.getId())).hasSize(2);
+        assertThat(edgeRepo.findByGraphTemplateId(template.getId())).hasSize(2);
     }
 
     @Test
@@ -122,46 +131,78 @@ class BaseRoadmapProvisionerSeederTest extends BaseTest {
 
         // One unconditional edge (Analyzer → Human Gate)
         assertThat(edges.stream().filter(e -> e.getCondition() == null).count()).isEqualTo(1);
-        // One approved edge (Human Gate → Feature Creator)
-        assertThat(edges.stream()
-                        .filter(e -> "approved".equals(e.getCondition()))
-                        .count())
-                .isEqualTo(1);
         // One rejected edge (Human Gate → Analyzer)
         assertThat(edges.stream()
                         .filter(e -> "rejected".equals(e.getCondition()))
                         .count())
                 .isEqualTo(1);
+        // No "approved" edge at all — v13 makes "approved" a terminal_decisions entry
+        // instead (Decision 2), not an edge to a third node.
+        assertThat(edges.stream()
+                        .filter(e -> "approved".equals(e.getCondition()))
+                        .count())
+                .isEqualTo(0);
     }
 
     @Test
-    void featureCreatorPromptMentionsMultiRepoFlag() {
-        var nd = nodeDefRepo.findAll().stream()
-                .filter(n -> "Roadmap Feature Creator".equals(n.getName()))
-                .findFirst()
-                .orElseThrow();
-        // v8 bump: the Feature Creator prompt must teach `--repo` for multi-repo proposals.
-        assertThat(nd.getPromptTemplate()).contains("--repo");
-        assertThat(nd.getPromptTemplate()).contains("ONE or TWO");
+    void seededTemplatePassesGraphValidation() {
+        // RunService.startRun() runs every graph through GraphValidationService before
+        // allowing a run to start — a template that seeds successfully but fails this
+        // check can never actually be run. Rule 3 (terminal node check) predates Decision
+        // 2's terminal_decisions capability and originally only recognized a literal
+        // zero-outgoing-edge node as terminal, which this template's gate (approved has no
+        // edge, only terminal_decisions; rejected loops back to the analyzer) never has —
+        // exercising the real seeded template here, not just its DB rows in isolation,
+        // is what would have caught that gap.
+        var template = templateRepo.findByName("Roadmap Provisioner").orElseThrow();
+        var nodes = templateNodeRepo.findByGraphTemplateId(template.getId());
+        var edges = edgeRepo.findByGraphTemplateId(template.getId());
+
+        var result = graphValidationService.validate(nodes, edges);
+        assertThat(result.errors()).isEmpty();
+        assertThat(result.valid()).isTrue();
     }
 
     @Test
-    void featureCreatorPromptChainsCreateProposalThenCreateStoryThenCreateTask() {
-        var nd = nodeDefRepo.findAll().stream()
-                .filter(n -> "Roadmap Feature Creator".equals(n.getName()))
+    void humanGateHasTerminalDecisionsAndMaterializeConfig() throws Exception {
+        var template = templateRepo.findByName("Roadmap Provisioner").orElseThrow();
+        var humanGate = templateNodeRepo.findByGraphTemplateId(template.getId()).stream()
+                .filter(n -> "roadmap_human_gate".equals(n.getLabel()))
                 .findFirst()
                 .orElseThrow();
-        // v12 bump: the Feature Creator prompt must chain the full Epic -> Story -> Task
-        // creation sequence so an agent-proposed feature is immediately startable.
+
+        // Parsed rather than substring-matched: the config_overrides column is `jsonb`,
+        // which Postgres re-serializes on storage (reordered keys, normalized whitespace) —
+        // the exact text written by the seeder is not what comes back on read.
+        var objectMapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        var configOverrides = objectMapper.readTree(humanGate.getConfigOverrides());
+        assertThat(configOverrides.get("terminal_decisions").toString()).isEqualTo("[\"approved\"]");
+        assertThat(configOverrides.get("materialize").asText()).isEqualTo("roadmap_candidates");
+        assertThat(humanGate.getRequiredInputArtifacts()).contains("roadmap_candidates.json");
+    }
+
+    @Test
+    void analyzerOutputSpecDeclaresBothFiles() {
+        var nd = nodeDefRepo.findAll().stream()
+                .filter(n -> "Roadmap Analyzer".equals(n.getName()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(nd.getOutputSpec()).contains("roadmap_analysis.md");
+        assertThat(nd.getOutputSpec()).contains("roadmap_candidates.json");
+    }
+
+    @Test
+    void analyzerPromptDescribesStructuredCandidateSchema() {
+        var nd = nodeDefRepo.findAll().stream()
+                .filter(n -> "Roadmap Analyzer".equals(n.getName()))
+                .findFirst()
+                .orElseThrow();
         String prompt = nd.getPromptTemplate();
-        int createProposalIdx = prompt.indexOf("create-proposal --title");
-        int createStoryIdx = prompt.indexOf("create-story --epic-id");
-        int createTaskIdx = prompt.indexOf("create-task --epic-id");
-        assertThat(createProposalIdx).isPositive();
-        assertThat(createStoryIdx).isPositive();
-        assertThat(createTaskIdx).isPositive();
-        assertThat(createProposalIdx).isLessThan(createStoryIdx);
-        assertThat(createStoryIdx).isLessThan(createTaskIdx);
+        assertThat(prompt).contains("roadmap_candidates.json");
+        assertThat(prompt).contains("\"stories\"");
+        assertThat(prompt).contains("\"tasks\"");
+        // No fixed 1:1 language (Decision 5) — a variable-depth breakdown instead.
+        assertThat(prompt).doesNotContain("one Story, containing one Task");
     }
 
     @Test
@@ -194,5 +235,38 @@ class BaseRoadmapProvisionerSeederTest extends BaseTest {
 
         assertThat(analyzer.getConfigOverrides()).contains("\"loop_group\": \"proposal-review\"");
         assertThat(humanGate.getConfigOverrides()).contains("\"loop_group\": \"proposal-review\"");
+    }
+
+    @Test
+    void reseedDoesNotTouchPreExistingOlderVersionRow() throws Exception {
+        // Simulate a real deployment that already has the old v12 3-node shape seeded
+        // (immutable seed data — never dropped, never mutated in place, per Decision 6).
+        // Uses a distinct `name` (rather than the real "Roadmap Provisioner") so this
+        // fixture row doesn't break `GraphTemplateRepository.findByName`'s single-result
+        // assumption for every other test in this class/suite — only graphId+version
+        // (what the seeder's own idempotency check keys on) needs to collide with v13.
+        GraphTemplate v12 = new GraphTemplate();
+        v12.setGraphId(BaseRoadmapProvisionerSeeder.GRAPH_ID);
+        v12.setVersion(12);
+        v12.setName("Roadmap Provisioner (legacy v12 test fixture)");
+        v12.setDescription("pre-existing v12 row");
+        v12.setInputSchema(
+                templateRepo.findByName("Roadmap Provisioner").orElseThrow().getInputSchema());
+        v12.setSystem(true);
+        templateRepo.save(v12);
+
+        roadmapSeeder.run(null);
+
+        var v12Reloaded = templateRepo.findByGraphIdAndVersion(BaseRoadmapProvisionerSeeder.GRAPH_ID, 12);
+        assertThat(v12Reloaded).isPresent();
+        assertThat(v12Reloaded.get().getDescription()).isEqualTo("pre-existing v12 row");
+
+        var v13 = templateRepo.findByGraphIdAndVersion(BaseRoadmapProvisionerSeeder.GRAPH_ID, 13);
+        assertThat(v13).isPresent();
+
+        var allRoadmapTemplates = templateRepo.findAll().stream()
+                .filter(t -> BaseRoadmapProvisionerSeeder.GRAPH_ID.equals(t.getGraphId()))
+                .toList();
+        assertThat(allRoadmapTemplates).hasSize(2);
     }
 }

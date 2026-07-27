@@ -104,7 +104,11 @@ class RunServiceCleanupTest {
                 null,
                 null,
                 null,
-                new com.choruskube.core.scope.NoOpScopeProvider());
+                new com.choruskube.core.scope.NoOpScopeProvider(),
+                new DecisionOptionsResolver(),
+                null,
+                null,
+                null); // nodeExecutionClaimService — unused (signalHumanDecision not exercised)
         // AuthorizationService is constructed with authEnabled=false, so
         // checkOrgAccess() is a no-op and storagePrefixResolver is not invoked — no stub needed.
     }

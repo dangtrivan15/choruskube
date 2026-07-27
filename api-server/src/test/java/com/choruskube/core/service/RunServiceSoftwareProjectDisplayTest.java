@@ -110,7 +110,11 @@ class RunServiceSoftwareProjectDisplayTest {
                 taskRepo,
                 artifactResolutionService,
                 null, // applicationEventPublisher — not needed for listing/detail tests
-                new com.choruskube.core.scope.NoOpScopeProvider());
+                new com.choruskube.core.scope.NoOpScopeProvider(),
+                new DecisionOptionsResolver(),
+                null,
+                null,
+                null); // nodeExecutionClaimService — unused (signalHumanDecision not exercised)
     }
 
     // -------------------------------------------------------------------------

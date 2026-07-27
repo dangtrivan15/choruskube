@@ -20,6 +20,11 @@
 #   roadmap_status_update  Fetch an Epic's Roadmap Graph View, then report a Task's outcome
 #                          via update-task-status (Decision 1/3/4) — same contract a real
 #                          agent uses; requires --epic-id and --task-id
+#   roadmap_candidates     Analyzer stand-in for the Roadmap Provisioner's structured
+#                          candidate-breakdown gate (Decision 1): writes both
+#                          roadmap_analysis.md and roadmap_candidates.json, matching the
+#                          two-artifact contract BaseRoadmapProvisionerSeeder's real
+#                          "Roadmap Analyzer" node declares.
 #   single_repo_claude_md  Verify SYSTEM_PROMPT is exported (tests the export fix)
 #   dind_isolation   Verify DinD isolation: DOCKER_HOST set, no ChorusKube services visible
 #   dind_network_connectivity  Verify API server is reachable from DinD agent
@@ -280,6 +285,48 @@ case "$SCENARIO" in
     exit 0
     ;;
 
+  roadmap_candidates)
+    # Analyzer stand-in for the Roadmap Provisioner's structured candidate-breakdown gate
+    # (Decision 1). Writes the same two artifacts BaseRoadmapProvisionerSeeder's real
+    # "Roadmap Analyzer" node declares in its outputSpec — roadmap_analysis.md (free-text,
+    # unused by materialization) and roadmap_candidates.json (structured, read by
+    # RoadmapCandidatesArtifactResolver via the ARTIFACT_FILENAME contract). The JSON must
+    # satisfy the same Bean Validation constraints as CandidateEpicProposal/
+    # CandidateStoryProposal/CandidateTaskProposal (non-blank titles, <=255 chars, <=8 items
+    # per list) or the resolver degrades to null and materialization is skipped.
+    echo "Mock agent: roadmap_candidates scenario"
+    write_artifact "roadmap_analysis.md" \
+      "Mock roadmap analysis: one candidate Epic proposed for E2E coverage of the structured candidate-breakdown gate (Decision 1)."
+
+    mkdir -p /workspace/out
+    cat > /workspace/out/roadmap_candidates.json <<'JSON'
+[
+  {
+    "title": "Mock Roadmap Candidate Epic",
+    "description": "A mock Epic proposed by the roadmap_candidates mock-agent scenario.",
+    "motivation": "Exercises the structured candidate-breakdown gate end-to-end in E2E.",
+    "repos": ["e2e-test/mock-repo"],
+    "priority": "medium",
+    "stories": [
+      {
+        "title": "Mock Candidate Story",
+        "description": "A mock Story under the candidate Epic.",
+        "tasks": [
+          {
+            "title": "Mock Candidate Task",
+            "description": "A mock Task under the candidate Story."
+          }
+        ]
+      }
+    ]
+  }
+]
+JSON
+    echo "Artifact written to /workspace/out/roadmap_candidates.json"
+    echo "Mock agent: roadmap_candidates completed"
+    exit 0
+    ;;
+
   single_repo_claude_md)
     echo "Mock agent: single_repo_claude_md scenario"
     # Verify SYSTEM_PROMPT is exported by entrypoint.sh and visible here.
@@ -352,13 +399,13 @@ case "$SCENARIO" in
   "")
     echo "ERROR: No scenario specified" >&2
     echo "Usage: mock-agent.sh <scenario> [options]" >&2
-    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, live_chat, multi_repo_pr, single_repo_claude_md, dind_isolation, dind_network_connectivity" >&2
+    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, live_chat, multi_repo_pr, roadmap_status_update, roadmap_candidates, single_repo_claude_md, dind_isolation, dind_network_connectivity" >&2
     exit 1
     ;;
 
   *)
     echo "ERROR: Unknown scenario '$SCENARIO'" >&2
-    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, live_chat, multi_repo_pr, single_repo_claude_md, dind_isolation, dind_network_connectivity" >&2
+    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, live_chat, multi_repo_pr, roadmap_status_update, roadmap_candidates, single_repo_claude_md, dind_isolation, dind_network_connectivity" >&2
     exit 1
     ;;
 esac

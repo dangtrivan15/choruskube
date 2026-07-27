@@ -26,7 +26,7 @@ public class BaseRoadmapProvisionerSeeder implements ApplicationRunner {
     private static final Logger log = LoggerFactory.getLogger(BaseRoadmapProvisionerSeeder.class);
 
     static final String GRAPH_ID = GraphIds.ROADMAP_PROVISIONER;
-    static final int VERSION = 12;
+    static final int VERSION = 13;
 
     private static final String TEMPLATE_NAME = "Roadmap Provisioner";
 
@@ -62,8 +62,9 @@ public class BaseRoadmapProvisionerSeeder implements ApplicationRunner {
             - You MUST NOT create, modify, or delete any proposals. Do NOT use the
               create-proposal CLI or call any API endpoints that mutate state.
             - Your sole output is a written analysis recommending features. A human
-              reviewer will approve or reject your recommendations in the next step,
-              and only then will approved features be created by a separate node.
+              reviewer will approve or reject your recommendations in the next step;
+              only on approval are roadmap items created, deterministically, from
+              the structured breakdown described below — not by a separate AI step.
 
             Your task:
             - Identify 3-5 high-value features that are not already proposed
@@ -91,69 +92,50 @@ public class BaseRoadmapProvisionerSeeder implements ApplicationRunner {
             {review_history}
 
             Save your analysis as /workspace/out/roadmap_analysis.md with a structured list of
-            proposed features, each with the five sections above.""";
+            proposed features, each with the five sections above.
 
-    private static final String FEATURE_CREATOR_PROMPT = """
-            You are creating roadmap work items based on an approved analysis. Each
-            approved feature becomes a fully startable Epic -> Story -> Task chain:
-            one Epic, containing one Story, containing one Task (the same 1:1
-            decomposition depth used today — see Caveat 1 of the work-hierarchy spec).
+            IN ADDITION, save a structured candidate breakdown as
+            /workspace/out/roadmap_candidates.json — a JSON array of candidate Epics,
+            each with a variable number of Stories, each with a variable number of
+            Tasks, reflecting an ACTUAL decomposition of that feature (not a
+            mechanical 1:1 wrapper — a small feature might be one Story with one
+            Task; a larger one might be three Stories with two or three Tasks each).
+            This is what a human reviewer will see and edit before approving — it is
+            the authoritative structured form of your analysis, not a duplicate of
+            the markdown.
 
-            Approved analysis:
-            {input.roadmap_analyzer.result}
+            Each element of the array must match this shape exactly:
+              {
+                "title": "Concise, user-facing Epic title",
+                "description": "The user story AND acceptance criteria, in markdown",
+                "motivation": "Why this matters — user impact and business value only",
+                "repos": ["repo-name", ...],
+                "priority": "High" | "Medium" | "Low",
+                "stories": [
+                  {
+                    "title": "Story title",
+                    "description": "Story description",
+                    "tasks": [
+                      {"title": "Task title", "description": "Task description"}
+                    ]
+                  }
+                ]
+              }
 
-            Repositories are cloned under /workspace/repo/<name>/.
-
-            For each approved feature in the analysis, run all three CLIs in
-            sequence — create-proposal, then create-story, then create-task:
-
-              1. create-proposal --title "Feature title" --description "Detailed description" --motivation "Why this matters"
-                 Creates the Epic. Capture its "id" from the JSON response.
-
-              2. create-story --epic-id <epic-id-from-step-1> --title "Feature title" --description "Detailed description"
-                 Creates a Story under that Epic. Capture its "id" from the JSON response.
-
-              3. create-task --epic-id <epic-id-from-step-1> --story-id <story-id-from-step-2> --title "Feature title" --description "Detailed description"
-                 Creates a Task under that Story. This is the level a human later
-                 starts as a workflow run — without this step the feature is
-                 recorded but not yet startable.
-
-            IMPORTANT:
-            - Always use the create-proposal, create-story, and create-task CLIs.
-              Do NOT call the API directly.
-            - The Epic's --description MUST include the user story AND acceptance
-              criteria from the analysis. Format them clearly with markdown headings.
-              Reuse the same description text for the Story and Task unless the
-              analysis suggests a more specific breakdown.
-            - The Epic's --motivation MUST focus on user impact and business value,
-              NOT on technical benefits like "cleaner architecture" or "better performance".
+            Rules for roadmap_candidates.json:
+            - One array element per proposed feature (same features as the markdown).
+            - "repos" and "priority" are reviewer context only (which repos this
+              feature likely touches, and a rough triage signal) — they are not
+              created as roadmap fields, so keep them brief.
+            - At most 8 Stories per Epic, and at most 8 Tasks per Story. If a feature
+              needs more, it's a sign it should be split into two candidate Epics
+              instead of one deeply nested one.
+            - Every Epic needs at least one Story, and every Story needs at least
+              one Task, so the result is startable end-to-end.
             - Do NOT add implementation details, technology choices, or architectural
-              suggestions to any description or motivation. These will be determined
-              by the Feature Development workflow.
-            - create-story and create-task do not take a --motivation flag — only
-              the Epic (create-proposal) carries motivation (Decision 4 of the
-              work-hierarchy spec: software_project_id and motivation live on Epic).
-            - An Epic can span ONE or TWO repositories. If the approved analysis
-              identifies a feature that clearly needs changes in two repos (for
-              example, "add push notifications" requiring backend + frontend changes),
-              pass `--repo` twice on the create-proposal call:
-                create-proposal --title "..." --description "..." --motivation "..." \\
-                  --repo <primary-repo-name> --repo <secondary-repo-name>
-              Repo names are the subdirectory names under /workspace/repo/<name>/ and
-              are listed under `repos[]` in /workspace/config.json.
-              If unsure, default to a single --repo (the primary repo, same as today).
-            - Never pass more than two --repo arguments.
-
-            Steps:
-            1. Parse the approved features from the analysis
-            2. For each feature, compose a description that includes:
-               - The user story (As a... I want... So that...)
-               - The acceptance criteria (Given/When/Then)
-            3. Create the Epic via create-proposal, then the Story via create-story,
-               then the Task via create-task, threading the ids returned by each
-               step into the next
-            4. Verify each of the three creations was successful (exit code 0, JSON response)
-            5. Save a summary of created Epics/Stories/Tasks as /workspace/out/feature_summary.md""";
+              suggestions to any description or motivation — same rule as the
+              markdown analysis.
+            - The file must be valid JSON (a top-level array) and nothing else.""";
 
     private final GraphTemplateRepository templateRepo;
     private final NodeDefinitionRepository nodeDefRepo;
@@ -202,16 +184,11 @@ public class BaseRoadmapProvisionerSeeder implements ApplicationRunner {
         // Create node definitions
         NodeDefinition analyzer = createNodeDef("Roadmap Analyzer", ExecutorType.ai, ANALYZER_PROMPT, 1800);
         analyzer.setOutputSpec(
-                "{\"files\":[{\"name\":\"roadmap_analysis.md\",\"required\":true,\"description\":\"Analysis of roadmap proposals for human review\"}]}");
+                "{\"files\":[{\"name\":\"roadmap_analysis.md\",\"required\":true,\"description\":\"Analysis of roadmap proposals for human review\"},"
+                        + "{\"name\":\"roadmap_candidates.json\",\"required\":true,\"description\":\"Structured candidate Epic/Story/Task breakdown for human review\"}]}");
         nodeDefRepo.save(analyzer);
 
         NodeDefinition humanGate = createNodeDef("Roadmap Human Gate", ExecutorType.human, null, 86400);
-
-        NodeDefinition featureCreator =
-                createNodeDef("Roadmap Feature Creator", ExecutorType.ai, FEATURE_CREATOR_PROMPT, 1800);
-        featureCreator.setOutputSpec(
-                "{\"files\":[{\"name\":\"feature_summary.md\",\"required\":true,\"description\":\"Summary of features created from proposals\"}]}");
-        nodeDefRepo.save(featureCreator);
 
         // Create template
         GraphTemplate template = new GraphTemplate();
@@ -224,9 +201,14 @@ public class BaseRoadmapProvisionerSeeder implements ApplicationRunner {
         template = templateRepo.save(template);
 
         // Create template nodes in a horizontal pipeline layout
-        //   [Analyzer] → [Human Gate] → [Feature Creator]
-        //   (x=50)       (x=350)        (x=650)
-        //   All at y=150 for a single-row layout
+        //   [Analyzer] → [Human Gate]
+        //   (x=50)       (x=350)
+        //   Both at y=150 for a single-row layout. There is no third "Feature
+        //   Creator" node in v13 (Decision 2/3): "approved" is a terminal
+        //   decision on the Human Gate — the API server materializes the
+        //   reviewed candidate breakdown itself, in the same request that
+        //   handles the decision signal, instead of handing off to a second
+        //   AI agent.
         TemplateNode tnAnalyzer =
                 createNode(template, analyzer, "roadmap_analyzer", true, "{\"loop_group\": \"proposal-review\"}");
         TemplateNode tnHumanGate = createNode(
@@ -234,20 +216,20 @@ public class BaseRoadmapProvisionerSeeder implements ApplicationRunner {
                 humanGate,
                 "roadmap_human_gate",
                 false,
-                "{\"loop_group\": \"proposal-review\"}",
-                "[{\"template_node_label\":\"roadmap_analyzer\",\"artifacts\":[{\"name\":\"roadmap_analysis.md\",\"description\":\"Analysis of roadmap proposals for human review\"}]}]");
-        TemplateNode tnFeatureCreator = createNode(template, featureCreator, "roadmap_feature_creator", false, "{}");
+                "{\"loop_group\": \"proposal-review\",\"terminal_decisions\":[\"approved\"],\"materialize\":\"roadmap_candidates\"}",
+                "[{\"template_node_label\":\"roadmap_analyzer\",\"artifacts\":[{\"name\":\"roadmap_analysis.md\",\"description\":\"Analysis of roadmap proposals for human review\"},"
+                        + "{\"name\":\"roadmap_candidates.json\",\"description\":\"Structured candidate Epic/Story/Task breakdown for human review\"}]}]");
 
         // Create edges
         // Analyzer → Human Gate (unconditional)
         createEdge(template, tnAnalyzer, tnHumanGate, null);
-        // Human Gate → Feature Creator (approved)
-        createEdge(template, tnHumanGate, tnFeatureCreator, "approved");
         // Human Gate → Analyzer (rejected — loops back with review history)
         createEdge(template, tnHumanGate, tnAnalyzer, "rejected");
+        // Human Gate "approved" has no outgoing edge — it's a terminal_decisions
+        // entry (Decision 2) instead, so the run completes right here.
 
         log.info(
-                "BaseRoadmapProvisionerSeeder: seeded template graphId='{}' v{}: 3 node definitions, 3 template nodes, 3 edges",
+                "BaseRoadmapProvisionerSeeder: seeded template graphId='{}' v{}: 2 node definitions, 2 template nodes, 2 edges",
                 GRAPH_ID,
                 VERSION);
     }

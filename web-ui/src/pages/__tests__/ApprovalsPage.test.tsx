@@ -598,6 +598,111 @@ describe("ApprovalsPage", () => {
     );
   });
 
+  describe("roadmap candidate breakdown", () => {
+    const candidateBreakdown = [
+      {
+        title: "Add dark mode",
+        description: "Support a dark theme",
+        motivation: "Users asked for it",
+        repos: ["repo-a"],
+        priority: "High",
+        stories: [
+          {
+            title: "Theme toggle",
+            description: "Add a toggle",
+            tasks: [{ title: "Build toggle", description: "New component" }],
+          },
+        ],
+      },
+    ];
+
+    function renderWithBreakdownGate(breakdown: unknown) {
+      mockUsePendingGates.mockReturnValue({
+        data: {
+          content: [
+            {
+              nodeExecutionId: "exec-1",
+              runId: "run-1",
+              runStatus: "awaiting_human",
+              runName: "Roadmap Provisioner Run",
+              nodeLabel: "review_candidates",
+              iteration: 1,
+              timeoutSeconds: null,
+              waitingSince: null,
+              status: "awaiting_human",
+              predecessorOutputs: [],
+              candidateBreakdown: breakdown,
+            },
+          ],
+          totalElements: 1, totalPages: 1, number: 0, size: 20, first: true, last: true, empty: false,
+        },
+        isLoading: false,
+        isError: false,
+      });
+      renderWithProviders(<ApprovalsPage />);
+    }
+
+    it("renders the editable breakdown when gate.candidateBreakdown is present", () => {
+      renderWithBreakdownGate(candidateBreakdown);
+
+      expect(screen.getByTestId("roadmap-candidate-breakdown")).toBeInTheDocument();
+      expect(screen.getByDisplayValue("Add dark mode")).toBeInTheDocument();
+    });
+
+    it("does not render the breakdown when gate.candidateBreakdown is null", () => {
+      renderWithBreakdownGate(null);
+
+      expect(screen.queryByTestId("roadmap-candidate-breakdown")).not.toBeInTheDocument();
+    });
+
+    it("includes editedCandidates in the mutate payload on Approve, reflecting edits", async () => {
+      const mockMutate = vi.fn();
+      const { useSignalFromDashboard } = await import("@/hooks/usePendingGates");
+      (useSignalFromDashboard as ReturnType<typeof vi.fn>).mockReturnValue({
+        mutate: mockMutate,
+        isPending: false,
+      });
+
+      const user = userEvent.setup();
+      renderWithBreakdownGate(candidateBreakdown);
+
+      const titleInput = screen.getByDisplayValue("Add dark mode");
+      await user.clear(titleInput);
+      await user.type(titleInput, "Add dark and light mode");
+
+      await user.click(screen.getByTestId("gate-card-approve-button"));
+
+      expect(mockMutate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runId: "run-1",
+          nodeExecId: "exec-1",
+          decision: "approved",
+          editedCandidates: [
+            expect.objectContaining({ title: "Add dark and light mode" }),
+          ],
+        }),
+        expect.objectContaining({ onSuccess: expect.any(Function) })
+      );
+    });
+
+    it("does not include editedCandidates in the mutate payload when candidateBreakdown was null", async () => {
+      const mockMutate = vi.fn();
+      const { useSignalFromDashboard } = await import("@/hooks/usePendingGates");
+      (useSignalFromDashboard as ReturnType<typeof vi.fn>).mockReturnValue({
+        mutate: mockMutate,
+        isPending: false,
+      });
+
+      const user = userEvent.setup();
+      renderWithBreakdownGate(null);
+
+      await user.click(screen.getByTestId("gate-card-approve-button"));
+
+      const [payload] = mockMutate.mock.calls[0];
+      expect(Object.prototype.hasOwnProperty.call(payload, "editedCandidates")).toBe(false);
+    });
+  });
+
   describe("v23 spec gate from approvals dashboard (regression: 500 on Reject)", () => {
     function renderWithV23Gate() {
       mockUsePendingGates.mockReturnValue({

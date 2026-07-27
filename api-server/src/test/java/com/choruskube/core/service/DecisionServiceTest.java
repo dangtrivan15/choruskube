@@ -65,7 +65,8 @@ class DecisionServiceTest {
                 null,
                 null,
                 null,
-                null);
+                null,
+                new DecisionOptionsResolver());
     }
 
     private NodeExecution stubExec() {

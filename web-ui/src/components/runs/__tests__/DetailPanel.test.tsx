@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { screen, fireEvent } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "@/__tests__/test-utils";
 import DetailPanel from "../DetailPanel";
 import type { RunResponse } from "@/lib/types";
@@ -110,6 +111,7 @@ function makeRun(overrides: Partial<RunResponse> = {}): RunResponse {
         reviewerType: null,
         traversedEdgeIds: null,
         requiredArtifacts: null,
+      candidateBreakdown: null,
       },
     ],
     pullRequests: [],
@@ -168,6 +170,7 @@ describe("DetailPanel", () => {
           reviewerType: null,
           traversedEdgeIds: null,
           requiredArtifacts,
+          candidateBreakdown: null,
         },
       ],
     });
@@ -177,6 +180,143 @@ describe("DetailPanel", () => {
     // ArtifactList is rendered with the requiredArtifacts groups
     expect(screen.getByTestId("artifact-list-mock")).toBeInTheDocument();
     expect(screen.getByText("ArtifactList (1 groups)")).toBeInTheDocument();
+  });
+
+  it("passes candidateBreakdown to HumanGatePanel when non-null and status is awaiting_human", () => {
+    // Regression coverage: HumanGatePanel accepts a candidateBreakdown prop (the Roadmap
+    // Provisioner editable breakdown), but DetailPanel previously never forwarded it from
+    // the node execution — this asserts the wiring end-to-end via the real breakdown editor.
+    const candidateBreakdown = [
+      {
+        title: "Add dark mode",
+        description: "Support a dark theme across the app",
+        motivation: "Users have asked for this repeatedly",
+        repos: ["repo-a"],
+        priority: "High",
+        stories: [],
+      },
+    ];
+    const run = makeRun({
+      nodeExecutions: [
+        {
+          id: "exec-1",
+          templateNodeId: "node-1",
+          status: "awaiting_human",
+          result: null,
+          decision: null,
+          podName: null,
+          iteration: 1,
+          startedAt: null,
+          completedAt: null,
+          errorMessage: null,
+          graphVersion: 1,
+          artifactRefs: "{}",
+          label: null,
+          loopGroup: null,
+          reviewerType: null,
+          traversedEdgeIds: null,
+          requiredArtifacts: null,
+          candidateBreakdown,
+        },
+      ],
+    });
+
+    renderWithProviders(<DetailPanel run={run} nodeId="node-1" />);
+
+    expect(screen.getByTestId("roadmap-candidate-breakdown")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Add dark mode")).toBeInTheDocument();
+  });
+
+  it("does not leak one node's edited candidates into another node's breakdown editor", async () => {
+    // Regression coverage: when a run has two nodes simultaneously awaiting_human
+    // (parallel DAG branches) and the reviewer switches focus between them via
+    // `nodeId`, DetailPanel previously reused the same HumanGatePanel instance
+    // (no `key`), so React preserved node A's local `editedCandidates` state
+    // across the prop swap — a reviewer who edited node A's breakdown and then
+    // selected node B would silently submit node A's edits against node B's
+    // decision. HumanGatePanel is now keyed by node execution id so switching
+    // nodes remounts the panel and resets its local state.
+    const user = userEvent.setup();
+    const run = makeRun({
+      graphSnapshot: {
+        nodes: [
+          {
+            template_node_id: "node-1",
+            label: "Review Gate A",
+            executor_type: "human",
+            is_entrypoint: false,
+          },
+          {
+            template_node_id: "node-2",
+            label: "Review Gate B",
+            executor_type: "human",
+            is_entrypoint: false,
+          },
+        ],
+        edges: [],
+      },
+      nodeExecutions: [
+        {
+          id: "exec-1",
+          templateNodeId: "node-1",
+          status: "awaiting_human",
+          result: null,
+          decision: null,
+          podName: null,
+          iteration: 1,
+          startedAt: null,
+          completedAt: null,
+          errorMessage: null,
+          graphVersion: 1,
+          artifactRefs: "{}",
+          label: null,
+          loopGroup: null,
+          reviewerType: null,
+          traversedEdgeIds: null,
+          requiredArtifacts: null,
+          candidateBreakdown: [
+            { title: "Epic A", description: "d", motivation: "m", repos: ["repo-a"], priority: "High", stories: [] },
+          ],
+        },
+        {
+          id: "exec-2",
+          templateNodeId: "node-2",
+          status: "awaiting_human",
+          result: null,
+          decision: null,
+          podName: null,
+          iteration: 1,
+          startedAt: null,
+          completedAt: null,
+          errorMessage: null,
+          graphVersion: 1,
+          artifactRefs: "{}",
+          label: null,
+          loopGroup: null,
+          reviewerType: null,
+          traversedEdgeIds: null,
+          requiredArtifacts: null,
+          candidateBreakdown: [
+            { title: "Epic B", description: "d", motivation: "m", repos: ["repo-a"], priority: "High", stories: [] },
+          ],
+        },
+      ],
+    });
+
+    const { rerender } = renderWithProviders(<DetailPanel run={run} nodeId="node-1" />);
+
+    const titleInputA = screen.getByTestId("candidate-epic-title-0") as HTMLInputElement;
+    expect(titleInputA).toHaveValue("Epic A");
+    await user.clear(titleInputA);
+    await user.type(titleInputA, "Edited Epic A");
+    expect(screen.getByTestId("candidate-epic-title-0")).toHaveValue("Edited Epic A");
+
+    rerender(<DetailPanel run={run} nodeId="node-2" />);
+
+    // Node B's own breakdown is shown, not node A's edited (or unedited) title.
+    const titleInputB = screen.getByTestId("candidate-epic-title-0");
+    expect(titleInputB).toHaveValue("Epic B");
+    expect(screen.queryByDisplayValue("Edited Epic A")).not.toBeInTheDocument();
   });
 
   it("falls back to graph-walk predecessors when requiredArtifacts is null", () => {
@@ -271,6 +411,7 @@ describe("DetailPanel", () => {
           reviewerType: null,
           traversedEdgeIds: null,
           requiredArtifacts: null,
+      candidateBreakdown: null,
         },
         {
           id: "exec-pred",
@@ -290,6 +431,7 @@ describe("DetailPanel", () => {
           reviewerType: null,
           traversedEdgeIds: null,
           requiredArtifacts: null,
+      candidateBreakdown: null,
         },
       ],
     });

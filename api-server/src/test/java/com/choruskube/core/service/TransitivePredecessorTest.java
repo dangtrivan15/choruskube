@@ -48,7 +48,8 @@ class TransitivePredecessorTest {
                 null,
                 null,
                 null,
-                null);
+                null,
+                new DecisionOptionsResolver());
     }
 
     // --- helpers ---

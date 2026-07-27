@@ -62,6 +62,9 @@ class HumanDecisionValidationTest {
     @Mock
     private WorkflowStub workflowStub;
 
+    @Mock
+    private NodeExecutionClaimService nodeExecutionClaimService;
+
     private RunService service;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final UUID runId = UUID.randomUUID();
@@ -97,7 +100,11 @@ class HumanDecisionValidationTest {
                 null,
                 null,
                 null,
-                new com.choruskube.core.scope.NoOpScopeProvider());
+                new com.choruskube.core.scope.NoOpScopeProvider(),
+                new DecisionOptionsResolver(),
+                null,
+                null,
+                nodeExecutionClaimService);
     }
 
     private NodeExecution stubExec() {
@@ -109,6 +116,9 @@ class HumanDecisionValidationTest {
         exec.setGraphVersion(1);
         when(execRepo.findById(nodeExecId)).thenReturn(Optional.of(exec));
         lenient().when(execRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        lenient()
+                .when(nodeExecutionClaimService.compareAndSetStatus(any(), any(), any()))
+                .thenReturn(1);
         return exec;
     }
 
@@ -140,7 +150,7 @@ class HumanDecisionValidationTest {
         NodeExecution exec = stubExec();
         stubRun("approved", "rejected");
 
-        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", "LGTM", null));
+        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", "LGTM", null, null));
 
         // Decision is NOT written to DB here — orchestrator persists it via SetNodeDecision activity
         assertThat(exec.getDecision()).isNull();
@@ -159,8 +169,8 @@ class HumanDecisionValidationTest {
         stubExec();
         stubRun("approved", "rejected");
 
-        assertThatThrownBy(() ->
-                        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("maybe", "not sure", null)))
+        assertThatThrownBy(() -> service.signalHumanDecision(
+                        runId, nodeExecId, new SignalRequest("maybe", "not sure", null, null)))
                 .isInstanceOf(BadRequestException.class)
                 .hasMessageContaining("Invalid decision");
     }
@@ -171,7 +181,7 @@ class HumanDecisionValidationTest {
         exec.setResult("Previous AI output");
         stubRun("approved", "rejected");
 
-        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", "Looks good", null));
+        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", "Looks good", null, null));
 
         // Result in DB is unchanged — only decision is stored
         assertThat(exec.getResult()).isEqualTo("Previous AI output");
@@ -194,7 +204,7 @@ class HumanDecisionValidationTest {
         NodeExecution exec = stubExec();
         stubRun("approved", "rejected");
 
-        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null));
+        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, null));
 
         // Decision is NOT written to DB here — orchestrator persists it via SetNodeDecision activity
         assertThat(exec.getDecision()).isNull();

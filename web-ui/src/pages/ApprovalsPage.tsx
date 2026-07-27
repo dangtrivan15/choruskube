@@ -29,9 +29,10 @@ import ArtifactBrowser from "@/components/runs/ArtifactBrowser";
 import ArtifactList from "@/components/runs/ArtifactList";
 import LiveChatPanel from "@/components/runs/LiveChatPanel";
 import FileUploadZone from "@/components/runs/FileUploadZone";
+import RoadmapCandidateBreakdown from "@/components/runs/RoadmapCandidateBreakdown";
 import PageHeader from "@/components/layout/PageHeader";
 import PageShell from "@/components/layout/PageShell";
-import type { PendingGateResponse, SortParam, PaginationParams } from "@/lib/types";
+import type { PendingGateResponse, SortParam, PaginationParams, CandidateEpicProposal } from "@/lib/types";
 
 const SORT_OPTIONS = [
   { label: "Waiting (oldest first)", field: "startedAt", direction: "asc" as const },
@@ -102,6 +103,9 @@ function GateCard({ gate }: { gate: PendingGateResponse }) {
   const [outputExpanded, setOutputExpanded] = useState(false);
   const [expandedPredIdx, setExpandedPredIdx] = useState<number | null>(null);
   const [attachmentFiles, setAttachmentFiles] = useState<File[]>([]);
+  const [editedCandidates, setEditedCandidates] = useState<CandidateEpicProposal[]>(
+    gate.candidateBreakdown ?? []
+  );
   const signalMutation = useSignalFromDashboard();
   const isLiveChat = gate.status === "live_chat";
   const { canOperate } = usePermission();
@@ -121,6 +125,7 @@ function GateCard({ gate }: { gate: PendingGateResponse }) {
         decision,
         feedback,
         files,
+        ...(gate.candidateBreakdown != null ? { editedCandidates } : {}),
       },
       {
         onSuccess: () => {
@@ -233,6 +238,13 @@ function GateCard({ gate }: { gate: PendingGateResponse }) {
       {gate.requiredArtifacts != null && gate.requiredArtifacts.length > 0 && (
         <>
           <ArtifactList runId={gate.runId} groups={gate.requiredArtifacts} />
+          <Separator className="my-3" />
+        </>
+      )}
+
+      {gate.candidateBreakdown != null && (
+        <>
+          <RoadmapCandidateBreakdown value={editedCandidates} onChange={setEditedCandidates} />
           <Separator className="my-3" />
         </>
       )}

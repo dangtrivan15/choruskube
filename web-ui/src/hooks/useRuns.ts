@@ -13,6 +13,7 @@ import type {
   QuotaExceededResponse,
   StagingRefsResponse,
   AttachmentRefsResponse,
+  CandidateEpicProposal,
 } from "@/lib/types";
 
 export function useRuns(status?: string, name?: string, pagination?: PaginationParams) {
@@ -164,8 +165,9 @@ export function useSignalNode(runId: string) {
   const queryClient = useQueryClient();
   const { addEntry } = useActivityFeed();
   return useMutation({
-    mutationFn: async ({ nodeExecId, decision, feedback, files }: {
+    mutationFn: async ({ nodeExecId, decision, feedback, files, editedCandidates }: {
       nodeExecId: string; decision: string; feedback: string; files?: File[];
+      editedCandidates?: CandidateEpicProposal[];
     }) => {
       let attachmentRefs: string | undefined;
       if (files && files.length > 0) {
@@ -178,6 +180,7 @@ export function useSignalNode(runId: string) {
       }
       return api.post(`/runs/${runId}/nodes/${nodeExecId}/signal`, {
         decision, feedback, attachmentRefs,
+        ...(editedCandidates !== undefined ? { editedCandidates } : {}),
       });
     },
     onSuccess: () => {

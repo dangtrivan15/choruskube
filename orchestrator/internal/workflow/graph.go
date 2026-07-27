@@ -88,7 +88,13 @@ func FindReadyNodes(snap *state.GraphRuntimeSnapshot, nodeStates map[uuid.UUID]s
 // Rules:
 //   - Unconditional edges (condition == nil) always fire
 //   - Conditional edges fire if condition matches result (case-insensitive)
-//   - If node has ONLY conditional edges and none match → error
+//   - If node has ONLY conditional edges and none match, but the node's
+//     ConfigOverrides["terminal_decisions"] contains result (case-insensitive),
+//     it is treated like a terminal node with no outgoing edges: empty lists,
+//     no error. This lets a node declare that certain decisions are legitimate
+//     run-branch endpoints even though the node also has other conditional
+//     edges for its remaining decisions.
+//   - Otherwise, if node has ONLY conditional edges and none match → error
 //   - If node has no outgoing edges (terminal) → empty lists, no error
 func EvaluateEdges(
 	snap *state.GraphRuntimeSnapshot,
@@ -123,10 +129,41 @@ func EvaluateEdges(
 	}
 
 	if hasConditional && len(targets) == 0 {
+		if node, ok := GetNodeByID(snap, completedNodeID); ok && isTerminalDecision(node, resultLower) {
+			return nil, nil, nil
+		}
 		return nil, nil, fmt.Errorf("no matching edge for result: %s", result)
 	}
 
 	return targets, firedEdgeIDs, nil
+}
+
+// isTerminalDecision reports whether resultLower (already lowercased) matches
+// one of the node's ConfigOverrides["terminal_decisions"] entries
+// (case-insensitive). terminal_decisions round-trips through encoding/json,
+// so it arrives as a []interface{} of strings rather than a []string.
+func isTerminalDecision(node state.SnapshotNode, resultLower string) bool {
+	if node.ConfigOverrides == nil {
+		return false
+	}
+	raw, ok := node.ConfigOverrides["terminal_decisions"]
+	if !ok {
+		return false
+	}
+	decisions, ok := raw.([]interface{})
+	if !ok {
+		return false
+	}
+	for _, d := range decisions {
+		s, ok := d.(string)
+		if !ok {
+			continue
+		}
+		if strings.ToLower(s) == resultLower {
+			return true
+		}
+	}
+	return false
 }
 
 // GetNodeByID looks up a node in the snapshot by template_node_id

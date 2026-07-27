@@ -139,7 +139,11 @@ class RunServiceCredentialCheckTest {
                 null,
                 null,
                 mock(ApplicationEventPublisher.class),
-                new com.choruskube.core.scope.NoOpScopeProvider());
+                new com.choruskube.core.scope.NoOpScopeProvider(),
+                new DecisionOptionsResolver(),
+                null,
+                null,
+                null); // nodeExecutionClaimService — unused (signalHumanDecision not exercised)
     }
 
     @AfterEach
