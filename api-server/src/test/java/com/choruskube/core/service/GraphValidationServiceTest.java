@@ -95,6 +95,42 @@ class GraphValidationServiceTest {
     }
 
     @Test
+    void cycleWithTerminalDecisionsIsValid() {
+        // Mirrors the Roadmap Provisioner v13 shape (Decision 2): analyzer -> gate,
+        // gate --rejected--> analyzer (back-edge), gate has no outgoing "approved" edge —
+        // instead config_overrides.terminal_decisions declares "approved" ends the run
+        // right there. Without Rule 3 recognizing terminal_decisions, this graph has zero
+        // nodes with no outgoing edges and fails "No terminal node found" even though the
+        // graph is a legitimate, completable pipeline.
+        UUID analyzer = UUID.randomUUID();
+        UUID gate = UUID.randomUUID();
+
+        var gateNode = makeNode(gate, "gate", false);
+        gateNode.setConfigOverrides("{\"terminal_decisions\":[\"approved\"]}");
+        var nodes = List.of(makeNode(analyzer, "analyzer", true), gateNode);
+        var edges = List.of(makeEdge(analyzer, gate, null), makeEdge(gate, analyzer, "rejected"));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isTrue();
+        assertThat(result.errors()).isEmpty();
+    }
+
+    @Test
+    void emptyTerminalDecisionsDoesNotCountAsTerminal() {
+        UUID analyzer = UUID.randomUUID();
+        UUID gate = UUID.randomUUID();
+
+        var gateNode = makeNode(gate, "gate", false);
+        gateNode.setConfigOverrides("{\"terminal_decisions\":[]}");
+        var nodes = List.of(makeNode(analyzer, "analyzer", true), gateNode);
+        var edges = List.of(makeEdge(analyzer, gate, null), makeEdge(gate, analyzer, "rejected"));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isFalse();
+        assertThat(result.errors()).anyMatch(e -> e.contains("terminal"));
+    }
+
+    @Test
     void unreachableFromEntrypoint() {
         UUID nodeA = UUID.randomUUID();
         UUID nodeB = UUID.randomUUID();

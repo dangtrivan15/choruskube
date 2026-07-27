@@ -8,6 +8,7 @@ import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.NodeDefinitionRepository;
 import com.choruskube.core.repository.TemplateEdgeRepository;
 import com.choruskube.core.repository.TemplateNodeRepository;
+import com.choruskube.core.service.GraphValidationService;
 import io.temporal.client.WorkflowClient;
 import io.temporal.serviceclient.WorkflowServiceStubs;
 import org.junit.jupiter.api.Test;
@@ -36,6 +37,9 @@ class BaseRoadmapProvisionerSeederTest extends BaseTest {
 
     @Autowired
     private TemplateEdgeRepository edgeRepo;
+
+    @Autowired
+    private GraphValidationService graphValidationService;
 
     // --- Base template tests ---
 
@@ -138,6 +142,25 @@ class BaseRoadmapProvisionerSeederTest extends BaseTest {
                         .filter(e -> "approved".equals(e.getCondition()))
                         .count())
                 .isEqualTo(0);
+    }
+
+    @Test
+    void seededTemplatePassesGraphValidation() {
+        // RunService.startRun() runs every graph through GraphValidationService before
+        // allowing a run to start — a template that seeds successfully but fails this
+        // check can never actually be run. Rule 3 (terminal node check) predates Decision
+        // 2's terminal_decisions capability and originally only recognized a literal
+        // zero-outgoing-edge node as terminal, which this template's gate (approved has no
+        // edge, only terminal_decisions; rejected loops back to the analyzer) never has —
+        // exercising the real seeded template here, not just its DB rows in isolation,
+        // is what would have caught that gap.
+        var template = templateRepo.findByName("Roadmap Provisioner").orElseThrow();
+        var nodes = templateNodeRepo.findByGraphTemplateId(template.getId());
+        var edges = edgeRepo.findByGraphTemplateId(template.getId());
+
+        var result = graphValidationService.validate(nodes, edges);
+        assertThat(result.errors()).isEmpty();
+        assertThat(result.valid()).isTrue();
     }
 
     @Test
