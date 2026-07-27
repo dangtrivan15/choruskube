@@ -8,12 +8,40 @@ import java.util.List;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface NodeExecutionRepository
         extends JpaRepository<NodeExecution, UUID>, JpaSpecificationExecutor<NodeExecution> {
     List<NodeExecution> findByWorkflowRunId(UUID workflowRunId);
+
+    /**
+     * Atomic compare-and-set on {@code status}, used to guard exactly-once handling of a human
+     * decision signal ({@link com.choruskube.core.service.RunService#signalHumanDecision}).
+     *
+     * <p>Two concurrent/duplicate decision submissions for the same node execution (double-click,
+     * two open tabs, a client retry) would otherwise both pass validation and both independently
+     * trigger materialization, silently creating duplicate Epic/Story/Task rows. The
+     * read-compare-write is a single atomic statement at the database level: only the caller whose
+     * {@code expectedStatus} still matches wins, and the loser sees {@code 0} rows affected.
+     *
+     * <p>Unlike CRUD methods inherited from {@link JpaRepository}, a custom {@code @Modifying
+     * @Query} method like this one is <em>not</em> wrapped in a transaction by Spring Data on its
+     * own — invoking it with no ambient transaction active throws {@code
+     * TransactionRequiredException}. Call it only through {@link
+     * com.choruskube.core.service.NodeExecutionClaimService}, which gives it a transactional entry
+     * point.
+     *
+     * @return the number of rows updated — {@code 1} if this call won the race, {@code 0} if the
+     *     node execution was already claimed (or was never in {@code expectedStatus})
+     */
+    @Modifying
+    @Query("UPDATE NodeExecution n SET n.status = :newStatus " + "WHERE n.id = :id AND n.status = :expectedStatus")
+    int compareAndSetStatus(
+            @Param("id") UUID id,
+            @Param("expectedStatus") NodeExecutionStatus expectedStatus,
+            @Param("newStatus") NodeExecutionStatus newStatus);
 
     List<NodeExecution> findByWorkflowRunIdIn(Collection<UUID> workflowRunIds);
 

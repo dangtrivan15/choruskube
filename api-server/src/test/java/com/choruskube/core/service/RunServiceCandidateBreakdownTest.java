@@ -115,7 +115,8 @@ class RunServiceCandidateBreakdownTest {
                 new com.choruskube.core.scope.NoOpScopeProvider(),
                 new DecisionOptionsResolver(),
                 roadmapCandidateMaterializer,
-                roadmapCandidatesArtifactResolver);
+                roadmapCandidatesArtifactResolver,
+                null); // nodeExecutionClaimService — unused (signalHumanDecision not exercised)
     }
 
     private WorkflowRun stubRun() {

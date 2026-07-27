@@ -90,6 +90,9 @@ class RunServiceTest {
     @Mock
     private SoftwareProjectRepository softwareProjectRepo;
 
+    @Mock
+    private NodeExecutionClaimService nodeExecutionClaimService;
+
     private RunService service;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final UUID runId = UUID.randomUUID();
@@ -132,7 +135,8 @@ class RunServiceTest {
                 new com.choruskube.core.scope.NoOpScopeProvider(),
                 new DecisionOptionsResolver(),
                 null,
-                null);
+                null,
+                nodeExecutionClaimService);
     }
 
     // -----------------------------------------------------------------------
@@ -155,8 +159,11 @@ class RunServiceTest {
         String snapshot = """
                 {"nodes":[{"template_node_id":"%s","label":"gate","executor_type":"human","timeout_seconds":86400}],
                  "edges":[%s]}""".formatted(templateNodeId, edges);
-        when(snapshotBuilder.buildSnapshotForRun(run)).thenReturn(snapshot);
-        when(workflowClient.newUntypedWorkflowStub("test-wf-id")).thenReturn(workflowStub);
+        // lenient(): tests exercising the idempotency-claim guard (e.g. an already-claimed node,
+        // or a validation failure) throw before ever reaching buildSnapshotForRun/the workflow
+        // stub, so these stubs would otherwise be flagged as unnecessary in those tests.
+        lenient().when(snapshotBuilder.buildSnapshotForRun(run)).thenReturn(snapshot);
+        lenient().when(workflowClient.newUntypedWorkflowStub("test-wf-id")).thenReturn(workflowStub);
     }
 
     private NodeExecution stubExec() {
@@ -167,6 +174,9 @@ class RunServiceTest {
         exec.setStatus(NodeExecutionStatus.awaiting_human);
         exec.setGraphVersion(1);
         when(execRepo.findById(nodeExecId)).thenReturn(Optional.of(exec));
+        lenient()
+                .when(nodeExecutionClaimService.compareAndSetStatus(any(), any(), any()))
+                .thenReturn(1);
         return exec;
     }
 
@@ -214,6 +224,48 @@ class RunServiceTest {
         JsonNode payload = captureSignalPayload();
         assertThat(payload.get("feedback").asText()).contains("Looks good");
         assertThat(payload.get("attachmentRefs").asText()).isEqualTo("{\"file.txt\":\"acme/gate/file.txt\"}");
+    }
+
+    // -----------------------------------------------------------------------
+    // signalHumanDecision — idempotency guard against concurrent/duplicate submissions
+    // -----------------------------------------------------------------------
+
+    @Test
+    void signalHumanDecision_alreadyClaimed_throwsConflictAndNeverSignals() {
+        stubExec();
+        stubRunWithEdges("approved", "rejected");
+        // Simulate a concurrent/duplicate request that already won the atomic claim:
+        // this node execution is no longer in awaiting_human by the time we try to claim it.
+        when(nodeExecutionClaimService.compareAndSetStatus(
+                        nodeExecId, NodeExecutionStatus.awaiting_human, NodeExecutionStatus.running))
+                .thenReturn(0);
+
+        assertThatThrownBy(() ->
+                        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, null)))
+                .isInstanceOf(com.choruskube.core.exception.ConflictException.class);
+
+        // Neither the Temporal signal nor a status-changed event should fire for the loser.
+        verify(workflowStub, never()).signal(anyString(), any());
+        verify(eventPublisher, never()).publishNodeStatusChanged(any(), any(), anyString());
+    }
+
+    @Test
+    void signalHumanDecision_invalidDecision_releasesClaimForRetry() {
+        stubExec();
+        // Only "rejected" is a valid decision for this node — "approved" will fail validation.
+        stubRunWithEdges("rejected");
+
+        assertThatThrownBy(() ->
+                        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, null)))
+                .isInstanceOf(com.choruskube.core.exception.BadRequestException.class);
+
+        // The claim taken before validation must be released back to awaiting_human so a
+        // corrected resubmission isn't permanently rejected as a false-positive conflict.
+        verify(nodeExecutionClaimService)
+                .compareAndSetStatus(nodeExecId, NodeExecutionStatus.awaiting_human, NodeExecutionStatus.running);
+        verify(nodeExecutionClaimService)
+                .compareAndSetStatus(nodeExecId, NodeExecutionStatus.running, NodeExecutionStatus.awaiting_human);
+        verify(workflowStub, never()).signal(anyString(), any());
     }
 
     // -----------------------------------------------------------------------

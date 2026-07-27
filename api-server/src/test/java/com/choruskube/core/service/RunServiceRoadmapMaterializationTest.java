@@ -76,6 +76,9 @@ class RunServiceRoadmapMaterializationTest {
     @Mock
     private RoadmapCandidatesArtifactResolver roadmapCandidatesArtifactResolver;
 
+    @Mock
+    private NodeExecutionClaimService nodeExecutionClaimService;
+
     private RunService service;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final UUID runId = UUID.randomUUID();
@@ -114,7 +117,8 @@ class RunServiceRoadmapMaterializationTest {
                 new com.choruskube.core.scope.NoOpScopeProvider(),
                 new DecisionOptionsResolver(),
                 roadmapCandidateMaterializer,
-                roadmapCandidatesArtifactResolver);
+                roadmapCandidatesArtifactResolver,
+                nodeExecutionClaimService);
     }
 
     private NodeExecution stubExec() {
@@ -125,6 +129,9 @@ class RunServiceRoadmapMaterializationTest {
         exec.setStatus(NodeExecutionStatus.awaiting_human);
         exec.setGraphVersion(1);
         when(execRepo.findById(nodeExecId)).thenReturn(Optional.of(exec));
+        lenient()
+                .when(nodeExecutionClaimService.compareAndSetStatus(any(), any(), any()))
+                .thenReturn(1);
         return exec;
     }
 

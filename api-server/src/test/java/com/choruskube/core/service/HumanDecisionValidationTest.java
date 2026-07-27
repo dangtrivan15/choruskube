@@ -62,6 +62,9 @@ class HumanDecisionValidationTest {
     @Mock
     private WorkflowStub workflowStub;
 
+    @Mock
+    private NodeExecutionClaimService nodeExecutionClaimService;
+
     private RunService service;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final UUID runId = UUID.randomUUID();
@@ -100,7 +103,8 @@ class HumanDecisionValidationTest {
                 new com.choruskube.core.scope.NoOpScopeProvider(),
                 new DecisionOptionsResolver(),
                 null,
-                null);
+                null,
+                nodeExecutionClaimService);
     }
 
     private NodeExecution stubExec() {
@@ -112,6 +116,9 @@ class HumanDecisionValidationTest {
         exec.setGraphVersion(1);
         when(execRepo.findById(nodeExecId)).thenReturn(Optional.of(exec));
         lenient().when(execRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        lenient()
+                .when(nodeExecutionClaimService.compareAndSetStatus(any(), any(), any()))
+                .thenReturn(1);
         return exec;
     }
 

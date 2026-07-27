@@ -47,7 +47,8 @@ class RunServiceInputValidationTest {
                 new com.choruskube.core.scope.NoOpScopeProvider(),
                 new DecisionOptionsResolver(),
                 null,
-                null);
+                null,
+                null); // nodeExecutionClaimService — unused (signalHumanDecision not exercised)
     }
 
     @Test
