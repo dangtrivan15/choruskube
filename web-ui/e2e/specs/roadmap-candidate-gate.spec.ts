@@ -43,8 +43,24 @@ test.describe("Roadmap Provisioner candidate gate", () => {
     api,
   }) => {
     const template = await api.getTemplateByName("e2e-roadmap-candidate-gate");
+    // Materialization resolves software_project_id from the run's inputs (see
+    // InternalRunService.resolveSoftwareProjectIdFromRun) — a real Roadmap Provisioner
+    // run always supplies one (CLAUDE.md: "git_repo_id is a run input, not a template
+    // field"). Without it, DefaultRoadmapCandidateMaterializer silently skips the
+    // candidate (caught, logged, and rolled into the "N skipped" count) and the run
+    // still completes via the terminal_decisions edge, so this must be supplied here or
+    // the Epic below is never created. Single-repo SoftwareProjects share the git_repo's id.
+    const repos = await api.listGitRepos();
+    expect(
+      repos.content.length,
+      "E2eTestDataSeeder must seed at least 1 git_repo row for this spec",
+    ).toBeGreaterThanOrEqual(1);
     const runName = `candgate-edit-${Date.now().toString(36)}`;
-    const run = await api.startRun({ graphTemplateId: template.id, name: runName });
+    const run = await api.startRun({
+      graphTemplateId: template.id,
+      name: runName,
+      inputs: { software_project_id: repos.content[0].id },
+    });
 
     await api.waitForNodeStatus(run.id, "review_candidates", ["awaiting_human"], 60_000);
 
