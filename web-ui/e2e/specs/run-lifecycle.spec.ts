@@ -153,7 +153,13 @@ test.describe("Run Lifecycle", () => {
       await expect(breadcrumb).toContainText(uniqueTitle);
       await expect(breadcrumb).toContainText("Breadcrumb story");
 
-      await api.deleteEpic(epic.id);
+      // No cleanup here (unlike roadmap.spec.ts / roadmap-graph.spec.ts fixtures):
+      // starting the Task above has already moved it out of "backlog", and
+      // DefaultEpicService#delete deliberately refuses to delete an Epic with any
+      // started descendant Task ("Can only delete an Epic while all of its Tasks
+      // are still in backlog") — that's intentional, to preserve run history. The
+      // `uniqueTitle` timestamp keeps this fixture from colliding with other runs
+      // of this spec, so leaving it behind is safe.
     });
 
     test("DAG visualization renders nodes", async ({ runMonitorPage, api }) => {
