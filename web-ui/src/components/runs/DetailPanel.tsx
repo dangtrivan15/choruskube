@@ -75,16 +75,16 @@ function findPredecessorOutputs(
 }
 
 /**
- * Outgoing edge conditions from the given template node. These are the valid
- * decision values for a human gate and drive the action buttons. Matches the
- * server's `PendingGateResponse.decisionOptions` computation so the two UI
- * surfaces (run detail + /approvals) stay aligned with the validator.
+ * Valid decision values for a human gate, read verbatim from the graph
+ * snapshot's server-computed `decision_options` field (the same
+ * `DecisionOptionsResolver` union of outgoing edge conditions and
+ * `terminal_decisions` that backs `PendingGateResponse.decisionOptions`).
+ * Not re-derived here — an edges-only re-derivation previously silently
+ * dropped decisions like the Roadmap Provisioner's edge-less "approved"
+ * terminal decision.
  */
 function findDecisionOptions(run: RunResponse, nodeId: string): string[] {
-  if (!run.graphSnapshot) return [];
-  return run.graphSnapshot.edges
-    .filter((e) => e.source_node_id === nodeId && e.condition != null)
-    .map((e) => e.condition as string);
+  return findSnapshotNode(run, nodeId)?.decision_options ?? [];
 }
 
 /**

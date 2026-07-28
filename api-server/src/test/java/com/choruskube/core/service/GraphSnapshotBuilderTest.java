@@ -124,4 +124,90 @@ public class GraphSnapshotBuilderTest extends BaseTest {
         assertThat(snapshotJson.has("namespace")).isFalse();
         assertThat(snapshotJson.has("docker_config")).isFalse();
     }
+
+    @Test
+    void buildSnapshotIncludesDecisionOptionsForPlainEdgeGate() throws Exception {
+        // "Final Approval" (feature-development) has two outgoing edges — approved, rereview —
+        // and no terminal_decisions config: a plain edge-driven gate.
+        var baseTemplate = templateRepo
+                .findFirstByGraphIdOrderByVersionDesc(GraphIds.FEATURE_DEVELOPMENT)
+                .orElseThrow();
+        var nodes = templateNodeRepo.findByGraphTemplateId(baseTemplate.getId());
+        var finalApproval = nodes.stream()
+                .filter(n -> "final_approval".equals(n.getLabel()))
+                .findFirst()
+                .orElseThrow();
+
+        WorkflowRun run = new WorkflowRun();
+        run.setGraphTemplateId(baseTemplate.getId());
+        run.setInputs("{\"feature_request\":\"test\"}");
+        run = runRepo.save(run);
+
+        JsonNode snapshotJson = objectMapper.readTree(snapshotBuilder.buildSnapshotForRun(run));
+        JsonNode node = findSnapshotNode(snapshotJson, finalApproval.getId());
+
+        List<String> decisionOptions = new ArrayList<>();
+        node.get("decision_options").forEach(o -> decisionOptions.add(o.asText()));
+        assertThat(decisionOptions).containsExactlyInAnyOrder("approved", "rereview");
+    }
+
+    @Test
+    void buildSnapshotIncludesDecisionOptionsForTerminalDecisionGate() throws Exception {
+        // "Roadmap Human Gate" (roadmap-provisioner) has one outgoing edge (rejected) plus
+        // config_overrides.terminal_decisions == ["approved"] — the Roadmap Provisioner's
+        // edge-less "approved ends the run" pattern this fix targets.
+        var baseTemplate = templateRepo
+                .findFirstByGraphIdOrderByVersionDesc(GraphIds.ROADMAP_PROVISIONER)
+                .orElseThrow();
+        var nodes = templateNodeRepo.findByGraphTemplateId(baseTemplate.getId());
+        var humanGate = nodes.stream()
+                .filter(n -> "roadmap_human_gate".equals(n.getLabel()))
+                .findFirst()
+                .orElseThrow();
+
+        WorkflowRun run = new WorkflowRun();
+        run.setGraphTemplateId(baseTemplate.getId());
+        run.setInputs("{\"project_context\":\"test\"}");
+        run = runRepo.save(run);
+
+        JsonNode snapshotJson = objectMapper.readTree(snapshotBuilder.buildSnapshotForRun(run));
+        JsonNode node = findSnapshotNode(snapshotJson, humanGate.getId());
+
+        List<String> decisionOptions = new ArrayList<>();
+        node.get("decision_options").forEach(o -> decisionOptions.add(o.asText()));
+        assertThat(decisionOptions).containsExactly("rejected", "approved");
+    }
+
+    @Test
+    void buildSnapshotDecisionOptionsEmptyForNodeWithNoEdgesOrTerminalDecisions() throws Exception {
+        // "push_create_pr" (feature-development) is a terminal node: no outgoing edges and no
+        // terminal_decisions config.
+        var baseTemplate = templateRepo
+                .findFirstByGraphIdOrderByVersionDesc(GraphIds.FEATURE_DEVELOPMENT)
+                .orElseThrow();
+        var nodes = templateNodeRepo.findByGraphTemplateId(baseTemplate.getId());
+        var pushCreatePr = nodes.stream()
+                .filter(n -> "push_create_pr".equals(n.getLabel()))
+                .findFirst()
+                .orElseThrow();
+
+        WorkflowRun run = new WorkflowRun();
+        run.setGraphTemplateId(baseTemplate.getId());
+        run.setInputs("{\"feature_request\":\"test\"}");
+        run = runRepo.save(run);
+
+        JsonNode snapshotJson = objectMapper.readTree(snapshotBuilder.buildSnapshotForRun(run));
+        JsonNode node = findSnapshotNode(snapshotJson, pushCreatePr.getId());
+
+        assertThat(node.get("decision_options")).isEmpty();
+    }
+
+    private JsonNode findSnapshotNode(JsonNode snapshotJson, UUID templateNodeId) {
+        for (JsonNode n : snapshotJson.get("nodes")) {
+            if (n.get("template_node_id").asText().equals(templateNodeId.toString())) {
+                return n;
+            }
+        }
+        throw new AssertionError("No snapshot node found for template_node_id=" + templateNodeId);
+    }
 }

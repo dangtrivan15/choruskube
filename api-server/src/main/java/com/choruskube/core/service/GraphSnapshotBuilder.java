@@ -40,6 +40,7 @@ public class GraphSnapshotBuilder {
     private final GraphTemplateRepository graphTemplateRepo;
     private final SoftwareProjectRepository softwareProjectRepo;
     private final ObjectMapper objectMapper;
+    private final DecisionOptionsResolver decisionOptionsResolver;
 
     public GraphSnapshotBuilder(
             TemplateNodeRepository templateNodeRepo,
@@ -48,7 +49,8 @@ public class GraphSnapshotBuilder {
             GitRepoRepository gitRepoRepo,
             GraphTemplateRepository graphTemplateRepo,
             SoftwareProjectRepository softwareProjectRepo,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            DecisionOptionsResolver decisionOptionsResolver) {
         this.templateNodeRepo = templateNodeRepo;
         this.nodeDefRepo = nodeDefRepo;
         this.edgeRepo = edgeRepo;
@@ -56,6 +58,7 @@ public class GraphSnapshotBuilder {
         this.graphTemplateRepo = graphTemplateRepo;
         this.softwareProjectRepo = softwareProjectRepo;
         this.objectMapper = objectMapper;
+        this.decisionOptionsResolver = decisionOptionsResolver;
     }
 
     private JsonNode parseJsonField(String json, String fallback) {
@@ -165,6 +168,21 @@ public class GraphSnapshotBuilder {
             edge.put("target_node_id", te.getTargetNodeId().toString());
             edge.put("condition", te.getCondition());
             edgesArray.add(edge);
+        }
+
+        // Attach each node's server-resolved decision options — the union of its outgoing edge
+        // conditions and its terminal_decisions config (DecisionOptionsResolver). This is the same
+        // resolver the Approvals/pending-gates endpoint uses, so the run-detail sidebar can render
+        // gates (like the Roadmap Provisioner's edge-less "approved" path) without re-deriving the
+        // rule itself and drifting from the server's answer.
+        for (JsonNode nodeNode : nodesArray) {
+            ObjectNode node = (ObjectNode) nodeNode;
+            UUID nodeId = UUID.fromString(node.get("template_node_id").asText());
+            JsonNode configOverrides = node.get("config_overrides");
+            List<String> decisionOptions = decisionOptionsResolver.resolve(edgesArray, nodeId, configOverrides);
+            ArrayNode decisionOptionsArray = objectMapper.createArrayNode();
+            decisionOptions.forEach(decisionOptionsArray::add);
+            node.set("decision_options", decisionOptionsArray);
         }
 
         // Resolve enable_docker from SoftwareProject (preferred) or GitRepo
