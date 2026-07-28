@@ -75,7 +75,7 @@ export default function ArtifactBrowser({ runId, execId, filterArtifactNames }: 
       </button>
 
       {expanded && (
-        <ul className="space-y-1">
+        <ul data-testid="artifact-browser-items" className="space-y-1">
           {displayArtifacts.map((artifact) => (
             <li key={artifact.name}>
               <button

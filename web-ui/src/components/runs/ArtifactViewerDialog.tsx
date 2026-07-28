@@ -153,7 +153,10 @@ export default function ArtifactViewerDialog({
 
         {/* File switcher pills */}
         {artifacts.length > 1 && (
-          <div className="flex flex-wrap gap-1.5">
+          <div
+            data-testid="artifact-file-switcher"
+            className="flex max-h-24 flex-wrap gap-1.5 overflow-y-auto"
+          >
             {artifacts.map((artifact) => (
               <button
                 key={artifact.name}
@@ -172,7 +175,10 @@ export default function ArtifactViewerDialog({
         )}
 
         {/* Content area */}
-        <div className="min-h-0 flex-1 overflow-auto">
+        <div
+          data-testid="artifact-viewer-content"
+          className="min-h-64 flex-1 overflow-auto"
+        >
           {renderContent()}
         </div>
       </DialogContent>

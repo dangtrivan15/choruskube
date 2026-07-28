@@ -238,6 +238,71 @@ describe("ArtifactViewerDialog", () => {
     expect(mockUseArtifactContent).toHaveBeenCalledWith("r1", "e1", null);
   });
 
+  it("keeps the content pane visible when a node produces many files", () => {
+    mockUseArtifactContent.mockReturnValue({
+      data: "content",
+      isLoading: false,
+      isError: false,
+    });
+    const manyArtifacts = Array.from({ length: 30 }, (_, i) => ({
+      name: `report-${String(i).padStart(3, "0")}.txt`,
+      size: 128,
+      lastModified: "2026-01-01T00:00:00Z",
+    }));
+    renderWithProviders(
+      <ArtifactViewerDialog
+        {...defaultProps}
+        artifacts={manyArtifacts}
+        selectedFile={manyArtifacts[0].name}
+      />
+    );
+
+    // All 30 pills render...
+    const pills = screen.getAllByRole("button").filter(
+      (btn) => btn.classList.contains("rounded-full")
+    );
+    expect(pills).toHaveLength(30);
+
+    // ...but the content pane is still present and not squeezed out.
+    const content = screen.getByTestId("artifact-viewer-content");
+    expect(content).toBeInTheDocument();
+    expect(content).toContainElement(screen.getByText("content"));
+  });
+
+  it("caps the file switcher's height with its own scroll region, regardless of artifact count", () => {
+    mockUseArtifactContent.mockReturnValue({
+      data: "content",
+      isLoading: false,
+      isError: false,
+    });
+
+    // Small artifact count.
+    const { unmount } = renderWithProviders(
+      <ArtifactViewerDialog {...defaultProps} />
+    );
+    const smallSwitcher = screen.getByTestId("artifact-file-switcher");
+    expect(smallSwitcher.className).toContain("max-h-");
+    expect(smallSwitcher.className).toContain("overflow-y-auto");
+    unmount();
+
+    // Large artifact count — same bounding classes, not conditional on count.
+    const manyArtifacts = Array.from({ length: 30 }, (_, i) => ({
+      name: `report-${String(i).padStart(3, "0")}.txt`,
+      size: 128,
+      lastModified: "2026-01-01T00:00:00Z",
+    }));
+    renderWithProviders(
+      <ArtifactViewerDialog
+        {...defaultProps}
+        artifacts={manyArtifacts}
+        selectedFile={manyArtifacts[0].name}
+      />
+    );
+    const largeSwitcher = screen.getByTestId("artifact-file-switcher");
+    expect(largeSwitcher.className).toContain("max-h-");
+    expect(largeSwitcher.className).toContain("overflow-y-auto");
+  });
+
   it("renders SVG files as images (not as inline SVG)", () => {
     const artifacts = [
       ...baseArtifacts,

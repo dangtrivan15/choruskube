@@ -61,6 +61,10 @@ public class E2eTestDataSeeder implements ApplicationRunner {
     // in place of the real AI analyzer, so roadmap-candidate-gate.spec.ts can exercise the
     // structured candidate-breakdown gate (Decisions 1-5) without a live Claude call.
     private static final String GRAPH_ID_ROADMAP_CANDIDATE_GATE = "e2e-roadmap-candidate-gate";
+    // many_artifacts: single-node template whose entrypoint writes 40 small output files
+    // via mock-agent.sh's "many_artifacts" scenario, for artifact-viewer-layout.spec.ts's
+    // "content pane collapses when a node has many files" regression coverage.
+    private static final String GRAPH_ID_MANY_ARTIFACTS = "e2e-many-artifacts";
 
     private static final int VERSION = 2;
 
@@ -156,7 +160,9 @@ public class E2eTestDataSeeder implements ApplicationRunner {
 
         seedRoadmapCandidateGate(mockSuccess, mockGate);
 
-        log.info("E2eTestDataSeeder: seeded 3 git repos, 1 repo group, 11 node definitions, and 11 E2E templates");
+        seedManyArtifacts(mockSuccess);
+
+        log.info("E2eTestDataSeeder: seeded 3 git repos, 1 repo group, 11 node definitions, and 12 E2E templates");
     }
 
     private void seedDemoRepoGroup() {
@@ -496,6 +502,22 @@ public class E2eTestDataSeeder implements ApplicationRunner {
         createEdge(t, gate, analyzer, "rejected");
         // Human Gate "approved" has no outgoing edge — it's a terminal_decisions entry
         // (Decision 2) instead, so the run completes right here, same as production v13.
+    }
+
+    // --- Many Artifacts: single node producing many output files (artifact viewer layout) ---
+    //
+    // Single-node, no edges: the entrypoint runs mock-agent.sh's "many_artifacts" scenario
+    // (writes 40 small distinct files to /workspace/out), giving artifact-viewer-layout.spec.ts
+    // a node execution with a realistic-to-large artifact count to drive the file-switcher
+    // pill row's bounded/scrollable layout (Decision 1) via ArtifactBrowser's list.
+
+    private void seedManyArtifacts(NodeDefinition mockSuccess) {
+        GraphTemplate t = createTemplate(
+                GRAPH_ID_MANY_ARTIFACTS,
+                "e2e-many-artifacts",
+                "E2E test: single node producing many output files (artifact viewer layout regression)");
+
+        createNode(t, mockSuccess, "produce_files", true, cmd("many_artifacts --count 40"));
     }
 
     // --- Helpers ---

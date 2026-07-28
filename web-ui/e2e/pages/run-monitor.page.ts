@@ -42,6 +42,12 @@ export class RunMonitorPage {
   // Artifact list
   readonly artifactList: Locator;
   readonly artifactListItems: Locator;
+  readonly artifactBrowserItems: Locator;
+
+  // Artifact viewer dialog (ArtifactViewerDialog.tsx)
+  readonly artifactViewerDialog: Locator;
+  readonly artifactViewerContent: Locator;
+  readonly artifactFileSwitcher: Locator;
 
   constructor(page: Page) {
     this.page = page;
@@ -76,6 +82,15 @@ export class RunMonitorPage {
 
     this.artifactList = page.getByTestId("artifact-list");
     this.artifactListItems = page.getByTestId("artifact-list-items").locator("li");
+    // Note: artifactListItems is backed by ArtifactList.tsx, reachable only from
+    // gate/approval surfaces (human-gates.spec.ts). A normal script node's artifacts
+    // render via ArtifactBrowser.tsx instead, which is why artifactBrowserItems exists
+    // as a separate locator rather than reusing artifactListItems.
+    this.artifactBrowserItems = page.getByTestId("artifact-browser-items").locator("li");
+
+    this.artifactViewerDialog = page.getByTestId("artifact-viewer-dialog");
+    this.artifactViewerContent = page.getByTestId("artifact-viewer-content");
+    this.artifactFileSwitcher = page.getByTestId("artifact-file-switcher");
   }
 
   async goto(runId: string) {
