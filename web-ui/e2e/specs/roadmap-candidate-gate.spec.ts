@@ -144,7 +144,6 @@ test.describe("Roadmap Provisioner candidate gate", () => {
     const card = await gatePage.waitForGateCard(runName);
 
     const beforeReject = await api.listEpics();
-    const titleBeforeReject = await gatePage.epicTitleInput(card).inputValue();
 
     await gatePage.reject(card, "Not ready — send back for another pass");
 
@@ -153,8 +152,16 @@ test.describe("Roadmap Provisioner candidate gate", () => {
     // rows should exist for this candidate breakdown.
     await api.waitForNodeStatus(run.id, "review_candidates", ["awaiting_human"], 60_000, 2_000);
 
+    // Scope the "nothing was created" check to this run's candidates by diffing
+    // Epic IDs, not titles: the analyzer's mocked candidate breakdown proposes the
+    // same default title on every run, and another spec in this file (and the run
+    // page sidebar test above) legitimately materializes an Epic with that exact
+    // unedited default title from a *different*, approved run. A title-existence
+    // check would false-positive against that unrelated Epic; an ID-based diff
+    // only fails if *this* rejection produced a new row.
     const afterReject = await api.listEpics();
     expect(afterReject.content.length).toBe(beforeReject.content.length);
-    expect(afterReject.content.some((e) => e.title === titleBeforeReject)).toBe(false);
+    const beforeIds = new Set(beforeReject.content.map((e) => e.id));
+    expect(afterReject.content.every((e) => beforeIds.has(e.id))).toBe(true);
   });
 });
