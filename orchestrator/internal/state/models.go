@@ -42,14 +42,31 @@ type SnapshotRepo struct {
 	AgentImage  string `json:"agentImage,omitempty"`
 }
 
+// SnapshotTaskContext holds the triggering Task's identity (and its parent
+// Story/Epic, when resolvable) for a task-triggered run. Absent entirely when
+// the run wasn't started from a Task. Field names are JSON-tagged to match
+// GraphRuntimeSnapshotResponse.TaskContext's Jackson camelCase output on the
+// api-server side exactly — there is no compile-time check across this
+// language boundary, so a name mismatch here silently zero-values this struct
+// instead of failing loudly.
+type SnapshotTaskContext struct {
+	TaskID     uuid.UUID  `json:"taskId"`
+	TaskTitle  string     `json:"taskTitle"`
+	StoryID    *uuid.UUID `json:"storyId,omitempty"`
+	StoryTitle *string    `json:"storyTitle,omitempty"`
+	EpicID     *uuid.UUID `json:"epicId,omitempty"`
+	EpicTitle  *string    `json:"epicTitle,omitempty"`
+}
+
 // GraphRuntimeSnapshot is the projected snapshot returned by the API server.
 // It contains only workflow-execution fields; infrastructure fields (image,
 // secrets, namespace, docker config) are resolved by the API server.
 type GraphRuntimeSnapshot struct {
-	Nodes  []SnapshotNode         `json:"nodes"`
-	Edges  []SnapshotEdge         `json:"edges"`
-	Inputs map[string]interface{} `json:"inputs,omitempty"`
-	Repos  []SnapshotRepo         `json:"repos,omitempty"`
+	Nodes       []SnapshotNode         `json:"nodes"`
+	Edges       []SnapshotEdge         `json:"edges"`
+	Inputs      map[string]interface{} `json:"inputs,omitempty"`
+	Repos       []SnapshotRepo         `json:"repos,omitempty"`
+	TaskContext *SnapshotTaskContext   `json:"taskContext,omitempty"`
 }
 
 type SnapshotNode struct {

@@ -659,6 +659,7 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 
 				execID := tracker.execID
 				nodeID := node.TemplateNodeID
+				taskID, taskTitle, storyID, storyTitle, epicID, epicTitle := taskContextFields(snap)
 				future := workflow.ExecuteActivity(aiCtx, activities.ExecuteAINodeFromSnapshot,
 					activity.ExecuteAINodeFromSnapshotParams{
 						NodeExecutionID:        execID,
@@ -680,6 +681,12 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 						NeedDecision:           HasConditionalEdges(snap, node.TemplateNodeID),
 						Repos:                  repos,
 						OutputSpec:             snapshotNode.OutputSpec,
+						TaskID:                 taskID,
+						TaskTitle:              taskTitle,
+						StoryID:                storyID,
+						StoryTitle:             storyTitle,
+						EpicID:                 epicID,
+						EpicTitle:              epicTitle,
 					},
 				)
 
@@ -1235,4 +1242,32 @@ func extractConfigField(overrides map[string]interface{}, key string) string {
 		return fmt.Sprintf("%v", v)
 	}
 	return ""
+}
+
+// taskContextFields flattens a snapshot's TaskContext (nil-safe) into the plain
+// strings ExecuteAINodeFromSnapshotParams expects, so every node execution's
+// config.json carries the same triggering-Task identity (Decision 3). Absent
+// entirely (all empty strings) when the run wasn't started from a Task;
+// Story/Epic are independently empty if that level no longer resolves
+// (Caveat 1) even though TaskID is set.
+func taskContextFields(snap *state.GraphRuntimeSnapshot) (taskID, taskTitle, storyID, storyTitle, epicID, epicTitle string) {
+	if snap.TaskContext == nil {
+		return "", "", "", "", "", ""
+	}
+	tc := snap.TaskContext
+	taskID = tc.TaskID.String()
+	taskTitle = tc.TaskTitle
+	if tc.StoryID != nil {
+		storyID = tc.StoryID.String()
+	}
+	if tc.StoryTitle != nil {
+		storyTitle = *tc.StoryTitle
+	}
+	if tc.EpicID != nil {
+		epicID = tc.EpicID.String()
+	}
+	if tc.EpicTitle != nil {
+		epicTitle = *tc.EpicTitle
+	}
+	return taskID, taskTitle, storyID, storyTitle, epicID, epicTitle
 }

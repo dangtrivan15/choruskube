@@ -71,6 +71,8 @@ public class RunService {
     private final CredentialPreflightChecker credentialPreflightChecker;
     private final UploadService uploadService;
     private final TaskRepository taskRepo;
+    private final StoryRepository storyRepo;
+    private final EpicRepository epicRepo;
     private final ArtifactResolutionService artifactResolutionService;
     private final ApplicationEventPublisher applicationEventPublisher;
     private final ScopeProvider scopeProvider;
@@ -112,6 +114,8 @@ public class RunService {
             CredentialPreflightChecker credentialPreflightChecker,
             UploadService uploadService,
             TaskRepository taskRepo,
+            StoryRepository storyRepo,
+            EpicRepository epicRepo,
             ArtifactResolutionService artifactResolutionService,
             ApplicationEventPublisher applicationEventPublisher,
             ScopeProvider scopeProvider,
@@ -143,6 +147,8 @@ public class RunService {
         this.credentialPreflightChecker = credentialPreflightChecker;
         this.uploadService = uploadService;
         this.taskRepo = taskRepo;
+        this.storyRepo = storyRepo;
+        this.epicRepo = epicRepo;
         this.artifactResolutionService = artifactResolutionService;
         this.applicationEventPublisher = applicationEventPublisher;
         this.scopeProvider = scopeProvider;
@@ -791,7 +797,10 @@ public class RunService {
 
     /**
      * Builds the run's Task summary directly from {@code run.getTaskId()} (Decision 1) — no
-     * reverse lookup, since {@code task_id} is a forward FK on {@code workflow_run} itself.
+     * reverse lookup, since {@code task_id} is a forward FK on {@code workflow_run} itself. Also
+     * walks {@code task.story_id -> story.epic_id} to surface the parent Story/Epic identity;
+     * either level is independently nullable rather than failing the whole summary if a Story or
+     * Epic no longer resolves (Caveat 1).
      */
     private @Nullable RunTaskSummary buildTaskSummary(WorkflowRun run) {
         if (run.getTaskId() == null) {
@@ -803,8 +812,18 @@ public class RunService {
                             .findById(task.getSoftwareProjectId())
                             .map(this::toSoftwareProjectRef)
                             .orElse(null);
+                    Story story = storyRepo.findById(task.getStoryId()).orElse(null);
+                    Epic epic =
+                            story != null ? epicRepo.findById(story.getEpicId()).orElse(null) : null;
                     return new RunTaskSummary(
-                            task.getId(), task.getTitle(), task.getStatus().name(), projectRef);
+                            task.getId(),
+                            task.getTitle(),
+                            task.getStatus().name(),
+                            projectRef,
+                            story != null ? story.getId() : null,
+                            story != null ? story.getTitle() : null,
+                            epic != null ? epic.getId() : null,
+                            epic != null ? epic.getTitle() : null);
                 })
                 .orElse(null);
     }

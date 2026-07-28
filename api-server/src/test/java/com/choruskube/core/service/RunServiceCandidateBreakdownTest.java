@@ -110,6 +110,8 @@ class RunServiceCandidateBreakdownTest {
                 null,
                 null,
                 null,
+                null, // storyRepo
+                null, // epicRepo
                 artifactResolutionService,
                 null,
                 new com.choruskube.core.scope.NoOpScopeProvider(),

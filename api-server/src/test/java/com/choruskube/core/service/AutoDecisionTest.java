@@ -67,6 +67,8 @@ class AutoDecisionTest {
                 templateNodeRepo,
                 nodeDefinitionRepo,
                 null,
+                null, // taskRepo
+                null, // epicRepo
                 null,
                 new DecisionOptionsResolver());
     }

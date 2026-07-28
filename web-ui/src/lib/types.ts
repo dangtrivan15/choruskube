@@ -43,6 +43,10 @@ export interface RunTaskSummary {
   title: string;
   status: "backlog" | "in_progress" | "done";
   softwareProject: SoftwareProjectRef | null;
+  storyId: string | null;
+  storyTitle: string | null;
+  epicId: string | null;
+  epicTitle: string | null;
 }
 
 export interface RunResponse {
