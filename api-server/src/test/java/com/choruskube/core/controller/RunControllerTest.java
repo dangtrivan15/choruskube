@@ -1,6 +1,7 @@
 package com.choruskube.core.controller;
 
 import static org.hamcrest.Matchers.nullValue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -8,25 +9,35 @@ import com.choruskube.core.BaseTest;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.GraphTemplate;
 import com.choruskube.core.model.NodeDefinition;
+import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.Story;
 import com.choruskube.core.model.Task;
+import com.choruskube.core.model.TemplateEdge;
 import com.choruskube.core.model.TemplateNode;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.ExecutorType;
+import com.choruskube.core.model.enums.NodeExecutionStatus;
 import com.choruskube.core.model.enums.WorkItemStatus;
+import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.NodeDefinitionRepository;
+import com.choruskube.core.repository.NodeExecutionRepository;
 import com.choruskube.core.repository.SoftwareProjectRepository;
 import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.repository.TaskRepository;
+import com.choruskube.core.repository.TemplateEdgeRepository;
 import com.choruskube.core.repository.TemplateNodeRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowOptions;
 import io.temporal.client.WorkflowStub;
 import io.temporal.serviceclient.WorkflowServiceStubs;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentMatchers;
@@ -36,6 +47,8 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.transaction.annotation.Transactional;
 
 @AutoConfigureMockMvc
 public class RunControllerTest extends BaseTest {
@@ -69,6 +82,12 @@ public class RunControllerTest extends BaseTest {
 
     @Autowired
     private SoftwareProjectRepository softwareProjectRepo;
+
+    @Autowired
+    private TemplateEdgeRepository templateEdgeRepo;
+
+    @Autowired
+    private NodeExecutionRepository nodeExecutionRepo;
 
     @MockitoBean
     private WorkflowServiceStubs workflowServiceStubs;
@@ -370,5 +389,162 @@ public class RunControllerTest extends BaseTest {
         mockMvc.perform(get("/api/v1/runs/" + run.getId()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.softwareProject").value(nullValue()));
+    }
+
+    // -----------------------------------------------------------------------
+    // GET /api/v1/runs/{id} — graphSnapshot.nodes[].decision_options parity
+    // with GET /api/v1/pending-gates' content[].decisionOptions (Decision 1:
+    // both endpoints must resolve the same node's decision options via the
+    // shared DecisionOptionsResolver, so the run-page sidebar and the
+    // Approvals page can never silently disagree on which decisions a gate
+    // accepts).
+    // -----------------------------------------------------------------------
+
+    private NodeDefinition createHumanGateNodeDefinition(String name) {
+        NodeDefinition nodeDef = new NodeDefinition();
+        nodeDef.setName(name);
+        nodeDef.setExecutorType(ExecutorType.human);
+        nodeDef.setImage("placeholder");
+        nodeDef.setPromptTemplate("");
+        nodeDef.setSkills("[]");
+        nodeDef.setInputSpec("{}");
+        nodeDef.setOutputSpec("{}");
+        nodeDef.setSecrets("[]");
+        nodeDef.setTimeoutSeconds(1800);
+        return nodeDefRepo.save(nodeDef);
+    }
+
+    private TemplateNode createTemplateNode(
+            GraphTemplate template, NodeDefinition nodeDef, String label, String configOverrides, boolean entrypoint) {
+        TemplateNode tn = new TemplateNode();
+        tn.setGraphTemplateId(template.getId());
+        tn.setNodeDefinitionId(nodeDef.getId());
+        tn.setLabel(label);
+        tn.setConfigOverrides(configOverrides);
+        tn.setEntrypoint(entrypoint);
+        return templateNodeRepo.save(tn);
+    }
+
+    private TemplateEdge createTemplateEdge(
+            GraphTemplate template, TemplateNode source, TemplateNode target, String condition) {
+        TemplateEdge edge = new TemplateEdge();
+        edge.setGraphTemplateId(template.getId());
+        edge.setSourceNodeId(source.getId());
+        edge.setTargetNodeId(target.getId());
+        edge.setCondition(condition);
+        return templateEdgeRepo.save(edge);
+    }
+
+    private NodeExecution createAwaitingHumanExecution(WorkflowRun run, TemplateNode node) {
+        NodeExecution exec = new NodeExecution();
+        exec.setWorkflowRunId(run.getId());
+        exec.setTemplateNodeId(node.getId());
+        exec.setStatus(NodeExecutionStatus.awaiting_human);
+        exec.setGraphVersion(1);
+        return nodeExecutionRepo.save(exec);
+    }
+
+    /** Finds the snapshot node with the given {@code template_node_id} and returns its {@code decision_options}. */
+    private List<String> decisionOptionsFromRunDetail(JsonNode runDetail, UUID templateNodeId) {
+        for (JsonNode node : runDetail.get("graphSnapshot").get("nodes")) {
+            if (node.get("template_node_id").asText().equals(templateNodeId.toString())) {
+                List<String> options = new ArrayList<>();
+                node.get("decision_options").forEach(o -> options.add(o.asText()));
+                return options;
+            }
+        }
+        throw new AssertionError("No snapshot node found for template_node_id " + templateNodeId);
+    }
+
+    /** Finds the pending-gates entry for the given node execution and returns its {@code decisionOptions}. */
+    private List<String> decisionOptionsFromPendingGates(JsonNode pendingGates, UUID nodeExecutionId) {
+        for (JsonNode entry : pendingGates.get("content")) {
+            if (entry.get("nodeExecutionId").asText().equals(nodeExecutionId.toString())) {
+                List<String> options = new ArrayList<>();
+                entry.get("decisionOptions").forEach(o -> options.add(o.asText()));
+                return options;
+            }
+        }
+        throw new AssertionError("No pending-gate entry found for node execution " + nodeExecutionId);
+    }
+
+    @Test
+    @Transactional
+    void getRun_decisionOptionsMatchPendingGatesForPlainEdgeGate() throws Exception {
+        GraphTemplate template = createTemplate("Plain Edge Gate Template", "plain-edge-gate-template");
+        NodeDefinition nodeDef = createHumanGateNodeDefinition("plain-edge-gate");
+
+        TemplateNode gate = createTemplateNode(template, nodeDef, "Review", "{}", true);
+        TemplateNode approvedNext = createTemplateNode(template, nodeDef, "After Approve", "{}", false);
+        TemplateNode rejectedNext = createTemplateNode(template, nodeDef, "After Reject", "{}", false);
+        createTemplateEdge(template, gate, approvedNext, "approved");
+        createTemplateEdge(template, gate, rejectedNext, "rejected");
+
+        WorkflowRun run = new WorkflowRun();
+        run.setGraphTemplateId(template.getId());
+        run.setName("Plain Edge Gate Run");
+        run.setStatus(WorkflowRunStatus.awaiting_human);
+        run = runRepo.save(run);
+
+        NodeExecution exec = createAwaitingHumanExecution(run, gate);
+
+        MvcResult runResult = mockMvc.perform(get("/api/v1/runs/" + run.getId()))
+                .andExpect(status().isOk())
+                .andReturn();
+        MvcResult pendingGatesResult = mockMvc.perform(get("/api/v1/pending-gates"))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        JsonNode runDetail = objectMapper.readTree(runResult.getResponse().getContentAsString());
+        JsonNode pendingGates =
+                objectMapper.readTree(pendingGatesResult.getResponse().getContentAsString());
+
+        List<String> fromRunDetail = decisionOptionsFromRunDetail(runDetail, gate.getId());
+        List<String> fromPendingGates = decisionOptionsFromPendingGates(pendingGates, exec.getId());
+
+        assertEquals(List.of("approved", "rejected"), fromRunDetail);
+        assertEquals(fromPendingGates, fromRunDetail);
+    }
+
+    @Test
+    @Transactional
+    void getRun_decisionOptionsMatchPendingGatesForTerminalDecisionGate() throws Exception {
+        GraphTemplate template = createTemplate("Terminal Decision Gate Template", "terminal-decision-gate-template");
+        NodeDefinition nodeDef = createHumanGateNodeDefinition("terminal-decision-gate");
+
+        // Mirrors the Roadmap Provisioner's human gate: "approved" ends the run via
+        // terminal_decisions with no corresponding graph edge, only "rejected" is a real edge.
+        TemplateNode gate = createTemplateNode(
+                template, nodeDef, "Roadmap Human Gate", "{\"terminal_decisions\":[\"approved\"]}", true);
+        TemplateNode rejectedNext = createTemplateNode(template, nodeDef, "After Reject", "{}", false);
+        createTemplateEdge(template, gate, rejectedNext, "rejected");
+
+        WorkflowRun run = new WorkflowRun();
+        run.setGraphTemplateId(template.getId());
+        run.setName("Terminal Decision Gate Run");
+        run.setStatus(WorkflowRunStatus.awaiting_human);
+        run = runRepo.save(run);
+
+        NodeExecution exec = createAwaitingHumanExecution(run, gate);
+
+        MvcResult runResult = mockMvc.perform(get("/api/v1/runs/" + run.getId()))
+                .andExpect(status().isOk())
+                .andReturn();
+        MvcResult pendingGatesResult = mockMvc.perform(get("/api/v1/pending-gates"))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        JsonNode runDetail = objectMapper.readTree(runResult.getResponse().getContentAsString());
+        JsonNode pendingGates =
+                objectMapper.readTree(pendingGatesResult.getResponse().getContentAsString());
+
+        List<String> fromRunDetail = decisionOptionsFromRunDetail(runDetail, gate.getId());
+        List<String> fromPendingGates = decisionOptionsFromPendingGates(pendingGates, exec.getId());
+
+        // This is the exact shape that was silently broken on the run-detail side before this
+        // fix (edge-less "approved", only "rejected" as a real edge) while already working on
+        // the pending-gates side.
+        assertEquals(List.of("rejected", "approved"), fromRunDetail);
+        assertEquals(fromPendingGates, fromRunDetail);
     }
 }

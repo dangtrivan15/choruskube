@@ -77,6 +77,7 @@ export interface SnapshotNode {
   prompt_template?: string;
   timeout_seconds?: number;
   config_overrides?: Record<string, unknown>;
+  decision_options?: string[];
 }
 
 export interface SnapshotEdge {

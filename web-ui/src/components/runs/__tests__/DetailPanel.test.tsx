@@ -441,4 +441,58 @@ describe("DetailPanel", () => {
     // With a predecessor execution available, the legacy section should appear
     expect(screen.getByText("Previous Step Output")).toBeInTheDocument();
   });
+
+  it("renders Approve for a Roadmap-Human-Gate-shaped node (terminal decision, no approved edge)", () => {
+    // Mirrors the Roadmap Provisioner's human gate: a single outgoing `rejected`
+    // edge plus `approved` only reachable via terminal_decisions — the server's
+    // decision_options field is the only source for "approved" here, since no
+    // edge carries that condition.
+    const run = makeRun({
+      graphSnapshot: {
+        nodes: [
+          {
+            template_node_id: "node-1",
+            label: "Roadmap Human Gate",
+            executor_type: "human",
+            is_entrypoint: false,
+            config_overrides: { terminal_decisions: ["approved"] },
+            decision_options: ["rejected", "approved"],
+          },
+        ],
+        edges: [
+          { template_edge_id: "edge-1", source_node_id: "node-1", target_node_id: "node-1", condition: "rejected" },
+        ],
+      },
+    });
+
+    renderWithProviders(<DetailPanel run={run} nodeId="node-1" />);
+
+    expect(screen.getByTestId("gate-approve-button")).toBeInTheDocument();
+    expect(screen.getByTestId("gate-reject-button")).toBeInTheDocument();
+  });
+
+  it("renders Approve and Reject for a plain two-edge gate (regression, no terminal_decisions)", () => {
+    const run = makeRun({
+      graphSnapshot: {
+        nodes: [
+          {
+            template_node_id: "node-1",
+            label: "Review Gate",
+            executor_type: "human",
+            is_entrypoint: false,
+            decision_options: ["approved", "rejected"],
+          },
+        ],
+        edges: [
+          { template_edge_id: "edge-1", source_node_id: "node-1", target_node_id: "node-1", condition: "approved" },
+          { template_edge_id: "edge-2", source_node_id: "node-1", target_node_id: "node-1", condition: "rejected" },
+        ],
+      },
+    });
+
+    renderWithProviders(<DetailPanel run={run} nodeId="node-1" />);
+
+    expect(screen.getByTestId("gate-approve-button")).toBeInTheDocument();
+    expect(screen.getByTestId("gate-reject-button")).toBeInTheDocument();
+  });
 });
