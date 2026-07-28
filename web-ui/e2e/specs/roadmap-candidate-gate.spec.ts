@@ -82,6 +82,53 @@ test.describe("Roadmap Provisioner candidate gate", () => {
     expect(created).toBeTruthy();
   });
 
+  test("run page sidebar shows Approve for the edge-less terminal-decision gate and approving materializes the breakdown", async ({
+    api,
+    runMonitorPage,
+  }) => {
+    // Regression coverage for the bug this fix addresses: the run page's right
+    // sidebar previously derived decision buttons from graph edges alone, so the
+    // Roadmap Provisioner's edge-less "approved via terminal_decisions" gate
+    // silently lost its Approve button here — while the Approvals page (which
+    // trusts the server-computed decision_options from PendingGateService)
+    // rendered it correctly. See human-gates.spec.ts for the equivalent
+    // run-page-sidebar coverage against a gate with a real "approved" edge,
+    // which could never have caught this: this template is the one that
+    // mirrors the actual edge-less shape that was broken.
+    const repos = await api.listGitRepos();
+    expect(
+      repos.content.length,
+      "E2eTestDataSeeder must seed at least 1 git_repo row for this spec",
+    ).toBeGreaterThanOrEqual(1);
+    const template = await api.getTemplateByName("e2e-roadmap-candidate-gate");
+    const runName = `candgate-sidebar-${Date.now().toString(36)}`;
+    const run = await api.startRun({
+      graphTemplateId: template.id,
+      name: runName,
+      inputs: { software_project_id: repos.content[0].id },
+    });
+
+    await api.waitForNodeStatus(run.id, "review_candidates", ["awaiting_human"], 60_000);
+
+    await runMonitorPage.goto(run.id);
+    await runMonitorPage.selectNode("review_candidates");
+    await expect(runMonitorPage.gateApproveButton).toBeVisible();
+    await expect(runMonitorPage.gateRejectButton).toBeVisible();
+
+    const beforeApprove = await api.listEpics();
+
+    await runMonitorPage.approveGate("Looks good, approved from the run page sidebar");
+
+    // Approval materializes the analyzer's candidate breakdown deterministically
+    // (no second AI agent) — same materialization path the Approvals-page-driven
+    // test above exercises, just reached via the previously-broken surface.
+    const finished = await api.waitForRunStatus(run.id, ["completed"], 60_000);
+    expect(finished.status).toBe("completed");
+
+    const afterApprove = await api.listEpics();
+    expect(afterApprove.content.length).toBeGreaterThan(beforeApprove.content.length);
+  });
+
   test("reject loop still works, with no roadmap items created", async ({
     page,
     api,
