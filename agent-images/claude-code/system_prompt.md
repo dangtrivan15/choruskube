@@ -88,10 +88,12 @@ The following helper scripts are available on the PATH:
   Create a Task under a Story — the leaf of the hierarchy, and the only level that can
   later be started as a workflow run. A feature you propose is not startable until you
   create both its Story and its Task.
-- `get-roadmap-graph --epic-id UUID` — Fetch an Epic's full Story/Task tree in one call,
+- `get-roadmap-graph [--epic-id UUID]` — Fetch an Epic's full Story/Task tree in one call,
   including each item's dependency-derived readiness (READY/BLOCKED) and each Task's
-  recent run history. Call this before selecting a Task to work on, so you pick one
-  that is actually READY rather than blocked on an unfinished dependency.
+  recent run history. `--epic-id` is optional for a Task-triggered run — when omitted,
+  the server resolves the Epic from this run's own triggering Task. Call this before
+  selecting a Task to work on, so you pick one that is actually READY rather than
+  blocked on an unfinished dependency.
 - `update-task-status --task-id UUID --status STATUS [--run-id UUID] [--note NOTE]` —
   Report a Task's outcome (`--status done` on success, `--status backlog` to reopen it
   for retry after a failed/aborted run). Call this to report your run's outcome instead

@@ -660,6 +660,38 @@ public class InternalRunService {
     }
 
     /**
+     * Reads the Roadmap Graph View for the Epic that owns the calling run's own triggering Task
+     * (Decision 1, Decision 2) — lets an agent fetch its dependency context with no Epic ID at
+     * all, resolving {@code run.task_id -> Task.story_id -> Story.epic_id} at request time rather
+     * than relying on a client-side default computed once at pod start. {@code nodeExecId} is
+     * accepted for route symmetry with the other {@code /{runId}/node-executions/{nodeExecId}/...}
+     * internal endpoints and for future use (e.g. logging), but is not otherwise consulted;
+     * resolution is entirely driven by {@code runId}'s own {@code task_id}. Mirrors {@link
+     * #buildTaskContext} for the same FK chain, but throws {@link NotFoundException} on any
+     * unresolved link (a 404 is the correct signal for this endpoint) instead of returning a
+     * nullable summary DTO for narration — do not merge the two methods. Delegates to the same
+     * {@link #getGraph(UUID, UUID)} authorization-checked path once {@code epicId} is resolved
+     * (Decision 3), so this method adds no new org-aware code of its own.
+     */
+    @Transactional(readOnly = true)
+    public RoadmapGraphSnapshot getGraphForTriggeringTask(UUID runId, UUID nodeExecId) {
+        WorkflowRun run =
+                runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
+        if (run.getTaskId() == null) {
+            throw new NotFoundException("Run " + runId + " was not started from a Task");
+        }
+        Task task = taskRepo.findById(run.getTaskId())
+                .orElseThrow(() -> new NotFoundException("Task not found: " + run.getTaskId()));
+        Story story = storyRepo
+                .findById(task.getStoryId())
+                .orElseThrow(() -> new NotFoundException("Story not found for task " + task.getId()));
+        Epic epic = epicRepo.findById(story.getEpicId())
+                .orElseThrow(() -> new NotFoundException("Epic not found for story " + story.getId()));
+        UUID softwareProjectId = resolveSoftwareProjectIdFromRun(run);
+        return roadmapGraphService.getGraph(epic.getId(), runId, softwareProjectId);
+    }
+
+    /**
      * Updates a Task's status (Decision 4) on behalf of an agent pod reporting a run's outcome.
      * See {@link #createEpic} for why these internal endpoints exist; scoped the same way as
      * {@link #createStory}/{@link #createTask} via the run's resolved software project. {@code
