@@ -681,6 +681,7 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 						StoryTitle:      storyTitle,
 						EpicID:          epicID,
 						EpicTitle:       epicTitle,
+						OpenBlockers:    openBlockerFields(snap),
 					},
 				)
 
@@ -1253,4 +1254,25 @@ func taskContextFields(snap *state.GraphRuntimeSnapshot) (taskID, taskTitle, sto
 		epicTitle = *tc.EpicTitle
 	}
 	return taskID, taskTitle, storyID, storyTitle, epicID, epicTitle
+}
+
+// openBlockerFields flattens a snapshot's TaskContext.OpenBlockers (nil-safe) into
+// the []activity.OpenBlockerParam shape ExecuteAINodeFromSnapshotParams expects,
+// mirroring taskContextFields above. Returns nil when the run wasn't started from
+// a Task or the Task has no open blockers — ExecuteAINodeFromSnapshot omits the
+// open_blockers key entirely in that case.
+func openBlockerFields(snap *state.GraphRuntimeSnapshot) []activity.OpenBlockerParam {
+	if snap.TaskContext == nil || len(snap.TaskContext.OpenBlockers) == 0 {
+		return nil
+	}
+	blockers := make([]activity.OpenBlockerParam, 0, len(snap.TaskContext.OpenBlockers))
+	for _, b := range snap.TaskContext.OpenBlockers {
+		blockers = append(blockers, activity.OpenBlockerParam{
+			ItemType: b.ItemType,
+			ItemID:   b.ItemID.String(),
+			Title:    b.Title,
+			Status:   b.Status,
+		})
+	}
+	return blockers
 }

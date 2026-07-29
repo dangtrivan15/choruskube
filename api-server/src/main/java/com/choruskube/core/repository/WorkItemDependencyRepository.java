@@ -28,4 +28,12 @@ public interface WorkItemDependencyRepository extends JpaRepository<WorkItemDepe
      */
     List<WorkItemDependency> findByBlockingItemIdInOrBlockedItemIdIn(
             Collection<UUID> blockingItemIds, Collection<UUID> blockedItemIds);
+
+    /**
+     * A single item's own direct incoming blocking edges (Decision 1) — used to resolve a Task's
+     * open blockers for the run-start {@code task_context} (Decision 3), independent of any Epic
+     * boundary (Decision 4).
+     */
+    List<WorkItemDependency> findByBlockedItemTypeAndBlockedItemId(
+            BlockableItemType blockedItemType, UUID blockedItemId);
 }

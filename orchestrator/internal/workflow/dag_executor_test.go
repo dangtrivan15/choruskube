@@ -101,8 +101,9 @@ func (s *DAGExecutorTestSuite) TestLinearTwoNodeGraph() {
 }
 
 // TestLinearTwoNodeGraph_TaskContextPropagatesToAllNodes verifies Decision 3: a
-// snapshot's taskContext (Task -> Story -> Epic identity) must reach EVERY node
-// execution's config.json, not just the entrypoint — A -> B, both AI nodes.
+// snapshot's taskContext (Task -> Story -> Epic identity, and its openBlockers,
+// Decision 1/4) must reach EVERY node execution's config.json, not just the
+// entrypoint — A -> B, both AI nodes.
 func (s *DAGExecutorTestSuite) TestLinearTwoNodeGraph_TaskContextPropagatesToAllNodes() {
 	nodeA := uuid.New()
 	nodeB := uuid.New()
@@ -112,6 +113,7 @@ func (s *DAGExecutorTestSuite) TestLinearTwoNodeGraph_TaskContextPropagatesToAll
 	taskID := uuid.New()
 	storyID := uuid.New()
 	epicID := uuid.New()
+	blockerID := uuid.New()
 
 	snapshot := `{
 		"nodes": [
@@ -127,7 +129,10 @@ func (s *DAGExecutorTestSuite) TestLinearTwoNodeGraph_TaskContextPropagatesToAll
 			"storyId": "` + storyID.String() + `",
 			"storyTitle": "Agent identity threading",
 			"epicId": "` + epicID.String() + `",
-			"epicTitle": "Roadmap-aware agents"
+			"epicTitle": "Roadmap-aware agents",
+			"openBlockers": [
+				{"itemType": "task", "itemId": "` + blockerID.String() + `", "title": "Prerequisite", "status": "in_progress"}
+			]
 		}
 	}`
 
@@ -150,7 +155,12 @@ func (s *DAGExecutorTestSuite) TestLinearTwoNodeGraph_TaskContextPropagatesToAll
 			p.StoryID == storyID.String() &&
 			p.StoryTitle == "Agent identity threading" &&
 			p.EpicID == epicID.String() &&
-			p.EpicTitle == "Roadmap-aware agents"
+			p.EpicTitle == "Roadmap-aware agents" &&
+			len(p.OpenBlockers) == 1 &&
+			p.OpenBlockers[0].ItemType == "task" &&
+			p.OpenBlockers[0].ItemID == blockerID.String() &&
+			p.OpenBlockers[0].Title == "Prerequisite" &&
+			p.OpenBlockers[0].Status == "in_progress"
 	}
 
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {

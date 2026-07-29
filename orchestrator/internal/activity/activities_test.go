@@ -487,6 +487,131 @@ func TestExecuteAINodeFromSnapshot_NoTaskContextWhenTaskIDEmpty(t *testing.T) {
 	assert.False(t, hasTaskContext, "task_context should be absent from config.json when TaskID is empty")
 }
 
+func TestExecuteAINodeFromSnapshot_TaskContextIncludesOpenBlockers(t *testing.T) {
+	var receivedConfigJSON map[string]interface{}
+
+	runID := uuid.New()
+	taskID := uuid.New()
+	blockerID := uuid.New()
+
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/internal/workloads/"):
+			var req map[string]interface{}
+			json.NewDecoder(r.Body).Decode(&req)
+			if cj, ok := req["configJson"].(map[string]interface{}); ok {
+				receivedConfigJSON = cj
+			}
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"executionHandle": "agent-abc12345",
+				"jobSecretHash":   "hash123",
+			})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/logs"):
+			w.WriteHeader(http.StatusCreated)
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer apiServer.Close()
+
+	client := apiclient.NewClient(apiServer.URL)
+	cfg := &config.Config{
+		Callback: config.CallbackConfig{URL: "http://callback:9090/api/v1/callback"},
+	}
+
+	acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
+
+	params := ExecuteAINodeFromSnapshotParams{
+		NodeExecutionID: uuid.New(),
+		RunID:           runID,
+		TemplateNodeID:  uuid.New(),
+		Label:           "implement",
+		ExecutorType:    "ai",
+		PromptTemplate:  "Do the thing",
+		Variables:       map[string]string{"run.id": runID.String()},
+		RunLogPath:      "runs/" + runID.String() + "/run_log.md",
+		TaskID:          taskID.String(),
+		TaskTitle:       "Wire up open blockers",
+		OpenBlockers: []OpenBlockerParam{
+			{ItemType: "task", ItemID: blockerID.String(), Title: "Prerequisite Task", Status: "in_progress"},
+		},
+	}
+
+	err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+	assert.ErrorIs(t, err, activity.ErrResultPending)
+
+	taskContext, ok := receivedConfigJSON["task_context"].(map[string]interface{})
+	require.True(t, ok, "task_context should be present in config.json when TaskID is set")
+	openBlockers, ok := taskContext["open_blockers"].([]interface{})
+	require.True(t, ok, "open_blockers should be present in task_context when OpenBlockers is non-empty")
+	require.Len(t, openBlockers, 1)
+	blocker, ok := openBlockers[0].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "task", blocker["item_type"])
+	assert.Equal(t, blockerID.String(), blocker["item_id"])
+	assert.Equal(t, "Prerequisite Task", blocker["title"])
+	assert.Equal(t, "in_progress", blocker["status"])
+}
+
+func TestExecuteAINodeFromSnapshot_NoOpenBlockersKeyWhenEmpty(t *testing.T) {
+	var receivedConfigJSON map[string]interface{}
+
+	runID := uuid.New()
+	taskID := uuid.New()
+
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/internal/workloads/"):
+			var req map[string]interface{}
+			json.NewDecoder(r.Body).Decode(&req)
+			if cj, ok := req["configJson"].(map[string]interface{}); ok {
+				receivedConfigJSON = cj
+			}
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"executionHandle": "agent-abc12345",
+				"jobSecretHash":   "hash123",
+			})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/logs"):
+			w.WriteHeader(http.StatusCreated)
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer apiServer.Close()
+
+	client := apiclient.NewClient(apiServer.URL)
+	cfg := &config.Config{
+		Callback: config.CallbackConfig{URL: "http://callback:9090/api/v1/callback"},
+	}
+
+	acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
+
+	// TaskID set (task_context present) but OpenBlockers left empty — the run's Task has no
+	// open blockers today.
+	params := ExecuteAINodeFromSnapshotParams{
+		NodeExecutionID: uuid.New(),
+		RunID:           runID,
+		TemplateNodeID:  uuid.New(),
+		Label:           "implement",
+		ExecutorType:    "ai",
+		PromptTemplate:  "Do the thing",
+		Variables:       map[string]string{"run.id": runID.String()},
+		RunLogPath:      "runs/" + runID.String() + "/run_log.md",
+		TaskID:          taskID.String(),
+		TaskTitle:       "No blockers here",
+	}
+
+	err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+	assert.ErrorIs(t, err, activity.ErrResultPending)
+
+	taskContext, ok := receivedConfigJSON["task_context"].(map[string]interface{})
+	require.True(t, ok, "task_context should be present in config.json when TaskID is set")
+	_, hasOpenBlockers := taskContext["open_blockers"]
+	assert.False(t, hasOpenBlockers, "open_blockers key should be absent from task_context when OpenBlockers is empty")
+}
+
 func TestExecuteAINodeFromSnapshot_IterationInConfigJson(t *testing.T) {
 	var receivedConfigJSON map[string]interface{}
 

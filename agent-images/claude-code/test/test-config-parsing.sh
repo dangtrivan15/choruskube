@@ -141,6 +141,52 @@ EOF
 NEED_DECISION=$(jq -r '.need_decision // false' "$CONFIG")
 [ "$NEED_DECISION" = "false" ] && ok "need_decision=false parsed" || fail "need_decision=false parsed"
 
+# --- Test 11: open_blockers parsing — two entries ---
+cat > "$CONFIG" <<'EOF'
+{
+  "run_id": "abc-123",
+  "node_execution_id": "node-456",
+  "prompt": "do the thing",
+  "task_context": {
+    "task_id": "task-1",
+    "task_title": "Blocked task",
+    "open_blockers": [
+      {"item_type": "task", "item_id": "b1", "title": "Prereq A", "status": "in_progress"},
+      {"item_type": "story", "item_id": "b2", "title": "Prereq B", "status": "backlog"}
+    ]
+  }
+}
+EOF
+OPEN_BLOCKERS_JSON=$(jq -c '.task_context.open_blockers // []' "$CONFIG")
+BLOCKER_COUNT=$(echo "$OPEN_BLOCKERS_JSON" | jq 'length')
+[ "$BLOCKER_COUNT" -eq 2 ] && ok "open_blockers parsed to 2-element array" || fail "open_blockers parsed to 2-element array"
+
+# --- Test 12: entrypoint.sh narrates an "## Open Blockers" section ---
+# No existing test covers the "Triggering Task" narration block to mirror — that
+# block is untested today, so this establishes the pattern (grep-on-script-content,
+# matching this file's existing `--max-turns` flag assertion) rather than copying one.
+grep -q "## Open Blockers" "$ENTRYPOINT" \
+  && ok "entrypoint narrates Open Blockers section" || fail "entrypoint narrates Open Blockers section"
+grep -q "does not prevent the run" "$ENTRYPOINT" \
+  && ok "Open Blockers narration states it's informational only" || fail "Open Blockers narration states it's informational only"
+
+# --- Test 13: open_blockers absent (older API server) — defaults to empty, no crash ---
+cat > "$CONFIG" <<'EOF'
+{
+  "run_id": "abc-123",
+  "node_execution_id": "node-456",
+  "prompt": "do the thing",
+  "task_context": {
+    "task_id": "task-1",
+    "task_title": "Task from an older API server"
+  }
+}
+EOF
+OPEN_BLOCKERS_JSON=$(jq -c '.task_context.open_blockers // []' "$CONFIG")
+[ "$OPEN_BLOCKERS_JSON" = "[]" ] && ok "missing open_blockers defaults to empty array" || fail "missing open_blockers defaults to empty array"
+BLOCKER_COUNT=$(echo "$OPEN_BLOCKERS_JSON" | jq 'length')
+[ "$BLOCKER_COUNT" -eq 0 ] && ok "missing open_blockers yields zero-length count, no crash" || fail "missing open_blockers yields zero-length count, no crash"
+
 # --- Summary ---
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

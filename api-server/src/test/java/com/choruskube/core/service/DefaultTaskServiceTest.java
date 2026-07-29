@@ -175,6 +175,23 @@ public class DefaultTaskServiceTest extends BaseTest {
     }
 
     @Test
+    void start_taskWithOpenBlockers_stillSucceeds() {
+        // Blocking is informational only (Decision 2) — Task.start() does not gate on open
+        // blockers, matching how the Roadmap Graph View already lets a human start a blocked Task
+        // today. This characterization test guards against that intentionally never changing here.
+        GitRepo r = makeRepo("https://github.com/test/task-start-blocked.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse blocker = service.create(story.id(), new TaskRequest("Prerequisite", "D"));
+        TaskResponse task = service.create(story.id(), new TaskRequest("Blocked task", "D"));
+        dependencyService.create(new CreateDependencyRequest("task", blocker.id(), "task", task.id()));
+
+        TaskResponse started = service.start(task.id());
+
+        assertThat(started.status()).isEqualTo("in_progress");
+        assertThat(started.latestRunId()).isNotNull();
+    }
+
+    @Test
     void start_whileActiveRunExists_throwsConflict() {
         GitRepo r = makeRepo("https://github.com/test/task-start-active.git");
         StoryResponse story = makeStory(r.getId());
