@@ -40,6 +40,16 @@
 #                             this filename, so gate templates that declare
 #                             requiredInputArtifacts by name must match it.
 #   --decision <value>        Custom decision value for gate scenarios
+#   --escalate-after <n>      'gate_approve' only: once the current iteration (read from
+#                             /workspace/config.json, same key the real agent reads) is >=
+#                             <n>, submit --escalate-decision's value instead of the normal
+#                             decision. Lets the mock deterministically reach a human
+#                             escalation without relying on any server-side cap override.
+#                             Requires --escalate-decision. Default: unset (disabled) —
+#                             gate_approve's existing behavior is unchanged when omitted.
+#   --escalate-decision <value>  Decision value to submit for 'gate_approve' once
+#                             --escalate-after's threshold is reached. Required if
+#                             --escalate-after is passed.
 #   --epic-id <uuid>          Epic UUID for 'roadmap_status_update'
 #   --task-id <uuid>          Task UUID for 'roadmap_status_update' (must already be
 #                             in_progress — e.g. this run was started via Task-start)
@@ -52,6 +62,8 @@ DELAY=30
 SUCCEED_AFTER=3
 ARTIFACT_TEXT=""
 CUSTOM_DECISION=""
+ESCALATE_AFTER=""
+ESCALATE_DECISION=""
 EPIC_ID_ARG=""
 TASK_ID_ARG=""
 ARTIFACT_COUNT=40
@@ -74,6 +86,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --decision)
       CUSTOM_DECISION="$2"
+      shift 2
+      ;;
+    --escalate-after)
+      ESCALATE_AFTER="$2"
+      shift 2
+      ;;
+    --escalate-decision)
+      ESCALATE_DECISION="$2"
       shift 2
       ;;
     --epic-id)
@@ -199,8 +219,28 @@ case "$SCENARIO" in
     ;;
 
   gate_approve)
-    DECISION="${CUSTOM_DECISION:-approved}"
-    echo "Mock agent: gate_approve scenario — submitting decision '$DECISION'"
+    # --escalate-after/--escalate-decision let the mock deterministically reach a human
+    # escalation on its own, now that the server always stores the reviewer's decision
+    # verbatim (no more server-side iteration-cap override). When --escalate-after is
+    # unset this scenario behaves exactly as before.
+    if [ -n "$ESCALATE_AFTER" ] && [ -z "$ESCALATE_DECISION" ]; then
+      echo "ERROR: gate_approve --escalate-after requires --escalate-decision" >&2
+      exit 1
+    fi
+
+    if [ -n "$ESCALATE_AFTER" ]; then
+      ITERATION=$(get_iteration)
+      if [ "$ITERATION" -ge "$ESCALATE_AFTER" ]; then
+        DECISION="$ESCALATE_DECISION"
+        echo "Mock agent: gate_approve scenario — iteration=$ITERATION >= escalate-after=$ESCALATE_AFTER, escalating with decision '$DECISION'"
+      else
+        DECISION="${CUSTOM_DECISION:-approved}"
+        echo "Mock agent: gate_approve scenario — iteration=$ITERATION < escalate-after=$ESCALATE_AFTER, submitting decision '$DECISION'"
+      fi
+    else
+      DECISION="${CUSTOM_DECISION:-approved}"
+      echo "Mock agent: gate_approve scenario — submitting decision '$DECISION'"
+    fi
     submit_decision "$DECISION"
     write_artifact "result.txt" "Gate approved with decision: $DECISION"
     exit 0
