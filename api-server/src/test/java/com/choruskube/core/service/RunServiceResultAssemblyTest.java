@@ -102,6 +102,8 @@ class RunServiceResultAssemblyTest {
                 null,
                 null,
                 null,
+                null, // storyRepo
+                null, // epicRepo
                 null,
                 null,
                 null,

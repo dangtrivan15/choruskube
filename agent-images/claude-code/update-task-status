@@ -15,7 +15,11 @@
 #   in_progress -> backlog   Task's run failed/was aborted; reopen for retry
 #
 # Options:
-#   --task-id UUID   Task UUID to update (required)
+#   --task-id UUID   Task UUID to update. Optional when this run was started
+#                    from a Task — defaults to $TASK_ID, which entrypoint.sh
+#                    exports from config.json's task_context for task-triggered
+#                    runs. Required (and must be passed explicitly) for a
+#                    manually-started run, where $TASK_ID is unset.
 #   --status STATUS  Target status: done | backlog (required)
 #   --run-id UUID    The run this outcome is being reported for (optional).
 #                    When supplied, it must match the Task's most recent
@@ -32,6 +36,8 @@
 #   RUN_ID              — Workflow run UUID
 #   NODE_EXECUTION_ID   — Node execution UUID
 #   JOB_SECRET          — Bearer token for authentication
+#   TASK_ID             — Triggering Task's UUID (task-triggered runs only);
+#                          used as the default for --task-id when omitted
 #
 # Examples:
 #   # Report success for the run this agent is currently executing in
@@ -39,6 +45,9 @@
 #
 #   # Report failure with a note, reopening the Task for retry
 #   update-task-status --task-id <uuid> --status backlog --note "tests failed on CI"
+#
+#   # Task-triggered run: --task-id omitted, defaults to $TASK_ID
+#   update-task-status --status done
 #
 # Exit codes:
 #   0  Task status updated successfully (JSON response printed to stdout)
@@ -61,7 +70,7 @@ if [ -z "${RUN_ID:-}" ] || [ -z "${NODE_EXECUTION_ID:-}" ]; then
     exit 1
 fi
 
-TASK_ID=""
+TASK_ID_ARG=""
 STATUS=""
 RUN_ID_ARG=""
 NOTE=""
@@ -69,7 +78,7 @@ NOTE=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --task-id)
-            TASK_ID="$2"
+            TASK_ID_ARG="$2"
             shift 2
             ;;
         --status)
@@ -92,8 +101,20 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-if [ -z "$TASK_ID" ] || [ -z "$STATUS" ]; then
-    echo "ERROR: --task-id and --status are required." >&2
+# Default --task-id to the triggering Task (Decision 4): $TASK_ID is exported
+# by entrypoint.sh from config.json's task_context for task-triggered runs, and
+# is unset for a manually-started run — in which case --task-id must be passed
+# explicitly or this fails clearly below rather than sending an empty id.
+EFFECTIVE_TASK_ID="${TASK_ID_ARG:-${TASK_ID:-}}"
+
+if [ -z "$EFFECTIVE_TASK_ID" ]; then
+    echo "ERROR: no task id available — pass --task-id explicitly, or run this from a task-triggered run (\$TASK_ID unset)." >&2
+    echo "Usage: update-task-status --task-id UUID --status STATUS [--run-id UUID] [--note NOTE]" >&2
+    exit 1
+fi
+
+if [ -z "$STATUS" ]; then
+    echo "ERROR: --status is required." >&2
     echo "Usage: update-task-status --task-id UUID --status STATUS [--run-id UUID] [--note NOTE]" >&2
     exit 1
 fi
@@ -113,7 +134,7 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer ${JOB_SECRET:-}" \
     -d "$BODY" \
-    "$API_SERVER_URL/internal/runs/$RUN_ID/node-executions/$NODE_EXECUTION_ID/tasks/$TASK_ID/status")
+    "$API_SERVER_URL/internal/runs/$RUN_ID/node-executions/$NODE_EXECUTION_ID/tasks/$EFFECTIVE_TASK_ID/status")
 HTTP_CODE=$(echo "$RESPONSE" | tail -1)
 BODY_RESPONSE=$(echo "$RESPONSE" | sed '$d')
 

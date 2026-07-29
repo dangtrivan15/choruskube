@@ -24,6 +24,50 @@ func TestParseSnapshot(t *testing.T) {
 	assert.Len(t, snap.Edges, 0)
 }
 
+// TestParseSnapshot_TaskContext exercises the Java -> Go JSON contract for
+// GraphRuntimeSnapshotResponse.TaskContext itself: a field-name typo on either
+// side of the language boundary would silently zero-value SnapshotTaskContext
+// instead of failing loudly, since there's no compile-time check across it.
+func TestParseSnapshot_TaskContext(t *testing.T) {
+	taskID := uuid.New()
+	storyID := uuid.New()
+	epicID := uuid.New()
+	json := `{"nodes":[],"edges":[],"taskContext":{` +
+		`"taskId":"` + taskID.String() + `",` +
+		`"taskTitle":"Wire up task_context",` +
+		`"storyId":"` + storyID.String() + `",` +
+		`"storyTitle":"Agent identity threading",` +
+		`"epicId":"` + epicID.String() + `",` +
+		`"epicTitle":"Roadmap-aware agents"` +
+		`}}`
+
+	snap, err := ParseSnapshot(json)
+	require.NoError(t, err)
+	require.NotNil(t, snap.TaskContext)
+	assert.Equal(t, taskID, snap.TaskContext.TaskID)
+	assert.Equal(t, "Wire up task_context", snap.TaskContext.TaskTitle)
+	require.NotNil(t, snap.TaskContext.StoryID)
+	assert.Equal(t, storyID, *snap.TaskContext.StoryID)
+	require.NotNil(t, snap.TaskContext.StoryTitle)
+	assert.Equal(t, "Agent identity threading", *snap.TaskContext.StoryTitle)
+	require.NotNil(t, snap.TaskContext.EpicID)
+	assert.Equal(t, epicID, *snap.TaskContext.EpicID)
+	require.NotNil(t, snap.TaskContext.EpicTitle)
+	assert.Equal(t, "Roadmap-aware agents", *snap.TaskContext.EpicTitle)
+}
+
+// TestParseSnapshot_NoTaskContext confirms a manually-started run's snapshot
+// (no taskContext key at all) leaves TaskContext nil rather than a zero-valued
+// struct — the signal ExecuteAINodeFromSnapshot uses to omit config.json's
+// task_context entirely.
+func TestParseSnapshot_NoTaskContext(t *testing.T) {
+	json := `{"nodes":[],"edges":[]}`
+
+	snap, err := ParseSnapshot(json)
+	require.NoError(t, err)
+	assert.Nil(t, snap.TaskContext)
+}
+
 func TestFindEntryNodes(t *testing.T) {
 	nodeA := makeNodeID()
 	nodeB := makeNodeID()

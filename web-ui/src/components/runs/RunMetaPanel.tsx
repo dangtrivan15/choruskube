@@ -75,6 +75,30 @@ export default function RunMetaPanel({ run }: RunMetaPanelProps) {
           <div className="flex flex-wrap items-center gap-x-6 gap-y-1.5">
             <div className="flex items-center gap-1.5">
               <span className="text-muted-foreground">Roadmap:</span>
+              {run.task.epicId && (
+                <span className="flex items-center gap-1.5" data-testid="run-meta-panel-breadcrumb">
+                  <Link
+                    to={`/roadmap/epics/${run.task.epicId}`}
+                    className="text-primary hover:underline"
+                    data-testid="run-meta-panel-epic-link"
+                  >
+                    {run.task.epicTitle}
+                  </Link>
+                  {run.task.storyId && (
+                    <>
+                      <span className="text-muted-foreground">/</span>
+                      <Link
+                        to={`/roadmap/epics/${run.task.epicId}/stories/${run.task.storyId}`}
+                        className="text-primary hover:underline"
+                        data-testid="run-meta-panel-story-link"
+                      >
+                        {run.task.storyTitle}
+                      </Link>
+                    </>
+                  )}
+                  <span className="text-muted-foreground">/</span>
+                </span>
+              )}
               <Link
                 to={`/tasks/${run.task.id}`}
                 className="font-medium text-primary hover:underline"

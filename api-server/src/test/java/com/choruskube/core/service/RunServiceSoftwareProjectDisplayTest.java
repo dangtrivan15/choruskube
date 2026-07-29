@@ -72,6 +72,12 @@ class RunServiceSoftwareProjectDisplayTest {
     private TaskRepository taskRepo;
 
     @Mock
+    private StoryRepository storyRepo;
+
+    @Mock
+    private EpicRepository epicRepo;
+
+    @Mock
     private SoftwareProjectRepository softwareProjectRepo;
 
     @Mock
@@ -108,6 +114,8 @@ class RunServiceSoftwareProjectDisplayTest {
                 null, // credentialService
                 null, // uploadService
                 taskRepo,
+                storyRepo,
+                epicRepo,
                 artifactResolutionService,
                 null, // applicationEventPublisher — not needed for listing/detail tests
                 new com.choruskube.core.scope.NoOpScopeProvider(),

@@ -96,6 +96,8 @@ class InternalRunServiceEpicTest {
                 null,
                 null,
                 storyRepo,
+                null, // taskRepo
+                null, // epicRepo
                 roadmapGraphService,
                 new DecisionOptionsResolver());
     }

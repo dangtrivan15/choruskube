@@ -10,6 +10,7 @@ import com.choruskube.core.repository.*;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.Nullable;
 import java.time.Instant;
 import java.util.*;
 import java.util.Optional;
@@ -45,6 +46,8 @@ public class InternalRunService {
     private final TemplateNodeRepository templateNodeRepo;
     private final NodeDefinitionRepository nodeDefinitionRepo;
     private final StoryRepository storyRepo;
+    private final TaskRepository taskRepo;
+    private final EpicRepository epicRepo;
     private final RoadmapGraphService roadmapGraphService;
     private final DecisionOptionsResolver decisionOptionsResolver;
 
@@ -71,6 +74,8 @@ public class InternalRunService {
             TemplateNodeRepository templateNodeRepo,
             NodeDefinitionRepository nodeDefinitionRepo,
             StoryRepository storyRepo,
+            TaskRepository taskRepo,
+            EpicRepository epicRepo,
             RoadmapGraphService roadmapGraphService,
             DecisionOptionsResolver decisionOptionsResolver) {
         this.runRepo = runRepo;
@@ -92,6 +97,8 @@ public class InternalRunService {
         this.templateNodeRepo = templateNodeRepo;
         this.nodeDefinitionRepo = nodeDefinitionRepo;
         this.storyRepo = storyRepo;
+        this.taskRepo = taskRepo;
+        this.epicRepo = epicRepo;
         this.roadmapGraphService = roadmapGraphService;
         this.decisionOptionsResolver = decisionOptionsResolver;
     }
@@ -355,10 +362,41 @@ public class InternalRunService {
                 }
             }
 
-            return new GraphRuntimeSnapshotResponse(nodes, edges, inputs, repos);
+            GraphRuntimeSnapshotResponse.TaskContext taskContext = buildTaskContext(run);
+
+            return new GraphRuntimeSnapshotResponse(nodes, edges, inputs, repos, taskContext);
         } catch (Exception e) {
             throw new RuntimeException("Failed to build graph runtime snapshot", e);
         }
+    }
+
+    /**
+     * Resolves the triggering Task's identity directly off {@code run.getTaskId()} and the
+     * {@code task.story_id -> story.epic_id} FK chain (Decision 1), for broadcast into every
+     * node execution's {@code config.json} (Decision 3). Reads repositories directly rather than
+     * {@code TaskService}/{@code EpicService} because this internal path has no request-scoped
+     * tenant context for {@code checkOrgAccess} to consult, mirroring {@code RunService
+     * .buildTaskSummary}'s identical choice. Absent when the run wasn't started from a Task;
+     * Story/Epic are independently nullable if either no longer resolves (Caveat 1).
+     */
+    private @Nullable GraphRuntimeSnapshotResponse.TaskContext buildTaskContext(WorkflowRun run) {
+        if (run.getTaskId() == null) {
+            return null;
+        }
+        return taskRepo.findById(run.getTaskId())
+                .map(task -> {
+                    Story story = storyRepo.findById(task.getStoryId()).orElse(null);
+                    Epic epic =
+                            story != null ? epicRepo.findById(story.getEpicId()).orElse(null) : null;
+                    return new GraphRuntimeSnapshotResponse.TaskContext(
+                            task.getId(),
+                            task.getTitle(),
+                            story != null ? story.getId() : null,
+                            story != null ? story.getTitle() : null,
+                            epic != null ? epic.getId() : null,
+                            epic != null ? epic.getTitle() : null);
+                })
+                .orElse(null);
     }
 
     public JobSecretHashResponse getJobSecretHash(UUID runId, UUID nodeExecId) {

@@ -100,6 +100,88 @@ func (s *DAGExecutorTestSuite) TestLinearTwoNodeGraph() {
 	s.NoError(s.env.GetWorkflowError())
 }
 
+// TestLinearTwoNodeGraph_TaskContextPropagatesToAllNodes verifies Decision 3: a
+// snapshot's taskContext (Task -> Story -> Epic identity) must reach EVERY node
+// execution's config.json, not just the entrypoint — A -> B, both AI nodes.
+func (s *DAGExecutorTestSuite) TestLinearTwoNodeGraph_TaskContextPropagatesToAllNodes() {
+	nodeA := uuid.New()
+	nodeB := uuid.New()
+	execA := uuid.New()
+	execB := uuid.New()
+	runID := uuid.New()
+	taskID := uuid.New()
+	storyID := uuid.New()
+	epicID := uuid.New()
+
+	snapshot := `{
+		"nodes": [
+			{"templateNodeId": "` + nodeA.String() + `", "label": "A", "executorType": "ai", "timeoutSeconds": 1800, "isEntrypoint": true},
+			{"templateNodeId": "` + nodeB.String() + `", "label": "B", "executorType": "ai", "timeoutSeconds": 1800}
+		],
+		"edges": [
+			{"sourceNodeId": "` + nodeA.String() + `", "targetNodeId": "` + nodeB.String() + `"}
+		],
+		"taskContext": {
+			"taskId": "` + taskID.String() + `",
+			"taskTitle": "Wire up task_context",
+			"storyId": "` + storyID.String() + `",
+			"storyTitle": "Agent identity threading",
+			"epicId": "` + epicID.String() + `",
+			"epicTitle": "Roadmap-aware agents"
+		}
+	}`
+
+	s.env.OnActivity("UpdateWorkflowRunStatus", mock.Anything, mock.Anything).Return(nil)
+	s.env.OnActivity("GetGraphRuntime", mock.Anything, runID).Return(snapshot, nil)
+	s.env.OnActivity("WriteExecutionLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("InitRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("AppendRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == nodeA
+	})).Return(execA, nil).Once()
+
+	s.env.OnActivity("LoadPredecessorInputs", mock.Anything, mock.Anything).Return(map[string]string{}, nil).Maybe()
+	s.env.OnActivity("LoadReviewHistoryJSON", mock.Anything, mock.Anything).Return("[]", nil).Maybe()
+
+	taskContextMatches := func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.TaskID == taskID.String() &&
+			p.TaskTitle == "Wire up task_context" &&
+			p.StoryID == storyID.String() &&
+			p.StoryTitle == "Agent identity threading" &&
+			p.EpicID == epicID.String() &&
+			p.EpicTitle == "Roadmap-aware agents"
+	}
+
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.TemplateNodeID == nodeA && taskContextMatches(p)
+	})).Return(nil)
+
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == nodeB
+	})).Return(execB, nil).Once()
+
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.TemplateNodeID == nodeB && taskContextMatches(p)
+	})).Return(nil)
+
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execA
+	})).Return("no_decision", nil).Once()
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execB
+	})).Return("no_decision", nil).Once()
+
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
+		RunID: runID, GraphVersion: 1,
+	})
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+}
+
 // TestFanOutGraph verifies: A → B, A → C (both unconditional, parallel fan-out)
 func (s *DAGExecutorTestSuite) TestFanOutGraph() {
 	nodeA := uuid.New()

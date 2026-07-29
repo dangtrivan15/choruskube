@@ -137,6 +137,8 @@ class RunServiceCredentialCheckTest {
                 credentialPreflightChecker,
                 null,
                 null,
+                null, // storyRepo
+                null, // epicRepo
                 null,
                 mock(ApplicationEventPublisher.class),
                 new com.choruskube.core.scope.NoOpScopeProvider(),
