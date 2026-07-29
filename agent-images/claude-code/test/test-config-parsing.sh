@@ -187,6 +187,36 @@ OPEN_BLOCKERS_JSON=$(jq -c '.task_context.open_blockers // []' "$CONFIG")
 BLOCKER_COUNT=$(echo "$OPEN_BLOCKERS_JSON" | jq 'length')
 [ "$BLOCKER_COUNT" -eq 0 ] && ok "missing open_blockers yields zero-length count, no crash" || fail "missing open_blockers yields zero-length count, no crash"
 
+# --- Test 14: task_context entirely absent (true ad-hoc run, not started from a Task) ---
+# Distinct from Test 13 (task_context present but its open_blockers key missing): here the
+# whole task_context object is absent, as it always was pre-epic and still is for any run
+# not triggered from a roadmap Task. Confirms the no-context path stays byte-for-byte
+# unchanged: every derived field falls back to empty via `// empty` / `// []`, no crash.
+cat > "$CONFIG" <<'EOF'
+{
+  "run_id": "abc-123",
+  "node_execution_id": "node-456",
+  "prompt": "do the thing"
+}
+EOF
+TASK_ID=$(jq -r '.task_context.task_id // empty' "$CONFIG")
+STORY_ID=$(jq -r '.task_context.story_id // empty' "$CONFIG")
+EPIC_ID=$(jq -r '.task_context.epic_id // empty' "$CONFIG")
+[ -z "$TASK_ID" ] && ok "task_context absent — TASK_ID empty" || fail "task_context absent — TASK_ID empty"
+[ -z "$STORY_ID" ] && ok "task_context absent — STORY_ID empty" || fail "task_context absent — STORY_ID empty"
+[ -z "$EPIC_ID" ] && ok "task_context absent — EPIC_ID empty" || fail "task_context absent — EPIC_ID empty"
+OPEN_BLOCKERS_JSON=$(jq -c '.task_context.open_blockers // []' "$CONFIG")
+[ "$OPEN_BLOCKERS_JSON" = "[]" ] && ok "task_context absent — OPEN_BLOCKERS_JSON defaults to empty array" || fail "task_context absent — OPEN_BLOCKERS_JSON defaults to empty array"
+BLOCKER_COUNT=$(echo "$OPEN_BLOCKERS_JSON" | jq 'length')
+[ "$BLOCKER_COUNT" -eq 0 ] && ok "task_context absent — zero-length blocker count, no crash" || fail "task_context absent — zero-length blocker count, no crash"
+# Companion structural assertion (mirrors Test 2/12's grep-on-script-content style): both
+# narration blocks are guarded behind the same TASK_ID check, so an ad-hoc run's prompt gets
+# neither section, not a templated placeholder.
+grep -q '## Triggering Task' "$ENTRYPOINT" \
+  && ok "entrypoint narrates a Triggering Task section" || fail "entrypoint narrates a Triggering Task section"
+grep -qE 'if \[ -n "\$TASK_ID" \]' "$ENTRYPOINT" \
+  && ok "Triggering Task / Open Blockers narration guarded by TASK_ID check" || fail "Triggering Task / Open Blockers narration guarded by TASK_ID check"
+
 # --- Summary ---
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
