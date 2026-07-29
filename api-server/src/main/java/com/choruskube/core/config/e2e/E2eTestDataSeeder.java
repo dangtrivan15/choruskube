@@ -53,9 +53,11 @@ public class E2eTestDataSeeder implements ApplicationRunner {
     // spec_and_plan_gate: a v23 spec gate whose outgoing edges (approved/rereview/redraft)
     // drive the three-button decision UI (human-gates.spec.ts v23 case).
     private static final String GRAPH_ID_SPEC_GATE = "e2e-spec-and-plan-gate";
-    // cap_human_gate: exercises transparent AI iteration cap (iteration_cap=3 on AI node)
-    // and human escalation gate with rereview back-edge (transparent-iteration-cap feature)
-    private static final String GRAPH_ID_CAP_HUMAN_GATE = "e2e-cap-human-gate";
+    // review_conflict_gate: exercises self-detected review-conflict escalation (script node
+    // self-escalates via need_human_decision:review_conflict after a fixed number of
+    // iterations) and human escalation gate with rereview back-edge
+    // (self-detected-review-conflict feature).
+    private static final String GRAPH_ID_REVIEW_CONFLICT_GATE = "e2e-review-conflict-gate";
     // roadmap_candidate_gate: mirrors BaseRoadmapProvisionerSeeder's v13 production shape
     // (analyzer -> human gate with terminal_decisions + materialize) using a script node
     // in place of the real AI analyzer, so roadmap-candidate-gate.spec.ts can exercise the
@@ -150,13 +152,13 @@ public class E2eTestDataSeeder implements ApplicationRunner {
         NodeDefinition mockDindNetwork = createNodeDef("mock-dind-network", ExecutorType.script, null, 120);
         seedDindIsolationTemplate(mockDindIsolation, mockDindNetwork);
 
-        // Cap + human gate template: script node (cap=3) deterministically submits "revised";
-        // at iteration 3 the API server silently overrides to need_human_decision:iteration_cap,
-        // routing to the human gate. Using ExecutorType.script avoids launching real Claude pods
-        // in E2E while still exercising the cap-override path end-to-end.
-        NodeDefinition mockAiCapped =
-                createNodeDefWithIterationCap("mock-ai-capped", ExecutorType.script, null, 1800, 3);
-        seedCapHumanGateTemplate(mockAiCapped, mockGate, mockSuccess);
+        // Self-escalating review + human gate template: script node deterministically
+        // submits "revised" for a fixed number of iterations, then self-escalates via
+        // need_human_decision:review_conflict, routing to the human gate. Using
+        // ExecutorType.script avoids launching real Claude pods in E2E while still
+        // exercising the self-detected-conflict escalation path end-to-end.
+        NodeDefinition mockAiSelfEscalating = createNodeDef("mock-ai-self-escalating", ExecutorType.script, null, 1800);
+        seedReviewConflictHumanGateTemplate(mockAiSelfEscalating, mockGate, mockSuccess);
 
         seedRoadmapCandidateGate(mockSuccess, mockGate);
 
@@ -439,30 +441,37 @@ public class E2eTestDataSeeder implements ApplicationRunner {
         createEdge(t, gate, draft, "redraft");
     }
 
-    // --- Cap + Human Gate: ai_review --(revised)--> ai_review (self-loop)
+    // --- Review Conflict + Human Gate: ai_review --(revised)--> ai_review (self-loop)
     //                                --(approved)--> done
-    //                                --(need_human_decision:iteration_cap)--> human_gate
+    //                                --(need_human_decision:review_conflict)--> human_gate
     //                       human_gate --(rereview)--> ai_review
     //                                  --(approved)--> done
 
-    private void seedCapHumanGateTemplate(
-            NodeDefinition mockAiCapped, NodeDefinition mockGate, NodeDefinition mockSuccess) {
+    private void seedReviewConflictHumanGateTemplate(
+            NodeDefinition mockAiSelfEscalating, NodeDefinition mockGate, NodeDefinition mockSuccess) {
         GraphTemplate t = createTemplate(
-                GRAPH_ID_CAP_HUMAN_GATE,
-                "e2e-cap-human-gate",
-                "E2E test: transparent AI iteration cap (cap=3) with human escalation gate and rereview back-edge");
+                GRAPH_ID_REVIEW_CONFLICT_GATE,
+                "e2e-review-conflict-gate",
+                "E2E test: self-detected review-conflict escalation with human escalation gate and rereview back-edge");
 
-        // gate_approve --decision revised always submits "revised". At cap (iteration 3),
-        // submitDecision() silently overrides it to need_human_decision:iteration_cap and
-        // routes to humanGate — the key behavior under test.
-        TemplateNode aiReview = createNode(t, mockAiCapped, "ai_review", true, cmd("gate_approve --decision revised"));
+        // gate_approve --decision revised --escalate-after 3 --escalate-decision
+        // need_human_decision:review_conflict submits "revised" for the first 2 iterations,
+        // then self-escalates to need_human_decision:review_conflict on the 3rd — the key
+        // behavior under test (the reviewer, not the API server, decides to escalate).
+        TemplateNode aiReview = createNode(
+                t,
+                mockAiSelfEscalating,
+                "ai_review",
+                true,
+                cmd(
+                        "gate_approve --decision revised --escalate-after 3 --escalate-decision need_human_decision:review_conflict"));
         TemplateNode humanGate = createNode(t, mockGate, "human_gate", false, "{}");
-        TemplateNode done = createNode(t, mockSuccess, "done", false, cmd("success --artifact cap-gate-done"));
+        TemplateNode done = createNode(t, mockSuccess, "done", false, cmd("success --artifact conflict-gate-done"));
 
         // AI node edges: self-loop on revised, approve out, escalate to human gate
         createEdge(t, aiReview, aiReview, "revised");
         createEdge(t, aiReview, done, "approved");
-        createEdge(t, aiReview, humanGate, "need_human_decision:iteration_cap");
+        createEdge(t, aiReview, humanGate, "need_human_decision:review_conflict");
 
         // Human gate edges: rereview sends back to AI, approve exits
         createEdge(t, humanGate, aiReview, "rereview");
@@ -527,11 +536,6 @@ public class E2eTestDataSeeder implements ApplicationRunner {
     }
 
     private NodeDefinition createNodeDef(String name, ExecutorType executorType, String promptTemplate, int timeout) {
-        return createNodeDefWithIterationCap(name, executorType, promptTemplate, timeout, null);
-    }
-
-    private NodeDefinition createNodeDefWithIterationCap(
-            String name, ExecutorType executorType, String promptTemplate, int timeout, Integer iterationCap) {
         NodeDefinition nd = new NodeDefinition();
         nd.setName(name);
         nd.setExecutorType(executorType);
@@ -542,7 +546,6 @@ public class E2eTestDataSeeder implements ApplicationRunner {
         nd.setInputSpec("{}");
         nd.setOutputSpec("{}");
         nd.setSecrets("[]");
-        nd.setIterationCap(iterationCap);
         return nodeDefRepo.save(nd);
     }
 

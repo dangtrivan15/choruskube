@@ -202,6 +202,32 @@ public class GraphSnapshotBuilderTest extends BaseTest {
         assertThat(node.get("decision_options")).isEmpty();
     }
 
+    @Test
+    void buildSnapshotOmitsIterationCapForReviewNode() throws Exception {
+        // Regression guard: iteration_cap was removed from NodeDefinition (and its
+        // epoch-tracking counterpart from NodeExecution) in favor of self-detected
+        // review-conflict escalation. "spec_review" is a self-iterating review-loop
+        // node — the snapshot must never emit an iteration_cap field for it again.
+        var baseTemplate = templateRepo
+                .findFirstByGraphIdOrderByVersionDesc(GraphIds.FEATURE_DEVELOPMENT)
+                .orElseThrow();
+        var nodes = templateNodeRepo.findByGraphTemplateId(baseTemplate.getId());
+        var specReview = nodes.stream()
+                .filter(n -> "spec_review".equals(n.getLabel()))
+                .findFirst()
+                .orElseThrow();
+
+        WorkflowRun run = new WorkflowRun();
+        run.setGraphTemplateId(baseTemplate.getId());
+        run.setInputs("{\"feature_request\":\"test\"}");
+        run = runRepo.save(run);
+
+        JsonNode snapshotJson = objectMapper.readTree(snapshotBuilder.buildSnapshotForRun(run));
+        JsonNode node = findSnapshotNode(snapshotJson, specReview.getId());
+
+        assertThat(node.has("iteration_cap")).isFalse();
+    }
+
     private JsonNode findSnapshotNode(JsonNode snapshotJson, UUID templateNodeId) {
         for (JsonNode n : snapshotJson.get("nodes")) {
             if (n.get("template_node_id").asText().equals(templateNodeId.toString())) {

@@ -37,14 +37,14 @@ public class InternalRunControllerValidDecisionsTest extends BaseTest {
     @Test
     void returnsValidDecisionsAsJsonArray() throws Exception {
         when(service.getValidDecisions(RUN_ID, NODE_EXEC_ID))
-                .thenReturn(List.of("approved", "revised", "need_human_decision:iteration_cap"));
+                .thenReturn(List.of("approved", "revised", "need_human_decision:review_conflict"));
 
         mockMvc.perform(get(
                         "/internal/runs/{runId}/node-executions/{nodeExecId}/valid-decisions", RUN_ID, NODE_EXEC_ID))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.decisions[0]").value("approved"))
                 .andExpect(jsonPath("$.decisions[1]").value("revised"))
-                .andExpect(jsonPath("$.decisions[2]").value("need_human_decision:iteration_cap"));
+                .andExpect(jsonPath("$.decisions[2]").value("need_human_decision:review_conflict"));
     }
 
     @Test

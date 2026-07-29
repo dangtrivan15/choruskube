@@ -52,9 +52,6 @@ public class NodeExecution {
     @Column(nullable = false)
     private int iteration = 1;
 
-    @Column(name = "iteration_cap_epoch_start", nullable = false)
-    private int iterationCapEpochStart = 1;
-
     @Column(name = "graph_version", nullable = false)
     private int graphVersion;
 
@@ -151,14 +148,6 @@ public class NodeExecution {
 
     public void setIteration(int iteration) {
         this.iteration = iteration;
-    }
-
-    public int getIterationCapEpochStart() {
-        return iterationCapEpochStart;
-    }
-
-    public void setIterationCapEpochStart(int iterationCapEpochStart) {
-        this.iterationCapEpochStart = iterationCapEpochStart;
     }
 
     public int getGraphVersion() {

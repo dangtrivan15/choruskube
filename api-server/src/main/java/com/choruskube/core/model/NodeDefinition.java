@@ -52,9 +52,6 @@ public class NodeDefinition extends BaseEntity {
     @Column(name = "model")
     private String model;
 
-    @Column(name = "iteration_cap")
-    private Integer iterationCap;
-
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb", nullable = false)
     private String secrets;
@@ -137,14 +134,6 @@ public class NodeDefinition extends BaseEntity {
 
     public void setModel(String model) {
         this.model = model;
-    }
-
-    public Integer getIterationCap() {
-        return iterationCap;
-    }
-
-    public void setIterationCap(Integer iterationCap) {
-        this.iterationCap = iterationCap;
     }
 
     public String getSecrets() {
