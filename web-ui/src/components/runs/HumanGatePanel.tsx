@@ -40,7 +40,7 @@ interface HumanGatePanelProps {
    * (possibly edited) copy is included as `editedCandidates` on the signal call.
    */
   candidateBreakdown?: CandidateEpicProposal[] | null;
-  /** The triggering reviewer's decision string, e.g. `need_human_decision:iteration_cap`. */
+  /** The triggering reviewer's decision string, e.g. `need_human_decision:review_conflict`. */
   triggerDecision?: string | null;
   /**
    * Valid decisions for this gate — outgoing edge conditions from the template
@@ -52,15 +52,15 @@ interface HumanGatePanelProps {
 
 function TriggerBanner({ trigger }: { trigger: GateTrigger }) {
   if (trigger.kind === "approved") return null;
-  if (trigger.kind === "iteration_cap") {
+  if (trigger.kind === "review_conflict") {
     return (
       <div className="flex gap-3 rounded-md border border-status-warning/40 bg-status-warning/10 p-3">
         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-status-warning" />
         <div className="space-y-0.5 text-sm">
-          <p className="font-semibold">Iteration cap reached</p>
+          <p className="font-semibold">Review conflict detected</p>
           <p className="text-muted-foreground">
-            The reviewer could not converge after the maximum iterations. Unresolved flaws
-            are listed in the artifact below — review them and decide how to proceed.
+            The reviewer found that its current fix would contradict or reverse an earlier
+            review decision. Compare the two below and decide how to proceed.
           </p>
         </div>
       </div>
