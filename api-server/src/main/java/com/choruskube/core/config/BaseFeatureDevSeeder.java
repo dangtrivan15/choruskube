@@ -35,7 +35,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
     // and executor changes here never retroactively mutate prior versions. To ship a
     // change, edit the constants in this file (prompt, executor, schema), increment
     // CURRENT_VERSION, and the next boot creates the new snapshot.
-    static final int CURRENT_VERSION = 28;
+    static final int CURRENT_VERSION = 29;
 
     private static final String TEMPLATE_NAME = "Feature Development";
 
@@ -285,19 +285,14 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
 
             ## Iteration awareness
 
-            Read `iteration_in_epoch` from /workspace/config.json — NOT
-            `iteration`. `iteration` counts every run of this node across its
-            whole lifetime and never resets; `iteration_in_epoch` counts only
-            attempts since the current convergence attempt began, and resets
-            to 1 whenever a human routes the workflow back to Spec Review (so
-            you may see `iteration_in_epoch: 1` even when `iteration` is much
-            higher — that means you have a fresh budget). The iteration cap
-            for Spec Review is **5**, measured against `iteration_in_epoch`.
-            The cap exists because spec iterations are expensive (cross-repo
-            reasoning) and converging quickly matters. If you reach
-            iteration_in_epoch 5 with flaws still unresolved, escalate to a
-            human via `need_human_decision:iteration_cap` rather than
-            guessing.
+            Read `iteration` from /workspace/config.json. It counts every run
+            of this node across its whole lifetime and never resets — it does
+            not reset when a human routes the workflow back to Spec Review, and
+            it is not a budget. There is no iteration cap. The self-loop on
+            `revised` ends only when you emit `approved`, or when you escalate
+            to a human via one of the `need_human_decision:*` decisions below.
+            Convergence is expected to happen through genuine resolution, not
+            through running out of attempts.
 
             ## Inputs
 
@@ -319,6 +314,25 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             **Iteration-1 special case:** if `/workspace/in/spec_review/` is empty
             or absent, this is iteration 1. There is no prior iteration to read;
             you are reviewing the original draft.
+
+            ## Review History & Conflict Check
+
+            {review_history}
+
+            The above is a JSON array of every past review in this loop
+            group, ordered oldest-first. Each entry has: `loopGroup`,
+            `iteration`, `reviewerType`, `decision`, `result`,
+            `artifactRefs`, `nodeLabel`, `timestamp`, `status`.
+
+            Before finalizing any decision, check whether your current fix or
+            decision would reverse, contradict, or re-litigate a specific
+            past entry's decision or fix. This can happen when a human
+            guidance note, or your own re-reading of the spec, pushes you
+            toward undoing something a prior iteration deliberately decided.
+
+            If you detect such a conflict, do NOT apply the fix. Escalate via
+            `need_human_decision:review_conflict` instead — see the decision
+            tree below for what to write.
 
             ## Outputs (REQUIRED on every invocation)
 
@@ -378,21 +392,24 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
               `/workspace/out/spec_review.md` confirming approval.
 
             - **`revised`** — Flaws found AND fixable within the current
-              decomposition/architecture AND iteration_in_epoch < 5. Apply the
+              decomposition/architecture. Apply the
               fixes to `/workspace/out/spec_and_plan.md`. In
               `/workspace/out/spec_review.md` include a "Reasoning for fixes"
               section explaining WHY each fix was chosen. The orchestrator will
               route this back to Spec Review for a fresh-session re-review on
               the next iteration.
 
-            - **`need_human_decision:iteration_cap`** — Flaws found AND
-              iteration_in_epoch >= 5. Do not invent fixes you are not
-              confident about. In `/workspace/out/spec_review.md` write a
-              structured "Remaining unresolved flaws" section listing each
-              flaw with what you tried and why it didn't resolve. Still write
-              `spec_and_plan.md` with whatever partial fixes you applied (or
-              copy the input verbatim if you
-              applied none).
+            - **`need_human_decision:review_conflict`** — Your fix or
+              decision would reverse, contradict, or re-litigate a specific
+              prior iteration's decision (see "Review History & Conflict
+              Check" above). Do NOT apply the fix. In
+              `/workspace/out/spec_review.md` write a structured section
+              with: (1) description of the conflict, (2) your current
+              proposal, (3) the specific prior decision/iteration it
+              conflicts with, (4) tradeoffs between honoring the new fix vs.
+              the prior decision, (5) your reasoning for why this can't be
+              resolved unilaterally. Still write `spec_and_plan.md` verbatim
+              (no partial fix applied).
 
             - **`need_human_decision:uncertainty`** — A flaw is found but the
               correct fix is unclear. Do not guess. In
@@ -437,8 +454,6 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
               final once submitted.
             - `artifact get <object-path> <local-path>` / `artifact put` — Pull
               and push files from/to object storage.
-
-            {review_history}
 
             ## Final reminder
 
@@ -523,24 +538,19 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
 
             ## Iteration awareness
 
-            Read `iteration_in_epoch` from /workspace/config.json — NOT
-            `iteration`. `iteration` counts every run of this node across its
-            whole lifetime and never resets; `iteration_in_epoch` counts only
-            attempts since the current convergence attempt began, and resets
-            to 1 whenever a human routes the workflow back to Code Review (so
-            you may see `iteration_in_epoch: 1` even when `iteration` is much
-            higher — that means you have a fresh budget). The iteration cap
-            for Code Review is **5**, measured against `iteration_in_epoch`.
-            Code-level flaws tend to be incremental (typo, missing test, wrong
-            import) so the cap is more generous than Spec Review's. If you
-            reach iteration_in_epoch 5 with flaws still unresolved, escalate
-            to a human via `need_human_decision:iteration_cap` rather than
-            guessing.
+            Read `iteration` from /workspace/config.json. It counts every run
+            of this node across its whole lifetime and never resets — it does
+            not reset when a human routes the workflow back to Code Review,
+            and it is not a budget. There is no iteration cap. The self-loop
+            on `revised` ends only when you emit `approved`, or when you
+            escalate to a human via one of the `need_human_decision:*`
+            decisions below. Convergence is expected to happen through
+            genuine resolution, not through running out of attempts.
 
             Note: by the time code reaches you, the spec is already approved.
             Architectural alternatives are NOT in scope here — if you find the
             implementation is structurally irrecoverable within the current spec,
-            escalate via `need_human_decision:iteration_cap` (cannot converge) or
+            escalate via `need_human_decision:review_conflict` (cannot converge) or
             `need_human_decision:uncertainty` (don't know how to proceed). Do NOT
             propose to discard the spec.
 
@@ -562,6 +572,26 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             **Iteration-1 special case:** if `/workspace/in/code_review/` is
             empty or absent, this is iteration 1. There is no prior review to
             read; you are reviewing the implementation as it stands.
+
+            ## Review History & Conflict Check
+
+            {review_history}
+
+            The above is a JSON array of every past review in this loop
+            group, ordered oldest-first. Each entry has: `loopGroup`,
+            `iteration`, `reviewerType`, `decision`, `result`,
+            `artifactRefs`, `nodeLabel`, `timestamp`, `status`.
+
+            Before finalizing any decision, check whether your current fix or
+            decision would reverse, contradict, or re-litigate a specific
+            past entry's decision or fix. This can happen when a human
+            guidance note, or your own re-reading of the code, pushes you
+            toward undoing something a prior iteration deliberately decided.
+
+            If you detect such a conflict, do NOT apply the fix — do not
+            push a commit that reverts or contradicts it. Escalate via
+            `need_human_decision:review_conflict` instead — see the decision
+            tree below for what to write.
 
             ## Outputs
 
@@ -609,21 +639,24 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             - **`approved`** — No flaws found. Write a short
               `/workspace/out/review.md` confirming approval (per-repo summary).
 
-            - **`revised`** — Flaws found AND fixable AND iteration_in_epoch <
-              5. Apply the fixes via `git commit` + `git push origin HEAD` on
-              the working branch. Write `/workspace/out/review.md` documenting
-              both what you found and a "Reasoning for fixes" section
-              explaining WHY each fix was chosen and which commit(s) implement
-              it. The orchestrator will route this back to Code Review for a
+            - **`revised`** — Flaws found AND fixable. Apply the fixes via
+              `git commit` + `git push origin HEAD` on the working branch.
+              Write `/workspace/out/review.md` documenting both what you
+              found and a "Reasoning for fixes" section explaining WHY each
+              fix was chosen and which commit(s) implement it. The
+              orchestrator will route this back to Code Review for a
               fresh-session re-review on the next iteration.
 
-            - **`need_human_decision:iteration_cap`** — Flaws found AND
-              iteration_in_epoch >= 5. Do not invent fixes you are not
-              confident about. In `/workspace/out/review.md` write a
-              structured "Remaining unresolved flaws" section listing each
-              flaw with what you tried and why it didn't resolve. You may
-              have applied partial fixes (already pushed to the branch) —
-              note them.
+            - **`need_human_decision:review_conflict`** — Your fix or
+              decision would reverse, contradict, or re-litigate a specific
+              prior iteration's decision (see "Review History & Conflict
+              Check" above). Do NOT push a commit that applies the fix. In
+              `/workspace/out/review.md` write a structured section with:
+              (1) description of the conflict, (2) your current proposal,
+              (3) the specific prior decision/iteration it conflicts with
+              (cite its commit SHA(s)), (4) tradeoffs between honoring the
+              new fix vs. the prior decision, (5) your reasoning for why
+              this can't be resolved unilaterally.
 
             - **`need_human_decision:uncertainty`** — A flaw is found but the
               correct fix is unclear, OR the implementation appears structurally
@@ -655,8 +688,6 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
               HEAD`) — credentials are configured by the entrypoint.
             - `artifact get` / `artifact put` — Pull/push files from/to object storage
               (used for review.md, not for code).
-
-            {review_history}
 
             ## Final reminder
 
@@ -877,12 +908,11 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
         NodeDefinition specReview = createNodeDef("Spec Review", ExecutorType.ai, SPEC_REVIEW_PROMPT, 1800);
         specReview.setOutputSpec(
                 "{\"files\":[{\"name\":\"spec_review.md\",\"required\":true,\"description\":\"AI reviewer assessment and recommendations\"}]}");
-        // At iteration 5, submitDecision() silently overrides any non-approved decision to
-        // need_human_decision:iteration_cap, routing to the approve_spec_and_plan gate.
-        // list-decisions always returns the full set; the cap fires transparently at submit time.
-        // Without this the revised self-loop has no termination condition other than the AI
-        // volunteering to stop.
-        specReview.setIterationCap(5);
+        // No iteration cap: the revised self-loop terminates only via `approved` or the
+        // reviewer's own escalation (need_human_decision:review_conflict when it detects
+        // its current fix would reverse a prior decision from {review_history}, or
+        // need_human_decision:uncertainty/alternative_proposal). There is no counter-based
+        // forced escalation — the prompt is the only thing driving convergence.
         nodeDefRepo.save(specReview);
         defs.put("Spec Review", specReview);
 
@@ -899,9 +929,8 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
         NodeDefinition codeReview = createNodeDef("Code Review", ExecutorType.ai, CODE_REVIEW_PROMPT, 1800);
         codeReview.setOutputSpec(
                 "{\"files\":[{\"name\":\"review.md\",\"required\":true,\"description\":\"Code review findings and approve/reject recommendation\"}]}");
-        // Code review can sustain more iterations than spec review — each pass reviews concrete
-        // diffs, so progress is easier to confirm; 5 attempts before forcing escalation.
-        codeReview.setIterationCap(5);
+        // No iteration cap: same self-detected review-conflict escalation as Spec Review
+        // (see the comment above specReview).
         nodeDefRepo.save(codeReview);
         defs.put("Code Review", codeReview);
 
@@ -1036,7 +1065,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
         createEdge(template, tnDraftSpecAndPlan, tnSpecReview, null);
         createEdge(template, tnSpecReview, tnApproveSpecAndPlan, "approved");
         createEdge(template, tnSpecReview, tnApproveSpecAndPlan, "need_human_decision:alternative_proposal");
-        createEdge(template, tnSpecReview, tnApproveSpecAndPlan, "need_human_decision:iteration_cap");
+        createEdge(template, tnSpecReview, tnApproveSpecAndPlan, "need_human_decision:review_conflict");
         createEdge(template, tnSpecReview, tnApproveSpecAndPlan, "need_human_decision:uncertainty");
         createEdge(template, tnSpecReview, tnSpecReview, "revised");
         createEdge(template, tnApproveSpecAndPlan, tnImplement, "approved");
@@ -1046,7 +1075,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
         createEdge(template, tnImplement, tnCodeReview, null);
         createEdge(template, tnCodeReview, tnCodeReview, "revised");
         createEdge(template, tnCodeReview, tnTest, "approved");
-        createEdge(template, tnCodeReview, tnTest, "need_human_decision:iteration_cap");
+        createEdge(template, tnCodeReview, tnTest, "need_human_decision:review_conflict");
         createEdge(template, tnCodeReview, tnTest, "need_human_decision:uncertainty");
         createEdge(template, tnTest, tnFinalApproval, "passed");
         createEdge(template, tnTest, tnImplement, "failed");

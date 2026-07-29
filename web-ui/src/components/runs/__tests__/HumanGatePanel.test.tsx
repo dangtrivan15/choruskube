@@ -375,14 +375,14 @@ describe("HumanGatePanel", () => {
       expect(screen.getByText("Alternative design proposed")).toBeInTheDocument();
     });
 
-    it("renders iteration_cap banner when triggered by it", () => {
+    it("renders review_conflict banner when triggered by it", () => {
       renderWithProviders(
         <HumanGatePanel
           {...approveSpecProps}
-          triggerDecision="need_human_decision:iteration_cap"
+          triggerDecision="need_human_decision:review_conflict"
         />,
       );
-      expect(screen.getByText("Iteration cap reached")).toBeInTheDocument();
+      expect(screen.getByText("Review conflict detected")).toBeInTheDocument();
     });
   });
 

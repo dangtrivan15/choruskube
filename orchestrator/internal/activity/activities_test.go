@@ -534,6 +534,10 @@ func TestExecuteAINodeFromSnapshot_IterationInConfigJson(t *testing.T) {
 	assert.ErrorIs(t, err, activity.ErrResultPending)
 
 	assert.Equal(t, float64(3), receivedConfigJSON["iteration"])
+	// Regression guard: the iteration-cap epoch machinery was removed; make sure
+	// it doesn't silently reappear in the agent's config.json.
+	_, hasEpochKey := receivedConfigJSON["iteration_in_epoch"]
+	assert.False(t, hasEpochKey, "iteration_in_epoch should not be present in config.json")
 }
 
 func TestExecuteAINodeFromSnapshot_IterationZeroOmitted(t *testing.T) {
@@ -583,166 +587,6 @@ func TestExecuteAINodeFromSnapshot_IterationZeroOmitted(t *testing.T) {
 
 	_, exists := receivedConfigJSON["iteration"]
 	assert.False(t, exists, "iteration=0 should not be in config.json")
-}
-
-// TestExecuteAINodeFromSnapshot_IterationInEpoch_ResetCase mirrors
-// DecisionServiceTest.submitDecision_epochReset_effectiveIterationIsOne's fixture
-// (iteration=5, epoch_start=5) so the Go and Java effective-iteration formulas are
-// checked against identical inputs (Decision 2).
-func TestExecuteAINodeFromSnapshot_IterationInEpoch_ResetCase(t *testing.T) {
-	var receivedConfigJSON map[string]interface{}
-
-	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/internal/workloads/"):
-			var req map[string]interface{}
-			json.NewDecoder(r.Body).Decode(&req)
-			if cj, ok := req["configJson"].(map[string]interface{}); ok {
-				receivedConfigJSON = cj
-			}
-			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"executionHandle": "agent-abc12345",
-				"jobSecretHash":   "hash123",
-			})
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/logs"):
-			w.WriteHeader(http.StatusCreated)
-		default:
-			w.WriteHeader(http.StatusOK)
-		}
-	}))
-	defer apiServer.Close()
-
-	client := apiclient.NewClient(apiServer.URL)
-	cfg := &config.Config{
-		Callback: config.CallbackConfig{URL: "http://callback:9090/api/v1/callback"},
-	}
-
-	acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
-
-	params := ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID:        uuid.New(),
-		RunID:                  uuid.New(),
-		TemplateNodeID:         uuid.New(),
-		Label:                  "spec-review",
-		ExecutorType:           "ai",
-		PromptTemplate:         "Do something",
-		Variables:              map[string]string{"run.id": "test123"},
-		Iteration:              5,
-		IterationCapEpochStart: 5,
-	}
-
-	err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
-	assert.ErrorIs(t, err, activity.ErrResultPending)
-
-	assert.Equal(t, float64(1), receivedConfigJSON["iteration_in_epoch"])
-}
-
-// TestExecuteAINodeFromSnapshot_IterationInEpoch_CarriedForwardCase mirrors
-// DecisionServiceTest.submitDecision_epochReset_atEffectiveCap_overrides's fixture
-// (iteration=7, epoch_start=5) so the Go and Java effective-iteration formulas are
-// checked against identical inputs (Decision 2).
-func TestExecuteAINodeFromSnapshot_IterationInEpoch_CarriedForwardCase(t *testing.T) {
-	var receivedConfigJSON map[string]interface{}
-
-	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/internal/workloads/"):
-			var req map[string]interface{}
-			json.NewDecoder(r.Body).Decode(&req)
-			if cj, ok := req["configJson"].(map[string]interface{}); ok {
-				receivedConfigJSON = cj
-			}
-			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"executionHandle": "agent-abc12345",
-				"jobSecretHash":   "hash123",
-			})
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/logs"):
-			w.WriteHeader(http.StatusCreated)
-		default:
-			w.WriteHeader(http.StatusOK)
-		}
-	}))
-	defer apiServer.Close()
-
-	client := apiclient.NewClient(apiServer.URL)
-	cfg := &config.Config{
-		Callback: config.CallbackConfig{URL: "http://callback:9090/api/v1/callback"},
-	}
-
-	acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
-
-	params := ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID:        uuid.New(),
-		RunID:                  uuid.New(),
-		TemplateNodeID:         uuid.New(),
-		Label:                  "spec-review",
-		ExecutorType:           "ai",
-		PromptTemplate:         "Do something",
-		Variables:              map[string]string{"run.id": "test123"},
-		Iteration:              7,
-		IterationCapEpochStart: 5,
-	}
-
-	err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
-	assert.ErrorIs(t, err, activity.ErrResultPending)
-
-	assert.Equal(t, float64(3), receivedConfigJSON["iteration_in_epoch"])
-}
-
-// TestExecuteAINodeFromSnapshot_IterationInEpoch_DefaultEpochStart exercises the
-// defensive "0 means default 1" convention at this activity layer. This is a
-// Go-only case: there is no Java-side equivalent because InternalRunService
-// applies its own 0->1 default earlier, at node-execution creation, so
-// DecisionServiceTest never observes an unset epoch start.
-func TestExecuteAINodeFromSnapshot_IterationInEpoch_DefaultEpochStart(t *testing.T) {
-	var receivedConfigJSON map[string]interface{}
-
-	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/internal/workloads/"):
-			var req map[string]interface{}
-			json.NewDecoder(r.Body).Decode(&req)
-			if cj, ok := req["configJson"].(map[string]interface{}); ok {
-				receivedConfigJSON = cj
-			}
-			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"executionHandle": "agent-abc12345",
-				"jobSecretHash":   "hash123",
-			})
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/logs"):
-			w.WriteHeader(http.StatusCreated)
-		default:
-			w.WriteHeader(http.StatusOK)
-		}
-	}))
-	defer apiServer.Close()
-
-	client := apiclient.NewClient(apiServer.URL)
-	cfg := &config.Config{
-		Callback: config.CallbackConfig{URL: "http://callback:9090/api/v1/callback"},
-	}
-
-	acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
-
-	params := ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID:        uuid.New(),
-		RunID:                  uuid.New(),
-		TemplateNodeID:         uuid.New(),
-		Label:                  "spec-review",
-		ExecutorType:           "ai",
-		PromptTemplate:         "Do something",
-		Variables:              map[string]string{"run.id": "test123"},
-		Iteration:              2,
-		IterationCapEpochStart: 0,
-	}
-
-	err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
-	assert.ErrorIs(t, err, activity.ErrResultPending)
-
-	assert.Equal(t, float64(2), receivedConfigJSON["iteration_in_epoch"])
 }
 
 func TestFetchPodLogs_DelegatesToAPIServer(t *testing.T) {

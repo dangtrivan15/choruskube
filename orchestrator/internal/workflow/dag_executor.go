@@ -46,15 +46,14 @@ type nodeCompletion struct {
 
 // nodeTracker tracks in-workflow state for each activated node
 type nodeTracker struct {
-	status                 string // pending, running, awaiting_human, completed, failed
-	result                 *string
-	execID                 uuid.UUID
-	iteration              int
-	iterationCapEpochStart int     // epoch start for cap enforcement; default 1
-	errorMessage           *string // from completion
-	artifactRefs           string  // from completion
-	preDecision            string  // pre-supplied decision from retry-with-approval (skip human wait)
-	preFeedback            string  // pre-supplied feedback from retry-with-approval
+	status       string // pending, running, awaiting_human, completed, failed
+	result       *string
+	execID       uuid.UUID
+	iteration    int
+	errorMessage *string // from completion
+	artifactRefs string  // from completion
+	preDecision  string  // pre-supplied decision from retry-with-approval (skip human wait)
+	preFeedback  string  // pre-supplied feedback from retry-with-approval
 }
 
 func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
@@ -133,7 +132,7 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 			return fmt.Errorf("create entry node execution for %s: %w", node.Label, err)
 		}
 		nodes[node.TemplateNodeID] = &nodeTracker{
-			status: "pending", execID: execID, iteration: 1, iterationCapEpochStart: 1,
+			status: "pending", execID: execID, iteration: 1,
 		}
 	}
 
@@ -332,12 +331,11 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 				var execID uuid.UUID
 				if err := workflow.ExecuteActivity(dbCtx, activities.CreateNodeExecution,
 					activity.CreateNodeExecParams{
-						WorkflowRunID:          params.RunID,
-						TemplateNodeID:         templateNodeID,
-						GraphVersion:           params.GraphVersion,
-						Iteration:              newIteration,
-						Label:                  targetNode.Label,
-						IterationCapEpochStart: tracker.iterationCapEpochStart,
+						WorkflowRunID:  params.RunID,
+						TemplateNodeID: templateNodeID,
+						GraphVersion:   params.GraphVersion,
+						Iteration:      newIteration,
+						Label:          targetNode.Label,
 					},
 				).Get(ctx, &execID); err != nil {
 					logger.Error("Failed to create retry node execution", "error", err)
@@ -346,10 +344,9 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 
 				// Reset tracker
 				nodes[templateNodeID] = &nodeTracker{
-					status:                 "pending",
-					execID:                 execID,
-					iteration:              newIteration,
-					iterationCapEpochStart: tracker.iterationCapEpochStart,
+					status:    "pending",
+					execID:    execID,
+					iteration: newIteration,
 				}
 
 				// Restore run status
@@ -391,12 +388,11 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 					var execID uuid.UUID
 					if err := workflow.ExecuteActivity(dbCtx, activities.CreateNodeExecution,
 						activity.CreateNodeExecParams{
-							WorkflowRunID:          params.RunID,
-							TemplateNodeID:         failedID,
-							GraphVersion:           params.GraphVersion,
-							Iteration:              newIteration,
-							Label:                  failedNode.Label,
-							IterationCapEpochStart: failedTracker.iterationCapEpochStart,
+							WorkflowRunID:  params.RunID,
+							TemplateNodeID: failedID,
+							GraphVersion:   params.GraphVersion,
+							Iteration:      newIteration,
+							Label:          failedNode.Label,
 						},
 					).Get(ctx, &execID); err != nil {
 						logger.Error("Failed to create retry node execution", "error", err)
@@ -417,12 +413,11 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 
 					// Reset tracker with pre-decision
 					nodes[failedID] = &nodeTracker{
-						status:                 "pending",
-						execID:                 execID,
-						iteration:              newIteration,
-						iterationCapEpochStart: failedTracker.iterationCapEpochStart,
-						preDecision:            signal.Decision,
-						preFeedback:            signal.Feedback,
+						status:      "pending",
+						execID:      execID,
+						iteration:   newIteration,
+						preDecision: signal.Decision,
+						preFeedback: signal.Feedback,
 					}
 
 					// Restore run status
@@ -662,31 +657,30 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 				taskID, taskTitle, storyID, storyTitle, epicID, epicTitle := taskContextFields(snap)
 				future := workflow.ExecuteActivity(aiCtx, activities.ExecuteAINodeFromSnapshot,
 					activity.ExecuteAINodeFromSnapshotParams{
-						NodeExecutionID:        execID,
-						RunID:                  params.RunID,
-						TemplateNodeID:         nodeID,
-						Label:                  snapshotNode.Label,
-						ExecutorType:           executorType,
-						PromptTemplate:         promptTemplate,
-						Model:                  snapshotNode.Model,
-						InputArtifacts:         runInputArtifacts,
-						Variables:              vars,
-						LoopGroup:              loopGroup,
-						Iteration:              tracker.iteration,
-						IterationCapEpochStart: tracker.iterationCapEpochStart,
-						RepoURL:                repoURL,
-						WorkingBranch:          workingBranch,
-						Command:                command,
-						OrgSlug:                params.OrgSlug,
-						NeedDecision:           HasConditionalEdges(snap, node.TemplateNodeID),
-						Repos:                  repos,
-						OutputSpec:             snapshotNode.OutputSpec,
-						TaskID:                 taskID,
-						TaskTitle:              taskTitle,
-						StoryID:                storyID,
-						StoryTitle:             storyTitle,
-						EpicID:                 epicID,
-						EpicTitle:              epicTitle,
+						NodeExecutionID: execID,
+						RunID:           params.RunID,
+						TemplateNodeID:  nodeID,
+						Label:           snapshotNode.Label,
+						ExecutorType:    executorType,
+						PromptTemplate:  promptTemplate,
+						Model:           snapshotNode.Model,
+						InputArtifacts:  runInputArtifacts,
+						Variables:       vars,
+						LoopGroup:       loopGroup,
+						Iteration:       tracker.iteration,
+						RepoURL:         repoURL,
+						WorkingBranch:   workingBranch,
+						Command:         command,
+						OrgSlug:         params.OrgSlug,
+						NeedDecision:    HasConditionalEdges(snap, node.TemplateNodeID),
+						Repos:           repos,
+						OutputSpec:      snapshotNode.OutputSpec,
+						TaskID:          taskID,
+						TaskTitle:       taskTitle,
+						StoryID:         storyID,
+						StoryTitle:      storyTitle,
+						EpicID:          epicID,
+						EpicTitle:       epicTitle,
 					},
 				)
 
@@ -745,12 +739,11 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 							var newExecID uuid.UUID
 							createErr := workflow.ExecuteActivity(dbCtx, activities.CreateNodeExecution,
 								activity.CreateNodeExecParams{
-									WorkflowRunID:          params.RunID,
-									TemplateNodeID:         completion.nodeID,
-									GraphVersion:           params.GraphVersion,
-									Iteration:              newIteration,
-									Label:                  snapshotNode.Label,
-									IterationCapEpochStart: tracker.iterationCapEpochStart,
+									WorkflowRunID:  params.RunID,
+									TemplateNodeID: completion.nodeID,
+									GraphVersion:   params.GraphVersion,
+									Iteration:      newIteration,
+									Label:          snapshotNode.Label,
 								},
 							).Get(ctx, &newExecID)
 							if createErr != nil {
@@ -759,10 +752,9 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 								// fall through to normal failure path
 							} else {
 								nodes[completion.nodeID] = &nodeTracker{
-									status:                 "pending",
-									execID:                 newExecID,
-									iteration:              newIteration,
-									iterationCapEpochStart: tracker.iterationCapEpochStart,
+									status:    "pending",
+									execID:    newExecID,
+									iteration: newIteration,
 								}
 								return // skip normal failure path; ready-nodes evaluator will re-schedule
 							}
@@ -1033,36 +1025,27 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 				for _, targetID := range targets {
 					existingTracker, exists := nodes[targetID]
 					iteration := 1
-					iterationCapEpochStart := 1
 					if exists && existingTracker.status == "completed" {
 						// Back-edge / loop — increment iteration
 						iteration = existingTracker.iteration + 1
-						// Carry epoch forward by default; reset if source was a human node
-						if snapshotNode.ExecutorType == "human" {
-							iterationCapEpochStart = iteration // reset: new epoch starts at this iteration
-						} else {
-							iterationCapEpochStart = existingTracker.iterationCapEpochStart
-						}
 					}
 
 					targetNode, _ := GetNodeByID(snap, targetID)
 					var execID uuid.UUID
 					workflow.ExecuteActivity(dbCtx, activities.CreateNodeExecution,
 						activity.CreateNodeExecParams{
-							WorkflowRunID:          params.RunID,
-							TemplateNodeID:         targetID,
-							GraphVersion:           params.GraphVersion,
-							Iteration:              iteration,
-							Label:                  targetNode.Label,
-							IterationCapEpochStart: iterationCapEpochStart,
+							WorkflowRunID:  params.RunID,
+							TemplateNodeID: targetID,
+							GraphVersion:   params.GraphVersion,
+							Iteration:      iteration,
+							Label:          targetNode.Label,
 						},
 					).Get(ctx, &execID)
 
 					nodes[targetID] = &nodeTracker{
-						status:                 "pending",
-						execID:                 execID,
-						iteration:              iteration,
-						iterationCapEpochStart: iterationCapEpochStart,
+						status:    "pending",
+						execID:    execID,
+						iteration: iteration,
 					}
 				}
 			})

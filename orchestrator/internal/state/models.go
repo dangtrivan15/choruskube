@@ -113,12 +113,11 @@ type SnapshotEdge struct {
 // --- Param types (used by apiclient and activities) ---
 
 type CreateNodeExecutionParams struct {
-	WorkflowRunID          uuid.UUID
-	TemplateNodeID         uuid.UUID
-	GraphVersion           int
-	Iteration              int // 0 means use default (1)
-	Label                  string
-	IterationCapEpochStart int // 0 means "use default 1" (same convention as Iteration)
+	WorkflowRunID  uuid.UUID
+	TemplateNodeID uuid.UUID
+	GraphVersion   int
+	Iteration      int // 0 means use default (1)
+	Label          string
 }
 
 type UpdateNodeExecutionParams struct {

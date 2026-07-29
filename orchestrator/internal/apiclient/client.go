@@ -93,11 +93,10 @@ func (c *Client) doJSON(ctx context.Context, method, path string, reqBody interf
 // --- Node Execution ---
 
 type createNodeExecRequest struct {
-	TemplateNodeID         uuid.UUID `json:"templateNodeId"`
-	GraphVersion           int       `json:"graphVersion"`
-	Iteration              int       `json:"iteration"`
-	Label                  string    `json:"label"`
-	IterationCapEpochStart int       `json:"iterationCapEpochStart"`
+	TemplateNodeID uuid.UUID `json:"templateNodeId"`
+	GraphVersion   int       `json:"graphVersion"`
+	Iteration      int       `json:"iteration"`
+	Label          string    `json:"label"`
 }
 
 type nodeExecResponse struct {
@@ -133,11 +132,10 @@ func toNodeExecution(r *nodeExecResponse, runID uuid.UUID) *state.NodeExecution 
 
 func (c *Client) CreateNodeExecution(ctx context.Context, runID uuid.UUID, params state.CreateNodeExecutionParams) (*state.NodeExecution, error) {
 	body := createNodeExecRequest{
-		TemplateNodeID:         params.TemplateNodeID,
-		GraphVersion:           params.GraphVersion,
-		Iteration:              params.Iteration,
-		Label:                  params.Label,
-		IterationCapEpochStart: params.IterationCapEpochStart,
+		TemplateNodeID: params.TemplateNodeID,
+		GraphVersion:   params.GraphVersion,
+		Iteration:      params.Iteration,
+		Label:          params.Label,
 	}
 	resp, err := c.doJSON(ctx, http.MethodPost, fmt.Sprintf("/internal/runs/%s/node-executions", runID), body)
 	if err != nil {

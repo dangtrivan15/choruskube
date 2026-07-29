@@ -5,8 +5,8 @@ describe("parseGateTrigger", () => {
   it("returns approved for the approved decision", () => {
     expect(parseGateTrigger("approved")).toEqual({ kind: "approved" });
   });
-  it("returns iteration_cap for the iteration_cap suffix", () => {
-    expect(parseGateTrigger("need_human_decision:iteration_cap")).toEqual({ kind: "iteration_cap" });
+  it("returns review_conflict for the review_conflict suffix", () => {
+    expect(parseGateTrigger("need_human_decision:review_conflict")).toEqual({ kind: "review_conflict" });
   });
   it("returns uncertainty for the uncertainty suffix", () => {
     expect(parseGateTrigger("need_human_decision:uncertainty")).toEqual({ kind: "uncertainty" });

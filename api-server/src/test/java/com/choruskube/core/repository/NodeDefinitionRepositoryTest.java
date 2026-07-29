@@ -57,25 +57,4 @@ class NodeDefinitionRepositoryTest extends BaseTest {
         NodeDefinition reloaded = repo.findById(saved.getId()).orElseThrow();
         assertThat(reloaded.getModel()).isNull();
     }
-
-    @Test
-    void persistsIterationCapField() {
-        NodeDefinition def = buildDef("Cap Node");
-        def.setIterationCap(3);
-
-        NodeDefinition saved = repo.saveAndFlush(def);
-
-        NodeDefinition reloaded = repo.findById(saved.getId()).orElseThrow();
-        assertThat(reloaded.getIterationCap()).isEqualTo(3);
-    }
-
-    @Test
-    void iterationCapDefaultsToNull() {
-        NodeDefinition def = buildDef("Default Cap Node");
-
-        NodeDefinition saved = repo.saveAndFlush(def);
-
-        NodeDefinition reloaded = repo.findById(saved.getId()).orElseThrow();
-        assertThat(reloaded.getIterationCap()).isNull();
-    }
 }

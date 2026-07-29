@@ -39,22 +39,20 @@ func NewActivities(client *apiclient.Client, resolver *prompt.Resolver, cfg *con
 // --- Activity: CreateNodeExecution ---
 
 type CreateNodeExecParams struct {
-	WorkflowRunID          uuid.UUID
-	TemplateNodeID         uuid.UUID
-	GraphVersion           int
-	Iteration              int // 0 means use DB default (1)
-	Label                  string
-	IterationCapEpochStart int
+	WorkflowRunID  uuid.UUID
+	TemplateNodeID uuid.UUID
+	GraphVersion   int
+	Iteration      int // 0 means use DB default (1)
+	Label          string
 }
 
 func (a *Activities) CreateNodeExecution(ctx context.Context, params CreateNodeExecParams) (uuid.UUID, error) {
 	exec, err := a.client.CreateNodeExecution(ctx, params.WorkflowRunID, state.CreateNodeExecutionParams{
-		WorkflowRunID:          params.WorkflowRunID,
-		TemplateNodeID:         params.TemplateNodeID,
-		GraphVersion:           params.GraphVersion,
-		Iteration:              params.Iteration,
-		Label:                  params.Label,
-		IterationCapEpochStart: params.IterationCapEpochStart,
+		WorkflowRunID:  params.WorkflowRunID,
+		TemplateNodeID: params.TemplateNodeID,
+		GraphVersion:   params.GraphVersion,
+		Iteration:      params.Iteration,
+		Label:          params.Label,
 	})
 	if err != nil {
 		// Detect 429 (quota exceeded) and wrap as non-retryable to prevent retry storm.
@@ -155,26 +153,25 @@ func (a *Activities) GetGraphRuntime(ctx context.Context, runID uuid.UUID) (stri
 // --- Activity: ExecuteAINodeFromSnapshot (Phase 2) ---
 
 type ExecuteAINodeFromSnapshotParams struct {
-	NodeExecutionID        uuid.UUID
-	RunID                  uuid.UUID
-	TemplateNodeID         uuid.UUID
-	Label                  string
-	ExecutorType           string // "ai" or "script"
-	PromptTemplate         string
-	InputArtifacts         map[string]string
-	Variables              map[string]string
-	LoopGroup              string // from config_overrides, empty if not a review node
-	Iteration              int
-	IterationCapEpochStart int
-	RepoURL                string
-	WorkingBranch          string
-	Command                string                   // for script executor
-	RunLogPath             string                   // Deprecated: kept for Temporal activity history replay; activity builds from OrgSlug + RunID
-	OrgSlug                string                   // Org slug for object storage path isolation; empty = legacy paths
-	NeedDecision           bool                     // true if node has conditional edges and is AI type
-	OutputSpec             string                   // JSON string describing required output files; "" or "{}" = no enforcement
-	Repos                  []map[string]interface{} `json:"repos,omitempty"`
-	Model                  string                   `json:"model,omitempty"` // optional override; empty = agent default
+	NodeExecutionID uuid.UUID
+	RunID           uuid.UUID
+	TemplateNodeID  uuid.UUID
+	Label           string
+	ExecutorType    string // "ai" or "script"
+	PromptTemplate  string
+	InputArtifacts  map[string]string
+	Variables       map[string]string
+	LoopGroup       string // from config_overrides, empty if not a review node
+	Iteration       int
+	RepoURL         string
+	WorkingBranch   string
+	Command         string                   // for script executor
+	RunLogPath      string                   // Deprecated: kept for Temporal activity history replay; activity builds from OrgSlug + RunID
+	OrgSlug         string                   // Org slug for object storage path isolation; empty = legacy paths
+	NeedDecision    bool                     // true if node has conditional edges and is AI type
+	OutputSpec      string                   // JSON string describing required output files; "" or "{}" = no enforcement
+	Repos           []map[string]interface{} `json:"repos,omitempty"`
+	Model           string                   `json:"model,omitempty"` // optional override; empty = agent default
 	// Triggering Task's identity (Decision 1/2/3), broadcast into config.json's task_context
 	// for every node execution in a task-triggered run. TaskID == "" means the run wasn't
 	// started from a Task; StoryID/EpicID may independently be "" if that level no longer
@@ -272,14 +269,6 @@ func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params Execu
 	}
 	if params.Iteration > 0 {
 		configJSON["iteration"] = params.Iteration
-		// Mirrors InternalRunService.submitDecision's effectiveIteration formula
-		// (api-server .../service/InternalRunService.java) — keep both in sync if
-		// the cap-reset trigger ever changes.
-		epochStart := params.IterationCapEpochStart
-		if epochStart <= 0 {
-			epochStart = 1
-		}
-		configJSON["iteration_in_epoch"] = params.Iteration - epochStart + 1
 	}
 	if len(params.Repos) > 0 {
 		configJSON["repos"] = params.Repos

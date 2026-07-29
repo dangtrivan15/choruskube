@@ -115,7 +115,7 @@ const FEATURE_DEVELOPMENT: FixtureSnapshot = {
     { source_node_id: "draft_spec_and_plan",   target_node_id: "spec_review",           condition: null },
     { source_node_id: "spec_review",           target_node_id: "approve_spec_and_plan", condition: "approved" },
     { source_node_id: "spec_review",           target_node_id: "approve_spec_and_plan", condition: "need_human_decision:alternative_proposal" },
-    { source_node_id: "spec_review",           target_node_id: "approve_spec_and_plan", condition: "need_human_decision:iteration_cap" },
+    { source_node_id: "spec_review",           target_node_id: "approve_spec_and_plan", condition: "need_human_decision:review_conflict" },
     { source_node_id: "spec_review",           target_node_id: "approve_spec_and_plan", condition: "need_human_decision:uncertainty" },
     { source_node_id: "spec_review",           target_node_id: "spec_review",           condition: "revised" },
     { source_node_id: "approve_spec_and_plan", target_node_id: "implement",             condition: "approved" },
@@ -125,7 +125,7 @@ const FEATURE_DEVELOPMENT: FixtureSnapshot = {
     { source_node_id: "implement",    target_node_id: "code_review",  condition: null },
     { source_node_id: "code_review",  target_node_id: "code_review",  condition: "revised" },
     { source_node_id: "code_review",  target_node_id: "test",         condition: "approved" },
-    { source_node_id: "code_review",  target_node_id: "test",         condition: "need_human_decision:iteration_cap" },
+    { source_node_id: "code_review",  target_node_id: "test",         condition: "need_human_decision:review_conflict" },
     { source_node_id: "code_review",  target_node_id: "test",         condition: "need_human_decision:uncertainty" },
     { source_node_id: "test",         target_node_id: "final_approval", condition: "passed" },
     { source_node_id: "test",         target_node_id: "implement",      condition: "failed" },
@@ -174,9 +174,9 @@ export const DAG_FIXTURES = {
     // Decisions reflect the path actually taken to reach the awaiting_human
     // state on Final Approval: spec→review→implement→code_review→test→final.
     draft_spec_and_plan: "completed",
-    // Use need_human_decision:iteration_cap so the escalation edge to
+    // Use need_human_decision:review_conflict so the escalation edge to
     // approve_spec_and_plan highlights correctly.
-    spec_review: { status: "completed", decision: "need_human_decision:iteration_cap" },
+    spec_review: { status: "completed", decision: "need_human_decision:review_conflict" },
     approve_spec_and_plan: { status: "completed", decision: "approved" },
     // Implement → code_review is unconditional; no decision value needed.
     implement: { status: "completed", decision: null },

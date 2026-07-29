@@ -115,7 +115,6 @@ public class InternalRunService {
         exec.setTemplateNodeId(req.templateNodeId());
         exec.setGraphVersion(req.graphVersion());
         exec.setIteration(req.iteration() > 0 ? req.iteration() : 1);
-        exec.setIterationCapEpochStart(req.iterationCapEpochStart() > 0 ? req.iterationCapEpochStart() : 1);
         exec.setLabel(req.label());
         exec = execRepo.save(exec);
 
@@ -508,23 +507,6 @@ public class InternalRunService {
                 .findFirst()
                 .orElse(decision);
 
-        // Cap override: if effective iteration has reached the cap, silently rewrite
-        // any non-approved decision to need_human_decision:iteration_cap.
-        // The stored decision will differ from the originally submitted value;
-        // operators can detect this by comparing the node execution record against
-        // the agent's last output in the run history.
-        Integer cap = findIterationCap(dws.snapshot(), exec.getTemplateNodeId());
-        if (cap != null
-                && cap > 0 // defensive: cap=0 is nonsensical and would fire on every iteration
-                && !canonical.equalsIgnoreCase("approved")
-                && validConditions.contains("need_human_decision:iteration_cap")) {
-            int epochStart = exec.getIterationCapEpochStart() > 0 ? exec.getIterationCapEpochStart() : 1;
-            int effectiveIteration = exec.getIteration() - epochStart + 1;
-            if (effectiveIteration >= cap) {
-                canonical = "need_human_decision:iteration_cap";
-            }
-        }
-
         exec.setDecision(canonical);
         execRepo.save(exec);
 
@@ -561,24 +543,6 @@ public class InternalRunService {
         } catch (Exception e) {
             throw new RuntimeException("Failed to build graph snapshot", e);
         }
-    }
-
-    private Integer findIterationCap(com.fasterxml.jackson.databind.JsonNode snapshot, UUID templateNodeId) {
-        var nodes = snapshot.get("nodes");
-        if (nodes == null) {
-            return null;
-        }
-        for (var n : nodes) {
-            if (!n.has("template_node_id")
-                    || !n.get("template_node_id").asText().equals(templateNodeId.toString())) {
-                continue;
-            }
-            if (n.has("iteration_cap") && !n.get("iteration_cap").isNull()) {
-                return n.get("iteration_cap").asInt();
-            }
-            return null;
-        }
-        return null;
     }
 
     public String getDecision(UUID runId, UUID nodeExecId) {
