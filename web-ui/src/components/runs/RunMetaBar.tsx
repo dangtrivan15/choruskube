@@ -68,6 +68,30 @@ export default function RunMetaBar({ run }: RunMetaBarProps) {
         <div className="flex flex-wrap items-center gap-x-6 gap-y-1.5">
           <div className="flex items-center gap-1.5">
             <span className="text-muted-foreground">Roadmap:</span>
+            {task.epicId && (
+              <span className="flex items-center gap-1.5" data-testid="run-meta-bar-breadcrumb">
+                <Link
+                  to={`/roadmap/epics/${task.epicId}`}
+                  className="text-primary hover:underline"
+                  data-testid="run-meta-bar-epic-link"
+                >
+                  {task.epicTitle}
+                </Link>
+                {task.storyId && (
+                  <>
+                    <span className="text-muted-foreground">/</span>
+                    <Link
+                      to={`/roadmap/epics/${task.epicId}/stories/${task.storyId}`}
+                      className="text-primary hover:underline"
+                      data-testid="run-meta-bar-story-link"
+                    >
+                      {task.storyTitle}
+                    </Link>
+                  </>
+                )}
+                <span className="text-muted-foreground">/</span>
+              </span>
+            )}
             <Link
               to={`/tasks/${task.id}`}
               className="font-medium text-primary hover:underline"

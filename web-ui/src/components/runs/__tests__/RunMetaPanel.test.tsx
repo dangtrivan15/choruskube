@@ -32,6 +32,10 @@ function makeTask(overrides: Partial<RunTaskSummary> = {}): RunTaskSummary {
     title: "Add dark mode",
     status: "backlog",
     softwareProject: { id: "sp-1", type: "git_repo", name: "my-repo" },
+    storyId: null,
+    storyTitle: null,
+    epicId: null,
+    epicTitle: null,
     ...overrides,
   };
 }
@@ -110,5 +114,48 @@ describe("RunMetaPanel", () => {
       <RunMetaPanel run={makeRun({ promptText: "Some feature request" })} />
     );
     expect(screen.queryByText("No run metadata available.")).not.toBeInTheDocument();
+  });
+
+  it("renders the Epic/Story/Task breadcrumb for a task-triggered run with a full chain", () => {
+    const task = makeTask({
+      id: "task-1",
+      title: "Add dark mode",
+      epicId: "epic-1",
+      epicTitle: "UI Overhaul",
+      storyId: "story-1",
+      storyTitle: "Theming",
+    });
+    renderWithProviders(<RunMetaPanel run={makeRun({ task })} />);
+
+    const breadcrumb = screen.getByTestId("run-meta-panel-breadcrumb");
+    expect(breadcrumb).toHaveTextContent("UI Overhaul");
+    expect(breadcrumb).toHaveTextContent("Theming");
+
+    const epicLink = screen.getByTestId("run-meta-panel-epic-link");
+    expect(epicLink).toHaveAttribute("href", "/roadmap/epics/epic-1");
+    const storyLink = screen.getByTestId("run-meta-panel-story-link");
+    expect(storyLink).toHaveAttribute("href", "/roadmap/epics/epic-1/stories/story-1");
+  });
+
+  it("degrades gracefully when a task has an Epic but no resolvable Story", () => {
+    const task = makeTask({
+      id: "task-1",
+      title: "Add dark mode",
+      epicId: "epic-1",
+      epicTitle: "UI Overhaul",
+      storyId: null,
+      storyTitle: null,
+    });
+    renderWithProviders(<RunMetaPanel run={makeRun({ task })} />);
+
+    expect(screen.getByTestId("run-meta-panel-breadcrumb")).toHaveTextContent("UI Overhaul");
+    expect(screen.queryByTestId("run-meta-panel-story-link")).toBeNull();
+    expect(screen.getByTestId("run-meta-panel-task-link")).toHaveTextContent("Add dark mode");
+  });
+
+  it("renders no breadcrumb for a manual run (task is null)", () => {
+    renderWithProviders(<RunMetaPanel run={makeRun({ task: null })} />);
+
+    expect(screen.queryByTestId("run-meta-panel-breadcrumb")).toBeNull();
   });
 });

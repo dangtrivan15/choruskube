@@ -35,6 +35,18 @@ RUN_LOG_PATH=$(jq -r '.run_log_path // empty' "$CONFIG_FILE")
 export API_SERVER_URL=$(jq -r '.api_server_url // empty' "$CONFIG_FILE")
 NEED_DECISION=$(jq -r '.need_decision // false' "$CONFIG_FILE")
 
+# Triggering Task's identity (Decision 1/2/3) — present only for runs started from
+# a Task. Story/Epic may independently be empty if that level no longer resolves
+# (Caveat 1) even though TASK_ID is set. update-task-status/get-roadmap-graph
+# default their --task-id/--epic-id flags from these when the caller omits them
+# (Decision 4).
+export TASK_ID=$(jq -r '.task_context.task_id // empty' "$CONFIG_FILE")
+export TASK_TITLE=$(jq -r '.task_context.task_title // empty' "$CONFIG_FILE")
+export STORY_ID=$(jq -r '.task_context.story_id // empty' "$CONFIG_FILE")
+export STORY_TITLE=$(jq -r '.task_context.story_title // empty' "$CONFIG_FILE")
+export EPIC_ID=$(jq -r '.task_context.epic_id // empty' "$CONFIG_FILE")
+export EPIC_TITLE=$(jq -r '.task_context.epic_title // empty' "$CONFIG_FILE")
+
 # JOB_SECRET is injected via K8s Secret as an environment variable
 if [ -z "${JOB_SECRET:-}" ]; then
   echo "ERROR: JOB_SECRET environment variable not set"
@@ -237,6 +249,22 @@ elif [ -n "$REPO_URL" ]; then
     cd /workspace
   fi
   echo "Repo ready at /workspace/repo/"
+fi
+
+# Narrate the triggering Task's identity into the system prompt (Decision 7) —
+# exporting TASK_ID/STORY_ID/EPIC_ID above makes the roadmap CLI tools work, but
+# an env var the model never learns about is operationally invisible. Tell it
+# plainly, in addition to (not instead of) the environment variables.
+if [ -n "$TASK_ID" ]; then
+  SYSTEM_PROMPT="${SYSTEM_PROMPT}
+
+## Triggering Task
+This run was started from Task: ${TASK_TITLE}${STORY_TITLE:+
+Story: ${STORY_TITLE}}${EPIC_TITLE:+
+Epic: ${EPIC_TITLE}}
+
+You can call \`update-task-status\` and \`get-roadmap-graph\` without passing
+--task-id/--epic-id — they default to this run's Task/Epic automatically."
 fi
 export SYSTEM_PROMPT
 

@@ -20,6 +20,15 @@
 #   roadmap_status_update  Fetch an Epic's Roadmap Graph View, then report a Task's outcome
 #                          via update-task-status (Decision 1/3/4) — same contract a real
 #                          agent uses; requires --epic-id and --task-id
+#   roadmap_status_update_env_default  Same contract as roadmap_status_update, but calls
+#                          get-roadmap-graph/update-task-status with NO --epic-id/--task-id
+#                          flags at all, proving the $EPIC_ID/$TASK_ID environment-default
+#                          path a task-triggered run's entrypoint.sh exports actually works
+#                          end to end; requires this run to have been started from a Task
+#   roadmap_status_update_missing_task_id  Negative-path counterpart: simulates a
+#                          manually-started run (unsets $TASK_ID) and asserts a bare
+#                          update-task-status call exits 1 with a clear message instead of
+#                          sending a malformed/empty id
 #   roadmap_candidates     Analyzer stand-in for the Roadmap Provisioner's structured
 #                          candidate-breakdown gate (Decision 1): writes both
 #                          roadmap_analysis.md and roadmap_candidates.json, matching the
@@ -334,6 +343,63 @@ case "$SCENARIO" in
     exit 0
     ;;
 
+  roadmap_status_update_env_default)
+    # Exercises Decision 4's environment-default path: get-roadmap-graph and
+    # update-task-status are called with NO --epic-id/--task-id flags at all,
+    # relying purely on $TASK_ID/$EPIC_ID as ordinary inherited environment.
+    # mock-agent.sh runs as entrypoint.sh's $COMMAND (script executor), after
+    # entrypoint.sh's unconditional config-parsing/export block already ran, so
+    # it inherits TASK_ID/EPIC_ID for free exactly like RUN_ID/API_SERVER_URL
+    # today — no independent config.json parsing needed here (Caveat 4).
+    echo "Mock agent: roadmap_status_update_env_default scenario"
+    if [ -z "${TASK_ID:-}" ]; then
+      echo "ERROR: roadmap_status_update_env_default requires \$TASK_ID to be set (start this run from a Task)" >&2
+      exit 1
+    fi
+
+    GRAPH=$(get-roadmap-graph)
+    if [ -n "${EPIC_ID:-}" ] && ! echo "$GRAPH" | jq -e --arg id "$TASK_ID" '.tasks[] | select(.id == $id)' > /dev/null; then
+      echo "ERROR: Task $TASK_ID not found in Epic $EPIC_ID's graph" >&2
+      exit 1
+    fi
+
+    update-task-status --status done --note "Completed by mock agent (env default)"
+
+    write_artifact "result.txt" "Task $TASK_ID marked done via update-task-status (no --task-id flag)"
+    echo "Mock agent: roadmap_status_update_env_default completed"
+    exit 0
+    ;;
+
+  roadmap_status_update_missing_task_id)
+    # Negative path backing §6's Behavioral claim: $TASK_ID unset (manual run)
+    # plus a bare update-task-status call must exit non-zero with a clear
+    # message, not send a malformed/empty id. Unsets $TASK_ID even if
+    # entrypoint.sh happened to export one, so this scenario always simulates
+    # a manually-started run regardless of how it was launched.
+    echo "Mock agent: roadmap_status_update_missing_task_id scenario"
+    unset TASK_ID || true
+
+    set +e
+    ERROR_OUTPUT=$(update-task-status --status done 2>&1)
+    EXIT_CODE=$?
+    set -e
+
+    if [ "$EXIT_CODE" -eq 0 ]; then
+      echo "ERROR: update-task-status succeeded with no --task-id and \$TASK_ID unset; expected exit 1" >&2
+      echo "$ERROR_OUTPUT" >&2
+      exit 1
+    fi
+    if ! echo "$ERROR_OUTPUT" | grep -q "no task id available"; then
+      echo "ERROR: update-task-status failed as expected (exit $EXIT_CODE) but without the 'no task id available' message:" >&2
+      echo "$ERROR_OUTPUT" >&2
+      exit 1
+    fi
+
+    write_artifact "result.txt" "update-task-status correctly rejected missing --task-id/\$TASK_ID"
+    echo "Mock agent: roadmap_status_update_missing_task_id completed (update-task-status correctly failed)"
+    exit 0
+    ;;
+
   roadmap_candidates)
     # Analyzer stand-in for the Roadmap Provisioner's structured candidate-breakdown gate
     # (Decision 1). Writes the same two artifacts BaseRoadmapProvisionerSeeder's real
@@ -462,13 +528,13 @@ JSON
   "")
     echo "ERROR: No scenario specified" >&2
     echo "Usage: mock-agent.sh <scenario> [options]" >&2
-    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, live_chat, multi_repo_pr, roadmap_status_update, roadmap_candidates, single_repo_claude_md, dind_isolation, dind_network_connectivity, many_artifacts" >&2
+    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, live_chat, multi_repo_pr, roadmap_status_update, roadmap_status_update_env_default, roadmap_status_update_missing_task_id, roadmap_candidates, single_repo_claude_md, dind_isolation, dind_network_connectivity, many_artifacts" >&2
     exit 1
     ;;
 
   *)
     echo "ERROR: Unknown scenario '$SCENARIO'" >&2
-    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, live_chat, multi_repo_pr, roadmap_status_update, roadmap_candidates, single_repo_claude_md, dind_isolation, dind_network_connectivity, many_artifacts" >&2
+    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, live_chat, multi_repo_pr, roadmap_status_update, roadmap_status_update_env_default, roadmap_status_update_missing_task_id, roadmap_candidates, single_repo_claude_md, dind_isolation, dind_network_connectivity, many_artifacts" >&2
     exit 1
     ;;
 esac

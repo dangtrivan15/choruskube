@@ -4,7 +4,13 @@ import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 import com.choruskube.core.dto.GraphRuntimeSnapshotResponse;
+import com.choruskube.core.model.Epic;
+import com.choruskube.core.model.Story;
+import com.choruskube.core.model.Task;
 import com.choruskube.core.model.WorkflowRun;
+import com.choruskube.core.repository.EpicRepository;
+import com.choruskube.core.repository.StoryRepository;
+import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.Optional;
@@ -23,6 +29,15 @@ class InternalRunServiceGraphRuntimeTest {
 
     @Mock
     private GraphSnapshotBuilder snapshotBuilder;
+
+    @Mock
+    private StoryRepository storyRepo;
+
+    @Mock
+    private TaskRepository taskRepo;
+
+    @Mock
+    private EpicRepository epicRepo;
 
     private ObjectMapper objectMapper = new ObjectMapper();
     private InternalRunService service;
@@ -107,7 +122,9 @@ class InternalRunServiceGraphRuntimeTest {
                 null,
                 null,
                 null,
-                null,
+                storyRepo,
+                taskRepo,
+                epicRepo,
                 null,
                 new DecisionOptionsResolver());
     }
@@ -233,5 +250,94 @@ class InternalRunServiceGraphRuntimeTest {
 
         // SNAPSHOT_JSON has no repos array → should default to empty list
         assertThat(response.repos()).isEmpty();
+    }
+
+    // -----------------------------------------------------------------------
+    // taskContext — resolved live off run.getTaskId() -> task.storyId -> story.epicId
+    // (Decision 1), broadcast into the snapshot for every node to consume (Decision 3).
+    // -----------------------------------------------------------------------
+
+    @Test
+    void getGraphRuntimeSnapshot_noTaskLinked_taskContextIsNull() throws Exception {
+        UUID runId = UUID.randomUUID();
+        WorkflowRun run = new WorkflowRun();
+        when(runRepo.findById(runId)).thenReturn(Optional.of(run));
+        when(snapshotBuilder.buildSnapshotForRun(run)).thenReturn(SNAPSHOT_JSON);
+
+        GraphRuntimeSnapshotResponse response = service.getGraphRuntimeSnapshot(runId);
+
+        assertThat(response.taskContext()).isNull();
+    }
+
+    @Test
+    void getGraphRuntimeSnapshot_taskTriggeredRun_populatesFullTaskContext() throws Exception {
+        UUID runId = UUID.randomUUID();
+        UUID taskId = UUID.randomUUID();
+        UUID storyId = UUID.randomUUID();
+        UUID epicId = UUID.randomUUID();
+
+        WorkflowRun run = new WorkflowRun();
+        run.setTaskId(taskId);
+        when(runRepo.findById(runId)).thenReturn(Optional.of(run));
+        when(snapshotBuilder.buildSnapshotForRun(run)).thenReturn(SNAPSHOT_JSON);
+
+        Task task = new Task();
+        task.setId(taskId);
+        task.setTitle("Wire up task_context");
+        task.setStoryId(storyId);
+
+        Story story = new Story();
+        story.setId(storyId);
+        story.setTitle("Agent identity threading");
+        story.setEpicId(epicId);
+
+        Epic epic = new Epic();
+        epic.setId(epicId);
+        epic.setTitle("Roadmap-aware agents");
+
+        when(taskRepo.findById(taskId)).thenReturn(Optional.of(task));
+        when(storyRepo.findById(storyId)).thenReturn(Optional.of(story));
+        when(epicRepo.findById(epicId)).thenReturn(Optional.of(epic));
+
+        GraphRuntimeSnapshotResponse response = service.getGraphRuntimeSnapshot(runId);
+
+        assertThat(response.taskContext()).isNotNull();
+        GraphRuntimeSnapshotResponse.TaskContext taskContext = response.taskContext();
+        assertThat(taskContext.taskId()).isEqualTo(taskId);
+        assertThat(taskContext.taskTitle()).isEqualTo("Wire up task_context");
+        assertThat(taskContext.storyId()).isEqualTo(storyId);
+        assertThat(taskContext.storyTitle()).isEqualTo("Agent identity threading");
+        assertThat(taskContext.epicId()).isEqualTo(epicId);
+        assertThat(taskContext.epicTitle()).isEqualTo("Roadmap-aware agents");
+    }
+
+    @Test
+    void getGraphRuntimeSnapshot_taskWithUnresolvableStory_partialTaskContextNotException() throws Exception {
+        UUID runId = UUID.randomUUID();
+        UUID taskId = UUID.randomUUID();
+        UUID storyId = UUID.randomUUID();
+
+        WorkflowRun run = new WorkflowRun();
+        run.setTaskId(taskId);
+        when(runRepo.findById(runId)).thenReturn(Optional.of(run));
+        when(snapshotBuilder.buildSnapshotForRun(run)).thenReturn(SNAPSHOT_JSON);
+
+        Task task = new Task();
+        task.setId(taskId);
+        task.setTitle("Task with deleted story");
+        task.setStoryId(storyId);
+
+        when(taskRepo.findById(taskId)).thenReturn(Optional.of(task));
+        when(storyRepo.findById(storyId)).thenReturn(Optional.empty());
+
+        GraphRuntimeSnapshotResponse response = service.getGraphRuntimeSnapshot(runId);
+
+        assertThat(response.taskContext()).isNotNull();
+        GraphRuntimeSnapshotResponse.TaskContext taskContext = response.taskContext();
+        assertThat(taskContext.taskId()).isEqualTo(taskId);
+        assertThat(taskContext.storyId()).isNull();
+        assertThat(taskContext.storyTitle()).isNull();
+        assertThat(taskContext.epicId()).isNull();
+        assertThat(taskContext.epicTitle()).isNull();
     }
 }

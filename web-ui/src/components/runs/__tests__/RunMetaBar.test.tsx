@@ -33,6 +33,10 @@ function makeTask(overrides: Partial<RunTaskSummary> = {}): RunTaskSummary {
     title: "Add dark mode",
     status: "backlog",
     softwareProject: { id: "sp-1", type: "git_repo", name: "my-repo" },
+    storyId: null,
+    storyTitle: null,
+    epicId: null,
+    epicTitle: null,
     ...overrides,
   };
 }
@@ -194,5 +198,48 @@ describe("RunMetaBar", () => {
 
     // The task link exists alongside it
     expect(screen.getByTestId("run-meta-bar-task-link")).toHaveTextContent("My Feature");
+  });
+
+  it("renders the Epic/Story/Task breadcrumb for a task-triggered run with a full chain", () => {
+    const task = makeTask({
+      id: "task-1",
+      title: "Add dark mode",
+      epicId: "epic-1",
+      epicTitle: "UI Overhaul",
+      storyId: "story-1",
+      storyTitle: "Theming",
+    });
+    renderWithProviders(<RunMetaBar run={makeRun({ task })} />);
+
+    const breadcrumb = screen.getByTestId("run-meta-bar-breadcrumb");
+    expect(breadcrumb).toHaveTextContent("UI Overhaul");
+    expect(breadcrumb).toHaveTextContent("Theming");
+
+    const epicLink = screen.getByTestId("run-meta-bar-epic-link");
+    expect(epicLink).toHaveAttribute("href", "/roadmap/epics/epic-1");
+    const storyLink = screen.getByTestId("run-meta-bar-story-link");
+    expect(storyLink).toHaveAttribute("href", "/roadmap/epics/epic-1/stories/story-1");
+  });
+
+  it("degrades gracefully when a task has an Epic but no resolvable Story", () => {
+    const task = makeTask({
+      id: "task-1",
+      title: "Add dark mode",
+      epicId: "epic-1",
+      epicTitle: "UI Overhaul",
+      storyId: null,
+      storyTitle: null,
+    });
+    renderWithProviders(<RunMetaBar run={makeRun({ task })} />);
+
+    expect(screen.getByTestId("run-meta-bar-breadcrumb")).toHaveTextContent("UI Overhaul");
+    expect(screen.queryByTestId("run-meta-bar-story-link")).toBeNull();
+    expect(screen.getByTestId("run-meta-bar-task-link")).toHaveTextContent("Add dark mode");
+  });
+
+  it("renders no breadcrumb for a manual run (task is null)", () => {
+    renderWithProviders(<RunMetaBar run={makeRun({ task: null, promptText: "Do a thing" })} />);
+
+    expect(screen.queryByTestId("run-meta-bar-breadcrumb")).toBeNull();
   });
 });

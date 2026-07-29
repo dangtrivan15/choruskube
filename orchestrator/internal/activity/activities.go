@@ -172,6 +172,16 @@ type ExecuteAINodeFromSnapshotParams struct {
 	OutputSpec      string                   // JSON string describing required output files; "" or "{}" = no enforcement
 	Repos           []map[string]interface{} `json:"repos,omitempty"`
 	Model           string                   `json:"model,omitempty"` // optional override; empty = agent default
+	// Triggering Task's identity (Decision 1/2/3), broadcast into config.json's task_context
+	// for every node execution in a task-triggered run. TaskID == "" means the run wasn't
+	// started from a Task; StoryID/EpicID may independently be "" if that level no longer
+	// resolves (Caveat 1) even though TaskID is set.
+	TaskID     string
+	TaskTitle  string
+	StoryID    string
+	StoryTitle string
+	EpicID     string
+	EpicTitle  string
 }
 
 func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params ExecuteAINodeFromSnapshotParams) error {
@@ -270,6 +280,16 @@ func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params Execu
 	}
 	if params.Model != "" {
 		configJSON["model"] = params.Model
+	}
+	if params.TaskID != "" {
+		configJSON["task_context"] = map[string]interface{}{
+			"task_id":     params.TaskID,
+			"task_title":  params.TaskTitle,
+			"story_id":    params.StoryID,
+			"story_title": params.StoryTitle,
+			"epic_id":     params.EpicID,
+			"epic_title":  params.EpicTitle,
+		}
 	}
 
 	// Delegate workload creation to the API server.

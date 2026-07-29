@@ -111,6 +111,57 @@ test.describe("Run Lifecycle", () => {
       await expect(runMonitorPage.runStatus).toBeVisible();
     });
 
+    test("shows Epic -> Story -> Task breadcrumb for a run started from a Task", async ({
+      runMonitorPage,
+      api,
+    }) => {
+      const repos = await api.listGitRepos();
+      if (repos.content.length === 0) {
+        test.skip();
+        return;
+      }
+
+      // Build a real Epic -> Story -> Task chain (same fixture-building pieces
+      // already proven by roadmap.spec.ts / roadmap-graph.spec.ts), then start
+      // the run from the Task rather than a manual/template run — this proves
+      // task_context (Decision 1/2/3) actually reaches the run detail page end
+      // to end, not just the RunMetaPanel unit tests.
+      const uniqueTitle = `E2E Breadcrumb ${Date.now()}`;
+      const epic = await api.createEpic({
+        title: uniqueTitle,
+        description: "Testing run breadcrumb",
+        softwareProjectId: repos.content[0].id,
+      });
+      const story = await api.createStory(epic.id, {
+        title: "Breadcrumb story",
+        description: "desc",
+      });
+      const task = await api.createTask(story.id, {
+        title: "Breadcrumb task",
+        description: "desc",
+      });
+
+      const started = await api.startTask(task.id);
+      expect(started.latestRunId).not.toBeNull();
+
+      // startTask's response already carries the new run's id — go straight to
+      // the run detail page, no UI click-through or status polling needed.
+      await runMonitorPage.goto(started.latestRunId!);
+
+      const breadcrumb = runMonitorPage.page.getByTestId("run-meta-panel-breadcrumb");
+      await expect(breadcrumb).toBeVisible();
+      await expect(breadcrumb).toContainText(uniqueTitle);
+      await expect(breadcrumb).toContainText("Breadcrumb story");
+
+      // No cleanup here (unlike roadmap.spec.ts / roadmap-graph.spec.ts fixtures):
+      // starting the Task above has already moved it out of "backlog", and
+      // DefaultEpicService#delete deliberately refuses to delete an Epic with any
+      // started descendant Task ("Can only delete an Epic while all of its Tasks
+      // are still in backlog") — that's intentional, to preserve run history. The
+      // `uniqueTitle` timestamp keeps this fixture from colliding with other runs
+      // of this spec, so leaving it behind is safe.
+    });
+
     test("DAG visualization renders nodes", async ({ runMonitorPage, api }) => {
       const template = await api.getTemplateByName("e2e-linear-pipeline");
 

@@ -112,6 +112,8 @@ class RunServiceRoadmapMaterializationTest {
                 null,
                 null,
                 null,
+                null, // storyRepo
+                null, // epicRepo
                 null,
                 null,
                 new com.choruskube.core.scope.NoOpScopeProvider(),

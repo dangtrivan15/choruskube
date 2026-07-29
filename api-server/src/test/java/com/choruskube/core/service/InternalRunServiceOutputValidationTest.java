@@ -58,6 +58,8 @@ class InternalRunServiceOutputValidationTest {
                 templateNodeRepo,
                 nodeDefinitionRepo,
                 null,
+                null, // taskRepo
+                null, // epicRepo
                 null,
                 new DecisionOptionsResolver());
     }

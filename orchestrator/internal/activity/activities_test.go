@@ -369,6 +369,124 @@ func TestExecuteAINodeFromSnapshot_NoSystemPromptInConfigJson(t *testing.T) {
 	assert.Equal(t, "runs/"+runID.String()+"/run_log.md", receivedConfigJSON["run_log_path"])
 }
 
+func TestExecuteAINodeFromSnapshot_TaskContextInConfigJson(t *testing.T) {
+	var receivedConfigJSON map[string]interface{}
+
+	runID := uuid.New()
+	taskID := uuid.New()
+	storyID := uuid.New()
+	epicID := uuid.New()
+
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/internal/workloads/"):
+			var req map[string]interface{}
+			json.NewDecoder(r.Body).Decode(&req)
+			if cj, ok := req["configJson"].(map[string]interface{}); ok {
+				receivedConfigJSON = cj
+			}
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"executionHandle": "agent-abc12345",
+				"jobSecretHash":   "hash123",
+			})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/logs"):
+			w.WriteHeader(http.StatusCreated)
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer apiServer.Close()
+
+	client := apiclient.NewClient(apiServer.URL)
+	cfg := &config.Config{
+		Callback: config.CallbackConfig{URL: "http://callback:9090/api/v1/callback"},
+	}
+
+	acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
+
+	params := ExecuteAINodeFromSnapshotParams{
+		NodeExecutionID: uuid.New(),
+		RunID:           runID,
+		TemplateNodeID:  uuid.New(),
+		Label:           "implement",
+		ExecutorType:    "ai",
+		PromptTemplate:  "Do the thing",
+		Variables:       map[string]string{"run.id": runID.String()},
+		RunLogPath:      "runs/" + runID.String() + "/run_log.md",
+		TaskID:          taskID.String(),
+		TaskTitle:       "Wire up task_context",
+		StoryID:         storyID.String(),
+		StoryTitle:      "Agent identity threading",
+		EpicID:          epicID.String(),
+		EpicTitle:       "Roadmap-aware agents",
+	}
+
+	err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+	assert.ErrorIs(t, err, activity.ErrResultPending)
+
+	taskContext, ok := receivedConfigJSON["task_context"].(map[string]interface{})
+	require.True(t, ok, "task_context should be present in config.json when TaskID is set")
+	assert.Equal(t, taskID.String(), taskContext["task_id"])
+	assert.Equal(t, "Wire up task_context", taskContext["task_title"])
+	assert.Equal(t, storyID.String(), taskContext["story_id"])
+	assert.Equal(t, "Agent identity threading", taskContext["story_title"])
+	assert.Equal(t, epicID.String(), taskContext["epic_id"])
+	assert.Equal(t, "Roadmap-aware agents", taskContext["epic_title"])
+}
+
+func TestExecuteAINodeFromSnapshot_NoTaskContextWhenTaskIDEmpty(t *testing.T) {
+	var receivedConfigJSON map[string]interface{}
+
+	runID := uuid.New()
+
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/internal/workloads/"):
+			var req map[string]interface{}
+			json.NewDecoder(r.Body).Decode(&req)
+			if cj, ok := req["configJson"].(map[string]interface{}); ok {
+				receivedConfigJSON = cj
+			}
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"executionHandle": "agent-abc12345",
+				"jobSecretHash":   "hash123",
+			})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/logs"):
+			w.WriteHeader(http.StatusCreated)
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer apiServer.Close()
+
+	client := apiclient.NewClient(apiServer.URL)
+	cfg := &config.Config{
+		Callback: config.CallbackConfig{URL: "http://callback:9090/api/v1/callback"},
+	}
+
+	acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
+
+	// Manually-started run: no TaskID set at all.
+	params := ExecuteAINodeFromSnapshotParams{
+		NodeExecutionID: uuid.New(),
+		RunID:           runID,
+		TemplateNodeID:  uuid.New(),
+		Label:           "implement",
+		ExecutorType:    "ai",
+		PromptTemplate:  "Do the thing",
+		Variables:       map[string]string{"run.id": runID.String()},
+		RunLogPath:      "runs/" + runID.String() + "/run_log.md",
+	}
+
+	err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+	assert.ErrorIs(t, err, activity.ErrResultPending)
+
+	_, hasTaskContext := receivedConfigJSON["task_context"]
+	assert.False(t, hasTaskContext, "task_context should be absent from config.json when TaskID is empty")
+}
+
 func TestExecuteAINodeFromSnapshot_IterationInConfigJson(t *testing.T) {
 	var receivedConfigJSON map[string]interface{}
 

@@ -8,10 +8,12 @@ import com.choruskube.core.config.SingleTenant;
 import com.choruskube.core.dto.RunResponse;
 import com.choruskube.core.dto.RunTaskSummary;
 import com.choruskube.core.dto.SignalRequest;
+import com.choruskube.core.model.Epic;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.GraphTemplate;
 import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.RepoGroup;
+import com.choruskube.core.model.Story;
 import com.choruskube.core.model.Task;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.NodeExecutionStatus;
@@ -88,6 +90,12 @@ class RunServiceTest {
     private TaskRepository taskRepo;
 
     @Mock
+    private StoryRepository storyRepo;
+
+    @Mock
+    private EpicRepository epicRepo;
+
+    @Mock
     private SoftwareProjectRepository softwareProjectRepo;
 
     @Mock
@@ -130,6 +138,8 @@ class RunServiceTest {
                 null,
                 null,
                 taskRepo,
+                storyRepo,
+                epicRepo,
                 mock(ArtifactResolutionService.class),
                 mock(ApplicationEventPublisher.class),
                 new com.choruskube.core.scope.NoOpScopeProvider(),
@@ -497,6 +507,102 @@ class RunServiceTest {
         assertThat(response.task()).isNotNull();
         assertThat(response.task().id()).isEqualTo(taskId);
         assertThat(response.task().softwareProject()).isNull();
+    }
+
+    @Test
+    void getRun_taskFoundWithStoryAndEpic_returnsFullLineage() {
+        WorkflowRun run = stubRunForGetRun();
+
+        UUID taskId = UUID.randomUUID();
+        UUID storyId = UUID.randomUUID();
+        UUID epicId = UUID.randomUUID();
+        run.setTaskId(taskId);
+
+        Task task = new Task();
+        task.setId(taskId);
+        task.setTitle("Dark mode");
+        task.setStatus(WorkItemStatus.in_progress);
+        task.setStoryId(storyId);
+
+        Story story = new Story();
+        story.setId(storyId);
+        story.setTitle("Theming");
+        story.setEpicId(epicId);
+
+        Epic epic = new Epic();
+        epic.setId(epicId);
+        epic.setTitle("UI Overhaul");
+
+        when(taskRepo.findById(taskId)).thenReturn(Optional.of(task));
+        when(storyRepo.findById(storyId)).thenReturn(Optional.of(story));
+        when(epicRepo.findById(epicId)).thenReturn(Optional.of(epic));
+
+        RunResponse response = service.getRun(runId);
+
+        RunTaskSummary summary = response.task();
+        assertThat(summary.storyId()).isEqualTo(storyId);
+        assertThat(summary.storyTitle()).isEqualTo("Theming");
+        assertThat(summary.epicId()).isEqualTo(epicId);
+        assertThat(summary.epicTitle()).isEqualTo("UI Overhaul");
+    }
+
+    @Test
+    void getRun_taskFoundWithStoryButEpicUnresolvable_epicIsNull() {
+        WorkflowRun run = stubRunForGetRun();
+
+        UUID taskId = UUID.randomUUID();
+        UUID storyId = UUID.randomUUID();
+        UUID epicId = UUID.randomUUID();
+        run.setTaskId(taskId);
+
+        Task task = new Task();
+        task.setId(taskId);
+        task.setTitle("Orphaned epic");
+        task.setStatus(WorkItemStatus.backlog);
+        task.setStoryId(storyId);
+
+        Story story = new Story();
+        story.setId(storyId);
+        story.setTitle("Some story");
+        story.setEpicId(epicId);
+
+        when(taskRepo.findById(taskId)).thenReturn(Optional.of(task));
+        when(storyRepo.findById(storyId)).thenReturn(Optional.of(story));
+        when(epicRepo.findById(epicId)).thenReturn(Optional.empty());
+
+        RunResponse response = service.getRun(runId);
+
+        RunTaskSummary summary = response.task();
+        assertThat(summary.storyId()).isEqualTo(storyId);
+        assertThat(summary.storyTitle()).isEqualTo("Some story");
+        assertThat(summary.epicId()).isNull();
+        assertThat(summary.epicTitle()).isNull();
+    }
+
+    @Test
+    void getRun_taskFoundButStoryUnresolvable_storyAndEpicNull() {
+        WorkflowRun run = stubRunForGetRun();
+
+        UUID taskId = UUID.randomUUID();
+        UUID storyId = UUID.randomUUID();
+        run.setTaskId(taskId);
+
+        Task task = new Task();
+        task.setId(taskId);
+        task.setTitle("Story deleted");
+        task.setStatus(WorkItemStatus.backlog);
+        task.setStoryId(storyId);
+
+        when(taskRepo.findById(taskId)).thenReturn(Optional.of(task));
+        when(storyRepo.findById(storyId)).thenReturn(Optional.empty());
+
+        RunResponse response = service.getRun(runId);
+
+        RunTaskSummary summary = response.task();
+        assertThat(summary.storyId()).isNull();
+        assertThat(summary.storyTitle()).isNull();
+        assertThat(summary.epicId()).isNull();
+        assertThat(summary.epicTitle()).isNull();
     }
 
     // -----------------------------------------------------------------------
