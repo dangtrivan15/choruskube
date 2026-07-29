@@ -120,24 +120,6 @@ class V1TemplateSeederTest extends BaseTest {
     }
 
     @Test
-    void reviewNodeDefinitionsHaveIterationCaps() {
-        // v23 self-iterating loops must terminate. Caps live on NodeDefinition because they
-        // are a property of the reviewer's concept (Spec Review / Code Review), not the
-        // template wiring. getValidDecisions reads the cap from the snapshot and restricts
-        // the agent's choices to need_human_decision:iteration_cap once the cap is hit.
-        var specReview = nodeDefRepo.findAll().stream()
-                .filter(nd -> "Spec Review".equals(nd.getName()))
-                .findFirst()
-                .orElseThrow();
-        var codeReview = nodeDefRepo.findAll().stream()
-                .filter(nd -> "Code Review".equals(nd.getName()))
-                .findFirst()
-                .orElseThrow();
-        assertThat(specReview.getIterationCap()).isEqualTo(5);
-        assertThat(codeReview.getIterationCap()).isEqualTo(5);
-    }
-
-    @Test
     void specReviewSelfIteratesAndEscalatesToHumanGate() {
         var template = templateRepo
                 .findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION)
@@ -168,7 +150,7 @@ class V1TemplateSeederTest extends BaseTest {
                         .count())
                 .isEqualTo(1);
         // each need_human_decision suffix variant → approve gate
-        for (String suffix : new String[] {"alternative_proposal", "iteration_cap", "uncertainty"}) {
+        for (String suffix : new String[] {"alternative_proposal", "review_conflict", "uncertainty"}) {
             assertThat(outgoing.stream()
                             .filter(e -> ("need_human_decision:" + suffix).equals(e.getCondition())
                                     && e.getTargetNodeId().equals(approveSpecAndPlan.getId()))
@@ -274,10 +256,10 @@ class V1TemplateSeederTest extends BaseTest {
                                 && e.getTargetNodeId().equals(codeReview.getId()))
                         .count())
                 .isEqualTo(1);
-        // v24: Code Review's iteration_cap and uncertainty exits route to Test
+        // v24: Code Review's review_conflict and uncertainty exits route to Test
         // (single test gate), not Final Approval. Test will then route passed →
         // Final Approval or failed → Implement.
-        for (String suffix : new String[] {"iteration_cap", "uncertainty"}) {
+        for (String suffix : new String[] {"review_conflict", "uncertainty"}) {
             assertThat(edges.stream()
                             .filter(e -> e.getSourceNodeId().equals(codeReview.getId())
                                     && ("need_human_decision:" + suffix).equals(e.getCondition())
@@ -708,19 +690,14 @@ class V1TemplateSeederTest extends BaseTest {
     }
 
     @Test
-    void reviewNodeDefinitionCapPromptsReferenceEpochRelativeIteration() {
-        // Regression guard: the agent must reason about the iteration cap using
-        // iteration_in_epoch (epoch-relative, reset by a human "route back"), not
-        // the raw, ever-incrementing `iteration` field. Comparing against the raw
-        // field is exactly the bug this template version fixes — see
-        // BaseFeatureDevSeeder's Iteration awareness sections.
-        //
-        // The resolved prompt strings are Java text blocks; SPEC_REVIEW_PROMPT's
-        // cap=5 escalation sentence wraps so the comparison operator falls on its
-        // own line ("...AND iteration_in_epoch" / ">= 5." on the next line). A
-        // literal substring match against the raw resolved string would miss (or
-        // vacuously pass) that comparison, so whitespace is normalized to single
-        // spaces before any assertion below.
+    void reviewNodeDefinitionPromptsDeclareReviewConflictEscalation() {
+        // Regression guard for the removal of the counter-based iteration cap
+        // (and its epoch tracking) in favor of self-detected review-conflict
+        // escalation: both self-iterating review prompts must instruct the
+        // reviewer to check {review_history} for conflicts before finalizing,
+        // and must expose need_human_decision:review_conflict as the escalation
+        // decision. Neither prompt should reference the retired cap/epoch
+        // vocabulary anymore.
         var template = templateRepo
                 .findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION)
                 .orElseThrow();
@@ -730,35 +707,30 @@ class V1TemplateSeederTest extends BaseTest {
                 .filter(n -> "spec_review".equals(n.getLabel()))
                 .findFirst()
                 .orElseThrow();
-        var specReviewDef =
-                nodeDefRepo.findById(specReviewNode.getNodeDefinitionId()).orElseThrow();
-        String normalizedSpecReviewPrompt = specReviewDef.getPromptTemplate().replaceAll("\\s+", " ");
+        var specReviewPrompt = nodeDefRepo
+                .findById(specReviewNode.getNodeDefinitionId())
+                .orElseThrow()
+                .getPromptTemplate();
 
         var codeReviewNode = nodes.stream()
                 .filter(n -> "code_review".equals(n.getLabel()))
                 .findFirst()
                 .orElseThrow();
-        var codeReviewDef =
-                nodeDefRepo.findById(codeReviewNode.getNodeDefinitionId()).orElseThrow();
-        String normalizedCodeReviewPrompt = codeReviewDef.getPromptTemplate().replaceAll("\\s+", " ");
+        var codeReviewPrompt = nodeDefRepo
+                .findById(codeReviewNode.getNodeDefinitionId())
+                .orElseThrow()
+                .getPromptTemplate();
 
-        // Spec Review: cap = 5, references iteration_in_epoch alongside the cap
-        // threshold and the escalation decision.
-        assertThat(normalizedSpecReviewPrompt)
-                .contains("iteration_in_epoch")
-                .contains("iteration_in_epoch < 5")
-                .contains("iteration_in_epoch >= 5")
-                .contains("need_human_decision:iteration_cap");
-        // Raw-iteration comparison forms must not appear anywhere in the
-        // cap-related text — this is what would have masked the original bug.
-        assertThat(normalizedSpecReviewPrompt).doesNotContain("iteration < 5").doesNotContain("iteration >= 5");
+        assertThat(specReviewPrompt)
+                .contains("## Review History & Conflict Check")
+                .contains("need_human_decision:review_conflict")
+                .doesNotContain("iteration_in_epoch")
+                .doesNotContain("need_human_decision:iteration_cap");
 
-        // Code Review: cap = 5, same shape.
-        assertThat(normalizedCodeReviewPrompt)
-                .contains("iteration_in_epoch")
-                .contains("iteration_in_epoch < 5")
-                .contains("iteration_in_epoch >= 5")
-                .contains("need_human_decision:iteration_cap");
-        assertThat(normalizedCodeReviewPrompt).doesNotContain("iteration < 5").doesNotContain("iteration >= 5");
+        assertThat(codeReviewPrompt)
+                .contains("## Review History & Conflict Check")
+                .contains("need_human_decision:review_conflict")
+                .doesNotContain("iteration_in_epoch")
+                .doesNotContain("need_human_decision:iteration_cap");
     }
 }

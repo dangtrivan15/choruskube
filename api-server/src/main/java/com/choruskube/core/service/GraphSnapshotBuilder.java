@@ -125,9 +125,6 @@ public class GraphSnapshotBuilder {
             node.put("image", nd.getImage());
             node.put("prompt_template", nd.getPromptTemplate());
             node.put("model", nd.getModel());
-            if (nd.getIterationCap() != null) {
-                node.put("iteration_cap", nd.getIterationCap());
-            }
             node.set("input_spec", parseJsonField(nd.getInputSpec(), "{}"));
             node.set("output_spec", parseJsonField(nd.getOutputSpec(), "{}"));
             node.put("timeout_seconds", nd.getTimeoutSeconds());
