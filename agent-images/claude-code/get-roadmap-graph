@@ -1,7 +1,7 @@
 #!/bin/bash
 # get-roadmap-graph — fetch an Epic's full Roadmap Graph View via the ChorusKube API server.
 #
-# Usage: get-roadmap-graph --epic-id UUID
+# Usage: get-roadmap-graph [--epic-id UUID]
 #
 # Returns the Epic's entire Story/Task subtree in one call: every Story and
 # Task under the Epic, their dependency edges (plus references to blockers
@@ -72,7 +72,7 @@ while [ $# -gt 0 ]; do
             ;;
         *)
             echo "ERROR: Unknown argument: $1" >&2
-            echo "Usage: get-roadmap-graph --epic-id UUID" >&2
+            echo "Usage: get-roadmap-graph [--epic-id UUID]" >&2
             exit 1
             ;;
     esac
