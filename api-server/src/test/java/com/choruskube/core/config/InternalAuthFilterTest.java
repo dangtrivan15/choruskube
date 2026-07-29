@@ -66,6 +66,7 @@ public class InternalAuthFilterTest extends BaseTest {
 
     private WorkflowRun run;
     private NodeExecution exec;
+    private NodeExecution otherExec;
 
     @BeforeEach
     void setUp() {
@@ -106,6 +107,19 @@ public class InternalAuthFilterTest extends BaseTest {
         exec.setGraphVersion(1);
         exec.setJobSecretHash(InternalAuthFilter.sha256Hex(jobSecret));
         exec = execRepo.save(exec);
+
+        // A second, distinct node execution (same run) with its own job secret — used to prove a
+        // *real, valid* secret for one execution is rejected against a *different* real
+        // execution's id on the same route shape, not merely that an arbitrary/nonexistent id 401s.
+        otherExec = new NodeExecution();
+        otherExec.setWorkflowRunId(run.getId());
+        otherExec.setTemplateNodeId(templateNode.getId());
+        otherExec.setGraphVersion(1);
+        // Distinct iteration: (workflow_run_id, template_node_id, iteration) is unique, and `exec`
+        // above already occupies iteration 1 for this run/templateNode pair.
+        otherExec.setIteration(2);
+        otherExec.setJobSecretHash(InternalAuthFilter.sha256Hex("test-other-agent-job-secret"));
+        otherExec = execRepo.save(otherExec);
     }
 
     @Test
@@ -141,6 +155,15 @@ public class InternalAuthFilterTest extends BaseTest {
     void agentToken_deniesOtherEndpoint() throws Exception {
         // Agent token should not grant access to non-node-execution endpoints
         mockMvc.perform(get("/internal/runs/" + run.getId() + "/graph-runtime")
+                        .header("Authorization", "Bearer test-agent-job-secret"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void agentToken_deniesGraphEndpointForOtherExecution() throws Exception {
+        // A valid job secret for `exec` must not grant access to the same route shape
+        // (`.../node-executions/{nodeExecId}/graph`) scoped to a *different*, real execution's id.
+        mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + otherExec.getId() + "/graph")
                         .header("Authorization", "Bearer test-agent-job-secret"))
                 .andExpect(status().isUnauthorized());
     }

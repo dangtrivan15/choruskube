@@ -513,4 +513,68 @@ public class InternalRunControllerTest extends BaseTest {
                         .content(objectMapper.writeValueAsString(body)))
                 .andExpect(status().isNotFound());
     }
+
+    // ── new no-Epic-ID route: resolves the Epic from the run's own triggering Task ──
+
+    @Test
+    void getGraphForCurrentTask_withResolvableTask_returns200AndGraph() throws Exception {
+        NodeExecution exec = new NodeExecution();
+        exec.setWorkflowRunId(run.getId());
+        exec.setTemplateNodeId(templateNode.getId());
+        exec.setGraphVersion(1);
+        exec = execRepo.save(exec);
+
+        String createEpicResponse = mockMvc.perform(post("/internal/runs/" + run.getId() + "/node-executions/"
+                                + exec.getId() + "/feature-proposals")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                Map.of("title", "Epic for triggering task", "description", "desc"))))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        String epicId = objectMapper.readTree(createEpicResponse).get("id").asText();
+
+        String createStoryResponse = mockMvc.perform(post("/internal/runs/" + run.getId() + "/node-executions/"
+                                + exec.getId() + "/feature-proposals/" + epicId + "/stories")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                Map.of("title", "Story for triggering task", "description", "desc"))))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        String storyId = objectMapper.readTree(createStoryResponse).get("id").asText();
+
+        String createTaskResponse = mockMvc.perform(post("/internal/runs/" + run.getId() + "/node-executions/"
+                                + exec.getId() + "/feature-proposals/" + epicId + "/stories/" + storyId + "/tasks")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                Map.of("title", "Triggering task", "description", "desc"))))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        String taskId = objectMapper.readTree(createTaskResponse).get("id").asText();
+
+        run.setTaskId(UUID.fromString(taskId));
+        run = runRepo.save(run);
+
+        mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/graph"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.epic.id").value(epicId));
+    }
+
+    @Test
+    void getGraphForCurrentTask_runWithNoTaskId_returns404() throws Exception {
+        NodeExecution exec = new NodeExecution();
+        exec.setWorkflowRunId(run.getId());
+        exec.setTemplateNodeId(templateNode.getId());
+        exec.setGraphVersion(1);
+        exec = execRepo.save(exec);
+
+        // The `@BeforeEach` run fixture never sets `task_id` — this is a manually-started run.
+        mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/graph"))
+                .andExpect(status().isNotFound());
+    }
 }

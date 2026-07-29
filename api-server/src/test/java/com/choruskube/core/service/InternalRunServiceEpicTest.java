@@ -12,13 +12,17 @@ import com.choruskube.core.dto.SoftwareProjectRef;
 import com.choruskube.core.dto.StoryResponse;
 import com.choruskube.core.dto.TaskResponse;
 import com.choruskube.core.exception.NotFoundException;
+import com.choruskube.core.model.Epic;
 import com.choruskube.core.model.GraphTemplate;
 import com.choruskube.core.model.Story;
+import com.choruskube.core.model.Task;
 import com.choruskube.core.model.WorkflowRun;
+import com.choruskube.core.repository.EpicRepository;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.SoftwareProjectRepository;
 import com.choruskube.core.repository.StoryRepository;
+import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
@@ -65,6 +69,12 @@ class InternalRunServiceEpicTest {
     private StoryRepository storyRepo;
 
     @Mock
+    private TaskRepository taskRepo;
+
+    @Mock
+    private EpicRepository epicRepo;
+
+    @Mock
     private RoadmapGraphService roadmapGraphService;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -96,8 +106,8 @@ class InternalRunServiceEpicTest {
                 null,
                 null,
                 storyRepo,
-                null, // taskRepo
-                null, // epicRepo
+                taskRepo,
+                epicRepo,
                 roadmapGraphService,
                 new DecisionOptionsResolver());
     }
@@ -403,6 +413,89 @@ class InternalRunServiceEpicTest {
                 .hasMessageContaining("Workflow run not found");
     }
 
+    // ── getGraphForTriggeringTask: server-side Epic resolution from run.task_id ──
+
+    @Test
+    void getGraphForTriggeringTask_resolvesEpicFromRunsTask_delegatesToRoadmapGraphService() {
+        UUID runId = UUID.randomUUID();
+        UUID nodeExecId = UUID.randomUUID();
+        UUID taskId = UUID.randomUUID();
+        UUID storyId = UUID.randomUUID();
+        UUID epicId = UUID.randomUUID();
+        WorkflowRun run = createRun(
+                runId, TEMPLATE_ID, "{\"software_project_id\":\"" + PROJECT_ID + "\",\"feature_request\":\"x\"}");
+        run.setTaskId(taskId);
+        when(runRepo.findById(runId)).thenReturn(Optional.of(run));
+        when(softwareProjectRepo.existsById(PROJECT_ID)).thenReturn(true);
+        when(taskRepo.findById(taskId)).thenReturn(Optional.of(taskWithStory(taskId, storyId)));
+        when(storyRepo.findById(storyId)).thenReturn(Optional.of(storyWithEpic(storyId, epicId)));
+        when(epicRepo.findById(epicId)).thenReturn(Optional.of(epicWithId(epicId)));
+
+        var expected = new com.choruskube.core.dto.RoadmapGraphSnapshot(
+                epicResponseFor(PROJECT_ID), List.of(), List.of(), List.of(), List.of());
+        when(roadmapGraphService.getGraph(epicId, runId, PROJECT_ID)).thenReturn(expected);
+
+        var result = service.getGraphForTriggeringTask(runId, nodeExecId);
+
+        assertThat(result).isSameAs(expected);
+        verify(roadmapGraphService).getGraph(epicId, runId, PROJECT_ID);
+    }
+
+    @Test
+    void getGraphForTriggeringTask_withNoTaskIdOnRun_throwsNotFound() {
+        UUID runId = UUID.randomUUID();
+        WorkflowRun run = createRun(runId, TEMPLATE_ID, "{}");
+        when(runRepo.findById(runId)).thenReturn(Optional.of(run));
+
+        assertThatThrownBy(() -> service.getGraphForTriggeringTask(runId, UUID.randomUUID()))
+                .isInstanceOf(NotFoundException.class)
+                .hasMessageContaining("was not started from a Task");
+    }
+
+    @Test
+    void getGraphForTriggeringTask_withUnknownRunId_throwsNotFound() {
+        UUID unknownRunId = UUID.randomUUID();
+        when(runRepo.findById(unknownRunId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.getGraphForTriggeringTask(unknownRunId, UUID.randomUUID()))
+                .isInstanceOf(NotFoundException.class)
+                .hasMessageContaining("Workflow run not found");
+    }
+
+    @Test
+    void getGraphForTriggeringTask_withTaskButNoResolvableStory_throwsNotFound() {
+        UUID runId = UUID.randomUUID();
+        UUID taskId = UUID.randomUUID();
+        UUID storyId = UUID.randomUUID();
+        WorkflowRun run = createRun(runId, TEMPLATE_ID, "{}");
+        run.setTaskId(taskId);
+        when(runRepo.findById(runId)).thenReturn(Optional.of(run));
+        when(taskRepo.findById(taskId)).thenReturn(Optional.of(taskWithStory(taskId, storyId)));
+        when(storyRepo.findById(storyId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.getGraphForTriggeringTask(runId, UUID.randomUUID()))
+                .isInstanceOf(NotFoundException.class)
+                .hasMessageContaining("Story not found for task " + taskId);
+    }
+
+    @Test
+    void getGraphForTriggeringTask_withStoryButNoResolvableEpic_throwsNotFound() {
+        UUID runId = UUID.randomUUID();
+        UUID taskId = UUID.randomUUID();
+        UUID storyId = UUID.randomUUID();
+        UUID epicId = UUID.randomUUID();
+        WorkflowRun run = createRun(runId, TEMPLATE_ID, "{}");
+        run.setTaskId(taskId);
+        when(runRepo.findById(runId)).thenReturn(Optional.of(run));
+        when(taskRepo.findById(taskId)).thenReturn(Optional.of(taskWithStory(taskId, storyId)));
+        when(storyRepo.findById(storyId)).thenReturn(Optional.of(storyWithEpic(storyId, epicId)));
+        when(epicRepo.findById(epicId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.getGraphForTriggeringTask(runId, UUID.randomUUID()))
+                .isInstanceOf(NotFoundException.class)
+                .hasMessageContaining("Epic not found for story " + storyId);
+    }
+
     @Test
     void updateTaskStatus_delegatesToTaskServiceWithRunIdAndResolvedSoftwareProjectId() {
         UUID runId = UUID.randomUUID();
@@ -464,6 +557,21 @@ class InternalRunServiceEpicTest {
         story.setTitle("Story title");
         story.setDescription("Story desc");
         return story;
+    }
+
+    private Task taskWithStory(UUID taskId, UUID storyId) {
+        Task task = new Task();
+        task.setId(taskId);
+        task.setStoryId(storyId);
+        task.setTitle("Task title");
+        task.setDescription("Task desc");
+        return task;
+    }
+
+    private Epic epicWithId(UUID epicId) {
+        Epic epic = new Epic();
+        epic.setId(epicId);
+        return epic;
     }
 
     private EpicResponse epicResponseFor(UUID projectId) {

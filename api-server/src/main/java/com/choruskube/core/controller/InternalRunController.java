@@ -210,6 +210,17 @@ public class InternalRunController {
     }
 
     /**
+     * Agent-facing "resolve it for me" sibling of {@link #getGraph} (Decision 1, Decision 2) — no
+     * Epic ID in the path; the Epic is derived server-side from the calling run's own triggering
+     * Task ({@code run.task_id -> Task -> Story -> Epic}), so a plain {@code get-roadmap-graph}
+     * with no flags works even when the client-side {@code $EPIC_ID} default never resolved.
+     */
+    @GetMapping("/{runId}/node-executions/{nodeExecId}/graph")
+    public RoadmapGraphSnapshot getGraphForCurrentTask(@PathVariable UUID runId, @PathVariable UUID nodeExecId) {
+        return service.getGraphForTriggeringTask(runId, nodeExecId);
+    }
+
+    /**
      * Agent-facing mirror of {@code PATCH /api/v1/tasks/{id}/status} (Decision 1, Decision 4) —
      * lets an agent report a Task's outcome (success or failure) from inside its own run, scoped
      * by the calling run's project rather than a JWT-derived org (Decision 5).

@@ -12,12 +12,14 @@
 # through this /internal/ mirror instead of the UI's /api/v1/ route.
 #
 # Options:
-#   --epic-id UUID    Epic UUID to fetch the graph for. Optional when this run
-#                      was started from a Task under this Epic — defaults to
-#                      $EPIC_ID, which entrypoint.sh exports from config.json's
-#                      task_context for task-triggered runs. Required (and must
-#                      be passed explicitly) for a manually-started run, or a
-#                      task-triggered run whose Task's Epic didn't resolve.
+#   --epic-id UUID    Epic UUID to fetch the graph for. Optional — when
+#                      omitted, the server resolves it from this run's
+#                      triggering Task (its Story's Epic), so a task-triggered
+#                      run needs no flags at all, even if this pod's own
+#                      client-side $EPIC_ID export never resolved. The $EPIC_ID
+#                      env var is no longer consulted directly by this script
+#                      (still exported by entrypoint.sh for prompt narration
+#                      and other tools).
 #   -h, --help        Show this help message
 #
 # Environment:
@@ -25,8 +27,6 @@
 #   RUN_ID              — Workflow run UUID
 #   NODE_EXECUTION_ID   — Node execution UUID
 #   JOB_SECRET          — Bearer token for authentication
-#   EPIC_ID             — Triggering Task's Epic UUID (task-triggered runs
-#                          only); used as the default for --epic-id when omitted
 #
 # Examples:
 #   # Print the full graph as JSON
@@ -38,7 +38,8 @@
 #   # Show each Task's most recent run status
 #   get-roadmap-graph --epic-id <uuid> | jq '.tasks[] | {id, title, latestRunStatus}'
 #
-#   # Task-triggered run: --epic-id omitted, defaults to $EPIC_ID
+#   # Task-triggered run: --epic-id omitted, server resolves it from this
+#   # run's triggering Task
 #   get-roadmap-graph
 #
 # Exit codes:
@@ -77,21 +78,22 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-# Default --epic-id to the triggering Task's Epic (Decision 4): $EPIC_ID is
-# exported by entrypoint.sh from config.json's task_context for task-triggered
-# runs, and is unset for a manually-started run (or one whose Epic didn't
-# resolve) — in which case --epic-id must be passed explicitly.
-EFFECTIVE_EPIC_ID="${EPIC_ID_ARG:-${EPIC_ID:-}}"
-
-if [ -z "$EFFECTIVE_EPIC_ID" ]; then
-    echo "ERROR: no epic id available — pass --epic-id explicitly, or run this from a task-triggered run whose Task's Epic resolves (\$EPIC_ID unset)." >&2
-    echo "Usage: get-roadmap-graph --epic-id UUID" >&2
-    exit 1
+# When --epic-id is passed explicitly, hit the existing Epic-ID route
+# unchanged. Otherwise, call the new no-Epic-ID route (Decision 1, Decision
+# 2): the server resolves the Epic from this run's own triggering Task at
+# request time, so there's no client-side default to fall back on here at
+# all — a manually-started run, or a task-triggered run whose Task's
+# Story/Epic link is broken, simply gets a 404 from the server instead of a
+# client-side hard failure.
+if [ -n "$EPIC_ID_ARG" ]; then
+    GRAPH_URL="$API_SERVER_URL/internal/runs/$RUN_ID/node-executions/$NODE_EXECUTION_ID/feature-proposals/$EPIC_ID_ARG/graph"
+else
+    GRAPH_URL="$API_SERVER_URL/internal/runs/$RUN_ID/node-executions/$NODE_EXECUTION_ID/graph"
 fi
 
 RESPONSE=$(curl -s -w "\n%{http_code}" \
     -H "Authorization: Bearer ${JOB_SECRET:-}" \
-    "$API_SERVER_URL/internal/runs/$RUN_ID/node-executions/$NODE_EXECUTION_ID/feature-proposals/$EFFECTIVE_EPIC_ID/graph")
+    "$GRAPH_URL")
 HTTP_CODE=$(echo "$RESPONSE" | tail -1)
 BODY=$(echo "$RESPONSE" | sed '$d')
 
