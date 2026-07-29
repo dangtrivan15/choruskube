@@ -68,7 +68,8 @@ class DecisionServiceTest {
                 null, // taskRepo
                 null, // epicRepo
                 null,
-                new DecisionOptionsResolver());
+                new DecisionOptionsResolver(),
+                null);
     }
 
     private NodeExecution stubExec() {

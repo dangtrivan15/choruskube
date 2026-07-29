@@ -50,6 +50,7 @@ public class InternalRunService {
     private final EpicRepository epicRepo;
     private final RoadmapGraphService roadmapGraphService;
     private final DecisionOptionsResolver decisionOptionsResolver;
+    private final WorkItemDependencyRepository dependencyRepo;
 
     @Value("${artifact.enforcement.mode:warn}")
     private String artifactEnforcementMode;
@@ -77,7 +78,8 @@ public class InternalRunService {
             TaskRepository taskRepo,
             EpicRepository epicRepo,
             RoadmapGraphService roadmapGraphService,
-            DecisionOptionsResolver decisionOptionsResolver) {
+            DecisionOptionsResolver decisionOptionsResolver,
+            WorkItemDependencyRepository dependencyRepo) {
         this.runRepo = runRepo;
         this.execRepo = execRepo;
         this.logRepo = logRepo;
@@ -101,6 +103,7 @@ public class InternalRunService {
         this.epicRepo = epicRepo;
         this.roadmapGraphService = roadmapGraphService;
         this.decisionOptionsResolver = decisionOptionsResolver;
+        this.dependencyRepo = dependencyRepo;
     }
 
     public NodeExecutionResponse createNodeExecution(UUID runId, InternalCreateNodeExecutionRequest req) {
@@ -393,9 +396,56 @@ public class InternalRunService {
                             story != null ? story.getId() : null,
                             story != null ? story.getTitle() : null,
                             epic != null ? epic.getId() : null,
-                            epic != null ? epic.getTitle() : null);
+                            epic != null ? epic.getTitle() : null,
+                            resolveOpenBlockers(task.getId()));
                 })
                 .orElse(null);
+    }
+
+    /**
+     * The Task's own direct, not-yet-{@code done} incoming blocking edges (Decision 1), queried
+     * independently of any Epic boundary (Decision 4) so a cross-epic blocker is still reported.
+     * Mirrors the type-discriminant dual-lookup shape of {@link
+     * DefaultRoadmapGraphService#resolveExternalBlocker} (a sibling service class — this method
+     * has no in-class precedent of its own to reuse; see Decision 4's tradeoff on this
+     * duplication). Rows whose blocking item no longer resolves are silently skipped: {@code
+     * work_item_dependency} has no DB-level foreign key on {@code blocking_item_id} (see {@code
+     * V5__work_item_dependency.sql}), so a referenced Story/Task can be gone without the edge
+     * itself being cleaned up (a race between fetching the edge and resolving it, or direct DB
+     * manipulation) — the app-level delete paths clean up referencing edges defensively, but
+     * nothing at the schema level guarantees it.
+     */
+    private List<OpenBlockerRef> resolveOpenBlockers(UUID taskId) {
+        List<WorkItemDependency> edges =
+                dependencyRepo.findByBlockedItemTypeAndBlockedItemId(BlockableItemType.task, taskId);
+        List<OpenBlockerRef> openBlockers = new ArrayList<>();
+        for (WorkItemDependency edge : edges) {
+            String title;
+            String status;
+            if (edge.getBlockingItemType() == BlockableItemType.story) {
+                Story blockingStory =
+                        storyRepo.findById(edge.getBlockingItemId()).orElse(null);
+                if (blockingStory == null) {
+                    continue;
+                }
+                title = blockingStory.getTitle();
+                status = RollupCalculator.compute(taskRepo.findByStoryIdOrderByCreatedAtDesc(blockingStory.getId()))
+                        .status();
+            } else {
+                Task blockingTask = taskRepo.findById(edge.getBlockingItemId()).orElse(null);
+                if (blockingTask == null) {
+                    continue;
+                }
+                title = blockingTask.getTitle();
+                status = blockingTask.getStatus().name();
+            }
+            if (WorkItemStatus.done.name().equals(status)) {
+                continue;
+            }
+            openBlockers.add(
+                    new OpenBlockerRef(edge.getBlockingItemType().name(), edge.getBlockingItemId(), title, status));
+        }
+        return openBlockers;
     }
 
     public JobSecretHashResponse getJobSecretHash(UUID runId, UUID nodeExecId) {

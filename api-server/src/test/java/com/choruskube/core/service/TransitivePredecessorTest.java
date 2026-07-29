@@ -51,7 +51,8 @@ class TransitivePredecessorTest {
                 null, // taskRepo
                 null, // epicRepo
                 null,
-                new DecisionOptionsResolver());
+                new DecisionOptionsResolver(),
+                null);
     }
 
     // --- helpers ---

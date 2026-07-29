@@ -182,6 +182,20 @@ type ExecuteAINodeFromSnapshotParams struct {
 	StoryTitle string
 	EpicID     string
 	EpicTitle  string
+	// OpenBlockers lists the triggering Task's own direct, not-yet-done incoming blocking
+	// edges (Decision 1/4), threaded into config.json's task_context.open_blockers. Empty
+	// (nil or zero-length) omits the key entirely, matching how task_context itself is
+	// omitted when TaskID == "".
+	OpenBlockers []OpenBlockerParam
+}
+
+// OpenBlockerParam mirrors one entry of state.SnapshotOpenBlocker, flattened into the
+// activity's plain-string param shape (same convention as TaskID/TaskTitle/... above).
+type OpenBlockerParam struct {
+	ItemType string
+	ItemID   string
+	Title    string
+	Status   string
 }
 
 func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params ExecuteAINodeFromSnapshotParams) error {
@@ -282,7 +296,7 @@ func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params Execu
 		configJSON["model"] = params.Model
 	}
 	if params.TaskID != "" {
-		configJSON["task_context"] = map[string]interface{}{
+		taskContext := map[string]interface{}{
 			"task_id":     params.TaskID,
 			"task_title":  params.TaskTitle,
 			"story_id":    params.StoryID,
@@ -290,6 +304,19 @@ func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params Execu
 			"epic_id":     params.EpicID,
 			"epic_title":  params.EpicTitle,
 		}
+		if len(params.OpenBlockers) > 0 {
+			openBlockers := make([]map[string]interface{}, 0, len(params.OpenBlockers))
+			for _, b := range params.OpenBlockers {
+				openBlockers = append(openBlockers, map[string]interface{}{
+					"item_type": b.ItemType,
+					"item_id":   b.ItemID,
+					"title":     b.Title,
+					"status":    b.Status,
+				})
+			}
+			taskContext["open_blockers"] = openBlockers
+		}
+		configJSON["task_context"] = taskContext
 	}
 
 	// Delegate workload creation to the API server.

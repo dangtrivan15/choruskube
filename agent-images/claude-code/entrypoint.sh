@@ -47,6 +47,14 @@ export STORY_TITLE=$(jq -r '.task_context.story_title // empty' "$CONFIG_FILE")
 export EPIC_ID=$(jq -r '.task_context.epic_id // empty' "$CONFIG_FILE")
 export EPIC_TITLE=$(jq -r '.task_context.epic_title // empty' "$CONFIG_FILE")
 
+# The Task's own direct, not-yet-done incoming blocking edges (Decision 1/4) —
+# informational only, does not gate the run (Decision 2). "// []" defaults to an
+# empty array both when task_context itself is absent and when an older
+# config.json (written before this field existed) has task_context but no
+# open_blockers key, so this never crashes on a mismatched agent/API-server pairing.
+OPEN_BLOCKERS_JSON=$(jq -c '.task_context.open_blockers // []' "$CONFIG_FILE")
+export OPEN_BLOCKERS_JSON
+
 # JOB_SECRET is injected via K8s Secret as an environment variable
 if [ -z "${JOB_SECRET:-}" ]; then
   echo "ERROR: JOB_SECRET environment variable not set"
@@ -265,6 +273,21 @@ Epic: ${EPIC_TITLE}}
 
 You can call \`update-task-status\` and \`get-roadmap-graph\` without passing
 --task-id/--epic-id — they default to this run's Task/Epic automatically."
+
+  # Narrate open blockers (Decision 2/3) — only when the triggering Task has at
+  # least one direct, not-yet-done incoming blocking edge. This does not gate the
+  # run; it's context for the agent to factor into its plan.
+  BLOCKER_COUNT=$(echo "$OPEN_BLOCKERS_JSON" | jq 'length')
+  if [ "$BLOCKER_COUNT" -gt 0 ]; then
+    BLOCKER_LINES=$(echo "$OPEN_BLOCKERS_JSON" | jq -r '.[] | "- \(.title) (\(.item_type), status: \(.status))"')
+    SYSTEM_PROMPT="${SYSTEM_PROMPT}
+
+## Open Blockers
+This Task has ${BLOCKER_COUNT} unresolved blocking dependencies not yet done:
+${BLOCKER_LINES}
+
+This does not prevent the run — factor these into your work."
+  fi
 fi
 export SYSTEM_PROMPT
 

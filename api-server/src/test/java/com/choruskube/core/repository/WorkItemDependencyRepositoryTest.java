@@ -98,4 +98,25 @@ class WorkItemDependencyRepositoryTest extends BaseTest {
         assertThat(byBlocked).extracting(WorkItemDependency::getId).containsExactly(edge.getId());
         assertThat(noMatch).isEmpty();
     }
+
+    @Test
+    void findByBlockedItemTypeAndBlockedItemId_returnsOnlyEdgesBlockingThatItem() {
+        UUID blockedTaskId = UUID.randomUUID();
+        UUID blockedStoryId = UUID.randomUUID();
+        WorkItemDependency edgeBlockingTask = repo.saveAndFlush(
+                buildEdge(BlockableItemType.task, UUID.randomUUID(), BlockableItemType.task, blockedTaskId));
+        repo.saveAndFlush(
+                buildEdge(BlockableItemType.task, UUID.randomUUID(), BlockableItemType.story, blockedStoryId));
+
+        var found = repo.findByBlockedItemTypeAndBlockedItemId(BlockableItemType.task, blockedTaskId);
+
+        assertThat(found).extracting(WorkItemDependency::getId).containsExactly(edgeBlockingTask.getId());
+    }
+
+    @Test
+    void findByBlockedItemTypeAndBlockedItemId_noIncomingEdges_returnsEmptyList() {
+        var found = repo.findByBlockedItemTypeAndBlockedItemId(BlockableItemType.task, UUID.randomUUID());
+
+        assertThat(found).isEmpty();
+    }
 }

@@ -42,6 +42,17 @@ type SnapshotRepo struct {
 	AgentImage  string `json:"agentImage,omitempty"`
 }
 
+// SnapshotOpenBlocker holds one of the triggering Task's own direct,
+// not-yet-done incoming blocking edges. Field names are JSON-tagged to match
+// OpenBlockerRef's Jackson camelCase output on the api-server side exactly —
+// same cross-language sync point as SnapshotTaskContext below.
+type SnapshotOpenBlocker struct {
+	ItemType string    `json:"itemType"`
+	ItemID   uuid.UUID `json:"itemId"`
+	Title    string    `json:"title"`
+	Status   string    `json:"status"`
+}
+
 // SnapshotTaskContext holds the triggering Task's identity (and its parent
 // Story/Epic, when resolvable) for a task-triggered run. Absent entirely when
 // the run wasn't started from a Task. Field names are JSON-tagged to match
@@ -50,12 +61,13 @@ type SnapshotRepo struct {
 // language boundary, so a name mismatch here silently zero-values this struct
 // instead of failing loudly.
 type SnapshotTaskContext struct {
-	TaskID     uuid.UUID  `json:"taskId"`
-	TaskTitle  string     `json:"taskTitle"`
-	StoryID    *uuid.UUID `json:"storyId,omitempty"`
-	StoryTitle *string    `json:"storyTitle,omitempty"`
-	EpicID     *uuid.UUID `json:"epicId,omitempty"`
-	EpicTitle  *string    `json:"epicTitle,omitempty"`
+	TaskID       uuid.UUID             `json:"taskId"`
+	TaskTitle    string                `json:"taskTitle"`
+	StoryID      *uuid.UUID            `json:"storyId,omitempty"`
+	StoryTitle   *string               `json:"storyTitle,omitempty"`
+	EpicID       *uuid.UUID            `json:"epicId,omitempty"`
+	EpicTitle    *string               `json:"epicTitle,omitempty"`
+	OpenBlockers []SnapshotOpenBlocker `json:"openBlockers,omitempty"`
 }
 
 // GraphRuntimeSnapshot is the projected snapshot returned by the API server.
