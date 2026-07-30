@@ -80,11 +80,11 @@ fi
 # the mirror and risk Docker Hub rate limiting.
 if [ -n "${BUILD_CACHE_REGISTRY:-}" ] && [ -n "${DOCKER_HOST:-}" ]; then
   # The executor injects the upstream Docker registry mirror host as
-  # REGISTRY_MIRROR_HOST. When set, trust it over plain HTTP and use it as the
+  # REGISTRY_MIRROR. When set, trust it over plain HTTP and use it as the
   # docker.io pull-through mirror so base-image pulls go through the mirror
   # instead of hitting Docker Hub directly; when unset, BuildKit pulls from
   # docker.io directly (no mirror).
-  MIRROR_HOST="${REGISTRY_MIRROR_HOST:-}"
+  MIRROR_HOST="${REGISTRY_MIRROR:-}"
 
   cat > /tmp/buildkitd.toml <<EOF
 debug = false
