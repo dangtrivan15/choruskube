@@ -3,6 +3,7 @@ package com.choruskube.core.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 
+import com.choruskube.core.dto.BlockingChainNode;
 import com.choruskube.core.model.WorkItemDependency;
 import com.choruskube.core.model.enums.BlockableItemType;
 import com.choruskube.core.model.enums.Readiness;
@@ -35,6 +36,14 @@ class TransitiveReadinessResolverTest {
 
     private static Function<UUID, String> statusOf(Map<UUID, String> statuses) {
         return statuses::get;
+    }
+
+    private static Function<UUID, String> titleOf(Map<UUID, String> titles) {
+        return id -> titles.getOrDefault(id, id.toString());
+    }
+
+    private static Function<UUID, BlockableItemType> itemTypeOf(Map<UUID, BlockableItemType> types) {
+        return id -> types.getOrDefault(id, BlockableItemType.task);
     }
 
     // ── computeReadiness ───────────────────────────────────────────────────
@@ -236,5 +245,116 @@ class TransitiveReadinessResolverTest {
         List<WorkItemDependency> edges = List.of(edge(A, B), edge(C, D));
 
         assertThat(TransitiveReadinessResolver.wouldCreateCycle(D, A, edges)).isFalse();
+    }
+
+    // ── blockingChainOf ────────────────────────────────────────────────────
+
+    @Test
+    void blockingChainOf_singleDirectBlocker_returnsOneLeafNode() {
+        List<WorkItemDependency> edges = List.of(edge(A, B));
+        Map<UUID, String> statuses = Map.of(A, "backlog", B, "backlog");
+
+        TransitiveReadinessResolver.ChainWalkResult result = TransitiveReadinessResolver.blockingChainOf(
+                B, itemTypeOf(Map.of()), edges, statusOf(statuses), titleOf(Map.of()), 200, 20);
+
+        assertThat(result.blockedBy()).hasSize(1);
+        assertThat(result.blockedBy().get(0).itemId()).isEqualTo(A);
+        assertThat(result.blockedBy().get(0).blockedBy()).isEmpty();
+        assertThat(result.truncated()).isFalse();
+    }
+
+    @Test
+    void blockingChainOf_linearChainOfThree_nestsMiddleUnderTail() {
+        // A blocks B, B blocks C — none done.
+        List<WorkItemDependency> edges = List.of(edge(A, B), edge(B, C));
+        Map<UUID, String> statuses = Map.of(A, "backlog", B, "backlog", C, "backlog");
+
+        TransitiveReadinessResolver.ChainWalkResult result = TransitiveReadinessResolver.blockingChainOf(
+                C, itemTypeOf(Map.of()), edges, statusOf(statuses), titleOf(Map.of()), 200, 20);
+
+        assertThat(result.blockedBy()).hasSize(1);
+        BlockingChainNode bNode = result.blockedBy().get(0);
+        assertThat(bNode.itemId()).isEqualTo(B);
+        assertThat(bNode.blockedBy()).hasSize(1);
+        assertThat(bNode.blockedBy().get(0).itemId()).isEqualTo(A);
+        assertThat(result.truncated()).isFalse();
+    }
+
+    @Test
+    void blockingChainOf_twoIndependentDirectBlockers_bothAppearAtDepthOne() {
+        // C is blocked by both A and B, neither done.
+        List<WorkItemDependency> edges = List.of(edge(A, C), edge(B, C));
+        Map<UUID, String> statuses = Map.of(A, "backlog", B, "backlog", C, "backlog");
+
+        TransitiveReadinessResolver.ChainWalkResult result = TransitiveReadinessResolver.blockingChainOf(
+                C, itemTypeOf(Map.of()), edges, statusOf(statuses), titleOf(Map.of()), 200, 20);
+
+        assertThat(result.blockedBy()).extracting(BlockingChainNode::itemId).containsExactlyInAnyOrder(A, B);
+    }
+
+    @Test
+    void blockingChainOf_doneIntermediateWithUndoneAncestor_stillIncluded() {
+        // A blocks B, B blocks C. B is done, but A (further upstream) is not — B must still be
+        // shown so the user understands why C is still blocked.
+        List<WorkItemDependency> edges = List.of(edge(A, B), edge(B, C));
+        Map<UUID, String> statuses = Map.of(A, "backlog", B, "done", C, "backlog");
+
+        TransitiveReadinessResolver.ChainWalkResult result = TransitiveReadinessResolver.blockingChainOf(
+                C, itemTypeOf(Map.of()), edges, statusOf(statuses), titleOf(Map.of()), 200, 20);
+
+        assertThat(result.blockedBy()).hasSize(1);
+        BlockingChainNode bNode = result.blockedBy().get(0);
+        assertThat(bNode.itemId()).isEqualTo(B);
+        assertThat(bNode.status()).isEqualTo("done");
+        assertThat(bNode.blockedBy()).hasSize(1);
+        assertThat(bNode.blockedBy().get(0).itemId()).isEqualTo(A);
+    }
+
+    @Test
+    void blockingChainOf_fullyDoneBranch_isPrunedEntirely() {
+        // A blocks B, B blocks C. Both A and B are done — the whole branch is resolved, so it
+        // must not appear in C's chain at all.
+        List<WorkItemDependency> edges = List.of(edge(A, B), edge(B, C));
+        Map<UUID, String> statuses = Map.of(A, "done", B, "done", C, "backlog");
+
+        TransitiveReadinessResolver.ChainWalkResult result = TransitiveReadinessResolver.blockingChainOf(
+                C, itemTypeOf(Map.of()), edges, statusOf(statuses), titleOf(Map.of()), 200, 20);
+
+        assertThat(result.blockedBy()).isEmpty();
+    }
+
+    @Test
+    void blockingChainOf_cyclicEdges_doesNotHangAndReturns() {
+        // A blocks B, B blocks A.
+        List<WorkItemDependency> edges = List.of(edge(A, B), edge(B, A));
+        Map<UUID, String> statuses = Map.of(A, "backlog", B, "backlog");
+
+        assertThatCode(() -> TransitiveReadinessResolver.blockingChainOf(
+                        B, itemTypeOf(Map.of()), edges, statusOf(statuses), titleOf(Map.of()), 200, 20))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void blockingChainOf_smallMaxNodes_setsTruncatedTrue() {
+        // A blocks B, B blocks C, C blocks D — longer than a maxNodes of 1.
+        List<WorkItemDependency> edges = List.of(edge(A, B), edge(B, C), edge(C, D));
+        Map<UUID, String> statuses = Map.of(A, "backlog", B, "backlog", C, "backlog", D, "backlog");
+
+        TransitiveReadinessResolver.ChainWalkResult result = TransitiveReadinessResolver.blockingChainOf(
+                D, itemTypeOf(Map.of()), edges, statusOf(statuses), titleOf(Map.of()), 1, 20);
+
+        assertThat(result.truncated()).isTrue();
+    }
+
+    @Test
+    void blockingChainOf_smallMaxDepth_setsTruncatedTrue() {
+        // A blocks B, B blocks C, C blocks D — longer than a maxDepth of 1.
+        List<WorkItemDependency> edges = List.of(edge(A, B), edge(B, C), edge(C, D));
+        Map<UUID, String> statuses = Map.of(A, "backlog", B, "backlog", C, "backlog", D, "backlog");
+
+        TransitiveReadinessResolver.ChainWalkResult result = TransitiveReadinessResolver.blockingChainOf(
+                D, itemTypeOf(Map.of()), edges, statusOf(statuses), titleOf(Map.of()), 200, 1);
+
+        assertThat(result.truncated()).isTrue();
     }
 }
