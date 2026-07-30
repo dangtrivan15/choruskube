@@ -11,6 +11,7 @@ import (
 	"go.temporal.io/sdk/testsuite"
 
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/activity"
+	"github.com/dangtrivan15/choruskube/orchestrator/internal/state"
 )
 
 type DAGExecutorTestSuite struct {
@@ -1354,4 +1355,45 @@ func (s *DAGExecutorTestSuite) TestSelfLoopingAIReviewerIteratesThenAdvances() {
 
 	s.True(s.env.IsWorkflowCompleted())
 	s.NoError(s.env.GetWorkflowError())
+}
+
+// TestTaskContextFields_NilTaskContext confirms the nil-safety documented on
+// taskContextFields/openBlockerFields (dag_executor.go) is exercised at THIS layer —
+// the DAG-executor's own flattening step — not only via ExecuteAINodeFromSnapshot's
+// activity-layer coverage in activities_test.go. A snapshot with TaskContext == nil is
+// the ad-hoc-run case (Decision 1 of "Preserve current behavior for Tasks with no
+// dependency context"): a run that was never started from a roadmap Task.
+func (s *DAGExecutorTestSuite) TestTaskContextFields_NilTaskContext() {
+	snap := &state.GraphRuntimeSnapshot{TaskContext: nil}
+
+	taskID, taskTitle, storyID, storyTitle, epicID, epicTitle := taskContextFields(snap)
+	s.Empty(taskID, "TaskID")
+	s.Empty(taskTitle, "TaskTitle")
+	s.Empty(storyID, "StoryID")
+	s.Empty(storyTitle, "StoryTitle")
+	s.Empty(epicID, "EpicID")
+	s.Empty(epicTitle, "EpicTitle")
+
+	s.Empty(openBlockerFields(snap), "OpenBlockers")
+}
+
+// TestOpenBlockerFields_TaskContextWithNoOpenBlockers covers the sibling nil-safety
+// case: a Task-linked run whose TaskContext resolves but has zero open blockers.
+// openBlockerFields must still return an empty/nil slice (not a slice of length 1 with
+// a zero-valued entry, and not a panic on the nil OpenBlockers field) so
+// ExecuteAINodeFromSnapshot omits the open_blockers key rather than emitting a
+// misleading "you have 0 blockers" narration downstream in entrypoint.sh.
+func (s *DAGExecutorTestSuite) TestOpenBlockerFields_TaskContextWithNoOpenBlockers() {
+	taskID := uuid.New()
+	snap := &state.GraphRuntimeSnapshot{
+		TaskContext: &state.SnapshotTaskContext{
+			TaskID:    taskID,
+			TaskTitle: "Task with no open blockers",
+		},
+	}
+
+	gotTaskID, gotTaskTitle, _, _, _, _ := taskContextFields(snap)
+	s.Equal(taskID.String(), gotTaskID)
+	s.Equal("Task with no open blockers", gotTaskTitle)
+	s.Empty(openBlockerFields(snap), "OpenBlockers")
 }
