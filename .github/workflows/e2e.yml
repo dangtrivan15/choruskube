@@ -135,21 +135,20 @@ jobs:
           # The runner supplies the docker.io pull-through mirror host as REGISTRY_MIRROR —
           # the same name the agent image and the image-build workflow already use, so one
           # variable means "pull-through mirror host" everywhere.
-          MIRROR_HOST="${REGISTRY_MIRROR:-}"
-          if [ -n "$MIRROR_HOST" ]; then
-            echo "::add-mask::$MIRROR_HOST"
-            echo "REGISTRY_MIRROR=$MIRROR_HOST" >> "$GITHUB_ENV"
+          if [ -n "${REGISTRY_MIRROR:-}" ]; then
+            echo "::add-mask::$REGISTRY_MIRROR"
+            echo "REGISTRY_MIRROR=$REGISTRY_MIRROR" >> "$GITHUB_ENV"
           fi
           # Generate the container-builder config. The docker.io pull-through mirror block
-          # is emitted ONLY when a mirror host is set — an empty mirror host would
+          # is emitted ONLY when REGISTRY_MIRROR is set — an empty mirror host would
           # yield `mirrors = [""]` and break base-image pulls. BUILD_CACHE_REGISTRY trust is
           # always emitted (the builder below is only created when it is present).
           if [ -n "${BUILD_CACHE_REGISTRY:-}" ]; then
             {
-              if [ -n "$MIRROR_HOST" ]; then
+              if [ -n "${REGISTRY_MIRROR:-}" ]; then
                 echo '[registry."docker.io"]'
-                echo "  mirrors = [\"${MIRROR_HOST}\"]"
-                echo "[registry.\"${MIRROR_HOST}\"]"
+                echo "  mirrors = [\"${REGISTRY_MIRROR}\"]"
+                echo "[registry.\"${REGISTRY_MIRROR}\"]"
                 echo '  http = true'
               fi
               echo "[registry.\"${BUILD_CACHE_REGISTRY}\"]"
