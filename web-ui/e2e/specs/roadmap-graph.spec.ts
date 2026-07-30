@@ -192,12 +192,25 @@ test.describe("Roadmap Graph View", () => {
       blockedItemId: taskC.id,
     });
 
-    // Drive taskB through a real run to completion and mark it done (mirrors
-    // run-lifecycle.spec.ts's "start a Task's run, wait for it to finish"
-    // pattern), while taskA stays untouched in backlog.
+    // Get taskB to "done" without depending on its Task-triggered run (the
+    // real "Feature Development" template, unlike the trivial e2e-linear-pipeline
+    // used elsewhere in this suite) actually completing — that template requires
+    // cloning taskB's git repo, which is unrelated to what this test verifies and
+    // an unnecessary source of flakiness/slowness here. `completeTask` only
+    // requires the Task's most recent linked run to be in a *terminal* state
+    // (RunService#cancelRun sets that synchronously), not specifically
+    // "completed" (mirrors run-lifecycle.spec.ts's "cancel button terminates a
+    // running workflow" pattern). Wait for the run to actually reach "running"
+    // first: the orchestrator's own async node-dispatch callback
+    // (InternalRunService#updateRunStatus) unconditionally overwrites run
+    // status with no terminal-state guard, so cancelling before that callback
+    // lands races it and can get silently clobbered back to "running" —
+    // waiting first means cancel is the last write. taskA stays untouched in
+    // backlog throughout.
     const started = await api.startTask(taskB.id);
     expect(started.latestRunId).not.toBeNull();
-    await api.waitForRunStatus(started.latestRunId!, ["completed"], 120_000);
+    await api.waitForRunStatus(started.latestRunId!, ["running"], 15_000);
+    await api.cancelRun(started.latestRunId!);
     await api.completeTask(taskB.id);
 
     await roadmapGraphPage.goto(epic.id);
