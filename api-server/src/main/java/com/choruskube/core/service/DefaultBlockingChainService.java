@@ -29,7 +29,7 @@ public class DefaultBlockingChainService implements BlockingChainService {
 
     /** Hops from the root before the walk is reported truncated (Caveat 4 — same caveat as
      * {@link #MAX_CHAIN_NODES}: an unvalidated-in-production default). */
-    private static final int MAX_CHAIN_DEPTH = 20;
+    private static final int MAX_CHAIN_DEPTH = 25;
 
     private final StoryService storyService;
     private final TaskService taskService;

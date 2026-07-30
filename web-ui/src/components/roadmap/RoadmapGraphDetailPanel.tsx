@@ -325,11 +325,11 @@ export default function RoadmapGraphDetailPanel({
         />
       )}
 
+      <ExternalBlockersSection blockers={externalBlockers} />
+
       {itemType !== "epic" && item.readiness === "BLOCKED" && (
         <BlockingChainSection chain={chainQuery.data} isLoading={chainQuery.isLoading} />
       )}
-
-      <ExternalBlockersSection blockers={externalBlockers} />
     </div>
   );
 }

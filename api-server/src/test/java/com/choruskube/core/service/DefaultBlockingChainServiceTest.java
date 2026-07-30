@@ -2,6 +2,7 @@ package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -136,6 +137,24 @@ class DefaultBlockingChainServiceTest {
         when(taskService.get(root)).thenThrow(new ForbiddenException("outside org"));
 
         assertThatThrownBy(() -> service.getChain(BlockableItemType.task, root)).isInstanceOf(ForbiddenException.class);
+    }
+
+    @Test
+    void getChain_itemRootBlocksRatherThanIsBlockedBy_neverAppearsInChain() {
+        // findByBlockingItemIdInOrBlockedItemIdIn is bidirectional by design (Decision 4 / §3.1):
+        // it also returns rows where `root` is the *blockingItemId* — i.e. items root itself
+        // blocks, not items blocking root. Those rows must be discarded rather than followed, or
+        // the walk would present something root blocks as though it were a blocker of root.
+        UUID root = UUID.randomUUID();
+        UUID itemRootBlocks = UUID.randomUUID();
+        when(taskService.get(root)).thenReturn(task(root, "Root", "backlog"));
+        when(dependencyRepo.findByBlockingItemIdInOrBlockedItemIdIn(Set.of(root), Set.of(root)))
+                .thenReturn(List.of(edge(root, itemRootBlocks)));
+
+        BlockingChainResponse response = service.getChain(BlockableItemType.task, root);
+
+        assertThat(response.blockedBy()).isEmpty();
+        verify(taskService, never()).get(itemRootBlocks);
     }
 
     @Test
