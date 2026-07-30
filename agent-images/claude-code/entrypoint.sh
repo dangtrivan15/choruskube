@@ -84,7 +84,11 @@ if [ -n "${BUILD_CACHE_REGISTRY:-}" ] && [ -n "${DOCKER_HOST:-}" ]; then
   # docker.io pull-through mirror so base-image pulls go through the mirror
   # instead of hitting Docker Hub directly; when unset, BuildKit pulls from
   # docker.io directly (no mirror).
-  MIRROR_HOST="${REGISTRY_MIRROR:-}"
+  #
+  # Self-default once so the rest of this block can reference REGISTRY_MIRROR plainly:
+  # the script runs under `set -u`, where a bare unset reference aborts the agent, and
+  # repeating `:-` at every use site invites one being forgotten.
+  REGISTRY_MIRROR="${REGISTRY_MIRROR:-}"
 
   cat > /tmp/buildkitd.toml <<EOF
 debug = false
@@ -93,14 +97,14 @@ debug = false
   http = true
 EOF
 
-  if [ -n "${MIRROR_HOST}" ]; then
+  if [ -n "${REGISTRY_MIRROR}" ]; then
     cat >> /tmp/buildkitd.toml <<EOF
 
-[registry."${MIRROR_HOST}"]
+[registry."${REGISTRY_MIRROR}"]
   http = true
 
 [registry."docker.io"]
-  mirrors = ["${MIRROR_HOST}"]
+  mirrors = ["${REGISTRY_MIRROR}"]
 EOF
   fi
 
@@ -115,7 +119,7 @@ EOF
       --name choruskube-builder \
       --driver docker-container \
       --buildkitd-config /tmp/buildkitd.toml >/dev/null 2>&1; then
-    echo "BuildKit builder ready: choruskube-builder (HTTP trust: ${BUILD_CACHE_REGISTRY}${MIRROR_HOST:+, ${MIRROR_HOST}})"
+    echo "BuildKit builder ready: choruskube-builder (HTTP trust: ${BUILD_CACHE_REGISTRY}${REGISTRY_MIRROR:+, ${REGISTRY_MIRROR}})"
   else
     # Don't fail the agent — e2e-up.sh's bake invocation has a no-cache
     # fallback that still produces a working build, just slower.
