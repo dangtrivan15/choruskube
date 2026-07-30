@@ -351,10 +351,12 @@ export interface EpicRequest {
 
 /**
  * Dependency-readiness signal for a Story/Task node in the Roadmap Graph View
- * (Decision 2) — computed at read time from that item's direct incoming
- * "blocking" edges, never persisted. `null` on responses assembled outside
- * the graph view (plain Story/Task CRUD reads have no reason to join
- * dependency edges).
+ * — computed at read time by walking the full chain of incoming "blocking"
+ * edges backward from the item, not just its direct blocker(s); never
+ * persisted. `BLOCKED` if any item reachable that way is not yet done, even
+ * when the direct blocker itself is done but something further upstream in
+ * the chain is not. `null` on responses assembled outside the graph view
+ * (plain Story/Task CRUD reads have no reason to join dependency edges).
  */
 export type Readiness = "READY" | "BLOCKED";
 

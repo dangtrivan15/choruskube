@@ -141,6 +141,54 @@ public class WorkItemDependencyControllerTest extends BaseTest {
     }
 
     @Test
+    void createDependency_directCycle_returns409() throws Exception {
+        TaskResponse a = makeTask("https://github.com/test/dep-ctrl-direct-cycle-a.git");
+        TaskResponse b = makeTask("https://github.com/test/dep-ctrl-direct-cycle-b.git");
+        dependencyService.create(new CreateDependencyRequest("task", a.id(), "task", b.id()));
+
+        var body = new CreateDependencyRequest("task", b.id(), "task", a.id());
+
+        mockMvc.perform(post("/api/v1/dependencies")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    void createDependency_indirectCycle_returns409() throws Exception {
+        TaskResponse a = makeTask("https://github.com/test/dep-ctrl-indirect-cycle-a.git");
+        TaskResponse b = makeTask("https://github.com/test/dep-ctrl-indirect-cycle-b.git");
+        TaskResponse c = makeTask("https://github.com/test/dep-ctrl-indirect-cycle-c.git");
+        dependencyService.create(new CreateDependencyRequest("task", a.id(), "task", b.id()));
+        dependencyService.create(new CreateDependencyRequest("task", b.id(), "task", c.id()));
+
+        var body = new CreateDependencyRequest("task", c.id(), "task", a.id());
+
+        mockMvc.perform(post("/api/v1/dependencies")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    void createDependency_nonCycleFormingEdgeAmongSameNodes_returns201() throws Exception {
+        // A blocks B, B blocks C already exist; A blocks C is a valid extra edge (not a cycle) and
+        // must still succeed — proves the cycle guard doesn't over-reject a diamond-shaped graph.
+        TaskResponse a = makeTask("https://github.com/test/dep-ctrl-non-cycle-a.git");
+        TaskResponse b = makeTask("https://github.com/test/dep-ctrl-non-cycle-b.git");
+        TaskResponse c = makeTask("https://github.com/test/dep-ctrl-non-cycle-c.git");
+        dependencyService.create(new CreateDependencyRequest("task", a.id(), "task", b.id()));
+        dependencyService.create(new CreateDependencyRequest("task", b.id(), "task", c.id()));
+
+        var body = new CreateDependencyRequest("task", a.id(), "task", c.id());
+
+        mockMvc.perform(post("/api/v1/dependencies")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isCreated());
+    }
+
+    @Test
     void createDependency_withoutOperatePermission_returns403() throws Exception {
         TaskResponse blocking = makeTask("https://github.com/test/dep-ctrl-forbidden-a.git");
         TaskResponse blocked = makeTask("https://github.com/test/dep-ctrl-forbidden-b.git");

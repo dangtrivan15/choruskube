@@ -157,6 +157,77 @@ test.describe("Roadmap Graph View", () => {
     }
   });
 
+  test("a 3-task chain stays BLOCKED at the tail after the middle task completes but the root has not", async ({
+    roadmapGraphPage,
+    api,
+  }) => {
+    const repos = await api.listGitRepos();
+    if (repos.content.length === 0) {
+      test.skip();
+      return;
+    }
+
+    const epic = await api.createEpic({
+      title: `E2E Graph Chain Epic ${Date.now()}`,
+      description: "desc",
+      softwareProjectId: repos.content[0].id,
+    });
+    const story = await api.createStory(epic.id, { title: "Chain Story", description: "desc" });
+    const taskA = await api.createTask(story.id, { title: "Chain Task A (root)", description: "desc" });
+    const taskB = await api.createTask(story.id, { title: "Chain Task B (middle)", description: "desc" });
+    const taskC = await api.createTask(story.id, { title: "Chain Task C (tail)", description: "desc" });
+
+    // A blocks B, B blocks C. taskA is never started below, so it's the only
+    // undone item in the chain.
+    await api.createDependency({
+      blockingItemType: "task",
+      blockingItemId: taskA.id,
+      blockedItemType: "task",
+      blockedItemId: taskB.id,
+    });
+    await api.createDependency({
+      blockingItemType: "task",
+      blockingItemId: taskB.id,
+      blockedItemType: "task",
+      blockedItemId: taskC.id,
+    });
+
+    // Get taskB to "done" without depending on its Task-triggered run (the
+    // real "Feature Development" template, unlike the trivial e2e-linear-pipeline
+    // used elsewhere in this suite) actually completing — that template requires
+    // cloning taskB's git repo, which is unrelated to what this test verifies and
+    // an unnecessary source of flakiness/slowness here. `completeTask` only
+    // requires the Task's most recent linked run to be in a *terminal* state
+    // (RunService#cancelRun sets that synchronously), not specifically
+    // "completed" (mirrors run-lifecycle.spec.ts's "cancel button terminates a
+    // running workflow" pattern). Wait for the run to actually reach "running"
+    // first: the orchestrator's own async node-dispatch callback
+    // (InternalRunService#updateRunStatus) unconditionally overwrites run
+    // status with no terminal-state guard, so cancelling before that callback
+    // lands races it and can get silently clobbered back to "running" —
+    // waiting first means cancel is the last write. taskA stays untouched in
+    // backlog throughout.
+    const started = await api.startTask(taskB.id);
+    expect(started.latestRunId).not.toBeNull();
+    await api.waitForRunStatus(started.latestRunId!, ["running"], 15_000);
+    await api.cancelRun(started.latestRunId!);
+    await api.completeTask(taskB.id);
+
+    await roadmapGraphPage.goto(epic.id);
+
+    // This is the regression this feature exists to fix: taskB (taskC's
+    // direct blocker) is now done, but taskA — further upstream — is not, so
+    // taskC must still render BLOCKED rather than flipping to READY the
+    // moment its own immediate blocker clears.
+    const tailNode = roadmapGraphPage.nodeByLabel(taskC.title);
+    await expect(tailNode.getByTestId("roadmap-graph-node-blocked-badge")).toBeVisible();
+
+    // No cleanup: starting taskB has moved it out of "backlog", and
+    // DefaultEpicService#delete refuses to delete an Epic with any started
+    // descendant Task (see run-lifecycle.spec.ts's breadcrumb test) — the
+    // Date.now() title keeps this fixture from colliding with other runs.
+  });
+
   test("collapsing and expanding a large Story branch shows/hides its Tasks", async ({
     roadmapGraphPage,
     api,

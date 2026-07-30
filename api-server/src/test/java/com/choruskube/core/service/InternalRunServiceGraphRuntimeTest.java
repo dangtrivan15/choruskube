@@ -19,6 +19,7 @@ import com.choruskube.core.repository.WorkflowRunRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -351,8 +352,13 @@ class InternalRunServiceGraphRuntimeTest {
     }
 
     // -----------------------------------------------------------------------
-    // openBlockers — the Task's own direct, not-done incoming blocking edges
-    // (Decision 1), resolved independently of any Epic boundary (Decision 4).
+    // openBlockers — the Task's actionable, root-cause open blocker(s), resolved by walking the
+    // full blocking chain via TransitiveReadinessResolver#rootCauseBlockersOf, not just the direct
+    // blocker (multi-step blocking chain feature, Decisions 3/4). The tests in this section use
+    // stubMinimalTask, which deliberately leaves the Task's Epic unresolved, so resolveOpenBlockers
+    // falls back to its no-epic-context path (a plain findByBlockingItemIdInOrBlockedItemIdIn on
+    // just the Task's own id) — the epic-bounded chain walk itself is covered separately below by
+    // getGraphRuntimeSnapshot_threeNodeChain_openBlockersReturnsOnlyTheRootNotTheMiddle.
     // -----------------------------------------------------------------------
 
     private void stubMinimalTask(UUID runId, UUID taskId) {
@@ -365,7 +371,9 @@ class InternalRunServiceGraphRuntimeTest {
         // never-resolving storyId (rather than null) so buildTaskContext's own
         // storyRepo.findById(task.getStoryId()) call is an explicit stub, not an unstubbed
         // invocation that would trip Mockito's strict-stubbing PotentialStubbingProblem check
-        // against the blocker-resolution tests' own storyRepo.findById(...) stubs below.
+        // against the blocker-resolution tests' own storyRepo.findById(...) stubs below. Because
+        // the Story never resolves, buildTaskContext's Epic also stays null, so
+        // resolveOpenBlockers falls back to its no-epic-context path (see above).
         UUID unresolvedStoryId = UUID.randomUUID();
         Task task = new Task();
         task.setId(taskId);
@@ -402,7 +410,7 @@ class InternalRunServiceGraphRuntimeTest {
         openBlocker.setTitle("Still in progress prerequisite");
         openBlocker.setStatus(WorkItemStatus.in_progress);
 
-        when(dependencyRepo.findByBlockedItemTypeAndBlockedItemId(BlockableItemType.task, taskId))
+        when(dependencyRepo.findByBlockingItemIdInOrBlockedItemIdIn(Set.of(taskId), Set.of(taskId)))
                 .thenReturn(List.of(
                         edgeBlocking(taskId, BlockableItemType.task, doneBlockerId),
                         edgeBlocking(taskId, BlockableItemType.task, openBlockerId)));
@@ -424,7 +432,7 @@ class InternalRunServiceGraphRuntimeTest {
         UUID runId = UUID.randomUUID();
         UUID taskId = UUID.randomUUID();
         stubMinimalTask(runId, taskId);
-        when(dependencyRepo.findByBlockedItemTypeAndBlockedItemId(BlockableItemType.task, taskId))
+        when(dependencyRepo.findByBlockingItemIdInOrBlockedItemIdIn(Set.of(taskId), Set.of(taskId)))
                 .thenReturn(List.of());
 
         GraphRuntimeSnapshotResponse response = service.getGraphRuntimeSnapshot(runId);
@@ -446,7 +454,7 @@ class InternalRunServiceGraphRuntimeTest {
         blockingStory.setId(blockingStoryId);
         blockingStory.setTitle("Cross-epic prerequisite Story");
 
-        when(dependencyRepo.findByBlockedItemTypeAndBlockedItemId(BlockableItemType.task, taskId))
+        when(dependencyRepo.findByBlockingItemIdInOrBlockedItemIdIn(Set.of(taskId), Set.of(taskId)))
                 .thenReturn(List.of(edgeBlocking(taskId, BlockableItemType.story, blockingStoryId)));
         when(storyRepo.findById(blockingStoryId)).thenReturn(Optional.of(blockingStory));
         when(taskRepo.findByStoryIdOrderByCreatedAtDesc(blockingStoryId)).thenReturn(List.of());
@@ -477,7 +485,7 @@ class InternalRunServiceGraphRuntimeTest {
 
         // Simulates a work_item_dependency row whose blocking_item_id no longer corresponds to any
         // existing task/story row — there is no DB-level FK enforcing this (V5__work_item_dependency.sql).
-        when(dependencyRepo.findByBlockedItemTypeAndBlockedItemId(BlockableItemType.task, taskId))
+        when(dependencyRepo.findByBlockingItemIdInOrBlockedItemIdIn(Set.of(taskId), Set.of(taskId)))
                 .thenReturn(List.of(
                         edgeBlocking(taskId, BlockableItemType.task, orphanedBlockerId),
                         edgeBlocking(taskId, BlockableItemType.task, resolvableBlockerId)));
@@ -488,5 +496,76 @@ class InternalRunServiceGraphRuntimeTest {
 
         assertThat(response.taskContext().openBlockers()).hasSize(1);
         assertThat(response.taskContext().openBlockers().get(0).itemId()).isEqualTo(resolvableBlockerId);
+    }
+
+    @Test
+    void getGraphRuntimeSnapshot_threeNodeChain_openBlockersReturnsOnlyTheRootNotTheMiddle() throws Exception {
+        // Root blocks Middle, Middle blocks Tail (the run's own Task). Middle is done, Root is
+        // not — resolveOpenBlockers must walk past the done Middle to report Root, not Middle
+        // (multi-step blocking chain feature, Decisions 3/4), mirroring
+        // RoadmapGraphServiceTest#getGraph_threeNodeChain_middleDoneRootUndone_tailStillBlocked.
+        // Unlike stubMinimalTask's tests above, this fixtures a real Story/Epic so the walk is
+        // bounded to (and covers) that Epic's own candidate set (Decision 2).
+        UUID runId = UUID.randomUUID();
+        UUID epicId = UUID.randomUUID();
+        UUID storyId = UUID.randomUUID();
+        UUID rootId = UUID.randomUUID();
+        UUID middleId = UUID.randomUUID();
+        UUID tailId = UUID.randomUUID();
+
+        WorkflowRun run = new WorkflowRun();
+        run.setTaskId(tailId);
+        when(runRepo.findById(runId)).thenReturn(Optional.of(run));
+        when(snapshotBuilder.buildSnapshotForRun(run)).thenReturn(SNAPSHOT_JSON);
+
+        Task tailTask = new Task();
+        tailTask.setId(tailId);
+        tailTask.setTitle("Tail");
+        tailTask.setStoryId(storyId);
+        when(taskRepo.findById(tailId)).thenReturn(Optional.of(tailTask));
+
+        Story story = new Story();
+        story.setId(storyId);
+        story.setTitle("Story");
+        story.setEpicId(epicId);
+        when(storyRepo.findById(storyId)).thenReturn(Optional.of(story));
+
+        Epic epic = new Epic();
+        epic.setId(epicId);
+        epic.setTitle("Epic");
+        when(epicRepo.findById(epicId)).thenReturn(Optional.of(epic));
+
+        when(storyRepo.findByEpicIdOrderByCreatedAtDesc(epicId)).thenReturn(List.of(story));
+
+        Task rootTask = new Task();
+        rootTask.setId(rootId);
+        rootTask.setTitle("Root");
+        rootTask.setStatus(WorkItemStatus.backlog);
+        rootTask.setStoryId(storyId);
+
+        Task middleTask = new Task();
+        middleTask.setId(middleId);
+        middleTask.setTitle("Middle");
+        middleTask.setStatus(WorkItemStatus.done);
+        middleTask.setStoryId(storyId);
+
+        when(taskRepo.findByStoryIdIn(List.of(storyId))).thenReturn(List.of(rootTask, middleTask, tailTask));
+
+        Set<UUID> candidateIds = Set.of(storyId, rootId, middleId, tailId);
+        when(dependencyRepo.findByBlockingItemIdInOrBlockedItemIdIn(candidateIds, candidateIds))
+                .thenReturn(List.of(
+                        edgeBlocking(middleId, BlockableItemType.task, rootId),
+                        edgeBlocking(tailId, BlockableItemType.task, middleId)));
+        when(taskRepo.findById(rootId)).thenReturn(Optional.of(rootTask));
+        when(taskRepo.findById(middleId)).thenReturn(Optional.of(middleTask));
+
+        GraphRuntimeSnapshotResponse response = service.getGraphRuntimeSnapshot(runId);
+
+        assertThat(response.taskContext().openBlockers()).hasSize(1);
+        var blocker = response.taskContext().openBlockers().get(0);
+        assertThat(blocker.itemType()).isEqualTo("task");
+        assertThat(blocker.itemId()).isEqualTo(rootId);
+        assertThat(blocker.title()).isEqualTo("Root");
+        assertThat(blocker.status()).isEqualTo("backlog");
     }
 }
