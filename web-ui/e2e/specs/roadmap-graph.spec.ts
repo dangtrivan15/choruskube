@@ -157,6 +157,64 @@ test.describe("Roadmap Graph View", () => {
     }
   });
 
+  test("a 3-task chain stays BLOCKED at the tail after the middle task completes but the root has not", async ({
+    roadmapGraphPage,
+    api,
+  }) => {
+    const repos = await api.listGitRepos();
+    if (repos.content.length === 0) {
+      test.skip();
+      return;
+    }
+
+    const epic = await api.createEpic({
+      title: `E2E Graph Chain Epic ${Date.now()}`,
+      description: "desc",
+      softwareProjectId: repos.content[0].id,
+    });
+    const story = await api.createStory(epic.id, { title: "Chain Story", description: "desc" });
+    const taskA = await api.createTask(story.id, { title: "Chain Task A (root)", description: "desc" });
+    const taskB = await api.createTask(story.id, { title: "Chain Task B (middle)", description: "desc" });
+    const taskC = await api.createTask(story.id, { title: "Chain Task C (tail)", description: "desc" });
+
+    // A blocks B, B blocks C. taskA is never started below, so it's the only
+    // undone item in the chain.
+    await api.createDependency({
+      blockingItemType: "task",
+      blockingItemId: taskA.id,
+      blockedItemType: "task",
+      blockedItemId: taskB.id,
+    });
+    await api.createDependency({
+      blockingItemType: "task",
+      blockingItemId: taskB.id,
+      blockedItemType: "task",
+      blockedItemId: taskC.id,
+    });
+
+    // Drive taskB through a real run to completion and mark it done (mirrors
+    // run-lifecycle.spec.ts's "start a Task's run, wait for it to finish"
+    // pattern), while taskA stays untouched in backlog.
+    const started = await api.startTask(taskB.id);
+    expect(started.latestRunId).not.toBeNull();
+    await api.waitForRunStatus(started.latestRunId!, ["completed"], 120_000);
+    await api.completeTask(taskB.id);
+
+    await roadmapGraphPage.goto(epic.id);
+
+    // This is the regression this feature exists to fix: taskB (taskC's
+    // direct blocker) is now done, but taskA — further upstream — is not, so
+    // taskC must still render BLOCKED rather than flipping to READY the
+    // moment its own immediate blocker clears.
+    const tailNode = roadmapGraphPage.nodeByLabel(taskC.title);
+    await expect(tailNode.getByTestId("roadmap-graph-node-blocked-badge")).toBeVisible();
+
+    // No cleanup: starting taskB has moved it out of "backlog", and
+    // DefaultEpicService#delete refuses to delete an Epic with any started
+    // descendant Task (see run-lifecycle.spec.ts's breadcrumb test) — the
+    // Date.now() title keeps this fixture from colliding with other runs.
+  });
+
   test("collapsing and expanding a large Story branch shows/hides its Tasks", async ({
     roadmapGraphPage,
     api,

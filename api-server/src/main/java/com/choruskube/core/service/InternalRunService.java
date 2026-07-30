@@ -397,55 +397,96 @@ public class InternalRunService {
                             story != null ? story.getTitle() : null,
                             epic != null ? epic.getId() : null,
                             epic != null ? epic.getTitle() : null,
-                            resolveOpenBlockers(task.getId()));
+                            resolveOpenBlockers(task.getId(), epic != null ? epic.getId() : null));
                 })
                 .orElse(null);
     }
 
     /**
-     * The Task's own direct, not-yet-{@code done} incoming blocking edges (Decision 1), queried
-     * independently of any Epic boundary (Decision 4) so a cross-epic blocker is still reported.
-     * Mirrors the type-discriminant dual-lookup shape of {@link
-     * DefaultRoadmapGraphService#resolveExternalBlocker} (a sibling service class — this method
-     * has no in-class precedent of its own to reuse; see Decision 4's tradeoff on this
-     * duplication). Rows whose blocking item no longer resolves are silently skipped: {@code
+     * The Task's actionable, root-cause open blocker(s) — not-yet-{@code done} items reachable by
+     * walking the full blocking chain (not just the direct blocker) that are themselves unblocked,
+     * i.e. worth acting on next (multi-step blocking chain feature, Decisions 3/4). Delegates to
+     * {@link TransitiveReadinessResolver#rootCauseBlockersOf}, the same shared resolver {@link
+     * DefaultRoadmapGraphService} uses, so the two call sites can no longer independently drift on
+     * what "blocked" means. The transitive walk is bounded to the Task's own Epic's Story/Task set
+     * when {@code epicId} is known (mirrors {@link DefaultRoadmapGraphService#assemble}'s
+     * candidate-set bounding, Decision 2) — a direct blocker outside that Epic is still reported
+     * (single-hop, as before), but its own upstream chain is not walked past. {@code epicId} is
+     * null only when the Task's Story/Epic no longer resolves (Caveat 1 on {@link
+     * #buildTaskContext}), in which case the walk covers just the Task's own direct edges.
+     *
+     * <p>Rows whose blocking item no longer resolves are silently skipped: {@code
      * work_item_dependency} has no DB-level foreign key on {@code blocking_item_id} (see {@code
      * V5__work_item_dependency.sql}), so a referenced Story/Task can be gone without the edge
      * itself being cleaned up (a race between fetching the edge and resolving it, or direct DB
      * manipulation) — the app-level delete paths clean up referencing edges defensively, but
      * nothing at the schema level guarantees it.
      */
-    private List<OpenBlockerRef> resolveOpenBlockers(UUID taskId) {
-        List<WorkItemDependency> edges =
-                dependencyRepo.findByBlockedItemTypeAndBlockedItemId(BlockableItemType.task, taskId);
+    private List<OpenBlockerRef> resolveOpenBlockers(UUID taskId, @Nullable UUID epicId) {
+        Set<UUID> candidateIds = new HashSet<>();
+        candidateIds.add(taskId);
+        if (epicId != null) {
+            List<Story> epicStories = storyRepo.findByEpicIdOrderByCreatedAtDesc(epicId);
+            List<UUID> epicStoryIds = epicStories.stream().map(Story::getId).toList();
+            candidateIds.addAll(epicStoryIds);
+            taskRepo.findByStoryIdIn(epicStoryIds).forEach(t -> candidateIds.add(t.getId()));
+        }
+
+        List<WorkItemDependency> rows =
+                dependencyRepo.findByBlockingItemIdInOrBlockedItemIdIn(candidateIds, candidateIds);
+
+        Map<UUID, String> titleById = new HashMap<>();
+        Map<UUID, String> statusById = new HashMap<>();
+        Map<UUID, BlockableItemType> typeById = new HashMap<>();
+        for (WorkItemDependency row : rows) {
+            resolveBlockerTitleAndStatus(
+                    row.getBlockingItemType(), row.getBlockingItemId(), titleById, statusById, typeById);
+        }
+
+        List<UUID> rootCauseIds = TransitiveReadinessResolver.rootCauseBlockersOf(taskId, rows, statusById::get);
+
         List<OpenBlockerRef> openBlockers = new ArrayList<>();
-        for (WorkItemDependency edge : edges) {
-            String title;
-            String status;
-            if (edge.getBlockingItemType() == BlockableItemType.story) {
-                Story blockingStory =
-                        storyRepo.findById(edge.getBlockingItemId()).orElse(null);
-                if (blockingStory == null) {
-                    continue;
-                }
-                title = blockingStory.getTitle();
-                status = RollupCalculator.compute(taskRepo.findByStoryIdOrderByCreatedAtDesc(blockingStory.getId()))
-                        .status();
-            } else {
-                Task blockingTask = taskRepo.findById(edge.getBlockingItemId()).orElse(null);
-                if (blockingTask == null) {
-                    continue;
-                }
-                title = blockingTask.getTitle();
-                status = blockingTask.getStatus().name();
-            }
-            if (WorkItemStatus.done.name().equals(status)) {
-                continue;
+        for (UUID blockerId : rootCauseIds) {
+            String title = titleById.get(blockerId);
+            if (title == null) {
+                continue; // referenced item no longer resolves (see javadoc above)
             }
             openBlockers.add(
-                    new OpenBlockerRef(edge.getBlockingItemType().name(), edge.getBlockingItemId(), title, status));
+                    new OpenBlockerRef(typeById.get(blockerId).name(), blockerId, title, statusById.get(blockerId)));
         }
         return openBlockers;
+    }
+
+    /** Resolves and caches a blocking item's title/status/type by id, once per {@code id}. */
+    private void resolveBlockerTitleAndStatus(
+            BlockableItemType type,
+            UUID id,
+            Map<UUID, String> titleById,
+            Map<UUID, String> statusById,
+            Map<UUID, BlockableItemType> typeById) {
+        if (titleById.containsKey(id)) {
+            return;
+        }
+        if (type == BlockableItemType.story) {
+            Story blockingStory = storyRepo.findById(id).orElse(null);
+            if (blockingStory == null) {
+                return;
+            }
+            titleById.put(id, blockingStory.getTitle());
+            statusById.put(
+                    id,
+                    RollupCalculator.compute(taskRepo.findByStoryIdOrderByCreatedAtDesc(id))
+                            .status());
+            typeById.put(id, BlockableItemType.story);
+        } else {
+            Task blockingTask = taskRepo.findById(id).orElse(null);
+            if (blockingTask == null) {
+                return;
+            }
+            titleById.put(id, blockingTask.getTitle());
+            statusById.put(id, blockingTask.getStatus().name());
+            typeById.put(id, BlockableItemType.task);
+        }
     }
 
     public JobSecretHashResponse getJobSecretHash(UUID runId, UUID nodeExecId) {

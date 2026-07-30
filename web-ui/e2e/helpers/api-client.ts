@@ -220,6 +220,21 @@ export class TestApiClient {
     return text ? (JSON.parse(text) as T) : (undefined as T);
   }
 
+  private async patch<T>(path: string, body?: unknown): Promise<T> {
+    const headers: Record<string, string> = await this.authHeaders();
+    if (body) headers["Content-Type"] = "application/json";
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      method: "PATCH",
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (!res.ok) {
+      throw new Error(`PATCH ${path} → ${res.status}: ${await res.text()}`);
+    }
+    const text = await res.text();
+    return text ? (JSON.parse(text) as T) : (undefined as T);
+  }
+
   private async delete(path: string): Promise<void> {
     const headers = await this.authHeaders();
     const res = await fetch(`${this.baseUrl}${path}`, { method: "DELETE", headers });
@@ -353,6 +368,15 @@ export class TestApiClient {
 
   async startTask(id: string): Promise<Task> {
     return this.post(`/api/v1/tasks/${id}/start`);
+  }
+
+  /**
+   * Flips an `in_progress` Task to `done` (mirrors `TaskController#complete`'s
+   * `PATCH /complete`). Only valid once the Task's most recent linked run has
+   * reached a terminal status — pair with `waitForRunStatus` after `startTask`.
+   */
+  async completeTask(id: string): Promise<Task> {
+    return this.patch(`/api/v1/tasks/${id}/complete`);
   }
 
   // ── Roadmap Graph View (Part 2) ────────────────────────────────────

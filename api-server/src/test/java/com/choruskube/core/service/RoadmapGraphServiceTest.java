@@ -332,6 +332,91 @@ public class RoadmapGraphServiceTest extends BaseTest {
         assertThat(snapshot.stories().get(0).readiness()).isEqualTo(Readiness.BLOCKED);
     }
 
+    // ── transitive readiness (multi-step blocking chains) ─────────────────────
+
+    @Test
+    void getGraph_threeNodeChain_onlyRootUndone_tailIsBlocked() {
+        EpicResponse epic = makeEpic("https://github.com/test/readiness-chain-root-undone.git");
+        StoryResponse story = makeStory(epic.id(), "Story");
+        TaskResponse root = makeTask(story.id(), "Root");
+        TaskResponse middle = makeTask(story.id(), "Middle");
+        TaskResponse tail = makeTask(story.id(), "Tail");
+        dependencyService.create(new CreateDependencyRequest("task", root.id(), "task", middle.id()));
+        dependencyService.create(new CreateDependencyRequest("task", middle.id(), "task", tail.id()));
+
+        RoadmapGraphSnapshot snapshot = graphService.getGraph(epic.id());
+
+        assertThat(readinessOf(snapshot, middle.id())).isEqualTo(Readiness.BLOCKED);
+        assertThat(readinessOf(snapshot, tail.id())).isEqualTo(Readiness.BLOCKED);
+        assertThat(readinessOf(snapshot, root.id())).isEqualTo(Readiness.READY);
+    }
+
+    @Test
+    void getGraph_threeNodeChain_middleDoneRootUndone_tailStillBlocked() {
+        // The core regression this feature exists to fix: marking the middle link done must not
+        // flip the tail to READY while the root cause further upstream is still not done.
+        EpicResponse epic = makeEpic("https://github.com/test/readiness-chain-middle-done.git");
+        StoryResponse story = makeStory(epic.id(), "Story");
+        TaskResponse root = makeTask(story.id(), "Root");
+        TaskResponse middle = makeTask(story.id(), "Middle");
+        TaskResponse tail = makeTask(story.id(), "Tail");
+        dependencyService.create(new CreateDependencyRequest("task", root.id(), "task", middle.id()));
+        dependencyService.create(new CreateDependencyRequest("task", middle.id(), "task", tail.id()));
+
+        markTaskDone(middle.id());
+        // root is deliberately left undone.
+
+        RoadmapGraphSnapshot snapshot = graphService.getGraph(epic.id());
+
+        assertThat(readinessOf(snapshot, tail.id())).isEqualTo(Readiness.BLOCKED);
+    }
+
+    @Test
+    void getGraph_diamondDependency_isBlocked() {
+        EpicResponse epic = makeEpic("https://github.com/test/readiness-diamond.git");
+        StoryResponse story = makeStory(epic.id(), "Story");
+        TaskResponse blockerA = makeTask(story.id(), "Blocker A");
+        TaskResponse blockerB = makeTask(story.id(), "Blocker B");
+        TaskResponse blocked = makeTask(story.id(), "Blocked by both");
+        dependencyService.create(new CreateDependencyRequest("task", blockerA.id(), "task", blocked.id()));
+        dependencyService.create(new CreateDependencyRequest("task", blockerB.id(), "task", blocked.id()));
+
+        markTaskDone(blockerB.id());
+        // blockerA is deliberately left undone.
+
+        RoadmapGraphSnapshot snapshot = graphService.getGraph(epic.id());
+
+        assertThat(readinessOf(snapshot, blocked.id())).isEqualTo(Readiness.BLOCKED);
+    }
+
+    @Test
+    void getGraph_crossEpicBlocker_notWalkedPastExternalBlocker() {
+        // An item's direct blocker is itself blocked by an item in a DIFFERENT Epic (Decision 2):
+        // the walk is bounded to the requesting Epic, so it stops at the external blocker's own
+        // status and does not follow that blocker's further upstream chain — the item renders
+        // READY once the external blocker itself is done, even though something further upstream
+        // of it (in the other Epic) is still not done.
+        EpicResponse epicA = makeEpic("https://github.com/test/readiness-cross-epic-a.git");
+        StoryResponse storyA = makeStory(epicA.id(), "Story A");
+        TaskResponse blockedInA = makeTask(storyA.id(), "Blocked in A");
+
+        EpicResponse epicB = makeEpic("https://github.com/test/readiness-cross-epic-b.git");
+        StoryResponse storyB = makeStory(epicB.id(), "Story B");
+        TaskResponse externalBlocker = makeTask(storyB.id(), "External Blocker in B");
+        TaskResponse upstreamOfExternalBlocker = makeTask(storyB.id(), "Upstream of External Blocker in B");
+
+        dependencyService.create(new CreateDependencyRequest("task", externalBlocker.id(), "task", blockedInA.id()));
+        dependencyService.create(
+                new CreateDependencyRequest("task", upstreamOfExternalBlocker.id(), "task", externalBlocker.id()));
+
+        markTaskDone(externalBlocker.id());
+        // upstreamOfExternalBlocker is deliberately left undone.
+
+        RoadmapGraphSnapshot snapshot = graphService.getGraph(epicA.id());
+
+        assertThat(readinessOf(snapshot, blockedInA.id())).isEqualTo(Readiness.READY);
+    }
+
     // ── recentRuns / totalRunCount (Decision 3) ───────────────────────────────
 
     @Test
@@ -433,6 +518,14 @@ public class RoadmapGraphServiceTest extends BaseTest {
         TaskResponse started = taskService.start(taskId);
         markRunTerminal(started.latestRunId(), WorkflowRunStatus.completed);
         taskService.complete(taskId);
+    }
+
+    private static Readiness readinessOf(RoadmapGraphSnapshot snapshot, UUID taskId) {
+        return snapshot.tasks().stream()
+                .filter(t -> t.id().equals(taskId))
+                .findFirst()
+                .orElseThrow()
+                .readiness();
     }
 
     private EpicResponse makeEpic(String url) {

@@ -126,52 +126,51 @@ public class DefaultRoadmapGraphService implements RoadmapGraphService {
         stories.forEach(s -> statusById.put(s.id(), s.status()));
         tasks.forEach(t -> statusById.put(t.id(), t.status()));
 
-        // Readiness (Decision 2): BLOCKED iff a DIRECT incoming blocking edge's blocker is not
-        // done. Computed in the same pass as dependency/external-blocker assembly below, so an
-        // external blocker's status/org-check is resolved (and org-checked) only once per row.
-        Map<UUID, Boolean> blockedFlags = new HashMap<>();
         List<DependencyEdgeResponse> dependencies = new ArrayList<>();
         List<ExternalBlockerRef> externalBlockers = new ArrayList<>();
 
         for (WorkItemDependency row : rows) {
             boolean blockingInside = candidateIds.contains(row.getBlockingItemId());
             boolean blockedInside = candidateIds.contains(row.getBlockedItemId());
-            String blockingStatus = null;
 
             if (blockingInside && blockedInside) {
                 dependencies.add(toEdgeResponse(row));
-                blockingStatus = statusById.get(row.getBlockingItemId());
             } else if (!blockingInside) {
                 ExternalBlockerResolution resolution =
                         resolveExternalBlocker(row.getBlockingItemType(), row.getBlockingItemId(), internal, runId);
                 externalBlockers.add(resolution.ref());
-                blockingStatus = resolution.status();
+                // Feeds the transitive walk below: a direct blocker's own status still gates
+                // readiness even when it lives outside this Epic (Decision 2), so its status must
+                // be resolvable by id like every in-Epic item's.
+                statusById.put(row.getBlockingItemId(), resolution.status());
             } else {
                 // blockingInside && !blockedInside: the BLOCKED side lives outside this Epic —
                 // shown as an external blocker reference for display, but it doesn't affect
-                // readiness of anything IN this Epic (blockedInside is false).
+                // readiness of anything IN this Epic (blockedInside is false), so its status is
+                // never looked up.
                 ExternalBlockerResolution resolution =
                         resolveExternalBlocker(row.getBlockedItemType(), row.getBlockedItemId(), internal, runId);
                 externalBlockers.add(resolution.ref());
             }
-
-            if (blockedInside && blockingStatus != null && !"done".equals(blockingStatus)) {
-                blockedFlags.put(row.getBlockedItemId(), true);
-            }
         }
 
+        // Readiness: BLOCKED iff any item reachable by walking the blocking chain backward from
+        // this node is not yet done — not just its direct blocker (multi-step blocking chain
+        // feature, Decisions 1/2). The walk is bounded to `rows` (this Epic's own candidate set,
+        // loaded above), so an external blocker's own upstream chain is not followed further
+        // (Decision 2) — only its already-resolved status (added to statusById above) gates
+        // readiness at that hop.
+        Map<UUID, Readiness> readinessById =
+                TransitiveReadinessResolver.computeReadiness(candidateIds, rows, statusById::get);
+
         List<StoryResponse> storiesWithReadiness = stories.stream()
-                .map(s -> withReadiness(s, readinessOf(blockedFlags, s.id())))
+                .map(s -> withReadiness(s, readinessById.get(s.id())))
                 .toList();
         List<TaskResponse> tasksWithExtras = tasks.stream()
-                .map(t -> withReadinessAndRuns(t, readinessOf(blockedFlags, t.id()), internal))
+                .map(t -> withReadinessAndRuns(t, readinessById.get(t.id()), internal))
                 .toList();
 
         return new RoadmapGraphSnapshot(epic, storiesWithReadiness, tasksWithExtras, dependencies, externalBlockers);
-    }
-
-    private static Readiness readinessOf(Map<UUID, Boolean> blockedFlags, UUID id) {
-        return blockedFlags.getOrDefault(id, false) ? Readiness.BLOCKED : Readiness.READY;
     }
 
     private static StoryResponse withReadiness(StoryResponse s, Readiness readiness) {

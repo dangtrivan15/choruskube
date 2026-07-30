@@ -3,6 +3,7 @@ package com.choruskube.core.service;
 import com.choruskube.core.dto.CreateDependencyRequest;
 import com.choruskube.core.dto.DependencyEdgeResponse;
 import com.choruskube.core.exception.BadRequestException;
+import com.choruskube.core.exception.DependencyCycleException;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.WorkItemDependency;
 import com.choruskube.core.model.enums.BlockableItemType;
@@ -65,9 +66,22 @@ public class DefaultWorkItemDependencyService implements WorkItemDependencyServi
         // own request-scoped org: a caller in one org must not be able to link two items that both
         // belong to a different org. Deliberately NOT assertSameOrg — that compares the two named
         // resources only to each other and ignores the caller's own org context entirely (see its
-        // Javadoc), which would let a caller outside both orgs create the edge.
+        // Javadoc), which would let a caller outside both orgs create the edge. Runs before the
+        // cycle check below: authorization must gate the request regardless of what the cycle
+        // check would find, not the other way around.
         authService.checkOrgAccess(blockingType.name(), blockingId);
         authService.checkOrgAccess(blockedType.name(), blockedId);
+
+        // Cycle guard (Decision 5): reject before insert if this edge would close a loop with
+        // existing edges anywhere in the graph — a cycle isn't necessarily confined to one Epic
+        // (dependencies can cross Epics), so the reachability check reads every existing edge
+        // rather than a pre-scoped subset. The traversal-time guard in TransitiveReadinessResolver
+        // itself remains the second line of defense (Caveat 4: this read-then-write check has no
+        // locking, so two concurrent creates could still jointly close a cycle).
+        List<WorkItemDependency> existingEdges = repo.findAll();
+        if (TransitiveReadinessResolver.wouldCreateCycle(blockingId, blockedId, existingEdges)) {
+            throw new DependencyCycleException(blockingId, blockedId);
+        }
 
         WorkItemDependency edge = new WorkItemDependency();
         edge.setBlockingItemType(blockingType);
