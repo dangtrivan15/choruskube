@@ -120,7 +120,9 @@ function ExternalBlockerGroup({
       <h3 className="text-sm font-medium text-muted-foreground">{heading}</h3>
       <ul className="flex flex-wrap gap-2">
         {blockers.map((blocker) => (
-          <li key={`${blocker.itemType}-${blocker.itemId}-${blocker.direction}`}>
+          <li
+            key={`${blocker.itemType}-${blocker.itemId}-${blocker.internalItemId}-${blocker.direction}`}
+          >
             <Link
               to={`/roadmap/epics/${blocker.epicId}`}
               data-testid="roadmap-external-blocker-badge"

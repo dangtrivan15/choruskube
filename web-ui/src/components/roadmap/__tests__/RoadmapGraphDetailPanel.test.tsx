@@ -272,6 +272,34 @@ describe("RoadmapGraphDetailPanel", () => {
     expect(screen.getAllByTestId("roadmap-external-blocker-badge")).toHaveLength(2);
   });
 
+  it("keys each Epic-node external-blocker badge uniquely even when the same external item touches two internal items", () => {
+    // Regression test: for an Epic node (unlike a Story/Task node, which is
+    // pre-filtered to one internalItemId — see the "filters external
+    // blockers" test above), ExternalBlockerGroup renders the full,
+    // un-filtered list. Its <li> key used to be
+    // `${itemType}-${itemId}-${direction}`, omitting internalItemId. Two
+    // refs for the same external item touching two different in-Epic items
+    // in the same direction (the exact shape RoadmapGraphServiceTest's
+    // getGraph_externalBlockerTouchingMultipleInternalItems_eachRefHasDistinctInternalItemId
+    // proves the backend emits) then collided on one key, which React
+    // reports as a duplicate-key warning and can silently drop/duplicate
+    // list children.
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const blockerForOtherTask: ExternalBlockerRef = { ...externalBlocker, internalItemId: "task-2" };
+    renderPanel({
+      detail: { itemType: "epic", item: epic },
+      externalBlockers: [externalBlocker, blockerForOtherTask],
+    });
+
+    expect(screen.getAllByTestId("roadmap-external-blocker-badge")).toHaveLength(2);
+    expect(consoleError).not.toHaveBeenCalledWith(
+      expect.stringContaining("Encountered two children with the same key"),
+      expect.anything(),
+      expect.anything(),
+    );
+    consoleError.mockRestore();
+  });
+
   it("groups external blockers under 'Blocked by' when the external item blocks the selected item", () => {
     renderPanel({ detail: { itemType: "task", item: task }, externalBlockers: [externalBlocker] });
     expect(screen.getByText("Blocked by (other Epics)")).toBeInTheDocument();
