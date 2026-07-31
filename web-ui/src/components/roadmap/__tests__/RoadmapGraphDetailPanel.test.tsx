@@ -272,6 +272,46 @@ describe("RoadmapGraphDetailPanel", () => {
     expect(screen.getAllByTestId("roadmap-external-blocker-badge")).toHaveLength(2);
   });
 
+  it("groups external blockers under 'Blocked by' when the external item blocks the selected item", () => {
+    renderPanel({ detail: { itemType: "task", item: task }, externalBlockers: [externalBlocker] });
+    expect(screen.getByText("Blocked by (other Epics)")).toBeInTheDocument();
+    expect(screen.queryByText("Blocking (other Epics)")).not.toBeInTheDocument();
+  });
+
+  it("groups external blockers under 'Blocking' — not 'Blocked by' — when the selected item blocks the external item", () => {
+    // Regression test: direction === "BLOCKED" means the in-Epic item blocks
+    // the external one, the reverse of `externalBlocker`. Before this fix,
+    // every entry rendered under one undifferentiated "External blockers"
+    // heading regardless of direction, so a BLOCKED-direction entry read as
+    // if the external item were blocking the selected item — the opposite
+    // of what actually happened.
+    const weBlockThem: ExternalBlockerRef = { ...externalBlocker, direction: "BLOCKED" };
+    renderPanel({ detail: { itemType: "task", item: task }, externalBlockers: [weBlockThem] });
+
+    expect(screen.getByText("Blocking (other Epics)")).toBeInTheDocument();
+    expect(screen.queryByText("Blocked by (other Epics)")).not.toBeInTheDocument();
+    expect(screen.getByTestId("roadmap-external-blocker-badge")).toHaveTextContent(
+      "Migrate auth service",
+    );
+  });
+
+  it("shows both direction groups when the selected item has blockers in both directions", () => {
+    const weBlockThem: ExternalBlockerRef = {
+      ...externalBlocker,
+      itemId: "other-task-2",
+      title: "Rework billing export",
+      direction: "BLOCKED",
+    };
+    renderPanel({
+      detail: { itemType: "task", item: task },
+      externalBlockers: [externalBlocker, weBlockThem],
+    });
+
+    expect(screen.getByText("Blocked by (other Epics)")).toBeInTheDocument();
+    expect(screen.getByText("Blocking (other Epics)")).toBeInTheDocument();
+    expect(screen.getAllByTestId("roadmap-external-blocker-badge")).toHaveLength(2);
+  });
+
   it("does not render a 'Blocked by' section for an Epic node", () => {
     renderPanel({ detail: { itemType: "epic", item: epic } });
     expect(screen.queryByTestId("roadmap-blocking-dependencies")).not.toBeInTheDocument();
