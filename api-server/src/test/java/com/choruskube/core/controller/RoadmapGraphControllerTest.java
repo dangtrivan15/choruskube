@@ -81,6 +81,14 @@ public class RoadmapGraphControllerTest extends BaseTest {
         TaskResponse blocked = taskService.create(story.id(), new TaskRequest("Blocked", "D"));
         dependencyService.create(new CreateDependencyRequest("task", blocking.id(), "task", blocked.id()));
 
+        // A cross-Epic blocker of `blocked` (Decision 3), so the response shape assertion below
+        // also covers the additive `direction`/`internalItemId` fields on `externalBlockers`, not
+        // just the within-Epic `dependencies` shape.
+        EpicResponse foreignEpic = makeEpic("https://github.com/test/graph-ctrl-shape-foreign.git");
+        StoryResponse foreignStory = storyService.create(foreignEpic.id(), new StoryRequest("Foreign S", "D"));
+        TaskResponse foreignBlocking = taskService.create(foreignStory.id(), new TaskRequest("Foreign Blocking", "D"));
+        dependencyService.create(new CreateDependencyRequest("task", foreignBlocking.id(), "task", blocked.id()));
+
         mockMvc.perform(get("/api/v1/epics/" + epic.id() + "/graph"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.epic.id").value(epic.id().toString()))
@@ -92,7 +100,12 @@ public class RoadmapGraphControllerTest extends BaseTest {
                         .value(blocking.id().toString()))
                 .andExpect(jsonPath("$.dependencies[0].blockedItemId")
                         .value(blocked.id().toString()))
-                .andExpect(jsonPath("$.externalBlockers.length()").value(0));
+                .andExpect(jsonPath("$.externalBlockers.length()").value(1))
+                .andExpect(jsonPath("$.externalBlockers[0].direction").isNotEmpty())
+                .andExpect(jsonPath("$.externalBlockers[0].internalItemId").isNotEmpty())
+                .andExpect(jsonPath("$.externalBlockers[0].direction").value("BLOCKING"))
+                .andExpect(jsonPath("$.externalBlockers[0].internalItemId")
+                        .value(blocked.id().toString()));
     }
 
     @Test
