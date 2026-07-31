@@ -1,6 +1,8 @@
 package com.choruskube.core.service;
 
+import com.choruskube.core.dto.BlockingChainNode;
 import com.choruskube.core.model.WorkItemDependency;
+import com.choruskube.core.model.enums.BlockableItemType;
 import com.choruskube.core.model.enums.Readiness;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -22,10 +24,11 @@ import java.util.function.Function;
  * rows) and this class only walks whatever it's handed.
  *
  * <p>Used by {@link DefaultRoadmapGraphService} (per-node {@link Readiness} across an Epic), by
- * {@link InternalRunService} (root-cause "open blockers" for a run's Task), and by {@link
- * DefaultWorkItemDependencyService} (rejecting cycle-forming edges at creation time) — the single
- * shared component both readiness call sites now delegate to, so they cannot independently drift
- * on what "blocked" means (Decision 3).
+ * {@link InternalRunService} (root-cause "open blockers" for a run's Task), by {@link
+ * DefaultWorkItemDependencyService} (rejecting cycle-forming edges at creation time), and by
+ * {@link DefaultBlockingChainService} (the full pruned blocking-chain tree for one Story/Task) —
+ * the single shared component all these call sites now delegate to, so they cannot independently
+ * drift on what "blocked" means (Decision 3).
  */
 final class TransitiveReadinessResolver {
 
@@ -105,6 +108,124 @@ final class TransitiveReadinessResolver {
             }
         }
         return false;
+    }
+
+    /**
+     * The pruned blocking-chain tree rooted at {@code itemId} (Decisions 2, 4, 5): each returned
+     * {@link BlockingChainNode} is a direct blocker of its parent (the root, for the top-level
+     * list), carrying its own upstream blockers recursively. A branch is pruned entirely once every
+     * node on it is {@code "done"} — but a {@code done} node is still INCLUDED if something further
+     * upstream on the same branch is not done (mirrors {@link #isBlocked}'s core correctness rule:
+     * "A blocks B blocks C; B done, A not done ⇒ C still BLOCKED" — the display must show B so the
+     * user understands why the done-looking direct blocker still counts).
+     *
+     * <p>Bounded by {@code maxNodes} (total nodes admitted into the returned tree, across all
+     * branches) and {@code maxDepth} (hops from the root); once either is hit, that branch stops
+     * expanding and the walk is reported {@code truncated} via {@link ChainWalkResult#truncated()}
+     * (Decision 5) — the caller ({@code DefaultBlockingChainService}) applies its own, separate
+     * node/depth cap while resolving items from the database layer-by-layer, so by the time {@code
+     * edges} reaches here it is normally already within bounds; this method's own cap is a second,
+     * independent guard against the tree itself fanning out past the cap through duplicate branches
+     * to a shared ancestor (Caveat 2 — a shared ancestor is not deduplicated, so it can appear, and
+     * count against the cap, more than once).
+     *
+     * <p>Cyclic data (pre-existing bad rows — {@code work_item_dependency} has no DB-level FK, see
+     * its schema comment) is handled like {@link #isBlocked}: a blocker already on the current
+     * recursion path is included as a leaf (not expanded again) rather than recursed into, so cyclic
+     * data cannot hang this walk.
+     *
+     * @param itemTypeOf resolves an item id to its {@code BlockableItemType} (for {@code itemType}
+     *     on each node)
+     * @param titleOf resolves an item id to its display title
+     */
+    record ChainWalkResult(List<BlockingChainNode> blockedBy, boolean truncated) {}
+
+    static ChainWalkResult blockingChainOf(
+            UUID itemId,
+            Function<UUID, BlockableItemType> itemTypeOf,
+            List<WorkItemDependency> edges,
+            Function<UUID, String> statusOf,
+            Function<UUID, String> titleOf,
+            int maxNodes,
+            int maxDepth) {
+        Map<UUID, List<UUID>> blockersOf = indexBlockersByBlockedItem(edges);
+        int[] nodeCount = {0};
+        boolean[] truncated = {false};
+        List<BlockingChainNode> blockedBy = buildChainNodes(
+                itemId,
+                blockersOf,
+                statusOf,
+                titleOf,
+                itemTypeOf,
+                new LinkedHashSet<>(List.of(itemId)),
+                1,
+                maxDepth,
+                nodeCount,
+                maxNodes,
+                truncated);
+        return new ChainWalkResult(blockedBy, truncated[0]);
+    }
+
+    private static List<BlockingChainNode> buildChainNodes(
+            UUID id,
+            Map<UUID, List<UUID>> blockersOf,
+            Function<UUID, String> statusOf,
+            Function<UUID, String> titleOf,
+            Function<UUID, BlockableItemType> itemTypeOf,
+            Set<UUID> path,
+            int depth,
+            int maxDepth,
+            int[] nodeCount,
+            int maxNodes,
+            boolean[] truncated) {
+        List<BlockingChainNode> result = new ArrayList<>();
+        for (UUID blockerId : blockersOf.getOrDefault(id, List.of())) {
+            if (!path.add(blockerId)) {
+                // Cyclic: include as a leaf without recursing again (fail-safe, mirrors isBlocked).
+                String status = statusOf.apply(blockerId);
+                if (!"done".equals(status)) {
+                    result.add(new BlockingChainNode(
+                            itemTypeOf.apply(blockerId).name(),
+                            blockerId,
+                            titleOf.apply(blockerId),
+                            status,
+                            List.of()));
+                }
+                continue;
+            }
+            try {
+                if (depth > maxDepth || nodeCount[0] >= maxNodes) {
+                    truncated[0] = true;
+                    continue;
+                }
+                nodeCount[0]++;
+                List<BlockingChainNode> childBlockedBy = buildChainNodes(
+                        blockerId,
+                        blockersOf,
+                        statusOf,
+                        titleOf,
+                        itemTypeOf,
+                        path,
+                        depth + 1,
+                        maxDepth,
+                        nodeCount,
+                        maxNodes,
+                        truncated);
+                String status = statusOf.apply(blockerId);
+                boolean selfDone = "done".equals(status);
+                if (!selfDone || !childBlockedBy.isEmpty()) {
+                    result.add(new BlockingChainNode(
+                            itemTypeOf.apply(blockerId).name(),
+                            blockerId,
+                            titleOf.apply(blockerId),
+                            status,
+                            childBlockedBy));
+                }
+            } finally {
+                path.remove(blockerId);
+            }
+        }
+        return result;
     }
 
     /**

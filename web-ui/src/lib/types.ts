@@ -457,6 +457,35 @@ export interface CreateDependencyRequest {
   blockedItemId: string;
 }
 
+/**
+ * Matches the backend BlockingChainNode record — one node in a blocking-chain
+ * tree: an item that (transitively) blocks its parent, plus its own upstream
+ * blockers, recursively.
+ */
+export interface BlockingChainNode {
+  itemType: BlockableItemType;
+  itemId: string;
+  title: string;
+  status: "backlog" | "in_progress" | "done";
+  blockedBy: BlockingChainNode[];
+}
+
+/**
+ * Matches the backend BlockingChainResponse record — the full blocking-chain
+ * view for one Story/Task, rooted at the requested item. `truncated` is true
+ * when the server-side walk hit its node/depth cap, meaning the tree may omit
+ * some real blockers.
+ */
+export interface BlockingChainResponse {
+  itemType: BlockableItemType;
+  itemId: string;
+  title: string;
+  status: "backlog" | "in_progress" | "done";
+  readiness: Readiness;
+  blockedBy: BlockingChainNode[];
+  truncated: boolean;
+}
+
 // --- WebSocket Events ---
 
 /**

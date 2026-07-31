@@ -12,7 +12,9 @@ import {
 } from "@/components/ui/select";
 import MarkdownViewer from "@/components/ui/MarkdownViewer";
 import TaskRunHistoryList from "@/components/roadmap/TaskRunHistoryList";
+import BlockingChainSection from "@/components/roadmap/BlockingChainSection";
 import { useCreateDependency, useDeleteDependency } from "@/hooks/useDependencies";
+import { useBlockingChain } from "@/hooks/useBlockingChain";
 import type {
   EpicResponse,
   StoryResponse,
@@ -251,6 +253,18 @@ export default function RoadmapGraphDetailPanel({
 }: Props) {
   const { itemType, item } = detail;
 
+  // Epics have no `readiness` field at all (BlockableItemType has no "epic"
+  // variant), so this is only ever enabled for a BLOCKED Story/Task. Hooks
+  // must be called unconditionally on every render, so the item-type/id
+  // arguments are always computed (harmlessly unused when itemType is
+  // "epic") and only `enabled` varies — mirrors the `itemType !== "epic" &&
+  // readinessBadge(item.readiness)` narrowing pattern used below.
+  const chainQuery = useBlockingChain(
+    itemType === "task" ? "task" : "story",
+    item.id,
+    itemType !== "epic" && item.readiness === "BLOCKED",
+  );
+
   return (
     <div data-testid="roadmap-detail-panel" className="p-4 space-y-4">
       <div className="space-y-2">
@@ -312,6 +326,10 @@ export default function RoadmapGraphDetailPanel({
       )}
 
       <ExternalBlockersSection blockers={externalBlockers} />
+
+      {itemType !== "epic" && item.readiness === "BLOCKED" && (
+        <BlockingChainSection chain={chainQuery.data} isLoading={chainQuery.isLoading} />
+      )}
     </div>
   );
 }

@@ -28,6 +28,7 @@ vi.mock("@/lib/api", () => ({
 import { api } from "@/lib/api";
 
 const mockApi = api as unknown as {
+  get: ReturnType<typeof vi.fn>;
   post: ReturnType<typeof vi.fn>;
   delete: ReturnType<typeof vi.fn>;
   getPage: ReturnType<typeof vi.fn>;
@@ -375,5 +376,74 @@ describe("RoadmapGraphDetailPanel", () => {
 
     resolveDelete();
     await waitFor(() => expect(removeButton).not.toBeDisabled());
+  });
+
+  describe("blocking chain section", () => {
+    it("renders for a Task/Story with readiness BLOCKED, fetching from the blocking-chain endpoint", async () => {
+      const blockedTask: TaskResponse = { ...task, readiness: "BLOCKED" };
+      mockApi.get.mockResolvedValue({
+        itemType: "task",
+        itemId: blockedTask.id,
+        title: blockedTask.title,
+        status: blockedTask.status,
+        readiness: "BLOCKED",
+        blockedBy: [
+          {
+            itemType: "story",
+            itemId: "story-2",
+            title: "Upstream blocker",
+            status: "in_progress",
+            blockedBy: [],
+          },
+        ],
+        truncated: false,
+      });
+
+      renderPanel({ detail: { itemType: "task", item: blockedTask } });
+
+      expect(await screen.findByTestId("roadmap-blocking-chain")).toBeInTheDocument();
+      expect(mockApi.get).toHaveBeenCalledWith(`/tasks/${blockedTask.id}/blocking-chain`);
+    });
+
+    it("is absent for a READY item, and never calls the blocking-chain endpoint", () => {
+      renderPanel({ detail: { itemType: "task", item: task } });
+
+      expect(screen.queryByTestId("roadmap-blocking-chain")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("roadmap-blocking-chain-loading")).not.toBeInTheDocument();
+      expect(mockApi.get).not.toHaveBeenCalled();
+    });
+
+    it("is absent for an Epic, which has no readiness field at all", () => {
+      renderPanel({ detail: { itemType: "epic", item: epic } });
+
+      expect(screen.queryByTestId("roadmap-blocking-chain")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("roadmap-blocking-chain-loading")).not.toBeInTheDocument();
+      expect(mockApi.get).not.toHaveBeenCalled();
+    });
+
+    it("shows a loading state while the blocking-chain query is in flight", async () => {
+      const blockedStory: StoryResponse = { ...story, readiness: "BLOCKED" };
+      let resolveGet: (value: unknown) => void = () => {};
+      mockApi.get.mockReturnValue(
+        new Promise((resolve) => {
+          resolveGet = resolve;
+        }),
+      );
+
+      renderPanel({ detail: { itemType: "story", item: blockedStory } });
+
+      expect(await screen.findByTestId("roadmap-blocking-chain-loading")).toBeInTheDocument();
+      expect(screen.queryByTestId("roadmap-blocking-chain")).not.toBeInTheDocument();
+
+      resolveGet({
+        itemType: "story",
+        itemId: blockedStory.id,
+        title: blockedStory.title,
+        status: blockedStory.status,
+        readiness: "BLOCKED",
+        blockedBy: [],
+        truncated: false,
+      });
+    });
   });
 });

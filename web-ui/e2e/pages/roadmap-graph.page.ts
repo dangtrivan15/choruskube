@@ -29,6 +29,10 @@ export class RoadmapGraphPage {
   readonly externalBlockers: Locator;
   readonly externalBlockerBadges: Locator;
 
+  readonly blockingChainSection: Locator;
+  readonly blockingChainNodes: Locator;
+  readonly blockingChainTruncatedNotice: Locator;
+
   constructor(page: Page) {
     this.page = page;
 
@@ -52,6 +56,10 @@ export class RoadmapGraphPage {
 
     this.externalBlockers = page.getByTestId("roadmap-external-blockers");
     this.externalBlockerBadges = page.getByTestId("roadmap-external-blocker-badge");
+
+    this.blockingChainSection = page.getByTestId("roadmap-blocking-chain");
+    this.blockingChainNodes = page.getByTestId("roadmap-blocking-chain-node");
+    this.blockingChainTruncatedNotice = page.getByTestId("roadmap-blocking-chain-truncated");
   }
 
   async goto(epicId: string) {
