@@ -7,11 +7,13 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * {@code readiness} is {@code null}, and {@code recentRuns}/{@code totalRunCount} are empty/zero,
- * unless this response was assembled by the Roadmap Graph View (Decision 2, Decision 3) — plain
- * Task CRUD reads (create/get/update/list) have no reason to join dependency edges or embed run
- * history. {@code recentRuns} is capped (see {@code RECENT_RUNS_LIMIT}); {@code totalRunCount}
- * reflects the true count even when the embedded list is truncated — page through
+ * {@code readiness} is populated by the Roadmap Graph View and by {@code list()} (Decision 1/2);
+ * single-item reads (create/get/update) leave it {@code null}, since they have no reason to join
+ * dependency edges just to return the one item just written. {@code recentRuns}/{@code
+ * totalRunCount} stay empty/zero everywhere except the Roadmap Graph View (Decision 3) — embedding
+ * run history is specific to that view, unrelated to Decision 1/2's list-readiness change.
+ * {@code recentRuns} is capped (see {@code RECENT_RUNS_LIMIT}); {@code totalRunCount} reflects the
+ * true count even when the embedded list is truncated — page through
  * {@code GET /api/v1/tasks/{id}/runs} for the rest.
  */
 public record TaskResponse(

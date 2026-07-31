@@ -19,6 +19,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import CreateTaskDialog from "@/components/roadmap/CreateTaskDialog";
+import ReadinessBadge from "@/components/roadmap/ReadinessBadge";
 import PageHeader from "@/components/layout/PageHeader";
 
 function statusBadge(status: string) {
@@ -135,7 +136,10 @@ export default function StoryDetailPage() {
                 <TruncatedText as="div" className="font-medium text-sm">
                   {task.title}
                 </TruncatedText>
-                <div className="mt-1">{statusBadge(task.status)}</div>
+                <div className="mt-1 flex flex-wrap items-center gap-2">
+                  {statusBadge(task.status)}
+                  <ReadinessBadge readiness={task.readiness} data-testid="task-item-readiness-badge" />
+                </div>
               </div>
             </Link>
           ))}

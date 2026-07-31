@@ -1,0 +1,243 @@
+package com.choruskube.core.service;
+
+import com.choruskube.core.dto.DependencyEdgeResponse;
+import com.choruskube.core.dto.ExternalBlockerRef;
+import com.choruskube.core.exception.NotFoundException;
+import com.choruskube.core.model.Epic;
+import com.choruskube.core.model.Story;
+import com.choruskube.core.model.Task;
+import com.choruskube.core.model.WorkItemDependency;
+import com.choruskube.core.model.enums.BlockableItemType;
+import com.choruskube.core.model.enums.BlockerDirection;
+import com.choruskube.core.model.enums.Readiness;
+import com.choruskube.core.repository.EpicRepository;
+import com.choruskube.core.repository.StoryRepository;
+import com.choruskube.core.repository.TaskRepository;
+import com.choruskube.core.repository.WorkItemDependencyRepository;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import org.springframework.stereotype.Component;
+
+/**
+ * Epic-bounded dependency-readiness assembly (Decision 2), shared by {@link
+ * DefaultRoadmapGraphService} (the graph endpoint) and {@link DefaultStoryService}/{@link
+ * DefaultTaskService} (the flat list endpoints, Decision 1) so all three read paths compute
+ * "is this item blocked" identically instead of independently drifting. Positioned below all
+ * three call sites — it depends only on repositories and {@link AuthorizationService}, never on
+ * {@link EpicService}/{@link StoryService}/{@link TaskService} — so none of those services calling
+ * it creates a circular Spring bean dependency.
+ *
+ * <p>This is a straight extraction of logic that previously lived entirely inside {@code
+ * DefaultRoadmapGraphService#assemble}: loading the dependency edges touching a candidate Story/
+ * Task set, resolving the status of any cross-Epic external blocker (org-checked the same way
+ * that class always has), and delegating the actual transitive walk to {@link
+ * TransitiveReadinessResolver}. No behavior changed by extracting it (Decision 2's own framing).
+ */
+@Component
+class EpicReadinessAssembler {
+
+    private final StoryRepository storyRepo;
+    private final TaskRepository taskRepo;
+    private final EpicRepository epicRepo;
+    private final WorkItemDependencyRepository dependencyRepo;
+    private final AuthorizationService authService;
+
+    EpicReadinessAssembler(
+            StoryRepository storyRepo,
+            TaskRepository taskRepo,
+            EpicRepository epicRepo,
+            WorkItemDependencyRepository dependencyRepo,
+            AuthorizationService authService) {
+        this.storyRepo = storyRepo;
+        this.taskRepo = taskRepo;
+        this.epicRepo = epicRepo;
+        this.dependencyRepo = dependencyRepo;
+        this.authService = authService;
+    }
+
+    /** Per-item readiness plus the intra-Epic edges and cross-Epic blocker refs touching {@code candidateIds}. */
+    record Assembly(
+            Map<UUID, Readiness> readinessById,
+            List<DependencyEdgeResponse> dependencies,
+            List<ExternalBlockerRef> externalBlockers) {}
+
+    /**
+     * An Epic's full Story/Task set, pre-loaded once (Decision 3) so callers of {@link #assemble}
+     * don't each re-query it — shared between {@link DefaultStoryService#list} and {@link
+     * DefaultTaskService#list} (sync point from the implementation plan) so both list endpoints
+     * agree on exactly one "load this Epic's candidates" behavior.
+     */
+    record EpicCandidates(
+            List<Story> stories,
+            Map<UUID, List<Task>> tasksByStoryId,
+            Set<UUID> candidateIds,
+            Map<UUID, String> statusById) {}
+
+    /**
+     * Loads every Story under {@code epicId} plus every Task under each of those Stories, and
+     * derives each item's status (Story status is the rollup of its own Tasks, matching {@link
+     * DefaultStoryService#toResponse}). Does not authorize the read itself — callers already do
+     * that (checkOrgAccess/assertSameOrg on the Epic/Story) before calling this.
+     */
+    EpicCandidates loadEpicCandidates(UUID epicId) {
+        List<Story> stories = storyRepo.findByEpicIdOrderByCreatedAtDesc(epicId);
+        Map<UUID, List<Task>> tasksByStoryId = new HashMap<>();
+        Map<UUID, String> statusById = new HashMap<>();
+        Set<UUID> candidateIds = new HashSet<>();
+        for (Story story : stories) {
+            List<Task> tasks = taskRepo.findByStoryIdOrderByCreatedAtDesc(story.getId());
+            tasksByStoryId.put(story.getId(), tasks);
+            candidateIds.add(story.getId());
+            statusById.put(story.getId(), RollupCalculator.compute(tasks).status());
+            for (Task task : tasks) {
+                candidateIds.add(task.getId());
+                statusById.put(task.getId(), task.getStatus().name());
+            }
+        }
+        return new EpicCandidates(stories, tasksByStoryId, candidateIds, statusById);
+    }
+
+    /**
+     * Loads dependency edges touching {@code candidateIds}, resolves any cross-Epic external
+     * blocker's status (one hop only — Decision 2), and computes per-item {@link Readiness} via
+     * {@link TransitiveReadinessResolver}.
+     *
+     * @param statusById status for every id in {@code candidateIds}; mutated copies are made
+     *     internally, the caller's map is left untouched
+     * @param internal whether to authorize cross-Epic references via the internal ({@code
+     *     assertSameOrg}) path or the public ({@code checkOrgAccess}) path
+     * @param runId the calling run's id, used only when {@code internal} is true
+     */
+    Assembly assemble(Set<UUID> candidateIds, Map<UUID, String> statusById, boolean internal, UUID runId) {
+        List<WorkItemDependency> rows = candidateIds.isEmpty()
+                ? List.of()
+                : dependencyRepo.findByBlockingItemIdInOrBlockedItemIdIn(candidateIds, candidateIds);
+
+        Map<UUID, String> effectiveStatusById = new HashMap<>(statusById);
+        List<DependencyEdgeResponse> dependencies = new ArrayList<>();
+        List<ExternalBlockerRef> externalBlockers = new ArrayList<>();
+
+        for (WorkItemDependency row : rows) {
+            boolean blockingInside = candidateIds.contains(row.getBlockingItemId());
+            boolean blockedInside = candidateIds.contains(row.getBlockedItemId());
+
+            if (blockingInside && blockedInside) {
+                dependencies.add(toEdgeResponse(row));
+            } else if (!blockingInside) {
+                // The BLOCKING side lives outside this Epic (blockedInside is therefore
+                // guaranteed true — see findByBlockingItemIdInOrBlockedItemIdIn above) — the
+                // external item BLOCKS the in-Epic (blocked) item.
+                ExternalBlockerResolution resolution = resolveExternalBlocker(
+                        row.getBlockingItemType(),
+                        row.getBlockingItemId(),
+                        internal,
+                        runId,
+                        BlockerDirection.BLOCKING,
+                        row.getBlockedItemId());
+                externalBlockers.add(resolution.ref());
+                // Feeds the transitive walk below: a direct blocker's own status still gates
+                // readiness even when it lives outside this Epic (Decision 2), so its status must
+                // be resolvable by id like every in-Epic item's.
+                effectiveStatusById.put(row.getBlockingItemId(), resolution.status());
+            } else {
+                // blockingInside && !blockedInside: the BLOCKED side lives outside this Epic —
+                // shown as an external blocker reference for display, but it doesn't affect
+                // readiness of anything IN this Epic (blockedInside is false), so its status is
+                // never looked up. The in-Epic (blocking) item BLOCKS the external item, so from
+                // the external item's perspective it is the BLOCKED side.
+                ExternalBlockerResolution resolution = resolveExternalBlocker(
+                        row.getBlockedItemType(),
+                        row.getBlockedItemId(),
+                        internal,
+                        runId,
+                        BlockerDirection.BLOCKED,
+                        row.getBlockingItemId());
+                externalBlockers.add(resolution.ref());
+            }
+        }
+
+        // Readiness: BLOCKED iff any item reachable by walking the blocking chain backward from
+        // this node is not yet done — not just its direct blocker (multi-step blocking chain
+        // feature). The walk is bounded to `rows` (this Epic's own candidate set, loaded above),
+        // so an external blocker's own upstream chain is not followed further (Decision 2) — only
+        // its already-resolved status (added to effectiveStatusById above) gates readiness at
+        // that hop.
+        Map<UUID, Readiness> readinessById =
+                TransitiveReadinessResolver.computeReadiness(candidateIds, rows, effectiveStatusById::get);
+
+        return new Assembly(readinessById, dependencies, externalBlockers);
+    }
+
+    private DependencyEdgeResponse toEdgeResponse(WorkItemDependency row) {
+        return new DependencyEdgeResponse(
+                row.getId(),
+                row.getBlockingItemType().name(),
+                row.getBlockingItemId(),
+                row.getBlockedItemType().name(),
+                row.getBlockedItemId(),
+                row.getCreatedAt());
+    }
+
+    private record ExternalBlockerResolution(ExternalBlockerRef ref, String status) {}
+
+    /**
+     * Resolves title/owning-Epic/status for an item OUTSIDE the requested Epic, guarding against
+     * leaking it to a caller outside its org first. Uses {@code checkOrgAccess} (request-scoped)
+     * on the public path or {@code assertSameOrg} against the calling run (no tenant context) on
+     * the internal path — mirrors the split between {@link EpicService#get} and {@link
+     * EpicService#getInternal}.
+     *
+     * <p>Today every dependency edge is created with both endpoints in the same org as the caller
+     * (DefaultWorkItemDependencyService#create), so this never rejects in practice — but it closes
+     * the gap defensively for any future path (bulk import, admin ownership-transfer, direct
+     * repository writes) that could insert an edge without going through create()'s own
+     * checkOrgAccess/assertSameOrg pair.
+     *
+     * @param direction the external item's role relative to the in-Epic item it connects to, as
+     *     already determined by the caller from which side of the dependency row was outside the
+     *     Epic
+     * @param internalItemId the in-Epic Story/Task id this external blocker connects to, as
+     *     already determined by the caller
+     */
+    private ExternalBlockerResolution resolveExternalBlocker(
+            BlockableItemType type,
+            UUID id,
+            boolean internal,
+            UUID runId,
+            BlockerDirection direction,
+            UUID internalItemId) {
+        if (internal) {
+            authService.assertSameOrg(type.name(), id, "workflow_run", runId);
+        } else {
+            authService.checkOrgAccess(type.name(), id);
+        }
+        if (type == BlockableItemType.story) {
+            Story story = storyRepo.findById(id).orElseThrow(() -> new NotFoundException("Story not found: " + id));
+            Epic epic = findEpic(story.getEpicId());
+            List<Task> tasks = taskRepo.findByStoryIdOrderByCreatedAtDesc(id);
+            String status = RollupCalculator.compute(tasks).status();
+            return new ExternalBlockerResolution(
+                    new ExternalBlockerRef(
+                            "story", id, story.getTitle(), epic.getId(), epic.getTitle(), direction, internalItemId),
+                    status);
+        }
+        Task task = taskRepo.findById(id).orElseThrow(() -> new NotFoundException("Task not found: " + id));
+        Story story = storyRepo
+                .findById(task.getStoryId())
+                .orElseThrow(() -> new NotFoundException("Story not found: " + task.getStoryId()));
+        Epic epic = findEpic(story.getEpicId());
+        return new ExternalBlockerResolution(
+                new ExternalBlockerRef(
+                        "task", id, task.getTitle(), epic.getId(), epic.getTitle(), direction, internalItemId),
+                task.getStatus().name());
+    }
+
+    private Epic findEpic(UUID epicId) {
+        return epicRepo.findById(epicId).orElseThrow(() -> new NotFoundException("Epic not found: " + epicId));
+    }
+}

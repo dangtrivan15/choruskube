@@ -160,6 +160,16 @@ export class RoadmapPage {
     await expect(this.taskDetailTitle).toContainText(title);
   }
 
+  /** The readiness "Blocked" badge on the Story row (Epic detail page) titled `title`, if present. */
+  storyItemReadinessBadge(title: string): Locator {
+    return this.storyItems.filter({ hasText: title }).getByTestId("story-item-readiness-badge");
+  }
+
+  /** The readiness "Blocked" badge on the Task row (Story detail page) titled `title`, if present. */
+  taskItemReadinessBadge(title: string): Locator {
+    return this.taskItems.filter({ hasText: title }).getByTestId("task-item-readiness-badge");
+  }
+
   async openCreateDialog() {
     await this.newEpicButton.click();
     await expect(this.createDialogTitle).toBeVisible();

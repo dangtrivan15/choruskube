@@ -21,6 +21,7 @@ import com.choruskube.core.model.Story;
 import com.choruskube.core.model.Task;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.BlockableItemType;
+import com.choruskube.core.model.enums.Readiness;
 import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.observability.AuditDetail;
@@ -83,6 +84,9 @@ public class DefaultTaskService implements TaskService {
     private final ObjectMapper objectMapper;
     private final ApplicationEventPublisher applicationEventPublisher;
     private final WorkItemDependencyService workItemDependencyService;
+    // Populates `readiness` on list() responses (Decision 1) via the same Epic-bounded assembly
+    // the Roadmap Graph View uses (Decision 2/3), so the two can never disagree.
+    private final EpicReadinessAssembler readinessAssembler;
 
     public DefaultTaskService(
             TaskRepository repo,
@@ -97,7 +101,8 @@ public class DefaultTaskService implements TaskService {
             AuditSink auditSink,
             ObjectMapper objectMapper,
             ApplicationEventPublisher applicationEventPublisher,
-            WorkItemDependencyService workItemDependencyService) {
+            WorkItemDependencyService workItemDependencyService,
+            EpicReadinessAssembler readinessAssembler) {
         this.repo = repo;
         this.storyRepo = storyRepo;
         this.epicRepo = epicRepo;
@@ -111,6 +116,7 @@ public class DefaultTaskService implements TaskService {
         this.objectMapper = objectMapper;
         this.applicationEventPublisher = applicationEventPublisher;
         this.workItemDependencyService = workItemDependencyService;
+        this.readinessAssembler = readinessAssembler;
     }
 
     @Override
@@ -159,11 +165,9 @@ public class DefaultTaskService implements TaskService {
     @Override
     @Transactional(readOnly = true)
     public List<TaskResponse> list(UUID storyId) {
-        findStoryOrThrow(storyId);
+        Story story = findStoryOrThrow(storyId);
         authService.checkOrgAccess("story", storyId);
-        return repo.findByStoryIdOrderByCreatedAtDesc(storyId).stream()
-                .map(this::toResponse)
-                .toList();
+        return listWithReadiness(story, false, null);
     }
 
     @Override
@@ -175,8 +179,23 @@ public class DefaultTaskService implements TaskService {
         if (!epic.getSoftwareProjectId().equals(runSoftwareProjectId)) {
             throw new ForbiddenException("Story " + storyId + " does not belong to the run's software project");
         }
-        return repo.findByStoryIdOrderByCreatedAtDesc(storyId).stream()
-                .map(this::toResponse)
+        return listWithReadiness(story, true, runId);
+    }
+
+    /**
+     * Shared body for {@link #list} and {@link #listInternal}: a Task's true blocker can sit in a
+     * sibling Story under the same Epic (Decision 3), so this loads the OWNING EPIC's full
+     * Story/Task set — not just this Story's own Tasks — the same "load this Epic's candidates"
+     * helper {@link DefaultStoryService#list} uses, so the two list endpoints can never disagree
+     * on what an Epic's candidate set is. Only this Story's own Tasks are returned.
+     */
+    private List<TaskResponse> listWithReadiness(Story story, boolean internal, UUID runId) {
+        EpicReadinessAssembler.EpicCandidates candidates = readinessAssembler.loadEpicCandidates(story.getEpicId());
+        EpicReadinessAssembler.Assembly assembly =
+                readinessAssembler.assemble(candidates.candidateIds(), candidates.statusById(), internal, runId);
+        List<Task> ownTasks = candidates.tasksByStoryId().getOrDefault(story.getId(), List.of());
+        return ownTasks.stream()
+                .map(t -> toResponse(t, assembly.readinessById().get(t.getId())))
                 .toList();
     }
 
@@ -442,7 +461,15 @@ public class DefaultTaskService implements TaskService {
                 .findFirst();
     }
 
+    /** Single-item read paths (create/update/get/start/...) — readiness stays {@code null} here
+     * (Decision 1 scopes real readiness to the flat list endpoints and the Roadmap Graph View
+     * only); {@code recentRuns}/{@code totalRunCount} stay empty/zero here too (Decision 3 —
+     * unrelated to this feature, only the Roadmap Graph View embeds run history). */
     private TaskResponse toResponse(Task t) {
+        return toResponse(t, null);
+    }
+
+    private TaskResponse toResponse(Task t, Readiness readiness) {
         SoftwareProject project = softwareProjectRepo
                 .findById(t.getSoftwareProjectId())
                 .orElseThrow(() -> new NotFoundException(
@@ -464,7 +491,7 @@ public class DefaultTaskService implements TaskService {
                 repos,
                 latestRunId,
                 latestRunStatus,
-                null, // readiness: only computed by RoadmapGraphService (Decision 2)
+                readiness,
                 List.of(), // recentRuns: only embedded by RoadmapGraphService (Decision 3)
                 0L, // totalRunCount: ditto
                 t.getCreatedAt(),

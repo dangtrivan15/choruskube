@@ -12,6 +12,7 @@ import com.choruskube.core.model.Epic;
 import com.choruskube.core.model.Story;
 import com.choruskube.core.model.Task;
 import com.choruskube.core.model.enums.BlockableItemType;
+import com.choruskube.core.model.enums.Readiness;
 import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.observability.AuditDetail;
 import com.choruskube.core.observability.AuditSink;
@@ -40,6 +41,9 @@ public class DefaultStoryService implements StoryService {
     private final ObjectMapper objectMapper;
     private final ApplicationEventPublisher applicationEventPublisher;
     private final WorkItemDependencyService workItemDependencyService;
+    // Populates `readiness` on list() responses (Decision 1) via the same Epic-bounded assembly
+    // the Roadmap Graph View uses (Decision 2/3), so the two can never disagree.
+    private final EpicReadinessAssembler readinessAssembler;
 
     public DefaultStoryService(
             StoryRepository repo,
@@ -50,7 +54,8 @@ public class DefaultStoryService implements StoryService {
             AuditSink auditSink,
             ObjectMapper objectMapper,
             ApplicationEventPublisher applicationEventPublisher,
-            WorkItemDependencyService workItemDependencyService) {
+            WorkItemDependencyService workItemDependencyService,
+            EpicReadinessAssembler readinessAssembler) {
         this.repo = repo;
         this.epicRepo = epicRepo;
         this.taskRepo = taskRepo;
@@ -60,6 +65,7 @@ public class DefaultStoryService implements StoryService {
         this.objectMapper = objectMapper;
         this.applicationEventPublisher = applicationEventPublisher;
         this.workItemDependencyService = workItemDependencyService;
+        this.readinessAssembler = readinessAssembler;
     }
 
     @Override
@@ -106,8 +112,7 @@ public class DefaultStoryService implements StoryService {
     public List<StoryResponse> list(UUID epicId) {
         findEpicOrThrow(epicId);
         authService.checkOrgAccess("epic", epicId);
-        List<Story> stories = repo.findByEpicIdOrderByCreatedAtDesc(epicId);
-        return toResponses(stories);
+        return listWithReadiness(epicId, false, null);
     }
 
     @Override
@@ -118,8 +123,26 @@ public class DefaultStoryService implements StoryService {
         if (!epic.getSoftwareProjectId().equals(runSoftwareProjectId)) {
             throw new ForbiddenException("Epic " + epicId + " does not belong to the run's software project");
         }
-        List<Story> stories = repo.findByEpicIdOrderByCreatedAtDesc(epicId);
-        return toResponses(stories);
+        return listWithReadiness(epicId, true, runId);
+    }
+
+    /**
+     * Shared body for {@link #list} and {@link #listInternal}: loads this Epic's full Story/Task
+     * set once (Decision 3 — the readiness walk must be bounded to the whole Epic, not just this
+     * Story's own Tasks, or a blocker in a sibling Story would be missed) and populates real
+     * {@code readiness} instead of the {@code null} every other read path still returns (Decision
+     * 1 — only the flat list endpoints and the Roadmap Graph View compute it).
+     */
+    private List<StoryResponse> listWithReadiness(UUID epicId, boolean internal, UUID runId) {
+        EpicReadinessAssembler.EpicCandidates candidates = readinessAssembler.loadEpicCandidates(epicId);
+        EpicReadinessAssembler.Assembly assembly =
+                readinessAssembler.assemble(candidates.candidateIds(), candidates.statusById(), internal, runId);
+        return candidates.stories().stream()
+                .map(s -> toResponse(
+                        s,
+                        candidates.tasksByStoryId().getOrDefault(s.getId(), List.of()),
+                        assembly.readinessById().get(s.getId())))
+                .toList();
     }
 
     @Override
@@ -179,12 +202,14 @@ public class DefaultStoryService implements StoryService {
         return tasks.stream().anyMatch(t -> t.getStatus() != WorkItemStatus.backlog);
     }
 
-    private List<StoryResponse> toResponses(List<Story> stories) {
-        return stories.stream().map(this::toResponse).toList();
-    }
-
+    /** Single-item read paths (create/update/get) — readiness stays {@code null} here (Decision 1
+     * scopes real readiness to the flat list endpoints and the Roadmap Graph View only). */
     private StoryResponse toResponse(Story s) {
         List<Task> tasks = taskRepo.findByStoryIdOrderByCreatedAtDesc(s.getId());
+        return toResponse(s, tasks, null);
+    }
+
+    private StoryResponse toResponse(Story s, List<Task> tasks, Readiness readiness) {
         RollupCalculator.Rollup rollup = RollupCalculator.compute(tasks);
         return new StoryResponse(
                 s.getId(),
@@ -192,7 +217,7 @@ public class DefaultStoryService implements StoryService {
                 s.getTitle(),
                 s.getDescription(),
                 rollup.status(),
-                null, // readiness: only computed by RoadmapGraphService (Decision 2)
+                readiness,
                 new EpicResponse.Progress(rollup.totalTasks(), rollup.doneTasks()),
                 s.getCreatedAt(),
                 s.getUpdatedAt());

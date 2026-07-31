@@ -131,6 +131,27 @@ describe("EpicDetailPage", () => {
     expect(item).toHaveAttribute("href", "/roadmap/epics/epic-1/stories/story-1");
   });
 
+  it("shows a Blocked badge on a Story row whose readiness is BLOCKED", () => {
+    mockUseEpic.mockReturnValue({ data: makeEpic(), isLoading: false });
+    mockUseStories.mockReturnValue({ data: [makeStory({ readiness: "BLOCKED" })], isLoading: false });
+    renderWithProviders(<EpicDetailPage />);
+    expect(screen.getByTestId("story-item-readiness-badge")).toHaveTextContent("Blocked");
+  });
+
+  it("shows no readiness badge on a Story row whose readiness is READY", () => {
+    mockUseEpic.mockReturnValue({ data: makeEpic(), isLoading: false });
+    mockUseStories.mockReturnValue({ data: [makeStory({ readiness: "READY" })], isLoading: false });
+    renderWithProviders(<EpicDetailPage />);
+    expect(screen.queryByTestId("story-item-readiness-badge")).not.toBeInTheDocument();
+  });
+
+  it("shows no readiness badge on a Story row whose readiness is null", () => {
+    mockUseEpic.mockReturnValue({ data: makeEpic(), isLoading: false });
+    mockUseStories.mockReturnValue({ data: [makeStory({ readiness: null })], isLoading: false });
+    renderWithProviders(<EpicDetailPage />);
+    expect(screen.queryByTestId("story-item-readiness-badge")).not.toBeInTheDocument();
+  });
+
   it("shows empty state when there are no stories", () => {
     mockUseEpic.mockReturnValue({ data: makeEpic(), isLoading: false });
     mockUseStories.mockReturnValue({ data: [], isLoading: false });

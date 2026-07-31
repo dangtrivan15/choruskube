@@ -4,6 +4,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 import com.choruskube.core.BaseTest;
+import com.choruskube.core.dto.CreateDependencyRequest;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
 import com.choruskube.core.dto.StoryRequest;
@@ -19,6 +20,7 @@ import com.choruskube.core.service.EpicService;
 import com.choruskube.core.service.RunEventPublisher;
 import com.choruskube.core.service.StoryService;
 import com.choruskube.core.service.TaskService;
+import com.choruskube.core.service.WorkItemDependencyService;
 import com.choruskube.core.util.RepoNameUtil;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.temporal.client.WorkflowClient;
@@ -62,6 +64,9 @@ public class TaskControllerTest extends BaseTest {
 
     @Autowired
     private TaskService taskService;
+
+    @Autowired
+    private WorkItemDependencyService dependencyService;
 
     @MockitoBean
     private WorkflowServiceStubs workflowServiceStubs;
@@ -114,6 +119,23 @@ public class TaskControllerTest extends BaseTest {
         mockMvc.perform(get("/api/v1/stories/" + story.id() + "/tasks"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(2));
+    }
+
+    @Test
+    void listTasks_blockedByUnfinishedDependency_readinessIsBlocked() throws Exception {
+        // Decision 1: the flat list endpoint now populates the same `readiness` field the
+        // Roadmap Graph View has always computed, instead of leaving it null.
+        StoryResponse story = makeStory("https://github.com/test/task-list-readiness.git");
+        TaskResponse blocking = taskService.create(story.id(), new TaskRequest("Blocking", "D"));
+        TaskResponse blocked = taskService.create(story.id(), new TaskRequest("Blocked", "D"));
+        dependencyService.create(new CreateDependencyRequest("task", blocking.id(), "task", blocked.id()));
+
+        mockMvc.perform(get("/api/v1/stories/" + story.id() + "/tasks"))
+                .andExpect(status().isOk())
+                .andExpect(
+                        jsonPath("$[?(@.id=='" + blocked.id() + "')].readiness").value("BLOCKED"))
+                .andExpect(jsonPath("$[?(@.id=='" + blocking.id() + "')].readiness")
+                        .value("READY"));
     }
 
     @Test

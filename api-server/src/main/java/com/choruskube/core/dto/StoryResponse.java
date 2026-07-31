@@ -6,9 +6,10 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * {@code readiness} is {@code null} unless this response was assembled by the Roadmap Graph View
- * (Decision 2) — it is computed at read time from {@code work_item_dependency} edges, which
- * plain Story CRUD reads have no reason to join against.
+ * {@code readiness} is populated by the Roadmap Graph View and by {@code list()} (Decision 1/2) —
+ * it is computed at read time from {@code work_item_dependency} edges. Single-item reads
+ * (create/get/update) leave it {@code null}, since they have no reason to join dependency edges
+ * just to return the one item just written.
  */
 public record StoryResponse(
         UUID id,

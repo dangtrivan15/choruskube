@@ -161,4 +161,67 @@ test.describe("Roadmap drill-down", () => {
     expect(response?.ok()).toBe(true);
     await expect(page.getByTestId("epic-list")).toHaveCount(0);
   });
+
+  test("Story and Task list rows show a Blocked badge without opening the graph, and it clears without a manual refresh once the blocker completes", async ({
+    roadmapPage,
+    api,
+  }) => {
+    const repos = await api.listGitRepos();
+    if (repos.content.length === 0) {
+      test.skip();
+      return;
+    }
+
+    const epic = await api.createEpic({
+      title: `E2E List Readiness Epic ${Date.now()}`,
+      description: "desc",
+      softwareProjectId: repos.content[0].id,
+    });
+    const story = await api.createStory(epic.id, { title: "List Readiness Story", description: "desc" });
+    const blockingTask = await api.createTask(story.id, {
+      title: "List Readiness Blocking Task",
+      description: "desc",
+    });
+    const blockedTask = await api.createTask(story.id, {
+      title: "List Readiness Blocked Task",
+      description: "desc",
+    });
+    await api.createDependency({
+      blockingItemType: "task",
+      blockingItemId: blockingTask.id,
+      blockedItemType: "task",
+      blockedItemId: blockedTask.id,
+    });
+
+    // Not the graph — the Epic detail page's flat Story list.
+    await roadmapPage.goto();
+    await roadmapPage.openEpic(epic.title);
+    await expect(roadmapPage.storyItemReadinessBadge(story.title)).toBeVisible();
+
+    // Not the graph — the Story detail page's flat Task list.
+    await roadmapPage.openStory(story.title);
+    await expect(roadmapPage.taskItemReadinessBadge(blockedTask.title)).toBeVisible();
+    await expect(roadmapPage.taskItemReadinessBadge(blockingTask.title)).not.toBeVisible();
+
+    // Complete the blocking Task out-of-band (mirrors roadmap-graph.spec.ts's
+    // equivalent pattern — completeTask only needs a terminal run, not a real
+    // "Feature Development" template run) and confirm the Task row's badge
+    // clears on the already-open Story detail page without a manual reload —
+    // exercises the realtime push-driven update flow (Part 1 §4).
+    const started = await api.startTask(blockingTask.id);
+    expect(started.latestRunId).not.toBeNull();
+    await api.waitForRunStatus(started.latestRunId!, ["running"], 15_000);
+    await api.cancelRun(started.latestRunId!);
+    await api.completeTask(blockingTask.id);
+
+    await expect(roadmapPage.taskItemReadinessBadge(blockedTask.title)).not.toBeVisible();
+
+    await roadmapPage.page.goto(`/roadmap/epics/${epic.id}`);
+    await expect(roadmapPage.storyItemReadinessBadge(story.title)).not.toBeVisible();
+
+    // No cleanup: starting blockingTask moved it out of backlog, and
+    // DefaultEpicService#delete refuses to delete an Epic with any started
+    // descendant Task (see run-lifecycle.spec.ts's breadcrumb test) — the
+    // Date.now() title keeps this fixture from colliding with other runs.
+  });
 });
