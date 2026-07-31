@@ -228,6 +228,62 @@ test.describe("Roadmap Graph View", () => {
     // Date.now() title keeps this fixture from colliding with other runs.
   });
 
+  test("clicking an external blocker's link navigates to its owning Epic's detail page", async ({
+    roadmapGraphPage,
+    api,
+    page,
+  }) => {
+    const repos = await api.listGitRepos();
+    if (repos.content.length === 0) {
+      test.skip();
+      return;
+    }
+
+    const firstEpic = await api.createEpic({
+      title: `E2E External Blocker Epic ${Date.now()}`,
+      description: "desc",
+      softwareProjectId: repos.content[0].id,
+    });
+    const secondEpic = await api.createEpic({
+      title: `E2E Owning Epic ${Date.now()}`,
+      description: "desc",
+      softwareProjectId: repos.content[0].id,
+    });
+    const firstStory = await api.createStory(firstEpic.id, { title: "Blocked Story", description: "desc" });
+    const blockedTask = await api.createTask(firstStory.id, {
+      title: "Externally Blocked Task",
+      description: "desc",
+    });
+    const secondStory = await api.createStory(secondEpic.id, { title: "Blocking Story", description: "desc" });
+    const blockingTask = await api.createTask(secondStory.id, {
+      title: "External Blocking Task",
+      description: "desc",
+    });
+
+    await api.createDependency({
+      blockingItemType: "task",
+      blockingItemId: blockingTask.id,
+      blockedItemType: "task",
+      blockedItemId: blockedTask.id,
+    });
+
+    try {
+      await roadmapGraphPage.goto(firstEpic.id);
+      await roadmapGraphPage.selectNode(blockedTask.title);
+
+      await expect(roadmapGraphPage.externalBlockers).toBeVisible();
+      await expect(roadmapGraphPage.externalBlockerBadges).toContainText(secondEpic.title);
+
+      await roadmapGraphPage.externalBlockerLink(blockingTask.title).click();
+
+      await expect(page).toHaveURL(`/roadmap/epics/${secondEpic.id}`);
+      await expect(page.getByTestId("epic-detail-title")).toHaveText(secondEpic.title);
+    } finally {
+      await api.deleteEpic(firstEpic.id);
+      await api.deleteEpic(secondEpic.id);
+    }
+  });
+
   test("collapsing and expanding a large Story branch shows/hides its Tasks", async ({
     roadmapGraphPage,
     api,

@@ -220,6 +220,24 @@ describe("RoadmapGraphDetailPanel", () => {
       "Migrate auth service",
     );
     expect(screen.getByTestId("roadmap-external-blocker-badge")).toHaveTextContent("Auth Overhaul");
+    expect(screen.getByTestId("roadmap-external-blocker-badge")).toHaveAttribute(
+      "href",
+      "/roadmap/epics/other-epic-1",
+    );
+  });
+
+  it("links the external-blocker badge to its owning Epic's detail route", async () => {
+    const user = userEvent.setup();
+    renderPanel({ detail: { itemType: "task", item: task }, externalBlockers: [externalBlocker] });
+
+    const link = screen.getByTestId("roadmap-external-blocker-badge");
+    expect(link.tagName).toBe("A");
+    await user.click(link);
+
+    // MemoryRouter has no <Routes> configured in this test's provider tree, so
+    // there's no page content to assert post-navigation — the href itself is
+    // the navigation target the click resolves to.
+    expect(link).toHaveAttribute("href", `/roadmap/epics/${externalBlocker.epicId}`);
   });
 
   it("does not render a 'Blocked by' section for an Epic node", () => {
