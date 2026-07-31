@@ -178,9 +178,42 @@ export interface RoadmapDependencyEdgeInput {
   target: string;
 }
 
+/**
+ * One external ("ghost") node attached to the tree (Decision 1/4 in the
+ * cross-Epic-blockers spec) — a stub standing in for a Story/Task that lives
+ * in a *different* Epic. Deduplicated by external item identity upstream
+ * (RoadmapGraph), so there is exactly one of these per unique external item
+ * regardless of how many in-Epic nodes it connects to.
+ */
+export interface RoadmapExternalNodeInput {
+  /** roadmapExternalNodeId(itemId) */
+  id: string;
+}
+
+/**
+ * One cross-Epic edge attaching an external node to the in-Epic node it
+ * touches. `internalItemId` is always the in-Epic endpoint regardless of
+ * `ExternalBlockerRef.direction` — for LAYOUT purposes an external node is
+ * always a leaf hanging below the in-Epic node it connects to (mirrors a
+ * hierarchy edge's routing: `internalItemId__source-bottom` ->
+ * `externalNodeId__target-top`), so it gets a real ELK-computed position
+ * instead of floating unpositioned. Which side is semantically the
+ * "blocker" (for arrow direction) is a rendering concern the caller
+ * (RoadmapGraph) resolves from `direction` when building the React Flow edge.
+ */
+export interface RoadmapExternalEdgeInput {
+  /** roadmapCrossEpicEdgeId(blockerId) */
+  id: string;
+  externalNodeId: string;
+  internalItemId: string;
+}
+
 export interface RoadmapTreeInput {
   nodes: RoadmapTreeNode[];
   dependencyEdges: RoadmapDependencyEdgeInput[];
+  /** Cross-Epic external nodes/edges (Decision 1/4). Omit or pass `[]` when there are none. */
+  externalNodes?: RoadmapExternalNodeInput[];
+  externalEdges?: RoadmapExternalEdgeInput[];
 }
 
 /** Stable id for a hierarchy (tree) edge — parent -> child. */
@@ -197,6 +230,27 @@ export function roadmapHierarchyEdgeId(parentId: string, childId: string): strin
  */
 export function roadmapDependencyEdgeId(dependencyId: string): string {
   return `dep:${dependencyId}`;
+}
+
+/**
+ * Stable id for an external ("ghost") node standing in for a Story/Task in
+ * another Epic (Decision 1). Keyed by the external item's own id — one node
+ * per unique external item (Decision 4's dedup), not one per blocker entry.
+ */
+export function roadmapExternalNodeId(itemId: string): string {
+  return `external:${itemId}`;
+}
+
+/**
+ * Stable id for a cross-Epic dependency edge. `blockerId` is a caller-built
+ * composite key identifying one `ExternalBlockerRef` entry — unlike a
+ * within-Epic dependency row, `ExternalBlockerRef` has no id of its own, so
+ * the caller (RoadmapGraph) combines the external item id with the specific
+ * in-Epic item id (`internalItemId`) it connects to, since the same external
+ * item can touch more than one in-Epic node (Decision 4).
+ */
+export function roadmapCrossEpicEdgeId(blockerId: string): string {
+  return `cross-epic:${blockerId}`;
 }
 
 /** Extract {@link ElkLayoutResult} from a resolved ELK layout — shared by both entry points. */
@@ -244,21 +298,44 @@ function extractLayoutResult(laidOut: ElkNode): ElkLayoutResult {
  * run edges do (source-bottom -> target-top); dependency edges reuse the same
  * ports so ELK can route both kinds of edges (including cross-branch
  * dependency edges) without a bespoke port scheme.
+ *
+ * External nodes (`input.externalNodes`) are added as ordinary ELK children —
+ * same size/ports as any tree node — and each `input.externalEdges` entry is
+ * routed exactly like a hierarchy edge (`internalItemId__source-bottom` ->
+ * `externalNodeId__target-top`), so ELK places every external node as a leaf
+ * hanging below the in-Epic node it attaches to, rather than treating it as
+ * an unbounded free-floating graph participant that could pull layout weight
+ * toward an unrelated part of the tree.
  */
 export async function computeRoadmapTreeLayout(input: RoadmapTreeInput): Promise<ElkLayoutResult> {
   const nodeIds = new Set(input.nodes.map((n) => n.id));
+  const externalNodes = input.externalNodes ?? [];
+  const externalNodeIds = new Set(externalNodes.map((n) => n.id));
+  const externalEdges = input.externalEdges ?? [];
+
   const elkGraph: ElkNode = {
     id: "root",
     layoutOptions: ELK_OPTIONS,
-    children: input.nodes.map((n): ElkNode => ({
-      id: n.id,
-      width: ELK_NODE_WIDTH,
-      height: ELK_NODE_HEIGHT,
-      layoutOptions: {
-        "elk.portConstraints": "FIXED_POS",
-      },
-      ports: buildPortsFor(n.id),
-    })),
+    children: [
+      ...input.nodes.map((n): ElkNode => ({
+        id: n.id,
+        width: ELK_NODE_WIDTH,
+        height: ELK_NODE_HEIGHT,
+        layoutOptions: {
+          "elk.portConstraints": "FIXED_POS",
+        },
+        ports: buildPortsFor(n.id),
+      })),
+      ...externalNodes.map((n): ElkNode => ({
+        id: n.id,
+        width: ELK_NODE_WIDTH,
+        height: ELK_NODE_HEIGHT,
+        layoutOptions: {
+          "elk.portConstraints": "FIXED_POS",
+        },
+        ports: buildPortsFor(n.id),
+      })),
+    ],
     edges: [
       ...input.nodes
         .filter((n): n is RoadmapTreeNode & { parentId: string } => n.parentId !== null)
@@ -277,6 +354,16 @@ export async function computeRoadmapTreeLayout(input: RoadmapTreeInput): Promise
           id: roadmapDependencyEdgeId(e.id),
           sources: [`${e.source}__source-bottom`],
           targets: [`${e.target}__target-top`],
+        })),
+      // Cross-Epic external-node attachments — leaf edges, not dependency
+      // edges (see doc comment above): only emitted when both the in-Epic
+      // endpoint is currently visible and the external node itself is known.
+      ...externalEdges
+        .filter((e) => nodeIds.has(e.internalItemId) && externalNodeIds.has(e.externalNodeId))
+        .map((e): ElkExtendedEdge => ({
+          id: e.id,
+          sources: [`${e.internalItemId}__source-bottom`],
+          targets: [`${e.externalNodeId}__target-top`],
         })),
     ],
   };
@@ -314,5 +401,13 @@ export function buildRoadmapTopologyKey(
     .sort()
     .join("|");
   const collapsed = [...collapsedNodeIds].sort().join(",");
-  return `${nodes}#${deps}#collapsed:${collapsed}`;
+  const externalNodes = (input.externalNodes ?? [])
+    .map((n) => n.id)
+    .sort()
+    .join(",");
+  const externalEdges = (input.externalEdges ?? [])
+    .map((e) => `${e.id}:${e.internalItemId}->${e.externalNodeId}`)
+    .sort()
+    .join("|");
+  return `${nodes}#${deps}#collapsed:${collapsed}#extNodes:${externalNodes}#extEdges:${externalEdges}`;
 }

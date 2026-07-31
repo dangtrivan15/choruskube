@@ -29,6 +29,9 @@ export class RoadmapGraphPage {
   readonly externalBlockers: Locator;
   readonly externalBlockerBadges: Locator;
 
+  readonly externalNodes: Locator;
+  readonly crossEpicEdges: Locator;
+
   readonly blockingChainSection: Locator;
   readonly blockingChainNodes: Locator;
   readonly blockingChainTruncatedNotice: Locator;
@@ -57,6 +60,14 @@ export class RoadmapGraphPage {
     this.externalBlockers = page.getByTestId("roadmap-external-blockers");
     this.externalBlockerBadges = page.getByTestId("roadmap-external-blocker-badge");
 
+    // Canvas equivalents of the sidebar's external-blocker list (Decision 1):
+    // a real React Flow node/edge pair, not just a text mention. Mirrors the
+    // `data-id^="dep:"` pattern already used for the within-Epic dependency
+    // edge — see roadmapCrossEpicEdgeId's "cross-epic:" prefix in
+    // src/lib/elkLayout.ts.
+    this.externalNodes = page.getByTestId("roadmap-external-node");
+    this.crossEpicEdges = page.locator('.react-flow__edge[data-id^="cross-epic:"]');
+
     this.blockingChainSection = page.getByTestId("roadmap-blocking-chain");
     this.blockingChainNodes = page.getByTestId("roadmap-blocking-chain-node");
     this.blockingChainTruncatedNotice = page.getByTestId("roadmap-blocking-chain-truncated");
@@ -76,6 +87,11 @@ export class RoadmapGraphPage {
   /** Locates an external-blocker link by the blocker item's own title (ExternalBlockersSection). */
   externalBlockerLink(title: string): Locator {
     return this.externalBlockerBadges.filter({ hasText: title });
+  }
+
+  /** Locates a canvas external node (RoadmapExternalNode) by the blocker item's own title. */
+  externalNodeByLabel(title: string): Locator {
+    return this.externalNodes.filter({ hasText: title });
   }
 
   async selectNode(label: string) {

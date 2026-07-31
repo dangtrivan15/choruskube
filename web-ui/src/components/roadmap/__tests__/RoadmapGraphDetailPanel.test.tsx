@@ -89,6 +89,8 @@ const externalBlocker: ExternalBlockerRef = {
   title: "Migrate auth service",
   epicId: "other-epic-1",
   epicTitle: "Auth Overhaul",
+  direction: "BLOCKING",
+  internalItemId: "task-1",
 };
 
 const blockableItems: BlockableItemRef[] = [

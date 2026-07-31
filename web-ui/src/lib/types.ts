@@ -426,7 +426,10 @@ export interface DependencyEdgeResponse {
  * OUTSIDE the requested Epic that participates in a dependency edge touching
  * this Epic's tree (e.g. a Task in another Epic that blocks one of this
  * Epic's Tasks). Carries enough context for the UI to render "blocked by a
- * Task in another Epic" without a follow-up lookup.
+ * Task in another Epic" without a follow-up lookup, plus which in-Epic item
+ * (`internalItemId`) the connection touches and in which direction
+ * (`direction`) — needed to render the edge as a real graph edge with a
+ * source and a target, not just a sidebar mention.
  */
 export interface ExternalBlockerRef {
   itemType: BlockableItemType;
@@ -434,6 +437,16 @@ export interface ExternalBlockerRef {
   title: string;
   epicId: string;
   epicTitle: string;
+  /**
+   * The external item's role relative to the in-Epic item it connects to.
+   * `BLOCKING` = the external item blocks the in-Epic item. `BLOCKED` = the
+   * external item is blocked by the in-Epic item. Jackson's default enum
+   * serialization (name-as-string) is the sync point with the backend
+   * `BlockerDirection` enum — these string values must match verbatim.
+   */
+  direction: "BLOCKING" | "BLOCKED";
+  /** The id of the specific in-Epic Story/Task this external blocker connects to. */
+  internalItemId: string;
 }
 
 /**
