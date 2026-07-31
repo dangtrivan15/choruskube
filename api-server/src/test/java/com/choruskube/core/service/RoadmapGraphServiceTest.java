@@ -11,6 +11,7 @@ import com.choruskube.core.BaseTest;
 import com.choruskube.core.dto.CreateDependencyRequest;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
+import com.choruskube.core.dto.ExternalBlockerRef;
 import com.choruskube.core.dto.RoadmapGraphSnapshot;
 import com.choruskube.core.dto.StoryRequest;
 import com.choruskube.core.dto.StoryResponse;
@@ -246,7 +247,7 @@ public class RoadmapGraphServiceTest extends BaseTest {
                 .allMatch(b -> b.itemId().equals(blockingInB.id()))
                 .allMatch(b -> b.direction() == BlockerDirection.BLOCKING);
         assertThat(snapshot.externalBlockers())
-                .extracting(com.choruskube.core.dto.ExternalBlockerRef::internalItemId)
+                .extracting(ExternalBlockerRef::internalItemId)
                 .containsExactlyInAnyOrder(blockedInA1.id(), blockedInA2.id());
     }
 
