@@ -48,12 +48,11 @@ interface Props {
   /**
    * The Epic graph's full external-blockers list (RoadmapGraphSnapshot.externalBlockers).
    *
-   * The backend does not currently record which internal item a given external
-   * blocker's dependency edge connects to (DefaultRoadmapGraphService discards
-   * that correlation once it classifies a row as "external") — there is no
-   * per-item filter available, so every external blocker for the Epic is
-   * surfaced here as context regardless of which node is selected, rather
-   * than silently pretending a precise per-node filter exists.
+   * Each entry carries `internalItemId` — the specific in-Epic Story/Task its
+   * dependency edge touches — so callers pass the whole, unfiltered list and
+   * this component narrows it per selected node (see `ExternalBlockersSection`
+   * below). An Epic node has no single `internalItemId` to match against, so
+   * it sees every external blocker in the Epic as summary context.
    */
   externalBlockers: ExternalBlockerRef[];
 }
@@ -326,7 +325,13 @@ export default function RoadmapGraphDetailPanel({
         />
       )}
 
-      <ExternalBlockersSection blockers={externalBlockers} />
+      <ExternalBlockersSection
+        blockers={
+          itemType === "epic"
+            ? externalBlockers
+            : externalBlockers.filter((b) => b.internalItemId === item.id)
+        }
+      />
 
       {itemType !== "epic" && item.readiness === "BLOCKED" && (
         <BlockingChainSection chain={chainQuery.data} isLoading={chainQuery.isLoading} />

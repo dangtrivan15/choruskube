@@ -242,6 +242,36 @@ describe("RoadmapGraphDetailPanel", () => {
     expect(link).toHaveAttribute("href", `/roadmap/epics/${externalBlocker.epicId}`);
   });
 
+  it("filters external blockers to the ones touching the selected Story/Task's internalItemId", () => {
+    // Same external item ("other-task-1") touching two different in-Epic
+    // items — the shape RoadmapGraphServiceTest's
+    // getGraph_externalBlockerTouchingMultipleInternalItems_eachRefHasDistinctInternalItemId
+    // proves the backend now emits. Selecting task-1 must show only the ref
+    // whose internalItemId is task-1, not task-2's.
+    const blockerForOtherTask: ExternalBlockerRef = { ...externalBlocker, internalItemId: "task-2" };
+    renderPanel({
+      detail: { itemType: "task", item: task },
+      externalBlockers: [externalBlocker, blockerForOtherTask],
+    });
+
+    expect(screen.getAllByTestId("roadmap-external-blocker-badge")).toHaveLength(1);
+  });
+
+  it("shows no external blockers for a Story/Task when none target its internalItemId", () => {
+    renderPanel({ detail: { itemType: "task", item: otherTask }, externalBlockers: [externalBlocker] });
+    expect(screen.queryByTestId("roadmap-external-blockers")).not.toBeInTheDocument();
+  });
+
+  it("shows every external blocker for an Epic node regardless of internalItemId", () => {
+    const blockerForOtherTask: ExternalBlockerRef = { ...externalBlocker, internalItemId: "task-2" };
+    renderPanel({
+      detail: { itemType: "epic", item: epic },
+      externalBlockers: [externalBlocker, blockerForOtherTask],
+    });
+
+    expect(screen.getAllByTestId("roadmap-external-blocker-badge")).toHaveLength(2);
+  });
+
   it("does not render a 'Blocked by' section for an Epic node", () => {
     renderPanel({ detail: { itemType: "epic", item: epic } });
     expect(screen.queryByTestId("roadmap-blocking-dependencies")).not.toBeInTheDocument();
