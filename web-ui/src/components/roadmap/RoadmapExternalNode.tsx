@@ -47,7 +47,7 @@ function RoadmapExternalNode({ data }: NodeProps<RoadmapExternalNodeType>) {
         to={`/roadmap/epics/${data.epicId}/graph`}
         data-testid="roadmap-external-node"
         data-label={data.title}
-        title={`Blocked by "${data.title}" in ${data.epicTitle} — open that Epic's graph`}
+        title={`Connected to "${data.title}" in ${data.epicTitle} — open that Epic's graph`}
         className="nodrag flex w-[160px] items-center gap-1.5 rounded-md border border-dashed border-status-accent/60 bg-status-accent/10 px-2 py-1.5 text-xs text-status-accent shadow-sm hover:bg-status-accent/20"
         onClick={(event) => event.stopPropagation()}
       >

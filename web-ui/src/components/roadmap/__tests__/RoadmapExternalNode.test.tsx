@@ -62,4 +62,18 @@ describe("RoadmapExternalNode", () => {
     expect(link).toHaveTextContent("Auth Overhaul");
     expect(link).toHaveAttribute("href", "/roadmap/epics/other-epic-1/graph");
   });
+
+  it("does not commit the tooltip to a blocking direction, since dedupeExternalNodes " +
+    "(RoadmapGraph.tsx) collapses BLOCKING and BLOCKED blockers of the same external item " +
+    "into one node and this component never receives `direction`", () => {
+    renderNode({
+      title: "Migrate auth service",
+      epicId: "other-epic-1",
+      epicTitle: "Auth Overhaul",
+    });
+
+    const link = screen.getByTestId("roadmap-external-node");
+    expect(link).toHaveAttribute("title", 'Connected to "Migrate auth service" in Auth Overhaul — open that Epic\'s graph');
+    expect(link.getAttribute("title")).not.toMatch(/blocked by|blocks/i);
+  });
 });
