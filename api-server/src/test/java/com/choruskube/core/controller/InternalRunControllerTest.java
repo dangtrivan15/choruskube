@@ -4,12 +4,14 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 import com.choruskube.core.BaseTest;
+import com.choruskube.core.dto.CreateDependencyRequest;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
 import com.choruskube.core.model.*;
 import com.choruskube.core.model.enums.ExecutorType;
 import com.choruskube.core.repository.*;
 import com.choruskube.core.service.EpicService;
+import com.choruskube.core.service.WorkItemDependencyService;
 import com.choruskube.core.util.RepoNameUtil;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.temporal.client.WorkflowClient;
@@ -57,7 +59,7 @@ public class InternalRunControllerTest extends BaseTest {
     private EpicService epicService;
 
     @Autowired
-    private com.choruskube.core.service.WorkItemDependencyService dependencyService;
+    private WorkItemDependencyService dependencyService;
 
     @MockitoBean
     private WorkflowServiceStubs workflowServiceStubs;
@@ -607,8 +609,8 @@ public class InternalRunControllerTest extends BaseTest {
         // No internal/agent-facing HTTP endpoint creates dependencies (dependency creation is a
         // user-facing action) — go through the service directly, same as
         // RoadmapGraphServiceTest/RoadmapGraphControllerTest's fixture setup.
-        dependencyService.create(new com.choruskube.core.dto.CreateDependencyRequest(
-                "task", UUID.fromString(foreignTaskId), "task", UUID.fromString(taskId)));
+        dependencyService.create(
+                new CreateDependencyRequest("task", UUID.fromString(foreignTaskId), "task", UUID.fromString(taskId)));
 
         mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/graph"))
                 .andExpect(status().isOk())
