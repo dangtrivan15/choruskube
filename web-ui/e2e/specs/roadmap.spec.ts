@@ -192,6 +192,18 @@ test.describe("Roadmap drill-down", () => {
       blockedItemType: "task",
       blockedItemId: blockedTask.id,
     });
+    // Readiness is computed per-item from its own direct/transitive dependency
+    // edges (Part 1 §3.1 — "this feature does not change the algorithm"), not
+    // rolled up from a Story's child Tasks. A Task-to-Task edge alone leaves
+    // the parent Story itself un-blocked, so a second edge blocks the Story
+    // directly — exactly how a user would flag "this Story can't start yet"
+    // via the same dependency picker used for Task-to-Task edges.
+    await api.createDependency({
+      blockingItemType: "task",
+      blockingItemId: blockingTask.id,
+      blockedItemType: "story",
+      blockedItemId: story.id,
+    });
 
     // Not the graph — the Epic detail page's flat Story list.
     await roadmapPage.goto();
