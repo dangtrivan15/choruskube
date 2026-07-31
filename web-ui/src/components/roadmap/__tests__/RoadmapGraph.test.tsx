@@ -3,7 +3,7 @@ import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentType, CSSProperties } from "react";
 import { renderWithProviders } from "@/__tests__/test-utils";
-import type { RoadmapGraphSnapshot, TaskResponse } from "@/lib/types";
+import type { ExternalBlockerRef, RoadmapGraphSnapshot, TaskResponse } from "@/lib/types";
 
 // Mock @xyflow/react — real ReactFlow attaches d3-zoom/d3-drag pointer
 // handlers to the pane that crash happy-dom on pointerdown (no window on
@@ -26,7 +26,16 @@ vi.mock("@xyflow/react", () => {
       onPaneClick,
     }: {
       nodes: { id: string; type: string; data: unknown }[];
-      edges: { id: string; type: string; data: unknown; markerEnd?: unknown }[];
+      edges: {
+        id: string;
+        type: string;
+        data: unknown;
+        markerEnd?: unknown;
+        source: string;
+        target: string;
+        sourceHandle?: string;
+        targetHandle?: string;
+      }[];
       nodeTypes: Record<string, ComponentType<{ id: string; data: unknown; selected: boolean }>>;
       edgeTypes: Record<
         string,
@@ -62,7 +71,14 @@ vi.mock("@xyflow/react", () => {
         {edges.map((e) => {
           const Comp = edgeTypes[e.type];
           return (
-            <div key={e.id} data-testid={`mock-edge-${e.id}`}>
+            <div
+              key={e.id}
+              data-testid={`mock-edge-${e.id}`}
+              data-source={e.source}
+              data-target={e.target}
+              data-source-handle={e.sourceHandle}
+              data-target-handle={e.targetHandle}
+            >
               <Comp
                 id={e.id}
                 data={e.data}
@@ -275,6 +291,149 @@ describe("RoadmapGraph", () => {
     expect(hierarchyEdge?.getAttribute("marker-end")).toBeFalsy();
     // Distinct colors too.
     expect(dependencyEdge?.getAttribute("stroke")).not.toBe(hierarchyEdge?.getAttribute("stroke"));
+  });
+
+  it("renders a cross-Epic dependency edge visually distinct from a within-Epic dependency edge", async () => {
+    const externalBlocker: ExternalBlockerRef = {
+      itemType: "task",
+      itemId: "ext-task-1",
+      title: "External Blocking Task",
+      epicId: "epic-2",
+      epicTitle: "Other Epic",
+      direction: "BLOCKING",
+      internalItemId: "task-1",
+    };
+    const snapshot = makeSnapshot({
+      dependencies: [
+        {
+          id: "dep-1",
+          blockingItemType: "task",
+          blockingItemId: "task-1",
+          blockedItemType: "task",
+          blockedItemId: "task-2",
+          createdAt: "2026-04-01T00:00:00Z",
+        },
+      ],
+      externalBlockers: [externalBlocker],
+    });
+    renderWithProviders(<RoadmapGraph snapshot={snapshot} onNodeSelect={vi.fn()} />);
+    await waitForGraphReady();
+
+    const hierarchyEdge = screen.getByTestId("mock-edge-epic-1=>story-1").querySelector("path");
+    const dependencyEdge = screen.getByTestId("mock-edge-dep:dep-1").querySelector("path");
+    const crossEpicEdge = screen
+      .getByTestId("mock-edge-cross-epic:ext-task-1:task-1")
+      .querySelector("path");
+
+    expect(hierarchyEdge).toBeTruthy();
+    expect(dependencyEdge).toBeTruthy();
+    expect(crossEpicEdge).toBeTruthy();
+
+    // Cross-Epic edges are dashed/dotted + carry an arrowhead, same as
+    // within-Epic dependency edges, but with a distinct dash pattern and color.
+    expect(crossEpicEdge?.getAttribute("stroke-dasharray")).toBeTruthy();
+    expect(crossEpicEdge?.getAttribute("marker-end")).toBeTruthy();
+    expect(crossEpicEdge?.getAttribute("stroke-dasharray")).not.toBe(
+      dependencyEdge?.getAttribute("stroke-dasharray"),
+    );
+    expect(crossEpicEdge?.getAttribute("stroke")).not.toBe(dependencyEdge?.getAttribute("stroke"));
+    expect(crossEpicEdge?.getAttribute("stroke")).not.toBe(hierarchyEdge?.getAttribute("stroke"));
+    expect(crossEpicEdge?.getAttribute("stroke-dasharray")).not.toBe(
+      hierarchyEdge?.getAttribute("stroke-dasharray"),
+    );
+  });
+
+  it("dedupes external blockers referencing the same item into one external node", async () => {
+    const sharedExternalBlocker = {
+      itemType: "task" as const,
+      itemId: "ext-task-1",
+      title: "External Blocking Task",
+      epicId: "epic-2",
+      epicTitle: "Other Epic",
+      direction: "BLOCKING" as const,
+    };
+    const snapshot = makeSnapshot({
+      externalBlockers: [
+        { ...sharedExternalBlocker, internalItemId: "task-1" },
+        { ...sharedExternalBlocker, internalItemId: "task-2" },
+      ],
+    });
+    renderWithProviders(<RoadmapGraph snapshot={snapshot} onNodeSelect={vi.fn()} />);
+    await waitForGraphReady();
+
+    expect(screen.getAllByTestId("mock-node-external:ext-task-1")).toHaveLength(1);
+    expect(screen.getByTestId("mock-edge-cross-epic:ext-task-1:task-1")).toBeInTheDocument();
+    expect(screen.getByTestId("mock-edge-cross-epic:ext-task-1:task-2")).toBeInTheDocument();
+  });
+
+  it.each([
+    {
+      direction: "BLOCKING" as const,
+      description: "external item blocks the in-Epic item — edge runs external -> internal",
+      expectedSource: "external:ext-task-1",
+      expectedTarget: "task-1",
+      expectedSourceHandle: "source-top",
+      expectedTargetHandle: "target-bottom",
+    },
+    {
+      direction: "BLOCKED" as const,
+      description: "in-Epic item blocks the external item — edge runs internal -> external",
+      expectedSource: "task-1",
+      expectedTarget: "external:ext-task-1",
+      expectedSourceHandle: "source-bottom",
+      expectedTargetHandle: "target-top",
+    },
+  ])(
+    "wires the cross-Epic edge's source/target/handles for direction=$direction ($description)",
+    async ({ direction, expectedSource, expectedTarget, expectedSourceHandle, expectedTargetHandle }) => {
+      const externalBlocker: ExternalBlockerRef = {
+        itemType: "task",
+        itemId: "ext-task-1",
+        title: "External Task",
+        epicId: "epic-2",
+        epicTitle: "Other Epic",
+        direction,
+        internalItemId: "task-1",
+      };
+      const snapshot = makeSnapshot({ externalBlockers: [externalBlocker] });
+      renderWithProviders(<RoadmapGraph snapshot={snapshot} onNodeSelect={vi.fn()} />);
+      await waitForGraphReady();
+
+      const edge = screen.getByTestId("mock-edge-cross-epic:ext-task-1:task-1");
+      expect(edge).toHaveAttribute("data-source", expectedSource);
+      expect(edge).toHaveAttribute("data-target", expectedTarget);
+      expect(edge).toHaveAttribute("data-source-handle", expectedSourceHandle);
+      expect(edge).toHaveAttribute("data-target-handle", expectedTargetHandle);
+    },
+  );
+
+  it("clicking an external node navigates to the owning Epic's graph route", async () => {
+    const externalBlocker: ExternalBlockerRef = {
+      itemType: "task",
+      itemId: "ext-task-1",
+      title: "External Blocking Task",
+      epicId: "epic-2",
+      epicTitle: "Other Epic",
+      direction: "BLOCKING",
+      internalItemId: "task-1",
+    };
+    const snapshot = makeSnapshot({ externalBlockers: [externalBlocker] });
+    const onNodeSelect = vi.fn();
+    renderWithProviders(<RoadmapGraph snapshot={snapshot} onNodeSelect={onNodeSelect} />);
+    await waitForGraphReady();
+
+    const link = screen.getByTestId("roadmap-external-node");
+    expect(link.tagName).toBe("A");
+    expect(link).toHaveAttribute("href", "/roadmap/epics/epic-2/graph");
+
+    // MemoryRouter has no <Routes> configured in this test's provider tree
+    // (mirrors RoadmapGraphDetailPanel.test.tsx's equivalent sidebar-link
+    // test), so the href itself is the navigation target the click resolves
+    // to — clicking must not throw and must not trigger the internal
+    // onNodeSelect flow (RoadmapExternalNode stops click propagation).
+    const user = userEvent.setup();
+    await user.click(link);
+    expect(onNodeSelect).not.toHaveBeenCalled();
   });
 
   it("collapsing a Story hides its Task nodes, and expanding restores them", async () => {

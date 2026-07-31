@@ -10,25 +10,75 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
-import type { Readiness, RoadmapGraphSnapshot } from "@/lib/types";
+import type { ExternalBlockerRef, Readiness, RoadmapGraphSnapshot } from "@/lib/types";
 import { resolveStatusColors } from "@/lib/dagLayout";
 import {
   computeRoadmapTreeLayout,
   buildRoadmapTopologyKey,
   roadmapHierarchyEdgeId,
   roadmapDependencyEdgeId,
+  roadmapExternalNodeId,
+  roadmapCrossEpicEdgeId,
   ELK_NODE_HEIGHT,
   type ElkLayoutResult,
   type RoadmapTreeInput,
   type RoadmapTreeNode,
+  type RoadmapExternalNodeInput,
+  type RoadmapExternalEdgeInput,
 } from "@/lib/elkLayout";
 import RoadmapGraphNode, { type RoadmapGraphNodeData, type RoadmapItemType } from "./RoadmapGraphNode";
 import RoadmapGraphEdge, { type RoadmapGraphEdgeData } from "./RoadmapGraphEdge";
 import RoadmapDependencyEdge, { type RoadmapDependencyEdgeData } from "./RoadmapDependencyEdge";
+import RoadmapExternalNode, { type RoadmapExternalNodeData } from "./RoadmapExternalNode";
+import RoadmapCrossEpicEdge, { type RoadmapCrossEpicEdgeData } from "./RoadmapCrossEpicEdge";
+import RoadmapGraphLegend from "./RoadmapGraphLegend";
 import type { RoadmapDetailItem } from "./RoadmapGraphDetailPanel";
 
-const nodeTypes = { roadmap: RoadmapGraphNode };
-const edgeTypes = { "roadmap-hierarchy": RoadmapGraphEdge, "roadmap-dependency": RoadmapDependencyEdge };
+const nodeTypes = { roadmap: RoadmapGraphNode, "roadmap-external": RoadmapExternalNode };
+const edgeTypes = {
+  "roadmap-hierarchy": RoadmapGraphEdge,
+  "roadmap-dependency": RoadmapDependencyEdge,
+  "roadmap-cross-epic-dependency": RoadmapCrossEpicEdge,
+};
+
+/** Every node/edge type this canvas can render — internal tree nodes plus external stub nodes. */
+type RoadmapFlowNode =
+  | Node<RoadmapGraphNodeData, "roadmap">
+  | Node<RoadmapExternalNodeData, "roadmap-external">;
+type RoadmapFlowEdge =
+  | Edge<RoadmapGraphEdgeData, "roadmap-hierarchy">
+  | Edge<RoadmapDependencyEdgeData, "roadmap-dependency">
+  | Edge<RoadmapCrossEpicEdgeData, "roadmap-cross-epic-dependency">;
+
+/** One unique external item (Decision 4's dedup key: `itemType:itemId`). */
+interface ExternalNodeInfo {
+  id: string;
+  title: string;
+  epicId: string;
+  epicTitle: string;
+}
+
+/** Composite key identifying one `ExternalBlockerRef` entry — see roadmapCrossEpicEdgeId's doc comment. */
+function blockerKey(blocker: ExternalBlockerRef): string {
+  return `${blocker.itemId}:${blocker.internalItemId}`;
+}
+
+/** One external node per unique `(itemType, itemId)` — Decision 4. */
+function dedupeExternalNodes(blockers: ExternalBlockerRef[]): ExternalNodeInfo[] {
+  const byKey = new Map<string, ExternalNodeInfo>();
+  for (const blocker of blockers) {
+    const key = `${blocker.itemType}:${blocker.itemId}`;
+    if (!byKey.has(key)) {
+      byKey.set(key, {
+        id: roadmapExternalNodeId(blocker.itemId),
+        title: blocker.title,
+        epicId: blocker.epicId,
+        epicTitle: blocker.epicTitle,
+      });
+    }
+  }
+  return [...byKey.values()];
+}
 
 /**
  * A Story branch with more Tasks than this collapses by default on first
@@ -162,6 +212,22 @@ export default function RoadmapGraph({ snapshot, onNodeSelect }: RoadmapGraphPro
       ),
     [snapshot.dependencies, visibleIds],
   );
+  // A cross-Epic blocker is only shown once the in-Epic node it attaches to
+  // is visible — mirrors visibleDependencies above. The external node itself
+  // has no collapse state of its own; hiding its one in-Epic anchor hides it.
+  const visibleExternalBlockers = useMemo(
+    () => snapshot.externalBlockers.filter((b) => visibleIds.has(b.internalItemId)),
+    [snapshot.externalBlockers, visibleIds],
+  );
+
+  const allExternalNodeInfos = useMemo(
+    () => dedupeExternalNodes(snapshot.externalBlockers),
+    [snapshot.externalBlockers],
+  );
+  const visibleExternalNodeInfos = useMemo(
+    () => dedupeExternalNodes(visibleExternalBlockers),
+    [visibleExternalBlockers],
+  );
 
   const treeInputAll: RoadmapTreeInput = useMemo(
     () => ({
@@ -171,8 +237,14 @@ export default function RoadmapGraph({ snapshot, onNodeSelect }: RoadmapGraphPro
         source: d.blockingItemId,
         target: d.blockedItemId,
       })),
+      externalNodes: allExternalNodeInfos.map((n): RoadmapExternalNodeInput => ({ id: n.id })),
+      externalEdges: snapshot.externalBlockers.map((b): RoadmapExternalEdgeInput => ({
+        id: roadmapCrossEpicEdgeId(blockerKey(b)),
+        externalNodeId: roadmapExternalNodeId(b.itemId),
+        internalItemId: b.internalItemId,
+      })),
     }),
-    [allNodes, snapshot.dependencies],
+    [allNodes, snapshot.dependencies, snapshot.externalBlockers, allExternalNodeInfos],
   );
 
   const topologyKey = useMemo(() => buildRoadmapTopologyKey(treeInputAll, collapsed), [treeInputAll, collapsed]);
@@ -189,6 +261,12 @@ export default function RoadmapGraph({ snapshot, onNodeSelect }: RoadmapGraphPro
         source: d.blockingItemId,
         target: d.blockedItemId,
       })),
+      externalNodes: visibleExternalNodeInfos.map((n): RoadmapExternalNodeInput => ({ id: n.id })),
+      externalEdges: visibleExternalBlockers.map((b): RoadmapExternalEdgeInput => ({
+        id: roadmapCrossEpicEdgeId(blockerKey(b)),
+        externalNodeId: roadmapExternalNodeId(b.itemId),
+        internalItemId: b.internalItemId,
+      })),
     };
     setFallback(false);
     computeRoadmapTreeLayout(treeInputVisible)
@@ -198,7 +276,12 @@ export default function RoadmapGraph({ snapshot, onNodeSelect }: RoadmapGraphPro
       .catch((err) => {
         if (cancelled) return;
         console.error("ELK roadmap layout failed", err);
-        setLayout(buildFallbackLayout(visibleNodes.map((n) => n.id)));
+        setLayout(
+          buildFallbackLayout([
+            ...visibleNodes.map((n) => n.id),
+            ...visibleExternalNodeInfos.map((n) => n.id),
+          ]),
+        );
         setFallback(true);
       });
     return () => {
@@ -218,10 +301,10 @@ export default function RoadmapGraph({ snapshot, onNodeSelect }: RoadmapGraphPro
 
   const { nodes, edges } = useMemo(() => {
     if (!layout) {
-      return { nodes: [] as Node<RoadmapGraphNodeData>[], edges: [] as Edge[] };
+      return { nodes: [] as RoadmapFlowNode[], edges: [] as RoadmapFlowEdge[] };
     }
 
-    const flowNodes: Node<RoadmapGraphNodeData>[] = visibleNodes.map((n) => {
+    const flowNodes: Node<RoadmapGraphNodeData, "roadmap">[] = visibleNodes.map((n) => {
       const pos = layout.nodes.get(n.id) ?? { x: 0, y: 0 };
       return {
         id: n.id,
@@ -239,7 +322,23 @@ export default function RoadmapGraph({ snapshot, onNodeSelect }: RoadmapGraphPro
       };
     });
 
-    const hierarchyEdges: Edge<RoadmapGraphEdgeData>[] = visibleNodes
+    const externalFlowNodes: Node<RoadmapExternalNodeData, "roadmap-external">[] = visibleExternalNodeInfos.map(
+      (n) => {
+        const pos = layout.nodes.get(n.id) ?? { x: 0, y: 0 };
+        return {
+          id: n.id,
+          type: "roadmap-external",
+          position: { x: pos.x, y: pos.y },
+          data: {
+            title: n.title,
+            epicId: n.epicId,
+            epicTitle: n.epicTitle,
+          },
+        };
+      },
+    );
+
+    const hierarchyEdges: Edge<RoadmapGraphEdgeData, "roadmap-hierarchy">[] = visibleNodes
       .filter((n) => n.parentId !== null)
       .flatMap((n) => {
         const id = roadmapHierarchyEdgeId(n.parentId as string, n.id);
@@ -254,7 +353,7 @@ export default function RoadmapGraph({ snapshot, onNodeSelect }: RoadmapGraphPro
             targetHandle: "target-top",
             type: "roadmap-hierarchy",
             data: { points: route.points },
-          } satisfies Edge<RoadmapGraphEdgeData>,
+          } satisfies Edge<RoadmapGraphEdgeData, "roadmap-hierarchy">,
         ];
       });
 
@@ -264,28 +363,74 @@ export default function RoadmapGraph({ snapshot, onNodeSelect }: RoadmapGraphPro
     // to an actual value here (not a CSS var()), since it becomes a literal
     // SVG attribute rather than an inline style.
     const dependencyMarkerColor = resolveStatusColors()["--status-warning"];
-    const dependencyEdges: Edge<RoadmapDependencyEdgeData>[] = visibleDependencies.flatMap((d) => {
-      const id = roadmapDependencyEdgeId(d.id);
-      const route = layout.edges.get(id);
-      if (!route) return [];
-      return [
-        {
-          id,
-          source: d.blockingItemId,
-          target: d.blockedItemId,
-          sourceHandle: "source-bottom",
-          targetHandle: "target-top",
-          type: "roadmap-dependency",
-          markerEnd: { type: MarkerType.ArrowClosed, color: dependencyMarkerColor, width: 18, height: 18 },
-          data: { points: route.points },
-        } satisfies Edge<RoadmapDependencyEdgeData>,
-      ];
-    });
+    const dependencyEdges: Edge<RoadmapDependencyEdgeData, "roadmap-dependency">[] = visibleDependencies.flatMap(
+      (d) => {
+        const id = roadmapDependencyEdgeId(d.id);
+        const route = layout.edges.get(id);
+        if (!route) return [];
+        return [
+          {
+            id,
+            source: d.blockingItemId,
+            target: d.blockedItemId,
+            sourceHandle: "source-bottom",
+            targetHandle: "target-top",
+            type: "roadmap-dependency",
+            markerEnd: { type: MarkerType.ArrowClosed, color: dependencyMarkerColor, width: 18, height: 18 },
+            data: { points: route.points },
+          } satisfies Edge<RoadmapDependencyEdgeData, "roadmap-dependency">,
+        ];
+      },
+    );
 
-    return { nodes: flowNodes, edges: [...hierarchyEdges, ...dependencyEdges] };
-  }, [layout, visibleNodes, visibleDependencies, childCounts, collapsed, handleToggleCollapse]);
+    // Cross-Epic edges (Decision 1). Layout always attaches the external node
+    // as a leaf below its in-Epic anchor (internalItemId__source-bottom ->
+    // externalNodeId__target-top, see computeRoadmapTreeLayout) — the ELK
+    // route below is always in that order regardless of `direction`. The
+    // *rendered* edge, though, must point from blocker to blocked (matching
+    // the within-Epic dependency edge's convention): for `BLOCKING` the
+    // external item is the blocker, so the React Flow edge (and the point
+    // order handed to RoadmapCrossEpicEdge) is reversed to run
+    // external -> internal instead.
+    const crossEpicMarkerColor = resolveStatusColors()["--status-accent"];
+    const crossEpicEdges: Edge<RoadmapCrossEpicEdgeData, "roadmap-cross-epic-dependency">[] =
+      visibleExternalBlockers.flatMap((b) => {
+        const id = roadmapCrossEpicEdgeId(blockerKey(b));
+        const route = layout.edges.get(id);
+        if (!route) return [];
+        const externalNodeId = roadmapExternalNodeId(b.itemId);
+        const reversed = b.direction === "BLOCKING";
+        const points = reversed ? [...route.points].reverse() : route.points;
+        return [
+          {
+            id,
+            source: reversed ? externalNodeId : b.internalItemId,
+            target: reversed ? b.internalItemId : externalNodeId,
+            sourceHandle: reversed ? "source-top" : "source-bottom",
+            targetHandle: reversed ? "target-bottom" : "target-top",
+            type: "roadmap-cross-epic-dependency",
+            markerEnd: { type: MarkerType.ArrowClosed, color: crossEpicMarkerColor, width: 18, height: 18 },
+            data: { points },
+          } satisfies Edge<RoadmapCrossEpicEdgeData, "roadmap-cross-epic-dependency">,
+        ];
+      });
 
-  const onNodeClick: NodeMouseHandler<Node<RoadmapGraphNodeData>> = useCallback(
+    return {
+      nodes: [...flowNodes, ...externalFlowNodes],
+      edges: [...hierarchyEdges, ...dependencyEdges, ...crossEpicEdges],
+    };
+  }, [
+    layout,
+    visibleNodes,
+    visibleDependencies,
+    visibleExternalNodeInfos,
+    visibleExternalBlockers,
+    childCounts,
+    collapsed,
+    handleToggleCollapse,
+  ]);
+
+  const onNodeClick: NodeMouseHandler<RoadmapFlowNode> = useCallback(
     (_event, node) => {
       const detail = findDetailItem(node.id, snapshot);
       onNodeSelect(detail);
@@ -297,7 +442,7 @@ export default function RoadmapGraph({ snapshot, onNodeSelect }: RoadmapGraphPro
   return (
     <div
       data-testid="roadmap-graph-container"
-      className="h-full w-full"
+      className="relative h-full w-full"
       data-elk-ready={layout && !fallback ? "true" : "false"}
       data-elk-fallback={fallback ? "true" : "false"}
     >
@@ -320,6 +465,7 @@ export default function RoadmapGraph({ snapshot, onNodeSelect }: RoadmapGraphPro
         <Controls showInteractive={false} />
         <Background gap={16} size={1} />
       </ReactFlow>
+      <RoadmapGraphLegend />
     </div>
   );
 }

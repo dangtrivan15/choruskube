@@ -11,6 +11,7 @@ import com.choruskube.core.BaseTest;
 import com.choruskube.core.dto.CreateDependencyRequest;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
+import com.choruskube.core.dto.ExternalBlockerRef;
 import com.choruskube.core.dto.RoadmapGraphSnapshot;
 import com.choruskube.core.dto.StoryRequest;
 import com.choruskube.core.dto.StoryResponse;
@@ -19,6 +20,7 @@ import com.choruskube.core.dto.TaskResponse;
 import com.choruskube.core.exception.ForbiddenException;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.WorkflowRun;
+import com.choruskube.core.model.enums.BlockerDirection;
 import com.choruskube.core.model.enums.Readiness;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.GitRepoRepository;
@@ -171,6 +173,108 @@ public class RoadmapGraphServiceTest extends BaseTest {
         assertThat(blocker.title()).isEqualTo("Blocked in B");
         assertThat(blocker.epicId()).isEqualTo(epicB.id());
         assertThat(blocker.epicTitle()).isEqualTo(epicB.title());
+    }
+
+    @Test
+    void getGraph_blockerInDifferentEpic_externalBlockerHasDirectionBlockingAndInternalItemId() {
+        // Same fixture as getGraph_blockerInDifferentEpic_appearsInExternalBlockersNotDependencies
+        // above, extended to assert the new direction/internalItemId fields (Decision 3): the
+        // external item BLOCKS the in-Epic item, so direction is BLOCKING and internalItemId
+        // points back at the in-Epic (blocked) Task.
+        EpicResponse epicA = makeEpic("https://github.com/test/graph-direction-blocking-a.git");
+        StoryResponse storyA = makeStory(epicA.id(), "Story A");
+        TaskResponse blockedInA = makeTask(storyA.id(), "Blocked in A");
+
+        EpicResponse epicB = makeEpic("https://github.com/test/graph-direction-blocking-b.git");
+        StoryResponse storyB = makeStory(epicB.id(), "Story B");
+        TaskResponse blockingInB = makeTask(storyB.id(), "Blocking in B");
+
+        dependencyService.create(new CreateDependencyRequest("task", blockingInB.id(), "task", blockedInA.id()));
+
+        RoadmapGraphSnapshot snapshot = graphService.getGraph(epicA.id());
+
+        assertThat(snapshot.externalBlockers()).hasSize(1);
+        var blocker = snapshot.externalBlockers().get(0);
+        assertThat(blocker.direction()).isEqualTo(BlockerDirection.BLOCKING);
+        assertThat(blocker.internalItemId()).isEqualTo(blockedInA.id());
+    }
+
+    @Test
+    void getGraph_blockedInDifferentEpic_externalBlockerHasDirectionBlockedAndInternalItemId() {
+        // Same fixture as getGraph_blockedInDifferentEpic_appearsInExternalBlockersNotDependencies
+        // above, extended to assert the new direction/internalItemId fields (Decision 3): the
+        // in-Epic item BLOCKS the external item, so from the external item's perspective direction
+        // is BLOCKED and internalItemId points back at the in-Epic (blocking) Task.
+        EpicResponse epicA = makeEpic("https://github.com/test/graph-direction-blocked-a.git");
+        StoryResponse storyA = makeStory(epicA.id(), "Story A");
+        TaskResponse blockingInA = makeTask(storyA.id(), "Blocking in A");
+
+        EpicResponse epicB = makeEpic("https://github.com/test/graph-direction-blocked-b.git");
+        StoryResponse storyB = makeStory(epicB.id(), "Story B");
+        TaskResponse blockedInB = makeTask(storyB.id(), "Blocked in B");
+
+        dependencyService.create(new CreateDependencyRequest("task", blockingInA.id(), "task", blockedInB.id()));
+
+        RoadmapGraphSnapshot snapshot = graphService.getGraph(epicA.id());
+
+        assertThat(snapshot.externalBlockers()).hasSize(1);
+        var blocker = snapshot.externalBlockers().get(0);
+        assertThat(blocker.direction()).isEqualTo(BlockerDirection.BLOCKED);
+        assertThat(blocker.internalItemId()).isEqualTo(blockingInA.id());
+    }
+
+    @Test
+    void getGraph_externalBlockerTouchingMultipleInternalItems_eachRefHasDistinctInternalItemId() {
+        // The same external Task blocks two different in-Epic Tasks — Decision 4's dedup
+        // responsibility lives client-side, so the service must still emit one ExternalBlockerRef
+        // per edge here, each carrying the specific in-Epic item it touches.
+        EpicResponse epicA = makeEpic("https://github.com/test/graph-multi-internal-a.git");
+        StoryResponse storyA = makeStory(epicA.id(), "Story A");
+        TaskResponse blockedInA1 = makeTask(storyA.id(), "Blocked in A 1");
+        TaskResponse blockedInA2 = makeTask(storyA.id(), "Blocked in A 2");
+
+        EpicResponse epicB = makeEpic("https://github.com/test/graph-multi-internal-b.git");
+        StoryResponse storyB = makeStory(epicB.id(), "Story B");
+        TaskResponse blockingInB = makeTask(storyB.id(), "Blocking in B");
+
+        dependencyService.create(new CreateDependencyRequest("task", blockingInB.id(), "task", blockedInA1.id()));
+        dependencyService.create(new CreateDependencyRequest("task", blockingInB.id(), "task", blockedInA2.id()));
+
+        RoadmapGraphSnapshot snapshot = graphService.getGraph(epicA.id());
+
+        assertThat(snapshot.externalBlockers()).hasSize(2);
+        assertThat(snapshot.externalBlockers())
+                .allMatch(b -> b.itemId().equals(blockingInB.id()))
+                .allMatch(b -> b.direction() == BlockerDirection.BLOCKING);
+        assertThat(snapshot.externalBlockers())
+                .extracting(ExternalBlockerRef::internalItemId)
+                .containsExactlyInAnyOrder(blockedInA1.id(), blockedInA2.id());
+    }
+
+    @Test
+    void getGraph_internalPath_blockerInDifferentEpic_externalBlockerHasDirectionAndInternalItemId() {
+        // Exercises the internal 3-arg getGraph(epicId, runId, softwareProjectId) overload used by
+        // InternalRunController/get-roadmap-graph — assemble() is shared with the public path
+        // above, so this proves that sharing actually threads direction/internalItemId through
+        // both paths rather than assuming it.
+        EpicResponse epicA = makeEpic("https://github.com/test/graph-internal-direction-a.git");
+        StoryResponse storyA = makeStory(epicA.id(), "Story A");
+        TaskResponse blockedInA = makeTask(storyA.id(), "Blocked in A");
+
+        EpicResponse epicB = makeEpic("https://github.com/test/graph-internal-direction-b.git");
+        StoryResponse storyB = makeStory(epicB.id(), "Story B");
+        TaskResponse blockingInB = makeTask(storyB.id(), "Blocking in B");
+
+        dependencyService.create(new CreateDependencyRequest("task", blockingInB.id(), "task", blockedInA.id()));
+        UUID runId = UUID.randomUUID();
+
+        RoadmapGraphSnapshot snapshot =
+                graphService.getGraph(epicA.id(), runId, epicA.softwareProject().id());
+
+        assertThat(snapshot.externalBlockers()).hasSize(1);
+        var blocker = snapshot.externalBlockers().get(0);
+        assertThat(blocker.direction()).isEqualTo(BlockerDirection.BLOCKING);
+        assertThat(blocker.internalItemId()).isEqualTo(blockedInA.id());
     }
 
     @Test

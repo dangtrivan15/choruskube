@@ -4,12 +4,14 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 import com.choruskube.core.BaseTest;
+import com.choruskube.core.dto.CreateDependencyRequest;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
 import com.choruskube.core.model.*;
 import com.choruskube.core.model.enums.ExecutorType;
 import com.choruskube.core.repository.*;
 import com.choruskube.core.service.EpicService;
+import com.choruskube.core.service.WorkItemDependencyService;
 import com.choruskube.core.util.RepoNameUtil;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.temporal.client.WorkflowClient;
@@ -55,6 +57,9 @@ public class InternalRunControllerTest extends BaseTest {
 
     @Autowired
     private EpicService epicService;
+
+    @Autowired
+    private WorkItemDependencyService dependencyService;
 
     @MockitoBean
     private WorkflowServiceStubs workflowServiceStubs;
@@ -560,9 +565,61 @@ public class InternalRunControllerTest extends BaseTest {
         run.setTaskId(UUID.fromString(taskId));
         run = runRepo.save(run);
 
+        // A cross-Epic blocker of the triggering task (Decision 3), so this also proves the
+        // internal/agent-facing graph mirror (`get-roadmap-graph`) carries the same additive
+        // `direction`/`internalItemId` shape as the public path, through the HTTP layer.
+        String createForeignEpicResponse = mockMvc.perform(post("/internal/runs/" + run.getId() + "/node-executions/"
+                                + exec.getId() + "/feature-proposals")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                Map.of("title", "Foreign epic", "description", "desc"))))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        String foreignEpicId =
+                objectMapper.readTree(createForeignEpicResponse).get("id").asText();
+
+        String createForeignStoryResponse = mockMvc.perform(post("/internal/runs/" + run.getId()
+                                + "/node-executions/" + exec.getId() + "/feature-proposals/" + foreignEpicId
+                                + "/stories")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                Map.of("title", "Foreign story", "description", "desc"))))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        String foreignStoryId =
+                objectMapper.readTree(createForeignStoryResponse).get("id").asText();
+
+        String createForeignTaskResponse = mockMvc.perform(post("/internal/runs/" + run.getId()
+                                + "/node-executions/" + exec.getId() + "/feature-proposals/" + foreignEpicId
+                                + "/stories/" + foreignStoryId + "/tasks")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                Map.of("title", "Foreign blocking task", "description", "desc"))))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        String foreignTaskId =
+                objectMapper.readTree(createForeignTaskResponse).get("id").asText();
+
+        // No internal/agent-facing HTTP endpoint creates dependencies (dependency creation is a
+        // user-facing action) — go through the service directly, same as
+        // RoadmapGraphServiceTest/RoadmapGraphControllerTest's fixture setup.
+        dependencyService.create(
+                new CreateDependencyRequest("task", UUID.fromString(foreignTaskId), "task", UUID.fromString(taskId)));
+
         mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/graph"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.epic.id").value(epicId));
+                .andExpect(jsonPath("$.epic.id").value(epicId))
+                .andExpect(jsonPath("$.externalBlockers.length()").value(1))
+                .andExpect(jsonPath("$.externalBlockers[0].direction").isNotEmpty())
+                .andExpect(jsonPath("$.externalBlockers[0].internalItemId").isNotEmpty())
+                .andExpect(jsonPath("$.externalBlockers[0].direction").value("BLOCKING"))
+                .andExpect(jsonPath("$.externalBlockers[0].internalItemId").value(taskId));
     }
 
     @Test

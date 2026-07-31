@@ -48,12 +48,11 @@ interface Props {
   /**
    * The Epic graph's full external-blockers list (RoadmapGraphSnapshot.externalBlockers).
    *
-   * The backend does not currently record which internal item a given external
-   * blocker's dependency edge connects to (DefaultRoadmapGraphService discards
-   * that correlation once it classifies a row as "external") — there is no
-   * per-item filter available, so every external blocker for the Epic is
-   * surfaced here as context regardless of which node is selected, rather
-   * than silently pretending a precise per-node filter exists.
+   * Each entry carries `internalItemId` — the specific in-Epic Story/Task its
+   * dependency edge touches — so callers pass the whole, unfiltered list and
+   * this component narrows it per selected node (see `ExternalBlockersSection`
+   * below). An Epic node has no single `internalItemId` to match against, so
+   * it sees every external blocker in the Epic as summary context.
    */
   externalBlockers: ExternalBlockerRef[];
 }
@@ -100,14 +99,30 @@ function itemTypeLabel(itemType: RoadmapItemType): string {
   }
 }
 
-function ExternalBlockersSection({ blockers }: { blockers: ExternalBlockerRef[] }) {
-  if (blockers.length === 0) return null;
+/**
+ * One direction-labeled group of external-blocker badges (see
+ * `ExternalBlockersSection`). Unlike the roadmap canvas's external node —
+ * which dedups by identity (Decision 4) and can end up representing edges of
+ * both directions at once, forcing direction-neutral wording (see the
+ * `RoadmapExternalNode` tooltip fix) — each `ExternalBlockerRef` here is a
+ * single, un-deduped edge (`RoadmapGraph.tsx` passes `snapshot.externalBlockers`
+ * straight through), so its `direction` can be shown accurately per badge.
+ */
+function ExternalBlockerGroup({
+  heading,
+  blockers,
+}: {
+  heading: string;
+  blockers: ExternalBlockerRef[];
+}) {
   return (
-    <div data-testid="roadmap-external-blockers" className="pt-3 border-t space-y-2">
-      <h3 className="text-sm font-medium text-muted-foreground">External blockers</h3>
+    <div className="space-y-2">
+      <h3 className="text-sm font-medium text-muted-foreground">{heading}</h3>
       <ul className="flex flex-wrap gap-2">
         {blockers.map((blocker) => (
-          <li key={`${blocker.itemType}-${blocker.itemId}`}>
+          <li
+            key={`${blocker.itemType}-${blocker.itemId}-${blocker.internalItemId}-${blocker.direction}`}
+          >
             <Link
               to={`/roadmap/epics/${blocker.epicId}`}
               data-testid="roadmap-external-blocker-badge"
@@ -121,6 +136,30 @@ function ExternalBlockersSection({ blockers }: { blockers: ExternalBlockerRef[] 
           </li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+/**
+ * External-blockers sidebar section. Splits by `direction` into two
+ * sub-groups — "Blocked by" (the external item blocks the selected in-Epic
+ * item) and "Blocking" (the selected in-Epic item blocks the external item)
+ * — instead of listing every entry under one undifferentiated heading, which
+ * would tell the user the opposite of reality for a BLOCKED-direction entry
+ * (see the regression tests below for the specific case this fixes).
+ */
+function ExternalBlockersSection({ blockers }: { blockers: ExternalBlockerRef[] }) {
+  if (blockers.length === 0) return null;
+  const blockingUs = blockers.filter((b) => b.direction === "BLOCKING");
+  const weBlock = blockers.filter((b) => b.direction === "BLOCKED");
+  return (
+    <div data-testid="roadmap-external-blockers" className="pt-3 border-t space-y-2">
+      {blockingUs.length > 0 && (
+        <ExternalBlockerGroup heading="Blocked by (other Epics)" blockers={blockingUs} />
+      )}
+      {weBlock.length > 0 && (
+        <ExternalBlockerGroup heading="Blocking (other Epics)" blockers={weBlock} />
+      )}
     </div>
   );
 }
@@ -326,7 +365,13 @@ export default function RoadmapGraphDetailPanel({
         />
       )}
 
-      <ExternalBlockersSection blockers={externalBlockers} />
+      <ExternalBlockersSection
+        blockers={
+          itemType === "epic"
+            ? externalBlockers
+            : externalBlockers.filter((b) => b.internalItemId === item.id)
+        }
+      />
 
       {itemType !== "epic" && item.readiness === "BLOCKED" && (
         <BlockingChainSection chain={chainQuery.data} isLoading={chainQuery.isLoading} />

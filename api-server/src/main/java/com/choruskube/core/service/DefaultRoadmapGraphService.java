@@ -13,6 +13,7 @@ import com.choruskube.core.model.Story;
 import com.choruskube.core.model.Task;
 import com.choruskube.core.model.WorkItemDependency;
 import com.choruskube.core.model.enums.BlockableItemType;
+import com.choruskube.core.model.enums.BlockerDirection;
 import com.choruskube.core.model.enums.Readiness;
 import com.choruskube.core.repository.EpicRepository;
 import com.choruskube.core.repository.StoryRepository;
@@ -136,8 +137,16 @@ public class DefaultRoadmapGraphService implements RoadmapGraphService {
             if (blockingInside && blockedInside) {
                 dependencies.add(toEdgeResponse(row));
             } else if (!blockingInside) {
-                ExternalBlockerResolution resolution =
-                        resolveExternalBlocker(row.getBlockingItemType(), row.getBlockingItemId(), internal, runId);
+                // The BLOCKING side lives outside this Epic (blockedInside is therefore
+                // guaranteed true — see findByBlockingItemIdInOrBlockedItemIdIn above) — the
+                // external item BLOCKS the in-Epic (blocked) item.
+                ExternalBlockerResolution resolution = resolveExternalBlocker(
+                        row.getBlockingItemType(),
+                        row.getBlockingItemId(),
+                        internal,
+                        runId,
+                        BlockerDirection.BLOCKING,
+                        row.getBlockedItemId());
                 externalBlockers.add(resolution.ref());
                 // Feeds the transitive walk below: a direct blocker's own status still gates
                 // readiness even when it lives outside this Epic (Decision 2), so its status must
@@ -147,9 +156,15 @@ public class DefaultRoadmapGraphService implements RoadmapGraphService {
                 // blockingInside && !blockedInside: the BLOCKED side lives outside this Epic —
                 // shown as an external blocker reference for display, but it doesn't affect
                 // readiness of anything IN this Epic (blockedInside is false), so its status is
-                // never looked up.
-                ExternalBlockerResolution resolution =
-                        resolveExternalBlocker(row.getBlockedItemType(), row.getBlockedItemId(), internal, runId);
+                // never looked up. The in-Epic (blocking) item BLOCKS the external item, so from
+                // the external item's perspective it is the BLOCKED side.
+                ExternalBlockerResolution resolution = resolveExternalBlocker(
+                        row.getBlockedItemType(),
+                        row.getBlockedItemId(),
+                        internal,
+                        runId,
+                        BlockerDirection.BLOCKED,
+                        row.getBlockingItemId());
                 externalBlockers.add(resolution.ref());
             }
         }
@@ -231,9 +246,19 @@ public class DefaultRoadmapGraphService implements RoadmapGraphService {
      * the gap defensively for any future path (bulk import, admin ownership-transfer, direct
      * repository writes) that could insert an edge without going through create()'s own
      * checkOrgAccess/assertSameOrg pair.
+     *
+     * @param direction the external item's role relative to the in-Epic item, as already
+     *     determined by the caller from which side of the dependency row was outside the Epic
+     * @param internalItemId the in-Epic Story/Task id this external blocker connects to, as
+     *     already determined by the caller
      */
     private ExternalBlockerResolution resolveExternalBlocker(
-            BlockableItemType type, UUID id, boolean internal, UUID runId) {
+            BlockableItemType type,
+            UUID id,
+            boolean internal,
+            UUID runId,
+            BlockerDirection direction,
+            UUID internalItemId) {
         if (internal) {
             authService.assertSameOrg(type.name(), id, "workflow_run", runId);
         } else {
@@ -245,7 +270,9 @@ public class DefaultRoadmapGraphService implements RoadmapGraphService {
             List<Task> tasks = taskRepo.findByStoryIdOrderByCreatedAtDesc(id);
             String status = RollupCalculator.compute(tasks).status();
             return new ExternalBlockerResolution(
-                    new ExternalBlockerRef("story", id, story.getTitle(), epic.getId(), epic.getTitle()), status);
+                    new ExternalBlockerRef(
+                            "story", id, story.getTitle(), epic.getId(), epic.getTitle(), direction, internalItemId),
+                    status);
         }
         Task task = taskRepo.findById(id).orElseThrow(() -> new NotFoundException("Task not found: " + id));
         Story story = storyRepo
@@ -253,7 +280,8 @@ public class DefaultRoadmapGraphService implements RoadmapGraphService {
                 .orElseThrow(() -> new NotFoundException("Story not found: " + task.getStoryId()));
         Epic epic = findEpic(story.getEpicId());
         return new ExternalBlockerResolution(
-                new ExternalBlockerRef("task", id, task.getTitle(), epic.getId(), epic.getTitle()),
+                new ExternalBlockerRef(
+                        "task", id, task.getTitle(), epic.getId(), epic.getTitle(), direction, internalItemId),
                 task.getStatus().name());
     }
 

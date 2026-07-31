@@ -89,6 +89,8 @@ const externalBlocker: ExternalBlockerRef = {
   title: "Migrate auth service",
   epicId: "other-epic-1",
   epicTitle: "Auth Overhaul",
+  direction: "BLOCKING",
+  internalItemId: "task-1",
 };
 
 const blockableItems: BlockableItemRef[] = [
@@ -238,6 +240,104 @@ describe("RoadmapGraphDetailPanel", () => {
     // there's no page content to assert post-navigation — the href itself is
     // the navigation target the click resolves to.
     expect(link).toHaveAttribute("href", `/roadmap/epics/${externalBlocker.epicId}`);
+  });
+
+  it("filters external blockers to the ones touching the selected Story/Task's internalItemId", () => {
+    // Same external item ("other-task-1") touching two different in-Epic
+    // items — the shape RoadmapGraphServiceTest's
+    // getGraph_externalBlockerTouchingMultipleInternalItems_eachRefHasDistinctInternalItemId
+    // proves the backend now emits. Selecting task-1 must show only the ref
+    // whose internalItemId is task-1, not task-2's.
+    const blockerForOtherTask: ExternalBlockerRef = { ...externalBlocker, internalItemId: "task-2" };
+    renderPanel({
+      detail: { itemType: "task", item: task },
+      externalBlockers: [externalBlocker, blockerForOtherTask],
+    });
+
+    expect(screen.getAllByTestId("roadmap-external-blocker-badge")).toHaveLength(1);
+  });
+
+  it("shows no external blockers for a Story/Task when none target its internalItemId", () => {
+    renderPanel({ detail: { itemType: "task", item: otherTask }, externalBlockers: [externalBlocker] });
+    expect(screen.queryByTestId("roadmap-external-blockers")).not.toBeInTheDocument();
+  });
+
+  it("shows every external blocker for an Epic node regardless of internalItemId", () => {
+    const blockerForOtherTask: ExternalBlockerRef = { ...externalBlocker, internalItemId: "task-2" };
+    renderPanel({
+      detail: { itemType: "epic", item: epic },
+      externalBlockers: [externalBlocker, blockerForOtherTask],
+    });
+
+    expect(screen.getAllByTestId("roadmap-external-blocker-badge")).toHaveLength(2);
+  });
+
+  it("keys each Epic-node external-blocker badge uniquely even when the same external item touches two internal items", () => {
+    // Regression test: for an Epic node (unlike a Story/Task node, which is
+    // pre-filtered to one internalItemId — see the "filters external
+    // blockers" test above), ExternalBlockerGroup renders the full,
+    // un-filtered list. Its <li> key used to be
+    // `${itemType}-${itemId}-${direction}`, omitting internalItemId. Two
+    // refs for the same external item touching two different in-Epic items
+    // in the same direction (the exact shape RoadmapGraphServiceTest's
+    // getGraph_externalBlockerTouchingMultipleInternalItems_eachRefHasDistinctInternalItemId
+    // proves the backend emits) then collided on one key, which React
+    // reports as a duplicate-key warning and can silently drop/duplicate
+    // list children.
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const blockerForOtherTask: ExternalBlockerRef = { ...externalBlocker, internalItemId: "task-2" };
+    renderPanel({
+      detail: { itemType: "epic", item: epic },
+      externalBlockers: [externalBlocker, blockerForOtherTask],
+    });
+
+    expect(screen.getAllByTestId("roadmap-external-blocker-badge")).toHaveLength(2);
+    expect(consoleError).not.toHaveBeenCalledWith(
+      expect.stringContaining("Encountered two children with the same key"),
+      expect.anything(),
+      expect.anything(),
+    );
+    consoleError.mockRestore();
+  });
+
+  it("groups external blockers under 'Blocked by' when the external item blocks the selected item", () => {
+    renderPanel({ detail: { itemType: "task", item: task }, externalBlockers: [externalBlocker] });
+    expect(screen.getByText("Blocked by (other Epics)")).toBeInTheDocument();
+    expect(screen.queryByText("Blocking (other Epics)")).not.toBeInTheDocument();
+  });
+
+  it("groups external blockers under 'Blocking' — not 'Blocked by' — when the selected item blocks the external item", () => {
+    // Regression test: direction === "BLOCKED" means the in-Epic item blocks
+    // the external one, the reverse of `externalBlocker`. Before this fix,
+    // every entry rendered under one undifferentiated "External blockers"
+    // heading regardless of direction, so a BLOCKED-direction entry read as
+    // if the external item were blocking the selected item — the opposite
+    // of what actually happened.
+    const weBlockThem: ExternalBlockerRef = { ...externalBlocker, direction: "BLOCKED" };
+    renderPanel({ detail: { itemType: "task", item: task }, externalBlockers: [weBlockThem] });
+
+    expect(screen.getByText("Blocking (other Epics)")).toBeInTheDocument();
+    expect(screen.queryByText("Blocked by (other Epics)")).not.toBeInTheDocument();
+    expect(screen.getByTestId("roadmap-external-blocker-badge")).toHaveTextContent(
+      "Migrate auth service",
+    );
+  });
+
+  it("shows both direction groups when the selected item has blockers in both directions", () => {
+    const weBlockThem: ExternalBlockerRef = {
+      ...externalBlocker,
+      itemId: "other-task-2",
+      title: "Rework billing export",
+      direction: "BLOCKED",
+    };
+    renderPanel({
+      detail: { itemType: "task", item: task },
+      externalBlockers: [externalBlocker, weBlockThem],
+    });
+
+    expect(screen.getByText("Blocked by (other Epics)")).toBeInTheDocument();
+    expect(screen.getByText("Blocking (other Epics)")).toBeInTheDocument();
+    expect(screen.getAllByTestId("roadmap-external-blocker-badge")).toHaveLength(2);
   });
 
   it("does not render a 'Blocked by' section for an Epic node", () => {

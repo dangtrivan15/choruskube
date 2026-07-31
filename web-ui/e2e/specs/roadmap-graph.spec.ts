@@ -284,6 +284,65 @@ test.describe("Roadmap Graph View", () => {
     }
   });
 
+  test("renders a cross-Epic blocker as a canvas edge and external node, and navigates to the other Epic's graph on click", async ({
+    roadmapGraphPage,
+    api,
+    page,
+  }) => {
+    const repos = await api.listGitRepos();
+    if (repos.content.length === 0) {
+      test.skip();
+      return;
+    }
+
+    const firstEpic = await api.createEpic({
+      title: `E2E Cross-Epic Canvas Epic ${Date.now()}`,
+      description: "desc",
+      softwareProjectId: repos.content[0].id,
+    });
+    const secondEpic = await api.createEpic({
+      title: `E2E Cross-Epic Owning Epic ${Date.now()}`,
+      description: "desc",
+      softwareProjectId: repos.content[0].id,
+    });
+    const firstStory = await api.createStory(firstEpic.id, { title: "Blocked Story", description: "desc" });
+    const blockedTask = await api.createTask(firstStory.id, {
+      title: "Canvas Externally Blocked Task",
+      description: "desc",
+    });
+    const secondStory = await api.createStory(secondEpic.id, { title: "Blocking Story", description: "desc" });
+    const blockingTask = await api.createTask(secondStory.id, {
+      title: "Canvas External Blocking Task",
+      description: "desc",
+    });
+
+    await api.createDependency({
+      blockingItemType: "task",
+      blockingItemId: blockingTask.id,
+      blockedItemType: "task",
+      blockedItemId: blockedTask.id,
+    });
+
+    try {
+      // Open the *blocked* Task's own Epic graph — the cross-Epic blocker
+      // originates in the other Epic, so this is the canvas that must show
+      // the edge + external node for it.
+      await roadmapGraphPage.goto(firstEpic.id);
+
+      await expect(roadmapGraphPage.crossEpicEdges).toHaveCount(1);
+      await expect(roadmapGraphPage.externalNodeByLabel(blockingTask.title)).toBeVisible();
+
+      // Distinct from the pre-existing sidebar-link test above, which
+      // asserts the Epic *detail* route (no "/graph" suffix) — the canvas
+      // external node targets the graph view instead (Decision 5).
+      await roadmapGraphPage.externalNodeByLabel(blockingTask.title).click();
+      await expect(page).toHaveURL(`/roadmap/epics/${secondEpic.id}/graph`);
+    } finally {
+      await api.deleteEpic(firstEpic.id);
+      await api.deleteEpic(secondEpic.id);
+    }
+  });
+
   test("collapsing and expanding a large Story branch shows/hides its Tasks", async ({
     roadmapGraphPage,
     api,
