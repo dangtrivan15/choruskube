@@ -73,6 +73,11 @@ export class RoadmapGraphPage {
     return this.page.locator(`[data-testid="roadmap-graph-node"][data-label="${label}"]`);
   }
 
+  /** Locates an external-blocker link by the blocker item's own title (ExternalBlockersSection). */
+  externalBlockerLink(title: string): Locator {
+    return this.externalBlockerBadges.filter({ hasText: title });
+  }
+
   async selectNode(label: string) {
     await this.nodeByLabel(label).click();
     await expect(this.detailPanel).toBeVisible();

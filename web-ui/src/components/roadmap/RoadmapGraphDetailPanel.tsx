@@ -108,15 +108,16 @@ function ExternalBlockersSection({ blockers }: { blockers: ExternalBlockerRef[] 
       <ul className="flex flex-wrap gap-2">
         {blockers.map((blocker) => (
           <li key={`${blocker.itemType}-${blocker.itemId}`}>
-            <Badge
-              variant="outline"
+            <Link
+              to={`/roadmap/epics/${blocker.epicId}`}
               data-testid="roadmap-external-blocker-badge"
-              className="gap-1"
+              className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
               title={`${blocker.title} (${blocker.epicTitle})`}
             >
+              <ExternalLink className="size-3" />
               {blocker.title}
               <span className="text-muted-foreground">in {blocker.epicTitle}</span>
-            </Badge>
+            </Link>
           </li>
         ))}
       </ul>
