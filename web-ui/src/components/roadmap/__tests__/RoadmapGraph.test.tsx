@@ -26,7 +26,16 @@ vi.mock("@xyflow/react", () => {
       onPaneClick,
     }: {
       nodes: { id: string; type: string; data: unknown }[];
-      edges: { id: string; type: string; data: unknown; markerEnd?: unknown }[];
+      edges: {
+        id: string;
+        type: string;
+        data: unknown;
+        markerEnd?: unknown;
+        source: string;
+        target: string;
+        sourceHandle?: string;
+        targetHandle?: string;
+      }[];
       nodeTypes: Record<string, ComponentType<{ id: string; data: unknown; selected: boolean }>>;
       edgeTypes: Record<
         string,
@@ -62,7 +71,14 @@ vi.mock("@xyflow/react", () => {
         {edges.map((e) => {
           const Comp = edgeTypes[e.type];
           return (
-            <div key={e.id} data-testid={`mock-edge-${e.id}`}>
+            <div
+              key={e.id}
+              data-testid={`mock-edge-${e.id}`}
+              data-source={e.source}
+              data-target={e.target}
+              data-source-handle={e.sourceHandle}
+              data-target-handle={e.targetHandle}
+            >
               <Comp
                 id={e.id}
                 data={e.data}
@@ -349,6 +365,47 @@ describe("RoadmapGraph", () => {
     expect(screen.getByTestId("mock-edge-cross-epic:ext-task-1:task-1")).toBeInTheDocument();
     expect(screen.getByTestId("mock-edge-cross-epic:ext-task-1:task-2")).toBeInTheDocument();
   });
+
+  it.each([
+    {
+      direction: "BLOCKING" as const,
+      description: "external item blocks the in-Epic item — edge runs external -> internal",
+      expectedSource: "external:ext-task-1",
+      expectedTarget: "task-1",
+      expectedSourceHandle: "source-top",
+      expectedTargetHandle: "target-bottom",
+    },
+    {
+      direction: "BLOCKED" as const,
+      description: "in-Epic item blocks the external item — edge runs internal -> external",
+      expectedSource: "task-1",
+      expectedTarget: "external:ext-task-1",
+      expectedSourceHandle: "source-bottom",
+      expectedTargetHandle: "target-top",
+    },
+  ])(
+    "wires the cross-Epic edge's source/target/handles for direction=$direction ($description)",
+    async ({ direction, expectedSource, expectedTarget, expectedSourceHandle, expectedTargetHandle }) => {
+      const externalBlocker: ExternalBlockerRef = {
+        itemType: "task",
+        itemId: "ext-task-1",
+        title: "External Task",
+        epicId: "epic-2",
+        epicTitle: "Other Epic",
+        direction,
+        internalItemId: "task-1",
+      };
+      const snapshot = makeSnapshot({ externalBlockers: [externalBlocker] });
+      renderWithProviders(<RoadmapGraph snapshot={snapshot} onNodeSelect={vi.fn()} />);
+      await waitForGraphReady();
+
+      const edge = screen.getByTestId("mock-edge-cross-epic:ext-task-1:task-1");
+      expect(edge).toHaveAttribute("data-source", expectedSource);
+      expect(edge).toHaveAttribute("data-target", expectedTarget);
+      expect(edge).toHaveAttribute("data-source-handle", expectedSourceHandle);
+      expect(edge).toHaveAttribute("data-target-handle", expectedTargetHandle);
+    },
+  );
 
   it("clicking an external node navigates to the owning Epic's graph route", async () => {
     const externalBlocker: ExternalBlockerRef = {
