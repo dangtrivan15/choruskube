@@ -4,7 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import mermaid from "mermaid";
 import { artifactUrl } from "@/lib/api";
-import { escapeMermaidSemicolons } from "@/lib/mermaid";
+import { escapeMermaidSemicolons, quoteSequenceParticipantAliases } from "@/lib/mermaid";
 
 mermaid.initialize({
   startOnLoad: false,
@@ -110,7 +110,10 @@ function MermaidDiagram({ source }: { source: string }) {
   const renderId = `mermaid-${reactId.replace(/[^a-zA-Z0-9]/g, "")}`;
   const [svg, setSvg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const healedSource = useMemo(() => escapeMermaidSemicolons(source), [source]);
+  const healedSource = useMemo(
+    () => escapeMermaidSemicolons(quoteSequenceParticipantAliases(source)),
+    [source]
+  );
 
   useEffect(() => {
     let cancelled = false;

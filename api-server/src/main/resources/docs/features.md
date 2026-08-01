@@ -74,6 +74,18 @@ launches — including restarts — stays visible as that Task's run history.
 
 See [Roadmap](roadmap-and-proposals) for usage.
 
+## Approval Flow
+
+A typical Human Gate approval is a short exchange between a reviewer and the API server:
+
+```mermaid
+sequenceDiagram
+  participant actor as Reviewer
+  participant API as api-server
+  actor->>API: Approve or reject
+  API-->>actor: 200 OK
+```
+
 ## Single-Tenant Workspace
 
 The open-source core runs **single-tenant**: there is no identity provider, login, or
