@@ -350,13 +350,15 @@ export interface EpicRequest {
 }
 
 /**
- * Dependency-readiness signal for a Story/Task node in the Roadmap Graph View
- * — computed at read time by walking the full chain of incoming "blocking"
- * edges backward from the item, not just its direct blocker(s); never
- * persisted. `BLOCKED` if any item reachable that way is not yet done, even
- * when the direct blocker itself is done but something further upstream in
- * the chain is not. `null` on responses assembled outside the graph view
- * (plain Story/Task CRUD reads have no reason to join dependency edges).
+ * Dependency-readiness signal for a Story/Task node, populated on the
+ * Roadmap Graph View and the flat Story/Task list endpoints (`GET
+ * .../stories`, `GET .../tasks`) — computed at read time by walking the full
+ * chain of incoming "blocking" edges backward from the item, not just its
+ * direct blocker(s); never persisted. `BLOCKED` if any item reachable that
+ * way is not yet done, even when the direct blocker itself is done but
+ * something further upstream in the chain is not. `null` on single-item
+ * reads (create/get/update) — those have no reason to join dependency edges
+ * just to return the one item just written.
  */
 export type Readiness = "READY" | "BLOCKED";
 

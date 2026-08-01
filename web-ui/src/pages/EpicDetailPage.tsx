@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/dialog";
 import EditEpicDialog from "@/components/roadmap/EditEpicDialog";
 import CreateStoryDialog from "@/components/roadmap/CreateStoryDialog";
+import ReadinessBadge from "@/components/roadmap/ReadinessBadge";
 import PageHeader from "@/components/layout/PageHeader";
 import { useNavigate } from "react-router";
 
@@ -181,6 +182,7 @@ export default function EpicDetailPage() {
                 </TruncatedText>
                 <div className="mt-1 flex flex-wrap items-center gap-2">
                   {statusBadge(story.status)}
+                  <ReadinessBadge readiness={story.readiness} data-testid="story-item-readiness-badge" />
                   <span className="text-xs text-muted-foreground">
                     {story.progress.doneTasks}/{story.progress.totalTasks} tasks done
                   </span>

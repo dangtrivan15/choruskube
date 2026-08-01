@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { useDraggable } from "@dnd-kit/core";
-import { ChevronDown, ChevronRight, Lock } from "lucide-react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { useStories } from "@/hooks/useStories";
 import type { EpicResponse } from "@/lib/types";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import ReadinessBadge from "@/components/roadmap/ReadinessBadge";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -92,16 +93,11 @@ export default function EpicBoardCard({ epic }: Props) {
             >
               <span className="min-w-0 flex-1 truncate">{story.title}</span>
               <div className="flex shrink-0 items-center gap-1.5">
-                {story.readiness === "BLOCKED" && (
-                  <span
-                    data-testid="epic-board-card-story-blocked"
-                    title="Blocked by an unfinished dependency"
-                    className="inline-flex items-center gap-0.5 rounded-full bg-status-warning/15 px-1.5 py-0.5 text-[10px] font-medium text-status-warning"
-                  >
-                    <Lock className="size-2.5" />
-                    Blocked
-                  </span>
-                )}
+                <ReadinessBadge
+                  readiness={story.readiness}
+                  size="compact"
+                  data-testid="epic-board-card-story-blocked"
+                />
                 <span
                   data-testid="epic-board-card-story-progress"
                   className="text-muted-foreground"

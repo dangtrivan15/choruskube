@@ -115,6 +115,27 @@ describe("StoryDetailPage", () => {
     expect(item).toHaveAttribute("href", "/tasks/task-1");
   });
 
+  it("shows a Blocked badge on a Task row whose readiness is BLOCKED", () => {
+    mockUseStory.mockReturnValue({ data: makeStory(), isLoading: false });
+    mockUseTasks.mockReturnValue({ data: [makeTask({ readiness: "BLOCKED" })], isLoading: false });
+    renderWithProviders(<StoryDetailPage />);
+    expect(screen.getByTestId("task-item-readiness-badge")).toHaveTextContent("Blocked");
+  });
+
+  it("shows no readiness badge on a Task row whose readiness is READY", () => {
+    mockUseStory.mockReturnValue({ data: makeStory(), isLoading: false });
+    mockUseTasks.mockReturnValue({ data: [makeTask({ readiness: "READY" })], isLoading: false });
+    renderWithProviders(<StoryDetailPage />);
+    expect(screen.queryByTestId("task-item-readiness-badge")).not.toBeInTheDocument();
+  });
+
+  it("shows no readiness badge on a Task row whose readiness is null", () => {
+    mockUseStory.mockReturnValue({ data: makeStory(), isLoading: false });
+    mockUseTasks.mockReturnValue({ data: [makeTask({ readiness: null })], isLoading: false });
+    renderWithProviders(<StoryDetailPage />);
+    expect(screen.queryByTestId("task-item-readiness-badge")).not.toBeInTheDocument();
+  });
+
   it("shows empty state when there are no tasks", () => {
     mockUseStory.mockReturnValue({ data: makeStory(), isLoading: false });
     mockUseTasks.mockReturnValue({ data: [], isLoading: false });

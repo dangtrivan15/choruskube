@@ -16,6 +16,7 @@ import com.choruskube.core.exception.ForbiddenException;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.Task;
+import com.choruskube.core.model.enums.Readiness;
 import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.TaskRepository;
@@ -121,6 +122,71 @@ public class DefaultStoryServiceTest extends BaseTest {
 
         List<StoryResponse> result = service.list(epic.id());
         assertThat(result).extracting(StoryResponse::id).containsExactly(newer.id(), older.id());
+    }
+
+    // ── readiness (Decision 1/2) — the flat list endpoint now populates the field the Roadmap
+    // Graph View has always computed, via the same shared EpicReadinessAssembler ──────────────
+
+    @Test
+    void list_storyWithNoDependencyEdges_isReady() {
+        EpicResponse epic = makeEpic("https://github.com/test/story-readiness-none.git");
+        StoryResponse story = service.create(epic.id(), new StoryRequest("S", "D"));
+
+        List<StoryResponse> result = service.list(epic.id());
+
+        assertThat(result).extracting(StoryResponse::readiness).containsExactly(Readiness.READY);
+        assertThat(story.readiness()).isNull(); // create() itself still returns null (Decision 1 scopes list only)
+    }
+
+    @Test
+    void list_storyBlockedByUnfinishedDependency_isBlocked() {
+        EpicResponse epic = makeEpic("https://github.com/test/story-readiness-blocked.git");
+        StoryResponse blocking = service.create(epic.id(), new StoryRequest("Blocking", "D"));
+        StoryResponse blocked = service.create(epic.id(), new StoryRequest("Blocked", "D"));
+        dependencyService.create(new CreateDependencyRequest("story", blocking.id(), "story", blocked.id()));
+
+        List<StoryResponse> result = service.list(epic.id());
+
+        assertThat(readinessOf(result, blocked.id())).isEqualTo(Readiness.BLOCKED);
+        assertThat(readinessOf(result, blocking.id())).isEqualTo(Readiness.READY);
+    }
+
+    @Test
+    void list_storyBlockedBySiblingStorysUnfinishedTask_isBlocked() {
+        // Decision 3: the readiness walk is bounded to the whole Epic, not the requested Story
+        // alone — a Story in the same Epic can be blocked by a Task under a completely different
+        // sibling Story.
+        EpicResponse epic = makeEpic("https://github.com/test/story-readiness-cross-story.git");
+        StoryResponse blockerStory = service.create(epic.id(), new StoryRequest("Blocker Story", "D"));
+        var blockerTask = taskService.create(blockerStory.id(), new TaskRequest("Blocker Task", "D"));
+        StoryResponse blocked = service.create(epic.id(), new StoryRequest("Blocked", "D"));
+        dependencyService.create(new CreateDependencyRequest("task", blockerTask.id(), "story", blocked.id()));
+
+        List<StoryResponse> result = service.list(epic.id());
+
+        assertThat(readinessOf(result, blocked.id())).isEqualTo(Readiness.BLOCKED);
+    }
+
+    @Test
+    void get_doesNotPopulateReadiness() {
+        // Decision 1: only the flat list endpoints (and the Roadmap Graph View) compute
+        // readiness — single-item reads are unaffected and keep returning null.
+        EpicResponse epic = makeEpic("https://github.com/test/story-readiness-get-null.git");
+        StoryResponse blocking = service.create(epic.id(), new StoryRequest("Blocking", "D"));
+        StoryResponse blocked = service.create(epic.id(), new StoryRequest("Blocked", "D"));
+        dependencyService.create(new CreateDependencyRequest("story", blocking.id(), "story", blocked.id()));
+
+        StoryResponse fetched = service.get(blocked.id());
+
+        assertThat(fetched.readiness()).isNull();
+    }
+
+    private static Readiness readinessOf(List<StoryResponse> stories, UUID storyId) {
+        return stories.stream()
+                .filter(s -> s.id().equals(storyId))
+                .findFirst()
+                .orElseThrow()
+                .readiness();
     }
 
     @Test

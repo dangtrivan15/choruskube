@@ -16,9 +16,13 @@ import com.choruskube.core.exception.ConflictException;
 import com.choruskube.core.exception.ForbiddenException;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.GitRepo;
+import com.choruskube.core.model.Task;
 import com.choruskube.core.model.WorkflowRun;
+import com.choruskube.core.model.enums.Readiness;
+import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.GitRepoRepository;
+import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkItemDependencyRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.util.RepoNameUtil;
@@ -26,6 +30,7 @@ import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowOptions;
 import io.temporal.client.WorkflowStub;
 import io.temporal.serviceclient.WorkflowServiceStubs;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -60,6 +65,9 @@ public class DefaultTaskServiceTest extends BaseTest {
 
     @Autowired
     private WorkItemDependencyRepository dependencyRepo;
+
+    @Autowired
+    private TaskRepository taskRepo;
 
     @MockitoBean
     private WorkflowServiceStubs workflowServiceStubs;
@@ -385,6 +393,97 @@ public class DefaultTaskServiceTest extends BaseTest {
                         null,
                         null))
                 .isInstanceOf(ForbiddenException.class);
+    }
+
+    // ── readiness (Decision 1/2/3) — the flat list endpoint now populates the field the Roadmap
+    // Graph View has always computed, via the same shared EpicReadinessAssembler ──────────────
+
+    @Test
+    void list_taskWithNoDependencyEdges_isReady() {
+        GitRepo r = makeRepo("https://github.com/test/task-readiness-none.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
+
+        List<TaskResponse> result = service.list(story.id());
+
+        assertThat(result).extracting(TaskResponse::readiness).containsExactly(Readiness.READY);
+        assertThat(task.readiness()).isNull(); // create() itself still returns null (Decision 1 scopes list only)
+    }
+
+    @Test
+    void list_taskBlockedByUnfinishedDependency_isBlocked() {
+        GitRepo r = makeRepo("https://github.com/test/task-readiness-blocked.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse blocking = service.create(story.id(), new TaskRequest("Blocking", "D"));
+        TaskResponse blocked = service.create(story.id(), new TaskRequest("Blocked", "D"));
+        dependencyService.create(new CreateDependencyRequest("task", blocking.id(), "task", blocked.id()));
+
+        List<TaskResponse> result = service.list(story.id());
+
+        assertThat(readinessOf(result, blocked.id())).isEqualTo(Readiness.BLOCKED);
+        assertThat(readinessOf(result, blocking.id())).isEqualTo(Readiness.READY);
+    }
+
+    @Test
+    void list_taskBlockedBySiblingStorysTask_underSameEpic_isBlocked() {
+        // Decision 3: a Task list request is scoped to its OWNING EPIC's full Story/Task set, not
+        // just the requested Story's own Tasks — a Task can be blocked by a Task under a
+        // completely different sibling Story in the same Epic.
+        GitRepo r = makeRepo("https://github.com/test/task-readiness-cross-story.git");
+        EpicResponse epic = epicService.create(new EpicRequest("Epic", "Epic desc", null, r.getId()), null);
+        StoryResponse blockerStory = storyService.create(epic.id(), new StoryRequest("Blocker Story", "D"));
+        TaskResponse blockerTask = service.create(blockerStory.id(), new TaskRequest("Blocker Task", "D"));
+        StoryResponse blockedStory = storyService.create(epic.id(), new StoryRequest("Blocked Story", "D"));
+        TaskResponse blockedTask = service.create(blockedStory.id(), new TaskRequest("Blocked Task", "D"));
+        dependencyService.create(new CreateDependencyRequest("task", blockerTask.id(), "task", blockedTask.id()));
+
+        List<TaskResponse> result = service.list(blockedStory.id());
+
+        assertThat(readinessOf(result, blockedTask.id())).isEqualTo(Readiness.BLOCKED);
+    }
+
+    @Test
+    void list_blockerBecomesDone_flipsBlockedTaskToReady() {
+        GitRepo r = makeRepo("https://github.com/test/task-readiness-flip.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse blocking = service.create(story.id(), new TaskRequest("Blocking", "D"));
+        TaskResponse blocked = service.create(story.id(), new TaskRequest("Blocked", "D"));
+        dependencyService.create(new CreateDependencyRequest("task", blocking.id(), "task", blocked.id()));
+
+        assertThat(readinessOf(service.list(story.id()), blocked.id())).isEqualTo(Readiness.BLOCKED);
+
+        markDone(blocking.id());
+
+        assertThat(readinessOf(service.list(story.id()), blocked.id())).isEqualTo(Readiness.READY);
+    }
+
+    @Test
+    void get_doesNotPopulateReadiness() {
+        // Decision 1: only the flat list endpoints (and the Roadmap Graph View) compute
+        // readiness — single-item reads are unaffected and keep returning null.
+        GitRepo r = makeRepo("https://github.com/test/task-readiness-get-null.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse blocking = service.create(story.id(), new TaskRequest("Blocking", "D"));
+        TaskResponse blocked = service.create(story.id(), new TaskRequest("Blocked", "D"));
+        dependencyService.create(new CreateDependencyRequest("task", blocking.id(), "task", blocked.id()));
+
+        TaskResponse fetched = service.get(blocked.id());
+
+        assertThat(fetched.readiness()).isNull();
+    }
+
+    private void markDone(UUID taskId) {
+        Task t = taskRepo.findById(taskId).orElseThrow();
+        t.setStatus(WorkItemStatus.done);
+        taskRepo.saveAndFlush(t);
+    }
+
+    private static Readiness readinessOf(List<TaskResponse> tasks, UUID taskId) {
+        return tasks.stream()
+                .filter(t -> t.id().equals(taskId))
+                .findFirst()
+                .orElseThrow()
+                .readiness();
     }
 
     @Test

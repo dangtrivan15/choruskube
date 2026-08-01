@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router";
-import { ExternalLink, Lock, X } from "lucide-react";
+import { ExternalLink, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,6 +13,7 @@ import {
 import MarkdownViewer from "@/components/ui/MarkdownViewer";
 import TaskRunHistoryList from "@/components/roadmap/TaskRunHistoryList";
 import BlockingChainSection from "@/components/roadmap/BlockingChainSection";
+import ReadinessBadge from "@/components/roadmap/ReadinessBadge";
 import { useCreateDependency, useDeleteDependency } from "@/hooks/useDependencies";
 import { useBlockingChain } from "@/hooks/useBlockingChain";
 import type {
@@ -22,7 +23,6 @@ import type {
   ExternalBlockerRef,
   DependencyEdgeResponse,
   BlockableItemType,
-  Readiness,
 } from "@/lib/types";
 import type { RoadmapItemType } from "./RoadmapGraphNode";
 
@@ -68,24 +68,6 @@ function statusBadge(status: string) {
     default:
       return <Badge variant="outline">{status}</Badge>;
   }
-}
-
-/**
- * Dependency-readiness badge (Decision 2). Only rendered for an explicit
- * "BLOCKED" — `null`/"READY" show nothing rather than a redundant "ready" pill.
- */
-function readinessBadge(readiness: Readiness | null) {
-  if (readiness !== "BLOCKED") return null;
-  return (
-    <Badge
-      variant="outline"
-      data-testid="roadmap-detail-readiness-badge"
-      className="gap-1 border-status-warning/20 bg-status-warning/15 text-status-warning"
-    >
-      <Lock className="size-3" />
-      Blocked
-    </Badge>
-  );
 }
 
 function itemTypeLabel(itemType: RoadmapItemType): string {
@@ -298,7 +280,7 @@ export default function RoadmapGraphDetailPanel({
   // must be called unconditionally on every render, so the item-type/id
   // arguments are always computed (harmlessly unused when itemType is
   // "epic") and only `enabled` varies — mirrors the `itemType !== "epic" &&
-  // readinessBadge(item.readiness)` narrowing pattern used below.
+  // <ReadinessBadge readiness={item.readiness} />` narrowing pattern used below.
   const chainQuery = useBlockingChain(
     itemType === "task" ? "task" : "story",
     item.id,
@@ -319,7 +301,9 @@ export default function RoadmapGraphDetailPanel({
         </h2>
         <div data-testid="roadmap-detail-status" className="flex items-center gap-2">
           {statusBadge(item.status)}
-          {itemType !== "epic" && readinessBadge(item.readiness)}
+          {itemType !== "epic" && (
+            <ReadinessBadge readiness={item.readiness} data-testid="roadmap-detail-readiness-badge" />
+          )}
         </div>
       </div>
 
