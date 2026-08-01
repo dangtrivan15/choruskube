@@ -25,12 +25,13 @@ import org.springframework.stereotype.Component;
 
 /**
  * Epic-bounded dependency-readiness assembly (Decision 2), shared by {@link
- * DefaultRoadmapGraphService} (the graph endpoint) and {@link DefaultStoryService}/{@link
- * DefaultTaskService} (the flat list endpoints, Decision 1) so all three read paths compute
- * "is this item blocked" identically instead of independently drifting. Positioned below all
- * three call sites — it depends only on repositories and {@link AuthorizationService}, never on
- * {@link EpicService}/{@link StoryService}/{@link TaskService} — so none of those services calling
- * it creates a circular Spring bean dependency.
+ * DefaultRoadmapGraphService} (the graph endpoint), {@link DefaultStoryService}/{@link
+ * DefaultTaskService} (the flat list endpoints, Decision 1), and {@link DefaultEpicService} (the
+ * Epic-level "ready to start" rollup, via {@link #assembleFromRows}) so all these read paths
+ * compute "is this item blocked" identically instead of independently drifting. Positioned below
+ * all these call sites — it depends only on repositories and {@link AuthorizationService}, never
+ * on {@link EpicService}/{@link StoryService}/{@link TaskService} — so none of those services
+ * calling it creates a circular Spring bean dependency.
  *
  * <p>This is a straight extraction of logic that previously lived entirely inside {@code
  * DefaultRoadmapGraphService#assemble}: loading the dependency edges touching a candidate Story/
@@ -117,7 +118,30 @@ class EpicReadinessAssembler {
         List<WorkItemDependency> rows = candidateIds.isEmpty()
                 ? List.of()
                 : dependencyRepo.findByBlockingItemIdInOrBlockedItemIdIn(candidateIds, candidateIds);
+        return assembleFromRows(candidateIds, statusById, rows, internal, runId);
+    }
 
+    /**
+     * Same as {@link #assemble} but skips this class's own dependency-edge fetch, using {@code
+     * rows} the caller already loaded — for a batched multi-Epic caller ({@link
+     * DefaultEpicService}'s Epic list "ready to start" rollup) that fetches dependency edges once
+     * for an entire page of Epics rather than once per Epic, avoiding the N+1 shape calling {@link
+     * #assemble} once per Epic in a loop would otherwise reintroduce (the exact defect Decision 3
+     * of the ready-to-start-filter feature rejects as an alternative).
+     *
+     * <p><b>Precondition:</b> every row in {@code rows} must touch {@code candidateIds} on at
+     * least one side (blocking or blocked) — i.e. exactly what {@link #assemble} would itself have
+     * fetched for this same {@code candidateIds} set. A row touching neither side must not be
+     * included: the classification below assumes "not on the blocking side" implies "on the
+     * blocked side" (and vice versa) for any row it sees, so an unrelated row would be
+     * misclassified as an external blocker of this Epic's candidates instead of being ignored.
+     */
+    Assembly assembleFromRows(
+            Set<UUID> candidateIds,
+            Map<UUID, String> statusById,
+            List<WorkItemDependency> rows,
+            boolean internal,
+            UUID runId) {
         Map<UUID, String> effectiveStatusById = new HashMap<>(statusById);
         List<DependencyEdgeResponse> dependencies = new ArrayList<>();
         List<ExternalBlockerRef> externalBlockers = new ArrayList<>();

@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.choruskube.core.BaseTest;
 import com.choruskube.core.config.OrgSecurity;
+import com.choruskube.core.dto.CreateDependencyRequest;
 import com.choruskube.core.dto.StoryRequest;
 import com.choruskube.core.dto.TaskRequest;
 import com.choruskube.core.model.Epic;
@@ -24,6 +25,7 @@ import com.choruskube.core.service.RepoGroupService;
 import com.choruskube.core.service.RunEventPublisher;
 import com.choruskube.core.service.StoryService;
 import com.choruskube.core.service.TaskService;
+import com.choruskube.core.service.WorkItemDependencyService;
 import com.choruskube.core.util.RepoNameUtil;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.temporal.client.WorkflowClient;
@@ -74,6 +76,9 @@ public class EpicControllerTest extends BaseTest {
     @Autowired
     private TaskRepository taskRepo;
 
+    @Autowired
+    private WorkItemDependencyService dependencyService;
+
     @MockitoBean
     private WorkflowServiceStubs workflowServiceStubs;
 
@@ -116,7 +121,9 @@ public class EpicControllerTest extends BaseTest {
                 .andExpect(jsonPath("$.progress.totalTasks").value(0))
                 .andExpect(jsonPath("$.softwareProject.id").value(repo.getId().toString()))
                 .andExpect(jsonPath("$.softwareProject.type").value("git_repo"))
-                .andExpect(jsonPath("$.repos.length()").value(1));
+                .andExpect(jsonPath("$.repos.length()").value(1))
+                // No Stories/Tasks yet: nothing to start.
+                .andExpect(jsonPath("$.readyToStart").value(false));
     }
 
     @Test
@@ -172,14 +179,108 @@ public class EpicControllerTest extends BaseTest {
     }
 
     @Test
+    void listEpics_unfilteredRequest_includesReadyToStartOnEveryEpic() throws Exception {
+        GitRepo repo = createGitRepo("https://github.com/test/list-includes-field.git");
+        Epic ready = createEpic(repo, "Ready Epic");
+        var story = storyService.create(ready.getId(), new StoryRequest("S", "D"));
+        taskService.create(story.id(), new TaskRequest("T", "D"));
+        createEpic(repo, "Empty Epic");
+
+        mockMvc.perform(get("/api/v1/epics"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[?(@.id == '" + ready.getId() + "')].readyToStart")
+                        .value(true))
+                .andExpect(jsonPath("$.content[?(@.title == 'Empty Epic')].readyToStart")
+                        .value(false));
+    }
+
+    @Test
+    void listEpics_readyToStartFilter_excludesDoneInProgressAndBlockedEpics() throws Exception {
+        GitRepo repo = createGitRepo("https://github.com/test/list-ready-filter.git");
+
+        Epic readyEpic = createEpic(repo, "Ready Epic");
+        var readyStory = storyService.create(readyEpic.getId(), new StoryRequest("S", "D"));
+        taskService.create(readyStory.id(), new TaskRequest("T", "D"));
+
+        Epic doneEpic = createEpic(repo, "Done Epic");
+        var doneStory = storyService.create(doneEpic.getId(), new StoryRequest("S", "D"));
+        var doneTask = taskService.create(doneStory.id(), new TaskRequest("T", "D"));
+        Task dt = taskRepo.findById(doneTask.id()).orElseThrow();
+        dt.setStatus(WorkItemStatus.done);
+        taskRepo.saveAndFlush(dt);
+
+        // The Story's own rollup status must leave "backlog" too (not just the blocked Task),
+        // otherwise the Story itself — having no blocking edge of its own — would independently
+        // count as ready-to-start work regardless of the Task-level block (Decision 2 treats
+        // Story/Task readiness independently). Task A started (in_progress) trips the Story's
+        // rollup to "in_progress" while itself not counting toward readyToStart (not backlog);
+        // Task A being not-done is what keeps Task C (blocked transitively through done Task B)
+        // BLOCKED — mirrors the multi-hop chain regression this feature must not reintroduce.
+        Epic blockedEpic = createEpic(repo, "Blocked Epic");
+        var blockedStory = storyService.create(blockedEpic.getId(), new StoryRequest("S", "D"));
+        var taskA = taskService.create(blockedStory.id(), new TaskRequest("A", "D"));
+        var taskB = taskService.create(blockedStory.id(), new TaskRequest("B", "D"));
+        var taskC = taskService.create(blockedStory.id(), new TaskRequest("C", "D"));
+        dependencyService.create(new CreateDependencyRequest("task", taskA.id(), "task", taskB.id()));
+        dependencyService.create(new CreateDependencyRequest("task", taskB.id(), "task", taskC.id()));
+        Task ta = taskRepo.findById(taskA.id()).orElseThrow();
+        ta.setStatus(WorkItemStatus.in_progress);
+        taskRepo.saveAndFlush(ta);
+        Task tb = taskRepo.findById(taskB.id()).orElseThrow();
+        tb.setStatus(WorkItemStatus.done);
+        taskRepo.saveAndFlush(tb);
+
+        mockMvc.perform(get("/api/v1/epics").param("readyToStart", "true"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[?(@.id == '" + readyEpic.getId() + "')]")
+                        .isNotEmpty())
+                .andExpect(jsonPath("$.content[?(@.id == '" + doneEpic.getId() + "')]")
+                        .isEmpty())
+                .andExpect(jsonPath("$.content[?(@.id == '" + blockedEpic.getId() + "')]")
+                        .isEmpty());
+    }
+
+    @Test
+    void listEpics_readyToStartFilter_paginationReflectsFilteredCount() throws Exception {
+        GitRepo repo = createGitRepo("https://github.com/test/list-ready-pagination.git");
+        Epic readyEpic = createEpic(repo, "Only Ready Epic");
+        var story = storyService.create(readyEpic.getId(), new StoryRequest("S", "D"));
+        taskService.create(story.id(), new TaskRequest("T", "D"));
+        createEpic(repo, "Empty Epic 1");
+        createEpic(repo, "Empty Epic 2");
+
+        mockMvc.perform(get("/api/v1/epics").param("readyToStart", "true"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.totalPages").value(1));
+    }
+
+    @Test
+    void listEpics_readyToStartFilter_noMatches_returnsEmptyPageWithZeroPagination() throws Exception {
+        GitRepo repo = createGitRepo("https://github.com/test/list-ready-empty.git");
+        createEpic(repo, "Never Ready Epic");
+
+        mockMvc.perform(get("/api/v1/epics").param("readyToStart", "true"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(0))
+                .andExpect(jsonPath("$.totalElements").value(0))
+                .andExpect(jsonPath("$.totalPages").value(0));
+    }
+
+    @Test
     void getEpic_returnsEpic() throws Exception {
         GitRepo repo = createGitRepo("https://github.com/test/get.git");
         Epic e = createEpic(repo, "My Feature");
+        var story = storyService.create(e.getId(), new StoryRequest("S", "D"));
+        taskService.create(story.id(), new TaskRequest("T", "D"));
 
         mockMvc.perform(get("/api/v1/epics/" + e.getId()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.title").value("My Feature"))
-                .andExpect(jsonPath("$.status").value("backlog"));
+                .andExpect(jsonPath("$.status").value("backlog"))
+                // Computed the same way as the list path (Decision 3), not a stale/default value.
+                .andExpect(jsonPath("$.readyToStart").value(true));
     }
 
     @Test
@@ -191,6 +292,8 @@ public class EpicControllerTest extends BaseTest {
     void updateEpic_returns200() throws Exception {
         GitRepo repo = createGitRepo("https://github.com/test/update.git");
         Epic e = createEpic(repo, "Old Title");
+        var story = storyService.create(e.getId(), new StoryRequest("S", "D"));
+        taskService.create(story.id(), new TaskRequest("T", "D"));
 
         var body =
                 Map.of("title", "New Title", "description", "Updated description", "softwareProjectId", repo.getId());
@@ -199,7 +302,9 @@ public class EpicControllerTest extends BaseTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(body)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.title").value("New Title"));
+                .andExpect(jsonPath("$.title").value("New Title"))
+                // Accurate, not a stale/default value, on the PUT response too (Decision 3).
+                .andExpect(jsonPath("$.readyToStart").value(true));
     }
 
     @Test

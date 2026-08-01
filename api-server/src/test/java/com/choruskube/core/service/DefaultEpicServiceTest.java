@@ -45,6 +45,9 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -449,6 +452,203 @@ public class DefaultEpicServiceTest extends BaseTest {
         assertThat(after.stage()).isEqualTo("backlog");
         verify(auditSink, never()).record(eq(AuditSink.EPIC_STAGE_UPDATED), any(), any(), any());
         verify(runEventPublisher, never()).publishRoadmapItemChanged(eq("epic"), eq(created.id()), eq("done"));
+    }
+
+    // --- readyToStart rollup (Decision 2/3) ---
+
+    @Test
+    void readyToStart_epicWithNoStoriesOrTasks_isFalse() {
+        GitRepo r = makeRepo("https://github.com/test/ready-empty.git");
+        EpicResponse created = service.create(new EpicRequest("T", "D", null, r.getId()), null);
+
+        EpicResponse fetched = service.get(created.id());
+
+        assertThat(fetched.readyToStart()).isFalse();
+    }
+
+    @Test
+    void readyToStart_backlogTaskWithNoBlockers_isTrue() {
+        GitRepo r = makeRepo("https://github.com/test/ready-simple.git");
+        EpicResponse created = service.create(new EpicRequest("T", "D", null, r.getId()), null);
+        var story = storyService.create(created.id(), new StoryRequest("S", "D"));
+        taskService.create(story.id(), new TaskRequest("T", "D"));
+
+        EpicResponse fetched = service.get(created.id());
+
+        assertThat(fetched.readyToStart()).isTrue();
+    }
+
+    @Test
+    void readyToStart_multiHopChainWithUpstreamBlockerNotDone_isFalse() {
+        // A blocks B blocks C; B is done but A (B's own blocker) is not — mirrors the multi-step
+        // blocking chain feature's core regression rule: C must stay BLOCKED. A itself is left
+        // in_progress (not backlog) so it can't make the Epic ready to start on its own merits.
+        GitRepo r = makeRepo("https://github.com/test/ready-multihop-blocked.git");
+        EpicResponse created = service.create(new EpicRequest("T", "D", null, r.getId()), null);
+        var story = storyService.create(created.id(), new StoryRequest("S", "D"));
+        var a = taskService.create(story.id(), new TaskRequest("A", "D"));
+        var b = taskService.create(story.id(), new TaskRequest("B", "D"));
+        var c = taskService.create(story.id(), new TaskRequest("C", "D"));
+        dependencyService.create(new CreateDependencyRequest("task", a.id(), "task", b.id()));
+        dependencyService.create(new CreateDependencyRequest("task", b.id(), "task", c.id()));
+        markTaskInProgress(a.id());
+        markTaskDone(b.id());
+
+        EpicResponse fetched = service.get(created.id());
+
+        assertThat(fetched.readyToStart()).isFalse();
+    }
+
+    @Test
+    void readyToStart_multiHopChainFullyDone_isTrue() {
+        // Same shape as above, but the entire upstream chain (A and B) is done — C's blockers are
+        // all resolved, so C (still backlog) makes the Epic ready to start.
+        GitRepo r = makeRepo("https://github.com/test/ready-multihop-done.git");
+        EpicResponse created = service.create(new EpicRequest("T", "D", null, r.getId()), null);
+        var story = storyService.create(created.id(), new StoryRequest("S", "D"));
+        var a = taskService.create(story.id(), new TaskRequest("A", "D"));
+        var b = taskService.create(story.id(), new TaskRequest("B", "D"));
+        var c = taskService.create(story.id(), new TaskRequest("C", "D"));
+        dependencyService.create(new CreateDependencyRequest("task", a.id(), "task", b.id()));
+        dependencyService.create(new CreateDependencyRequest("task", b.id(), "task", c.id()));
+        markTaskDone(a.id());
+        markTaskDone(b.id());
+
+        EpicResponse fetched = service.get(created.id());
+
+        assertThat(fetched.readyToStart()).isTrue();
+    }
+
+    @Test
+    void readyToStart_blockedOnlyByExternalItemInDifferentEpic_usesThatItemsLiveStatus() {
+        // The in-Epic Story is deliberately left with no Tasks: a Story with a backlog Task is
+        // ALSO its own independent readiness candidate (Decision 2 treats every Story/Task
+        // independently), and since that Task has no blocking edge of its own, it would make the
+        // Epic ready to start on its own merits regardless of what blocks the Story — masking the
+        // very interaction this test wants to isolate. A bare Story (no Tasks) is the Epic's only
+        // candidate, so its own readiness is the only thing that can make the Epic ready.
+        GitRepo r = makeRepo("https://github.com/test/ready-external-blocked.git");
+        EpicResponse epic = service.create(new EpicRequest("T", "D", null, r.getId()), null);
+        var story = storyService.create(epic.id(), new StoryRequest("S", "D"));
+
+        GitRepo otherRepo = makeRepo("https://github.com/test/ready-external-blocked-other.git");
+        EpicResponse otherEpic = service.create(new EpicRequest("Other", "D", null, otherRepo.getId()), null);
+        var otherStory = storyService.create(otherEpic.id(), new StoryRequest("Other S", "D"));
+        var externalBlocker = taskService.create(otherStory.id(), new TaskRequest("Other T", "D"));
+        dependencyService.create(new CreateDependencyRequest("task", externalBlocker.id(), "story", story.id()));
+
+        // The external blocker is still backlog (not done): the in-Epic Story stays blocked, so
+        // this Epic (whose only item is that Story) is not ready to start.
+        assertThat(service.get(epic.id()).readyToStart()).isFalse();
+
+        markTaskDone(externalBlocker.id());
+
+        // Once the external blocker's own (live) status flips to done, the in-Epic Story becomes
+        // ready and the Epic is ready to start — proving the status is read live, not cached.
+        assertThat(service.get(epic.id()).readyToStart()).isTrue();
+    }
+
+    @Test
+    void readyToStart_doneEpic_isFalse() {
+        GitRepo r = makeRepo("https://github.com/test/ready-done-epic.git");
+        EpicResponse epic = service.create(new EpicRequest("T", "D", null, r.getId()), null);
+        var story = storyService.create(epic.id(), new StoryRequest("S", "D"));
+        var task = taskService.create(story.id(), new TaskRequest("T", "D"));
+        markTaskDone(task.id());
+
+        assertThat(service.get(epic.id()).readyToStart()).isFalse();
+    }
+
+    @Test
+    void readyToStart_singleItemPathMatchesBatchedListPath() {
+        // create()/update()/get() (single-item toResponse) must not diverge from list()'s batched
+        // rollup for the same Epic (Decision 3: one definition, not two).
+        GitRepo r = makeRepo("https://github.com/test/ready-single-vs-batch.git");
+        EpicResponse created = service.create(new EpicRequest("T", "D", null, r.getId()), null);
+        var story = storyService.create(created.id(), new StoryRequest("S", "D"));
+        taskService.create(story.id(), new TaskRequest("T", "D"));
+
+        EpicResponse fromGet = service.get(created.id());
+        assertThat(fromGet.readyToStart()).isTrue();
+
+        Page<EpicResponse> page = service.list(null, null, Pageable.unpaged());
+        EpicResponse fromList = page.getContent().stream()
+                .filter(e -> e.id().equals(created.id()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(fromList.readyToStart()).isEqualTo(fromGet.readyToStart());
+
+        EpicResponse updated = service.update(created.id(), new EpicRequest("T2", "D2", null, r.getId()));
+        assertThat(updated.readyToStart()).isEqualTo(fromGet.readyToStart());
+    }
+
+    @Test
+    void list_readyToStartFilter_excludesUnreadyIncludesReady() {
+        GitRepo r = makeRepo("https://github.com/test/ready-filter.git");
+        EpicResponse readyEpic = service.create(new EpicRequest("Ready Epic", "D", null, r.getId()), null);
+        var readyStory = storyService.create(readyEpic.id(), new StoryRequest("S", "D"));
+        taskService.create(readyStory.id(), new TaskRequest("T", "D"));
+
+        // The Story's own rollup status must leave "backlog" too (not just the blocked Task),
+        // otherwise the Story itself — having no blocking edge of its own — would independently
+        // count as ready-to-start work regardless of the Task-level block (Decision 2 treats
+        // Story/Task readiness independently). Task A started (in_progress) trips the Story's
+        // rollup to "in_progress" while itself not counting toward readyToStart (not backlog);
+        // Task A being not-done is what keeps Task C (blocked transitively through done Task B)
+        // BLOCKED — mirrors the multi-hop chain regression this feature must not reintroduce.
+        EpicResponse blockedEpic = service.create(new EpicRequest("Blocked Epic", "D", null, r.getId()), null);
+        var blockedStory = storyService.create(blockedEpic.id(), new StoryRequest("S", "D"));
+        var taskA = taskService.create(blockedStory.id(), new TaskRequest("A", "D"));
+        var taskB = taskService.create(blockedStory.id(), new TaskRequest("B", "D"));
+        var taskC = taskService.create(blockedStory.id(), new TaskRequest("C", "D"));
+        dependencyService.create(new CreateDependencyRequest("task", taskA.id(), "task", taskB.id()));
+        dependencyService.create(new CreateDependencyRequest("task", taskB.id(), "task", taskC.id()));
+        markTaskInProgress(taskA.id());
+        markTaskDone(taskB.id());
+
+        EpicResponse doneEpic = service.create(new EpicRequest("Done Epic", "D", null, r.getId()), null);
+        var doneStory = storyService.create(doneEpic.id(), new StoryRequest("S", "D"));
+        var doneTask = taskService.create(doneStory.id(), new TaskRequest("T", "D"));
+        markTaskDone(doneTask.id());
+
+        Page<EpicResponse> filtered = service.list(null, true, PageRequest.of(0, 20));
+
+        List<UUID> ids = filtered.getContent().stream().map(EpicResponse::id).toList();
+        assertThat(ids).contains(readyEpic.id());
+        assertThat(ids).doesNotContain(blockedEpic.id(), doneEpic.id());
+        assertThat(filtered.getContent()).allMatch(EpicResponse::readyToStart);
+    }
+
+    @Test
+    void list_readyToStartFilter_paginationReflectsFilteredCountNotUnfilteredCount() {
+        GitRepo r = makeRepo("https://github.com/test/ready-filter-pagination.git");
+        EpicResponse readyEpic = service.create(new EpicRequest("Ready Only Epic", "D", null, r.getId()), null);
+        var readyStory = storyService.create(readyEpic.id(), new StoryRequest("S", "D"));
+        taskService.create(readyStory.id(), new TaskRequest("T", "D"));
+
+        // Several Epics with no ready work at all — they'd inflate totalElements if the filter's
+        // pagination metadata were computed against the unfiltered set.
+        for (int i = 0; i < 3; i++) {
+            service.create(new EpicRequest("Empty Epic " + i, "D", null, r.getId()), null);
+        }
+
+        Page<EpicResponse> filtered = service.list(null, true, PageRequest.of(0, 20));
+
+        assertThat(filtered.getTotalElements()).isEqualTo(1);
+        assertThat(filtered.getContent()).hasSize(1);
+        assertThat(filtered.getContent().get(0).id()).isEqualTo(readyEpic.id());
+    }
+
+    @Test
+    void list_readyToStartFilter_noMatches_returnsEmptyPageWithZeroPagination() {
+        GitRepo r = makeRepo("https://github.com/test/ready-filter-no-matches.git");
+        service.create(new EpicRequest("Never Ready Epic", "D", null, r.getId()), null);
+
+        Page<EpicResponse> filtered = service.list(null, true, PageRequest.of(0, 20));
+
+        assertThat(filtered.getContent()).isEmpty();
+        assertThat(filtered.getTotalElements()).isEqualTo(0);
+        assertThat(filtered.getTotalPages()).isEqualTo(0);
     }
 
     private void markTaskInProgress(UUID taskId) {

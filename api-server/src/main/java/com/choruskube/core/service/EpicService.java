@@ -22,7 +22,13 @@ public interface EpicService {
     /** Agent/internal entry: no request-scoped TenantContext; org is asserted against {@code runId}. */
     EpicResponse create(EpicRequest request, UUID runId);
 
-    Page<EpicResponse> list(String title, Pageable pageable);
+    /**
+     * @param readyToStart when {@code Boolean.TRUE}, the returned page is filtered to Epics with
+     *     at least one ready-to-start Story/Task, and its pagination metadata (total elements/
+     *     pages) reflects that filtered set, not the unfiltered one; {@code null}/{@code false}
+     *     leaves list behavior unchanged.
+     */
+    Page<EpicResponse> list(String title, Boolean readyToStart, Pageable pageable);
 
     EpicResponse get(UUID id);
 

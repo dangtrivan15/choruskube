@@ -44,8 +44,9 @@ public class EpicController {
     @GetMapping
     public Page<EpicResponse> list(
             @RequestParam(required = false) String title,
+            @RequestParam(required = false) Boolean readyToStart,
             @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
-        return service.list(title, pageable);
+        return service.list(title, readyToStart, pageable);
     }
 
     @PreAuthorize("@orgSecurity.canRead()")
