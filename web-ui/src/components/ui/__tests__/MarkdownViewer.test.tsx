@@ -196,7 +196,10 @@ describe("MarkdownViewer", () => {
     expect(mermaidRenderMock).toHaveBeenCalled();
     const [callId, callSource] = mermaidRenderMock.mock.calls[0] as [string, string];
     expect(typeof callId).toBe("string");
-    expect(callSource).toBe("sequenceDiagram\n  participant A\n  A->>B: hello");
+    // Every sequenceDiagram participant alias is quoted unconditionally before
+    // render (Decision 2) — a no-op for a non-colliding alias like "A" other
+    // than the added quotes themselves.
+    expect(callSource).toBe('sequenceDiagram\n  participant "A"\n  "A"->>B: hello');
 
     // The diagram element should indicate successful render.
     await waitFor(() => expect(diagram).toHaveAttribute("data-rendered", "true"));
@@ -350,6 +353,33 @@ describe("MarkdownViewer", () => {
     expect(callSource).toContain("Page fills available width#59; no card border");
     // The raw `;` mid-label must not survive into mermaid's input.
     expect(callSource).not.toMatch(/width; no/);
+  });
+
+  // End-to-end: a sequenceDiagram participant alias that collides with a Mermaid
+  // reserved word (`actor`) is quoted before mermaid.render is called, working
+  // around Mermaid's grammar treating bare reserved words as keywords.
+  it("quotes a reserved-word participant alias before calling mermaid.render", async () => {
+    mermaidRenderMock.mockClear();
+    const fenceSource =
+      "sequenceDiagram\n  participant Actor as Any user/agent\n  Actor->>API: hello";
+    const content = "```mermaid\n" + fenceSource + "\n```";
+    renderWithProviders(<MarkdownViewer content={content} />);
+
+    await screen.findByTestId("mermaid-diagram");
+    expect(mermaidRenderMock).toHaveBeenCalled();
+    const [, callSource] = mermaidRenderMock.mock.calls[0] as [string, string];
+
+    // The healed source reaching mermaid.render has the alias quoted at both
+    // the declaration and the message-arrow reference.
+    expect(callSource).toContain('participant "Actor" as Any user/agent');
+    expect(callSource).toContain('"Actor"->>API: hello');
+
+    // The original, unquoted fence text is untouched — the Raw toggle still
+    // shows exactly what was authored.
+    expect(screen.getByText("Raw")).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByText("Raw"));
+    const pre = screen.getByText(/participant Actor as Any user\/agent/);
+    expect(pre.textContent).toContain(fenceSource);
   });
 
   // 3i. Prose variant — now has Raw/Rendered toggle.

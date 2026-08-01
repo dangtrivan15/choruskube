@@ -41,6 +41,26 @@ test.describe("Documentation", () => {
     await expect(second).not.toContainText("Client");
   });
 
+  // Regression: a sequenceDiagram participant alias that collides with a Mermaid
+  // reserved word (`actor`) renders as a real diagram, not the raw-source error
+  // fallback. Exercises the fix end-to-end against a real browser and mermaid.js,
+  // using the "Approval Flow" fixture diagram in the Features Overview doc.
+  test("renders a sequence diagram whose participant alias is a reserved word", async ({
+    docsPage,
+  }) => {
+    await docsPage.goto();
+    await docsPage.selectDoc("Features Overview");
+
+    await expect(docsPage.mermaidDiagrams).toHaveCount(1);
+    const diagram = docsPage.mermaidDiagrams.first();
+    await expect(diagram).toHaveAttribute("data-rendered", "true");
+    await expect(diagram.locator("svg")).toBeVisible();
+
+    // The `as` label proves the diagram parsed and rendered rather than
+    // falling back to the bordered raw-source error box.
+    await expect(diagram).toContainText("Reviewer");
+  });
+
   // 6b — Internal links navigate via pushState without triggering a popup.
   test("internal link navigates via pushState without page reload", async ({ docsPage, page }) => {
     await docsPage.goto();
