@@ -15,21 +15,23 @@ import type {
  * one page large enough to hold every Epic so the board can group client-side
  * by `stage` without its own pagination UI. `useUpdateEpicStage`'s optimistic
  * update targets this exact query key (see its `boardEpicsQueryKey` below);
- * keep the two in sync if the board's fetch params ever change.
+ * keep the two in sync if the board's fetch params ever change — including
+ * `readyToStart`, now part of that synced shape too.
  */
 export const EPIC_BOARD_PAGINATION: PaginationParams = { page: 0, size: 200 };
 
-function boardEpicsQueryKey() {
-  return ["epics", { title: undefined, pagination: EPIC_BOARD_PAGINATION }] as const;
+function boardEpicsQueryKey(readyToStart?: boolean) {
+  return ["epics", { title: undefined, pagination: EPIC_BOARD_PAGINATION, readyToStart }] as const;
 }
 
-export function useEpics(title?: string, pagination?: PaginationParams) {
+export function useEpics(title?: string, pagination?: PaginationParams, readyToStart?: boolean) {
   const params: string[] = [];
   if (title) params.push(`title=${encodeURIComponent(title)}`);
+  if (readyToStart === true) params.push("readyToStart=true");
   const queryString = params.length > 0 ? `?${params.join("&")}` : "";
 
   return useQuery({
-    queryKey: ["epics", { title, pagination }],
+    queryKey: ["epics", { title, pagination, readyToStart }],
     queryFn: () =>
       api.getPage<PageResponse<EpicResponse>>(`/epics${queryString}`, pagination),
     refetchInterval: 15_000,
@@ -82,7 +84,7 @@ export function useUpdateEpic() {
  * update to the board's own Epics query so a drag-and-drop move is reflected
  * immediately, then rolls back on error.
  */
-export function useUpdateEpicStage() {
+export function useUpdateEpicStage(readyToStart?: boolean) {
   const queryClient = useQueryClient();
   const { addEntry } = useActivityFeed();
 
@@ -90,7 +92,7 @@ export function useUpdateEpicStage() {
     mutationFn: ({ id, stage }: { id: string } & EpicStageUpdateRequest) =>
       api.patch<EpicResponse>(`/epics/${id}/stage`, { stage } satisfies EpicStageUpdateRequest),
     onMutate: async ({ id, stage }) => {
-      const queryKey = boardEpicsQueryKey();
+      const queryKey = boardEpicsQueryKey(readyToStart);
       await queryClient.cancelQueries({ queryKey });
 
       // Snapshot only this epic's previous stage, not the whole page: two epics can be

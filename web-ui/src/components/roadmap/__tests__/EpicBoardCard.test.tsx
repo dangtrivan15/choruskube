@@ -35,6 +35,7 @@ function makeEpic(overrides: Partial<EpicResponse> = {}): EpicResponse {
     repos: [],
     createdAt: "2026-04-01T00:00:00Z",
     updatedAt: "2026-04-01T00:00:00Z",
+    readyToStart: false,
     ...overrides,
   };
 }
@@ -65,6 +66,16 @@ describe("EpicBoardCard", () => {
     expect(screen.getByTestId("epic-board-card-progress")).toHaveTextContent(
       "1 of 3 tasks complete"
     );
+  });
+
+  it("shows a 'Ready to start' badge when readyToStart is true", () => {
+    renderWithProviders(<EpicBoardCard epic={makeEpic({ readyToStart: true })} />);
+    expect(screen.getByTestId("epic-board-card-ready-to-start")).toBeInTheDocument();
+  });
+
+  it("does not show a 'Ready to start' badge when readyToStart is false", () => {
+    renderWithProviders(<EpicBoardCard epic={makeEpic({ readyToStart: false })} />);
+    expect(screen.queryByTestId("epic-board-card-ready-to-start")).not.toBeInTheDocument();
   });
 
   it("does not fetch stories until expanded", () => {

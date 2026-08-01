@@ -336,6 +336,14 @@ export interface EpicResponse {
   repos: RepoRef[];
   createdAt: string;
   updatedAt: string;
+  /**
+   * True iff this Epic has at least one Story/Task that is both still
+   * backlog (not started) and has no open blocker, per the same
+   * transitive blocking-chain walk that powers the Roadmap Graph View
+   * and the Story/Task list readiness badges. Always populated, not
+   * only when the `readyToStart` filter is active.
+   */
+  readyToStart: boolean;
 }
 
 export interface EpicStageUpdateRequest {

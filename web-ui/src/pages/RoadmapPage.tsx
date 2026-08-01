@@ -12,8 +12,20 @@ import { Skeleton } from "@/components/ui/skeleton";
 import TruncatedText from "@/components/ui/TruncatedText";
 import Pagination from "@/components/ui/Pagination";
 import SortDropdown from "@/components/ui/SortDropdown";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import CreateEpicDialog from "@/components/roadmap/CreateEpicDialog";
 import PageHeader from "@/components/layout/PageHeader";
+
+const READY_TO_START_OPTIONS = [
+  { value: "all", label: "All" },
+  { value: "ready", label: "Ready to start only" },
+] as const;
 
 const SORT_OPTIONS = [
   { label: "Newest first", field: "createdAt", direction: "desc" as const },
@@ -44,9 +56,11 @@ export default function RoadmapPage() {
   const [page, setPage] = useState(0);
   const [sort, setSort] = useState<SortParam | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [readyToStartFilter, setReadyToStartFilter] = useState<string>("all");
 
+  const readyToStart = readyToStartFilter === "all" ? undefined : true;
   const pagination: PaginationParams = { page, size: 20, sort };
-  const { data: pageData, isLoading } = useEpics(undefined, pagination);
+  const { data: pageData, isLoading } = useEpics(undefined, pagination, readyToStart);
   const epics = pageData?.content;
   useRoadmapSubscription();
 
@@ -61,6 +75,24 @@ export default function RoadmapPage() {
           <LayoutGrid className="size-4" />
           Board view
         </Link>
+        <Select
+          value={readyToStartFilter}
+          onValueChange={(v) => {
+            setReadyToStartFilter(v ?? "all");
+            setPage(0);
+          }}
+        >
+          <SelectTrigger data-testid="roadmap-ready-to-start-filter">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {READY_TO_START_OPTIONS.map((opt) => (
+              <SelectItem key={opt.value} value={opt.value}>
+                {opt.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <SortDropdown options={SORT_OPTIONS} currentSort={sort} onSort={setSort} />
         <Authorized require="canOperate">
           <Button data-testid="new-epic-button" size="sm" onClick={() => setCreateOpen(true)}>

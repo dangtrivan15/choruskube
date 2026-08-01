@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useDraggable } from "@dnd-kit/core";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, Zap } from "lucide-react";
 import { useStories } from "@/hooks/useStories";
 import type { EpicResponse } from "@/lib/types";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
@@ -74,9 +74,21 @@ export default function EpicBoardCard({ epic }: Props) {
             {expanded ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
           </button>
         </div>
-        <span data-testid="epic-board-card-progress" className="text-xs text-muted-foreground">
-          {epic.progress.doneTasks} of {epic.progress.totalTasks} tasks complete
-        </span>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span data-testid="epic-board-card-progress" className="text-xs text-muted-foreground">
+            {epic.progress.doneTasks} of {epic.progress.totalTasks} tasks complete
+          </span>
+          {epic.readyToStart && (
+            <span
+              data-testid="epic-board-card-ready-to-start"
+              title="Has unblocked backlog work"
+              className="inline-flex items-center gap-1 rounded-full border border-status-success/20 bg-status-success/15 px-2 py-0.5 text-xs font-medium text-status-success"
+            >
+              <Zap className="size-3" />
+              Ready to start
+            </span>
+          )}
+        </div>
       </CardHeader>
 
       {expanded && (

@@ -13,6 +13,7 @@ export class RoadmapBoardPage {
   readonly listViewLink: Locator;
   readonly board: Locator;
   readonly cards: Locator;
+  readonly readyToStartFilter: Locator;
 
   constructor(page: Page) {
     this.page = page;
@@ -21,6 +22,24 @@ export class RoadmapBoardPage {
     this.listViewLink = page.getByTestId("roadmap-board-list-view-link");
     this.board = page.getByTestId("roadmap-board");
     this.cards = page.getByTestId("epic-board-card");
+    this.readyToStartFilter = page.getByTestId("roadmap-board-ready-to-start-filter");
+  }
+
+  /** Toggles the "Ready to start only" filter on the board. */
+  async filterReadyToStartOnly() {
+    await this.readyToStartFilter.click();
+    await this.page.getByRole("option", { name: "Ready to start only" }).click();
+  }
+
+  /** Clears the "Ready to start only" filter, restoring every Epic to the board. */
+  async clearReadyToStartFilter() {
+    await this.readyToStartFilter.click();
+    await this.page.getByRole("option", { name: "All", exact: true }).click();
+  }
+
+  /** The "Ready to start" badge on the Epic card titled `title`, if present. */
+  cardReadyToStartBadge(title: string): Locator {
+    return this.cardByTitle(title).getByTestId("epic-board-card-ready-to-start");
   }
 
   async goto() {

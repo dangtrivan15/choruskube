@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router";
 import { List } from "lucide-react";
 import {
@@ -13,6 +13,13 @@ import { useEpics, useUpdateEpicStage, EPIC_BOARD_PAGINATION } from "@/hooks/use
 import { useRoadmapSubscription } from "@/hooks/useRoadmapSubscription";
 import type { EpicResponse, EpicStage } from "@/lib/types";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import PageHeader from "@/components/layout/PageHeader";
 import BoardColumn from "@/components/roadmap/BoardColumn";
 
@@ -22,14 +29,22 @@ const COLUMNS: { stage: EpicStage; label: string }[] = [
   { stage: "rolled_out", label: "Rolled Out" },
 ];
 
+const READY_TO_START_OPTIONS = [
+  { value: "all", label: "All" },
+  { value: "ready", label: "Ready to start only" },
+] as const;
+
 /**
  * Roadmap Board — a Kanban view of Epics grouped into columns by `stage`.
  * Dragging a card to a new column PATCHes the stage (see useUpdateEpicStage);
  * a drop back into the same column is a no-op and never calls the mutation.
  */
 export default function RoadmapBoardPage() {
-  const { data: pageData, isLoading } = useEpics(undefined, EPIC_BOARD_PAGINATION);
-  const updateStage = useUpdateEpicStage();
+  const [readyToStartFilter, setReadyToStartFilter] = useState<string>("all");
+  const readyToStart = readyToStartFilter === "all" ? undefined : true;
+
+  const { data: pageData, isLoading } = useEpics(undefined, EPIC_BOARD_PAGINATION, readyToStart);
+  const updateStage = useUpdateEpicStage(readyToStart);
   useRoadmapSubscription();
 
   const sensors = useSensors(
@@ -82,6 +97,18 @@ export default function RoadmapBoardPage() {
           <List className="size-4" />
           List view
         </Link>
+        <Select value={readyToStartFilter} onValueChange={(v) => setReadyToStartFilter(v ?? "all")}>
+          <SelectTrigger data-testid="roadmap-board-ready-to-start-filter">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {READY_TO_START_OPTIONS.map((opt) => (
+              <SelectItem key={opt.value} value={opt.value}>
+                {opt.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </PageHeader>
 
       {isLoading && (

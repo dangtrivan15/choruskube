@@ -71,6 +71,7 @@ function makeEpic(overrides: Partial<EpicResponse> = {}): EpicResponse {
     repos: [],
     createdAt: "2026-04-01T00:00:00Z",
     updatedAt: "2026-04-01T00:00:00Z",
+    readyToStart: false,
     ...overrides,
   };
 }
@@ -265,5 +266,28 @@ describe("RoadmapBoardPage", () => {
     stompState.callback!({ body: "{}" });
 
     await waitFor(() => expect(mockApi.getPage).toHaveBeenCalledTimes(2));
+  });
+
+  it("toggling the ready-to-start filter refetches with readyToStart=true, and back off without it", async () => {
+    mockApi.getPage.mockResolvedValue(makePage([makeEpic()]));
+
+    renderWithProviders(<RoadmapBoardPage />);
+    await waitFor(() => expect(mockApi.getPage).toHaveBeenCalledWith("/epics", expect.any(Object)));
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("roadmap-board-ready-to-start-filter"));
+    await user.click(await screen.findByText("Ready to start only"));
+
+    await waitFor(() =>
+      expect(mockApi.getPage).toHaveBeenCalledWith("/epics?readyToStart=true", expect.any(Object)),
+    );
+
+    await user.click(screen.getByTestId("roadmap-board-ready-to-start-filter"));
+    await user.click(await screen.findByText("All"));
+
+    await waitFor(() => {
+      const calls = mockApi.getPage.mock.calls;
+      expect(calls[calls.length - 1][0]).toBe("/epics");
+    });
   });
 });

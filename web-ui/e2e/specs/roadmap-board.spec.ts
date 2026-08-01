@@ -70,4 +70,76 @@ test.describe("Roadmap Board", () => {
       await api.deleteEpic(epic.id);
     }
   });
+
+  test("Ready to start filter hides Epics with no unblocked backlog work, and dragging a still-visible card still works", async ({
+    roadmapBoardPage,
+    api,
+  }) => {
+    const repos = await api.listGitRepos();
+    if (repos.content.length === 0) {
+      test.skip();
+      return;
+    }
+    const softwareProjectId = repos.content[0].id;
+    const suffix = Date.now();
+
+    const readyEpic = await api.createEpic({
+      title: `E2E Board Ready Epic ${suffix}`,
+      description: "desc",
+      softwareProjectId,
+    });
+    // A bare Story (no Tasks) is itself an unblocked, backlog readiness
+    // candidate — enough on its own to make the Epic ready to start.
+    await api.createStory(readyEpic.id, { title: "Board Ready Story", description: "desc" });
+
+    const blockerEpic = await api.createEpic({
+      title: `E2E Board Ready Filter Blocker Epic ${suffix}`,
+      description: "desc",
+      softwareProjectId,
+    });
+    const blockerStory = await api.createStory(blockerEpic.id, {
+      title: "Board Blocker Story",
+      description: "desc",
+    });
+
+    const blockedEpic = await api.createEpic({
+      title: `E2E Board Blocked Epic ${suffix}`,
+      description: "desc",
+      softwareProjectId,
+    });
+    const blockedStory = await api.createStory(blockedEpic.id, {
+      title: "Board Blocked Story",
+      description: "desc",
+    });
+    await api.createDependency({
+      blockingItemType: "story",
+      blockingItemId: blockerStory.id,
+      blockedItemType: "story",
+      blockedItemId: blockedStory.id,
+    });
+
+    try {
+      await roadmapBoardPage.goto();
+      await roadmapBoardPage.filterReadyToStartOnly();
+
+      await expect(roadmapBoardPage.cardByTitle(readyEpic.title)).toHaveCount(1);
+      await expect(roadmapBoardPage.cardReadyToStartBadge(readyEpic.title)).toBeVisible();
+      await expect(roadmapBoardPage.cardByTitle(blockedEpic.title)).toHaveCount(0);
+
+      // Dragging a card still visible under the active filter still works —
+      // the filter doesn't interfere with the board's DnD wiring.
+      await roadmapBoardPage.dragCardToColumn(readyEpic.title, "in_progress");
+      await roadmapBoardPage.expectCardInColumn(readyEpic.title, "in_progress");
+
+      await roadmapBoardPage.clearReadyToStartFilter();
+      await expect(roadmapBoardPage.cardByTitle(blockedEpic.title)).toHaveCount(1);
+    } finally {
+      await api.deleteEpic(blockedEpic.id);
+      await api.deleteEpic(blockerEpic.id);
+      // readyEpic was dragged to in_progress — still has no started
+      // descendant Task, so delete still succeeds (mirrors the other test's
+      // own cleanup in this file).
+      await api.deleteEpic(readyEpic.id);
+    }
+  });
 });

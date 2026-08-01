@@ -8,7 +8,7 @@ import type { EpicResponse } from "@/lib/types";
 const mockUseEpics = vi.fn();
 
 vi.mock("@/hooks/useEpics", () => ({
-  useEpics: () => mockUseEpics(),
+  useEpics: (...args: unknown[]) => mockUseEpics(...args),
   useCreateEpic: () => ({
     mutate: vi.fn(),
     isPending: false,
@@ -42,6 +42,7 @@ function makeEpic(overrides: Partial<EpicResponse> = {}): EpicResponse {
     repos: [],
     createdAt: "2026-04-01T00:00:00Z",
     updatedAt: "2026-04-01T00:00:00Z",
+    readyToStart: false,
     ...overrides,
   };
 }
@@ -123,5 +124,27 @@ describe("RoadmapPage", () => {
     const user = userEvent.setup();
     await user.click(screen.getByTestId("new-epic-button"));
     expect(screen.getByRole("heading", { name: "New Epic" })).toBeInTheDocument();
+  });
+
+  it("calls useEpics without readyToStart by default", () => {
+    mockUseEpics.mockReturnValue({ data: emptyPage, isLoading: false });
+    renderWithProviders(<RoadmapPage />);
+    expect(mockUseEpics).toHaveBeenCalledWith(undefined, expect.any(Object), undefined);
+  });
+
+  it("toggling the ready-to-start filter calls useEpics with readyToStart: true, and back off with undefined", async () => {
+    mockUseEpics.mockReturnValue({ data: emptyPage, isLoading: false });
+    renderWithProviders(<RoadmapPage />);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByTestId("roadmap-ready-to-start-filter"));
+    await user.click(await screen.findByText("Ready to start only"));
+
+    expect(mockUseEpics).toHaveBeenLastCalledWith(undefined, expect.any(Object), true);
+
+    await user.click(screen.getByTestId("roadmap-ready-to-start-filter"));
+    await user.click(await screen.findByText("All"));
+
+    expect(mockUseEpics).toHaveBeenLastCalledWith(undefined, expect.any(Object), undefined);
   });
 });

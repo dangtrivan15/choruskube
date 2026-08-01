@@ -12,6 +12,7 @@ export class RoadmapPage {
   readonly newEpicButton: Locator;
   readonly epicList: Locator;
   readonly epicItems: Locator;
+  readonly readyToStartFilter: Locator;
 
   // Epic detail
   readonly epicDetailTitle: Locator;
@@ -75,6 +76,7 @@ export class RoadmapPage {
     this.newEpicButton = page.getByTestId("new-epic-button");
     this.epicList = page.getByTestId("epic-list");
     this.epicItems = page.getByTestId("epic-item");
+    this.readyToStartFilter = page.getByTestId("roadmap-ready-to-start-filter");
 
     this.epicDetailTitle = page.getByTestId("epic-detail-title");
     this.epicDetailDescription = page.getByTestId("epic-detail-description");
@@ -158,6 +160,18 @@ export class RoadmapPage {
     const item = this.taskItems.filter({ hasText: title });
     await item.click();
     await expect(this.taskDetailTitle).toContainText(title);
+  }
+
+  /** Toggles the "Ready to start only" filter on the Epic list. */
+  async filterReadyToStartOnly() {
+    await this.readyToStartFilter.click();
+    await this.page.getByRole("option", { name: "Ready to start only" }).click();
+  }
+
+  /** Clears the "Ready to start only" filter, restoring the full Epic list. */
+  async clearReadyToStartFilter() {
+    await this.readyToStartFilter.click();
+    await this.page.getByRole("option", { name: "All", exact: true }).click();
   }
 
   /** The readiness "Blocked" badge on the Story row (Epic detail page) titled `title`, if present. */

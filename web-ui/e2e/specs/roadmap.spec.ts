@@ -236,4 +236,68 @@ test.describe("Roadmap drill-down", () => {
     // descendant Task (see run-lifecycle.spec.ts's breadcrumb test) — the
     // Date.now() title keeps this fixture from colliding with other runs.
   });
+
+  test("Ready to start filter shows only Epics with unblocked backlog work", async ({
+    roadmapPage,
+    api,
+  }) => {
+    const repos = await api.listGitRepos();
+    if (repos.content.length === 0) {
+      test.skip();
+      return;
+    }
+    const softwareProjectId = repos.content[0].id;
+    const suffix = Date.now();
+
+    const readyEpic = await api.createEpic({
+      title: `E2E Ready Epic ${suffix}`,
+      description: "desc",
+      softwareProjectId,
+    });
+    // A bare Story (no Tasks) is itself an unblocked, backlog readiness
+    // candidate — enough on its own to make the Epic ready to start.
+    await api.createStory(readyEpic.id, { title: "Ready Story", description: "desc" });
+
+    const blockerEpic = await api.createEpic({
+      title: `E2E Ready Filter Blocker Epic ${suffix}`,
+      description: "desc",
+      softwareProjectId,
+    });
+    const blockerStory = await api.createStory(blockerEpic.id, {
+      title: "Blocker Story",
+      description: "desc",
+    });
+
+    const blockedEpic = await api.createEpic({
+      title: `E2E Blocked Epic ${suffix}`,
+      description: "desc",
+      softwareProjectId,
+    });
+    const blockedStory = await api.createStory(blockedEpic.id, {
+      title: "Blocked Story",
+      description: "desc",
+    });
+    await api.createDependency({
+      blockingItemType: "story",
+      blockingItemId: blockerStory.id,
+      blockedItemType: "story",
+      blockedItemId: blockedStory.id,
+    });
+
+    try {
+      await roadmapPage.goto();
+      await roadmapPage.filterReadyToStartOnly();
+
+      await expect(roadmapPage.epicItems.filter({ hasText: readyEpic.title })).toHaveCount(1);
+      await expect(roadmapPage.epicItems.filter({ hasText: blockedEpic.title })).toHaveCount(0);
+
+      await roadmapPage.clearReadyToStartFilter();
+      await expect(roadmapPage.epicItems.filter({ hasText: readyEpic.title })).toHaveCount(1);
+      await expect(roadmapPage.epicItems.filter({ hasText: blockedEpic.title })).toHaveCount(1);
+    } finally {
+      await api.deleteEpic(readyEpic.id);
+      await api.deleteEpic(blockedEpic.id);
+      await api.deleteEpic(blockerEpic.id);
+    }
+  });
 });
