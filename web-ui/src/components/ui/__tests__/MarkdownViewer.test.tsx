@@ -198,8 +198,11 @@ describe("MarkdownViewer", () => {
     expect(typeof callId).toBe("string");
     // Every sequenceDiagram participant alias is quoted unconditionally before
     // render (Decision 2) — a no-op for a non-colliding alias like "A" other
-    // than the added quotes themselves.
-    expect(callSource).toBe('sequenceDiagram\n  participant "A"\n  "A"->>B: hello');
+    // than the added quotes themselves. "B" is never declared via a
+    // `participant` line, but Mermaid implicitly creates it as a participant
+    // the first time it's used as a message target, so it's collected and
+    // quoted too.
+    expect(callSource).toBe('sequenceDiagram\n  participant "A"\n  "A"->>"B": hello');
 
     // The diagram element should indicate successful render.
     await waitFor(() => expect(diagram).toHaveAttribute("data-rendered", "true"));
@@ -370,9 +373,12 @@ describe("MarkdownViewer", () => {
     const [, callSource] = mermaidRenderMock.mock.calls[0] as [string, string];
 
     // The healed source reaching mermaid.render has the alias quoted at both
-    // the declaration and the message-arrow reference.
+    // the declaration and the message-arrow reference. "API" is never
+    // declared via a `participant` line, but Mermaid implicitly creates it
+    // as a participant the first time it's used as a message target, so it's
+    // collected and quoted too (Decision 2 is unconditional).
     expect(callSource).toContain('participant "Actor" as Any user/agent');
-    expect(callSource).toContain('"Actor"->>API: hello');
+    expect(callSource).toContain('"Actor"->>"API": hello');
 
     // The original, unquoted fence text is untouched — the Raw toggle still
     // shows exactly what was authored.

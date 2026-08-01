@@ -119,10 +119,14 @@ describe("quoteSequenceParticipantAliases", () => {
       "  participant actor as Reviewer",
       "  actor->>API: Approve",
     ].join("\n");
+    // `API` is never declared via a `participant`/`actor` line, but Mermaid
+    // implicitly creates it as a participant the first time it's used as a
+    // message target — so the collection pass picks it up too, and Decision
+    // 2 (quote every alias unconditionally) means it gets quoted like `actor`.
     const expected = [
       "sequenceDiagram",
       '  participant "actor" as Reviewer',
-      '  "actor"->>API: Approve',
+      '  "actor"->>"API": Approve',
     ].join("\n");
     expect(quoteSequenceParticipantAliases(src)).toBe(expected);
   });
@@ -163,7 +167,8 @@ describe("quoteSequenceParticipantAliases", () => {
     const src = [
       "sequenceDiagram",
       '  participant "Actor" as Any user',
-      '  "Actor"->>API: hi',
+      '  participant "API" as api-server',
+      '  "Actor"->>"API": hi',
     ].join("\n");
     expect(quoteSequenceParticipantAliases(src)).toBe(src);
   });
@@ -175,12 +180,18 @@ describe("quoteSequenceParticipantAliases", () => {
     const expected = [
       "sequenceDiagram",
       '  participant "actor"',
-      '  "actor"->>API: hi',
+      '  "actor"->>"API": hi',
     ].join("\n");
     expect(quoteSequenceParticipantAliases(src)).toBe(expected);
   });
 
-  it("heals `Note over X,Y:` and `Note left of X:` forms, leaving non-alias entries unquoted", () => {
+  it("heals `Note over X,Y:` and `Note left of X:` forms, including a participant only ever referenced in a Note list", () => {
+    // "Nobody" is never declared and never used as a message endpoint — only
+    // named in this Note's participant list. Confirmed empirically via
+    // mermaid.parse() that Mermaid still implicitly creates it as a
+    // participant in that position (a bare, undeclared token in `Note over`
+    // parses successfully), so it must be collected and quoted like any
+    // other alias (Decision 2 is unconditional).
     const src = [
       "sequenceDiagram",
       "  participant actor as Reviewer",
@@ -195,7 +206,7 @@ describe("quoteSequenceParticipantAliases", () => {
       '  participant "API" as api-server',
       '  Note over "actor", "API": reviewing',
       '  Note left of "actor": waiting',
-      '  Note over "actor", Nobody: mixed',
+      '  Note over "actor", "Nobody": mixed',
     ].join("\n");
     expect(quoteSequenceParticipantAliases(src)).toBe(expected);
   });
@@ -266,5 +277,229 @@ describe("quoteSequenceParticipantAliases", () => {
       '  "Actor"->>"API": the Actor pattern',
     ].join("\n");
     expect(quoteSequenceParticipantAliases(src)).toBe(expected);
+  });
+
+  it("quotes a reserved-word alias that is never explicitly declared, used only via message-arrow lines", () => {
+    const src = [
+      "sequenceDiagram",
+      "  actor->>API: Approve",
+      "  API-->>actor: 200 OK",
+    ].join("\n");
+    // Both `actor` and `API` are collected — `API` is never declared but is
+    // used as a message-arrow endpoint, which implicitly creates it as a
+    // participant too, so Decision 2's unconditional quoting covers it.
+    const expected = [
+      "sequenceDiagram",
+      '  "actor"->>"API": Approve',
+      '  "API"-->>"actor": 200 OK',
+    ].join("\n");
+    expect(quoteSequenceParticipantAliases(src)).toBe(expected);
+  });
+
+  it("quotes a never-declared reserved-word alias consistently across a message arrow, a Note, and activate/deactivate", () => {
+    const src = [
+      "sequenceDiagram",
+      "  actor->>+API: Approve",
+      "  Note over actor,API: reviewing",
+      "  activate actor",
+      "  deactivate actor",
+    ].join("\n");
+    const expected = [
+      "sequenceDiagram",
+      '  "actor"->>+"API": Approve',
+      '  Note over "actor", "API": reviewing',
+      '  activate "actor"',
+      '  deactivate "actor"',
+    ].join("\n");
+    expect(quoteSequenceParticipantAliases(src)).toBe(expected);
+  });
+
+  it("quotes both an explicitly declared and a purely implicit reserved-word alias in the same diagram", () => {
+    const src = [
+      "sequenceDiagram",
+      "  participant actor as Reviewer",
+      "  actor->>loop: Approve",
+    ].join("\n");
+    const expected = [
+      "sequenceDiagram",
+      '  participant "actor" as Reviewer',
+      '  "actor"->>"loop": Approve',
+    ].join("\n");
+    expect(quoteSequenceParticipantAliases(src)).toBe(expected);
+  });
+
+  it("quotes a reserved-word alias on the source side of a two-character arrow token (`-->>`, `--x`, `--)`)", () => {
+    const src = [
+      "sequenceDiagram",
+      "  participant actor as Reviewer",
+      "  participant API as api-server",
+      "  actor-->>API: 200 OK",
+      "  actor--xAPI: gone",
+    ].join("\n");
+    const expected = [
+      "sequenceDiagram",
+      '  participant "actor" as Reviewer',
+      '  participant "API" as api-server',
+      '  "actor"-->>"API": 200 OK',
+      '  "actor"--x"API": gone',
+    ].join("\n");
+    expect(quoteSequenceParticipantAliases(src)).toBe(expected);
+  });
+
+  it("quotes the target alias correctly when there's no space after the colon or the label is empty", () => {
+    const src = [
+      "sequenceDiagram",
+      "  participant actor as Reviewer",
+      "  participant API as api-server",
+      "  actor->>API:OK",
+      "  actor->>API:",
+    ].join("\n");
+    const expected = [
+      "sequenceDiagram",
+      '  participant "actor" as Reviewer',
+      '  participant "API" as api-server',
+      '  "actor"->>"API":OK',
+      '  "actor"->>"API":',
+    ].join("\n");
+    expect(quoteSequenceParticipantAliases(src)).toBe(expected);
+  });
+
+  it("quotes a reserved-word alias referenced with the activation-shorthand `+`/`-` modifier, preserving the modifier outside the quotes", () => {
+    const src = [
+      "sequenceDiagram",
+      "  participant actor as Reviewer",
+      "  participant API as api-server",
+      "  actor->>+API: call",
+      "  API-->>-actor: reply",
+    ].join("\n");
+    const expected = [
+      "sequenceDiagram",
+      '  participant "actor" as Reviewer',
+      '  participant "API" as api-server',
+      '  "actor"->>+"API": call',
+      '  "API"-->>-"actor": reply',
+    ].join("\n");
+    expect(quoteSequenceParticipantAliases(src)).toBe(expected);
+  });
+
+  it("quotes a reserved-word alias referenced via bidirectional arrow forms, including combined with the activation modifier", () => {
+    const src = [
+      "sequenceDiagram",
+      "  participant actor as Reviewer",
+      "  participant API as api-server",
+      "  actor<<->>API: hi",
+      "  API<<-->>actor: hi",
+      "  actor<<->>+API: hi",
+    ].join("\n");
+    const expected = [
+      "sequenceDiagram",
+      '  participant "actor" as Reviewer',
+      '  participant "API" as api-server',
+      '  "actor"<<->>"API": hi',
+      '  "API"<<-->>"actor": hi',
+      '  "actor"<<->>+"API": hi',
+    ].join("\n");
+    expect(quoteSequenceParticipantAliases(src)).toBe(expected);
+  });
+
+  it("quotes a reserved-word alias referenced via link/links/properties/details lines, leaving everything after the first colon untouched", () => {
+    const src = [
+      "sequenceDiagram",
+      "  participant loop as Looper",
+      "  link loop: Google@https://google.com",
+      '  links loop: {"Google": "https://google.com"}',
+      '  properties loop: {"class": "x", "nested": {"k": "v:w"}}',
+      "  details loop: some free text",
+    ].join("\n");
+    const expected = [
+      "sequenceDiagram",
+      '  participant "loop" as Looper',
+      '  link "loop": Google@https://google.com',
+      '  links "loop": {"Google": "https://google.com"}',
+      '  properties "loop": {"class": "x", "nested": {"k": "v:w"}}',
+      '  details "loop": some free text',
+    ].join("\n");
+    expect(quoteSequenceParticipantAliases(src)).toBe(expected);
+  });
+
+  it("detects and heals a sequenceDiagram preceded by a leading YAML frontmatter block", () => {
+    const src = [
+      "---",
+      "title: Approval",
+      "---",
+      "sequenceDiagram",
+      "  participant actor as Reviewer",
+      "  actor->>API: Approve",
+    ].join("\n");
+    const expected = [
+      "---",
+      "title: Approval",
+      "---",
+      "sequenceDiagram",
+      '  participant "actor" as Reviewer',
+      '  "actor"->>"API": Approve',
+    ].join("\n");
+    expect(quoteSequenceParticipantAliases(src)).toBe(expected);
+  });
+
+  it("detects and heals a sequenceDiagram preceded by frontmatter followed by an %%{init: ...}%% directive", () => {
+    const src = [
+      "---",
+      "title: Approval",
+      "---",
+      "%%{init: {'theme': 'dark'}}%%",
+      "sequenceDiagram",
+      "  participant actor as Reviewer",
+      "  actor->>API: Approve",
+    ].join("\n");
+    const expected = [
+      "---",
+      "title: Approval",
+      "---",
+      "%%{init: {'theme': 'dark'}}%%",
+      "sequenceDiagram",
+      '  participant "actor" as Reviewer',
+      '  "actor"->>"API": Approve',
+    ].join("\n");
+    expect(quoteSequenceParticipantAliases(src)).toBe(expected);
+  });
+
+  it("detects and heals a sequenceDiagram preceded by a leading plain `%%` comment line (no directive body)", () => {
+    const src = [
+      "%% just a comment",
+      "sequenceDiagram",
+      "  participant actor as Reviewer",
+      "  actor->>API: Approve",
+    ].join("\n");
+    const expected = [
+      "%% just a comment",
+      "sequenceDiagram",
+      '  participant "actor" as Reviewer',
+      '  "actor"->>"API": Approve',
+    ].join("\n");
+    expect(quoteSequenceParticipantAliases(src)).toBe(expected);
+  });
+
+  it("detects and heals a sequenceDiagram with comments, frontmatter, and an init directive interleaved in varying order/count", () => {
+    const cases = [
+      ["%% c1", "---", "title: t", "---", "sequenceDiagram"],
+      ["---", "title: t", "---", "%% c1", "sequenceDiagram"],
+      ["%% c1", "%% c2", "sequenceDiagram"],
+      ["%% c1", "%%{init: {}}%%", "sequenceDiagram"],
+      ["%%{init: {}}%%", "%% c1", "sequenceDiagram"],
+    ];
+    for (const preamble of cases) {
+      const src = [...preamble, "  participant actor as Reviewer", "  actor->>API: Approve"].join(
+        "\n"
+      );
+      const healed = quoteSequenceParticipantAliases(src);
+      expect(healed).toContain('participant "actor" as Reviewer');
+      expect(healed).toContain('"actor"->>"API": Approve');
+    }
+  });
+
+  it("leaves a non-sequenceDiagram source preceded by a comment line byte-for-byte unchanged", () => {
+    const src = ["%% a comment", "flowchart TD", "  actor-->API"].join("\n");
+    expect(quoteSequenceParticipantAliases(src)).toBe(src);
   });
 });
