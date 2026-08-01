@@ -1,5 +1,6 @@
 package com.choruskube.core.controller;
 
+import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -155,18 +156,30 @@ public class TaskControllerTest extends BaseTest {
 
     @Test
     void listAllTasks_returnsPagedShape() throws Exception {
+        // Board T1/T2 assert into the *global*, unscoped listing, which (like
+        // NodeDefinitionControllerTest#listNodeDefinitions_returnsAll and
+        // GraphTemplateControllerTest's list test) can also observe rows committed by
+        // non-@Transactional e2e integration tests (e.g. Phase2WorkHierarchyIntegrationTest)
+        // that persist for the life of the test JVM. Assert presence of these two plus a
+        // lower-bound count, not an exact global total.
         StoryResponse story = makeStory("https://github.com/test/task-board-list.git");
-        taskService.create(story.id(), new TaskRequest("Board T1", "D"));
-        taskService.create(story.id(), new TaskRequest("Board T2", "D"));
+        TaskResponse t1 = taskService.create(story.id(), new TaskRequest("Board T1", "D"));
+        TaskResponse t2 = taskService.create(story.id(), new TaskRequest("Board T2", "D"));
 
         mockMvc.perform(get("/api/v1/tasks"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.content.length()").value(2))
-                .andExpect(jsonPath("$.totalElements").value(2));
+                .andExpect(jsonPath("$.content.length()").value(greaterThanOrEqualTo(2)))
+                .andExpect(jsonPath("$.totalElements").value(greaterThanOrEqualTo(2)))
+                .andExpect(jsonPath("$.content[?(@.id=='" + t1.id() + "')]").exists())
+                .andExpect(jsonPath("$.content[?(@.id=='" + t2.id() + "')]").exists());
     }
 
     @Test
     void listAllTasks_filtersByStatus() throws Exception {
+        // See listAllTasks_returnsPagedShape: assert presence of the fixtured task in the
+        // matching status filter (and absence from the other), not an exact global count —
+        // other tasks with the same status may already exist from e2e integration tests that
+        // commit real rows outside this test's transaction.
         StoryResponse story = makeStory("https://github.com/test/task-board-filter.git");
         TaskResponse backlogTask = taskService.create(story.id(), new TaskRequest("Still Backlog", "D"));
         TaskResponse startedTask = taskService.create(story.id(), new TaskRequest("Started", "D"));
@@ -174,13 +187,13 @@ public class TaskControllerTest extends BaseTest {
 
         mockMvc.perform(get("/api/v1/tasks").param("status", "backlog"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.content.length()").value(1))
-                .andExpect(jsonPath("$.content[0].id").value(backlogTask.id().toString()));
+                .andExpect(jsonPath("$.content[?(@.id=='" + backlogTask.id() + "')]").exists())
+                .andExpect(jsonPath("$.content[?(@.id=='" + startedTask.id() + "')]").doesNotExist());
 
         mockMvc.perform(get("/api/v1/tasks").param("status", "in_progress"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.content.length()").value(1))
-                .andExpect(jsonPath("$.content[0].id").value(startedTask.id().toString()));
+                .andExpect(jsonPath("$.content[?(@.id=='" + startedTask.id() + "')]").exists())
+                .andExpect(jsonPath("$.content[?(@.id=='" + backlogTask.id() + "')]").doesNotExist());
     }
 
     @Test

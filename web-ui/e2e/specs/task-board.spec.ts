@@ -64,23 +64,26 @@ test.describe("Task Board", () => {
       description: "Task for the task board E2E test",
     });
 
-    try {
-      await taskBoardPage.goto();
-      await taskBoardPage.expectCardInColumn(uniqueTitle, "backlog");
+    await taskBoardPage.goto();
+    await taskBoardPage.expectCardInColumn(uniqueTitle, "backlog");
 
-      // Drag the card from Backlog into In Progress — a legal transition
-      // (backlog -> in_progress) per TaskController's validated-transition
-      // status endpoint; a move out of "done" has no legal target, so this
-      // spec doesn't attempt one.
-      await taskBoardPage.dragCardToColumn(uniqueTitle, "in_progress");
-      await taskBoardPage.expectCardInColumn(uniqueTitle, "in_progress");
+    // Drag the card from Backlog into In Progress — a legal transition
+    // (backlog -> in_progress) per TaskController's validated-transition
+    // status endpoint; a move out of "done" has no legal target, so this
+    // spec doesn't attempt one.
+    await taskBoardPage.dragCardToColumn(uniqueTitle, "in_progress");
+    await taskBoardPage.expectCardInColumn(uniqueTitle, "in_progress");
 
-      // Reload — the new status is persisted server-side, not just client state.
-      await taskBoardPage.goto();
-      await taskBoardPage.expectCardInColumn(uniqueTitle, "in_progress");
-    } finally {
-      // Deleting the Epic cascades to its Story/Task (see roadmap-board.spec.ts).
-      await api.deleteEpic(epic.id);
-    }
+    // Reload — the new status is persisted server-side, not just client state.
+    await taskBoardPage.goto();
+    await taskBoardPage.expectCardInColumn(uniqueTitle, "in_progress");
+
+    // No cleanup (mirrors run-lifecycle.spec.ts's breadcrumb test): the drag
+    // above has already moved the Task out of "backlog" via a real started run,
+    // and DefaultEpicService#delete deliberately refuses to delete an Epic with
+    // any started descendant Task ("Can only delete an Epic while all of its
+    // Tasks are still in backlog") — intentional, to preserve run history. The
+    // `uniqueTitle` timestamp keeps this fixture from colliding with other runs
+    // of this spec, so leaving it behind is safe.
   });
 });
