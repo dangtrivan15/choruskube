@@ -9,6 +9,7 @@ import SoftwareProjectsPage from "@/pages/SoftwareProjectsPage";
 import AnalyticsPage from "@/pages/AnalyticsPage";
 import RoadmapPage from "@/pages/RoadmapPage";
 import RoadmapBoardPage from "@/pages/RoadmapBoardPage";
+import TaskBoardPage from "@/pages/TaskBoardPage";
 import RoadmapGraphPage from "@/pages/RoadmapGraphPage";
 import EpicDetailPage from "@/pages/EpicDetailPage";
 import StoryDetailPage from "@/pages/StoryDetailPage";
@@ -27,6 +28,7 @@ const coreChildren: RouteObject[] = [
   { path: "analytics", element: <AnalyticsPage /> },
   { path: "roadmap", element: <RoadmapPage /> },
   { path: "roadmap/board", element: <RoadmapBoardPage /> },
+  { path: "roadmap/board/tasks", element: <TaskBoardPage /> },
   { path: "roadmap/epics/:epicId", element: <EpicDetailPage /> },
   { path: "roadmap/epics/:epicId/graph", element: <RoadmapGraphPage /> },
   { path: "roadmap/epics/:epicId/stories/:storyId", element: <StoryDetailPage /> },

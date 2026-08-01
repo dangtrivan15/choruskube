@@ -1,0 +1,79 @@
+import { useDraggable } from "@dnd-kit/core";
+import { Link } from "react-router";
+import type { TaskResponse } from "@/lib/types";
+import { Card, CardHeader } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import RunStatusBadge from "@/components/runs/RunStatusBadge";
+import { cn } from "@/lib/utils";
+
+interface Props {
+  task: TaskResponse;
+}
+
+function statusBadge(status: "backlog" | "in_progress" | "done") {
+  switch (status) {
+    case "backlog":
+      return <Badge variant="outline">backlog</Badge>;
+    case "in_progress":
+      return <Badge variant="secondary">in progress</Badge>;
+    case "done":
+      return <Badge variant="default">done</Badge>;
+  }
+}
+
+/**
+ * A single Task Board card. Draggable via dnd-kit (`useDraggable`); the drop
+ * is resolved by TaskBoardPage's `DndContext`. Unlike EpicBoardCard, a Task
+ * has no nested children to expand — it's the leaf of the roadmap hierarchy —
+ * so this is a flat, non-expandable summary showing the title, its `status`
+ * badge, and (if present) its most recent run's status.
+ *
+ * Deliberately does not render a readiness badge: the listing endpoint's
+ * shared mapper hardcodes `TaskResponse.readiness` to `null`, so a badge here
+ * could never show a value. (Story/Task rows elsewhere in the app do show
+ * readiness badges from a different, unrelated code path.)
+ */
+export default function TaskBoardCard({ task }: Props) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: task.id,
+    data: { status: task.status },
+  });
+
+  const style = transform
+    ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` }
+    : undefined;
+
+  return (
+    <Card
+      ref={setNodeRef}
+      style={style}
+      data-testid="task-board-card"
+      data-task-id={task.id}
+      className={cn("touch-none select-none", isDragging && "opacity-50")}
+      {...listeners}
+      {...attributes}
+    >
+      <CardHeader className="gap-1 p-3 pb-2">
+        <Link
+          to={`/tasks/${task.id}`}
+          data-testid="task-board-card-title"
+          className="min-w-0 truncate text-sm font-medium hover:underline"
+          // Stop the pointerdown from bubbling to the card's dnd-kit `listeners`
+          // (spread on the Card below) so clicking the title navigates instead
+          // of starting a drag — same guard EpicBoardCard's expand button uses.
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          {task.title}
+        </Link>
+        <span data-testid="task-board-card-status" className="flex items-center gap-1.5">
+          {statusBadge(task.status)}
+          {task.latestRunStatus && (
+            <span data-testid="task-board-card-run-status">
+              <RunStatusBadge status={task.latestRunStatus} />
+            </span>
+          )}
+        </span>
+      </CardHeader>
+    </Card>
+  );
+}

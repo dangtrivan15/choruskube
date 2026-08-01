@@ -402,6 +402,22 @@ export interface TaskRequest {
   description: string;
 }
 
+/**
+ * Matches the backend TaskStatusUpdateRequest record — body for the
+ * validated-transition write `PATCH /api/v1/tasks/{id}/status`. `runId`/`note`
+ * are optional: `runId` is the workflow run this outcome is being reported
+ * for (must match the Task's most recent linked run when present); `note` is
+ * a free-text outcome note recorded on the audit trail. There is no
+ * `WorkItemStatus` TypeScript alias — that name is a Java enum on the backend
+ * only; the frontend uses the same inline `"backlog" | "in_progress" |
+ * "done"` literal union as `TaskResponse.status` everywhere it appears.
+ */
+export interface TaskStatusUpdateRequest {
+  status: "backlog" | "in_progress" | "done";
+  runId?: string;
+  note?: string;
+}
+
 // --- Roadmap Graph View ---
 
 /**

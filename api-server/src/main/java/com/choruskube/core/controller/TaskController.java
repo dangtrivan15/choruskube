@@ -4,6 +4,7 @@ import com.choruskube.core.dto.RunSummary;
 import com.choruskube.core.dto.TaskRequest;
 import com.choruskube.core.dto.TaskResponse;
 import com.choruskube.core.dto.TaskStatusUpdateRequest;
+import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.service.TaskService;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -22,6 +23,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -43,6 +45,18 @@ public class TaskController {
     @GetMapping("/api/v1/stories/{storyId}/tasks")
     public List<TaskResponse> list(@PathVariable UUID storyId) {
         return service.list(storyId);
+    }
+
+    /**
+     * Global, cross-Story Task listing for the Kanban board view (Backlog/In Progress/Done
+     * columns map directly onto {@code status}; no separate board-move endpoint exists here).
+     */
+    @PreAuthorize("@orgSecurity.canRead()")
+    @GetMapping("/api/v1/tasks")
+    public Page<TaskResponse> list(
+            @RequestParam(required = false) WorkItemStatus status,
+            @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
+        return service.list(status, pageable);
     }
 
     @PreAuthorize("@orgSecurity.canRead()")

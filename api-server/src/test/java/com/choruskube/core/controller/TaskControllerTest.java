@@ -1,9 +1,11 @@
 package com.choruskube.core.controller;
 
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 import com.choruskube.core.BaseTest;
+import com.choruskube.core.config.OrgSecurity;
 import com.choruskube.core.dto.CreateDependencyRequest;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
@@ -77,12 +79,23 @@ public class TaskControllerTest extends BaseTest {
     @MockitoBean
     private RunEventPublisher runEventPublisher;
 
+    @MockitoBean
+    private OrgSecurity orgSecurity;
+
     @BeforeEach
     void setUp() {
         WorkflowStub mockStub = Mockito.mock(WorkflowStub.class);
         Mockito.when(workflowClient.newUntypedWorkflowStub(
                         ArgumentMatchers.anyString(), ArgumentMatchers.any(WorkflowOptions.class)))
                 .thenReturn(mockStub);
+
+        // Mirrors NoOpOrgSecurity (the un-mocked default): every level of access is allowed unless
+        // an individual test overrides it, so the permission mock doesn't break the other tests in
+        // this class (mirrors EpicControllerTest#allowAllByDefault).
+        when(orgSecurity.canRead()).thenReturn(true);
+        when(orgSecurity.canOperate()).thenReturn(true);
+        when(orgSecurity.canAdmin()).thenReturn(true);
+        when(orgSecurity.isPlatformAdmin()).thenReturn(true);
     }
 
     @Test
@@ -136,6 +149,45 @@ public class TaskControllerTest extends BaseTest {
                         jsonPath("$[?(@.id=='" + blocked.id() + "')].readiness").value("BLOCKED"))
                 .andExpect(jsonPath("$[?(@.id=='" + blocking.id() + "')].readiness")
                         .value("READY"));
+    }
+
+    // --- GET /api/v1/tasks (global board listing) ---
+
+    @Test
+    void listAllTasks_returnsPagedShape() throws Exception {
+        StoryResponse story = makeStory("https://github.com/test/task-board-list.git");
+        taskService.create(story.id(), new TaskRequest("Board T1", "D"));
+        taskService.create(story.id(), new TaskRequest("Board T2", "D"));
+
+        mockMvc.perform(get("/api/v1/tasks"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(2))
+                .andExpect(jsonPath("$.totalElements").value(2));
+    }
+
+    @Test
+    void listAllTasks_filtersByStatus() throws Exception {
+        StoryResponse story = makeStory("https://github.com/test/task-board-filter.git");
+        TaskResponse backlogTask = taskService.create(story.id(), new TaskRequest("Still Backlog", "D"));
+        TaskResponse startedTask = taskService.create(story.id(), new TaskRequest("Started", "D"));
+        taskService.start(startedTask.id());
+
+        mockMvc.perform(get("/api/v1/tasks").param("status", "backlog"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].id").value(backlogTask.id().toString()));
+
+        mockMvc.perform(get("/api/v1/tasks").param("status", "in_progress"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].id").value(startedTask.id().toString()));
+    }
+
+    @Test
+    void listAllTasks_belowCanReadPermission_returns403() throws Exception {
+        when(orgSecurity.canRead()).thenReturn(false);
+
+        mockMvc.perform(get("/api/v1/tasks")).andExpect(status().isForbidden());
     }
 
     @Test

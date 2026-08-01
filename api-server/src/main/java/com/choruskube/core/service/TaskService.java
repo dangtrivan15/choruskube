@@ -33,6 +33,17 @@ public interface TaskService {
     List<TaskResponse> list(UUID storyId);
 
     /**
+     * Global, cross-Story Task listing for the Kanban board view — Backlog/In Progress/Done
+     * columns map directly onto {@code status}, so no separate board "stage" field exists (unlike
+     * {@link EpicService#updateStage}). Mirrors {@link EpicService#list(String, Pageable)}'s
+     * shape: {@code scopeProvider}-scoped, optionally filtered, page-returning. Uses the same
+     * shared single-item mapper as {@link #get}/{@link #create} — {@code readiness} stays {@code
+     * null} here (Decision 1 scopes real readiness to the per-Story {@link #list(UUID)} and the
+     * Roadmap Graph View only).
+     */
+    Page<TaskResponse> list(WorkItemStatus status, Pageable pageable);
+
+    /**
      * Agent/internal mirror of {@link #list} for the Roadmap Graph View internal route (Decision
      * 1): validated the same way as {@link #create(UUID, TaskRequest, UUID, UUID)} —
      * {@code assertSameOrg} plus a direct project match — instead of {@link #list}'s
