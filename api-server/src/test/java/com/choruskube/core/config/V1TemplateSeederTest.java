@@ -120,6 +120,26 @@ class V1TemplateSeederTest extends BaseTest {
     }
 
     @Test
+    void buildRunningNodesGetABuildSizedTimeout() {
+        // code_review runs the same cold `npm ci` + typecheck + lint pass as implement,
+        // so it needs implement's budget rather than the 1800s schema default — on the
+        // default it dies on StartToClose once the diff under review grows.
+        assertThat(timeoutSecondsFor("code_review")).isEqualTo(10800);
+        assertThat(timeoutSecondsFor("code_review")).isEqualTo(timeoutSecondsFor("implement"));
+    }
+
+    private int timeoutSecondsFor(String label) {
+        var template = templateRepo
+                .findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION)
+                .orElseThrow();
+        var node = templateNodeRepo.findByGraphTemplateId(template.getId()).stream()
+                .filter(n -> label.equals(n.getLabel()))
+                .findFirst()
+                .orElseThrow();
+        return nodeDefRepo.findById(node.getNodeDefinitionId()).orElseThrow().getTimeoutSeconds();
+    }
+
+    @Test
     void specReviewSelfIteratesAndEscalatesToHumanGate() {
         var template = templateRepo
                 .findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION)

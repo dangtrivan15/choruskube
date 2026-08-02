@@ -35,7 +35,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
     // and executor changes here never retroactively mutate prior versions. To ship a
     // change, edit the constants in this file (prompt, executor, schema), increment
     // CURRENT_VERSION, and the next boot creates the new snapshot.
-    static final int CURRENT_VERSION = 29;
+    static final int CURRENT_VERSION = 30;
 
     private static final String TEMPLATE_NAME = "Feature Development";
 
@@ -926,7 +926,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
 
         defs.put("Test", createNodeDef("Test", ExecutorType.script, null, 7200));
 
-        NodeDefinition codeReview = createNodeDef("Code Review", ExecutorType.ai, CODE_REVIEW_PROMPT, 1800);
+        NodeDefinition codeReview = createNodeDef("Code Review", ExecutorType.ai, CODE_REVIEW_PROMPT, 10800);
         codeReview.setOutputSpec(
                 "{\"files\":[{\"name\":\"review.md\",\"required\":true,\"description\":\"Code review findings and approve/reject recommendation\"}]}");
         // No iteration cap: same self-detected review-conflict escalation as Spec Review
