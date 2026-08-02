@@ -24,6 +24,7 @@ import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.RepoGroup;
 import com.choruskube.core.model.RepoGroupMember;
 import com.choruskube.core.model.Task;
+import com.choruskube.core.model.enums.Readiness;
 import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.observability.AuditSink;
 import com.choruskube.core.repository.GitRepoRepository;
@@ -45,6 +46,8 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -305,6 +308,92 @@ public class DefaultEpicServiceTest extends BaseTest {
         EpicResponse fetched = service.get(epic.id());
         assertThat(fetched.status()).isEqualTo("backlog");
         assertThat(fetched.progress().totalTasks()).isZero();
+    }
+
+    // ── readyItemCount rollup ("ready to start" roadmap filter, Decision 2) ───────
+    //
+    // readyItemCount is populated only on the list page (Decision 2/Part 2 Task 4) — not on
+    // single-Epic reads like get()/create() (see toResponse's comment in
+    // DefaultEpicService for why) — so these tests read it back via list(), not get().
+
+    @Test
+    void readyItemCount_epicWithNoStories_isZero() {
+        GitRepo r = makeRepo("https://github.com/test/ready-empty.git");
+        EpicResponse epic = service.create(new EpicRequest("T", "D", null, r.getId()), null);
+
+        assertThat(readyItemCountOf(epic.id())).isZero();
+    }
+
+    @Test
+    void readyItemCount_epicWithAllBlockedStories_isZero() {
+        GitRepo r = makeRepo("https://github.com/test/ready-all-blocked.git");
+        EpicResponse epic = service.create(new EpicRequest("T", "D", null, r.getId()), null);
+        var blocked = storyService.create(epic.id(), new StoryRequest("Blocked", "D"));
+        EpicResponse blockerEpic = service.create(new EpicRequest("Blocker Owner", "D", null, r.getId()), null);
+        var blocker = storyService.create(blockerEpic.id(), new StoryRequest("Blocker", "D"));
+        dependencyService.create(new CreateDependencyRequest("story", blocker.id(), "story", blocked.id()));
+
+        assertThat(readyItemCountOf(epic.id())).isZero();
+    }
+
+    @Test
+    void readyItemCount_epicWithMixOfReadyAndBlockedStories_countsOnlyReady() {
+        GitRepo r = makeRepo("https://github.com/test/ready-mix.git");
+        EpicResponse epic = service.create(new EpicRequest("T", "D", null, r.getId()), null);
+        storyService.create(epic.id(), new StoryRequest("Ready", "D"));
+        var blocked = storyService.create(epic.id(), new StoryRequest("Blocked", "D"));
+        var blocker = storyService.create(epic.id(), new StoryRequest("Blocker", "D"));
+        dependencyService.create(new CreateDependencyRequest("story", blocker.id(), "story", blocked.id()));
+        // "Ready" and "Blocker" both have no incoming blocking edge -> READY; "Blocked" -> BLOCKED.
+
+        assertThat(readyItemCountOf(epic.id())).isEqualTo(2);
+    }
+
+    @Test
+    void readyItemCount_externalBlockerResolvingDone_makesDependentReady() {
+        // Mirrors the one-hop external-blocker semantics EpicReadinessAssembler already applies to
+        // the Story/Task list endpoints (Decision 2): a Story's readiness is gated by a blocker in
+        // a *different* Epic just like an in-Epic blocker, so readyItemCount must react to that
+        // external blocker's own status changing, not just to changes within this Epic.
+        GitRepo r = makeRepo("https://github.com/test/ready-external.git");
+        EpicResponse epic = service.create(new EpicRequest("T", "D", null, r.getId()), null);
+        var dependent = storyService.create(epic.id(), new StoryRequest("Dependent", "D"));
+        EpicResponse otherEpic = service.create(new EpicRequest("Other", "D", null, r.getId()), null);
+        var external = storyService.create(otherEpic.id(), new StoryRequest("External", "D"));
+        var externalTask = taskService.create(external.id(), new TaskRequest("T", "D"));
+        dependencyService.create(new CreateDependencyRequest("story", external.id(), "story", dependent.id()));
+
+        assertThat(readyItemCountOf(epic.id())).isZero();
+
+        markTaskDone(externalTask.id());
+
+        assertThat(readyItemCountOf(epic.id())).isEqualTo(1);
+    }
+
+    private long readyItemCountOf(UUID epicId) {
+        return service.list(null, null, PageRequest.of(0, 100)).getContent().stream()
+                .filter(e -> e.id().equals(epicId))
+                .findFirst()
+                .orElseThrow()
+                .readyItemCount();
+    }
+
+    @Test
+    void list_readyFilter_excludesEpicsWithNoReadyDescendants_andPaginatesFilteredSetInMemory() {
+        GitRepo r = makeRepo("https://github.com/test/ready-filter-service.git");
+        EpicResponse readyEpic = service.create(new EpicRequest("Ready", "D", null, r.getId()), null);
+        storyService.create(readyEpic.id(), new StoryRequest("Unblocked", "D"));
+
+        EpicResponse blockedEpic = service.create(new EpicRequest("Blocked", "D", null, r.getId()), null);
+        var blockedStory = storyService.create(blockedEpic.id(), new StoryRequest("Blocked", "D"));
+        EpicResponse blockerEpic = service.create(new EpicRequest("Blocker Owner", "D", null, r.getId()), null);
+        var blockerStory = storyService.create(blockerEpic.id(), new StoryRequest("Blocker", "D"));
+        dependencyService.create(new CreateDependencyRequest("story", blockerStory.id(), "story", blockedStory.id()));
+
+        Page<EpicResponse> page = service.list(null, Readiness.READY, PageRequest.of(0, 20));
+
+        assertThat(page.getContent()).extracting(EpicResponse::id).contains(readyEpic.id());
+        assertThat(page.getContent()).extracting(EpicResponse::id).doesNotContain(blockedEpic.id());
     }
 
     // ── updateInternal: PATCH preserve semantics ──────────────────────────────────

@@ -22,6 +22,7 @@ import {
 import EditEpicDialog from "@/components/roadmap/EditEpicDialog";
 import CreateStoryDialog from "@/components/roadmap/CreateStoryDialog";
 import ReadinessBadge from "@/components/roadmap/ReadinessBadge";
+import RoadmapReadyToggle from "@/components/roadmap/RoadmapReadyToggle";
 import PageHeader from "@/components/layout/PageHeader";
 import { useNavigate } from "react-router";
 
@@ -51,6 +52,9 @@ export default function EpicDetailPage() {
   const [editOpen, setEditOpen] = useState(false);
   const [createStoryOpen, setCreateStoryOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [readyOnly, setReadyOnly] = useState(false);
+
+  const visibleStories = readyOnly ? stories?.filter((s) => s.readiness === "READY") : stories;
 
   function handleDelete() {
     if (!epicId) return;
@@ -158,6 +162,7 @@ export default function EpicDetailPage() {
 
       <div className="pt-4 border-t">
         <PageHeader title="Stories">
+          <RoadmapReadyToggle checked={readyOnly} onChange={setReadyOnly} />
           <Authorized require="canOperate">
             <Button data-testid="new-story-button" size="sm" onClick={() => setCreateStoryOpen(true)}>
               <Plus className="size-4" />
@@ -169,7 +174,7 @@ export default function EpicDetailPage() {
         <div data-testid="story-list" className="mt-4">
           {storiesLoading &&
             Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} className="h-14 w-full mb-2" />)}
-          {stories?.map((story) => (
+          {visibleStories?.map((story) => (
             <Link
               key={story.id}
               to={`/roadmap/epics/${epic.id}/stories/${story.id}`}
@@ -191,8 +196,13 @@ export default function EpicDetailPage() {
             </Link>
           ))}
           {stories && stories.length === 0 && (
-            <div className="p-6 text-center text-muted-foreground text-sm">
+            <div data-testid="story-list-empty" className="p-6 text-center text-muted-foreground text-sm">
               No stories yet. Click &ldquo;New Story&rdquo; to create one.
+            </div>
+          )}
+          {stories && stories.length > 0 && visibleStories?.length === 0 && (
+            <div data-testid="story-list-empty" className="p-6 text-center text-muted-foreground text-sm">
+              No stories are ready to start. Try turning off the &ldquo;Ready to start&rdquo; filter.
             </div>
           )}
         </div>

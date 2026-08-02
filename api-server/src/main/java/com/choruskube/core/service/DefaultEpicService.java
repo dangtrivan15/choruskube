@@ -16,6 +16,7 @@ import com.choruskube.core.model.SoftwareProject;
 import com.choruskube.core.model.Story;
 import com.choruskube.core.model.Task;
 import com.choruskube.core.model.enums.BlockableItemType;
+import com.choruskube.core.model.enums.Readiness;
 import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.observability.AuditDetail;
 import com.choruskube.core.observability.AuditSink;
@@ -55,6 +56,7 @@ public class DefaultEpicService implements EpicService {
     private final ApplicationEventPublisher applicationEventPublisher;
     private final ScopeProvider scopeProvider;
     private final WorkItemDependencyService workItemDependencyService;
+    private final EpicReadinessAssembler readinessAssembler;
 
     public DefaultEpicService(
             EpicRepository repo,
@@ -67,7 +69,8 @@ public class DefaultEpicService implements EpicService {
             ObjectMapper objectMapper,
             ApplicationEventPublisher applicationEventPublisher,
             ScopeProvider scopeProvider,
-            WorkItemDependencyService workItemDependencyService) {
+            WorkItemDependencyService workItemDependencyService,
+            EpicReadinessAssembler readinessAssembler) {
         this.repo = repo;
         this.storyRepo = storyRepo;
         this.taskRepo = taskRepo;
@@ -79,6 +82,7 @@ public class DefaultEpicService implements EpicService {
         this.applicationEventPublisher = applicationEventPublisher;
         this.scopeProvider = scopeProvider;
         this.workItemDependencyService = workItemDependencyService;
+        this.readinessAssembler = readinessAssembler;
     }
 
     @Override
@@ -121,15 +125,34 @@ public class DefaultEpicService implements EpicService {
 
     @Override
     @Transactional(readOnly = true)
-    public Page<EpicResponse> list(String title, Pageable pageable) {
+    public Page<EpicResponse> list(String title, Readiness readiness, Pageable pageable) {
         Specification<Epic> spec = scopeProvider.scope(Epic.class);
         if (title != null && !title.isBlank()) {
             String pattern = LikePatterns.containsIgnoreCase(title);
             spec = spec.and((root, query, cb) -> cb.like(cb.lower(root.get("title")), pattern));
         }
-        Page<Epic> page = repo.findAll(spec, pageable);
-        List<EpicResponse> content = toResponses(page.getContent());
-        return new PageImpl<>(content, pageable, page.getTotalElements());
+        if (readiness == null) {
+            // Pre-feature path, unchanged: SQL-level pagination. readyItemCount is still populated
+            // on every returned EpicResponse (Decision 2), but pagination itself stays DB-side.
+            Page<Epic> page = repo.findAll(spec, pageable);
+            List<EpicResponse> content = toResponses(page.getContent());
+            return new PageImpl<>(content, pageable, page.getTotalElements());
+        }
+        // Readiness filter active: readyItemCount is not a stored column, so filtering requires
+        // loading every Epic matching the non-readiness filters, computing readiness for all of
+        // them, filtering, then paginating the result in memory (Decision 3).
+        List<Epic> matching = repo.findAll(spec, pageable.getSort());
+        List<EpicResponse> responses = toResponses(matching);
+        List<EpicResponse> filtered = readiness == Readiness.READY
+                ? responses.stream().filter(r -> r.readyItemCount() > 0).toList()
+                // Only READY is a meaningful filter value today (Caveat 4) — any other non-null
+                // Readiness (i.e. BLOCKED) yields no candidates rather than silently falling back
+                // to the unfiltered page.
+                : List.of();
+        int total = filtered.size();
+        int fromIndex = Math.min((int) pageable.getOffset(), total);
+        int toIndex = Math.min(fromIndex + pageable.getPageSize(), total);
+        return new PageImpl<>(filtered.subList(fromIndex, toIndex), pageable, total);
     }
 
     @Override
@@ -302,6 +325,7 @@ public class DefaultEpicService implements EpicService {
                         .collect(Collectors.toMap(SoftwareProject::getId, p -> p));
 
         Map<UUID, RollupCalculator.Rollup> rollupsByEpicId = computeRollups(epics);
+        Map<UUID, Long> readyItemCountsByEpicId = computeReadyItemCounts(epics);
 
         List<EpicResponse> out = new ArrayList<>(epics.size());
         for (Epic e : epics) {
@@ -312,9 +336,36 @@ public class DefaultEpicService implements EpicService {
             }
             RollupCalculator.Rollup rollup =
                     rollupsByEpicId.getOrDefault(e.getId(), new RollupCalculator.Rollup(0, 0, "backlog"));
-            out.add(buildResponse(e, project, rollup));
+            long readyItemCount = readyItemCountsByEpicId.getOrDefault(e.getId(), 0L);
+            out.add(buildResponse(e, project, rollup, readyItemCount));
         }
         return out;
+    }
+
+    /**
+     * Per-Epic "ready to start" rollup (Decision 2): for each Epic, reuses the same
+     * per-Epic {@link EpicReadinessAssembler#loadEpicCandidates}/{@link
+     * EpicReadinessAssembler#assemble} pair the Story/Task list endpoints already use — not the
+     * batched {@link #computeRollups} pattern — so this count stays exactly consistent with the
+     * per-item {@code readiness} the Story/Task lists render (Decision 1). Called with {@code
+     * internal=false, runId=null} since every caller of {@link #list}/{@link #toResponses} is on
+     * the public (request-scoped) path, never the internal run-scoped one.
+     */
+    private Map<UUID, Long> computeReadyItemCounts(List<Epic> epics) {
+        Map<UUID, Long> result = new HashMap<>();
+        for (Epic e : epics) {
+            result.put(e.getId(), computeReadyItemCount(e.getId()));
+        }
+        return result;
+    }
+
+    private long computeReadyItemCount(UUID epicId) {
+        EpicReadinessAssembler.EpicCandidates candidates = readinessAssembler.loadEpicCandidates(epicId);
+        EpicReadinessAssembler.Assembly assembly =
+                readinessAssembler.assemble(candidates.candidateIds(), candidates.statusById(), false, null);
+        return assembly.readinessById().values().stream()
+                .filter(r -> r == Readiness.READY)
+                .count();
     }
 
     /** Batched (N+1-avoiding) rollup computation for a page/list of Epics — one query per level. */
@@ -342,7 +393,8 @@ public class DefaultEpicService implements EpicService {
         return result;
     }
 
-    private EpicResponse buildResponse(Epic e, SoftwareProject project, RollupCalculator.Rollup rollup) {
+    private EpicResponse buildResponse(
+            Epic e, SoftwareProject project, RollupCalculator.Rollup rollup, long readyItemCount) {
         SoftwareProjectRef projectRef = toProjectRef(project);
         List<RepoRef> repos = project.resolveRepos().stream()
                 .map(g -> new RepoRef(g.getId(), g.getUrl(), RepoNameUtil.deriveRepoName(g.getUrl())))
@@ -358,7 +410,8 @@ public class DefaultEpicService implements EpicService {
                 projectRef,
                 repos,
                 e.getCreatedAt(),
-                e.getUpdatedAt());
+                e.getUpdatedAt(),
+                readyItemCount);
     }
 
     private SoftwareProjectRef toProjectRef(SoftwareProject project) {
@@ -418,6 +471,15 @@ public class DefaultEpicService implements EpicService {
         Set<UUID> storyIds = stories.stream().map(Story::getId).collect(Collectors.toSet());
         List<Task> tasks = storyIds.isEmpty() ? List.of() : taskRepo.findByStoryIdIn(storyIds);
         RollupCalculator.Rollup rollup = RollupCalculator.compute(tasks);
-        return buildResponse(e, project, rollup);
+        // readyItemCount is deliberately NOT computed here (left 0): this single-Epic path is
+        // shared by create/update/updateStage/get AND the internal (getInternal/updateInternal)
+        // callers, which authorize cross-Epic external blockers differently (assertSameOrg, no
+        // request-scoped TenantContext) than the public path computeReadyItemCounts always uses
+        // (checkOrgAccess) — computing it here would authorize with the wrong mechanism on the
+        // internal path and double the external-blocker resolution work (and its authorization
+        // calls) for callers like DefaultRoadmapGraphService that already do their own. Only the
+        // list page (Decision 2) populates it — no UI reachable through this single-Epic path
+        // renders readyItemCount today.
+        return buildResponse(e, project, rollup, 0);
     }
 }

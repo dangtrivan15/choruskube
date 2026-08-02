@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.choruskube.core.BaseTest;
 import com.choruskube.core.config.OrgSecurity;
+import com.choruskube.core.dto.CreateDependencyRequest;
 import com.choruskube.core.dto.StoryRequest;
 import com.choruskube.core.dto.TaskRequest;
 import com.choruskube.core.model.Epic;
@@ -24,6 +25,7 @@ import com.choruskube.core.service.RepoGroupService;
 import com.choruskube.core.service.RunEventPublisher;
 import com.choruskube.core.service.StoryService;
 import com.choruskube.core.service.TaskService;
+import com.choruskube.core.service.WorkItemDependencyService;
 import com.choruskube.core.util.RepoNameUtil;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.temporal.client.WorkflowClient;
@@ -73,6 +75,9 @@ public class EpicControllerTest extends BaseTest {
 
     @Autowired
     private TaskRepository taskRepo;
+
+    @Autowired
+    private WorkItemDependencyService dependencyService;
 
     @MockitoBean
     private WorkflowServiceStubs workflowServiceStubs;
@@ -169,6 +174,69 @@ public class EpicControllerTest extends BaseTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.content.length()").value(2))
                 .andExpect(jsonPath("$.totalElements").value(2));
+    }
+
+    // --- GET /epics?readiness= ("ready to start" roadmap filter) ---
+
+    @Test
+    void listEpics_readyFilter_returnsOnlyEpicsWithReadyDescendants() throws Exception {
+        GitRepo repo = createGitRepo("https://github.com/test/ready-filter.git");
+        Epic readyEpic = createEpic(repo, "Ready Epic");
+        storyService.create(readyEpic.getId(), new StoryRequest("Unblocked", "D")); // no incoming edge -> READY
+
+        Epic blockedEpic = createEpic(repo, "Blocked Epic");
+        var blockedStory = storyService.create(blockedEpic.getId(), new StoryRequest("Blocked", "D"));
+        Epic blockerEpic = createEpic(repo, "Blocker Owner Epic");
+        var blockerStory = storyService.create(blockerEpic.getId(), new StoryRequest("Blocker", "D"));
+        dependencyService.create(new CreateDependencyRequest("story", blockerStory.id(), "story", blockedStory.id()));
+
+        mockMvc.perform(get("/api/v1/epics").param("readiness", "READY"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[?(@.id == '" + readyEpic.getId() + "')]")
+                        .exists())
+                .andExpect(jsonPath("$.content[?(@.id == '" + blockedEpic.getId() + "')]")
+                        .doesNotExist());
+    }
+
+    @Test
+    void listEpics_readyFilter_pagesCorrectly() throws Exception {
+        GitRepo repo = createGitRepo("https://github.com/test/ready-filter-paging.git");
+        for (int i = 0; i < 3; i++) {
+            Epic epic = createEpic(repo, "Ready Epic " + i);
+            storyService.create(epic.getId(), new StoryRequest("S" + i, "D"));
+        }
+
+        mockMvc.perform(get("/api/v1/epics").param("readiness", "READY").param("size", "2"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(2))
+                .andExpect(jsonPath("$.totalElements").value(3))
+                .andExpect(jsonPath("$.totalPages").value(2));
+    }
+
+    @Test
+    void listEpics_unsupportedReadinessValue_returns400() throws Exception {
+        mockMvc.perform(get("/api/v1/epics").param("readiness", "not_a_real_readiness"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void listEpics_noFilter_includesReadyItemCountOnEveryEpic() throws Exception {
+        GitRepo repo = createGitRepo("https://github.com/test/ready-count.git");
+        Epic readyEpic = createEpic(repo, "Ready Count Epic");
+        storyService.create(readyEpic.getId(), new StoryRequest("Unblocked", "D"));
+
+        Epic blockedEpic = createEpic(repo, "Blocked Count Epic");
+        var blockedStory = storyService.create(blockedEpic.getId(), new StoryRequest("Blocked", "D"));
+        Epic blockerEpic = createEpic(repo, "Blocker Count Owner Epic");
+        var blockerStory = storyService.create(blockerEpic.getId(), new StoryRequest("Blocker", "D"));
+        dependencyService.create(new CreateDependencyRequest("story", blockerStory.id(), "story", blockedStory.id()));
+
+        mockMvc.perform(get("/api/v1/epics"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[?(@.id == '" + readyEpic.getId() + "')].readyItemCount")
+                        .value(1))
+                .andExpect(jsonPath("$.content[?(@.id == '" + blockedEpic.getId() + "')].readyItemCount")
+                        .value(0));
     }
 
     @Test

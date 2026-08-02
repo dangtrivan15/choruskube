@@ -19,17 +19,26 @@ import type {
  */
 export const EPIC_BOARD_PAGINATION: PaginationParams = { page: 0, size: 200 };
 
-function boardEpicsQueryKey() {
-  return ["epics", { title: undefined, pagination: EPIC_BOARD_PAGINATION }] as const;
+// `readyOnly` takes a real-boolean default (`= false`), not a bare `readyOnly?: boolean`.
+// TanStack Query's default key hasher runs `JSON.stringify` on the query key, which drops
+// object properties whose value is `undefined` — so an optional-with-no-default parameter
+// would let an omitted call bind to `undefined` and hash to a key with no `readyOnly`
+// property at all, which would never match `useEpics`'s own key (always an explicit
+// boolean, see below). The default ensures every call, explicit or omitted, resolves to a
+// real boolean before the key is built, so `useUpdateEpicStage`'s optimistic update always
+// targets the correct (possibly-filtered) board cache entry.
+function boardEpicsQueryKey(readyOnly: boolean = false) {
+  return ["epics", { title: undefined, pagination: EPIC_BOARD_PAGINATION, readyOnly }] as const;
 }
 
-export function useEpics(title?: string, pagination?: PaginationParams) {
+export function useEpics(title?: string, pagination?: PaginationParams, readyOnly: boolean = false) {
   const params: string[] = [];
   if (title) params.push(`title=${encodeURIComponent(title)}`);
+  if (readyOnly) params.push("readiness=READY");
   const queryString = params.length > 0 ? `?${params.join("&")}` : "";
 
   return useQuery({
-    queryKey: ["epics", { title, pagination }],
+    queryKey: ["epics", { title, pagination, readyOnly }],
     queryFn: () =>
       api.getPage<PageResponse<EpicResponse>>(`/epics${queryString}`, pagination),
     refetchInterval: 15_000,
@@ -81,8 +90,17 @@ export function useUpdateEpic() {
  * content-edit guard on the full PUT edit endpoint. Applies an optimistic
  * update to the board's own Epics query so a drag-and-drop move is reflected
  * immediately, then rolls back on error.
+ *
+ * `readyOnly` is required, not optional: it must reflect the board's current
+ * "Ready to start" toggle state (`RoadmapBoardPage`'s own local state) so the
+ * optimistic update targets the currently-active board cache entry —
+ * `boardEpicsQueryKey(readyOnly)` — rather than always the unfiltered one.
+ * Since this hook is re-invoked on every `RoadmapBoardPage` render, its
+ * `onMutate`/`onError` closures always see the current `readyOnly` value
+ * directly; it does not need to be threaded through `mutate()`'s own
+ * arguments.
  */
-export function useUpdateEpicStage() {
+export function useUpdateEpicStage(readyOnly: boolean) {
   const queryClient = useQueryClient();
   const { addEntry } = useActivityFeed();
 
@@ -90,7 +108,7 @@ export function useUpdateEpicStage() {
     mutationFn: ({ id, stage }: { id: string } & EpicStageUpdateRequest) =>
       api.patch<EpicResponse>(`/epics/${id}/stage`, { stage } satisfies EpicStageUpdateRequest),
     onMutate: async ({ id, stage }) => {
-      const queryKey = boardEpicsQueryKey();
+      const queryKey = boardEpicsQueryKey(readyOnly);
       await queryClient.cancelQueries({ queryKey });
 
       // Snapshot only this epic's previous stage, not the whole page: two epics can be

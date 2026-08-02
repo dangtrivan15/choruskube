@@ -12,6 +12,7 @@ export class RoadmapPage {
   readonly newEpicButton: Locator;
   readonly epicList: Locator;
   readonly epicItems: Locator;
+  readonly readyToStartToggle: Locator;
 
   // Epic detail
   readonly epicDetailTitle: Locator;
@@ -75,6 +76,10 @@ export class RoadmapPage {
     this.newEpicButton = page.getByTestId("new-epic-button");
     this.epicList = page.getByTestId("epic-list");
     this.epicItems = page.getByTestId("epic-item");
+    // Shared "Ready to start" toggle (RoadmapReadyToggle) — rendered on each of the Epic
+    // list, Epic detail, and Story detail views this page object covers; only one is ever
+    // mounted at a time since they're separate routes.
+    this.readyToStartToggle = page.getByTestId("ready-to-start-toggle");
 
     this.epicDetailTitle = page.getByTestId("epic-detail-title");
     this.epicDetailDescription = page.getByTestId("epic-detail-description");

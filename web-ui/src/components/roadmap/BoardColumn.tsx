@@ -7,6 +7,8 @@ interface Props {
   stage: EpicStage;
   label: string;
   epics: EpicResponse[];
+  /** Whether the "Ready to start" filter is active — changes the empty-column copy. */
+  readyOnly?: boolean;
 }
 
 /**
@@ -14,7 +16,7 @@ interface Props {
  * rolled_out). Dropping a dragged EpicBoardCard here fires `onDragEnd` in
  * RoadmapBoardPage with this column's `stage` as the drop target.
  */
-export default function BoardColumn({ stage, label, epics }: Props) {
+export default function BoardColumn({ stage, label, epics, readyOnly = false }: Props) {
   const { setNodeRef, isOver } = useDroppable({ id: stage });
 
   return (
@@ -38,8 +40,11 @@ export default function BoardColumn({ stage, label, epics }: Props) {
           <EpicBoardCard key={epic.id} epic={epic} />
         ))}
         {epics.length === 0 && (
-          <div className="rounded-md border border-dashed p-4 text-center text-xs text-muted-foreground">
-            No epics
+          <div
+            data-testid={`board-column-empty-${stage}`}
+            className="rounded-md border border-dashed p-4 text-center text-xs text-muted-foreground"
+          >
+            {readyOnly ? "Nothing ready in this stage" : "No epics"}
           </div>
         )}
       </div>

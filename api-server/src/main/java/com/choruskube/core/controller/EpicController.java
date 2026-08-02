@@ -3,6 +3,7 @@ package com.choruskube.core.controller;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
 import com.choruskube.core.dto.EpicStageUpdateRequest;
+import com.choruskube.core.model.enums.Readiness;
 import com.choruskube.core.service.EpicService;
 import jakarta.validation.Valid;
 import java.util.UUID;
@@ -44,8 +45,14 @@ public class EpicController {
     @GetMapping
     public Page<EpicResponse> list(
             @RequestParam(required = false) String title,
+            // "Ready to start" roadmap filter (Decision 1/3): only READY is a meaningful value
+            // today (Caveat 4), but the param accepts the full Readiness enum for forward
+            // compatibility. An unparseable value 400s via Spring's own enum conversion; a
+            // syntactically valid but unsupported value (e.g. BLOCKED) is accepted here and
+            // handled as "no candidates match" in DefaultEpicService, not silently ignored.
+            @RequestParam(required = false) Readiness readiness,
             @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
-        return service.list(title, pageable);
+        return service.list(title, readiness, pageable);
     }
 
     @PreAuthorize("@orgSecurity.canRead()")

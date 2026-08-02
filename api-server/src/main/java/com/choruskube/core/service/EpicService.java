@@ -3,6 +3,7 @@ package com.choruskube.core.service;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
 import com.choruskube.core.dto.InternalUpdateEpicRequest;
+import com.choruskube.core.model.enums.Readiness;
 import com.choruskube.core.model.enums.WorkItemStatus;
 import java.util.List;
 import java.util.UUID;
@@ -22,7 +23,16 @@ public interface EpicService {
     /** Agent/internal entry: no request-scoped TenantContext; org is asserted against {@code runId}. */
     EpicResponse create(EpicRequest request, UUID runId);
 
-    Page<EpicResponse> list(String title, Pageable pageable);
+    /**
+     * Lists Epics, optionally filtered to those with at least one {@code READY} descendant
+     * Story/Task (roadmap "ready to start" filter, Decision 1/3 of that feature). {@code
+     * readiness == null} preserves the pre-feature behavior exactly (no filter, DB-level
+     * pagination); {@code readiness == Readiness.READY} switches to an in-memory-paginated path
+     * (Decision 3) since {@code readyItemCount} is not a stored column. Every returned {@link
+     * EpicResponse} carries {@code readyItemCount} regardless of whether the filter is active
+     * (Decision 2).
+     */
+    Page<EpicResponse> list(String title, Readiness readiness, Pageable pageable);
 
     EpicResponse get(UUID id);
 

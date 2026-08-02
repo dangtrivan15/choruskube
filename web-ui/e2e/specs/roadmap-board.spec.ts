@@ -70,4 +70,101 @@ test.describe("Roadmap Board", () => {
       await api.deleteEpic(epic.id);
     }
   });
+
+  test("'Ready to start' filter on the board shows only Epics with unblocked work", async ({
+    roadmapBoardPage,
+    api,
+  }) => {
+    const repos = await api.listGitRepos();
+    if (repos.content.length === 0) {
+      test.skip();
+      return;
+    }
+
+    const readyEpic = await api.createEpic({
+      title: `E2E Board Ready Filter Ready Epic ${Date.now()}`,
+      description: "desc",
+      softwareProjectId: repos.content[0].id,
+    });
+    await api.createStory(readyEpic.id, { title: "Unblocked story", description: "desc" });
+
+    const blockedEpic = await api.createEpic({
+      title: `E2E Board Ready Filter Blocked Epic ${Date.now()}`,
+      description: "desc",
+      softwareProjectId: repos.content[0].id,
+    });
+    const blockedStory = await api.createStory(blockedEpic.id, {
+      title: "Blocked story",
+      description: "desc",
+    });
+    const blockerEpic = await api.createEpic({
+      title: `E2E Board Ready Filter Blocker Owner Epic ${Date.now()}`,
+      description: "desc",
+      softwareProjectId: repos.content[0].id,
+    });
+    const blockerStory = await api.createStory(blockerEpic.id, {
+      title: "Blocker story",
+      description: "desc",
+    });
+    await api.createDependency({
+      blockingItemType: "story",
+      blockingItemId: blockerStory.id,
+      blockedItemType: "story",
+      blockedItemId: blockedStory.id,
+    });
+
+    try {
+      await roadmapBoardPage.goto();
+      await roadmapBoardPage.expectCardInColumn(readyEpic.title, "backlog");
+      await roadmapBoardPage.expectCardInColumn(blockedEpic.title, "backlog");
+
+      await roadmapBoardPage.readyToStartToggle.click();
+
+      await roadmapBoardPage.expectCardInColumn(readyEpic.title, "backlog");
+      await expect(roadmapBoardPage.cardByTitle(blockedEpic.title)).toHaveCount(0);
+    } finally {
+      await api.deleteEpic(readyEpic.id);
+      await api.deleteEpic(blockedEpic.id);
+      await api.deleteEpic(blockerEpic.id);
+    }
+  });
+
+  // Scoped as its own test rather than toggling mid-assertion inside the drag spec
+  // above: exercises the boardEpicsQueryKey/useUpdateEpicStage fix from Task 9 (the
+  // stage-update mutation must target the currently-active, filtered cache entry),
+  // not just UI-level filtering.
+  test("drag a card to a new column with the 'Ready to start' toggle on, and confirm the move persists on reload", async ({
+    roadmapBoardPage,
+    api,
+  }) => {
+    const repos = await api.listGitRepos();
+    if (repos.content.length === 0) {
+      test.skip();
+      return;
+    }
+
+    const uniqueTitle = `E2E Board Ready Drag Epic ${Date.now()}`;
+    const epic = await api.createEpic({
+      title: uniqueTitle,
+      description: "Epic for the ready-filtered drag E2E test",
+      softwareProjectId: repos.content[0].id,
+    });
+    await api.createStory(epic.id, { title: "Unblocked story", description: "desc" });
+
+    try {
+      await roadmapBoardPage.goto();
+      await roadmapBoardPage.readyToStartToggle.click();
+      await roadmapBoardPage.expectCardInColumn(uniqueTitle, "backlog");
+
+      await roadmapBoardPage.dragCardToColumn(uniqueTitle, "in_progress");
+      await roadmapBoardPage.expectCardInColumn(uniqueTitle, "in_progress");
+
+      // Reload (the toggle resets, since it's local component state, not URL state) —
+      // the new stage must still be persisted server-side, not just client state.
+      await roadmapBoardPage.goto();
+      await roadmapBoardPage.expectCardInColumn(uniqueTitle, "in_progress");
+    } finally {
+      await api.deleteEpic(epic.id);
+    }
+  });
 });

@@ -34,12 +34,13 @@ function makeEpic(overrides: Partial<EpicResponse> = {}): EpicResponse {
     repos: [],
     createdAt: "2026-04-01T00:00:00Z",
     updatedAt: "2026-04-01T00:00:00Z",
+    readyItemCount: 0,
     ...overrides,
   };
 }
 
-function boardQueryKey() {
-  return ["epics", { title: undefined, pagination: EPIC_BOARD_PAGINATION }] as const;
+function boardQueryKey(readyOnly = false) {
+  return ["epics", { title: undefined, pagination: EPIC_BOARD_PAGINATION, readyOnly }] as const;
 }
 
 function makePage(content: EpicResponse[]): PageResponse<EpicResponse> {
@@ -65,7 +66,7 @@ describe("useUpdateEpicStage", () => {
     mockApi.patch.mockResolvedValueOnce({ ...epic, stage: "in_progress" });
     const { wrapper } = createTestHookWrapper();
 
-    const { result } = renderHook(() => useUpdateEpicStage(), { wrapper });
+    const { result } = renderHook(() => useUpdateEpicStage(false), { wrapper });
 
     result.current.mutate({ id: "epic-1", stage: "in_progress" });
 
@@ -91,7 +92,7 @@ describe("useUpdateEpicStage", () => {
     const epic = makeEpic({ stage: "backlog" });
     queryClient.setQueryData(boardQueryKey(), makePage([epic]));
 
-    const { result } = renderHook(() => useUpdateEpicStage(), { wrapper });
+    const { result } = renderHook(() => useUpdateEpicStage(false), { wrapper });
 
     act(() => {
       result.current.mutate({ id: "epic-1", stage: "in_progress" });
@@ -115,7 +116,7 @@ describe("useUpdateEpicStage", () => {
     const epic = makeEpic({ stage: "backlog" });
     queryClient.setQueryData(boardQueryKey(), makePage([epic]));
 
-    const { result } = renderHook(() => useUpdateEpicStage(), { wrapper });
+    const { result } = renderHook(() => useUpdateEpicStage(false), { wrapper });
 
     act(() => {
       result.current.mutate({ id: "epic-1", stage: "in_progress" });
@@ -125,6 +126,49 @@ describe("useUpdateEpicStage", () => {
 
     const cached = queryClient.getQueryData<PageResponse<EpicResponse>>(boardQueryKey());
     expect(cached?.content[0].stage).toBe("backlog");
+  });
+
+  it("with the 'Ready to start' toggle on, optimistically updates and rolls back the readyOnly:true cache entry, not the unfiltered one", async () => {
+    // Regression guard for boardEpicsQueryKey's readyOnly parameterization: this hook must
+    // target the cache entry matching the board's *current* toggle state, not always the
+    // unfiltered (readyOnly: false) one.
+    let rejectPatch: (err: Error) => void;
+    mockApi.patch.mockReturnValueOnce(
+      new Promise<EpicResponse>((_resolve, reject) => {
+        rejectPatch = reject;
+      })
+    );
+
+    const { wrapper, queryClient } = createTestHookWrapper();
+    queryClient.setQueryDefaults(["epics"], { gcTime: Infinity });
+    const readyEpic = makeEpic({ stage: "backlog" });
+    const unfilteredEpic = makeEpic({ stage: "backlog" });
+    queryClient.setQueryData(boardQueryKey(true), makePage([readyEpic]));
+    queryClient.setQueryData(boardQueryKey(false), makePage([unfilteredEpic]));
+
+    const { result } = renderHook(() => useUpdateEpicStage(true), { wrapper });
+
+    act(() => {
+      result.current.mutate({ id: "epic-1", stage: "in_progress" });
+    });
+
+    await waitFor(() => {
+      const cached = queryClient.getQueryData<PageResponse<EpicResponse>>(boardQueryKey(true));
+      expect(cached?.content[0].stage).toBe("in_progress");
+    });
+    // The unfiltered (readyOnly: false) entry must be untouched.
+    expect(
+      queryClient.getQueryData<PageResponse<EpicResponse>>(boardQueryKey(false))?.content[0].stage
+    ).toBe("backlog");
+
+    act(() => {
+      rejectPatch!(new Error("boom"));
+    });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    expect(
+      queryClient.getQueryData<PageResponse<EpicResponse>>(boardQueryKey(true))?.content[0].stage
+    ).toBe("backlog");
   });
 
   it("rolling back a failed mutation does not clobber a different epic's concurrent optimistic move", async () => {
@@ -148,8 +192,8 @@ describe("useUpdateEpicStage", () => {
     const epic2 = makeEpic({ id: "epic-2", stage: "backlog" });
     queryClient.setQueryData(boardQueryKey(), makePage([epic1, epic2]));
 
-    const { result: resultA } = renderHook(() => useUpdateEpicStage(), { wrapper });
-    const { result: resultB } = renderHook(() => useUpdateEpicStage(), { wrapper });
+    const { result: resultA } = renderHook(() => useUpdateEpicStage(false), { wrapper });
+    const { result: resultB } = renderHook(() => useUpdateEpicStage(false), { wrapper });
 
     // A: epic-1 -> in_progress (left pending).
     act(() => {
@@ -203,8 +247,8 @@ describe("useUpdateEpicStage", () => {
     const epic1 = makeEpic({ id: "epic-1", stage: "backlog" });
     queryClient.setQueryData(boardQueryKey(), makePage([epic1]));
 
-    const { result: resultA } = renderHook(() => useUpdateEpicStage(), { wrapper });
-    const { result: resultB } = renderHook(() => useUpdateEpicStage(), { wrapper });
+    const { result: resultA } = renderHook(() => useUpdateEpicStage(false), { wrapper });
+    const { result: resultB } = renderHook(() => useUpdateEpicStage(false), { wrapper });
 
     // A: epic-1 backlog -> in_progress (left pending).
     act(() => {

@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router";
 import { List, ListChecks } from "lucide-react";
 import {
@@ -15,6 +15,7 @@ import type { EpicResponse, EpicStage } from "@/lib/types";
 import { Skeleton } from "@/components/ui/skeleton";
 import PageHeader from "@/components/layout/PageHeader";
 import BoardColumn from "@/components/roadmap/BoardColumn";
+import RoadmapReadyToggle from "@/components/roadmap/RoadmapReadyToggle";
 
 const COLUMNS: { stage: EpicStage; label: string }[] = [
   { stage: "backlog", label: "Backlog" },
@@ -28,8 +29,9 @@ const COLUMNS: { stage: EpicStage; label: string }[] = [
  * a drop back into the same column is a no-op and never calls the mutation.
  */
 export default function RoadmapBoardPage() {
-  const { data: pageData, isLoading } = useEpics(undefined, EPIC_BOARD_PAGINATION);
-  const updateStage = useUpdateEpicStage();
+  const [readyOnly, setReadyOnly] = useState(false);
+  const { data: pageData, isLoading } = useEpics(undefined, EPIC_BOARD_PAGINATION, readyOnly);
+  const updateStage = useUpdateEpicStage(readyOnly);
   useRoadmapSubscription();
 
   const sensors = useSensors(
@@ -90,6 +92,7 @@ export default function RoadmapBoardPage() {
           <List className="size-4" />
           List view
         </Link>
+        <RoadmapReadyToggle checked={readyOnly} onChange={setReadyOnly} />
       </PageHeader>
 
       {isLoading && (
@@ -104,7 +107,13 @@ export default function RoadmapBoardPage() {
         <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
           <div data-testid="roadmap-board" className="mt-4 flex flex-1 gap-4 overflow-x-auto">
             {COLUMNS.map((c) => (
-              <BoardColumn key={c.stage} stage={c.stage} label={c.label} epics={byStage[c.stage]} />
+              <BoardColumn
+                key={c.stage}
+                stage={c.stage}
+                label={c.label}
+                epics={byStage[c.stage]}
+                readyOnly={readyOnly}
+              />
             ))}
           </div>
         </DndContext>

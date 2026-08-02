@@ -336,6 +336,12 @@ export interface EpicResponse {
   repos: RepoRef[];
   createdAt: string;
   updatedAt: string;
+  /**
+   * Count of this Epic's descendant Stories/Tasks with `readiness === "READY"`
+   * (roadmap "ready to start" filter) — computed at read time, never stored.
+   * Populated on every EpicResponse, not just filtered ones.
+   */
+  readyItemCount: number;
 }
 
 export interface EpicStageUpdateRequest {

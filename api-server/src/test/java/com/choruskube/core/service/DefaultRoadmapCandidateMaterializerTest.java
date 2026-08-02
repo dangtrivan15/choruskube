@@ -39,7 +39,7 @@ class DefaultRoadmapCandidateMaterializerTest {
     }
 
     private static EpicResponse epicResponse(UUID id) {
-        return new EpicResponse(id, "t", "d", "m", "open", "active", null, null, null, Instant.now(), Instant.now());
+        return new EpicResponse(id, "t", "d", "m", "open", "active", null, null, null, Instant.now(), Instant.now(), 0);
     }
 
     private static StoryResponse storyResponse(UUID id, UUID epicId) {
