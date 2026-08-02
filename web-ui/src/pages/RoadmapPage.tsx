@@ -13,6 +13,7 @@ import TruncatedText from "@/components/ui/TruncatedText";
 import Pagination from "@/components/ui/Pagination";
 import SortDropdown from "@/components/ui/SortDropdown";
 import CreateEpicDialog from "@/components/roadmap/CreateEpicDialog";
+import RoadmapReadyToggle from "@/components/roadmap/RoadmapReadyToggle";
 import PageHeader from "@/components/layout/PageHeader";
 
 const SORT_OPTIONS = [
@@ -44,9 +45,10 @@ export default function RoadmapPage() {
   const [page, setPage] = useState(0);
   const [sort, setSort] = useState<SortParam | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [readyOnly, setReadyOnly] = useState(false);
 
   const pagination: PaginationParams = { page, size: 20, sort };
-  const { data: pageData, isLoading } = useEpics(undefined, pagination);
+  const { data: pageData, isLoading } = useEpics(undefined, pagination, readyOnly);
   const epics = pageData?.content;
   useRoadmapSubscription();
 
@@ -61,6 +63,7 @@ export default function RoadmapPage() {
           <LayoutGrid className="size-4" />
           Board view
         </Link>
+        <RoadmapReadyToggle checked={readyOnly} onChange={setReadyOnly} />
         <SortDropdown options={SORT_OPTIONS} currentSort={sort} onSort={setSort} />
         <Authorized require="canOperate">
           <Button data-testid="new-epic-button" size="sm" onClick={() => setCreateOpen(true)}>
@@ -121,8 +124,12 @@ export default function RoadmapPage() {
           );
         })}
         {epics && epics.length === 0 && (
-          <div className="p-6 text-center text-muted-foreground text-sm">
-            No epics yet. Click &ldquo;New Epic&rdquo; to create one.
+          <div data-testid="epic-list-empty" className="p-6 text-center text-muted-foreground text-sm">
+            {readyOnly ? (
+              <>No epics currently have ready work. Try turning off the &ldquo;Ready to start&rdquo; filter.</>
+            ) : (
+              <>No epics yet. Click &ldquo;New Epic&rdquo; to create one.</>
+            )}
           </div>
         )}
       </div>

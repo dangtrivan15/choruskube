@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "@/__tests__/test-utils";
 import StoryDetailPage from "@/pages/StoryDetailPage";
 import type { StoryResponse, TaskResponse } from "@/lib/types";
@@ -141,5 +142,42 @@ describe("StoryDetailPage", () => {
     mockUseTasks.mockReturnValue({ data: [], isLoading: false });
     renderWithProviders(<StoryDetailPage />);
     expect(screen.getByText(/No tasks yet/)).toBeInTheDocument();
+  });
+
+  // --- "Ready to start" filter (client-side, over already-fetched data) ---
+
+  it("toggling the filter hides BLOCKED task rows without re-parameterizing useTasks", async () => {
+    mockUseStory.mockReturnValue({ data: makeStory(), isLoading: false });
+    mockUseTasks.mockReturnValue({
+      data: [
+        makeTask({ id: "task-ready", title: "Ready Task", readiness: "READY" }),
+        makeTask({ id: "task-blocked", title: "Blocked Task", readiness: "BLOCKED" }),
+      ],
+      isLoading: false,
+    });
+    renderWithProviders(<StoryDetailPage />);
+    expect(screen.getByText("Blocked Task")).toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("ready-to-start-toggle"));
+
+    expect(screen.queryByText("Blocked Task")).not.toBeInTheDocument();
+    expect(screen.getByText("Ready Task")).toBeInTheDocument();
+    // The filter is purely local — useTasks must never be called with anything but the
+    // storyId, i.e. toggling never fires a new network request.
+    mockUseTasks.mock.calls.forEach((call) => expect(call).toEqual(["story-1"]));
+  });
+
+  it("shows filter-specific empty-state copy when the filter yields zero results despite non-empty task data", async () => {
+    mockUseStory.mockReturnValue({ data: makeStory(), isLoading: false });
+    mockUseTasks.mockReturnValue({ data: [makeTask({ readiness: "BLOCKED" })], isLoading: false });
+    renderWithProviders(<StoryDetailPage />);
+    const user = userEvent.setup();
+
+    expect(screen.queryByText(/No tasks are ready to start/)).not.toBeInTheDocument();
+
+    await user.click(screen.getByTestId("ready-to-start-toggle"));
+
+    expect(screen.getByText(/No tasks are ready to start/)).toBeInTheDocument();
   });
 });

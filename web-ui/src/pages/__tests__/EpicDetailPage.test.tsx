@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "@/__tests__/test-utils";
 import EpicDetailPage from "@/pages/EpicDetailPage";
 import type { EpicResponse, StoryResponse } from "@/lib/types";
@@ -70,6 +71,7 @@ function makeEpic(overrides: Partial<EpicResponse> = {}): EpicResponse {
     repos: [],
     createdAt: "2026-04-01T00:00:00Z",
     updatedAt: "2026-04-01T00:00:00Z",
+    readyItemCount: 0,
     ...overrides,
   };
 }
@@ -157,5 +159,42 @@ describe("EpicDetailPage", () => {
     mockUseStories.mockReturnValue({ data: [], isLoading: false });
     renderWithProviders(<EpicDetailPage />);
     expect(screen.getByText(/No stories yet/)).toBeInTheDocument();
+  });
+
+  // --- "Ready to start" filter (client-side, over already-fetched data) ---
+
+  it("toggling the filter hides BLOCKED story rows without re-parameterizing useStories", async () => {
+    mockUseEpic.mockReturnValue({ data: makeEpic(), isLoading: false });
+    mockUseStories.mockReturnValue({
+      data: [
+        makeStory({ id: "story-ready", title: "Ready Story", readiness: "READY" }),
+        makeStory({ id: "story-blocked", title: "Blocked Story", readiness: "BLOCKED" }),
+      ],
+      isLoading: false,
+    });
+    renderWithProviders(<EpicDetailPage />);
+    expect(screen.getByText("Blocked Story")).toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("ready-to-start-toggle"));
+
+    expect(screen.queryByText("Blocked Story")).not.toBeInTheDocument();
+    expect(screen.getByText("Ready Story")).toBeInTheDocument();
+    // The filter is purely local — useStories must never be called with anything but the
+    // epicId, i.e. toggling never fires a new network request.
+    mockUseStories.mock.calls.forEach((call) => expect(call).toEqual(["epic-1"]));
+  });
+
+  it("shows filter-specific empty-state copy when the filter yields zero results despite non-empty story data", async () => {
+    mockUseEpic.mockReturnValue({ data: makeEpic(), isLoading: false });
+    mockUseStories.mockReturnValue({ data: [makeStory({ readiness: "BLOCKED" })], isLoading: false });
+    renderWithProviders(<EpicDetailPage />);
+    const user = userEvent.setup();
+
+    expect(screen.queryByText(/No stories are ready to start/)).not.toBeInTheDocument();
+
+    await user.click(screen.getByTestId("ready-to-start-toggle"));
+
+    expect(screen.getByText(/No stories are ready to start/)).toBeInTheDocument();
   });
 });

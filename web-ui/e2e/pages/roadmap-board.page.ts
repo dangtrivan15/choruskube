@@ -13,6 +13,7 @@ export class RoadmapBoardPage {
   readonly listViewLink: Locator;
   readonly board: Locator;
   readonly cards: Locator;
+  readonly readyToStartToggle: Locator;
 
   constructor(page: Page) {
     this.page = page;
@@ -21,6 +22,7 @@ export class RoadmapBoardPage {
     this.listViewLink = page.getByTestId("roadmap-board-list-view-link");
     this.board = page.getByTestId("roadmap-board");
     this.cards = page.getByTestId("epic-board-card");
+    this.readyToStartToggle = page.getByTestId("ready-to-start-toggle");
   }
 
   async goto() {

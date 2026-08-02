@@ -71,6 +71,7 @@ function makeEpic(overrides: Partial<EpicResponse> = {}): EpicResponse {
     repos: [],
     createdAt: "2026-04-01T00:00:00Z",
     updatedAt: "2026-04-01T00:00:00Z",
+    readyItemCount: 0,
     ...overrides,
   };
 }
@@ -265,5 +266,140 @@ describe("RoadmapBoardPage", () => {
     stompState.callback!({ body: "{}" });
 
     await waitFor(() => expect(mockApi.getPage).toHaveBeenCalledTimes(2));
+  });
+
+  // --- "Ready to start" filter ---
+
+  it("toggling the filter reduces visible cards per column", async () => {
+    const readyEpic = makeEpic({ id: "epic-1", title: "Ready Epic", stage: "backlog" });
+    const blockedEpic = makeEpic({ id: "epic-2", title: "Blocked Epic", stage: "backlog" });
+    mockApi.getPage.mockImplementation((path: string) =>
+      Promise.resolve(
+        path.includes("readiness=READY") ? makePage([readyEpic]) : makePage([readyEpic, blockedEpic])
+      )
+    );
+
+    renderWithProviders(<RoadmapBoardPage />);
+    await waitFor(() => expect(screen.getByText("Blocked Epic")).toBeInTheDocument());
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("ready-to-start-toggle"));
+
+    await waitFor(() => expect(screen.queryByText("Blocked Epic")).not.toBeInTheDocument());
+    expect(screen.getByText("Ready Epic")).toBeInTheDocument();
+  });
+
+  it("existing drag-and-drop still works with the toggle off (regression guard)", async () => {
+    const epic = makeEpic({ id: "epic-1", title: "Off-State Movable Epic", stage: "backlog" });
+    mockApi.getPage
+      .mockResolvedValueOnce(makePage([epic]))
+      .mockResolvedValueOnce(makePage([{ ...epic, stage: "in_progress" }]));
+    mockApi.patch.mockResolvedValueOnce({ ...epic, stage: "in_progress" });
+
+    renderWithProviders(<RoadmapBoardPage />);
+    await waitFor(() => expect(screen.getByText("Off-State Movable Epic")).toBeInTheDocument());
+
+    dndState.onDragEnd!({
+      active: { id: "epic-1", data: { current: { stage: "backlog" } } },
+      over: { id: "in_progress" },
+    });
+
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId("board-column-in_progress")).getByText("Off-State Movable Epic")
+      ).toBeInTheDocument()
+    );
+  });
+
+  it("dragging a card with the 'Ready to start' toggle ON optimistically updates the filtered (readyOnly: true) board before the mutation resolves", async () => {
+    // Regression guard for boardEpicsQueryKey's readyOnly parameterization (Task 9): if the
+    // optimistic update wrote to the unfiltered cache entry while the board is actively
+    // rendering the readyOnly:true one, this move would not be visible until the mutation
+    // settles and a refetch reconciles it — so asserting it *before* the patch resolves
+    // proves the optimistic write targeted the right entry.
+    const epic = makeEpic({ id: "epic-1", title: "Ready Movable Epic", stage: "backlog" });
+    mockApi.getPage.mockResolvedValue(makePage([epic]));
+    let resolvePatch: (value: EpicResponse) => void;
+    mockApi.patch.mockReturnValueOnce(
+      new Promise<EpicResponse>((resolve) => {
+        resolvePatch = resolve;
+      })
+    );
+
+    renderWithProviders(<RoadmapBoardPage />);
+    await waitFor(() => expect(screen.getByText("Ready Movable Epic")).toBeInTheDocument());
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("ready-to-start-toggle"));
+    await waitFor(() =>
+      expect(mockApi.getPage).toHaveBeenLastCalledWith(
+        expect.stringContaining("readiness=READY"),
+        expect.anything()
+      )
+    );
+
+    dndState.onDragEnd!({
+      active: { id: "epic-1", data: { current: { stage: "backlog" } } },
+      over: { id: "in_progress" },
+    });
+
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId("board-column-in_progress")).getByText("Ready Movable Epic")
+      ).toBeInTheDocument()
+    );
+
+    resolvePatch!({ ...epic, stage: "in_progress" });
+  });
+
+  it("dragging a card with the toggle OFF optimistically updates the unfiltered (readyOnly: false) board before the mutation resolves", async () => {
+    // Companion to the ON-state case above — a regression guard specifically for making
+    // `readyOnly` a required (not optional) parameter in Task 9: an implicit-`undefined`
+    // call would only surface as a cache-key mismatch in this off-state case, not the
+    // on-state one, since the off state is TanStack Query's default query key already.
+    const epic = makeEpic({ id: "epic-1", title: "Off Movable Epic", stage: "backlog" });
+    mockApi.getPage.mockResolvedValue(makePage([epic]));
+    let resolvePatch: (value: EpicResponse) => void;
+    mockApi.patch.mockReturnValueOnce(
+      new Promise<EpicResponse>((resolve) => {
+        resolvePatch = resolve;
+      })
+    );
+
+    renderWithProviders(<RoadmapBoardPage />);
+    await waitFor(() => expect(screen.getByText("Off Movable Epic")).toBeInTheDocument());
+
+    dndState.onDragEnd!({
+      active: { id: "epic-1", data: { current: { stage: "backlog" } } },
+      over: { id: "in_progress" },
+    });
+
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId("board-column-in_progress")).getByText("Off Movable Epic")
+      ).toBeInTheDocument()
+    );
+
+    resolvePatch!({ ...epic, stage: "in_progress" });
+  });
+
+  it("shows filter-aware empty-column copy for empty stages when the 'Ready to start' filter is active", async () => {
+    const epic = makeEpic({ id: "epic-1", title: "Ready Epic", stage: "backlog" });
+    mockApi.getPage.mockResolvedValue(makePage([epic]));
+
+    renderWithProviders(<RoadmapBoardPage />);
+    await waitFor(() => expect(screen.getByText("Ready Epic")).toBeInTheDocument());
+    expect(
+      within(screen.getByTestId("board-column-in_progress")).getByText("No epics")
+    ).toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("ready-to-start-toggle"));
+
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId("board-column-in_progress")).getByText("Nothing ready in this stage")
+      ).toBeInTheDocument()
+    );
   });
 });

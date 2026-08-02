@@ -8,7 +8,7 @@ import type { EpicResponse } from "@/lib/types";
 const mockUseEpics = vi.fn();
 
 vi.mock("@/hooks/useEpics", () => ({
-  useEpics: () => mockUseEpics(),
+  useEpics: (...args: unknown[]) => mockUseEpics(...args),
   useCreateEpic: () => ({
     mutate: vi.fn(),
     isPending: false,
@@ -42,6 +42,7 @@ function makeEpic(overrides: Partial<EpicResponse> = {}): EpicResponse {
     repos: [],
     createdAt: "2026-04-01T00:00:00Z",
     updatedAt: "2026-04-01T00:00:00Z",
+    readyItemCount: 0,
     ...overrides,
   };
 }
@@ -123,5 +124,49 @@ describe("RoadmapPage", () => {
     const user = userEvent.setup();
     await user.click(screen.getByTestId("new-epic-button"));
     expect(screen.getByRole("heading", { name: "New Epic" })).toBeInTheDocument();
+  });
+
+  // --- "Ready to start" filter ---
+
+  it("toggling the filter re-issues the query with readyOnly=true", async () => {
+    mockUseEpics.mockReturnValue({ data: emptyPage, isLoading: false });
+    renderWithProviders(<RoadmapPage />);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByTestId("ready-to-start-toggle"));
+
+    const lastCall = mockUseEpics.mock.calls[mockUseEpics.mock.calls.length - 1];
+    expect(lastCall?.[2]).toBe(true);
+  });
+
+  it("toggling off restores the unfiltered query", async () => {
+    mockUseEpics.mockReturnValue({ data: emptyPage, isLoading: false });
+    renderWithProviders(<RoadmapPage />);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByTestId("ready-to-start-toggle"));
+    await user.click(screen.getByTestId("ready-to-start-toggle"));
+
+    const lastCall = mockUseEpics.mock.calls[mockUseEpics.mock.calls.length - 1];
+    expect(lastCall?.[2]).toBe(false);
+  });
+
+  it("shows filter-specific empty-state copy when the filter yields zero results despite non-empty underlying data", async () => {
+    mockUseEpics.mockImplementation((_title?: string, _pagination?: unknown, readyOnly?: boolean) =>
+      readyOnly
+        ? { data: emptyPage, isLoading: false }
+        : {
+            data: { ...emptyPage, content: [makeEpic()], totalElements: 1, empty: false },
+            isLoading: false,
+          }
+    );
+    renderWithProviders(<RoadmapPage />);
+    const user = userEvent.setup();
+
+    expect(screen.queryByText(/No epics currently have ready work/)).not.toBeInTheDocument();
+
+    await user.click(screen.getByTestId("ready-to-start-toggle"));
+
+    expect(screen.getByText(/No epics currently have ready work/)).toBeInTheDocument();
   });
 });

@@ -587,7 +587,8 @@ class InternalRunServiceEpicTest {
                 new SoftwareProjectRef(projectId, "git_repo", "name"),
                 List.of(),
                 null,
-                null);
+                null,
+                0);
     }
 
     private WorkflowRun createRun(UUID runId, UUID templateId, String inputs) {

@@ -236,4 +236,61 @@ test.describe("Roadmap drill-down", () => {
     // descendant Task (see run-lifecycle.spec.ts's breadcrumb test) — the
     // Date.now() title keeps this fixture from colliding with other runs.
   });
+
+  test("'Ready to start' filter on the Roadmap list shows only Epics with unblocked work", async ({
+    roadmapPage,
+    api,
+  }) => {
+    const repos = await api.listGitRepos();
+    if (repos.content.length === 0) {
+      test.skip();
+      return;
+    }
+
+    const readyEpic = await api.createEpic({
+      title: `E2E Ready Filter Ready Epic ${Date.now()}`,
+      description: "desc",
+      softwareProjectId: repos.content[0].id,
+    });
+    await api.createStory(readyEpic.id, { title: "Unblocked story", description: "desc" });
+
+    const blockedEpic = await api.createEpic({
+      title: `E2E Ready Filter Blocked Epic ${Date.now()}`,
+      description: "desc",
+      softwareProjectId: repos.content[0].id,
+    });
+    const blockedStory = await api.createStory(blockedEpic.id, {
+      title: "Blocked story",
+      description: "desc",
+    });
+    const blockerEpic = await api.createEpic({
+      title: `E2E Ready Filter Blocker Owner Epic ${Date.now()}`,
+      description: "desc",
+      softwareProjectId: repos.content[0].id,
+    });
+    const blockerStory = await api.createStory(blockerEpic.id, {
+      title: "Blocker story",
+      description: "desc",
+    });
+    await api.createDependency({
+      blockingItemType: "story",
+      blockingItemId: blockerStory.id,
+      blockedItemType: "story",
+      blockedItemId: blockedStory.id,
+    });
+
+    await roadmapPage.goto();
+    await expect(roadmapPage.epicItems.filter({ hasText: readyEpic.title })).toBeVisible();
+    await expect(roadmapPage.epicItems.filter({ hasText: blockedEpic.title })).toBeVisible();
+
+    await roadmapPage.readyToStartToggle.click();
+
+    await expect(roadmapPage.epicItems.filter({ hasText: readyEpic.title })).toBeVisible();
+    await expect(roadmapPage.epicItems.filter({ hasText: blockedEpic.title })).toHaveCount(0);
+
+    // Clean up.
+    await api.deleteEpic(readyEpic.id);
+    await api.deleteEpic(blockedEpic.id);
+    await api.deleteEpic(blockerEpic.id);
+  });
 });

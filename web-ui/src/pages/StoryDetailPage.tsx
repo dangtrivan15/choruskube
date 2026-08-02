@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/dialog";
 import CreateTaskDialog from "@/components/roadmap/CreateTaskDialog";
 import ReadinessBadge from "@/components/roadmap/ReadinessBadge";
+import RoadmapReadyToggle from "@/components/roadmap/RoadmapReadyToggle";
 import PageHeader from "@/components/layout/PageHeader";
 
 function statusBadge(status: string) {
@@ -47,6 +48,9 @@ export default function StoryDetailPage() {
 
   const [createTaskOpen, setCreateTaskOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [readyOnly, setReadyOnly] = useState(false);
+
+  const visibleTasks = readyOnly ? tasks?.filter((t) => t.readiness === "READY") : tasks;
 
   function handleDelete() {
     if (!storyId || !epicId) return;
@@ -114,6 +118,7 @@ export default function StoryDetailPage() {
 
       <div className="pt-4 border-t">
         <PageHeader title="Tasks">
+          <RoadmapReadyToggle checked={readyOnly} onChange={setReadyOnly} />
           <Authorized require="canOperate">
             <Button data-testid="new-task-button" size="sm" onClick={() => setCreateTaskOpen(true)}>
               <Plus className="size-4" />
@@ -125,7 +130,7 @@ export default function StoryDetailPage() {
         <div data-testid="task-list" className="mt-4">
           {tasksLoading &&
             Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} className="h-14 w-full mb-2" />)}
-          {tasks?.map((task) => (
+          {visibleTasks?.map((task) => (
             <Link
               key={task.id}
               to={`/tasks/${task.id}`}
@@ -144,8 +149,13 @@ export default function StoryDetailPage() {
             </Link>
           ))}
           {tasks && tasks.length === 0 && (
-            <div className="p-6 text-center text-muted-foreground text-sm">
+            <div data-testid="task-list-empty" className="p-6 text-center text-muted-foreground text-sm">
               No tasks yet. Click &ldquo;New Task&rdquo; to create one.
+            </div>
+          )}
+          {tasks && tasks.length > 0 && visibleTasks?.length === 0 && (
+            <div data-testid="task-list-empty" className="p-6 text-center text-muted-foreground text-sm">
+              No tasks are ready to start. Try turning off the &ldquo;Ready to start&rdquo; filter.
             </div>
           )}
         </div>
