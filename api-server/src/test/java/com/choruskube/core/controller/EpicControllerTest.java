@@ -220,6 +220,22 @@ public class EpicControllerTest extends BaseTest {
     }
 
     @Test
+    void listEpics_blockedReadinessValue_returnsEmptyPage_notUnfilteredFallback() throws Exception {
+        // BLOCKED is a syntactically valid Readiness enum value, so it doesn't hit the 400 path
+        // above — it must instead be treated as "no candidates match" (Caveat 4), not silently
+        // fall back to the unfiltered page. Seed an Epic that would appear in both the unfiltered
+        // list and the READY-filtered list, to prove ?readiness=BLOCKED excludes it too.
+        GitRepo repo = createGitRepo("https://github.com/test/ready-filter-blocked-value.git");
+        Epic readyEpic = createEpic(repo, "Ready Epic For Blocked Value Filter");
+        storyService.create(readyEpic.getId(), new StoryRequest("Unblocked", "D"));
+
+        mockMvc.perform(get("/api/v1/epics").param("readiness", "BLOCKED"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(0))
+                .andExpect(jsonPath("$.totalElements").value(0));
+    }
+
+    @Test
     void listEpics_noFilter_includesReadyItemCountOnEveryEpic() throws Exception {
         GitRepo repo = createGitRepo("https://github.com/test/ready-count.git");
         Epic readyEpic = createEpic(repo, "Ready Count Epic");
