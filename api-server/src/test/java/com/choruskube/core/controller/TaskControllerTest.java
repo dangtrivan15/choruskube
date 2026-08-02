@@ -187,13 +187,17 @@ public class TaskControllerTest extends BaseTest {
 
         mockMvc.perform(get("/api/v1/tasks").param("status", "backlog"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.content[?(@.id=='" + backlogTask.id() + "')]").exists())
-                .andExpect(jsonPath("$.content[?(@.id=='" + startedTask.id() + "')]").doesNotExist());
+                .andExpect(jsonPath("$.content[?(@.id=='" + backlogTask.id() + "')]")
+                        .exists())
+                .andExpect(jsonPath("$.content[?(@.id=='" + startedTask.id() + "')]")
+                        .doesNotExist());
 
         mockMvc.perform(get("/api/v1/tasks").param("status", "in_progress"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.content[?(@.id=='" + startedTask.id() + "')]").exists())
-                .andExpect(jsonPath("$.content[?(@.id=='" + backlogTask.id() + "')]").doesNotExist());
+                .andExpect(jsonPath("$.content[?(@.id=='" + startedTask.id() + "')]")
+                        .exists())
+                .andExpect(jsonPath("$.content[?(@.id=='" + backlogTask.id() + "')]")
+                        .doesNotExist());
     }
 
     @Test
