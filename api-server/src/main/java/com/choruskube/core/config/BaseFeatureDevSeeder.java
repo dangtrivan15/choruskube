@@ -602,11 +602,20 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
               build on or challenge prior decisions without reverting them.
 
             **Code fixes go to git, not to object storage.** When you apply a fix, edit
-            the code in `/workspace/repo/...`, run the relevant tests locally,
-            then `git add` → `git commit -m "review: <what you fixed>"` →
+            the code in `/workspace/repo/...`, verify it as scoped below, then
+            `git add` → `git commit -m "review: <what you fixed>"` →
             `git push origin HEAD`. The branch state is the source of truth;
             Push & Create PR later reads from this branch. Do NOT write code to
             `/workspace/out/`.
+
+            **Scope verification to what you changed.** Run only what covers the
+            files you touched — a single test class, one spec file, a typecheck
+            or lint of the affected package. Do NOT run the full suite: no
+            `-Pe2e`, no bare `./gradlew test`, no whole-repo test run. A
+            dedicated Test node runs the full suite on this same branch
+            immediately after you, so repeating it here costs the run tens of
+            minutes and adds no signal. If a change is only provable by the full
+            suite, say so in `review.md` and let the Test node prove it.
 
             ## Review checklist — fix or escalate for ANY of these in ANY repo
 
