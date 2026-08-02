@@ -32,6 +32,7 @@ import com.choruskube.core.repository.SoftwareProjectRepository;
 import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
+import com.choruskube.core.scope.ScopeProvider;
 import com.choruskube.core.util.RepoNameUtil;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.LinkedHashMap;
@@ -43,8 +44,10 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -87,6 +90,7 @@ public class DefaultTaskService implements TaskService {
     // Populates `readiness` on list() responses (Decision 1) via the same Epic-bounded assembly
     // the Roadmap Graph View uses (Decision 2/3), so the two can never disagree.
     private final EpicReadinessAssembler readinessAssembler;
+    private final ScopeProvider scopeProvider;
 
     public DefaultTaskService(
             TaskRepository repo,
@@ -102,7 +106,8 @@ public class DefaultTaskService implements TaskService {
             ObjectMapper objectMapper,
             ApplicationEventPublisher applicationEventPublisher,
             WorkItemDependencyService workItemDependencyService,
-            EpicReadinessAssembler readinessAssembler) {
+            EpicReadinessAssembler readinessAssembler,
+            ScopeProvider scopeProvider) {
         this.repo = repo;
         this.storyRepo = storyRepo;
         this.epicRepo = epicRepo;
@@ -117,6 +122,7 @@ public class DefaultTaskService implements TaskService {
         this.applicationEventPublisher = applicationEventPublisher;
         this.workItemDependencyService = workItemDependencyService;
         this.readinessAssembler = readinessAssembler;
+        this.scopeProvider = scopeProvider;
     }
 
     @Override
@@ -197,6 +203,19 @@ public class DefaultTaskService implements TaskService {
         return ownTasks.stream()
                 .map(t -> toResponse(t, assembly.readinessById().get(t.getId())))
                 .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<TaskResponse> list(WorkItemStatus status, Pageable pageable) {
+        Specification<Task> spec = scopeProvider.scope(Task.class);
+        if (status != null) {
+            spec = spec.and((root, query, cb) -> cb.equal(root.get("status"), status));
+        }
+        Page<Task> page = repo.findAll(spec, pageable);
+        List<TaskResponse> content =
+                page.getContent().stream().map(this::toResponse).toList();
+        return new PageImpl<>(content, pageable, page.getTotalElements());
     }
 
     @Override

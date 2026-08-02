@@ -39,6 +39,7 @@ import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -258,6 +259,64 @@ public class DefaultTaskServiceTest extends BaseTest {
         TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
 
         assertThatThrownBy(() -> service.complete(task.id())).isInstanceOf(ConflictException.class);
+    }
+
+    // ── list(status, pageable): global Kanban board listing ──────────────────────
+    // Note: unlike the cloud overlay, OSS core has no organization/tenant concept on Task at all
+    // (no org_id column — see V2__work_hierarchy.sql) and its sole ScopeProvider implementation,
+    // NoOpScopeProvider, always returns an unconditional conjunction (see NoOpScopeProviderTest) —
+    // single-tenant sees everything. So there is no second org to construct here to prove
+    // cross-tenant isolation; that guarantee is exercised in the cloud overlay's own
+    // DefaultTaskServiceTest against its real (TenantContext-backed) ScopeProvider instead.
+
+    @Test
+    void list_unfiltered_returnsAllTasks() {
+        GitRepo r = makeRepo("https://github.com/test/task-board-list-all.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse t1 = service.create(story.id(), new TaskRequest("T1", "D"));
+        TaskResponse t2 = service.create(story.id(), new TaskRequest("T2", "D"));
+
+        Page<TaskResponse> page =
+                service.list(null, PageRequest.of(0, 20, Sort.by("createdAt").descending()));
+
+        assertThat(page.getContent()).extracting(TaskResponse::id).contains(t1.id(), t2.id());
+        assertThat(page.getTotalElements()).isGreaterThanOrEqualTo(2);
+    }
+
+    @Test
+    void list_filteredByStatus_returnsOnlyMatchingRows() {
+        GitRepo r = makeRepo("https://github.com/test/task-board-list-filtered.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse backlogTask = service.create(story.id(), new TaskRequest("Still Backlog", "D"));
+        TaskResponse startedTask = service.create(story.id(), new TaskRequest("Started", "D"));
+        service.start(startedTask.id());
+
+        Page<TaskResponse> backlogPage = service.list(
+                WorkItemStatus.backlog,
+                PageRequest.of(0, 20, Sort.by("createdAt").descending()));
+        Page<TaskResponse> inProgressPage = service.list(
+                WorkItemStatus.in_progress,
+                PageRequest.of(0, 20, Sort.by("createdAt").descending()));
+
+        assertThat(backlogPage.getContent()).extracting(TaskResponse::id).contains(backlogTask.id());
+        assertThat(backlogPage.getContent()).extracting(TaskResponse::id).doesNotContain(startedTask.id());
+        assertThat(inProgressPage.getContent()).extracting(TaskResponse::id).contains(startedTask.id());
+        assertThat(inProgressPage.getContent()).extracting(TaskResponse::id).doesNotContain(backlogTask.id());
+    }
+
+    @Test
+    void list_readinessStaysNull_usesSharedSingleItemMapper() {
+        // The plain listing endpoint deliberately reuses the shared single-item mapper (the same
+        // one get()/create() use), NOT the Roadmap Graph View's EpicReadinessAssembler-backed path
+        // — readiness is intentionally null here, unlike list(storyId).
+        GitRepo r = makeRepo("https://github.com/test/task-board-list-readiness.git");
+        StoryResponse story = makeStory(r.getId());
+        service.create(story.id(), new TaskRequest("T", "D"));
+
+        Page<TaskResponse> page =
+                service.list(null, PageRequest.of(0, 20, Sort.by("createdAt").descending()));
+
+        assertThat(page.getContent()).extracting(TaskResponse::readiness).containsOnlyNulls();
     }
 
     // ── updateStatus / updateStatusInternal (Decision 4) ─────────────────────────

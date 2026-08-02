@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { Link } from "react-router";
-import { List } from "lucide-react";
+import { List, ListChecks } from "lucide-react";
 import {
   DndContext,
   PointerSensor,
@@ -74,6 +74,14 @@ export default function RoadmapBoardPage() {
   return (
     <div className="flex h-full min-w-0 flex-col p-4 md:p-6">
       <PageHeader title="Roadmap Board" data-testid="roadmap-board-heading">
+        <Link
+          to="/roadmap/board/tasks"
+          data-testid="roadmap-board-task-board-link"
+          className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-transparent px-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
+          <ListChecks className="size-4" />
+          Task board
+        </Link>
         <Link
           to="/roadmap"
           data-testid="roadmap-board-list-view-link"

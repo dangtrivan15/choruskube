@@ -1,9 +1,12 @@
 package com.choruskube.core.controller;
 
+import static org.hamcrest.Matchers.greaterThanOrEqualTo;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 import com.choruskube.core.BaseTest;
+import com.choruskube.core.config.OrgSecurity;
 import com.choruskube.core.dto.CreateDependencyRequest;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
@@ -77,12 +80,23 @@ public class TaskControllerTest extends BaseTest {
     @MockitoBean
     private RunEventPublisher runEventPublisher;
 
+    @MockitoBean
+    private OrgSecurity orgSecurity;
+
     @BeforeEach
     void setUp() {
         WorkflowStub mockStub = Mockito.mock(WorkflowStub.class);
         Mockito.when(workflowClient.newUntypedWorkflowStub(
                         ArgumentMatchers.anyString(), ArgumentMatchers.any(WorkflowOptions.class)))
                 .thenReturn(mockStub);
+
+        // Mirrors NoOpOrgSecurity (the un-mocked default): every level of access is allowed unless
+        // an individual test overrides it, so the permission mock doesn't break the other tests in
+        // this class (mirrors EpicControllerTest#allowAllByDefault).
+        when(orgSecurity.canRead()).thenReturn(true);
+        when(orgSecurity.canOperate()).thenReturn(true);
+        when(orgSecurity.canAdmin()).thenReturn(true);
+        when(orgSecurity.isPlatformAdmin()).thenReturn(true);
     }
 
     @Test
@@ -136,6 +150,61 @@ public class TaskControllerTest extends BaseTest {
                         jsonPath("$[?(@.id=='" + blocked.id() + "')].readiness").value("BLOCKED"))
                 .andExpect(jsonPath("$[?(@.id=='" + blocking.id() + "')].readiness")
                         .value("READY"));
+    }
+
+    // --- GET /api/v1/tasks (global board listing) ---
+
+    @Test
+    void listAllTasks_returnsPagedShape() throws Exception {
+        // Board T1/T2 assert into the *global*, unscoped listing, which (like
+        // NodeDefinitionControllerTest#listNodeDefinitions_returnsAll and
+        // GraphTemplateControllerTest's list test) can also observe rows committed by
+        // non-@Transactional e2e integration tests (e.g. Phase2WorkHierarchyIntegrationTest)
+        // that persist for the life of the test JVM. Assert presence of these two plus a
+        // lower-bound count, not an exact global total.
+        StoryResponse story = makeStory("https://github.com/test/task-board-list.git");
+        TaskResponse t1 = taskService.create(story.id(), new TaskRequest("Board T1", "D"));
+        TaskResponse t2 = taskService.create(story.id(), new TaskRequest("Board T2", "D"));
+
+        mockMvc.perform(get("/api/v1/tasks"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(greaterThanOrEqualTo(2)))
+                .andExpect(jsonPath("$.totalElements").value(greaterThanOrEqualTo(2)))
+                .andExpect(jsonPath("$.content[?(@.id=='" + t1.id() + "')]").exists())
+                .andExpect(jsonPath("$.content[?(@.id=='" + t2.id() + "')]").exists());
+    }
+
+    @Test
+    void listAllTasks_filtersByStatus() throws Exception {
+        // See listAllTasks_returnsPagedShape: assert presence of the fixtured task in the
+        // matching status filter (and absence from the other), not an exact global count —
+        // other tasks with the same status may already exist from e2e integration tests that
+        // commit real rows outside this test's transaction.
+        StoryResponse story = makeStory("https://github.com/test/task-board-filter.git");
+        TaskResponse backlogTask = taskService.create(story.id(), new TaskRequest("Still Backlog", "D"));
+        TaskResponse startedTask = taskService.create(story.id(), new TaskRequest("Started", "D"));
+        taskService.start(startedTask.id());
+
+        mockMvc.perform(get("/api/v1/tasks").param("status", "backlog"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[?(@.id=='" + backlogTask.id() + "')]")
+                        .exists())
+                .andExpect(jsonPath("$.content[?(@.id=='" + startedTask.id() + "')]")
+                        .doesNotExist());
+
+        mockMvc.perform(get("/api/v1/tasks").param("status", "in_progress"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[?(@.id=='" + startedTask.id() + "')]")
+                        .exists())
+                .andExpect(jsonPath("$.content[?(@.id=='" + backlogTask.id() + "')]")
+                        .doesNotExist());
+    }
+
+    @Test
+    void listAllTasks_belowCanReadPermission_returns403() throws Exception {
+        when(orgSecurity.canRead()).thenReturn(false);
+
+        mockMvc.perform(get("/api/v1/tasks")).andExpect(status().isForbidden());
     }
 
     @Test
