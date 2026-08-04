@@ -139,6 +139,13 @@ function PendingNodeInfo({ node }: { node: SnapshotNode }) {
           <Badge variant="outline">{node.executor_type}</Badge>
         </div>
 
+        {node.effort === "ultracode" && (
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Effort</span>
+            <Badge variant="secondary">Effort: ultracode</Badge>
+          </div>
+        )}
+
         {node.timeout_seconds != null && (
           <div className="flex justify-between">
             <span className="text-muted-foreground">Timeout</span>

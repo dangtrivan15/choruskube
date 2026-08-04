@@ -217,6 +217,56 @@ grep -q '## Triggering Task' "$ENTRYPOINT" \
 grep -qE 'if \[ -n "\$TASK_ID" \]' "$ENTRYPOINT" \
   && ok "Triggering Task / Open Blockers narration guarded by TASK_ID check" || fail "Triggering Task / Open Blockers narration guarded by TASK_ID check"
 
+# --- Test 15: --effort reaches run_claude()'s argv construction (structural) ---
+# Mirrors the existing --max-turns assertion style (Test 2): grep the actual
+# entrypoint.sh text rather than a hand-copied fragment, so the assertion tracks
+# the real argv construction.
+grep -qF '${EFFORT:+--effort "$EFFORT"}' "$ENTRYPOINT" \
+  && ok "claude invoked with --effort interpolation" || fail "claude invoked with --effort interpolation"
+
+# --- Test 16: effort field parsing — "ultracode" produces EFFORT=ultracode ---
+# Same jq parsing logic used for MODEL (`.model // empty`).
+cat > "$CONFIG" <<'EOF'
+{"run_id":"abc","node_execution_id":"xyz","prompt":"test","effort":"ultracode"}
+EOF
+EFFORT=$(jq -r '.effort // empty' "$CONFIG")
+[ "$EFFORT" = "ultracode" ] && ok "effort=ultracode parsed" || fail "effort=ultracode parsed"
+
+# --- Test 17: effort field absent — EFFORT empty, no --effort token in argv ---
+cat > "$CONFIG" <<'EOF'
+{"run_id":"abc","node_execution_id":"xyz","prompt":"test"}
+EOF
+EFFORT=$(jq -r '.effort // empty' "$CONFIG")
+[ -z "$EFFORT" ] && ok "missing effort field // empty returns blank" || fail "missing effort field // empty returns blank"
+# The same ${EFFORT:+--effort "$EFFORT"} interpolation entrypoint.sh uses — with
+# EFFORT empty, bash parameter expansion yields nothing, so no --effort token
+# reaches claude's argv at all.
+ARGV_FRAGMENT="${EFFORT:+--effort "$EFFORT"}"
+[ -z "$ARGV_FRAGMENT" ] && ok "empty EFFORT produces no --effort token in argv" || fail "empty EFFORT produces no --effort token in argv"
+
+# --- Test 18: unrecognized effort value — entrypoint.sh exits non-zero before any
+# run_claude()/claude invocation ---
+# Runs the actual entrypoint.sh text (CONFIG_FILE path swapped to a fixture) so this
+# exercises the real validation guard, not a hand-copied re-implementation. The guard
+# sits near the top of the script — well before JOB_SECRET validation, BuildKit setup,
+# or run_claude's definition — so if it fires, claude is structurally never invoked.
+BAD_EFFORT_CONFIG="$TESTDIR/bad_effort_config.json"
+cat > "$BAD_EFFORT_CONFIG" <<'EOF'
+{"run_id":"abc","node_execution_id":"xyz","prompt":"test","effort":"something-else"}
+EOF
+ENTRYPOINT_COPY="$TESTDIR/entrypoint_effort_check.sh"
+sed "s#/workspace/config.json#$BAD_EFFORT_CONFIG#g" "$ENTRYPOINT" > "$ENTRYPOINT_COPY"
+chmod +x "$ENTRYPOINT_COPY"
+set +e
+BAD_EFFORT_STDERR=$(bash "$ENTRYPOINT_COPY" 2>&1 >/dev/null)
+BAD_EFFORT_RC=$?
+set -e
+[ "$BAD_EFFORT_RC" -ne 0 ] && ok "unrecognized effort value exits non-zero" || fail "unrecognized effort value exits non-zero"
+echo "$BAD_EFFORT_STDERR" | grep -q "unsupported effort value" \
+  && ok "unrecognized effort value logs a clear error" || fail "unrecognized effort value logs a clear error"
+echo "$BAD_EFFORT_STDERR" | grep -q "Claude Code exited" \
+  && fail "guard did not stop before a claude invocation" || ok "guard fires before any run_claude()/claude invocation"
+
 # --- Summary ---
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

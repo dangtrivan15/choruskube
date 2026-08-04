@@ -171,7 +171,8 @@ type ExecuteAINodeFromSnapshotParams struct {
 	NeedDecision    bool                     // true if node has conditional edges and is AI type
 	OutputSpec      string                   // JSON string describing required output files; "" or "{}" = no enforcement
 	Repos           []map[string]interface{} `json:"repos,omitempty"`
-	Model           string                   `json:"model,omitempty"` // optional override; empty = agent default
+	Model           string                   `json:"model,omitempty"`  // optional override; empty = agent default
+	Effort          string                   `json:"effort,omitempty"` // optional override; empty = agent default
 	// Triggering Task's identity (Decision 1/2/3), broadcast into config.json's task_context
 	// for every node execution in a task-triggered run. TaskID == "" means the run wasn't
 	// started from a Task; StoryID/EpicID may independently be "" if that level no longer
@@ -294,6 +295,9 @@ func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params Execu
 	}
 	if params.Model != "" {
 		configJSON["model"] = params.Model
+	}
+	if params.Effort != "" {
+		configJSON["effort"] = params.Effort
 	}
 	if params.TaskID != "" {
 		taskContext := map[string]interface{}{

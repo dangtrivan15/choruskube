@@ -597,6 +597,7 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 				// Multi-repo config building
 				var repos []map[string]interface{}
 				needsBranch := extractConfigField(snapshotNode.ConfigOverrides, "needs_branch")
+				effort := extractConfigField(snapshotNode.ConfigOverrides, "effort")
 
 				if len(snap.Repos) > 0 {
 					for _, r := range snap.Repos {
@@ -664,6 +665,7 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 						ExecutorType:    executorType,
 						PromptTemplate:  promptTemplate,
 						Model:           snapshotNode.Model,
+						Effort:          effort,
 						InputArtifacts:  runInputArtifacts,
 						Variables:       vars,
 						LoopGroup:       loopGroup,

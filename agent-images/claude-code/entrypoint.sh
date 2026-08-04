@@ -24,6 +24,14 @@ export GITHUB_TOKEN_URL=$(jq -r '.github_token_url // empty' "$CONFIG_FILE")
 COMMAND=$(jq -r '.command // empty' "$CONFIG_FILE")
 EXECUTOR_TYPE=$(jq -r '.executor_type // "ai"' "$CONFIG_FILE")
 MODEL=$(jq -r '.model // empty' "$CONFIG_FILE")
+EFFORT=$(jq -r '.effort // empty' "$CONFIG_FILE")
+# Only "ultracode" is a recognized effort mode today. Validate before any
+# run_claude() call so an unrecognized/typo'd config.json value fails loudly
+# here rather than reaching claude's argv unexamined (see spec Decision 2/§3.4).
+if [ -n "$EFFORT" ] && [ "$EFFORT" != "ultracode" ]; then
+  echo "ERROR: unsupported effort value '$EFFORT' (only 'ultracode' is supported)" >&2
+  exit 1
+fi
 # Build system prompt from image-local template + run context
 SYSTEM_PROMPT_FILE="/usr/local/share/choruskube/system_prompt.md"
 if [ -f "$SYSTEM_PROMPT_FILE" ]; then
@@ -566,6 +574,7 @@ else
       --disallowed-tools "AskUserQuestion" \
       --max-turns "$MAX_TURNS" \
       ${MODEL:+--model "$MODEL"} \
+      ${EFFORT:+--effort "$EFFORT"} \
       ${ADD_DIR_ARGS[@]+"${ADD_DIR_ARGS[@]}"} \
       $sys_args ${sys_prompt:+"$sys_prompt"} \
       $extra_flags \
