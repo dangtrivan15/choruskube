@@ -19,18 +19,28 @@ import com.choruskube.core.observability.AuditSink;
 import com.choruskube.core.repository.EpicRepository;
 import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.repository.TaskRepository;
+import com.choruskube.core.scope.ScopeProvider;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /** Sole implementation of {@link StoryService} (Decision 8). */
 @Service
 public class DefaultStoryService implements StoryService {
+
+    private static final Set<WorkItemStatus> VALID_BOARD_STAGES =
+            EnumSet.of(WorkItemStatus.backlog, WorkItemStatus.in_progress, WorkItemStatus.rolled_out);
 
     private final StoryRepository repo;
     private final EpicRepository epicRepo;
@@ -44,6 +54,7 @@ public class DefaultStoryService implements StoryService {
     // Populates `readiness` on list() responses (Decision 1) via the same Epic-bounded assembly
     // the Roadmap Graph View uses (Decision 2/3), so the two can never disagree.
     private final EpicReadinessAssembler readinessAssembler;
+    private final ScopeProvider scopeProvider;
 
     public DefaultStoryService(
             StoryRepository repo,
@@ -55,7 +66,8 @@ public class DefaultStoryService implements StoryService {
             ObjectMapper objectMapper,
             ApplicationEventPublisher applicationEventPublisher,
             WorkItemDependencyService workItemDependencyService,
-            EpicReadinessAssembler readinessAssembler) {
+            EpicReadinessAssembler readinessAssembler,
+            ScopeProvider scopeProvider) {
         this.repo = repo;
         this.epicRepo = epicRepo;
         this.taskRepo = taskRepo;
@@ -66,6 +78,7 @@ public class DefaultStoryService implements StoryService {
         this.applicationEventPublisher = applicationEventPublisher;
         this.workItemDependencyService = workItemDependencyService;
         this.readinessAssembler = readinessAssembler;
+        this.scopeProvider = scopeProvider;
     }
 
     @Override
@@ -124,6 +137,19 @@ public class DefaultStoryService implements StoryService {
             throw new ForbiddenException("Epic " + epicId + " does not belong to the run's software project");
         }
         return listWithReadiness(epicId, true, runId);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<StoryResponse> list(WorkItemStatus stage, Pageable pageable) {
+        Specification<Story> spec = scopeProvider.scope(Story.class);
+        if (stage != null) {
+            spec = spec.and((root, query, cb) -> cb.equal(root.get("stage"), stage));
+        }
+        Page<Story> page = repo.findAll(spec, pageable);
+        List<StoryResponse> content =
+                page.getContent().stream().map(this::toResponse).toList();
+        return new PageImpl<>(content, pageable, page.getTotalElements());
     }
 
     /**
@@ -197,6 +223,26 @@ public class DefaultStoryService implements StoryService {
         eventPublisher.publishRoadmapItemChanged("story", id, "deleted");
     }
 
+    @Override
+    @Transactional
+    public StoryResponse updateStage(UUID id, WorkItemStatus stage) {
+        Story story = findOrThrow(id);
+        authService.checkOrgAccess("story", id);
+        if (!VALID_BOARD_STAGES.contains(stage)) {
+            throw new BadRequestException("Invalid board stage: " + stage);
+        }
+        // Deliberately no hasStartedTasks(id) guard here: unlike the full PUT edit path, stage
+        // moves on the roadmap board must succeed even after descendant Tasks have started.
+        Map<String, Object> beforeSnapshot = snapshot(story);
+        story.setStage(stage);
+        story = repo.save(story);
+
+        StoryResponse response = toResponse(story);
+        auditSink.record(AuditSink.STORY_STAGE_UPDATED, "story", id, detailJson(beforeSnapshot, snapshot(story)));
+        eventPublisher.publishRoadmapItemChanged("story", story.getId(), stage.name());
+        return response;
+    }
+
     private boolean hasStartedTasks(UUID storyId) {
         List<Task> tasks = taskRepo.findByStoryIdOrderByCreatedAtDesc(storyId);
         return tasks.stream().anyMatch(t -> t.getStatus() != WorkItemStatus.backlog);
@@ -217,6 +263,7 @@ public class DefaultStoryService implements StoryService {
                 s.getTitle(),
                 s.getDescription(),
                 rollup.status(),
+                s.getStage().name(),
                 readiness,
                 new EpicResponse.Progress(rollup.totalTasks(), rollup.doneTasks()),
                 s.getCreatedAt(),
@@ -236,6 +283,7 @@ public class DefaultStoryService implements StoryService {
         snap.put("epic_id", s.getEpicId() != null ? s.getEpicId().toString() : null);
         snap.put("title", s.getTitle());
         snap.put("description", s.getDescription());
+        snap.put("stage", s.getStage() != null ? s.getStage().name() : null);
         return snap;
     }
 

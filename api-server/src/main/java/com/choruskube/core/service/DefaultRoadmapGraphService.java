@@ -113,6 +113,7 @@ public class DefaultRoadmapGraphService implements RoadmapGraphService {
                 s.getTitle(),
                 s.getDescription(),
                 rollup.status(),
+                s.getStage().name(),
                 readiness,
                 new EpicResponse.Progress(rollup.totalTasks(), rollup.doneTasks()),
                 s.getCreatedAt(),

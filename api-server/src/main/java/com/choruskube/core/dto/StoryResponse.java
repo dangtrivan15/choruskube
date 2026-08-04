@@ -10,6 +10,9 @@ import java.util.UUID;
  * it is computed at read time from {@code work_item_dependency} edges. Single-item reads
  * (create/get/update) leave it {@code null}, since they have no reason to join dependency edges
  * just to return the one item just written.
+ *
+ * <p>{@code stage} is the persisted Story board column, mirroring {@code EpicResponse#stage}
+ * exactly — separate from the computed {@code status} rollup above.
  */
 public record StoryResponse(
         UUID id,
@@ -17,6 +20,7 @@ public record StoryResponse(
         String title,
         String description,
         String status,
+        String stage,
         @Nullable Readiness readiness,
         EpicResponse.Progress progress,
         Instant createdAt,

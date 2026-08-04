@@ -1,9 +1,12 @@
 package com.choruskube.core.controller;
 
+import static org.hamcrest.Matchers.greaterThanOrEqualTo;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 import com.choruskube.core.BaseTest;
+import com.choruskube.core.config.OrgSecurity;
 import com.choruskube.core.dto.CreateDependencyRequest;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
@@ -11,6 +14,7 @@ import com.choruskube.core.dto.StoryRequest;
 import com.choruskube.core.dto.StoryResponse;
 import com.choruskube.core.dto.TaskRequest;
 import com.choruskube.core.model.GitRepo;
+import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.service.EpicService;
 import com.choruskube.core.service.RunEventPublisher;
 import com.choruskube.core.service.TaskService;
@@ -21,7 +25,10 @@ import io.temporal.client.WorkflowClient;
 import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.Map;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
@@ -62,6 +69,20 @@ public class StoryControllerTest extends BaseTest {
 
     @MockitoBean
     private RunEventPublisher runEventPublisher;
+
+    @MockitoBean
+    private OrgSecurity orgSecurity;
+
+    @BeforeEach
+    void allowAllByDefault() {
+        // Mirrors NoOpOrgSecurity (the un-mocked default): every level of access is allowed unless
+        // an individual test overrides it, so the permission mock doesn't break the other tests in
+        // this class (mirrors EpicControllerTest#allowAllByDefault).
+        when(orgSecurity.canRead()).thenReturn(true);
+        when(orgSecurity.canOperate()).thenReturn(true);
+        when(orgSecurity.canAdmin()).thenReturn(true);
+        when(orgSecurity.isPlatformAdmin()).thenReturn(true);
+    }
 
     @Test
     void createStory_returns201() throws Exception {
@@ -178,6 +199,143 @@ public class StoryControllerTest extends BaseTest {
         taskService.start(task.id());
 
         mockMvc.perform(delete("/api/v1/stories/" + story.id())).andExpect(status().isConflict());
+    }
+
+    // --- GET /api/v1/stories (global board listing) ---
+
+    @Test
+    void listAllStories_returnsPagedShape() throws Exception {
+        // Board S1/S2 assert into the *global*, unscoped listing, which (like
+        // TaskControllerTest#listAllTasks_returnsPagedShape) can also observe rows committed by
+        // non-@Transactional e2e integration tests that persist for the life of the test JVM.
+        // Assert presence of these two plus a lower-bound count, not an exact global total.
+        EpicResponse epic = makeEpic("https://github.com/test/story-board-list.git");
+        StoryResponse s1 = makeStory(epic.id(), "Board S1");
+        StoryResponse s2 = makeStory(epic.id(), "Board S2");
+
+        mockMvc.perform(get("/api/v1/stories"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(greaterThanOrEqualTo(2)))
+                .andExpect(jsonPath("$.totalElements").value(greaterThanOrEqualTo(2)))
+                .andExpect(jsonPath("$.content[?(@.id=='" + s1.id() + "')]").exists())
+                .andExpect(jsonPath("$.content[?(@.id=='" + s2.id() + "')]").exists());
+    }
+
+    @Test
+    void listAllStories_everyRowHasNullReadiness() throws Exception {
+        EpicResponse epic = makeEpic("https://github.com/test/story-board-readiness.git");
+        makeStory(epic.id(), "Board Readiness S1");
+
+        mockMvc.perform(get("/api/v1/stories"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[*].readiness")
+                        .value(org.hamcrest.Matchers.everyItem(org.hamcrest.Matchers.nullValue())));
+    }
+
+    @Test
+    void listAllStories_filtersByStage() throws Exception {
+        EpicResponse epic = makeEpic("https://github.com/test/story-board-filter.git");
+        StoryResponse backlogStory = makeStory(epic.id(), "Still Backlog");
+        StoryResponse movedStory = makeStory(epic.id(), "Moved");
+        storyService.updateStage(movedStory.id(), WorkItemStatus.in_progress);
+
+        mockMvc.perform(get("/api/v1/stories").param("stage", "backlog"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[?(@.id=='" + backlogStory.id() + "')]")
+                        .exists())
+                .andExpect(jsonPath("$.content[?(@.id=='" + movedStory.id() + "')]")
+                        .doesNotExist());
+
+        mockMvc.perform(get("/api/v1/stories").param("stage", "in_progress"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[?(@.id=='" + movedStory.id() + "')]")
+                        .exists())
+                .andExpect(jsonPath("$.content[?(@.id=='" + backlogStory.id() + "')]")
+                        .doesNotExist());
+    }
+
+    @Test
+    void listAllStories_belowCanReadPermission_returns403() throws Exception {
+        when(orgSecurity.canRead()).thenReturn(false);
+
+        mockMvc.perform(get("/api/v1/stories")).andExpect(status().isForbidden());
+    }
+
+    // --- PATCH /api/v1/stories/{id}/stage ---
+
+    @ParameterizedTest
+    @ValueSource(strings = {"backlog", "in_progress", "rolled_out"})
+    void updateStage_withValidStage_returns200WithUpdatedStage(String stage) throws Exception {
+        EpicResponse epic = makeEpic("https://github.com/test/story-stage-" + stage + ".git");
+        StoryResponse story = makeStory(epic.id(), "Stage Story " + stage);
+
+        mockMvc.perform(patch("/api/v1/stories/" + story.id() + "/stage")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("stage", stage))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.stage").value(stage));
+    }
+
+    @Test
+    void updateStage_withSyntacticallyUnknownStage_returns400() throws Exception {
+        EpicResponse epic = makeEpic("https://github.com/test/story-stage-unknown.git");
+        StoryResponse story = makeStory(epic.id(), "Stage Story Unknown");
+
+        mockMvc.perform(patch("/api/v1/stories/" + story.id() + "/stage")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("stage", "not_a_real_stage"))))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void updateStage_withDoneValue_returns400() throws Exception {
+        // "done" is a syntactically valid WorkItemStatus (so Jackson deserializes it fine) but is
+        // not a valid board stage — this is a distinct, service-layer rejection from the Jackson
+        // enum-deserialization failure above.
+        EpicResponse epic = makeEpic("https://github.com/test/story-stage-done.git");
+        StoryResponse story = makeStory(epic.id(), "Stage Story Done");
+
+        mockMvc.perform(patch("/api/v1/stories/" + story.id() + "/stage")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("stage", "done"))))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void updateStage_onNonexistentStory_returns404() throws Exception {
+        mockMvc.perform(patch("/api/v1/stories/" + UUID.randomUUID() + "/stage")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("stage", "in_progress"))))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void updateStage_withStartedDescendantTask_succeeds() throws Exception {
+        // Proves the "no edit once started" guard used by the full PUT edit endpoint does NOT
+        // apply to stage moves.
+        EpicResponse epic = makeEpic("https://github.com/test/story-stage-started-task.git");
+        StoryResponse story = makeStory(epic.id(), "Stage Story Started Task");
+        var task = taskService.create(story.id(), new TaskRequest("T", "D"));
+        taskService.start(task.id());
+
+        mockMvc.perform(patch("/api/v1/stories/" + story.id() + "/stage")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("stage", "rolled_out"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.stage").value("rolled_out"));
+    }
+
+    @Test
+    void updateStage_belowCanOperatePermission_returns403() throws Exception {
+        when(orgSecurity.canOperate()).thenReturn(false);
+
+        EpicResponse epic = makeEpic("https://github.com/test/story-stage-forbidden.git");
+        StoryResponse story = makeStory(epic.id(), "Stage Story Forbidden");
+
+        mockMvc.perform(patch("/api/v1/stories/" + story.id() + "/stage")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("stage", "in_progress"))))
+                .andExpect(status().isForbidden());
     }
 
     // --- helpers ---

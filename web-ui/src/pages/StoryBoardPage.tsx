@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Link } from "react-router";
-import { List, ListChecks, BookOpen } from "lucide-react";
+import { Kanban, ListChecks, List } from "lucide-react";
 import {
   DndContext,
   PointerSensor,
@@ -9,29 +9,31 @@ import {
   useSensors,
   type DragEndEvent,
 } from "@dnd-kit/core";
-import { useEpics, useUpdateEpicStage, EPIC_BOARD_PAGINATION } from "@/hooks/useEpics";
+import { useAllStories, useUpdateStoryStage, STORY_BOARD_PAGINATION } from "@/hooks/useStories";
 import { useRoadmapSubscription } from "@/hooks/useRoadmapSubscription";
-import type { EpicResponse, EpicStage } from "@/lib/types";
+import type { StoryResponse, StoryStage } from "@/lib/types";
 import { Skeleton } from "@/components/ui/skeleton";
 import PageHeader from "@/components/layout/PageHeader";
-import BoardColumn from "@/components/roadmap/BoardColumn";
-import RoadmapReadyToggle from "@/components/roadmap/RoadmapReadyToggle";
+import StoryBoardColumn from "@/components/roadmap/StoryBoardColumn";
 
-const COLUMNS: { stage: EpicStage; label: string }[] = [
+const COLUMNS: { stage: StoryStage; label: string }[] = [
   { stage: "backlog", label: "Backlog" },
   { stage: "in_progress", label: "In Progress" },
   { stage: "rolled_out", label: "Rolled Out" },
 ];
 
 /**
- * Roadmap Board — a Kanban view of Epics grouped into columns by `stage`.
- * Dragging a card to a new column PATCHes the stage (see useUpdateEpicStage);
- * a drop back into the same column is a no-op and never calls the mutation.
+ * Story Board — a Kanban view of Stories grouped into columns by `stage`.
+ * Story has its own persisted board `stage`, mirroring the Epic board
+ * exactly — separate from the read-time `status` rollup, unlike the Task
+ * board (which maps its columns directly onto `TaskResponse.status`).
+ * Dragging a card to a new column PATCHes the stage (see
+ * useUpdateStoryStage); a drop back into the same column is a no-op and
+ * never calls the mutation.
  */
-export default function RoadmapBoardPage() {
-  const [readyOnly, setReadyOnly] = useState(false);
-  const { data: pageData, isLoading } = useEpics(undefined, EPIC_BOARD_PAGINATION, readyOnly);
-  const updateStage = useUpdateEpicStage(readyOnly);
+export default function StoryBoardPage() {
+  const { data: pageData, isLoading } = useAllStories(undefined, STORY_BOARD_PAGINATION);
+  const updateStage = useUpdateStoryStage();
   useRoadmapSubscription();
 
   const sensors = useSensors(
@@ -39,35 +41,35 @@ export default function RoadmapBoardPage() {
     useSensor(KeyboardSensor)
   );
 
-  const epics = pageData?.content;
+  const stories = pageData?.content;
   const byStage = useMemo(() => {
-    const groups: Record<EpicStage, EpicResponse[]> = {
+    const groups: Record<StoryStage, StoryResponse[]> = {
       backlog: [],
       in_progress: [],
       rolled_out: [],
     };
     const knownStages = new Set(COLUMNS.map((c) => c.stage));
-    for (const epic of epics ?? []) {
+    for (const story of stories ?? []) {
       // `stage` is a Postgres enum extended via `ALTER TYPE ... ADD VALUE` (see CLAUDE.md); a
       // value the backend has already shipped but this build predates (e.g. mid rolling-deploy)
       // must not crash the whole app — skip it from the board rather than indexing `groups` with
       // an unrecognized key.
-      if (!knownStages.has(epic.stage)) {
-        console.warn(`Roadmap Board: skipping epic ${epic.id} with unrecognized stage "${epic.stage}"`);
+      if (!knownStages.has(story.stage)) {
+        console.warn(`Story Board: skipping story ${story.id} with unrecognized stage "${story.stage}"`);
         continue;
       }
-      groups[epic.stage].push(epic);
+      groups[story.stage].push(story);
     }
     return groups;
-  }, [epics]);
+  }, [stories]);
 
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
     if (!over) return;
 
-    const targetStage = over.id as EpicStage;
-    const currentStage = active.data.current?.stage as EpicStage | undefined;
-    // A drop back into the epic's own column must not call the mutation.
+    const targetStage = over.id as StoryStage;
+    const currentStage = active.data.current?.stage as StoryStage | undefined;
+    // A drop back into the story's own column must not call the mutation.
     if (!currentStage || currentStage === targetStage) return;
 
     updateStage.mutate({ id: String(active.id), stage: targetStage });
@@ -75,18 +77,18 @@ export default function RoadmapBoardPage() {
 
   return (
     <div className="flex h-full min-w-0 flex-col p-4 md:p-6">
-      <PageHeader title="Roadmap Board" data-testid="roadmap-board-heading">
+      <PageHeader title="Story Board" data-testid="story-board-heading">
         <Link
-          to="/roadmap/board/stories"
-          data-testid="roadmap-board-story-board-link"
+          to="/roadmap/board"
+          data-testid="story-board-epic-board-link"
           className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-transparent px-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
         >
-          <BookOpen className="size-4" />
-          Story board
+          <Kanban className="size-4" />
+          Epic board
         </Link>
         <Link
           to="/roadmap/board/tasks"
-          data-testid="roadmap-board-task-board-link"
+          data-testid="story-board-task-board-link"
           className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-transparent px-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
         >
           <ListChecks className="size-4" />
@@ -94,13 +96,12 @@ export default function RoadmapBoardPage() {
         </Link>
         <Link
           to="/roadmap"
-          data-testid="roadmap-board-list-view-link"
+          data-testid="story-board-list-view-link"
           className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-transparent px-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
         >
           <List className="size-4" />
           List view
         </Link>
-        <RoadmapReadyToggle checked={readyOnly} onChange={setReadyOnly} />
       </PageHeader>
 
       {isLoading && (
@@ -113,14 +114,13 @@ export default function RoadmapBoardPage() {
 
       {!isLoading && (
         <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
-          <div data-testid="roadmap-board" className="mt-4 flex flex-1 gap-4 overflow-x-auto">
+          <div data-testid="story-board" className="mt-4 flex flex-1 gap-4 overflow-x-auto">
             {COLUMNS.map((c) => (
-              <BoardColumn
+              <StoryBoardColumn
                 key={c.stage}
                 stage={c.stage}
                 label={c.label}
-                epics={byStage[c.stage]}
-                readyOnly={readyOnly}
+                stories={byStage[c.stage]}
               />
             ))}
           </div>

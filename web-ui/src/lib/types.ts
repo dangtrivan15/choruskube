@@ -368,16 +368,28 @@ export interface EpicRequest {
  */
 export type Readiness = "READY" | "BLOCKED";
 
+/**
+ * Roadmap board column a Story sits in. Persisted separately from the
+ * read-time {@code status} rollup, mirroring {@code EpicStage} exactly. See
+ * PATCH /stories/{id}/stage.
+ */
+export type StoryStage = "backlog" | "in_progress" | "rolled_out";
+
 export interface StoryResponse {
   id: string;
   epicId: string;
   title: string;
   description: string;
   status: "backlog" | "in_progress" | "done";
+  stage: StoryStage;
   readiness: Readiness | null;
   progress: WorkItemProgress;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface StoryStageUpdateRequest {
+  stage: StoryStage;
 }
 
 export interface StoryRequest {
