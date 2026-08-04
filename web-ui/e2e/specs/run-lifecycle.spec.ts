@@ -58,7 +58,11 @@ test.describe("Run Lifecycle", () => {
       // the dialog with the same UI-visible name (the picker renders t.name).
       await api.getTemplateByName("e2e-linear-pipeline");
 
-      const runName = uniqueName("e2e-lifecycle-test");
+      // Run names are capped at 30 chars server-side (RunService.RUN_NAME_MAX_LENGTH)
+      // and silently truncated with a "…" marker past that — keep the uniqueName()
+      // prefix short so this stays under the limit (the poll below does an exact
+      // name match against the server-stored, possibly-truncated value).
+      const runName = uniqueName("e2e-lc");
       await runListPage.goto();
       await runListPage.startRun("e2e-linear-pipeline", runName);
 

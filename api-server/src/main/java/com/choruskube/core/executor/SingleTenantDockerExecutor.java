@@ -641,7 +641,6 @@ public class SingleTenantDockerExecutor implements WorkloadExecutor {
 
     /** Test-node ("script" executor_type) executions — see the E2E_WORKERS env comment above. */
     static boolean isScriptExecution(ExecutionParams params) {
-        Object raw = params.configJson() != null ? params.configJson().getOrDefault("executor_type", "ai") : "ai";
-        return "script".equalsIgnoreCase(String.valueOf(raw));
+        return !needsOauthToken(params);
     }
 }

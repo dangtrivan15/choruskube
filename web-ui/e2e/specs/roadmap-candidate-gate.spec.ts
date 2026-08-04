@@ -23,7 +23,10 @@ test.describe("Roadmap Provisioner candidate gate", () => {
     api,
   }) => {
     const template = await api.getTemplateByName("e2e-roadmap-candidate-gate");
-    const runName = uniqueName("candgate-view");
+    // Run names are capped at 30 chars server-side (RunService.RUN_NAME_MAX_LENGTH),
+    // so keep the uniqueName() prefix short to stay under the limit even with a
+    // 2-digit shard/worker index and multi-digit monotonic counter.
+    const runName = uniqueName("cg-view");
     const run = await api.startRun({ graphTemplateId: template.id, name: runName });
 
     await api.waitForNodeStatus(run.id, "review_candidates", ["awaiting_human"], 60_000);
@@ -56,7 +59,7 @@ test.describe("Roadmap Provisioner candidate gate", () => {
       repos.content.length,
       "E2eTestDataSeeder must seed at least 1 git_repo row for this spec",
     ).toBeGreaterThanOrEqual(1);
-    const runName = uniqueName("candgate-edit");
+    const runName = uniqueName("cg-edit");
     const run = await api.startRun({
       graphTemplateId: template.id,
       name: runName,
@@ -102,7 +105,7 @@ test.describe("Roadmap Provisioner candidate gate", () => {
       "E2eTestDataSeeder must seed at least 1 git_repo row for this spec",
     ).toBeGreaterThanOrEqual(1);
     const template = await api.getTemplateByName("e2e-roadmap-candidate-gate");
-    const runName = uniqueName("candgate-sidebar");
+    const runName = uniqueName("cg-sidebar");
     const run = await api.startRun({
       graphTemplateId: template.id,
       name: runName,
@@ -135,7 +138,7 @@ test.describe("Roadmap Provisioner candidate gate", () => {
     api,
   }) => {
     const template = await api.getTemplateByName("e2e-roadmap-candidate-gate");
-    const runName = uniqueName("candgate-reject");
+    const runName = uniqueName("cg-reject");
     const run = await api.startRun({ graphTemplateId: template.id, name: runName });
 
     await api.waitForNodeStatus(run.id, "review_candidates", ["awaiting_human"], 60_000);
