@@ -197,10 +197,10 @@ public class Phase4AEndToEndTest extends BaseTest {
         assertThat(snapshot.get("inputs").get("test_command").asText()).isEqualTo("npm test");
         assertThat(snapshot.get("inputs").get("agent_image").asText()).isEqualTo("my-agent:latest");
 
-        // Verify snapshot shape (v24: 8 nodes, 18 edges — Test Bypass removed;
-        // single Test gate placed after Code Review).
-        assertThat(snapshot.get("nodes")).hasSize(8);
-        assertThat(snapshot.get("edges")).hasSize(18);
+        // Verify snapshot shape (v32: 9 nodes, 20 edges — Code Review's escalation
+        // exits now route through the Review Escalation human gate before Test).
+        assertThat(snapshot.get("nodes")).hasSize(9);
+        assertThat(snapshot.get("edges")).hasSize(20);
     }
 
     @Test

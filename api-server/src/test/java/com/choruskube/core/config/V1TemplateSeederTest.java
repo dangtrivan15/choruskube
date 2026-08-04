@@ -43,8 +43,8 @@ class V1TemplateSeederTest extends BaseTest {
                 GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION);
         assertThat(template).isPresent();
         assertThat(templateNodeRepo.findByGraphTemplateId(template.get().getId()))
-                .hasSize(8);
-        assertThat(edgeRepo.findByGraphTemplateId(template.get().getId())).hasSize(18);
+                .hasSize(9);
+        assertThat(edgeRepo.findByGraphTemplateId(template.get().getId())).hasSize(20);
     }
 
     @Test
@@ -264,8 +264,8 @@ class V1TemplateSeederTest extends BaseTest {
                 .filter(n -> "code_review".equals(n.getLabel()))
                 .findFirst()
                 .orElseThrow();
-        var test = nodes.stream()
-                .filter(n -> "test".equals(n.getLabel()))
+        var reviewEscalation = nodes.stream()
+                .filter(n -> "review_escalation".equals(n.getLabel()))
                 .findFirst()
                 .orElseThrow();
 
@@ -276,16 +276,16 @@ class V1TemplateSeederTest extends BaseTest {
                                 && e.getTargetNodeId().equals(codeReview.getId()))
                         .count())
                 .isEqualTo(1);
-        // v24: Code Review's review_conflict and uncertainty exits route to Test
-        // (single test gate), not Final Approval. Test will then route passed →
-        // Final Approval or failed → Implement.
+        // v32: Code Review's review_conflict and uncertainty exits route to Review
+        // Escalation (a human gate), not straight to Test. A human decides there
+        // whether to proceed to Test or send the change back to Code Review.
         for (String suffix : new String[] {"review_conflict", "uncertainty"}) {
             assertThat(edges.stream()
                             .filter(e -> e.getSourceNodeId().equals(codeReview.getId())
                                     && ("need_human_decision:" + suffix).equals(e.getCondition())
-                                    && e.getTargetNodeId().equals(test.getId()))
+                                    && e.getTargetNodeId().equals(reviewEscalation.getId()))
                             .count())
-                    .as("code_review --need_human_decision:%s--> test", suffix)
+                    .as("code_review --need_human_decision:%s--> review_escalation", suffix)
                     .isEqualTo(1);
         }
         // Code Review must NOT emit alternative_proposal — the spec is fixed by contract.
@@ -295,6 +295,48 @@ class V1TemplateSeederTest extends BaseTest {
                         .count())
                 .as("code_review must not have an alternative_proposal edge")
                 .isZero();
+    }
+
+    @Test
+    void reviewEscalationRoutesApprovedToTestAndRereviewToCodeReview() {
+        var template = templateRepo
+                .findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION)
+                .orElseThrow();
+        var nodes = templateNodeRepo.findByGraphTemplateId(template.getId());
+        var edges = edgeRepo.findByGraphTemplateId(template.getId());
+
+        var reviewEscalation = nodes.stream()
+                .filter(n -> "review_escalation".equals(n.getLabel()))
+                .findFirst()
+                .orElseThrow();
+        var test = nodes.stream()
+                .filter(n -> "test".equals(n.getLabel()))
+                .findFirst()
+                .orElseThrow();
+        var codeReview = nodes.stream()
+                .filter(n -> "code_review".equals(n.getLabel()))
+                .findFirst()
+                .orElseThrow();
+
+        var outgoing = edges.stream()
+                .filter(e -> e.getSourceNodeId().equals(reviewEscalation.getId()))
+                .toList();
+        // approved → test, rereview → code_review (mirrors final_approval's shape)
+        assertThat(outgoing)
+                .as("review_escalation has exactly two outgoing edges")
+                .hasSize(2);
+        assertThat(outgoing.stream()
+                        .filter(e -> "approved".equals(e.getCondition())
+                                && e.getTargetNodeId().equals(test.getId()))
+                        .count())
+                .as("review_escalation --approved--> test")
+                .isEqualTo(1);
+        assertThat(outgoing.stream()
+                        .filter(e -> "rereview".equals(e.getCondition())
+                                && e.getTargetNodeId().equals(codeReview.getId()))
+                        .count())
+                .as("review_escalation --rereview--> code_review")
+                .isEqualTo(1);
     }
 
     @Test
