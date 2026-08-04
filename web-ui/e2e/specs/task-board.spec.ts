@@ -1,4 +1,5 @@
 import { test, expect } from "../fixtures";
+import { uniqueName } from "../helpers/api-client";
 
 // Single-session flow: open the Task Board, drag a Task card to a new
 // column, then reload and confirm the move persisted server-side.
@@ -49,7 +50,7 @@ test.describe("Task Board", () => {
       return;
     }
 
-    const uniqueTitle = `E2E Board Task ${Date.now()}`;
+    const uniqueTitle = uniqueName("E2E Board Task");
     const epic = await api.createEpic({
       title: `Epic for ${uniqueTitle}`,
       description: "Epic for the task board E2E test",
@@ -83,7 +84,7 @@ test.describe("Task Board", () => {
     // and DefaultEpicService#delete deliberately refuses to delete an Epic with
     // any started descendant Task ("Can only delete an Epic while all of its
     // Tasks are still in backlog") — intentional, to preserve run history. The
-    // `uniqueTitle` timestamp keeps this fixture from colliding with other runs
+    // `uniqueTitle` suffix keeps this fixture from colliding with other runs
     // of this spec, so leaving it behind is safe.
   });
 });

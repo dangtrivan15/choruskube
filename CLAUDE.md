@@ -18,6 +18,8 @@ There is **no root Gradle build** — each component is built and tested on its 
 
 **The reliability gate is per-component tests plus the published-image smoke test**, `scripts/oss-smoke.sh` — it boots the canonical Docker Compose stack from published images and drives one feature-dev run end to end (with a throwaway dummy token, no real Claude call). Run it before declaring complete any change that crosses a component boundary. Per-component unit tests are for fast iteration, not sign-off.
 
+`./scripts/e2e.sh`'s Playwright stage is serial unless `E2E_WORKERS` is set (parallel workers against one stack) and, in CI (`.github/workflows/e2e.yml`), shards across 4 runner pods via `SHARD_INDEX`/`SHARD_TOTAL` — new specs must name created resources via `uniqueName()` (`web-ui/e2e/helpers/api-client.ts`), not a static literal, or they'll collide across workers/shards. See [CONTRIBUTING.md](CONTRIBUTING.md#running-the-playwright-suite-in-parallel).
+
 The api-server enforces **60% line coverage** via JaCoCo, separate from `test` so local iteration stays fast:
 
 ```bash

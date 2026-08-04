@@ -177,6 +177,19 @@ public class SingleTenantDockerExecutor implements WorkloadExecutor {
             if (needsOauthToken(params)) {
                 env.add("CLAUDE_CODE_OAUTH_TOKEN=" + aiCredentialResolver.resolveOauthToken(params.runId()));
             }
+            // Test-node (executor_type=="script") dogfood executions run run-all-tests, which
+            // eval's this repo's test_command (./scripts/e2e.sh) as a single subprocess tree
+            // inside this one container — there is no shard-level fan-out available to it, only
+            // in-stack Playwright worker parallelism. Without an explicit env var it would
+            // silently inherit playwright.config.ts's "unset -> serial" default, which is correct
+            // for local dev but means a Test-node run never benefits from suite parallelization.
+            // The worker count is a starting estimate (unmeasured against real dogfood-run
+            // duration), not an empirically tuned value — tune after observing rollout. No
+            // matching CPU/memory bump is needed here: this executor sets no resource limits on
+            // agent containers today.
+            if (isScriptExecution(params)) {
+                env.add("E2E_WORKERS=3");
+            }
 
             List<Bind> binds = new ArrayList<>();
             binds.add(new Bind(configPath.toString(), new Volume("/workspace/config.json"), AccessMode.ro));
@@ -624,5 +637,11 @@ public class SingleTenantDockerExecutor implements WorkloadExecutor {
     static boolean needsOauthToken(ExecutionParams params) {
         Object raw = params.configJson() != null ? params.configJson().getOrDefault("executor_type", "ai") : "ai";
         return !"script".equalsIgnoreCase(String.valueOf(raw));
+    }
+
+    /** Test-node ("script" executor_type) executions — see the E2E_WORKERS env comment above. */
+    static boolean isScriptExecution(ExecutionParams params) {
+        Object raw = params.configJson() != null ? params.configJson().getOrDefault("executor_type", "ai") : "ai";
+        return "script".equalsIgnoreCase(String.valueOf(raw));
     }
 }

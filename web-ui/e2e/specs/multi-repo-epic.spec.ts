@@ -1,4 +1,5 @@
 import { test, expect } from "../fixtures";
+import { uniqueName } from "../helpers/api-client";
 
 /**
  * Multi-repo Epic flow: the Epic targets a SoftwareProject, which in the
@@ -26,13 +27,13 @@ test.describe("Multi-repo Epics (UI)", () => {
     ).toBeGreaterThanOrEqual(2);
     const [primary, secondary] = reposPage.content;
 
-    const groupName = `e2e-multi-repo-${Date.now()}`;
+    const groupName = uniqueName("e2e-multi-repo");
     const group = await api.createRepoGroup({
       name: groupName,
       memberRepoIds: [primary.id, secondary.id],
     });
 
-    const title = `Multi-repo E2E ${Date.now()}`;
+    const title = uniqueName("Multi-repo E2E");
     try {
       await roadmapPage.goto();
       await roadmapPage.createEpic(

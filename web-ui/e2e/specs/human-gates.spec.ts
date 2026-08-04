@@ -1,4 +1,5 @@
 import { test, expect } from "../fixtures";
+import { uniqueName } from "../helpers/api-client";
 
 test.describe("Human Gates", () => {
   test("approvals page shows pending gates", async ({ approvalsPage, api }) => {
@@ -123,7 +124,7 @@ test.describe("Human Gates", () => {
     // card's ArtifactList renders it. Scope to THIS run's card — the approvals page lists
     // every pending gate, so several artifact lists are present at once.
     const template = await api.getTemplateByName("e2e-human-gate");
-    const runName = `flat-${Date.now().toString(36)}`;
+    const runName = uniqueName("flat");
     const run = await api.startRun({ graphTemplateId: template.id, name: runName });
     await api.waitForNodeStatus(run.id, "review_gate", ["awaiting_human"], 60_000);
     await approvalsPage.goto();
@@ -183,7 +184,7 @@ test.describe("Human Gates", () => {
     // page lists every pending gate and many share the "review_gate" node label,
     // so scope by run name (rendered on the card). Keep it short: the card
     // truncates long names with an ellipsis, which breaks an exact hasText match.
-    const runName = `appr-${Date.now().toString(36)}`;
+    const runName = uniqueName("appr");
     const run = await api.startRun({
       graphTemplateId: template.id,
       name: runName,

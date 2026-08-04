@@ -1,5 +1,6 @@
 import { test, expect } from "../fixtures";
 import { RoadmapCandidateGatePage } from "../pages/roadmap-candidate-gate.page";
+import { uniqueName } from "../helpers/api-client";
 
 // Exercises the Roadmap Provisioner's structured candidate-breakdown gate: the
 // analyzer emits `roadmap_candidates.json` alongside its markdown, the reviewer
@@ -22,7 +23,7 @@ test.describe("Roadmap Provisioner candidate gate", () => {
     api,
   }) => {
     const template = await api.getTemplateByName("e2e-roadmap-candidate-gate");
-    const runName = `candgate-view-${Date.now().toString(36)}`;
+    const runName = uniqueName("candgate-view");
     const run = await api.startRun({ graphTemplateId: template.id, name: runName });
 
     await api.waitForNodeStatus(run.id, "review_candidates", ["awaiting_human"], 60_000);
@@ -55,7 +56,7 @@ test.describe("Roadmap Provisioner candidate gate", () => {
       repos.content.length,
       "E2eTestDataSeeder must seed at least 1 git_repo row for this spec",
     ).toBeGreaterThanOrEqual(1);
-    const runName = `candgate-edit-${Date.now().toString(36)}`;
+    const runName = uniqueName("candgate-edit");
     const run = await api.startRun({
       graphTemplateId: template.id,
       name: runName,
@@ -68,7 +69,7 @@ test.describe("Roadmap Provisioner candidate gate", () => {
     await gatePage.goto();
     const card = await gatePage.waitForGateCard(runName);
 
-    const editedTitle = `Edited via reviewer ${Date.now().toString(36)}`;
+    const editedTitle = uniqueName("Edited via reviewer");
     await gatePage.editEpicTitle(card, editedTitle);
     await gatePage.approve(card, "Looks good, approved with one title edit");
 
@@ -101,7 +102,7 @@ test.describe("Roadmap Provisioner candidate gate", () => {
       "E2eTestDataSeeder must seed at least 1 git_repo row for this spec",
     ).toBeGreaterThanOrEqual(1);
     const template = await api.getTemplateByName("e2e-roadmap-candidate-gate");
-    const runName = `candgate-sidebar-${Date.now().toString(36)}`;
+    const runName = uniqueName("candgate-sidebar");
     const run = await api.startRun({
       graphTemplateId: template.id,
       name: runName,
@@ -134,7 +135,7 @@ test.describe("Roadmap Provisioner candidate gate", () => {
     api,
   }) => {
     const template = await api.getTemplateByName("e2e-roadmap-candidate-gate");
-    const runName = `candgate-reject-${Date.now().toString(36)}`;
+    const runName = uniqueName("candgate-reject");
     const run = await api.startRun({ graphTemplateId: template.id, name: runName });
 
     await api.waitForNodeStatus(run.id, "review_candidates", ["awaiting_human"], 60_000);

@@ -13,7 +13,12 @@ export default defineConfig({
     globals: true,
     environment: "happy-dom",
     setupFiles: ["./src/__tests__/setup.ts"],
-    include: ["src/**/*.test.{ts,tsx}"],
+    // `e2e/helpers/**` is included alongside `src/**` so the framework-agnostic
+    // (non-Playwright-runtime-dependent) helpers under web-ui/e2e/helpers/ — e.g.
+    // `uniqueName` in api-client.ts — can have plain Vitest unit tests co-located
+    // with the source, matching this repo's existing unit-test convention,
+    // without needing a running Playwright test (and therefore the full stack).
+    include: ["src/**/*.test.{ts,tsx}", "e2e/helpers/**/*.test.ts"],
     css: false,
     testTimeout: 15000,
     coverage: {

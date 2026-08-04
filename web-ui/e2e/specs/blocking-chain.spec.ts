@@ -1,4 +1,5 @@
 import { test, expect } from "../fixtures";
+import { uniqueName } from "../helpers/api-client";
 
 test.describe("Blocking Chain", () => {
   test("opening a blocked Task's detail panel shows a multi-hop chain", async ({
@@ -17,9 +18,9 @@ test.describe("Blocking Chain", () => {
       softwareProjectId: repos.content[0].id,
     });
     const story = await api.createStory(epic.id, { title: "Blocking Chain Story", description: "desc" });
-    const taskA = await api.createTask(story.id, { title: "Chain Root Task", description: "desc" });
-    const taskB = await api.createTask(story.id, { title: "Chain Middle Task", description: "desc" });
-    const taskC = await api.createTask(story.id, { title: "Chain Tail Task", description: "desc" });
+    const taskA = await api.createTask(story.id, { title: uniqueName("Chain Root Task"), description: "desc" });
+    const taskB = await api.createTask(story.id, { title: uniqueName("Chain Middle Task"), description: "desc" });
+    const taskC = await api.createTask(story.id, { title: uniqueName("Chain Tail Task"), description: "desc" });
 
     // taskC (tail) blocks taskB (middle), taskB blocks taskA (root) — a 3-hop
     // chain behind taskA, none of which are done, so all 3 hops appear.
@@ -62,8 +63,8 @@ test.describe("Blocking Chain", () => {
       softwareProjectId: repos.content[0].id,
     });
     const story = await api.createStory(epic.id, { title: "Single Hop Story", description: "desc" });
-    const blockingTask = await api.createTask(story.id, { title: "Direct Blocker Task", description: "desc" });
-    const blockedTask = await api.createTask(story.id, { title: "Directly Blocked Task", description: "desc" });
+    const blockingTask = await api.createTask(story.id, { title: uniqueName("Direct Blocker Task"), description: "desc" });
+    const blockedTask = await api.createTask(story.id, { title: uniqueName("Directly Blocked Task"), description: "desc" });
 
     await api.createDependency({
       blockingItemType: "task",
@@ -97,7 +98,7 @@ test.describe("Blocking Chain", () => {
       softwareProjectId: repos.content[0].id,
     });
     const story = await api.createStory(epic.id, { title: "No Chain Story", description: "desc" });
-    const task = await api.createTask(story.id, { title: "Unblocked Task", description: "desc" });
+    const task = await api.createTask(story.id, { title: uniqueName("Unblocked Task"), description: "desc" });
 
     try {
       await roadmapGraphPage.goto(epic.id);

@@ -1,4 +1,5 @@
 import { test, expect } from "../fixtures";
+import { uniqueName } from "../helpers/api-client";
 
 /**
  * RepoGroup-launched run end-to-end flow.
@@ -60,11 +61,11 @@ test.describe("Repo Groups (UI) launches a run via software_project_id", () => {
       r.url.replace(/^https?:\/\/[^/]+\//, "").replace(/\.git$/, ""),
     );
 
-    const groupName = `${E2E_GROUP_PREFIX}${Date.now()}`;
+    const groupName = uniqueName(`${E2E_GROUP_PREFIX}create`);
     const featureRequest = `E2E test feature ${Date.now()}`;
-    // Run names are capped at 30 chars server-side, so use a base-36 timestamp
-    // suffix to keep this unique fixture under the limit.
-    const runName = `e2e-rg-run-${Date.now().toString(36)}`;
+    // Run names are capped at 30 chars server-side, so keep the uniqueName()
+    // prefix short to keep this unique fixture under the limit.
+    const runName = uniqueName("e2e-rg-run");
 
     // 1. Navigate to Software Projects via the sidebar.
     await page.goto("/runs");
@@ -196,7 +197,7 @@ test.describe("Repo Groups (UI) launches a run via software_project_id", () => {
       r.url.replace(/^https?:\/\/[^/]+\//, "").replace(/\.git$/, ""),
     );
     const repoIds = reposPage.content.slice(0, 2).map((r) => r.id);
-    const originalName = `${E2E_GROUP_PREFIX}edit-${Date.now()}`;
+    const originalName = uniqueName(`${E2E_GROUP_PREFIX}edit`);
     const renamed = `${originalName}-renamed`;
     const seeded = await api.createRepoGroup({
       name: originalName,

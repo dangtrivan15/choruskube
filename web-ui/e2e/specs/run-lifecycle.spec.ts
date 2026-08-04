@@ -1,4 +1,5 @@
 import { test, expect } from "../fixtures";
+import { uniqueName } from "../helpers/api-client";
 
 test.describe("Run Lifecycle", () => {
   test.describe("Run List", () => {
@@ -57,8 +58,9 @@ test.describe("Run Lifecycle", () => {
       // the dialog with the same UI-visible name (the picker renders t.name).
       await api.getTemplateByName("e2e-linear-pipeline");
 
+      const runName = uniqueName("e2e-lifecycle-test");
       await runListPage.goto();
-      await runListPage.startRun("e2e-linear-pipeline", "e2e-lifecycle-test");
+      await runListPage.startRun("e2e-linear-pipeline", runName);
 
       // The dialog closed on success — the run now exists server-side. Find it
       // by its UI name, then drive the mock-agent pipeline to completion via the
@@ -68,7 +70,7 @@ test.describe("Run Lifecycle", () => {
         .poll(
           async () => {
             const runs = await api.listRuns();
-            startedId = runs.content.find((r) => r.name === "e2e-lifecycle-test")?.id ?? null;
+            startedId = runs.content.find((r) => r.name === runName)?.id ?? null;
             return startedId;
           },
           { timeout: 15_000, message: "run started via the UI dialog should be listed" },
@@ -126,14 +128,15 @@ test.describe("Run Lifecycle", () => {
       // the run from the Task rather than a manual/template run — this proves
       // task_context (Decision 1/2/3) actually reaches the run detail page end
       // to end, not just the RunMetaPanel unit tests.
-      const uniqueTitle = `E2E Breadcrumb ${Date.now()}`;
+      const uniqueTitle = uniqueName("E2E Breadcrumb");
       const epic = await api.createEpic({
         title: uniqueTitle,
         description: "Testing run breadcrumb",
         softwareProjectId: repos.content[0].id,
       });
+      const storyTitle = uniqueName("Breadcrumb story");
       const story = await api.createStory(epic.id, {
-        title: "Breadcrumb story",
+        title: storyTitle,
         description: "desc",
       });
       const task = await api.createTask(story.id, {
@@ -151,15 +154,15 @@ test.describe("Run Lifecycle", () => {
       const breadcrumb = runMonitorPage.page.getByTestId("run-meta-panel-breadcrumb");
       await expect(breadcrumb).toBeVisible();
       await expect(breadcrumb).toContainText(uniqueTitle);
-      await expect(breadcrumb).toContainText("Breadcrumb story");
+      await expect(breadcrumb).toContainText(storyTitle);
 
       // No cleanup here (unlike roadmap.spec.ts / roadmap-graph.spec.ts fixtures):
       // starting the Task above has already moved it out of "backlog", and
       // DefaultEpicService#delete deliberately refuses to delete an Epic with any
       // started descendant Task ("Can only delete an Epic while all of its Tasks
       // are still in backlog") — that's intentional, to preserve run history. The
-      // `uniqueTitle` timestamp keeps this fixture from colliding with other runs
-      // of this spec, so leaving it behind is safe.
+      // `uniqueTitle` / `storyTitle` uniqueName() suffixes keep this fixture from
+      // colliding with other runs of this spec, so leaving it behind is safe.
     });
 
     test("DAG visualization renders nodes", async ({ runMonitorPage, api }) => {

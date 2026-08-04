@@ -1,4 +1,5 @@
 import { test, expect } from "../fixtures";
+import { uniqueName } from "../helpers/api-client";
 
 // Single-session flow: open the Story Board, drag a Story card to a new
 // column, then reload and confirm the move persisted server-side. Mirrors
@@ -67,7 +68,7 @@ test.describe("Story Board", () => {
       return;
     }
 
-    const uniqueTitle = `E2E Board Story ${Date.now()}`;
+    const uniqueTitle = uniqueName("E2E Board Story");
     const epic = await api.createEpic({
       title: `Epic for ${uniqueTitle}`,
       description: "Epic for the story board E2E test",
@@ -94,7 +95,7 @@ test.describe("Story Board", () => {
     // No cleanup needed: stage moves don't block deletion the way a started descendant Task
     // does (Decision 2 — stage moves bypass that guard entirely), but this spec leaves the
     // fixture Epic/Story behind anyway, mirroring roadmap-board.spec.ts/task-board.spec.ts's
-    // own no-cleanup convention. The `uniqueTitle` timestamp keeps this fixture from colliding
+    // own no-cleanup convention. The `uniqueTitle` suffix keeps this fixture from colliding
     // with other runs of this spec.
   });
 });

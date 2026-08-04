@@ -9,12 +9,60 @@
  * (Resource Owner Password Credentials flow) using the E2E test user.
  */
 
+import { createRequire } from "node:module";
 import type { RepoRef, SoftwareProjectRef } from "../../src/lib/types";
 
 // E2e-mode defaults (2xxxx range). Local-mode runs on 1xxxx — override via
 // API_URL / AUTH_URL env vars if pointing Playwright at the local stack.
 const DEFAULT_API_URL = "http://localhost:28080";
 const DEFAULT_AUTH_URL = "http://localhost:28081";
+
+// Monotonic within-process counter. On top of the worker/shard namespacing
+// below, this guarantees that two `uniqueName` calls made back-to-back from
+// the *same* worker in the *same* shard (e.g. a spec that creates several
+// named resources) still never collide.
+let uniqueNameCounter = 0;
+
+const nodeRequire = createRequire(import.meta.url);
+
+/**
+ * Resolves the current Playwright worker's `parallelIndex` via
+ * `test.info()`. `@playwright/test` is loaded lazily (via `require`, not a
+ * static import) so that this module can be imported — and `uniqueName` unit
+ * tested with explicit indices — under Vitest without pulling in
+ * `@playwright/test`'s own runtime at module-evaluation time.
+ */
+function currentParallelIndex(): number {
+  const { test } = nodeRequire("@playwright/test") as typeof import("@playwright/test");
+  return test.info().parallelIndex;
+}
+
+/**
+ * Derives a name that's unique across concurrent Playwright workers *and*
+ * across CI shards, for specs that create a named resource (Run/Epic/Task
+ * title, GitRepo, RepoGroup, ...) and later locate it in the UI via
+ * `getByText` or similar.
+ *
+ * Playwright's own `test.info().parallelIndex` distinguishes workers within
+ * one shard, but resets to 0 independently in every shard's own process — so
+ * it alone can't distinguish shard 1's worker 0 from shard 2's worker 0. The
+ * `SHARD_INDEX` env var (set per CI matrix job — see playwright.config.ts /
+ * scripts/e2e-pipeline.sh; defaults to "0" for local, unsharded runs) closes
+ * that gap.
+ *
+ * `parallelIndex`/`shardIndex` are overridable so this function can be unit
+ * tested with simulated worker/shard indices outside of a running Playwright
+ * test, where `test.info()` is unavailable — production callers should omit
+ * both and let them default.
+ */
+export function uniqueName(
+  prefix: string,
+  parallelIndex: number = currentParallelIndex(),
+  shardIndex: number = Number(process.env.SHARD_INDEX ?? "0"),
+): string {
+  const suffix = `${Date.now().toString(36)}${(uniqueNameCounter++).toString(36)}`;
+  return `${prefix}-s${shardIndex}w${parallelIndex}-${suffix}`;
+}
 
 export interface NodeDefinition {
   id: string;
@@ -287,6 +335,35 @@ export class TestApiClient {
 
   async listGitRepos(): Promise<PageResponse<GitRepo>> {
     return this.get("/api/v1/git-repos?size=100");
+  }
+
+  /**
+   * Note: `GitRepoRequest` (backend DTO) has no `name` field — a repo's
+   * display name is always derived server-side from its URL
+   * (`RepoNameUtil.deriveOwnerRepoName`, see `GitRepoService`). `url` is the
+   * only required field; give each E2E-created repo a `uniqueName`-derived
+   * URL so its derived display name is worker/shard-unique too.
+   */
+  async createGitRepo(body: {
+    url: string;
+    defaultBranch?: string | null;
+    testCommand?: string | null;
+    agentImage?: string | null;
+    secrets?: string | null;
+    enableDocker?: boolean | null;
+  }): Promise<GitRepo> {
+    return this.post("/api/v1/git-repos", {
+      url: body.url,
+      defaultBranch: body.defaultBranch ?? null,
+      testCommand: body.testCommand ?? null,
+      agentImage: body.agentImage ?? null,
+      secrets: body.secrets ?? null,
+      enableDocker: body.enableDocker ?? null,
+    });
+  }
+
+  async deleteGitRepo(id: string): Promise<void> {
+    return this.delete(`/api/v1/git-repos/${id}`);
   }
 
   // ── Runs ─────────────────────────────────────────────────────────
