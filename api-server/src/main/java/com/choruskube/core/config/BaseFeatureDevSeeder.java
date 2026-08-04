@@ -35,7 +35,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
     // and executor changes here never retroactively mutate prior versions. To ship a
     // change, edit the constants in this file (prompt, executor, schema), increment
     // CURRENT_VERSION, and the next boot creates the new snapshot.
-    static final int CURRENT_VERSION = 31;
+    static final int CURRENT_VERSION = 32;
 
     private static final String TEMPLATE_NAME = "Feature Development";
 
@@ -598,8 +598,8 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             - `/workspace/in/run_log.md` — accumulated history including the
               Implement node summary and any test reports.
             - `/workspace/in/<gate_label>/human_guidance.md` — present only if
-              Final Approval sent this back via `rereview`. When present, this is
-              direction from the human reviewer; honor it.
+              Final Approval or Review Escalation sent this back via `rereview`.
+              When present, this is direction from the human reviewer; honor it.
 
             **Iteration-1 special case:** if `/workspace/in/code_review/` is
             empty or absent, this is iteration 1. There is no prior review to
@@ -975,6 +975,11 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
         nodeDefRepo.save(codeReview);
         defs.put("Code Review", codeReview);
 
+        // Human gate that Code Review's escalation decisions
+        // (need_human_decision:review_conflict / need_human_decision:uncertainty) route to
+        // directly, BEFORE Test runs — see v32 impl subgraph comment in seedTemplate().
+        defs.put("Review Escalation", createNodeDef("Review Escalation", ExecutorType.human, null, 86400));
+
         defs.put("Final Approval", createNodeDef("Final Approval", ExecutorType.human, null, 86400));
 
         NodeDefinition pushCreatePr = createNodeDef("Push & Create PR", ExecutorType.ai, PUSH_PR_PROMPT, 1800);
@@ -1004,20 +1009,26 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
         template.setSystem(true);
         template = templateRepo.save(template);
 
-        // v24 single-test-gate layout. Multi-repo coarse-rejection: a single
-        // Implement node operates across all repos (internally parallelized via
-        // Task subagents). Code Review can self-loop to apply fixes; the Test
-        // gate sits AFTER Code Review so commits Code Review pushes during its
-        // self-loop are validated before reaching Final Approval. Test failure
-        // routes back to Implement (single failure path; loop bound by external
-        // human intervention via Final Approval rereview).
+        // v32 layout. Multi-repo coarse-rejection: a single Implement node operates
+        // across all repos (internally parallelized via Task subagents). Code Review
+        // can self-loop to apply fixes; a clean approval proceeds straight to the Test
+        // gate so commits Code Review pushes during its self-loop are validated before
+        // reaching Final Approval. Test failure routes back to Implement (single
+        // failure path; loop bound by external human intervention via Final Approval
+        // rereview). An uncertain or conflicted Code Review, however, no longer reaches
+        // Test unsupervised: it routes to the new Review Escalation human gate first,
+        // which decides whether to proceed to Test or send the change back to Code
+        // Review for another pass (see Decision 1 in the accompanying spec).
         //
         //   Spec subgraph (unchanged from v23):
         //     [Draft S&P] → [Spec Review] ⇄ (revised) → [Approve S&P]
         //
-        //   Impl subgraph (v24):
+        //   Impl subgraph (v32):
         //     [Implement] → [Code Review] ⇄ revised (self-loop)
-        //                       ↓ approved | need_human_decision:*
+        //                       ├── approved ────────────────→ [Test]
+        //                       └── need_human_decision:* ──→ [Review Escalation]
+        //                                                          ├── approved ──→ [Test]
+        //                                                          └── rereview ──→ [Code Review]
         //                    [Test]
         //                       ├── passed ──→ [Final Approval]
         //                       │                  ├── approved ──→ [Push & Create PR]
@@ -1085,6 +1096,17 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                 false,
                 "{\"loop_group\": \"impl-review\", \"needs_branch\": \"true\", \"effort\": \"ultracode\"}",
                 "[{\"template_node_label\":\"code_review\",\"artifacts\":[{\"name\":\"review.md\",\"description\":\"Prior iteration's code review notes including Reasoning for fixes (only present if iteration > 1)\"}]}]");
+        // Review Escalation gates entry to Test whenever Code Review can't confidently
+        // approve on its own. It reads the same evidence Final Approval already gets
+        // (the implementation summary and Code Review's findings) so the human isn't
+        // asked to decide blind.
+        TemplateNode tnReviewEscalation = createNode(
+                template,
+                nodeDefs.get("Review Escalation"),
+                "review_escalation",
+                false,
+                "{\"loop_group\": \"impl-review\"}",
+                "[{\"template_node_label\":\"implement\",\"artifacts\":[{\"name\":\"summary.md\",\"description\":\"Implementation summary describing changes made\"}]},{\"template_node_label\":\"code_review\",\"artifacts\":[{\"name\":\"review.md\",\"description\":\"Code review findings and approve/reject recommendation\"}]}]");
         TemplateNode tnFinalApproval = createNode(
                 template,
                 nodeDefs.get("Final Approval"),
@@ -1112,19 +1134,22 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
         createEdge(template, tnApproveSpecAndPlan, tnImplement, "approved");
         createEdge(template, tnApproveSpecAndPlan, tnSpecReview, "rereview");
         createEdge(template, tnApproveSpecAndPlan, tnDraftSpecAndPlan, "redraft");
-        // Impl-review loop (v24: single Test gate placed after Code Review)
+        // Impl-review loop (v32: escalations from Code Review route to Review
+        // Escalation, a human gate, instead of straight to Test)
         createEdge(template, tnImplement, tnCodeReview, null);
         createEdge(template, tnCodeReview, tnCodeReview, "revised");
         createEdge(template, tnCodeReview, tnTest, "approved");
-        createEdge(template, tnCodeReview, tnTest, "need_human_decision:review_conflict");
-        createEdge(template, tnCodeReview, tnTest, "need_human_decision:uncertainty");
+        createEdge(template, tnCodeReview, tnReviewEscalation, "need_human_decision:review_conflict");
+        createEdge(template, tnCodeReview, tnReviewEscalation, "need_human_decision:uncertainty");
+        createEdge(template, tnReviewEscalation, tnTest, "approved");
+        createEdge(template, tnReviewEscalation, tnCodeReview, "rereview");
         createEdge(template, tnTest, tnFinalApproval, "passed");
         createEdge(template, tnTest, tnImplement, "failed");
         createEdge(template, tnFinalApproval, tnPushCreatePr, "approved");
         createEdge(template, tnFinalApproval, tnCodeReview, "rereview");
 
         log.info(
-                "BaseFeatureDevSeeder: seeded template graphId='{}' v{}: 8 template nodes, 18 edges (node defs shared)",
+                "BaseFeatureDevSeeder: seeded template graphId='{}' v{}: 9 template nodes, 20 edges (node defs shared)",
                 GRAPH_ID,
                 version);
     }
