@@ -368,9 +368,17 @@ export class TestApiClient {
 
   // ── Runs ─────────────────────────────────────────────────────────
 
-  async listRuns(status?: string): Promise<PageResponse<WorkflowRun>> {
-    const qs = status ? `?status=${status}` : "";
-    return this.get(`/api/v1/runs${qs}`);
+  // `size=100` (matching the other list* methods) plus an optional server-side
+  // `name` filter (RunController/RunService both support it) — without both,
+  // this defaults to the backend's page size of 20 sorted by createdAt DESC,
+  // so a poll for a specific just-created run can be pushed off page 1 by
+  // concurrent runs other Playwright workers create in parallel and never
+  // find it before the poll times out.
+  async listRuns(status?: string, name?: string): Promise<PageResponse<WorkflowRun>> {
+    const params = new URLSearchParams({ size: "100" });
+    if (status) params.set("status", status);
+    if (name) params.set("name", name);
+    return this.get(`/api/v1/runs?${params.toString()}`);
   }
 
   async getRun(id: string): Promise<WorkflowRun> {

@@ -157,7 +157,7 @@ test.describe("Repo Groups (UI) launches a run via software_project_id", () => {
     await expect
       .poll(
         async () => {
-          const runs = await api.listRuns();
+          const runs = await api.listRuns(undefined, runName);
           return runs.content.some(
             (r) =>
               r.name === runName && r.templateName === "Feature Development",
@@ -172,7 +172,7 @@ test.describe("Repo Groups (UI) launches a run via software_project_id", () => {
 
     // Best-effort: cancel the run so it doesn't keep churning the mock-agent
     // worker after the test resolves. The afterEach above handles the group.
-    const runs = await api.listRuns();
+    const runs = await api.listRuns(undefined, runName);
     const created = runs.content.find((r) => r.name === runName);
     if (created) {
       await api.cancelRun(created.id).catch(() => {

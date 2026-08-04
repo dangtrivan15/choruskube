@@ -73,7 +73,7 @@ test.describe("Run Lifecycle", () => {
       await expect
         .poll(
           async () => {
-            const runs = await api.listRuns();
+            const runs = await api.listRuns(undefined, runName);
             startedId = runs.content.find((r) => r.name === runName)?.id ?? null;
             return startedId;
           },
