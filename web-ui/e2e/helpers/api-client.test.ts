@@ -46,10 +46,13 @@ describe("uniqueName", () => {
 
   it("keeps the worker/shard component stable across repeated calls from the same slot", () => {
     // The worker/shard-derived portion of the name is deterministic given the
-    // same indices — only the trailing per-call suffix varies. This is the
-    // property the worker-scoped fixture leans on when it memoizes a single
-    // uniqueName(...) result for the life of a worker: every name minted from
-    // that worker/shard slot is recognizably "of" that slot.
+    // same indices — only the trailing per-call suffix varies. This is useful
+    // to any caller correlating multiple uniqueName(...) calls back to the
+    // same worker/shard slot (e.g. log/dashboard readability) without needing
+    // to memoize a single result. The worker-scoped `workerRepo` fixture does
+    // NOT rely on this: it needs fetch-or-create idempotency across retries of
+    // the same slot, so it builds its own "s<shard>w<worker>" name directly
+    // rather than calling uniqueName(), which mints a fresh suffix every call.
     const a = uniqueName("story", 3, 2);
     const b = uniqueName("story", 3, 2);
     const worker3Shard2Marker = "-s2w3";
