@@ -598,8 +598,8 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             - `/workspace/in/run_log.md` — accumulated history including the
               Implement node summary and any test reports.
             - `/workspace/in/<gate_label>/human_guidance.md` — present only if
-              Final Approval sent this back via `rereview`. When present, this is
-              direction from the human reviewer; honor it.
+              Final Approval or Review Escalation sent this back via `rereview`.
+              When present, this is direction from the human reviewer; honor it.
 
             **Iteration-1 special case:** if `/workspace/in/code_review/` is
             empty or absent, this is iteration 1. There is no prior review to
