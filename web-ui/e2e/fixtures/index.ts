@@ -6,7 +6,7 @@
  *   - Page Objects for each major UI area
  */
 import { test as base } from "@playwright/test";
-import { TestApiClient, uniqueName, type GitRepo, type RepoGroupSummary } from "../helpers/api-client";
+import { TestApiClient, type GitRepo, type RepoGroupSummary } from "../helpers/api-client";
 import { NavigationPage } from "../pages/navigation.page";
 import { RunListPage } from "../pages/run-list.page";
 import { RunMonitorPage } from "../pages/run-monitor.page";
@@ -53,10 +53,18 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   // that runs in it, so specs needing "a repo of their own" don't each mint a
   // fresh GitRepo/RepoGroup pair. Fetch-or-create so a fixture re-used across
   // an aborted-then-retried worker slot doesn't fail on a name/URL conflict.
+  //
+  // Deliberately NOT uniqueName(): that helper mints a fresh Date.now()+counter
+  // suffix on every call, so two calls for the *same* (shard, worker) slot would
+  // never resolve to the same name/URL and the fetch-or-create lookup below could
+  // never hit. The name only needs to be stable per slot and distinct across
+  // slots, so it's built directly from the same "s<shard>w<worker>" scheme
+  // uniqueName() uses for its own collision-safety, minus the per-call suffix.
   workerRepo: [
     async ({}, use, workerInfo) => {
       const api = new TestApiClient();
-      const name = uniqueName("e2e-worker-repo", workerInfo.parallelIndex);
+      const shardIndex = Number(process.env.SHARD_INDEX ?? "0");
+      const name = `e2e-worker-repo-s${shardIndex}w${workerInfo.parallelIndex}`;
       const url = `https://example.invalid/e2e-worker/${name}.git`;
 
       const existingRepos = await api.listGitRepos();

@@ -13,7 +13,7 @@ test.describe("Blocking Chain", () => {
     }
 
     const epic = await api.createEpic({
-      title: `E2E Blocking Chain Epic ${Date.now()}`,
+      title: uniqueName("E2E Blocking Chain Epic"),
       description: "desc",
       softwareProjectId: repos.content[0].id,
     });
@@ -58,7 +58,7 @@ test.describe("Blocking Chain", () => {
     }
 
     const epic = await api.createEpic({
-      title: `E2E Single Hop Chain Epic ${Date.now()}`,
+      title: uniqueName("E2E Single Hop Chain Epic"),
       description: "desc",
       softwareProjectId: repos.content[0].id,
     });
@@ -93,7 +93,7 @@ test.describe("Blocking Chain", () => {
     }
 
     const epic = await api.createEpic({
-      title: `E2E No Chain Epic ${Date.now()}`,
+      title: uniqueName("E2E No Chain Epic"),
       description: "desc",
       softwareProjectId: repos.content[0].id,
     });
