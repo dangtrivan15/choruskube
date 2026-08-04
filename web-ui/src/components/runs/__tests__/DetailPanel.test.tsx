@@ -495,4 +495,89 @@ describe("DetailPanel", () => {
     expect(screen.getByTestId("gate-approve-button")).toBeInTheDocument();
     expect(screen.getByTestId("gate-reject-button")).toBeInTheDocument();
   });
+
+  it("renders an Effort badge for a pending AI node with effort=ultracode", () => {
+    const run = makeRun({
+      graphSnapshot: {
+        nodes: [
+          {
+            template_node_id: "node-1",
+            label: "Implement",
+            executor_type: "ai",
+            is_entrypoint: false,
+            effort: "ultracode",
+          },
+        ],
+        edges: [],
+      },
+      nodeExecutions: [
+        {
+          id: "exec-1",
+          templateNodeId: "node-1",
+          status: "pending",
+          result: null,
+          decision: null,
+          podName: null,
+          iteration: 1,
+          startedAt: null,
+          completedAt: null,
+          errorMessage: null,
+          graphVersion: 1,
+          artifactRefs: "{}",
+          label: null,
+          loopGroup: null,
+          reviewerType: null,
+          traversedEdgeIds: null,
+          requiredArtifacts: null,
+          candidateBreakdown: null,
+        },
+      ],
+    });
+
+    renderWithProviders(<DetailPanel run={run} nodeId="node-1" />);
+
+    expect(screen.getByText("Effort: ultracode")).toBeInTheDocument();
+  });
+
+  it("does not render an Effort badge when the node has no effort override", () => {
+    const run = makeRun({
+      graphSnapshot: {
+        nodes: [
+          {
+            template_node_id: "node-1",
+            label: "Implement",
+            executor_type: "ai",
+            is_entrypoint: false,
+          },
+        ],
+        edges: [],
+      },
+      nodeExecutions: [
+        {
+          id: "exec-1",
+          templateNodeId: "node-1",
+          status: "pending",
+          result: null,
+          decision: null,
+          podName: null,
+          iteration: 1,
+          startedAt: null,
+          completedAt: null,
+          errorMessage: null,
+          graphVersion: 1,
+          artifactRefs: "{}",
+          label: null,
+          loopGroup: null,
+          reviewerType: null,
+          traversedEdgeIds: null,
+          requiredArtifacts: null,
+          candidateBreakdown: null,
+        },
+      ],
+    });
+
+    renderWithProviders(<DetailPanel run={run} nodeId="node-1" />);
+
+    expect(screen.queryByText("Effort: ultracode")).not.toBeInTheDocument();
+  });
 });

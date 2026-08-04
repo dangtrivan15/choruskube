@@ -35,7 +35,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
     // and executor changes here never retroactively mutate prior versions. To ship a
     // change, edit the constants in this file (prompt, executor, schema), increment
     // CURRENT_VERSION, and the next boot creates the new snapshot.
-    static final int CURRENT_VERSION = 30;
+    static final int CURRENT_VERSION = 31;
 
     private static final String TEMPLATE_NAME = "Feature Development";
 
@@ -554,6 +554,38 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             `need_human_decision:uncertainty` (don't know how to proceed). Do NOT
             propose to discard the spec.
 
+            ## Multi-agent review panel (ultracode effort mode)
+
+            Check `effort` in /workspace/config.json. If it is `"ultracode"`, this
+            session runs as an ADJUDICATOR on top of the self-iterating review
+            described below — it does not replace it.
+
+            Before applying the checklist yourself, dispatch a small panel of
+            independent Task subagents, one per lens, each reviewing the same
+            working git branch from a distinct, narrow perspective:
+            - **Correctness** — logic errors, edge cases, off-by-ones, incorrect
+              assumptions about inputs/state.
+            - **Security** — hardcoded secrets, injection vectors, missing input
+              validation, auth/authorization gaps.
+            - **Test coverage** — untested branches, missing edge-case tests,
+              tests that don't actually assert meaningful behavior.
+            - **Simplification** — unnecessary complexity, duplicated logic,
+              wrong abstractions, dead code.
+
+            Each subagent reports its findings back to you; it does not fix
+            anything or push commits itself — only you (the adjudicator) apply
+            fixes and decide approve/reject, after weighing all four lenses
+            together. Where subagents disagree or one lens's finding
+            contradicts another's fix, resolve the disagreement yourself and
+            note the resolution in `review.md` — do not silently drop a
+            dissenting finding. This panel augments, but does not replace, your
+            own reading of the code: continue to apply the full checklist below
+            yourself in addition to weighing the panel's findings.
+
+            When `effort` is not `"ultracode"` (or is absent), skip this
+            section entirely and self-review in a single pass exactly as
+            described below — that existing single-pass behavior is unchanged.
+
             ## Inputs
 
             - `/workspace/repo/` (or `/workspace/repo/<name>/` for multi-repo) —
@@ -1031,7 +1063,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                 nodeDefs.get("Implement"),
                 "implement",
                 false,
-                "{\"loop_group\": \"impl-review\", \"needs_branch\": \"true\"}",
+                "{\"loop_group\": \"impl-review\", \"needs_branch\": \"true\", \"effort\": \"ultracode\"}",
                 "[{\"template_node_label\":\"spec_review\",\"artifacts\":[{\"name\":\"spec_and_plan.md\",\"description\":\"The approved spec to implement\"}]}]");
         // Test runs run-all-tests (a script in the agent image) which iterates each
         // repo's test_command from /workspace/config.json. Single-repo runs read the
@@ -1051,7 +1083,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                 nodeDefs.get("Code Review"),
                 "code_review",
                 false,
-                "{\"loop_group\": \"impl-review\", \"needs_branch\": \"true\"}",
+                "{\"loop_group\": \"impl-review\", \"needs_branch\": \"true\", \"effort\": \"ultracode\"}",
                 "[{\"template_node_label\":\"code_review\",\"artifacts\":[{\"name\":\"review.md\",\"description\":\"Prior iteration's code review notes including Reasoning for fixes (only present if iteration > 1)\"}]}]");
         TemplateNode tnFinalApproval = createNode(
                 template,

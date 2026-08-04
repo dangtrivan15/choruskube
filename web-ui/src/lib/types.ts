@@ -82,6 +82,7 @@ export interface SnapshotNode {
   timeout_seconds?: number;
   config_overrides?: Record<string, unknown>;
   decision_options?: string[];
+  effort?: string;
 }
 
 export interface SnapshotEdge {

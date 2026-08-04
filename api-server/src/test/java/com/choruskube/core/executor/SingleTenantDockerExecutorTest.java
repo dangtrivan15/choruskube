@@ -12,6 +12,8 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.choruskube.core.credential.AiCredentialResolver;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.dockerjava.api.DockerClient;
 import com.github.dockerjava.api.command.CreateContainerCmd;
 import com.github.dockerjava.api.command.CreateContainerResponse;
@@ -1109,6 +1111,45 @@ class SingleTenantDockerExecutorTest {
         // outer catch's unconditional DinD cleanup guard).
         verify(docker, atLeastOnce()).removeContainerCmd(argThat(name -> name.startsWith("ck-dind-")));
         verify(docker, atLeastOnce()).removeVolumeCmd(argThat(name -> name.startsWith("ck-dind-data-")));
+    }
+
+    // -----------------------------------------------------------------------
+    // configJson pass-through — arbitrary keys (e.g. "effort") reach the mounted config.json
+    // verbatim. SingleTenantDockerExecutor writes params.configJson() through unchanged via
+    // Files.writeString — no production code change needed, this only proves the pass-through.
+    // -----------------------------------------------------------------------
+
+    @Test
+    void execute_writesEffortIntoMountedConfigJsonVerbatim() throws IOException {
+        AiCredentialResolver credentialService = mock(AiCredentialResolver.class);
+        when(credentialService.resolveOauthToken(any())).thenReturn("test-oauth-token");
+
+        DockerMocks mocks = mockDockerClient();
+        SingleTenantDockerExecutor executor =
+                new SingleTenantDockerExecutor(testConfig(), mocks.docker(), credentialService);
+
+        ExecutionParams params = new ExecutionParams(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                "choruskube/agent:test",
+                Map.of("api_server_url", "http://api-server:8080", "effort", "ultracode"),
+                false,
+                List.of(),
+                null);
+
+        executor.execute(params);
+
+        ArgumentCaptor<HostConfig> captor = ArgumentCaptor.forClass(HostConfig.class);
+        verify(mocks.createCmd()).withHostConfig(captor.capture());
+        HostConfig captured = captor.getValue();
+
+        Bind configBind = findBindByContainerPath(captured, "/workspace/config.json");
+        assertThat(configBind).isNotNull();
+
+        String mountedConfig = Files.readString(Path.of(configBind.getPath()));
+        JsonNode configNode = new ObjectMapper().readTree(mountedConfig);
+        assertThat(configNode.get("effort").asText()).isEqualTo("ultracode");
     }
 
     // -----------------------------------------------------------------------

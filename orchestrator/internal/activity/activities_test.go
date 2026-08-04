@@ -1326,6 +1326,99 @@ func TestExecuteAINodeFromSnapshot_ModelOmittedWhenEmpty(t *testing.T) {
 	assert.False(t, hasModel, "config.json must omit model when not set on the snapshot")
 }
 
+// TestExecuteAINodeFromSnapshot_EffortInConfigJson verifies that the effort override
+// extracted from config_overrides is propagated to the agent via config.json["effort"]
+// when set.
+func TestExecuteAINodeFromSnapshot_EffortInConfigJson(t *testing.T) {
+	var receivedConfigJSON map[string]interface{}
+
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/internal/workloads/"):
+			var req map[string]interface{}
+			json.NewDecoder(r.Body).Decode(&req)
+			if cj, ok := req["configJson"].(map[string]interface{}); ok {
+				receivedConfigJSON = cj
+			}
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"executionHandle": "agent-abc12345",
+				"jobSecretHash":   "hash123",
+			})
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer apiServer.Close()
+
+	client := apiclient.NewClient(apiServer.URL)
+	cfg := &config.Config{
+		APIServerURL: apiServer.URL,
+		Callback:     config.CallbackConfig{URL: "http://callback:9090/api/v1/callback"},
+	}
+	acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
+
+	err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+		NodeExecutionID: uuid.New(),
+		RunID:           uuid.New(),
+		TemplateNodeID:  uuid.New(),
+		Label:           "code_review",
+		ExecutorType:    "ai",
+		PromptTemplate:  "irrelevant",
+		Effort:          "ultracode",
+	})
+	assert.ErrorIs(t, err, activity.ErrResultPending)
+
+	assert.Equal(t, "ultracode", receivedConfigJSON["effort"],
+		"config.json must include effort when set on the snapshot")
+}
+
+// TestExecuteAINodeFromSnapshot_EffortOmittedWhenEmpty verifies effort is omitted from
+// config.json when not set (not present as an empty string).
+func TestExecuteAINodeFromSnapshot_EffortOmittedWhenEmpty(t *testing.T) {
+	var receivedConfigJSON map[string]interface{}
+
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/internal/workloads/"):
+			var req map[string]interface{}
+			json.NewDecoder(r.Body).Decode(&req)
+			if cj, ok := req["configJson"].(map[string]interface{}); ok {
+				receivedConfigJSON = cj
+			}
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"executionHandle": "agent-abc12345",
+				"jobSecretHash":   "hash123",
+			})
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer apiServer.Close()
+
+	client := apiclient.NewClient(apiServer.URL)
+	cfg := &config.Config{
+		APIServerURL: apiServer.URL,
+		Callback:     config.CallbackConfig{URL: "http://callback:9090/api/v1/callback"},
+	}
+	acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
+
+	err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+		NodeExecutionID: uuid.New(),
+		RunID:           uuid.New(),
+		TemplateNodeID:  uuid.New(),
+		Label:           "spec_review",
+		ExecutorType:    "ai",
+		PromptTemplate:  "irrelevant",
+		// Effort intentionally not set
+	})
+	assert.ErrorIs(t, err, activity.ErrResultPending)
+
+	_, hasEffort := receivedConfigJSON["effort"]
+	assert.False(t, hasEffort, "config.json must omit effort when not set on the snapshot")
+}
+
 // TestLoadReviewHistoryJSON_PreservesFeedbackText is the end-to-end regression test for
 // the bug where the reviewer's feedback never reached the Roadmap Analyzer's
 // {review_history} prompt variable. It exercises the full path from the API server's
