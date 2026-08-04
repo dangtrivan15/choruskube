@@ -17,6 +17,7 @@ public interface AuditSink {
     String STORY_CREATED = "story_created";
     String STORY_UPDATED = "story_updated";
     String STORY_DELETED = "story_deleted";
+    String STORY_STAGE_UPDATED = "story_stage_updated";
     String TASK_CREATED = "task_created";
     String TASK_UPDATED = "task_updated";
     String TASK_DELETED = "task_deleted";

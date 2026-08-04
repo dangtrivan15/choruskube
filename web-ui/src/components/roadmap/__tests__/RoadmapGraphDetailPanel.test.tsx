@@ -55,6 +55,7 @@ const story: StoryResponse = {
   title: "Dark theme toggle",
   description: "Story description",
   status: "backlog",
+  stage: "backlog",
   readiness: "READY",
   progress: { totalTasks: 1, doneTasks: 0 },
   createdAt: "2026-04-01T00:00:00Z",

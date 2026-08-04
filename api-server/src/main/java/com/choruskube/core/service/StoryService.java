@@ -2,8 +2,11 @@ package com.choruskube.core.service;
 
 import com.choruskube.core.dto.StoryRequest;
 import com.choruskube.core.dto.StoryResponse;
+import com.choruskube.core.model.enums.WorkItemStatus;
 import java.util.List;
 import java.util.UUID;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 
 /**
  * CRUD plus rollup status/progress aggregation for Stories (Decision 2). Defined as an
@@ -28,6 +31,16 @@ public interface StoryService {
     List<StoryResponse> list(UUID epicId);
 
     /**
+     * Global, cross-Epic Story listing for the Kanban board view — mirrors {@link
+     * com.choruskube.core.service.TaskService#list(WorkItemStatus, Pageable)}'s shape:
+     * {@code scopeProvider}-scoped, optionally filtered by board {@code stage}, page-returning.
+     * Uses the same shared single-item mapper as {@link #get}/{@link #create} — {@code readiness}
+     * stays {@code null} here (Decision 1 scopes real readiness to the per-Epic {@link #list(UUID)}
+     * and the Roadmap Graph View only).
+     */
+    Page<StoryResponse> list(WorkItemStatus stage, Pageable pageable);
+
+    /**
      * Agent/internal mirror of {@link #list} for the Roadmap Graph View internal route (Decision
      * 1): validated the same way as {@link #create(UUID, StoryRequest, UUID, UUID)} —
      * {@code assertSameOrg} plus a direct project match — instead of {@link #list}'s
@@ -41,4 +54,11 @@ public interface StoryService {
     StoryResponse update(UUID id, StoryRequest request);
 
     void delete(UUID id);
+
+    /**
+     * Moves a Story to a new roadmap board stage. Exempt from the "no edit once started" guard
+     * that {@link #update} enforces — stage moves must succeed even after descendant Tasks have
+     * started. Mirrors {@link EpicService#updateStage} exactly.
+     */
+    StoryResponse updateStage(UUID id, WorkItemStatus stage);
 }

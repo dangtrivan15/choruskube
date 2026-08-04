@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { Link } from "react-router";
-import { Kanban, List } from "lucide-react";
+import { Kanban, List, BookOpen } from "lucide-react";
 import {
   DndContext,
   PointerSensor,
@@ -86,6 +86,14 @@ export default function TaskBoardPage() {
         >
           <Kanban className="size-4" />
           Epic board
+        </Link>
+        <Link
+          to="/roadmap/board/stories"
+          data-testid="task-board-story-board-link"
+          className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-transparent px-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
+          <BookOpen className="size-4" />
+          Story board
         </Link>
         <Link
           to="/roadmap"

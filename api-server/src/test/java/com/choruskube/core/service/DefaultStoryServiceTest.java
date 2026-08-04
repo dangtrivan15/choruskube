@@ -2,6 +2,10 @@ package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 
 import com.choruskube.core.BaseTest;
 import com.choruskube.core.dto.CreateDependencyRequest;
@@ -11,6 +15,8 @@ import com.choruskube.core.dto.EpicResponse;
 import com.choruskube.core.dto.StoryRequest;
 import com.choruskube.core.dto.StoryResponse;
 import com.choruskube.core.dto.TaskRequest;
+import com.choruskube.core.dto.TaskResponse;
+import com.choruskube.core.exception.BadRequestException;
 import com.choruskube.core.exception.ConflictException;
 import com.choruskube.core.exception.ForbiddenException;
 import com.choruskube.core.exception.NotFoundException;
@@ -18,10 +24,13 @@ import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.Task;
 import com.choruskube.core.model.enums.Readiness;
 import com.choruskube.core.model.enums.WorkItemStatus;
+import com.choruskube.core.observability.AuditSink;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkItemDependencyRepository;
 import com.choruskube.core.util.RepoNameUtil;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.temporal.client.WorkflowClient;
 import io.temporal.serviceclient.WorkflowServiceStubs;
 import jakarta.persistence.EntityManager;
@@ -29,7 +38,11 @@ import jakarta.persistence.PersistenceContext;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -68,6 +81,9 @@ public class DefaultStoryServiceTest extends BaseTest {
 
     @MockitoBean
     private RunEventPublisher runEventPublisher;
+
+    @MockitoBean
+    private AuditSink auditSink;
 
     @Test
     void create_underEpic_returnsStoryWithEpicId() {
@@ -283,6 +299,149 @@ public class DefaultStoryServiceTest extends BaseTest {
         service.delete(story.id());
 
         assertThat(dependencyRepo.findById(edge.id())).isEmpty();
+    }
+
+    // ── global list(stage, pageable) board listing ────────────────────────────────
+
+    @Test
+    void create_defaultsStageToBacklog() {
+        EpicResponse epic = makeEpic("https://github.com/test/story-stage-default.git");
+
+        StoryResponse created = service.create(epic.id(), new StoryRequest("S", "D"));
+
+        assertThat(created.stage()).isEqualTo("backlog");
+    }
+
+    @Test
+    void listBoard_unfiltered_returnsAllStories() {
+        EpicResponse epic = makeEpic("https://github.com/test/story-board-list-all.git");
+        StoryResponse s1 = service.create(epic.id(), new StoryRequest("S1", "D"));
+        StoryResponse s2 = service.create(epic.id(), new StoryRequest("S2", "D"));
+
+        Page<StoryResponse> page =
+                service.list(null, PageRequest.of(0, 20, Sort.by("createdAt").descending()));
+
+        assertThat(page.getContent()).extracting(StoryResponse::id).contains(s1.id(), s2.id());
+        assertThat(page.getTotalElements()).isGreaterThanOrEqualTo(2);
+    }
+
+    @Test
+    void listBoard_filteredByStage_returnsOnlyMatchingRows() {
+        EpicResponse epic = makeEpic("https://github.com/test/story-board-list-filtered.git");
+        StoryResponse backlogStory = service.create(epic.id(), new StoryRequest("Still Backlog", "D"));
+        StoryResponse movedStory = service.create(epic.id(), new StoryRequest("Moved", "D"));
+        service.updateStage(movedStory.id(), WorkItemStatus.in_progress);
+
+        Page<StoryResponse> backlogPage = service.list(
+                WorkItemStatus.backlog,
+                PageRequest.of(0, 20, Sort.by("createdAt").descending()));
+        Page<StoryResponse> inProgressPage = service.list(
+                WorkItemStatus.in_progress,
+                PageRequest.of(0, 20, Sort.by("createdAt").descending()));
+
+        assertThat(backlogPage.getContent()).extracting(StoryResponse::id).contains(backlogStory.id());
+        assertThat(backlogPage.getContent()).extracting(StoryResponse::id).doesNotContain(movedStory.id());
+        assertThat(inProgressPage.getContent()).extracting(StoryResponse::id).contains(movedStory.id());
+        assertThat(inProgressPage.getContent()).extracting(StoryResponse::id).doesNotContain(backlogStory.id());
+    }
+
+    @Test
+    void listBoard_readinessStaysNull_usesSharedSingleItemMapper() {
+        // Mirrors DefaultTaskServiceTest#list_readinessStaysNull_usesSharedSingleItemMapper: the
+        // global board listing deliberately reuses the shared single-item mapper (the same one
+        // get()/create() use), not the Roadmap Graph View's EpicReadinessAssembler-backed path.
+        EpicResponse epic = makeEpic("https://github.com/test/story-board-list-readiness.git");
+        service.create(epic.id(), new StoryRequest("S", "D"));
+
+        Page<StoryResponse> page =
+                service.list(null, PageRequest.of(0, 20, Sort.by("createdAt").descending()));
+
+        assertThat(page.getContent()).extracting(StoryResponse::readiness).containsOnlyNulls();
+    }
+
+    // ── updateStage: roadmap board stage moves ────────────────────────────────────
+
+    @Test
+    void updateStage_persistsNewStage_leavesStatusAndProgressUnchanged() {
+        EpicResponse epic = makeEpic("https://github.com/test/story-stage-persist.git");
+        StoryResponse created = service.create(epic.id(), new StoryRequest("S", "D"));
+        var task = taskService.create(created.id(), new TaskRequest("T", "D"));
+        markTaskDone(task.id());
+        StoryResponse beforeStageMove = service.get(created.id());
+
+        StoryResponse updated = service.updateStage(created.id(), WorkItemStatus.rolled_out);
+
+        assertThat(updated.stage()).isEqualTo("rolled_out");
+        // Decision: stage is fully decoupled from the read-time status rollup.
+        assertThat(updated.status()).isEqualTo(beforeStageMove.status());
+        assertThat(updated.progress().totalTasks())
+                .isEqualTo(beforeStageMove.progress().totalTasks());
+        assertThat(updated.progress().doneTasks())
+                .isEqualTo(beforeStageMove.progress().doneTasks());
+
+        StoryResponse refetched = service.get(created.id());
+        assertThat(refetched.stage()).isEqualTo("rolled_out");
+    }
+
+    @Test
+    void updateStage_publishesRoadmapItemChangedEvent() {
+        EpicResponse epic = makeEpic("https://github.com/test/story-stage-event.git");
+        StoryResponse created = service.create(epic.id(), new StoryRequest("S", "D"));
+
+        service.updateStage(created.id(), WorkItemStatus.in_progress);
+
+        verify(runEventPublisher).publishRoadmapItemChanged(eq("story"), eq(created.id()), eq("in_progress"));
+    }
+
+    @Test
+    void updateStage_writesAuditEntryWithBeforeAfterStage() {
+        EpicResponse epic = makeEpic("https://github.com/test/story-stage-audit.git");
+        StoryResponse created = service.create(epic.id(), new StoryRequest("S", "D"));
+
+        service.updateStage(created.id(), WorkItemStatus.rolled_out);
+
+        ArgumentCaptor<String> detailCaptor = ArgumentCaptor.forClass(String.class);
+        verify(auditSink)
+                .record(eq(AuditSink.STORY_STAGE_UPDATED), eq("story"), eq(created.id()), detailCaptor.capture());
+        JsonNode detail = readTree(detailCaptor.getValue());
+        assertThat(detail.path("before").path("stage").asText()).isEqualTo("backlog");
+        assertThat(detail.path("after").path("stage").asText()).isEqualTo("rolled_out");
+    }
+
+    private static JsonNode readTree(String json) {
+        try {
+            return new ObjectMapper().readTree(json);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    @Test
+    void updateStage_withDoneValue_throwsAndHasNoSideEffects() {
+        EpicResponse epic = makeEpic("https://github.com/test/story-stage-done-rejected.git");
+        StoryResponse created = service.create(epic.id(), new StoryRequest("S", "D"));
+
+        assertThatThrownBy(() -> service.updateStage(created.id(), WorkItemStatus.done))
+                .isInstanceOf(BadRequestException.class);
+
+        StoryResponse after = service.get(created.id());
+        assertThat(after.stage()).isEqualTo("backlog");
+        verify(auditSink, never()).record(eq(AuditSink.STORY_STAGE_UPDATED), any(), any(), any());
+        verify(runEventPublisher, never()).publishRoadmapItemChanged(eq("story"), eq(created.id()), eq("done"));
+    }
+
+    @Test
+    void updateStage_withStartedDescendantTask_succeeds() {
+        // Proves the "no edit once started" guard used by the full update() edit path does NOT
+        // apply to stage moves (Decision 2 of the plan: mirrors DefaultEpicService#updateStage).
+        EpicResponse epic = makeEpic("https://github.com/test/story-stage-started-task.git");
+        StoryResponse story = service.create(epic.id(), new StoryRequest("S", "D"));
+        TaskResponse task = taskService.create(story.id(), new TaskRequest("T", "D"));
+        markTaskInProgress(task.id());
+
+        StoryResponse updated = service.updateStage(story.id(), WorkItemStatus.rolled_out);
+
+        assertThat(updated.stage()).isEqualTo("rolled_out");
     }
 
     @Test

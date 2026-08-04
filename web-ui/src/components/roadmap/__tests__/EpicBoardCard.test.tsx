@@ -47,6 +47,7 @@ function makeStory(overrides: Partial<StoryResponse> = {}): StoryResponse {
     title: "Dark theme toggle",
     description: "desc",
     status: "backlog",
+    stage: "backlog",
     readiness: null,
     progress: { totalTasks: 2, doneTasks: 1 },
     createdAt: "2026-04-01T00:00:00Z",
