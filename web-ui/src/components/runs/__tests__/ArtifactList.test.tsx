@@ -31,7 +31,7 @@ describe("ArtifactList", () => {
   it("renders nothing when all groups have null execId", () => {
     mockUseArtifactsForGroups.mockReturnValue([]);
     const groups = [
-      { nodeExecutionId: null, nodeLabel: "Node A", artifacts: [{ name: "file.md", description: null }] },
+      { nodeExecutionId: null, nodeLabel: "Node A", artifacts: [{ name: "file.md", description: null, required: false }] },
     ];
     const { container } = renderWithProviders(
       <ArtifactList runId="run-1" groups={groups} />
@@ -68,7 +68,7 @@ describe("ArtifactList", () => {
       {
         nodeExecutionId: "exec-a",
         nodeLabel: "Node A",
-        artifacts: [{ name: "plan.md", description: null }],
+        artifacts: [{ name: "plan.md", description: null, required: false }],
       },
     ];
     renderWithProviders(<ArtifactList runId="run-1" groups={groups} />);
@@ -128,7 +128,7 @@ describe("ArtifactList", () => {
       {
         nodeExecutionId: "exec-a",
         nodeLabel: "Node A",
-        artifacts: [{ name: "plan.md", description: null }],
+        artifacts: [{ name: "plan.md", description: null, required: false }],
       },
     ];
     const { container } = renderWithProviders(<ArtifactList runId="run-1" groups={groups} />);

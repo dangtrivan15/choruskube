@@ -147,7 +147,7 @@ describe("DetailPanel", () => {
       {
         nodeExecutionId: "exec-pred-1",
         nodeLabel: "Planning Node",
-        artifacts: [{ name: "spec_and_plan.md", description: "Spec and plan" }],
+        artifacts: [{ name: "spec_and_plan.md", description: "Spec and plan", required: false }],
       },
     ];
     const run = makeRun({
