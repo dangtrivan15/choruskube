@@ -1207,7 +1207,7 @@ class SingleTenantDockerExecutorTest {
                 UUID.randomUUID(),
                 UUID.randomUUID(),
                 "choruskube/agent:test",
-                Map.of("api_server_url", "http://api-server:8080", "effort", "ultracode"),
+                Map.of("api_server_url", "http://api-server:8080", "effort", "xhigh"),
                 false,
                 List.of(),
                 null);
@@ -1223,7 +1223,7 @@ class SingleTenantDockerExecutorTest {
 
         String mountedConfig = Files.readString(Path.of(configBind.getPath()));
         JsonNode configNode = new ObjectMapper().readTree(mountedConfig);
-        assertThat(configNode.get("effort").asText()).isEqualTo("ultracode");
+        assertThat(configNode.get("effort").asText()).isEqualTo("xhigh");
     }
 
     // -----------------------------------------------------------------------

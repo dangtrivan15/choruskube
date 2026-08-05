@@ -24,14 +24,12 @@ export GITHUB_TOKEN_URL=$(jq -r '.github_token_url // empty' "$CONFIG_FILE")
 COMMAND=$(jq -r '.command // empty' "$CONFIG_FILE")
 EXECUTOR_TYPE=$(jq -r '.executor_type // "ai"' "$CONFIG_FILE")
 MODEL=$(jq -r '.model // empty' "$CONFIG_FILE")
+# Whatever effort the node configures reaches claude's argv verbatim — the set of
+# levels is claude's to define, not this entrypoint's, so no allowlist is kept in
+# sync here. Unlike max_turns/max_retries below, a bad value is not structurally
+# fatal: claude warns and falls back to its default effort, degrading the run
+# rather than breaking it.
 EFFORT=$(jq -r '.effort // empty' "$CONFIG_FILE")
-# Only "ultracode" is a recognized effort mode today. Validate before any
-# run_claude() call so an unrecognized/typo'd config.json value fails loudly
-# here rather than reaching claude's argv unexamined (see spec Decision 2/§3.4).
-if [ -n "$EFFORT" ] && [ "$EFFORT" != "ultracode" ]; then
-  echo "ERROR: unsupported effort value '$EFFORT' (only 'ultracode' is supported)" >&2
-  exit 1
-fi
 # --- Per-node turn/retry budget (max_turns / max_retries) ---
 # Both feed loop/argv arithmetic further down: max_turns becomes --max-turns,
 # max_retries bounds the attempt loops. Read them here with the other config

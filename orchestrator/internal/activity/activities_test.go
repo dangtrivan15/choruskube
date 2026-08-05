@@ -1496,11 +1496,11 @@ func TestExecuteAINodeFromSnapshot_EffortInConfigJson(t *testing.T) {
 		Label:           "code_review",
 		ExecutorType:    "ai",
 		PromptTemplate:  "irrelevant",
-		Effort:          "ultracode",
+		Effort:          "xhigh",
 	})
 	assert.ErrorIs(t, err, activity.ErrResultPending)
 
-	assert.Equal(t, "ultracode", receivedConfigJSON["effort"],
+	assert.Equal(t, "xhigh", receivedConfigJSON["effort"],
 		"config.json must include effort when set on the snapshot")
 }
 

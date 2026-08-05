@@ -35,7 +35,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
     // and executor changes here never retroactively mutate prior versions. To ship a
     // change, edit the constants in this file (prompt, executor, schema), increment
     // CURRENT_VERSION, and the next boot creates the new snapshot.
-    static final int CURRENT_VERSION = 33;
+    static final int CURRENT_VERSION = 34;
 
     private static final String TEMPLATE_NAME = "Feature Development";
 
@@ -573,15 +573,11 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             `need_human_decision:uncertainty` (don't know how to proceed). Do NOT
             propose to discard the spec.
 
-            ## Multi-agent review panel (ultracode effort mode)
+            ## Review lenses
 
-            Check `effort` in /workspace/config.json. If it is `"ultracode"`, this
-            session runs as an ADJUDICATOR on top of the self-iterating review
-            described below — it does not replace it.
-
-            Before applying the checklist yourself, dispatch a small panel of
-            independent Task subagents, one per lens, each reviewing the same
-            working git branch from a distinct, narrow perspective:
+            Review in a single pass, but read the diff once per lens rather than
+            once overall — a single sweep reliably under-weights whichever
+            concern is not top of mind:
             - **Correctness** — logic errors, edge cases, off-by-ones, incorrect
               assumptions about inputs/state.
             - **Security** — hardcoded secrets, injection vectors, missing input
@@ -591,19 +587,11 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             - **Simplification** — unnecessary complexity, duplicated logic,
               wrong abstractions, dead code.
 
-            Each subagent reports its findings back to you; it does not fix
-            anything or push commits itself — only you (the adjudicator) apply
-            fixes and decide approve/reject, after weighing all four lenses
-            together. Where subagents disagree or one lens's finding
-            contradicts another's fix, resolve the disagreement yourself and
-            note the resolution in `review.md` — do not silently drop a
-            dissenting finding. This panel augments, but does not replace, your
-            own reading of the code: continue to apply the full checklist below
-            yourself in addition to weighing the panel's findings.
-
-            When `effort` is not `"ultracode"` (or is absent), skip this
-            section entirely and self-review in a single pass exactly as
-            described below — that existing single-pass behavior is unchanged.
+            Where two lenses point opposite ways — a security hardening that
+            complicates the code, say — resolve the tension yourself and note
+            the resolution in `review.md` rather than silently dropping the
+            losing finding. These lenses are a reading order for the checklist
+            below, not a replacement for it.
 
             ## Inputs
 
@@ -1093,7 +1081,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                 nodeDefs.get("Implement"),
                 "implement",
                 false,
-                "{\"loop_group\": \"impl-review\", \"needs_branch\": \"true\", \"effort\": \"ultracode\"}",
+                "{\"loop_group\": \"impl-review\", \"needs_branch\": \"true\", \"effort\": \"xhigh\"}",
                 "[{\"template_node_label\":\"spec_review\",\"artifacts\":[{\"name\":\"spec_and_plan.md\",\"description\":\"The approved spec to implement\",\"required\":true}]}]");
         // Test runs run-all-tests (a script in the agent image) which iterates each
         // repo's test_command from /workspace/config.json. Single-repo runs read the
@@ -1113,7 +1101,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                 nodeDefs.get("Code Review"),
                 "code_review",
                 false,
-                "{\"loop_group\": \"impl-review\", \"needs_branch\": \"true\", \"effort\": \"ultracode\"}",
+                "{\"loop_group\": \"impl-review\", \"needs_branch\": \"true\", \"effort\": \"xhigh\"}",
                 "[{\"template_node_label\":\"code_review\",\"artifacts\":[{\"name\":\"review.md\",\"description\":\"Prior iteration's code review notes including Reasoning for fixes (only present if iteration > 1)\",\"required\":false}]}]");
         // Review Escalation gates entry to Test whenever Code Review can't confidently
         // approve on its own. It reads the same evidence Final Approval already gets

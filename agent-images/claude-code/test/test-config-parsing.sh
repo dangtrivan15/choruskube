@@ -224,13 +224,13 @@ grep -qE 'if \[ -n "\$TASK_ID" \]' "$ENTRYPOINT" \
 grep -qF '${EFFORT:+--effort "$EFFORT"}' "$ENTRYPOINT" \
   && ok "claude invoked with --effort interpolation" || fail "claude invoked with --effort interpolation"
 
-# --- Test 16: effort field parsing — "ultracode" produces EFFORT=ultracode ---
+# --- Test 16: effort field parsing — "xhigh" produces EFFORT=xhigh ---
 # Same jq parsing logic used for MODEL (`.model // empty`).
 cat > "$CONFIG" <<'EOF'
-{"run_id":"abc","node_execution_id":"xyz","prompt":"test","effort":"ultracode"}
+{"run_id":"abc","node_execution_id":"xyz","prompt":"test","effort":"xhigh"}
 EOF
 EFFORT=$(jq -r '.effort // empty' "$CONFIG")
-[ "$EFFORT" = "ultracode" ] && ok "effort=ultracode parsed" || fail "effort=ultracode parsed"
+[ "$EFFORT" = "xhigh" ] && ok "effort=xhigh parsed" || fail "effort=xhigh parsed"
 
 # --- Test 17: effort field absent — EFFORT empty, no --effort token in argv ---
 cat > "$CONFIG" <<'EOF'
@@ -244,28 +244,41 @@ EFFORT=$(jq -r '.effort // empty' "$CONFIG")
 ARGV_FRAGMENT="${EFFORT:+--effort "$EFFORT"}"
 [ -z "$ARGV_FRAGMENT" ] && ok "empty EFFORT produces no --effort token in argv" || fail "empty EFFORT produces no --effort token in argv"
 
-# --- Test 18: unrecognized effort value — entrypoint.sh exits non-zero before any
-# run_claude()/claude invocation ---
-# Runs the actual entrypoint.sh text (CONFIG_FILE path swapped to a fixture) so this
-# exercises the real validation guard, not a hand-copied re-implementation. The guard
-# sits near the top of the script — well before JOB_SECRET validation, BuildKit setup,
-# or run_claude's definition — so if it fires, claude is structurally never invoked.
-BAD_EFFORT_CONFIG="$TESTDIR/bad_effort_config.json"
-cat > "$BAD_EFFORT_CONFIG" <<'EOF'
+# --- Test 18: any effort value reaches claude's argv verbatim ---
+# The entrypoint keeps no allowlist: which levels exist is claude's contract, and
+# a value it does not know only costs a fallback to default effort. Assert the
+# pass-through directly, over levels claude documents plus one it does not, so a
+# re-introduced allowlist fails here instead of silently dropping a valid level.
+for level in low medium high xhigh max ultracode; do
+  printf '{"run_id":"abc","node_execution_id":"xyz","prompt":"test","effort":"%s"}\n' "$level" > "$CONFIG"
+  EFFORT=$(jq -r '.effort // empty' "$CONFIG")
+  ARGV_FRAGMENT="${EFFORT:+--effort "$EFFORT"}"
+  [ "$ARGV_FRAGMENT" = "--effort $level" ] \
+    && ok "effort=$level reaches argv verbatim" || fail "effort=$level reaches argv verbatim"
+done
+
+# --- Test 18b: an unknown effort value does not abort the entrypoint ---
+# Runs the actual entrypoint.sh text (CONFIG_FILE path swapped to a fixture) rather
+# than a hand-copied re-implementation. Nothing between the top of the script and
+# run_claude() inspects the effort value, so an unrecognized one must reach claude.
+# The anchor is the JOB_SECRET check — the next thing that can halt the script after
+# the effort read. Reaching it proves execution passed the read without a gate; an
+# allowlist re-introduced above it would exit first and this message would be absent.
+EFFORT_CONFIG="$TESTDIR/effort_passthrough_config.json"
+ENTRYPOINT_COPY="$TESTDIR/entrypoint_effort_check.sh"
+sed "s#/workspace/config.json#$EFFORT_CONFIG#g" "$ENTRYPOINT" > "$ENTRYPOINT_COPY"
+chmod +x "$ENTRYPOINT_COPY"
+cat > "$EFFORT_CONFIG" <<'EOF'
 {"run_id":"abc","node_execution_id":"xyz","prompt":"test","effort":"something-else"}
 EOF
-ENTRYPOINT_COPY="$TESTDIR/entrypoint_effort_check.sh"
-sed "s#/workspace/config.json#$BAD_EFFORT_CONFIG#g" "$ENTRYPOINT" > "$ENTRYPOINT_COPY"
-chmod +x "$ENTRYPOINT_COPY"
+# Both streams: the config guards report on stderr, but the JOB_SECRET check is a
+# plain echo on stdout.
 set +e
-BAD_EFFORT_STDERR=$(bash "$ENTRYPOINT_COPY" 2>&1 >/dev/null)
-BAD_EFFORT_RC=$?
+EFFORT_OUTPUT=$(bash "$ENTRYPOINT_COPY" 2>&1)
 set -e
-[ "$BAD_EFFORT_RC" -ne 0 ] && ok "unrecognized effort value exits non-zero" || fail "unrecognized effort value exits non-zero"
-echo "$BAD_EFFORT_STDERR" | grep -q "unsupported effort value" \
-  && ok "unrecognized effort value logs a clear error" || fail "unrecognized effort value logs a clear error"
-echo "$BAD_EFFORT_STDERR" | grep -q "Claude Code exited" \
-  && fail "guard did not stop before a claude invocation" || ok "guard fires before any run_claude()/claude invocation"
+echo "$EFFORT_OUTPUT" | grep -q "JOB_SECRET environment variable not set" \
+  && ok "unknown effort value runs past the effort read" \
+  || fail "unknown effort value runs past the effort read"
 
 # --- Test 19: input artifact download loop — nested keys, required vs optional ---
 # Runs the real Step 1 block against a stub `artifact` so the required/optional branch is
