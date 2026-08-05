@@ -57,6 +57,12 @@ jobs:
               - 'agent-images/claude-code/**'
             choruskube-dev:
               - 'agent-images/choruskube-dev/**'
+              # The image bakes a warmed Gradle module cache resolved from these files, so
+              # they are build inputs too. A stale cache is not incorrect — Gradle just
+              # fetches the delta — but rebuilding here keeps it doing no work at all.
+              - 'api-server/build.gradle'
+              - 'api-server/settings.gradle.kts'
+              - 'api-server/gradle/**'
 
   build-orchestrator:
     needs: detect-changes
@@ -297,6 +303,11 @@ jobs:
         with:
           context: agent-images/choruskube-dev
           file: agent-images/choruskube-dev/Dockerfile
+          # The Gradle warm-up layer needs api-server's build files. A named context keeps
+          # the main context scoped to agent-images/choruskube-dev — switching to a
+          # repo-root context would ship the whole working tree to BuildKit instead.
+          build-contexts: |
+            api-server=api-server
           platforms: linux/amd64
           push: true
           # Pin the base to the public :latest agent — published by build-claude-code just

@@ -1,0 +1,28 @@
+// Gradle init script used ONLY at image build time (see the Dockerfile's warm-up layer).
+// It forces every resolvable configuration to download its artifacts, populating
+// ~/.gradle/caches/modules-2 so that a build running in this image starts with the
+// dependency graph already on disk.
+//
+// `dependencies` / `resolve()` alone would not do: the `dependencies` task reports the
+// graph from POM metadata without fetching the JARs. Touching `configuration.files` is
+// what forces the artifacts themselves to be downloaded.
+//
+// Each configuration is resolved independently and failures are swallowed. Some
+// configurations are not resolvable in isolation (they expect a composite build, a
+// project dependency, or a platform that only exists downstream), and one of those must
+// not fail the image build — a partially warmed cache is still strictly better than a
+// cold one, because Gradle fetches only what is missing.
+allprojects {
+    tasks.register("warmUpDependencies") {
+        doLast {
+            configurations.findAll { it.canBeResolved }.each { configuration ->
+                try {
+                    configuration.files
+                    logger.lifecycle("warmup: resolved ${configuration.name}")
+                } catch (Throwable t) {
+                    logger.lifecycle("warmup: skipped ${configuration.name} (${t.message})")
+                }
+            }
+        }
+    }
+}

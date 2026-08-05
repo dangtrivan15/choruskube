@@ -52,4 +52,37 @@ RUN npm install -g @playwright/test@1.58.2 \
     && playwright install-deps chromium \
     && playwright install chromium
 
+# Pre-resolve the api-server dependency graph into the Gradle module cache
+# (~/.gradle/caches/modules-2), so a CI job running in this image begins with the
+# artifacts already on disk instead of re-downloading them per run.
+#
+# This exists because the obvious alternative is a trap. actions/setup-java's
+# `cache: gradle` keys the cache on a hash of every *.gradle* file in the workspace and
+# sets no restoreKeys at all — upstream cache.ts says so outright: "No restoreKeys is set,
+# to start with a clear cache after dependency update". Editing a single line of a single
+# build file therefore discards the ENTIRE cache and re-downloads every artifact; measured
+# at ~205s of added CI wall-clock on one build-file commit. A cache baked into the image
+# degrades gracefully instead: Gradle keeps everything still valid and fetches only the
+# delta.
+#
+# Only the build files are copied — never sources — so this layer is invalidated by a
+# dependency change rather than by every commit. api-server arrives as a named build
+# context so the main context stays scoped to this directory (see build-images.yml).
+#
+# Placed LAST on purpose: build files change far more often than the JDK/Go/Playwright
+# layers above, and a busted layer invalidates every layer after it. Keeping the warm-up
+# at the end means a dependency bump rebuilds only this layer.
+#
+# Resolution goes straight to Maven Central. Do NOT thread a faster internal mirror
+# through a --build-arg: build args are recorded in the image history, and this image is
+# published to a public registry.
+COPY gradle-warmup.init.gradle /warmup/
+COPY --from=api-server gradlew settings.gradle.kts build.gradle /warmup/api-server/
+COPY --from=api-server gradle /warmup/api-server/gradle
+RUN cd /warmup/api-server \
+    && GRADLE_USER_HOME=/home/agent/.gradle ./gradlew --no-daemon --console=plain \
+         --init-script /warmup/gradle-warmup.init.gradle warmUpDependencies \
+    && rm -rf /warmup /home/agent/.gradle/daemon /home/agent/.gradle/native \
+    && chown -R 1000:1000 /home/agent/.gradle
+
 USER 1000
