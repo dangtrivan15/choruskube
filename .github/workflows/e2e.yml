@@ -5,9 +5,15 @@ name: E2E
 # No real Claude token is needed: the agent runs the deterministic mock-agent and AI calls
 # are stubbed by WireMock with a dummy token.
 #
-# Runs on every PR to main and on push to main so it can serve as a REQUIRED status check.
-# It is intentionally NOT path-filtered: a required check that is skipped (e.g. on a docs-only
-# PR) is reported as pending and blocks the merge forever.
+# Runs on every PR to main, as a REQUIRED status check — a pre-merge gate, and deliberately
+# only that. It is intentionally NOT path-filtered: a required check that is skipped (e.g. on
+# a docs-only PR) is reported as pending and blocks the merge forever.
+#
+# There is no `push: main` trigger. Re-running the suite on main after a merge re-verifies a
+# commit whose content this workflow already passed on the PR, at the cost of a full runner
+# allocation and stack boot per merge — the pool is small enough that those runs contend with
+# the PR checks that actually gate something. Anything reaching main outside a PR (an admin
+# merge, a direct push) can be covered on demand via `workflow_dispatch`.
 #
 # Parallelism is Playwright workers (E2E_WORKERS) inside this one job, against the one
 # Compose stack it boots.
@@ -26,8 +32,6 @@ name: E2E
 on:
   workflow_dispatch:
   pull_request:
-    branches: [main]
-  push:
     branches: [main]
 
 # One e2e run per ref — supersede an in-flight run when new commits land. Workflow-level

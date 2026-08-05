@@ -65,7 +65,10 @@ It is also distinct from `scripts/oss-smoke.sh` (boots from published images,
 exercises one feature-dev run end-to-end). Use `e2e.sh` to validate changes that cross
 a component boundary before declaring them complete. In CI, the `E2E` workflow
 (`.github/workflows/e2e.yml`) runs this whole harness — unit suites included — on
-every PR and push to `main`.
+every PR to `main`, and nowhere else: it is a pre-merge gate, not a post-merge one.
+Re-running it on `main` would re-verify content the PR already proved green while
+occupying a runner that a live PR check needs. Use `workflow_dispatch` if something
+reaches `main` outside a PR and you want the suite over it.
 
 To tear down the e2e stack manually:
 
