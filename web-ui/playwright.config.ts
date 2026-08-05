@@ -25,7 +25,7 @@ const AUTH_FILE = join(__dirname, "e2e/.auth/user.json");
  *
  * Run with: npx playwright test
  * Parallel: E2E_WORKERS=4 npx playwright test
- * Sharded (CI): SHARD_INDEX=1 SHARD_TOTAL=4 E2E_WORKERS=2 npx playwright test --shard=1/4
+ * Sharded (CI): SHARD_INDEX=1 SHARD_TOTAL=2 E2E_WORKERS=2 npx playwright test --shard=1/2
  */
 const shardIndex = process.env.SHARD_INDEX;
 

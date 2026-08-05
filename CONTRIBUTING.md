@@ -96,8 +96,14 @@ each running `E2E_WORKERS` workers against its own stack instance. `SHARD_INDEX`
 with the worker index, keep `uniqueName()` collision-free across shards too:
 
 ```bash
-SHARD_INDEX=1 SHARD_TOTAL=4 E2E_WORKERS=2 ./scripts/e2e.sh
+SHARD_INDEX=1 SHARD_TOTAL=2 E2E_WORKERS=2 ./scripts/e2e.sh
 ```
+
+`SHARD_TOTAL` tracks the shard-matrix length in `e2e.yml` (currently 2), which is in turn
+sized to how many runners the `arc-runner-choruskube` pool admits concurrently — not to how
+long the suite is. Adding shards beyond that limit queues them into a second wave, and each
+shard re-runs the whole stack-boot and unit-test preamble, so an unmatched raise costs more
+time than it saves. Change both together, and only alongside the pool's limit.
 
 The CI workflow's `e2e` job (not the per-shard `e2e-shard (N)` jobs) is the intended
 required status check — it's the one job whose name doesn't vary per matrix leg, and

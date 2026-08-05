@@ -9,10 +9,17 @@ name: E2E
 # serve as a REQUIRED status check. It is intentionally NOT path-filtered: a required check
 # that is skipped (e.g. on a docs-only PR) is reported as pending and blocks the merge forever.
 #
-# The suite fans out into a 4-way shard matrix (`e2e-shard`), each shard an independent job
+# The suite fans out into a 2-way shard matrix (`e2e-shard`), each shard an independent job
 # on its own `arc-runner-choruskube` pod running a subset of the Playwright suite with
 # multiple in-stack workers (SHARD_INDEX/SHARD_TOTAL/E2E_WORKERS — see
-# web-ui/playwright.config.ts and scripts/e2e-pipeline.sh). `e2e` aggregates the shard
+# web-ui/playwright.config.ts and scripts/e2e-pipeline.sh).
+#
+# The shard count is sized to the `arc-runner-choruskube` pool's concurrent-runner limit,
+# not to the suite. Requesting more shards than the pool can admit does not run them sooner:
+# the surplus queues and executes as a second wave, and because every shard re-pays the whole
+# non-Playwright preamble (image builds, stack boot, the full unit stage in scripts/e2e.sh),
+# a queued wave costs more wall-clock than it saves. Raise this only together with the pool's
+# limit. `e2e` aggregates the shard
 # results into the single required check branch protection watches — the required check's
 # name changes from the old single `e2e` job to this aggregation job; see the spec's §8
 # Manual Operations for the branch-protection update this implies.
@@ -36,8 +43,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
-    # Per-shard group (not just per-ref) so a new push cancels all four in-flight shards
+        shard: [1, 2]
+    # Per-shard group (not just per-ref) so a new push cancels both in-flight shards
     # of the superseded run without shards from the same run canceling each other.
     concurrency:
       group: e2e-${{ github.ref }}-shard-${{ matrix.shard }}
@@ -185,7 +192,10 @@ jobs:
         env:
           CI: "true"
           SHARD_INDEX: ${{ matrix.shard }}
-          SHARD_TOTAL: 4
+          # Must equal the length of the `shard` matrix above: Playwright splits the suite
+          # into SHARD_TOTAL slices and each job runs only its own, so a SHARD_TOTAL larger
+          # than the matrix silently drops the unclaimed slices from the run entirely.
+          SHARD_TOTAL: 2
           E2E_WORKERS: 2
         run: scripts/e2e.sh --no-teardown
 
@@ -194,7 +204,7 @@ jobs:
         run: docker compose -f docker-compose.e2e.yaml logs --no-color --tail=400 || true
 
       # Named/pathed per shard (playwright.config.ts's reporter already writes to
-      # `playwright-report-shard-${SHARD_INDEX}` when SHARD_INDEX is set) so the four
+      # `playwright-report-shard-${SHARD_INDEX}` when SHARD_INDEX is set) so the
       # concurrent shard jobs don't race to overwrite one shared report artifact.
       - name: Upload Playwright report
         if: always()
