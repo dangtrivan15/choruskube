@@ -83,13 +83,23 @@ jobs:
           fi
           echo "69264a7a211bf5029830d07bc3370f879769d62ebc5b5488e90c9343a2da0e1f  $RUNNER_TEMP/temurin25.tar.gz" | sha256sum -c -
 
+      # No `cache: gradle`. It was a net LOSS on this runner, measured on run 31028073161:
+      # restoring the 387 MB module cache took 150s (the runner gets ~3 MB/s to GitHub's
+      # cache service) to save roughly 50s of dependency resolution — and resolution here
+      # goes through the in-cluster dependency proxy below, which is far faster than the
+      # cache service it was standing in for.
+      #
+      # It was also fragile in a way that is easy to miss: setup-java keys the cache on a
+      # hash of every *.gradle* file in the workspace and sets NO restoreKeys, deliberately
+      # (upstream cache.ts: "No restoreKeys is set, to start with a clear cache after
+      # dependency update"). Exact match only — so editing one line of one build file
+      # discarded the entire cache and re-downloaded everything, with no partial reuse.
       - uses: actions/setup-java@v4
         with:
           distribution: jdkfile
           jdkFile: ${{ runner.temp }}/temurin25.tar.gz
           java-version: 25.0.3
           architecture: x64
-          cache: gradle
 
       - uses: actions/setup-go@v5
         with:
