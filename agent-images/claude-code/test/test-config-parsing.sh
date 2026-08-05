@@ -584,6 +584,35 @@ ATTEMPT_LOOPS=$(grep -cF '[ $ATTEMPT -lt $MAX_RETRIES ]' "$ENTRYPOINT")
   && ok "all three attempt loops are bounded by the shared \$ATTEMPT/\$MAX_RETRIES pair" \
   || fail "all three attempt loops are bounded by the shared \$ATTEMPT/\$MAX_RETRIES pair (found $ATTEMPT_LOOPS)"
 
+# --- Test 19: needs_pr field parsing (mirrors Test 10's need_decision coverage) ---
+# A regression here (e.g. a typo turning .needs_pr into .need_pr) would silently disable
+# the entire PR-completion gate feature with nothing else in this suite to catch it: the
+# Go-side orchestrator tests only prove config.json gets written correctly, not that
+# entrypoint.sh reads it back, and the E2E/mock-agent path never exercises this field
+# either (NEED_PR is gated on EXECUTOR_TYPE != script, same as NEED_DECISION).
+cat > "$CONFIG" <<'EOF'
+{"run_id":"x","node_execution_id":"y","prompt":"z","needs_pr":true}
+EOF
+NEED_PR=$(jq -r '.needs_pr // false' "$CONFIG")
+[ "$NEED_PR" = "true" ] && ok "needs_pr=true parsed" || fail "needs_pr=true parsed"
+
+cat > "$CONFIG" <<'EOF'
+{"run_id":"x","node_execution_id":"y","prompt":"z"}
+EOF
+NEED_PR=$(jq -r '.needs_pr // false' "$CONFIG")
+[ "$NEED_PR" = "false" ] && ok "needs_pr absent defaults to false" || fail "needs_pr absent defaults to false"
+
+# --- Test 20: entrypoint.sh's PR-verification block branches on check-prs's exit
+# status (not stdout text, unlike DECISION's "(none)" string-equality idiom), and
+# captures check-prs's stderr diagnostics too so a loud failure (Caveat 3) actually
+# reaches the retry prompt / final error message instead of being silently dropped ---
+grep -q "PR verification" "$ENTRYPOINT" \
+  && ok "entrypoint narrates a PR verification block" || fail "entrypoint narrates a PR verification block"
+grep -q 'PR_CHECK_STATUS=\$?' "$ENTRYPOINT" \
+  && ok "PR verification branches on check-prs's exit status" || fail "PR verification branches on check-prs's exit status"
+grep -q 'check-prs 2>&1' "$ENTRYPOINT" \
+  && ok "PR verification captures check-prs's stderr, not just stdout" || fail "PR verification captures check-prs's stderr, not just stdout"
+
 # --- Summary ---
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

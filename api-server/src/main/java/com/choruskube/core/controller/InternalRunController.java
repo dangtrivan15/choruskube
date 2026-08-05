@@ -265,13 +265,24 @@ public class InternalRunController {
      * Node-execution-scoped mirror of {@link #getPullRequests} (Decision 3/3.3 — PR completion
      * gate) — {@code InternalAuthFilter} only authorizes an agent's {@code JOB_SECRET} for paths
      * containing its own {@code node-executions/{nodeExecId}} segment, so the run-scoped read
-     * above is unreachable from inside an agent pod. {@code nodeExecId} is unused beyond
-     * satisfying that scoping pattern, same as {@link #listFeatureProposals} and the other
-     * {@code feature-proposals}/{@code tasks} routes above.
+     * above is unreachable from inside an agent pod.
+     *
+     * <p>Unlike {@link #listFeatureProposals} and the other {@code feature-proposals}/{@code
+     * tasks} routes above (which accept {@code nodeExecId} purely to satisfy that scoping pattern
+     * and otherwise ignore it), this endpoint's {@code nodeExecId} is NOT decorative: {@code
+     * runPullRequestService.getPullRequestsForNodeExecution} cross-checks that {@code nodeExecId}
+     * actually belongs to {@code runId}. {@code InternalAuthFilter} only verifies the caller's
+     * {@code JOB_SECRET} against {@code nodeExecId}'s own stored hash — it never compares the
+     * path's {@code runId} segment to that execution's actual {@code workflow_run_id} — so without
+     * this check, a valid JOB_SECRET for one run's node execution could read a different run's PR
+     * list (repo URLs, PR URLs/numbers, titles) by substituting an arbitrary {@code runId} while
+     * keeping its own {@code nodeExecId}. See {@link
+     * com.choruskube.core.service.RunPullRequestService#getPullRequestsForNodeExecution} for the
+     * check itself.
      */
     @GetMapping("/{runId}/node-executions/{nodeExecId}/pull-requests")
     public List<RunPullRequestResponse> getPullRequestsForNodeExecution(
             @PathVariable UUID runId, @PathVariable UUID nodeExecId) {
-        return runPullRequestService.getPullRequests(runId);
+        return runPullRequestService.getPullRequestsForNodeExecution(runId, nodeExecId);
     }
 }

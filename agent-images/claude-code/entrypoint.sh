@@ -816,14 +816,20 @@ ${PROMPT}"
   # repo they pushed to this run (Decision 3/§3.3). Unlike DECISION above,
   # check-prs has no single-value sentinel to string-match against — it prints a
   # variable-length list of "<repo>: no PR registered" lines (or a distinct
-  # "could not reach origin for <repo>" message if it fails loudly per Caveat 3),
-  # so branch on exit status instead: 0 = nothing missing, non-zero = something
-  # missing or check-prs itself failed. This is a fourth phase drawing on the
-  # same shared $ATTEMPT budget as the three phases above (Caveat 4) — it may
-  # start with little or no budget left.
+  # "could not reach origin for <repo>" / "could not reach $API_SERVER_URL" message
+  # if it fails loudly per Caveat 3), so branch on exit status instead: 0 = nothing
+  # missing, non-zero = something missing or check-prs itself failed. This is a
+  # fourth phase drawing on the same shared $ATTEMPT budget as the three phases
+  # above (Caveat 4) — it may start with little or no budget left.
+  #
+  # Capture check-prs's stderr along with its stdout (2>&1): check-prs's loud
+  # failure diagnostics (unreachable origin/API server, HTTP failure) are written
+  # to stderr — without 2>&1 here, those diagnostics would never reach the retry
+  # prompt or the final ERROR_MESSAGE below, silently defeating Caveat 3's "fail
+  # loudly" intent at the one place a human or the resumed agent actually sees it.
   if [ "$NEED_PR" = "true" ] && [ -n "$API_SERVER_URL" ] && [ -n "$CLAUDE_RESULT" ]; then
     set +e
-    PR_CHECK_OUTPUT=$(check-prs)
+    PR_CHECK_OUTPUT=$(check-prs 2>&1)
     PR_CHECK_STATUS=$?
     set -e
 
@@ -831,21 +837,32 @@ ${PROMPT}"
       ATTEMPT=$((ATTEMPT + 1))
       echo "=== PR retry $ATTEMPT/$MAX_RETRIES (resuming session $CLAUDE_SESSION_ID) ==="
 
-      PR_RETRY_PROMPT="You pushed commits to the following, but did not register a pull request: ${PR_CHECK_OUTPUT}. Run: register-pr --repo-id <id> --pr-url <url> [--pr-number <n>] [--title <t>] [--repo-name <name>] for each missing repo before finishing."
+      PR_RETRY_PROMPT="PR verification reported a problem before this node can finish: ${PR_CHECK_OUTPUT}. If this lists repo(s) with no pull request registered, run: register-pr --repo-id <id> --pr-url <url> [--pr-number <n>] [--title <t>] [--repo-name <name>] for each one. If it instead describes a different failure (e.g. an unreachable API server or git remote), resolve that before finishing."
 
       CLAUDE_OUTPUT=$(run_claude "$PR_RETRY_PROMPT" "--resume $CLAUDE_SESSION_ID")
       parse_claude_output "$CLAUDE_OUTPUT"
 
       set +e
-      PR_CHECK_OUTPUT=$(check-prs)
+      PR_CHECK_OUTPUT=$(check-prs 2>&1)
       PR_CHECK_STATUS=$?
       set -e
     done
 
     if [ "$PR_CHECK_STATUS" -ne 0 ]; then
-      echo "ERROR: PR registration missing for ${PR_CHECK_OUTPUT:-unknown repo(s)} after $ATTEMPT/$MAX_RETRIES total resume attempts this node"
-      RESULT_STATUS="failed"
-      ERROR_MESSAGE="PR registration missing for ${PR_CHECK_OUTPUT:-unknown repo(s)} after $ATTEMPT/$MAX_RETRIES total resume attempts this node"
+      PR_FAILURE_MESSAGE="PR registration missing for ${PR_CHECK_OUTPUT:-unknown repo(s)} after $ATTEMPT/$MAX_RETRIES total resume attempts this node"
+      echo "ERROR: $PR_FAILURE_MESSAGE"
+      # Don't clobber an earlier phase's diagnosis (e.g. decision verification
+      # above, on a Code Review-shaped node where both NEED_DECISION and NEED_PR
+      # are true and the shared $ATTEMPT budget was already exhausted before PR
+      # verification's own loop ever ran) — append instead of overwrite, so the
+      # persisted error_message still names the more fundamental problem instead
+      # of only the last one checked.
+      if [ "$RESULT_STATUS" = "failed" ]; then
+        ERROR_MESSAGE="${ERROR_MESSAGE}; additionally, ${PR_FAILURE_MESSAGE}"
+      else
+        RESULT_STATUS="failed"
+        ERROR_MESSAGE="$PR_FAILURE_MESSAGE"
+      fi
     else
       echo "PR verification passed"
     fi

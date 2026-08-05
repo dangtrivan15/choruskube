@@ -99,9 +99,26 @@ if [ ! -s "$PUSHED_FILE" ]; then
 fi
 
 # --- Step 2: fetch the set of repos that already have a registered PR ---
+# Guarded the same way the git ls-remote call above is (set +e/set -e around it):
+# under set -euo pipefail, a bare `$(curl ...)` would otherwise let curl's own
+# transport-failure exit code (e.g. 6/7/28 for DNS/connect/timeout failures) kill
+# this script immediately, with no diagnostic at all (curl -s suppresses curl's own
+# stderr message, and the HTTP_CODE check below — which would otherwise produce
+# one — is never reached). That would silently defeat Caveat 3's "fail loudly on
+# an unreachable dependency" requirement for this second network call, the same
+# way it's already honored for the ls-remote call above.
+set +e
 RESPONSE=$(curl -s -w "\n%{http_code}" \
     -H "Authorization: Bearer $JOB_SECRET" \
     "$API_SERVER_URL/internal/runs/$RUN_ID/node-executions/$NODE_EXECUTION_ID/pull-requests")
+CURL_EXIT=$?
+set -e
+
+if [ "$CURL_EXIT" -ne 0 ]; then
+    echo "ERROR: could not reach $API_SERVER_URL for PR check (curl exited $CURL_EXIT)" >&2
+    exit 1
+fi
+
 HTTP_CODE=$(echo "$RESPONSE" | tail -1)
 BODY=$(echo "$RESPONSE" | sed '$d')
 

@@ -8,9 +8,11 @@ import com.choruskube.core.dto.CreateRunPullRequestRequest;
 import com.choruskube.core.dto.RunPullRequestResponse;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.GitRepo;
+import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.RunPullRequest;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.repository.GitRepoRepository;
+import com.choruskube.core.repository.NodeExecutionRepository;
 import com.choruskube.core.repository.RunPullRequestRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import java.util.List;
@@ -36,6 +38,9 @@ class RunPullRequestServiceTest {
     private GitRepoRepository gitRepoRepo;
 
     @Mock
+    private NodeExecutionRepository execRepo;
+
+    @Mock
     private RunEventPublisher eventPublisher;
 
     private RunPullRequestService service;
@@ -49,7 +54,7 @@ class RunPullRequestServiceTest {
     @BeforeEach
     void setUp() {
         service = new RunPullRequestService(
-                prRepo, runRepo, gitRepoRepo, eventPublisher, mock(ApplicationEventPublisher.class));
+                prRepo, runRepo, gitRepoRepo, execRepo, eventPublisher, mock(ApplicationEventPublisher.class));
     }
 
     @Test
@@ -215,6 +220,56 @@ class RunPullRequestServiceTest {
 
         assertThat(responses).hasSize(1);
         assertThat(responses.get(0).repoUrl()).isEmpty();
+    }
+
+    // ── getPullRequestsForNodeExecution (Decision 3/3.3 — cross-run leak guard) ──────────────
+
+    @Test
+    void getPullRequestsForNodeExecution_withOwnRun_returnsRunsPullRequests() {
+        NodeExecution exec = new NodeExecution();
+        exec.setWorkflowRunId(RUN_ID);
+        when(execRepo.findById(NODE_EXEC_ID)).thenReturn(Optional.of(exec));
+
+        RunPullRequest pr1 = createPrEntity(GIT_REPO_ID_1, "https://github.com/org/backend-api/pull/1", "backend-api");
+        when(prRepo.findByWorkflowRunId(RUN_ID)).thenReturn(List.of(pr1));
+
+        GitRepo repo1 = new GitRepo();
+        repo1.setId(GIT_REPO_ID_1);
+        repo1.setUrl("https://github.com/org/backend-api");
+        when(gitRepoRepo.findAllById(anyIterable())).thenReturn(List.of(repo1));
+
+        List<RunPullRequestResponse> responses = service.getPullRequestsForNodeExecution(RUN_ID, NODE_EXEC_ID);
+
+        assertThat(responses).hasSize(1);
+        assertThat(responses.get(0).prUrl()).isEqualTo("https://github.com/org/backend-api/pull/1");
+    }
+
+    @Test
+    void getPullRequestsForNodeExecution_withUnrelatedRunId_throwsNotFoundException() {
+        // The node execution is real and belongs to RUN_ID, but the caller substitutes a
+        // different, unrelated run's UUID in the path while presenting its own valid
+        // nodeExecId — the exact leak vector this cross-check exists to close, since
+        // InternalAuthFilter itself only validates the nodeExecId segment, never runId.
+        UUID unrelatedRunId = UUID.randomUUID();
+        NodeExecution exec = new NodeExecution();
+        exec.setWorkflowRunId(RUN_ID);
+        when(execRepo.findById(NODE_EXEC_ID)).thenReturn(Optional.of(exec));
+
+        assertThatThrownBy(() -> service.getPullRequestsForNodeExecution(unrelatedRunId, NODE_EXEC_ID))
+                .isInstanceOf(NotFoundException.class);
+
+        // Must reject before ever touching the unrelated run's PR data.
+        verifyNoInteractions(prRepo);
+    }
+
+    @Test
+    void getPullRequestsForNodeExecution_withUnknownNodeExecId_throwsNotFoundException() {
+        when(execRepo.findById(NODE_EXEC_ID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.getPullRequestsForNodeExecution(RUN_ID, NODE_EXEC_ID))
+                .isInstanceOf(NotFoundException.class);
+
+        verifyNoInteractions(prRepo);
     }
 
     private RunPullRequest createPrEntity(UUID gitRepoId, String prUrl, String repoName) {

@@ -5,8 +5,10 @@ import com.choruskube.core.dto.RunPullRequestResponse;
 import com.choruskube.core.event.MappableCreated;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.GitRepo;
+import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.RunPullRequest;
 import com.choruskube.core.repository.GitRepoRepository;
+import com.choruskube.core.repository.NodeExecutionRepository;
 import com.choruskube.core.repository.RunPullRequestRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import java.util.List;
@@ -24,6 +26,7 @@ public class RunPullRequestService {
     private final RunPullRequestRepository prRepo;
     private final WorkflowRunRepository runRepo;
     private final GitRepoRepository gitRepoRepo;
+    private final NodeExecutionRepository execRepo;
     private final RunEventPublisher eventPublisher;
     private final ApplicationEventPublisher applicationEventPublisher;
 
@@ -31,11 +34,13 @@ public class RunPullRequestService {
             RunPullRequestRepository prRepo,
             WorkflowRunRepository runRepo,
             GitRepoRepository gitRepoRepo,
+            NodeExecutionRepository execRepo,
             RunEventPublisher eventPublisher,
             ApplicationEventPublisher applicationEventPublisher) {
         this.prRepo = prRepo;
         this.runRepo = runRepo;
         this.gitRepoRepo = gitRepoRepo;
+        this.execRepo = execRepo;
         this.eventPublisher = eventPublisher;
         this.applicationEventPublisher = applicationEventPublisher;
     }
@@ -73,6 +78,30 @@ public class RunPullRequestService {
         eventPublisher.publishPullRequestCreated(runId);
 
         return toResponse(pr, gitRepo.getUrl());
+    }
+
+    /**
+     * Node-execution-scoped read used by {@code InternalRunController#getPullRequestsForNodeExecution}
+     * (Decision 3/3.3 — PR completion gate; {@code check-prs} calls this via the {@code
+     * /internal/runs/{runId}/node-executions/{nodeExecId}/pull-requests} endpoint). {@code
+     * InternalAuthFilter} only checks that the caller's {@code JOB_SECRET} hash matches {@code
+     * nodeExecId}'s own stored hash — it never cross-checks the {@code runId} segment in the same
+     * path against that execution's actual {@code workflow_run_id}. Without the check below, a
+     * caller could substitute an arbitrary {@code runId} while presenting its own valid {@code
+     * nodeExecId} and read a completely unrelated run's PR list. This mirrors the same {@code
+     * nodeExecId}-belongs-to-{@code runId} guard {@link
+     * com.choruskube.core.service.InternalRunService#setTraversedEdges} already performs for
+     * exactly this reason; the message intentionally doesn't distinguish "wrong run" from
+     * "execution doesn't exist" so it can't be used to probe whether a given nodeExecId is valid
+     * for some other run.
+     */
+    public List<RunPullRequestResponse> getPullRequestsForNodeExecution(UUID runId, UUID nodeExecId) {
+        NodeExecution exec = execRepo.findById(nodeExecId)
+                .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
+        if (!exec.getWorkflowRunId().equals(runId)) {
+            throw new NotFoundException("Node execution not found: " + nodeExecId);
+        }
+        return getPullRequests(runId);
     }
 
     public List<RunPullRequestResponse> getPullRequests(UUID runId) {
