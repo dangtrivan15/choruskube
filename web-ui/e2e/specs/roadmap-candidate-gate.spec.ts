@@ -25,7 +25,7 @@ test.describe("Roadmap Provisioner candidate gate", () => {
     const template = await api.getTemplateByName("e2e-roadmap-candidate-gate");
     // Run names are capped at 30 chars server-side (RunService.RUN_NAME_MAX_LENGTH),
     // so keep the uniqueName() prefix short to stay under the limit even with a
-    // 2-digit shard/worker index and multi-digit monotonic counter.
+    // 2-digit worker index and multi-digit monotonic counter.
     const runName = uniqueName("cg-view");
     const run = await api.startRun({ graphTemplateId: template.id, name: runName });
 

@@ -90,24 +90,22 @@ RepoGroup) derives that name from `uniqueName()` (`web-ui/e2e/helpers/api-client
 so concurrent workers never collide over the one shared backend stack — see that
 file's doc comment before adding a new spec with a static name literal.
 
-CI additionally shards the suite across independent runner pods (`.github/workflows/e2e.yml`),
-each running `E2E_WORKERS` workers against its own stack instance. `SHARD_INDEX` /
-`SHARD_TOTAL` (both unset locally) select the shard's slice of specs and, combined
-with the worker index, keep `uniqueName()` collision-free across shards too:
+CI (`.github/workflows/e2e.yml`) runs the suite as a single `e2e` job — one runner pod,
+one Compose stack — and sets `E2E_WORKERS` on it. That job's name is the required status
+check; renaming it detaches the branch-protection rule, which then waits forever on a
+check that is never reported.
 
-```bash
-SHARD_INDEX=1 SHARD_TOTAL=2 E2E_WORKERS=2 ./scripts/e2e.sh
-```
+Splitting the suite across multiple runner pods was tried and removed. Each pod re-pays the
+whole non-Playwright preamble (image builds, stack boot, the full unit stage), so it buys
+parallelism at a fixed cost in minutes, and the runner pool admits few enough concurrent
+runners that the extra pods queued into a second wave rather than starting sooner. Workers
+are the cheap axis — one more process against a stack that is already up.
 
-`SHARD_TOTAL` tracks the shard-matrix length in `e2e.yml` (currently 2), which is in turn
-sized to how many runners the `arc-runner-choruskube` pool admits concurrently — not to how
-long the suite is. Adding shards beyond that limit queues them into a second wave, and each
-shard re-runs the whole stack-boot and unit-test preamble, so an unmatched raise costs more
-time than it saves. Change both together, and only alongside the pool's limit.
-
-The CI workflow's `e2e` job (not the per-shard `e2e-shard (N)` jobs) is the intended
-required status check — it's the one job whose name doesn't vary per matrix leg, and
-it fails if any shard failed.
+The trade-off workers carry instead is a shared backend: raising `E2E_WORKERS` puts more
+concurrent load on one api-server, PostgreSQL, Temporal and Docker daemon, so the ceiling
+is backend contention rather than runner capacity. Raise it against measured run times, and
+keep the `uniqueName()` discipline above — every added worker widens the window in which
+two specs can see each other's rows.
 
 ## Sign your commits (DCO)
 

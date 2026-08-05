@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # scripts/e2e-pipeline.sh — seed-verify + Playwright run against the live stack.
 #
-# Reads E2E_WORKERS / SHARD_INDEX / SHARD_TOTAL (all optional) and forwards
-# them to `npx playwright test` as --workers / --shard. Unset by default so a
-# plain local run stays on playwright.config.ts's serial fallback; CI sets
-# them per matrix job (see .github/workflows/e2e.yml).
+# Reads E2E_WORKERS (optional) and forwards it to `npx playwright test` as
+# --workers. Unset by default so a plain local run stays on
+# playwright.config.ts's serial fallback; CI sets it (see
+# .github/workflows/e2e.yml).
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 bash "${REPO_ROOT}/e2e/setup-test-data.sh"
@@ -21,12 +21,9 @@ npm ci
 
 PLAYWRIGHT_ARGS=()
 [ -n "${E2E_WORKERS:-}" ] && PLAYWRIGHT_ARGS+=("--workers=${E2E_WORKERS}")
-if [ -n "${SHARD_INDEX:-}" ] && [ -n "${SHARD_TOTAL:-}" ]; then
-  PLAYWRIGHT_ARGS+=("--shard=${SHARD_INDEX}/${SHARD_TOTAL}")
-fi
 
 # The `+` (not `:-`) form is required: under `set -u`, expanding an empty
 # array via "${arr[@]}" on bash < 4.4 (e.g. macOS's stock /bin/bash 3.2, still
-# the default for a plain local `E2E_WORKERS`/`SHARD_*`-unset run) throws
+# the default for a plain local `E2E_WORKERS`-unset run) throws
 # "unbound variable" even though the array itself is legitimately empty.
 CI="${CI:-}" npx playwright test "${PLAYWRIGHT_ARGS[@]+"${PLAYWRIGHT_ARGS[@]}"}"

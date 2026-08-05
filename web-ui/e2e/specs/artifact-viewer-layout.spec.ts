@@ -15,7 +15,7 @@ test.describe("Artifact Viewer Layout", () => {
     const template = await api.getTemplateByName("e2e-many-artifacts");
     // Run names are capped at 30 chars server-side (RunService.RUN_NAME_MAX_LENGTH)
     // and silently truncated past that — keep the uniqueName() prefix short so this
-    // stays under the limit even with a 2-digit shard/worker index and a multi-digit
+    // stays under the limit even with a 2-digit worker index and a multi-digit
     // monotonic counter (see run-lifecycle.spec.ts / roadmap-candidate-gate.spec.ts).
     const run = await api.startRun({
       graphTemplateId: template.id,

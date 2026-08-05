@@ -5,30 +5,37 @@ name: E2E
 # No real Claude token is needed: the agent runs the deterministic mock-agent and AI calls
 # are stubbed by WireMock with a dummy token.
 #
-# Runs on every PR to main and on push to main so the trailing `e2e` aggregation job can
-# serve as a REQUIRED status check. It is intentionally NOT path-filtered: a required check
-# that is skipped (e.g. on a docs-only PR) is reported as pending and blocks the merge forever.
+# Runs on every PR to main and on push to main so it can serve as a REQUIRED status check.
+# It is intentionally NOT path-filtered: a required check that is skipped (e.g. on a docs-only
+# PR) is reported as pending and blocks the merge forever.
 #
-# The suite fans out into a 2-way shard matrix (`e2e-shard`), each shard an independent job
-# on its own `arc-runner-choruskube` pod running a subset of the Playwright suite with
-# multiple in-stack workers (SHARD_INDEX/SHARD_TOTAL/E2E_WORKERS — see
-# web-ui/playwright.config.ts and scripts/e2e-pipeline.sh).
+# Parallelism is Playwright workers (E2E_WORKERS) inside this one job, against the one
+# Compose stack it boots.
 #
-# The shard count is sized to the `arc-runner-choruskube` pool's concurrent-runner limit,
-# not to the suite. Requesting more shards than the pool can admit does not run them sooner:
-# the surplus queues and executes as a second wave, and because every shard re-pays the whole
-# non-Playwright preamble (image builds, stack boot, the full unit stage in scripts/e2e.sh),
-# a queued wave costs more wall-clock than it saves. Raise this only together with the pool's
-# limit. `e2e` aggregates the shard
-# results into the single required check branch protection watches — the required check's
-# name changes from the old single `e2e` job to this aggregation job; see the spec's §8
-# Manual Operations for the branch-protection update this implies.
+# Splitting the suite across multiple runner pods was tried and removed: every pod re-pays
+# the whole non-Playwright preamble (image builds, stack boot, the full unit stage in
+# scripts/e2e.sh), so each one buys parallelism at a fixed cost measured in minutes, and the
+# `arc-runner-choruskube` pool admits few enough concurrent runners that the extra pods
+# queued into a second wave rather than running sooner. A worker is one more process against
+# a stack that is already up, which costs ~nothing.
+#
+# The trade-off workers carry instead: they share one backend (a single api-server,
+# PostgreSQL, Temporal and Docker daemon), so their ceiling is backend contention rather than
+# runner capacity, and every spec must name the resources it creates via uniqueName()
+# (web-ui/e2e/helpers/api-client.ts) to stay collision-free against its siblings.
 on:
   workflow_dispatch:
   pull_request:
     branches: [main]
   push:
     branches: [main]
+
+# One e2e run per ref — supersede an in-flight run when new commits land. Workflow-level
+# (not per-job): it cancels the superseded run as a whole, so no straggler job survives to
+# occupy a runner and report a spurious failure against the new commit.
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -37,18 +44,12 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  e2e-shard:
+  # Single job, and its name is the required status check branch protection watches.
+  # Keep it named `e2e` — renaming it silently detaches the branch-protection rule, which
+  # then waits forever on a check that is never reported.
+  e2e:
     runs-on: arc-runner-choruskube
     timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2]
-    # Per-shard group (not just per-ref) so a new push cancels both in-flight shards
-    # of the superseded run without shards from the same run canceling each other.
-    concurrency:
-      group: e2e-${{ github.ref }}-shard-${{ matrix.shard }}
-      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
 
@@ -184,57 +185,33 @@ jobs:
       # e2e.sh: build agent images → app images → compose up → smoke → seed-verify →
       # playwright. --no-teardown leaves the stack up so the steps below can collect
       # diagnostics before it is torn down. BUILD_CACHE_REGISTRY reaches e2e-up.sh from
-      # the runner env and switches it between cached and plain builds. SHARD_INDEX/
-      # SHARD_TOTAL/E2E_WORKERS reach scripts/e2e-pipeline.sh (invoked by e2e.sh), which
-      # forwards them to `npx playwright test` as --shard/--workers; unset on a plain
-      # local `./scripts/e2e.sh` run, so this leaves that path unaffected.
+      # the runner env and switches it between cached and plain builds. E2E_WORKERS reaches
+      # scripts/e2e-pipeline.sh (invoked by e2e.sh), which forwards it to `npx playwright
+      # test` as --workers; unset on a plain local `./scripts/e2e.sh` run, which therefore
+      # stays serial.
       - name: Run e2e suite
         env:
           CI: "true"
-          SHARD_INDEX: ${{ matrix.shard }}
-          # Must equal the length of the `shard` matrix above: Playwright splits the suite
-          # into SHARD_TOTAL slices and each job runs only its own, so a SHARD_TOTAL larger
-          # than the matrix silently drops the unclaimed slices from the run entirely.
-          SHARD_TOTAL: 2
-          E2E_WORKERS: 2
+          # Playwright workers sharing this job's single Compose stack. Raising this is the
+          # way to speed the suite up; the limit is backend contention (one api-server, one
+          # PostgreSQL, one Temporal, one Docker daemon), so raise it against measured run
+          # times rather than by assumption.
+          E2E_WORKERS: 4
         run: scripts/e2e.sh --no-teardown
 
       - name: Dump stack logs on failure
         if: failure()
         run: docker compose -f docker-compose.e2e.yaml logs --no-color --tail=400 || true
 
-      # Named/pathed per shard (playwright.config.ts's reporter already writes to
-      # `playwright-report-shard-${SHARD_INDEX}` when SHARD_INDEX is set) so the
-      # concurrent shard jobs don't race to overwrite one shared report artifact.
       - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report-shard-${{ matrix.shard }}
-          path: web-ui/e2e/playwright-report-shard-${{ matrix.shard }}
+          name: playwright-report
+          path: web-ui/e2e/playwright-report
           if-no-files-found: ignore
           retention-days: 7
 
       - name: Tear down stack
         if: always()
         run: scripts/e2e-down.sh --volumes || true
-
-  # Trailing aggregation job: the single required status check branch protection watches,
-  # replacing the old single `e2e` job now that the suite fans out into `e2e-shard`'s
-  # matrix. Runs even if a shard failed/was skipped (`if: always()`) so it always reports
-  # a real pass/fail instead of being skipped itself (a skipped required check blocks the
-  # merge forever, same reasoning as the workflow staying un-path-filtered above).
-  e2e:
-    name: e2e
-    needs: e2e-shard
-    if: always()
-    runs-on: arc-runner-choruskube
-    timeout-minutes: 5
-    steps:
-      - name: Check shard results
-        run: |
-          if [ "${{ needs.e2e-shard.result }}" != "success" ]; then
-            echo "One or more e2e-shard jobs did not succeed: ${{ needs.e2e-shard.result }}"
-            exit 1
-          fi
-          echo "All e2e-shard jobs succeeded."
