@@ -138,9 +138,12 @@ public class GraphSnapshotBuilderTest extends BaseTest {
         // "Review Escalation" (feature-development, v33) has two outgoing edges — approved,
         // rereview — and no terminal_decisions config: a plain edge-driven gate. Prior to v33
         // this test targeted "Final Approval", but v33 (Decision 2 in the accompanying spec) gave
-        // Final Approval a terminal_decisions entry alongside its remaining edge, so it now
-        // exercises the *mixed* edge+terminal_decisions case covered separately below instead of
-        // a plain edge-driven gate.
+        // Final Approval a terminal_decisions entry alongside its remaining edge, so it's no
+        // longer a plain edge-driven gate — that mixed edge+terminal_decisions shape is instead
+        // covered below by "Roadmap Human Gate" (a different node/template with the same general
+        // shape: one real edge plus a terminal_decisions entry), not by a dedicated Final-Approval
+        // -specific snapshot assertion. Final Approval's own edge/config-override data is covered
+        // separately by V1TemplateSeederTest#finalApprovalRereviewsBackToCodeReviewOnly.
         var baseTemplate = templateRepo
                 .findFirstByGraphIdOrderByVersionDesc(GraphIds.FEATURE_DEVELOPMENT)
                 .orElseThrow();

@@ -590,6 +590,15 @@ ATTEMPT_LOOPS=$(grep -cF '[ $ATTEMPT -lt $MAX_RETRIES ]' "$ENTRYPOINT")
 # Go-side orchestrator tests only prove config.json gets written correctly, not that
 # entrypoint.sh reads it back, and the E2E/mock-agent path never exercises this field
 # either (NEED_PR is gated on EXECUTOR_TYPE != script, same as NEED_DECISION).
+#
+# The two jq assertions below exercise the `// false` idiom against sample JSON in
+# isolation — they'd pass identically even if entrypoint.sh's own extraction line used
+# a different field name entirely, so on their own they don't actually guard against the
+# typo they're introduced to catch. The third assertion closes that gap by asserting on
+# entrypoint.sh's own literal extraction line, the same way Test 20 below already does
+# for the PR-verification block — confirmed by empirically reintroducing the exact
+# `.needs_pr` -> `.need_pr` typo into entrypoint.sh and re-running this suite: without
+# this third assertion, all tests still passed.
 cat > "$CONFIG" <<'EOF'
 {"run_id":"x","node_execution_id":"y","prompt":"z","needs_pr":true}
 EOF
@@ -601,6 +610,10 @@ cat > "$CONFIG" <<'EOF'
 EOF
 NEED_PR=$(jq -r '.needs_pr // false' "$CONFIG")
 [ "$NEED_PR" = "false" ] && ok "needs_pr absent defaults to false" || fail "needs_pr absent defaults to false"
+
+grep -q "jq -r '\.needs_pr // false'" "$ENTRYPOINT" \
+  && ok "entrypoint.sh itself extracts NEED_PR via .needs_pr (not just this test's own jq idiom)" \
+  || fail "entrypoint.sh itself extracts NEED_PR via .needs_pr (not just this test's own jq idiom)"
 
 # --- Test 20: entrypoint.sh's PR-verification block branches on check-prs's exit
 # status (not stdout text, unlike DECISION's "(none)" string-equality idiom), and
