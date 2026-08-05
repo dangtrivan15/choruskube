@@ -724,6 +724,69 @@ func (s *DAGExecutorTestSuite) TestRunInputArtifactRefs_EmptyOrAbsent_NoInputArt
 	s.NoError(s.env.GetWorkflowError())
 }
 
+// TestNeedsPR_ExtractedFromConfigOverrides verifies that a template node's
+// configOverrides.needs_pr == "true" is threaded through to
+// ExecuteAINodeFromSnapshotParams.NeedsPR (mirroring how needs_branch feeds
+// WorkingBranch), and that a node with no needs_pr override gets NeedsPR == false.
+func (s *DAGExecutorTestSuite) TestNeedsPR_ExtractedFromConfigOverrides() {
+	nodeA := uuid.New()
+	nodeB := uuid.New()
+	execA := uuid.New()
+	execB := uuid.New()
+	runID := uuid.New()
+
+	snapshot := `{
+		"nodes": [
+			{"templateNodeId": "` + nodeA.String() + `", "label": "implement", "executorType": "ai", "timeoutSeconds": 1800, "isEntrypoint": true, "configOverrides": {"needs_pr": "true"}},
+			{"templateNodeId": "` + nodeB.String() + `", "label": "spec_review", "executorType": "ai", "timeoutSeconds": 1800}
+		],
+		"edges": [
+			{"sourceNodeId": "` + nodeA.String() + `", "targetNodeId": "` + nodeB.String() + `"}
+		]
+	}`
+
+	s.env.OnActivity("UpdateWorkflowRunStatus", mock.Anything, mock.Anything).Return(nil)
+	s.env.OnActivity("GetGraphRuntime", mock.Anything, runID).Return(snapshot, nil)
+	s.env.OnActivity("WriteExecutionLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("InitRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("AppendRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("LoadPredecessorInputs", mock.Anything, mock.Anything).Return(map[string]string{}, nil).Maybe()
+	s.env.OnActivity("LoadReviewHistoryJSON", mock.Anything, mock.Anything).Return("[]", nil).Maybe()
+
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == nodeA
+	})).Return(execA, nil).Once()
+
+	// Node A has needs_pr: "true" in its config_overrides → NeedsPR must be true.
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.TemplateNodeID == nodeA && p.NeedsPR == true
+	})).Return(nil).Once()
+
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == nodeB
+	})).Return(execB, nil).Once()
+
+	// Node B has no needs_pr override → NeedsPR must be false.
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.TemplateNodeID == nodeB && p.NeedsPR == false
+	})).Return(nil).Once()
+
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execA
+	})).Return("no_decision", nil).Once()
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execB
+	})).Return("no_decision", nil).Once()
+
+	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
+		RunID: runID, GraphVersion: 1,
+	})
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+}
+
 // TestTimeoutCallsDeleteAgentJob verifies that when a node's activity returns an error
 // (simulating a timeout), the workflow calls DeleteAgentJob for the node's execution.
 func (s *DAGExecutorTestSuite) TestTimeoutCallsDeleteAgentJob() {

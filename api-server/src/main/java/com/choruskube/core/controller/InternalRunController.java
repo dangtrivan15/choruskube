@@ -260,4 +260,18 @@ public class InternalRunController {
     public List<RunPullRequestResponse> getPullRequests(@PathVariable UUID runId) {
         return runPullRequestService.getPullRequests(runId);
     }
+
+    /**
+     * Node-execution-scoped mirror of {@link #getPullRequests} (Decision 3/3.3 — PR completion
+     * gate) — {@code InternalAuthFilter} only authorizes an agent's {@code JOB_SECRET} for paths
+     * containing its own {@code node-executions/{nodeExecId}} segment, so the run-scoped read
+     * above is unreachable from inside an agent pod. {@code nodeExecId} is unused beyond
+     * satisfying that scoping pattern, same as {@link #listFeatureProposals} and the other
+     * {@code feature-proposals}/{@code tasks} routes above.
+     */
+    @GetMapping("/{runId}/node-executions/{nodeExecId}/pull-requests")
+    public List<RunPullRequestResponse> getPullRequestsForNodeExecution(
+            @PathVariable UUID runId, @PathVariable UUID nodeExecId) {
+        return runPullRequestService.getPullRequests(runId);
+    }
 }

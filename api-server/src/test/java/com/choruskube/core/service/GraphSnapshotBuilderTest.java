@@ -5,9 +5,14 @@ import static org.assertj.core.api.Assertions.*;
 import com.choruskube.core.BaseTest;
 import com.choruskube.core.config.GraphIds;
 import com.choruskube.core.model.GitRepo;
+import com.choruskube.core.model.GraphTemplate;
+import com.choruskube.core.model.NodeDefinition;
+import com.choruskube.core.model.TemplateNode;
 import com.choruskube.core.model.WorkflowRun;
+import com.choruskube.core.model.enums.ExecutorType;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.GraphTemplateRepository;
+import com.choruskube.core.repository.NodeDefinitionRepository;
 import com.choruskube.core.repository.TemplateNodeRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.util.RepoNameUtil;
@@ -30,6 +35,9 @@ public class GraphSnapshotBuilderTest extends BaseTest {
 
     @Autowired
     private TemplateNodeRepository templateNodeRepo;
+
+    @Autowired
+    private NodeDefinitionRepository nodeDefRepo;
 
     @Autowired
     private WorkflowRunRepository runRepo;
@@ -127,14 +135,18 @@ public class GraphSnapshotBuilderTest extends BaseTest {
 
     @Test
     void buildSnapshotIncludesDecisionOptionsForPlainEdgeGate() throws Exception {
-        // "Final Approval" (feature-development) has two outgoing edges — approved, rereview —
-        // and no terminal_decisions config: a plain edge-driven gate.
+        // "Review Escalation" (feature-development, v33) has two outgoing edges — approved,
+        // rereview — and no terminal_decisions config: a plain edge-driven gate. Prior to v33
+        // this test targeted "Final Approval", but v33 (Decision 2 in the accompanying spec) gave
+        // Final Approval a terminal_decisions entry alongside its remaining edge, so it now
+        // exercises the *mixed* edge+terminal_decisions case covered separately below instead of
+        // a plain edge-driven gate.
         var baseTemplate = templateRepo
                 .findFirstByGraphIdOrderByVersionDesc(GraphIds.FEATURE_DEVELOPMENT)
                 .orElseThrow();
         var nodes = templateNodeRepo.findByGraphTemplateId(baseTemplate.getId());
-        var finalApproval = nodes.stream()
-                .filter(n -> "final_approval".equals(n.getLabel()))
+        var reviewEscalation = nodes.stream()
+                .filter(n -> "review_escalation".equals(n.getLabel()))
                 .findFirst()
                 .orElseThrow();
 
@@ -144,7 +156,7 @@ public class GraphSnapshotBuilderTest extends BaseTest {
         run = runRepo.save(run);
 
         JsonNode snapshotJson = objectMapper.readTree(snapshotBuilder.buildSnapshotForRun(run));
-        JsonNode node = findSnapshotNode(snapshotJson, finalApproval.getId());
+        JsonNode node = findSnapshotNode(snapshotJson, reviewEscalation.getId());
 
         List<String> decisionOptions = new ArrayList<>();
         node.get("decision_options").forEach(o -> decisionOptions.add(o.asText()));
@@ -180,24 +192,48 @@ public class GraphSnapshotBuilderTest extends BaseTest {
 
     @Test
     void buildSnapshotDecisionOptionsEmptyForNodeWithNoEdgesOrTerminalDecisions() throws Exception {
-        // "push_create_pr" (feature-development) is a terminal node: no outgoing edges and no
-        // terminal_decisions config.
-        var baseTemplate = templateRepo
-                .findFirstByGraphIdOrderByVersionDesc(GraphIds.FEATURE_DEVELOPMENT)
-                .orElseThrow();
-        var nodes = templateNodeRepo.findByGraphTemplateId(baseTemplate.getId());
-        var pushCreatePr = nodes.stream()
-                .filter(n -> "push_create_pr".equals(n.getLabel()))
-                .findFirst()
-                .orElseThrow();
+        // Neither seeded template has a node with zero outgoing edges AND no terminal_decisions
+        // config any more: feature-development's old example of this shape, "push_create_pr", was
+        // retired in v33 (Decision 1 in the accompanying spec — PR creation moved into Implement
+        // and Code Review, and the dedicated node it lived on was deleted outright), and
+        // roadmap-provisioner's two nodes both have at least one outgoing edge. Build a minimal
+        // standalone template with exactly this shape instead of depending on seeded data having
+        // an incidental dead-end node — this decouples the regression guard from a structural
+        // property of a real template that is free to change for unrelated reasons.
+        GraphTemplate template = new GraphTemplate();
+        template.setName("Dead-End Node Test Template");
+        template.setGraphId("dead-end-node-test");
+        template.setVersion(1);
+        template = templateRepo.save(template);
+
+        NodeDefinition nodeDef = new NodeDefinition();
+        nodeDef.setName("dead-end-test-node");
+        nodeDef.setExecutorType(ExecutorType.ai);
+        nodeDef.setImage("test:latest");
+        nodeDef.setPromptTemplate("test");
+        nodeDef.setSkills("[]");
+        nodeDef.setInputSpec("{}");
+        nodeDef.setOutputSpec("{}");
+        nodeDef.setSecrets("[]");
+        nodeDef = nodeDefRepo.save(nodeDef);
+
+        TemplateNode deadEnd = new TemplateNode();
+        deadEnd.setGraphTemplateId(template.getId());
+        deadEnd.setNodeDefinitionId(nodeDef.getId());
+        deadEnd.setLabel("dead_end");
+        deadEnd.setConfigOverrides("{}");
+        deadEnd.setEntrypoint(true);
+        deadEnd = templateNodeRepo.save(deadEnd);
+        // Deliberately no createEdge(...) call and no terminal_decisions in config_overrides —
+        // this node has neither, which is exactly the shape under test.
 
         WorkflowRun run = new WorkflowRun();
-        run.setGraphTemplateId(baseTemplate.getId());
-        run.setInputs("{\"feature_request\":\"test\"}");
+        run.setGraphTemplateId(template.getId());
+        run.setInputs("{}");
         run = runRepo.save(run);
 
         JsonNode snapshotJson = objectMapper.readTree(snapshotBuilder.buildSnapshotForRun(run));
-        JsonNode node = findSnapshotNode(snapshotJson, pushCreatePr.getId());
+        JsonNode node = findSnapshotNode(snapshotJson, deadEnd.getId());
 
         assertThat(node.get("decision_options")).isEmpty();
     }

@@ -109,7 +109,6 @@ const FEATURE_DEVELOPMENT: FixtureSnapshot = {
     { template_node_id: "review_escalation",      label: "review_escalation",      executor_type: "human", is_entrypoint: false },
     { template_node_id: "test",                   label: "test",                   executor_type: "ai",    is_entrypoint: false },
     { template_node_id: "final_approval",         label: "final_approval",         executor_type: "human", is_entrypoint: false },
-    { template_node_id: "push_create_pr",         label: "push_create_pr",         executor_type: "ai",    is_entrypoint: false },
   ],
   edges: [
     // Spec subgraph
@@ -132,7 +131,6 @@ const FEATURE_DEVELOPMENT: FixtureSnapshot = {
     { source_node_id: "review_escalation", target_node_id: "code_review", condition: "rereview" },
     { source_node_id: "test",         target_node_id: "final_approval", condition: "passed" },
     { source_node_id: "test",         target_node_id: "implement",      condition: "failed" },
-    { source_node_id: "final_approval", target_node_id: "push_create_pr", condition: "approved" },
     { source_node_id: "final_approval", target_node_id: "code_review",   condition: "rereview" },
   ],
 };
@@ -187,7 +185,6 @@ export const DAG_FIXTURES = {
     code_review: { status: "completed", decision: "approved" },
     test: { status: "completed", decision: "passed" },
     final_approval: "awaiting_human",
-    push_create_pr: "pending",
   }),
   sparse_chain: snapshotRun("sparse_chain", SPARSE_CHAIN, {}),
   dense_fanout: snapshotRun("dense_fanout", DENSE_FANOUT, {}),

@@ -42,9 +42,11 @@ class V1TemplateSeederTest extends BaseTest {
         var template = templateRepo.findByGraphIdAndVersion(
                 GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION);
         assertThat(template).isPresent();
+        // v33 retires the dedicated Push & Create PR node (Decision 1/2): 8 template nodes,
+        // 19 edges (down from 9/20).
         assertThat(templateNodeRepo.findByGraphTemplateId(template.get().getId()))
-                .hasSize(9);
-        assertThat(edgeRepo.findByGraphTemplateId(template.get().getId())).hasSize(20);
+                .hasSize(8);
+        assertThat(edgeRepo.findByGraphTemplateId(template.get().getId())).hasSize(19);
     }
 
     @Test
@@ -102,10 +104,35 @@ class V1TemplateSeederTest extends BaseTest {
                         .filter(nd -> "Spec Review".equals(nd.getName()))
                         .count())
                 .isEqualTo(1);
+        // v33 retires the dedicated Push & Create PR node (Decision 1) — Implement and
+        // Code Review now own PR creation/refresh themselves.
         assertThat(nodeDefRepo.findAll().stream()
                         .filter(nd -> "Push & Create PR".equals(nd.getName()))
                         .count())
-                .isEqualTo(1);
+                .as("v33 must not seed a Push & Create PR NodeDefinition")
+                .isZero();
+    }
+
+    @Test
+    void implementAndCodeReviewCarryNeedsPrConfigOverride() {
+        // v33 (Decision 1): PR creation/refresh moves into Implement and Code Review, gated
+        // by needs_pr the same way needs_branch already gates branch provisioning.
+        var template = templateRepo
+                .findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION)
+                .orElseThrow();
+        var nodes = templateNodeRepo.findByGraphTemplateId(template.getId());
+
+        var implement = nodes.stream()
+                .filter(n -> "implement".equals(n.getLabel()))
+                .findFirst()
+                .orElseThrow();
+        var codeReview = nodes.stream()
+                .filter(n -> "code_review".equals(n.getLabel()))
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(implement.getConfigOverrides()).contains("\"needs_pr\": \"true\"");
+        assertThat(codeReview.getConfigOverrides()).contains("\"needs_pr\": \"true\"");
     }
 
     @Test
@@ -419,13 +446,16 @@ class V1TemplateSeederTest extends BaseTest {
         var outgoing = edges.stream()
                 .filter(e -> e.getSourceNodeId().equals(finalApproval.getId()))
                 .toList();
-        // approved → push_create_pr, rereview → code_review (no redraft option)
-        assertThat(outgoing).hasSize(2);
+        // v33 (Decision 1/2): rereview → code_review is the ONLY real outgoing edge.
+        // `approved` no longer routes to a Push & Create PR node — it's declared as a
+        // terminal_decisions entry on this node's config_overrides instead, ending the run.
+        assertThat(outgoing).hasSize(1);
         assertThat(outgoing.stream()
                         .filter(e -> "rereview".equals(e.getCondition())
                                 && e.getTargetNodeId().equals(codeReview.getId()))
                         .count())
                 .isEqualTo(1);
+        assertThat(finalApproval.getConfigOverrides()).contains("\"terminal_decisions\": [\"approved\"]");
         // Final Approval must NOT have a redraft edge — once spec is approved,
         // discarding the implementation entirely is rare enough not to be routable.
         assertThat(outgoing.stream()
@@ -603,26 +633,27 @@ class V1TemplateSeederTest extends BaseTest {
     }
 
     @Test
-    void pushPrPromptSurfacesManualOperationsAndCaveats() {
-        // Push & Create PR must reach back to the spec and the spec review so it
-        // can copy §8 Manual Operations into PR bodies, list §7 Caveats, and flag
-        // any unresolved "Needs human decision" caveats prominently.
+    void implementPromptSurfacesManualOperationsAndCaveats() {
+        // v33 (Decision 1): PR creation moved from the retired Push & Create PR node
+        // into Implement itself, so Implement's own "Opening and updating pull
+        // requests" section must carry the same PR-body content rules that node used
+        // to own — copy §8 Manual Operations into PR bodies, list §7 Caveats, and
+        // flag any unresolved "Needs human decision" caveats.
         var template = templateRepo
                 .findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION)
                 .orElseThrow();
         var nodes = templateNodeRepo.findByGraphTemplateId(template.getId());
 
-        var pushPrNode = nodes.stream()
-                .filter(n -> "push_create_pr".equals(n.getLabel()))
+        var implementNode = nodes.stream()
+                .filter(n -> "implement".equals(n.getLabel()))
                 .findFirst()
                 .orElseThrow();
-        var pushPrDef = nodeDefRepo.findById(pushPrNode.getNodeDefinitionId()).orElseThrow();
+        var implementDef =
+                nodeDefRepo.findById(implementNode.getNodeDefinitionId()).orElseThrow();
 
-        assertThat(pushPrDef.getPromptTemplate())
-                .as("Push PR must have access to the spec content")
+        assertThat(implementDef.getPromptTemplate())
+                .as("Implement must have access to the spec content to build PR bodies from it")
                 .contains("{input.draft_spec_and_plan.result}")
-                .as("Push PR must have access to the spec reviewer's notes for caveat resolution context")
-                .contains("{input.spec_review.result}")
                 .as("PR body must surface Manual Operations under a clearly-labelled heading")
                 .contains("## ⚠️ Manual Operations Required")
                 .as("PR body must surface Caveats from §7")
@@ -632,24 +663,24 @@ class V1TemplateSeederTest extends BaseTest {
     }
 
     @Test
-    void pushPrPromptEnforcesRepositoryVisibilityIsolation() {
-        // v26 regression guard. Before v26 the prompt ordered the agent to copy §8
-        // into every PR "do not filter by repo" and to cross-link every PR to every
-        // other one. In a run spanning repos of mixed visibility that mandates a
-        // leak: the public repo's PR ends up linking a non-public repo's PR and
-        // republishing its rollout steps. The agent was obeying its prompt, so the
-        // fix has to live in the prompt.
+    void implementPromptEnforcesRepositoryVisibilityIsolation() {
+        // v33 regression guard, carried over from the retired Push & Create PR node's
+        // own v26 guard: PR text must never be written before a repo's visibility is
+        // resolved, unknown visibility must fail safe to PUBLIC (never to private), and
+        // a PUBLIC repo's PR may only link/name other PUBLIC repos' PRs — an empty
+        // companion section is omitted, never narrated with a "none" note that would
+        // itself disclose that companions were withheld.
         var template = templateRepo
                 .findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION)
                 .orElseThrow();
         var nodes = templateNodeRepo.findByGraphTemplateId(template.getId());
 
-        var pushPrNode = nodes.stream()
-                .filter(n -> "push_create_pr".equals(n.getLabel()))
+        var implementNode = nodes.stream()
+                .filter(n -> "implement".equals(n.getLabel()))
                 .findFirst()
                 .orElseThrow();
         var prompt = nodeDefRepo
-                .findById(pushPrNode.getNodeDefinitionId())
+                .findById(implementNode.getNodeDefinitionId())
                 .orElseThrow()
                 .getPromptTemplate();
 
@@ -657,66 +688,53 @@ class V1TemplateSeederTest extends BaseTest {
                 .as("the agent cannot filter by visibility it never resolved")
                 .contains("gh repo view <owner/repo> --json visibility")
                 .as("visibility must be resolved before any PR text is written")
-                .contains("Resolve each repo's visibility FIRST")
-                // Asserted as two fragments: the prompt is a Java text block, so the
+                .contains("Resolve the repo's visibility FIRST")
+                // Asserted as separate fragments: the prompt is a Java text block, so the
                 // sentence wraps and no single-line literal spans it.
                 .as("unknown visibility must fail safe to public, never to private")
-                .contains("Treat a repo as PUBLIC")
-                .contains("if the command fails or the answer is unclear (fail-safe)");
-
-        assertThat(prompt)
-                .as("the pre-v26 order that forced §8 into every PR must be gone")
-                .doesNotContain("do not filter by repo")
-                // The pre-v26 sentence wrapped across text-block lines, so assert on a
-                // fragment that lived on a single line — otherwise this passes vacuously.
-                .as("the pre-v26 order that cross-linked every PR to every other must be gone")
-                .doesNotContain("in the set must end up linking every other PR");
-
-        // §7 Caveats and the Open Decisions section derived from it are cross-repo
-        // content of exactly the same shape as §8 — a caveat can name a non-public
-        // repo just as easily as a rollout row can. Filtering §8 while leaving §7
-        // beside it unfiltered would reopen the hole at a different address.
-        assertThat(prompt)
-                .as("§7 Caveats must be visibility-filtered for a public repo, like §8")
-                .contains("§7 is cross-repo content, exactly like §8, so the same")
-                .as("a caveat that only exists because a non-public repo is involved must be dropped, not reworded")
-                .contains("hint that one exists")
-                .as("Open Decisions is derived from §7 and must inherit its filter")
-                .contains("it inherits §7's visibility");
+                .contains("if the command fails or the answer is unclear")
+                .contains("(fail-safe)");
 
         assertThat(prompt)
                 .as("a public PR may only link other public PRs — a URL alone discloses a private repo")
-                .contains("list ONLY the other PRs whose repos are also")
+                .contains("list ONLY the other PRs opened this pass")
                 .as("an empty companion section must be omitted, not narrated — a 'none'"
                         + " note discloses that companions were withheld")
                 .contains("Do NOT write \"none\"")
                 .as("§8 must be scoped and generalized for a public repo, not copied verbatim")
-                .contains("include ONLY the operations that apply to");
+                .contains("include ONLY the operations that apply");
     }
 
     @Test
-    void pushPrNodeIsNotTieredToACheaperModel() {
-        // Through v25 this node ran on Haiku, tiered down on the premise that it was
-        // mechanical. From v26 it must classify each repo's visibility and decide what
-        // to drop or generalize before writing a PR body — a judgment whose failure
-        // mode is publishing non-public detail irreversibly. If a future cost-tuning
-        // pass re-pins a cheaper model here, that tradeoff must be made deliberately,
-        // not by reflex — this test is what forces the conversation.
+    void codeReviewPromptKeepsPullRequestsCurrentAndOnlyLinksOneDirectionally() {
+        // v33 (Decision 1/Caveat 5): Code Review refreshes PRs Implement (or an earlier
+        // Code Review pass) already opened, and opens a fallback PR itself for a repo
+        // nobody has touched yet — but must NOT edit an already-open sibling PR to add
+        // a backlink to a new one it just opened.
         var template = templateRepo
                 .findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION)
                 .orElseThrow();
         var nodes = templateNodeRepo.findByGraphTemplateId(template.getId());
 
-        var pushPrNode = nodes.stream()
-                .filter(n -> "push_create_pr".equals(n.getLabel()))
+        var codeReviewNode = nodes.stream()
+                .filter(n -> "code_review".equals(n.getLabel()))
                 .findFirst()
                 .orElseThrow();
-        var pushPrDef = nodeDefRepo.findById(pushPrNode.getNodeDefinitionId()).orElseThrow();
+        var prompt = nodeDefRepo
+                .findById(codeReviewNode.getNodeDefinitionId())
+                .orElseThrow()
+                .getPromptTemplate();
 
-        assertThat(pushPrDef.getModel())
-                .as("Push & Create PR must run on the default model now that it makes"
-                        + " an irreversible visibility judgment")
-                .isNull();
+        assertThat(prompt)
+                .as(
+                        "Code Review must build the known-PRs set from both Implement's and its own prior pass's pr_urls.txt")
+                .contains("Build the known-PRs set first")
+                .as("Code Review must re-run register-pr to refresh an already-known PR after pushing to it")
+                .contains("re-run `register-pr` to refresh ChorusKube's own")
+                .as(
+                        "the one-directional-only rule must be explicit so a fresh PR is never backlinked from an older one")
+                .contains("One-directional only")
+                .contains("do NOT `gh pr edit` the earlier,");
     }
 
     @Test
@@ -743,11 +761,13 @@ class V1TemplateSeederTest extends BaseTest {
                 .doesNotContain("report-result test")
                 .doesNotContain("report-result request_test_bypass")
                 .doesNotContain("## Routing Decision");
-        // The "no `gh pr create`" guardrail (load-bearing per the v16/v23 incident
-        // documented in the prior version of this test) is preserved — the dedicated
-        // Push & Create PR node still owns PR creation.
+        // v33: the dedicated Push & Create PR node is retired — Implement now owns PR
+        // creation itself (in the later "Opening and updating pull requests" section), but
+        // the original v16/v23 guardrail this regression-guards is preserved unchanged: a
+        // per-repo subagent dispatched during parallel implementation must still never call
+        // `gh pr create` itself.
         assertThat(prompt)
-                .as("v24 Implement prompt must still forbid PR creation in this node")
+                .as("v33 Implement prompt must still forbid PR creation from inside a per-repo subagent")
                 .contains("Do NOT run `gh pr create`");
     }
 

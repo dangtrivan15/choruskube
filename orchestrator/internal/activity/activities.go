@@ -173,6 +173,7 @@ type ExecuteAINodeFromSnapshotParams struct {
 	RunLogPath             string                   // Deprecated: kept for Temporal activity history replay; activity builds from OrgSlug + RunID
 	OrgSlug                string                   // Org slug for object storage path isolation; empty = legacy paths
 	NeedDecision           bool                     // true if node has conditional edges and is AI type
+	NeedsPR                bool                     // true if node must open/register a PR before finishing (config_overrides.needs_pr)
 	OutputSpec             string                   // JSON string describing required output files; "" or "{}" = no enforcement
 	Repos                  []map[string]interface{} `json:"repos,omitempty"`
 	Model                  string                   `json:"model,omitempty"`  // optional override; empty = agent default
@@ -303,6 +304,9 @@ func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params Execu
 	configJSON["run_log_path"] = runLogPath
 	if params.NeedDecision {
 		configJSON["need_decision"] = true
+	}
+	if params.NeedsPR {
+		configJSON["needs_pr"] = true
 	}
 	if params.OutputSpec != "" && params.OutputSpec != "{}" {
 		configJSON["output_spec"] = params.OutputSpec

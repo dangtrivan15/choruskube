@@ -1,0 +1,128 @@
+#!/bin/bash
+# check-prs — verify a pull request is registered for every repo this node
+# execution pushed commits to.
+#
+# Usage: check-prs
+#
+# Reads /workspace/config.json's repos[] (id, name, local_path). For each
+# repo, determines whether its current branch was pushed to origin this run
+# (via `git ls-remote`, not the local upstream-tracking ref — see the header
+# comment in entrypoint.sh's PR-verification block for why). For every repo
+# that was pushed but has no pull request registered with the ChorusKube API
+# for this run's node execution, prints "<repo-name>: no PR registered".
+#
+# Unlike check-decision's single-value "(none)" convention, check-prs's
+# output is a variable-length list (zero or more lines) — callers MUST branch
+# on the exit status, not on the text of stdout.
+#
+# Environment:
+#   API_SERVER_URL      — Base URL of the ChorusKube API server
+#   RUN_ID               — Workflow run UUID
+#   NODE_EXECUTION_ID    — Node execution UUID
+#   JOB_SECRET           — Bearer token for authentication
+#
+# Examples:
+#   # Fail the node if any pushed repo is missing a registered PR
+#   if ! check-prs; then echo "PR(s) missing"; fi
+#
+# Exit codes:
+#   0  Every repo this node pushed to has a registered PR (including zero
+#      repos pushed)
+#   1  One or more pushed repos are missing a registered PR, a required
+#      environment variable is unset, the API call failed, or a repo's
+#      remote could not be reached (see "could not reach origin" below)
+set -euo pipefail
+
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+    sed -n '2,/^set -euo pipefail$/{ /^set -euo pipefail$/d; s/^# \?//; p }' "$0"
+    exit 0
+fi
+
+if [ -z "${API_SERVER_URL:-}" ]; then
+    echo "ERROR: API_SERVER_URL not set. This script must be run inside an agent pod." >&2
+    exit 1
+fi
+
+if [ -z "${RUN_ID:-}" ] || [ -z "${NODE_EXECUTION_ID:-}" ]; then
+    echo "ERROR: RUN_ID and NODE_EXECUTION_ID must be set." >&2
+    exit 1
+fi
+
+if [ -z "${JOB_SECRET:-}" ]; then
+    echo "ERROR: JOB_SECRET not set. This script must be run inside an agent pod." >&2
+    exit 1
+fi
+
+CONFIG_FILE="/workspace/config.json"
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo "ERROR: $CONFIG_FILE not found." >&2
+    exit 1
+fi
+
+# --- Step 1: determine which repos this node pushed commits to (Decision 5) ---
+# tab-separated (id, name) of repos whose current branch exists on origin.
+PUSHED_FILE=$(mktemp)
+trap 'rm -f "$PUSHED_FILE"' EXIT
+
+REPOS_LEN=$(jq '(.repos // []) | length' "$CONFIG_FILE")
+
+if [ "$REPOS_LEN" -gt 0 ]; then
+    while IFS=$'\t' read -r REPO_ID REPO_NAME REPO_DIR; do
+        if [ ! -d "$REPO_DIR" ]; then
+            continue
+        fi
+
+        BRANCH=$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+        if [ -z "$BRANCH" ] || [ "$BRANCH" = "HEAD" ]; then
+            continue
+        fi
+
+        set +e
+        git -C "$REPO_DIR" ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1
+        LS_REMOTE_EXIT=$?
+        set -e
+
+        if [ "$LS_REMOTE_EXIT" -eq 0 ]; then
+            printf '%s\t%s\n' "$REPO_ID" "$REPO_NAME" >>"$PUSHED_FILE"
+        elif [ "$LS_REMOTE_EXIT" -eq 2 ]; then
+            continue
+        else
+            echo "ERROR: could not reach origin for $REPO_NAME (git ls-remote exited $LS_REMOTE_EXIT)" >&2
+            exit 1
+        fi
+    done < <(jq -r '.repos[] | [.id, .name, (.local_path // ("/workspace/repo/" + .name))] | @tsv' "$CONFIG_FILE")
+fi
+
+if [ ! -s "$PUSHED_FILE" ]; then
+    # Nothing was pushed this run — nothing to gate on.
+    exit 0
+fi
+
+# --- Step 2: fetch the set of repos that already have a registered PR ---
+RESPONSE=$(curl -s -w "\n%{http_code}" \
+    -H "Authorization: Bearer $JOB_SECRET" \
+    "$API_SERVER_URL/internal/runs/$RUN_ID/node-executions/$NODE_EXECUTION_ID/pull-requests")
+HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+BODY=$(echo "$RESPONSE" | sed '$d')
+
+if [ "$HTTP_CODE" != "200" ]; then
+    echo "ERROR: PR check failed (HTTP $HTTP_CODE): $BODY" >&2
+    exit 1
+fi
+
+REGISTERED_REPO_IDS=$(echo "$BODY" | jq -r '.[].gitRepoId')
+
+# --- Step 3: report pushed repos missing a registered PR ---
+MISSING=0
+while IFS=$'\t' read -r REPO_ID REPO_NAME; do
+    if ! grep -qxF "$REPO_ID" <<<"$REGISTERED_REPO_IDS"; then
+        echo "$REPO_NAME: no PR registered"
+        MISSING=1
+    fi
+done <"$PUSHED_FILE"
+
+if [ "$MISSING" -eq 1 ]; then
+    exit 1
+fi
+
+exit 0

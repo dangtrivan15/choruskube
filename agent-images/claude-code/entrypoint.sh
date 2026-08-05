@@ -58,6 +58,7 @@ fi
 RUN_LOG_PATH=$(jq -r '.run_log_path // empty' "$CONFIG_FILE")
 export API_SERVER_URL=$(jq -r '.api_server_url // empty' "$CONFIG_FILE")
 NEED_DECISION=$(jq -r '.need_decision // false' "$CONFIG_FILE")
+NEED_PR=$(jq -r '.needs_pr // false' "$CONFIG_FILE")
 
 # Triggering Task's identity (Decision 1/2/3) — present only for runs started from
 # a Task. Story/Epic may independently be empty if that level no longer resolves
@@ -485,6 +486,23 @@ Knowing this set up-front frames how to approach the work. The absence of a deci
   fi
 fi
 
+# Compose a PR-requirement note into the system prompt (AI nodes only) when this
+# node must register a pull request for every repo it pushes to before finishing
+# (Decision 3/§3.3). Informational only — the actual gate runs after the Claude
+# session ends (see "PR verification" below); this just tells the agent about
+# the constraint up front instead of only on retry.
+if [ "$NEED_PR" = "true" ] && [ "$EXECUTOR_TYPE" != "script" ]; then
+  SYSTEM_PROMPT="${SYSTEM_PROMPT}
+
+## Pull Request Requirement
+
+Before you finish, every repo you pushed commits to this run must have a
+registered pull request: open (or update) its PR and run \`register-pr\` for
+it. If any repo you pushed to is left without a registered PR, this node will
+be resumed and asked to fix it before it can complete."
+  export SYSTEM_PROMPT
+fi
+
 if [ "$SKIP_AGENT_INVOCATION" = "true" ]; then
   echo "Skipping agent invocation: $ERROR_MESSAGE"
   # Nothing ran, so the initial RESULT sentinel is still in place and would
@@ -730,8 +748,9 @@ ${PROMPT}"
     ERROR_MESSAGE="Claude produced no result after $ATTEMPT attempts (last subtype=${CLAUDE_SUBTYPE:-none}, exit=$CLAUDE_EXIT_CODE)"
   fi
 
-  # NOTE: $ATTEMPT is shared across the main retry, artifact enforcement, and decision
-  # verification loops to cap total retries at $MAX_RETRIES across all phases.
+  # NOTE: $ATTEMPT is shared across the main retry, artifact enforcement, decision
+  # verification, and PR verification loops to cap total retries at $MAX_RETRIES
+  # across all phases.
   # --- Artifact enforcement: verify required output files were produced ---
   OUTPUT_SPEC=$(jq -r '.output_spec // ""' "$CONFIG_FILE")
   if [ -n "$OUTPUT_SPEC" ] && [ "$OUTPUT_SPEC" != "{}" ] && [ -n "$CLAUDE_RESULT" ]; then
@@ -790,6 +809,45 @@ ${PROMPT}"
       ERROR_MESSAGE="Node requires a decision but agent did not call report-result after $ATTEMPT attempts"
     else
       echo "Decision verified: $DECISION"
+    fi
+  fi
+
+  # PR verification: only for nodes that must register a pull request for every
+  # repo they pushed to this run (Decision 3/§3.3). Unlike DECISION above,
+  # check-prs has no single-value sentinel to string-match against — it prints a
+  # variable-length list of "<repo>: no PR registered" lines (or a distinct
+  # "could not reach origin for <repo>" message if it fails loudly per Caveat 3),
+  # so branch on exit status instead: 0 = nothing missing, non-zero = something
+  # missing or check-prs itself failed. This is a fourth phase drawing on the
+  # same shared $ATTEMPT budget as the three phases above (Caveat 4) — it may
+  # start with little or no budget left.
+  if [ "$NEED_PR" = "true" ] && [ -n "$API_SERVER_URL" ] && [ -n "$CLAUDE_RESULT" ]; then
+    set +e
+    PR_CHECK_OUTPUT=$(check-prs)
+    PR_CHECK_STATUS=$?
+    set -e
+
+    while [ "$PR_CHECK_STATUS" -ne 0 ] && [ $ATTEMPT -lt $MAX_RETRIES ] && [ -n "$CLAUDE_SESSION_ID" ]; do
+      ATTEMPT=$((ATTEMPT + 1))
+      echo "=== PR retry $ATTEMPT/$MAX_RETRIES (resuming session $CLAUDE_SESSION_ID) ==="
+
+      PR_RETRY_PROMPT="You pushed commits to the following, but did not register a pull request: ${PR_CHECK_OUTPUT}. Run: register-pr --repo-id <id> --pr-url <url> [--pr-number <n>] [--title <t>] [--repo-name <name>] for each missing repo before finishing."
+
+      CLAUDE_OUTPUT=$(run_claude "$PR_RETRY_PROMPT" "--resume $CLAUDE_SESSION_ID")
+      parse_claude_output "$CLAUDE_OUTPUT"
+
+      set +e
+      PR_CHECK_OUTPUT=$(check-prs)
+      PR_CHECK_STATUS=$?
+      set -e
+    done
+
+    if [ "$PR_CHECK_STATUS" -ne 0 ]; then
+      echo "ERROR: PR registration missing for ${PR_CHECK_OUTPUT:-unknown repo(s)} after $ATTEMPT/$MAX_RETRIES total resume attempts this node"
+      RESULT_STATUS="failed"
+      ERROR_MESSAGE="PR registration missing for ${PR_CHECK_OUTPUT:-unknown repo(s)} after $ATTEMPT/$MAX_RETRIES total resume attempts this node"
+    else
+      echo "PR verification passed"
     fi
   fi
 fi
