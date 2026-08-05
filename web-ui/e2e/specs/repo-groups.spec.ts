@@ -1,4 +1,5 @@
 import { test, expect } from "../fixtures";
+import { uniqueName } from "../helpers/api-client";
 
 /**
  * RepoGroup-launched run end-to-end flow.
@@ -20,27 +21,39 @@ import { test, expect } from "../fixtures";
  *   - A "demo-stack" RepoGroup combining both repos.
  *   - The v17 "Feature Development" system template.
  *
- * The UI test creates its own group ("e2e-group-…") on top of the seeds and
- * cleans it up in {@code afterEach} — the seeded "demo-stack" stays put.
+ * Each test creates its own group ("e2e-group-…") on top of the seeds and
+ * cleans up by id in {@code afterEach} — the seeded "demo-stack" stays put, as
+ * does any group a concurrently-running worker owns.
  */
 
 const E2E_GROUP_PREFIX = "e2e-group-";
 
+// Ids of the RepoGroups the running test created, drained by afterEach.
+//
+// Cleanup tracks ids rather than sweeping every name matching E2E_GROUP_PREFIX:
+// under `fullyParallel` the two tests below can run concurrently on separate
+// workers against the one shared stack, and both name their group from that same
+// prefix. A prefix sweep would therefore delete the sibling test's group while it
+// is still in use. `uniqueName` keeps the names distinct, but only an id-scoped
+// delete keeps the *teardown* worker-scoped too.
+//
+// Tests in one worker run sequentially, so a module-scoped array is safe here —
+// each worker is its own process and gets its own copy.
+let createdGroupIds: string[] = [];
+
 test.describe("Repo Groups (UI) launches a run via software_project_id", () => {
+  test.beforeEach(() => {
+    createdGroupIds = [];
+  });
+
   test.afterEach(async ({ api }) => {
-    // Best-effort cleanup. Leave the seeded "demo-stack" alone; only delete
-    // groups this spec produced (prefix-matched). Wrap the whole block so a
-    // teardown error never masks the real test failure.
-    try {
-      const groups = await api.listRepoGroups();
-      for (const g of groups) {
-        if (g.name.startsWith(E2E_GROUP_PREFIX)) {
-          await api.deleteRepoGroup(g.id).catch(() => {});
-        }
-      }
-    } catch {
-      // Listing/network blip — ignore.
+    // Best-effort cleanup, scoped to this test's own groups. Leave the seeded
+    // "demo-stack" (and any concurrent worker's fixtures) alone. Each delete is
+    // caught so a teardown error never masks the real test failure.
+    for (const id of createdGroupIds) {
+      await api.deleteRepoGroup(id).catch(() => {});
     }
+    createdGroupIds = [];
   });
 
   test("creates a Repo Group via UI and launches a run from it", async ({
@@ -60,11 +73,11 @@ test.describe("Repo Groups (UI) launches a run via software_project_id", () => {
       r.url.replace(/^https?:\/\/[^/]+\//, "").replace(/\.git$/, ""),
     );
 
-    const groupName = `${E2E_GROUP_PREFIX}${Date.now()}`;
+    const groupName = uniqueName(`${E2E_GROUP_PREFIX}create`);
     const featureRequest = `E2E test feature ${Date.now()}`;
-    // Run names are capped at 30 chars server-side, so use a base-36 timestamp
-    // suffix to keep this unique fixture under the limit.
-    const runName = `e2e-rg-run-${Date.now().toString(36)}`;
+    // Run names are capped at 30 chars server-side, so keep the uniqueName()
+    // prefix short to keep this unique fixture under the limit.
+    const runName = uniqueName("e2e-rg-run");
 
     // 1. Navigate to Software Projects via the sidebar.
     await page.goto("/runs");
@@ -100,6 +113,16 @@ test.describe("Repo Groups (UI) launches a run via software_project_id", () => {
     await expect(
       page.getByRole("cell", { name: groupName, exact: true }),
     ).toBeVisible();
+
+    // The group was created through the UI, so its id never passed through this
+    // test — resolve it by exact name now that it exists, so afterEach can drop
+    // exactly this group and nothing a concurrent worker owns.
+    const createdGroup = (await api.listRepoGroups()).find(
+      (g) => g.name === groupName,
+    );
+    if (createdGroup) {
+      createdGroupIds.push(createdGroup.id);
+    }
 
     // 7. Navigate to Runs and open the Start Run dialog. The sidebar nav link's
     //    accessible name is "Runs g r" (label + shortcut hint kbd children),
@@ -156,7 +179,7 @@ test.describe("Repo Groups (UI) launches a run via software_project_id", () => {
     await expect
       .poll(
         async () => {
-          const runs = await api.listRuns();
+          const runs = await api.listRuns(undefined, runName);
           return runs.content.some(
             (r) =>
               r.name === runName && r.templateName === "Feature Development",
@@ -171,7 +194,7 @@ test.describe("Repo Groups (UI) launches a run via software_project_id", () => {
 
     // Best-effort: cancel the run so it doesn't keep churning the mock-agent
     // worker after the test resolves. The afterEach above handles the group.
-    const runs = await api.listRuns();
+    const runs = await api.listRuns(undefined, runName);
     const created = runs.content.find((r) => r.name === runName);
     if (created) {
       await api.cancelRun(created.id).catch(() => {
@@ -196,12 +219,15 @@ test.describe("Repo Groups (UI) launches a run via software_project_id", () => {
       r.url.replace(/^https?:\/\/[^/]+\//, "").replace(/\.git$/, ""),
     );
     const repoIds = reposPage.content.slice(0, 2).map((r) => r.id);
-    const originalName = `${E2E_GROUP_PREFIX}edit-${Date.now()}`;
+    const originalName = uniqueName(`${E2E_GROUP_PREFIX}edit`);
     const renamed = `${originalName}-renamed`;
     const seeded = await api.createRepoGroup({
       name: originalName,
       memberRepoIds: [repoIds[0], repoIds[1]],
     });
+    // Tracked by id, so the rename below (which keeps the shared prefix) doesn't
+    // affect whether afterEach can find it.
+    createdGroupIds.push(seeded.id);
 
     // 1. Navigate to the Repo Groups tab.
     await page.goto("/git-repos");

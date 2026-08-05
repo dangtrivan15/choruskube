@@ -184,6 +184,80 @@ class SingleTenantDockerExecutorTest {
     }
 
     // -----------------------------------------------------------------------
+    // Test-node (executor_type="script") executions get E2E_WORKERS
+    // -----------------------------------------------------------------------
+
+    private ExecutionParams paramsWithExecutorType(String executorType) {
+        Map<String, Object> configJson = new java.util.HashMap<>();
+        configJson.put("api_server_url", "http://api-server:8080");
+        if (executorType != null) {
+            configJson.put("executor_type", executorType);
+        }
+        return new ExecutionParams(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                "choruskube/agent:test",
+                configJson,
+                false,
+                List.of(),
+                null);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void execute_scriptExecution_setsE2eWorkersEnv() {
+        AiCredentialResolver credentialService = mock(AiCredentialResolver.class);
+
+        DockerMocks mocks = mockDockerClient();
+        SingleTenantDockerExecutor executor =
+                new SingleTenantDockerExecutor(testConfig(), mocks.docker(), credentialService);
+
+        ArgumentCaptor<List<String>> envCaptor = ArgumentCaptor.forClass((Class) List.class);
+        executor.execute(paramsWithExecutorType("script"));
+
+        verify(mocks.createCmd()).withEnv(envCaptor.capture());
+        assertThat(envCaptor.getValue()).contains("E2E_WORKERS=3");
+
+        // Script executions don't need the Claude credential either.
+        verifyNoInteractions(credentialService);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void execute_scriptExecutionCaseInsensitive_setsE2eWorkersEnv() {
+        AiCredentialResolver credentialService = mock(AiCredentialResolver.class);
+
+        DockerMocks mocks = mockDockerClient();
+        SingleTenantDockerExecutor executor =
+                new SingleTenantDockerExecutor(testConfig(), mocks.docker(), credentialService);
+
+        ArgumentCaptor<List<String>> envCaptor = ArgumentCaptor.forClass((Class) List.class);
+        executor.execute(paramsWithExecutorType("SCRIPT"));
+
+        verify(mocks.createCmd()).withEnv(envCaptor.capture());
+        assertThat(envCaptor.getValue()).contains("E2E_WORKERS=3");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void execute_aiExecution_doesNotSetE2eWorkersEnv() {
+        AiCredentialResolver credentialService = mock(AiCredentialResolver.class);
+        when(credentialService.resolveOauthToken(any())).thenReturn("test-oauth-token");
+
+        DockerMocks mocks = mockDockerClient();
+        SingleTenantDockerExecutor executor =
+                new SingleTenantDockerExecutor(testConfig(), mocks.docker(), credentialService);
+
+        ArgumentCaptor<List<String>> envCaptor = ArgumentCaptor.forClass((Class) List.class);
+        // No explicit executor_type — defaults to "ai" (see baseParams()/needsOauthToken()).
+        executor.execute(paramsWithExecutorType(null));
+
+        verify(mocks.createCmd()).withEnv(envCaptor.capture());
+        assertThat(envCaptor.getValue()).noneMatch(e -> e.startsWith("E2E_WORKERS="));
+    }
+
+    // -----------------------------------------------------------------------
     // Local-first image resolution: skip the pull when the image is present
     // -----------------------------------------------------------------------
 

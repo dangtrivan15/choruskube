@@ -1,4 +1,5 @@
 import { test, expect } from "../fixtures";
+import { uniqueName } from "../helpers/api-client";
 
 test.describe("Roadmap drill-down", () => {
   test("displays roadmap page with heading", async ({ roadmapPage }) => {
@@ -42,7 +43,7 @@ test.describe("Roadmap drill-down", () => {
     const projectName = repo.url
       .replace(/^https?:\/\/[^/]+\//, "")
       .replace(/\.git$/, "");
-    const uniqueTitle = `E2E Epic ${Date.now()}`;
+    const uniqueTitle = uniqueName("E2E Epic");
 
     await roadmapPage.goto();
     await roadmapPage.createEpic(
@@ -62,14 +63,14 @@ test.describe("Roadmap drill-down", () => {
     await expect(roadmapPage.epicDetailDescription).toBeVisible();
 
     // Create a Story under it, then a Task under that Story.
-    const storyTitle = `E2E Story ${Date.now()}`;
+    const storyTitle = uniqueName("E2E Story");
     await roadmapPage.newStoryButton.click();
     await roadmapPage.createStoryTitleInput.fill(storyTitle);
     await roadmapPage.createStoryDescriptionInput.fill("A story description");
     await roadmapPage.createStorySubmitButton.click();
 
     await roadmapPage.openStory(storyTitle);
-    const taskTitle = `E2E Task ${Date.now()}`;
+    const taskTitle = uniqueName("E2E Task");
     await roadmapPage.newTaskButton.click();
     await roadmapPage.createTaskTitleInput.fill(taskTitle);
     await roadmapPage.createTaskDescriptionInput.fill("A task description");
@@ -96,7 +97,7 @@ test.describe("Roadmap drill-down", () => {
       return;
     }
 
-    const uniqueTitle = `E2E Actions ${Date.now()}`;
+    const uniqueTitle = uniqueName("E2E Actions");
     // git_repo.id IS software_project.id post-V45 — pass it directly.
     const epic = await api.createEpic({
       title: uniqueTitle,
@@ -107,13 +108,14 @@ test.describe("Roadmap drill-down", () => {
       title: "Story for action test",
       description: "desc",
     });
+    const taskTitle = uniqueName("Task for action test");
     const task = await api.createTask(story.id, {
-      title: "Task for action test",
+      title: taskTitle,
       description: "desc",
     });
 
     await roadmapPage.page.goto(`/tasks/${task.id}`);
-    await expect(roadmapPage.taskDetailTitle).toContainText("Task for action test");
+    await expect(roadmapPage.taskDetailTitle).toContainText(taskTitle);
     await expect(roadmapPage.taskStartButton).toBeVisible();
     await expect(roadmapPage.taskDeleteButton).toBeVisible();
 
@@ -128,7 +130,7 @@ test.describe("Roadmap drill-down", () => {
       return;
     }
 
-    const uniqueTitle = `E2E Delete ${Date.now()}`;
+    const uniqueTitle = uniqueName("E2E Delete");
     await api.createEpic({
       title: uniqueTitle,
       description: "Will be deleted",
@@ -173,17 +175,20 @@ test.describe("Roadmap drill-down", () => {
     }
 
     const epic = await api.createEpic({
-      title: `E2E List Readiness Epic ${Date.now()}`,
+      title: uniqueName("E2E List Readiness Epic"),
       description: "desc",
       softwareProjectId: repos.content[0].id,
     });
-    const story = await api.createStory(epic.id, { title: "List Readiness Story", description: "desc" });
+    const story = await api.createStory(epic.id, {
+      title: uniqueName("List Readiness Story"),
+      description: "desc",
+    });
     const blockingTask = await api.createTask(story.id, {
-      title: "List Readiness Blocking Task",
+      title: uniqueName("List Readiness Blocking Task"),
       description: "desc",
     });
     const blockedTask = await api.createTask(story.id, {
-      title: "List Readiness Blocked Task",
+      title: uniqueName("List Readiness Blocked Task"),
       description: "desc",
     });
     await api.createDependency({
@@ -234,7 +239,7 @@ test.describe("Roadmap drill-down", () => {
     // No cleanup: starting blockingTask moved it out of backlog, and
     // DefaultEpicService#delete refuses to delete an Epic with any started
     // descendant Task (see run-lifecycle.spec.ts's breadcrumb test) — the
-    // Date.now() title keeps this fixture from colliding with other runs.
+    // uniqueName() title keeps this fixture from colliding with concurrent runs.
   });
 
   test("'Ready to start' filter on the Roadmap list shows only Epics with unblocked work", async ({
@@ -248,14 +253,14 @@ test.describe("Roadmap drill-down", () => {
     }
 
     const readyEpic = await api.createEpic({
-      title: `E2E Ready Filter Ready Epic ${Date.now()}`,
+      title: uniqueName("E2E Ready Filter Ready Epic"),
       description: "desc",
       softwareProjectId: repos.content[0].id,
     });
     await api.createStory(readyEpic.id, { title: "Unblocked story", description: "desc" });
 
     const blockedEpic = await api.createEpic({
-      title: `E2E Ready Filter Blocked Epic ${Date.now()}`,
+      title: uniqueName("E2E Ready Filter Blocked Epic"),
       description: "desc",
       softwareProjectId: repos.content[0].id,
     });
@@ -264,7 +269,7 @@ test.describe("Roadmap drill-down", () => {
       description: "desc",
     });
     const blockerEpic = await api.createEpic({
-      title: `E2E Ready Filter Blocker Owner Epic ${Date.now()}`,
+      title: uniqueName("E2E Ready Filter Blocker Owner Epic"),
       description: "desc",
       softwareProjectId: repos.content[0].id,
     });

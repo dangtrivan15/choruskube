@@ -1,4 +1,5 @@
 import { test, expect } from "../fixtures";
+import { uniqueName } from "../helpers/api-client";
 
 test.describe("Artifact Viewer Layout", () => {
   // e2e-many-artifacts is a single-node template whose entrypoint node
@@ -12,9 +13,13 @@ test.describe("Artifact Viewer Layout", () => {
     api,
   }) => {
     const template = await api.getTemplateByName("e2e-many-artifacts");
+    // Run names are capped at 30 chars server-side (RunService.RUN_NAME_MAX_LENGTH)
+    // and silently truncated past that — keep the uniqueName() prefix short so this
+    // stays under the limit even with a 2-digit shard/worker index and a multi-digit
+    // monotonic counter (see run-lifecycle.spec.ts / roadmap-candidate-gate.spec.ts).
     const run = await api.startRun({
       graphTemplateId: template.id,
-      name: `e2e-many-artifacts-${Date.now().toString(36)}`,
+      name: uniqueName("av-many"),
     });
 
     await api.waitForRunStatus(run.id, ["completed"], 60_000);
@@ -44,7 +49,7 @@ test.describe("Artifact Viewer Layout", () => {
     const template = await api.getTemplateByName("e2e-many-artifacts");
     const run = await api.startRun({
       graphTemplateId: template.id,
-      name: `e2e-many-artifacts-scroll-${Date.now().toString(36)}`,
+      name: uniqueName("av-scroll"),
     });
 
     await api.waitForRunStatus(run.id, ["completed"], 60_000);

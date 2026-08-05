@@ -1,4 +1,5 @@
 import { test, expect } from "../fixtures";
+import { uniqueName } from "../helpers/api-client";
 
 test.describe("Roadmap Graph View", () => {
   test("opens the graph view for an Epic and shows the Story/Task tree shape", async ({
@@ -13,16 +14,22 @@ test.describe("Roadmap Graph View", () => {
     }
 
     const epic = await api.createEpic({
-      title: `E2E Graph Epic ${Date.now()}`,
+      title: uniqueName("E2E Graph Epic"),
       description: "Epic for graph view e2e",
       softwareProjectId: repos.content[0].id,
     });
     const story = await api.createStory(epic.id, {
-      title: "Graph Story",
+      title: uniqueName("Graph Story"),
       description: "desc",
     });
-    const task1 = await api.createTask(story.id, { title: "Graph Task One", description: "desc" });
-    const task2 = await api.createTask(story.id, { title: "Graph Task Two", description: "desc" });
+    const task1 = await api.createTask(story.id, {
+      title: uniqueName("Graph Task One"),
+      description: "desc",
+    });
+    const task2 = await api.createTask(story.id, {
+      title: uniqueName("Graph Task Two"),
+      description: "desc",
+    });
 
     try {
       // Reachable from the Epic list, not just by direct URL.
@@ -51,12 +58,12 @@ test.describe("Roadmap Graph View", () => {
     }
 
     const epic = await api.createEpic({
-      title: `E2E Graph Detail Epic ${Date.now()}`,
+      title: uniqueName("E2E Graph Detail Epic"),
       description: "desc",
       softwareProjectId: repos.content[0].id,
     });
     const story = await api.createStory(epic.id, { title: "Detail Story", description: "desc" });
-    const task = await api.createTask(story.id, { title: "Detail Task", description: "desc" });
+    const task = await api.createTask(story.id, { title: uniqueName("Detail Task"), description: "desc" });
 
     try {
       await roadmapGraphPage.goto(epic.id);
@@ -85,13 +92,19 @@ test.describe("Roadmap Graph View", () => {
     }
 
     const epic = await api.createEpic({
-      title: `E2E Graph Dependency Epic ${Date.now()}`,
+      title: uniqueName("E2E Graph Dependency Epic"),
       description: "desc",
       softwareProjectId: repos.content[0].id,
     });
     const story = await api.createStory(epic.id, { title: "Dependency Story", description: "desc" });
-    const blockingTask = await api.createTask(story.id, { title: "Blocking Task", description: "desc" });
-    const blockedTask = await api.createTask(story.id, { title: "Blocked Task", description: "desc" });
+    const blockingTask = await api.createTask(story.id, {
+      title: uniqueName("Blocking Task"),
+      description: "desc",
+    });
+    const blockedTask = await api.createTask(story.id, {
+      title: uniqueName("Blocked Task"),
+      description: "desc",
+    });
 
     try {
       await roadmapGraphPage.goto(epic.id);
@@ -126,13 +139,19 @@ test.describe("Roadmap Graph View", () => {
     }
 
     const epic = await api.createEpic({
-      title: `E2E Graph Live Update Epic ${Date.now()}`,
+      title: uniqueName("E2E Graph Live Update Epic"),
       description: "desc",
       softwareProjectId: repos.content[0].id,
     });
     const story = await api.createStory(epic.id, { title: "Live Update Story", description: "desc" });
-    const blockingTask = await api.createTask(story.id, { title: "Live Blocking Task", description: "desc" });
-    const blockedTask = await api.createTask(story.id, { title: "Live Blocked Task", description: "desc" });
+    const blockingTask = await api.createTask(story.id, {
+      title: uniqueName("Live Blocking Task"),
+      description: "desc",
+    });
+    const blockedTask = await api.createTask(story.id, {
+      title: uniqueName("Live Blocked Task"),
+      description: "desc",
+    });
 
     try {
       await roadmapGraphPage.goto(epic.id);
@@ -168,14 +187,23 @@ test.describe("Roadmap Graph View", () => {
     }
 
     const epic = await api.createEpic({
-      title: `E2E Graph Chain Epic ${Date.now()}`,
+      title: uniqueName("E2E Graph Chain Epic"),
       description: "desc",
       softwareProjectId: repos.content[0].id,
     });
     const story = await api.createStory(epic.id, { title: "Chain Story", description: "desc" });
-    const taskA = await api.createTask(story.id, { title: "Chain Task A (root)", description: "desc" });
-    const taskB = await api.createTask(story.id, { title: "Chain Task B (middle)", description: "desc" });
-    const taskC = await api.createTask(story.id, { title: "Chain Task C (tail)", description: "desc" });
+    const taskA = await api.createTask(story.id, {
+      title: uniqueName("Chain Task A (root)"),
+      description: "desc",
+    });
+    const taskB = await api.createTask(story.id, {
+      title: uniqueName("Chain Task B (middle)"),
+      description: "desc",
+    });
+    const taskC = await api.createTask(story.id, {
+      title: uniqueName("Chain Task C (tail)"),
+      description: "desc",
+    });
 
     // A blocks B, B blocks C. taskA is never started below, so it's the only
     // undone item in the chain.
@@ -225,7 +253,7 @@ test.describe("Roadmap Graph View", () => {
     // No cleanup: starting taskB has moved it out of "backlog", and
     // DefaultEpicService#delete refuses to delete an Epic with any started
     // descendant Task (see run-lifecycle.spec.ts's breadcrumb test) — the
-    // Date.now() title keeps this fixture from colliding with other runs.
+    // uniqueName() title keeps this fixture from colliding with concurrent runs.
   });
 
   test("clicking an external blocker's link navigates to its owning Epic's detail page", async ({
@@ -240,23 +268,23 @@ test.describe("Roadmap Graph View", () => {
     }
 
     const firstEpic = await api.createEpic({
-      title: `E2E External Blocker Epic ${Date.now()}`,
+      title: uniqueName("E2E External Blocker Epic"),
       description: "desc",
       softwareProjectId: repos.content[0].id,
     });
     const secondEpic = await api.createEpic({
-      title: `E2E Owning Epic ${Date.now()}`,
+      title: uniqueName("E2E Owning Epic"),
       description: "desc",
       softwareProjectId: repos.content[0].id,
     });
     const firstStory = await api.createStory(firstEpic.id, { title: "Blocked Story", description: "desc" });
     const blockedTask = await api.createTask(firstStory.id, {
-      title: "Externally Blocked Task",
+      title: uniqueName("Externally Blocked Task"),
       description: "desc",
     });
     const secondStory = await api.createStory(secondEpic.id, { title: "Blocking Story", description: "desc" });
     const blockingTask = await api.createTask(secondStory.id, {
-      title: "External Blocking Task",
+      title: uniqueName("External Blocking Task"),
       description: "desc",
     });
 
@@ -296,12 +324,12 @@ test.describe("Roadmap Graph View", () => {
     }
 
     const firstEpic = await api.createEpic({
-      title: `E2E Cross-Epic Canvas Epic ${Date.now()}`,
+      title: uniqueName("E2E Cross-Epic Canvas Epic"),
       description: "desc",
       softwareProjectId: repos.content[0].id,
     });
     const secondEpic = await api.createEpic({
-      title: `E2E Cross-Epic Owning Epic ${Date.now()}`,
+      title: uniqueName("E2E Cross-Epic Owning Epic"),
       description: "desc",
       softwareProjectId: repos.content[0].id,
     });
@@ -312,7 +340,7 @@ test.describe("Roadmap Graph View", () => {
     });
     const secondStory = await api.createStory(secondEpic.id, { title: "Blocking Story", description: "desc" });
     const blockingTask = await api.createTask(secondStory.id, {
-      title: "Canvas External Blocking Task",
+      title: uniqueName("Canvas External Blocking Task"),
       description: "desc",
     });
 
@@ -354,16 +382,19 @@ test.describe("Roadmap Graph View", () => {
     }
 
     const epic = await api.createEpic({
-      title: `E2E Graph Collapse Epic ${Date.now()}`,
+      title: uniqueName("E2E Graph Collapse Epic"),
       description: "desc",
       softwareProjectId: repos.content[0].id,
     });
-    const bigStory = await api.createStory(epic.id, { title: "Big Story", description: "desc" });
+    const bigStory = await api.createStory(epic.id, { title: uniqueName("Big Story"), description: "desc" });
     // One more Task than RoadmapGraph's AUTO_COLLAPSE_TASK_THRESHOLD (8), so
     // this branch starts collapsed by default.
+    const collapseTaskPrefix = uniqueName("Collapse Task");
     const tasks = [];
     for (let i = 0; i < 9; i++) {
-      tasks.push(await api.createTask(bigStory.id, { title: `Collapse Task ${i}`, description: "desc" }));
+      tasks.push(
+        await api.createTask(bigStory.id, { title: `${collapseTaskPrefix} ${i}`, description: "desc" }),
+      );
     }
 
     try {

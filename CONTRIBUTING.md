@@ -58,11 +58,14 @@ cd web-ui && npm run test:e2e
 ```
 
 `e2e.sh` now supersets the per-component unit tests (which remain the fast-iteration
-path — run them directly while developing). It is also distinct from
-`scripts/oss-smoke.sh` (boots from published images, exercises one feature-dev run
-end-to-end). Use `e2e.sh` to validate changes that cross a component boundary
-before declaring them complete. In CI, the `E2E` workflow (`.github/workflows/e2e.yml`)
-runs this whole harness — unit suites included — on every PR and push to `main`.
+path — run them directly while developing; the api-server/orchestrator/web-ui suites
+now also run concurrently as background subprocesses within `e2e.sh` itself, so the
+unit-test stage takes as long as its slowest suite rather than the sum of all three).
+It is also distinct from `scripts/oss-smoke.sh` (boots from published images,
+exercises one feature-dev run end-to-end). Use `e2e.sh` to validate changes that cross
+a component boundary before declaring them complete. In CI, the `E2E` workflow
+(`.github/workflows/e2e.yml`) runs this whole harness — unit suites included — on
+every PR and push to `main`.
 
 To tear down the e2e stack manually:
 
@@ -70,6 +73,41 @@ To tear down the e2e stack manually:
 ./scripts/e2e-down.sh           # stop containers
 ./scripts/e2e-down.sh --volumes # stop and wipe data volumes
 ```
+
+### Running the Playwright suite in parallel
+
+The Playwright suite (`web-ui/e2e/specs/`) is serial by default — safe for local dev,
+where nothing else is competing for the one shared stack instance. Opt into multiple
+workers with `E2E_WORKERS`:
+
+```bash
+E2E_WORKERS=4 ./scripts/e2e.sh                 # full run, 4 Playwright workers
+cd web-ui && E2E_WORKERS=4 npm run test:e2e    # against a stack already up
+```
+
+Every spec that creates a named resource (a Run/Epic/Task title, a GitRepo, a
+RepoGroup) derives that name from `uniqueName()` (`web-ui/e2e/helpers/api-client.ts`)
+so concurrent workers never collide over the one shared backend stack — see that
+file's doc comment before adding a new spec with a static name literal.
+
+CI additionally shards the suite across independent runner pods (`.github/workflows/e2e.yml`),
+each running `E2E_WORKERS` workers against its own stack instance. `SHARD_INDEX` /
+`SHARD_TOTAL` (both unset locally) select the shard's slice of specs and, combined
+with the worker index, keep `uniqueName()` collision-free across shards too:
+
+```bash
+SHARD_INDEX=1 SHARD_TOTAL=2 E2E_WORKERS=2 ./scripts/e2e.sh
+```
+
+`SHARD_TOTAL` tracks the shard-matrix length in `e2e.yml` (currently 2), which is in turn
+sized to how many runners the `arc-runner-choruskube` pool admits concurrently — not to how
+long the suite is. Adding shards beyond that limit queues them into a second wave, and each
+shard re-runs the whole stack-boot and unit-test preamble, so an unmatched raise costs more
+time than it saves. Change both together, and only alongside the pool's limit.
+
+The CI workflow's `e2e` job (not the per-shard `e2e-shard (N)` jobs) is the intended
+required status check — it's the one job whose name doesn't vary per matrix leg, and
+it fails if any shard failed.
 
 ## Sign your commits (DCO)
 

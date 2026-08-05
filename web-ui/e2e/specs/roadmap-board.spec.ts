@@ -1,4 +1,5 @@
 import { test, expect } from "../fixtures";
+import { uniqueName } from "../helpers/api-client";
 
 // Single-session flow: open the board, expand a card to see its Stories, drag
 // it to a new column, then reload and confirm the move persisted server-side.
@@ -40,14 +41,14 @@ test.describe("Roadmap Board", () => {
       return;
     }
 
-    const uniqueTitle = `E2E Board Epic ${Date.now()}`;
+    const uniqueTitle = uniqueName("E2E Board Epic");
     const epic = await api.createEpic({
       title: uniqueTitle,
       description: "Epic for the roadmap board E2E test",
       softwareProjectId: repos.content[0].id,
     });
     const story = await api.createStory(epic.id, {
-      title: "Board test story",
+      title: uniqueName("Board test story"),
       description: "A story shown under the expanded card",
     });
 
@@ -82,14 +83,14 @@ test.describe("Roadmap Board", () => {
     }
 
     const readyEpic = await api.createEpic({
-      title: `E2E Board Ready Filter Ready Epic ${Date.now()}`,
+      title: uniqueName("E2E Board Ready Filter Ready Epic"),
       description: "desc",
       softwareProjectId: repos.content[0].id,
     });
     await api.createStory(readyEpic.id, { title: "Unblocked story", description: "desc" });
 
     const blockedEpic = await api.createEpic({
-      title: `E2E Board Ready Filter Blocked Epic ${Date.now()}`,
+      title: uniqueName("E2E Board Ready Filter Blocked Epic"),
       description: "desc",
       softwareProjectId: repos.content[0].id,
     });
@@ -98,7 +99,7 @@ test.describe("Roadmap Board", () => {
       description: "desc",
     });
     const blockerEpic = await api.createEpic({
-      title: `E2E Board Ready Filter Blocker Owner Epic ${Date.now()}`,
+      title: uniqueName("E2E Board Ready Filter Blocker Owner Epic"),
       description: "desc",
       softwareProjectId: repos.content[0].id,
     });
@@ -143,7 +144,7 @@ test.describe("Roadmap Board", () => {
       return;
     }
 
-    const uniqueTitle = `E2E Board Ready Drag Epic ${Date.now()}`;
+    const uniqueTitle = uniqueName("E2E Board Ready Drag Epic");
     const epic = await api.createEpic({
       title: uniqueTitle,
       description: "Epic for the ready-filtered drag E2E test",

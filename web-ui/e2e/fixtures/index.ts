@@ -6,7 +6,7 @@
  *   - Page Objects for each major UI area
  */
 import { test as base } from "@playwright/test";
-import { TestApiClient } from "../helpers/api-client";
+import { TestApiClient, type GitRepo, type RepoGroupSummary } from "../helpers/api-client";
 import { NavigationPage } from "../pages/navigation.page";
 import { RunListPage } from "../pages/run-list.page";
 import { RunMonitorPage } from "../pages/run-monitor.page";
@@ -32,11 +32,57 @@ export interface TestFixtures {
   docsPage: DocsPage;
 }
 
-export const test = base.extend<TestFixtures>({
+/** A GitRepo + RepoGroup dedicated to the current Playwright worker. */
+export interface WorkerRepoFixture {
+  gitRepo: GitRepo;
+  repoGroup: RepoGroupSummary;
+}
+
+export interface WorkerFixtures {
+  workerRepo: WorkerRepoFixture;
+}
+
+export const test = base.extend<TestFixtures, WorkerFixtures>({
   api: async ({}, use) => {
     const client = new TestApiClient();
     await use(client);
   },
+
+  // Worker-scoped: created once per worker (Playwright caches worker-scoped
+  // fixtures for the life of the worker process) and shared by every test
+  // that runs in it, so specs needing "a repo of their own" don't each mint a
+  // fresh GitRepo/RepoGroup pair. Fetch-or-create so a fixture re-used across
+  // an aborted-then-retried worker slot doesn't fail on a name/URL conflict.
+  //
+  // Deliberately NOT uniqueName(): that helper mints a fresh Date.now()+counter
+  // suffix on every call, so two calls for the *same* (shard, worker) slot would
+  // never resolve to the same name/URL and the fetch-or-create lookup below could
+  // never hit. The name only needs to be stable per slot and distinct across
+  // slots, so it's built directly from the same "s<shard>w<worker>" scheme
+  // uniqueName() uses for its own collision-safety, minus the per-call suffix.
+  workerRepo: [
+    async ({}, use, workerInfo) => {
+      const api = new TestApiClient();
+      const shardIndex = Number(process.env.SHARD_INDEX ?? "0");
+      const name = `e2e-worker-repo-s${shardIndex}w${workerInfo.parallelIndex}`;
+      const url = `https://example.invalid/e2e-worker/${name}.git`;
+
+      const existingRepos = await api.listGitRepos();
+      let gitRepo = existingRepos.content.find((r) => r.url === url);
+      if (!gitRepo) {
+        gitRepo = await api.createGitRepo({ url });
+      }
+
+      const existingGroups = await api.listRepoGroups();
+      let repoGroup = existingGroups.find((g) => g.name === name);
+      if (!repoGroup) {
+        repoGroup = await api.createRepoGroup({ name, memberRepoIds: [gitRepo.id] });
+      }
+
+      await use({ gitRepo, repoGroup });
+    },
+    { scope: "worker" },
+  ],
 
   navigationPage: async ({ page }, use) => {
     await use(new NavigationPage(page));

@@ -19,15 +19,24 @@ const AUTH_FILE = join(__dirname, "e2e/.auth/user.json");
  *
  * (Override base URL via E2E_BASE_URL if needed.)
  *
+ * Every spec that creates a named resource (Run/Epic/Task title, GitRepo,
+ * RepoGroup, ...) namespaces it via `uniqueName` (see e2e/helpers/api-client.ts)
+ * so concurrent workers/shards never collide over one shared backend stack.
+ *
  * Run with: npx playwright test
+ * Parallel: E2E_WORKERS=4 npx playwright test
+ * Sharded (CI): SHARD_INDEX=1 SHARD_TOTAL=2 E2E_WORKERS=2 npx playwright test --shard=1/2
  */
+const shardIndex = process.env.SHARD_INDEX;
+
 export default defineConfig({
   testDir: "./e2e/specs",
   outputDir: "./e2e/test-results",
 
-  /* Serial execution to avoid DB state conflicts between tests */
-  workers: 1,
-  fullyParallel: false,
+  /* Workers driven by E2E_WORKERS; omitting it reproduces today's serial
+   * behavior exactly (local dev, and any caller that doesn't opt in). */
+  workers: process.env.E2E_WORKERS ? Number(process.env.E2E_WORKERS) : 1,
+  fullyParallel: true,
 
   /* Fail the build on any test.only left in source code */
   forbidOnly: !!process.env.CI,
@@ -35,9 +44,21 @@ export default defineConfig({
   /* Retry failed tests once in CI */
   retries: process.env.CI ? 1 : 0,
 
-  /* Reporter */
+  /* Reporter. Report output dir incorporates SHARD_INDEX (set per CI matrix job)
+   * so each shard's HTML report can be uploaded as its own artifact instead of
+   * every shard racing to overwrite one shared "playwright-report" dir. */
   reporter: process.env.CI
-    ? [["html", { outputFolder: "./e2e/playwright-report" }], ["list"]]
+    ? [
+        [
+          "html",
+          {
+            outputFolder: shardIndex
+              ? `./e2e/playwright-report-shard-${shardIndex}`
+              : "./e2e/playwright-report",
+          },
+        ],
+        ["list"],
+      ]
     : [["list"]],
 
   use: {
