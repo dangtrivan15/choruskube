@@ -9,7 +9,10 @@
 # (via `git ls-remote`, not the local upstream-tracking ref — see the header
 # comment in entrypoint.sh's PR-verification block for why). For every repo
 # that was pushed but has no pull request registered with the ChorusKube API
-# for this run's node execution, prints "<repo-name>: no PR registered".
+# for this run (checked via this node execution's own scoped read of the
+# whole run's PR set — see RunPullRequestService#getPullRequestsForNodeExecution
+# — not just PRs this node execution itself registered), prints
+# "<repo-name>: no PR registered".
 #
 # Unlike check-decision's single-value "(none)" convention, check-prs's
 # output is a variable-length list (zero or more lines) — callers MUST branch
