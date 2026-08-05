@@ -2,6 +2,7 @@ package com.choruskube.core.controller;
 
 import com.choruskube.core.credential.GitHubCredentialResolver;
 import com.choruskube.core.dto.*;
+import com.choruskube.core.service.ArtifactResolutionService;
 import com.choruskube.core.service.InternalRunService;
 import com.choruskube.core.service.RunPullRequestService;
 import jakarta.validation.Valid;
@@ -18,14 +19,17 @@ public class InternalRunController {
     private final InternalRunService service;
     private final GitHubCredentialResolver gitHubCredentialResolver;
     private final RunPullRequestService runPullRequestService;
+    private final ArtifactResolutionService artifactResolutionService;
 
     public InternalRunController(
             InternalRunService service,
             GitHubCredentialResolver gitHubCredentialResolver,
-            RunPullRequestService runPullRequestService) {
+            RunPullRequestService runPullRequestService,
+            ArtifactResolutionService artifactResolutionService) {
         this.service = service;
         this.gitHubCredentialResolver = gitHubCredentialResolver;
         this.runPullRequestService = runPullRequestService;
+        this.artifactResolutionService = artifactResolutionService;
     }
 
     @PostMapping("/{runId}/node-executions")
@@ -112,6 +116,15 @@ public class InternalRunController {
     public List<PredecessorArtifactsResponse> getCompletedPredecessors(
             @PathVariable UUID runId, @PathVariable UUID nodeExecId) {
         return service.getCompletedPredecessors(runId, nodeExecId);
+    }
+
+    /**
+     * Files the orchestrator should list in config.json so the agent finds them under
+     * {@code /workspace/in/} instead of hunting object storage for them.
+     */
+    @GetMapping("/{runId}/node-executions/{nodeExecId}/input-artifacts")
+    public InputArtifactManifest getInputArtifacts(@PathVariable UUID runId, @PathVariable UUID nodeExecId) {
+        return artifactResolutionService.resolveInputArtifactManifest(runId, nodeExecId);
     }
 
     @PutMapping("/{runId}/node-executions/{nodeExecId}/decision")

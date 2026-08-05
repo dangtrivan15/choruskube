@@ -46,7 +46,7 @@ class RoadmapCandidatesArtifactResolverTest {
         return List.of(new ResolvedArtifactGroup(
                 analyzerExecId,
                 "roadmap_analyzer",
-                List.of(new ResolvedArtifactEntry("roadmap_candidates.json", "Structured breakdown"))));
+                List.of(new ResolvedArtifactEntry("roadmap_candidates.json", "Structured breakdown", false))));
     }
 
     private void stubArtifactContent(String json) {

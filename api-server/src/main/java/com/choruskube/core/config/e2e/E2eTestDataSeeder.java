@@ -68,7 +68,10 @@ public class E2eTestDataSeeder implements ApplicationRunner {
     // "content pane collapses when a node has many files" regression coverage.
     private static final String GRAPH_ID_MANY_ARTIFACTS = "e2e-many-artifacts";
 
-    private static final int VERSION = 2;
+    // Bumped to 3 so step_2's requiredInputArtifacts declaration re-seeds — run() early-returns
+    // when a template at the current VERSION already exists, so an edit without a bump is a no-op
+    // against any environment whose database survived the previous boot.
+    private static final int VERSION = 3;
 
     private static final String E2E_REPO_URL = "https://github.com/e2e-test/mock-repo";
     private static final String E2E_SECONDARY_REPO_URL = "https://github.com/e2e-test/mock-frontend";
@@ -305,11 +308,24 @@ public class E2eTestDataSeeder implements ApplicationRunner {
     // --- Linear Pipeline: step_1 -> step_2 -> step_3 ---
 
     private void seedLinearPipeline(NodeDefinition mockSuccess) {
-        GraphTemplate t =
-                createTemplate(GRAPH_ID_LINEAR, "e2e-linear-pipeline", "E2E test: three sequential mock-success nodes");
+        GraphTemplate t = createTemplate(
+                GRAPH_ID_LINEAR,
+                "e2e-linear-pipeline",
+                "E2E test: three sequential mock-success nodes; step_2 asserts step_1's artifact "
+                        + "was materialised under /workspace/in");
 
         TemplateNode step1 = createNode(t, mockSuccess, "step_1", true, cmd("success --artifact step-1-done"));
-        TemplateNode step2 = createNode(t, mockSuccess, "step_2", false, cmd("success --artifact step-2-done"));
+        // step_2 declares step_1's output and asserts it landed on disk. Without this, the whole
+        // required_input_artifacts path — manifest resolution, config.json plumbing, the
+        // entrypoint's download loop — runs as a no-op in E2E and can regress unnoticed.
+        TemplateNode step2 = createNode(
+                t,
+                mockSuccess,
+                "step_2",
+                false,
+                cmd("success --artifact step-2-done --expect-input step_1/step-1-done"),
+                "[{\"template_node_label\":\"step_1\",\"artifacts\":[{\"name\":\"step-1-done\","
+                        + "\"description\":\"step_1's output artifact\",\"required\":true}]}]");
         TemplateNode step3 = createNode(t, mockSuccess, "step_3", false, cmd("success --artifact step-3-done"));
 
         createEdge(t, step1, step2, null);

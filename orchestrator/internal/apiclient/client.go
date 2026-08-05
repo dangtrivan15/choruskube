@@ -359,6 +359,29 @@ func (c *Client) GetCompletedPredecessors(ctx context.Context, runID, nodeExecID
 	return preds, nil
 }
 
+// --- Input Artifact Manifest ---
+
+type inputArtifactManifestResponse struct {
+	Artifacts map[string]string `json:"artifacts"`
+	Required  []string          `json:"required"`
+}
+
+// GetInputArtifacts asks the api-server which files this node execution should have materialised
+// under /workspace/in/. The api-server owns the resolution because it holds both halves of the
+// join: the template's artifact declarations and each source execution's recorded artifact_refs.
+func (c *Client) GetInputArtifacts(ctx context.Context, runID, nodeExecID uuid.UUID) (*state.InputArtifactManifest, error) {
+	path := fmt.Sprintf("/internal/runs/%s/node-executions/%s/input-artifacts", runID, nodeExecID)
+	resp, err := c.doJSON(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("get input artifacts: %w", err)
+	}
+	var result inputArtifactManifestResponse
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("unmarshal input artifacts: %w", err)
+	}
+	return &state.InputArtifactManifest{Artifacts: result.Artifacts, Required: result.Required}, nil
+}
+
 // --- Workloads (delegated to API server) ---
 
 type createWorkloadRequest struct {

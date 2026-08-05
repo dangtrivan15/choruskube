@@ -314,7 +314,9 @@ class PendingGateServiceTest {
 
         ArtifactResolutionService mockResolutionService = Mockito.mock(ArtifactResolutionService.class);
         List<ResolvedArtifactGroup> expectedGroups = List.of(new ResolvedArtifactGroup(
-                UUID.randomUUID(), "Planning Node", List.of(new ResolvedArtifactEntry("spec.md", "Spec document"))));
+                UUID.randomUUID(),
+                "Planning Node",
+                List.of(new ResolvedArtifactEntry("spec.md", "Spec document", false))));
         Mockito.when(mockResolutionService.resolveRequiredArtifacts(templateNodeId, runId))
                 .thenReturn(expectedGroups);
 

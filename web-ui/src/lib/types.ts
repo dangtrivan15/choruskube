@@ -95,6 +95,7 @@ export interface SnapshotEdge {
 export interface ResolvedArtifactEntry {
   name: string;
   description: string | null;
+  required: boolean;
 }
 
 export interface ResolvedArtifactGroup {

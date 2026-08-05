@@ -34,8 +34,8 @@ EXECUTOR=$(jq -r '.executor_type // "ai"' "$CONFIG")
 ENTRYPOINT="$(dirname "${BASH_SOURCE[0]}")/../entrypoint.sh"
 grep -q -- '--max-turns "\$MAX_TURNS"' "$ENTRYPOINT" \
   && ok "claude invoked with --max-turns" || fail "claude invoked with --max-turns"
-grep -qE '^  MAX_TURNS=[0-9]+' "$ENTRYPOINT" \
-  && ok "MAX_TURNS defined" || fail "MAX_TURNS defined"
+grep -qF '  MAX_TURNS="${MAX_TURNS:-100}"' "$ENTRYPOINT" \
+  && ok "MAX_TURNS defined, defaulting to 100" || fail "MAX_TURNS defined, defaulting to 100"
 [ ! -f "$(dirname "${BASH_SOURCE[0]}")/../settings.json" ] \
   && ok "no settings.json shipping an unsupported key" || fail "no settings.json shipping an unsupported key"
 
@@ -266,6 +266,310 @@ echo "$BAD_EFFORT_STDERR" | grep -q "unsupported effort value" \
   && ok "unrecognized effort value logs a clear error" || fail "unrecognized effort value logs a clear error"
 echo "$BAD_EFFORT_STDERR" | grep -q "Claude Code exited" \
   && fail "guard did not stop before a claude invocation" || ok "guard fires before any run_claude()/claude invocation"
+
+# --- Test 19: input artifact download loop — nested keys, required vs optional ---
+# Runs the real Step 1 block against a stub `artifact` so the required/optional branch is
+# exercised without object storage. A shell function shadows the PATH binary.
+IA_CONFIG="$TESTDIR/config_input_artifacts.json"
+cat > "$IA_CONFIG" <<'EOF'
+{
+  "input_artifacts": {
+    "spec_review/spec_and_plan.md": "org/runs/r/e/out/spec_and_plan.md",
+    "spec_review/spec_review.md": "org/runs/r/e/out/spec_review.md"
+  },
+  "required_input_artifacts": ["spec_review/spec_and_plan.md"]
+}
+EOF
+
+build_step1_harness() {
+  # $1 = object path the stub should fail to fetch, $2 = workspace-in dir
+  {
+    echo 'set -euo pipefail'
+    echo "CONFIG_FILE=\"$IA_CONFIG\""
+    echo "WORKSPACE_IN=\"$2\""
+    echo "artifact() { if [ \"\$2\" = \"$1\" ]; then return 1; fi; printf stub > \"\$3\"; return 0; }"
+    awk '/^# --- Step 1: Pull input artifacts/{f=1} /^# Pull run log/{f=0} f' "$ENTRYPOINT"
+  }
+}
+
+# 19a: an absent OPTIONAL artifact is skipped, and the rest still land
+IA_IN_A="$TESTDIR/in_optional"
+build_step1_harness "org/runs/r/e/out/spec_review.md" "$IA_IN_A" > "$TESTDIR/step1_optional.sh"
+set +e
+IA_OUT_A=$(bash "$TESTDIR/step1_optional.sh" 2>&1)
+IA_RC_A=$?
+set -e
+[ "$IA_RC_A" -eq 0 ] && ok "absent optional input artifact does not fail the pod" \
+  || fail "absent optional input artifact does not fail the pod ($IA_OUT_A)"
+[ -f "$IA_IN_A/spec_review/spec_and_plan.md" ] \
+  && ok "nested input artifact key creates its parent directory" \
+  || fail "nested input artifact key creates its parent directory"
+echo "$IA_OUT_A" | grep -q "Optional input artifact absent" \
+  && ok "absent optional input artifact is logged" || fail "absent optional input artifact is logged"
+
+# 19b: an absent REQUIRED artifact stops the pod with a clear error
+IA_IN_B="$TESTDIR/in_required"
+build_step1_harness "org/runs/r/e/out/spec_and_plan.md" "$IA_IN_B" > "$TESTDIR/step1_required.sh"
+set +e
+IA_OUT_B=$(bash "$TESTDIR/step1_required.sh" 2>&1)
+IA_RC_B=$?
+set -e
+[ "$IA_RC_B" -ne 0 ] && ok "absent required input artifact exits non-zero" \
+  || fail "absent required input artifact exits non-zero"
+echo "$IA_OUT_B" | grep -q "required input artifact missing" \
+  && ok "absent required input artifact logs a clear error" \
+  || fail "absent required input artifact logs a clear error"
+
+# --- Test 20: absent required_input_artifacts key — every input is best-effort ---
+IA_LEGACY="$TESTDIR/config_legacy_inputs.json"
+cat > "$IA_LEGACY" <<'EOF'
+{"input_artifacts": {"run_input/notes.md": "org/runs/r/run_input/notes.md"}}
+EOF
+LEGACY_REQUIRED=$(jq -r '.required_input_artifacts // [] | .[]' "$IA_LEGACY")
+[ -z "$LEGACY_REQUIRED" ] && ok "absent required_input_artifacts parses to empty" \
+  || fail "absent required_input_artifacts parses to empty"
+
+# --- Test 21: failure safety net — in-progress work is pushed before reporting ---
+# Runs the real safety-net block against real git repos (a bare repo standing in for
+# origin) rather than a hand-copied re-implementation, so the commit/push decisions
+# under test are the ones that ship. Same extract-the-fragment style as Test 19.
+SN_BRANCH="choruskube-run-test"
+
+sn_setup_repo() {
+  # $1 = repo name, $2 = run branch to check out ("" leaves it on main)
+  local name="$1" branch="$2"
+  local remote="$TESTDIR/$name.git" work="$TESTDIR/$name"
+  git init -q --bare "$remote"
+  git init -q "$work"
+  git -C "$work" config user.email "agent@choruskube.local"
+  git -C "$work" config user.name "ChorusKube Agent"
+  git -C "$work" config commit.gpgsign false
+  echo seed > "$work/seed.txt"
+  git -C "$work" add -A
+  git -C "$work" commit -q -m seed
+  git -C "$work" branch -M main
+  git -C "$work" remote add origin "$remote"
+  git -C "$work" push -q -u origin main
+  [ -n "$branch" ] && git -C "$work" checkout -q -b "$branch"
+  return 0
+}
+
+sn_build_harness() {
+  # $1 = REPOS_JSON, $2 = REPO_URL, $3 = WORKING_BRANCH. A failed AI node with no
+  # result text is the production case: is_error set, .result absent, last assistant
+  # message empty because the cut-off landed mid-tool-call.
+  {
+    echo 'set -euo pipefail'
+    echo 'RUN_ID=run-1'
+    echo 'NODE_EXECUTION_ID=exec-1'
+    echo 'RESULT_STATUS=failed'
+    echo 'ERROR_MESSAGE="Claude reported is_error after 3 attempts (subtype=error_max_turns)"'
+    echo 'RESULT=""'
+    printf 'REPOS_JSON=%q\n' "$1"
+    printf 'REPO_URL=%q\n' "$2"
+    printf 'WORKING_BRANCH=%q\n' "$3"
+    awk '/^# --- Failure safety net/{f=1} /^# --- Step 5:/{f=0} f' "$ENTRYPOINT"
+    echo 'echo "FINAL_STATUS:$RESULT_STATUS"'
+    echo 'echo "$RESULT"'
+  }
+}
+
+# 21a: multi-repo — a dirty repo is committed and pushed, a clean one is not
+sn_setup_repo repo-a "$SN_BRANCH"
+sn_setup_repo repo-b "$SN_BRANCH"
+echo "new work" > "$TESTDIR/repo-a/feature.txt"
+SN_REPOS_JSON=$(jq -nc --arg pa "$TESTDIR/repo-a" --arg pb "$TESTDIR/repo-b" --arg br "$SN_BRANCH" \
+  '[{name:"repo-a",local_path:$pa,working_branch:$br},{name:"repo-b",local_path:$pb,working_branch:$br}]')
+sn_build_harness "$SN_REPOS_JSON" "" "" > "$TESTDIR/safety_multi.sh"
+set +e
+SN_OUT_A=$(bash "$TESTDIR/safety_multi.sh" 2>&1)
+SN_RC_A=$?
+set -e
+[ "$SN_RC_A" -eq 0 ] && ok "safety net exits clean on a failed node" \
+  || fail "safety net exits clean on a failed node ($SN_OUT_A)"
+[ "$(git -C "$TESTDIR/repo-a" rev-list --count HEAD)" = "2" ] \
+  && ok "dirty repo gets a commit" || fail "dirty repo gets a commit"
+[ "$(git -C "$TESTDIR/repo-a.git" rev-parse "$SN_BRANCH")" = "$(git -C "$TESTDIR/repo-a" rev-parse HEAD)" ] \
+  && ok "dirty repo's commit reaches origin" || fail "dirty repo's commit reaches origin"
+[ "$(git -C "$TESTDIR/repo-b" rev-list --count HEAD)" = "1" ] \
+  && ok "clean repo gets no empty commit" || fail "clean repo gets no empty commit"
+echo "$SN_OUT_A" | grep -q "repo-a: pushed $SN_BRANCH @ $(git -C "$TESTDIR/repo-a" rev-parse --short HEAD)" \
+  && ok "result names the branch and short SHA pushed per repo" \
+  || fail "result names the branch and short SHA pushed per repo"
+echo "$SN_OUT_A" | grep -q "repo-b:" \
+  && ok "every repo in a multi-repo run is reported" || fail "every repo in a multi-repo run is reported"
+echo "$SN_OUT_A" | grep -q "error_max_turns" \
+  && ok "failure result carries the original error message" \
+  || fail "failure result carries the original error message"
+echo "$SN_OUT_A" | grep -q "FINAL_STATUS:failed" \
+  && ok "safety net leaves RESULT_STATUS failed" || fail "safety net leaves RESULT_STATUS failed"
+
+# 21b: a second failure on the same branch pushes nothing new
+# Retries reuse the run branch, so the safety net has to be idempotent — re-running
+# it over an already-pushed branch must not manufacture a commit or a push.
+set +e
+SN_OUT_B=$(bash "$TESTDIR/safety_multi.sh" 2>&1)
+SN_RC_B=$?
+set -e
+[ "$SN_RC_B" -eq 0 ] && ok "safety net is re-runnable on an already-pushed branch" \
+  || fail "safety net is re-runnable on an already-pushed branch ($SN_OUT_B)"
+[ "$(git -C "$TESTDIR/repo-a" rev-list --count HEAD)" = "2" ] \
+  && ok "re-run adds no further commit" || fail "re-run adds no further commit"
+echo "$SN_OUT_B" | grep -q "repo-a: nothing new to push" \
+  && ok "re-run reports nothing new to push" || fail "re-run reports nothing new to push"
+
+# 21c: a push that fails must neither crash the pod nor mask the original error
+sn_setup_repo repo-c "$SN_BRANCH"
+echo "new work" > "$TESTDIR/repo-c/feature.txt"
+git -C "$TESTDIR/repo-c" remote set-url origin "$TESTDIR/does-not-exist.git"
+SN_REPOS_C=$(jq -nc --arg p "$TESTDIR/repo-c" --arg br "$SN_BRANCH" \
+  '[{name:"repo-c",local_path:$p,working_branch:$br}]')
+sn_build_harness "$SN_REPOS_C" "" "" > "$TESTDIR/safety_pushfail.sh"
+set +e
+SN_OUT_C=$(bash "$TESTDIR/safety_pushfail.sh" 2>&1)
+SN_RC_C=$?
+set -e
+[ "$SN_RC_C" -eq 0 ] && ok "unreachable origin does not crash the safety net" \
+  || fail "unreachable origin does not crash the safety net ($SN_OUT_C)"
+echo "$SN_OUT_C" | grep -q "error_max_turns" \
+  && ok "push failure does not mask the original error" || fail "push failure does not mask the original error"
+echo "$SN_OUT_C" | grep -q "FINAL_STATUS:failed" \
+  && ok "push failure leaves RESULT_STATUS failed" || fail "push failure leaves RESULT_STATUS failed"
+[ "$(git -C "$TESTDIR/repo-c" rev-list --count HEAD)" = "2" ] \
+  && ok "work is still committed locally when the push fails" \
+  || fail "work is still committed locally when the push fails"
+echo "$SN_OUT_C" | grep -q "push failed" \
+  && ok "failed push is reported in the result" || fail "failed push is reported in the result"
+
+# 21d: a node with no run branch is left alone — its HEAD is the default branch
+sn_setup_repo repo-d ""
+echo "new work" > "$TESTDIR/repo-d/feature.txt"
+SN_MAIN_BEFORE=$(git -C "$TESTDIR/repo-d.git" rev-parse main)
+SN_REPOS_D=$(jq -nc --arg p "$TESTDIR/repo-d" '[{name:"repo-d",local_path:$p}]')
+sn_build_harness "$SN_REPOS_D" "" "" > "$TESTDIR/safety_nobranch.sh"
+set +e
+SN_OUT_D=$(bash "$TESTDIR/safety_nobranch.sh" 2>&1)
+SN_RC_D=$?
+set -e
+[ "$SN_RC_D" -eq 0 ] && ok "repo without a run branch does not crash the safety net" \
+  || fail "repo without a run branch does not crash the safety net ($SN_OUT_D)"
+[ "$(git -C "$TESTDIR/repo-d" rev-list --count HEAD)" = "1" ] \
+  && ok "no run branch — nothing committed to the default branch" \
+  || fail "no run branch — nothing committed to the default branch"
+[ "$(git -C "$TESTDIR/repo-d.git" rev-parse main)" = "$SN_MAIN_BEFORE" ] \
+  && ok "no run branch — origin's default branch is untouched" \
+  || fail "no run branch — origin's default branch is untouched"
+echo "$SN_OUT_D" | grep -q "no repository work to preserve" \
+  && ok "empty preserve summary reported explicitly" || fail "empty preserve summary reported explicitly"
+
+# 21e: single-repo mode uses the /workspace/repo clone and $WORKING_BRANCH
+sn_setup_repo single-repo "$SN_BRANCH"
+echo "new work" > "$TESTDIR/single-repo/feature.txt"
+sn_build_harness "" "https://example.invalid/single-repo.git" "$SN_BRANCH" \
+  | sed "s#\"/workspace/repo\"#\"$TESTDIR/single-repo\"#" > "$TESTDIR/safety_single.sh"
+set +e
+SN_OUT_E=$(bash "$TESTDIR/safety_single.sh" 2>&1)
+SN_RC_E=$?
+set -e
+[ "$SN_RC_E" -eq 0 ] && ok "single-repo mode safety net exits clean" \
+  || fail "single-repo mode safety net exits clean ($SN_OUT_E)"
+[ "$(git -C "$TESTDIR/single-repo.git" rev-parse "$SN_BRANCH")" = "$(git -C "$TESTDIR/single-repo" rev-parse HEAD)" ] \
+  && ok "single-repo mode pushes the working branch" || fail "single-repo mode pushes the working branch"
+
+# --- Test 22: per-node turn/retry budget — configured values win, absent keeps 100/3 ---
+# The read and the defaults sit in two different parts of entrypoint.sh (config parsing at
+# the top, the assignment inside the AI branch), and a value read at the top is worthless
+# if the assignment shadows it. Extract BOTH real fragments and run them together, same
+# style as Tests 19/21, so the test observes the value claude would actually be launched with.
+build_budget_harness() {
+  # $1 = config.json fixture path
+  {
+    echo 'set -euo pipefail'
+    printf 'CONFIG_FILE=%q\n' "$1"
+    awk '/^# --- Per-node turn\/retry budget/{f=1} /^# Build system prompt/{f=0} f' "$ENTRYPOINT"
+    grep -E '^  MAX_(TURNS|RETRIES)=' "$ENTRYPOINT"
+    echo 'echo "MAX_TURNS=$MAX_TURNS MAX_RETRIES=$MAX_RETRIES"'
+  }
+}
+
+# 22a: both configured — the config values reach the budget variables
+BUDGET_CONFIG="$TESTDIR/config_budget.json"
+cat > "$BUDGET_CONFIG" <<'EOF'
+{"run_id":"abc","node_execution_id":"xyz","prompt":"test","max_turns":"250","max_retries":"5"}
+EOF
+build_budget_harness "$BUDGET_CONFIG" > "$TESTDIR/budget_set.sh"
+BUDGET_OUT_A=$(bash "$TESTDIR/budget_set.sh")
+[ "$BUDGET_OUT_A" = "MAX_TURNS=250 MAX_RETRIES=5" ] \
+  && ok "configured max_turns/max_retries win over the defaults" \
+  || fail "configured max_turns/max_retries win over the defaults ($BUDGET_OUT_A)"
+
+# 22b: neither configured — today's budget, unchanged
+cat > "$BUDGET_CONFIG" <<'EOF'
+{"run_id":"abc","node_execution_id":"xyz","prompt":"test"}
+EOF
+build_budget_harness "$BUDGET_CONFIG" > "$TESTDIR/budget_unset.sh"
+BUDGET_OUT_B=$(bash "$TESTDIR/budget_unset.sh")
+[ "$BUDGET_OUT_B" = "MAX_TURNS=100 MAX_RETRIES=3" ] \
+  && ok "absent budget config keeps the 100-turn / 3-attempt defaults" \
+  || fail "absent budget config keeps the 100-turn / 3-attempt defaults ($BUDGET_OUT_B)"
+
+# 22c: one configured, one not — they default independently
+cat > "$BUDGET_CONFIG" <<'EOF'
+{"run_id":"abc","node_execution_id":"xyz","prompt":"test","max_turns":300}
+EOF
+build_budget_harness "$BUDGET_CONFIG" > "$TESTDIR/budget_partial.sh"
+BUDGET_OUT_C=$(bash "$TESTDIR/budget_partial.sh")
+[ "$BUDGET_OUT_C" = "MAX_TURNS=300 MAX_RETRIES=3" ] \
+  && ok "max_turns configured alone leaves max_retries at its default" \
+  || fail "max_turns configured alone leaves max_retries at its default ($BUDGET_OUT_C)"
+
+# --- Test 23: malformed budget values fail loudly before any claude invocation ---
+# Same technique as Test 18 (run the real entrypoint.sh with CONFIG_FILE swapped for a
+# fixture): the guard sits with the other config reads, ahead of JOB_SECRET validation,
+# BuildKit setup and run_claude's definition, so a value that trips it never reaches claude.
+run_budget_guard() {
+  # $1 = config.json body. Leaves the run's stderr in BUDGET_ERR and its status in BUDGET_RC.
+  local cfg="$TESTDIR/bad_budget_config.json"
+  printf '%s\n' "$1" > "$cfg"
+  local copy="$TESTDIR/entrypoint_budget_check.sh"
+  sed "s#/workspace/config.json#$cfg#g" "$ENTRYPOINT" > "$copy"
+  set +e
+  BUDGET_ERR=$(bash "$copy" 2>&1 >/dev/null)
+  BUDGET_RC=$?
+  set -e
+}
+
+assert_budget_rejected() {
+  # $1 = label, $2 = config.json body, $3 = substring the error must name
+  run_budget_guard "$2"
+  [ "$BUDGET_RC" -ne 0 ] && ok "$1 exits non-zero" || fail "$1 exits non-zero"
+  echo "$BUDGET_ERR" | grep -qF "$3" \
+    && ok "$1 logs a clear error" || fail "$1 logs a clear error ($BUDGET_ERR)"
+  echo "$BUDGET_ERR" | grep -q "Claude Code exited" \
+    && fail "$1 reached a claude invocation" || ok "$1 fires before any run_claude()/claude invocation"
+}
+
+assert_budget_rejected "non-numeric max_turns" \
+  '{"run_id":"abc","node_execution_id":"xyz","prompt":"test","max_turns":"many"}' \
+  "unsupported max_turns value 'many'"
+assert_budget_rejected "zero max_turns" \
+  '{"run_id":"abc","node_execution_id":"xyz","prompt":"test","max_turns":0}' \
+  "unsupported max_turns value '0'"
+assert_budget_rejected "negative max_retries" \
+  '{"run_id":"abc","node_execution_id":"xyz","prompt":"test","max_retries":-1}' \
+  "unsupported max_retries value '-1'"
+assert_budget_rejected "whitespace-only max_retries" \
+  '{"run_id":"abc","node_execution_id":"xyz","prompt":"test","max_retries":"  "}' \
+  "must be a positive integer"
+
+# --- Test 24: MAX_RETRIES bounds every attempt loop, and they share one counter ---
+# The main retry, artifact-enforcement and decision-verification loops deliberately share
+# $ATTEMPT so the budget caps total attempts across all phases, not per phase. A per-node
+# max_retries is only meaningful if that stays true.
+ATTEMPT_LOOPS=$(grep -cF '[ $ATTEMPT -lt $MAX_RETRIES ]' "$ENTRYPOINT")
+[ "$ATTEMPT_LOOPS" -eq 3 ] \
+  && ok "all three attempt loops are bounded by the shared \$ATTEMPT/\$MAX_RETRIES pair" \
+  || fail "all three attempt loops are bounded by the shared \$ATTEMPT/\$MAX_RETRIES pair (found $ATTEMPT_LOOPS)"
 
 # --- Summary ---
 echo ""

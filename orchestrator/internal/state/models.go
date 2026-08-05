@@ -157,3 +157,13 @@ type PredecessorArtifacts struct {
 	ArtifactRefs   string
 	Result         string
 }
+
+// InputArtifactManifest lists the files to materialise under /workspace/in/ before an agent
+// starts, so it reads them off disk instead of hunting object storage for them.
+type InputArtifactManifest struct {
+	// Artifacts maps "<source_label>/<filename>" to its object storage path. The key doubles as
+	// the path under /workspace/in/.
+	Artifacts map[string]string
+	// Required lists the subset of keys whose absence must fail the node rather than be skipped.
+	Required []string
+}

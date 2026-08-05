@@ -32,6 +32,24 @@ if [ -n "$EFFORT" ] && [ "$EFFORT" != "ultracode" ]; then
   echo "ERROR: unsupported effort value '$EFFORT' (only 'ultracode' is supported)" >&2
   exit 1
 fi
+# --- Per-node turn/retry budget (max_turns / max_retries) ---
+# Both feed loop/argv arithmetic further down: max_turns becomes --max-turns,
+# max_retries bounds the attempt loops. Read them here with the other config
+# fields and validate before any run_claude() call, so a typo'd config.json
+# value fails loudly rather than reaching claude's argv unexamined or
+# collapsing the retry loops to zero attempts. Empty means "not configured" —
+# the defaults live at the assignment site in the AI branch below.
+MAX_TURNS=$(jq -r '.max_turns // empty' "$CONFIG_FILE")
+MAX_RETRIES=$(jq -r '.max_retries // empty' "$CONFIG_FILE")
+validate_positive_int() {
+  # $1 = config.json key name (for the message), $2 = its value.
+  if [ -n "$2" ] && ! [[ "$2" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ERROR: unsupported $1 value '$2' (must be a positive integer)" >&2
+    exit 1
+  fi
+}
+validate_positive_int max_turns "$MAX_TURNS"
+validate_positive_int max_retries "$MAX_RETRIES"
 # Build system prompt from image-local template + run context
 SYSTEM_PROMPT_FILE="/usr/local/share/choruskube/system_prompt.md"
 if [ -f "$SYSTEM_PROMPT_FILE" ]; then
@@ -147,13 +165,31 @@ if [ "$EXECUTOR_TYPE" != "script" ] && [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; th
 fi
 
 # --- Step 1: Pull input artifacts via presigned URLs ---
+# Keys are paths, not flat names: predecessor and gate files arrive as
+# "<source_label>/<filename>" so the agent finds them where the node prompts say they
+# are, rather than hunting object storage for them. Create the parent directory first.
+#
+# Absence is normal, not exceptional: declarations legitimately reference a prior
+# iteration that does not exist on iteration 1, and gate attachments only exist when a
+# reviewer actually attached something. So a failed download is fatal only for keys the
+# api-server marked required — everything else logs and continues.
 mkdir -p "$WORKSPACE_IN"
+REQUIRED_KEYS=$(jq -r '.required_input_artifacts // [] | .[]' "$CONFIG_FILE" 2>/dev/null || true)
 INPUT_KEYS=$(jq -r '.input_artifacts // {} | keys[]' "$CONFIG_FILE" 2>/dev/null || true)
-for key in $INPUT_KEYS; do
+while IFS= read -r key; do
+  [ -z "$key" ] && continue
   MINIO_PATH=$(jq -r ".input_artifacts.\"$key\"" "$CONFIG_FILE")
-  echo "Pulling input artifact: $key from $MINIO_PATH"
-  artifact get "$MINIO_PATH" "${WORKSPACE_IN}/${key}"
-done
+  DEST="${WORKSPACE_IN}/${key}"
+  mkdir -p "$(dirname "$DEST")"
+  if artifact get "$MINIO_PATH" "$DEST" 2>/dev/null; then
+    echo "Pulled input artifact: $key from $MINIO_PATH"
+  elif printf '%s\n' "$REQUIRED_KEYS" | grep -qxF "$key"; then
+    echo "ERROR: required input artifact missing: $key ($MINIO_PATH)" >&2
+    exit 1
+  else
+    echo "Optional input artifact absent, skipping: $key ($MINIO_PATH)"
+  fi
+done <<< "$INPUT_KEYS"
 
 # Pull run log (may not exist for first iteration, that's OK)
 if [ -n "$RUN_LOG_PATH" ]; then
@@ -453,6 +489,10 @@ fi
 
 if [ "$SKIP_AGENT_INVOCATION" = "true" ]; then
   echo "Skipping agent invocation: $ERROR_MESSAGE"
+  # Nothing ran, so the initial RESULT sentinel is still in place and would
+  # report the literal text "completed" for a node that failed. The failure
+  # composer below supplies the real text.
+  RESULT=""
 elif [ "$EXECUTOR_TYPE" = "script" ]; then
   echo "Running script: $COMMAND"
   cd /workspace/repo 2>/dev/null || cd /workspace
@@ -621,8 +661,11 @@ else
       jq -r '[.message.content[]? | select(.type == "text") | .text] | join("\n")' 2>/dev/null || true)
   }
 
-  MAX_RETRIES=3
-  MAX_TURNS=100
+  # Defaults; config.json's max_retries/max_turns (read and validated at the top
+  # of this script) win over them, so a node that configures nothing keeps the
+  # budget it has always had.
+  MAX_RETRIES="${MAX_RETRIES:-3}"
+  MAX_TURNS="${MAX_TURNS:-100}"
   ATTEMPT=1
   CLAUDE_SESSION_ID=""
   CLAUDE_RESULT=""
@@ -751,6 +794,95 @@ ${PROMPT}"
       echo "Decision verified: $DECISION"
     fi
   fi
+fi
+
+# --- Failure safety net: preserve in-progress work ---
+# A failed node is retried as an entirely new node execution: new pod, new
+# clone. Work that exists only in this pod's filesystem is therefore lost
+# outright, and the retry re-derives from nothing what may have been an hour of
+# agent time. Commit and push each repo's run branch first so the retry inherits
+# real work, and name what was pushed in the result: a Claude run that ends in
+# an error carries no .result text at all, and the last assistant message is
+# empty whenever the cut-off landed mid-tool-call, so the callback otherwise
+# reports a failure with no content for the run log or the next attempt to
+# start from.
+#
+# Best-effort by construction: the failure that must reach the caller is the
+# original one, so no git command here may abort the pod or alter RESULT_STATUS.
+
+# Commits and pushes one clone's run branch. Emits one summary line per repo on
+# stdout (it becomes part of the reported result); diagnostics go to stderr.
+preserve_repo_work() {
+  local repo_name="$1" repo_path="$2" repo_branch="$3"
+  (
+    set +e
+    # A node that was given no run branch is still on the repo's default
+    # branch, which is never ours to commit to.
+    [ -n "$repo_branch" ] || exit 0
+    cd "$repo_path" 2>/dev/null || exit 0
+    git rev-parse --git-dir >/dev/null 2>&1 || exit 0
+
+    local current_branch
+    current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+    if [ "$current_branch" != "$repo_branch" ]; then
+      echo "WARNING: $repo_name is on '$current_branch', not run branch '$repo_branch' — leaving it untouched" >&2
+      exit 0
+    fi
+
+    if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+      git add -A >/dev/null 2>&1
+      git commit -q \
+        -m "WIP: agent work preserved after node failure" \
+        -m "Committed by the agent entrypoint so a retry starts from the work already done. Run $RUN_ID, node execution $NODE_EXECUTION_ID." \
+        >/dev/null 2>&1 \
+        || echo "WARNING: could not commit pending changes in $repo_name" >&2
+    fi
+
+    local head_sha remote_sha
+    head_sha=$(git rev-parse --short HEAD 2>/dev/null)
+    [ -n "$head_sha" ] || exit 0
+    remote_sha=$(git rev-parse --short --verify --quiet "refs/remotes/origin/$repo_branch" 2>/dev/null)
+    if [ "$head_sha" = "$remote_sha" ]; then
+      echo "- $repo_name: nothing new to push ($repo_branch @ $head_sha)"
+      exit 0
+    fi
+
+    if git push origin "HEAD:$repo_branch" >/dev/null 2>&1; then
+      echo "- $repo_name: pushed $repo_branch @ $head_sha"
+    else
+      echo "WARNING: could not push $repo_branch for $repo_name; the work stays in this pod" >&2
+      echo "- $repo_name: $repo_branch @ $head_sha committed locally, push failed"
+    fi
+  )
+}
+
+# The same repo set Step 3 cloned, iterated the same way: every entry of `repos`
+# in multi-repo mode, or the single clone at /workspace/repo.
+preserve_work() {
+  if [ -n "$REPOS_JSON" ] && [ "$REPOS_JSON" != "null" ]; then
+    while IFS= read -r repo; do
+      preserve_repo_work \
+        "$(echo "$repo" | jq -r '.name')" \
+        "$(echo "$repo" | jq -r '.local_path')" \
+        "$(echo "$repo" | jq -r '.working_branch // empty')"
+    done < <(echo "$REPOS_JSON" | jq -c '.[]')
+  elif [ -n "$REPO_URL" ]; then
+    preserve_repo_work "$(basename "$REPO_URL" .git)" "/workspace/repo" "$WORKING_BRANCH"
+  fi
+}
+
+if [ "$RESULT_STATUS" = "failed" ]; then
+  echo "=== Preserving in-progress work before reporting failure ==="
+  PRESERVED_WORK=$(preserve_work) || true
+  [ -n "$PRESERVED_WORK" ] || PRESERVED_WORK="- (no repository work to preserve)"
+  echo "$PRESERVED_WORK"
+  RESULT="Node failed: ${ERROR_MESSAGE}
+
+Repository state preserved for the retry:
+${PRESERVED_WORK}${RESULT:+
+
+Last agent output before the failure:
+${RESULT}}"
 fi
 
 # --- Step 5: Push output artifacts via presigned URLs ---

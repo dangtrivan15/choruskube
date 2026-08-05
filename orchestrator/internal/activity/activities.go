@@ -160,19 +160,28 @@ type ExecuteAINodeFromSnapshotParams struct {
 	ExecutorType    string // "ai" or "script"
 	PromptTemplate  string
 	InputArtifacts  map[string]string
-	Variables       map[string]string
-	LoopGroup       string // from config_overrides, empty if not a review node
-	Iteration       int
-	RepoURL         string
-	WorkingBranch   string
-	Command         string                   // for script executor
-	RunLogPath      string                   // Deprecated: kept for Temporal activity history replay; activity builds from OrgSlug + RunID
-	OrgSlug         string                   // Org slug for object storage path isolation; empty = legacy paths
-	NeedDecision    bool                     // true if node has conditional edges and is AI type
-	OutputSpec      string                   // JSON string describing required output files; "" or "{}" = no enforcement
-	Repos           []map[string]interface{} `json:"repos,omitempty"`
-	Model           string                   `json:"model,omitempty"`  // optional override; empty = agent default
-	Effort          string                   `json:"effort,omitempty"` // optional override; empty = agent default
+	// RequiredInputArtifacts names the InputArtifacts keys whose absence must fail the node.
+	// Everything else is best-effort: several declarations legitimately reference a prior
+	// iteration that does not exist on iteration 1.
+	RequiredInputArtifacts []string
+	Variables              map[string]string
+	LoopGroup              string // from config_overrides, empty if not a review node
+	Iteration              int
+	RepoURL                string
+	WorkingBranch          string
+	Command                string                   // for script executor
+	RunLogPath             string                   // Deprecated: kept for Temporal activity history replay; activity builds from OrgSlug + RunID
+	OrgSlug                string                   // Org slug for object storage path isolation; empty = legacy paths
+	NeedDecision           bool                     // true if node has conditional edges and is AI type
+	OutputSpec             string                   // JSON string describing required output files; "" or "{}" = no enforcement
+	Repos                  []map[string]interface{} `json:"repos,omitempty"`
+	Model                  string                   `json:"model,omitempty"`  // optional override; empty = agent default
+	Effort                 string                   `json:"effort,omitempty"` // optional override; empty = agent default
+	// Per-node turn/retry budget, as configured strings. Empty = agent default
+	// (the entrypoint's own 100 turns / 3 attempts); the entrypoint validates
+	// any value it is given.
+	MaxTurns   string `json:"max_turns,omitempty"`
+	MaxRetries string `json:"max_retries,omitempty"`
 	// Triggering Task's identity (Decision 1/2/3), broadcast into config.json's task_context
 	// for every node execution in a task-triggered run. TaskID == "" means the run wasn't
 	// started from a Task; StoryID/EpicID may independently be "" if that level no longer
@@ -213,13 +222,24 @@ func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params Execu
 	// Append predecessor artifact annotation to prompt when artifact refs are present.
 	// vars from LoadPredecessorInputs use keys "input.{label}.result" (text) and
 	// "input.{label}.{filename}" (object storage path). Filter out .result entries.
+	//
+	// Anything also present in InputArtifacts is left out: the entrypoint materialises
+	// those under /workspace/in/{label}/{filename} before the agent starts, so a
+	// "download it yourself" instruction would send the agent after a file it already
+	// has. The two maps spell the same file differently — "input.{label}.{filename}"
+	// here, "{label}/{filename}" there — so compare on the translated key, not the raw
+	// one. A filename may itself contain dots, hence the join over parts[2:].
 	var artifactLines []string
 	for key, val := range params.Variables {
 		parts := strings.Split(key, ".")
 		// Must have at least 3 parts (input, label, thing) and not end in "result"
-		if len(parts) >= 3 && parts[0] == "input" && parts[len(parts)-1] != "result" {
-			artifactLines = append(artifactLines, fmt.Sprintf("- %s: %s", key, val))
+		if len(parts) < 3 || parts[0] != "input" || parts[len(parts)-1] == "result" {
+			continue
 		}
+		if _, materialised := params.InputArtifacts[parts[1]+"/"+strings.Join(parts[2:], ".")]; materialised {
+			continue
+		}
+		artifactLines = append(artifactLines, fmt.Sprintf("- %s: %s", key, val))
 	}
 	if len(artifactLines) > 0 {
 		sort.Strings(artifactLines)
@@ -260,6 +280,11 @@ func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params Execu
 		"executor_type":     params.ExecutorType,
 		"api_server_url":    a.config.APIServerURL,
 	}
+	// Emitted only when non-empty so config.json keeps its existing shape for nodes that
+	// declare nothing — the entrypoint treats an absent key as "every input is best-effort".
+	if len(params.RequiredInputArtifacts) > 0 {
+		configJSON["required_input_artifacts"] = params.RequiredInputArtifacts
+	}
 	// Add optional fields only if set
 	if params.RepoURL != "" {
 		configJSON["repo_url"] = params.RepoURL
@@ -298,6 +323,14 @@ func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params Execu
 	}
 	if params.Effort != "" {
 		configJSON["effort"] = params.Effort
+	}
+	// Written only when configured, so config.json keeps its shape for the nodes
+	// that set no budget and the agent applies its own defaults.
+	if params.MaxTurns != "" {
+		configJSON["max_turns"] = params.MaxTurns
+	}
+	if params.MaxRetries != "" {
+		configJSON["max_retries"] = params.MaxRetries
 	}
 	if params.TaskID != "" {
 		taskContext := map[string]interface{}{
@@ -402,6 +435,41 @@ func (a *Activities) LoadPredecessorInputs(ctx context.Context, params LoadPrede
 		}
 	}
 	return vars, nil
+}
+
+// --- Activity: LoadRequiredInputArtifacts ---
+
+type LoadRequiredInputArtifactsParams struct {
+	RunID           uuid.UUID
+	NodeExecutionID uuid.UUID
+}
+
+// LoadRequiredInputArtifactsResult mirrors state.InputArtifactManifest. It is a distinct type
+// because Temporal serialises activity results into workflow history: keeping the wire shape here
+// means a later change to the internal model cannot silently alter replay of existing histories.
+type LoadRequiredInputArtifactsResult struct {
+	Artifacts map[string]string
+	Required  []string
+}
+
+// LoadRequiredInputArtifacts resolves the files to place under /workspace/in/ for this node.
+//
+// This is separate from LoadPredecessorInputs, which produces prompt *variables*. That path can
+// only name a predecessor's output directory, never a file inside it, so it leaves the agent to
+// guess the filename. This one resolves exact object paths.
+func (a *Activities) LoadRequiredInputArtifacts(
+	ctx context.Context,
+	params LoadRequiredInputArtifactsParams,
+) (LoadRequiredInputArtifactsResult, error) {
+	if params.NodeExecutionID == uuid.Nil {
+		return LoadRequiredInputArtifactsResult{}, nil
+	}
+
+	manifest, err := a.client.GetInputArtifacts(ctx, params.RunID, params.NodeExecutionID)
+	if err != nil {
+		return LoadRequiredInputArtifactsResult{}, fmt.Errorf("load input artifact manifest: %w", err)
+	}
+	return LoadRequiredInputArtifactsResult{Artifacts: manifest.Artifacts, Required: manifest.Required}, nil
 }
 
 // --- Activity: LoadReviewHistoryJSON ---

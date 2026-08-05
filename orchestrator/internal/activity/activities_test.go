@@ -951,6 +951,137 @@ func TestExecuteAINodeFromSnapshot_OnlyResultEntries_NoAnnotation(t *testing.T) 
 	assert.NotContains(t, prompt, "**Predecessor Artifacts**", "no annotation block when only .result entries present")
 }
 
+// TestExecuteAINodeFromSnapshot_PredecessorArtifactAnnotation_MaterialisedFiltered pins the
+// interaction between the two maps that describe the same predecessor files: Variables drives
+// the prompt suffix (keyed "input.{label}.{filename}") while InputArtifacts drives what the
+// entrypoint downloads to /workspace/in/{label}/{filename} before the agent starts. A file in
+// the latter is already on disk, so advertising it as something to `artifact get` is wrong —
+// it must be filtered out, matching on the translated key rather than the raw string.
+func TestExecuteAINodeFromSnapshot_PredecessorArtifactAnnotation_MaterialisedFiltered(t *testing.T) {
+	tests := []struct {
+		name           string
+		variables      map[string]string
+		inputArtifacts map[string]string
+		wantBlock      bool
+		wantPresent    []string
+		wantAbsent     []string
+	}{
+		{
+			name: "materialised entry is omitted, un-materialised sibling stays",
+			variables: map[string]string{
+				"input.spec_review.result":           "approved",
+				"input.spec_review.spec_and_plan.md": "system/runs/abc/out/spec_and_plan.md",
+				"input.spec_review.notes.md":         "system/runs/abc/out/notes.md",
+			},
+			inputArtifacts: map[string]string{
+				"spec_review/spec_and_plan.md": "system/runs/abc/out/spec_and_plan.md",
+			},
+			wantBlock:   true,
+			wantPresent: []string{"input.spec_review.notes.md", "system/runs/abc/out/notes.md"},
+			wantAbsent:  []string{"input.spec_review.spec_and_plan.md"},
+		},
+		{
+			name: "un-materialised entry still appears when nothing was downloaded",
+			variables: map[string]string{
+				"input.gate.human_guidance.md": "system/runs/abc/gate/human_guidance.md",
+			},
+			inputArtifacts: map[string]string{},
+			wantBlock:      true,
+			wantPresent:    []string{"input.gate.human_guidance.md"},
+		},
+		{
+			name: "same filename under a different label is not treated as materialised",
+			variables: map[string]string{
+				"input.gate.human_guidance.md": "system/runs/abc/gate/human_guidance.md",
+			},
+			inputArtifacts: map[string]string{
+				"older_gate/human_guidance.md": "system/runs/abc/older-gate/human_guidance.md",
+			},
+			wantBlock:   true,
+			wantPresent: []string{"input.gate.human_guidance.md"},
+		},
+		{
+			name: "fully materialised set produces no suffix at all",
+			variables: map[string]string{
+				"input.spec_review.result":           "approved",
+				"input.spec_review.spec_and_plan.md": "system/runs/abc/out/spec_and_plan.md",
+				"input.gate.human_guidance.md":       "system/runs/abc/gate/human_guidance.md",
+			},
+			inputArtifacts: map[string]string{
+				"spec_review/spec_and_plan.md": "system/runs/abc/out/spec_and_plan.md",
+				"gate/human_guidance.md":       "system/runs/abc/gate/human_guidance.md",
+			},
+			wantBlock:  false,
+			wantAbsent: []string{"input.spec_review.spec_and_plan.md", "input.gate.human_guidance.md"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var receivedConfigJSON map[string]interface{}
+
+			apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/internal/workloads/"):
+					var req map[string]interface{}
+					json.NewDecoder(r.Body).Decode(&req)
+					if cj, ok := req["configJson"].(map[string]interface{}); ok {
+						receivedConfigJSON = cj
+					}
+					w.WriteHeader(http.StatusCreated)
+					json.NewEncoder(w).Encode(map[string]interface{}{
+						"executionHandle": "agent-abc12345",
+						"jobSecretHash":   "hash123",
+					})
+				case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/logs"):
+					w.WriteHeader(http.StatusCreated)
+				default:
+					w.WriteHeader(http.StatusOK)
+				}
+			}))
+			defer apiServer.Close()
+
+			client := apiclient.NewClient(apiServer.URL)
+			cfg := &config.Config{
+				APIServerURL: apiServer.URL,
+				Callback:     config.CallbackConfig{URL: "http://callback:9090/api/v1/callback"},
+			}
+			acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
+
+			err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+				NodeExecutionID: uuid.New(),
+				RunID:           uuid.New(),
+				TemplateNodeID:  uuid.New(),
+				Label:           "implement",
+				ExecutorType:    "ai",
+				PromptTemplate:  "Do the thing",
+				Variables:       tt.variables,
+				InputArtifacts:  tt.inputArtifacts,
+				Iteration:       1,
+			})
+			assert.ErrorIs(t, err, activity.ErrResultPending)
+
+			resolvedPrompt, ok := receivedConfigJSON["prompt"].(string)
+			require.True(t, ok, "prompt should be a string in config.json")
+
+			if tt.wantBlock {
+				assert.Contains(t, resolvedPrompt, "**Predecessor Artifacts**",
+					"un-materialised entries remain, so the block should be emitted")
+			} else {
+				assert.NotContains(t, resolvedPrompt, "**Predecessor Artifacts**",
+					"nothing left after filtering, so no block should be emitted")
+			}
+			for _, want := range tt.wantPresent {
+				assert.Contains(t, resolvedPrompt, want, "expected entry missing from annotation")
+			}
+			for _, notWant := range tt.wantAbsent {
+				assert.NotContains(t, resolvedPrompt, notWant,
+					"materialised file must not be advertised as a manual download")
+			}
+		})
+	}
+}
+
 // TestExecuteAINodeFromSnapshot_RunInputAnnotation verifies that run-level attachments
 // (keys prefixed "run_input/" in InputArtifacts) are announced to the LLM in a
 // dedicated "Run Inputs" block, matching the predecessor-artifact behavior. Without
@@ -1417,6 +1548,124 @@ func TestExecuteAINodeFromSnapshot_EffortOmittedWhenEmpty(t *testing.T) {
 
 	_, hasEffort := receivedConfigJSON["effort"]
 	assert.False(t, hasEffort, "config.json must omit effort when not set on the snapshot")
+}
+
+// TestExecuteAINodeFromSnapshot_TurnBudgetInConfigJson verifies that the per-node
+// max_turns/max_retries overrides extracted from config_overrides reach the agent via
+// config.json when set.
+func TestExecuteAINodeFromSnapshot_TurnBudgetInConfigJson(t *testing.T) {
+	var receivedConfigJSON map[string]interface{}
+
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/internal/workloads/"):
+			var req map[string]interface{}
+			json.NewDecoder(r.Body).Decode(&req)
+			if cj, ok := req["configJson"].(map[string]interface{}); ok {
+				receivedConfigJSON = cj
+			}
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"executionHandle": "agent-abc12345",
+				"jobSecretHash":   "hash123",
+			})
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer apiServer.Close()
+
+	client := apiclient.NewClient(apiServer.URL)
+	cfg := &config.Config{
+		APIServerURL: apiServer.URL,
+		Callback:     config.CallbackConfig{URL: "http://callback:9090/api/v1/callback"},
+	}
+	acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
+
+	err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+		NodeExecutionID: uuid.New(),
+		RunID:           uuid.New(),
+		TemplateNodeID:  uuid.New(),
+		Label:           "implement",
+		ExecutorType:    "ai",
+		PromptTemplate:  "irrelevant",
+		MaxTurns:        "250",
+		MaxRetries:      "5",
+	})
+	assert.ErrorIs(t, err, activity.ErrResultPending)
+
+	assert.Equal(t, "250", receivedConfigJSON["max_turns"],
+		"config.json must include max_turns when set on the snapshot")
+	assert.Equal(t, "5", receivedConfigJSON["max_retries"],
+		"config.json must include max_retries when set on the snapshot")
+}
+
+// TestExecuteAINodeFromSnapshot_TurnBudgetOmittedWhenEmpty verifies max_turns/max_retries
+// are absent from config.json when unset — not present as empty strings, which the agent
+// would have to special-case instead of simply falling back to its own defaults. The two
+// default independently, so this also covers one being set without the other.
+func TestExecuteAINodeFromSnapshot_TurnBudgetOmittedWhenEmpty(t *testing.T) {
+	var receivedConfigJSON map[string]interface{}
+
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/internal/workloads/"):
+			var req map[string]interface{}
+			json.NewDecoder(r.Body).Decode(&req)
+			if cj, ok := req["configJson"].(map[string]interface{}); ok {
+				receivedConfigJSON = cj
+			}
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"executionHandle": "agent-abc12345",
+				"jobSecretHash":   "hash123",
+			})
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer apiServer.Close()
+
+	client := apiclient.NewClient(apiServer.URL)
+	cfg := &config.Config{
+		APIServerURL: apiServer.URL,
+		Callback:     config.CallbackConfig{URL: "http://callback:9090/api/v1/callback"},
+	}
+	acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
+
+	err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+		NodeExecutionID: uuid.New(),
+		RunID:           uuid.New(),
+		TemplateNodeID:  uuid.New(),
+		Label:           "spec_review",
+		ExecutorType:    "ai",
+		PromptTemplate:  "irrelevant",
+		MaxTurns:        "150",
+		// MaxRetries intentionally not set
+	})
+	assert.ErrorIs(t, err, activity.ErrResultPending)
+
+	assert.Equal(t, "150", receivedConfigJSON["max_turns"],
+		"config.json must include max_turns when set on the snapshot")
+	_, hasMaxRetries := receivedConfigJSON["max_retries"]
+	assert.False(t, hasMaxRetries, "config.json must omit max_retries when not set on the snapshot")
+
+	receivedConfigJSON = nil
+	err = acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+		NodeExecutionID: uuid.New(),
+		RunID:           uuid.New(),
+		TemplateNodeID:  uuid.New(),
+		Label:           "spec_review",
+		ExecutorType:    "ai",
+		PromptTemplate:  "irrelevant",
+		// Neither MaxTurns nor MaxRetries set
+	})
+	assert.ErrorIs(t, err, activity.ErrResultPending)
+
+	_, hasMaxTurns := receivedConfigJSON["max_turns"]
+	assert.False(t, hasMaxTurns, "config.json must omit max_turns when not set on the snapshot")
+	_, hasMaxRetries = receivedConfigJSON["max_retries"]
+	assert.False(t, hasMaxRetries, "config.json must omit max_retries when not set on the snapshot")
 }
 
 // TestLoadReviewHistoryJSON_PreservesFeedbackText is the end-to-end regression test for

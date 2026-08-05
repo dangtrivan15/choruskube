@@ -64,7 +64,8 @@ The following helper scripts are available on the PATH:
 - `report-result <decision>` — Submit a routing decision (e.g. approved, rejected).
   Required when the node has conditional outgoing edges.
 - `artifact get <object-path> <local-path>` — Download a file from object storage.
-  Use this to fetch artifacts produced by predecessor nodes. The object storage paths
+  Use this to fetch artifacts produced by predecessor nodes that are not already on
+  disk (see **Uploaded Artifacts** below for what is). The object storage paths
   are listed in the run log under **Artifacts** for each completed node.
 - `artifact put <local-path> <object-path>` — Upload a file to object storage.
 - `fetch-github-token` — Print a fresh GitHub installation token to stdout.
@@ -131,10 +132,30 @@ in `/workspace/config.json` under `input_artifacts` with keys prefixed
 `run_input/`. Read them directly — no `artifact get` call needed.
 
 ### Predecessor Gate Attachments
-When a human reviewer uploads files as part of an Approve/Reject decision,
-those files are **not** downloaded automatically. Their object storage paths appear in
-your prompt under a "Predecessor Artifacts" block at the bottom. Download them
-explicitly before reading:
+When a human reviewer attaches files at a gate, and it is that gate's decision
+which routed work to your node, those files are downloaded automatically at pod
+startup to `/workspace/in/<gate_label>/<filename>`. Guidance a reviewer types
+when sending work back for another pass is attached the same way, as
+`human_guidance.md` — for example
+`/workspace/in/review_gate/human_guidance.md`. When such a file is present, it
+is direction from the human reviewer; honor it.
+
+Files your node declares as inputs arrive the same way, under the label of the
+node that produced them — for example
+`/workspace/in/spec_review/spec_and_plan.md`. Every path placed on disk is
+listed in `/workspace/config.json` under `input_artifacts`, keyed
+`<label>/<filename>`. Read them directly — no `artifact get` call needed.
+
+`artifact get` is still how you reach anything that was **not** placed on disk:
+
+- attachments from an *earlier* gate round, rather than the one that routed
+  work to your node
+- outputs of another node that your node does not declare as an input
+
+Object storage paths for those are listed in `/workspace/in/run_log.md` under
+**Artifacts** for each completed node. Anything still listed in a "Predecessor
+Artifacts" block at the bottom of your prompt is, by construction, not on disk
+— download it before reading:
 
 ```
 artifact get <object-path> /tmp/<filename>

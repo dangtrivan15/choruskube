@@ -9,6 +9,7 @@ import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
 import com.choruskube.core.model.*;
 import com.choruskube.core.model.enums.ExecutorType;
+import com.choruskube.core.model.enums.NodeExecutionStatus;
 import com.choruskube.core.repository.*;
 import com.choruskube.core.service.EpicService;
 import com.choruskube.core.service.WorkItemDependencyService;
@@ -633,5 +634,100 @@ public class InternalRunControllerTest extends BaseTest {
         // The `@BeforeEach` run fixture never sets `task_id` — this is a manually-started run.
         mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/graph"))
                 .andExpect(status().isNotFound());
+    }
+
+    // ── input-artifact manifest: what the orchestrator merges into config.json ─────
+    //
+    // The declared arm is covered against mocked repositories in ArtifactResolutionServiceTest;
+    // these drive the same resolution through the real endpoint, real repositories and real
+    // JSON serialization, so a break in the wiring (or in the response shape the orchestrator
+    // parses) fails here rather than only in E2E. The human-gate passthrough arm is
+    // deliberately left to ArtifactResolutionServiceTest — it needs traversed_edge_ids plus a
+    // graph snapshot carrying edges, which is a brittle fixture to build through this class.
+
+    @Test
+    void getInputArtifacts_declaredArtifact_joinsNameOntoSourceOutputPrefix() throws Exception {
+        TemplateNode producer = saveTemplateNode("spec_review", null);
+        TemplateNode consumer = saveTemplateNode(
+                "implement",
+                "[{\"template_node_label\":\"spec_review\",\"artifacts\":"
+                        + "[{\"name\":\"spec_and_plan.md\",\"description\":\"The approved spec\",\"required\":true}]}]");
+
+        String prefix = "system/runs/" + run.getId() + "/spec-review-exec/out/";
+        saveCompletedExec(producer, "{\"output\":\"" + prefix + "\"}");
+        NodeExecution consumerExec = saveExec(consumer);
+
+        mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + consumerExec.getId()
+                        + "/input-artifacts"))
+                .andExpect(status().isOk())
+                .andExpect(
+                        jsonPath("$.artifacts['spec_review/spec_and_plan.md']").value(prefix + "spec_and_plan.md"))
+                .andExpect(jsonPath("$.required.length()").value(1))
+                .andExpect(jsonPath("$.required[0]").value("spec_review/spec_and_plan.md"));
+    }
+
+    @Test
+    void getInputArtifacts_optionalDeclarations_appearInArtifactsButNotRequired() throws Exception {
+        TemplateNode producer = saveTemplateNode("spec_review", null);
+        // Two shapes of "optional": explicitly required:false, and no `required` key at all.
+        // The second is the iteration-1 case — a declaration naming a prior iteration's file
+        // that does not exist yet must not harden into a pod abort.
+        TemplateNode consumer = saveTemplateNode(
+                "implement",
+                "[{\"template_node_label\":\"spec_review\",\"artifacts\":["
+                        + "{\"name\":\"explicitly_optional.md\",\"description\":\"d\",\"required\":false},"
+                        + "{\"name\":\"unflagged.md\",\"description\":\"d\"}]}]");
+
+        String prefix = "system/runs/" + run.getId() + "/spec-review-exec/out/";
+        saveCompletedExec(producer, "{\"output\":\"" + prefix + "\"}");
+        NodeExecution consumerExec = saveExec(consumer);
+
+        mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + consumerExec.getId()
+                        + "/input-artifacts"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.artifacts['spec_review/explicitly_optional.md']")
+                        .value(prefix + "explicitly_optional.md"))
+                .andExpect(jsonPath("$.artifacts['spec_review/unflagged.md']").value(prefix + "unflagged.md"))
+                .andExpect(jsonPath("$.required.length()").value(0));
+    }
+
+    @Test
+    void getInputArtifacts_nodeWithNoDeclarations_returnsEmptyManifest() throws Exception {
+        // The `@BeforeEach` template node declares nothing — the overwhelmingly common case.
+        // It must produce an empty manifest, not an error: the orchestrator calls this endpoint
+        // for every node execution.
+        NodeExecution exec = saveExec(templateNode);
+
+        mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/input-artifacts"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.artifacts").isEmpty())
+                .andExpect(jsonPath("$.required.length()").value(0));
+    }
+
+    private TemplateNode saveTemplateNode(String label, String requiredInputArtifacts) {
+        TemplateNode tn = new TemplateNode();
+        tn.setGraphTemplateId(template.getId());
+        tn.setNodeDefinitionId(templateNode.getNodeDefinitionId());
+        tn.setLabel(label);
+        tn.setConfigOverrides("{}");
+        tn.setEntrypoint(false);
+        tn.setRequiredInputArtifacts(requiredInputArtifacts);
+        return templateNodeRepo.save(tn);
+    }
+
+    private NodeExecution saveExec(TemplateNode tn) {
+        NodeExecution exec = new NodeExecution();
+        exec.setWorkflowRunId(run.getId());
+        exec.setTemplateNodeId(tn.getId());
+        exec.setGraphVersion(1);
+        return execRepo.save(exec);
+    }
+
+    /** A finished producer: only completed executions supply an output prefix to resolve against. */
+    private NodeExecution saveCompletedExec(TemplateNode tn, String artifactRefs) {
+        NodeExecution exec = saveExec(tn);
+        exec.setStatus(NodeExecutionStatus.completed);
+        exec.setArtifactRefs(artifactRefs);
+        return execRepo.save(exec);
     }
 }

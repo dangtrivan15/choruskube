@@ -103,8 +103,8 @@ class PendingGateServiceCandidateBreakdownTest {
                 analyzerExecId,
                 "roadmap_analyzer",
                 List.of(
-                        new ResolvedArtifactEntry("roadmap_analysis.md", "Analysis"),
-                        new ResolvedArtifactEntry("roadmap_candidates.json", "Structured breakdown"))));
+                        new ResolvedArtifactEntry("roadmap_analysis.md", "Analysis", false),
+                        new ResolvedArtifactEntry("roadmap_candidates.json", "Structured breakdown", false))));
         stubGate(gateSnapshot(), requiredArtifacts);
 
         String json = """
@@ -132,7 +132,7 @@ class PendingGateServiceCandidateBreakdownTest {
         List<ResolvedArtifactGroup> requiredArtifacts = List.of(new ResolvedArtifactGroup(
                 analyzerExecId,
                 "roadmap_analyzer",
-                List.of(new ResolvedArtifactEntry("roadmap_candidates.json", "Structured breakdown"))));
+                List.of(new ResolvedArtifactEntry("roadmap_candidates.json", "Structured breakdown", false))));
         stubGate(gateSnapshot(), requiredArtifacts);
 
         Mockito.when(artifactService.getArtifactContent(runId, analyzerExecId, "roadmap_candidates.json"))
@@ -154,7 +154,7 @@ class PendingGateServiceCandidateBreakdownTest {
         List<ResolvedArtifactGroup> requiredArtifacts = List.of(new ResolvedArtifactGroup(
                 analyzerExecId,
                 "roadmap_analyzer",
-                List.of(new ResolvedArtifactEntry("roadmap_candidates.json", "Structured breakdown"))));
+                List.of(new ResolvedArtifactEntry("roadmap_candidates.json", "Structured breakdown", false))));
         stubGate(gateSnapshot(), requiredArtifacts);
 
         String json = """
@@ -178,7 +178,7 @@ class PendingGateServiceCandidateBreakdownTest {
         // A gate from a template that doesn't produce a structured breakdown at all — e.g.
         // it only requires a plain markdown artifact.
         List<ResolvedArtifactGroup> requiredArtifacts = List.of(new ResolvedArtifactGroup(
-                analyzerExecId, "some_other_node", List.of(new ResolvedArtifactEntry("summary.md", "Summary"))));
+                analyzerExecId, "some_other_node", List.of(new ResolvedArtifactEntry("summary.md", "Summary", false))));
         stubGate(gateSnapshot(), requiredArtifacts);
 
         List<PendingGateResponse> result = service.getPendingGates();

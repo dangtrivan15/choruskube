@@ -344,3 +344,44 @@ func TestGetReviewHistory_IncludesFeedbackFields(t *testing.T) {
 	assert.Equal(t, "completed", reviews[1].Status)
 	assert.Equal(t, "roadmap_human_gate", reviews[1].NodeLabel)
 }
+
+func TestGetInputArtifacts(t *testing.T) {
+	runID := uuid.New()
+	execID := uuid.New()
+
+	_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodGet, r.Method)
+		assert.Contains(t, r.URL.Path, "/input-artifacts")
+
+		// Field names must match the Java InputArtifactManifest record exactly — this is the
+		// contract between the api-server resolver and the agent's download loop.
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{
+			"artifacts": {
+				"spec_review/spec_and_plan.md": "system/runs/r/e/out/spec_and_plan.md",
+				"approve_spec_and_plan/human_guidance.md": "system/runs/r/gate-attachments/g/human_guidance.md"
+			},
+			"required": ["spec_review/spec_and_plan.md"]
+		}`))
+	})
+
+	manifest, err := client.GetInputArtifacts(context.Background(), runID, execID)
+	require.NoError(t, err)
+	assert.Equal(t, "system/runs/r/e/out/spec_and_plan.md", manifest.Artifacts["spec_review/spec_and_plan.md"])
+	assert.Equal(t,
+		"system/runs/r/gate-attachments/g/human_guidance.md",
+		manifest.Artifacts["approve_spec_and_plan/human_guidance.md"])
+	assert.Equal(t, []string{"spec_review/spec_and_plan.md"}, manifest.Required)
+}
+
+func TestGetInputArtifactsEmptyManifest(t *testing.T) {
+	_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"artifacts":{},"required":[]}`))
+	})
+
+	manifest, err := client.GetInputArtifacts(context.Background(), uuid.New(), uuid.New())
+	require.NoError(t, err)
+	assert.Empty(t, manifest.Artifacts)
+	assert.Empty(t, manifest.Required)
+}

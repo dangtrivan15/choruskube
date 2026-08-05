@@ -63,6 +63,13 @@
 #   --task-id <uuid>          Task UUID for 'roadmap_status_update' (must already be
 #                             in_progress — e.g. this run was started via Task-start)
 #   --count <n>               Number of files to write for 'many_artifacts' (default: 40)
+#   --expect-input <relpath>  Assert $WORKSPACE_IN/<relpath> (default base /workspace/in)
+#                             exists and is non-empty before the scenario runs; exit 1 with
+#                             a listing of what IS present otherwise. Repeatable. <relpath>
+#                             is the manifest key the api-server resolves and the entrypoint
+#                             downloads — "<source_node_label>/<filename>". Applies to every
+#                             scenario, so any template declaring requiredInputArtifacts can
+#                             prove the declaration actually reached disk.
 set -euo pipefail
 
 # --- Defaults ---
@@ -76,6 +83,7 @@ ESCALATE_DECISION=""
 EPIC_ID_ARG=""
 TASK_ID_ARG=""
 ARTIFACT_COUNT=40
+EXPECT_INPUTS=()
 
 # --- Parse arguments ---
 shift || true
@@ -117,11 +125,45 @@ while [[ $# -gt 0 ]]; do
       ARTIFACT_COUNT="$2"
       shift 2
       ;;
+    --expect-input)
+      EXPECT_INPUTS+=("$2")
+      shift 2
+      ;;
     *)
       echo "Unknown option: $1" >&2
       exit 1
       ;;
   esac
+done
+
+# --- Input artifact assertions (--expect-input) ---
+# Sits between argument parsing and scenario dispatch so every scenario gets the check,
+# not just 'success'. The api-server resolves a node's requiredInputArtifacts into a
+# manifest and entrypoint.sh downloads each key to $WORKSPACE_IN/<key> before this script
+# runs, so an absent or zero-byte file here means one of manifest resolution, config.json
+# plumbing, or the entrypoint download loop regressed — a listing of what did arrive is
+# what tells the three apart.
+#
+# The base directory is a variable purely so this block is runnable against a fake root in
+# test/test-mock-agent.sh; in a pod nothing sets it and it stays /workspace/in.
+WORKSPACE_IN="${WORKSPACE_IN:-/workspace/in}"
+for expected in ${EXPECT_INPUTS[@]+"${EXPECT_INPUTS[@]}"}; do
+  expected_path="${WORKSPACE_IN}/${expected}"
+  if [ ! -s "$expected_path" ]; then
+    if [ -e "$expected_path" ]; then
+      echo "ERROR: expected input artifact is empty: $expected_path" >&2
+    else
+      echo "ERROR: expected input artifact not found: $expected_path" >&2
+    fi
+    if [ -d "$WORKSPACE_IN" ]; then
+      echo "Contents of ${WORKSPACE_IN}:" >&2
+      ls -laR "$WORKSPACE_IN" >&2
+    else
+      echo "No such directory: ${WORKSPACE_IN}" >&2
+    fi
+    exit 1
+  fi
+  echo "Input artifact present: $expected_path ($(wc -c < "$expected_path" | tr -d ' ') bytes)"
 done
 
 # --- Helpers ---

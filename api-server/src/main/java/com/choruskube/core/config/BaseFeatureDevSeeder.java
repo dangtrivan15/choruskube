@@ -35,7 +35,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
     // and executor changes here never retroactively mutate prior versions. To ship a
     // change, edit the constants in this file (prompt, executor, schema), increment
     // CURRENT_VERSION, and the next boot creates the new snapshot.
-    static final int CURRENT_VERSION = 32;
+    static final int CURRENT_VERSION = 33;
 
     private static final String TEMPLATE_NAME = "Feature Development";
 
@@ -480,6 +480,25 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             match §5 Expected Changed Files, or a migration contradicts §2
             Decisions), follow Part 1's intent and document the discrepancy in
             your summary.
+
+            ## Inputs
+
+            - `/workspace/in/spec_review/spec_and_plan.md` — the approved spec
+              and plan described above, both parts in one file. Always present.
+              This is the authoritative copy: read it from this path rather
+              than searching object storage or the run log for it.
+            - `/workspace/in/run_log.md` — accumulated history of all prior
+              nodes. On a retry it also holds the earlier Implement summary and
+              the Test node's report.
+            - `/workspace/in/approve_spec_and_plan/<filename>` — any files the
+              human reviewer attached at the approval gate. Present only if
+              they attached something. Guidance a reviewer types when sending
+              work back arrives the same way, as `human_guidance.md`; when such
+              a file is present it is direction from the human reviewer, so
+              honor it.
+
+            The block below is the drafting node's short summary of the spec —
+            orientation only, not a substitute for reading the document itself.
 
             {input.draft_spec_and_plan.result}
 
@@ -1053,7 +1072,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                 "spec_review",
                 false,
                 "{\"loop_group\": \"spec-review\"}",
-                "[{\"template_node_label\":\"draft_spec_and_plan\",\"artifacts\":[{\"name\":\"spec_and_plan.md\",\"description\":\"Original draft spec from the first author\"}]},{\"template_node_label\":\"spec_review\",\"artifacts\":[{\"name\":\"spec_and_plan.md\",\"description\":\"Prior iteration's revised spec (only present if iteration > 1)\"},{\"name\":\"spec_review.md\",\"description\":\"Prior iteration's review notes including Reasoning for fixes (only present if iteration > 1)\"}]}]");
+                "[{\"template_node_label\":\"draft_spec_and_plan\",\"artifacts\":[{\"name\":\"spec_and_plan.md\",\"description\":\"Original draft spec from the first author\",\"required\":true}]},{\"template_node_label\":\"spec_review\",\"artifacts\":[{\"name\":\"spec_and_plan.md\",\"description\":\"Prior iteration's revised spec (only present if iteration > 1)\",\"required\":false},{\"name\":\"spec_review.md\",\"description\":\"Prior iteration's review notes including Reasoning for fixes (only present if iteration > 1)\",\"required\":false}]}]");
         // Spec ownership transfer (v23): Approve Spec & Plan reads spec_and_plan.md
         // from Spec Review, NOT from Draft Spec & Plan. Spec Review always writes
         // the spec to its own output (verbatim copy on first-pass approve, revised
@@ -1065,7 +1084,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                 "approve_spec_and_plan",
                 false,
                 "{\"loop_group\": \"spec-review\"}",
-                "[{\"template_node_label\":\"spec_review\",\"artifacts\":[{\"name\":\"spec_and_plan.md\",\"description\":\"The reviewed (and possibly revised) spec to approve\"},{\"name\":\"spec_review.md\",\"description\":\"Reviewer notes — needed when escalating via need_human_decision:*\"}]}]");
+                "[{\"template_node_label\":\"spec_review\",\"artifacts\":[{\"name\":\"spec_and_plan.md\",\"description\":\"The reviewed (and possibly revised) spec to approve\",\"required\":true},{\"name\":\"spec_review.md\",\"description\":\"Reviewer notes — needed when escalating via need_human_decision:*\",\"required\":true}]}]");
 
         // Implement reads spec_and_plan.md from Spec Review (ownership transfer),
         // not from Draft Spec.
@@ -1075,7 +1094,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                 "implement",
                 false,
                 "{\"loop_group\": \"impl-review\", \"needs_branch\": \"true\", \"effort\": \"ultracode\"}",
-                "[{\"template_node_label\":\"spec_review\",\"artifacts\":[{\"name\":\"spec_and_plan.md\",\"description\":\"The approved spec to implement\"}]}]");
+                "[{\"template_node_label\":\"spec_review\",\"artifacts\":[{\"name\":\"spec_and_plan.md\",\"description\":\"The approved spec to implement\",\"required\":true}]}]");
         // Test runs run-all-tests (a script in the agent image) which iterates each
         // repo's test_command from /workspace/config.json. Single-repo runs read the
         // top-level test_command instead. Exit code 0 → "passed", non-zero → "failed".
@@ -1095,7 +1114,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                 "code_review",
                 false,
                 "{\"loop_group\": \"impl-review\", \"needs_branch\": \"true\", \"effort\": \"ultracode\"}",
-                "[{\"template_node_label\":\"code_review\",\"artifacts\":[{\"name\":\"review.md\",\"description\":\"Prior iteration's code review notes including Reasoning for fixes (only present if iteration > 1)\"}]}]");
+                "[{\"template_node_label\":\"code_review\",\"artifacts\":[{\"name\":\"review.md\",\"description\":\"Prior iteration's code review notes including Reasoning for fixes (only present if iteration > 1)\",\"required\":false}]}]");
         // Review Escalation gates entry to Test whenever Code Review can't confidently
         // approve on its own. It reads the same evidence Final Approval already gets
         // (the implementation summary and Code Review's findings) so the human isn't
@@ -1106,14 +1125,14 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                 "review_escalation",
                 false,
                 "{\"loop_group\": \"impl-review\"}",
-                "[{\"template_node_label\":\"implement\",\"artifacts\":[{\"name\":\"summary.md\",\"description\":\"Implementation summary describing changes made\"}]},{\"template_node_label\":\"code_review\",\"artifacts\":[{\"name\":\"review.md\",\"description\":\"Code review findings and approve/reject recommendation\"}]}]");
+                "[{\"template_node_label\":\"implement\",\"artifacts\":[{\"name\":\"summary.md\",\"description\":\"Implementation summary describing changes made\",\"required\":true}]},{\"template_node_label\":\"code_review\",\"artifacts\":[{\"name\":\"review.md\",\"description\":\"Code review findings and approve/reject recommendation\",\"required\":true}]}]");
         TemplateNode tnFinalApproval = createNode(
                 template,
                 nodeDefs.get("Final Approval"),
                 "final_approval",
                 false,
                 "{\"loop_group\": \"impl-review\"}",
-                "[{\"template_node_label\":\"implement\",\"artifacts\":[{\"name\":\"summary.md\",\"description\":\"Implementation summary describing changes made\"}]},{\"template_node_label\":\"code_review\",\"artifacts\":[{\"name\":\"review.md\",\"description\":\"Code review findings and approve/reject recommendation\"}]}]");
+                "[{\"template_node_label\":\"implement\",\"artifacts\":[{\"name\":\"summary.md\",\"description\":\"Implementation summary describing changes made\",\"required\":true}]},{\"template_node_label\":\"code_review\",\"artifacts\":[{\"name\":\"review.md\",\"description\":\"Code review findings and approve/reject recommendation\",\"required\":true}]}]");
         TemplateNode tnPushCreatePr = createNode(
                 template, nodeDefs.get("Push & Create PR"), "push_create_pr", false, "{\"needs_branch\": \"true\"}");
 

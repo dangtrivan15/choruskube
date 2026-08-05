@@ -2,13 +2,19 @@ package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.*;
 
+import com.choruskube.core.dto.InputArtifactManifest;
 import com.choruskube.core.dto.ResolvedArtifactGroup;
 import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.TemplateNode;
+import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.NodeExecutionStatus;
+import com.choruskube.core.model.enums.ReviewerType;
 import com.choruskube.core.repository.NodeExecutionRepository;
 import com.choruskube.core.repository.TemplateNodeRepository;
+import com.choruskube.core.repository.WorkflowRunRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -20,13 +26,18 @@ class ArtifactResolutionServiceTest {
 
     private TemplateNodeRepository templateNodeRepo;
     private NodeExecutionRepository nodeExecutionRepo;
+    private WorkflowRunRepository workflowRunRepo;
+    private GraphSnapshotBuilder snapshotBuilder;
     private ArtifactResolutionService service;
 
     @BeforeEach
     void setUp() {
         templateNodeRepo = Mockito.mock(TemplateNodeRepository.class);
         nodeExecutionRepo = Mockito.mock(NodeExecutionRepository.class);
-        service = new ArtifactResolutionService(templateNodeRepo, nodeExecutionRepo, new ObjectMapper());
+        workflowRunRepo = Mockito.mock(WorkflowRunRepository.class);
+        snapshotBuilder = Mockito.mock(GraphSnapshotBuilder.class);
+        service = new ArtifactResolutionService(
+                templateNodeRepo, nodeExecutionRepo, workflowRunRepo, snapshotBuilder, new ObjectMapper());
     }
 
     @Test
@@ -283,5 +294,176 @@ class ArtifactResolutionServiceTest {
         assertThat(result).isNotNull().hasSize(1);
         // Should select exec2 (higher iteration)
         assertThat(result.get(0).nodeExecutionId()).isEqualTo(exec2Id);
+    }
+
+    // --- resolveInputArtifactManifest: declared arm ---
+
+    @Test
+    void resolveInputArtifactManifest_joinsDeclaredNameOntoSourceOutputPrefix() {
+        ManifestFixture f = new ManifestFixture();
+        f.declare("[{\"template_node_label\":\"spec_review\",\"artifacts\":"
+                + "[{\"name\":\"spec_and_plan.md\",\"description\":\"The approved spec\",\"required\":true}]}]");
+        f.sourceOutputPrefix("system/runs/r/src-exec/out/");
+        f.stub();
+
+        InputArtifactManifest manifest = service.resolveInputArtifactManifest(f.runId, f.execId);
+
+        assertThat(manifest.artifacts())
+                .containsEntry("spec_review/spec_and_plan.md", "system/runs/r/src-exec/out/spec_and_plan.md");
+        assertThat(manifest.required()).containsExactly("spec_review/spec_and_plan.md");
+    }
+
+    @Test
+    void resolveInputArtifactManifest_treatsUnflaggedDeclarationAsOptional() {
+        ManifestFixture f = new ManifestFixture();
+        // No "required" key — the iteration-1 case, which must never harden into a pod abort.
+        f.declare("[{\"template_node_label\":\"spec_review\",\"artifacts\":"
+                + "[{\"name\":\"spec_review.md\",\"description\":\"Prior iteration's notes\"}]}]");
+        f.sourceOutputPrefix("system/runs/r/src-exec/out/");
+        f.stub();
+
+        InputArtifactManifest manifest = service.resolveInputArtifactManifest(f.runId, f.execId);
+
+        assertThat(manifest.artifacts()).containsKey("spec_review/spec_review.md");
+        assertThat(manifest.required()).isEmpty();
+    }
+
+    @Test
+    void resolveInputArtifactManifest_addsMissingSlashToOutputPrefix() {
+        ManifestFixture f = new ManifestFixture();
+        f.declare("[{\"template_node_label\":\"spec_review\",\"artifacts\":"
+                + "[{\"name\":\"spec_and_plan.md\",\"description\":\"d\",\"required\":true}]}]");
+        f.sourceOutputPrefix("system/runs/r/src-exec/out");
+        f.stub();
+
+        InputArtifactManifest manifest = service.resolveInputArtifactManifest(f.runId, f.execId);
+
+        assertThat(manifest.artifacts())
+                .containsEntry("spec_review/spec_and_plan.md", "system/runs/r/src-exec/out/spec_and_plan.md");
+    }
+
+    // --- resolveInputArtifactManifest: passthrough arm ---
+
+    @Test
+    void resolveInputArtifactManifest_materialisesAttachmentsFromTheGateThatRoutedHere() {
+        ManifestFixture f = new ManifestFixture();
+        f.gateRoutedHere(
+                "approve_spec_and_plan",
+                "{\"human_guidance.md\":\"system/runs/r/gate-attachments/g1/human_guidance.md\"}");
+        f.stub();
+
+        InputArtifactManifest manifest = service.resolveInputArtifactManifest(f.runId, f.execId);
+
+        assertThat(manifest.artifacts())
+                .containsEntry(
+                        "approve_spec_and_plan/human_guidance.md",
+                        "system/runs/r/gate-attachments/g1/human_guidance.md");
+    }
+
+    @Test
+    void resolveInputArtifactManifest_ignoresGateThatDidNotRouteHere() {
+        ManifestFixture f = new ManifestFixture();
+        f.gateRoutedElsewhere(
+                "some_other_gate", "{\"evidence.png\":\"system/runs/r/gate-attachments/g9/evidence.png\"}");
+        f.stub();
+
+        InputArtifactManifest manifest = service.resolveInputArtifactManifest(f.runId, f.execId);
+
+        assertThat(manifest.artifacts()).isEmpty();
+    }
+
+    /**
+     * Builds the smallest graph that exercises the manifest resolver: one target node, one declared
+     * source, and one human gate with a single inbound edge into the target.
+     */
+    private class ManifestFixture {
+        final UUID runId = UUID.randomUUID();
+        final UUID execId = UUID.randomUUID();
+        final UUID graphTemplateId = UUID.randomUUID();
+        final UUID targetNodeId = UUID.randomUUID();
+        final UUID sourceNodeId = UUID.randomUUID();
+        final UUID sourceExecId = UUID.randomUUID();
+        final UUID inboundEdgeId = UUID.randomUUID();
+        final UUID otherEdgeId = UUID.randomUUID();
+
+        final TemplateNode targetNode = new TemplateNode();
+        final TemplateNode sourceNode = new TemplateNode();
+        final NodeExecution targetExec = new NodeExecution();
+        final NodeExecution sourceExec = new NodeExecution();
+        final List<NodeExecution> completed = new ArrayList<>();
+
+        ManifestFixture() {
+            targetNode.setId(targetNodeId);
+            targetNode.setGraphTemplateId(graphTemplateId);
+            targetNode.setLabel("implement");
+
+            sourceNode.setId(sourceNodeId);
+            sourceNode.setGraphTemplateId(graphTemplateId);
+            sourceNode.setLabel("spec_review");
+
+            targetExec.setId(execId);
+            targetExec.setWorkflowRunId(runId);
+            targetExec.setTemplateNodeId(targetNodeId);
+            targetExec.setStatus(NodeExecutionStatus.running);
+
+            sourceExec.setId(sourceExecId);
+            sourceExec.setWorkflowRunId(runId);
+            sourceExec.setTemplateNodeId(sourceNodeId);
+            sourceExec.setStatus(NodeExecutionStatus.completed);
+            sourceExec.setIteration(1);
+            completed.add(sourceExec);
+        }
+
+        void declare(String json) {
+            targetNode.setRequiredInputArtifacts(json);
+        }
+
+        void sourceOutputPrefix(String prefix) {
+            sourceExec.setArtifactRefs("{\"output\":\"" + prefix + "\"}");
+        }
+
+        void gateRoutedHere(String label, String artifactRefs) {
+            addGate(label, artifactRefs, inboundEdgeId);
+        }
+
+        void gateRoutedElsewhere(String label, String artifactRefs) {
+            addGate(label, artifactRefs, otherEdgeId);
+        }
+
+        private void addGate(String label, String artifactRefs, UUID traversedEdgeId) {
+            NodeExecution gate = new NodeExecution();
+            gate.setId(UUID.randomUUID());
+            gate.setWorkflowRunId(runId);
+            gate.setTemplateNodeId(UUID.randomUUID());
+            gate.setStatus(NodeExecutionStatus.completed);
+            gate.setIteration(1);
+            gate.setLabel(label);
+            gate.setReviewerType(ReviewerType.human);
+            gate.setArtifactRefs(artifactRefs);
+            gate.setTraversedEdgeIds(new UUID[] {traversedEdgeId});
+            gate.setCompletedAt(Instant.now());
+            completed.add(gate);
+        }
+
+        void stub() {
+            WorkflowRun run = new WorkflowRun();
+            run.setId(runId);
+
+            String snapshot = "{\"edges\":[" + "{\"template_edge_id\":\""
+                    + inboundEdgeId + "\",\"source_node_id\":\"" + sourceNodeId + "\",\"target_node_id\":\""
+                    + targetNodeId + "\"}," + "{\"template_edge_id\":\""
+                    + otherEdgeId + "\",\"source_node_id\":\"" + sourceNodeId + "\",\"target_node_id\":\""
+                    + UUID.randomUUID() + "\"}" + "]}";
+
+            Mockito.when(nodeExecutionRepo.findById(execId)).thenReturn(Optional.of(targetExec));
+            Mockito.when(nodeExecutionRepo.findById(sourceExecId)).thenReturn(Optional.of(sourceExec));
+            Mockito.when(templateNodeRepo.findById(targetNodeId)).thenReturn(Optional.of(targetNode));
+            Mockito.when(templateNodeRepo.findByGraphTemplateId(graphTemplateId))
+                    .thenReturn(List.of(targetNode, sourceNode));
+            Mockito.when(nodeExecutionRepo.findByWorkflowRunIdAndStatus(runId, NodeExecutionStatus.completed))
+                    .thenReturn(completed);
+            Mockito.when(workflowRunRepo.findById(runId)).thenReturn(Optional.of(run));
+            Mockito.when(snapshotBuilder.buildSnapshotForRun(run)).thenReturn(snapshot);
+        }
     }
 }

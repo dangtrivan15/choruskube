@@ -560,6 +560,31 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 					vars[k] = v
 				}
 
+				// Resolve the files to materialise under /workspace/in/. Failure here is
+				// non-fatal: the run log still names every predecessor artifact, so the agent
+				// falls back to the pre-existing `artifact get` path rather than losing the node.
+				var inputManifest activity.LoadRequiredInputArtifactsResult
+				if err := workflow.ExecuteActivity(dbCtx, activities.LoadRequiredInputArtifacts,
+					activity.LoadRequiredInputArtifactsParams{
+						RunID:           params.RunID,
+						NodeExecutionID: tracker.execID,
+					},
+				).Get(ctx, &inputManifest); err != nil {
+					logger.Warn("Failed to resolve input artifact manifest; agent will fall back to artifact get",
+						"nodeExecID", tracker.execID, "error", err)
+					inputManifest = activity.LoadRequiredInputArtifactsResult{}
+				}
+
+				// Run-level uploads and resolved predecessor/gate files share one manifest.
+				// Copied per node so one node's entries cannot leak into the next.
+				nodeInputArtifacts := map[string]string{}
+				for k, v := range runInputArtifacts {
+					nodeInputArtifacts[k] = v
+				}
+				for k, v := range inputManifest.Artifacts {
+					nodeInputArtifacts[k] = v
+				}
+
 				promptTemplate := ""
 				loopGroup := ""
 				executorType := snapshotNode.ExecutorType
@@ -598,6 +623,11 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 				var repos []map[string]interface{}
 				needsBranch := extractConfigField(snapshotNode.ConfigOverrides, "needs_branch")
 				effort := extractConfigField(snapshotNode.ConfigOverrides, "effort")
+				// Per-node turn/retry budget. Travels as a string like every other
+				// config override; the agent entrypoint validates it and falls back to
+				// its own defaults when unset.
+				maxTurns := extractConfigField(snapshotNode.ConfigOverrides, "max_turns")
+				maxRetries := extractConfigField(snapshotNode.ConfigOverrides, "max_retries")
 
 				if len(snap.Repos) > 0 {
 					for _, r := range snap.Repos {
@@ -658,32 +688,35 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 				taskID, taskTitle, storyID, storyTitle, epicID, epicTitle := taskContextFields(snap)
 				future := workflow.ExecuteActivity(aiCtx, activities.ExecuteAINodeFromSnapshot,
 					activity.ExecuteAINodeFromSnapshotParams{
-						NodeExecutionID: execID,
-						RunID:           params.RunID,
-						TemplateNodeID:  nodeID,
-						Label:           snapshotNode.Label,
-						ExecutorType:    executorType,
-						PromptTemplate:  promptTemplate,
-						Model:           snapshotNode.Model,
-						Effort:          effort,
-						InputArtifacts:  runInputArtifacts,
-						Variables:       vars,
-						LoopGroup:       loopGroup,
-						Iteration:       tracker.iteration,
-						RepoURL:         repoURL,
-						WorkingBranch:   workingBranch,
-						Command:         command,
-						OrgSlug:         params.OrgSlug,
-						NeedDecision:    HasConditionalEdges(snap, node.TemplateNodeID),
-						Repos:           repos,
-						OutputSpec:      snapshotNode.OutputSpec,
-						TaskID:          taskID,
-						TaskTitle:       taskTitle,
-						StoryID:         storyID,
-						StoryTitle:      storyTitle,
-						EpicID:          epicID,
-						EpicTitle:       epicTitle,
-						OpenBlockers:    openBlockerFields(snap),
+						NodeExecutionID:        execID,
+						RunID:                  params.RunID,
+						TemplateNodeID:         nodeID,
+						Label:                  snapshotNode.Label,
+						ExecutorType:           executorType,
+						PromptTemplate:         promptTemplate,
+						Model:                  snapshotNode.Model,
+						Effort:                 effort,
+						MaxTurns:               maxTurns,
+						MaxRetries:             maxRetries,
+						InputArtifacts:         nodeInputArtifacts,
+						RequiredInputArtifacts: inputManifest.Required,
+						Variables:              vars,
+						LoopGroup:              loopGroup,
+						Iteration:              tracker.iteration,
+						RepoURL:                repoURL,
+						WorkingBranch:          workingBranch,
+						Command:                command,
+						OrgSlug:                params.OrgSlug,
+						NeedDecision:           HasConditionalEdges(snap, node.TemplateNodeID),
+						Repos:                  repos,
+						OutputSpec:             snapshotNode.OutputSpec,
+						TaskID:                 taskID,
+						TaskTitle:              taskTitle,
+						StoryID:                storyID,
+						StoryTitle:             storyTitle,
+						EpicID:                 epicID,
+						EpicTitle:              epicTitle,
+						OpenBlockers:           openBlockerFields(snap),
 					},
 				)
 
