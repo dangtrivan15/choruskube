@@ -55,16 +55,15 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   // an aborted-then-retried worker slot doesn't fail on a name/URL conflict.
   //
   // Deliberately NOT uniqueName(): that helper mints a fresh Date.now()+counter
-  // suffix on every call, so two calls for the *same* (shard, worker) slot would
-  // never resolve to the same name/URL and the fetch-or-create lookup below could
-  // never hit. The name only needs to be stable per slot and distinct across
-  // slots, so it's built directly from the same "s<shard>w<worker>" scheme
-  // uniqueName() uses for its own collision-safety, minus the per-call suffix.
+  // suffix on every call, so two calls for the *same* worker slot would never
+  // resolve to the same name/URL and the fetch-or-create lookup below could never
+  // hit. The name only needs to be stable per slot and distinct across slots, so
+  // it's built directly from the worker index — the same thing uniqueName() uses
+  // for its own collision-safety, minus the per-call suffix.
   workerRepo: [
     async ({}, use, workerInfo) => {
       const api = new TestApiClient();
-      const shardIndex = Number(process.env.SHARD_INDEX ?? "0");
-      const name = `e2e-worker-repo-s${shardIndex}w${workerInfo.parallelIndex}`;
+      const name = `e2e-worker-repo-w${workerInfo.parallelIndex}`;
       const url = `https://example.invalid/e2e-worker/${name}.git`;
 
       const existingRepos = await api.listGitRepos();

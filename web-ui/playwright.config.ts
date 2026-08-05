@@ -21,14 +21,11 @@ const AUTH_FILE = join(__dirname, "e2e/.auth/user.json");
  *
  * Every spec that creates a named resource (Run/Epic/Task title, GitRepo,
  * RepoGroup, ...) namespaces it via `uniqueName` (see e2e/helpers/api-client.ts)
- * so concurrent workers/shards never collide over one shared backend stack.
+ * so concurrent workers never collide over the one shared backend stack.
  *
  * Run with: npx playwright test
  * Parallel: E2E_WORKERS=4 npx playwright test
- * Sharded (CI): SHARD_INDEX=1 SHARD_TOTAL=2 E2E_WORKERS=2 npx playwright test --shard=1/2
  */
-const shardIndex = process.env.SHARD_INDEX;
-
 export default defineConfig({
   testDir: "./e2e/specs",
   outputDir: "./e2e/test-results",
@@ -44,21 +41,9 @@ export default defineConfig({
   /* Retry failed tests once in CI */
   retries: process.env.CI ? 1 : 0,
 
-  /* Reporter. Report output dir incorporates SHARD_INDEX (set per CI matrix job)
-   * so each shard's HTML report can be uploaded as its own artifact instead of
-   * every shard racing to overwrite one shared "playwright-report" dir. */
+  /* Reporter */
   reporter: process.env.CI
-    ? [
-        [
-          "html",
-          {
-            outputFolder: shardIndex
-              ? `./e2e/playwright-report-shard-${shardIndex}`
-              : "./e2e/playwright-report",
-          },
-        ],
-        ["list"],
-      ]
+    ? [["html", { outputFolder: "./e2e/playwright-report" }], ["list"]]
     : [["list"]],
 
   use: {
