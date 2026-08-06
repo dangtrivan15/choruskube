@@ -6,17 +6,12 @@ test.describe("Roadmap Graph View", () => {
     roadmapGraphPage,
     roadmapPage,
     api,
+    workerRepo,
   }) => {
-    const repos = await api.listGitRepos();
-    if (repos.content.length === 0) {
-      test.skip();
-      return;
-    }
-
     const epic = await api.createEpic({
       title: uniqueName("E2E Graph Epic"),
       description: "Epic for graph view e2e",
-      softwareProjectId: repos.content[0].id,
+      softwareProjectId: workerRepo.gitRepo.id,
     });
     const story = await api.createStory(epic.id, {
       title: uniqueName("Graph Story"),
@@ -50,17 +45,12 @@ test.describe("Roadmap Graph View", () => {
   test("clicking a Task node opens the detail panel with its run history", async ({
     roadmapGraphPage,
     api,
+    workerRepo,
   }) => {
-    const repos = await api.listGitRepos();
-    if (repos.content.length === 0) {
-      test.skip();
-      return;
-    }
-
     const epic = await api.createEpic({
       title: uniqueName("E2E Graph Detail Epic"),
       description: "desc",
-      softwareProjectId: repos.content[0].id,
+      softwareProjectId: workerRepo.gitRepo.id,
     });
     const story = await api.createStory(epic.id, { title: "Detail Story", description: "desc" });
     const task = await api.createTask(story.id, { title: uniqueName("Detail Task"), description: "desc" });
@@ -84,17 +74,12 @@ test.describe("Roadmap Graph View", () => {
   test("creates a blocking dependency via the UI and draws a distinct dependency edge", async ({
     roadmapGraphPage,
     api,
+    workerRepo,
   }) => {
-    const repos = await api.listGitRepos();
-    if (repos.content.length === 0) {
-      test.skip();
-      return;
-    }
-
     const epic = await api.createEpic({
       title: uniqueName("E2E Graph Dependency Epic"),
       description: "desc",
-      softwareProjectId: repos.content[0].id,
+      softwareProjectId: workerRepo.gitRepo.id,
     });
     const story = await api.createStory(epic.id, { title: "Dependency Story", description: "desc" });
     const blockingTask = await api.createTask(story.id, {
@@ -131,17 +116,12 @@ test.describe("Roadmap Graph View", () => {
   test("reflects a dependency created out-of-band without a manual refresh", async ({
     roadmapGraphPage,
     api,
+    workerRepo,
   }) => {
-    const repos = await api.listGitRepos();
-    if (repos.content.length === 0) {
-      test.skip();
-      return;
-    }
-
     const epic = await api.createEpic({
       title: uniqueName("E2E Graph Live Update Epic"),
       description: "desc",
-      softwareProjectId: repos.content[0].id,
+      softwareProjectId: workerRepo.gitRepo.id,
     });
     const story = await api.createStory(epic.id, { title: "Live Update Story", description: "desc" });
     const blockingTask = await api.createTask(story.id, {
@@ -179,17 +159,12 @@ test.describe("Roadmap Graph View", () => {
   test("a 3-task chain stays BLOCKED at the tail after the middle task completes but the root has not", async ({
     roadmapGraphPage,
     api,
+    workerRepo,
   }) => {
-    const repos = await api.listGitRepos();
-    if (repos.content.length === 0) {
-      test.skip();
-      return;
-    }
-
     const epic = await api.createEpic({
       title: uniqueName("E2E Graph Chain Epic"),
       description: "desc",
-      softwareProjectId: repos.content[0].id,
+      softwareProjectId: workerRepo.gitRepo.id,
     });
     const story = await api.createStory(epic.id, { title: "Chain Story", description: "desc" });
     const taskA = await api.createTask(story.id, {
@@ -259,23 +234,18 @@ test.describe("Roadmap Graph View", () => {
   test("clicking an external blocker's link navigates to its owning Epic's detail page", async ({
     roadmapGraphPage,
     api,
+    workerRepo,
     page,
   }) => {
-    const repos = await api.listGitRepos();
-    if (repos.content.length === 0) {
-      test.skip();
-      return;
-    }
-
     const firstEpic = await api.createEpic({
       title: uniqueName("E2E External Blocker Epic"),
       description: "desc",
-      softwareProjectId: repos.content[0].id,
+      softwareProjectId: workerRepo.gitRepo.id,
     });
     const secondEpic = await api.createEpic({
       title: uniqueName("E2E Owning Epic"),
       description: "desc",
-      softwareProjectId: repos.content[0].id,
+      softwareProjectId: workerRepo.gitRepo.id,
     });
     const firstStory = await api.createStory(firstEpic.id, { title: "Blocked Story", description: "desc" });
     const blockedTask = await api.createTask(firstStory.id, {
@@ -315,23 +285,18 @@ test.describe("Roadmap Graph View", () => {
   test("renders a cross-Epic blocker as a canvas edge and external node, and navigates to the other Epic's graph on click", async ({
     roadmapGraphPage,
     api,
+    workerRepo,
     page,
   }) => {
-    const repos = await api.listGitRepos();
-    if (repos.content.length === 0) {
-      test.skip();
-      return;
-    }
-
     const firstEpic = await api.createEpic({
       title: uniqueName("E2E Cross-Epic Canvas Epic"),
       description: "desc",
-      softwareProjectId: repos.content[0].id,
+      softwareProjectId: workerRepo.gitRepo.id,
     });
     const secondEpic = await api.createEpic({
       title: uniqueName("E2E Cross-Epic Owning Epic"),
       description: "desc",
-      softwareProjectId: repos.content[0].id,
+      softwareProjectId: workerRepo.gitRepo.id,
     });
     const firstStory = await api.createStory(firstEpic.id, { title: "Blocked Story", description: "desc" });
     const blockedTask = await api.createTask(firstStory.id, {
@@ -374,17 +339,12 @@ test.describe("Roadmap Graph View", () => {
   test("collapsing and expanding a large Story branch shows/hides its Tasks", async ({
     roadmapGraphPage,
     api,
+    workerRepo,
   }) => {
-    const repos = await api.listGitRepos();
-    if (repos.content.length === 0) {
-      test.skip();
-      return;
-    }
-
     const epic = await api.createEpic({
       title: uniqueName("E2E Graph Collapse Epic"),
       description: "desc",
-      softwareProjectId: repos.content[0].id,
+      softwareProjectId: workerRepo.gitRepo.id,
     });
     const bigStory = await api.createStory(epic.id, { title: uniqueName("Big Story"), description: "desc" });
     // One more Task than RoadmapGraph's AUTO_COLLAPSE_TASK_THRESHOLD (8), so

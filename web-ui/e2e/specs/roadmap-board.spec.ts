@@ -34,18 +34,13 @@ test.describe("Roadmap Board", () => {
   test("expand a card, drag it to a new column, and confirm the move persists on reload", async ({
     roadmapBoardPage,
     api,
+    workerRepo,
   }) => {
-    const repos = await api.listGitRepos();
-    if (repos.content.length === 0) {
-      test.skip();
-      return;
-    }
-
     const uniqueTitle = uniqueName("E2E Board Epic");
     const epic = await api.createEpic({
       title: uniqueTitle,
       description: "Epic for the roadmap board E2E test",
-      softwareProjectId: repos.content[0].id,
+      softwareProjectId: workerRepo.gitRepo.id,
     });
     const story = await api.createStory(epic.id, {
       title: uniqueName("Board test story"),
@@ -75,24 +70,19 @@ test.describe("Roadmap Board", () => {
   test("'Ready to start' filter on the board shows only Epics with unblocked work", async ({
     roadmapBoardPage,
     api,
+    workerRepo,
   }) => {
-    const repos = await api.listGitRepos();
-    if (repos.content.length === 0) {
-      test.skip();
-      return;
-    }
-
     const readyEpic = await api.createEpic({
       title: uniqueName("E2E Board Ready Filter Ready Epic"),
       description: "desc",
-      softwareProjectId: repos.content[0].id,
+      softwareProjectId: workerRepo.gitRepo.id,
     });
     await api.createStory(readyEpic.id, { title: "Unblocked story", description: "desc" });
 
     const blockedEpic = await api.createEpic({
       title: uniqueName("E2E Board Ready Filter Blocked Epic"),
       description: "desc",
-      softwareProjectId: repos.content[0].id,
+      softwareProjectId: workerRepo.gitRepo.id,
     });
     const blockedStory = await api.createStory(blockedEpic.id, {
       title: "Blocked story",
@@ -101,7 +91,7 @@ test.describe("Roadmap Board", () => {
     const blockerEpic = await api.createEpic({
       title: uniqueName("E2E Board Ready Filter Blocker Owner Epic"),
       description: "desc",
-      softwareProjectId: repos.content[0].id,
+      softwareProjectId: workerRepo.gitRepo.id,
     });
     const blockerStory = await api.createStory(blockerEpic.id, {
       title: "Blocker story",
@@ -137,18 +127,13 @@ test.describe("Roadmap Board", () => {
   test("drag a card to a new column with the 'Ready to start' toggle on, and confirm the move persists on reload", async ({
     roadmapBoardPage,
     api,
+    workerRepo,
   }) => {
-    const repos = await api.listGitRepos();
-    if (repos.content.length === 0) {
-      test.skip();
-      return;
-    }
-
     const uniqueTitle = uniqueName("E2E Board Ready Drag Epic");
     const epic = await api.createEpic({
       title: uniqueTitle,
       description: "Epic for the ready-filtered drag E2E test",
-      softwareProjectId: repos.content[0].id,
+      softwareProjectId: workerRepo.gitRepo.id,
     });
     await api.createStory(epic.id, { title: "Unblocked story", description: "desc" });
 

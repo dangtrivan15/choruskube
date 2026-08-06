@@ -31,13 +31,9 @@ test.describe("Roadmap drill-down", () => {
   test("create an Epic, drill into its Story, then its Task", async ({
     roadmapPage,
     api,
+    workerRepo,
   }) => {
-    const repos = await api.listGitRepos();
-    if (repos.content.length === 0) {
-      test.skip();
-      return;
-    }
-    const repo = repos.content[0];
+    const repo = workerRepo.gitRepo;
     // Single-repo SoftwareProjects share the git_repo's id; the dropdown
     // labels them by `repoDisplayName(url)` (last 2 path segments).
     const projectName = repo.url
@@ -90,19 +86,14 @@ test.describe("Roadmap drill-down", () => {
   test("task detail shows Start button for a backlog task", async ({
     roadmapPage,
     api,
+    workerRepo,
   }) => {
-    const repos = await api.listGitRepos();
-    if (repos.content.length === 0) {
-      test.skip();
-      return;
-    }
-
     const uniqueTitle = uniqueName("E2E Actions");
     // git_repo.id IS software_project.id post-V45 — pass it directly.
     const epic = await api.createEpic({
       title: uniqueTitle,
       description: "Testing action buttons",
-      softwareProjectId: repos.content[0].id,
+      softwareProjectId: workerRepo.gitRepo.id,
     });
     const story = await api.createStory(epic.id, {
       title: "Story for action test",
@@ -123,18 +114,12 @@ test.describe("Roadmap drill-down", () => {
     await api.deleteEpic(epic.id);
   });
 
-  test("delete confirmation dialog works for an Epic", async ({ roadmapPage, api }) => {
-    const repos = await api.listGitRepos();
-    if (repos.content.length === 0) {
-      test.skip();
-      return;
-    }
-
+  test("delete confirmation dialog works for an Epic", async ({ roadmapPage, api, workerRepo }) => {
     const uniqueTitle = uniqueName("E2E Delete");
     await api.createEpic({
       title: uniqueTitle,
       description: "Will be deleted",
-      softwareProjectId: repos.content[0].id,
+      softwareProjectId: workerRepo.gitRepo.id,
     });
 
     await roadmapPage.goto();
@@ -167,17 +152,12 @@ test.describe("Roadmap drill-down", () => {
   test("Story and Task list rows show a Blocked badge without opening the graph, and it clears without a manual refresh once the blocker completes", async ({
     roadmapPage,
     api,
+    workerRepo,
   }) => {
-    const repos = await api.listGitRepos();
-    if (repos.content.length === 0) {
-      test.skip();
-      return;
-    }
-
     const epic = await api.createEpic({
       title: uniqueName("E2E List Readiness Epic"),
       description: "desc",
-      softwareProjectId: repos.content[0].id,
+      softwareProjectId: workerRepo.gitRepo.id,
     });
     const story = await api.createStory(epic.id, {
       title: uniqueName("List Readiness Story"),
@@ -245,24 +225,19 @@ test.describe("Roadmap drill-down", () => {
   test("'Ready to start' filter on the Roadmap list shows only Epics with unblocked work", async ({
     roadmapPage,
     api,
+    workerRepo,
   }) => {
-    const repos = await api.listGitRepos();
-    if (repos.content.length === 0) {
-      test.skip();
-      return;
-    }
-
     const readyEpic = await api.createEpic({
       title: uniqueName("E2E Ready Filter Ready Epic"),
       description: "desc",
-      softwareProjectId: repos.content[0].id,
+      softwareProjectId: workerRepo.gitRepo.id,
     });
     await api.createStory(readyEpic.id, { title: "Unblocked story", description: "desc" });
 
     const blockedEpic = await api.createEpic({
       title: uniqueName("E2E Ready Filter Blocked Epic"),
       description: "desc",
-      softwareProjectId: repos.content[0].id,
+      softwareProjectId: workerRepo.gitRepo.id,
     });
     const blockedStory = await api.createStory(blockedEpic.id, {
       title: "Blocked story",
@@ -271,7 +246,7 @@ test.describe("Roadmap drill-down", () => {
     const blockerEpic = await api.createEpic({
       title: uniqueName("E2E Ready Filter Blocker Owner Epic"),
       description: "desc",
-      softwareProjectId: repos.content[0].id,
+      softwareProjectId: workerRepo.gitRepo.id,
     });
     const blockerStory = await api.createStory(blockerEpic.id, {
       title: "Blocker story",

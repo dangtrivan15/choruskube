@@ -38,6 +38,26 @@ export interface WorkerRepoFixture {
   repoGroup: RepoGroupSummary;
 }
 
+/**
+ * URL prefix every `workerRepo` GitRepo is minted under.
+ *
+ * `GET /api/v1/git-repos` sorts by `url` ascending, and "example.invalid" sorts
+ * ahead of the seeded "github.com" rows — so worker repos occupy the head of
+ * that list as soon as any worker materializes one. Specs that need the *seeded*
+ * repos specifically must exclude this prefix rather than index into the list.
+ */
+export const WORKER_REPO_URL_PREFIX = "https://example.invalid/e2e-worker/";
+
+/**
+ * Narrows a `listGitRepos()` page to the rows `E2eTestDataSeeder` seeded,
+ * dropping every worker's `workerRepo`. Use this in specs that need a *stable*
+ * repo set — ones that index into the list, slice it, or drive a checkbox per
+ * entry — since how many worker repos exist depends on which tests have run.
+ */
+export function seededRepos<T extends { url: string }>(repos: T[]): T[] {
+  return repos.filter((r) => !r.url.startsWith(WORKER_REPO_URL_PREFIX));
+}
+
 export interface WorkerFixtures {
   workerRepo: WorkerRepoFixture;
 }
@@ -64,7 +84,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     async ({}, use, workerInfo) => {
       const api = new TestApiClient();
       const name = `e2e-worker-repo-w${workerInfo.parallelIndex}`;
-      const url = `https://example.invalid/e2e-worker/${name}.git`;
+      const url = `${WORKER_REPO_URL_PREFIX}${name}.git`;
 
       const existingRepos = await api.listGitRepos();
       let gitRepo = existingRepos.content.find((r) => r.url === url);
