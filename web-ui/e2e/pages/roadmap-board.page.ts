@@ -53,6 +53,15 @@ export class RoadmapBoardPage {
     await expect(this.column(stage).getByText(title)).toBeVisible();
   }
 
+  /** Resolves true if `title`'s card shows up in `stage`'s column within `timeout`. */
+  private async cardLandedIn(title: string, stage: EpicStage, timeout: number): Promise<boolean> {
+    return this.column(stage)
+      .getByText(title)
+      .waitFor({ state: "visible", timeout })
+      .then(() => true)
+      .catch(() => false);
+  }
+
   /**
    * Drags the Epic card titled `title` into the `targetStage` column.
    *
@@ -61,35 +70,64 @@ export class RoadmapBoardPage {
    * mouse down → a few incremental moves → mouse up sequence rather than a
    * single jump (which some DnD libraries miss because they see no
    * intermediate `pointermove` events).
+   *
+   * A hand-rolled pointer sequence opts out of Playwright's auto-waiting: the
+   * coordinates are frozen at `boundingBox()` time, and any `roadmap-items`
+   * STOMP event in the window before `mouse.down()` invalidates `["epics"]`
+   * and re-orders the column, so the press can land on a moved or replaced
+   * node and no drop happens at all. On a shared stack another worker's Epic
+   * write is enough to trigger that. Hence: re-measure immediately before
+   * pressing, abandon the attempt if the card shifted, and retry the whole
+   * gesture until the card lands.
    */
-  async dragCardToColumn(title: string, targetStage: EpicStage) {
+  async dragCardToColumn(title: string, targetStage: EpicStage, attempts = 3) {
     const card = this.cardByTitle(title);
     const targetColumn = this.column(targetStage);
 
-    const sourceBox = await card.boundingBox();
-    const targetBox = await targetColumn.boundingBox();
-    if (!sourceBox || !targetBox) {
-      throw new Error(`Could not measure drag source/target for "${title}" -> ${targetStage}`);
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      await card.waitFor({ state: "visible" });
+
+      const sourceBox = await card.boundingBox();
+      const targetBox = await targetColumn.boundingBox();
+      if (!sourceBox || !targetBox) continue;
+
+      const startX = sourceBox.x + sourceBox.width / 2;
+      const startY = sourceBox.y + sourceBox.height / 2;
+      const endX = targetBox.x + targetBox.width / 2;
+      const endY = targetBox.y + Math.min(40, targetBox.height / 2);
+
+      await this.page.mouse.move(startX, startY);
+
+      // The pointer is in position but nothing is pressed yet — the last point
+      // at which a re-render is still recoverable.
+      const settledBox = await card.boundingBox();
+      if (
+        !settledBox ||
+        Math.abs(settledBox.x - sourceBox.x) > 2 ||
+        Math.abs(settledBox.y - sourceBox.y) > 2
+      ) {
+        continue;
+      }
+
+      await this.page.mouse.down();
+      await this.page.mouse.move(
+        startX + (endX - startX) / 3,
+        startY + (endY - startY) / 3,
+        { steps: 5 },
+      );
+      await this.page.mouse.move(
+        startX + ((endX - startX) * 2) / 3,
+        startY + ((endY - startY) * 2) / 3,
+        { steps: 5 },
+      );
+      await this.page.mouse.move(endX, endY, { steps: 5 });
+      await this.page.mouse.up();
+
+      if (await this.cardLandedIn(title, targetStage, 5_000)) return;
     }
 
-    const startX = sourceBox.x + sourceBox.width / 2;
-    const startY = sourceBox.y + sourceBox.height / 2;
-    const endX = targetBox.x + targetBox.width / 2;
-    const endY = targetBox.y + Math.min(40, targetBox.height / 2);
-
-    await this.page.mouse.move(startX, startY);
-    await this.page.mouse.down();
-    await this.page.mouse.move(
-      startX + (endX - startX) / 3,
-      startY + (endY - startY) / 3,
-      { steps: 5 },
+    throw new Error(
+      `Card "${title}" never landed in the ${targetStage} column after ${attempts} drag attempts`,
     );
-    await this.page.mouse.move(
-      startX + ((endX - startX) * 2) / 3,
-      startY + ((endY - startY) * 2) / 3,
-      { steps: 5 },
-    );
-    await this.page.mouse.move(endX, endY, { steps: 5 });
-    await this.page.mouse.up();
   }
 }

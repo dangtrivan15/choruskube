@@ -1,4 +1,4 @@
-import { test, expect } from "../fixtures";
+import { test, expect, seededRepos } from "../fixtures";
 import { uniqueName } from "../helpers/api-client";
 
 /**
@@ -21,11 +21,12 @@ test.describe("Multi-repo Epics (UI)", () => {
     api,
   }) => {
     const reposPage = await api.listGitRepos();
+    const seeded = seededRepos(reposPage.content);
     expect(
-      reposPage.content.length,
+      seeded.length,
       "E2eTestDataSeeder must seed at least 2 git_repo rows for this spec",
     ).toBeGreaterThanOrEqual(2);
-    const [primary, secondary] = reposPage.content;
+    const [primary, secondary] = seeded;
 
     const groupName = uniqueName("e2e-multi-repo");
     const group = await api.createRepoGroup({

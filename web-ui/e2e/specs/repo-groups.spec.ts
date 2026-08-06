@@ -1,4 +1,4 @@
-import { test, expect } from "../fixtures";
+import { test, expect, seededRepos } from "../fixtures";
 import { uniqueName } from "../helpers/api-client";
 
 /**
@@ -62,14 +62,17 @@ test.describe("Repo Groups (UI) launches a run via software_project_id", () => {
   }) => {
     // Fail-fast: the seeded fixtures the UI flow depends on must be present.
     const reposPage = await api.listGitRepos();
+    const seeded = seededRepos(reposPage.content);
     expect(
-      reposPage.content.length,
+      seeded.length,
       "E2eTestDataSeeder must seed at least 2 git_repo rows for this spec",
     ).toBeGreaterThanOrEqual(2);
     // The two seeded URLs render as `e2e-test/mock-repo` /
     // `e2e-test/mock-frontend` via {@code repoDisplayName}; the form uses each
-    // display name as the {@code aria-label} of its checkbox.
-    const repoLabels = reposPage.content.map((r) =>
+    // display name as the {@code aria-label} of its checkbox. Worker repos are
+    // excluded — this flow ticks every label it collects, and another worker's
+    // repo has no business in this group.
+    const repoLabels = seeded.map((r) =>
       r.url.replace(/^https?:\/\/[^/]+\//, "").replace(/\.git$/, ""),
     );
 
@@ -211,14 +214,15 @@ test.describe("Repo Groups (UI) launches a run via software_project_id", () => {
     // Seed a group via the API so the test starts from a known state. The
     // Edit affordance is what we're exercising here, not the Create flow.
     const reposPage = await api.listGitRepos();
+    const seededRepoRows = seededRepos(reposPage.content);
     expect(
-      reposPage.content.length,
+      seededRepoRows.length,
       "E2eTestDataSeeder must seed at least 2 git_repo rows for this spec",
     ).toBeGreaterThanOrEqual(2);
-    const repoLabels = reposPage.content.map((r) =>
+    const repoLabels = seededRepoRows.map((r) =>
       r.url.replace(/^https?:\/\/[^/]+\//, "").replace(/\.git$/, ""),
     );
-    const repoIds = reposPage.content.slice(0, 2).map((r) => r.id);
+    const repoIds = seededRepoRows.slice(0, 2).map((r) => r.id);
     const originalName = uniqueName(`${E2E_GROUP_PREFIX}edit`);
     const renamed = `${originalName}-renamed`;
     const seeded = await api.createRepoGroup({

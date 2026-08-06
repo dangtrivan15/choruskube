@@ -406,6 +406,25 @@ export class TestApiClient {
     return this.get("/api/v1/epics?size=100");
   }
 
+  /**
+   * The Epics targeting `softwareProjectId`, newest first.
+   *
+   * Any spec asserting over *counts* of Epics must go through here rather than
+   * {@link listEpics}: the unscoped list is org-wide, so on a shared stack a
+   * concurrent create or delete from another worker moves it — breaking
+   * `toBe(equal)` in one direction and `toBeGreaterThan` in the other. Pair it
+   * with the worker-scoped `workerRepo` fixture and the window closes, since a
+   * worker runs one test at a time.
+   *
+   * `GET /api/v1/epics` takes no project filter, so this narrows client-side
+   * over the `size=100` page. That page is `createdAt DESC`, so it favours the
+   * rows a running test just produced.
+   */
+  async listEpicsForProject(softwareProjectId: string): Promise<Epic[]> {
+    const page = await this.listEpics();
+    return page.content.filter((e) => e.softwareProject?.id === softwareProjectId);
+  }
+
   async createEpic(body: {
     title: string;
     description: string;

@@ -5,17 +5,12 @@ test.describe("Blocking Chain", () => {
   test("opening a blocked Task's detail panel shows a multi-hop chain", async ({
     roadmapGraphPage,
     api,
+    workerRepo,
   }) => {
-    const repos = await api.listGitRepos();
-    if (repos.content.length === 0) {
-      test.skip();
-      return;
-    }
-
     const epic = await api.createEpic({
       title: uniqueName("E2E Blocking Chain Epic"),
       description: "desc",
-      softwareProjectId: repos.content[0].id,
+      softwareProjectId: workerRepo.gitRepo.id,
     });
     const story = await api.createStory(epic.id, { title: "Blocking Chain Story", description: "desc" });
     const taskA = await api.createTask(story.id, { title: uniqueName("Chain Root Task"), description: "desc" });
@@ -50,17 +45,11 @@ test.describe("Blocking Chain", () => {
     }
   });
 
-  test("a Task blocked only directly shows a single-hop chain", async ({ roadmapGraphPage, api }) => {
-    const repos = await api.listGitRepos();
-    if (repos.content.length === 0) {
-      test.skip();
-      return;
-    }
-
+  test("a Task blocked only directly shows a single-hop chain", async ({ roadmapGraphPage, api, workerRepo }) => {
     const epic = await api.createEpic({
       title: uniqueName("E2E Single Hop Chain Epic"),
       description: "desc",
-      softwareProjectId: repos.content[0].id,
+      softwareProjectId: workerRepo.gitRepo.id,
     });
     const story = await api.createStory(epic.id, { title: "Single Hop Story", description: "desc" });
     const blockingTask = await api.createTask(story.id, { title: uniqueName("Direct Blocker Task"), description: "desc" });
@@ -85,17 +74,11 @@ test.describe("Blocking Chain", () => {
     }
   });
 
-  test("an unblocked item's panel shows no blocking chain section", async ({ roadmapGraphPage, api }) => {
-    const repos = await api.listGitRepos();
-    if (repos.content.length === 0) {
-      test.skip();
-      return;
-    }
-
+  test("an unblocked item's panel shows no blocking chain section", async ({ roadmapGraphPage, api, workerRepo }) => {
     const epic = await api.createEpic({
       title: uniqueName("E2E No Chain Epic"),
       description: "desc",
-      softwareProjectId: repos.content[0].id,
+      softwareProjectId: workerRepo.gitRepo.id,
     });
     const story = await api.createStory(epic.id, { title: "No Chain Story", description: "desc" });
     const task = await api.createTask(story.id, { title: uniqueName("Unblocked Task"), description: "desc" });

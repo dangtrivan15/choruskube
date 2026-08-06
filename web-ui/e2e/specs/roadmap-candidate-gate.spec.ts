@@ -45,6 +45,7 @@ test.describe("Roadmap Provisioner candidate gate", () => {
   test("editing a field and approving carries the edit through to the created Epic", async ({
     page,
     api,
+    workerRepo,
   }) => {
     const template = await api.getTemplateByName("e2e-roadmap-candidate-gate");
     // Materialization resolves software_project_id from the run's inputs (see
@@ -54,16 +55,11 @@ test.describe("Roadmap Provisioner candidate gate", () => {
     // candidate (caught, logged, and rolled into the "N skipped" count) and the run
     // still completes via the terminal_decisions edge, so this must be supplied here or
     // the Epic below is never created. Single-repo SoftwareProjects share the git_repo's id.
-    const repos = await api.listGitRepos();
-    expect(
-      repos.content.length,
-      "E2eTestDataSeeder must seed at least 1 git_repo row for this spec",
-    ).toBeGreaterThanOrEqual(1);
     const runName = uniqueName("cg-edit");
     const run = await api.startRun({
       graphTemplateId: template.id,
       name: runName,
-      inputs: { software_project_id: repos.content[0].id },
+      inputs: { software_project_id: workerRepo.gitRepo.id },
     });
 
     await api.waitForNodeStatus(run.id, "review_candidates", ["awaiting_human"], 60_000);
@@ -89,6 +85,7 @@ test.describe("Roadmap Provisioner candidate gate", () => {
   test("run page sidebar shows Approve for the edge-less terminal-decision gate and approving materializes the breakdown", async ({
     api,
     runMonitorPage,
+    workerRepo,
   }) => {
     // Regression coverage for the bug this fix addresses: the run page's right
     // sidebar previously derived decision buttons from graph edges alone, so the
@@ -99,17 +96,12 @@ test.describe("Roadmap Provisioner candidate gate", () => {
     // run-page-sidebar coverage against a gate with a real "approved" edge,
     // which could never have caught this: this template is the one that
     // mirrors the actual edge-less shape that was broken.
-    const repos = await api.listGitRepos();
-    expect(
-      repos.content.length,
-      "E2eTestDataSeeder must seed at least 1 git_repo row for this spec",
-    ).toBeGreaterThanOrEqual(1);
     const template = await api.getTemplateByName("e2e-roadmap-candidate-gate");
     const runName = uniqueName("cg-sidebar");
     const run = await api.startRun({
       graphTemplateId: template.id,
       name: runName,
-      inputs: { software_project_id: repos.content[0].id },
+      inputs: { software_project_id: workerRepo.gitRepo.id },
     });
 
     await api.waitForNodeStatus(run.id, "review_candidates", ["awaiting_human"], 60_000);
@@ -119,7 +111,7 @@ test.describe("Roadmap Provisioner candidate gate", () => {
     await expect(runMonitorPage.gateApproveButton).toBeVisible();
     await expect(runMonitorPage.gateRejectButton).toBeVisible();
 
-    const beforeApprove = await api.listEpics();
+    const beforeApprove = await api.listEpicsForProject(workerRepo.gitRepo.id);
 
     await runMonitorPage.approveGate("Looks good, approved from the run page sidebar");
 
@@ -129,17 +121,28 @@ test.describe("Roadmap Provisioner candidate gate", () => {
     const finished = await api.waitForRunStatus(run.id, ["completed"], 60_000);
     expect(finished.status).toBe("completed");
 
-    const afterApprove = await api.listEpics();
-    expect(afterApprove.content.length).toBeGreaterThan(beforeApprove.content.length);
+    const afterApprove = await api.listEpicsForProject(workerRepo.gitRepo.id);
+    expect(afterApprove.length).toBeGreaterThan(beforeApprove.length);
   });
 
   test("reject loop still works, with no roadmap items created", async ({
     page,
     api,
+    workerRepo,
   }) => {
     const template = await api.getTemplateByName("e2e-roadmap-candidate-gate");
     const runName = uniqueName("cg-reject");
-    const run = await api.startRun({ graphTemplateId: template.id, name: runName });
+    // Supply software_project_id even though nothing should be materialized: without
+    // it DefaultRoadmapCandidateMaterializer skips every candidate for lack of a
+    // resolvable target (see the edit-and-approve test above), so a regression that
+    // wrongly materialized on reject would be masked by the missing input rather
+    // than caught. With it, the only reason no Epic appears is that reject doesn't
+    // materialize — which is what this test claims.
+    const run = await api.startRun({
+      graphTemplateId: template.id,
+      name: runName,
+      inputs: { software_project_id: workerRepo.gitRepo.id },
+    });
 
     await api.waitForNodeStatus(run.id, "review_candidates", ["awaiting_human"], 60_000);
 
@@ -147,7 +150,7 @@ test.describe("Roadmap Provisioner candidate gate", () => {
     await gatePage.goto();
     const card = await gatePage.waitForGateCard(runName);
 
-    const beforeReject = await api.listEpics();
+    const beforeReject = await api.listEpicsForProject(workerRepo.gitRepo.id);
 
     await gatePage.reject(card, "Not ready — send back for another pass");
 
@@ -163,9 +166,13 @@ test.describe("Roadmap Provisioner candidate gate", () => {
     // unedited default title from a *different*, approved run. A title-existence
     // check would false-positive against that unrelated Epic; an ID-based diff
     // only fails if *this* rejection produced a new row.
-    const afterReject = await api.listEpics();
-    expect(afterReject.content.length).toBe(beforeReject.content.length);
-    const beforeIds = new Set(beforeReject.content.map((e) => e.id));
-    expect(afterReject.content.every((e) => beforeIds.has(e.id))).toBe(true);
+    //
+    // Both halves are read through the worker's own software project. The ID diff
+    // is no safer than the count against a *concurrent* create — either one trips
+    // on an Epic another worker made mid-window — so scoping has to wrap both.
+    const afterReject = await api.listEpicsForProject(workerRepo.gitRepo.id);
+    expect(afterReject.length).toBe(beforeReject.length);
+    const beforeIds = new Set(beforeReject.map((e) => e.id));
+    expect(afterReject.every((e) => beforeIds.has(e.id))).toBe(true);
   });
 });

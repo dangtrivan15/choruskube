@@ -61,18 +61,13 @@ test.describe("Story Board", () => {
   test("drag a story card to a legal target column and confirm the move persists on reload", async ({
     storyBoardPage,
     api,
+    workerRepo,
   }) => {
-    const repos = await api.listGitRepos();
-    if (repos.content.length === 0) {
-      test.skip();
-      return;
-    }
-
     const uniqueTitle = uniqueName("E2E Board Story");
     const epic = await api.createEpic({
       title: `Epic for ${uniqueTitle}`,
       description: "Epic for the story board E2E test",
-      softwareProjectId: repos.content[0].id,
+      softwareProjectId: workerRepo.gitRepo.id,
     });
     await api.createStory(epic.id, {
       title: uniqueTitle,

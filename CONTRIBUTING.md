@@ -93,6 +93,12 @@ RepoGroup) derives that name from `uniqueName()` (`web-ui/e2e/helpers/api-client
 so concurrent workers never collide over the one shared backend stack — see that
 file's doc comment before adding a new spec with a static name literal.
 
+Names are only half of it: workers also share the org-wide list endpoints, the board's
+query cache and the `roadmap-items` topic, none of which `uniqueName()` touches. A spec
+that asserts over a list, or that drives a drag, has more rules to follow — they're in
+[`web-ui/e2e/PARALLELISM.md`](web-ui/e2e/PARALLELISM.md), along with the flakes that
+produced them. Read it before adding either kind of spec.
+
 CI (`.github/workflows/e2e.yml`) runs the suite as a single `e2e` job — one runner pod,
 one Compose stack — and sets `E2E_WORKERS` on it. That job's name is the required status
 check; renaming it detaches the branch-protection rule, which then waits forever on a
