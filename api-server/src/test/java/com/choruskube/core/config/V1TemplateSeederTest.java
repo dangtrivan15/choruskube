@@ -42,7 +42,7 @@ class V1TemplateSeederTest extends BaseTest {
         var template = templateRepo.findByGraphIdAndVersion(
                 GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION);
         assertThat(template).isPresent();
-        // v33 retires the dedicated Push & Create PR node (Decision 1/2): 8 template nodes,
+        // v35 retires the dedicated Push & Create PR node (Decision 1/2): 8 template nodes,
         // 19 edges (down from 9/20).
         assertThat(templateNodeRepo.findByGraphTemplateId(template.get().getId()))
                 .hasSize(8);
@@ -104,18 +104,18 @@ class V1TemplateSeederTest extends BaseTest {
                         .filter(nd -> "Spec Review".equals(nd.getName()))
                         .count())
                 .isEqualTo(1);
-        // v33 retires the dedicated Push & Create PR node (Decision 1) — Implement and
+        // v35 retires the dedicated Push & Create PR node (Decision 1) — Implement and
         // Code Review now own PR creation/refresh themselves.
         assertThat(nodeDefRepo.findAll().stream()
                         .filter(nd -> "Push & Create PR".equals(nd.getName()))
                         .count())
-                .as("v33 must not seed a Push & Create PR NodeDefinition")
+                .as("v35 must not seed a Push & Create PR NodeDefinition")
                 .isZero();
     }
 
     @Test
     void implementAndCodeReviewCarryNeedsPrConfigOverride() {
-        // v33 (Decision 1): PR creation/refresh moves into Implement and Code Review, gated
+        // v35 (Decision 1): PR creation/refresh moves into Implement and Code Review, gated
         // by needs_pr the same way needs_branch already gates branch provisioning.
         var template = templateRepo
                 .findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION)
@@ -446,7 +446,7 @@ class V1TemplateSeederTest extends BaseTest {
         var outgoing = edges.stream()
                 .filter(e -> e.getSourceNodeId().equals(finalApproval.getId()))
                 .toList();
-        // v33 (Decision 1/2): rereview → code_review is the ONLY real outgoing edge.
+        // v35 (Decision 1/2): rereview → code_review is the ONLY real outgoing edge.
         // `approved` no longer routes to a Push & Create PR node — it's declared as a
         // terminal_decisions entry on this node's config_overrides instead, ending the run.
         assertThat(outgoing).hasSize(1);
@@ -634,7 +634,7 @@ class V1TemplateSeederTest extends BaseTest {
 
     @Test
     void implementPromptSurfacesManualOperationsAndCaveats() {
-        // v33 (Decision 1): PR creation moved from the retired Push & Create PR node
+        // v35 (Decision 1): PR creation moved from the retired Push & Create PR node
         // into Implement itself, so Implement's own "Opening and updating pull
         // requests" section must carry the same PR-body content rules that node used
         // to own — copy §8 Manual Operations into PR bodies, list §7 Caveats, and
@@ -664,7 +664,7 @@ class V1TemplateSeederTest extends BaseTest {
 
     @Test
     void implementPromptEnforcesRepositoryVisibilityIsolation() {
-        // v33 regression guard, carried over from the retired Push & Create PR node's
+        // v35 regression guard, carried over from the retired Push & Create PR node's
         // own v26 guard: PR text must never be written before a repo's visibility is
         // resolved, unknown visibility must fail safe to PUBLIC (never to private), and
         // a PUBLIC repo's PR may only link/name other PUBLIC repos' PRs — an empty
@@ -707,7 +707,7 @@ class V1TemplateSeederTest extends BaseTest {
 
     @Test
     void codeReviewPromptKeepsPullRequestsCurrentAndOnlyLinksOneDirectionally() {
-        // v33 (Decision 1/Caveat 5): Code Review refreshes PRs Implement (or an earlier
+        // v35 (Decision 1/Caveat 5): Code Review refreshes PRs Implement (or an earlier
         // Code Review pass) already opened, and opens a fallback PR itself for a repo
         // nobody has touched yet — but must NOT edit an already-open sibling PR to add
         // a backlink to a new one it just opened.
@@ -761,13 +761,13 @@ class V1TemplateSeederTest extends BaseTest {
                 .doesNotContain("report-result test")
                 .doesNotContain("report-result request_test_bypass")
                 .doesNotContain("## Routing Decision");
-        // v33: the dedicated Push & Create PR node is retired — Implement now owns PR
+        // v35: the dedicated Push & Create PR node is retired — Implement now owns PR
         // creation itself (in the later "Opening and updating pull requests" section), but
         // the original v16/v23 guardrail this regression-guards is preserved unchanged: a
         // per-repo subagent dispatched during parallel implementation must still never call
         // `gh pr create` itself.
         assertThat(prompt)
-                .as("v33 Implement prompt must still forbid PR creation from inside a per-repo subagent")
+                .as("v35 Implement prompt must still forbid PR creation from inside a per-repo subagent")
                 .contains("Do NOT run `gh pr create`");
     }
 

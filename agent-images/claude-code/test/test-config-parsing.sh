@@ -576,13 +576,14 @@ assert_budget_rejected "whitespace-only max_retries" \
   "must be a positive integer"
 
 # --- Test 24: MAX_RETRIES bounds every attempt loop, and they share one counter ---
-# The main retry, artifact-enforcement and decision-verification loops deliberately share
-# $ATTEMPT so the budget caps total attempts across all phases, not per phase. A per-node
-# max_retries is only meaningful if that stays true.
+# The main retry, artifact-enforcement, decision-verification and PR-verification loops
+# deliberately share $ATTEMPT so the budget caps total attempts across all phases, not per
+# phase (Caveat 4: PR verification only gets whatever budget the first three phases didn't
+# already spend). A per-node max_retries is only meaningful if that stays true.
 ATTEMPT_LOOPS=$(grep -cF '[ $ATTEMPT -lt $MAX_RETRIES ]' "$ENTRYPOINT")
-[ "$ATTEMPT_LOOPS" -eq 3 ] \
-  && ok "all three attempt loops are bounded by the shared \$ATTEMPT/\$MAX_RETRIES pair" \
-  || fail "all three attempt loops are bounded by the shared \$ATTEMPT/\$MAX_RETRIES pair (found $ATTEMPT_LOOPS)"
+[ "$ATTEMPT_LOOPS" -eq 4 ] \
+  && ok "all four attempt loops are bounded by the shared \$ATTEMPT/\$MAX_RETRIES pair" \
+  || fail "all four attempt loops are bounded by the shared \$ATTEMPT/\$MAX_RETRIES pair (found $ATTEMPT_LOOPS)"
 
 # --- Test 19: needs_pr field parsing (mirrors Test 10's need_decision coverage) ---
 # A regression here (e.g. a typo turning .needs_pr into .need_pr) would silently disable

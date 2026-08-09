@@ -135,9 +135,9 @@ public class GraphSnapshotBuilderTest extends BaseTest {
 
     @Test
     void buildSnapshotIncludesDecisionOptionsForPlainEdgeGate() throws Exception {
-        // "Review Escalation" (feature-development, v33) has two outgoing edges — approved,
-        // rereview — and no terminal_decisions config: a plain edge-driven gate. Prior to v33
-        // this test targeted "Final Approval", but v33 (Decision 2 in the accompanying spec) gave
+        // "Review Escalation" (feature-development, v35) has two outgoing edges — approved,
+        // rereview — and no terminal_decisions config: a plain edge-driven gate. Prior to v35
+        // this test targeted "Final Approval", but v35 (Decision 2 in the accompanying spec) gave
         // Final Approval a terminal_decisions entry alongside its remaining edge, so it's no
         // longer a plain edge-driven gate — that mixed edge+terminal_decisions shape is instead
         // covered below by "Roadmap Human Gate" (a different node/template with the same general
@@ -197,7 +197,7 @@ public class GraphSnapshotBuilderTest extends BaseTest {
     void buildSnapshotDecisionOptionsEmptyForNodeWithNoEdgesOrTerminalDecisions() throws Exception {
         // Neither seeded template has a node with zero outgoing edges AND no terminal_decisions
         // config any more: feature-development's old example of this shape, "push_create_pr", was
-        // retired in v33 (Decision 1 in the accompanying spec — PR creation moved into Implement
+        // retired in v35 (Decision 1 in the accompanying spec — PR creation moved into Implement
         // and Code Review, and the dedicated node it lived on was deleted outright), and
         // roadmap-provisioner's two nodes both have at least one outgoing edge. Build a minimal
         // standalone template with exactly this shape instead of depending on seeded data having
