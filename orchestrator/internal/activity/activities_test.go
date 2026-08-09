@@ -1668,6 +1668,99 @@ func TestExecuteAINodeFromSnapshot_TurnBudgetOmittedWhenEmpty(t *testing.T) {
 	assert.False(t, hasMaxRetries, "config.json must omit max_retries when not set on the snapshot")
 }
 
+// TestExecuteAINodeFromSnapshot_NeedsPRInConfigJson verifies that NeedsPR true (derived
+// from config_overrides.needs_pr == "true") is propagated to the agent via
+// config.json["needs_pr"].
+func TestExecuteAINodeFromSnapshot_NeedsPRInConfigJson(t *testing.T) {
+	var receivedConfigJSON map[string]interface{}
+
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/internal/workloads/"):
+			var req map[string]interface{}
+			json.NewDecoder(r.Body).Decode(&req)
+			if cj, ok := req["configJson"].(map[string]interface{}); ok {
+				receivedConfigJSON = cj
+			}
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"executionHandle": "agent-abc12345",
+				"jobSecretHash":   "hash123",
+			})
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer apiServer.Close()
+
+	client := apiclient.NewClient(apiServer.URL)
+	cfg := &config.Config{
+		APIServerURL: apiServer.URL,
+		Callback:     config.CallbackConfig{URL: "http://callback:9090/api/v1/callback"},
+	}
+	acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
+
+	err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+		NodeExecutionID: uuid.New(),
+		RunID:           uuid.New(),
+		TemplateNodeID:  uuid.New(),
+		Label:           "implement",
+		ExecutorType:    "ai",
+		PromptTemplate:  "irrelevant",
+		NeedsPR:         true,
+	})
+	assert.ErrorIs(t, err, activity.ErrResultPending)
+
+	assert.Equal(t, true, receivedConfigJSON["needs_pr"],
+		"config.json must include needs_pr=true when NeedsPR is set on the snapshot")
+}
+
+// TestExecuteAINodeFromSnapshot_NeedsPROmittedWhenFalse verifies needs_pr is omitted from
+// config.json when NeedsPR is false (the zero value, i.e. not set via config_overrides).
+func TestExecuteAINodeFromSnapshot_NeedsPROmittedWhenFalse(t *testing.T) {
+	var receivedConfigJSON map[string]interface{}
+
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/internal/workloads/"):
+			var req map[string]interface{}
+			json.NewDecoder(r.Body).Decode(&req)
+			if cj, ok := req["configJson"].(map[string]interface{}); ok {
+				receivedConfigJSON = cj
+			}
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"executionHandle": "agent-abc12345",
+				"jobSecretHash":   "hash123",
+			})
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer apiServer.Close()
+
+	client := apiclient.NewClient(apiServer.URL)
+	cfg := &config.Config{
+		APIServerURL: apiServer.URL,
+		Callback:     config.CallbackConfig{URL: "http://callback:9090/api/v1/callback"},
+	}
+	acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
+
+	err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+		NodeExecutionID: uuid.New(),
+		RunID:           uuid.New(),
+		TemplateNodeID:  uuid.New(),
+		Label:           "spec_review",
+		ExecutorType:    "ai",
+		PromptTemplate:  "irrelevant",
+		// NeedsPR intentionally not set
+	})
+	assert.ErrorIs(t, err, activity.ErrResultPending)
+
+	_, hasNeedsPR := receivedConfigJSON["needs_pr"]
+	assert.False(t, hasNeedsPR, "config.json must omit needs_pr when not set on the snapshot")
+}
+
 // TestLoadReviewHistoryJSON_PreservesFeedbackText is the end-to-end regression test for
 // the bug where the reviewer's feedback never reached the Roadmap Analyzer's
 // {review_history} prompt variable. It exercises the full path from the API server's

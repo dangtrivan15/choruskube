@@ -622,6 +622,7 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 				// Multi-repo config building
 				var repos []map[string]interface{}
 				needsBranch := extractConfigField(snapshotNode.ConfigOverrides, "needs_branch")
+				needsPR := extractConfigField(snapshotNode.ConfigOverrides, "needs_pr")
 				effort := extractConfigField(snapshotNode.ConfigOverrides, "effort")
 				// Per-node turn/retry budget. Travels as a string like every other
 				// config override; the agent entrypoint validates it and falls back to
@@ -708,6 +709,7 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 						Command:                command,
 						OrgSlug:                params.OrgSlug,
 						NeedDecision:           HasConditionalEdges(snap, node.TemplateNodeID),
+						NeedsPR:                needsPR == "true",
 						Repos:                  repos,
 						OutputSpec:             snapshotNode.OutputSpec,
 						TaskID:                 taskID,

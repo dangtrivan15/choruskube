@@ -730,4 +730,44 @@ public class InternalRunControllerTest extends BaseTest {
         exec.setArtifactRefs(artifactRefs);
         return execRepo.save(exec);
     }
+
+    // ── node-execution-scoped pull-requests mirror (Decision 3/3.3) ──────────────
+
+    @Test
+    void getPullRequestsForNodeExecution_returnsSamePullRequestsAsRunScopedRead() throws Exception {
+        NodeExecution exec = new NodeExecution();
+        exec.setWorkflowRunId(run.getId());
+        exec.setTemplateNodeId(templateNode.getId());
+        exec.setGraphVersion(1);
+        exec = execRepo.save(exec);
+
+        Map<String, Object> body = Map.of(
+                "gitRepoId",
+                gitRepo.getId().toString(),
+                "prUrl",
+                "https://github.com/test/repo/pull/1",
+                "prNumber",
+                1,
+                "title",
+                "Add dark mode",
+                "repoName",
+                gitRepo.getName());
+
+        mockMvc.perform(post("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/pull-requests")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isCreated());
+
+        // The node-execution-scoped mirror exists precisely because InternalAuthFilter only
+        // authorizes an agent's JOB_SECRET for paths carrying its own node-executions/{id}
+        // segment — the plain run-scoped GET /{runId}/pull-requests is unreachable from an
+        // agent pod. It must return the exact same PR set.
+        mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/pull-requests"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$").isArray())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].prUrl").value("https://github.com/test/repo/pull/1"))
+                .andExpect(jsonPath("$[0].gitRepoId").value(gitRepo.getId().toString()))
+                .andExpect(jsonPath("$[0].workflowRunId").value(run.getId().toString()));
+    }
 }

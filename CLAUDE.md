@@ -65,7 +65,7 @@ cd api-server && ./gradlew jacocoTestCoverageVerification
 - Use `set -euo pipefail` in all bash scripts
 - Agent entrypoint is `agent-images/claude-code/entrypoint.sh` — changes affect all agent pods and ship via the published agent image
 - The dev image (`agent-images/choruskube-dev`) builds on top of `claude-code` with a fuller toolchain
-- Agent-facing CLI scripts (on PATH in the agent image): `report-result`, `fetch-github-token`, `check-decision`, `list-decisions`, `artifact`, `create-proposal`, `list-proposals`, `update-proposal`, `register-pr`, `run-all-tests`, `get-roadmap-graph`, `update-task-status`
+- Agent-facing CLI scripts (on PATH in the agent image): `report-result`, `fetch-github-token`, `check-decision`, `list-decisions`, `artifact`, `create-proposal`, `list-proposals`, `update-proposal`, `register-pr`, `check-prs`, `run-all-tests`, `get-roadmap-graph`, `update-task-status`
 - Entrypoint-only scripts: `send-heartbeat`, `send-callback`, `live-chat-loop`
 - All scripts use `JOB_SECRET` Bearer auth for API calls
 - Agents access object storage through **presigned URLs** issued by the API server (`artifact` CLI) — object-store credentials never enter the pod

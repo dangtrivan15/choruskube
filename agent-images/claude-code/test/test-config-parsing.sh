@@ -576,13 +576,56 @@ assert_budget_rejected "whitespace-only max_retries" \
   "must be a positive integer"
 
 # --- Test 24: MAX_RETRIES bounds every attempt loop, and they share one counter ---
-# The main retry, artifact-enforcement and decision-verification loops deliberately share
-# $ATTEMPT so the budget caps total attempts across all phases, not per phase. A per-node
-# max_retries is only meaningful if that stays true.
+# The main retry, artifact-enforcement, decision-verification and PR-verification loops
+# deliberately share $ATTEMPT so the budget caps total attempts across all phases, not per
+# phase (Caveat 4: PR verification only gets whatever budget the first three phases didn't
+# already spend). A per-node max_retries is only meaningful if that stays true.
 ATTEMPT_LOOPS=$(grep -cF '[ $ATTEMPT -lt $MAX_RETRIES ]' "$ENTRYPOINT")
-[ "$ATTEMPT_LOOPS" -eq 3 ] \
-  && ok "all three attempt loops are bounded by the shared \$ATTEMPT/\$MAX_RETRIES pair" \
-  || fail "all three attempt loops are bounded by the shared \$ATTEMPT/\$MAX_RETRIES pair (found $ATTEMPT_LOOPS)"
+[ "$ATTEMPT_LOOPS" -eq 4 ] \
+  && ok "all four attempt loops are bounded by the shared \$ATTEMPT/\$MAX_RETRIES pair" \
+  || fail "all four attempt loops are bounded by the shared \$ATTEMPT/\$MAX_RETRIES pair (found $ATTEMPT_LOOPS)"
+
+# --- Test 19: needs_pr field parsing (mirrors Test 10's need_decision coverage) ---
+# A regression here (e.g. a typo turning .needs_pr into .need_pr) would silently disable
+# the entire PR-completion gate feature with nothing else in this suite to catch it: the
+# Go-side orchestrator tests only prove config.json gets written correctly, not that
+# entrypoint.sh reads it back, and the E2E/mock-agent path never exercises this field
+# either (NEED_PR is gated on EXECUTOR_TYPE != script, same as NEED_DECISION).
+#
+# The two jq assertions below exercise the `// false` idiom against sample JSON in
+# isolation — they'd pass identically even if entrypoint.sh's own extraction line used
+# a different field name entirely, so on their own they don't actually guard against the
+# typo they're introduced to catch. The third assertion closes that gap by asserting on
+# entrypoint.sh's own literal extraction line, the same way Test 20 below already does
+# for the PR-verification block — confirmed by empirically reintroducing the exact
+# `.needs_pr` -> `.need_pr` typo into entrypoint.sh and re-running this suite: without
+# this third assertion, all tests still passed.
+cat > "$CONFIG" <<'EOF'
+{"run_id":"x","node_execution_id":"y","prompt":"z","needs_pr":true}
+EOF
+NEED_PR=$(jq -r '.needs_pr // false' "$CONFIG")
+[ "$NEED_PR" = "true" ] && ok "needs_pr=true parsed" || fail "needs_pr=true parsed"
+
+cat > "$CONFIG" <<'EOF'
+{"run_id":"x","node_execution_id":"y","prompt":"z"}
+EOF
+NEED_PR=$(jq -r '.needs_pr // false' "$CONFIG")
+[ "$NEED_PR" = "false" ] && ok "needs_pr absent defaults to false" || fail "needs_pr absent defaults to false"
+
+grep -q "jq -r '\.needs_pr // false'" "$ENTRYPOINT" \
+  && ok "entrypoint.sh itself extracts NEED_PR via .needs_pr (not just this test's own jq idiom)" \
+  || fail "entrypoint.sh itself extracts NEED_PR via .needs_pr (not just this test's own jq idiom)"
+
+# --- Test 20: entrypoint.sh's PR-verification block branches on check-prs's exit
+# status (not stdout text, unlike DECISION's "(none)" string-equality idiom), and
+# captures check-prs's stderr diagnostics too so a loud failure (Caveat 3) actually
+# reaches the retry prompt / final error message instead of being silently dropped ---
+grep -q "PR verification" "$ENTRYPOINT" \
+  && ok "entrypoint narrates a PR verification block" || fail "entrypoint narrates a PR verification block"
+grep -q 'PR_CHECK_STATUS=\$?' "$ENTRYPOINT" \
+  && ok "PR verification branches on check-prs's exit status" || fail "PR verification branches on check-prs's exit status"
+grep -q 'check-prs 2>&1' "$ENTRYPOINT" \
+  && ok "PR verification captures check-prs's stderr, not just stdout" || fail "PR verification captures check-prs's stderr, not just stdout"
 
 # --- Summary ---
 echo ""

@@ -197,10 +197,11 @@ public class Phase4AEndToEndTest extends BaseTest {
         assertThat(snapshot.get("inputs").get("test_command").asText()).isEqualTo("npm test");
         assertThat(snapshot.get("inputs").get("agent_image").asText()).isEqualTo("my-agent:latest");
 
-        // Verify snapshot shape (v32: 9 nodes, 20 edges — Code Review's escalation
-        // exits now route through the Review Escalation human gate before Test).
-        assertThat(snapshot.get("nodes")).hasSize(9);
-        assertThat(snapshot.get("edges")).hasSize(20);
+        // Verify snapshot shape (v35: 8 nodes, 19 edges — Push & Create PR was retired;
+        // Implement and Code Review now open/update PRs themselves, and Final Approval's
+        // `approved` decision is terminal instead of routing to one more AI step).
+        assertThat(snapshot.get("nodes")).hasSize(8);
+        assertThat(snapshot.get("edges")).hasSize(19);
     }
 
     @Test

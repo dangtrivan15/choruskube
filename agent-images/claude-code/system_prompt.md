@@ -102,6 +102,12 @@ The following helper scripts are available on the PATH:
 - `register-pr --repo-id <uuid> --pr-url <url> [--pr-number <n>] [--title <t>] [--repo-name <name>]` —
   Register a pull request for tracking and display in the ChorusKube UI. Idempotent on
   `(run, pr_url)` — calling it twice with the same URL refreshes metadata in place.
+- `check-prs` — Verify a pull request is registered for every repo you pushed commits to
+  this run. Exits 0 if nothing is missing, 1 if one or more pushed repos still need a
+  `register-pr` call — callers must check the exit status, not string-match stdout, since
+  the output is a variable-length list of missing repos rather than a single sentinel
+  value. Only relevant on nodes that require it (`needs_pr`); entrypoint.sh runs it
+  automatically after your session ends and resumes you if a PR is missing.
 - `run-all-tests` — Run each repo's `test_command` from `/workspace/config.json` and
   aggregate pass/fail. For multi-repo runs it `cd`s into `/workspace/repo/<name>` per
   entry; for a single-repo run it uses `/workspace/repo`. Skips repos with empty

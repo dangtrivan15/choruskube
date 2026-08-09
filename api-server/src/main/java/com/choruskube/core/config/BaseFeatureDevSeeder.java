@@ -35,7 +35,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
     // and executor changes here never retroactively mutate prior versions. To ship a
     // change, edit the constants in this file (prompt, executor, schema), increment
     // CURRENT_VERSION, and the next boot creates the new snapshot.
-    static final int CURRENT_VERSION = 34;
+    static final int CURRENT_VERSION = 35;
 
     private static final String TEMPLATE_NAME = "Feature Development";
 
@@ -517,9 +517,10 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
               of Code Review will run them — do NOT run the full test suite yourself)
             - Commit all changes on the working branch
             - Push the branch to origin
-            - **Do NOT run `gh pr create` or open a pull request.** A separate
-              "Push & Create PR" node owns PR creation. Your responsibility ends
-              at `git push`.
+            - Do NOT run `gh pr create` from inside this per-repo subagent. PR
+              creation happens once, afterward, in the "Opening and updating
+              pull requests" section below, after every repo's implementation
+              is done. Your subagent's responsibility ends at `git push`.
 
             For repos with cross-repo dependencies (the plan will call these out),
             implement them in the ordered sequence specified in the plan; do not
@@ -536,13 +537,151 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             authoritative test gate is the Test node downstream — not your local
             invocation.
 
+            ## Opening and updating pull requests
+
+            Once every repo's implementation is done, open or refresh a pull
+            request for every repo you pushed commits to this run. This is your
+            responsibility now — Push & Create PR no longer exists as a
+            separate node; PR creation moved here so a reviewer has something
+            to look at from the moment implementation starts.
+
+            **Retry check first.** Build a known-PRs set before doing anything
+            else: merge every `pr_urls.txt` visible in your Predecessor
+            Artifacts — your own earlier iteration's (label `implement` —
+            present only on a retry after a Test failure, i.e. iteration > 1)
+            AND Code Review's, if present (label `code_review` — present
+            whenever Code Review ran and registered anything before Test
+            failed and routed back to you; Code Review is reachable as your
+            own predecessor on this path, and it may have opened a fallback PR
+            for a repo you never touched — see Decision 5/§3.5 in the spec).
+            `artifact get` each one that's present. Where both list the same
+            repo, the `code_review` entry wins (it reflects more recent
+            state); where only one lists a repo, include it anyway. For any
+            repo in this merged set, do NOT open a new PR — just push your new
+            commits and re-run `register-pr`, using the PR's current
+            title/number (fetch via `gh pr view <url> --json title,number`
+            first, so the refresh call doesn't blank out existing metadata).
+
+            For every other repo with commits pushed this run:
+
+            0. **Resolve the repo's visibility FIRST**, before writing any PR
+               text: run `gh repo view <owner/repo> --json visibility`. Treat it
+               as PUBLIC if the command fails or the answer is unclear
+               (fail-safe). This classification governs what may appear in the
+               PR body. See "Repository Isolation" in your system prompt for the
+               full rule; it overrides any instruction here that conflicts with
+               it. A PUBLIC repo's PR must not name, link to, or otherwise
+               reveal the existence of any non-public repo in this run, and must
+               not carry that repo's infrastructure detail — scope and
+               generalize instead.
+
+            1. **Push and open a PR.** Ensure all changes are committed and the
+               branch is pushed to origin, then create a pull request against
+               the default branch via `gh pr create`.
+               - PR title: a concise summary of this repo's portion of the
+                 feature.
+               - PR body, in this exact order:
+
+                 **a. Summary** — per-repo implementation summary scoped to this
+                 repo, describing what you just did. For a PUBLIC repo, describe
+                 only this repo's change and justify it on grounds that hold
+                 within this repo alone; do not explain it by reference to
+                 another repo.
+
+                 **b. ⚠️ Manual Operations Required** — from section §8 of the
+                 specification (the Local/Production table AND the "Notes for
+                 production rollout" block), under a top-level
+                 `## ⚠️ Manual Operations Required` heading.
+                   - For a NON-PUBLIC repo: copy §8 verbatim.
+                   - For a PUBLIC repo: include ONLY the operations that apply
+                     to this repo, rewritten to remove other-repo names,
+                     internal hosts, cluster/namespace detail, and internal
+                     paths. Drop rows that describe work in a non-public repo
+                     entirely — do not replace them with a placeholder row that
+                     implies one exists.
+                   - If §8 is empty, absent, or nothing survives the filter,
+                     write `_No manual operations required for this change._`
+                     instead.
+
+                 **c. Caveats & Known Limitations** — under a top-level
+                 `## Caveats & Known Limitations` heading, list each Caveat from
+                 §7 of the specification: title and Disposition tag, "What's
+                 not handled" line, "Reasoning" line. §7 is cross-repo content
+                 like §8, so the same visibility rule applies: NON-PUBLIC repo
+                 gets every Caveat; PUBLIC repo gets only the Caveats that
+                 concern it, generalized to remove other-repo names and
+                 infrastructure detail, with any Caveat that exists only
+                 because a non-public repo is involved dropped entirely rather
+                 than reworded into a hint that one exists. If §7 is empty, or
+                 nothing survives the filter, omit this section entirely.
+
+                 **d. ❓ Open Decisions for Reviewer** — ONLY include this
+                 section if at least one Caveat is still tagged "Needs human
+                 decision". When included, render it under a top-level
+                 `## ❓ Open Decisions for Reviewer` heading: restate the open
+                 question in one sentence, list the options the spec laid out
+                 (if any), and make clear that merging implies accepting the
+                 default behavior described in the Caveat's Reasoning. Inherits
+                 §7's visibility filter. Omit entirely if none remain.
+
+                 **e. Companion PRs placeholder** — a single line:
+                 `_Companion PRs: (linked after all PRs are created)_`. OMIT
+                 this placeholder entirely if this repo will have no linkable
+                 companions under step 3 below (e.g. a PUBLIC repo in a run
+                 whose other repos are all non-public).
+
+               Record the PR URL and PR number. You may dispatch Task subagents
+               to open PRs in parallel — one per repo.
+
+            2. **Register each PR with ChorusKube** by running, for each PR:
+
+                   register-pr --repo-id <gitRepoId> --pr-url <url> \\
+                       --pr-number <number> --title <title> --repo-name <name>
+
+               Use the `id` from config.json's `repos[]` as `<gitRepoId>`.
+
+            3. **Cross-link the PRs you just opened, honoring visibility.**
+               After all of this pass's PRs exist, for each PR edit its body
+               (via `gh pr edit <url> --body <new_body>`) to replace the
+               Companion PRs placeholder with a `## Companion PRs` section.
+               Which PRs may be listed depends on the visibility of the repo
+               whose body you are editing:
+                 - NON-PUBLIC repo's PR: list every OTHER PR opened this pass.
+                 - PUBLIC repo's PR: list ONLY the other PRs opened this pass
+                   whose repos are also PUBLIC. Never link or name a
+                   non-public repo's PR from a public repo — the URL alone
+                   discloses that repo's existence.
+               If no companions remain listable for a public repo, omit the
+               `## Companion PRs` section entirely. Do NOT write "none", "not
+               applicable", or any note explaining why it is empty. PRESERVE
+               the other sections during this edit.
+
+            4. **Save artifacts**:
+               - /workspace/out/pr_urls.txt — one `repo_name: url` line per
+                 repo with an open PR: the full known-PRs set from the retry
+                 check above (even a repo you didn't push to this pass, e.g.
+                 one only Code Review's file listed), plus anything newly
+                 opened this pass — not just the repos this pass touched — so
+                 this file fully supersedes both your own prior iteration's
+                 file and Code Review's for every downstream reader.
+               - /workspace/out/pr_summary.md — brief summary of what was
+                 shipped. Include one-line notes if Manual Operations are
+                 required and/or if any Open Decisions for Reviewer remain.
+
+            Code Review runs next and will keep these PRs current as it fixes
+            issues; it also opens a PR itself for any repo you didn't touch. Do
+            not merge PRs — a human will review and merge after Final Approval.
+
             Before finishing, verify the implementation in each affected repo:
             - All plan steps for that repo are addressed
             - Tests are written (the Test node will execute them)
             - Code quality is clean (no dead code, no debug artifacts, no unused imports)
             - Changes match the spec intent, not just the plan mechanics
             - All changes committed and pushed to the working branch
-            - No pull request was opened from this node
+            - A PR is open and registered (via `register-pr`) for every repo
+              with commits pushed this run, unless it already had one from a
+              prior iteration (Test-failure retry), in which case it was
+              refreshed, not duplicated.
 
             Save a summary of what you changed (per repo) as /workspace/out/summary.md.
 
@@ -643,9 +782,87 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             **Code fixes go to git, not to object storage.** When you apply a fix, edit
             the code in `/workspace/repo/...`, verify it as scoped below, then
             `git add` → `git commit -m "review: <what you fixed>"` →
-            `git push origin HEAD`. The branch state is the source of truth;
-            Push & Create PR later reads from this branch. Do NOT write code to
-            `/workspace/out/`.
+            `git push origin HEAD`. The branch state is the source of truth —
+            any PR opened or kept current against it (see "Keeping pull
+            requests current" below) reflects these commits automatically via
+            GitHub. Do NOT write code to `/workspace/out/`.
+
+            **Keeping pull requests current.** A PR already exists for some or
+            all repos by the time you run — Implement opens one per repo it
+            changed, and an earlier Code Review pass may have opened more.
+            Your job is to keep every PR you touch current, and to open one
+            yourself for a repo no earlier pass has covered yet.
+
+            - **Build the known-PRs set first.** Merge every `pr_urls.txt`
+              visible in your Predecessor Artifacts: Implement's (label
+              `implement`) and, if present, Code Review's own most recent
+              prior pass (label `code_review` — present from this node's
+              second iteration onward, whenever an earlier pass registered
+              anything). `artifact get` each one that's present. Where both
+              list the same repo, the `code_review` entry wins (it reflects
+              more recent state); where only one lists a repo, include it
+              anyway. This union — not Implement's file alone — is "the
+              known-PRs set" for everything below. This matters because Code
+              Review is itself a self-looping node (`revised`, and re-entry
+              from Review Escalation/Final Approval on `rereview`): a later
+              pass must recognize a PR *it itself* opened for a repo Implement
+              never touched, not just PRs Implement opened — otherwise a
+              second pass pushing further fixes to that same repo would try to
+              `gh pr create` again for a branch that already has an open PR
+              and fail.
+
+            - **After any `git push` this pass**, for each repo you just
+              pushed to:
+              - If the repo is already in the known-PRs set: GitHub already
+                reflects the new commit on the open PR with no action needed
+                there, but re-run `register-pr` to refresh ChorusKube's own
+                tracking row — fetch the PR's current title/number first
+                (`gh pr view <url> --json title,number`) and pass them
+                through, never a blank `--title`/`--repo-name`, so the
+                refresh doesn't blank out existing metadata. This refresh
+                call is a normal, expected action on every pass that pushes
+                to an already-registered repo, not just a fallback for the
+                missing case below.
+              - If the repo is missing from the known-PRs set: open and
+                register a new PR for it now.
+                - Resolve its visibility first: `gh repo view <owner/repo>
+                  --json visibility`, fail-safe to PUBLIC if the command
+                  fails or is unclear.
+                - `gh pr create` against the default branch. PR title: a
+                  concise summary of this repo's portion of the fix. PR body,
+                  in this exact order: **a. Summary** of what you fixed in
+                  this repo (generalized, no cross-repo references, if
+                  PUBLIC); **b. ⚠️ Manual Operations Required** from spec §8
+                  (verbatim for NON-PUBLIC, filtered/generalized for PUBLIC,
+                  or `_No manual operations required for this change._` if
+                  none survive); **c. Caveats & Known Limitations** from spec
+                  §7 (same visibility filtering — NON-PUBLIC gets every
+                  Caveat, PUBLIC gets only the ones that concern it with any
+                  non-public-only Caveat dropped entirely, omit the section
+                  if empty); **d. ❓ Open Decisions for Reviewer**, only if a
+                  Caveat is still tagged "Needs human decision" after
+                  filtering, else omit; **e. `## Companion PRs`** populated
+                  (not a placeholder) from the sibling URLs in the known-PRs
+                  set, applying the same visibility rule (NON-PUBLIC repo's
+                  PR lists every sibling; PUBLIC repo's PR lists only PUBLIC
+                  siblings; omit the section if none survive — never a
+                  "none" note).
+                - Register it: `register-pr --repo-id <gitRepoId> --pr-url
+                  <url> --pr-number <number> --title <title> --repo-name
+                  <name>` (`id` from config.json's `repos[]`).
+                - **One-directional only:** do NOT `gh pr edit` the earlier,
+                  already-open sibling PRs to add a link back to this new one
+                  — see the spec's Caveat 5. Their Companion PRs sections
+                  stay exactly as Implement (or an earlier Code Review pass)
+                  left them.
+
+            - **If this pass registered or refreshed anything at all**, write
+              `/workspace/out/pr_urls.txt` as the full known-PRs set *after*
+              this pass's changes (every repo from the merged set, plus
+              anything just opened this pass) — not just the repos touched
+              this pass — so it fully supersedes Implement's (and any earlier
+              Code Review pass's) file for every downstream reader: a later
+              Code Review pass, or Implement on a Test-failure retry.
 
             **Scope verification to what you changed.** Run only what covers the
             files you touched — a single test class, one spec file, a typecheck
@@ -743,160 +960,6 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             written and any fix commits are pushed. The decision is final once
             submitted. Your task is not complete until you call `report-result`.""";
 
-    private static final String PUSH_PR_PROMPT = """
-            You are creating pull requests for a completed multi-repository feature
-            implementation. Create ONE pull request per affected repository, with
-            companion-PR cross-links (subject to the repository-visibility rules
-            below) and explicit surfacing of (a) manual operations the reviewer
-            must perform and (b) caveats the spec intentionally did not handle.
-
-            Specification:
-            {input.draft_spec_and_plan.result}
-
-            Spec review notes (use to augment Caveats with resolution context):
-            {input.spec_review.result}
-
-            Implementation summary:
-            {input.implement.result}
-
-            Code review:
-            {input.code_review.result}
-
-            Repositories are cloned under /workspace/repo/<name>/ on the working branch.
-            Per-repo metadata (id, url, name) is in /workspace/config.json under the
-            "repos" array.
-
-            ## Steps
-
-            0. **Resolve each repo's visibility FIRST**, before writing any PR text.
-               For each repo in config.json, run
-               `gh repo view <owner/repo> --json visibility`. Treat a repo as PUBLIC
-               if the command fails or the answer is unclear (fail-safe). Carry this
-               classification through every step below — it governs what may appear
-               in each PR body. See "Repository Isolation" in your system prompt for
-               the full rule; it overrides any instruction here that conflicts with it.
-
-               A PUBLIC repo's PR must not name, link to, or otherwise reveal the
-               existence of any non-public repo in this run, and must not carry that
-               repo's infrastructure detail. Scope and generalize its content instead.
-
-            1. **Per repo, push and open a PR**. For each repo with a committed working
-               branch, in /workspace/repo/<name>/:
-               - Ensure all changes are committed and the branch is pushed to origin.
-               - Create a pull request against the default branch via `gh pr create`.
-               - PR title: a concise summary of this repo's portion of the feature.
-               - PR body, in this exact order:
-
-                 **a. Summary** — per-repo implementation summary scoped to this
-                 repo (from {input.implement.result}). For a PUBLIC repo, describe
-                 only this repo's change and justify it on grounds that hold within
-                 this repo alone; do not explain it by reference to another repo.
-
-                 **b. Code Review Findings** — relevant excerpt from
-                 {input.code_review.result}, scoped to this repo. Never paste the
-                 review verbatim into a PUBLIC repo's PR: review notes routinely
-                 discuss every repo in the run. Summarize only the findings that
-                 concern this repo, and generalize any cross-repo reasoning.
-
-                 **c. ⚠️ Manual Operations Required** — from section §8 of the
-                 specification (the Local/Production table AND the "Notes for
-                 production rollout" block), under a top-level
-                 `## ⚠️ Manual Operations Required` heading.
-                   - For a NON-PUBLIC repo: copy §8 verbatim. It is cross-repo
-                     content — every non-public repo's PR gets the same full block.
-                   - For a PUBLIC repo: include ONLY the operations that apply to
-                     this repo, rewritten to remove other-repo names, internal
-                     hosts, cluster/namespace detail, and internal paths. Drop rows
-                     that describe work in a non-public repo entirely — do not
-                     replace them with a placeholder row that implies one exists.
-                   - If §8 is empty, absent, or nothing survives the filter, write
-                     `_No manual operations required for this change._` instead.
-
-                 **d. Caveats & Known Limitations** — under a top-level
-                 `## Caveats & Known Limitations` heading, list each Caveat from
-                 §7 of the specification:
-                   - Title and Disposition tag (Accepted / Future work /
-                     Needs human decision).
-                   - "What's not handled" line.
-                   - "Reasoning" line.
-                   - If the spec review notes contain a resolution or comment
-                     that materially clarifies how this Caveat was addressed
-                     during review, append a `> Resolution from review:`
-                     blockquote with a one-line summary. Do not invent
-                     resolutions; only include this when the review notes
-                     clearly speak to the caveat.
-                 §7 is cross-repo content, exactly like §8, so the same
-                 visibility rule applies. For a NON-PUBLIC repo: list every
-                 Caveat. For a PUBLIC repo: list only the Caveats that concern
-                 this repo, generalized to remove other-repo names and
-                 infrastructure detail; DROP any Caveat that exists only because
-                 a non-public repo is involved, rather than rewording it into a
-                 hint that one exists.
-                 If §7 is empty, or nothing survives the filter, omit this
-                 section entirely.
-
-                 **e. ❓ Open Decisions for Reviewer** — ONLY include this section
-                 IF, after applying any review-note resolutions, there is at
-                 least one Caveat still tagged "Needs human decision". When
-                 included, render it under a top-level
-                 `## ❓ Open Decisions for Reviewer` heading. For each
-                 unresolved decision:
-                   - Restate the open question in one sentence.
-                   - List the options the spec laid out (if any).
-                   - Make clear that merging the PR implies accepting the
-                     default behavior described in the Caveat's Reasoning.
-                 This section is derived from §7, so it inherits §7's visibility
-                 filter: a decision that was dropped or generalized for a PUBLIC
-                 repo above must be dropped or generalized here too. Never
-                 restate an open question that only makes sense if the reader
-                 knows a non-public repo exists.
-                 If all "Needs human decision" caveats were resolved during
-                 review, omit this section entirely. Its presence is a signal
-                 that the merging reviewer must make a call before merging.
-
-                 **f. Companion PRs placeholder** — a single line:
-                 `_Companion PRs: (linked after all PRs are created)_`.
-                 OMIT this placeholder entirely if this repo will have no linkable
-                 companions under the step-3 rules (e.g. a PUBLIC repo in a run
-                 whose other repos are all non-public).
-
-               - Record the PR URL and PR number.
-
-               You may dispatch Task subagents to create PRs in parallel — one per repo.
-
-            2. **Register each PR with ChorusKube** by running, for each PR:
-
-                   register-pr --repo-id <gitRepoId> --pr-url <url> \\
-                       --pr-number <number> --title <title> --repo-name <name>
-
-               Use the `id` from config.json's repos[] as `<gitRepoId>`.
-
-            3. **Cross-link PRs, honoring visibility**. After all PRs are created,
-               for each PR edit its body (via `gh pr edit <url> --body <new_body>`)
-               to replace the Companion PRs placeholder with a `## Companion PRs`
-               section. Which PRs may be listed depends on the visibility of the
-               repo whose body you are editing:
-                 - NON-PUBLIC repo's PR: list every OTHER PR in the set.
-                 - PUBLIC repo's PR: list ONLY the other PRs whose repos are also
-                   PUBLIC. Never link or name a non-public repo's PR from a public
-                   repo — the URL alone discloses that repo's existence.
-               If no companions remain listable for a public repo, omit the
-               `## Companion PRs` section entirely. Do NOT write "none", "not
-               applicable", or any note explaining why it is empty — such a note
-               discloses exactly what the rule exists to withhold.
-               PRESERVE the ⚠️ Manual Operations Required, Caveats & Known
-               Limitations, and ❓ Open Decisions for Reviewer sections during
-               this edit.
-
-            4. **Save artifacts**:
-               - /workspace/out/pr_urls.txt — one URL per line, in repo order.
-               - /workspace/out/pr_summary.md — brief summary of what was shipped.
-                 Include one-line notes if Manual Operations are required and/or
-                 if any Open Decisions for Reviewer remain, so the run log makes
-                 the operational handoff visible.
-
-            Do not merge the PRs. A human will review and merge.""";
-
     private final GraphTemplateRepository templateRepo;
     private final NodeDefinitionRepository nodeDefRepo;
     private final TemplateNodeRepository templateNodeRepo;
@@ -984,21 +1047,13 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
 
         // Human gate that Code Review's escalation decisions
         // (need_human_decision:review_conflict / need_human_decision:uncertainty) route to
-        // directly, BEFORE Test runs — see v32 impl subgraph comment in seedTemplate().
+        // directly, BEFORE Test runs — see v35 impl subgraph comment in seedTemplate().
         defs.put("Review Escalation", createNodeDef("Review Escalation", ExecutorType.human, null, 86400));
 
+        // Terminal node (v35): its `approved` decision is declared via
+        // terminal_decisions in seedTemplate() instead of routing to a
+        // now-retired Push & Create PR node — see Decision 2 in the spec.
         defs.put("Final Approval", createNodeDef("Final Approval", ExecutorType.human, null, 86400));
-
-        NodeDefinition pushCreatePr = createNodeDef("Push & Create PR", ExecutorType.ai, PUSH_PR_PROMPT, 1800);
-        pushCreatePr.setOutputSpec(
-                "{\"files\":[{\"name\":\"pr_summary.md\",\"required\":false,\"description\":\"PR creation confirmation and link\"}]}");
-        // Runs on the default model, NOT a cheaper tier. This node was tiered down to
-        // Haiku through v25 on the premise that it is mechanical (stitch caveats, push
-        // commits, open PR). That premise no longer holds: from v26 it must classify
-        // each repo's visibility and decide what to drop or generalize before writing a
-        // PR body, and a misjudgment publishes non-public detail irreversibly.
-        nodeDefRepo.save(pushCreatePr);
-        defs.put("Push & Create PR", pushCreatePr);
 
         return defs;
     }
@@ -1016,7 +1071,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
         template.setSystem(true);
         template = templateRepo.save(template);
 
-        // v32 layout. Multi-repo coarse-rejection: a single Implement node operates
+        // v35 layout. Multi-repo coarse-rejection: a single Implement node operates
         // across all repos (internally parallelized via Task subagents). Code Review
         // can self-loop to apply fixes; a clean approval proceeds straight to the Test
         // gate so commits Code Review pushes during its self-loop are validated before
@@ -1027,10 +1082,15 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
         // which decides whether to proceed to Test or send the change back to Code
         // Review for another pass (see Decision 1 in the accompanying spec).
         //
+        // v35 retires the dedicated Push & Create PR node: Implement opens each
+        // repo's PR right after implementing, Code Review keeps it current, and
+        // Final Approval's `approved` decision is now terminal (ends the run)
+        // instead of routing to one more AI step — see Decisions 1 and 2.
+        //
         //   Spec subgraph (unchanged from v23):
         //     [Draft S&P] → [Spec Review] ⇄ (revised) → [Approve S&P]
         //
-        //   Impl subgraph (v32):
+        //   Impl subgraph (v35):
         //     [Implement] → [Code Review] ⇄ revised (self-loop)
         //                       ├── approved ────────────────→ [Test]
         //                       └── need_human_decision:* ──→ [Review Escalation]
@@ -1038,7 +1098,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
         //                                                          └── rereview ──→ [Code Review]
         //                    [Test]
         //                       ├── passed ──→ [Final Approval]
-        //                       │                  ├── approved ──→ [Push & Create PR]
+        //                       │                  ├── approved ──→ (terminal — run ends)
         //                       │                  └── rereview ──→ [Code Review]
         //                       └── failed ──→ [Implement]
 
@@ -1081,7 +1141,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                 nodeDefs.get("Implement"),
                 "implement",
                 false,
-                "{\"loop_group\": \"impl-review\", \"needs_branch\": \"true\", \"effort\": \"xhigh\"}",
+                "{\"loop_group\": \"impl-review\", \"needs_branch\": \"true\", \"effort\": \"xhigh\", \"needs_pr\": \"true\"}",
                 "[{\"template_node_label\":\"spec_review\",\"artifacts\":[{\"name\":\"spec_and_plan.md\",\"description\":\"The approved spec to implement\",\"required\":true}]}]");
         // Test runs run-all-tests (a script in the agent image) which iterates each
         // repo's test_command from /workspace/config.json. Single-repo runs read the
@@ -1101,7 +1161,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                 nodeDefs.get("Code Review"),
                 "code_review",
                 false,
-                "{\"loop_group\": \"impl-review\", \"needs_branch\": \"true\", \"effort\": \"xhigh\"}",
+                "{\"loop_group\": \"impl-review\", \"needs_branch\": \"true\", \"effort\": \"xhigh\", \"needs_pr\": \"true\"}",
                 "[{\"template_node_label\":\"code_review\",\"artifacts\":[{\"name\":\"review.md\",\"description\":\"Prior iteration's code review notes including Reasoning for fixes (only present if iteration > 1)\",\"required\":false}]}]");
         // Review Escalation gates entry to Test whenever Code Review can't confidently
         // approve on its own. It reads the same evidence Final Approval already gets
@@ -1114,15 +1174,16 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                 false,
                 "{\"loop_group\": \"impl-review\"}",
                 "[{\"template_node_label\":\"implement\",\"artifacts\":[{\"name\":\"summary.md\",\"description\":\"Implementation summary describing changes made\",\"required\":true}]},{\"template_node_label\":\"code_review\",\"artifacts\":[{\"name\":\"review.md\",\"description\":\"Code review findings and approve/reject recommendation\",\"required\":true}]}]");
+        // Terminal node (v35): `approved` has no outgoing edge — it's a
+        // terminal_decisions entry (Decision 2) that ends the run instead of
+        // routing to the now-retired Push & Create PR node.
         TemplateNode tnFinalApproval = createNode(
                 template,
                 nodeDefs.get("Final Approval"),
                 "final_approval",
                 false,
-                "{\"loop_group\": \"impl-review\"}",
+                "{\"loop_group\": \"impl-review\", \"terminal_decisions\": [\"approved\"]}",
                 "[{\"template_node_label\":\"implement\",\"artifacts\":[{\"name\":\"summary.md\",\"description\":\"Implementation summary describing changes made\",\"required\":true}]},{\"template_node_label\":\"code_review\",\"artifacts\":[{\"name\":\"review.md\",\"description\":\"Code review findings and approve/reject recommendation\",\"required\":true}]}]");
-        TemplateNode tnPushCreatePr = createNode(
-                template, nodeDefs.get("Push & Create PR"), "push_create_pr", false, "{\"needs_branch\": \"true\"}");
 
         // Create edges. v23 introduces self-iterating review nodes: review nodes
         // self-loop on `revised` (find AND fix in one session) and escalate to
@@ -1152,11 +1213,12 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
         createEdge(template, tnReviewEscalation, tnCodeReview, "rereview");
         createEdge(template, tnTest, tnFinalApproval, "passed");
         createEdge(template, tnTest, tnImplement, "failed");
-        createEdge(template, tnFinalApproval, tnPushCreatePr, "approved");
+        // No `approved` edge for tnFinalApproval: it's a terminal_decisions entry
+        // (declared on tnFinalApproval's config-overrides above) that ends the run.
         createEdge(template, tnFinalApproval, tnCodeReview, "rereview");
 
         log.info(
-                "BaseFeatureDevSeeder: seeded template graphId='{}' v{}: 9 template nodes, 20 edges (node defs shared)",
+                "BaseFeatureDevSeeder: seeded template graphId='{}' v{}: 8 template nodes, 19 edges (node defs shared)",
                 GRAPH_ID,
                 version);
     }

@@ -17,6 +17,14 @@
 #   gate_reject      Submit "rejected" decision via API (for human-type nodes)
 #   live_chat        Simulate a live chat session: submit transcript + decision
 #   multi_repo_pr    Register PRs for all repos in a multi-repo run
+#   check_prs_gate   Drives the real check-prs/register-pr CLI contract end to end
+#                    (Decision 3/§3.3 PR completion gate): for every repo in this
+#                    run's config.json repos[], pushes a marker commit to origin,
+#                    registers a PR for it via register-pr, then runs check-prs for
+#                    real and asserts it reports nothing missing — same contract
+#                    entrypoint.sh's PR-verification block exercises against a real
+#                    agent when a node has needs_pr: true. No-op (exit 0) if no
+#                    repos are configured for this node.
 #   roadmap_status_update  Fetch an Epic's Roadmap Graph View, then report a Task's outcome
 #                          via update-task-status (Decision 1/3/4) — same contract a real
 #                          agent uses; requires --epic-id and --task-id
@@ -360,6 +368,67 @@ case "$SCENARIO" in
     exit 0
     ;;
 
+  check_prs_gate)
+    # Exercises the check-prs/register-pr CLI contract end to end (Decision 3/§3.3
+    # PR completion gate), the same way multi_repo_pr exercises register-pr's
+    # contract: real CLI calls against the live API, not faked output. For every
+    # repo in this run's config.json repos[] (already cloned onto its working
+    # branch by entrypoint.sh's Step 3, before this scenario ever runs), pushes a
+    # marker commit to origin (`git push origin HEAD`, no `-u` — matching the real
+    # Implement/Code Review prompts' own push convention, see Decision 5) so
+    # check-prs's `git ls-remote` detects the repo as pushed, then registers a PR
+    # for it via the real register-pr CLI (same fabricated-PR-URL convention as
+    # multi_repo_pr, since there is no real `gh pr create` call here). Finally runs
+    # the real check-prs CLI and asserts it reports nothing missing — proving
+    # entrypoint.sh's PR-verification block has something real to gate on when a
+    # node has needs_pr: true, without a live Claude call.
+    echo "Mock agent: check_prs_gate scenario"
+    REPOS_JSON=$(jq -r '.repos // empty' /workspace/config.json 2>/dev/null || true)
+
+    if [ -z "$REPOS_JSON" ] || [ "$REPOS_JSON" = "null" ]; then
+      echo "No repos configured for this node — nothing for check-prs to gate on."
+      write_artifact "result.txt" "check_prs_gate: no repos configured; nothing to verify"
+      exit 0
+    fi
+
+    while IFS= read -r repo; do
+      repo_id=$(echo "$repo" | jq -r '.id')
+      repo_name=$(echo "$repo" | jq -r '.name')
+      repo_url=$(echo "$repo" | jq -r '.url')
+      repo_dir=$(echo "$repo" | jq -r '.local_path')
+
+      echo "[check_prs_gate] $repo_name: committing + pushing a marker change"
+      (
+        cd "$repo_dir"
+        echo "check_prs_gate marker $(date -u +%Y-%m-%dT%H:%M:%SZ)" > .check-prs-gate-marker
+        git add .check-prs-gate-marker
+        git commit -q -m "mock-agent: check_prs_gate marker" --allow-empty
+        git push origin HEAD
+      ) || { echo "ERROR: check_prs_gate: git push failed for $repo_name" >&2; exit 1; }
+
+      pr_number=$((RANDOM % 1000 + 1))
+      pr_url="${repo_url}/pull/${pr_number}"
+
+      register-pr \
+        --repo-id "$repo_id" \
+        --pr-url "$pr_url" \
+        --pr-number "$pr_number" \
+        --title "chore: check_prs_gate marker (${repo_name})" \
+        --repo-name "$repo_name"
+    done < <(echo "$REPOS_JSON" | jq -c '.[]')
+
+    echo "[check_prs_gate] running check-prs..."
+    if check-prs; then
+      echo "check-prs passed: every pushed repo has a registered PR"
+      write_artifact "result.txt" "check_prs_gate: check-prs passed after pushing + registering all repos"
+      echo "Mock agent: check_prs_gate completed"
+      exit 0
+    else
+      echo "ERROR: check_prs_gate: check-prs reported missing PR(s) after registering every pushed repo" >&2
+      exit 1
+    fi
+    ;;
+
   roadmap_status_update)
     # Exercises the get-roadmap-graph / update-task-status CLI contract (Roadmap Graph View,
     # Decision 1/3/4) the same way multi_repo_pr exercises register-pr's contract: calls the
@@ -570,13 +639,13 @@ JSON
   "")
     echo "ERROR: No scenario specified" >&2
     echo "Usage: mock-agent.sh <scenario> [options]" >&2
-    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, live_chat, multi_repo_pr, roadmap_status_update, roadmap_status_update_env_default, roadmap_status_update_missing_task_id, roadmap_candidates, single_repo_claude_md, dind_isolation, dind_network_connectivity, many_artifacts" >&2
+    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, live_chat, multi_repo_pr, check_prs_gate, roadmap_status_update, roadmap_status_update_env_default, roadmap_status_update_missing_task_id, roadmap_candidates, single_repo_claude_md, dind_isolation, dind_network_connectivity, many_artifacts" >&2
     exit 1
     ;;
 
   *)
     echo "ERROR: Unknown scenario '$SCENARIO'" >&2
-    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, live_chat, multi_repo_pr, roadmap_status_update, roadmap_status_update_env_default, roadmap_status_update_missing_task_id, roadmap_candidates, single_repo_claude_md, dind_isolation, dind_network_connectivity, many_artifacts" >&2
+    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, live_chat, multi_repo_pr, check_prs_gate, roadmap_status_update, roadmap_status_update_env_default, roadmap_status_update_missing_task_id, roadmap_candidates, single_repo_claude_md, dind_isolation, dind_network_connectivity, many_artifacts" >&2
     exit 1
     ;;
 esac
