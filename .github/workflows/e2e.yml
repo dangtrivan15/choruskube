@@ -50,9 +50,30 @@ env:
 jobs:
   # Single job, and its name is the required status check branch protection watches.
   # Keep it named `e2e` — renaming it silently detaches the branch-protection rule, which
-  # then waits forever on a check that is never reported.
+  # then waits forever on a check that is never reported. That constraint is also why the
+  # runner choice below is an expression on ONE job rather than two jobs with complementary
+  # `if:` conditions: a second job means a second check name, and branch protection would
+  # stop seeing the one it is configured for.
   e2e:
-    runs-on: arc-runner-choruskube
+    # Same-repo PRs and manual runs use the self-hosted pool. PRs FROM FORKS run on a
+    # GitHub-hosted runner instead.
+    #
+    # Why: this repository is public, so anyone can open a PR from a fork, and a workflow
+    # triggered that way executes the PR's own code. GitHub withholds `secrets.*` from fork
+    # PRs precisely to stop that code reading credentials — but the self-hosted pool supplies
+    # its configuration through the runner's process environment, which GitHub does not
+    # manage and therefore cannot withhold. Sending fork PRs to a GitHub-hosted runner is
+    # what restores that boundary; it has none of that environment.
+    #
+    # Fork PRs keep full e2e coverage. Every accelerator this workflow reads from the runner
+    # environment (dependency proxy, registry mirror, layer cache) is already optional and
+    # no-ops when unset — see the steps below, which were written to stay runnable anywhere.
+    # A fork run is slower because it fetches from upstream instead, not less thorough.
+    #
+    # `github.event_name != 'pull_request'` keeps workflow_dispatch on the self-hosted pool:
+    # on that event `github.event.pull_request` is null, so testing the repo match alone
+    # would send every manual run to a GitHub-hosted runner.
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'arc-runner-choruskube' || 'ubuntu-latest' }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
