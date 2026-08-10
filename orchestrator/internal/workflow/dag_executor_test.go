@@ -1433,6 +1433,209 @@ func (s *DAGExecutorTestSuite) TestSelfLoopingAIReviewerIteratesThenAdvances() {
 	s.NoError(s.env.GetWorkflowError())
 }
 
+// TestModelEffortResolution_SelfLoopingReviewNode_FirstThenSubsequentIteration
+// covers Decision 2 / Part 2 step 7(a)+(b) of the accompanying spec: a review
+// node's iteration-aware config_overrides keys resolve to the first-iteration
+// model/effort on its first pass (tracker.reviewPass == 1) and to the
+// subsequent-iteration model/effort once the back-edge self-loop advances
+// reviewPass to 2 — keyed on reviewPass, not the raw iteration counter.
+func (s *DAGExecutorTestSuite) TestModelEffortResolution_SelfLoopingReviewNode_FirstThenSubsequentIteration() {
+	draft := uuid.New()
+	review := uuid.New()
+	gate := uuid.New()
+	execDraft := uuid.New()
+	execReview1 := uuid.New()
+	execReview2 := uuid.New()
+	execGate := uuid.New()
+	runID := uuid.New()
+
+	snapshot := `{
+		"nodes": [
+			{"templateNodeId": "` + draft.String() + `", "label": "draft", "executorType": "ai", "timeoutSeconds": 1800, "isEntrypoint": true},
+			{"templateNodeId": "` + review.String() + `", "label": "review", "executorType": "ai", "timeoutSeconds": 1800, "configOverrides": {"loop_group": "review", "model_first_iteration": "opus-x", "effort_first_iteration": "xhigh", "model_subsequent_iteration": "sonnet-y", "effort_subsequent_iteration": "high"}},
+			{"templateNodeId": "` + gate.String() + `", "label": "gate", "executorType": "ai", "timeoutSeconds": 1800}
+		],
+		"edges": [
+			{"sourceNodeId": "` + draft.String() + `", "targetNodeId": "` + review.String() + `"},
+			{"sourceNodeId": "` + review.String() + `", "targetNodeId": "` + review.String() + `", "condition": "revised"},
+			{"sourceNodeId": "` + review.String() + `", "targetNodeId": "` + gate.String() + `", "condition": "approved"}
+		]
+	}`
+
+	s.env.OnActivity("UpdateWorkflowRunStatus", mock.Anything, mock.Anything).Return(nil)
+	s.env.OnActivity("GetGraphRuntime", mock.Anything, runID).Return(snapshot, nil)
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("WriteExecutionLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("LoadPredecessorInputs", mock.Anything, mock.Anything).Return(map[string]string{}, nil).Maybe()
+	s.env.OnActivity("LoadRequiredInputArtifacts", mock.Anything, mock.Anything).Return(activity.LoadRequiredInputArtifactsResult{}, nil).Maybe()
+	s.env.OnActivity("LoadReviewHistoryJSON", mock.Anything, mock.Anything).Return("[]", nil).Maybe()
+	s.env.OnActivity("InitRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("AppendRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("SetTraversedEdges", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("WriteReviewHistory", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == draft
+	})).Return(execDraft, nil).Once()
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == review && p.Iteration == 1
+	})).Return(execReview1, nil).Once()
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == review && p.Iteration == 2
+	})).Return(execReview2, nil).Once()
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == gate
+	})).Return(execGate, nil).Once()
+
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.TemplateNodeID == draft
+	})).Return(nil).Once()
+	// First review pass (reviewPass == 1): resolves model_first_iteration/effort_first_iteration.
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.TemplateNodeID == review && p.Iteration == 1 && p.Model == "opus-x" && p.Effort == "xhigh"
+	})).Return(nil).Once()
+	// Second review pass, reached via the back-edge self-loop (reviewPass == 2):
+	// resolves model_subsequent_iteration/effort_subsequent_iteration.
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.TemplateNodeID == review && p.Iteration == 2 && p.Model == "sonnet-y" && p.Effort == "high"
+	})).Return(nil).Once()
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.TemplateNodeID == gate
+	})).Return(nil).Once()
+
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execDraft
+	})).Return("no_decision", nil).Once()
+	// iter 1: revised → self-loop fires, review iter 2 / reviewPass 2 created
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execReview1
+	})).Return("revised", nil).Once()
+	// iter 2: approved → forward edge to gate
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execReview2
+	})).Return("approved", nil).Once()
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execGate
+	})).Return("no_decision", nil).Once()
+
+	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
+		RunID: runID, GraphVersion: 1,
+	})
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+}
+
+// TestModelEffortResolution_NodeWithoutIterationAwareKeys_FallsBackToStatic
+// covers Decision 2 / Part 2 step 7(c): a node whose config_overrides carry no
+// iteration-aware keys at all (e.g. Implement, Draft Spec & Plan) is unaffected
+// by the new resolution branch and still resolves via the pre-existing static
+// model / flat effort path.
+func (s *DAGExecutorTestSuite) TestModelEffortResolution_NodeWithoutIterationAwareKeys_FallsBackToStatic() {
+	nodeA := uuid.New()
+	execA := uuid.New()
+	runID := uuid.New()
+
+	snapshot := `{
+		"nodes": [
+			{"templateNodeId": "` + nodeA.String() + `", "label": "A", "executorType": "ai", "timeoutSeconds": 1800, "isEntrypoint": true, "model": "static-model", "configOverrides": {"effort": "static-effort"}}
+		],
+		"edges": []
+	}`
+
+	s.env.OnActivity("UpdateWorkflowRunStatus", mock.Anything, mock.Anything).Return(nil)
+	s.env.OnActivity("GetGraphRuntime", mock.Anything, runID).Return(snapshot, nil)
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("WriteExecutionLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("InitRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("AppendRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("LoadPredecessorInputs", mock.Anything, mock.Anything).Return(map[string]string{}, nil).Maybe()
+	s.env.OnActivity("LoadRequiredInputArtifacts", mock.Anything, mock.Anything).Return(activity.LoadRequiredInputArtifactsResult{}, nil).Maybe()
+	s.env.OnActivity("LoadReviewHistoryJSON", mock.Anything, mock.Anything).Return("[]", nil).Maybe()
+
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.Anything).Return(execA, nil).Once()
+
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.TemplateNodeID == nodeA && p.Model == "static-model" && p.Effort == "static-effort"
+	})).Return(nil).Once()
+
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.Anything).Return("no_decision", nil).Once()
+
+	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
+		RunID: runID, GraphVersion: 1,
+	})
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+}
+
+// TestModelEffortResolution_PartialIterationKeys_FallsBackToStaticNotEmpty
+// covers Decision 2 / Part 2 step 7(d): a review node whose config_overrides
+// set only model_first_iteration/effort_first_iteration — omitting the
+// _subsequent_iteration counterparts — must fall back to the static
+// model/flat effort value on reviewPass > 1, not silently resolve to an empty
+// string. extractConfigField cannot distinguish an absent key from an
+// explicit empty string, so a combined "either key present" guard would get
+// this wrong; the per-branch-key-then-fallback resolution must not.
+func (s *DAGExecutorTestSuite) TestModelEffortResolution_PartialIterationKeys_FallsBackToStaticNotEmpty() {
+	review := uuid.New()
+	execReview1 := uuid.New()
+	execReview2 := uuid.New()
+	runID := uuid.New()
+
+	snapshot := `{
+		"nodes": [
+			{"templateNodeId": "` + review.String() + `", "label": "review", "executorType": "ai", "timeoutSeconds": 1800, "isEntrypoint": true, "model": "static-fallback-model", "configOverrides": {"loop_group": "review", "effort": "static-fallback-effort", "model_first_iteration": "opus-x", "effort_first_iteration": "xhigh"}}
+		],
+		"edges": [
+			{"sourceNodeId": "` + review.String() + `", "targetNodeId": "` + review.String() + `", "condition": "revised"}
+		]
+	}`
+
+	s.env.OnActivity("UpdateWorkflowRunStatus", mock.Anything, mock.Anything).Return(nil)
+	s.env.OnActivity("GetGraphRuntime", mock.Anything, runID).Return(snapshot, nil)
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("WriteExecutionLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("InitRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("AppendRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("LoadPredecessorInputs", mock.Anything, mock.Anything).Return(map[string]string{}, nil).Maybe()
+	s.env.OnActivity("LoadRequiredInputArtifacts", mock.Anything, mock.Anything).Return(activity.LoadRequiredInputArtifactsResult{}, nil).Maybe()
+	s.env.OnActivity("LoadReviewHistoryJSON", mock.Anything, mock.Anything).Return("[]", nil).Maybe()
+	s.env.OnActivity("SetTraversedEdges", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("WriteReviewHistory", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.Iteration == 1
+	})).Return(execReview1, nil).Once()
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.Iteration == 2
+	})).Return(execReview2, nil).Once()
+
+	// reviewPass == 1: model_first_iteration/effort_first_iteration are set — use them.
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.Iteration == 1 && p.Model == "opus-x" && p.Effort == "xhigh"
+	})).Return(nil).Once()
+	// reviewPass == 2: model_subsequent_iteration/effort_subsequent_iteration are absent —
+	// must fall back to the static model/flat effort, NOT resolve to "".
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.Iteration == 2 && p.Model == "static-fallback-model" && p.Effort == "static-fallback-effort"
+	})).Return(nil).Once()
+
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execReview1
+	})).Return("revised", nil).Once()
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execReview2
+	})).Return("no_decision", nil).Once()
+
+	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
+		RunID: runID, GraphVersion: 1,
+	})
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+}
+
 // TestTaskContextFields_NilTaskContext confirms the nil-safety documented on
 // taskContextFields/openBlockerFields (dag_executor.go) is exercised at THIS layer —
 // the DAG-executor's own flattening step — not only via ExecuteAINodeFromSnapshot's

@@ -85,6 +85,37 @@ class InternalRunServiceGraphRuntimeTest {
             }
             """;
 
+    // Per-node-type model/effort config (Decision 2 in the accompanying spec): the four
+    // new iteration-aware config_overrides keys must survive the raw-JSON-snapshot →
+    // RuntimeNode.configOverrides() projection byte-for-byte, since dag_executor.go reads
+    // them from exactly this DTO field via snapshotNode.ConfigOverrides.
+    private static final String SNAPSHOT_WITH_ITERATION_AWARE_CONFIG_JSON = """
+            {
+              "nodes": [{
+                "template_node_id": "11111111-1111-1111-1111-111111111111",
+                "label": "Code Review",
+                "executor_type": "ai",
+                "image": "agent:latest",
+                "prompt_template": "Review the code...",
+                "input_spec": {},
+                "output_spec": {},
+                "timeout_seconds": 1800,
+                "secrets": [],
+                "skills": [],
+                "is_entrypoint": true,
+                "config_overrides": {
+                  "loop_group": "review",
+                  "model_first_iteration": "claude-opus-4-8",
+                  "effort_first_iteration": "xhigh",
+                  "model_subsequent_iteration": "claude-sonnet-5",
+                  "effort_subsequent_iteration": "high"
+                }
+              }],
+              "edges": [],
+              "inputs": {}
+            }
+            """;
+
     private static final String SNAPSHOT_WITH_REPOS_JSON = """
             {
               "nodes": [{
@@ -169,6 +200,23 @@ class InternalRunServiceGraphRuntimeTest {
         assertThat(node.timeoutSeconds()).isEqualTo(1800);
         assertThat(node.isEntrypoint()).isTrue();
         assertThat(node.configOverrides()).containsEntry("loop_group", "review");
+    }
+
+    @Test
+    void getGraphRuntimeSnapshot_projectsIterationAwareModelEffortConfigOverridesUnchanged() throws Exception {
+        UUID runId = UUID.randomUUID();
+        WorkflowRun run = new WorkflowRun();
+        when(runRepo.findById(runId)).thenReturn(Optional.of(run));
+        when(snapshotBuilder.buildSnapshotForRun(run)).thenReturn(SNAPSHOT_WITH_ITERATION_AWARE_CONFIG_JSON);
+
+        GraphRuntimeSnapshotResponse response = service.getGraphRuntimeSnapshot(runId);
+
+        GraphRuntimeSnapshotResponse.RuntimeNode node = response.nodes().get(0);
+        assertThat(node.configOverrides())
+                .containsEntry("model_first_iteration", "claude-opus-4-8")
+                .containsEntry("effort_first_iteration", "xhigh")
+                .containsEntry("model_subsequent_iteration", "claude-sonnet-5")
+                .containsEntry("effort_subsequent_iteration", "high");
     }
 
     @Test

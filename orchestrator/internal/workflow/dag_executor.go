@@ -46,10 +46,20 @@ type nodeCompletion struct {
 
 // nodeTracker tracks in-workflow state for each activated node
 type nodeTracker struct {
-	status       string // pending, running, awaiting_human, completed, failed
-	result       *string
-	execID       uuid.UUID
-	iteration    int
+	status    string // pending, running, awaiting_human, completed, failed
+	result    *string
+	execID    uuid.UUID
+	iteration int
+	// reviewPass counts genuine review-decision passes for a self-looping review
+	// node, distinct from `iteration` (which also advances on operator retries and
+	// pause/heartbeat-timeout recovery — see SignalRetryNode and the pause-recovery
+	// path below). It advances ONLY at the back-edge self-loop site (§4g, when the
+	// target node was previously "completed"); every other nodeTracker construction
+	// site carries the prior tracker's reviewPass forward unchanged. Model/effort
+	// resolution for the new iteration-aware config_overrides keys reads reviewPass,
+	// not iteration, so an infra retry of a review node's first pass does not
+	// silently downgrade it to the cheaper subsequent-iteration configuration.
+	reviewPass   int
 	errorMessage *string // from completion
 	artifactRefs string  // from completion
 	preDecision  string  // pre-supplied decision from retry-with-approval (skip human wait)
@@ -132,7 +142,7 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 			return fmt.Errorf("create entry node execution for %s: %w", node.Label, err)
 		}
 		nodes[node.TemplateNodeID] = &nodeTracker{
-			status: "pending", execID: execID, iteration: 1,
+			status: "pending", execID: execID, iteration: 1, reviewPass: 1,
 		}
 	}
 
@@ -342,11 +352,15 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 					return
 				}
 
-				// Reset tracker
+				// Reset tracker. reviewPass carries forward unchanged — an operator
+				// retry of a failed execution is not a review decision, so it must
+				// not advance the counter that gates first-vs-subsequent-iteration
+				// model/effort resolution (see nodeTracker.reviewPass).
 				nodes[templateNodeID] = &nodeTracker{
-					status:    "pending",
-					execID:    execID,
-					iteration: newIteration,
+					status:     "pending",
+					execID:     execID,
+					iteration:  newIteration,
+					reviewPass: tracker.reviewPass,
 				}
 
 				// Restore run status
@@ -411,11 +425,16 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 						return
 					}
 
-					// Reset tracker with pre-decision
+					// Reset tracker with pre-decision. reviewPass carries forward
+					// unchanged (see nodeTracker.reviewPass) — gated on
+					// ExecutorType == "human" above, so this path never reaches
+					// an AI review node, but the invariant is kept consistent at
+					// every nodeTracker construction site regardless.
 					nodes[failedID] = &nodeTracker{
 						status:      "pending",
 						execID:      execID,
 						iteration:   newIteration,
+						reviewPass:  failedTracker.reviewPass,
 						preDecision: signal.Decision,
 						preFeedback: signal.Feedback,
 					}
@@ -624,6 +643,35 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 				needsBranch := extractConfigField(snapshotNode.ConfigOverrides, "needs_branch")
 				needsPR := extractConfigField(snapshotNode.ConfigOverrides, "needs_pr")
 				effort := extractConfigField(snapshotNode.ConfigOverrides, "effort")
+
+				// Resolve iteration-aware model/effort overrides (Decision 2 in the
+				// accompanying spec). Pick the key matching tracker.reviewPass's branch —
+				// NOT tracker.iteration, which also advances on operator/pause-recovery
+				// retries unrelated to a review decision (see nodeTracker.reviewPass) —
+				// and use it only when non-empty; otherwise fall back to the static
+				// snapshotNode.Model / flat `effort` value. This is deliberately a
+				// per-branch-key-then-fallback check, not a combined "either key
+				// present" guard: extractConfigField returns "" for both an absent key
+				// and an explicit empty string, so a combined check cannot tell "only
+				// one of the pair is configured" from "both are" and would silently
+				// resolve to "" on the iteration whose specific key is unset.
+				model := snapshotNode.Model
+				if tracker.reviewPass == 1 {
+					if v := extractConfigField(snapshotNode.ConfigOverrides, "model_first_iteration"); v != "" {
+						model = v
+					}
+					if v := extractConfigField(snapshotNode.ConfigOverrides, "effort_first_iteration"); v != "" {
+						effort = v
+					}
+				} else {
+					if v := extractConfigField(snapshotNode.ConfigOverrides, "model_subsequent_iteration"); v != "" {
+						model = v
+					}
+					if v := extractConfigField(snapshotNode.ConfigOverrides, "effort_subsequent_iteration"); v != "" {
+						effort = v
+					}
+				}
+
 				// Per-node turn/retry budget. Travels as a string like every other
 				// config override; the agent entrypoint validates it and falls back to
 				// its own defaults when unset.
@@ -695,7 +743,7 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 						Label:                  snapshotNode.Label,
 						ExecutorType:           executorType,
 						PromptTemplate:         promptTemplate,
-						Model:                  snapshotNode.Model,
+						Model:                  model,
 						Effort:                 effort,
 						MaxTurns:               maxTurns,
 						MaxRetries:             maxRetries,
@@ -789,10 +837,14 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 									"nodeID", completion.nodeID, "err", createErr)
 								// fall through to normal failure path
 							} else {
+								// reviewPass carries forward unchanged — a pause/heartbeat-
+								// timeout recovery is an infra retry of the same attempt, not
+								// a review decision (see nodeTracker.reviewPass).
 								nodes[completion.nodeID] = &nodeTracker{
-									status:    "pending",
-									execID:    newExecID,
-									iteration: newIteration,
+									status:     "pending",
+									execID:     newExecID,
+									iteration:  newIteration,
+									reviewPass: tracker.reviewPass,
 								}
 								return // skip normal failure path; ready-nodes evaluator will re-schedule
 							}
@@ -1063,9 +1115,15 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 				for _, targetID := range targets {
 					existingTracker, exists := nodes[targetID]
 					iteration := 1
+					reviewPass := 1
 					if exists && existingTracker.status == "completed" {
-						// Back-edge / loop — increment iteration
+						// Back-edge / loop — increment iteration. This is the ONLY site
+						// that advances reviewPass (see nodeTracker.reviewPass): a
+						// previously-completed node being re-activated is a genuine
+						// review-decision self-loop (e.g. Spec Review / Code Review's
+						// "revised" edge), not an infra retry.
 						iteration = existingTracker.iteration + 1
+						reviewPass = existingTracker.reviewPass + 1
 					}
 
 					targetNode, _ := GetNodeByID(snap, targetID)
@@ -1081,9 +1139,10 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 					).Get(ctx, &execID)
 
 					nodes[targetID] = &nodeTracker{
-						status:    "pending",
-						execID:    execID,
-						iteration: iteration,
+						status:     "pending",
+						execID:     execID,
+						iteration:  iteration,
+						reviewPass: reviewPass,
 					}
 				}
 			})

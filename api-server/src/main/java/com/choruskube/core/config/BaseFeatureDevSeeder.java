@@ -35,7 +35,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
     // and executor changes here never retroactively mutate prior versions. To ship a
     // change, edit the constants in this file (prompt, executor, schema), increment
     // CURRENT_VERSION, and the next boot creates the new snapshot.
-    static final int CURRENT_VERSION = 35;
+    static final int CURRENT_VERSION = 36;
 
     private static final String TEMPLATE_NAME = "Feature Development";
 
@@ -59,9 +59,15 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             under the "repos" array.
 
             Read each repo's codebase to understand its architecture, patterns, and
-            conventions before writing. When repos are independent, you may explore them
-            in parallel by dispatching Task subagents — one per repo — and consolidating
-            their findings.
+            conventions before writing. When repos are independent, explore them in
+            parallel by dispatching multiple Task subagents — one per repo, or further
+            split by subtopic within a large repo — and consolidating their findings
+            before you draft. For each subagent, choose the model yourself based on that
+            subagent's own difficulty: Sonnet for straightforward, mechanical exploration
+            (e.g. "list this repo's directory structure and build commands"), Opus for
+            anything requiring judgment about architecture, ambiguous requirements, or
+            cross-cutting tradeoffs. Use your own assessment of each sub-topic — there is
+            no fixed rule beyond "the harder the sub-topic, the more capable the model."
 
             Your output is a SINGLE document with two clearly separated parts:
 
@@ -525,6 +531,16 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             For repos with cross-repo dependencies (the plan will call these out),
             implement them in the ordered sequence specified in the plan; do not
             dispatch those in parallel.
+
+            Independently of the per-repo parallelism above: when a specific
+            sub-problem within a repo is genuinely hard — an ambiguous design
+            decision, a tricky concurrency or migration edge case, a piece of logic
+            you are not confident about — escalate that sub-problem to a Task
+            subagent and explicitly request the more capable model for it. Keep
+            straightforward, mechanical edits on the primary thread. This mirrors
+            how the platform already dispatches subagents for parallel exploration;
+            here it is about matching model capability to problem difficulty rather
+            than fan-out.
 
             Note: this node may be a retry of a previous attempt. Before you start,
             take a quick look at the current state of each repo's working branch —
@@ -1011,6 +1027,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
         Map<String, NodeDefinition> defs = new HashMap<>();
         NodeDefinition draftSpecAndPlan =
                 createNodeDef("Draft Spec & Plan", ExecutorType.ai, SPEC_AND_PLAN_PROMPT, 1800);
+        draftSpecAndPlan.setModel(ModelIds.MODEL_OPUS);
         draftSpecAndPlan.setOutputSpec(
                 "{\"files\":[{\"name\":\"spec_and_plan.md\",\"required\":true,\"description\":\"Technical specification and implementation plan\"}]}");
         nodeDefRepo.save(draftSpecAndPlan);
@@ -1030,6 +1047,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
         defs.put("Approve Spec & Plan", createNodeDef("Approve Spec & Plan", ExecutorType.human, null, 86400));
 
         NodeDefinition implement = createNodeDef("Implement", ExecutorType.ai, IMPLEMENT_PROMPT, 10800);
+        implement.setModel(ModelIds.MODEL_SONNET);
         implement.setOutputSpec(
                 "{\"files\":[{\"name\":\"summary.md\",\"required\":true,\"description\":\"Implementation summary describing changes made\"}]}");
         nodeDefRepo.save(implement);
@@ -1107,7 +1125,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                 nodeDefs.get("Draft Spec & Plan"),
                 "draft_spec_and_plan",
                 true,
-                "{\"loop_group\": \"spec-review\"}");
+                "{\"loop_group\": \"spec-review\", \"effort\": \"xhigh\"}");
         // Spec Review reads (a) the original draft, (b) its own prior iteration's
         // outputs (only present when iteration > 1), so it can build on prior
         // reasoning without reverting decisions. The self-reference is what makes
@@ -1119,7 +1137,11 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                 nodeDefs.get("Spec Review"),
                 "spec_review",
                 false,
-                "{\"loop_group\": \"spec-review\"}",
+                "{\"loop_group\": \"spec-review\", "
+                        + "\"model_first_iteration\": \"" + ModelIds.MODEL_OPUS + "\", "
+                        + "\"effort_first_iteration\": \"xhigh\", "
+                        + "\"model_subsequent_iteration\": \"" + ModelIds.MODEL_SONNET + "\", "
+                        + "\"effort_subsequent_iteration\": \"high\"}",
                 "[{\"template_node_label\":\"draft_spec_and_plan\",\"artifacts\":[{\"name\":\"spec_and_plan.md\",\"description\":\"Original draft spec from the first author\",\"required\":true}]},{\"template_node_label\":\"spec_review\",\"artifacts\":[{\"name\":\"spec_and_plan.md\",\"description\":\"Prior iteration's revised spec (only present if iteration > 1)\",\"required\":false},{\"name\":\"spec_review.md\",\"description\":\"Prior iteration's review notes including Reasoning for fixes (only present if iteration > 1)\",\"required\":false}]}]");
         // Spec ownership transfer (v23): Approve Spec & Plan reads spec_and_plan.md
         // from Spec Review, NOT from Draft Spec & Plan. Spec Review always writes
@@ -1141,7 +1163,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                 nodeDefs.get("Implement"),
                 "implement",
                 false,
-                "{\"loop_group\": \"impl-review\", \"needs_branch\": \"true\", \"effort\": \"xhigh\", \"needs_pr\": \"true\"}",
+                "{\"loop_group\": \"impl-review\", \"needs_branch\": \"true\", \"effort\": \"high\", \"needs_pr\": \"true\"}",
                 "[{\"template_node_label\":\"spec_review\",\"artifacts\":[{\"name\":\"spec_and_plan.md\",\"description\":\"The approved spec to implement\",\"required\":true}]}]");
         // Test runs run-all-tests (a script in the agent image) which iterates each
         // repo's test_command from /workspace/config.json. Single-repo runs read the
@@ -1161,7 +1183,11 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                 nodeDefs.get("Code Review"),
                 "code_review",
                 false,
-                "{\"loop_group\": \"impl-review\", \"needs_branch\": \"true\", \"effort\": \"xhigh\", \"needs_pr\": \"true\"}",
+                "{\"loop_group\": \"impl-review\", \"needs_branch\": \"true\", \"needs_pr\": \"true\", "
+                        + "\"model_first_iteration\": \"" + ModelIds.MODEL_OPUS + "\", "
+                        + "\"effort_first_iteration\": \"xhigh\", "
+                        + "\"model_subsequent_iteration\": \"" + ModelIds.MODEL_SONNET + "\", "
+                        + "\"effort_subsequent_iteration\": \"high\"}",
                 "[{\"template_node_label\":\"code_review\",\"artifacts\":[{\"name\":\"review.md\",\"description\":\"Prior iteration's code review notes including Reasoning for fixes (only present if iteration > 1)\",\"required\":false}]}]");
         // Review Escalation gates entry to Test whenever Code Review can't confidently
         // approve on its own. It reads the same evidence Final Approval already gets

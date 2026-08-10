@@ -1550,6 +1550,98 @@ func TestExecuteAINodeFromSnapshot_EffortOmittedWhenEmpty(t *testing.T) {
 	assert.False(t, hasEffort, "config.json must omit effort when not set on the snapshot")
 }
 
+// TestExecuteAINodeFromSnapshot_ResolvedModelEffortReachConfigJSONUnchanged_BothIterationBands
+// covers the spec's Integration testing bullet for the per-node-type
+// model/effort feature: dag_executor.go resolves the four new iteration-aware
+// config_overrides keys (model_first_iteration/model_subsequent_iteration/
+// effort_first_iteration/effort_subsequent_iteration) down to a single
+// concrete Model/Effort pair BEFORE calling this activity — this activity
+// itself is unchanged (Decision 2/§3.2) and only ever sees that resolved
+// pair via ExecuteAINodeFromSnapshotParams.Model/.Effort, never the raw
+// iteration-suffixed keys. This test simulates both bands the DAG executor
+// can hand it (a first-iteration resolution and a subsequent-iteration one)
+// and confirms each reaches config.json verbatim as plain "model"/"effort"
+// keys, proving the pass-through stays generic across both.
+func TestExecuteAINodeFromSnapshot_ResolvedModelEffortReachConfigJSONUnchanged_BothIterationBands(t *testing.T) {
+	newServerAndActs := func(dst *map[string]interface{}) *Activities {
+		apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/internal/workloads/"):
+				var req map[string]interface{}
+				json.NewDecoder(r.Body).Decode(&req)
+				if cj, ok := req["configJson"].(map[string]interface{}); ok {
+					*dst = cj
+				}
+				w.WriteHeader(http.StatusCreated)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"executionHandle": "agent-abc12345",
+					"jobSecretHash":   "hash123",
+				})
+			default:
+				w.WriteHeader(http.StatusOK)
+			}
+		}))
+		t.Cleanup(apiServer.Close)
+
+		client := apiclient.NewClient(apiServer.URL)
+		cfg := &config.Config{
+			APIServerURL: apiServer.URL,
+			Callback:     config.CallbackConfig{URL: "http://callback:9090/api/v1/callback"},
+		}
+		return NewActivities(client, prompt.NewResolver(), cfg, nil)
+	}
+
+	// Band 1: as dag_executor.go resolves it on tracker.reviewPass == 1 (from
+	// model_first_iteration/effort_first_iteration).
+	var firstIterationConfigJSON map[string]interface{}
+	firstActs := newServerAndActs(&firstIterationConfigJSON)
+	err := firstActs.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+		NodeExecutionID: uuid.New(),
+		RunID:           uuid.New(),
+		TemplateNodeID:  uuid.New(),
+		Label:           "code_review",
+		ExecutorType:    "ai",
+		PromptTemplate:  "irrelevant",
+		Model:           "opus-x",
+		Effort:          "xhigh",
+		Iteration:       1,
+	})
+	assert.ErrorIs(t, err, activity.ErrResultPending)
+	assert.Equal(t, "opus-x", firstIterationConfigJSON["model"],
+		"config.json must carry the resolved first-iteration model unchanged")
+	assert.Equal(t, "xhigh", firstIterationConfigJSON["effort"],
+		"config.json must carry the resolved first-iteration effort unchanged")
+	assert.NotContains(t, firstIterationConfigJSON, "model_first_iteration",
+		"config.json must never carry the raw iteration-suffixed key")
+	assert.NotContains(t, firstIterationConfigJSON, "model_subsequent_iteration",
+		"config.json must never carry the raw iteration-suffixed key")
+
+	// Band 2: as dag_executor.go resolves it on tracker.reviewPass > 1 (from
+	// model_subsequent_iteration/effort_subsequent_iteration).
+	var subsequentIterationConfigJSON map[string]interface{}
+	subsequentActs := newServerAndActs(&subsequentIterationConfigJSON)
+	err = subsequentActs.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+		NodeExecutionID: uuid.New(),
+		RunID:           uuid.New(),
+		TemplateNodeID:  uuid.New(),
+		Label:           "code_review",
+		ExecutorType:    "ai",
+		PromptTemplate:  "irrelevant",
+		Model:           "sonnet-y",
+		Effort:          "high",
+		Iteration:       2,
+	})
+	assert.ErrorIs(t, err, activity.ErrResultPending)
+	assert.Equal(t, "sonnet-y", subsequentIterationConfigJSON["model"],
+		"config.json must carry the resolved subsequent-iteration model unchanged")
+	assert.Equal(t, "high", subsequentIterationConfigJSON["effort"],
+		"config.json must carry the resolved subsequent-iteration effort unchanged")
+	assert.NotContains(t, subsequentIterationConfigJSON, "effort_first_iteration",
+		"config.json must never carry the raw iteration-suffixed key")
+	assert.NotContains(t, subsequentIterationConfigJSON, "effort_subsequent_iteration",
+		"config.json must never carry the raw iteration-suffixed key")
+}
+
 // TestExecuteAINodeFromSnapshot_TurnBudgetInConfigJson verifies that the per-node
 // max_turns/max_retries overrides extracted from config_overrides reach the agent via
 // config.json when set.
