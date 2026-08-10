@@ -132,4 +132,45 @@ describe("computeRoadmapTimelineLayout", () => {
     expect(nodes).toEqual([]);
     expect(edges).toEqual([]);
   });
+
+  describe("focus", () => {
+    function twoEpicData(): RoadmapTimelineResponse {
+      return {
+        epics: [
+          makeEpic({ id: "epic-1", stories: [makeStory({ id: "story-1", epicId: "epic-1" })] }),
+          makeEpic({ id: "epic-2", stories: [makeStory({ id: "story-2", epicId: "epic-2" })] }),
+        ],
+      };
+    }
+
+    it("sets isFocused: true on exactly the matching lane node and false on all others", () => {
+      const { nodes } = computeRoadmapTimelineLayout(twoEpicData(), { epicId: "epic-1" });
+      const laneNodes = nodes.filter(isEpicLaneNode);
+
+      expect(laneNodes.find((n) => n.id === "epic-1")!.data.isFocused).toBe(true);
+      expect(laneNodes.find((n) => n.id === "epic-2")!.data.isFocused).toBe(false);
+    });
+
+    it("sets isFocused: true on exactly the matching story node", () => {
+      const { nodes } = computeRoadmapTimelineLayout(twoEpicData(), {
+        epicId: "epic-1",
+        storyId: "story-1",
+      });
+      const storyNodes = nodes.filter(isStoryNode);
+
+      expect(storyNodes.find((n) => n.id === "story-1")!.data.isFocused).toBe(true);
+      expect(storyNodes.find((n) => n.id === "story-2")!.data.isFocused).toBe(false);
+    });
+
+    it("leaves every node isFocused: false when focus is non-matching or absent", () => {
+      const noFocus = computeRoadmapTimelineLayout(twoEpicData());
+      expect(noFocus.nodes.every((n) => n.data.isFocused === false)).toBe(true);
+
+      const nonMatching = computeRoadmapTimelineLayout(twoEpicData(), {
+        epicId: "epic-does-not-exist",
+        storyId: "story-does-not-exist",
+      });
+      expect(nonMatching.nodes.every((n) => n.data.isFocused === false)).toBe(true);
+    });
+  });
 });

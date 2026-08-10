@@ -21,6 +21,8 @@ export interface TimelineEpicLaneNodeData {
   epicId: string;
   title: string;
   stage: string;
+  /** Whether this lane's Epic is the currently-focused item (§3.1/§3.3) — drives highlight styling. */
+  isFocused: boolean;
   [key: string]: unknown;
 }
 
@@ -32,6 +34,8 @@ export interface TimelineStoryNodeData {
   title: string;
   stage: string;
   createdAt: string;
+  /** Whether this Story is the currently-focused item (§3.1/§3.3) — drives highlight styling. */
+  isFocused: boolean;
   [key: string]: unknown;
 }
 
@@ -78,12 +82,19 @@ function buildTimeScale(epics: TimelineEpicSummary[]): (timeMs: number) => numbe
  * entire response, not just the Stories in that one lane — so two Epics' lanes stay visually
  * comparable against the same axis.
  *
+ * `focus` (§3.1) sets `isFocused: true` on the lane/Story node(s) matching `focus.epicId`/
+ * `focus.storyId`, and `false` on every other node — defaults to `{}` (nothing focused) so
+ * existing callers that don't care about focus don't need to pass anything.
+ *
  * Returns ready-to-render `@xyflow/react` nodes — unlike `computeElkLayout`/
  * `computeRoadmapTreeLayout`, which return bare positions for a caller to assemble Nodes from,
  * this is a synchronous, purely arithmetic layout (no async graph solver), so it builds the full
  * `Node`/`Edge` objects directly.
  */
-export function computeRoadmapTimelineLayout(data: RoadmapTimelineResponse): TimelineLayoutResult {
+export function computeRoadmapTimelineLayout(
+  data: RoadmapTimelineResponse,
+  focus: { epicId?: string; storyId?: string } = {},
+): TimelineLayoutResult {
   const scale = buildTimeScale(data.epics);
   const nodes: TimelineFlowNode[] = [];
 
@@ -94,7 +105,7 @@ export function computeRoadmapTimelineLayout(data: RoadmapTimelineResponse): Tim
       id: epic.id,
       type: "timeline-epic-lane",
       position: { x: 0, y: laneY },
-      data: { epicId: epic.id, title: epic.title, stage: epic.stage },
+      data: { epicId: epic.id, title: epic.title, stage: epic.stage, isFocused: epic.id === focus.epicId },
     });
 
     const sortedStories = [...epic.stories].sort(compareStories);
@@ -120,6 +131,7 @@ export function computeRoadmapTimelineLayout(data: RoadmapTimelineResponse): Tim
           title: story.title,
           stage: story.stage,
           createdAt: story.createdAt,
+          isFocused: story.id === focus.storyId,
         },
       });
     }

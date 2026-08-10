@@ -13,6 +13,9 @@ export class RoadmapGraphPage {
   readonly graphContainer: Locator;
   readonly nodes: Locator;
 
+  readonly viewSwitcherBoardLink: Locator;
+  readonly viewSwitcherTimelineLink: Locator;
+
   readonly detailPanel: Locator;
   readonly detailTitle: Locator;
   readonly detailStatus: Locator;
@@ -43,6 +46,9 @@ export class RoadmapGraphPage {
     this.backToEpicLink = page.getByRole("link", { name: "Back to Epic" });
     this.graphContainer = page.getByTestId("roadmap-graph-container");
     this.nodes = page.getByTestId("roadmap-graph-node");
+
+    this.viewSwitcherBoardLink = page.getByTestId("roadmap-view-switcher-board");
+    this.viewSwitcherTimelineLink = page.getByTestId("roadmap-view-switcher-timeline");
 
     this.detailPanel = page.getByTestId("roadmap-detail-panel");
     this.detailTitle = page.getByTestId("roadmap-detail-title");

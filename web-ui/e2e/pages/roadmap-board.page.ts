@@ -15,6 +15,10 @@ export class RoadmapBoardPage {
   readonly cards: Locator;
   readonly readyToStartToggle: Locator;
 
+  /** The switcher's Graph entry — a disabled `<button>` until an Epic is focused (Decision 3). */
+  readonly viewSwitcherGraphEntry: Locator;
+  readonly viewSwitcherTimelineLink: Locator;
+
   constructor(page: Page) {
     this.page = page;
 
@@ -23,6 +27,9 @@ export class RoadmapBoardPage {
     this.board = page.getByTestId("roadmap-board");
     this.cards = page.getByTestId("epic-board-card");
     this.readyToStartToggle = page.getByTestId("ready-to-start-toggle");
+
+    this.viewSwitcherGraphEntry = page.getByTestId("roadmap-view-switcher-graph");
+    this.viewSwitcherTimelineLink = page.getByTestId("roadmap-view-switcher-timeline");
   }
 
   async goto() {

@@ -193,6 +193,51 @@ describe("RoadmapGraphPage", () => {
     expect(screen.getByTestId("roadmap-detail-title")).toHaveTextContent("Wire up the toggle (renamed)");
   });
 
+  // --- RoadmapViewSwitcher wiring ---
+
+  it("selecting a Story node causes the switcher's Board/Timeline links to include &story=", async () => {
+    const user = userEvent.setup();
+    mockUseRoadmapGraph.mockReturnValue({ data: makeSnapshot(), isLoading: false });
+    renderWithProviders(<RoadmapGraphPage />);
+
+    await user.click(screen.getByTestId("mock-select-story-1"));
+
+    expect(screen.getByTestId("roadmap-view-switcher-board")).toHaveAttribute(
+      "href",
+      "/roadmap/board?epic=epic-1&story=story-1",
+    );
+    expect(screen.getByTestId("roadmap-view-switcher-timeline")).toHaveAttribute(
+      "href",
+      "/roadmap/timeline?epic=epic-1&story=story-1",
+    );
+  });
+
+  it("selecting a Task node causes the switcher to carry the Task's parent Story id, not the Task's own id", async () => {
+    const user = userEvent.setup();
+    mockUseRoadmapGraph.mockReturnValue({ data: makeSnapshot(), isLoading: false });
+    renderWithProviders(<RoadmapGraphPage />);
+
+    await user.click(screen.getByTestId("mock-select-task-1"));
+
+    // task-1's parent is story-1 (see makeTask's default storyId) — the switcher must carry
+    // story-1, never task-1, since Board/Timeline have no Task-granularity focus (Decision 4).
+    expect(screen.getByTestId("roadmap-view-switcher-board")).toHaveAttribute(
+      "href",
+      "/roadmap/board?epic=epic-1&story=story-1",
+    );
+  });
+
+  it("with no selection, switcher links include only the route's own epic — no throw (clampFocusToStory(null))", () => {
+    mockUseRoadmapGraph.mockReturnValue({ data: makeSnapshot(), isLoading: false });
+    expect(() => renderWithProviders(<RoadmapGraphPage />)).not.toThrow();
+
+    expect(screen.getByTestId("roadmap-view-switcher-board")).toHaveAttribute(
+      "href",
+      "/roadmap/board?epic=epic-1",
+    );
+    expect(screen.getByTestId("roadmap-view-switcher-graph")).toHaveAttribute("aria-current", "page");
+  });
+
   it("closes the detail panel if the selected item disappears from a refreshed snapshot", async () => {
     const user = userEvent.setup();
     const initialSnapshot = makeSnapshot();

@@ -15,6 +15,10 @@ export class RoadmapTimelinePage {
   readonly markers: Locator;
   readonly emptyState: Locator;
 
+  /** The switcher's Graph entry — a disabled `<button>` until an Epic is focused (Decision 3). */
+  readonly viewSwitcherGraphEntry: Locator;
+  readonly viewSwitcherBoardLink: Locator;
+
   constructor(page: Page) {
     this.page = page;
 
@@ -24,6 +28,9 @@ export class RoadmapTimelinePage {
     this.lanes = page.getByTestId("roadmap-timeline-epic-lane");
     this.markers = page.getByTestId("roadmap-timeline-story-node");
     this.emptyState = page.getByTestId("roadmap-timeline-empty");
+
+    this.viewSwitcherGraphEntry = page.getByTestId("roadmap-view-switcher-graph");
+    this.viewSwitcherBoardLink = page.getByTestId("roadmap-view-switcher-board");
   }
 
   async goto() {

@@ -10,6 +10,28 @@ import { cn } from "@/lib/utils";
 
 interface Props {
   epic: EpicResponse;
+  /** Whether this card is the currently-focused Epic (§3.1/§3.3) — drives highlight styling. */
+  isFocused?: boolean;
+  /** Called on card click (excluding the expand chevron, which already stops propagation). */
+  onFocus?: (epicId: string) => void;
+  /**
+   * Whether this card should render pre-expanded on mount, with no click needed — used when the
+   * card arrives already focused on one of its Stories (a `story` focus param). Only read as the
+   * `expanded`/`hasLoadedStories` state hooks' *lazy initial value*; changing it after mount does
+   * not re-expand/re-collapse an already-mounted card (React `useState` ignores a changed initial
+   * argument on re-render) — the same "click-only, never auto-cleared" semantics Decision 4 gives
+   * focus generally.
+   */
+  initiallyExpanded?: boolean;
+  /** The Story (if any) to highlight once the Story list is visible. */
+  focusedStoryId?: string;
+  /**
+   * Receives the underlying `Card` DOM node so the page can `scrollIntoView` it. Not a plain
+   * `ref` prop — this element's `ref` slot is already taken by dnd-kit's `setNodeRef`
+   * (`useDraggable`), and a single JSX element can only receive one `ref` value, so the two are
+   * merged inline in the `Card` below rather than one clobbering the other.
+   */
+  cardRef?: (node: HTMLDivElement | null) => void;
 }
 
 /**
@@ -19,9 +41,16 @@ interface Props {
  * collapsing/re-expanding reuses the cached `useStories` query instead of
  * re-fetching (only the *visibility* of the story list toggles on `expanded`).
  */
-export default function EpicBoardCard({ epic }: Props) {
-  const [expanded, setExpanded] = useState(false);
-  const [hasLoadedStories, setHasLoadedStories] = useState(false);
+export default function EpicBoardCard({
+  epic,
+  isFocused = false,
+  onFocus,
+  initiallyExpanded = false,
+  focusedStoryId,
+  cardRef,
+}: Props) {
+  const [expanded, setExpanded] = useState(initiallyExpanded);
+  const [hasLoadedStories, setHasLoadedStories] = useState(initiallyExpanded);
 
   const { data: stories, isLoading: storiesLoading } = useStories(
     hasLoadedStories ? epic.id : undefined
@@ -43,11 +72,20 @@ export default function EpicBoardCard({ epic }: Props) {
 
   return (
     <Card
-      ref={setNodeRef}
+      ref={(node) => {
+        setNodeRef(node);
+        cardRef?.(node);
+      }}
       style={style}
       data-testid="epic-board-card"
       data-epic-id={epic.id}
-      className={cn("touch-none select-none", isDragging && "opacity-50")}
+      data-focused={isFocused ? "true" : "false"}
+      onClick={() => onFocus?.(epic.id)}
+      className={cn(
+        "touch-none select-none",
+        isDragging && "opacity-50",
+        isFocused && "ring-2 ring-ring ring-offset-1",
+      )}
       {...listeners}
       {...attributes}
     >
@@ -100,7 +138,12 @@ export default function EpicBoardCard({ epic }: Props) {
             <div
               key={story.id}
               data-testid="epic-board-card-story"
-              className="flex items-center justify-between gap-2 rounded border bg-background/50 px-2 py-1 text-xs"
+              data-story-id={story.id}
+              data-focused={story.id === focusedStoryId ? "true" : "false"}
+              className={cn(
+                "flex items-center justify-between gap-2 rounded border bg-background/50 px-2 py-1 text-xs",
+                story.id === focusedStoryId && "ring-2 ring-ring",
+              )}
             >
               <span className="min-w-0 flex-1 truncate">{story.title}</span>
               <div className="flex shrink-0 items-center gap-1.5">

@@ -1,8 +1,10 @@
-import { Link } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { ArrowLeft } from "lucide-react";
 import { useRoadmapTimeline } from "@/hooks/useRoadmapTimeline";
 import { useRoadmapSubscription } from "@/hooks/useRoadmapSubscription";
+import { parseFocusParams, focusToSearchParamsInit } from "@/lib/roadmapFocus";
 import RoadmapTimeline from "@/components/roadmap/RoadmapTimeline";
+import RoadmapViewSwitcher from "@/components/roadmap/RoadmapViewSwitcher";
 import { Skeleton } from "@/components/ui/skeleton";
 import PageHeader from "@/components/layout/PageHeader";
 
@@ -14,7 +16,23 @@ import PageHeader from "@/components/layout/PageHeader";
  */
 export default function RoadmapTimelinePage() {
   const { data, isLoading } = useRoadmapTimeline();
+  const [searchParams, setSearchParams] = useSearchParams();
   useRoadmapSubscription();
+
+  const rawFocus = parseFocusParams(searchParams);
+  // A URL-carried id that doesn't resolve against the freshly-fetched data (deleted, garbage, or
+  // simply an id from a different org — §6's Negative/security case) is treated as "nothing
+  // focused" rather than partially rendered or thrown on, all the way out to the switcher: an
+  // unresolved epic must not leave Graph looking enabled for an Epic that isn't really there.
+  const focusedEpic = data?.epics.find((e) => e.id === rawFocus.epicId);
+  const focusedEpicId = focusedEpic?.id;
+  const focusedStoryId = focusedEpic?.stories.find((s) => s.id === rawFocus.storyId)?.id;
+
+  function handleFocusChange(epicId: string, storyId?: string) {
+    // history replace, not push (§3.4) — ordinary lane/marker browsing shouldn't balloon the
+    // back-button history the way a `push` on every click would.
+    setSearchParams(focusToSearchParamsInit({ epicId, storyId }), { replace: true });
+  }
 
   if (isLoading) {
     return (
@@ -28,6 +46,11 @@ export default function RoadmapTimelinePage() {
   return (
     <div className="flex h-full flex-col">
       <PageHeader title="Roadmap — Timeline" data-testid="roadmap-timeline-heading">
+        <RoadmapViewSwitcher
+          activeView="timeline"
+          focusedEpicId={focusedEpicId}
+          focusedStoryId={focusedStoryId}
+        />
         <Link
           to="/roadmap"
           className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-transparent px-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -46,7 +69,12 @@ export default function RoadmapTimelinePage() {
             No epics yet. Create one from the Roadmap list to see it on the timeline.
           </div>
         ) : (
-          <RoadmapTimeline data={data} />
+          <RoadmapTimeline
+            data={data}
+            focusedEpicId={focusedEpicId}
+            focusedStoryId={focusedStoryId}
+            onFocusChange={handleFocusChange}
+          />
         )}
       </div>
     </div>

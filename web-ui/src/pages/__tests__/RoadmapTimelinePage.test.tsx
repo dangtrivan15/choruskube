@@ -1,9 +1,36 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "@/__tests__/test-utils";
 import RoadmapTimelinePage from "@/pages/RoadmapTimelinePage";
 import RoadmapPage from "@/pages/RoadmapPage";
 import type { RoadmapTimelineResponse } from "@/lib/types";
+
+// Spies on every `useSearchParams()` call in the rendered tree (RoadmapTimelinePage's own call —
+// this file doesn't mock react-router's other exports, so `MemoryRouter`/`Link`/etc. still behave
+// normally). `latestSearch` captures the *raw* `URLSearchParams#toString()` output on every
+// render, so a regression that writes the literal string "story=undefined" into the URL (see
+// roadmapFocus.ts's focusToSearchParamsInit doc comment) is caught by asserting against the
+// string itself, not just the parsed `parseFocusParams` result.
+const searchParamsSpy = vi.hoisted(() => ({
+  calls: [] as Array<{ init: unknown; options: unknown }>,
+  latestSearch: "",
+}));
+vi.mock("react-router", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react-router")>();
+  return {
+    ...actual,
+    useSearchParams: (...args: Parameters<typeof actual.useSearchParams>) => {
+      const [params, setParams] = actual.useSearchParams(...args);
+      searchParamsSpy.latestSearch = params.toString();
+      const spiedSetParams: typeof setParams = (init, options) => {
+        searchParamsSpy.calls.push({ init, options });
+        setParams(init, options);
+      };
+      return [params, spiedSetParams];
+    },
+  };
+});
 
 // STOMP client double — mirrors useRoadmapSubscription.test.ts's MockClient so the STOMP-driven
 // refetch case below can simulate an inbound `roadmap-items` message end to end, through the
@@ -48,19 +75,41 @@ const mockApi = api as unknown as {
 };
 
 // Real ReactFlow rendering is irrelevant to what this file tests (the page's data fetching,
-// empty-state branching, and STOMP-driven refetch) — same rationale RoadmapGraphPage.test.tsx
-// gives for stubbing out RoadmapGraph. Render each Epic lane / Story marker as plain text so
-// assertions can query by content instead of canvas internals.
+// empty-state branching, focus wiring, and STOMP-driven refetch) — same rationale
+// RoadmapGraphPage.test.tsx gives for stubbing out RoadmapGraph. Render each Epic lane / Story
+// marker as a clickable element so assertions can query by content and simulate a lane/marker
+// click via `onFocusChange`, the same way RoadmapGraphPage.test.tsx's mock RoadmapGraph exposes a
+// `mock-select-<id>` button per node.
 vi.mock("@/components/roadmap/RoadmapTimeline", () => ({
-  default: ({ data }: { data: RoadmapTimelineResponse }) => (
-    <div data-testid="mock-roadmap-timeline">
+  default: ({
+    data,
+    focusedEpicId,
+    focusedStoryId,
+    onFocusChange,
+  }: {
+    data: RoadmapTimelineResponse;
+    focusedEpicId?: string;
+    focusedStoryId?: string;
+    onFocusChange?: (epicId: string, storyId?: string) => void;
+  }) => (
+    <div
+      data-testid="mock-roadmap-timeline"
+      data-focused-epic={focusedEpicId ?? ""}
+      data-focused-story={focusedStoryId ?? ""}
+    >
       {data.epics.map((epic) => (
         <div key={epic.id} data-testid="mock-timeline-lane">
-          {epic.title}
+          <button data-testid={`mock-focus-lane-${epic.id}`} onClick={() => onFocusChange?.(epic.id)}>
+            {epic.title}
+          </button>
           {epic.stories.map((story) => (
-            <span key={story.id} data-testid="mock-timeline-marker">
+            <button
+              key={story.id}
+              data-testid={`mock-focus-story-${story.id}`}
+              onClick={() => onFocusChange?.(epic.id, story.id)}
+            >
               {story.title}
-            </span>
+            </button>
           ))}
         </div>
       ))}
@@ -105,6 +154,8 @@ function makeResponse(): RoadmapTimelineResponse {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  searchParamsSpy.calls = [];
+  searchParamsSpy.latestSearch = "";
   mockApi.getPage.mockResolvedValue({ content: [], totalElements: 0, totalPages: 0, number: 0 });
   mockUseEpics.mockReturnValue({
     data: { content: [], totalElements: 0, totalPages: 1, number: 0, size: 20, first: true, last: true, empty: true },
@@ -152,5 +203,67 @@ describe("RoadmapTimelinePage", () => {
     renderWithProviders(<RoadmapPage />);
 
     expect(screen.getByTestId("roadmap-timeline-view-link")).toHaveAttribute("href", "/roadmap/timeline");
+  });
+
+  // --- Focus / RoadmapViewSwitcher wiring ---
+
+  it("reads the epic query param and passes it to RoadmapTimeline as focusedEpicId", async () => {
+    mockApi.get.mockResolvedValue(makeResponse());
+
+    renderWithProviders(<RoadmapTimelinePage />, { initialEntries: ["/roadmap/timeline?epic=epic-1"] });
+
+    await waitFor(() => expect(screen.getByTestId("mock-roadmap-timeline")).toBeInTheDocument());
+    expect(screen.getByTestId("mock-roadmap-timeline")).toHaveAttribute("data-focused-epic", "epic-1");
+  });
+
+  it("clicking a Story marker updates the URL via history replace, not push", async () => {
+    mockApi.get.mockResolvedValue(makeResponse());
+    const user = userEvent.setup();
+
+    renderWithProviders(<RoadmapTimelinePage />);
+    await waitFor(() => expect(screen.getByTestId("mock-focus-story-story-1")).toBeInTheDocument());
+
+    await user.click(screen.getByTestId("mock-focus-story-story-1"));
+
+    await waitFor(() => expect(searchParamsSpy.latestSearch).toBe("epic=epic-1&story=story-1"));
+    expect(searchParamsSpy.calls[searchParamsSpy.calls.length - 1]?.options).toEqual({ replace: true });
+  });
+
+  it("clicking an Epic lane (no Story) writes exactly ?epic=..., with no story key at all", async () => {
+    mockApi.get.mockResolvedValue(makeResponse());
+    const user = userEvent.setup();
+
+    renderWithProviders(<RoadmapTimelinePage />, { initialEntries: ["/roadmap/timeline?epic=epic-1&story=story-1"] });
+    await waitFor(() => expect(screen.getByTestId("mock-focus-lane-epic-1")).toBeInTheDocument());
+
+    await user.click(screen.getByTestId("mock-focus-lane-epic-1"));
+
+    // Asserts the literal search string, not just the parsed value — a regression that writes
+    // `story=undefined` instead of dropping the key would still parse to `{ epicId: "epic-1" }`.
+    await waitFor(() => expect(searchParamsSpy.latestSearch).toBe("epic=epic-1"));
+    expect(searchParamsSpy.latestSearch).not.toContain("story");
+  });
+
+  it("with no query params, RoadmapViewSwitcher's Graph entry is disabled", async () => {
+    mockApi.get.mockResolvedValue(makeResponse());
+
+    renderWithProviders(<RoadmapTimelinePage />);
+
+    await waitFor(() => expect(screen.getByTestId("mock-roadmap-timeline")).toBeInTheDocument());
+    expect(screen.getByTestId("roadmap-view-switcher-graph")).toBeDisabled();
+  });
+
+  it("an epic/story param matching no loaded Epic/Story renders exactly like the no-focus case — no throw, no blank canvas, Graph stays disabled", async () => {
+    mockApi.get.mockResolvedValue(makeResponse());
+
+    renderWithProviders(<RoadmapTimelinePage />, {
+      initialEntries: ["/roadmap/timeline?epic=does-not-exist&story=does-not-exist-either"],
+    });
+
+    await waitFor(() => expect(screen.getByTestId("mock-roadmap-timeline")).toBeInTheDocument());
+    expect(screen.getByText("Add dark mode")).toBeInTheDocument();
+    expect(screen.getByTestId("mock-roadmap-timeline")).toHaveAttribute("data-focused-epic", "");
+    expect(screen.getByTestId("mock-roadmap-timeline")).toHaveAttribute("data-focused-story", "");
+    expect(screen.getByTestId("roadmap-view-switcher-graph")).toBeDisabled();
   });
 });
