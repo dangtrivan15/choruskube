@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ReactFlow, Controls, Background, type NodeMouseHandler, type ReactFlowInstance } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
@@ -40,7 +40,13 @@ export default function RoadmapTimeline({
     () => computeRoadmapTimelineLayout(data, { epicId: focusedEpicId, storyId: focusedStoryId }),
     [data, focusedEpicId, focusedStoryId],
   );
-  const flowInstanceRef = useRef<ReactFlowInstance<TimelineFlowNode> | null>(null);
+  // State, not a ref: `@xyflow/react`'s `onInit` fires asynchronously (internally deferred via
+  // `setTimeout`, after `viewportInitialized` flips), strictly after this component's own mount
+  // effects have already run once. A ref write from that callback wouldn't trigger a re-render, so
+  // the pan-to-focus effect below — whose whole job is restoring focus *on arrival* (§3.3), i.e.
+  // exactly the first-render case — would see a still-null instance and silently never pan. State
+  // makes the instance becoming ready itself trigger the re-render this effect depends on.
+  const [flowInstance, setFlowInstance] = useState<ReactFlowInstance<TimelineFlowNode> | null>(null);
 
   const onNodeClick: NodeMouseHandler<TimelineFlowNode> = useCallback(
     (_event, node) => {
@@ -56,20 +62,20 @@ export default function RoadmapTimeline({
 
   // Pan/center on whatever just became focused (§3.3) — the Story marker if one is focused,
   // otherwise the Epic lane. A no-op if the focused id isn't present in the current layout (a
-  // deleted or otherwise-missing Epic/Story — §6's Negative/security case).
+  // deleted or otherwise-missing Epic/Story — §6's Negative/security case), or if the instance
+  // isn't ready yet (re-runs once `flowInstance` itself changes from null to set).
   useEffect(() => {
-    const instance = flowInstanceRef.current;
     const focusedId = focusedStoryId ?? focusedEpicId;
-    if (!instance || !focusedId) return;
+    if (!flowInstance || !focusedId) return;
 
     const node = nodes.find((n) => n.id === focusedId);
     if (!node) return;
 
-    instance.setCenter(node.position.x, node.position.y, {
+    flowInstance.setCenter(node.position.x, node.position.y, {
       zoom: FOCUS_PAN_ZOOM,
       duration: FOCUS_PAN_DURATION_MS,
     });
-  }, [focusedEpicId, focusedStoryId, nodes]);
+  }, [flowInstance, focusedEpicId, focusedStoryId, nodes]);
 
   return (
     <div data-testid="roadmap-timeline-container" className="relative h-full w-full">
@@ -77,9 +83,7 @@ export default function RoadmapTimeline({
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
-        onInit={(instance) => {
-          flowInstanceRef.current = instance;
-        }}
+        onInit={setFlowInstance}
         onNodeClick={onNodeClick}
         fitView
         fitViewOptions={{ padding: 0.2 }}
