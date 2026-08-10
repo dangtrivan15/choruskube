@@ -12,6 +12,7 @@ import RoadmapBoardPage from "@/pages/RoadmapBoardPage";
 import TaskBoardPage from "@/pages/TaskBoardPage";
 import StoryBoardPage from "@/pages/StoryBoardPage";
 import RoadmapGraphPage from "@/pages/RoadmapGraphPage";
+import RoadmapTimelinePage from "@/pages/RoadmapTimelinePage";
 import EpicDetailPage from "@/pages/EpicDetailPage";
 import StoryDetailPage from "@/pages/StoryDetailPage";
 import TaskDetailPage from "@/pages/TaskDetailPage";
@@ -29,6 +30,7 @@ const coreChildren: RouteObject[] = [
   { path: "analytics", element: <AnalyticsPage /> },
   { path: "roadmap", element: <RoadmapPage /> },
   { path: "roadmap/board", element: <RoadmapBoardPage /> },
+  { path: "roadmap/timeline", element: <RoadmapTimelinePage /> },
   { path: "roadmap/board/tasks", element: <TaskBoardPage /> },
   { path: "roadmap/board/stories", element: <StoryBoardPage /> },
   { path: "roadmap/epics/:epicId", element: <EpicDetailPage /> },

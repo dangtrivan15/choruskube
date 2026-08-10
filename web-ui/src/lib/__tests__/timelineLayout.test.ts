@@ -1,0 +1,135 @@
+import { describe, it, expect } from "vitest";
+import {
+  computeRoadmapTimelineLayout,
+  TIMELINE_LANE_HEIGHT,
+  type TimelineEpicLaneNodeType,
+  type TimelineStoryNodeType,
+} from "../timelineLayout";
+import type { RoadmapTimelineResponse, TimelineEpicSummary, TimelineStorySummary } from "../types";
+
+function makeStory(overrides: Partial<TimelineStorySummary> = {}): TimelineStorySummary {
+  return {
+    id: "00000000-0000-0000-0000-000000000001",
+    epicId: "epic-1",
+    title: "Story",
+    stage: "backlog",
+    createdAt: "2026-04-01T00:00:00Z",
+    updatedAt: "2026-04-01T00:00:00Z",
+    ...overrides,
+  };
+}
+
+function makeEpic(overrides: Partial<TimelineEpicSummary> = {}): TimelineEpicSummary {
+  return {
+    id: "epic-1",
+    title: "Epic",
+    stage: "backlog",
+    createdAt: "2026-04-01T00:00:00Z",
+    updatedAt: "2026-04-01T00:00:00Z",
+    stories: [],
+    ...overrides,
+  };
+}
+
+function isStoryNode(node: { type?: string }): node is TimelineStoryNodeType {
+  return node.type === "timeline-story";
+}
+
+function isEpicLaneNode(node: { type?: string }): node is TimelineEpicLaneNodeType {
+  return node.type === "timeline-epic-lane";
+}
+
+describe("computeRoadmapTimelineLayout", () => {
+  it("single Epic with a single Story produces one lane node and one positioned Story node", () => {
+    const data: RoadmapTimelineResponse = {
+      epics: [makeEpic({ id: "epic-1", stories: [makeStory({ id: "story-1", epicId: "epic-1" })] })],
+    };
+
+    const { nodes, edges } = computeRoadmapTimelineLayout(data);
+
+    const laneNodes = nodes.filter(isEpicLaneNode);
+    const storyNodes = nodes.filter(isStoryNode);
+    expect(laneNodes).toHaveLength(1);
+    expect(laneNodes[0].id).toBe("epic-1");
+    expect(storyNodes).toHaveLength(1);
+    expect(storyNodes[0].id).toBe("story-1");
+    expect(storyNodes[0].position).toEqual(expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }));
+    expect(edges).toEqual([]);
+  });
+
+  it("an Epic with zero Stories produces a lane with no Story nodes", () => {
+    const data: RoadmapTimelineResponse = { epics: [makeEpic({ id: "epic-1", stories: [] })] };
+
+    const { nodes } = computeRoadmapTimelineLayout(data);
+
+    expect(nodes.filter(isEpicLaneNode)).toHaveLength(1);
+    expect(nodes.filter(isStoryNode)).toHaveLength(0);
+  });
+
+  it("two Stories sharing an identical createdAt in the same lane get distinct, non-overlapping X positions", () => {
+    const sameTimestamp = "2026-04-01T00:00:00Z";
+    const data: RoadmapTimelineResponse = {
+      epics: [
+        makeEpic({
+          id: "epic-1",
+          stories: [
+            makeStory({ id: "aaaaaaaa-0000-0000-0000-000000000001", createdAt: sameTimestamp }),
+            makeStory({ id: "bbbbbbbb-0000-0000-0000-000000000002", createdAt: sameTimestamp }),
+          ],
+        }),
+      ],
+    };
+
+    const { nodes } = computeRoadmapTimelineLayout(data);
+    const storyNodes = nodes.filter(isStoryNode);
+
+    expect(storyNodes).toHaveLength(2);
+    const xs = storyNodes.map((n) => n.position.x);
+    expect(new Set(xs).size).toBe(2);
+    // Ascending-id tie-break: the lexicographically smaller UUID resolves first (leftmost).
+    const sortedById = [...storyNodes].sort((a, b) => (a.id < b.id ? -1 : 1));
+    expect(sortedById[0].position.x).toBeLessThan(sortedById[1].position.x);
+  });
+
+  it("Stories within a lane are ordered left-to-right by ascending createdAt", () => {
+    const data: RoadmapTimelineResponse = {
+      epics: [
+        makeEpic({
+          id: "epic-1",
+          stories: [
+            makeStory({ id: "story-newest", title: "Newest", createdAt: "2026-04-03T00:00:00Z" }),
+            makeStory({ id: "story-oldest", title: "Oldest", createdAt: "2026-04-01T00:00:00Z" }),
+            makeStory({ id: "story-middle", title: "Middle", createdAt: "2026-04-02T00:00:00Z" }),
+          ],
+        }),
+      ],
+    };
+
+    const { nodes } = computeRoadmapTimelineLayout(data);
+    const storyNodes = nodes.filter(isStoryNode);
+
+    const byId = new Map(storyNodes.map((n) => [n.id, n.position.x]));
+    expect(byId.get("story-oldest")!).toBeLessThan(byId.get("story-middle")!);
+    expect(byId.get("story-middle")!).toBeLessThan(byId.get("story-newest")!);
+  });
+
+  it("places each Epic's lane on its own row, TIMELINE_LANE_HEIGHT apart, in response order", () => {
+    const data: RoadmapTimelineResponse = {
+      epics: [makeEpic({ id: "epic-1", stories: [] }), makeEpic({ id: "epic-2", stories: [] })],
+    };
+
+    const { nodes } = computeRoadmapTimelineLayout(data);
+    const laneNodes = nodes.filter(isEpicLaneNode);
+
+    const epic1 = laneNodes.find((n) => n.id === "epic-1")!;
+    const epic2 = laneNodes.find((n) => n.id === "epic-2")!;
+    expect(epic2.position.y - epic1.position.y).toBe(TIMELINE_LANE_HEIGHT);
+  });
+
+  it("an empty roadmap produces no nodes and no edges", () => {
+    const { nodes, edges } = computeRoadmapTimelineLayout({ epics: [] });
+
+    expect(nodes).toEqual([]);
+    expect(edges).toEqual([]);
+  });
+});

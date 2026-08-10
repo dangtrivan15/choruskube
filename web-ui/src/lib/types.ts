@@ -500,6 +500,46 @@ export interface RoadmapGraphSnapshot {
   externalBlockers: ExternalBlockerRef[];
 }
 
+// --- Roadmap Timeline View ---
+
+/**
+ * Matches the backend TimelineStorySummary record — one Story plotted on the Roadmap Timeline
+ * View, nested under its owning `TimelineEpicSummary`. `stage` mirrors `StoryResponse.stage`
+ * (the persisted board column), not the computed `status` rollup — Timeline has no `status`
+ * field of its own since it never joins dependency edges or Task rollups.
+ */
+export interface TimelineStorySummary {
+  id: string;
+  epicId: string;
+  title: string;
+  stage: StoryStage;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Matches the backend TimelineEpicSummary record — one Epic lane on the Roadmap Timeline View,
+ * carrying its own Stories ordered ascending by `createdAt`. An Epic with no Stories is still
+ * included, with `stories: []`.
+ */
+export interface TimelineEpicSummary {
+  id: string;
+  title: string;
+  stage: EpicStage;
+  createdAt: string;
+  updatedAt: string;
+  stories: TimelineStorySummary[];
+}
+
+/**
+ * Matches the backend RoadmapTimelineResponse record — the full org roadmap for the Timeline
+ * View: every scoped Epic (with its Stories nested), unpaginated. Backs
+ * GET /api/v1/roadmap/timeline.
+ */
+export interface RoadmapTimelineResponse {
+  epics: TimelineEpicSummary[];
+}
+
 /** Matches the backend CreateDependencyRequest record — POST /api/v1/dependencies body. */
 export interface CreateDependencyRequest {
   blockingItemType: BlockableItemType;
