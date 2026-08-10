@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router";
 import { formatDistanceToNow } from "date-fns";
-import { Plus, GitBranch, Layers, LayoutGrid, Network } from "lucide-react";
+import { Plus, GitBranch, Layers, LayoutGrid, Network, GanttChart } from "lucide-react";
 import Authorized from "@/components/Authorized";
 import { useEpics } from "@/hooks/useEpics";
 import { useRoadmapSubscription } from "@/hooks/useRoadmapSubscription";
@@ -62,6 +62,14 @@ export default function RoadmapPage() {
         >
           <LayoutGrid className="size-4" />
           Board view
+        </Link>
+        <Link
+          to="/roadmap/timeline"
+          data-testid="roadmap-timeline-view-link"
+          className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-transparent px-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
+          <GanttChart className="size-4" />
+          Timeline view
         </Link>
         <RoadmapReadyToggle checked={readyOnly} onChange={setReadyOnly} />
         <SortDropdown options={SORT_OPTIONS} currentSort={sort} onSort={setSort} />
