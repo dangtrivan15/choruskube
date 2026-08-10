@@ -104,10 +104,25 @@ spotless {
     }
 }
 
+// -Dtest.reports.dir=<abs path> is a per-REPO report root shared by every suite in this build
+// (e.g. /workspace/out/reports/choruskube), not a leaf: api-server's reports nest under
+// <root>/api-server so orchestrator/, web-ui/ and playwright/ can sit beside them, and so a
+// Repo Group run — where several repos' test_commands write into one /workspace/out/ — keeps
+// each repo's api-server reports separate. Unset (every local/CI run that does not pass it) is
+// the default-preserving path: nothing below is assigned, so every location keeps Gradle's own
+// default. That is why each redirect is guarded rather than expressed as `orElse(<default>)`,
+// which would silently freeze today's defaults into this file.
+def testReportsRoot = providers.systemProperty('test.reports.dir')
+def apiServerReportsDir = testReportsRoot.isPresent() ? file("${testReportsRoot.get()}/api-server") : null
+
 jacocoTestReport {
     reports {
         html.required = true
         xml.required = true
+        if (apiServerReportsDir != null) {
+            html.outputLocation = new File(apiServerReportsDir, 'jacoco/html')
+            xml.outputLocation = new File(apiServerReportsDir, 'jacoco/jacocoTestReport.xml')
+        }
     }
 }
 
@@ -138,6 +153,11 @@ tasks.named('test') {
     useJUnitPlatform()
     jvmArgs '-Dnet.bytebuddy.experimental=true'
     finalizedBy jacocoTestReport
+
+    if (apiServerReportsDir != null) {
+        reports.html.outputLocation = new File(apiServerReportsDir, 'tests/test')
+        reports.junitXml.outputLocation = new File(apiServerReportsDir, 'test-results/test')
+    }
 }
 
 // core is BOTH a plain library consumed by a downstream module AND a standalone

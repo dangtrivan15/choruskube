@@ -6,7 +6,10 @@ import static org.mockito.Mockito.*;
 
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.repository.GitRepoRepository;
+import com.choruskube.core.util.RepoNameUtil;
 import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -46,11 +49,32 @@ class SingleTenantRepoSeederTest {
         assertThat(saved.getDefaultBranch()).isEqualTo("main");
         assertThat(saved.getAgentImage()).isEqualTo("ghcr.io/test/agent:1");
         assertThat(saved.isEnableDocker()).isTrue();
-        // The choruskube repo has no root Gradle wrapper and no -Pe2e property; its
-        // documented full regression harness is ./scripts/e2e.sh (CONTRIBUTING.md
-        // "End-to-end tests"), run from the repo root. The test node executes this
-        // command verbatim from the clone root.
-        assertThat(saved.getTestCommand()).isEqualTo("./scripts/e2e.sh");
+        assertThat(saved.getTestCommand())
+                .isEqualTo("./gradlew test -Pe2e -Dtest.reports.dir=/workspace/out/reports/choruskube");
+    }
+
+    /**
+     * A Repo Group run eval's every repo's test_command in one pod against one /workspace/out/, so
+     * two repos sharing a report root would clobber each other's api-server reports. Pin the last
+     * segment of -Dtest.reports.dir to this repo's own name so a repo added later with a missing or
+     * copy-pasted infix fails here instead of silently overwriting another repo's artifacts.
+     */
+    @Test
+    void run_testCommand_reportsDirIsInfixedWithThisRepoName() {
+        seeder.run(null);
+
+        ArgumentCaptor<GitRepo> captor = ArgumentCaptor.forClass(GitRepo.class);
+        verify(gitRepoRepository).save(captor.capture());
+        GitRepo saved = captor.getValue();
+
+        Matcher m = Pattern.compile("-Dtest\\.reports\\.dir=(\\S+)").matcher(saved.getTestCommand());
+        assertThat(m.find()).as("test_command must set -Dtest.reports.dir").isTrue();
+        String reportsDir = m.group(1);
+        String repoName = RepoNameUtil.deriveRepoName(saved.getUrl());
+        assertThat(repoName).isNotEmpty();
+        assertThat(reportsDir.substring(reportsDir.lastIndexOf('/') + 1))
+                .as("report root must end with this repo's own name, not another repo's")
+                .isEqualTo(repoName);
     }
 
     @Test

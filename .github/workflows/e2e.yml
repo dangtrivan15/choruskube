@@ -15,15 +15,15 @@ name: E2E
 # the PR checks that actually gate something. Anything reaching main outside a PR (an admin
 # merge, a direct push) can be covered on demand via `workflow_dispatch`.
 #
-# Parallelism is Playwright workers (E2E_WORKERS) inside this one job, against the one
-# Compose stack it boots.
+# Parallelism is Playwright workers (E2E_WORKERS, or -Pworkers on a direct Gradle
+# invocation) inside this one job, against the one Compose stack it boots.
 #
 # Splitting the suite across multiple runner pods was tried and removed: every pod re-pays
-# the whole non-Playwright preamble (image builds, stack boot, the full unit stage in
-# scripts/e2e.sh), so each one buys parallelism at a fixed cost measured in minutes, and the
-# `arc-runner-choruskube` pool admits few enough concurrent runners that the extra pods
-# queued into a second wave rather than running sooner. A worker is one more process against
-# a stack that is already up, which costs ~nothing.
+# the whole non-Playwright preamble (image builds, stack boot, the full unit stage that
+# `./gradlew test -Pe2e` runs first), so each one buys parallelism at a fixed cost measured
+# in minutes, and the `arc-runner-choruskube` pool admits few enough concurrent runners that
+# the extra pods queued into a second wave rather than running sooner. A worker is one more
+# process against a stack that is already up, which costs ~nothing.
 #
 # The trade-off workers carry instead: they share one backend (a single api-server,
 # PostgreSQL, Temporal and Docker daemon), so their ceiling is backend contention rather than
@@ -84,9 +84,9 @@ jobs:
           cache: npm
           cache-dependency-path: web-ui/package-lock.json
 
-      # Java + Go on the host: scripts/e2e.sh now runs the per-component unit suites
-      # (api-server ./gradlew test, orchestrator go test ./...) before booting the stack,
-      # so the runner needs those toolchains, not only Node. Pinned Temurin 25 via jdkfile
+      # Java + Go on the host: `./gradlew test -Pe2e` runs the three unit suites
+      # (:api-server:test, :orchestrator:test, :web-ui:test) before booting the stack, so
+      # the runner needs those toolchains, not only Node. Pinned Temurin 25 via jdkfile
       # for the same reason the (now-removed) unit-tests.yml did: api.adoptium.net's TLS is
       # slow/high-variance from our CI egress, while the GitHub release tarball is fast.
       # Pinned by release tag + SHA256 for reproducibility; cached across runs.
@@ -115,6 +115,8 @@ jobs:
       # (upstream cache.ts: "No restoreKeys is set, to start with a clear cache after
       # dependency update"). Exact match only — so editing one line of one build file
       # discarded the entire cache and re-downloaded everything, with no partial reuse.
+      # The root Gradle build added more files to that hash, so the invalidation surface is
+      # wider now than when this was measured; the conclusion is unchanged either way.
       - uses: actions/setup-java@v4
         with:
           distribution: jdkfile
@@ -217,13 +219,36 @@ jobs:
         with:
           buildkitd-config: /tmp/buildkitd.toml
 
-      # e2e.sh: build agent images → app images → compose up → smoke → seed-verify →
-      # playwright. --no-teardown leaves the stack up so the steps below can collect
-      # diagnostics before it is torn down. BUILD_CACHE_REGISTRY reaches e2e-up.sh from
-      # the runner env and switches it between cached and plain builds. E2E_WORKERS reaches
-      # scripts/e2e-pipeline.sh (invoked by e2e.sh), which forwards it to `npx playwright
-      # test` as --workers; unset on a plain local `./scripts/e2e.sh` run, which therefore
-      # stays serial.
+      # `./gradlew test -Pe2e`: the three unit suites in parallel, then the e2e chain —
+      # :e2eImages → :e2eStackUp → :e2eSmoke → :e2eSeed → :e2ePlaywright. The `-Pe2e` is
+      # load-bearing: a bare `./gradlew test` runs the unit suites only and never boots the
+      # stack, so dropping it here would turn this required check into a unit-test job
+      # while still reporting green.
+      #
+      # -Pe2eNoTeardown suppresses the :e2eDown finalizer so the stack outlives the build
+      # and the steps below can read it — `docker compose logs` and the Playwright report
+      # both come from state teardown destroys. This job then owns the cleanup, which is
+      # the `always()` teardown at the end. Without the flag :e2eDown finalizes :e2eStackUp
+      # and therefore runs even when a later phase failed, which is what stops a local run
+      # from leaking containers mid-chain.
+      #
+      # Both accelerators arrive through the environment rather than through Gradle
+      # plumbing, because an Exec task inherits the daemon's environment:
+      # BUILD_CACHE_REGISTRY reaches e2e-up.sh and switches it between cached and plain
+      # image builds, and E2E_WORKERS reaches :e2ePlaywright, which forwards it to
+      # `npx playwright test` as --workers (the -Pworkers property does the same for a
+      # direct invocation). A run that sets neither stays serial.
+      #
+      # The build prints a per-task timing table — and writes timings.tsv — on success and
+      # on failure alike, so a slow or broken run can be attributed to a phase from the log
+      # itself rather than by re-running with a stopwatch.
+      #
+      # -Dtest.reports.dir gathers every suite's reports plus that timing summary under one
+      # tree, which is what the two upload steps below collect. The repo-name segment is not
+      # decoration: the dogfood Test node runs several repos' test commands into one shared
+      # output directory, and more than one of them has an api-server, so the segment is what
+      # keeps their reports from overwriting each other. Passing it here also means the flag
+      # is exercised on every PR instead of only on dogfood runs, which have no CI.
       - name: Run e2e suite
         env:
           CI: "true"
@@ -232,18 +257,41 @@ jobs:
           # PostgreSQL, one Temporal, one Docker daemon), so raise it against measured run
           # times rather than by assumption.
           E2E_WORKERS: 4
-        run: scripts/e2e.sh --no-teardown
+        run: >-
+          ./gradlew test -Pe2e -Pe2eNoTeardown
+          -Dtest.reports.dir=${{ github.workspace }}/build/reports/choruskube
 
       - name: Dump stack logs on failure
         if: failure()
         run: docker compose -f docker-compose.e2e.yaml logs --no-color --tail=400 || true
 
+      # Both upload steps read from the single tree that the run step's -Dtest.reports.dir
+      # creates. Passing that property here is deliberate beyond tidiness: the dogfood Test
+      # node is the only other caller that sets it, and the dogfood run has no CI of its own,
+      # so without this the flag would ship completely unexercised. Now every PR proves it.
+      #
+      # Kept as two artifacts rather than one: `playwright-report` is the name people already
+      # reach for, and the exclusion below stops the HTML being uploaded twice.
       - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report
-          path: web-ui/e2e/playwright-report
+          path: build/reports/choruskube/playwright
+          if-no-files-found: ignore
+          retention-days: 7
+
+      # `always()` because a failed run is exactly when these are worth reading, and
+      # `ignore` because a build that dies in an early phase never produces the later
+      # phases' reports — an absent path there is the expected outcome, not an error.
+      - name: Upload test reports and timing summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            build/reports/choruskube
+            !build/reports/choruskube/playwright
           if-no-files-found: ignore
           retention-days: 7
 

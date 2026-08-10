@@ -3,7 +3,33 @@ val goVersion = file("go.mod").readLines()
     .substringAfter("go ")
     .trim()
 
+// `-Dtest.reports.dir` is the per-repo report ROOT; this component nests under it. Absent =>
+// reports keep their existing build/ locations, so a local run is unchanged.
+val reportsRoot: Provider<String> = providers.systemProperty("test.reports.dir")
+
+tasks.register<Exec>("goModDownload") {
+    description = "Download Go module dependencies"
+    group = "build"
+    workingDir = projectDir
+    environment("GOTOOLCHAIN", "go$goVersion")
+    commandLine("go", "mod", "download")
+}
+
+// `go test -run '^$'` compiles every package's test binary and matches no test name, so it
+// builds everything and runs nothing. Splitting it out means the `test` task below measures
+// test execution against a warm compile cache instead of compile+execute in one number —
+// and a compile error surfaces as a failure of this task, not of the test run.
+tasks.register<Exec>("compileTests") {
+    description = "Compile every Go test binary without running any test"
+    group = "build"
+    dependsOn("goModDownload")
+    workingDir = projectDir
+    environment("GOTOOLCHAIN", "go$goVersion")
+    commandLine("go", "test", "-run", "^$", "./...")
+}
+
 tasks.register<Exec>("test") {
+    dependsOn("goModDownload", "compileTests")
     workingDir = projectDir
     environment("GOTOOLCHAIN", "go$goVersion")
     // Use bash to ensure build/ directory exists before go test writes coverage.out.
@@ -16,7 +42,10 @@ tasks.register<Exec>("test") {
 tasks.register<Exec>("coverageReport") {
     workingDir = projectDir
     environment("GOTOOLCHAIN", "go$goVersion")
-    commandLine("go", "tool", "cover", "-html=build/coverage.out", "-o", "build/coverage.html")
+    // Only the rendered HTML moves under the report root; coverage.out stays in build/
+    // because coverageCheck below reads it from there.
+    val html = reportsRoot.map { "$it/orchestrator/coverage.html" }.getOrElse("build/coverage.html")
+    commandLine("bash", "-c", "mkdir -p \"\$(dirname '$html')\" && go tool cover -html=build/coverage.out -o '$html'")
 }
 
 tasks.register("coverageCheck") {

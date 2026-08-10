@@ -50,12 +50,13 @@ public class SingleTenantRepoSeeder implements ApplicationRunner {
         });
 
         repo.setDefaultBranch("main");
-        // choruskube has no root Gradle wrapper (only api-server/gradlew) and no -Pe2e
-        // property — those were choruskube-cloud conventions that don't apply here. The
-        // documented full regression harness is ./scripts/e2e.sh (CONTRIBUTING.md
-        // "End-to-end tests": up -> smoke -> Playwright -> teardown), run from the repo
-        // root, which is exactly where the test node executes this command.
-        repo.setTestCommand("./scripts/e2e.sh");
+        // Run from the clone root, which is where the test node eval's this command. The
+        // `choruskube` infix on the report root is load-bearing, not decoration: in a Repo Group
+        // run, run-all-tests eval's every repo's test_command in the SAME pod against the SAME
+        // /workspace/out/, and the closed sibling repo also has an api-server component — a
+        // shared .../reports/api-server would mean whichever finishes second silently overwrites
+        // the first. One infix per repo keeps the trees disjoint.
+        repo.setTestCommand("./gradlew test -Pe2e -Dtest.reports.dir=/workspace/out/reports/choruskube");
         repo.setAgentImage(agentImage);
         repo.setEnableDocker(true);
         gitRepoRepository.save(repo);

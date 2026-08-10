@@ -8,7 +8,7 @@ This is the **open-source core** of ChorusKube. It runs **single-tenant** with n
 
 ## Quick Reference: Build & Test Commands
 
-There is **no root Gradle build** — each component is built and tested on its own. See [CONTRIBUTING.md](CONTRIBUTING.md#components-and-per-component-commands).
+`./gradlew test` at the repo root runs the three unit suites in parallel; `-Pe2e` adds the full stack chain (`e2eImages` → `e2eStackUp` → `e2eSmoke` → `e2eSeed` → `e2ePlaywright`, teardown as a finalizer). A bare `./gradlew test` no longer boots the stack. Every build prints a per-task timing table on success and failure; `-Dtest.reports.dir=<abs path>` collects all suites' reports under one repo-named tree. Per-component commands below remain the fast-iteration path — see [CONTRIBUTING.md](CONTRIBUTING.md#components-and-per-component-commands).
 
 | Component    | Build (from its dir)        | Test                | Lint / Format                  |
 |--------------|-----------------------------|---------------------|--------------------------------|
@@ -16,9 +16,9 @@ There is **no root Gradle build** — each component is built and tested on its 
 | Orchestrator | `cd orchestrator && go build ./...` | `go test ./...`  | `gofmt -w .`                   |
 | Web UI       | `cd web-ui && npm run build` | `npm run test`      | `npm run lint`                 |
 
-**The reliability gate is per-component tests plus the published-image smoke test**, `scripts/oss-smoke.sh` — it boots the canonical Docker Compose stack from published images and drives one feature-dev run end to end (with a throwaway dummy token, no real Claude call). Run it before declaring complete any change that crosses a component boundary. Per-component unit tests are for fast iteration, not sign-off.
+**The reliability gate is `./gradlew test -Pe2e` plus the published-image smoke test**, `scripts/oss-smoke.sh` — the latter boots the canonical Docker Compose stack from published images and drives one feature-dev run end to end (with a throwaway dummy token, no real Claude call). Run both before declaring complete any change that crosses a component boundary. Unit tests alone are for fast iteration, not sign-off.
 
-`./scripts/e2e.sh`'s Playwright stage is serial unless `E2E_WORKERS` is set — parallel workers against the one stack, which CI (`.github/workflows/e2e.yml`) sets. New specs must name created resources via `uniqueName()` (`web-ui/e2e/helpers/api-client.ts`), not a static literal, or they'll collide across workers; take the `workerRepo` fixture rather than indexing `listGitRepos()`, and scope any list assertion via `listEpicsForProject()`. See [CONTRIBUTING.md](CONTRIBUTING.md#running-the-playwright-suite-in-parallel) and [web-ui/e2e/PARALLELISM.md](web-ui/e2e/PARALLELISM.md).
+`./gradlew test -Pe2e`'s Playwright stage is serial unless `-Pworkers=N` (or the `E2E_WORKERS` env var) is set — parallel workers against the one stack, which CI (`.github/workflows/e2e.yml`) sets. Use `-Pe2eNoTeardown` to keep a failed stack alive for inspection — you then own tearing it down (`./scripts/e2e-down.sh --volumes`). New specs must name created resources via `uniqueName()` (`web-ui/e2e/helpers/api-client.ts`), not a static literal, or they'll collide across workers; take the `workerRepo` fixture rather than indexing `listGitRepos()`, and scope any list assertion via `listEpicsForProject()`. See [CONTRIBUTING.md](CONTRIBUTING.md#running-the-playwright-suite-in-parallel) and [web-ui/e2e/PARALLELISM.md](web-ui/e2e/PARALLELISM.md).
 
 The api-server enforces **60% line coverage** via JaCoCo, separate from `test` so local iteration stays fast:
 

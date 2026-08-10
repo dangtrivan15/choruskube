@@ -178,9 +178,11 @@ public class SingleTenantDockerExecutor implements WorkloadExecutor {
                 env.add("CLAUDE_CODE_OAUTH_TOKEN=" + aiCredentialResolver.resolveOauthToken(params.runId()));
             }
             // Test-node (executor_type=="script") dogfood executions run run-all-tests, which
-            // eval's this repo's test_command (./scripts/e2e.sh) as a single subprocess tree
-            // inside this one container — there is no shard-level fan-out available to it, only
-            // in-stack Playwright worker parallelism. Without an explicit env var it would
+            // eval's this repo's test_command (./gradlew test -Pe2e -Dtest.reports.dir=...) as a
+            // single subprocess tree inside this one container — there is no shard-level fan-out
+            // available to it, only in-stack Playwright worker parallelism. The var still reaches
+            // Playwright through Gradle: an Exec task inherits the daemon's environment, and the
+            // daemon inherits this container's. Without an explicit env var it would
             // silently inherit playwright.config.ts's "unset -> serial" default, which is correct
             // for local dev but means a Test-node run never benefits from suite parallelization.
             // The worker count is a starting estimate (unmeasured against real dogfood-run

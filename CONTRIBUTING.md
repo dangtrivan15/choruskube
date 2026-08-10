@@ -33,59 +33,124 @@ for fast iteration:
 - **orchestrator** — Go 1.25, Temporal.
 - **web-ui** — TypeScript, React, Vite. Run `npm ci` first to install deps.
 
+The repo root is also a Gradle build that includes all three, so the same suites are
+addressable from one place as `./gradlew :api-server:test`, `:orchestrator:test` and
+`:web-ui:test` — the Go and npm ones are wrapped, not reimplemented. Run them
+per-component while iterating on one component; run them from the root when you want
+all three, since the root runs them in parallel. See
+[End-to-end tests](#end-to-end-tests) for what the root `test` task covers.
+
 ## End-to-end tests
 
-`./scripts/e2e.sh` is the full regression harness. It first runs the per-component
-unit suites (`api-server` `./gradlew test`, `orchestrator` `go test ./...`, `web-ui`
-`npm run test`) so a unit regression fails fast, then boots an auth-free Docker
-stack on `2xxxx` ports (web UI on 23000, API on 28080) — separate from the local
-development stack on `3xxxx` ports so the two can coexist — runs API smoke checks,
-loads WireMock stubs, seeds test data, then drives the Playwright suite end-to-end
-through Temporal, the orchestrator, object storage, and an agent pod. Requires
-Docker (same requirement as the dev stack), plus Java 25 + Go 1.25 + Node 22 on the
-host for the unit step.
+`./gradlew test` at the repo root is the entrypoint for both the fast gate and the
+full regression:
 
 ```bash
-./scripts/e2e.sh                # full run: unit → up → smoke → Playwright → tear down
-./scripts/e2e.sh --no-teardown  # leave the stack up (useful for debugging failures)
+./gradlew test         # unit suites only — api-server + orchestrator + web-ui, in parallel
+./gradlew test -Pe2e   # the above, then the whole stack chain
 ```
 
-If the stack is already up (e.g. after `--no-teardown`), you can run just the
-Playwright specs against it:
+**A bare `./gradlew test` does not boot the stack.** That is a deliberate break from
+the old `scripts/e2e.sh` (now deleted), where the fast gate and the heavy one were
+the same command and you could not ask for only the first. Putting the expensive half
+behind a property makes the default the cheap thing, and it converges this repo on the
+shape the closed sibling repo already uses — the same two commands now mean the same
+two things in both.
+
+The three unit suites run **concurrently**, not one after another: they share no
+state (separate processes, separate toolchains), so the unit stage costs as long as
+its slowest suite rather than the sum of all three. That comes from
+`org.gradle.parallel=true` in the root `gradle.properties`; drop it and the stage
+silently serializes while still passing.
+
+With `-Pe2e`, Gradle then runs the end-to-end chain as separate tasks:
+
+| Task | What it does |
+|------|--------------|
+| `e2eImages` | Build the agent and application images |
+| `e2eStackUp` | `docker compose up`, then wait for health |
+| `e2eSmoke` | API smoke checks against the live stack |
+| `e2eSeed` | Load WireMock stubs and seed test data |
+| `e2ePlaywright` | Drive the Playwright suite end-to-end |
+
+The stack it boots is auth-free and listens on `2xxxx` ports (web UI on 23000, API on
+28080) — separate from the local development stack on `3xxxx` ports, so the two can
+coexist. The specs drive real runs through Temporal, the orchestrator, object storage
+and an agent container. Requires Docker (same requirement as the dev stack), plus
+Java 25 + Go 1.25 + Node 22 on the host for the unit stage.
+
+Teardown is a Gradle **finalizer** on `e2eStackUp` rather than the last link in the
+chain. A finalizer runs once the task it finalizes has completed, including when the
+build is already failing — so the containers come down exactly when they went up, and
+a failure in `e2eSmoke` no longer leaks a stack that a trailing chain step would have
+been skipped past. Opt out with `-Pe2eNoTeardown` when you want to inspect a failure;
+the stack is then yours to clean up:
 
 ```bash
-cd web-ui && npm run test:e2e
+./gradlew test -Pe2e -Pe2eNoTeardown   # leave the stack up — you must tear it down
+./scripts/e2e-down.sh                  # stop containers
+./scripts/e2e-down.sh --volumes        # stop and wipe data volumes
 ```
 
-`e2e.sh` now supersets the per-component unit tests (which remain the fast-iteration
-path — run them directly while developing; the api-server/orchestrator/web-ui suites
-now also run concurrently as background subprocesses within `e2e.sh` itself, so the
-unit-test stage takes as long as its slowest suite rather than the sum of all three).
-It is also distinct from `scripts/oss-smoke.sh` (boots from published images,
-exercises one feature-dev run end-to-end). Use `e2e.sh` to validate changes that cross
-a component boundary before declaring them complete. In CI, the `E2E` workflow
-(`.github/workflows/e2e.yml`) runs this whole harness — unit suites included — on
-every PR to `main`, and nowhere else: it is a pre-merge gate, not a post-merge one.
-Re-running it on `main` would re-verify content the PR already proved green while
-occupying a runner that a live PR check needs. Use `workflow_dispatch` if something
-reaches `main` outside a PR and you want the suite over it.
-
-To tear down the e2e stack manually:
+If a stack is already up (e.g. after `-Pe2eNoTeardown`), re-run just the Playwright
+specs against it — one task, two entry paths:
 
 ```bash
-./scripts/e2e-down.sh           # stop containers
-./scripts/e2e-down.sh --volumes # stop and wipe data volumes
+./gradlew e2ePlaywright         # from the repo root
+cd web-ui && npm run test:e2e   # equivalent, straight from the web-ui tree
 ```
+
+### What every build reports
+
+Each build prints a per-task timing table when it finishes — on success **and** on
+failure — breaking the run into each suite's init / build / test phases plus each e2e
+phase, with each one's share of the wall clock. The same numbers are written alongside
+it as a TSV. Nothing consumes this programmatically; the point is that "the suite got
+slower" is answerable from the log of the run that was slow, instead of by re-running
+it with a stopwatch. A phase with no measurement renders as `-`, because the timing
+report must never be the reason a build fails.
+
+Test reports keep their per-component default locations unless you say otherwise.
+`-Dtest.reports.dir=<absolute path>` redirects all of them into a single tree, with
+each suite nested under it:
+
+```bash
+./gradlew test -Pe2e -Dtest.reports.dir=/tmp/reports/choruskube
+```
+
+That value is a per-**repo** root, not one suite's leaf — hence the repo name on the
+end. An agent run can collect several repos' reports into one output directory, and
+more than one of those repos has an `api-server` component, so without the repo infix
+whichever finished second would silently overwrite the first. Leave the property unset
+and nothing is redirected, which is why an ordinary local run looks exactly as it
+always did.
+
+### Related, but not the same check
+
+`scripts/oss-smoke.sh` boots the canonical stack from **published** images and drives
+one feature-dev run end to end; `./gradlew test -Pe2e` builds everything from source.
+Use the e2e suite to validate a change that crosses a component boundary before
+declaring it complete, and `oss-smoke.sh` to validate that what was published actually
+works.
+
+In CI, the `E2E` workflow (`.github/workflows/e2e.yml`) runs `./gradlew test -Pe2e` —
+unit suites included — on every PR to `main`, and nowhere else: it is a pre-merge gate,
+not a post-merge one. Re-running it on `main` would re-verify content the PR already
+proved green while occupying a runner that a live PR check needs. Use
+`workflow_dispatch` if something reaches `main` outside a PR and you want the suite
+over it.
 
 ### Running the Playwright suite in parallel
 
 The Playwright suite (`web-ui/e2e/specs/`) is serial by default — safe for local dev,
 where nothing else is competing for the one shared stack instance. Opt into multiple
-workers with `E2E_WORKERS`:
+workers with the `-Pworkers` property or the `E2E_WORKERS` environment variable; both
+reach the same `--workers` flag, so use whichever fits the invocation:
 
 ```bash
-E2E_WORKERS=4 ./scripts/e2e.sh                 # full run, 4 Playwright workers
-cd web-ui && E2E_WORKERS=4 npm run test:e2e    # against a stack already up
+./gradlew test -Pe2e -Pworkers=4               # full run, 4 Playwright workers
+./gradlew e2ePlaywright -Pworkers=4            # against a stack already up
+cd web-ui && E2E_WORKERS=4 npm run test:e2e    # same, straight from the web-ui tree
 ```
 
 Every spec that creates a named resource (a Run/Epic/Task title, a GitRepo, a
