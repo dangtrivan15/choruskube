@@ -221,3 +221,156 @@ func (s *DAGExecutorTestSuite) TestScriptNodeRetry_RefreshesSnapshot() {
 	s.True(s.env.IsWorkflowCompleted())
 	s.NoError(s.env.GetWorkflowError())
 }
+
+// TestModelEffortResolution_RetryNodeSignal_PreservesReviewPassAcrossRetry
+// covers Decision 2 / Part 2 step 7(e) (first half) of the accompanying spec:
+// an operator-triggered retry of a failed node's first review pass (via
+// SignalRetryNode) advances the DB-facing `iteration` counter (so the new
+// node_execution row gets a fresh, unique value) but must NOT advance
+// `reviewPass` — the retried execution still resolves the first-iteration
+// model/effort, not the subsequent-iteration configuration.
+func (s *DAGExecutorTestSuite) TestModelEffortResolution_RetryNodeSignal_PreservesReviewPassAcrossRetry() {
+	nodeA := uuid.New()
+	execA1 := uuid.New() // first execution (will fail)
+	execA2 := uuid.New() // retry execution
+
+	runID := uuid.New()
+
+	snapshot := `{
+		"nodes": [
+			{"templateNodeId": "` + nodeA.String() + `", "label": "A", "executorType": "ai", "timeoutSeconds": 1800, "isEntrypoint": true, "model": "static-model", "configOverrides": {"effort": "static-effort", "model_first_iteration": "opus-x", "effort_first_iteration": "xhigh", "model_subsequent_iteration": "sonnet-y", "effort_subsequent_iteration": "high"}}
+		],
+		"edges": []
+	}`
+
+	s.env.OnActivity("UpdateWorkflowRunStatus", mock.Anything, mock.Anything).Return(nil)
+	s.env.OnActivity("GetGraphRuntime", mock.Anything, runID).Return(snapshot, nil).Maybe()
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("WriteExecutionLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("InitRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("AppendRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("LoadPredecessorInputs", mock.Anything, mock.Anything).Return(map[string]string{}, nil).Maybe()
+	s.env.OnActivity("LoadRequiredInputArtifacts", mock.Anything, mock.Anything).Return(activity.LoadRequiredInputArtifactsResult{}, nil).Maybe()
+	s.env.OnActivity("LoadReviewHistoryJSON", mock.Anything, mock.Anything).Return("[]", nil).Maybe()
+	s.env.OnActivity("FetchPodLogs", mock.Anything, mock.Anything).Return("", nil).Maybe()
+	s.env.OnActivity("DeleteAgentJob", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == nodeA && p.Iteration == 1
+	})).Return(execA1, nil).Once()
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == nodeA && p.Iteration == 2
+	})).Return(execA2, nil).Once()
+
+	// First attempt (reviewPass == 1, iteration 1): resolves the first-iteration
+	// config, then fails, sending the node into the awaiting_retry state.
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.NodeExecutionID == execA1 && p.Iteration == 1 && p.Model == "opus-x" && p.Effort == "xhigh"
+	})).Return(fmt.Errorf("boom")).Once()
+
+	// Retried attempt (iteration 2, but reviewPass STILL == 1 — this is an infra
+	// retry, not a review decision): must still resolve the first-iteration
+	// config, not the subsequent-iteration one.
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.NodeExecutionID == execA2 && p.Iteration == 2 && p.Model == "opus-x" && p.Effort == "xhigh"
+	})).Return(nil).Once()
+
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execA2
+	})).Return("no_decision", nil).Once()
+
+	s.env.RegisterDelayedCallback(func() {
+		s.env.SignalWorkflow(SignalRetryNode, RetryNodeSignal{
+			TemplateNodeID: nodeA.String(),
+		})
+	}, time.Millisecond*10)
+
+	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
+		RunID: runID, GraphVersion: 1,
+	})
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+}
+
+// TestModelEffortResolution_PauseHeartbeatTimeoutRecovery_PreservesReviewPass
+// covers Decision 2 / Part 2 step 7(e) (second half): a heartbeat timeout that
+// fires after a deliberate pause is treated as an infra-retry re-queue (see
+// dag_executor.go's pauseInterrupted handling), not a failure. The re-queued
+// execution's `iteration` advances (fresh DB row, same as any retry) but
+// `reviewPass` must not — the re-queued attempt still resolves the
+// first-iteration model/effort.
+func (s *DAGExecutorTestSuite) TestModelEffortResolution_PauseHeartbeatTimeoutRecovery_PreservesReviewPass() {
+	nodeA := uuid.New()
+	execA := uuid.New()
+	execA2 := uuid.New()
+	runID := uuid.New()
+
+	snapshot := `{
+		"nodes": [
+			{"templateNodeId": "` + nodeA.String() + `", "label": "A", "executorType": "ai", "timeoutSeconds": 1800, "isEntrypoint": true, "model": "static-model", "configOverrides": {"effort": "static-effort", "model_first_iteration": "opus-x", "effort_first_iteration": "xhigh", "model_subsequent_iteration": "sonnet-y", "effort_subsequent_iteration": "high"}}
+		],
+		"edges": []
+	}`
+
+	s.env.OnActivity("UpdateWorkflowRunStatus", mock.Anything, mock.Anything).Return(nil)
+	s.env.OnActivity("GetGraphRuntime", mock.Anything, runID).Return(snapshot, nil)
+	s.env.OnActivity("WriteExecutionLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("InitRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("AppendRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("FetchPodLogs", mock.Anything, mock.Anything).Return("", nil).Maybe()
+	s.env.OnActivity("LoadPredecessorInputs", mock.Anything, mock.Anything).Return(map[string]string{}, nil).Maybe()
+	s.env.OnActivity("LoadRequiredInputArtifacts", mock.Anything, mock.Anything).Return(activity.LoadRequiredInputArtifactsResult{}, nil).Maybe()
+	s.env.OnActivity("LoadReviewHistoryJSON", mock.Anything, mock.Anything).Return("[]", nil).Maybe()
+	s.env.OnActivity("DeleteAgentJob", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == nodeA && p.Iteration == 1
+	})).Return(execA, nil).Once()
+
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == nodeA && p.Iteration == 2
+	})).Return(execA2, nil).Once()
+
+	// First execution: resolves the first-iteration config, then "times out"
+	// (simulated heartbeat timeout) after the pause/resume cycle below.
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.NodeExecutionID == execA
+	})).After(500 * time.Millisecond).Return(fmt.Errorf("heartbeat timeout"))
+
+	// Re-queued execution (iteration 2, reviewPass STILL 1): must still resolve
+	// the first-iteration config, not the subsequent-iteration one.
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.NodeExecutionID == execA2 && p.Model == "opus-x" && p.Effort == "xhigh"
+	})).Return(nil)
+
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.MatchedBy(func(p activity.UpdateNodeExecStatusParams) bool {
+		return p.NodeExecutionID == execA && p.Status == "paused"
+	})).Return(nil).Once()
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.MatchedBy(func(p activity.UpdateNodeExecStatusParams) bool {
+		return p.NodeExecutionID == execA && p.Status == "invalidated"
+	})).Return(nil).Once()
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.MatchedBy(func(p activity.UpdateNodeExecStatusParams) bool {
+		return p.NodeExecutionID == execA2 && p.Status == "completed"
+	})).Return(nil).Once()
+
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execA2
+	})).Return("no_decision", nil).Once()
+
+	// Pause at 50 ms, resume at 100 ms (well before the 500 ms timeout) — same
+	// timing as TestResumeBeforeHeartbeatTimeout.
+	s.env.RegisterDelayedCallback(func() {
+		s.env.SignalWorkflow(SignalPause, nil)
+	}, time.Millisecond*50)
+	s.env.RegisterDelayedCallback(func() {
+		s.env.SignalWorkflow(SignalResume, nil)
+	}, time.Millisecond*100)
+
+	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
+		RunID: runID, GraphVersion: 1,
+	})
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+}

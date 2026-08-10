@@ -26,7 +26,7 @@ public class BaseRoadmapProvisionerSeeder implements ApplicationRunner {
     private static final Logger log = LoggerFactory.getLogger(BaseRoadmapProvisionerSeeder.class);
 
     static final String GRAPH_ID = GraphIds.ROADMAP_PROVISIONER;
-    static final int VERSION = 13;
+    static final int VERSION = 14;
 
     private static final String TEMPLATE_NAME = "Roadmap Provisioner";
 
@@ -48,8 +48,12 @@ public class BaseRoadmapProvisionerSeeder implements ApplicationRunner {
             Repositories are cloned under /workspace/repo/<name>/ — one subdirectory per
             repo in this run. Discover them by listing that directory. Per-repo metadata
             is available in /workspace/config.json under the "repos" array. When repos
-            are independent, you may explore them in parallel by dispatching Task
-            subagents — one per repo — and consolidating their findings.
+            are independent, explore them in parallel by dispatching multiple Task
+            subagents — one per repo, or further split by subtopic within a large repo —
+            and consolidating their findings. For each subagent, choose the model
+            yourself based on that subagent's own difficulty: Sonnet for straightforward,
+            mechanical exploration, Opus for anything requiring judgment about user
+            workflows, ambiguous feature framing, or cross-cutting product tradeoffs.
 
             Read the codebase(s) to understand the project's purpose, who its users are,
             what workflows it supports, and where the user experience has gaps or
@@ -183,6 +187,7 @@ public class BaseRoadmapProvisionerSeeder implements ApplicationRunner {
     private void seedTemplate() {
         // Create node definitions
         NodeDefinition analyzer = createNodeDef("Roadmap Analyzer", ExecutorType.ai, ANALYZER_PROMPT, 1800);
+        analyzer.setModel(ModelIds.MODEL_OPUS);
         analyzer.setOutputSpec(
                 "{\"files\":[{\"name\":\"roadmap_analysis.md\",\"required\":true,\"description\":\"Analysis of roadmap proposals for human review\"},"
                         + "{\"name\":\"roadmap_candidates.json\",\"required\":true,\"description\":\"Structured candidate Epic/Story/Task breakdown for human review\"}]}");
@@ -209,8 +214,12 @@ public class BaseRoadmapProvisionerSeeder implements ApplicationRunner {
         //   reviewed candidate breakdown itself, in the same request that
         //   handles the decision signal, instead of handing off to a second
         //   AI agent.
-        TemplateNode tnAnalyzer =
-                createNode(template, analyzer, "roadmap_analyzer", true, "{\"loop_group\": \"proposal-review\"}");
+        TemplateNode tnAnalyzer = createNode(
+                template,
+                analyzer,
+                "roadmap_analyzer",
+                true,
+                "{\"loop_group\": \"proposal-review\", \"effort\": \"xhigh\"}");
         TemplateNode tnHumanGate = createNode(
                 template,
                 humanGate,

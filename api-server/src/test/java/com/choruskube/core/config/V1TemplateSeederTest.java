@@ -9,6 +9,7 @@ import com.choruskube.core.repository.TemplateEdgeRepository;
 import com.choruskube.core.repository.TemplateNodeRepository;
 import io.temporal.client.WorkflowClient;
 import io.temporal.serviceclient.WorkflowServiceStubs;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -814,5 +815,79 @@ class V1TemplateSeederTest extends BaseTest {
                 .contains("need_human_decision:review_conflict")
                 .doesNotContain("iteration_in_epoch")
                 .doesNotContain("need_human_decision:iteration_cap");
+    }
+
+    @Test
+    void currentVersionIsBumpedForPerNodeTypeModelEffortConfig() {
+        // v36 (Decision 1/2): per-node-type model/effort selection, keyed off
+        // node_definition.model and template_node.config_overrides. No schema
+        // changes — verifies only that the seeder actually bumped its version
+        // constant when it shipped this change.
+        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(36);
+        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 36))
+                .isPresent();
+    }
+
+    @Test
+    void draftSpecAndPlanAndImplementCarryStaticModelAndExpectedEffort() {
+        // Draft Spec & Plan: static Opus model, xhigh effort (research node — Decision 2
+        // Context/§1). Implement: static Sonnet model, downshifted to "high" effort
+        // (Decision 4) from the pre-v36 "xhigh".
+        var template = templateRepo
+                .findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION)
+                .orElseThrow();
+        var nodes = templateNodeRepo.findByGraphTemplateId(template.getId());
+
+        var draftNode = nodes.stream()
+                .filter(n -> "draft_spec_and_plan".equals(n.getLabel()))
+                .findFirst()
+                .orElseThrow();
+        var draftDef = nodeDefRepo.findById(draftNode.getNodeDefinitionId()).orElseThrow();
+        assertThat(draftDef.getModel()).isEqualTo(ModelIds.MODEL_OPUS);
+        assertThat(draftNode.getConfigOverrides()).contains("\"effort\": \"xhigh\"");
+
+        var implementNode = nodes.stream()
+                .filter(n -> "implement".equals(n.getLabel()))
+                .findFirst()
+                .orElseThrow();
+        var implementDef =
+                nodeDefRepo.findById(implementNode.getNodeDefinitionId()).orElseThrow();
+        assertThat(implementDef.getModel()).isEqualTo(ModelIds.MODEL_SONNET);
+        assertThat(implementNode.getConfigOverrides())
+                .contains("\"effort\": \"high\"")
+                .doesNotContain("\"effort\": \"xhigh\"");
+    }
+
+    @Test
+    void specReviewAndCodeReviewCarryIterationAwareModelEffortKeys() {
+        // Decision 2: spec_review/code_review no longer carry a static flat `effort` —
+        // both iteration bands are declared via the four new config_overrides keys, read
+        // by the orchestrator's dag_executor.go keyed on tracker.reviewPass.
+        var template = templateRepo
+                .findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION)
+                .orElseThrow();
+        var nodes = templateNodeRepo.findByGraphTemplateId(template.getId());
+
+        var specReview = nodes.stream()
+                .filter(n -> "spec_review".equals(n.getLabel()))
+                .findFirst()
+                .orElseThrow();
+        var codeReview = nodes.stream()
+                .filter(n -> "code_review".equals(n.getLabel()))
+                .findFirst()
+                .orElseThrow();
+
+        for (var node : List.of(specReview, codeReview)) {
+            assertThat(node.getConfigOverrides())
+                    .as("%s config_overrides", node.getLabel())
+                    .contains("\"model_first_iteration\": \"" + ModelIds.MODEL_OPUS + "\"")
+                    .contains("\"effort_first_iteration\": \"xhigh\"")
+                    .contains("\"model_subsequent_iteration\": \"" + ModelIds.MODEL_SONNET + "\"")
+                    .contains("\"effort_subsequent_iteration\": \"high\"");
+        }
+        // Neither node declares a static flat `effort` key anymore — the iteration-aware
+        // keys fully replace it (Decision 2's "remove any static effort key" instruction).
+        assertThat(specReview.getConfigOverrides()).doesNotContain("\"effort\":");
+        assertThat(codeReview.getConfigOverrides()).doesNotContain("\"effort\":");
     }
 }

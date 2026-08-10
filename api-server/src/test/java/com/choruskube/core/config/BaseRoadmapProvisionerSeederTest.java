@@ -48,9 +48,30 @@ class BaseRoadmapProvisionerSeederTest extends BaseTest {
         var template = templateRepo.findByName("Roadmap Provisioner");
         assertThat(template).isPresent();
         assertThat(template.get().getGraphId()).isEqualTo("roadmap-provisioner");
-        // v13 (Decision 6/2/3): terminal-decision human gate + deterministic materialization,
-        // replacing the v12 3-node analyzer → gate → feature-creator shape.
-        assertThat(template.get().getVersion()).isEqualTo(13);
+        // v14 (per-node-type model/effort config): roadmap_analyzer gets a static
+        // Opus/xhigh configuration — no shape change from v13's terminal-decision human
+        // gate + deterministic materialization (itself replacing the v12 3-node
+        // analyzer → gate → feature-creator shape).
+        assertThat(template.get().getVersion()).isEqualTo(BaseRoadmapProvisionerSeeder.VERSION);
+        assertThat(BaseRoadmapProvisionerSeeder.VERSION).isEqualTo(14);
+    }
+
+    @Test
+    void analyzerCarriesStaticOpusModelAndXhighEffort() {
+        // Decision 2 (research node, always Opus/xhigh, unaffected by iteration —
+        // Roadmap Analyzer has no self-loop review-decision counter to key off of).
+        var nd = nodeDefRepo.findAll().stream()
+                .filter(n -> "Roadmap Analyzer".equals(n.getName()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(nd.getModel()).isEqualTo(ModelIds.MODEL_OPUS);
+
+        var template = templateRepo.findByName("Roadmap Provisioner").orElseThrow();
+        var analyzer = templateNodeRepo.findByGraphTemplateId(template.getId()).stream()
+                .filter(n -> "roadmap_analyzer".equals(n.getLabel()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(analyzer.getConfigOverrides()).contains("\"effort\": \"xhigh\"");
     }
 
     @Test
@@ -261,8 +282,9 @@ class BaseRoadmapProvisionerSeederTest extends BaseTest {
         assertThat(v12Reloaded).isPresent();
         assertThat(v12Reloaded.get().getDescription()).isEqualTo("pre-existing v12 row");
 
-        var v13 = templateRepo.findByGraphIdAndVersion(BaseRoadmapProvisionerSeeder.GRAPH_ID, 13);
-        assertThat(v13).isPresent();
+        var current = templateRepo.findByGraphIdAndVersion(
+                BaseRoadmapProvisionerSeeder.GRAPH_ID, BaseRoadmapProvisionerSeeder.VERSION);
+        assertThat(current).isPresent();
 
         var allRoadmapTemplates = templateRepo.findAll().stream()
                 .filter(t -> BaseRoadmapProvisionerSeeder.GRAPH_ID.equals(t.getGraphId()))
