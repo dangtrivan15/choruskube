@@ -138,4 +138,89 @@ describe("EpicBoardCard", () => {
     await waitFor(() => expect(screen.getByTestId("epic-board-card-story")).toBeInTheDocument());
     expect(mockApi.get).toHaveBeenCalledTimes(1);
   });
+
+  // --- Focus wiring (§3.1/§3.3/§3.4) ---
+
+  it("isFocused applies the highlight styling", () => {
+    renderWithProviders(<EpicBoardCard epic={makeEpic()} isFocused />);
+    expect(screen.getByTestId("epic-board-card")).toHaveAttribute("data-focused", "true");
+    expect(screen.getByTestId("epic-board-card").className).toMatch(/ring-2/);
+  });
+
+  it("does not apply the highlight styling when isFocused is false/omitted", () => {
+    renderWithProviders(<EpicBoardCard epic={makeEpic()} />);
+    expect(screen.getByTestId("epic-board-card")).toHaveAttribute("data-focused", "false");
+  });
+
+  it("clicking the card body calls onFocus with the Epic's id", async () => {
+    const onFocus = vi.fn();
+    renderWithProviders(<EpicBoardCard epic={makeEpic({ id: "epic-9" })} onFocus={onFocus} />);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByTestId("epic-board-card-title"));
+
+    expect(onFocus).toHaveBeenCalledWith("epic-9");
+  });
+
+  it("clicking the expand chevron does not call onFocus", async () => {
+    const onFocus = vi.fn();
+    renderWithProviders(<EpicBoardCard epic={makeEpic()} onFocus={onFocus} />);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByTestId("epic-board-card-expand"));
+
+    expect(onFocus).not.toHaveBeenCalled();
+  });
+
+  it("initiallyExpanded renders the Story list open on mount with no click, and fetches Stories immediately", async () => {
+    mockApi.get.mockResolvedValue([makeStory()]);
+    renderWithProviders(<EpicBoardCard epic={makeEpic()} initiallyExpanded />);
+
+    // Inverse of "does not fetch stories until expanded": fetch happens without any user
+    // interaction at all.
+    await waitFor(() => expect(mockApi.get).toHaveBeenCalledWith("/epics/epic-1/stories"));
+    expect(screen.getByTestId("epic-board-card-stories")).toBeInTheDocument();
+  });
+
+  it("focusedStoryId matching a loaded Story highlights that row only", async () => {
+    mockApi.get.mockResolvedValue([
+      makeStory({ id: "story-a", title: "Story A" }),
+      makeStory({ id: "story-b", title: "Story B" }),
+    ]);
+    renderWithProviders(<EpicBoardCard epic={makeEpic()} initiallyExpanded focusedStoryId="story-b" />);
+
+    await waitFor(() => expect(screen.getAllByTestId("epic-board-card-story")).toHaveLength(2));
+    const rows = screen.getAllByTestId("epic-board-card-story");
+    const rowA = rows.find((r) => r.getAttribute("data-story-id") === "story-a")!;
+    const rowB = rows.find((r) => r.getAttribute("data-story-id") === "story-b")!;
+
+    expect(rowA).toHaveAttribute("data-focused", "false");
+    expect(rowB).toHaveAttribute("data-focused", "true");
+  });
+
+  it("a focusedStoryId matching no loaded Story highlights nothing and does not throw", async () => {
+    mockApi.get.mockResolvedValue([makeStory({ id: "story-a", title: "Story A" })]);
+
+    expect(() =>
+      renderWithProviders(
+        <EpicBoardCard epic={makeEpic()} initiallyExpanded focusedStoryId="story-does-not-exist" />,
+      ),
+    ).not.toThrow();
+
+    await waitFor(() => expect(screen.getByTestId("epic-board-card-story")).toBeInTheDocument());
+    expect(screen.getByTestId("epic-board-card-story")).toHaveAttribute("data-focused", "false");
+  });
+
+  it("cardRef receives the underlying Card DOM node, and dnd-kit's drag wiring is unaffected", () => {
+    const cardRef = vi.fn();
+    renderWithProviders(<EpicBoardCard epic={makeEpic()} cardRef={cardRef} />);
+
+    expect(cardRef).toHaveBeenCalledWith(expect.any(HTMLElement));
+
+    // Regression coverage for the merged-ref change: dnd-kit's own `attributes` (spread onto the
+    // same Card element) must still land on the DOM node, not get clobbered by the ref merge.
+    const card = screen.getByTestId("epic-board-card");
+    expect(card).toHaveAttribute("aria-roledescription", "draggable");
+    expect(card).toHaveAttribute("tabindex", "0");
+  });
 });

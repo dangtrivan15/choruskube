@@ -9,6 +9,8 @@ import RoadmapGraphDetailPanel, {
   type RoadmapDetailItem,
   type BlockableItemRef,
 } from "@/components/roadmap/RoadmapGraphDetailPanel";
+import RoadmapViewSwitcher from "@/components/roadmap/RoadmapViewSwitcher";
+import { clampFocusToStory } from "@/lib/roadmapFocus";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import PageHeader from "@/components/layout/PageHeader";
@@ -45,6 +47,10 @@ export default function RoadmapGraphPage() {
     () => (selectedId && snapshot ? findDetailItem(selectedId, snapshot) : null),
     [selectedId, snapshot],
   );
+  // Outgoing focus for the view switcher (§3.2): this Epic (from the route), plus whatever's
+  // selected in the detail panel clamped down to its Story (Decision 4) — `selected` is passed
+  // straight through since `clampFocusToStory` already tolerates `null` (nothing selected).
+  const outgoingFocus = useMemo(() => clampFocusToStory(selected), [selected]);
 
   if (isLoading) {
     return (
@@ -66,6 +72,11 @@ export default function RoadmapGraphPage() {
   return (
     <div className="flex h-full flex-col">
       <PageHeader title={`${snapshot.epic.title} — Graph`} data-testid="roadmap-graph-heading">
+        <RoadmapViewSwitcher
+          activeView="graph"
+          focusedEpicId={snapshot.epic.id}
+          focusedStoryId={outgoingFocus.storyId}
+        />
         <Link
           to={`/roadmap/epics/${snapshot.epic.id}`}
           className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-transparent px-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"

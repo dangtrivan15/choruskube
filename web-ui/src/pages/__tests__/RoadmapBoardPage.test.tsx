@@ -5,6 +5,29 @@ import { renderWithProviders } from "@/__tests__/test-utils";
 import RoadmapBoardPage from "@/pages/RoadmapBoardPage";
 import type { EpicResponse, EpicStage, PageResponse, StoryResponse } from "@/lib/types";
 
+// Spies on every `useSearchParams()` call in the rendered tree — mirrors
+// RoadmapTimelinePage.test.tsx's identical spy; see that file's comment for why this captures the
+// raw `URLSearchParams#toString()` output rather than just the parsed focus.
+const searchParamsSpy = vi.hoisted(() => ({
+  calls: [] as Array<{ init: unknown; options: unknown }>,
+  latestSearch: "",
+}));
+vi.mock("react-router", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react-router")>();
+  return {
+    ...actual,
+    useSearchParams: (...args: Parameters<typeof actual.useSearchParams>) => {
+      const [params, setParams] = actual.useSearchParams(...args);
+      searchParamsSpy.latestSearch = params.toString();
+      const spiedSetParams: typeof setParams = (init, options) => {
+        searchParamsSpy.calls.push({ init, options });
+        setParams(init, options);
+      };
+      return [params, spiedSetParams];
+    },
+  };
+});
+
 // --- @/lib/api ---------------------------------------------------------
 vi.mock("@/lib/api", () => ({
   api: {
@@ -109,6 +132,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   dndState.onDragEnd = undefined;
   stompState.callback = undefined;
+  searchParamsSpy.calls = [];
+  searchParamsSpy.latestSearch = "";
 });
 
 describe("RoadmapBoardPage", () => {
@@ -402,5 +427,77 @@ describe("RoadmapBoardPage", () => {
         within(screen.getByTestId("board-column-in_progress")).getByText("Nothing ready in this stage")
       ).toBeInTheDocument()
     );
+  });
+
+  // --- Focus / RoadmapViewSwitcher wiring ---
+
+  describe("focus", () => {
+    it("with ?epic=epic-1 in the URL, that Epic's card receives the highlight/isFocused treatment", async () => {
+      const epics = [
+        makeEpic({ id: "epic-1", title: "Focused Epic" }),
+        makeEpic({ id: "epic-2", title: "Other Epic" }),
+      ];
+      mockApi.getPage.mockResolvedValue(makePage(epics));
+
+      renderWithProviders(<RoadmapBoardPage />, { initialEntries: ["/roadmap/board?epic=epic-1"] });
+
+      await waitFor(() =>
+        expect(screen.getByText("Focused Epic").closest('[data-testid="epic-board-card"]')).toHaveAttribute(
+          "data-focused",
+          "true",
+        )
+      );
+      expect(screen.getByText("Other Epic").closest('[data-testid="epic-board-card"]')).toHaveAttribute(
+        "data-focused",
+        "false",
+      );
+    });
+
+    it("clicking a card updates the epic query param via history replace, not push", async () => {
+      mockApi.getPage.mockResolvedValue(makePage([makeEpic({ id: "epic-1", title: "Clickable Epic" })]));
+      const user = userEvent.setup();
+
+      renderWithProviders(<RoadmapBoardPage />);
+      await waitFor(() => expect(screen.getByText("Clickable Epic")).toBeInTheDocument());
+
+      await user.click(screen.getByTestId("epic-board-card-title"));
+
+      await waitFor(() => expect(searchParamsSpy.latestSearch).toBe("epic=epic-1"));
+      expect(searchParamsSpy.calls[searchParamsSpy.calls.length - 1]?.options).toEqual({ replace: true });
+    });
+
+    it("with ?epic=epic-1&story=story-1, that Epic's card renders expanded with story-1 highlighted", async () => {
+      mockApi.getPage.mockResolvedValue(makePage([makeEpic({ id: "epic-1", title: "Story-Focused Epic" })]));
+      mockApi.get.mockResolvedValue([
+        makeStory({ id: "story-1", title: "The Focused Story" }),
+        makeStory({ id: "story-2", title: "Another Story" }),
+      ]);
+
+      renderWithProviders(<RoadmapBoardPage />, {
+        initialEntries: ["/roadmap/board?epic=epic-1&story=story-1"],
+      });
+
+      await waitFor(() => expect(screen.getByTestId("epic-board-card-stories")).toBeInTheDocument());
+      const rows = screen.getAllByTestId("epic-board-card-story");
+      const focusedRow = rows.find((r) => r.getAttribute("data-story-id") === "story-1")!;
+      const otherRow = rows.find((r) => r.getAttribute("data-story-id") === "story-2")!;
+      expect(focusedRow).toHaveAttribute("data-focused", "true");
+      expect(otherRow).toHaveAttribute("data-focused", "false");
+    });
+
+    it("an epic/story param matching no loaded Epic renders exactly like the no-focus case", async () => {
+      mockApi.getPage.mockResolvedValue(makePage([makeEpic({ id: "epic-1", title: "Unfocused Epic" })]));
+
+      renderWithProviders(<RoadmapBoardPage />, {
+        initialEntries: ["/roadmap/board?epic=does-not-exist&story=also-does-not-exist"],
+      });
+
+      await waitFor(() => expect(screen.getByText("Unfocused Epic")).toBeInTheDocument());
+      expect(
+        screen.getByText("Unfocused Epic").closest('[data-testid="epic-board-card"]')
+      ).toHaveAttribute("data-focused", "false");
+      expect(screen.queryByTestId("epic-board-card-stories")).not.toBeInTheDocument();
+      expect(screen.getByTestId("roadmap-view-switcher-graph")).toBeDisabled();
+    });
   });
 });

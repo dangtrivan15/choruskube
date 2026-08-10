@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { Link } from "react-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router";
 import { List, ListChecks, BookOpen } from "lucide-react";
 import {
   DndContext,
@@ -12,10 +12,12 @@ import {
 import { useEpics, useUpdateEpicStage, EPIC_BOARD_PAGINATION } from "@/hooks/useEpics";
 import { useRoadmapSubscription } from "@/hooks/useRoadmapSubscription";
 import type { EpicResponse, EpicStage } from "@/lib/types";
+import { parseFocusParams, focusToSearchParamsInit } from "@/lib/roadmapFocus";
 import { Skeleton } from "@/components/ui/skeleton";
 import PageHeader from "@/components/layout/PageHeader";
 import BoardColumn from "@/components/roadmap/BoardColumn";
 import RoadmapReadyToggle from "@/components/roadmap/RoadmapReadyToggle";
+import RoadmapViewSwitcher from "@/components/roadmap/RoadmapViewSwitcher";
 
 const COLUMNS: { stage: EpicStage; label: string }[] = [
   { stage: "backlog", label: "Backlog" },
@@ -32,6 +34,7 @@ export default function RoadmapBoardPage() {
   const [readyOnly, setReadyOnly] = useState(false);
   const { data: pageData, isLoading } = useEpics(undefined, EPIC_BOARD_PAGINATION, readyOnly);
   const updateStage = useUpdateEpicStage(readyOnly);
+  const [searchParams, setSearchParams] = useSearchParams();
   useRoadmapSubscription();
 
   const sensors = useSensors(
@@ -40,6 +43,46 @@ export default function RoadmapBoardPage() {
   );
 
   const epics = pageData?.content;
+
+  const rawFocus = parseFocusParams(searchParams);
+  // An `epic` id that doesn't match any loaded Epic (deleted, garbage, or an id from a different
+  // org — §6's Negative/security case) is treated as "nothing focused", all the way out to the
+  // switcher — not just "no card highlighted". A `story` id is left for EpicBoardCard to resolve
+  // once its own (lazily-fetched) Stories are in: Board never loads every card's Stories up front,
+  // so it has nothing to validate a `story` id against without that pass otherwise-eager fetch.
+  const focusedEpicId = epics?.some((e) => e.id === rawFocus.epicId) ? rawFocus.epicId : undefined;
+  const focusedStoryId = focusedEpicId ? rawFocus.storyId : undefined;
+
+  const cardNodesRef = useRef<Map<string, HTMLDivElement>>(new Map());
+  const registerCardRef = useCallback(
+    (epicId: string) => (node: HTMLDivElement | null) => {
+      if (node) {
+        cardNodesRef.current.set(epicId, node);
+      } else {
+        cardNodesRef.current.delete(epicId);
+      }
+    },
+    []
+  );
+
+  const handleFocusEpic = useCallback(
+    (epicId: string) => {
+      // history replace, not push (§3.4) — ordinary card browsing shouldn't balloon the
+      // back-button history the way a `push` on every click would.
+      setSearchParams(focusToSearchParamsInit({ epicId }), { replace: true });
+    },
+    [setSearchParams]
+  );
+
+  useEffect(() => {
+    if (!focusedEpicId) return;
+    const node = cardNodesRef.current.get(focusedEpicId);
+    node?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
+    // Re-run once the Epics list (re)loads too, not just when focusedEpicId itself changes — on
+    // first mount with a focus already in the URL, the focused card's ref only exists once `epics`
+    // has actually rendered it.
+  }, [focusedEpicId, epics]);
+
   const byStage = useMemo(() => {
     const groups: Record<EpicStage, EpicResponse[]> = {
       backlog: [],
@@ -76,6 +119,7 @@ export default function RoadmapBoardPage() {
   return (
     <div className="flex h-full min-w-0 flex-col p-4 md:p-6">
       <PageHeader title="Roadmap Board" data-testid="roadmap-board-heading">
+        <RoadmapViewSwitcher activeView="board" focusedEpicId={focusedEpicId} focusedStoryId={focusedStoryId} />
         <Link
           to="/roadmap/board/stories"
           data-testid="roadmap-board-story-board-link"
@@ -121,6 +165,10 @@ export default function RoadmapBoardPage() {
                 label={c.label}
                 epics={byStage[c.stage]}
                 readyOnly={readyOnly}
+                focusedEpicId={focusedEpicId}
+                focusedStoryId={focusedStoryId}
+                onFocusEpic={handleFocusEpic}
+                cardRef={registerCardRef}
               />
             ))}
           </div>

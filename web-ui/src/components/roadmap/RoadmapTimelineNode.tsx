@@ -22,9 +22,18 @@ function stageColors(stage: string) {
 }
 
 /**
+ * Highlight styling applied to a lane/marker whose `data.isFocused` is true (§3.3) — the same
+ * ring treatment `EpicBoardCard` uses for its own focused-Epic highlight, so a focused item reads
+ * consistently across Board and Timeline.
+ */
+const FOCUS_RING_CLASS = "ring-2 ring-ring ring-offset-1";
+
+/**
  * Lane header node — one per Epic, pinned at the left of its row (x=0, see
  * computeRoadmapTimelineLayout). Purely a label; the Epic's Stories on the same lane carry the
- * actual time-plotted markers.
+ * actual time-plotted markers. Clickable — the actual event handling lives on the parent
+ * `<ReactFlow>`'s `onNodeClick` (RoadmapTimeline), this component only needs to look interactive
+ * and stay clickable (no `pointer-events: none`).
  */
 function EpicLaneNode({ data }: NodeProps<TimelineEpicLaneNodeType>) {
   const colors = stageColors(data.stage);
@@ -32,10 +41,12 @@ function EpicLaneNode({ data }: NodeProps<TimelineEpicLaneNodeType>) {
     <div
       data-testid="roadmap-timeline-epic-lane"
       data-label={data.title}
+      data-focused={data.isFocused ? "true" : "false"}
       className={cn(
-        "flex w-[200px] items-center gap-2 rounded-lg border-2 px-3 py-2 shadow-sm",
+        "flex w-[200px] cursor-pointer items-center gap-2 rounded-lg border-2 px-3 py-2 shadow-sm transition-shadow",
         colors.bg,
         colors.border,
+        data.isFocused && FOCUS_RING_CLASS,
       )}
     >
       <span className={cn("shrink-0", colors.text)}>
@@ -50,6 +61,7 @@ function EpicLaneNode({ data }: NodeProps<TimelineEpicLaneNodeType>) {
  * Story marker node — plotted along its Epic's lane at an X position derived from the Story's
  * `createdAt` (see computeRoadmapTimelineLayout's time scale). A small dot-plus-label rather than
  * the full card RoadmapGraphNode renders, since a lane can hold many markers side by side.
+ * Clickable — see EpicLaneNode's doc comment above.
  */
 function StoryNode({ data }: NodeProps<TimelineStoryNodeType>) {
   const colors = stageColors(data.stage);
@@ -57,11 +69,13 @@ function StoryNode({ data }: NodeProps<TimelineStoryNodeType>) {
     <div
       data-testid="roadmap-timeline-story-node"
       data-label={data.title}
+      data-focused={data.isFocused ? "true" : "false"}
       title={data.title}
       className={cn(
-        "flex w-[140px] items-center gap-1.5 rounded-md border px-1.5 py-1 text-xs shadow-sm",
+        "flex w-[140px] cursor-pointer items-center gap-1.5 rounded-md border px-1.5 py-1 text-xs shadow-sm transition-shadow",
         colors.bg,
         colors.border,
+        data.isFocused && FOCUS_RING_CLASS,
       )}
     >
       <span className={cn("shrink-0", colors.text)}>

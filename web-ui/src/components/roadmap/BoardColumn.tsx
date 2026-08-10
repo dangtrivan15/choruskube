@@ -9,6 +9,12 @@ interface Props {
   epics: EpicResponse[];
   /** Whether the "Ready to start" filter is active — changes the empty-column copy. */
   readyOnly?: boolean;
+  /** The currently-focused Epic/Story (§3.1), forwarded to each card so it can highlight/expand itself. */
+  focusedEpicId?: string;
+  focusedStoryId?: string;
+  onFocusEpic?: (epicId: string) => void;
+  /** Ref-callback factory, curried per Epic id, so the page can locate a specific card's DOM node. */
+  cardRef?: (epicId: string) => (node: HTMLDivElement | null) => void;
 }
 
 /**
@@ -16,7 +22,16 @@ interface Props {
  * rolled_out). Dropping a dragged EpicBoardCard here fires `onDragEnd` in
  * RoadmapBoardPage with this column's `stage` as the drop target.
  */
-export default function BoardColumn({ stage, label, epics, readyOnly = false }: Props) {
+export default function BoardColumn({
+  stage,
+  label,
+  epics,
+  readyOnly = false,
+  focusedEpicId,
+  focusedStoryId,
+  onFocusEpic,
+  cardRef,
+}: Props) {
   const { setNodeRef, isOver } = useDroppable({ id: stage });
 
   return (
@@ -36,9 +51,20 @@ export default function BoardColumn({ stage, label, epics, readyOnly = false }: 
       </div>
 
       <div className="flex flex-col gap-2">
-        {epics.map((epic) => (
-          <EpicBoardCard key={epic.id} epic={epic} />
-        ))}
+        {epics.map((epic) => {
+          const isFocused = epic.id === focusedEpicId;
+          return (
+            <EpicBoardCard
+              key={epic.id}
+              epic={epic}
+              isFocused={isFocused}
+              initiallyExpanded={isFocused && Boolean(focusedStoryId)}
+              focusedStoryId={focusedStoryId}
+              onFocus={onFocusEpic}
+              cardRef={cardRef?.(epic.id)}
+            />
+          );
+        })}
         {epics.length === 0 && (
           <div
             data-testid={`board-column-empty-${stage}`}
