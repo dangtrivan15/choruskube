@@ -1,7 +1,19 @@
-val goVersion = file("go.mod").readLines()
-    .first { it.startsWith("go ") }
-    .substringAfter("go ")
-    .trim()
+// No GOTOOLCHAIN pin here, deliberately. These tasks used to set it to the exact version in
+// go.mod, which makes Go fetch that toolchain *as a module* from the checksum database — and
+// CI disables that database (GOSUMDB=off) because module traffic goes through a dependency
+// proxy, so the fetch cannot be verified and fails outright:
+//
+//   go: download go1.25.0: golang.org/toolchain@v0.0.1-...: verifying module:
+//       checksum database disabled by GOSUMDB=off
+//
+// The pin never surfaced before because this file was unreachable: with no root Gradle build,
+// the harness invoked `go test ./...` directly and these tasks never ran. Adding the root
+// aggregator made them live, and the pin failed on its first CI run.
+//
+// Leaving GOTOOLCHAIN at Go's default ("auto") is both correct and stricter than it looks:
+// go.mod's `go` directive still enforces the minimum version, CI pins the toolchain via
+// setup-go, and a developer whose Go is too old gets a download only if one is actually
+// needed — never on every invocation.
 
 // `-Dtest.reports.dir` is the per-repo report ROOT; this component nests under it. Absent =>
 // reports keep their existing build/ locations, so a local run is unchanged.
@@ -11,7 +23,6 @@ tasks.register<Exec>("goModDownload") {
     description = "Download Go module dependencies"
     group = "build"
     workingDir = projectDir
-    environment("GOTOOLCHAIN", "go$goVersion")
     commandLine("go", "mod", "download")
 }
 
@@ -24,14 +35,12 @@ tasks.register<Exec>("compileTests") {
     group = "build"
     dependsOn("goModDownload")
     workingDir = projectDir
-    environment("GOTOOLCHAIN", "go$goVersion")
     commandLine("go", "test", "-run", "^$", "./...")
 }
 
 tasks.register<Exec>("test") {
     dependsOn("goModDownload", "compileTests")
     workingDir = projectDir
-    environment("GOTOOLCHAIN", "go$goVersion")
     // Use bash to ensure build/ directory exists before go test writes coverage.out.
     // doFirst { file("build").mkdirs() } is unreliable in parallel Gradle builds
     // because the Exec task's process may start before the doFirst action completes.
@@ -41,7 +50,6 @@ tasks.register<Exec>("test") {
 
 tasks.register<Exec>("coverageReport") {
     workingDir = projectDir
-    environment("GOTOOLCHAIN", "go$goVersion")
     // Only the rendered HTML moves under the report root; coverage.out stays in build/
     // because coverageCheck below reads it from there.
     val html = reportsRoot.map { "$it/orchestrator/coverage.html" }.getOrElse("build/coverage.html")
