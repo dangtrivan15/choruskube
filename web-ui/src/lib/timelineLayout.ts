@@ -1,5 +1,6 @@
 import type { Node, Edge } from "@xyflow/react";
 import type { RoadmapTimelineResponse, TimelineEpicSummary, TimelineStorySummary } from "@/lib/types";
+import { deriveEpicRisk, deriveStoryRisk } from "@/lib/timelineRisk";
 
 /** Vertical space (px) each Epic's lane occupies, including inter-lane gap. */
 export const TIMELINE_LANE_HEIGHT = 96;
@@ -23,6 +24,9 @@ export interface TimelineEpicLaneNodeData {
   stage: string;
   /** Whether this lane's Epic is the currently-focused item (§3.1/§3.3) — drives highlight styling. */
   isFocused: boolean;
+  /** OR-aggregated across this Epic's Stories (plus its own `stalled`, for `stalled`) — see `deriveEpicRisk`. */
+  blocked: boolean;
+  stalled: boolean;
   [key: string]: unknown;
 }
 
@@ -36,6 +40,9 @@ export interface TimelineStoryNodeData {
   createdAt: string;
   /** Whether this Story is the currently-focused item (§3.1/§3.3) — drives highlight styling. */
   isFocused: boolean;
+  /** This Story's own risk signal (§ blocked/stalled work) — see `deriveStoryRisk`. */
+  blocked: boolean;
+  stalled: boolean;
   [key: string]: unknown;
 }
 
@@ -101,11 +108,19 @@ export function computeRoadmapTimelineLayout(
   data.epics.forEach((epic, laneIndex) => {
     const laneY = laneIndex * TIMELINE_LANE_HEIGHT;
 
+    const epicRisk = deriveEpicRisk(epic);
     nodes.push({
       id: epic.id,
       type: "timeline-epic-lane",
       position: { x: 0, y: laneY },
-      data: { epicId: epic.id, title: epic.title, stage: epic.stage, isFocused: epic.id === focus.epicId },
+      data: {
+        epicId: epic.id,
+        title: epic.title,
+        stage: epic.stage,
+        isFocused: epic.id === focus.epicId,
+        blocked: epicRisk.blocked,
+        stalled: epicRisk.stalled,
+      },
     });
 
     const sortedStories = [...epic.stories].sort(compareStories);
@@ -120,6 +135,7 @@ export function computeRoadmapTimelineLayout(
         previousTimeMs = timeMs;
       }
       const x = scale(timeMs) + collisionIndex * TIMELINE_COLLISION_OFFSET;
+      const storyRisk = deriveStoryRisk(story);
 
       nodes.push({
         id: story.id,
@@ -132,6 +148,8 @@ export function computeRoadmapTimelineLayout(
           stage: story.stage,
           createdAt: story.createdAt,
           isFocused: story.id === focus.storyId,
+          blocked: storyRisk.blocked,
+          stalled: storyRisk.stalled,
         },
       });
     }

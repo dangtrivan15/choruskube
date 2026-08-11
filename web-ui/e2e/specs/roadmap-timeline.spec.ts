@@ -66,4 +66,118 @@ test.describe("Roadmap Timeline View", () => {
       await api.deleteEpic(epic.id);
     }
   });
+
+  test("a Story blocked by an unfinished dependency shows the blocked badge", async ({
+    api,
+    workerRepo,
+    page,
+  }) => {
+    const epic = await api.createEpic({
+      title: uniqueName("E2E Timeline Blocked Epic"),
+      description: "desc",
+      softwareProjectId: workerRepo.gitRepo.id,
+    });
+    const blocking = await api.createStory(epic.id, {
+      title: uniqueName("Timeline Blocking Story"),
+      description: "desc",
+    });
+    const blocked = await api.createStory(epic.id, {
+      title: uniqueName("Timeline Blocked Story"),
+      description: "desc",
+    });
+    await api.createDependency({
+      blockingItemType: "story",
+      blockingItemId: blocking.id,
+      blockedItemType: "story",
+      blockedItemId: blocked.id,
+    });
+
+    const timelinePage = new RoadmapTimelinePage(page);
+
+    try {
+      await timelinePage.goto();
+
+      const blockedMarker = timelinePage.markerByLabel(blocked.title);
+      await expect(blockedMarker).toBeVisible();
+      await expect(blockedMarker.getByTestId("roadmap-timeline-story-blocked-badge")).toBeVisible();
+      expect(await timelinePage.riskFor(blocked.title)).toBe("blocked");
+
+      const blockingMarker = timelinePage.markerByLabel(blocking.title);
+      await expect(blockingMarker.getByTestId("roadmap-timeline-story-blocked-badge")).toHaveCount(0);
+    } finally {
+      await api.deleteEpic(epic.id);
+    }
+  });
+
+  test("an on-track Epic with no blocked or stalled work shows no risk badge", async ({
+    api,
+    workerRepo,
+    page,
+  }) => {
+    const epic = await api.createEpic({
+      title: uniqueName("E2E Timeline Clean Epic"),
+      description: "desc",
+      softwareProjectId: workerRepo.gitRepo.id,
+    });
+    const story = await api.createStory(epic.id, {
+      title: uniqueName("Timeline Clean Story"),
+      description: "desc",
+    });
+
+    const timelinePage = new RoadmapTimelinePage(page);
+
+    try {
+      await timelinePage.goto();
+
+      await expect(timelinePage.laneByLabel(epic.title)).toBeVisible();
+      expect(await timelinePage.riskFor(epic.title)).toBe("none");
+      expect(await timelinePage.riskFor(story.title)).toBe("none");
+    } finally {
+      await api.deleteEpic(epic.id);
+    }
+  });
+
+  test("adding a dependency out-of-band flips a Story to blocked live, no reload", async ({
+    api,
+    workerRepo,
+    page,
+  }) => {
+    const epic = await api.createEpic({
+      title: uniqueName("E2E Timeline Live Blocked Epic"),
+      description: "desc",
+      softwareProjectId: workerRepo.gitRepo.id,
+    });
+    const blocking = await api.createStory(epic.id, {
+      title: uniqueName("Live Blocking Story"),
+      description: "desc",
+    });
+    const blocked = await api.createStory(epic.id, {
+      title: uniqueName("Live Blocked Story"),
+      description: "desc",
+    });
+
+    const timelinePage = new RoadmapTimelinePage(page);
+
+    try {
+      await timelinePage.goto();
+      await expect(timelinePage.markerByLabel(blocked.title)).toBeVisible();
+      expect(await timelinePage.riskFor(blocked.title)).toBe("none");
+
+      // Simulate a second session creating the dependency directly via the API — mirrors this
+      // file's own "reflects a Story created out-of-band without a manual refresh" pattern (drive
+      // state via API, assert the already-open page updates via STOMP without a reload).
+      await api.createDependency({
+        blockingItemType: "story",
+        blockingItemId: blocking.id,
+        blockedItemType: "story",
+        blockedItemId: blocked.id,
+      });
+
+      await expect(
+        timelinePage.markerByLabel(blocked.title).getByTestId("roadmap-timeline-story-blocked-badge"),
+      ).toBeVisible({ timeout: 15_000 });
+    } finally {
+      await api.deleteEpic(epic.id);
+    }
+  });
 });

@@ -4,6 +4,9 @@ import { Milestone, BookOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { statusColorTokens } from "@/lib/statusColors";
 import type { TimelineEpicLaneNodeType, TimelineStoryNodeType } from "@/lib/timelineLayout";
+import { riskDisplayOrder } from "@/lib/timelineRisk";
+import ReadinessBadge from "@/components/roadmap/ReadinessBadge";
+import StalledBadge from "@/components/roadmap/StalledBadge";
 
 /**
  * Roadmap board stages (backlog/in_progress/rolled_out) don't share a vocabulary with the
@@ -37,22 +40,41 @@ const FOCUS_RING_CLASS = "ring-2 ring-ring ring-offset-1";
  */
 function EpicLaneNode({ data }: NodeProps<TimelineEpicLaneNodeType>) {
   const colors = stageColors(data.stage);
+  const risk = riskDisplayOrder(data);
+  const title = [
+    data.title,
+    data.blocked && "Contains a blocked item",
+    data.stalled && "Contains a stalled item",
+  ]
+    .filter(Boolean)
+    .join(" — ");
   return (
     <div
       data-testid="roadmap-timeline-epic-lane"
       data-label={data.title}
       data-focused={data.isFocused ? "true" : "false"}
+      data-risk={risk}
+      title={title}
       className={cn(
         "flex w-[200px] cursor-pointer items-center gap-2 rounded-lg border-2 px-3 py-2 shadow-sm transition-shadow",
         colors.bg,
         colors.border,
         data.isFocused && FOCUS_RING_CLASS,
+        data.blocked ? "ring-1 ring-status-warning/40" : data.stalled ? "ring-1 ring-status-neutral/40" : "",
       )}
     >
       <span className={cn("shrink-0", colors.text)}>
         <Milestone className="size-4" />
       </span>
       <span className="truncate text-sm font-medium">{data.title}</span>
+      <ReadinessBadge
+        readiness={data.blocked ? "BLOCKED" : null}
+        size="compact"
+        data-testid="roadmap-timeline-epic-blocked-badge"
+      />
+      {data.stalled && (
+        <StalledBadge stalled size="compact" data-testid="roadmap-timeline-epic-stalled-badge" />
+      )}
     </div>
   );
 }
@@ -65,23 +87,41 @@ function EpicLaneNode({ data }: NodeProps<TimelineEpicLaneNodeType>) {
  */
 function StoryNode({ data }: NodeProps<TimelineStoryNodeType>) {
   const colors = stageColors(data.stage);
+  const risk = riskDisplayOrder(data);
+  const title = [
+    data.title,
+    data.blocked && "Blocked by an unfinished dependency",
+    data.stalled && "Stalled — no recent activity",
+  ]
+    .filter(Boolean)
+    .join(" — ");
   return (
     <div
       data-testid="roadmap-timeline-story-node"
       data-label={data.title}
       data-focused={data.isFocused ? "true" : "false"}
-      title={data.title}
+      data-risk={risk}
+      title={title}
       className={cn(
         "flex w-[140px] cursor-pointer items-center gap-1.5 rounded-md border px-1.5 py-1 text-xs shadow-sm transition-shadow",
         colors.bg,
         colors.border,
         data.isFocused && FOCUS_RING_CLASS,
+        data.blocked ? "ring-1 ring-status-warning/40" : data.stalled ? "ring-1 ring-status-neutral/40" : "",
       )}
     >
       <span className={cn("shrink-0", colors.text)}>
         <BookOpen className="size-3" />
       </span>
       <span className="truncate">{data.title}</span>
+      <ReadinessBadge
+        readiness={data.blocked ? "BLOCKED" : null}
+        size="compact"
+        data-testid="roadmap-timeline-story-blocked-badge"
+      />
+      {data.stalled && (
+        <StalledBadge stalled size="compact" data-testid="roadmap-timeline-story-stalled-badge" />
+      )}
     </div>
   );
 }
