@@ -204,11 +204,8 @@ test.describe("Roadmap Timeline View", () => {
         const marker = timelinePage.markerByLabel(story.title);
         await expect(marker).toBeVisible();
 
-        await marker.hover();
+        await timelinePage.hoverToRevealPreview(marker, [story.title, epic.title]);
 
-        await expect(timelinePage.itemPreview).toBeVisible();
-        await expect(timelinePage.itemPreview).toContainText(story.title);
-        await expect(timelinePage.itemPreview).toContainText(epic.title);
         // The hover preview never opens the pinned panel — it's a client-only glance (Decision 3).
         await expect(timelinePage.detailPanel).toHaveCount(0);
       } finally {
