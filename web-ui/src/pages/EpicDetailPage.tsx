@@ -23,6 +23,7 @@ import EditEpicDialog from "@/components/roadmap/EditEpicDialog";
 import CreateStoryDialog from "@/components/roadmap/CreateStoryDialog";
 import ReadinessBadge from "@/components/roadmap/ReadinessBadge";
 import RoadmapReadyToggle from "@/components/roadmap/RoadmapReadyToggle";
+import LevelBadge from "@/components/roadmap/LevelBadge";
 import PageHeader from "@/components/layout/PageHeader";
 import { useNavigate } from "react-router";
 
@@ -90,6 +91,7 @@ export default function EpicDetailPage() {
 
       <div className="flex min-w-0 items-start justify-between gap-4">
         <div className="flex min-w-0 flex-col gap-2">
+          <LevelBadge level="epic" />
           <h2 data-testid="epic-detail-title" className="text-xl font-semibold break-words">
             {epic.title}
           </h2>

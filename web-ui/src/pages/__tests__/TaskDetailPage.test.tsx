@@ -5,6 +5,7 @@ import TaskDetailPage from "@/pages/TaskDetailPage";
 import type { TaskResponse } from "@/lib/types";
 
 const mockUseTask = vi.fn();
+const mockUseStory = vi.fn();
 const mockUseTaskRuns = vi.fn();
 const mockDeleteMutate = vi.fn();
 const mockStartMutate = vi.fn();
@@ -32,6 +33,10 @@ vi.mock("@/hooks/useTasks", () => ({
   }),
 }));
 
+vi.mock("@/hooks/useStories", () => ({
+  useStory: (id: string | undefined) => mockUseStory(id),
+}));
+
 vi.mock("@/hooks/useTaskRuns", () => ({
   useTaskRuns: (id: string) => mockUseTaskRuns(id),
 }));
@@ -51,11 +56,13 @@ vi.mock("react-router", async (importOriginal) => {
 
 beforeEach(() => {
   mockUseTask.mockReset();
+  mockUseStory.mockReset();
   mockUseTaskRuns.mockReset();
   mockDeleteMutate.mockReset();
   mockStartMutate.mockReset();
   mockCompleteMutate.mockReset();
   mockUseTaskRuns.mockReturnValue({ data: undefined, isLoading: false });
+  mockUseStory.mockReturnValue({ data: undefined });
 });
 
 function makeTask(overrides: Partial<TaskResponse> = {}): TaskResponse {
@@ -84,6 +91,30 @@ describe("TaskDetailPage", () => {
     renderWithProviders(<TaskDetailPage />);
     expect(screen.getByTestId("task-detail-title")).toHaveTextContent("Implement toggle switch");
     expect(screen.getByTestId("task-detail-status")).toHaveTextContent("backlog");
+  });
+
+  it("renders the Task LevelBadge", () => {
+    mockUseTask.mockReturnValue({ data: makeTask(), isLoading: false });
+    renderWithProviders(<TaskDetailPage />);
+    expect(screen.getByTestId("level-badge-task")).toHaveTextContent("Task");
+  });
+
+  it('renders a "Back to Story" link to the parent Story once it resolves', () => {
+    mockUseTask.mockReturnValue({ data: makeTask(), isLoading: false });
+    mockUseStory.mockReturnValue({
+      data: { id: "story-1", epicId: "epic-1", title: "Parent story" },
+    });
+    renderWithProviders(<TaskDetailPage />);
+    const link = screen.getByRole("link", { name: /Back to Story/ });
+    expect(link).toHaveAttribute("href", "/roadmap/epics/epic-1/stories/story-1");
+  });
+
+  it('falls back the "Back to Story" link to /roadmap while the parent Story is pending', () => {
+    mockUseTask.mockReturnValue({ data: makeTask(), isLoading: false });
+    mockUseStory.mockReturnValue({ data: undefined });
+    renderWithProviders(<TaskDetailPage />);
+    const link = screen.getByRole("link", { name: /Back to Story/ });
+    expect(link).toHaveAttribute("href", "/roadmap");
   });
 
   it("shows Start and Delete buttons for a backlog task", () => {

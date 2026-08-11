@@ -21,6 +21,7 @@ import {
 import CreateTaskDialog from "@/components/roadmap/CreateTaskDialog";
 import ReadinessBadge from "@/components/roadmap/ReadinessBadge";
 import RoadmapReadyToggle from "@/components/roadmap/RoadmapReadyToggle";
+import LevelBadge from "@/components/roadmap/LevelBadge";
 import PageHeader from "@/components/layout/PageHeader";
 
 function statusBadge(status: string) {
@@ -83,6 +84,7 @@ export default function StoryDetailPage() {
 
       <div className="flex min-w-0 items-start justify-between gap-4">
         <div className="flex min-w-0 flex-col gap-2">
+          <LevelBadge level="story" />
           <h2 data-testid="story-detail-title" className="text-xl font-semibold break-words">
             {story.title}
           </h2>

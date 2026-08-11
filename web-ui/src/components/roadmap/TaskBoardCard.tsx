@@ -4,7 +4,10 @@ import type { TaskResponse } from "@/lib/types";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import RunStatusBadge from "@/components/runs/RunStatusBadge";
+import { roadmapLevelMeta } from "@/lib/roadmapLevel";
 import { cn } from "@/lib/utils";
+
+const levelMeta = roadmapLevelMeta("task");
 
 interface Props {
   task: TaskResponse;
@@ -54,17 +57,20 @@ export default function TaskBoardCard({ task }: Props) {
       {...attributes}
     >
       <CardHeader className="gap-1 p-3 pb-2">
-        <Link
-          to={`/tasks/${task.id}`}
-          data-testid="task-board-card-title"
-          className="min-w-0 truncate text-sm font-medium hover:underline"
-          // Stop the pointerdown from bubbling to the card's dnd-kit `listeners`
-          // (spread on the Card below) so clicking the title navigates instead
-          // of starting a drag — same guard EpicBoardCard's expand button uses.
-          onPointerDown={(e) => e.stopPropagation()}
-        >
-          {task.title}
-        </Link>
+        <span className="flex min-w-0 items-center gap-1.5">
+          <levelMeta.Icon className={cn("size-3.5 shrink-0", levelMeta.textClass)} />
+          <Link
+            to={`/tasks/${task.id}`}
+            data-testid="task-board-card-title"
+            className="min-w-0 truncate text-sm font-medium hover:underline"
+            // Stop the pointerdown from bubbling to the card's dnd-kit `listeners`
+            // (spread on the Card below) so clicking the title navigates instead
+            // of starting a drag — same guard EpicBoardCard's expand button uses.
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            {task.title}
+          </Link>
+        </span>
         <span data-testid="task-board-card-status" className="flex items-center gap-1.5">
           {statusBadge(task.status)}
           {task.latestRunStatus && (

@@ -6,7 +6,10 @@ import type { StoryResponse } from "@/lib/types";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import ReadinessBadge from "@/components/roadmap/ReadinessBadge";
+import { roadmapLevelMeta } from "@/lib/roadmapLevel";
 import { cn } from "@/lib/utils";
+
+const levelMeta = roadmapLevelMeta("story");
 
 interface Props {
   story: StoryResponse;
@@ -54,11 +57,14 @@ export default function StoryBoardCard({ story }: Props) {
     >
       <CardHeader className="gap-1 p-3 pb-2">
         <div className="flex items-start justify-between gap-2">
-          <span
-            data-testid="story-board-card-title"
-            className="min-w-0 flex-1 truncate text-sm font-medium"
-          >
-            {story.title}
+          <span className="flex min-w-0 flex-1 items-center gap-1.5">
+            <levelMeta.Icon className={cn("size-3.5 shrink-0", levelMeta.textClass)} />
+            <span
+              data-testid="story-board-card-title"
+              className="min-w-0 flex-1 truncate text-sm font-medium"
+            >
+              {story.title}
+            </span>
           </span>
           <button
             type="button"

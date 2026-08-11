@@ -57,6 +57,8 @@ test.describe("Roadmap drill-down", () => {
     await roadmapPage.openEpic(uniqueTitle);
     await expect(roadmapPage.epicDetailTitle).toContainText(uniqueTitle);
     await expect(roadmapPage.epicDetailDescription).toBeVisible();
+    // The three hierarchy levels render a distinct "kind" identity (icon + label).
+    await expect(roadmapPage.page.getByTestId("level-badge-epic")).toHaveText(/Epic/);
 
     // Create a Story under it, then a Task under that Story.
     const storyTitle = uniqueName("E2E Story");
@@ -66,6 +68,7 @@ test.describe("Roadmap drill-down", () => {
     await roadmapPage.createStorySubmitButton.click();
 
     await roadmapPage.openStory(storyTitle);
+    await expect(roadmapPage.page.getByTestId("level-badge-story")).toHaveText(/Story/);
     const taskTitle = uniqueName("E2E Task");
     await roadmapPage.newTaskButton.click();
     await roadmapPage.createTaskTitleInput.fill(taskTitle);
@@ -75,6 +78,12 @@ test.describe("Roadmap drill-down", () => {
     await roadmapPage.openTask(taskTitle);
     await expect(roadmapPage.taskDetailTitle).toContainText(taskTitle);
     await expect(roadmapPage.taskStartButton).toBeVisible();
+    await expect(roadmapPage.page.getByTestId("level-badge-task")).toHaveText(/Task/);
+
+    // The Task's real parent is its Story, not the roadmap root — clicking
+    // "Back to Story" must land on the parent Story's detail page.
+    await roadmapPage.backToStoryLink.click();
+    await expect(roadmapPage.storyDetailTitle).toContainText(storyTitle);
 
     // Clean up — deleting the Epic cascades to its Story and Task.
     await api.listEpics().then(async (epics) => {

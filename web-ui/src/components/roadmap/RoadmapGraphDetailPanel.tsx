@@ -16,6 +16,7 @@ import BlockingChainSection from "@/components/roadmap/BlockingChainSection";
 import ReadinessBadge from "@/components/roadmap/ReadinessBadge";
 import { useCreateDependency, useDeleteDependency } from "@/hooks/useDependencies";
 import { useBlockingChain } from "@/hooks/useBlockingChain";
+import { roadmapLevelMeta } from "@/lib/roadmapLevel";
 import type {
   EpicResponse,
   StoryResponse,
@@ -24,7 +25,6 @@ import type {
   DependencyEdgeResponse,
   BlockableItemType,
 } from "@/lib/types";
-import type { RoadmapItemType } from "./RoadmapGraphNode";
 
 export type RoadmapDetailItem =
   | { itemType: "epic"; item: EpicResponse }
@@ -67,17 +67,6 @@ function statusBadge(status: string) {
       return <Badge variant="default">done</Badge>;
     default:
       return <Badge variant="outline">{status}</Badge>;
-  }
-}
-
-function itemTypeLabel(itemType: RoadmapItemType): string {
-  switch (itemType) {
-    case "epic":
-      return "Epic";
-    case "story":
-      return "Story";
-    case "task":
-      return "Task";
   }
 }
 
@@ -294,7 +283,7 @@ export default function RoadmapGraphDetailPanel({
           data-testid="roadmap-detail-item-type"
           className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
         >
-          {itemTypeLabel(itemType)}
+          {roadmapLevelMeta(itemType).label}
         </span>
         <h2 data-testid="roadmap-detail-title" className="text-lg font-semibold break-words">
           {item.title}

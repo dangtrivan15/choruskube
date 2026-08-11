@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router";
 import { ArrowLeft, Trash2, Play, CheckCircle2, GitBranch, Layers } from "lucide-react";
 import Authorized from "@/components/Authorized";
 import { useTask, useDeleteTask, useStartTask, useCompleteTask } from "@/hooks/useTasks";
+import { useStory } from "@/hooks/useStories";
 import { useTaskRuns } from "@/hooks/useTaskRuns";
 import { useRoadmapSubscription } from "@/hooks/useRoadmapSubscription";
 import { Badge } from "@/components/ui/badge";
@@ -18,6 +19,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import TaskRunHistoryList from "@/components/roadmap/TaskRunHistoryList";
+import LevelBadge from "@/components/roadmap/LevelBadge";
 import PageHeader from "@/components/layout/PageHeader";
 
 function statusBadge(status: string) {
@@ -44,6 +46,12 @@ export default function TaskDetailPage() {
   useRoadmapSubscription();
 
   const { data: task, isLoading } = useTask(id);
+  // Called unconditionally (before the isLoading/!task early return below) so hook order
+  // stays stable across renders — `useStory` is itself `enabled: !!id`, so passing
+  // `task?.storyId` (undefined while `task` hasn't loaded) is a safe no-op query rather than
+  // a conditional hook call. Resolves the parent Story client-side (Decision 1) since the
+  // Task route/DTO carry `storyId` but not the `epicId` the Story route also needs.
+  const { data: parentStory } = useStory(task?.storyId);
   const { data: runsPage, isLoading: runsLoading } = useTaskRuns(id);
   const deleteTask = useDeleteTask(task?.storyId ?? "");
   const startTask = useStartTask();
@@ -90,19 +98,26 @@ export default function TaskDetailPage() {
 
   const sp = task.softwareProject;
   const Icon = sp.type === "repo_group" ? Layers : GitBranch;
+  // Degrades to the roadmap root while the parent Story is resolving (or if it errored) —
+  // Caveat 1: normally already in the React Query cache from the drill-down path, so this
+  // window is sub-second and the fallback is always a safe, valid destination.
+  const backTo = parentStory
+    ? `/roadmap/epics/${parentStory.epicId}/stories/${parentStory.id}`
+    : "/roadmap";
 
   return (
     <div className="min-w-0 space-y-6 p-4 md:p-6 max-w-3xl">
       <Link
-        to="/roadmap"
+        to={backTo}
         className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
       >
         <ArrowLeft className="size-4" />
-        Back to Roadmap
+        Back to Story
       </Link>
 
       <div className="flex min-w-0 items-start justify-between gap-4">
         <div className="flex min-w-0 flex-col gap-2">
+          <LevelBadge level="task" />
           <h2 data-testid="task-detail-title" className="text-xl font-semibold break-words">
             {task.title}
           </h2>

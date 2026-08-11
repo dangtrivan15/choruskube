@@ -39,6 +39,7 @@ export class RoadmapPage {
   readonly taskCompleteButton: Locator;
   readonly taskDeleteButton: Locator;
   readonly taskRunHistoryList: Locator;
+  readonly backToStoryLink: Locator;
 
   // Create Epic dialog
   readonly createDialogTitle: Locator;
@@ -103,6 +104,7 @@ export class RoadmapPage {
     this.taskCompleteButton = page.getByTestId("task-complete-button");
     this.taskDeleteButton = page.getByTestId("task-delete-button");
     this.taskRunHistoryList = page.getByTestId("task-run-history-list");
+    this.backToStoryLink = page.getByRole("link", { name: "Back to Story" });
 
     // Create Epic dialog
     //
