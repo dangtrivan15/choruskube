@@ -80,7 +80,12 @@ public class RoadmapTimelineControllerTest extends BaseTest {
                 .andExpect(
                         jsonPath("$.epics[0].stories[0].epicId").value(epic.id().toString()))
                 .andExpect(jsonPath("$.epics[0].stories[0].title").value(story.title()))
-                .andExpect(jsonPath("$.epics[0].stories[0].stage").value(story.stage()));
+                .andExpect(jsonPath("$.epics[0].stories[0].stage").value(story.stage()))
+                // Freshly-created Epic/Story: no dependency edges and still `backlog`, so both are
+                // on-track — readiness READY, never stalled.
+                .andExpect(jsonPath("$.epics[0].stalled").value(false))
+                .andExpect(jsonPath("$.epics[0].stories[0].readiness").value("READY"))
+                .andExpect(jsonPath("$.epics[0].stories[0].stalled").value(false));
     }
 
     @Test

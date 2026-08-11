@@ -506,7 +506,13 @@ export interface RoadmapGraphSnapshot {
  * Matches the backend TimelineStorySummary record — one Story plotted on the Roadmap Timeline
  * View, nested under its owning `TimelineEpicSummary`. `stage` mirrors `StoryResponse.stage`
  * (the persisted board column), not the computed `status` rollup — Timeline has no `status`
- * field of its own since it never joins dependency edges or Task rollups.
+ * field of its own since it never joins dependency edges or Task rollups. `readiness` and
+ * `stalled` are the "blocked or stalled work" risk signals (visually flagged on the Timeline):
+ * `readiness` reuses the exact same per-Epic dependency computation as the Roadmap Graph View
+ * (`BLOCKED` iff an unfinished dependency blocks this Story); `stalled` is a separate,
+ * Timeline-only signal — `true` iff `stage === "in_progress"` and `updatedAt` is more than 14
+ * days in the past. The two are independent: a Story can be blocked without being stalled, or
+ * stalled without being blocked.
  */
 export interface TimelineStorySummary {
   id: string;
@@ -515,12 +521,18 @@ export interface TimelineStorySummary {
   stage: StoryStage;
   createdAt: string;
   updatedAt: string;
+  readiness: Readiness;
+  stalled: boolean;
 }
 
 /**
  * Matches the backend TimelineEpicSummary record — one Epic lane on the Roadmap Timeline View,
  * carrying its own Stories ordered ascending by `createdAt`. An Epic with no Stories is still
- * included, with `stories: []`.
+ * included, with `stories: []`. `stalled` is the same 14-day in-progress-staleness signal as
+ * `TimelineStorySummary.stalled`, computed from this Epic's own `stage`/`updatedAt` — it does
+ * NOT aggregate its Stories' `stalled` flags (see `deriveEpicRisk` in `@/lib/timelineRisk` for
+ * that UI-layer aggregation). There is no Epic-level `readiness` field: readiness is a
+ * dependency-graph concept and Epics do not participate in the Story/Task dependency graph.
  */
 export interface TimelineEpicSummary {
   id: string;
@@ -529,6 +541,7 @@ export interface TimelineEpicSummary {
   createdAt: string;
   updatedAt: string;
   stories: TimelineStorySummary[];
+  stalled: boolean;
 }
 
 /**

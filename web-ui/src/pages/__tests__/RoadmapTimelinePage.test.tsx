@@ -98,7 +98,7 @@ vi.mock("@/components/roadmap/RoadmapTimeline", () => ({
       data-focused-story={focusedStoryId ?? ""}
     >
       {data.epics.map((epic) => (
-        <div key={epic.id} data-testid="mock-timeline-lane">
+        <div key={epic.id} data-testid="mock-timeline-lane" data-stalled={String(epic.stalled)}>
           <button data-testid={`mock-focus-lane-${epic.id}`} onClick={() => onFocusChange?.(epic.id)}>
             {epic.title}
           </button>
@@ -106,6 +106,8 @@ vi.mock("@/components/roadmap/RoadmapTimeline", () => ({
             <button
               key={story.id}
               data-testid={`mock-focus-story-${story.id}`}
+              data-readiness={story.readiness}
+              data-stalled={String(story.stalled)}
               onClick={() => onFocusChange?.(epic.id, story.id)}
             >
               {story.title}
@@ -128,7 +130,7 @@ vi.mock("@/hooks/useSoftwareProjects", () => ({
   useSoftwareProjects: () => ({ data: [] }),
 }));
 
-function makeResponse(): RoadmapTimelineResponse {
+function makeResponse(overrides: { readiness?: "READY" | "BLOCKED"; storyStalled?: boolean; epicStalled?: boolean } = {}): RoadmapTimelineResponse {
   return {
     epics: [
       {
@@ -137,6 +139,7 @@ function makeResponse(): RoadmapTimelineResponse {
         stage: "in_progress",
         createdAt: "2026-04-01T00:00:00Z",
         updatedAt: "2026-04-01T00:00:00Z",
+        stalled: overrides.epicStalled ?? false,
         stories: [
           {
             id: "story-1",
@@ -145,6 +148,8 @@ function makeResponse(): RoadmapTimelineResponse {
             stage: "backlog",
             createdAt: "2026-04-01T00:00:00Z",
             updatedAt: "2026-04-01T00:00:00Z",
+            readiness: overrides.readiness ?? "READY",
+            stalled: overrides.storyStalled ?? false,
           },
         ],
       },
@@ -173,6 +178,17 @@ describe("RoadmapTimelinePage", () => {
     expect(screen.getAllByTestId("mock-timeline-lane")).toHaveLength(1);
     expect(screen.getByText("Add dark mode")).toBeInTheDocument();
     expect(screen.getByText("Dark theme toggle")).toBeInTheDocument();
+  });
+
+  it("propagates readiness and stalled fields from the fetched response through to the rendered nodes", async () => {
+    mockApi.get.mockResolvedValue(makeResponse({ readiness: "BLOCKED", storyStalled: true, epicStalled: true }));
+
+    renderWithProviders(<RoadmapTimelinePage />);
+
+    await waitFor(() => expect(screen.getByTestId("mock-focus-story-story-1")).toBeInTheDocument());
+    expect(screen.getByTestId("mock-focus-story-story-1")).toHaveAttribute("data-readiness", "BLOCKED");
+    expect(screen.getByTestId("mock-focus-story-story-1")).toHaveAttribute("data-stalled", "true");
+    expect(screen.getByTestId("mock-timeline-lane")).toHaveAttribute("data-stalled", "true");
   });
 
   it("renders the dedicated zero-Epics empty state instead of a blank canvas", async () => {

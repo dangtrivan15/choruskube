@@ -33,6 +33,18 @@ export class RoadmapTimelinePage {
     this.viewSwitcherBoardLink = page.getByTestId("roadmap-view-switcher-board");
   }
 
+  /**
+   * Reads the `data-risk` attribute ("none" | "blocked" | "stalled" | "blocked-stalled") off the
+   * Story marker or Epic lane node whose `data-label` matches `label` — the node's own
+   * blocked/stalled tint and badge state, set by RoadmapTimelineNode (see `@/lib/timelineRisk`).
+   */
+  async riskFor(label: string): Promise<string | null> {
+    const node = this.page.locator(
+      `[data-testid="roadmap-timeline-story-node"][data-label="${label}"], [data-testid="roadmap-timeline-epic-lane"][data-label="${label}"]`,
+    );
+    return node.getAttribute("data-risk");
+  }
+
   async goto() {
     await this.page.goto("/roadmap/timeline");
     await expect(this.heading).toBeVisible({ timeout: 15_000 });

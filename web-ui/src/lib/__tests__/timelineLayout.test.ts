@@ -15,6 +15,8 @@ function makeStory(overrides: Partial<TimelineStorySummary> = {}): TimelineStory
     stage: "backlog",
     createdAt: "2026-04-01T00:00:00Z",
     updatedAt: "2026-04-01T00:00:00Z",
+    readiness: "READY",
+    stalled: false,
     ...overrides,
   };
 }
@@ -27,6 +29,7 @@ function makeEpic(overrides: Partial<TimelineEpicSummary> = {}): TimelineEpicSum
     createdAt: "2026-04-01T00:00:00Z",
     updatedAt: "2026-04-01T00:00:00Z",
     stories: [],
+    stalled: false,
     ...overrides,
   };
 }
@@ -131,6 +134,63 @@ describe("computeRoadmapTimelineLayout", () => {
 
     expect(nodes).toEqual([]);
     expect(edges).toEqual([]);
+  });
+
+  describe("blocked/stalled risk data", () => {
+    it("carries a Story's own readiness/stalled straight through to its node data", () => {
+      const data: RoadmapTimelineResponse = {
+        epics: [
+          makeEpic({
+            id: "epic-1",
+            stories: [
+              makeStory({ id: "story-blocked", readiness: "BLOCKED", stalled: false }),
+              makeStory({ id: "story-stalled", readiness: "READY", stalled: true }),
+              makeStory({ id: "story-fine", readiness: "READY", stalled: false }),
+            ],
+          }),
+        ],
+      };
+
+      const { nodes } = computeRoadmapTimelineLayout(data);
+      const storyNodes = nodes.filter(isStoryNode);
+      const byId = new Map(storyNodes.map((n) => [n.id, n.data]));
+
+      expect(byId.get("story-blocked")).toEqual(expect.objectContaining({ blocked: true, stalled: false }));
+      expect(byId.get("story-stalled")).toEqual(expect.objectContaining({ blocked: false, stalled: true }));
+      expect(byId.get("story-fine")).toEqual(expect.objectContaining({ blocked: false, stalled: false }));
+    });
+
+    it("aggregates an Epic lane's blocked/stalled via OR across its Stories, plus its own stalled", () => {
+      const data: RoadmapTimelineResponse = {
+        epics: [
+          makeEpic({
+            id: "epic-with-blocked-story",
+            stalled: false,
+            stories: [makeStory({ id: "s1", readiness: "BLOCKED", stalled: false })],
+          }),
+          makeEpic({
+            id: "epic-with-stalled-story",
+            stalled: false,
+            stories: [makeStory({ id: "s2", readiness: "READY", stalled: true })],
+          }),
+          makeEpic({
+            id: "epic-itself-stalled",
+            stalled: true,
+            stories: [makeStory({ id: "s3", readiness: "READY", stalled: false })],
+          }),
+          makeEpic({ id: "epic-clean", stalled: false, stories: [makeStory({ id: "s4" })] }),
+        ],
+      };
+
+      const { nodes } = computeRoadmapTimelineLayout(data);
+      const laneNodes = nodes.filter(isEpicLaneNode);
+      const byId = new Map(laneNodes.map((n) => [n.id, n.data]));
+
+      expect(byId.get("epic-with-blocked-story")).toEqual(expect.objectContaining({ blocked: true, stalled: false }));
+      expect(byId.get("epic-with-stalled-story")).toEqual(expect.objectContaining({ blocked: false, stalled: true }));
+      expect(byId.get("epic-itself-stalled")).toEqual(expect.objectContaining({ blocked: false, stalled: true }));
+      expect(byId.get("epic-clean")).toEqual(expect.objectContaining({ blocked: false, stalled: false }));
+    });
   });
 
   describe("focus", () => {

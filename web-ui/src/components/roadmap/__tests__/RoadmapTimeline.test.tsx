@@ -62,6 +62,8 @@ function makeStory(overrides: Partial<TimelineStorySummary> = {}): TimelineStory
     stage: "backlog",
     createdAt: "2026-04-01T00:00:00Z",
     updatedAt: "2026-04-01T00:00:00Z",
+    readiness: "READY",
+    stalled: false,
     ...overrides,
   };
 }
@@ -74,6 +76,7 @@ function makeEpic(overrides: Partial<TimelineEpicSummary> = {}): TimelineEpicSum
     createdAt: "2026-04-01T00:00:00Z",
     updatedAt: "2026-04-01T00:00:00Z",
     stories: [],
+    stalled: false,
     ...overrides,
   };
 }
@@ -148,5 +151,88 @@ describe("RoadmapTimeline", () => {
     renderWithProviders(<RoadmapTimeline data={data} />);
 
     expect(setCenterMock).not.toHaveBeenCalled();
+  });
+
+  describe("blocked/stalled risk badges", () => {
+    it("shows the blocked badge and data-risk=blocked for a blocked Story, no stalled badge", () => {
+      const data: RoadmapTimelineResponse = {
+        epics: [
+          makeEpic({
+            id: "epic-1",
+            stories: [makeStory({ id: "story-1", readiness: "BLOCKED", stalled: false })],
+          }),
+        ],
+      };
+      renderWithProviders(<RoadmapTimeline data={data} />);
+
+      expect(screen.getByTestId("roadmap-timeline-story-blocked-badge")).toBeInTheDocument();
+      expect(screen.queryByTestId("roadmap-timeline-story-stalled-badge")).not.toBeInTheDocument();
+      expect(screen.getByTestId("roadmap-timeline-story-node")).toHaveAttribute("data-risk", "blocked");
+    });
+
+    it("shows the stalled badge and data-risk=stalled for a stalled Story, no blocked badge", () => {
+      const data: RoadmapTimelineResponse = {
+        epics: [
+          makeEpic({
+            id: "epic-1",
+            stories: [makeStory({ id: "story-1", readiness: "READY", stalled: true })],
+          }),
+        ],
+      };
+      renderWithProviders(<RoadmapTimeline data={data} />);
+
+      expect(screen.getByTestId("roadmap-timeline-story-stalled-badge")).toBeInTheDocument();
+      expect(screen.queryByTestId("roadmap-timeline-story-blocked-badge")).not.toBeInTheDocument();
+      expect(screen.getByTestId("roadmap-timeline-story-node")).toHaveAttribute("data-risk", "stalled");
+    });
+
+    it("shows both badges and data-risk=blocked-stalled for a Story that is both", () => {
+      const data: RoadmapTimelineResponse = {
+        epics: [
+          makeEpic({
+            id: "epic-1",
+            stories: [makeStory({ id: "story-1", readiness: "BLOCKED", stalled: true })],
+          }),
+        ],
+      };
+      renderWithProviders(<RoadmapTimeline data={data} />);
+
+      expect(screen.getByTestId("roadmap-timeline-story-blocked-badge")).toBeInTheDocument();
+      expect(screen.getByTestId("roadmap-timeline-story-stalled-badge")).toBeInTheDocument();
+      expect(screen.getByTestId("roadmap-timeline-story-node")).toHaveAttribute("data-risk", "blocked-stalled");
+    });
+
+    it("shows neither badge and data-risk=none for an on-track Story", () => {
+      const data: RoadmapTimelineResponse = {
+        epics: [
+          makeEpic({
+            id: "epic-1",
+            stories: [makeStory({ id: "story-1", readiness: "READY", stalled: false })],
+          }),
+        ],
+      };
+      renderWithProviders(<RoadmapTimeline data={data} />);
+
+      expect(screen.queryByTestId("roadmap-timeline-story-blocked-badge")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("roadmap-timeline-story-stalled-badge")).not.toBeInTheDocument();
+      expect(screen.getByTestId("roadmap-timeline-story-node")).toHaveAttribute("data-risk", "none");
+    });
+
+    it("aggregates risk onto the Epic lane node from its Stories", () => {
+      const data: RoadmapTimelineResponse = {
+        epics: [
+          makeEpic({
+            id: "epic-1",
+            stalled: false,
+            stories: [makeStory({ id: "story-1", readiness: "BLOCKED", stalled: true })],
+          }),
+        ],
+      };
+      renderWithProviders(<RoadmapTimeline data={data} />);
+
+      expect(screen.getByTestId("roadmap-timeline-epic-blocked-badge")).toBeInTheDocument();
+      expect(screen.getByTestId("roadmap-timeline-epic-stalled-badge")).toBeInTheDocument();
+      expect(screen.getByTestId("roadmap-timeline-epic-lane")).toHaveAttribute("data-risk", "blocked-stalled");
+    });
   });
 });

@@ -30,6 +30,7 @@ function makeResponse(): RoadmapTimelineResponse {
         stage: "in_progress",
         createdAt: "2026-04-01T00:00:00Z",
         updatedAt: "2026-04-01T00:00:00Z",
+        stalled: false,
         stories: [
           {
             id: "story-1",
@@ -38,6 +39,8 @@ function makeResponse(): RoadmapTimelineResponse {
             stage: "backlog",
             createdAt: "2026-04-01T00:00:00Z",
             updatedAt: "2026-04-01T00:00:00Z",
+            readiness: "READY",
+            stalled: false,
           },
         ],
       },
