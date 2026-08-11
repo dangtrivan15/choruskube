@@ -19,11 +19,6 @@ export class RoadmapTimelinePage {
   readonly viewSwitcherGraphEntry: Locator;
   readonly viewSwitcherBoardLink: Locator;
 
-  /** "Blocked" badges (visually flag blocked/stalled work) — one per Story node, one per Epic lane. */
-  readonly blockedBadge: Locator;
-  /** "Stalled" badges — one per Story node, one per Epic lane. */
-  readonly stalledBadge: Locator;
-
   constructor(page: Page) {
     this.page = page;
 
@@ -36,9 +31,6 @@ export class RoadmapTimelinePage {
 
     this.viewSwitcherGraphEntry = page.getByTestId("roadmap-view-switcher-graph");
     this.viewSwitcherBoardLink = page.getByTestId("roadmap-view-switcher-board");
-
-    this.blockedBadge = page.getByTestId(/roadmap-timeline-(story|epic)-blocked-badge/);
-    this.stalledBadge = page.getByTestId(/roadmap-timeline-(story|epic)-stalled-badge/);
   }
 
   /**
