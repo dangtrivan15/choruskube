@@ -1,8 +1,9 @@
 import { memo } from "react";
 import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
-import { ChevronDown, ChevronRight, Milestone, BookOpen, ListTodo, Lock } from "lucide-react";
+import { ChevronDown, ChevronRight, Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { statusColorTokens } from "@/lib/statusColors";
+import { roadmapLevelMeta } from "@/lib/roadmapLevel";
 import type { Readiness } from "@/lib/types";
 
 export type RoadmapItemType = "epic" | "story" | "task";
@@ -49,17 +50,6 @@ function getStatusColors(status: string) {
   };
 }
 
-function ItemTypeIcon({ itemType }: { itemType: RoadmapItemType }) {
-  switch (itemType) {
-    case "epic":
-      return <Milestone className="size-5" />;
-    case "story":
-      return <BookOpen className="size-5" />;
-    case "task":
-      return <ListTodo className="size-5" />;
-  }
-}
-
 /** Primary handle style: visible dot (top-target, bottom-source). */
 const primaryHandleClass = "!bg-muted-foreground !size-2";
 /** Secondary handle style: invisible, zero-size (used for routing only). */
@@ -69,6 +59,7 @@ function RoadmapGraphNode({ id, data, selected }: NodeProps<RoadmapGraphNodeType
   const colors = getStatusColors(data.status);
   const hasChildren = (data.childCount ?? 0) > 0;
   const isBlocked = data.readiness === "BLOCKED";
+  const ItemTypeIcon = roadmapLevelMeta(data.itemType).Icon;
 
   return (
     <>
@@ -92,7 +83,7 @@ function RoadmapGraphNode({ id, data, selected }: NodeProps<RoadmapGraphNodeType
       >
         <div className="flex items-center gap-2">
           <span className={cn("shrink-0", colors.text)}>
-            <ItemTypeIcon itemType={data.itemType} />
+            <ItemTypeIcon className="size-5" />
           </span>
           <span className="truncate text-sm font-medium">{data.label}</span>
           {hasChildren && (

@@ -109,6 +109,21 @@ describe("EpicDetailPage", () => {
     expect(screen.getByTestId("epic-detail-progress")).toHaveTextContent("1/2 tasks done");
   });
 
+  it("renders the Epic LevelBadge", () => {
+    mockUseEpic.mockReturnValue({ data: makeEpic(), isLoading: false });
+    mockUseStories.mockReturnValue({ data: [], isLoading: false });
+    renderWithProviders(<EpicDetailPage />);
+    expect(screen.getByTestId("level-badge-epic")).toHaveTextContent("Epic");
+  });
+
+  it('keeps the "Back to Roadmap" link unchanged', () => {
+    mockUseEpic.mockReturnValue({ data: makeEpic(), isLoading: false });
+    mockUseStories.mockReturnValue({ data: [], isLoading: false });
+    renderWithProviders(<EpicDetailPage />);
+    const link = screen.getByRole("link", { name: /Back to Roadmap/ });
+    expect(link).toHaveAttribute("href", "/roadmap");
+  });
+
   it("shows Edit and Delete buttons when the epic is in backlog", () => {
     mockUseEpic.mockReturnValue({ data: makeEpic({ status: "backlog" }), isLoading: false });
     mockUseStories.mockReturnValue({ data: [], isLoading: false });
