@@ -70,6 +70,20 @@ reports_root_for() {
     printf '%s' "$root"
 }
 
+# harvest-junit.js sits beside this script (/usr/local/bin in the image); resolve it
+# relative to $0 so the test harness's rewritten copy finds its own sibling.
+HARVEST_JUNIT="$(dirname "$0")/harvest-junit.js"
+
+# Never fails: a missing harvester, a missing node, or an unparseable tree yields an
+# empty section rather than a failed Test node.
+harvest_failures() {
+    local root="$1"
+    [ -d "$root" ] || return 0
+    [ -f "$HARVEST_JUNIT" ] || return 0
+    command -v node > /dev/null 2>&1 || return 0
+    node "$HARVEST_JUNIT" "$root" 2>/dev/null || true
+}
+
 {
   echo "# Test Report"
   echo ""
@@ -128,6 +142,8 @@ while IFS=$'\t' read -r NAME DIR CMD; do
   mkdir -p "$(dirname "$OUTPUT_LOG")"
   printf '%s\n' "$OUTPUT" > "$OUTPUT_LOG"
 
+  FAILING_SECTION=$(harvest_failures "$REPORTS_ROOT")
+
   {
     echo "## $NAME"
     echo ""
@@ -135,6 +151,11 @@ while IFS=$'\t' read -r NAME DIR CMD; do
     echo "**Command:** \`$CMD\`"
     echo "**Status:** $STATUS"
     echo ""
+    if [ -n "$FAILING_SECTION" ]; then
+      echo "### Failing tests"
+      echo ""
+      printf '%s\n' "$FAILING_SECTION"
+    fi
     echo "Full output: \`${OUTPUT_LOG#/workspace/out/}\`"
     echo ""
     echo "<details><summary>Last 100 lines of output</summary>"

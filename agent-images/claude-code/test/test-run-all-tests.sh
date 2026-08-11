@@ -99,6 +99,52 @@ if [ -f "$EXPECTED_LOG" ]; then
         || fail "parsed-path log contains the command's output"
 fi
 
+# --- Test 3: JUnit XML failures are harvested into the index ---
+# (Numbered 3 / S3 to avoid colliding with Test 2's S2 above, which stays live for
+# the remainder of the script's execution.)
+S3="$TESTDIR/s3"
+mkdir -p "$S3/workspace/repo" "$S3/workspace/out"
+XMLDIR="$S3/workspace/out/reports/widget/api-server/test-results/test"
+mkdir -p "$XMLDIR"
+cat > "$XMLDIR/TEST-com.acme.WidgetTest.xml" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.acme.WidgetTest" tests="2" failures="1">
+  <testcase name="spinsFreely" classname="com.acme.WidgetTest" time="0.01"/>
+  <testcase name="holdsTorque" classname="com.acme.WidgetTest" time="0.02">
+    <failure message="expected:&lt;7&gt; but was:&lt;3&gt;" type="AssertionError">
+com.acme.WidgetTest.holdsTorque(WidgetTest.java:42)
+        at org.junit.Assert.fail(Assert.java:88)
+    </failure>
+  </testcase>
+</testsuite>
+EOF
+# The report root is named in the command, exactly as the real seeders write it, so
+# reports_root_for parses it back out and finds the fixture tree above.
+cat > "$S3/workspace/config.json" <<EOF
+{
+  "repo_url": "https://example.invalid/acme/widget.git",
+  "test_command": "echo running -Dtest.reports.dir=$S3/workspace/out/reports/widget ; exit 1"
+}
+EOF
+COPY3=$(make_copy "$S3")
+set +e
+bash "$COPY3" > "$S3/stdout.txt" 2>&1
+RC3=$?
+set -e
+[ "$RC3" -eq 1 ] && ok "failing command: exits 1" || fail "failing command: exits 1 (got $RC3)"
+
+REPORT3="$S3/workspace/out/test_report.md"
+grep -qF "holdsTorque" "$REPORT3" \
+    && ok "index names the failing test" || fail "index names the failing test"
+grep -qF "expected:<7> but was:<3>" "$REPORT3" \
+    && ok "index decodes the XML-escaped failure message" \
+    || fail "index decodes the failure message"
+grep -qF "spinsFreely" "$REPORT3" \
+    && fail "index must NOT list the passing test" || ok "index omits passing tests"
+grep -qF "api-server" "$REPORT3" \
+    && ok "index attributes the failure to its component" \
+    || fail "index attributes the failure to its component"
+
 # --- Summary ---
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
