@@ -11,3 +11,8 @@ docs/superpowers/
 
 # Per-developer Claude Code settings. Shared agent config under .claude/ is committed.
 .claude/settings.local.json
+
+# Root Gradle build state. Anchored with a leading slash so it only covers the aggregator
+# build's own output (the timing report lands in /build) — each component keeps its own rule.
+/.gradle/
+/build/
