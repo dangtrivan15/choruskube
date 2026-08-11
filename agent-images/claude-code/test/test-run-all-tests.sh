@@ -63,6 +63,42 @@ if [ -n "$LOG" ]; then
     grep -qx "line-250" "$LOG" && ok "log keeps the last line" || fail "log keeps the last line"
 fi
 
+# --- Test 2: -Dtest.reports.dir is parsed out of the command and used, not the
+# <name>-test-output.log fallback. This exercises reports_root_for's parsing branch —
+# Test 1 only ever exercises its fallback branch, so a broken regex/cut there could
+# still leave Test 1 green.
+S2="$TESTDIR/s2"
+REPORTS_DIR="$S2/workspace/out/reports/widget-reports"
+mkdir -p "$S2/workspace/repo" "$S2/workspace/out" "$REPORTS_DIR"
+cat > "$S2/workspace/config.json" <<EOF
+{
+  "repo_url": "https://example.invalid/acme/widget.git",
+  "test_command": "true -Dtest.reports.dir=$REPORTS_DIR && for i in \$(seq 1 5); do echo line-\$i; done; exit 0"
+}
+EOF
+COPY2=$(make_copy "$S2")
+set +e
+bash "$COPY2" > "$S2/stdout.txt" 2>&1
+RC2=$?
+set -e
+[ "$RC2" -eq 0 ] && ok "reports.dir scenario: exits 0" || fail "reports.dir scenario: exits 0 (got $RC2)"
+
+EXPECTED_LOG="$REPORTS_DIR/test-output.log"
+[ -f "$EXPECTED_LOG" ] \
+    && ok "output log lands inside the parsed -Dtest.reports.dir, not the name fallback" \
+    || fail "output log lands inside the parsed -Dtest.reports.dir (expected $EXPECTED_LOG)"
+
+FALLBACK_LOG=$(find "$S2/workspace/out" -maxdepth 1 -name '*test-output.log')
+[ -z "$FALLBACK_LOG" ] \
+    && ok "no <name>-test-output.log fallback written when reports.dir parses" \
+    || fail "unexpected fallback log written: $FALLBACK_LOG"
+
+if [ -f "$EXPECTED_LOG" ]; then
+    grep -qx "line-5" "$EXPECTED_LOG" \
+        && ok "parsed-path log contains the command's output" \
+        || fail "parsed-path log contains the command's output"
+fi
+
 # --- Summary ---
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
