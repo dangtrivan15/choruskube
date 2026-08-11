@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { screen } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentType } from "react";
 import { renderWithProviders } from "@/__tests__/test-utils";
@@ -117,6 +117,58 @@ describe("RoadmapTimeline", () => {
     const user = userEvent.setup();
 
     await expect(user.click(screen.getByTestId("mock-node-epic-1"))).resolves.not.toThrow();
+  });
+
+  describe("keyboard activation", () => {
+    it("pressing Enter on a focused Epic lane node invokes onFocusChange with just the epicId, same as a click", async () => {
+      const onFocusChange = vi.fn();
+      const data: RoadmapTimelineResponse = { epics: [makeEpic({ id: "epic-1" })] };
+      renderWithProviders(<RoadmapTimeline data={data} onFocusChange={onFocusChange} />);
+      const user = userEvent.setup();
+
+      screen.getByTestId("roadmap-timeline-epic-lane").focus();
+      await user.keyboard("{Enter}");
+
+      // waitFor (not a bare synchronous assertion) so the hover-preview Tooltip's own
+      // focus-triggered open state — an unrelated async update — has a chance to flush first.
+      await waitFor(() => expect(onFocusChange).toHaveBeenCalledWith("epic-1"));
+      expect(onFocusChange).toHaveBeenCalledTimes(1);
+    });
+
+    it("pressing Space on a focused Story node invokes onFocusChange with the epic id and story id, same as a click", async () => {
+      const onFocusChange = vi.fn();
+      const data: RoadmapTimelineResponse = {
+        epics: [makeEpic({ id: "epic-1", stories: [makeStory({ id: "story-1", epicId: "epic-1" })] })],
+      };
+      renderWithProviders(<RoadmapTimeline data={data} onFocusChange={onFocusChange} />);
+      const user = userEvent.setup();
+
+      screen.getByTestId("roadmap-timeline-story-node").focus();
+      await user.keyboard(" ");
+
+      await waitFor(() => expect(onFocusChange).toHaveBeenCalledWith("epic-1", "story-1"));
+    });
+
+    it("does not throw when a node is keyboard-activated and no onFocusChange is provided", async () => {
+      const data: RoadmapTimelineResponse = { epics: [makeEpic({ id: "epic-1" })] };
+      renderWithProviders(<RoadmapTimeline data={data} />);
+      const user = userEvent.setup();
+
+      screen.getByTestId("roadmap-timeline-epic-lane").focus();
+      await expect(user.keyboard("{Enter}")).resolves.not.toThrow();
+    });
+
+    it("ignores keys other than Enter/Space", async () => {
+      const onFocusChange = vi.fn();
+      const data: RoadmapTimelineResponse = { epics: [makeEpic({ id: "epic-1" })] };
+      renderWithProviders(<RoadmapTimeline data={data} onFocusChange={onFocusChange} />);
+      const user = userEvent.setup();
+
+      screen.getByTestId("roadmap-timeline-epic-lane").focus();
+      await user.keyboard("{Tab}");
+
+      expect(onFocusChange).not.toHaveBeenCalled();
+    });
   });
 
   it("centers on the focused Story node's position once the instance is ready", async () => {

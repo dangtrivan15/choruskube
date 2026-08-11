@@ -19,6 +19,14 @@ export class RoadmapTimelinePage {
   readonly viewSwitcherGraphEntry: Locator;
   readonly viewSwitcherBoardLink: Locator;
 
+  /** Item-detail hover/click feature (§5, Task 6). */
+  readonly itemPreview: Locator;
+  readonly detailPanel: Locator;
+  readonly detailClose: Locator;
+  readonly detailTitle: Locator;
+  readonly detailParent: Locator;
+  readonly blockingChain: Locator;
+
   constructor(page: Page) {
     this.page = page;
 
@@ -31,6 +39,13 @@ export class RoadmapTimelinePage {
 
     this.viewSwitcherGraphEntry = page.getByTestId("roadmap-view-switcher-graph");
     this.viewSwitcherBoardLink = page.getByTestId("roadmap-view-switcher-board");
+
+    this.itemPreview = page.getByTestId("roadmap-timeline-item-preview");
+    this.detailPanel = page.getByTestId("roadmap-timeline-detail-panel");
+    this.detailClose = page.getByTestId("roadmap-timeline-detail-close");
+    this.detailTitle = page.getByTestId("roadmap-timeline-detail-title");
+    this.detailParent = page.getByTestId("roadmap-timeline-detail-parent");
+    this.blockingChain = page.getByTestId("roadmap-blocking-chain");
   }
 
   /**

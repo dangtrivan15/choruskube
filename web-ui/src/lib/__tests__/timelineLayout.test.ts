@@ -193,6 +193,41 @@ describe("computeRoadmapTimelineLayout", () => {
     });
   });
 
+  describe("epicTitle", () => {
+    it("populates each Story node's data.epicTitle with its parent Epic's title", () => {
+      const data: RoadmapTimelineResponse = {
+        epics: [
+          makeEpic({
+            id: "epic-1",
+            title: "Payments Overhaul",
+            stories: [makeStory({ id: "story-1", epicId: "epic-1" })],
+          }),
+          makeEpic({
+            id: "epic-2",
+            title: "Search Revamp",
+            stories: [makeStory({ id: "story-2", epicId: "epic-2" })],
+          }),
+        ],
+      };
+
+      const { nodes } = computeRoadmapTimelineLayout(data);
+      const storyNodes = nodes.filter(isStoryNode);
+      const byId = new Map(storyNodes.map((n) => [n.id, n.data.epicTitle]));
+
+      expect(byId.get("story-1")).toBe("Payments Overhaul");
+      expect(byId.get("story-2")).toBe("Search Revamp");
+    });
+
+    it("an empty Epic (no Stories) still lays out with just its lane node", () => {
+      const data: RoadmapTimelineResponse = { epics: [makeEpic({ id: "epic-1", title: "Empty Epic", stories: [] })] };
+
+      const { nodes } = computeRoadmapTimelineLayout(data);
+
+      expect(nodes.filter(isEpicLaneNode)).toHaveLength(1);
+      expect(nodes.filter(isStoryNode)).toHaveLength(0);
+    });
+  });
+
   describe("focus", () => {
     function twoEpicData(): RoadmapTimelineResponse {
       return {
