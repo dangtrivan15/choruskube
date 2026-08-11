@@ -1,28 +1,42 @@
 package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.when;
 
 import com.choruskube.core.BaseTest;
+import com.choruskube.core.dto.CreateDependencyRequest;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
 import com.choruskube.core.dto.RoadmapTimelineResponse;
 import com.choruskube.core.dto.StoryRequest;
 import com.choruskube.core.dto.StoryResponse;
 import com.choruskube.core.dto.TimelineEpicSummary;
+import com.choruskube.core.dto.TimelineStorySummary;
 import com.choruskube.core.model.GitRepo;
+import com.choruskube.core.model.enums.Readiness;
+import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.observability.AuditSink;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.util.RepoNameUtil;
 import io.temporal.client.WorkflowClient;
 import io.temporal.serviceclient.WorkflowServiceStubs;
+import jakarta.persistence.EntityManager;
+import java.sql.Timestamp;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 
 @Transactional
 public class RoadmapTimelineServiceTest extends BaseTest {
+
+    private static final Instant FIXED_NOW = Instant.parse("2026-08-11T00:00:00Z");
 
     @Autowired
     private RoadmapTimelineService timelineService;
@@ -34,7 +48,16 @@ public class RoadmapTimelineServiceTest extends BaseTest {
     private StoryService storyService;
 
     @Autowired
+    private WorkItemDependencyService dependencyService;
+
+    @Autowired
     private GitRepoRepository gitRepoRepo;
+
+    @Autowired
+    private JdbcTemplate jdbc;
+
+    @Autowired
+    private EntityManager entityManager;
 
     @MockitoBean
     private WorkflowServiceStubs workflowServiceStubs;
@@ -47,6 +70,18 @@ public class RoadmapTimelineServiceTest extends BaseTest {
 
     @MockitoBean
     private AuditSink auditSink;
+
+    @MockitoBean
+    private Clock clock;
+
+    @BeforeEach
+    void stubClock() {
+        // Every test in this class exercises DefaultRoadmapTimelineService's stalled() check, so
+        // the mocked Clock needs a default "now" even for tests that don't care about staleness —
+        // an unstubbed Clock bean returns null from instant(), which NPEs inside
+        // Duration.between(updatedAt, null).
+        when(clock.instant()).thenReturn(FIXED_NOW);
+    }
 
     @Test
     void getTimeline_noEpics_returnsEmptyEpicsList() {
@@ -115,6 +150,109 @@ public class RoadmapTimelineServiceTest extends BaseTest {
         assertThat(response.epics()).extracting(TimelineEpicSummary::id).containsExactly(epicOld.id(), epicNew.id());
         TimelineEpicSummary newEpicSummary = summaryFor(response, epicNew.id());
         assertThat(newEpicSummary.stories()).extracting(s -> s.id()).containsExactly(storyOld.id(), storyNew.id());
+    }
+
+    @Test
+    void getTimeline_storyBlockedByUnfinishedDependency_readinessIsBlocked() {
+        EpicResponse epic = makeEpic("https://github.com/test/timeline-blocked.git");
+        StoryResponse blocking = makeStory(epic.id(), "Blocking Story");
+        StoryResponse blocked = makeStory(epic.id(), "Blocked Story");
+        dependencyService.create(new CreateDependencyRequest("story", blocking.id(), "story", blocked.id()));
+
+        RoadmapTimelineResponse response = timelineService.getTimeline();
+
+        TimelineStorySummary blockedSummary = storySummaryFor(response, epic.id(), blocked.id());
+        assertThat(blockedSummary.readiness()).isEqualTo(Readiness.BLOCKED);
+    }
+
+    @Test
+    void getTimeline_readyStoryWithNoDependencies_readinessIsReadyAndNotStalled() {
+        EpicResponse epic = makeEpic("https://github.com/test/timeline-ready.git");
+        StoryResponse story = makeStory(epic.id(), "Ready Story");
+
+        RoadmapTimelineResponse response = timelineService.getTimeline();
+
+        TimelineStorySummary summary = storySummaryFor(response, epic.id(), story.id());
+        assertThat(summary.readiness()).isEqualTo(Readiness.READY);
+        assertThat(summary.stalled()).isFalse();
+    }
+
+    @Test
+    void getTimeline_inProgressStoryUpdated15DaysAgo_isStalled() {
+        EpicResponse epic = makeEpic("https://github.com/test/timeline-stalled-15.git");
+        StoryResponse story = makeStory(epic.id(), "Stalled Story");
+        storyService.updateStage(story.id(), WorkItemStatus.in_progress);
+        backdateStory(story.id(), FIXED_NOW.minus(Duration.ofDays(15)));
+
+        RoadmapTimelineResponse response = timelineService.getTimeline();
+
+        TimelineStorySummary summary = storySummaryFor(response, epic.id(), story.id());
+        assertThat(summary.stalled()).isTrue();
+    }
+
+    @Test
+    void getTimeline_inProgressStoryUpdated13DaysAgo_isNotStalled() {
+        EpicResponse epic = makeEpic("https://github.com/test/timeline-stalled-13.git");
+        StoryResponse story = makeStory(epic.id(), "Fresh In-Progress Story");
+        storyService.updateStage(story.id(), WorkItemStatus.in_progress);
+        backdateStory(story.id(), FIXED_NOW.minus(Duration.ofDays(13)));
+
+        RoadmapTimelineResponse response = timelineService.getTimeline();
+
+        TimelineStorySummary summary = storySummaryFor(response, epic.id(), story.id());
+        assertThat(summary.stalled()).isFalse();
+    }
+
+    @Test
+    void getTimeline_backlogRolledOutAndDoneStoriesOld_neverStalled() {
+        EpicResponse epic = makeEpic("https://github.com/test/timeline-stalled-immune.git");
+        StoryResponse backlog = makeStory(epic.id(), "Backlog Story");
+        StoryResponse rolledOut = makeStory(epic.id(), "Rolled Out Story");
+        storyService.updateStage(rolledOut.id(), WorkItemStatus.rolled_out);
+        Instant longAgo = FIXED_NOW.minus(Duration.ofDays(365));
+        backdateStory(backlog.id(), longAgo);
+        backdateStory(rolledOut.id(), longAgo);
+
+        RoadmapTimelineResponse response = timelineService.getTimeline();
+
+        assertThat(storySummaryFor(response, epic.id(), backlog.id()).stalled()).isFalse();
+        assertThat(storySummaryFor(response, epic.id(), rolledOut.id()).stalled())
+                .isFalse();
+    }
+
+    @Test
+    void getTimeline_epicItselfInProgressAndOld_isStalled() {
+        EpicResponse epic = makeEpic("https://github.com/test/timeline-epic-stalled.git");
+        epicService.updateStage(epic.id(), WorkItemStatus.in_progress);
+        backdateEpic(epic.id(), FIXED_NOW.minus(Duration.ofDays(15)));
+
+        RoadmapTimelineResponse response = timelineService.getTimeline();
+
+        TimelineEpicSummary summary = summaryFor(response, epic.id());
+        assertThat(summary.stalled()).isTrue();
+    }
+
+    private static TimelineStorySummary storySummaryFor(RoadmapTimelineResponse response, UUID epicId, UUID storyId) {
+        return summaryFor(response, epicId).stories().stream()
+                .filter(s -> s.id().equals(storyId))
+                .findFirst()
+                .orElseThrow();
+    }
+
+    private void backdateStory(UUID storyId, Instant updatedAt) {
+        // Flush first: the Story insert/update issued by storyService.* above is still only a
+        // pending Hibernate action at this point, not yet applied to the DB — the raw JDBC UPDATE
+        // below would silently affect zero rows without this, and the subsequent clear() would
+        // then discard that still-pending insert outright (never reaching the DB at all).
+        entityManager.flush();
+        jdbc.update("UPDATE story SET updated_at = ? WHERE id = ?", Timestamp.from(updatedAt), storyId);
+        entityManager.clear();
+    }
+
+    private void backdateEpic(UUID epicId, Instant updatedAt) {
+        entityManager.flush();
+        jdbc.update("UPDATE epic SET updated_at = ? WHERE id = ?", Timestamp.from(updatedAt), epicId);
+        entityManager.clear();
     }
 
     private static TimelineEpicSummary summaryFor(RoadmapTimelineResponse response, UUID epicId) {

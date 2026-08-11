@@ -5,9 +5,14 @@ import com.choruskube.core.dto.TimelineEpicSummary;
 import com.choruskube.core.dto.TimelineStorySummary;
 import com.choruskube.core.model.Epic;
 import com.choruskube.core.model.Story;
+import com.choruskube.core.model.enums.Readiness;
+import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.repository.EpicRepository;
 import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.scope.ScopeProvider;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -23,15 +28,30 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class DefaultRoadmapTimelineService implements RoadmapTimelineService {
 
+    /**
+     * "Stalled" threshold (visually flag blocked/stalled work feature): an {@code in_progress}
+     * Epic/Story whose {@code updatedAt} is older than this is considered stalled, regardless of
+     * dependency readiness.
+     */
+    private static final Duration STALL_THRESHOLD = Duration.ofDays(14);
+
     private final EpicRepository epicRepo;
     private final StoryRepository storyRepo;
     private final ScopeProvider scopeProvider;
+    private final EpicReadinessAssembler readinessAssembler;
+    private final Clock clock;
 
     public DefaultRoadmapTimelineService(
-            EpicRepository epicRepo, StoryRepository storyRepo, ScopeProvider scopeProvider) {
+            EpicRepository epicRepo,
+            StoryRepository storyRepo,
+            ScopeProvider scopeProvider,
+            EpicReadinessAssembler readinessAssembler,
+            Clock clock) {
         this.epicRepo = epicRepo;
         this.storyRepo = storyRepo;
         this.scopeProvider = scopeProvider;
+        this.readinessAssembler = readinessAssembler;
+        this.clock = clock;
     }
 
     @Override
@@ -58,9 +78,17 @@ public class DefaultRoadmapTimelineService implements RoadmapTimelineService {
     }
 
     private TimelineEpicSummary toEpicSummary(Epic epic, Map<UUID, List<Story>> storiesByEpicId) {
+        // Per-Epic readiness pass (accepted N+1-per-Epic tradeoff, Decision 1 of the blocked/
+        // stalled feature) — mirrors DefaultRoadmapGraphService#assemble's own single-Epic call,
+        // just run once per scoped Epic in this loop instead of once for a single requested Epic.
+        // Public (non-run-scoped) read path: internal=false, runId=null.
+        EpicReadinessAssembler.EpicCandidates candidates = readinessAssembler.loadEpicCandidates(epic.getId());
+        EpicReadinessAssembler.Assembly assembly =
+                readinessAssembler.assemble(candidates.candidateIds(), candidates.statusById(), false, null);
+
         List<TimelineStorySummary> stories = storiesByEpicId.getOrDefault(epic.getId(), List.of()).stream()
                 .sorted(Comparator.comparing(Story::getCreatedAt))
-                .map(DefaultRoadmapTimelineService::toStorySummary)
+                .map(s -> toStorySummary(s, assembly))
                 .toList();
         return new TimelineEpicSummary(
                 epic.getId(),
@@ -68,16 +96,30 @@ public class DefaultRoadmapTimelineService implements RoadmapTimelineService {
                 epic.getStage().name(),
                 epic.getCreatedAt(),
                 epic.getUpdatedAt(),
-                stories);
+                stories,
+                stalled(epic.getStage(), epic.getUpdatedAt(), clock));
     }
 
-    private static TimelineStorySummary toStorySummary(Story story) {
+    private TimelineStorySummary toStorySummary(Story story, EpicReadinessAssembler.Assembly assembly) {
+        Readiness readiness = assembly.readinessById().getOrDefault(story.getId(), Readiness.READY);
         return new TimelineStorySummary(
                 story.getId(),
                 story.getEpicId(),
                 story.getTitle(),
                 story.getStage().name(),
                 story.getCreatedAt(),
-                story.getUpdatedAt());
+                story.getUpdatedAt(),
+                readiness,
+                stalled(story.getStage(), story.getUpdatedAt(), clock));
+    }
+
+    /**
+     * {@code true} iff {@code stage} is {@code in_progress} and {@code updatedAt} is more than
+     * {@link #STALL_THRESHOLD} in the past relative to {@code clock}. {@code backlog}, {@code
+     * done}, and {@code rolled_out} items are never stalled regardless of age.
+     */
+    private static boolean stalled(WorkItemStatus stage, Instant updatedAt, Clock clock) {
+        return stage == WorkItemStatus.in_progress
+                && Duration.between(updatedAt, clock.instant()).compareTo(STALL_THRESHOLD) > 0;
     }
 }
