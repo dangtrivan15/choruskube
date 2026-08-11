@@ -56,6 +56,20 @@ fi
 OVERALL_EXIT=0
 HAS_RUNNABLE=0
 
+# Where a repo's reports live. The seeders put `-Dtest.reports.dir=<abs path>` in the
+# test_command (a per-repo report ROOT — see the repo build files), so parse it back out
+# rather than assuming a path: a repo whose command sets a different root still gets its
+# reports found. Falls back to the conventional location, which is also what a repo that
+# does not pass the flag at all would use if it ever started to.
+reports_root_for() {
+    local cmd="$1" name="$2" root
+    root=$(printf '%s' "$cmd" \
+        | grep -oE '\-Dtest\.reports\.dir=[^[:space:]]+' \
+        | head -1 | cut -d= -f2-)
+    [ -n "$root" ] || root="/workspace/out/reports/$name"
+    printf '%s' "$root"
+}
+
 {
   echo "# Test Report"
   echo ""
@@ -100,12 +114,28 @@ while IFS=$'\t' read -r NAME DIR CMD; do
     OVERALL_EXIT=1
   fi
 
+  REPORTS_ROOT=$(reports_root_for "$CMD" "$NAME")
+
+  # Full output, not a tail. The failing test names in a multi-module Gradle run scroll
+  # past long before the last 100 lines, which is why the old `tail -100` summary could
+  # say a run failed without saying what failed. Lands inside the report tree when there
+  # is one so it is archived alongside its component reports; otherwise beside them.
+  if [ -d "$REPORTS_ROOT" ]; then
+    OUTPUT_LOG="$REPORTS_ROOT/test-output.log"
+  else
+    OUTPUT_LOG="/workspace/out/${NAME}-test-output.log"
+  fi
+  mkdir -p "$(dirname "$OUTPUT_LOG")"
+  printf '%s\n' "$OUTPUT" > "$OUTPUT_LOG"
+
   {
     echo "## $NAME"
     echo ""
     echo "**Directory:** \`$DIR\`"
     echo "**Command:** \`$CMD\`"
     echo "**Status:** $STATUS"
+    echo ""
+    echo "Full output: \`${OUTPUT_LOG#/workspace/out/}\`"
     echo ""
     echo "<details><summary>Last 100 lines of output</summary>"
     echo ""
