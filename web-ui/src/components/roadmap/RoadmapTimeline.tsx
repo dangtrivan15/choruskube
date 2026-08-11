@@ -4,6 +4,7 @@ import "@xyflow/react/dist/style.css";
 
 import type { RoadmapTimelineResponse } from "@/lib/types";
 import { computeRoadmapTimelineLayout, type TimelineFlowNode } from "@/lib/timelineLayout";
+import { TimelineFocusProvider } from "@/lib/timelineFocus";
 import { RoadmapTimelineEpicLaneNode, RoadmapTimelineStoryNode } from "./RoadmapTimelineNode";
 
 const nodeTypes = {
@@ -60,6 +61,23 @@ export default function RoadmapTimeline({
     [onFocusChange],
   );
 
+  // Keyboard (Enter/Space) counterpart of onNodeClick above, exposed to the leaf nodes via
+  // TimelineFocusContext (pointer clicks keep using onNodeClick unchanged) — a leaf already knows
+  // its own epicId/storyId from `data`, so this just forwards to the same onFocusChange. Forwards
+  // with exactly one argument for an Epic-lane activation (storyId omitted, not passed as
+  // `undefined`) so it's indistinguishable from onNodeClick's own call shape above — callers doing
+  // strict arg-list assertions (e.g. `toHaveBeenCalledWith("epic-1")`) see the same call either way.
+  const onActivate = useCallback(
+    (epicId: string, storyId?: string) => {
+      if (storyId) {
+        onFocusChange?.(epicId, storyId);
+      } else {
+        onFocusChange?.(epicId);
+      }
+    },
+    [onFocusChange],
+  );
+
   // Pan/center on whatever just became focused (§3.3) — the Story marker if one is focused,
   // otherwise the Epic lane. A no-op if the focused id isn't present in the current layout (a
   // deleted or otherwise-missing Epic/Story — §6's Negative/security case), or if the instance
@@ -79,24 +97,26 @@ export default function RoadmapTimeline({
 
   return (
     <div data-testid="roadmap-timeline-container" className="relative h-full w-full">
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        nodeTypes={nodeTypes}
-        onInit={setFlowInstance}
-        onNodeClick={onNodeClick}
-        fitView
-        fitViewOptions={{ padding: 0.2 }}
-        nodesDraggable={false}
-        nodesConnectable={false}
-        elementsSelectable={true}
-        minZoom={0.1}
-        maxZoom={2}
-        proOptions={{ hideAttribution: true }}
-      >
-        <Controls showInteractive={false} />
-        <Background gap={16} size={1} />
-      </ReactFlow>
+      <TimelineFocusProvider value={onActivate}>
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          nodeTypes={nodeTypes}
+          onInit={setFlowInstance}
+          onNodeClick={onNodeClick}
+          fitView
+          fitViewOptions={{ padding: 0.2 }}
+          nodesDraggable={false}
+          nodesConnectable={false}
+          elementsSelectable={true}
+          minZoom={0.1}
+          maxZoom={2}
+          proOptions={{ hideAttribution: true }}
+        >
+          <Controls showInteractive={false} />
+          <Background gap={16} size={1} />
+        </ReactFlow>
+      </TimelineFocusProvider>
     </div>
   );
 }

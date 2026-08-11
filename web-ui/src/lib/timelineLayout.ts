@@ -35,6 +35,9 @@ export type TimelineEpicLaneNodeType = Node<TimelineEpicLaneNodeData, "timeline-
 export interface TimelineStoryNodeData {
   storyId: string;
   epicId: string;
+  /** The owning Epic's title (§ item-detail hover/click) — carried on the Story node so the hover
+   * preview can name the parent Epic without a separate lookup back into the full timeline data. */
+  epicTitle: string;
   title: string;
   stage: string;
   createdAt: string;
@@ -144,6 +147,7 @@ export function computeRoadmapTimelineLayout(
         data: {
           storyId: story.id,
           epicId: epic.id,
+          epicTitle: epic.title,
           title: story.title,
           stage: story.stage,
           createdAt: story.createdAt,

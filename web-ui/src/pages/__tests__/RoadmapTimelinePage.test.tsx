@@ -130,6 +130,13 @@ vi.mock("@/hooks/useSoftwareProjects", () => ({
   useSoftwareProjects: () => ({ data: [] }),
 }));
 
+// Defaults to desktop (mirrors RoadmapGraphPage.test.tsx) — individual tests override via
+// mockUseMobileBreakpoint.mockReturnValue(true) to exercise the mobile bottom-sheet path.
+const mockUseMobileBreakpoint = vi.fn(() => false);
+vi.mock("@/hooks/useMobileBreakpoint", () => ({
+  useMobileBreakpoint: () => mockUseMobileBreakpoint(),
+}));
+
 function makeResponse(overrides: { readiness?: "READY" | "BLOCKED"; storyStalled?: boolean; epicStalled?: boolean } = {}): RoadmapTimelineResponse {
   return {
     epics: [
@@ -166,6 +173,7 @@ beforeEach(() => {
     data: { content: [], totalElements: 0, totalPages: 1, number: 0, size: 20, first: true, last: true, empty: true },
     isLoading: false,
   });
+  mockUseMobileBreakpoint.mockReturnValue(false);
 });
 
 describe("RoadmapTimelinePage", () => {
@@ -281,5 +289,73 @@ describe("RoadmapTimelinePage", () => {
     expect(screen.getByTestId("mock-roadmap-timeline")).toHaveAttribute("data-focused-epic", "");
     expect(screen.getByTestId("mock-roadmap-timeline")).toHaveAttribute("data-focused-story", "");
     expect(screen.getByTestId("roadmap-view-switcher-graph")).toBeDisabled();
+  });
+
+  // --- Detail panel (item-detail hover/click) ---
+
+  it("renders no detail panel when nothing is focused", async () => {
+    mockApi.get.mockResolvedValue(makeResponse());
+
+    renderWithProviders(<RoadmapTimelinePage />);
+
+    await waitFor(() => expect(screen.getByTestId("mock-roadmap-timeline")).toBeInTheDocument());
+    expect(screen.queryByTestId("roadmap-timeline-detail-panel")).not.toBeInTheDocument();
+  });
+
+  it("focusing a Story renders the detail panel with its title and parent Epic", async () => {
+    mockApi.get.mockResolvedValue(makeResponse());
+
+    renderWithProviders(<RoadmapTimelinePage />, { initialEntries: ["/roadmap/timeline?epic=epic-1&story=story-1"] });
+
+    await waitFor(() => expect(screen.getByTestId("roadmap-timeline-detail-panel")).toBeInTheDocument());
+    expect(screen.getByTestId("roadmap-timeline-detail-title")).toHaveTextContent("Dark theme toggle");
+    expect(screen.getByTestId("roadmap-timeline-detail-parent")).toHaveTextContent("Add dark mode");
+  });
+
+  it("focusing only an Epic renders the detail panel without a parent line", async () => {
+    mockApi.get.mockResolvedValue(makeResponse());
+
+    renderWithProviders(<RoadmapTimelinePage />, { initialEntries: ["/roadmap/timeline?epic=epic-1"] });
+
+    await waitFor(() => expect(screen.getByTestId("roadmap-timeline-detail-panel")).toBeInTheDocument());
+    expect(screen.getByTestId("roadmap-timeline-detail-title")).toHaveTextContent("Add dark mode");
+    expect(screen.queryByTestId("roadmap-timeline-detail-parent")).not.toBeInTheDocument();
+  });
+
+  it("closing the panel clears the focus search params via history replace", async () => {
+    mockApi.get.mockResolvedValue(makeResponse());
+    const user = userEvent.setup();
+
+    renderWithProviders(<RoadmapTimelinePage />, { initialEntries: ["/roadmap/timeline?epic=epic-1&story=story-1"] });
+    await waitFor(() => expect(screen.getByTestId("roadmap-timeline-detail-panel")).toBeInTheDocument());
+
+    await user.click(screen.getByTestId("roadmap-timeline-detail-close"));
+
+    await waitFor(() => expect(screen.queryByTestId("roadmap-timeline-detail-panel")).not.toBeInTheDocument());
+    const lastCall = searchParamsSpy.calls[searchParamsSpy.calls.length - 1];
+    expect(lastCall?.options).toEqual({ replace: true });
+  });
+
+  it("an unresolved focused id renders no panel, consistent with the no-focus case", async () => {
+    mockApi.get.mockResolvedValue(makeResponse());
+
+    renderWithProviders(<RoadmapTimelinePage />, {
+      initialEntries: ["/roadmap/timeline?epic=does-not-exist&story=does-not-exist-either"],
+    });
+
+    await waitFor(() => expect(screen.getByTestId("mock-roadmap-timeline")).toBeInTheDocument());
+    expect(screen.queryByTestId("roadmap-timeline-detail-panel")).not.toBeInTheDocument();
+  });
+
+  it("uses the mobile bottom-sheet overlay testid when the mobile breakpoint is active", async () => {
+    mockUseMobileBreakpoint.mockReturnValue(true);
+    mockApi.get.mockResolvedValue(makeResponse());
+
+    renderWithProviders(<RoadmapTimelinePage />, { initialEntries: ["/roadmap/timeline?epic=epic-1&story=story-1"] });
+
+    await waitFor(() => expect(screen.getByTestId("roadmap-timeline-mobile-detail-overlay")).toBeInTheDocument());
+    expect(
+      screen.getByTestId("roadmap-timeline-mobile-detail-overlay").querySelector('[data-testid="roadmap-timeline-detail-panel"]'),
+    ).not.toBeNull();
   });
 });

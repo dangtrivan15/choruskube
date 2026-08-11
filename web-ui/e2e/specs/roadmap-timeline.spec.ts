@@ -180,4 +180,130 @@ test.describe("Roadmap Timeline View", () => {
       await api.deleteEpic(epic.id);
     }
   });
+
+  test.describe("item detail on hover/click", () => {
+    test("hovering a Story marker shows a preview with its status and parent Epic, no click needed", async ({
+      api,
+      workerRepo,
+      page,
+    }) => {
+      const epic = await api.createEpic({
+        title: uniqueName("E2E Timeline Detail Epic"),
+        description: "desc",
+        softwareProjectId: workerRepo.gitRepo.id,
+      });
+      const story = await api.createStory(epic.id, {
+        title: uniqueName("Timeline Detail Story"),
+        description: "desc",
+      });
+
+      const timelinePage = new RoadmapTimelinePage(page);
+
+      try {
+        await timelinePage.goto();
+        const marker = timelinePage.markerByLabel(story.title);
+        await expect(marker).toBeVisible();
+
+        await timelinePage.hoverToRevealPreview(marker, [story.title, epic.title]);
+
+        // The hover preview never opens the pinned panel — it's a client-only glance (Decision 3).
+        await expect(timelinePage.detailPanel).toHaveCount(0);
+      } finally {
+        await api.deleteEpic(epic.id);
+      }
+    });
+
+    test("clicking a blocked Story opens the pinned detail panel and lists its blocker", async ({
+      api,
+      workerRepo,
+      page,
+    }) => {
+      const epic = await api.createEpic({
+        title: uniqueName("E2E Timeline Detail Blocked Epic"),
+        description: "desc",
+        softwareProjectId: workerRepo.gitRepo.id,
+      });
+      const blocking = await api.createStory(epic.id, {
+        title: uniqueName("Timeline Detail Blocking Story"),
+        description: "desc",
+      });
+      const blocked = await api.createStory(epic.id, {
+        title: uniqueName("Timeline Detail Blocked Story"),
+        description: "desc",
+      });
+      await api.createDependency({
+        blockingItemType: "story",
+        blockingItemId: blocking.id,
+        blockedItemType: "story",
+        blockedItemId: blocked.id,
+      });
+
+      const timelinePage = new RoadmapTimelinePage(page);
+
+      try {
+        await timelinePage.goto();
+        await timelinePage.markerByLabel(blocked.title).click();
+
+        await expect(timelinePage.detailPanel).toBeVisible();
+        await expect(timelinePage.detailTitle).toHaveText(blocked.title);
+        await expect(timelinePage.detailParent).toContainText(epic.title);
+        await expect(timelinePage.blockingChain).toBeVisible();
+        await expect(timelinePage.blockingChain).toContainText(blocking.title);
+
+        await timelinePage.detailClose.click();
+        await expect(timelinePage.detailPanel).toHaveCount(0);
+      } finally {
+        await api.deleteEpic(epic.id);
+      }
+    });
+
+    test("clicking a ready Story opens the panel with no blocker section", async ({ api, workerRepo, page }) => {
+      const epic = await api.createEpic({
+        title: uniqueName("E2E Timeline Detail Ready Epic"),
+        description: "desc",
+        softwareProjectId: workerRepo.gitRepo.id,
+      });
+      const story = await api.createStory(epic.id, {
+        title: uniqueName("Timeline Detail Ready Story"),
+        description: "desc",
+      });
+
+      const timelinePage = new RoadmapTimelinePage(page);
+
+      try {
+        await timelinePage.goto();
+        await timelinePage.markerByLabel(story.title).click();
+
+        await expect(timelinePage.detailPanel).toBeVisible();
+        await expect(timelinePage.detailTitle).toHaveText(story.title);
+        await expect(timelinePage.blockingChain).toHaveCount(0);
+      } finally {
+        await api.deleteEpic(epic.id);
+      }
+    });
+
+    test("a deep link carrying a focused Story id opens the panel on load", async ({ api, workerRepo, page }) => {
+      const epic = await api.createEpic({
+        title: uniqueName("E2E Timeline Detail Deep Link Epic"),
+        description: "desc",
+        softwareProjectId: workerRepo.gitRepo.id,
+      });
+      const story = await api.createStory(epic.id, {
+        title: uniqueName("Timeline Detail Deep Link Story"),
+        description: "desc",
+      });
+
+      const timelinePage = new RoadmapTimelinePage(page);
+
+      try {
+        await page.goto(`/roadmap/timeline?epic=${epic.id}&story=${story.id}`);
+        await expect(timelinePage.heading).toBeVisible({ timeout: 15_000 });
+
+        await expect(timelinePage.detailPanel).toBeVisible();
+        await expect(timelinePage.detailTitle).toHaveText(story.title);
+      } finally {
+        await api.deleteEpic(epic.id);
+      }
+    });
+  });
 });

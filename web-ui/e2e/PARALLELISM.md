@@ -6,9 +6,9 @@ stack — one api-server, one PostgreSQL, one Temporal — and, because `fullyPa
 distributes individual tests rather than whole files, two tests from the same spec file
 can run at the same time in different workers.
 
-This file records why three tests flaked under that setup, what was done about it, and
+This file records why four tests flaked under that setup, what was done about it, and
 the rules a new spec has to follow. Read it before adding a spec that asserts over a
-list, or that drives a drag.
+list, or that drives a drag or a hover.
 
 ## What `uniqueName()` does and does not cover
 
@@ -27,7 +27,7 @@ That prevents name collisions. It does not isolate anything a name isn't the key
 | The board DOM + its react-query cache | A refetch re-renders and re-orders cards under a running test |
 | `/topic/roadmap-items` | One event invalidates `["epics"]`, `["stories"]`, `["tasks"]` in every open page |
 
-## The two failure modes
+## The three failure modes
 
 **1. Assertions over an org-wide list.**
 
@@ -55,6 +55,22 @@ boundingBox() ─────────────────── mouse.do
 Playwright's auto-waiting covers individual locator actions. A hand-rolled pointer
 sequence opts out of it, so nothing re-checks the card between measuring and pressing.
 
+**3. A hover-triggered assertion interrupted by a re-render.**
+
+```
+hover() ─────────────────────── wait for Tooltip open → assert content
+    ▲
+STOMP event → invalidate ["epics"] → marker re-renders at a new x  HERE
+    └→ a CSS-transform move alone doesn't re-fire mouseenter/mouseleave → Tooltip never opens
+```
+
+Unlike the drag case, Playwright's `hover()` itself auto-waits and is locator-based, not
+coordinate-based — the problem isn't the hover call, it's that a single hover-then-assert
+only samples one moment. If the element's on-screen position (or the DOM node itself, on a
+full re-render) moves out from under an already-resting cursor before the assertion
+observes the open Tooltip, the wait times out even though nothing about the interaction
+itself was wrong.
+
 ## What the suite does about it
 
 **Per-worker software project.** The `workerRepo` fixture (`fixtures/index.ts`) mints one
@@ -72,6 +88,10 @@ can scope the same way by passing `software_project_id` as a run input.
 before `mouse.down()`, abandons the attempt if it shifted, and retries the whole gesture
 until the card lands.
 
+**Re-entrant hover.** `RoadmapTimelinePage#hoverToRevealPreview` wraps the hover plus its
+follow-up assertions in `expect(...).toPass(...)`, so a failed attempt re-hovers (re-locating
+the marker at its current position) rather than re-asserting against a stale one.
+
 **Seeded-repo filter.** `GET /api/v1/git-repos` sorts by `url` ascending, and worker repos
 live under `https://example.invalid/e2e-worker/` — which sorts **ahead** of the seeded
 `https://github.com/e2e-test/…` rows. So `listGitRepos().content[0]` is whichever worker
@@ -84,6 +104,9 @@ happened to materialize its fixture first. Specs needing the seeded set specific
 - Take `workerRepo` rather than reaching into `listGitRepos()`.
 - Never assert an absolute count — or an ID-set diff — over an unscoped list.
 - Need the seeded repos? `seededRepos(page.content)`, never `content[0]` or `.slice(0, 2)`.
+- A hover (or any single-shot interaction) that asserts on something appearing after a delay
+  — a Tooltip, a debounced fetch — belongs in `expect(...).toPass(...)`, re-issuing the
+  interaction each attempt, not a single `hover()`/`click()` followed by one assertion.
 
 ## Why not serialize instead
 
