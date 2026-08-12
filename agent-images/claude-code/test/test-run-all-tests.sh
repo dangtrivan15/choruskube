@@ -210,6 +210,51 @@ grep -qiF "playwright" "$S5/workspace/out/test_report.md" \
     && fail "missing results.json must add no Playwright section" \
     || ok "missing results.json: no Playwright section"
 
+# --- Test 6: both harvesters empty, reports root never created — no heading at all ---
+# Guards the FAILING_SECTION collapse in run-all-tests directly: a regression that
+# leaves FAILING_SECTION non-empty whitespace (heading prints, body empty) must fail
+# this assertion, not just an absence-of-substring check.
+S6="$TESTDIR/s6"
+mkdir -p "$S6/workspace/repo" "$S6/workspace/out"
+cat > "$S6/workspace/config.json" <<EOF
+{
+  "repo_url": "https://example.invalid/acme/widget.git",
+  "test_command": "echo hi -Dtest.reports.dir=$S6/workspace/out/reports/widget ; exit 0"
+}
+EOF
+COPY6=$(make_copy "$S6")
+set +e
+bash "$COPY6" > "$S6/stdout.txt" 2>&1
+RC6=$?
+set -e
+[ "$RC6" -eq 0 ] && ok "reports root never created: still exits 0" \
+    || fail "reports root never created: still exits 0 (got $RC6)"
+REPORT6="$S6/workspace/out/test_report.md"
+grep -qF "### Failing tests" "$REPORT6" \
+    && fail "reports root never created: no Failing tests heading" \
+    || ok "reports root never created: no Failing tests heading"
+
+# --- Test 7: both harvesters empty, reports root exists but is empty — no heading ---
+S7="$TESTDIR/s7"
+mkdir -p "$S7/workspace/repo" "$S7/workspace/out/reports/widget"
+cat > "$S7/workspace/config.json" <<EOF
+{
+  "repo_url": "https://example.invalid/acme/widget.git",
+  "test_command": "echo hi -Dtest.reports.dir=$S7/workspace/out/reports/widget ; exit 0"
+}
+EOF
+COPY7=$(make_copy "$S7")
+set +e
+bash "$COPY7" > "$S7/stdout.txt" 2>&1
+RC7=$?
+set -e
+[ "$RC7" -eq 0 ] && ok "reports root exists but empty: still exits 0" \
+    || fail "reports root exists but empty: still exits 0 (got $RC7)"
+REPORT7="$S7/workspace/out/test_report.md"
+grep -qF "### Failing tests" "$REPORT7" \
+    && fail "reports root exists but empty: no Failing tests heading" \
+    || ok "reports root exists but empty: no Failing tests heading"
+
 # --- Summary ---
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
