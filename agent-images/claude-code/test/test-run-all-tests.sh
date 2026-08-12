@@ -145,6 +145,71 @@ grep -qF "api-server" "$REPORT3" \
     && ok "index attributes the failure to its component" \
     || fail "index attributes the failure to its component"
 
+# --- Test 4: Playwright JSON failures are harvested ---
+# (Numbered 4 / S4 to avoid colliding with Test 3's S3/COPY3/RC3 above, which stay live
+# for the remainder of the script's execution.)
+S4="$TESTDIR/s4"
+mkdir -p "$S4/workspace/repo" "$S4/workspace/out/reports/widget/playwright"
+cat > "$S4/workspace/out/reports/widget/playwright/results.json" <<'EOF'
+{
+  "suites": [
+    {
+      "title": "login.spec.ts",
+      "specs": [
+        {
+          "title": "signs a user in",
+          "ok": false,
+          "tests": [{"results": [{"status": "failed",
+            "error": {"message": "locator.click: Timeout 5000ms exceeded"}}]}]
+        },
+        {
+          "title": "shows the dashboard",
+          "ok": true,
+          "tests": [{"results": [{"status": "passed"}]}]
+        }
+      ]
+    }
+  ]
+}
+EOF
+cat > "$S4/workspace/config.json" <<EOF
+{
+  "repo_url": "https://example.invalid/acme/widget.git",
+  "test_command": "echo pw -Dtest.reports.dir=$S4/workspace/out/reports/widget ; exit 1"
+}
+EOF
+COPY4=$(make_copy "$S4")
+set +e
+bash "$COPY4" > "$S4/stdout.txt" 2>&1
+set -e
+REPORT4="$S4/workspace/out/test_report.md"
+grep -qF "signs a user in" "$REPORT4" \
+    && ok "index names the failing spec" || fail "index names the failing spec"
+grep -qF "Timeout 5000ms exceeded" "$REPORT4" \
+    && ok "index carries the spec's error message" || fail "index carries the spec error"
+grep -qF "shows the dashboard" "$REPORT4" \
+    && fail "index must NOT list the passing spec" || ok "index omits passing specs"
+
+# --- Test 5: absent results.json is silent, not an error ---
+S5="$TESTDIR/s5"
+mkdir -p "$S5/workspace/repo" "$S5/workspace/out/reports/widget/playwright"
+cat > "$S5/workspace/config.json" <<EOF
+{
+  "repo_url": "https://example.invalid/acme/widget.git",
+  "test_command": "echo none -Dtest.reports.dir=$S5/workspace/out/reports/widget ; exit 0"
+}
+EOF
+COPY5=$(make_copy "$S5")
+set +e
+bash "$COPY5" > "$S5/stdout.txt" 2>&1
+RC5=$?
+set -e
+[ "$RC5" -eq 0 ] && ok "missing results.json: still exits 0" \
+    || fail "missing results.json: still exits 0 (got $RC5)"
+grep -qiF "playwright" "$S5/workspace/out/test_report.md" \
+    && fail "missing results.json must add no Playwright section" \
+    || ok "missing results.json: no Playwright section"
+
 # --- Summary ---
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

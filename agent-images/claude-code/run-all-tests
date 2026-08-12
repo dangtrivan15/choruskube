@@ -84,6 +84,30 @@ harvest_failures() {
     node "$HARVEST_JUNIT" "$root" 2>/dev/null || true
 }
 
+# Playwright's JSON reporter, when the config emits one. jq rather than the Node
+# harvester because this is already JSON — and an absent file is the expected state on
+# any repo whose config has not been updated, so it must be silent, not a warning.
+harvest_playwright() {
+    local root="$1" json="$1/playwright/results.json"
+    [ -f "$json" ] || return 0
+    jq -r '
+      def specs: .. | objects | select(has("specs")) | .specs[];
+      [ specs | select(.ok == false) ] as $failed
+      | if ($failed | length) == 0 then empty
+        else
+          "#### playwright — \($failed | length) failing", "",
+          ( $failed[]
+            | "- **\(.title)**",
+              ( [ .tests[]?.results[]? | select(.status != "passed") | .error?.message? // empty ]
+                | first // empty
+                | "  - " + (. | gsub("\\s*\n\\s*"; " "))
+              )
+          ),
+          ""
+        end
+    ' "$json" 2>/dev/null || true
+}
+
 {
   echo "# Test Report"
   echo ""
@@ -142,7 +166,12 @@ while IFS=$'\t' read -r NAME DIR CMD; do
   mkdir -p "$(dirname "$OUTPUT_LOG")"
   printf '%s\n' "$OUTPUT" > "$OUTPUT_LOG"
 
-  FAILING_SECTION=$(harvest_failures "$REPORTS_ROOT")
+  FAILING_SECTION=$(printf '%s\n%s' \
+      "$(harvest_failures "$REPORTS_ROOT")" \
+      "$(harvest_playwright "$REPORTS_ROOT")")
+  # Collapse to empty when both harvesters produced nothing, so the index omits the
+  # heading entirely rather than printing an empty "Failing tests" section.
+  [ -n "$(printf '%s' "$FAILING_SECTION" | tr -d '[:space:]')" ] || FAILING_SECTION=""
 
   {
     echo "## $NAME"
