@@ -627,6 +627,15 @@ grep -q 'PR_CHECK_STATUS=\$?' "$ENTRYPOINT" \
 grep -q 'check-prs 2>&1' "$ENTRYPOINT" \
   && ok "PR verification captures check-prs's stderr, not just stdout" || fail "PR verification captures check-prs's stderr, not just stdout"
 
+# --- Test: script-path RESULT points at the index, not the raw output ---
+ENTRY="$(dirname "${BASH_SOURCE[0]}")/../entrypoint.sh"
+grep -qF 'RESULT="Read test_report.md' "$ENTRY" \
+    && ok "script RESULT points at test_report.md" \
+    || fail "script RESULT points at test_report.md"
+grep -qF 'RESULT="Read test_output.txt for full script output"' "$ENTRY" \
+    && fail "stale test_output.txt RESULT still present" \
+    || ok "stale test_output.txt RESULT removed"
+
 # --- Summary ---
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
