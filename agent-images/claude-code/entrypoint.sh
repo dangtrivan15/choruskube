@@ -541,14 +541,18 @@ elif [ "$EXECUTOR_TYPE" = "script" ]; then
     fi
   fi
 
-  # Full output goes to artifact; result is a short reference to avoid ARG_MAX issues.
-  # It points at the index rather than the raw output because this string is what lands
-  # in run_log.md, which every downstream node reads first — so it is the one place that
-  # decides where an agent starts looking. test_output.txt is still written and still
-  # named by the index for anyone who wants the unabridged log.
+  # Full output goes to test_output.txt unconditionally, to avoid ARG_MAX issues in
+  # RESULT — this string is what lands in run_log.md, which every downstream node reads
+  # first. Not every script node runs run-all-tests (e.g. mock-agent scenarios used by
+  # other script nodes), so /workspace/out/test_report.md is not guaranteed to exist;
+  # RESULT points at it only when it does, and falls back to the raw output otherwise.
   mkdir -p /workspace/out
   echo "$SCRIPT_OUTPUT" > /workspace/out/test_output.txt
-  RESULT="Read test_report.md first — it is the index: verdict, the failing tests named per component, and the archived reports. test_output.txt has the raw script output."
+  if [ -f /workspace/out/test_report.md ]; then
+    RESULT="Read test_report.md first — it is the index: verdict, the failing tests named per component, and the archived reports. test_output.txt has the raw script output."
+  else
+    RESULT="Read test_output.txt for full script output"
+  fi
 else
   # AI path — run Claude Code with retry on missing result
 

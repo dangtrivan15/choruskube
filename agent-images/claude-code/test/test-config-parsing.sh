@@ -627,14 +627,65 @@ grep -q 'PR_CHECK_STATUS=\$?' "$ENTRYPOINT" \
 grep -q 'check-prs 2>&1' "$ENTRYPOINT" \
   && ok "PR verification captures check-prs's stderr, not just stdout" || fail "PR verification captures check-prs's stderr, not just stdout"
 
-# --- Test: script-path RESULT points at the index, not the raw output ---
+# --- Test: script-path RESULT points at the index only when one exists ---
+# Not every script node runs run-all-tests (E2eTestDataSeeder wires ~10 script nodes to
+# mock-agent.sh scenarios that write no test_report.md), so the index wording can't be
+# unconditional — it has to be guarded by the file actually existing, with the original
+# raw-output wording surviving as the fallback for everyone else.
 ENTRY="$(dirname "${BASH_SOURCE[0]}")/../entrypoint.sh"
 grep -qF 'RESULT="Read test_report.md' "$ENTRY" \
     && ok "script RESULT points at test_report.md" \
     || fail "script RESULT points at test_report.md"
+grep -qF 'if [ -f /workspace/out/test_report.md ]; then' "$ENTRY" \
+    && ok "index RESULT is guarded by a test_report.md existence check" \
+    || fail "index RESULT is guarded by a test_report.md existence check"
 grep -qF 'RESULT="Read test_output.txt for full script output"' "$ENTRY" \
-    && fail "stale test_output.txt RESULT still present" \
-    || ok "stale test_output.txt RESULT removed"
+    && ok "raw-output RESULT fallback is present for script nodes with no index" \
+    || fail "raw-output RESULT fallback is present for script nodes with no index"
+
+# --- Test: script-path RESULT behaves correctly for both branches (behavioral) ---
+# Extracts the real fragment (SCRIPT_OUTPUT capture through the RESULT if/else) rather
+# than a hand-copied reimplementation, same technique as Tests 19/21/22. Matched by exact
+# line text, not a regex, so "set +e"'s literal `+` needs no escaping. API_SERVER_URL is
+# left empty so the decision-submission curl call is skipped, the same guard the real
+# script relies on. /workspace/out is swapped for a temp dir via sed (that path isn't
+# writable outside a pod), mirroring Test 21e's swap of /workspace/repo.
+build_script_result_harness() {
+  # $1 = temp dir standing in for /workspace/out, $2 = COMMAND to eval
+  {
+    echo 'set -euo pipefail'
+    echo 'API_SERVER_URL='
+    echo 'export API_SERVER_URL'
+    printf 'COMMAND=%q\n' "$2"
+    awk '$0=="  set +e"{f=1} $0=="else"{f=0} f' "$ENTRY" | sed "s#/workspace/out#$1#g"
+    echo 'echo "RESULT_IS:$RESULT"'
+  }
+}
+
+# with-index: the command writes test_report.md itself, same as run-all-tests would
+SR_DIR_A="$TESTDIR/script_result_index"
+build_script_result_harness "$SR_DIR_A" \
+  "mkdir -p \"$SR_DIR_A\" && printf 'verdict: pass' > \"$SR_DIR_A/test_report.md\"" \
+  > "$TESTDIR/script_result_index.sh"
+SR_OUT_A=$(bash "$TESTDIR/script_result_index.sh")
+echo "$SR_OUT_A" | grep -qF 'RESULT_IS:Read test_report.md first' \
+  && ok "RESULT points at the index when the command writes one" \
+  || fail "RESULT points at the index when the command writes one ($SR_OUT_A)"
+[ -f "$SR_DIR_A/test_output.txt" ] \
+  && ok "test_output.txt still written when an index exists" \
+  || fail "test_output.txt still written when an index exists"
+
+# without-index: a plain script node (e.g. a mock-agent.sh scenario) writes no report
+SR_DIR_B="$TESTDIR/script_result_noindex"
+build_script_result_harness "$SR_DIR_B" "printf 'plain command output'" \
+  > "$TESTDIR/script_result_noindex.sh"
+SR_OUT_B=$(bash "$TESTDIR/script_result_noindex.sh")
+echo "$SR_OUT_B" | grep -qF 'RESULT_IS:Read test_output.txt for full script output' \
+  && ok "RESULT falls back to raw output when no index was written" \
+  || fail "RESULT falls back to raw output when no index was written ($SR_OUT_B)"
+[ -f "$SR_DIR_B/test_output.txt" ] \
+  && ok "test_output.txt still written when no index exists" \
+  || fail "test_output.txt still written when no index exists"
 
 # --- Summary ---
 echo ""
