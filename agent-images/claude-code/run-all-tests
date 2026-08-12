@@ -56,6 +56,104 @@ fi
 OVERALL_EXIT=0
 HAS_RUNNABLE=0
 
+# Where a repo's reports live. The seeders put `-Dtest.reports.dir=<abs path>` in the
+# test_command (a per-repo report ROOT — see the repo build files), so parse it back out
+# rather than assuming a path: a repo whose command sets a different root still gets its
+# reports found. Falls back to the conventional location, which is also what a repo that
+# does not pass the flag at all would use if it ever started to.
+#
+# `;`, `&`, `|` are excluded from the value alongside whitespace: a user-authored
+# test_command can chain a further command directly onto the flag with no separating space
+# (`...=/x/y;exit 1`, `...=/x/y&&echo ok`), and without excluding them the match runs on
+# past the path into that next command, producing a bogus root.
+reports_root_for() {
+    local cmd="$1" name="$2" root
+    root=$(printf '%s' "$cmd" \
+        | grep -oE '\-Dtest\.reports\.dir=[^[:space:];&|]+' \
+        | head -1 | cut -d= -f2-)
+    [ -n "$root" ] || root="/workspace/out/reports/$name"
+    printf '%s' "$root"
+}
+
+# harvest-junit.js sits beside this script (/usr/local/bin in the image); resolve it
+# relative to $0 so the test harness's rewritten copy finds its own sibling.
+HARVEST_JUNIT="$(dirname "$0")/harvest-junit.js"
+
+# Never fails: a missing harvester, a missing node, or an absent report tree yields an
+# empty section rather than a failed Test node. A report file that exists inside the tree
+# but can't be read or parsed is different — harvest-junit.js counts and notes those rather
+# than silently reading them as "no failures" (see its own comments).
+harvest_failures() {
+    local root="$1"
+    [ -d "$root" ] || return 0
+    [ -f "$HARVEST_JUNIT" ] || return 0
+    command -v node > /dev/null 2>&1 || return 0
+    node "$HARVEST_JUNIT" "$root" 2>/dev/null || true
+}
+
+# Playwright's JSON reporter, when the config emits one. jq rather than the Node
+# harvester because this is already JSON — and an absent file is the expected state on
+# any repo whose config has not been updated, so it must be silent, not a warning.
+harvest_playwright() {
+    local json="$1/playwright/results.json"
+    [ -f "$json" ] || return 0
+    jq -r '
+      def specs: .. | objects | select(has("specs")) | .specs[];
+      [ specs | select(.ok == false) ] as $failed
+      | if ($failed | length) == 0 then empty
+        else
+          "#### playwright — \($failed | length) failing", "",
+          ( $failed[]
+            | "- **\(.title)**",
+              ( [ .tests[]?.results[]? | select(.status != "passed") | .error?.message? // empty ]
+                | first // empty
+                | "  - " + (. | gsub("\\s*\n\\s*"; " "))
+              )
+          ),
+          ""
+        end
+    ' "$json" 2>/dev/null || true
+}
+
+ARCHIVE_NOTES=""
+
+# The run's object-storage prefix, so the index can print a copy-pasteable `artifact get`
+# rather than a template. entrypoint.sh reads the same field into its own OUTPUT_PATH but
+# never exports it, so this script — a child process — has to read config.json itself.
+OUTPUT_PATH=$(jq -r '.output_path // ""' "$CONFIG")
+
+# One tarball per component directory, then delete the originals. The delete is the
+# point: entrypoint.sh uploads /workspace/out with `find . -type f` and one presign+PUT
+# per file, so leaving the tree in place would keep every one of the ~2000 report files
+# in the upload loop and in the run's artifact list.
+#
+# Loose files at the report root (timings.tsv/txt, test-output.log) are deliberately not
+# archived — they are small, high-signal, and worth reading without unpacking anything.
+#
+# A tar failure is never fatal. This is reporting, and turning a passing suite red over a
+# packaging problem would be strictly worse than uploading that component unarchived.
+archive_components() {
+    local root="$1" d comp err
+    [ -d "$root" ] || return 0
+    err=$(mktemp)
+    for d in "$root"/*/; do
+        [ -d "$d" ] || continue
+        comp=$(basename "$d")
+        if tar -czf "$root/$comp.tar.gz" -C "$root" "$comp" 2> "$err"; then
+            # ${d%/} strips the glob's trailing slash: rm -rf on a symlinked component
+            # dir with the slash kept would follow the link and delete its target — which
+            # can be anywhere on disk — while leaving the symlink itself in place.
+            rm -rf "${d%/}"
+            printf '| `%s.tar.gz` | %s |\n' "$comp" "$(du -h "$root/$comp.tar.gz" | cut -f1)"
+        else
+            rm -f "$root/$comp.tar.gz"
+            ARCHIVE_NOTES="${ARCHIVE_NOTES}- \`${comp}\`: archiving failed ($(head -1 "$err")); files left in place
+"
+        fi
+    done
+    rm -f "$err"
+}
+
 {
   echo "# Test Report"
   echo ""
@@ -100,12 +198,64 @@ while IFS=$'\t' read -r NAME DIR CMD; do
     OVERALL_EXIT=1
   fi
 
+  REPORTS_ROOT=$(reports_root_for "$CMD" "$NAME")
+
+  # Full output, not a tail. The failing test names in a multi-module Gradle run scroll
+  # past long before the last 100 lines, which is why the old `tail -100` summary could
+  # say a run failed without saying what failed. Lands inside the report tree when there
+  # is one so it is archived alongside its component reports; otherwise beside them.
+  if [ -d "$REPORTS_ROOT" ]; then
+    OUTPUT_LOG="$REPORTS_ROOT/test-output.log"
+  else
+    OUTPUT_LOG="/workspace/out/${NAME}-test-output.log"
+  fi
+  # `-e` is active here (the header omits it, but the eval capture above turns it back on
+  # for the rest of the loop body — see the comment at the top of the loop). Reporting must
+  # never change the node's verdict, so an unwritable/full /workspace/out must not abort the
+  # loop iteration the way an unguarded failure here would.
+  mkdir -p "$(dirname "$OUTPUT_LOG")" || true
+  printf '%s\n' "$OUTPUT" > "$OUTPUT_LOG" || true
+
+  FAILING_SECTION=$(printf '%s\n%s' \
+      "$(harvest_failures "$REPORTS_ROOT")" \
+      "$(harvest_playwright "$REPORTS_ROOT")")
+  # Collapse to empty when both harvesters produced nothing, so the index omits the
+  # heading entirely rather than printing an empty "Failing tests" section.
+  [ -n "$(printf '%s' "$FAILING_SECTION" | tr -d '[:space:]')" ] || FAILING_SECTION=""
+
+  # Must run after both harvesters above: they read files inside REPORTS_ROOT that
+  # archiving deletes.
+  #
+  # Reset per repo: ARCHIVE_NOTES is a global archive_components appends to, so without
+  # this a note from one repo's failure would still be sitting there — and get printed
+  # again — under every later repo's report section, including ones that archived cleanly.
+  ARCHIVE_NOTES=""
+
+  # Captured via a redirect rather than `ARCHIVE_ROWS=$(archive_components ...)`: command
+  # substitution forks a subshell, and archive_components's writes to the global
+  # ARCHIVE_NOTES would be lost with it, silently dropping every archiving-failure note.
+  ARCHIVE_ROWS_FILE=$(mktemp)
+  archive_components "$REPORTS_ROOT" > "$ARCHIVE_ROWS_FILE"
+  ARCHIVE_ROWS=$(cat "$ARCHIVE_ROWS_FILE")
+  rm -f "$ARCHIVE_ROWS_FILE"
+
   {
     echo "## $NAME"
     echo ""
     echo "**Directory:** \`$DIR\`"
     echo "**Command:** \`$CMD\`"
     echo "**Status:** $STATUS"
+    echo ""
+    if [ -n "$FAILING_SECTION" ]; then
+      echo "### Failing tests"
+      echo ""
+      printf '%s\n' "$FAILING_SECTION"
+    fi
+    # $( ) above stripped the harvesters' own trailing blank line, so without this the
+    # section ends on the last content line (often a "  - message" bullet) and "Full
+    # output:" renders as a lazy continuation inside it rather than its own paragraph.
+    echo ""
+    echo "Full output: \`${OUTPUT_LOG#/workspace/out/}\`"
     echo ""
     echo "<details><summary>Last 100 lines of output</summary>"
     echo ""
@@ -115,6 +265,26 @@ while IFS=$'\t' read -r NAME DIR CMD; do
     echo ""
     echo "</details>"
     echo ""
+    if [ -n "$ARCHIVE_ROWS" ]; then
+      echo "### Archived reports"
+      echo ""
+      echo "| Archive | Size |"
+      echo "|---|---|"
+      printf '%s\n' "$ARCHIVE_ROWS"
+      echo ""
+      echo "Extract one with:"
+      echo ""
+      echo '```bash'
+      echo "artifact get ${OUTPUT_PATH}${REPORTS_ROOT#/workspace/out/}/<name>.tar.gz /tmp/r.tar.gz"
+      echo "mkdir -p /tmp/r && tar -xzf /tmp/r.tar.gz -C /tmp/r"
+      echo '```'
+      echo ""
+    fi
+    if [ -n "$ARCHIVE_NOTES" ]; then
+      echo "**Archiving notes:**"
+      echo ""
+      printf '%s\n' "$ARCHIVE_NOTES"
+    fi
   } >> "$REPORT"
 done < "$PLAN_FILE"
 

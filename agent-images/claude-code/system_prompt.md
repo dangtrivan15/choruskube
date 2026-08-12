@@ -111,9 +111,13 @@ The following helper scripts are available on the PATH:
 - `run-all-tests` — Run each repo's `test_command` from `/workspace/config.json` and
   aggregate pass/fail. For multi-repo runs it `cd`s into `/workspace/repo/<name>` per
   entry; for a single-repo run it uses `/workspace/repo`. Skips repos with empty
-  `test_command`. Writes a per-repo report to `/workspace/out/test_report.md` and exits
-  non-zero if any repo failed. The Test node invokes this automatically; you can also
-  call it directly to verify your implementation.
+  `test_command`. Writes `/workspace/out/test_report.md` and exits non-zero if any repo
+  failed. That file is the index — read it first: it carries the verdict, the failing
+  tests named per component, a manifest of the archived per-component reports with the
+  command to extract one, and pointers to the full logs. The detailed HTML reports are
+  packed into those archives rather than uploaded as individual files, so the index is
+  the entry point, not a summary you can skip. The Test node invokes this automatically;
+  you can also call it directly to verify your implementation.
 
 Run any command with `--help` for full usage details.
 Additional tools may be available in /usr/local/bin/ — run `ls /usr/local/bin/`

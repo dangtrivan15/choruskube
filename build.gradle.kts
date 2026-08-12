@@ -210,11 +210,38 @@ objects.newInstance(ListenerRegistrar::class).registry.onTaskCompletion(timingSe
 // is never left behind by accident.
 val e2eNoTeardown = project.hasProperty("e2eNoTeardown")
 
+// The agent image's scripts are plain bash on the container's PATH, so they have no Gradle
+// project of their own. Their tests (agent-images/claude-code/test/test-*.sh) are
+// self-contained bash — each sets up a mktemp fixture, runs the real script, and exits
+// non-zero on failure. Before this task they ran from nothing: no Gradle task, no workflow
+// step (build-images.yml names agent-images/** only as an image-rebuild path filter), so a
+// regression in check-prs or run-all-tests was invisible to CI.
+//
+// A single Exec over a glob rather than one task per file: the set changes as scripts are
+// added, and a per-file task list would have to be edited in lockstep with the directory.
+val agentScriptTest = tasks.register<Exec>("agentScriptTest") {
+    description = "Run the agent image's bash script unit tests"
+    group = "verification"
+    workingDir = rootDir
+    commandLine(
+        "bash", "-c",
+        """
+        set -u
+        failed=0
+        for t in agent-images/claude-code/test/test-*.sh; do
+          echo "=== ${'$'}t ==="
+          bash "${'$'}t" || failed=1
+        done
+        exit ${'$'}failed
+        """.trimIndent()
+    )
+}
+
 // The unit suites are the fast gate: a unit regression should fail in seconds rather than
 // after Keycloak/Temporal/object storage have spun up. mustRunAfter (not dependsOn) keeps
 // the e2e tasks individually invokable — the constraint simply disappears when the unit
 // tasks are not in the graph.
-val unitStage = listOf(":api-server:test", ":orchestrator:test", ":web-ui:test")
+val unitStage = listOf(":api-server:test", ":orchestrator:test", ":web-ui:test", agentScriptTest)
 
 val e2eDown = tasks.register<Exec>("e2eDown") {
     description = "Tear down the e2e stack and wipe its volumes"
@@ -286,9 +313,11 @@ val e2ePlaywright = tasks.register<Exec>("e2ePlaywright") {
     val workers = (project.findProperty("workers") as String?) ?: System.getenv("E2E_WORKERS")
     workers?.let { environment("E2E_WORKERS", it) }
 
-    // The HTML reporter's outputFolder is set in playwright.config.ts; this env var overrides
-    // it, and is ignored when the reporter is not active (a non-CI run). Unset property =>
-    // the config's own path, unchanged.
+    // playwright.config.ts's reportDir const reads this and feeds both reporters: the HTML
+    // reporter's outputFolder (CI-gated — inactive on this task, since it never sets CI) and
+    // the JSON reporter's outputFile (unconditional, so this dogfood run's failures are still
+    // harvested despite CI never being set). Unset property => the config's own default path,
+    // unchanged for either reporter.
     reportsRoot.orNull?.let { environment("PLAYWRIGHT_HTML_OUTPUT_DIR", "$it/playwright") }
 
     val args = mutableListOf("npx", "playwright", "test")

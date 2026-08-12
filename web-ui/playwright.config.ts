@@ -41,10 +41,28 @@ export default defineConfig({
   /* Retry failed tests once in CI */
   retries: process.env.CI ? 1 : 0,
 
-  /* Reporter */
-  reporter: process.env.CI
-    ? [["html", { outputFolder: "./e2e/playwright-report" }], ["list"]]
-    : [["list"]],
+  /* One directory drives both reporters. PLAYWRIGHT_HTML_OUTPUT_DIR is set by the e2e
+   * Gradle task to relocate reports into the shared reports root; it is honored by the
+   * HTML reporter only, so the JSON reporter has to be pointed at the same place
+   * explicitly or it is written where nothing looks for it.
+   *
+   * The JSON reporter is unconditional — the in-pod e2ePlaywright Gradle task never sets
+   * CI (it drives Playwright via E2E_WORKERS/PLAYWRIGHT_HTML_OUTPUT_DIR instead), so
+   * gating results.json behind CI would leave a dogfood run's failing specs unharvested by
+   * the report index. HTML stays CI-only: it's the larger, slower artifact, and CI is
+   * still the right signal for whether to produce it. HTML is listed first when both are
+   * present; that order keeps the JSON file safe from the HTML reporter's folder-clear
+   * step. */
+  reporter: (() => {
+    const reportDir = process.env.PLAYWRIGHT_HTML_OUTPUT_DIR ?? "./e2e/playwright-report";
+    const json: ["json", { outputFile: string }] = [
+      "json",
+      { outputFile: `${reportDir}/results.json` },
+    ];
+    return process.env.CI
+      ? [["html", { outputFolder: reportDir }], json, ["list"]]
+      : [json, ["list"]];
+  })(),
 
   use: {
     /* Base URL for the web UI served by Docker Compose */
