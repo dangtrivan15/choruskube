@@ -189,6 +189,14 @@ grep -qF "Timeout 5000ms exceeded" "$REPORT4" \
     && ok "index carries the spec's error message" || fail "index carries the spec error"
 grep -qF "shows the dashboard" "$REPORT4" \
     && fail "index must NOT list the passing spec" || ok "index omits passing specs"
+# M4 regression: this fixture's failing section comes ONLY from harvest_playwright (no
+# JUnit XML in the tree at all), which is exactly the case that lost its blank line — $()
+# strips the harvester's own trailing blank, so "Full output:" rendered as a lazy
+# continuation of the last "  - message" bullet instead of its own paragraph.
+BLANK_BEFORE_FULL_OUTPUT4=$(awk '/^Full output:/{print prev; exit} {prev=$0}' "$REPORT4")
+[ -z "$BLANK_BEFORE_FULL_OUTPUT4" ] \
+    && ok "blank line separates the failing section from Full output:" \
+    || fail "blank line separates the failing section from Full output: (got [$BLANK_BEFORE_FULL_OUTPUT4])"
 
 # --- Test 5: absent results.json is silent, not an error ---
 S5="$TESTDIR/s5"

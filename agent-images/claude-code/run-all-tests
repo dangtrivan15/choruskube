@@ -251,6 +251,10 @@ while IFS=$'\t' read -r NAME DIR CMD; do
       echo ""
       printf '%s\n' "$FAILING_SECTION"
     fi
+    # $( ) above stripped the harvesters' own trailing blank line, so without this the
+    # section ends on the last content line (often a "  - message" bullet) and "Full
+    # output:" renders as a lazy continuation inside it rather than its own paragraph.
+    echo ""
     echo "Full output: \`${OUTPUT_LOG#/workspace/out/}\`"
     echo ""
     echo "<details><summary>Last 100 lines of output</summary>"
