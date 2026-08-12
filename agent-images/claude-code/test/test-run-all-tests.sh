@@ -414,6 +414,34 @@ printf '%s' "$BETA_SECTION" | grep -qF "broken" \
     && fail "multi-repo bleed: beta's section must NOT carry alpha's note" \
     || ok "multi-repo bleed: beta's section must NOT carry alpha's note"
 
+# --- Test 12: reports_root_for's parsed value stops at ;, &, | with no space needed ---
+# Test 2 above already covers the parsing branch, but its fixture inserts a space before
+# the `;` to sidestep this exact bug. This scenario is the no-space form: a trailing `;`
+# glued directly onto the path, the way a user-authored test_command can write it.
+S12="$TESTDIR/s12"
+REPORTS_DIR12="$S12/workspace/out/reports/widget-reports"
+mkdir -p "$S12/workspace/repo" "$S12/workspace/out" "$REPORTS_DIR12"
+cat > "$S12/workspace/config.json" <<EOF
+{
+  "repo_url": "https://example.invalid/acme/widget.git",
+  "test_command": "true -Dtest.reports.dir=$REPORTS_DIR12;exit 0"
+}
+EOF
+COPY12=$(make_copy "$S12")
+set +e
+bash "$COPY12" > "$S12/stdout.txt" 2>&1
+RC12=$?
+set -e
+[ "$RC12" -eq 0 ] && ok "no-space punctuation: exits 0" || fail "no-space punctuation: exits 0 (got $RC12)"
+EXPECTED_LOG12="$REPORTS_DIR12/test-output.log"
+[ -f "$EXPECTED_LOG12" ] \
+    && ok "no-space punctuation: log lands in the parsed dir, trailing ; not swallowed into it" \
+    || fail "no-space punctuation: log lands in the parsed dir (expected $EXPECTED_LOG12)"
+FALLBACK_LOG12=$(find "$S12/workspace/out" -maxdepth 1 -name '*test-output.log')
+[ -z "$FALLBACK_LOG12" ] \
+    && ok "no-space punctuation: no fallback log written (the bogus path never matched a dir)" \
+    || fail "no-space punctuation: unexpected fallback log written: $FALLBACK_LOG12"
+
 # --- Summary ---
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

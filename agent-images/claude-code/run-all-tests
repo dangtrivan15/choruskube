@@ -61,10 +61,15 @@ HAS_RUNNABLE=0
 # rather than assuming a path: a repo whose command sets a different root still gets its
 # reports found. Falls back to the conventional location, which is also what a repo that
 # does not pass the flag at all would use if it ever started to.
+#
+# `;`, `&`, `|` are excluded from the value alongside whitespace: a user-authored
+# test_command can chain a further command directly onto the flag with no separating space
+# (`...=/x/y;exit 1`, `...=/x/y&&echo ok`), and without excluding them the match runs on
+# past the path into that next command, producing a bogus root.
 reports_root_for() {
     local cmd="$1" name="$2" root
     root=$(printf '%s' "$cmd" \
-        | grep -oE '\-Dtest\.reports\.dir=[^[:space:]]+' \
+        | grep -oE '\-Dtest\.reports\.dir=[^[:space:];&|]+' \
         | head -1 | cut -d= -f2-)
     [ -n "$root" ] || root="/workspace/out/reports/$name"
     printf '%s' "$root"
