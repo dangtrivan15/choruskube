@@ -313,9 +313,11 @@ val e2ePlaywright = tasks.register<Exec>("e2ePlaywright") {
     val workers = (project.findProperty("workers") as String?) ?: System.getenv("E2E_WORKERS")
     workers?.let { environment("E2E_WORKERS", it) }
 
-    // The HTML reporter's outputFolder is set in playwright.config.ts; this env var overrides
-    // it, and is ignored when the reporter is not active (a non-CI run). Unset property =>
-    // the config's own path, unchanged.
+    // playwright.config.ts's reportDir const reads this and feeds both reporters: the HTML
+    // reporter's outputFolder (CI-gated — inactive on this task, since it never sets CI) and
+    // the JSON reporter's outputFile (unconditional, so this dogfood run's failures are still
+    // harvested despite CI never being set). Unset property => the config's own default path,
+    // unchanged for either reporter.
     reportsRoot.orNull?.let { environment("PLAYWRIGHT_HTML_OUTPUT_DIR", "$it/playwright") }
 
     val args = mutableListOf("npx", "playwright", "test")
