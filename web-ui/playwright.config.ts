@@ -41,9 +41,15 @@ export default defineConfig({
   /* Retry failed tests once in CI */
   retries: process.env.CI ? 1 : 0,
 
-  /* Reporter */
+  /* The JSON reporter is what run-all-tests reads to name failing specs in the test
+   * report index; the HTML report is packed into an archive and is not parsed. Both are
+   * CI-only, matching the existing split — a local run keeps the plain list reporter. */
   reporter: process.env.CI
-    ? [["html", { outputFolder: "./e2e/playwright-report" }], ["list"]]
+    ? [
+        ["html", { outputFolder: "./e2e/playwright-report" }],
+        ["json", { outputFile: "./e2e/playwright-report/results.json" }],
+        ["list"],
+      ]
     : [["list"]],
 
   use: {
