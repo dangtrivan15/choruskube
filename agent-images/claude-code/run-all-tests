@@ -133,7 +133,10 @@ archive_components() {
         [ -d "$d" ] || continue
         comp=$(basename "$d")
         if tar -czf "$root/$comp.tar.gz" -C "$root" "$comp" 2> "$err"; then
-            rm -rf "$d"
+            # ${d%/} strips the glob's trailing slash: rm -rf on a symlinked component
+            # dir with the slash kept would follow the link and delete its target — which
+            # can be anywhere on disk — while leaving the symlink itself in place.
+            rm -rf "${d%/}"
             printf '| `%s.tar.gz` | %s |\n' "$comp" "$(du -h "$root/$comp.tar.gz" | cut -f1)"
         else
             rm -f "$root/$comp.tar.gz"
@@ -212,6 +215,11 @@ while IFS=$'\t' read -r NAME DIR CMD; do
   # Must run after both harvesters above: they read files inside REPORTS_ROOT that
   # archiving deletes.
   #
+  # Reset per repo: ARCHIVE_NOTES is a global archive_components appends to, so without
+  # this a note from one repo's failure would still be sitting there — and get printed
+  # again — under every later repo's report section, including ones that archived cleanly.
+  ARCHIVE_NOTES=""
+
   # Captured via a redirect rather than `ARCHIVE_ROWS=$(archive_components ...)`: command
   # substitution forks a subshell, and archive_components's writes to the global
   # ARCHIVE_NOTES would be lost with it, silently dropping every archiving-failure note.

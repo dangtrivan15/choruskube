@@ -354,6 +354,66 @@ grep -qF "Archiving notes" "$S10/workspace/out/test_report.md" \
 grep -qF "api-server" "$S10/workspace/out/test_report.md" \
     && ok "tar failure: note names the affected component" || fail "tar failure: note names the affected component"
 
+# --- Test 11: ARCHIVE_NOTES does not bleed from one repo into the next repo's section ---
+# True multi-repo mode (config.json's `repos[]`, not the single-repo top-level test_command
+# every earlier scenario uses): repo alpha has one component whose archiving fails, repo beta
+# archives cleanly. Only alpha's report section should carry the failure note.
+#
+# The fake `tar` only intercepts the one target path ending in broken.tar.gz and delegates
+# everything else to the real tar (resolved once, up front) — a global PATH shadow would break
+# beta's own (unrelated) archiving too, which would defeat the point of this scenario.
+S11="$TESTDIR/s11"
+FAKEBIN11="$TESTDIR/fakebin11"
+REAL_TAR="$(command -v tar)"
+mkdir -p "$S11/workspace/repo/alpha" "$S11/workspace/repo/beta" "$FAKEBIN11"
+mkdir -p "$S11/workspace/out/reports/alpha/broken" "$S11/workspace/out/reports/beta/clean"
+echo "<html>1</html>" > "$S11/workspace/out/reports/alpha/broken/f.html"
+echo "<html>1</html>" > "$S11/workspace/out/reports/beta/clean/f.html"
+cat > "$FAKEBIN11/tar" <<STUB
+#!/usr/bin/env bash
+for arg in "\$@"; do
+  case "\$arg" in
+    *broken.tar.gz) echo "tar: simulated failure for test" >&2; exit 2 ;;
+  esac
+done
+exec "$REAL_TAR" "\$@"
+STUB
+chmod +x "$FAKEBIN11/tar"
+cat > "$S11/workspace/config.json" <<EOF
+{
+  "repos": [
+    {
+      "name": "alpha",
+      "local_path": "$S11/workspace/repo/alpha",
+      "test_command": "echo a -Dtest.reports.dir=$S11/workspace/out/reports/alpha ; exit 0"
+    },
+    {
+      "name": "beta",
+      "local_path": "$S11/workspace/repo/beta",
+      "test_command": "echo b -Dtest.reports.dir=$S11/workspace/out/reports/beta ; exit 0"
+    }
+  ]
+}
+EOF
+COPY11=$(make_copy "$S11")
+set +e
+PATH="$FAKEBIN11:$PATH" bash "$COPY11" > "$S11/stdout.txt" 2>&1
+RC11=$?
+set -e
+[ "$RC11" -eq 0 ] && ok "multi-repo bleed: node still exits 0" || fail "multi-repo bleed: node still exits 0 (got $RC11)"
+REPORT11="$S11/workspace/out/test_report.md"
+ALPHA_SECTION=$(sed -n '/^## alpha/,/^## beta/p' "$REPORT11")
+BETA_SECTION=$(sed -n '/^## beta/,$p' "$REPORT11")
+printf '%s' "$ALPHA_SECTION" | grep -qF "Archiving notes" \
+    && ok "multi-repo bleed: alpha's own section records its archiving note" \
+    || fail "multi-repo bleed: alpha's own section records its archiving note"
+printf '%s' "$BETA_SECTION" | grep -qF "clean.tar.gz" \
+    && ok "multi-repo bleed: beta's own archiving still succeeds" \
+    || fail "multi-repo bleed: beta's own archiving still succeeds"
+printf '%s' "$BETA_SECTION" | grep -qF "broken" \
+    && fail "multi-repo bleed: beta's section must NOT carry alpha's note" \
+    || ok "multi-repo bleed: beta's section must NOT carry alpha's note"
+
 # --- Summary ---
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
