@@ -79,8 +79,10 @@ reports_root_for() {
 # relative to $0 so the test harness's rewritten copy finds its own sibling.
 HARVEST_JUNIT="$(dirname "$0")/harvest-junit.js"
 
-# Never fails: a missing harvester, a missing node, or an unparseable tree yields an
-# empty section rather than a failed Test node.
+# Never fails: a missing harvester, a missing node, or an absent report tree yields an
+# empty section rather than a failed Test node. A report file that exists inside the tree
+# but can't be read or parsed is different — harvest-junit.js counts and notes those rather
+# than silently reading them as "no failures" (see its own comments).
 harvest_failures() {
     local root="$1"
     [ -d "$root" ] || return 0

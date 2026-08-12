@@ -442,6 +442,80 @@ FALLBACK_LOG12=$(find "$S12/workspace/out" -maxdepth 1 -name '*test-output.log')
     && ok "no-space punctuation: no fallback log written (the bogus path never matched a dir)" \
     || fail "no-space punctuation: unexpected fallback log written: $FALLBACK_LOG12"
 
+# --- Test 13: a <failure> inside a CDATA-wrapped <system-out> is not a real failure ---
+# harvest-junit.js matches on raw text, so a <system-out> that literally captured the
+# string "<failure ...>" (e.g. a debug line echoing a request/response payload) would be
+# read as a real failure before the CDATA pre-pass. The suite's own failures="0" and the
+# absence of a real <failure> element outside the CDATA are what prove this one is fake.
+S13="$TESTDIR/s13"
+mkdir -p "$S13/workspace/repo" "$S13/workspace/out"
+XMLDIR13="$S13/workspace/out/reports/widget/api-server/test-results/test"
+mkdir -p "$XMLDIR13"
+cat > "$XMLDIR13/TEST-com.acme.CdataTest.xml" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.acme.CdataTest" tests="1" failures="0">
+  <testcase name="logsSuspiciousOutput" classname="com.acme.CdataTest" time="0.01">
+    <system-out><![CDATA[
+some debug line
+<failure message="phantom failure from captured stdout" type="AssertionError">fake stack</failure>
+more debug output
+]]></system-out>
+  </testcase>
+</testsuite>
+EOF
+cat > "$S13/workspace/config.json" <<EOF
+{
+  "repo_url": "https://example.invalid/acme/widget.git",
+  "test_command": "echo cdata -Dtest.reports.dir=$S13/workspace/out/reports/widget ; exit 0"
+}
+EOF
+COPY13=$(make_copy "$S13")
+set +e
+bash "$COPY13" > "$S13/stdout.txt" 2>&1
+RC13=$?
+set -e
+[ "$RC13" -eq 0 ] && ok "CDATA fixture: exits 0" || fail "CDATA fixture: exits 0 (got $RC13)"
+REPORT13="$S13/workspace/out/test_report.md"
+grep -qF "phantom failure from captured stdout" "$REPORT13" \
+    && fail "CDATA-embedded <failure> must NOT be reported as a real failure" \
+    || ok "CDATA-embedded <failure> is not reported as a real failure"
+grep -qF "logsSuspiciousOutput" "$REPORT13" \
+    && fail "a passing test must not be listed as failing due to CDATA-embedded text" \
+    || ok "passing test with CDATA-embedded fake failure is not listed as failing"
+
+# --- Test 14: a malformed (truncated mid-write) JUnit XML file is noted, not silently
+# treated as "no failures" ---
+# Simulates a test JVM killed mid-write: the file has no closing tags at all. This must
+# not read the same as an absent report tree, which is the one case that stays silent.
+S14="$TESTDIR/s14"
+mkdir -p "$S14/workspace/repo" "$S14/workspace/out"
+XMLDIR14="$S14/workspace/out/reports/widget/api-server/test-results/test"
+mkdir -p "$XMLDIR14"
+printf '%s' '<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.acme.BrokenTest" tests="1" failures="1">
+  <testcase name="crashedMidWrite" classname="com.acme.BrokenTest" time="0.03">
+    <failure message="disk full during write" type="IOException">
+      com.acme.BrokenTest.crashedMidWrite(BrokenTest.java:1' > "$XMLDIR14/TEST-com.acme.BrokenTest.xml"
+cat > "$S14/workspace/config.json" <<EOF
+{
+  "repo_url": "https://example.invalid/acme/widget.git",
+  "test_command": "echo broken -Dtest.reports.dir=$S14/workspace/out/reports/widget ; exit 0"
+}
+EOF
+COPY14=$(make_copy "$S14")
+set +e
+bash "$COPY14" > "$S14/stdout.txt" 2>&1
+RC14=$?
+set -e
+[ "$RC14" -eq 0 ] && ok "malformed XML: node still exits 0" || fail "malformed XML: node still exits 0 (got $RC14)"
+REPORT14="$S14/workspace/out/test_report.md"
+grep -qiF "could not be" "$REPORT14" \
+    && ok "malformed XML: index notes the unparseable report file" \
+    || fail "malformed XML: index notes the unparseable report file"
+grep -qF "### Failing tests" "$REPORT14" \
+    && ok "malformed XML: the note surfaces under the index's Failing-tests section" \
+    || fail "malformed XML: the note surfaces in the index"
+
 # --- Summary ---
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

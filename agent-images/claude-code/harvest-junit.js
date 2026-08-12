@@ -2,8 +2,9 @@
 // harvest-junit.js — turn a repo's JUnit XML into the index's "failing tests" section.
 //
 // Usage: node harvest-junit.js <reports-root>
-// Prints markdown to stdout; prints NOTHING when there are no failures. Always exits 0 —
-// this is reporting, and a harvest problem must never change the Test node's verdict.
+// Prints markdown to stdout; prints NOTHING when there are no failures and every report
+// file was read and fully parsed. Always exits 0 — this is reporting, and a harvest
+// problem must never change the Test node's verdict.
 //
 // Node rather than a shell pipeline because the agent image ships neither python3 nor
 // xmllint (see the Dockerfile's apt list), and regex-over-XML in bash across multi-line
@@ -54,19 +55,34 @@ const attr = (s, n) => {
 };
 
 const failures = [];
+// Report files that exist but can't be turned into data. An absent report TREE is the
+// expected shape for a repo that hasn't produced one yet and must stay silent (handled by
+// the caller, which never invokes this script without a directory); a file that IS there
+// and comes back empty-handed is different, and gets counted instead of read as a silent
+// "no failures".
+let unparseable = 0;
 for (const file of walk(root, [])) {
   let xml;
   try {
     xml = fs.readFileSync(file, "utf8");
   } catch {
+    unparseable++;
     continue;
   }
+  // CDATA content is literal text, not markup — a <system-out> capturing raw command
+  // output (a logged request payload, a printed stack trace) can contain the substring
+  // "<failure" and get matched as a real one below. Strip CDATA bodies first so only
+  // actual elements are visible to the regexes that follow.
+  xml = xml.replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, "");
   // The component is the first path segment under the repo's report root, which is how
   // the report tree is laid out (<root>/api-server, <root>/web-ui, …).
   const component = path.relative(root, file).split(path.sep)[0] || "(root)";
+  const rawTestcaseCount = (xml.match(/<testcase\b/g) || []).length;
   let m;
   TESTCASE.lastIndex = 0;
+  let matched = 0;
   while ((m = TESTCASE.exec(xml)) !== null) {
+    matched++;
     const body = m[2] || "";
     const p = body.match(PROBLEM);
     if (!p) continue;
@@ -79,9 +95,13 @@ for (const file of walk(root, [])) {
       stack: decode(p[3] || "").trim(),
     });
   }
+  // A <testcase that never closes — no `/>`, no matching </testcase> — is what a process
+  // killed mid-write leaves behind. Same principle as the read failure above: count it
+  // rather than silently reading the file as having no failures.
+  if (matched < rawTestcaseCount) unparseable++;
 }
 
-if (failures.length === 0) process.exit(0);
+if (failures.length === 0 && unparseable === 0) process.exit(0);
 
 const byComponent = new Map();
 for (const f of failures) {
@@ -114,6 +134,14 @@ if (failures.length > MAX_DETAILED_FAILURES) {
   out.push(
     `> ${failures.length} tests failed. All are named above; stacks are included for the`,
     `> first ${MAX_DETAILED_FAILURES} only.`,
+    ""
+  );
+}
+
+if (unparseable > 0) {
+  out.push(
+    `> ${unparseable} report file(s) could not be read or fully parsed and were skipped; ` +
+      `see test-output.log for the full run.`,
     ""
   );
 }
