@@ -95,7 +95,7 @@ harvest_failures() {
 # harvester because this is already JSON — and an absent file is the expected state on
 # any repo whose config has not been updated, so it must be silent, not a warning.
 harvest_playwright() {
-    local root="$1" json="$1/playwright/results.json"
+    local json="$1/playwright/results.json"
     [ -f "$json" ] || return 0
     jq -r '
       def specs: .. | objects | select(has("specs")) | .specs[];
@@ -209,8 +209,12 @@ while IFS=$'\t' read -r NAME DIR CMD; do
   else
     OUTPUT_LOG="/workspace/out/${NAME}-test-output.log"
   fi
-  mkdir -p "$(dirname "$OUTPUT_LOG")"
-  printf '%s\n' "$OUTPUT" > "$OUTPUT_LOG"
+  # `-e` is active here (the header omits it, but the eval capture above turns it back on
+  # for the rest of the loop body — see the comment at the top of the loop). Reporting must
+  # never change the node's verdict, so an unwritable/full /workspace/out must not abort the
+  # loop iteration the way an unguarded failure here would.
+  mkdir -p "$(dirname "$OUTPUT_LOG")" || true
+  printf '%s\n' "$OUTPUT" > "$OUTPUT_LOG" || true
 
   FAILING_SECTION=$(printf '%s\n%s' \
       "$(harvest_failures "$REPORTS_ROOT")" \
