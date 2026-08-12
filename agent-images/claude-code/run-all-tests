@@ -108,6 +108,42 @@ harvest_playwright() {
     ' "$json" 2>/dev/null || true
 }
 
+ARCHIVE_NOTES=""
+
+# The run's object-storage prefix, so the index can print a copy-pasteable `artifact get`
+# rather than a template. entrypoint.sh reads the same field into its own OUTPUT_PATH but
+# never exports it, so this script — a child process — has to read config.json itself.
+OUTPUT_PATH=$(jq -r '.output_path // ""' "$CONFIG")
+
+# One tarball per component directory, then delete the originals. The delete is the
+# point: entrypoint.sh uploads /workspace/out with `find . -type f` and one presign+PUT
+# per file, so leaving the tree in place would keep every one of the ~2000 report files
+# in the upload loop and in the run's artifact list.
+#
+# Loose files at the report root (timings.tsv/txt, test-output.log) are deliberately not
+# archived — they are small, high-signal, and worth reading without unpacking anything.
+#
+# A tar failure is never fatal. This is reporting, and turning a passing suite red over a
+# packaging problem would be strictly worse than uploading that component unarchived.
+archive_components() {
+    local root="$1" d comp err
+    [ -d "$root" ] || return 0
+    err=$(mktemp)
+    for d in "$root"/*/; do
+        [ -d "$d" ] || continue
+        comp=$(basename "$d")
+        if tar -czf "$root/$comp.tar.gz" -C "$root" "$comp" 2> "$err"; then
+            rm -rf "$d"
+            printf '| `%s.tar.gz` | %s |\n' "$comp" "$(du -h "$root/$comp.tar.gz" | cut -f1)"
+        else
+            rm -f "$root/$comp.tar.gz"
+            ARCHIVE_NOTES="${ARCHIVE_NOTES}- \`${comp}\`: archiving failed ($(head -1 "$err")); files left in place
+"
+        fi
+    done
+    rm -f "$err"
+}
+
 {
   echo "# Test Report"
   echo ""
@@ -173,6 +209,17 @@ while IFS=$'\t' read -r NAME DIR CMD; do
   # heading entirely rather than printing an empty "Failing tests" section.
   [ -n "$(printf '%s' "$FAILING_SECTION" | tr -d '[:space:]')" ] || FAILING_SECTION=""
 
+  # Must run after both harvesters above: they read files inside REPORTS_ROOT that
+  # archiving deletes.
+  #
+  # Captured via a redirect rather than `ARCHIVE_ROWS=$(archive_components ...)`: command
+  # substitution forks a subshell, and archive_components's writes to the global
+  # ARCHIVE_NOTES would be lost with it, silently dropping every archiving-failure note.
+  ARCHIVE_ROWS_FILE=$(mktemp)
+  archive_components "$REPORTS_ROOT" > "$ARCHIVE_ROWS_FILE"
+  ARCHIVE_ROWS=$(cat "$ARCHIVE_ROWS_FILE")
+  rm -f "$ARCHIVE_ROWS_FILE"
+
   {
     echo "## $NAME"
     echo ""
@@ -195,6 +242,26 @@ while IFS=$'\t' read -r NAME DIR CMD; do
     echo ""
     echo "</details>"
     echo ""
+    if [ -n "$ARCHIVE_ROWS" ]; then
+      echo "### Archived reports"
+      echo ""
+      echo "| Archive | Size |"
+      echo "|---|---|"
+      printf '%s\n' "$ARCHIVE_ROWS"
+      echo ""
+      echo "Extract one with:"
+      echo ""
+      echo '```bash'
+      echo "artifact get ${OUTPUT_PATH}${REPORTS_ROOT#/workspace/out/}/<name>.tar.gz /tmp/r.tar.gz"
+      echo "mkdir -p /tmp/r && tar -xzf /tmp/r.tar.gz -C /tmp/r"
+      echo '```'
+      echo ""
+    fi
+    if [ -n "$ARCHIVE_NOTES" ]; then
+      echo "**Archiving notes:**"
+      echo ""
+      printf '%s\n' "$ARCHIVE_NOTES"
+    fi
   } >> "$REPORT"
 done < "$PLAN_FILE"
 

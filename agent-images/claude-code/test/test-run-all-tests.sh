@@ -206,7 +206,11 @@ RC5=$?
 set -e
 [ "$RC5" -eq 0 ] && ok "missing results.json: still exits 0" \
     || fail "missing results.json: still exits 0 (got $RC5)"
-grep -qiF "playwright" "$S5/workspace/out/test_report.md" \
+# A bare substring match on "playwright" also matches the report's Archived-reports
+# manifest, which names archives after their source directory (this fixture's empty
+# playwright/ dir archives to `playwright.tar.gz`). Match the harvester's own heading
+# text so this only detects an actual Failing-tests/Playwright section.
+grep -qF "#### playwright" "$S5/workspace/out/test_report.md" \
     && fail "missing results.json must add no Playwright section" \
     || ok "missing results.json: no Playwright section"
 
@@ -254,6 +258,101 @@ REPORT7="$S7/workspace/out/test_report.md"
 grep -qF "### Failing tests" "$REPORT7" \
     && fail "reports root exists but empty: no Failing tests heading" \
     || ok "reports root exists but empty: no Failing tests heading"
+
+# --- Test 8: components are archived and originals removed ---
+S8="$TESTDIR/s8"
+mkdir -p "$S8/workspace/repo" "$S8/workspace/out"
+mkdir -p "$S8/workspace/out/reports/widget/api-server/jacoco/html"
+mkdir -p "$S8/workspace/out/reports/widget/web-ui"
+for i in 1 2 3; do echo "<html>$i</html>" > "$S8/workspace/out/reports/widget/api-server/jacoco/html/c$i.html"; done
+echo "coverage" > "$S8/workspace/out/reports/widget/web-ui/index.html"
+echo "task	1" > "$S8/workspace/out/reports/widget/timings.tsv"
+cat > "$S8/workspace/config.json" <<EOF
+{
+  "repo_url": "https://example.invalid/acme/widget.git",
+  "test_command": "echo arch -Dtest.reports.dir=$S8/workspace/out/reports/widget ; exit 0",
+  "output_path": "runs/r-arch/out/"
+}
+EOF
+COPY8=$(make_copy "$S8")
+set +e
+bash "$COPY8" > "$S8/stdout.txt" 2>&1
+set -e
+R8="$S8/workspace/out/reports/widget"
+[ -f "$R8/api-server.tar.gz" ] && ok "api-server archived" || fail "api-server archived"
+[ -f "$R8/web-ui.tar.gz" ] && ok "web-ui archived" || fail "web-ui archived"
+[ ! -d "$R8/api-server" ] && ok "api-server originals removed" || fail "api-server originals removed"
+[ ! -d "$R8/web-ui" ] && ok "web-ui originals removed" || fail "web-ui originals removed"
+[ -f "$R8/timings.tsv" ] && ok "loose files left unarchived" || fail "loose files left unarchived"
+[ -f "$R8/test-output.log" ] && ok "output log left unarchived" || fail "output log left unarchived"
+tar -tzf "$R8/api-server.tar.gz" | grep -q "jacoco/html/c1.html" \
+    && ok "archive preserves the nested report tree" || fail "archive preserves nested tree"
+FILECOUNT=$(find "$S8/workspace/out" -type f | wc -l | tr -d ' ')
+[ "$FILECOUNT" -le 8 ] && ok "artifact count collapsed (got $FILECOUNT)" \
+    || fail "artifact count collapsed (got $FILECOUNT)"
+grep -qF "api-server.tar.gz" "$S8/workspace/out/test_report.md" \
+    && ok "index manifests the archives" || fail "index manifests the archives"
+grep -qF "runs/r-arch/out/reports/widget/<name>.tar.gz" "$S8/workspace/out/test_report.md" \
+    && ok "index prints a copy-pasteable artifact get with output_path" \
+    || fail "index prints a copy-pasteable artifact get with output_path"
+
+# --- Test 9: output_path absent degrades to a relative path, not a literal "null" ---
+S9="$TESTDIR/s9"
+mkdir -p "$S9/workspace/repo" "$S9/workspace/out/reports/widget/api-server"
+echo "<html>1</html>" > "$S9/workspace/out/reports/widget/api-server/c1.html"
+cat > "$S9/workspace/config.json" <<EOF
+{
+  "repo_url": "https://example.invalid/acme/widget.git",
+  "test_command": "echo noop -Dtest.reports.dir=$S9/workspace/out/reports/widget ; exit 0"
+}
+EOF
+COPY9=$(make_copy "$S9")
+set +e
+bash "$COPY9" > "$S9/stdout.txt" 2>&1
+set -e
+REPORT9="$S9/workspace/out/test_report.md"
+grep -qF "artifact get reports/widget/<name>.tar.gz" "$REPORT9" \
+    && ok "missing output_path: drill-in degrades to a bare relative path" \
+    || fail "missing output_path: drill-in degrades to a bare relative path"
+grep -qF "null" "$REPORT9" \
+    && fail "missing output_path: no literal null in the drill-in" \
+    || ok "missing output_path: no literal null in the drill-in"
+
+# --- Test 10: a tar failure is reported, not fatal, and leaves originals in place ---
+# A fake `tar` on PATH that always fails stands in for a real packaging failure
+# (disk full, corrupt tree, etc.) without depending on file-permission behavior, which
+# varies by execution privilege. Prepended to PATH rather than touching S9/S8's fixtures
+# so the earlier scenarios keep exercising the real `tar`.
+S10="$TESTDIR/s10"
+FAKEBIN="$TESTDIR/fakebin10"
+mkdir -p "$S10/workspace/repo" "$S10/workspace/out/reports/widget/api-server" "$FAKEBIN"
+echo "<html>1</html>" > "$S10/workspace/out/reports/widget/api-server/c1.html"
+cat > "$FAKEBIN/tar" <<'STUB'
+#!/usr/bin/env bash
+echo "tar: simulated failure for test" >&2
+exit 2
+STUB
+chmod +x "$FAKEBIN/tar"
+cat > "$S10/workspace/config.json" <<EOF
+{
+  "repo_url": "https://example.invalid/acme/widget.git",
+  "test_command": "echo x -Dtest.reports.dir=$S10/workspace/out/reports/widget ; exit 0"
+}
+EOF
+COPY10=$(make_copy "$S10")
+set +e
+PATH="$FAKEBIN:$PATH" bash "$COPY10" > "$S10/stdout.txt" 2>&1
+RC10=$?
+set -e
+[ "$RC10" -eq 0 ] && ok "tar failure: node still exits 0" || fail "tar failure: node still exits 0 (got $RC10)"
+R10="$S10/workspace/out/reports/widget"
+[ -d "$R10/api-server" ] && ok "tar failure: originals left in place" || fail "tar failure: originals left in place"
+[ ! -f "$R10/api-server.tar.gz" ] && ok "tar failure: no partial archive left behind" \
+    || fail "tar failure: no partial archive left behind"
+grep -qF "Archiving notes" "$S10/workspace/out/test_report.md" \
+    && ok "tar failure: index records an archiving note" || fail "tar failure: index records an archiving note"
+grep -qF "api-server" "$S10/workspace/out/test_report.md" \
+    && ok "tar failure: note names the affected component" || fail "tar failure: note names the affected component"
 
 # --- Summary ---
 echo ""
