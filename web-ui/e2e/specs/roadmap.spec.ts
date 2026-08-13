@@ -265,17 +265,25 @@ test.describe("Roadmap drill-down", () => {
     await roadmapPage.filterByPriority("all");
     await expect(roadmapPage.epicItems.filter({ hasText: lowEpic.title })).toBeVisible();
 
-    // Priority sort (High→Low) issues ?sort=priority,desc — the high Epic must
-    // render above the low one among the two created here.
+    // Priority sort: this spec is the only one in the whole e2e suite that sets
+    // a non-default `priority` (every other spec's Epics default to "medium"),
+    // so highEpic/lowEpic are each the sole occupant of their tier org-wide.
+    // That makes each one the guaranteed most-extreme row under its tier's sort
+    // direction — first on page 1 — regardless of how many "medium" Epics other
+    // specs or concurrent workers have created, and regardless of where the
+    // *other* tier's Epic happens to land in an unfiltered, paginated list.
+    // (A single cross-tier y-position comparison, as this used to do, breaks as
+    // soon as the org accumulates more than a page of "medium" Epics — the
+    // "low" Epic sorts last org-wide and falls off page 1 long before the "high"
+    // one does, silently no-op'ing the old `if (highBox && lowBox)` guard.)
+
+    // High→Low: the sole "high" Epic must be the very first row on page 1.
     await roadmapPage.selectSort(/Priority \(High/);
-    const highRow = roadmapPage.epicItems.filter({ hasText: highEpic.title });
-    const lowRow = roadmapPage.epicItems.filter({ hasText: lowEpic.title });
-    await expect(highRow).toBeVisible();
-    const highBox = await highRow.boundingBox();
-    const lowBox = await lowRow.boundingBox();
-    if (highBox && lowBox) {
-      expect(highBox.y).toBeLessThan(lowBox.y);
-    }
+    await expect(roadmapPage.epicItems.first()).toContainText(highEpic.title);
+
+    // Low→High: the sole "low" Epic must be the very first row on page 1.
+    await roadmapPage.selectSort(/Priority \(Low/);
+    await expect(roadmapPage.epicItems.first()).toContainText(lowEpic.title);
 
     // Re-prioritize the low Epic to High via the inline detail-page selector.
     await roadmapPage.page.goto(`/roadmap/epics/${lowEpic.id}`);

@@ -221,4 +221,33 @@ describe("EpicDetailPage", () => {
 
     expect(screen.getByText(/No stories are ready to start/)).toBeInTheDocument();
   });
+
+  it("shows priority-specific empty-state copy when only the priority filter yields zero results", async () => {
+    mockUseEpic.mockReturnValue({ data: makeEpic(), isLoading: false });
+    mockUseStories.mockReturnValue({ data: [makeStory({ priority: "medium" })], isLoading: false });
+    renderWithProviders(<EpicDetailPage />);
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+
+    expect(screen.queryByText(/No stories match the selected priority/)).not.toBeInTheDocument();
+
+    await user.click(screen.getByTestId("priority-filter-high"));
+
+    expect(screen.getByText(/No stories match the selected priority/)).toBeInTheDocument();
+    expect(screen.queryByText(/No stories are ready to start/)).not.toBeInTheDocument();
+  });
+
+  it("shows combined-filter empty-state copy when both the ready-to-start and priority filters are active", async () => {
+    mockUseEpic.mockReturnValue({ data: makeEpic(), isLoading: false });
+    mockUseStories.mockReturnValue({
+      data: [makeStory({ priority: "medium", readiness: "BLOCKED" })],
+      isLoading: false,
+    });
+    renderWithProviders(<EpicDetailPage />);
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+
+    await user.click(screen.getByTestId("ready-to-start-toggle"));
+    await user.click(screen.getByTestId("priority-filter-high"));
+
+    expect(screen.getByText(/No stories match the current filters/)).toBeInTheDocument();
+  });
 });

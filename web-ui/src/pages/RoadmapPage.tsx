@@ -142,8 +142,15 @@ export default function RoadmapPage() {
         })}
         {epics && epics.length === 0 && (
           <div data-testid="epic-list-empty" className="p-6 text-center text-muted-foreground text-sm">
-            {readyOnly ? (
+            {readyOnly && priority ? (
+              <>
+                No epics match the current filters. Try turning off the &ldquo;Ready to start&rdquo; filter or
+                clearing the priority filter.
+              </>
+            ) : readyOnly ? (
               <>No epics currently have ready work. Try turning off the &ldquo;Ready to start&rdquo; filter.</>
+            ) : priority ? (
+              <>No epics match the selected priority. Try clearing the priority filter.</>
             ) : (
               <>No epics yet. Click &ldquo;New Epic&rdquo; to create one.</>
             )}

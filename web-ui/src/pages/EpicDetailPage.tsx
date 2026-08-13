@@ -255,7 +255,16 @@ export default function EpicDetailPage() {
           )}
           {stories && stories.length > 0 && visibleStories?.length === 0 && (
             <div data-testid="story-list-empty" className="p-6 text-center text-muted-foreground text-sm">
-              No stories are ready to start. Try turning off the &ldquo;Ready to start&rdquo; filter.
+              {readyOnly && priorityFilter ? (
+                <>
+                  No stories match the current filters. Try turning off the &ldquo;Ready to start&rdquo; filter or
+                  clearing the priority filter.
+                </>
+              ) : priorityFilter ? (
+                <>No stories match the selected priority. Try clearing the priority filter.</>
+              ) : (
+                <>No stories are ready to start. Try turning off the &ldquo;Ready to start&rdquo; filter.</>
+              )}
             </div>
           )}
         </div>
