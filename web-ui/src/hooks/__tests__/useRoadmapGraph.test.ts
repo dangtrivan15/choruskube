@@ -30,6 +30,7 @@ function makeSnapshot(): RoadmapGraphSnapshot {
       motivation: null,
       status: "in_progress",
       stage: "in_progress",
+      priority: "medium",
       progress: { totalTasks: 2, doneTasks: 0 },
       softwareProject: { id: "r1", type: "git_repo", name: "backend-api" },
       repos: [],

@@ -23,6 +23,12 @@ vi.mock("@/hooks/useEpics", () => ({
     isError: false,
     reset: vi.fn(),
   }),
+  useUpdateEpicPriority: () => ({
+    mutate: vi.fn(),
+    isPending: false,
+    isError: false,
+    reset: vi.fn(),
+  }),
 }));
 
 vi.mock("@/hooks/useStories", () => ({
@@ -66,6 +72,7 @@ function makeEpic(overrides: Partial<EpicResponse> = {}): EpicResponse {
     motivation: null,
     status: "backlog",
     stage: "backlog",
+    priority: "medium",
     progress: { totalTasks: 2, doneTasks: 1 },
     softwareProject: { id: "r1", type: "git_repo", name: "backend-api" },
     repos: [],
@@ -84,6 +91,7 @@ function makeStory(overrides: Partial<StoryResponse> = {}): StoryResponse {
     description: "desc",
     status: "backlog",
     stage: "backlog",
+    priority: "medium",
     readiness: null,
     progress: { totalTasks: 1, doneTasks: 0 },
     createdAt: "2026-04-01T00:00:00Z",

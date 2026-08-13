@@ -112,7 +112,28 @@ describe("CreateEpicDialog", () => {
       description: "Desc Y",
       motivation: null,
       softwareProjectId: "r1",
+      // Defaults to "medium" when the priority picker is left untouched.
+      priority: "medium",
     });
+  });
+
+  it("includes the chosen priority in the post body", async () => {
+    renderWithProviders(<CreateEpicDialog open={true} onOpenChange={() => {}} />);
+    const user = userEvent.setup({ pointerEventsCheck: 0, delay: null });
+    await user.type(screen.getByTestId("create-epic-title"), "Feature X");
+    await user.type(screen.getByTestId("create-epic-description"), "Desc Y");
+    await user.click(screen.getByTestId("create-epic-software-project-select"));
+    await user.click(screen.getByText("backend-api"));
+
+    // Change priority away from the "medium" default to "High".
+    await user.click(screen.getByTestId("create-epic-priority-select"));
+    await user.click(screen.getByTestId("priority-option-high"));
+
+    await user.click(screen.getByTestId("create-epic-submit"));
+
+    expect(mockMutate).toHaveBeenCalledTimes(1);
+    const [payload] = mockMutate.mock.calls[0];
+    expect(payload.priority).toBe("high");
   });
 
   it("preserves a non-empty motivation in the post body", async () => {

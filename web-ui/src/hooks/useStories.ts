@@ -6,8 +6,10 @@ import type {
   StoryResponse,
   StoryRequest,
   StoryStageUpdateRequest,
+  StoryPriorityUpdateRequest,
   PageResponse,
   PaginationParams,
+  Priority,
 } from "@/lib/types";
 
 /**
@@ -31,14 +33,17 @@ function boardStoriesQueryKey() {
  */
 export function useAllStories(
   stage?: "backlog" | "in_progress" | "rolled_out",
-  pagination?: PaginationParams
+  pagination?: PaginationParams,
+  priority?: Priority
 ) {
   const params: string[] = [];
   if (stage) params.push(`stage=${encodeURIComponent(stage)}`);
+  // Raw value pass-through, exactly like `stage` above.
+  if (priority) params.push(`priority=${encodeURIComponent(priority)}`);
   const queryString = params.length > 0 ? `?${params.join("&")}` : "";
 
   return useQuery({
-    queryKey: ["stories", { stage, pagination }],
+    queryKey: ["stories", { stage, pagination, priority }],
     queryFn: () => api.getPage<PageResponse<StoryResponse>>(`/stories${queryString}`, pagination),
     refetchInterval: 15_000,
     placeholderData: (prev) => prev,
@@ -150,6 +155,30 @@ export function useUpdateStoryStage() {
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["stories"] });
+    },
+  });
+}
+
+/**
+ * Re-prioritize a Story via `PATCH /stories/{id}/priority` — the Story-level
+ * mirror of `useUpdateEpicPriority`. Invalidates the `["stories"]` query key on
+ * success (same pattern as `useUpdateStoryStage`'s onSettled) so the Story
+ * detail page and any Story list re-fetch the new priority.
+ */
+export function useUpdateStoryPriority() {
+  const queryClient = useQueryClient();
+  const { addEntry } = useActivityFeed();
+  return useMutation({
+    mutationFn: ({ id, priority }: { id: string } & StoryPriorityUpdateRequest) =>
+      api.patch<StoryResponse>(`/stories/${id}/priority`, {
+        priority,
+      } satisfies StoryPriorityUpdateRequest),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["stories"] });
+      addEntry(showMutationToast("Story priority updated", "success"));
+    },
+    onError: () => {
+      addEntry(showMutationToast("Failed to update story priority", "error"));
     },
   });
 }

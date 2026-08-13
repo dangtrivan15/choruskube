@@ -5,7 +5,7 @@ import { Plus, GitBranch, Layers, LayoutGrid, Network, GanttChart } from "lucide
 import Authorized from "@/components/Authorized";
 import { useEpics } from "@/hooks/useEpics";
 import { useRoadmapSubscription } from "@/hooks/useRoadmapSubscription";
-import type { SortParam, PaginationParams } from "@/lib/types";
+import type { SortParam, PaginationParams, Priority } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -14,6 +14,8 @@ import Pagination from "@/components/ui/Pagination";
 import SortDropdown from "@/components/ui/SortDropdown";
 import CreateEpicDialog from "@/components/roadmap/CreateEpicDialog";
 import RoadmapReadyToggle from "@/components/roadmap/RoadmapReadyToggle";
+import PriorityFilter from "@/components/roadmap/PriorityFilter";
+import PriorityBadge from "@/components/roadmap/PriorityBadge";
 import PageHeader from "@/components/layout/PageHeader";
 
 const SORT_OPTIONS = [
@@ -21,6 +23,10 @@ const SORT_OPTIONS = [
   { label: "Oldest first", field: "createdAt", direction: "asc" as const },
   { label: "Title A-Z", field: "title", direction: "asc" as const },
   { label: "Title Z-A", field: "title", direction: "desc" as const },
+  // Server-side `?sort=priority,{asc|desc}`. Descending is High→Low because the
+  // backend enum orders low < medium < high.
+  { label: "Priority (High→Low)", field: "priority", direction: "desc" as const },
+  { label: "Priority (Low→High)", field: "priority", direction: "asc" as const },
 ];
 
 function statusBadge(status: string) {
@@ -46,9 +52,10 @@ export default function RoadmapPage() {
   const [sort, setSort] = useState<SortParam | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [readyOnly, setReadyOnly] = useState(false);
+  const [priority, setPriority] = useState<Priority | undefined>(undefined);
 
   const pagination: PaginationParams = { page, size: 20, sort };
-  const { data: pageData, isLoading } = useEpics(undefined, pagination, readyOnly);
+  const { data: pageData, isLoading } = useEpics(undefined, pagination, readyOnly, priority);
   const epics = pageData?.content;
   useRoadmapSubscription();
 
@@ -72,6 +79,7 @@ export default function RoadmapPage() {
           Timeline view
         </Link>
         <RoadmapReadyToggle checked={readyOnly} onChange={setReadyOnly} />
+        <PriorityFilter value={priority} onChange={setPriority} />
         <SortDropdown options={SORT_OPTIONS} currentSort={sort} onSort={setSort} />
         <Authorized require="canOperate">
           <Button data-testid="new-epic-button" size="sm" onClick={() => setCreateOpen(true)}>
@@ -104,6 +112,7 @@ export default function RoadmapPage() {
                 </TruncatedText>
                 <div className="mt-1 flex flex-wrap items-center gap-2">
                   {statusBadge(epic.status)}
+                  <PriorityBadge priority={epic.priority} size="compact" data-testid="epic-priority-badge" />
                   <span
                     data-testid="epic-progress"
                     className="text-xs text-muted-foreground"

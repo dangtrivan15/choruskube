@@ -69,6 +69,7 @@ function makeEpic(overrides: Partial<EpicResponse> = {}): EpicResponse {
     motivation: null,
     status: "backlog",
     stage: "backlog",
+    priority: "medium",
     progress: { totalTasks: 0, doneTasks: 0 },
     softwareProject: {
       id: "r1",

@@ -6,6 +6,7 @@ import type { EpicResponse } from "@/lib/types";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import ReadinessBadge from "@/components/roadmap/ReadinessBadge";
+import PriorityBadge from "@/components/roadmap/PriorityBadge";
 import { roadmapLevelMeta } from "@/lib/roadmapLevel";
 import { cn } from "@/lib/utils";
 
@@ -119,6 +120,7 @@ export default function EpicBoardCard({
           </button>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <PriorityBadge priority={epic.priority} size="compact" data-testid="epic-board-card-priority" />
           <span data-testid="epic-board-card-progress" className="text-xs text-muted-foreground">
             {epic.progress.doneTasks} of {epic.progress.totalTasks} tasks complete
           </span>

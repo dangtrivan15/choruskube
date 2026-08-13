@@ -13,11 +13,16 @@ export class RoadmapPage {
   readonly epicList: Locator;
   readonly epicItems: Locator;
   readonly readyToStartToggle: Locator;
+  readonly priorityFilter: Locator;
 
   // Epic detail
   readonly epicDetailTitle: Locator;
   readonly epicDetailDescription: Locator;
   readonly epicDetailStatus: Locator;
+  readonly epicDetailPriorityBadge: Locator;
+  readonly epicDetailPrioritySelect: Locator;
+  readonly storyDetailPriorityBadge: Locator;
+  readonly storyDetailPrioritySelect: Locator;
   readonly epicEditButton: Locator;
   readonly epicDeleteButton: Locator;
   readonly newStoryButton: Locator;
@@ -81,10 +86,17 @@ export class RoadmapPage {
     // list, Epic detail, and Story detail views this page object covers; only one is ever
     // mounted at a time since they're separate routes.
     this.readyToStartToggle = page.getByTestId("ready-to-start-toggle");
+    // All/High/Medium/Low segmented filter (PriorityFilter) — rendered on the
+    // Epic list and Epic detail (Story list) toolbars.
+    this.priorityFilter = page.getByTestId("priority-filter");
 
     this.epicDetailTitle = page.getByTestId("epic-detail-title");
     this.epicDetailDescription = page.getByTestId("epic-detail-description");
     this.epicDetailStatus = page.getByTestId("epic-detail-status");
+    this.epicDetailPriorityBadge = page.getByTestId("epic-detail-priority-badge");
+    this.epicDetailPrioritySelect = page.getByTestId("epic-detail-priority-select");
+    this.storyDetailPriorityBadge = page.getByTestId("story-detail-priority-badge");
+    this.storyDetailPrioritySelect = page.getByTestId("story-detail-priority-select");
     this.epicEditButton = page.getByTestId("epic-edit-button");
     this.epicDeleteButton = page.getByTestId("epic-delete-button");
     this.newStoryButton = page.getByTestId("new-story-button");
@@ -165,6 +177,38 @@ export class RoadmapPage {
     const item = this.taskItems.filter({ hasText: title });
     await item.click();
     await expect(this.taskDetailTitle).toContainText(title);
+  }
+
+  /** The priority badge on the Epic row (Roadmap list) titled `title`. */
+  epicItemPriorityBadge(title: string): Locator {
+    return this.epicItems.filter({ hasText: title }).getByTestId("epic-priority-badge");
+  }
+
+  /** The priority badge on the Story row (Epic detail page) titled `title`. */
+  storyItemPriorityBadge(title: string): Locator {
+    return this.storyItems.filter({ hasText: title }).getByTestId("story-item-priority-badge");
+  }
+
+  /** Filter the Epic/Story list by priority via the segmented control ("all" clears it). */
+  async filterByPriority(level: "all" | "high" | "medium" | "low") {
+    await this.priorityFilter.getByTestId(`priority-filter-${level}`).click();
+  }
+
+  /**
+   * Pick a sort option from a `SortDropdown` by its visible label (e.g.
+   * "Priority (High→Low)"). The dropdown has no test id, so it's reached via the
+   * combobox role — pass the specific trigger locator when a view mounts more
+   * than one (Epic detail mounts the Story sort dropdown).
+   */
+  async selectSort(label: string | RegExp, trigger?: Locator) {
+    await (trigger ?? this.page.getByRole("combobox")).click();
+    await this.page.getByRole("option", { name: label }).click();
+  }
+
+  /** Re-prioritize via the inline detail-page PrioritySelect (Base UI Select). */
+  async setPriorityViaSelect(trigger: Locator, level: "high" | "medium" | "low") {
+    await trigger.click();
+    await this.page.getByTestId(`priority-option-${level}`).click();
   }
 
   /** The readiness "Blocked" badge on the Story row (Epic detail page) titled `title`, if present. */

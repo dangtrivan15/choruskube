@@ -8,6 +8,7 @@ import type { TimelineEpicLaneNodeType, TimelineStoryNodeType } from "@/lib/time
 import { riskDisplayOrder } from "@/lib/timelineRisk";
 import ReadinessBadge from "@/components/roadmap/ReadinessBadge";
 import StalledBadge from "@/components/roadmap/StalledBadge";
+import PriorityBadge from "@/components/roadmap/PriorityBadge";
 import RoadmapTimelineItemPreview from "@/components/roadmap/RoadmapTimelineItemPreview";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 
@@ -78,6 +79,7 @@ function EpicLaneNode({ data }: NodeProps<TimelineEpicLaneNodeType>) {
           <Milestone className="size-4" />
         </span>
         <span className="truncate text-sm font-medium">{data.title}</span>
+        <PriorityBadge priority={data.priority} size="compact" data-testid="roadmap-timeline-epic-priority-badge" />
         <ReadinessBadge
           readiness={data.blocked ? "BLOCKED" : null}
           size="compact"
@@ -145,6 +147,7 @@ function StoryNode({ data }: NodeProps<TimelineStoryNodeType>) {
           <BookOpen className="size-3" />
         </span>
         <span className="truncate">{data.title}</span>
+        <PriorityBadge priority={data.priority} size="compact" data-testid="roadmap-timeline-story-priority-badge" />
         <ReadinessBadge
           readiness={data.blocked ? "BLOCKED" : null}
           size="compact"

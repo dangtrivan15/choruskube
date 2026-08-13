@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { useCreateEpic } from "@/hooks/useEpics";
 import SoftwareProjectSelect from "@/components/software-projects/SoftwareProjectSelect";
+import PrioritySelect from "@/components/roadmap/PrioritySelect";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import type { Priority } from "@/lib/types";
 import {
   Dialog,
   DialogContent,
@@ -30,6 +32,9 @@ export default function CreateEpicDialog({ open, onOpenChange }: Props) {
   const [description, setDescription] = useState("");
   const [motivation, setMotivation] = useState("");
   const [softwareProjectId, setSoftwareProjectId] = useState<string>("");
+  // Defaults to "medium" — the same fallback the backend applies when priority
+  // is omitted, made explicit here so the picker always shows a concrete value.
+  const [priority, setPriority] = useState<Priority>("medium");
 
   const createEpic = useCreateEpic();
 
@@ -41,6 +46,7 @@ export default function CreateEpicDialog({ open, onOpenChange }: Props) {
         description: description.trim(),
         motivation: motivation.trim() || null,
         softwareProjectId,
+        priority,
       },
       {
         onSuccess: () => {
@@ -56,6 +62,7 @@ export default function CreateEpicDialog({ open, onOpenChange }: Props) {
     setDescription("");
     setMotivation("");
     setSoftwareProjectId("");
+    setPriority("medium");
     createEpic.reset();
   }
 
@@ -127,6 +134,15 @@ export default function CreateEpicDialog({ open, onOpenChange }: Props) {
               value={softwareProjectId}
               onChange={setSoftwareProjectId}
               testId="create-epic-software-project-select"
+            />
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium">Priority</label>
+            <PrioritySelect
+              value={priority}
+              onChange={setPriority}
+              testId="create-epic-priority-select"
             />
           </div>
         </div>

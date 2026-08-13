@@ -96,6 +96,8 @@ interface InternalNode {
   status: string;
   /** Epics can't participate in a dependency edge, so this is always null for them. */
   readiness: Readiness | null;
+  /** Prioritization level (Epic/Story only). `null` for a Task, which has none. */
+  priority: string | null;
 }
 
 function buildInternalNodes(snapshot: RoadmapGraphSnapshot): InternalNode[] {
@@ -107,6 +109,7 @@ function buildInternalNodes(snapshot: RoadmapGraphSnapshot): InternalNode[] {
       label: snapshot.epic.title,
       status: snapshot.epic.status,
       readiness: null,
+      priority: snapshot.epic.priority,
     },
   ];
   for (const story of snapshot.stories) {
@@ -117,6 +120,7 @@ function buildInternalNodes(snapshot: RoadmapGraphSnapshot): InternalNode[] {
       label: story.title,
       status: story.status,
       readiness: story.readiness,
+      priority: story.priority,
     });
   }
   for (const task of snapshot.tasks) {
@@ -127,6 +131,7 @@ function buildInternalNodes(snapshot: RoadmapGraphSnapshot): InternalNode[] {
       label: task.title,
       status: task.status,
       readiness: task.readiness,
+      priority: null,
     });
   }
   return nodes;
@@ -315,6 +320,7 @@ export default function RoadmapGraph({ snapshot, onNodeSelect }: RoadmapGraphPro
           itemType: n.itemType,
           status: n.status,
           readiness: n.readiness,
+          priority: n.priority,
           childCount: childCounts.get(n.id) ?? 0,
           collapsed: collapsed.has(n.id),
           onToggleCollapse: handleToggleCollapse,

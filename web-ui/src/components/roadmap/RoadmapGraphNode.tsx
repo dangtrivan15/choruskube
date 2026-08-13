@@ -4,6 +4,7 @@ import { ChevronDown, ChevronRight, Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { statusColorTokens } from "@/lib/statusColors";
 import { roadmapLevelMeta } from "@/lib/roadmapLevel";
+import PriorityBadge from "@/components/roadmap/PriorityBadge";
 import type { Readiness } from "@/lib/types";
 
 export type RoadmapItemType = "epic" | "story" | "task";
@@ -19,6 +20,12 @@ export interface RoadmapGraphNodeData {
    * indicator — only an explicit "BLOCKED" does.
    */
   readiness?: Readiness | null;
+  /**
+   * Prioritization level (Epic/Story). Typed loosely and optional: a Task has
+   * none, and a stale/older payload may omit it — `PriorityBadge` renders
+   * nothing for an unknown value rather than crashing.
+   */
+  priority?: string | null;
   /** Direct child count (Stories under an Epic, Tasks under a Story). Undefined/0 for a leaf Task. */
   childCount?: number;
   /** Whether this node's children are currently hidden. Ignored when `childCount` is falsy. */
@@ -111,6 +118,7 @@ function RoadmapGraphNode({ id, data, selected }: NodeProps<RoadmapGraphNodeType
             {data.status.replace(/_/g, " ")}
           </span>
           <div className="flex shrink-0 items-center gap-1">
+            <PriorityBadge priority={data.priority} size="compact" data-testid="roadmap-graph-node-priority" />
             {isBlocked && (
               <span
                 data-testid="roadmap-graph-node-blocked-badge"

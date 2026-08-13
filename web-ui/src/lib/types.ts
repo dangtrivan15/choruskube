@@ -326,6 +326,17 @@ export interface WorkItemProgress {
  */
 export type EpicStage = "backlog" | "in_progress" | "rolled_out";
 
+/**
+ * Prioritization level for an Epic/Story — the lowercase string values the
+ * backend {@code Priority} enum serializes as, matching every other status/enum
+ * union in this file (raw wire strings, not display labels). Set once at create
+ * time (defaulting to {@code "medium"} when omitted) and thereafter moved via
+ * {@code PATCH /{id}/priority} only, mirroring how {@code stage} is edit-immutable
+ * on the full PUT path. Display metadata (label/icon/accent/sort order) lives in
+ * {@code @/lib/priorityMeta}.
+ */
+export type Priority = "low" | "medium" | "high";
+
 export interface EpicResponse {
   id: string;
   title: string;
@@ -333,6 +344,7 @@ export interface EpicResponse {
   motivation: string | null;
   status: "backlog" | "in_progress" | "done";
   stage: EpicStage;
+  priority: Priority;
   progress: WorkItemProgress;
   softwareProject: SoftwareProjectRef;
   repos: RepoRef[];
@@ -350,11 +362,37 @@ export interface EpicStageUpdateRequest {
   stage: EpicStage;
 }
 
+/**
+ * Create-only (POST) request body for an Epic — mirrors the backend split of
+ * the old shared request into a create shape (carries {@code priority}) and an
+ * edit shape ({@link EpicUpdateRequest}, which does not). {@code priority} is
+ * optional here: an absent value defaults to {@code "medium"} server-side.
+ */
 export interface EpicRequest {
   title: string;
   description: string;
   motivation: string | null;
   softwareProjectId: string;
+  priority?: Priority;
+}
+
+/**
+ * Full PUT edit body for an Epic — the pre-existing editable fields only,
+ * structurally omitting {@code priority} to mirror the backend
+ * {@code EpicUpdateRequest}. Priority is not editable through the full PUT; it
+ * is moved via {@code PATCH /epics/{id}/priority} ({@link EpicPriorityUpdateRequest})
+ * instead, exactly like {@code stage}.
+ */
+export interface EpicUpdateRequest {
+  title: string;
+  description: string;
+  motivation: string | null;
+  softwareProjectId: string;
+}
+
+/** PATCH /epics/{id}/priority body — mirrors the backend EpicPriorityUpdateRequest. */
+export interface EpicPriorityUpdateRequest {
+  priority: Priority;
 }
 
 /**
@@ -384,6 +422,7 @@ export interface StoryResponse {
   description: string;
   status: "backlog" | "in_progress" | "done";
   stage: StoryStage;
+  priority: Priority;
   readiness: Readiness | null;
   progress: WorkItemProgress;
   createdAt: string;
@@ -394,9 +433,31 @@ export interface StoryStageUpdateRequest {
   stage: StoryStage;
 }
 
+/**
+ * Create-only (POST) request body for a Story — mirrors the backend split.
+ * {@code priority} is optional; an absent value defaults to {@code "medium"}
+ * server-side.
+ */
 export interface StoryRequest {
   title: string;
   description: string;
+  priority?: Priority;
+}
+
+/**
+ * Full PUT edit body for a Story — the pre-existing editable fields only,
+ * structurally omitting {@code priority} to mirror the backend
+ * {@code StoryUpdateRequest}. Priority is moved via {@code PATCH
+ * /stories/{id}/priority} ({@link StoryPriorityUpdateRequest}) instead.
+ */
+export interface StoryUpdateRequest {
+  title: string;
+  description: string;
+}
+
+/** PATCH /stories/{id}/priority body — mirrors the backend StoryPriorityUpdateRequest. */
+export interface StoryPriorityUpdateRequest {
+  priority: Priority;
 }
 
 export interface TaskResponse {
@@ -519,6 +580,7 @@ export interface TimelineStorySummary {
   epicId: string;
   title: string;
   stage: StoryStage;
+  priority: Priority;
   createdAt: string;
   updatedAt: string;
   readiness: Readiness;
@@ -538,6 +600,7 @@ export interface TimelineEpicSummary {
   id: string;
   title: string;
   stage: EpicStage;
+  priority: Priority;
   createdAt: string;
   updatedAt: string;
   stories: TimelineStorySummary[];

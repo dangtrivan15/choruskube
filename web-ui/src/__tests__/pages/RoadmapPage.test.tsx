@@ -37,6 +37,7 @@ function makeEpic(overrides: Partial<EpicResponse> = {}): EpicResponse {
     motivation: null,
     status: "backlog",
     stage: "backlog",
+    priority: "medium",
     progress: { totalTasks: 0, doneTasks: 0 },
     softwareProject: { id: "r1", type: "git_repo", name: "backend-api" },
     repos: [],
@@ -149,6 +150,46 @@ describe("RoadmapPage", () => {
 
     const lastCall = mockUseEpics.mock.calls[mockUseEpics.mock.calls.length - 1];
     expect(lastCall?.[2]).toBe(false);
+  });
+
+  // --- Priority sort & filter ---
+
+  it("selecting the priority sort option issues sort=priority,desc via the pagination arg", async () => {
+    mockUseEpics.mockReturnValue({ data: emptyPage, isLoading: false });
+    renderWithProviders(<RoadmapPage />);
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+
+    // The only Select on the page is the SortDropdown (the create dialog is closed).
+    await user.click(screen.getByRole("combobox"));
+    await user.click(screen.getByText(/Priority \(High/));
+
+    const lastCall = mockUseEpics.mock.calls[mockUseEpics.mock.calls.length - 1];
+    // pagination is the 2nd positional arg; its sort must be priority,desc.
+    expect(lastCall?.[1]).toMatchObject({ sort: { field: "priority", direction: "desc" } });
+  });
+
+  it("selecting a priority filter threads the level into the query (priority arg)", async () => {
+    mockUseEpics.mockReturnValue({ data: emptyPage, isLoading: false });
+    renderWithProviders(<RoadmapPage />);
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+
+    await user.click(screen.getByTestId("priority-filter-high"));
+
+    const lastCall = mockUseEpics.mock.calls[mockUseEpics.mock.calls.length - 1];
+    // priority is the 4th positional arg (after title, pagination, readyOnly).
+    expect(lastCall?.[3]).toBe("high");
+  });
+
+  it("selecting 'All' clears the priority filter", async () => {
+    mockUseEpics.mockReturnValue({ data: emptyPage, isLoading: false });
+    renderWithProviders(<RoadmapPage />);
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+
+    await user.click(screen.getByTestId("priority-filter-low"));
+    await user.click(screen.getByTestId("priority-filter-all"));
+
+    const lastCall = mockUseEpics.mock.calls[mockUseEpics.mock.calls.length - 1];
+    expect(lastCall?.[3]).toBeUndefined();
   });
 
   it("shows filter-specific empty-state copy when the filter yields zero results despite non-empty underlying data", async () => {

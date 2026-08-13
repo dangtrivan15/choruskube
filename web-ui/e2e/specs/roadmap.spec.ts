@@ -231,6 +231,63 @@ test.describe("Roadmap drill-down", () => {
     // uniqueName() title keeps this fixture from colliding with concurrent runs.
   });
 
+  test("set an Epic's priority, then filter and sort the Roadmap list by priority", async ({
+    roadmapPage,
+    api,
+    workerRepo,
+  }) => {
+    // Two Epics at opposite ends of the priority scale (created via API so the
+    // flow under test is the read/filter/sort/re-prioritize path, not create).
+    const highEpic = await api.createEpic({
+      title: uniqueName("E2E Priority High Epic"),
+      description: "desc",
+      softwareProjectId: workerRepo.gitRepo.id,
+      priority: "high",
+    });
+    const lowEpic = await api.createEpic({
+      title: uniqueName("E2E Priority Low Epic"),
+      description: "desc",
+      softwareProjectId: workerRepo.gitRepo.id,
+      priority: "low",
+    });
+
+    await roadmapPage.goto();
+    // Each row surfaces its priority badge.
+    await expect(roadmapPage.epicItemPriorityBadge(highEpic.title)).toHaveText(/High/);
+    await expect(roadmapPage.epicItemPriorityBadge(lowEpic.title)).toHaveText(/Low/);
+
+    // Filter to High-only: the high Epic stays, the low one is hidden.
+    await roadmapPage.filterByPriority("high");
+    await expect(roadmapPage.epicItems.filter({ hasText: highEpic.title })).toBeVisible();
+    await expect(roadmapPage.epicItems.filter({ hasText: lowEpic.title })).toHaveCount(0);
+
+    // Clearing the filter brings the low Epic back.
+    await roadmapPage.filterByPriority("all");
+    await expect(roadmapPage.epicItems.filter({ hasText: lowEpic.title })).toBeVisible();
+
+    // Priority sort (High→Low) issues ?sort=priority,desc — the high Epic must
+    // render above the low one among the two created here.
+    await roadmapPage.selectSort(/Priority \(High/);
+    const highRow = roadmapPage.epicItems.filter({ hasText: highEpic.title });
+    const lowRow = roadmapPage.epicItems.filter({ hasText: lowEpic.title });
+    await expect(highRow).toBeVisible();
+    const highBox = await highRow.boundingBox();
+    const lowBox = await lowRow.boundingBox();
+    if (highBox && lowBox) {
+      expect(highBox.y).toBeLessThan(lowBox.y);
+    }
+
+    // Re-prioritize the low Epic to High via the inline detail-page selector.
+    await roadmapPage.page.goto(`/roadmap/epics/${lowEpic.id}`);
+    await expect(roadmapPage.epicDetailPriorityBadge).toHaveText(/Low/);
+    await roadmapPage.setPriorityViaSelect(roadmapPage.epicDetailPrioritySelect, "high");
+    await expect(roadmapPage.epicDetailPriorityBadge).toHaveText(/High/);
+
+    // Clean up.
+    await api.deleteEpic(highEpic.id);
+    await api.deleteEpic(lowEpic.id);
+  });
+
   test("'Ready to start' filter on the Roadmap list shows only Epics with unblocked work", async ({
     roadmapPage,
     api,
