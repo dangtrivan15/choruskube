@@ -1,6 +1,7 @@
 package com.choruskube.core.dto;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 
@@ -18,6 +19,7 @@ public record EpicResponse(
         String status,
         String stage,
         String priority,
+        LocalDate targetDate,
         Progress progress,
         SoftwareProjectRef softwareProject,
         List<RepoRef> repos,

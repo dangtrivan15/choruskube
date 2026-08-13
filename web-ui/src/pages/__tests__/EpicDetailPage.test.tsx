@@ -29,6 +29,12 @@ vi.mock("@/hooks/useEpics", () => ({
     isError: false,
     reset: vi.fn(),
   }),
+  useUpdateEpicTargetDate: () => ({
+    mutate: vi.fn(),
+    isPending: false,
+    isError: false,
+    reset: vi.fn(),
+  }),
 }));
 
 vi.mock("@/hooks/useStories", () => ({
@@ -73,6 +79,7 @@ function makeEpic(overrides: Partial<EpicResponse> = {}): EpicResponse {
     status: "backlog",
     stage: "backlog",
     priority: "medium",
+    targetDate: null,
     progress: { totalTasks: 2, doneTasks: 1 },
     softwareProject: { id: "r1", type: "git_repo", name: "backend-api" },
     repos: [],
@@ -92,6 +99,7 @@ function makeStory(overrides: Partial<StoryResponse> = {}): StoryResponse {
     status: "backlog",
     stage: "backlog",
     priority: "medium",
+    targetDate: null,
     readiness: null,
     progress: { totalTasks: 1, doneTasks: 0 },
     createdAt: "2026-04-01T00:00:00Z",
@@ -122,6 +130,23 @@ describe("EpicDetailPage", () => {
     mockUseStories.mockReturnValue({ data: [], isLoading: false });
     renderWithProviders(<EpicDetailPage />);
     expect(screen.getByTestId("level-badge-epic")).toHaveTextContent("Epic");
+  });
+
+  it("renders the formatted target date when set", () => {
+    mockUseEpic.mockReturnValue({
+      data: makeEpic({ targetDate: "2026-08-13" }),
+      isLoading: false,
+    });
+    mockUseStories.mockReturnValue({ data: [], isLoading: false });
+    renderWithProviders(<EpicDetailPage />);
+    expect(screen.getByTestId("epic-detail-target-date")).toHaveTextContent("Aug 13, 2026");
+  });
+
+  it("renders the empty state when no target date is set", () => {
+    mockUseEpic.mockReturnValue({ data: makeEpic({ targetDate: null }), isLoading: false });
+    mockUseStories.mockReturnValue({ data: [], isLoading: false });
+    renderWithProviders(<EpicDetailPage />);
+    expect(screen.getByTestId("epic-detail-target-date")).toHaveTextContent("No target date");
   });
 
   it('keeps the "Back to Roadmap" link unchanged', () => {

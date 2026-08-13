@@ -3,6 +3,7 @@ package com.choruskube.core.dto;
 import com.choruskube.core.model.enums.Readiness;
 import jakarta.annotation.Nullable;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.UUID;
 
 /**
@@ -22,6 +23,7 @@ public record StoryResponse(
         String status,
         String stage,
         String priority,
+        LocalDate targetDate,
         @Nullable Readiness readiness,
         EpicResponse.Progress progress,
         Instant createdAt,

@@ -23,6 +23,12 @@ vi.mock("@/hooks/useStories", () => ({
     isError: false,
     reset: vi.fn(),
   }),
+  useUpdateStoryTargetDate: () => ({
+    mutate: vi.fn(),
+    isPending: false,
+    isError: false,
+    reset: vi.fn(),
+  }),
 }));
 
 vi.mock("@/hooks/useTasks", () => ({
@@ -63,6 +69,7 @@ function makeStory(overrides: Partial<StoryResponse> = {}): StoryResponse {
     status: "backlog",
     stage: "backlog",
     priority: "medium",
+    targetDate: null,
     readiness: null,
     progress: { totalTasks: 2, doneTasks: 1 },
     createdAt: "2026-04-01T00:00:00Z",
@@ -106,6 +113,23 @@ describe("StoryDetailPage", () => {
     mockUseTasks.mockReturnValue({ data: [], isLoading: false });
     renderWithProviders(<StoryDetailPage />);
     expect(screen.getByTestId("level-badge-story")).toHaveTextContent("Story");
+  });
+
+  it("renders the formatted target date when set", () => {
+    mockUseStory.mockReturnValue({
+      data: makeStory({ targetDate: "2026-08-13" }),
+      isLoading: false,
+    });
+    mockUseTasks.mockReturnValue({ data: [], isLoading: false });
+    renderWithProviders(<StoryDetailPage />);
+    expect(screen.getByTestId("story-detail-target-date")).toHaveTextContent("Aug 13, 2026");
+  });
+
+  it("renders the empty state when no target date is set", () => {
+    mockUseStory.mockReturnValue({ data: makeStory({ targetDate: null }), isLoading: false });
+    mockUseTasks.mockReturnValue({ data: [], isLoading: false });
+    renderWithProviders(<StoryDetailPage />);
+    expect(screen.getByTestId("story-detail-target-date")).toHaveTextContent("No target date");
   });
 
   it('keeps the "Back to Epic" link unchanged', () => {

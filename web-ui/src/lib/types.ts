@@ -345,6 +345,13 @@ export interface EpicResponse {
   status: "backlog" | "in_progress" | "done";
   stage: EpicStage;
   priority: Priority;
+  /**
+   * Optional calendar due-date, ISO-8601 (`"YYYY-MM-DD"`) — a day, not an instant, so it carries
+   * no time-of-day/timezone component. `null` means "no target". Set/cleared via
+   * {@code PATCH /epics/{id}/target-date} ({@link EpicTargetDateUpdateRequest}), mirroring how
+   * `priority` is moved, not the full PUT.
+   */
+  targetDate: string | null;
   progress: WorkItemProgress;
   softwareProject: SoftwareProjectRef;
   repos: RepoRef[];
@@ -396,6 +403,14 @@ export interface EpicPriorityUpdateRequest {
 }
 
 /**
+ * PATCH /epics/{id}/target-date body — mirrors the backend EpicTargetDateUpdateRequest.
+ * `targetDate: null` (or omitting the field) clears the date; a value sets it.
+ */
+export interface EpicTargetDateUpdateRequest {
+  targetDate: string | null;
+}
+
+/**
  * Dependency-readiness signal for a Story/Task node, populated on the
  * Roadmap Graph View and the flat Story/Task list endpoints (`GET
  * .../stories`, `GET .../tasks`) — computed at read time by walking the full
@@ -423,6 +438,8 @@ export interface StoryResponse {
   status: "backlog" | "in_progress" | "done";
   stage: StoryStage;
   priority: Priority;
+  /** Optional calendar due-date, ISO-8601 (`"YYYY-MM-DD"`) — see `EpicResponse.targetDate`. */
+  targetDate: string | null;
   readiness: Readiness | null;
   progress: WorkItemProgress;
   createdAt: string;
@@ -458,6 +475,14 @@ export interface StoryUpdateRequest {
 /** PATCH /stories/{id}/priority body — mirrors the backend StoryPriorityUpdateRequest. */
 export interface StoryPriorityUpdateRequest {
   priority: Priority;
+}
+
+/**
+ * PATCH /stories/{id}/target-date body — mirrors the backend StoryTargetDateUpdateRequest.
+ * `targetDate: null` (or omitting the field) clears the date; a value sets it.
+ */
+export interface StoryTargetDateUpdateRequest {
+  targetDate: string | null;
 }
 
 export interface TaskResponse {

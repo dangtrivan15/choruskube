@@ -15,11 +15,13 @@ public interface AuditSink {
     String EPIC_DELETED = "epic_deleted";
     String EPIC_STAGE_UPDATED = "epic_stage_updated";
     String EPIC_PRIORITY_UPDATED = "epic_priority_updated";
+    String EPIC_TARGET_DATE_UPDATED = "epic_target_date_updated";
     String STORY_CREATED = "story_created";
     String STORY_UPDATED = "story_updated";
     String STORY_DELETED = "story_deleted";
     String STORY_STAGE_UPDATED = "story_stage_updated";
     String STORY_PRIORITY_UPDATED = "story_priority_updated";
+    String STORY_TARGET_DATE_UPDATED = "story_target_date_updated";
     String TASK_CREATED = "task_created";
     String TASK_UPDATED = "task_updated";
     String TASK_DELETED = "task_deleted";

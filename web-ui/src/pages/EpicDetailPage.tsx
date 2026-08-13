@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router";
 import { formatDistanceToNow } from "date-fns";
 import { ArrowLeft, Pencil, Trash2, Plus, GitBranch, Layers } from "lucide-react";
 import Authorized from "@/components/Authorized";
-import { useEpic, useDeleteEpic, useUpdateEpicPriority } from "@/hooks/useEpics";
+import { useEpic, useDeleteEpic, useUpdateEpicPriority, useUpdateEpicTargetDate } from "@/hooks/useEpics";
 import { useStories } from "@/hooks/useStories";
 import { useRoadmapSubscription } from "@/hooks/useRoadmapSubscription";
 import type { SortParam, Priority } from "@/lib/types";
@@ -29,6 +29,7 @@ import RoadmapReadyToggle from "@/components/roadmap/RoadmapReadyToggle";
 import PriorityBadge from "@/components/roadmap/PriorityBadge";
 import PrioritySelect from "@/components/roadmap/PrioritySelect";
 import PriorityFilter from "@/components/roadmap/PriorityFilter";
+import TargetDateField from "@/components/roadmap/TargetDateField";
 import LevelBadge from "@/components/roadmap/LevelBadge";
 import PageHeader from "@/components/layout/PageHeader";
 import { useNavigate } from "react-router";
@@ -65,6 +66,7 @@ export default function EpicDetailPage() {
   const { data: stories, isLoading: storiesLoading } = useStories(epicId);
   const deleteEpic = useDeleteEpic();
   const updateEpicPriority = useUpdateEpicPriority();
+  const updateEpicTargetDate = useUpdateEpicTargetDate();
 
   const [editOpen, setEditOpen] = useState(false);
   const [createStoryOpen, setCreateStoryOpen] = useState(false);
@@ -133,6 +135,7 @@ export default function EpicDetailPage() {
           <div className="flex flex-wrap items-center gap-2">
             <span data-testid="epic-detail-status">{statusBadge(epic.status)}</span>
             <PriorityBadge priority={epic.priority} data-testid="epic-detail-priority-badge" />
+            <TargetDateField value={epic.targetDate} readOnly testId="epic-detail-target-date" />
             <span data-testid="epic-detail-progress" className="text-sm text-muted-foreground">
               {epic.progress.doneTasks}/{epic.progress.totalTasks} tasks done
             </span>
@@ -149,6 +152,15 @@ export default function EpicDetailPage() {
                 disabled={updateEpicPriority.isPending}
                 onChange={(p) => updateEpicPriority.mutate({ id: epic.id, priority: p })}
                 testId="epic-detail-priority-select"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">Target date</span>
+              <TargetDateField
+                value={epic.targetDate}
+                disabled={updateEpicTargetDate.isPending}
+                onChange={(targetDate) => updateEpicTargetDate.mutate({ id: epic.id, targetDate })}
+                testId="epic-detail-target-date-input"
               />
             </div>
           </Authorized>

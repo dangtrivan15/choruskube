@@ -4,6 +4,7 @@ import com.choruskube.core.dto.EpicPriorityUpdateRequest;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
 import com.choruskube.core.dto.EpicStageUpdateRequest;
+import com.choruskube.core.dto.EpicTargetDateUpdateRequest;
 import com.choruskube.core.dto.EpicUpdateRequest;
 import com.choruskube.core.model.enums.Priority;
 import com.choruskube.core.model.enums.Readiness;
@@ -88,5 +89,12 @@ public class EpicController {
     @PatchMapping("/{id}/priority")
     public EpicResponse updatePriority(@PathVariable UUID id, @Valid @RequestBody EpicPriorityUpdateRequest request) {
         return service.updatePriority(id, request.priority());
+    }
+
+    @PreAuthorize("@orgSecurity.canOperate()")
+    @PatchMapping("/{id}/target-date")
+    public EpicResponse updateTargetDate(
+            @PathVariable UUID id, @Valid @RequestBody EpicTargetDateUpdateRequest request) {
+        return service.updateTargetDate(id, request.targetDate());
     }
 }

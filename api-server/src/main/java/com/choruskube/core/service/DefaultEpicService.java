@@ -30,6 +30,7 @@ import com.choruskube.core.scope.ScopeProvider;
 import com.choruskube.core.specification.LikePatterns;
 import com.choruskube.core.util.RepoNameUtil;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.LocalDate;
 import java.util.*;
 import java.util.stream.Collectors;
 import org.springframework.context.ApplicationEventPublisher;
@@ -324,6 +325,26 @@ public class DefaultEpicService implements EpicService {
         return response;
     }
 
+    @Override
+    @Transactional
+    public EpicResponse updateTargetDate(UUID id, LocalDate targetDate) {
+        Epic epic = findOrThrow(id);
+        authService.checkOrgAccess("epic", id);
+        // Deliberately no hasStartedDescendantTasks(id) guard here: like updateStage/updatePriority,
+        // a target date change must succeed even after descendant Tasks have started. No
+        // value-subset check either — every LocalDate (including null, which clears it) is valid.
+        Map<String, Object> beforeSnapshot = snapshot(epic);
+        epic.setTargetDate(targetDate);
+        epic = repo.save(epic);
+
+        EpicResponse response = toResponse(epic);
+        // Audited like every other roadmap mutation (create/update/delete/stage/priority): target
+        // date is a planning attribute moved in isolation, so its change belongs in the audit trail.
+        auditSink.record(AuditSink.EPIC_TARGET_DATE_UPDATED, "epic", id, detailJson(beforeSnapshot, snapshot(epic)));
+        eventPublisher.publishRoadmapItemChanged("epic", epic.getId(), response.status());
+        return response;
+    }
+
     /**
      * True if any Task under any Story of this Epic has left {@code backlog}. Mirrors the
      * old proposal rule ("can only edit/delete while in backlog") one level down the hierarchy.
@@ -434,6 +455,7 @@ public class DefaultEpicService implements EpicService {
                 rollup.status(),
                 e.getStage().name(),
                 e.getPriority().name(),
+                e.getTargetDate(),
                 new EpicResponse.Progress(rollup.totalTasks(), rollup.doneTasks()),
                 projectRef,
                 repos,
@@ -476,6 +498,7 @@ public class DefaultEpicService implements EpicService {
                 e.getSoftwareProjectId() != null ? e.getSoftwareProjectId().toString() : null);
         snap.put("stage", e.getStage() != null ? e.getStage().name() : null);
         snap.put("priority", e.getPriority() != null ? e.getPriority().name() : null);
+        snap.put("target_date", e.getTargetDate() != null ? e.getTargetDate().toString() : null);
         return snap;
     }
 

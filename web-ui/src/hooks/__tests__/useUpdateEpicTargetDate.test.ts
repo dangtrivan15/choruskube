@@ -14,7 +14,7 @@ vi.mock("@/lib/api", () => ({
 }));
 
 import { api } from "@/lib/api";
-import { useUpdateEpicPriority } from "@/hooks/useEpics";
+import { useUpdateEpicTargetDate } from "@/hooks/useEpics";
 import type { EpicResponse } from "@/lib/types";
 
 const mockApi = api as unknown as {
@@ -41,33 +41,47 @@ function makeEpic(overrides: Partial<EpicResponse> = {}): EpicResponse {
   };
 }
 
-describe("useUpdateEpicPriority", () => {
+describe("useUpdateEpicTargetDate", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("calls PATCH /epics/{id}/priority with the expected body", async () => {
-    mockApi.patch.mockResolvedValueOnce(makeEpic({ priority: "high" }));
+  it("calls PATCH /epics/{id}/target-date with the expected body", async () => {
+    mockApi.patch.mockResolvedValueOnce(makeEpic({ targetDate: "2026-08-13" }));
     const { wrapper } = createTestHookWrapper();
 
-    const { result } = renderHook(() => useUpdateEpicPriority(), { wrapper });
+    const { result } = renderHook(() => useUpdateEpicTargetDate(), { wrapper });
 
-    result.current.mutate({ id: "epic-1", priority: "high" });
+    result.current.mutate({ id: "epic-1", targetDate: "2026-08-13" });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(mockApi.patch).toHaveBeenCalledWith("/epics/epic-1/priority", {
-      priority: "high",
+    expect(mockApi.patch).toHaveBeenCalledWith("/epics/epic-1/target-date", {
+      targetDate: "2026-08-13",
+    });
+  });
+
+  it("calls PATCH /epics/{id}/target-date with null to clear the date", async () => {
+    mockApi.patch.mockResolvedValueOnce(makeEpic({ targetDate: null }));
+    const { wrapper } = createTestHookWrapper();
+
+    const { result } = renderHook(() => useUpdateEpicTargetDate(), { wrapper });
+
+    result.current.mutate({ id: "epic-1", targetDate: null });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockApi.patch).toHaveBeenCalledWith("/epics/epic-1/target-date", {
+      targetDate: null,
     });
   });
 
   it("invalidates the ['epics'] query key on success", async () => {
-    mockApi.patch.mockResolvedValueOnce(makeEpic({ priority: "low" }));
+    mockApi.patch.mockResolvedValueOnce(makeEpic({ targetDate: "2026-08-13" }));
     const { wrapper, queryClient } = createTestHookWrapper();
     const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
 
-    const { result } = renderHook(() => useUpdateEpicPriority(), { wrapper });
+    const { result } = renderHook(() => useUpdateEpicTargetDate(), { wrapper });
 
-    result.current.mutate({ id: "epic-1", priority: "low" });
+    result.current.mutate({ id: "epic-1", targetDate: "2026-08-13" });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["epics"] });
