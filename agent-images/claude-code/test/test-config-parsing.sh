@@ -273,8 +273,11 @@ cat > "$EFFORT_CONFIG" <<'EOF'
 EOF
 # Both streams: the config guards report on stderr, but the JOB_SECRET check is a
 # plain echo on stdout.
+# Unset JOB_SECRET for this invocation regardless of the ambient environment — this test
+# runs inside real agent pods (via :agentScriptTest), which always have JOB_SECRET injected,
+# so without this the anchor never fires there even though the assertion is correct.
 set +e
-EFFORT_OUTPUT=$(bash "$ENTRYPOINT_COPY" 2>&1)
+EFFORT_OUTPUT=$(env -u JOB_SECRET bash "$ENTRYPOINT_COPY" 2>&1)
 set -e
 echo "$EFFORT_OUTPUT" | grep -q "JOB_SECRET environment variable not set" \
   && ok "unknown effort value runs past the effort read" \
