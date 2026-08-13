@@ -27,6 +27,7 @@ import com.choruskube.core.service.StoryService;
 import com.choruskube.core.service.TaskService;
 import com.choruskube.core.service.WorkItemDependencyService;
 import com.choruskube.core.util.RepoNameUtil;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.temporal.client.WorkflowClient;
 import io.temporal.serviceclient.WorkflowServiceStubs;
@@ -43,6 +44,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.annotation.Transactional;
 
 @AutoConfigureMockMvc
@@ -494,13 +496,34 @@ public class EpicControllerTest extends BaseTest {
         Epic highEpic = createEpic(repo, "Sort High");
         epicService.updatePriority(highEpic.getId(), com.choruskube.core.model.enums.Priority.high);
 
-        mockMvc.perform(get("/api/v1/epics").param("sort", "priority,desc").param("size", "100"))
+        // GET /api/v1/epics is global/unscoped, so it can also observe rows committed by
+        // other Epics in the shared test database (e.g. non-@Transactional integration
+        // tests, or any other fixture that outlives its own test) — see
+        // StoryControllerTest#listAllStories_sortedByPriorityDescending_ordersHighToLow for
+        // the full rationale. We can't assert exact ordinal position against a set we don't
+        // fully control; asserting the *relative* order of the two Epics we created still
+        // proves the sort is correct without depending on global isolation.
+        MvcResult result = mockMvc.perform(
+                        get("/api/v1/epics").param("sort", "priority,desc").param("size", "100"))
                 .andExpect(status().isOk())
-                // Ordinal position, not mere presence: the two Epics created above are the only
-                // rows in this @Transactional test's isolated view, so `high` must sort to index 0
-                // and `low` to index 1 under `?sort=priority,desc`.
-                .andExpect(jsonPath("$.content[0].id").value(highEpic.getId().toString()))
-                .andExpect(jsonPath("$.content[1].id").value(lowEpic.getId().toString()));
+                .andReturn();
+
+        JsonNode content =
+                objectMapper.readTree(result.getResponse().getContentAsString()).get("content");
+        int highIndex = -1;
+        int lowIndex = -1;
+        for (int i = 0; i < content.size(); i++) {
+            String id = content.get(i).get("id").asText();
+            if (id.equals(highEpic.getId().toString())) {
+                highIndex = i;
+            } else if (id.equals(lowEpic.getId().toString())) {
+                lowIndex = i;
+            }
+        }
+        org.junit.jupiter.api.Assertions.assertTrue(highIndex >= 0, "high-priority Epic missing from response");
+        org.junit.jupiter.api.Assertions.assertTrue(lowIndex >= 0, "low-priority Epic missing from response");
+        org.junit.jupiter.api.Assertions.assertTrue(
+                highIndex < lowIndex, "expected high-priority Epic to sort before low-priority Epic");
     }
 
     @Test

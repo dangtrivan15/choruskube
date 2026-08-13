@@ -20,6 +20,7 @@ import com.choruskube.core.service.RunEventPublisher;
 import com.choruskube.core.service.TaskService;
 import com.choruskube.core.service.WorkItemDependencyService;
 import com.choruskube.core.util.RepoNameUtil;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.temporal.client.WorkflowClient;
 import io.temporal.serviceclient.WorkflowServiceStubs;
@@ -34,6 +35,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.annotation.Transactional;
 
 @AutoConfigureMockMvc
@@ -422,13 +424,33 @@ public class StoryControllerTest extends BaseTest {
         StoryResponse highStory = makeStory(epic.id(), "Sort High");
         storyService.updatePriority(highStory.id(), com.choruskube.core.model.enums.Priority.high);
 
-        mockMvc.perform(get("/api/v1/stories").param("sort", "priority,desc").param("size", "100"))
+        // GET /api/v1/stories is global/unscoped, so — like listAllTasks_returnsPagedShape
+        // above — it can also observe rows committed by other Stories in the shared test
+        // database (e.g. non-@Transactional integration tests, or any other fixture that
+        // outlives its own test). We can't assert exact ordinal position against a set we
+        // don't fully control; asserting the *relative* order of the two Stories we created
+        // still proves the sort is correct without depending on global isolation.
+        MvcResult result = mockMvc.perform(
+                        get("/api/v1/stories").param("sort", "priority,desc").param("size", "100"))
                 .andExpect(status().isOk())
-                // Ordinal position, not mere presence: the two Stories created above are the only
-                // rows in this @Transactional test's isolated view, so `high` must sort to index 0
-                // and `low` to index 1 under `?sort=priority,desc`.
-                .andExpect(jsonPath("$.content[0].id").value(highStory.id().toString()))
-                .andExpect(jsonPath("$.content[1].id").value(lowStory.id().toString()));
+                .andReturn();
+
+        JsonNode content =
+                objectMapper.readTree(result.getResponse().getContentAsString()).get("content");
+        int highIndex = -1;
+        int lowIndex = -1;
+        for (int i = 0; i < content.size(); i++) {
+            String id = content.get(i).get("id").asText();
+            if (id.equals(highStory.id().toString())) {
+                highIndex = i;
+            } else if (id.equals(lowStory.id().toString())) {
+                lowIndex = i;
+            }
+        }
+        org.junit.jupiter.api.Assertions.assertTrue(highIndex >= 0, "high-priority Story missing from response");
+        org.junit.jupiter.api.Assertions.assertTrue(lowIndex >= 0, "low-priority Story missing from response");
+        org.junit.jupiter.api.Assertions.assertTrue(
+                highIndex < lowIndex, "expected high-priority Story to sort before low-priority Story");
     }
 
     @Test
