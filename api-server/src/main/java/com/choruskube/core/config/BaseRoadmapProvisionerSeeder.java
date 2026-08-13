@@ -128,9 +128,12 @@ public class BaseRoadmapProvisionerSeeder implements ApplicationRunner {
 
             Rules for roadmap_candidates.json:
             - One array element per proposed feature (same features as the markdown).
-            - "repos" and "priority" are reviewer context only (which repos this
-              feature likely touches, and a rough triage signal) — they are not
-              created as roadmap fields, so keep them brief.
+            - "repos" is reviewer context only (which repos this feature likely
+              touches) — it is not created as a roadmap field, so keep it brief.
+            - "priority" (High / Medium / Low) seeds the materialized Epic's
+              initial priority, which the reviewer can re-prioritize afterwards;
+              set it to reflect genuine user impact. Story candidates carry no
+              priority signal today — every materialized Story starts at Medium.
             - At most 8 Stories per Epic, and at most 8 Tasks per Story. If a feature
               needs more, it's a sign it should be split into two candidate Epics
               instead of one deeply nested one.

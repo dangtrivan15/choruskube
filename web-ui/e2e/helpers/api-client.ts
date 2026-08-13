@@ -108,6 +108,7 @@ export interface Epic {
   description: string;
   motivation: string | null;
   status: string;
+  priority: string;
   progress: { totalTasks: number; doneTasks: number };
   softwareProject: SoftwareProjectRef;
   // Single source of truth for the shape — avoids drift with the production type.
@@ -120,6 +121,7 @@ export interface Story {
   title: string;
   description: string;
   status: string;
+  priority: string;
   progress: { totalTasks: number; doneTasks: number };
 }
 
@@ -430,17 +432,25 @@ export class TestApiClient {
     description: string;
     motivation?: string | null;
     softwareProjectId: string;
+    priority?: string;
   }): Promise<Epic> {
     return this.post("/api/v1/epics", {
       title: body.title,
       description: body.description,
       motivation: body.motivation ?? null,
       softwareProjectId: body.softwareProjectId,
+      // Omit when unset so the server applies its "medium" default.
+      ...(body.priority ? { priority: body.priority } : {}),
     });
   }
 
   async deleteEpic(id: string): Promise<void> {
     return this.delete(`/api/v1/epics/${id}`);
+  }
+
+  /** Re-prioritize an Epic via PATCH /epics/{id}/priority (mirrors useUpdateEpicPriority). */
+  async setEpicPriority(id: string, priority: string): Promise<Epic> {
+    return this.patch(`/api/v1/epics/${id}/priority`, { priority });
   }
 
   async listStories(epicId: string): Promise<Story[]> {
@@ -449,9 +459,18 @@ export class TestApiClient {
 
   async createStory(
     epicId: string,
-    body: { title: string; description: string },
+    body: { title: string; description: string; priority?: string },
   ): Promise<Story> {
-    return this.post(`/api/v1/epics/${epicId}/stories`, body);
+    return this.post(`/api/v1/epics/${epicId}/stories`, {
+      title: body.title,
+      description: body.description,
+      ...(body.priority ? { priority: body.priority } : {}),
+    });
+  }
+
+  /** Re-prioritize a Story via PATCH /stories/{id}/priority (mirrors useUpdateStoryPriority). */
+  async setStoryPriority(id: string, priority: string): Promise<Story> {
+    return this.patch(`/api/v1/stories/${id}/priority`, { priority });
   }
 
   async listTasks(storyId: string): Promise<Task[]> {

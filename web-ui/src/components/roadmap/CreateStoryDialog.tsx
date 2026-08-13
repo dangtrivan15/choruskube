@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { useCreateStory } from "@/hooks/useStories";
+import PrioritySelect from "@/components/roadmap/PrioritySelect";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import type { Priority } from "@/lib/types";
 import {
   Dialog,
   DialogContent,
@@ -22,13 +24,15 @@ interface Props {
 export default function CreateStoryDialog({ epicId, open, onOpenChange }: Props) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  // Defaults to "medium", matching the backend's omitted-priority fallback.
+  const [priority, setPriority] = useState<Priority>("medium");
 
   const createStory = useCreateStory(epicId);
 
   function handleCreate() {
     if (!title.trim() || !description.trim()) return;
     createStory.mutate(
-      { title: title.trim(), description: description.trim() },
+      { title: title.trim(), description: description.trim(), priority },
       {
         onSuccess: () => {
           onOpenChange(false);
@@ -41,6 +45,7 @@ export default function CreateStoryDialog({ epicId, open, onOpenChange }: Props)
   function resetForm() {
     setTitle("");
     setDescription("");
+    setPriority("medium");
     createStory.reset();
   }
 
@@ -85,6 +90,15 @@ export default function CreateStoryDialog({ epicId, open, onOpenChange }: Props)
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Detailed description of this story..."
               rows={4}
+            />
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium">Priority</label>
+            <PrioritySelect
+              value={priority}
+              onChange={setPriority}
+              testId="create-story-priority-select"
             />
           </div>
         </div>

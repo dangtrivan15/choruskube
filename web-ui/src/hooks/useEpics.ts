@@ -5,9 +5,12 @@ import { useActivityFeed } from "./useActivityFeed";
 import type {
   EpicResponse,
   EpicRequest,
+  EpicUpdateRequest,
   EpicStageUpdateRequest,
+  EpicPriorityUpdateRequest,
   PageResponse,
   PaginationParams,
+  Priority,
 } from "@/lib/types";
 
 /**
@@ -31,14 +34,25 @@ function boardEpicsQueryKey(readyOnly: boolean = false) {
   return ["epics", { title: undefined, pagination: EPIC_BOARD_PAGINATION, readyOnly }] as const;
 }
 
-export function useEpics(title?: string, pagination?: PaginationParams, readyOnly: boolean = false) {
+export function useEpics(
+  title?: string,
+  pagination?: PaginationParams,
+  readyOnly: boolean = false,
+  priority?: Priority
+) {
   const params: string[] = [];
   if (title) params.push(`title=${encodeURIComponent(title)}`);
   if (readyOnly) params.push("readiness=READY");
+  // Raw value pass-through — mirrors how `useAllStories` threads its `stage`
+  // param, NOT the boolean "READY only" toggle `readyOnly` uses above. Omitting
+  // it (undefined) is dropped from the query key by TanStack's JSON.stringify
+  // hasher, so a caller that never filters by priority (e.g. the Board's
+  // `boardEpicsQueryKey`) still binds to the same cache entry it did before.
+  if (priority) params.push(`priority=${encodeURIComponent(priority)}`);
   const queryString = params.length > 0 ? `?${params.join("&")}` : "";
 
   return useQuery({
-    queryKey: ["epics", { title, pagination, readyOnly }],
+    queryKey: ["epics", { title, pagination, readyOnly, priority }],
     queryFn: () =>
       api.getPage<PageResponse<EpicResponse>>(`/epics${queryString}`, pagination),
     refetchInterval: 15_000,
@@ -73,7 +87,10 @@ export function useUpdateEpic() {
   const queryClient = useQueryClient();
   const { addEntry } = useActivityFeed();
   return useMutation({
-    mutationFn: ({ id, body }: { id: string; body: EpicRequest }) =>
+    // EpicUpdateRequest (not EpicRequest): the full PUT edit carries no
+    // `priority` — that moves via `useUpdateEpicPriority` (PATCH) only, mirroring
+    // how `stage` is edit-immutable on this path and moved via `useUpdateEpicStage`.
+    mutationFn: ({ id, body }: { id: string; body: EpicUpdateRequest }) =>
       api.put<EpicResponse>(`/epics/${id}`, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["epics"] });
@@ -81,6 +98,32 @@ export function useUpdateEpic() {
     },
     onError: () => {
       addEntry(showMutationToast("Failed to update epic", "error"));
+    },
+  });
+}
+
+/**
+ * Re-prioritize an Epic via `PATCH /epics/{id}/priority`, independent of the
+ * content-edit guard on the full PUT edit endpoint — the priority equivalent of
+ * `useUpdateEpicStage`. Invalidates the `["epics"]` query key on success (same
+ * pattern as `useUpdateEpic`) so every Epic list/detail view re-fetches the new
+ * priority; no optimistic update, since the inline detail-page selector is not
+ * a latency-sensitive drag interaction.
+ */
+export function useUpdateEpicPriority() {
+  const queryClient = useQueryClient();
+  const { addEntry } = useActivityFeed();
+  return useMutation({
+    mutationFn: ({ id, priority }: { id: string } & EpicPriorityUpdateRequest) =>
+      api.patch<EpicResponse>(`/epics/${id}/priority`, {
+        priority,
+      } satisfies EpicPriorityUpdateRequest),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["epics"] });
+      addEntry(showMutationToast("Epic priority updated", "success"));
+    },
+    onError: () => {
+      addEntry(showMutationToast("Failed to update epic priority", "error"));
     },
   });
 }

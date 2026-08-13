@@ -17,6 +17,7 @@ public record EpicResponse(
         String motivation,
         String status,
         String stage,
+        String priority,
         Progress progress,
         SoftwareProjectRef softwareProject,
         List<RepoRef> repos,

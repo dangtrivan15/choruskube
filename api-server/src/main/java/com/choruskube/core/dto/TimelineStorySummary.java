@@ -23,6 +23,7 @@ public record TimelineStorySummary(
         UUID epicId,
         String title,
         String stage,
+        String priority,
         Instant createdAt,
         Instant updatedAt,
         Readiness readiness,

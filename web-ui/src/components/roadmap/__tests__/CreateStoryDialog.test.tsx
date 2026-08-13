@@ -56,6 +56,25 @@ describe("CreateStoryDialog", () => {
 
     expect(mockMutate).toHaveBeenCalledTimes(1);
     const [payload] = mockMutate.mock.calls[0];
-    expect(payload).toEqual({ title: "Story title", description: "Story desc" });
+    // Priority defaults to "medium" when the picker is left untouched.
+    expect(payload).toEqual({ title: "Story title", description: "Story desc", priority: "medium" });
+  });
+
+  it("includes the chosen priority in the post body", async () => {
+    renderWithProviders(
+      <CreateStoryDialog epicId="epic-1" open={true} onOpenChange={() => {}} />
+    );
+    const user = userEvent.setup({ pointerEventsCheck: 0, delay: null });
+    await user.type(screen.getByTestId("create-story-title"), "Story title");
+    await user.type(screen.getByTestId("create-story-description"), "Story desc");
+
+    await user.click(screen.getByTestId("create-story-priority-select"));
+    await user.click(screen.getByTestId("priority-option-low"));
+
+    await user.click(screen.getByTestId("create-story-submit"));
+
+    expect(mockMutate).toHaveBeenCalledTimes(1);
+    const [payload] = mockMutate.mock.calls[0];
+    expect(payload.priority).toBe("low");
   });
 });

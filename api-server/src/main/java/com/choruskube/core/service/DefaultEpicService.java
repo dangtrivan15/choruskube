@@ -2,6 +2,7 @@ package com.choruskube.core.service;
 
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
+import com.choruskube.core.dto.EpicUpdateRequest;
 import com.choruskube.core.dto.InternalUpdateEpicRequest;
 import com.choruskube.core.dto.RepoRef;
 import com.choruskube.core.dto.SoftwareProjectRef;
@@ -16,6 +17,7 @@ import com.choruskube.core.model.SoftwareProject;
 import com.choruskube.core.model.Story;
 import com.choruskube.core.model.Task;
 import com.choruskube.core.model.enums.BlockableItemType;
+import com.choruskube.core.model.enums.Priority;
 import com.choruskube.core.model.enums.Readiness;
 import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.observability.AuditDetail;
@@ -120,16 +122,21 @@ public class DefaultEpicService implements EpicService {
         epic.setDescription(request.description());
         epic.setMotivation(request.motivation());
         epic.setSoftwareProjectId(project.getId());
+        // Create-time priority: absent (null) defaults to medium, mirroring the DB column default.
+        epic.setPriority(request.priority() != null ? request.priority() : Priority.medium);
         return repo.save(epic);
     }
 
     @Override
     @Transactional(readOnly = true)
-    public Page<EpicResponse> list(String title, Readiness readiness, Pageable pageable) {
+    public Page<EpicResponse> list(String title, Readiness readiness, Priority priority, Pageable pageable) {
         Specification<Epic> spec = scopeProvider.scope(Epic.class);
         if (title != null && !title.isBlank()) {
             String pattern = LikePatterns.containsIgnoreCase(title);
             spec = spec.and((root, query, cb) -> cb.like(cb.lower(root.get("title")), pattern));
+        }
+        if (priority != null) {
+            spec = spec.and((root, query, cb) -> cb.equal(root.get("priority"), priority));
         }
         if (readiness == null) {
             // Pre-feature path, unchanged: SQL-level pagination. readyItemCount is still populated
@@ -165,7 +172,7 @@ public class DefaultEpicService implements EpicService {
 
     @Override
     @Transactional
-    public EpicResponse update(UUID id, EpicRequest request) {
+    public EpicResponse update(UUID id, EpicUpdateRequest request) {
         Epic epic = findOrThrow(id);
         authService.checkOrgAccess("epic", id);
         if (hasStartedDescendantTasks(id)) {
@@ -297,6 +304,26 @@ public class DefaultEpicService implements EpicService {
         return response;
     }
 
+    @Override
+    @Transactional
+    public EpicResponse updatePriority(UUID id, Priority priority) {
+        Epic epic = findOrThrow(id);
+        authService.checkOrgAccess("epic", id);
+        // Deliberately no hasStartedDescendantTasks(id) guard here: like updateStage, a priority
+        // change must succeed even after descendant Tasks have started. Every Priority enum value
+        // is valid (unlike board stages, which exclude `done`), so there is no value-subset check.
+        Map<String, Object> beforeSnapshot = snapshot(epic);
+        epic.setPriority(priority);
+        epic = repo.save(epic);
+
+        EpicResponse response = toResponse(epic);
+        // Audited like every other roadmap mutation (create/update/delete/stage): priority is a
+        // planning attribute moved in isolation, so its change belongs in the audit trail too.
+        auditSink.record(AuditSink.EPIC_PRIORITY_UPDATED, "epic", id, detailJson(beforeSnapshot, snapshot(epic)));
+        eventPublisher.publishRoadmapItemChanged("epic", epic.getId(), response.status());
+        return response;
+    }
+
     /**
      * True if any Task under any Story of this Epic has left {@code backlog}. Mirrors the
      * old proposal rule ("can only edit/delete while in backlog") one level down the hierarchy.
@@ -406,6 +433,7 @@ public class DefaultEpicService implements EpicService {
                 e.getMotivation(),
                 rollup.status(),
                 e.getStage().name(),
+                e.getPriority().name(),
                 new EpicResponse.Progress(rollup.totalTasks(), rollup.doneTasks()),
                 projectRef,
                 repos,
@@ -447,6 +475,7 @@ public class DefaultEpicService implements EpicService {
                 "software_project_id",
                 e.getSoftwareProjectId() != null ? e.getSoftwareProjectId().toString() : null);
         snap.put("stage", e.getStage() != null ? e.getStage().name() : null);
+        snap.put("priority", e.getPriority() != null ? e.getPriority().name() : null);
         return snap;
     }
 

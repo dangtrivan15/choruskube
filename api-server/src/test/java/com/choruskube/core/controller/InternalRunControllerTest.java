@@ -269,6 +269,68 @@ public class InternalRunControllerTest extends BaseTest {
     }
 
     @Test
+    void createFeatureProposal_withPriority_returns201_andCarriesIt() throws Exception {
+        NodeExecution exec = new NodeExecution();
+        exec.setWorkflowRunId(run.getId());
+        exec.setTemplateNodeId(templateNode.getId());
+        exec.setGraphVersion(1);
+        exec = execRepo.save(exec);
+
+        Map<String, Object> body = Map.of(
+                "title", "Add dark mode",
+                "description", "Users want a dark mode option",
+                "priority", "high");
+
+        mockMvc.perform(post("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId()
+                                + "/feature-proposals")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.title").value("Add dark mode"))
+                .andExpect(jsonPath("$.priority").value("high"));
+    }
+
+    @Test
+    void createFeatureProposal_withoutPriority_defaultsToMedium() throws Exception {
+        NodeExecution exec = new NodeExecution();
+        exec.setWorkflowRunId(run.getId());
+        exec.setTemplateNodeId(templateNode.getId());
+        exec.setGraphVersion(1);
+        exec = execRepo.save(exec);
+
+        Map<String, Object> body = Map.of(
+                "title", "Add dark mode",
+                "description", "Users want a dark mode option");
+
+        mockMvc.perform(post("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId()
+                                + "/feature-proposals")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.priority").value("medium"));
+    }
+
+    @Test
+    void createFeatureProposal_invalidPriority_returns400() throws Exception {
+        NodeExecution exec = new NodeExecution();
+        exec.setWorkflowRunId(run.getId());
+        exec.setTemplateNodeId(templateNode.getId());
+        exec.setGraphVersion(1);
+        exec = execRepo.save(exec);
+
+        Map<String, Object> body = Map.of(
+                "title", "Add dark mode",
+                "description", "Users want a dark mode option",
+                "priority", "urgent");
+
+        mockMvc.perform(post("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId()
+                                + "/feature-proposals")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     void listFeatureProposals_returnsEmptyArray() throws Exception {
         NodeExecution exec = new NodeExecution();
         exec.setWorkflowRunId(run.getId());
@@ -423,6 +485,38 @@ public class InternalRunControllerTest extends BaseTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.epicId").value(epicId))
                 .andExpect(jsonPath("$.title").value("Agent-created story"));
+    }
+
+    @Test
+    void createStory_withPriority_returns201_andCarriesIt() throws Exception {
+        NodeExecution exec = new NodeExecution();
+        exec.setWorkflowRunId(run.getId());
+        exec.setTemplateNodeId(templateNode.getId());
+        exec.setGraphVersion(1);
+        exec = execRepo.save(exec);
+
+        String createEpicResponse = mockMvc.perform(post("/internal/runs/" + run.getId() + "/node-executions/"
+                                + exec.getId() + "/feature-proposals")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                Map.of("title", "Epic for story", "description", "desc"))))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        String epicId = objectMapper.readTree(createEpicResponse).get("id").asText();
+
+        Map<String, Object> body =
+                Map.of("title", "Agent-created story", "description", "Story description", "priority", "low");
+
+        mockMvc.perform(post("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId()
+                                + "/feature-proposals/" + epicId + "/stories")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.epicId").value(epicId))
+                .andExpect(jsonPath("$.title").value("Agent-created story"))
+                .andExpect(jsonPath("$.priority").value("low"));
     }
 
     @Test

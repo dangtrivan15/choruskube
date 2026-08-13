@@ -51,6 +51,7 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.annotation.Transactional;
 
 @AutoConfigureMockMvc
+@Transactional
 public class RunControllerTest extends BaseTest {
 
     @Autowired
@@ -469,7 +470,6 @@ public class RunControllerTest extends BaseTest {
     }
 
     @Test
-    @Transactional
     void getRun_decisionOptionsMatchPendingGatesForPlainEdgeGate() throws Exception {
         GraphTemplate template = createTemplate("Plain Edge Gate Template", "plain-edge-gate-template");
         NodeDefinition nodeDef = createHumanGateNodeDefinition("plain-edge-gate");
@@ -507,7 +507,6 @@ public class RunControllerTest extends BaseTest {
     }
 
     @Test
-    @Transactional
     void getRun_decisionOptionsMatchPendingGatesForTerminalDecisionGate() throws Exception {
         GraphTemplate template = createTemplate("Terminal Decision Gate Template", "terminal-decision-gate-template");
         NodeDefinition nodeDef = createHumanGateNodeDefinition("terminal-decision-gate");

@@ -1,6 +1,7 @@
 package com.choruskube.core.controller;
 
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -20,6 +21,7 @@ import com.choruskube.core.service.RunEventPublisher;
 import com.choruskube.core.service.TaskService;
 import com.choruskube.core.service.WorkItemDependencyService;
 import com.choruskube.core.util.RepoNameUtil;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.temporal.client.WorkflowClient;
 import io.temporal.serviceclient.WorkflowServiceStubs;
@@ -34,6 +36,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.annotation.Transactional;
 
 @AutoConfigureMockMvc
@@ -336,6 +339,148 @@ public class StoryControllerTest extends BaseTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("stage", "in_progress"))))
                 .andExpect(status().isForbidden());
+    }
+
+    // --- priority field ---
+
+    @Test
+    void createStory_withPriority_returns201WithPriority() throws Exception {
+        EpicResponse epic = makeEpic("https://github.com/test/story-priority-create.git");
+
+        var body = Map.of("title", "Story title", "description", "Story desc", "priority", "high");
+
+        mockMvc.perform(post("/api/v1/epics/" + epic.id() + "/stories")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.priority").value("high"));
+    }
+
+    @Test
+    void createStory_withoutPriority_defaultsToMedium() throws Exception {
+        EpicResponse epic = makeEpic("https://github.com/test/story-priority-default.git");
+
+        var body = Map.of("title", "Story title", "description", "Story desc");
+
+        mockMvc.perform(post("/api/v1/epics/" + epic.id() + "/stories")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.priority").value("medium"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"low", "medium", "high"})
+    void updatePriority_withValidPriority_returns200WithUpdatedPriority(String priority) throws Exception {
+        EpicResponse epic = makeEpic("https://github.com/test/story-priority-" + priority + ".git");
+        StoryResponse story = makeStory(epic.id(), "Priority Story " + priority);
+
+        mockMvc.perform(patch("/api/v1/stories/" + story.id() + "/priority")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("priority", priority))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.priority").value(priority));
+    }
+
+    @Test
+    void updatePriority_withSyntacticallyUnknownPriority_returns400() throws Exception {
+        EpicResponse epic = makeEpic("https://github.com/test/story-priority-unknown.git");
+        StoryResponse story = makeStory(epic.id(), "Priority Story Unknown");
+
+        mockMvc.perform(patch("/api/v1/stories/" + story.id() + "/priority")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("priority", "not_a_real_priority"))))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void updatePriority_onNonexistentStory_returns404() throws Exception {
+        mockMvc.perform(patch("/api/v1/stories/" + UUID.randomUUID() + "/priority")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("priority", "high"))))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void listAllStories_filteredByPriority_returnsOnlyMatching() throws Exception {
+        EpicResponse epic = makeEpic("https://github.com/test/story-priority-filter.git");
+        StoryResponse highStory = makeStory(epic.id(), "High Priority Story");
+        storyService.updatePriority(highStory.id(), com.choruskube.core.model.enums.Priority.high);
+        StoryResponse lowStory = makeStory(epic.id(), "Low Priority Story");
+        storyService.updatePriority(lowStory.id(), com.choruskube.core.model.enums.Priority.low);
+
+        mockMvc.perform(get("/api/v1/stories").param("priority", "high"))
+                .andExpect(status().isOk())
+                .andExpect(
+                        jsonPath("$.content[?(@.id=='" + highStory.id() + "')]").exists())
+                .andExpect(
+                        jsonPath("$.content[?(@.id=='" + lowStory.id() + "')]").doesNotExist());
+    }
+
+    @Test
+    void listAllStories_sortedByPriorityDescending_ordersHighToLow() throws Exception {
+        EpicResponse epic = makeEpic("https://github.com/test/story-priority-sort.git");
+        StoryResponse lowStory = makeStory(epic.id(), "Sort Low");
+        storyService.updatePriority(lowStory.id(), com.choruskube.core.model.enums.Priority.low);
+        StoryResponse highStory = makeStory(epic.id(), "Sort High");
+        storyService.updatePriority(highStory.id(), com.choruskube.core.model.enums.Priority.high);
+
+        // GET /api/v1/stories is global/unscoped, so — like listAllTasks_returnsPagedShape
+        // above — it can also observe rows committed by other Stories in the shared test
+        // database (e.g. non-@Transactional integration tests, or any other fixture that
+        // outlives its own test). We can't assert exact ordinal position against a set we
+        // don't fully control; asserting the *relative* order of the two Stories we created
+        // still proves the sort is correct without depending on global isolation.
+        MvcResult result = mockMvc.perform(
+                        get("/api/v1/stories").param("sort", "priority,desc").param("size", "100"))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        JsonNode content =
+                objectMapper.readTree(result.getResponse().getContentAsString()).get("content");
+        int highIndex = -1;
+        int lowIndex = -1;
+        for (int i = 0; i < content.size(); i++) {
+            String id = content.get(i).get("id").asText();
+            if (id.equals(highStory.id().toString())) {
+                highIndex = i;
+            } else if (id.equals(lowStory.id().toString())) {
+                lowIndex = i;
+            }
+        }
+        assertTrue(highIndex >= 0, "high-priority Story missing from response");
+        assertTrue(lowIndex >= 0, "low-priority Story missing from response");
+        assertTrue(highIndex < lowIndex, "expected high-priority Story to sort before low-priority Story");
+    }
+
+    @Test
+    void updatePriority_belowCanOperatePermission_returns403() throws Exception {
+        when(orgSecurity.canOperate()).thenReturn(false);
+
+        EpicResponse epic = makeEpic("https://github.com/test/story-priority-forbidden.git");
+        StoryResponse story = makeStory(epic.id(), "Priority Story Forbidden");
+
+        mockMvc.perform(patch("/api/v1/stories/" + story.id() + "/priority")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("priority", "high"))))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void updateStory_withStoryUpdateRequestBody_leavesPriorityUnchanged() throws Exception {
+        // The full PUT edit body (StoryUpdateRequest) carries no `priority` key at all — confirm the
+        // stored priority survives a PUT untouched, mirroring how `stage` is edit-immutable there.
+        EpicResponse epic = makeEpic("https://github.com/test/story-priority-put-noop.git");
+        StoryResponse story = makeStory(epic.id(), "Priority Put Noop");
+        storyService.updatePriority(story.id(), com.choruskube.core.model.enums.Priority.high);
+
+        var body = Map.of("title", "New Title", "description", "New Desc");
+
+        mockMvc.perform(put("/api/v1/stories/" + story.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.priority").value("high"));
     }
 
     // --- helpers ---

@@ -37,6 +37,7 @@ function makeEpic(overrides: Partial<EpicResponse> = {}): EpicResponse {
     motivation: null,
     status: "backlog",
     stage: "backlog",
+    priority: "medium",
     progress: { totalTasks: 0, doneTasks: 0 },
     softwareProject: { id: "r1", type: "git_repo", name: "backend-api" },
     repos: [],
@@ -151,6 +152,46 @@ describe("RoadmapPage", () => {
     expect(lastCall?.[2]).toBe(false);
   });
 
+  // --- Priority sort & filter ---
+
+  it("selecting the priority sort option issues sort=priority,desc via the pagination arg", async () => {
+    mockUseEpics.mockReturnValue({ data: emptyPage, isLoading: false });
+    renderWithProviders(<RoadmapPage />);
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+
+    // The only Select on the page is the SortDropdown (the create dialog is closed).
+    await user.click(screen.getByRole("combobox"));
+    await user.click(screen.getByText(/Priority \(High/));
+
+    const lastCall = mockUseEpics.mock.calls[mockUseEpics.mock.calls.length - 1];
+    // pagination is the 2nd positional arg; its sort must be priority,desc.
+    expect(lastCall?.[1]).toMatchObject({ sort: { field: "priority", direction: "desc" } });
+  });
+
+  it("selecting a priority filter threads the level into the query (priority arg)", async () => {
+    mockUseEpics.mockReturnValue({ data: emptyPage, isLoading: false });
+    renderWithProviders(<RoadmapPage />);
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+
+    await user.click(screen.getByTestId("priority-filter-high"));
+
+    const lastCall = mockUseEpics.mock.calls[mockUseEpics.mock.calls.length - 1];
+    // priority is the 4th positional arg (after title, pagination, readyOnly).
+    expect(lastCall?.[3]).toBe("high");
+  });
+
+  it("selecting 'All' clears the priority filter", async () => {
+    mockUseEpics.mockReturnValue({ data: emptyPage, isLoading: false });
+    renderWithProviders(<RoadmapPage />);
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+
+    await user.click(screen.getByTestId("priority-filter-low"));
+    await user.click(screen.getByTestId("priority-filter-all"));
+
+    const lastCall = mockUseEpics.mock.calls[mockUseEpics.mock.calls.length - 1];
+    expect(lastCall?.[3]).toBeUndefined();
+  });
+
   it("shows filter-specific empty-state copy when the filter yields zero results despite non-empty underlying data", async () => {
     mockUseEpics.mockImplementation((_title?: string, _pagination?: unknown, readyOnly?: boolean) =>
       readyOnly
@@ -168,5 +209,43 @@ describe("RoadmapPage", () => {
     await user.click(screen.getByTestId("ready-to-start-toggle"));
 
     expect(screen.getByText(/No epics currently have ready work/)).toBeInTheDocument();
+  });
+
+  it("shows priority-specific empty-state copy when only the priority filter yields zero results", async () => {
+    mockUseEpics.mockImplementation((_title?: string, _pagination?: unknown, _readyOnly?: boolean, priority?: string) =>
+      priority
+        ? { data: emptyPage, isLoading: false }
+        : {
+            data: { ...emptyPage, content: [makeEpic()], totalElements: 1, empty: false },
+            isLoading: false,
+          }
+    );
+    renderWithProviders(<RoadmapPage />);
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+
+    expect(screen.queryByText(/No epics match the selected priority/)).not.toBeInTheDocument();
+
+    await user.click(screen.getByTestId("priority-filter-high"));
+
+    expect(screen.getByText(/No epics match the selected priority/)).toBeInTheDocument();
+    expect(screen.queryByText(/No epics currently have ready work/)).not.toBeInTheDocument();
+  });
+
+  it("shows combined-filter empty-state copy when both the ready-to-start and priority filters are active", async () => {
+    mockUseEpics.mockImplementation((_title?: string, _pagination?: unknown, readyOnly?: boolean, priority?: string) =>
+      readyOnly && priority
+        ? { data: emptyPage, isLoading: false }
+        : {
+            data: { ...emptyPage, content: [makeEpic()], totalElements: 1, empty: false },
+            isLoading: false,
+          }
+    );
+    renderWithProviders(<RoadmapPage />);
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+
+    await user.click(screen.getByTestId("ready-to-start-toggle"));
+    await user.click(screen.getByTestId("priority-filter-high"));
+
+    expect(screen.getByText(/No epics match the current filters/)).toBeInTheDocument();
   });
 });

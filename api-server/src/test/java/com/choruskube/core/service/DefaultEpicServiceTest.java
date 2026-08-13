@@ -13,6 +13,7 @@ import com.choruskube.core.dto.CreateDependencyRequest;
 import com.choruskube.core.dto.DependencyEdgeResponse;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
+import com.choruskube.core.dto.EpicUpdateRequest;
 import com.choruskube.core.dto.InternalUpdateEpicRequest;
 import com.choruskube.core.dto.StoryRequest;
 import com.choruskube.core.dto.TaskRequest;
@@ -24,6 +25,7 @@ import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.RepoGroup;
 import com.choruskube.core.model.RepoGroupMember;
 import com.choruskube.core.model.Task;
+import com.choruskube.core.model.enums.Priority;
 import com.choruskube.core.model.enums.Readiness;
 import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.observability.AuditSink;
@@ -48,6 +50,7 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -169,7 +172,7 @@ public class DefaultEpicServiceTest extends BaseTest {
 
         EpicResponse created = service.create(new EpicRequest("Orig", "Desc", null, r1.getId()), null);
 
-        EpicResponse updated = service.update(created.id(), new EpicRequest("Orig", "Desc", null, r2.getId()));
+        EpicResponse updated = service.update(created.id(), new EpicUpdateRequest("Orig", "Desc", null, r2.getId()));
 
         assertThat(updated.softwareProject().id()).isEqualTo(r2.getId());
         assertThat(updated.repos()).hasSize(1);
@@ -184,7 +187,7 @@ public class DefaultEpicServiceTest extends BaseTest {
         var task = taskService.create(story.id(), new TaskRequest("T", "D"));
         markTaskInProgress(task.id());
 
-        assertThatThrownBy(() -> service.update(epic.id(), new EpicRequest("New", "D", null, r.getId())))
+        assertThatThrownBy(() -> service.update(epic.id(), new EpicUpdateRequest("New", "D", null, r.getId())))
                 .isInstanceOf(ConflictException.class);
     }
 
@@ -371,7 +374,7 @@ public class DefaultEpicServiceTest extends BaseTest {
     }
 
     private long readyItemCountOf(UUID epicId) {
-        return service.list(null, null, PageRequest.of(0, 100)).getContent().stream()
+        return service.list(null, null, null, PageRequest.of(0, 100)).getContent().stream()
                 .filter(e -> e.id().equals(epicId))
                 .findFirst()
                 .orElseThrow()
@@ -390,7 +393,7 @@ public class DefaultEpicServiceTest extends BaseTest {
         var blockerStory = storyService.create(blockerEpic.id(), new StoryRequest("Blocker", "D"));
         dependencyService.create(new CreateDependencyRequest("story", blockerStory.id(), "story", blockedStory.id()));
 
-        Page<EpicResponse> page = service.list(null, Readiness.READY, PageRequest.of(0, 20));
+        Page<EpicResponse> page = service.list(null, Readiness.READY, null, PageRequest.of(0, 20));
 
         assertThat(page.getContent()).extracting(EpicResponse::id).contains(readyEpic.id());
         assertThat(page.getContent()).extracting(EpicResponse::id).doesNotContain(blockedEpic.id());
@@ -538,6 +541,130 @@ public class DefaultEpicServiceTest extends BaseTest {
         assertThat(after.stage()).isEqualTo("backlog");
         verify(auditSink, never()).record(eq(AuditSink.EPIC_STAGE_UPDATED), any(), any(), any());
         verify(runEventPublisher, never()).publishRoadmapItemChanged(eq("epic"), eq(created.id()), eq("done"));
+    }
+
+    // ── updatePriority: Epic priority field (mirrors updateStage) ─────────────────
+
+    @Test
+    void create_defaultsPriorityToMedium() {
+        GitRepo r = makeRepo("https://github.com/test/priority-default.git");
+
+        EpicResponse created = service.create(new EpicRequest("T", "D", null, r.getId()), null);
+
+        assertThat(created.priority()).isEqualTo("medium");
+    }
+
+    @Test
+    void create_withExplicitPriority_persistsIt() {
+        GitRepo r = makeRepo("https://github.com/test/priority-explicit.git");
+
+        EpicResponse created = service.create(new EpicRequest("T", "D", null, r.getId(), Priority.high), null);
+
+        assertThat(created.priority()).isEqualTo("high");
+    }
+
+    @Test
+    void updatePriority_persistsNewPriority() {
+        GitRepo r = makeRepo("https://github.com/test/priority-persist.git");
+        EpicResponse created = service.create(new EpicRequest("T", "D", null, r.getId()), null);
+
+        EpicResponse updated = service.updatePriority(created.id(), Priority.high);
+
+        assertThat(updated.priority()).isEqualTo("high");
+        EpicResponse refetched = service.get(created.id());
+        assertThat(refetched.priority()).isEqualTo("high");
+    }
+
+    @Test
+    void updatePriority_withStartedDescendantTask_succeeds() {
+        // Proves the "no edit once started" guard used by the full update() edit path does NOT
+        // apply to priority moves — mirrors updateStage_withStartedDescendantTask_succeeds.
+        GitRepo r = makeRepo("https://github.com/test/priority-started-task.git");
+        EpicResponse created = service.create(new EpicRequest("T", "D", null, r.getId()), null);
+        var story = storyService.create(created.id(), new StoryRequest("S", "D"));
+        var task = taskService.create(story.id(), new TaskRequest("T", "D"));
+        markTaskInProgress(task.id());
+
+        EpicResponse updated = service.updatePriority(created.id(), Priority.low);
+
+        assertThat(updated.priority()).isEqualTo("low");
+    }
+
+    @Test
+    void updatePriority_writesAuditEntryWithBeforeAfterPriority() {
+        // Mirrors updateStage_writesAuditEntryWithBeforeAfterStage: a priority move is audited like
+        // every other roadmap mutation, with structurally correct before/after (not just a
+        // `contains` check that would miss a swapped-order bug in detailJson(...)).
+        GitRepo r = makeRepo("https://github.com/test/priority-audit.git");
+        EpicResponse created = service.create(new EpicRequest("T", "D", null, r.getId()), null);
+
+        service.updatePriority(created.id(), Priority.high);
+
+        ArgumentCaptor<String> detailCaptor = ArgumentCaptor.forClass(String.class);
+        verify(auditSink)
+                .record(eq(AuditSink.EPIC_PRIORITY_UPDATED), eq("epic"), eq(created.id()), detailCaptor.capture());
+        JsonNode detail = readTree(detailCaptor.getValue());
+        assertThat(detail.path("before").path("priority").asText()).isEqualTo("medium");
+        assertThat(detail.path("after").path("priority").asText()).isEqualTo("high");
+    }
+
+    @Test
+    void update_leavesPriorityUnchanged() {
+        // The full PUT edit (EpicUpdateRequest) has no priority field, so it must never move it.
+        GitRepo r = makeRepo("https://github.com/test/priority-put-noop.git");
+        EpicResponse created = service.create(new EpicRequest("T", "D", null, r.getId(), Priority.high), null);
+
+        EpicResponse updated = service.update(created.id(), new EpicUpdateRequest("New T", "New D", null, r.getId()));
+
+        assertThat(updated.priority()).isEqualTo("high");
+    }
+
+    @Test
+    void list_filteredByPriority_returnsOnlyMatchingRows() {
+        GitRepo r = makeRepo("https://github.com/test/priority-filter.git");
+        EpicResponse highEpic = service.create(new EpicRequest("High", "D", null, r.getId(), Priority.high), null);
+        EpicResponse lowEpic = service.create(new EpicRequest("Low", "D", null, r.getId(), Priority.low), null);
+
+        Page<EpicResponse> highPage = service.list(null, null, Priority.high, PageRequest.of(0, 20));
+
+        assertThat(highPage.getContent()).extracting(EpicResponse::id).contains(highEpic.id());
+        assertThat(highPage.getContent()).extracting(EpicResponse::id).doesNotContain(lowEpic.id());
+    }
+
+    @Test
+    void list_sortedByPriorityDescending_ordersHighToLow() {
+        GitRepo r = makeRepo("https://github.com/test/priority-sort.git");
+        EpicResponse lowEpic = service.create(new EpicRequest("Low", "D", null, r.getId(), Priority.low), null);
+        EpicResponse highEpic = service.create(new EpicRequest("High", "D", null, r.getId(), Priority.high), null);
+        EpicResponse mediumEpic =
+                service.create(new EpicRequest("Medium", "D", null, r.getId(), Priority.medium), null);
+
+        Page<EpicResponse> page = service.list(
+                null, null, null, PageRequest.of(0, 20, Sort.by("priority").descending()));
+
+        List<UUID> ids = page.getContent().stream().map(EpicResponse::id).toList();
+        assertThat(ids.indexOf(highEpic.id())).isLessThan(ids.indexOf(mediumEpic.id()));
+        assertThat(ids.indexOf(mediumEpic.id())).isLessThan(ids.indexOf(lowEpic.id()));
+    }
+
+    @Test
+    void list_readyFilterWithPrioritySort_stillOrdersHighToLow() {
+        // Proves sort applies through the in-memory (readiness-filtered) pagination path too, not
+        // just the DB-paginated path above.
+        GitRepo r = makeRepo("https://github.com/test/priority-sort-readiness.git");
+        EpicResponse lowEpic = service.create(new EpicRequest("Low", "D", null, r.getId(), Priority.low), null);
+        storyService.create(lowEpic.id(), new StoryRequest("S", "D"));
+        EpicResponse highEpic = service.create(new EpicRequest("High", "D", null, r.getId(), Priority.high), null);
+        storyService.create(highEpic.id(), new StoryRequest("S", "D"));
+
+        Page<EpicResponse> page = service.list(
+                null,
+                Readiness.READY,
+                null,
+                PageRequest.of(0, 20, Sort.by("priority").descending()));
+
+        List<UUID> ids = page.getContent().stream().map(EpicResponse::id).toList();
+        assertThat(ids.indexOf(highEpic.id())).isLessThan(ids.indexOf(lowEpic.id()));
     }
 
     private void markTaskInProgress(UUID taskId) {

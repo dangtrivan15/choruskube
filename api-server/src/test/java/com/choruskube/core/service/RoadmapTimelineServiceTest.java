@@ -132,6 +132,20 @@ public class RoadmapTimelineServiceTest extends BaseTest {
     }
 
     @Test
+    void getTimeline_epicAndStoryCarryPriority() {
+        EpicResponse epic = makeEpic("https://github.com/test/timeline-priority.git");
+        epicService.updatePriority(epic.id(), com.choruskube.core.model.enums.Priority.high);
+        StoryResponse story = makeStory(epic.id(), "Priority Story");
+        storyService.updatePriority(story.id(), com.choruskube.core.model.enums.Priority.low);
+
+        RoadmapTimelineResponse response = timelineService.getTimeline();
+
+        TimelineEpicSummary summary = summaryFor(response, epic.id());
+        assertThat(summary.priority()).isEqualTo("high");
+        assertThat(summary.stories()).extracting(TimelineStorySummary::priority).containsExactly("low");
+    }
+
+    @Test
     void getTimeline_ordersEpicsAndTheirStoriesAscendingByCreatedAt() throws InterruptedException {
         // Deliberately created out of title order so a pass here can't be explained by DB default
         // (insertion/PK) order coinciding with the assertion — only the service's explicit

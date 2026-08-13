@@ -2,7 +2,9 @@ package com.choruskube.core.service;
 
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
+import com.choruskube.core.dto.EpicUpdateRequest;
 import com.choruskube.core.dto.InternalUpdateEpicRequest;
+import com.choruskube.core.model.enums.Priority;
 import com.choruskube.core.model.enums.Readiness;
 import com.choruskube.core.model.enums.WorkItemStatus;
 import java.util.List;
@@ -30,13 +32,14 @@ public interface EpicService {
      * pagination); {@code readiness == Readiness.READY} switches to an in-memory-paginated path
      * (Decision 3) since {@code readyItemCount} is not a stored column. Every returned {@link
      * EpicResponse} carries {@code readyItemCount} regardless of whether the filter is active
-     * (Decision 2).
+     * (Decision 2). A non-null {@code priority} additionally narrows the result to Epics with that
+     * priority (a plain persisted-column predicate, applied in both the DB and readiness paths).
      */
-    Page<EpicResponse> list(String title, Readiness readiness, Pageable pageable);
+    Page<EpicResponse> list(String title, Readiness readiness, Priority priority, Pageable pageable);
 
     EpicResponse get(UUID id);
 
-    EpicResponse update(UUID id, EpicRequest request);
+    EpicResponse update(UUID id, EpicUpdateRequest request);
 
     void delete(UUID id);
 
@@ -64,4 +67,10 @@ public interface EpicService {
      * started.
      */
     EpicResponse updateStage(UUID id, WorkItemStatus stage);
+
+    /**
+     * Sets an Epic's priority. Exempt from the "no edit once started" guard that {@link #update}
+     * enforces — mirrors {@link #updateStage} exactly, not the full PUT edit.
+     */
+    EpicResponse updatePriority(UUID id, Priority priority);
 }

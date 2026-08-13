@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { ArrowLeft, Trash2, Plus } from "lucide-react";
 import Authorized from "@/components/Authorized";
-import { useStory, useDeleteStory } from "@/hooks/useStories";
+import { useStory, useDeleteStory, useUpdateStoryPriority } from "@/hooks/useStories";
 import { useTasks } from "@/hooks/useTasks";
 import { useRoadmapSubscription } from "@/hooks/useRoadmapSubscription";
 import { Badge } from "@/components/ui/badge";
@@ -21,6 +21,8 @@ import {
 import CreateTaskDialog from "@/components/roadmap/CreateTaskDialog";
 import ReadinessBadge from "@/components/roadmap/ReadinessBadge";
 import RoadmapReadyToggle from "@/components/roadmap/RoadmapReadyToggle";
+import PriorityBadge from "@/components/roadmap/PriorityBadge";
+import PrioritySelect from "@/components/roadmap/PrioritySelect";
 import LevelBadge from "@/components/roadmap/LevelBadge";
 import PageHeader from "@/components/layout/PageHeader";
 
@@ -46,6 +48,7 @@ export default function StoryDetailPage() {
   const { data: story, isLoading } = useStory(storyId);
   const { data: tasks, isLoading: tasksLoading } = useTasks(storyId);
   const deleteStory = useDeleteStory(epicId ?? "");
+  const updateStoryPriority = useUpdateStoryPriority();
 
   const [createTaskOpen, setCreateTaskOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -90,10 +93,23 @@ export default function StoryDetailPage() {
           </h2>
           <div className="flex flex-wrap items-center gap-2">
             <span data-testid="story-detail-status">{statusBadge(story.status)}</span>
+            <PriorityBadge priority={story.priority} data-testid="story-detail-priority-badge" />
             <span data-testid="story-detail-progress" className="text-sm text-muted-foreground">
               {story.progress.doneTasks}/{story.progress.totalTasks} tasks done
             </span>
           </div>
+          <Authorized require="canOperate">
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">Priority</span>
+              <PrioritySelect
+                value={story.priority}
+                size="sm"
+                disabled={updateStoryPriority.isPending}
+                onChange={(p) => updateStoryPriority.mutate({ id: story.id, priority: p })}
+                testId="story-detail-priority-select"
+              />
+            </div>
+          </Authorized>
         </div>
       </div>
 

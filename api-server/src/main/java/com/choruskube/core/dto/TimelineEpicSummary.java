@@ -22,6 +22,7 @@ public record TimelineEpicSummary(
         UUID id,
         String title,
         String stage,
+        String priority,
         Instant createdAt,
         Instant updatedAt,
         List<TimelineStorySummary> stories,

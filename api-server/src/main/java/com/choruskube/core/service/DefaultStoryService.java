@@ -3,6 +3,7 @@ package com.choruskube.core.service;
 import com.choruskube.core.dto.EpicResponse;
 import com.choruskube.core.dto.StoryRequest;
 import com.choruskube.core.dto.StoryResponse;
+import com.choruskube.core.dto.StoryUpdateRequest;
 import com.choruskube.core.event.MappableCreated;
 import com.choruskube.core.exception.BadRequestException;
 import com.choruskube.core.exception.ConflictException;
@@ -12,6 +13,7 @@ import com.choruskube.core.model.Epic;
 import com.choruskube.core.model.Story;
 import com.choruskube.core.model.Task;
 import com.choruskube.core.model.enums.BlockableItemType;
+import com.choruskube.core.model.enums.Priority;
 import com.choruskube.core.model.enums.Readiness;
 import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.observability.AuditDetail;
@@ -117,6 +119,8 @@ public class DefaultStoryService implements StoryService {
         story.setEpicId(epicId);
         story.setTitle(request.title());
         story.setDescription(request.description());
+        // Create-time priority: absent (null) defaults to medium, mirroring the DB column default.
+        story.setPriority(request.priority() != null ? request.priority() : Priority.medium);
         return repo.save(story);
     }
 
@@ -141,10 +145,13 @@ public class DefaultStoryService implements StoryService {
 
     @Override
     @Transactional(readOnly = true)
-    public Page<StoryResponse> list(WorkItemStatus stage, Pageable pageable) {
+    public Page<StoryResponse> list(WorkItemStatus stage, Priority priority, Pageable pageable) {
         Specification<Story> spec = scopeProvider.scope(Story.class);
         if (stage != null) {
             spec = spec.and((root, query, cb) -> cb.equal(root.get("stage"), stage));
+        }
+        if (priority != null) {
+            spec = spec.and((root, query, cb) -> cb.equal(root.get("priority"), priority));
         }
         Page<Story> page = repo.findAll(spec, pageable);
         List<StoryResponse> content =
@@ -181,7 +188,7 @@ public class DefaultStoryService implements StoryService {
 
     @Override
     @Transactional
-    public StoryResponse update(UUID id, StoryRequest request) {
+    public StoryResponse update(UUID id, StoryUpdateRequest request) {
         Story story = findOrThrow(id);
         authService.checkOrgAccess("story", id);
         if (hasStartedTasks(id)) {
@@ -243,6 +250,26 @@ public class DefaultStoryService implements StoryService {
         return response;
     }
 
+    @Override
+    @Transactional
+    public StoryResponse updatePriority(UUID id, Priority priority) {
+        Story story = findOrThrow(id);
+        authService.checkOrgAccess("story", id);
+        // Deliberately no hasStartedTasks(id) guard here: like updateStage, a priority change must
+        // succeed even after descendant Tasks have started. Every Priority enum value is valid, so
+        // there is no value-subset check (unlike board stages, which exclude `done`).
+        Map<String, Object> beforeSnapshot = snapshot(story);
+        story.setPriority(priority);
+        story = repo.save(story);
+
+        StoryResponse response = toResponse(story);
+        // Audited like every other roadmap mutation (create/update/delete/stage): priority is a
+        // planning attribute moved in isolation, so its change belongs in the audit trail too.
+        auditSink.record(AuditSink.STORY_PRIORITY_UPDATED, "story", id, detailJson(beforeSnapshot, snapshot(story)));
+        eventPublisher.publishRoadmapItemChanged("story", story.getId(), response.status());
+        return response;
+    }
+
     private boolean hasStartedTasks(UUID storyId) {
         List<Task> tasks = taskRepo.findByStoryIdOrderByCreatedAtDesc(storyId);
         return tasks.stream().anyMatch(t -> t.getStatus() != WorkItemStatus.backlog);
@@ -264,6 +291,7 @@ public class DefaultStoryService implements StoryService {
                 s.getDescription(),
                 rollup.status(),
                 s.getStage().name(),
+                s.getPriority().name(),
                 readiness,
                 new EpicResponse.Progress(rollup.totalTasks(), rollup.doneTasks()),
                 s.getCreatedAt(),
@@ -284,6 +312,7 @@ public class DefaultStoryService implements StoryService {
         snap.put("title", s.getTitle());
         snap.put("description", s.getDescription());
         snap.put("stage", s.getStage() != null ? s.getStage().name() : null);
+        snap.put("priority", s.getPriority() != null ? s.getPriority().name() : null);
         return snap;
     }
 

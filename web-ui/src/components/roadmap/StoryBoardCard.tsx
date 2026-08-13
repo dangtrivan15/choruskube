@@ -6,6 +6,7 @@ import type { StoryResponse } from "@/lib/types";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import ReadinessBadge from "@/components/roadmap/ReadinessBadge";
+import PriorityBadge from "@/components/roadmap/PriorityBadge";
 import { roadmapLevelMeta } from "@/lib/roadmapLevel";
 import { cn } from "@/lib/utils";
 
@@ -81,9 +82,12 @@ export default function StoryBoardCard({ story }: Props) {
             {expanded ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
           </button>
         </div>
-        <span data-testid="story-board-card-progress" className="text-xs text-muted-foreground">
-          {story.progress.doneTasks} of {story.progress.totalTasks} tasks complete
-        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <PriorityBadge priority={story.priority} size="compact" data-testid="story-board-card-priority" />
+          <span data-testid="story-board-card-progress" className="text-xs text-muted-foreground">
+            {story.progress.doneTasks} of {story.progress.totalTasks} tasks complete
+          </span>
+        </div>
       </CardHeader>
 
       {expanded && (

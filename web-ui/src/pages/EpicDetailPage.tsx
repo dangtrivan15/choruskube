@@ -3,14 +3,17 @@ import { Link, useParams } from "react-router";
 import { formatDistanceToNow } from "date-fns";
 import { ArrowLeft, Pencil, Trash2, Plus, GitBranch, Layers } from "lucide-react";
 import Authorized from "@/components/Authorized";
-import { useEpic, useDeleteEpic } from "@/hooks/useEpics";
+import { useEpic, useDeleteEpic, useUpdateEpicPriority } from "@/hooks/useEpics";
 import { useStories } from "@/hooks/useStories";
 import { useRoadmapSubscription } from "@/hooks/useRoadmapSubscription";
+import type { SortParam, Priority } from "@/lib/types";
+import { priorityMeta } from "@/lib/priorityMeta";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import MarkdownViewer from "@/components/ui/MarkdownViewer";
 import TruncatedText from "@/components/ui/TruncatedText";
+import SortDropdown from "@/components/ui/SortDropdown";
 import {
   Dialog,
   DialogContent,
@@ -23,9 +26,21 @@ import EditEpicDialog from "@/components/roadmap/EditEpicDialog";
 import CreateStoryDialog from "@/components/roadmap/CreateStoryDialog";
 import ReadinessBadge from "@/components/roadmap/ReadinessBadge";
 import RoadmapReadyToggle from "@/components/roadmap/RoadmapReadyToggle";
+import PriorityBadge from "@/components/roadmap/PriorityBadge";
+import PrioritySelect from "@/components/roadmap/PrioritySelect";
+import PriorityFilter from "@/components/roadmap/PriorityFilter";
 import LevelBadge from "@/components/roadmap/LevelBadge";
 import PageHeader from "@/components/layout/PageHeader";
 import { useNavigate } from "react-router";
+
+// Client-side Story sort options for the embedded list (the Story list here is
+// fetched whole via useStories, not paginated) — priority only, ranked by
+// priorityMeta's `order`. Mirrors RoadmapPage's server-side priority sort, but
+// applied in-memory since there is no list endpoint call to attach `?sort=` to.
+const STORY_SORT_OPTIONS = [
+  { label: "Priority (High→Low)", field: "priority", direction: "desc" as const },
+  { label: "Priority (Low→High)", field: "priority", direction: "asc" as const },
+];
 
 function statusBadge(status: string) {
   switch (status) {
@@ -49,13 +64,33 @@ export default function EpicDetailPage() {
   const { data: epic, isLoading } = useEpic(epicId);
   const { data: stories, isLoading: storiesLoading } = useStories(epicId);
   const deleteEpic = useDeleteEpic();
+  const updateEpicPriority = useUpdateEpicPriority();
 
   const [editOpen, setEditOpen] = useState(false);
   const [createStoryOpen, setCreateStoryOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [readyOnly, setReadyOnly] = useState(false);
+  const [priorityFilter, setPriorityFilter] = useState<Priority | undefined>(undefined);
+  const [storySort, setStorySort] = useState<SortParam | null>(null);
 
-  const visibleStories = readyOnly ? stories?.filter((s) => s.readiness === "READY") : stories;
+  // Client-side filter + sort over the whole embedded Story list — mirrors the
+  // existing `readyOnly` filter above, chained with the priority filter, then
+  // the priority sort (by priorityMeta's `order`).
+  const visibleStories = (() => {
+    let list = stories;
+    if (!list) return list;
+    if (readyOnly) list = list.filter((s) => s.readiness === "READY");
+    if (priorityFilter) list = list.filter((s) => s.priority === priorityFilter);
+    if (storySort?.field === "priority") {
+      const dir = storySort.direction;
+      list = [...list].sort((a, b) => {
+        const oa = priorityMeta(a.priority)?.order ?? 0;
+        const ob = priorityMeta(b.priority)?.order ?? 0;
+        return dir === "desc" ? ob - oa : oa - ob;
+      });
+    }
+    return list;
+  })();
 
   function handleDelete() {
     if (!epicId) return;
@@ -97,6 +132,7 @@ export default function EpicDetailPage() {
           </h2>
           <div className="flex flex-wrap items-center gap-2">
             <span data-testid="epic-detail-status">{statusBadge(epic.status)}</span>
+            <PriorityBadge priority={epic.priority} data-testid="epic-detail-priority-badge" />
             <span data-testid="epic-detail-progress" className="text-sm text-muted-foreground">
               {epic.progress.doneTasks}/{epic.progress.totalTasks} tasks done
             </span>
@@ -104,6 +140,18 @@ export default function EpicDetailPage() {
               {formatDistanceToNow(new Date(epic.createdAt), { addSuffix: true })}
             </span>
           </div>
+          <Authorized require="canOperate">
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">Priority</span>
+              <PrioritySelect
+                value={epic.priority}
+                size="sm"
+                disabled={updateEpicPriority.isPending}
+                onChange={(p) => updateEpicPriority.mutate({ id: epic.id, priority: p })}
+                testId="epic-detail-priority-select"
+              />
+            </div>
+          </Authorized>
           <div data-testid="epic-software-project" className="flex flex-wrap items-center gap-2">
             <span
               data-testid="epic-software-project-chip"
@@ -165,6 +213,8 @@ export default function EpicDetailPage() {
       <div className="pt-4 border-t">
         <PageHeader title="Stories">
           <RoadmapReadyToggle checked={readyOnly} onChange={setReadyOnly} />
+          <PriorityFilter value={priorityFilter} onChange={setPriorityFilter} />
+          <SortDropdown options={STORY_SORT_OPTIONS} currentSort={storySort} onSort={setStorySort} />
           <Authorized require="canOperate">
             <Button data-testid="new-story-button" size="sm" onClick={() => setCreateStoryOpen(true)}>
               <Plus className="size-4" />
@@ -189,6 +239,7 @@ export default function EpicDetailPage() {
                 </TruncatedText>
                 <div className="mt-1 flex flex-wrap items-center gap-2">
                   {statusBadge(story.status)}
+                  <PriorityBadge priority={story.priority} size="compact" data-testid="story-item-priority-badge" />
                   <ReadinessBadge readiness={story.readiness} data-testid="story-item-readiness-badge" />
                   <span className="text-xs text-muted-foreground">
                     {story.progress.doneTasks}/{story.progress.totalTasks} tasks done
@@ -204,7 +255,16 @@ export default function EpicDetailPage() {
           )}
           {stories && stories.length > 0 && visibleStories?.length === 0 && (
             <div data-testid="story-list-empty" className="p-6 text-center text-muted-foreground text-sm">
-              No stories are ready to start. Try turning off the &ldquo;Ready to start&rdquo; filter.
+              {readyOnly && priorityFilter ? (
+                <>
+                  No stories match the current filters. Try turning off the &ldquo;Ready to start&rdquo; filter or
+                  clearing the priority filter.
+                </>
+              ) : priorityFilter ? (
+                <>No stories match the selected priority. Try clearing the priority filter.</>
+              ) : (
+                <>No stories are ready to start. Try turning off the &ldquo;Ready to start&rdquo; filter.</>
+              )}
             </div>
           )}
         </div>

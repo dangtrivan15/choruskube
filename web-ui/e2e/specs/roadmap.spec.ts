@@ -231,6 +231,71 @@ test.describe("Roadmap drill-down", () => {
     // uniqueName() title keeps this fixture from colliding with concurrent runs.
   });
 
+  test("set an Epic's priority, then filter and sort the Roadmap list by priority", async ({
+    roadmapPage,
+    api,
+    workerRepo,
+  }) => {
+    // Two Epics at opposite ends of the priority scale (created via API so the
+    // flow under test is the read/filter/sort/re-prioritize path, not create).
+    const highEpic = await api.createEpic({
+      title: uniqueName("E2E Priority High Epic"),
+      description: "desc",
+      softwareProjectId: workerRepo.gitRepo.id,
+      priority: "high",
+    });
+    const lowEpic = await api.createEpic({
+      title: uniqueName("E2E Priority Low Epic"),
+      description: "desc",
+      softwareProjectId: workerRepo.gitRepo.id,
+      priority: "low",
+    });
+
+    await roadmapPage.goto();
+    // Each row surfaces its priority badge.
+    await expect(roadmapPage.epicItemPriorityBadge(highEpic.title)).toHaveText(/High/);
+    await expect(roadmapPage.epicItemPriorityBadge(lowEpic.title)).toHaveText(/Low/);
+
+    // Filter to High-only: the high Epic stays, the low one is hidden.
+    await roadmapPage.filterByPriority("high");
+    await expect(roadmapPage.epicItems.filter({ hasText: highEpic.title })).toBeVisible();
+    await expect(roadmapPage.epicItems.filter({ hasText: lowEpic.title })).toHaveCount(0);
+
+    // Clearing the filter brings the low Epic back.
+    await roadmapPage.filterByPriority("all");
+    await expect(roadmapPage.epicItems.filter({ hasText: lowEpic.title })).toBeVisible();
+
+    // Priority sort: this spec is the only one in the whole e2e suite that sets
+    // a non-default `priority` (every other spec's Epics default to "medium"),
+    // so highEpic/lowEpic are each the sole occupant of their tier org-wide.
+    // That makes each one the guaranteed most-extreme row under its tier's sort
+    // direction — first on page 1 — regardless of how many "medium" Epics other
+    // specs or concurrent workers have created, and regardless of where the
+    // *other* tier's Epic happens to land in an unfiltered, paginated list.
+    // (A single cross-tier y-position comparison, as this used to do, breaks as
+    // soon as the org accumulates more than a page of "medium" Epics — the
+    // "low" Epic sorts last org-wide and falls off page 1 long before the "high"
+    // one does, silently no-op'ing the old `if (highBox && lowBox)` guard.)
+
+    // High→Low: the sole "high" Epic must be the very first row on page 1.
+    await roadmapPage.selectSort(/Priority \(High/);
+    await expect(roadmapPage.epicItems.first()).toContainText(highEpic.title);
+
+    // Low→High: the sole "low" Epic must be the very first row on page 1.
+    await roadmapPage.selectSort(/Priority \(Low/);
+    await expect(roadmapPage.epicItems.first()).toContainText(lowEpic.title);
+
+    // Re-prioritize the low Epic to High via the inline detail-page selector.
+    await roadmapPage.page.goto(`/roadmap/epics/${lowEpic.id}`);
+    await expect(roadmapPage.epicDetailPriorityBadge).toHaveText(/Low/);
+    await roadmapPage.setPriorityViaSelect(roadmapPage.epicDetailPrioritySelect, "high");
+    await expect(roadmapPage.epicDetailPriorityBadge).toHaveText(/High/);
+
+    // Clean up.
+    await api.deleteEpic(highEpic.id);
+    await api.deleteEpic(lowEpic.id);
+  });
+
   test("'Ready to start' filter on the Roadmap list shows only Epics with unblocked work", async ({
     roadmapPage,
     api,

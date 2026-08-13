@@ -22,6 +22,8 @@ export interface TimelineEpicLaneNodeData {
   epicId: string;
   title: string;
   stage: string;
+  /** Prioritization level — display-only on the lane header (compact PriorityBadge). */
+  priority: string;
   /** Whether this lane's Epic is the currently-focused item (§3.1/§3.3) — drives highlight styling. */
   isFocused: boolean;
   /** OR-aggregated across this Epic's Stories (plus its own `stalled`, for `stalled`) — see `deriveEpicRisk`. */
@@ -40,6 +42,8 @@ export interface TimelineStoryNodeData {
   epicTitle: string;
   title: string;
   stage: string;
+  /** Prioritization level — display-only on the Story marker (compact PriorityBadge). */
+  priority: string;
   createdAt: string;
   /** Whether this Story is the currently-focused item (§3.1/§3.3) — drives highlight styling. */
   isFocused: boolean;
@@ -120,6 +124,7 @@ export function computeRoadmapTimelineLayout(
         epicId: epic.id,
         title: epic.title,
         stage: epic.stage,
+        priority: epic.priority,
         isFocused: epic.id === focus.epicId,
         blocked: epicRisk.blocked,
         stalled: epicRisk.stalled,
@@ -150,6 +155,7 @@ export function computeRoadmapTimelineLayout(
           epicTitle: epic.title,
           title: story.title,
           stage: story.stage,
+          priority: story.priority,
           createdAt: story.createdAt,
           isFocused: story.id === focus.storyId,
           blocked: storyRisk.blocked,

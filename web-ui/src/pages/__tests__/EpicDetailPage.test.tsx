@@ -23,6 +23,12 @@ vi.mock("@/hooks/useEpics", () => ({
     isError: false,
     reset: vi.fn(),
   }),
+  useUpdateEpicPriority: () => ({
+    mutate: vi.fn(),
+    isPending: false,
+    isError: false,
+    reset: vi.fn(),
+  }),
 }));
 
 vi.mock("@/hooks/useStories", () => ({
@@ -66,6 +72,7 @@ function makeEpic(overrides: Partial<EpicResponse> = {}): EpicResponse {
     motivation: null,
     status: "backlog",
     stage: "backlog",
+    priority: "medium",
     progress: { totalTasks: 2, doneTasks: 1 },
     softwareProject: { id: "r1", type: "git_repo", name: "backend-api" },
     repos: [],
@@ -84,6 +91,7 @@ function makeStory(overrides: Partial<StoryResponse> = {}): StoryResponse {
     description: "desc",
     status: "backlog",
     stage: "backlog",
+    priority: "medium",
     readiness: null,
     progress: { totalTasks: 1, doneTasks: 0 },
     createdAt: "2026-04-01T00:00:00Z",
@@ -212,5 +220,34 @@ describe("EpicDetailPage", () => {
     await user.click(screen.getByTestId("ready-to-start-toggle"));
 
     expect(screen.getByText(/No stories are ready to start/)).toBeInTheDocument();
+  });
+
+  it("shows priority-specific empty-state copy when only the priority filter yields zero results", async () => {
+    mockUseEpic.mockReturnValue({ data: makeEpic(), isLoading: false });
+    mockUseStories.mockReturnValue({ data: [makeStory({ priority: "medium" })], isLoading: false });
+    renderWithProviders(<EpicDetailPage />);
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+
+    expect(screen.queryByText(/No stories match the selected priority/)).not.toBeInTheDocument();
+
+    await user.click(screen.getByTestId("priority-filter-high"));
+
+    expect(screen.getByText(/No stories match the selected priority/)).toBeInTheDocument();
+    expect(screen.queryByText(/No stories are ready to start/)).not.toBeInTheDocument();
+  });
+
+  it("shows combined-filter empty-state copy when both the ready-to-start and priority filters are active", async () => {
+    mockUseEpic.mockReturnValue({ data: makeEpic(), isLoading: false });
+    mockUseStories.mockReturnValue({
+      data: [makeStory({ priority: "medium", readiness: "BLOCKED" })],
+      isLoading: false,
+    });
+    renderWithProviders(<EpicDetailPage />);
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+
+    await user.click(screen.getByTestId("ready-to-start-toggle"));
+    await user.click(screen.getByTestId("priority-filter-high"));
+
+    expect(screen.getByText(/No stories match the current filters/)).toBeInTheDocument();
   });
 });

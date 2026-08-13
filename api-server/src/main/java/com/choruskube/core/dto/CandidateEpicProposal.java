@@ -11,11 +11,14 @@ import java.util.List;
  * {@code roadmap_candidates.json} artifact and {@code SignalRequest.editedCandidates} — both must
  * conform to this record.
  *
- * <p>{@code repos}/{@code priority} are reviewer-context-only fields: shown in the gate's breakdown
- * editor as decomposition rationale, but never persisted — {@code InternalCreateEpicRequest} (the
- * DTO {@code RoadmapCandidateMaterializer} actually writes through) has no equivalent fields, and a
+ * <p>{@code repos} is a reviewer-context-only field: shown in the gate's breakdown editor as
+ * decomposition rationale, but never persisted — {@code InternalCreateEpicRequest} (the DTO {@code
+ * RoadmapCandidateMaterializer} actually writes through) has no {@code repos} field, and a
  * materialized Epic's {@code repos} is always derived from its software project, same as any
- * hand-created Epic (see Caveat 6).
+ * hand-created Epic (see Caveat 6). {@code priority} (free-text {@code High}/{@code Medium}/{@code
+ * Low}), by contrast, IS persisted: {@code RoadmapCandidateMaterializer} parses it onto the
+ * materialized Epic's initial (human-editable) {@code Priority}, defaulting to {@code medium} when
+ * blank/unrecognized.
  *
  * <p>{@code stories} needs {@code @Valid} (not just {@code @Size}) so that cascading bean
  * validation reaches each {@link CandidateStoryProposal}'s own {@code tasks @Size(max = 8)} —

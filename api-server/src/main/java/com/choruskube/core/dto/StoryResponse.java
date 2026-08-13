@@ -21,6 +21,7 @@ public record StoryResponse(
         String description,
         String status,
         String stage,
+        String priority,
         @Nullable Readiness readiness,
         EpicResponse.Progress progress,
         Instant createdAt,

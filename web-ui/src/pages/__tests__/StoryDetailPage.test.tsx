@@ -17,6 +17,12 @@ vi.mock("@/hooks/useStories", () => ({
     isError: false,
     reset: vi.fn(),
   }),
+  useUpdateStoryPriority: () => ({
+    mutate: vi.fn(),
+    isPending: false,
+    isError: false,
+    reset: vi.fn(),
+  }),
 }));
 
 vi.mock("@/hooks/useTasks", () => ({
@@ -56,6 +62,7 @@ function makeStory(overrides: Partial<StoryResponse> = {}): StoryResponse {
     description: "desc",
     status: "backlog",
     stage: "backlog",
+    priority: "medium",
     readiness: null,
     progress: { totalTasks: 2, doneTasks: 1 },
     createdAt: "2026-04-01T00:00:00Z",
