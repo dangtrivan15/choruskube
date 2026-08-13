@@ -258,10 +258,14 @@ public class DefaultStoryService implements StoryService {
         // Deliberately no hasStartedTasks(id) guard here: like updateStage, a priority change must
         // succeed even after descendant Tasks have started. Every Priority enum value is valid, so
         // there is no value-subset check (unlike board stages, which exclude `done`).
+        Map<String, Object> beforeSnapshot = snapshot(story);
         story.setPriority(priority);
         story = repo.save(story);
 
         StoryResponse response = toResponse(story);
+        // Audited like every other roadmap mutation (create/update/delete/stage): priority is a
+        // planning attribute moved in isolation, so its change belongs in the audit trail too.
+        auditSink.record(AuditSink.STORY_PRIORITY_UPDATED, "story", id, detailJson(beforeSnapshot, snapshot(story)));
         eventPublisher.publishRoadmapItemChanged("story", story.getId(), response.status());
         return response;
     }

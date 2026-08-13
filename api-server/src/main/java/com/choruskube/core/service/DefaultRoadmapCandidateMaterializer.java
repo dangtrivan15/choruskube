@@ -12,6 +12,7 @@ import com.choruskube.core.dto.StoryResponse;
 import com.choruskube.core.model.enums.Priority;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -138,7 +139,10 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
             return Priority.medium;
         }
         try {
-            return Priority.valueOf(value.trim().toLowerCase());
+            // Locale.ROOT so case-folding is locale-independent: under a Turkish default locale a
+            // naive toLowerCase() maps "HIGH" to "hıgh" (dotless ı), which would miss the enum and
+            // silently fall back to medium.
+            return Priority.valueOf(value.trim().toLowerCase(Locale.ROOT));
         } catch (IllegalArgumentException unrecognized) {
             return Priority.medium;
         }

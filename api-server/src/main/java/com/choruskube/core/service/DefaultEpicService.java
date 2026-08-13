@@ -312,10 +312,14 @@ public class DefaultEpicService implements EpicService {
         // Deliberately no hasStartedDescendantTasks(id) guard here: like updateStage, a priority
         // change must succeed even after descendant Tasks have started. Every Priority enum value
         // is valid (unlike board stages, which exclude `done`), so there is no value-subset check.
+        Map<String, Object> beforeSnapshot = snapshot(epic);
         epic.setPriority(priority);
         epic = repo.save(epic);
 
         EpicResponse response = toResponse(epic);
+        // Audited like every other roadmap mutation (create/update/delete/stage): priority is a
+        // planning attribute moved in isolation, so its change belongs in the audit trail too.
+        auditSink.record(AuditSink.EPIC_PRIORITY_UPDATED, "epic", id, detailJson(beforeSnapshot, snapshot(epic)));
         eventPublisher.publishRoadmapItemChanged("epic", epic.getId(), response.status());
         return response;
     }

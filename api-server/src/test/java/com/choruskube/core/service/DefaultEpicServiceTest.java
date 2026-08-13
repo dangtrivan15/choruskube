@@ -591,6 +591,24 @@ public class DefaultEpicServiceTest extends BaseTest {
     }
 
     @Test
+    void updatePriority_writesAuditEntryWithBeforeAfterPriority() {
+        // Mirrors updateStage_writesAuditEntryWithBeforeAfterStage: a priority move is audited like
+        // every other roadmap mutation, with structurally correct before/after (not just a
+        // `contains` check that would miss a swapped-order bug in detailJson(...)).
+        GitRepo r = makeRepo("https://github.com/test/priority-audit.git");
+        EpicResponse created = service.create(new EpicRequest("T", "D", null, r.getId()), null);
+
+        service.updatePriority(created.id(), Priority.high);
+
+        ArgumentCaptor<String> detailCaptor = ArgumentCaptor.forClass(String.class);
+        verify(auditSink)
+                .record(eq(AuditSink.EPIC_PRIORITY_UPDATED), eq("epic"), eq(created.id()), detailCaptor.capture());
+        JsonNode detail = readTree(detailCaptor.getValue());
+        assertThat(detail.path("before").path("priority").asText()).isEqualTo("medium");
+        assertThat(detail.path("after").path("priority").asText()).isEqualTo("high");
+    }
+
+    @Test
     void update_leavesPriorityUnchanged() {
         // The full PUT edit (EpicUpdateRequest) has no priority field, so it must never move it.
         GitRepo r = makeRepo("https://github.com/test/priority-put-noop.git");

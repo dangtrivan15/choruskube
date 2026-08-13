@@ -516,6 +516,23 @@ public class DefaultStoryServiceTest extends BaseTest {
     }
 
     @Test
+    void updatePriority_writesAuditEntryWithBeforeAfterPriority() {
+        // Mirrors updateStage_writesAuditEntryWithBeforeAfterStage: a priority move is audited like
+        // every other roadmap mutation, with structurally correct before/after.
+        EpicResponse epic = makeEpic("https://github.com/test/story-priority-audit.git");
+        StoryResponse created = service.create(epic.id(), new StoryRequest("S", "D"));
+
+        service.updatePriority(created.id(), Priority.high);
+
+        ArgumentCaptor<String> detailCaptor = ArgumentCaptor.forClass(String.class);
+        verify(auditSink)
+                .record(eq(AuditSink.STORY_PRIORITY_UPDATED), eq("story"), eq(created.id()), detailCaptor.capture());
+        JsonNode detail = readTree(detailCaptor.getValue());
+        assertThat(detail.path("before").path("priority").asText()).isEqualTo("medium");
+        assertThat(detail.path("after").path("priority").asText()).isEqualTo("high");
+    }
+
+    @Test
     void update_leavesPriorityUnchanged() {
         // The full PUT edit (StoryUpdateRequest) has no priority field, so it must never move it.
         EpicResponse epic = makeEpic("https://github.com/test/story-priority-put-noop.git");

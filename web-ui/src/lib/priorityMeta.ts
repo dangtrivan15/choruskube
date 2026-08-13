@@ -60,7 +60,7 @@ const PRIORITY_INFO: Record<Priority, PriorityInfo> = {
 };
 
 /**
- * The order the four priority levels are offered in every selector/filter —
+ * The order the three priority levels are offered in every selector/filter —
  * most urgent first, matching how a reviewer scans a prioritized backlog.
  */
 export const PRIORITY_ORDER: Priority[] = ["high", "medium", "low"];
