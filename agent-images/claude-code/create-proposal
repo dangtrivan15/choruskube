@@ -1,7 +1,7 @@
 #!/bin/bash
 # create-proposal — create a roadmap Epic via the ChorusKube API server.
 #
-# Usage: create-proposal --title TITLE --description DESC [--motivation MOT]
+# Usage: create-proposal --title TITLE --description DESC [--motivation MOT] [--priority LEVEL]
 #
 # Creates a new Epic targeting the workflow run's software project. The target
 # is resolved server-side from the run's software_project_id input; agents
@@ -18,6 +18,8 @@
 #   --title TITLE         Epic title (required, max 255 chars)
 #   --description DESC    Epic description (required)
 #   --motivation MOT      Motivation / rationale (optional)
+#   --priority LEVEL      Initial priority: low | medium | high (optional,
+#                         defaults to medium server-side)
 #   -h, --help            Show this help message
 #
 # Environment:
@@ -29,7 +31,7 @@
 # Examples:
 #   create-proposal --title "Add dark mode" --description "Users want dark mode"
 #   create-proposal --title "Add push notifications" --description "..." \
-#                   --motivation "Increase engagement"
+#                   --motivation "Increase engagement" --priority high
 #
 # Exit codes:
 #   0  Epic created successfully (JSON response printed to stdout)
@@ -54,6 +56,7 @@ fi
 TITLE=""
 DESCRIPTION=""
 MOTIVATION=""
+PRIORITY=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -69,9 +72,13 @@ while [ $# -gt 0 ]; do
             MOTIVATION="$2"
             shift 2
             ;;
+        --priority)
+            PRIORITY="$2"
+            shift 2
+            ;;
         *)
             echo "ERROR: Unknown argument: $1" >&2
-            echo "Usage: create-proposal --title TITLE --description DESC [--motivation MOT]" >&2
+            echo "Usage: create-proposal --title TITLE --description DESC [--motivation MOT] [--priority LEVEL]" >&2
             exit 1
             ;;
     esac
@@ -79,17 +86,22 @@ done
 
 if [ -z "$TITLE" ] || [ -z "$DESCRIPTION" ]; then
     echo "ERROR: --title and --description are required." >&2
-    echo "Usage: create-proposal --title TITLE --description DESC [--motivation MOT]" >&2
+    echo "Usage: create-proposal --title TITLE --description DESC [--motivation MOT] [--priority LEVEL]" >&2
     exit 1
 fi
 
 # Build JSON body using jq for proper escaping. The server resolves the Epic's
 # software project from the run's inputs — there's no per-Epic override.
+# --priority is sent through unvalidated; the server rejects an unknown level
+# with 400, surfaced by the generic non-2xx handling below.
 BODY=$(jq -n \
     --arg title "$TITLE" \
     --arg description "$DESCRIPTION" \
     --arg motivation "$MOTIVATION" \
-    '{title: $title, description: $description} + (if $motivation != "" then {motivation: $motivation} else {} end)')
+    --arg priority "$PRIORITY" \
+    '{title: $title, description: $description}
+        + (if $motivation != "" then {motivation: $motivation} else {} end)
+        + (if $priority != "" then {priority: $priority} else {} end)')
 
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
     -H "Content-Type: application/json" \

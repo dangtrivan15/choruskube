@@ -657,7 +657,8 @@ public class InternalRunService {
         WorkflowRun run =
                 runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
         UUID softwareProjectId = resolveSoftwareProjectIdFromRun(run);
-        EpicRequest epicRequest = new EpicRequest(req.title(), req.description(), req.motivation(), softwareProjectId);
+        EpicRequest epicRequest =
+                new EpicRequest(req.title(), req.description(), req.motivation(), softwareProjectId, req.priority());
         return epicService.create(epicRequest, runId);
     }
 
@@ -703,7 +704,8 @@ public class InternalRunService {
         WorkflowRun run =
                 runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
         UUID softwareProjectId = resolveSoftwareProjectIdFromRun(run);
-        return storyService.create(epicId, new StoryRequest(req.title(), req.description()), runId, softwareProjectId);
+        return storyService.create(
+                epicId, new StoryRequest(req.title(), req.description(), req.priority()), runId, softwareProjectId);
     }
 
     /**

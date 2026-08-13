@@ -9,6 +9,7 @@ import com.choruskube.core.dto.InternalCreateStoryRequest;
 import com.choruskube.core.dto.InternalCreateTaskRequest;
 import com.choruskube.core.dto.MaterializationSummary;
 import com.choruskube.core.dto.StoryResponse;
+import com.choruskube.core.model.enums.Priority;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -21,11 +22,18 @@ import org.springframework.stereotype.Service;
  * Stories then their Tasks via {@link InternalRunService}, wrapping each top-level candidate in its
  * own try/catch so one failure doesn't stop the rest of the batch (Decision 3, Caveat 3).
  *
- * <p>Only {@code title}/{@code description}/{@code motivation} are forwarded to {@code
- * InternalCreateEpicRequest} — {@link CandidateEpicProposal#repos()}/{@link
- * CandidateEpicProposal#priority()} have no corresponding field there and are intentionally
- * dropped (see Caveat 6: a materialized Epic's {@code repos} is always derived from its software
- * project, and the Epic model has no {@code priority} column at all).
+ * <p>{@code title}/{@code description}/{@code motivation} are forwarded to {@code
+ * InternalCreateEpicRequest} as-is, and {@link CandidateEpicProposal#priority()} — a free-text
+ * {@code "High"}/{@code "Medium"}/{@code "Low"} triage signal — is parsed (case-insensitively, via
+ * {@link #parsePriority}) into the materialized Epic's initial {@link Priority}, which the reviewer
+ * can re-prioritize afterwards. Anything null/blank/unrecognized falls back to {@link
+ * Priority#medium}. {@link CandidateEpicProposal#repos()} still has no corresponding field on the
+ * Epic and is intentionally dropped (see Caveat 6: a materialized Epic's {@code repos} is always
+ * derived from its software project).
+ *
+ * <p>Candidate Stories carry no priority signal ({@link CandidateStoryProposal} has no {@code
+ * priority} field), so {@code materializeStory} forwards none and the Story defaults to {@link
+ * Priority#medium} in {@code StoryService.create}.
  */
 @Service
 public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMaterializer {
@@ -69,7 +77,10 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
             epic = internalRunService.createEpic(
                     runId,
                     new InternalCreateEpicRequest(
-                            candidate.title(), orEmpty(candidate.description()), candidate.motivation()));
+                            candidate.title(),
+                            orEmpty(candidate.description()),
+                            candidate.motivation(),
+                            parsePriority(candidate.priority())));
         } catch (Exception e) {
             String title = candidate != null ? candidate.title() : "<null>";
             String message = "Failed to materialize candidate Epic '" + title + "': " + e.getMessage();
@@ -114,5 +125,22 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
 
     private static String orEmpty(String value) {
         return value != null ? value : "";
+    }
+
+    /**
+     * Maps a candidate Epic's free-text {@code priority} signal ({@code "High"}/{@code "Medium"}/
+     * {@code "Low"}, case-insensitive) onto the {@link Priority} enum. Null, blank, or unrecognized
+     * values fall back to {@link Priority#medium} — the same default a hand-created Epic gets — so a
+     * missing or malformed analyzer signal never blocks materialization.
+     */
+    private static Priority parsePriority(String value) {
+        if (value == null || value.isBlank()) {
+            return Priority.medium;
+        }
+        try {
+            return Priority.valueOf(value.trim().toLowerCase());
+        } catch (IllegalArgumentException unrecognized) {
+            return Priority.medium;
+        }
     }
 }

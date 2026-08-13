@@ -14,6 +14,7 @@ import com.choruskube.core.dto.InternalCreateTaskRequest;
 import com.choruskube.core.dto.MaterializationSummary;
 import com.choruskube.core.dto.StoryResponse;
 import com.choruskube.core.dto.TaskResponse;
+import com.choruskube.core.model.enums.Priority;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -24,7 +25,9 @@ import org.mockito.Mockito;
 /**
  * {@link DefaultRoadmapCandidateMaterializer}: creates each candidate Epic/Story/Task through
  * {@link InternalRunService}'s existing agent-facing write path (Decision 3), best-effort per
- * top-level candidate (Caveat 3), and never forwards {@code repos}/{@code priority} (Caveat 6).
+ * top-level candidate (Caveat 3). A candidate Epic's free-text {@code priority} is parsed
+ * case-insensitively onto {@link Priority} (defaulting to {@link Priority#medium}); {@code repos}
+ * is still dropped (Caveat 6), and candidate Stories carry no priority signal at all.
  */
 class DefaultRoadmapCandidateMaterializerTest {
 
@@ -89,8 +92,10 @@ class DefaultRoadmapCandidateMaterializerTest {
         assertThat(summary.createdEpicIds()).containsExactly(epicId);
         assertThat(summary.errors()).isEmpty();
 
+        // Candidate priority "High" materializes onto Priority.high; Story carries no priority
+        // signal, so the 2-arg (null-priority) InternalCreateStoryRequest is what's forwarded.
         verify(internalRunService)
-                .createEpic(eq(runId), eq(new InternalCreateEpicRequest("Bulk Import", "desc", "why")));
+                .createEpic(eq(runId), eq(new InternalCreateEpicRequest("Bulk Import", "desc", "why", Priority.high)));
         verify(internalRunService)
                 .createStory(eq(runId), eq(epicId), eq(new InternalCreateStoryRequest("Story 1", "s-desc")));
         verify(internalRunService)
@@ -103,9 +108,13 @@ class DefaultRoadmapCandidateMaterializerTest {
         CandidateEpicProposal failing = new CandidateEpicProposal("Bad", "d", "m", null, null, List.of());
         CandidateEpicProposal good = new CandidateEpicProposal("Good", "d", "m", null, null, List.of());
 
-        when(internalRunService.createEpic(eq(runId), eq(new InternalCreateEpicRequest("Bad", "d", "m"))))
+        // Both candidates have a null priority string, which parses to the Priority.medium default,
+        // so the materializer forwards the 4-arg request carrying Priority.medium.
+        when(internalRunService.createEpic(
+                        eq(runId), eq(new InternalCreateEpicRequest("Bad", "d", "m", Priority.medium))))
                 .thenThrow(new RuntimeException("boom"));
-        when(internalRunService.createEpic(eq(runId), eq(new InternalCreateEpicRequest("Good", "d", "m"))))
+        when(internalRunService.createEpic(
+                        eq(runId), eq(new InternalCreateEpicRequest("Good", "d", "m", Priority.medium))))
                 .thenReturn(epicResponse(goodEpicId));
 
         MaterializationSummary summary = materializer.materialize(runId, List.of(failing, good));
@@ -163,5 +172,47 @@ class DefaultRoadmapCandidateMaterializerTest {
         assertThat(summary.createdEpicIds()).isEmpty();
         assertThat(summary.errors()).isEmpty();
         verifyNoInteractions(internalRunService);
+    }
+
+    @Test
+    void candidatePriority_lowercase_isParsedOntoEnum() {
+        assertMaterializedEpicPriority("high", Priority.high);
+    }
+
+    @Test
+    void candidatePriority_mixedCase_isParsedOntoEnum() {
+        assertMaterializedEpicPriority("LoW", Priority.low);
+    }
+
+    @Test
+    void candidatePriority_null_defaultsToMedium() {
+        assertMaterializedEpicPriority(null, Priority.medium);
+    }
+
+    @Test
+    void candidatePriority_blank_defaultsToMedium() {
+        assertMaterializedEpicPriority("   ", Priority.medium);
+    }
+
+    @Test
+    void candidatePriority_unrecognized_defaultsToMedium() {
+        assertMaterializedEpicPriority("urgent", Priority.medium);
+    }
+
+    /**
+     * Materializes a single story-less candidate whose {@code priority} string is {@code
+     * candidatePriority}, and asserts the Epic forwarded to {@link InternalRunService#createEpic}
+     * carries {@code expected} as its parsed {@link Priority}.
+     */
+    private void assertMaterializedEpicPriority(String candidatePriority, Priority expected) {
+        UUID epicId = UUID.randomUUID();
+        when(internalRunService.createEpic(eq(runId), any())).thenReturn(epicResponse(epicId));
+
+        CandidateEpicProposal candidate =
+                new CandidateEpicProposal("Epic", "d", "m", null, candidatePriority, List.of());
+
+        materializer.materialize(runId, List.of(candidate));
+
+        verify(internalRunService).createEpic(eq(runId), eq(new InternalCreateEpicRequest("Epic", "d", "m", expected)));
     }
 }

@@ -227,6 +227,25 @@ class BaseRoadmapProvisionerSeederTest extends BaseTest {
     }
 
     @Test
+    void analyzerPromptDescribesPriorityAsSeedingTheEpic() {
+        var nd = nodeDefRepo.findAll().stream()
+                .filter(n -> "Roadmap Analyzer".equals(n.getName()))
+                .findFirst()
+                .orElseThrow();
+        String prompt = nd.getPromptTemplate();
+
+        // The candidate "priority" is now persisted as the materialized Epic's initial (human-
+        // editable) priority — the prompt must say so, and must no longer claim both repos and
+        // priority are reviewer-context-only fields that aren't created as roadmap fields.
+        assertThat(prompt).contains("seeds the materialized Epic's");
+        assertThat(prompt).doesNotContain("\"repos\" and \"priority\" are reviewer context only");
+        // repos alone stays reviewer-context-only.
+        assertThat(prompt).contains("\"repos\" is reviewer context only");
+        // Story candidates carry no priority signal — the prompt notes they default to Medium.
+        assertThat(prompt).contains("Story candidates carry no");
+    }
+
+    @Test
     void analyzerPromptReferencesMultiRepoWorkspace() {
         var nd = nodeDefRepo.findAll().stream()
                 .filter(n -> "Roadmap Analyzer".equals(n.getName()))
