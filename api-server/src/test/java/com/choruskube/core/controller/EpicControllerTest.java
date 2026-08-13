@@ -1,5 +1,6 @@
 package com.choruskube.core.controller;
 
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
@@ -520,10 +521,9 @@ public class EpicControllerTest extends BaseTest {
                 lowIndex = i;
             }
         }
-        org.junit.jupiter.api.Assertions.assertTrue(highIndex >= 0, "high-priority Epic missing from response");
-        org.junit.jupiter.api.Assertions.assertTrue(lowIndex >= 0, "low-priority Epic missing from response");
-        org.junit.jupiter.api.Assertions.assertTrue(
-                highIndex < lowIndex, "expected high-priority Epic to sort before low-priority Epic");
+        assertTrue(highIndex >= 0, "high-priority Epic missing from response");
+        assertTrue(lowIndex >= 0, "low-priority Epic missing from response");
+        assertTrue(highIndex < lowIndex, "expected high-priority Epic to sort before low-priority Epic");
     }
 
     @Test

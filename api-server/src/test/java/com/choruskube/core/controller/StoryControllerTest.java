@@ -1,6 +1,7 @@
 package com.choruskube.core.controller;
 
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -447,10 +448,9 @@ public class StoryControllerTest extends BaseTest {
                 lowIndex = i;
             }
         }
-        org.junit.jupiter.api.Assertions.assertTrue(highIndex >= 0, "high-priority Story missing from response");
-        org.junit.jupiter.api.Assertions.assertTrue(lowIndex >= 0, "low-priority Story missing from response");
-        org.junit.jupiter.api.Assertions.assertTrue(
-                highIndex < lowIndex, "expected high-priority Story to sort before low-priority Story");
+        assertTrue(highIndex >= 0, "high-priority Story missing from response");
+        assertTrue(lowIndex >= 0, "low-priority Story missing from response");
+        assertTrue(highIndex < lowIndex, "expected high-priority Story to sort before low-priority Story");
     }
 
     @Test
