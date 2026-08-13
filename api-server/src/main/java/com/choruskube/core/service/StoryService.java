@@ -2,6 +2,8 @@ package com.choruskube.core.service;
 
 import com.choruskube.core.dto.StoryRequest;
 import com.choruskube.core.dto.StoryResponse;
+import com.choruskube.core.dto.StoryUpdateRequest;
+import com.choruskube.core.model.enums.Priority;
 import com.choruskube.core.model.enums.WorkItemStatus;
 import java.util.List;
 import java.util.UUID;
@@ -36,9 +38,10 @@ public interface StoryService {
      * {@code scopeProvider}-scoped, optionally filtered by board {@code stage}, page-returning.
      * Uses the same shared single-item mapper as {@link #get}/{@link #create} — {@code readiness}
      * stays {@code null} here (Decision 1 scopes real readiness to the per-Epic {@link #list(UUID)}
-     * and the Roadmap Graph View only).
+     * and the Roadmap Graph View only). A non-null {@code priority} narrows the result to Stories
+     * with that priority (a plain persisted-column predicate).
      */
-    Page<StoryResponse> list(WorkItemStatus stage, Pageable pageable);
+    Page<StoryResponse> list(WorkItemStatus stage, Priority priority, Pageable pageable);
 
     /**
      * Agent/internal mirror of {@link #list} for the Roadmap Graph View internal route (Decision
@@ -51,7 +54,7 @@ public interface StoryService {
 
     StoryResponse get(UUID id);
 
-    StoryResponse update(UUID id, StoryRequest request);
+    StoryResponse update(UUID id, StoryUpdateRequest request);
 
     void delete(UUID id);
 
@@ -61,4 +64,10 @@ public interface StoryService {
      * started. Mirrors {@link EpicService#updateStage} exactly.
      */
     StoryResponse updateStage(UUID id, WorkItemStatus stage);
+
+    /**
+     * Sets a Story's priority. Exempt from the "no edit once started" guard that {@link #update}
+     * enforces — mirrors {@link #updateStage} / {@link EpicService#updatePriority} exactly.
+     */
+    StoryResponse updatePriority(UUID id, Priority priority);
 }

@@ -1,8 +1,11 @@
 package com.choruskube.core.controller;
 
+import com.choruskube.core.dto.EpicPriorityUpdateRequest;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
 import com.choruskube.core.dto.EpicStageUpdateRequest;
+import com.choruskube.core.dto.EpicUpdateRequest;
+import com.choruskube.core.model.enums.Priority;
 import com.choruskube.core.model.enums.Readiness;
 import com.choruskube.core.service.EpicService;
 import jakarta.validation.Valid;
@@ -51,8 +54,9 @@ public class EpicController {
             // syntactically valid but unsupported value (e.g. BLOCKED) is accepted here and
             // handled as "no candidates match" in DefaultEpicService, not silently ignored.
             @RequestParam(required = false) Readiness readiness,
+            @RequestParam(required = false) Priority priority,
             @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
-        return service.list(title, readiness, pageable);
+        return service.list(title, readiness, priority, pageable);
     }
 
     @PreAuthorize("@orgSecurity.canRead()")
@@ -63,7 +67,7 @@ public class EpicController {
 
     @PreAuthorize("@orgSecurity.canAdmin()")
     @PutMapping("/{id}")
-    public EpicResponse update(@PathVariable UUID id, @Valid @RequestBody EpicRequest request) {
+    public EpicResponse update(@PathVariable UUID id, @Valid @RequestBody EpicUpdateRequest request) {
         return service.update(id, request);
     }
 
@@ -78,5 +82,11 @@ public class EpicController {
     @PatchMapping("/{id}/stage")
     public EpicResponse updateStage(@PathVariable UUID id, @Valid @RequestBody EpicStageUpdateRequest request) {
         return service.updateStage(id, request.stage());
+    }
+
+    @PreAuthorize("@orgSecurity.canOperate()")
+    @PatchMapping("/{id}/priority")
+    public EpicResponse updatePriority(@PathVariable UUID id, @Valid @RequestBody EpicPriorityUpdateRequest request) {
+        return service.updatePriority(id, request.priority());
     }
 }

@@ -406,6 +406,130 @@ public class EpicControllerTest extends BaseTest {
                 .andExpect(status().isForbidden());
     }
 
+    // --- priority field ---
+
+    @Test
+    void createEpic_withPriority_returns201WithPriority() throws Exception {
+        GitRepo repo = createGitRepo("https://github.com/test/priority-create.git");
+
+        var body = Map.of(
+                "title", "High priority epic",
+                "description", "Desc",
+                "softwareProjectId", repo.getId(),
+                "priority", "high");
+
+        mockMvc.perform(post("/api/v1/epics")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.priority").value("high"));
+    }
+
+    @Test
+    void createEpic_withoutPriority_defaultsToMedium() throws Exception {
+        GitRepo repo = createGitRepo("https://github.com/test/priority-default.git");
+
+        var body = Map.of("title", "No priority set", "description", "Desc", "softwareProjectId", repo.getId());
+
+        mockMvc.perform(post("/api/v1/epics")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.priority").value("medium"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"low", "medium", "high"})
+    void updatePriority_withValidPriority_returns200WithUpdatedPriority(String priority) throws Exception {
+        GitRepo repo = createGitRepo("https://github.com/test/priority-" + priority + ".git");
+        Epic e = createEpic(repo, "Priority Epic " + priority);
+
+        mockMvc.perform(patch("/api/v1/epics/" + e.getId() + "/priority")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("priority", priority))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.priority").value(priority));
+    }
+
+    @Test
+    void updatePriority_withSyntacticallyUnknownPriority_returns400() throws Exception {
+        GitRepo repo = createGitRepo("https://github.com/test/priority-unknown.git");
+        Epic e = createEpic(repo, "Priority Epic Unknown");
+
+        mockMvc.perform(patch("/api/v1/epics/" + e.getId() + "/priority")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("priority", "not_a_real_priority"))))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void updatePriority_onNonexistentEpic_returns404() throws Exception {
+        mockMvc.perform(patch("/api/v1/epics/" + UUID.randomUUID() + "/priority")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("priority", "high"))))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void listEpics_filteredByPriority_returnsOnlyMatching() throws Exception {
+        GitRepo repo = createGitRepo("https://github.com/test/priority-filter.git");
+        Epic highEpic = createEpic(repo, "High Priority Epic");
+        epicService.updatePriority(highEpic.getId(), com.choruskube.core.model.enums.Priority.high);
+        Epic lowEpic = createEpic(repo, "Low Priority Epic");
+        epicService.updatePriority(lowEpic.getId(), com.choruskube.core.model.enums.Priority.low);
+
+        mockMvc.perform(get("/api/v1/epics").param("priority", "high"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[?(@.id == '" + highEpic.getId() + "')]")
+                        .exists())
+                .andExpect(jsonPath("$.content[?(@.id == '" + lowEpic.getId() + "')]")
+                        .doesNotExist());
+    }
+
+    @Test
+    void listEpics_sortedByPriorityDescending_ordersHighToLow() throws Exception {
+        GitRepo repo = createGitRepo("https://github.com/test/priority-sort.git");
+        Epic lowEpic = createEpic(repo, "Sort Low");
+        epicService.updatePriority(lowEpic.getId(), com.choruskube.core.model.enums.Priority.low);
+        Epic highEpic = createEpic(repo, "Sort High");
+        epicService.updatePriority(highEpic.getId(), com.choruskube.core.model.enums.Priority.high);
+
+        mockMvc.perform(get("/api/v1/epics").param("sort", "priority,desc").param("size", "100"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[?(@.priority == 'high')].id").exists());
+    }
+
+    @Test
+    void updatePriority_belowCanOperatePermission_returns403() throws Exception {
+        when(orgSecurity.canOperate()).thenReturn(false);
+
+        GitRepo repo = createGitRepo("https://github.com/test/priority-forbidden.git");
+        Epic e = createEpic(repo, "Priority Epic Forbidden");
+
+        mockMvc.perform(patch("/api/v1/epics/" + e.getId() + "/priority")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("priority", "high"))))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void updateEpic_withEpicUpdateRequestBody_leavesPriorityUnchanged() throws Exception {
+        // The full PUT edit body (EpicUpdateRequest) carries no `priority` key at all — confirm the
+        // stored priority survives a PUT untouched, mirroring how `stage` is edit-immutable there.
+        GitRepo repo = createGitRepo("https://github.com/test/priority-put-noop.git");
+        Epic e = createEpic(repo, "Priority Put Noop");
+        epicService.updatePriority(e.getId(), com.choruskube.core.model.enums.Priority.high);
+
+        var body =
+                Map.of("title", "New Title", "description", "Updated description", "softwareProjectId", repo.getId());
+
+        mockMvc.perform(put("/api/v1/epics/" + e.getId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.priority").value("high"));
+    }
+
     // --- Test helpers ---
 
     private GitRepo createGitRepo(String url) {

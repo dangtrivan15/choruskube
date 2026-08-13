@@ -1,8 +1,11 @@
 package com.choruskube.core.controller;
 
+import com.choruskube.core.dto.StoryPriorityUpdateRequest;
 import com.choruskube.core.dto.StoryRequest;
 import com.choruskube.core.dto.StoryResponse;
 import com.choruskube.core.dto.StoryStageUpdateRequest;
+import com.choruskube.core.dto.StoryUpdateRequest;
+import com.choruskube.core.model.enums.Priority;
 import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.service.StoryService;
 import jakarta.validation.Valid;
@@ -54,8 +57,9 @@ public class StoryController {
     @GetMapping("/api/v1/stories")
     public Page<StoryResponse> list(
             @RequestParam(required = false) WorkItemStatus stage,
+            @RequestParam(required = false) Priority priority,
             @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
-        return service.list(stage, pageable);
+        return service.list(stage, priority, pageable);
     }
 
     @PreAuthorize("@orgSecurity.canRead()")
@@ -66,7 +70,7 @@ public class StoryController {
 
     @PreAuthorize("@orgSecurity.canAdmin()")
     @PutMapping("/api/v1/stories/{id}")
-    public StoryResponse update(@PathVariable UUID id, @Valid @RequestBody StoryRequest request) {
+    public StoryResponse update(@PathVariable UUID id, @Valid @RequestBody StoryUpdateRequest request) {
         return service.update(id, request);
     }
 
@@ -81,5 +85,11 @@ public class StoryController {
     @PatchMapping("/api/v1/stories/{id}/stage")
     public StoryResponse updateStage(@PathVariable UUID id, @Valid @RequestBody StoryStageUpdateRequest request) {
         return service.updateStage(id, request.stage());
+    }
+
+    @PreAuthorize("@orgSecurity.canOperate()")
+    @PatchMapping("/api/v1/stories/{id}/priority")
+    public StoryResponse updatePriority(@PathVariable UUID id, @Valid @RequestBody StoryPriorityUpdateRequest request) {
+        return service.updatePriority(id, request.priority());
     }
 }

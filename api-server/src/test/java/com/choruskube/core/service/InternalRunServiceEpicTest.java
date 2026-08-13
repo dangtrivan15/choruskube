@@ -261,7 +261,17 @@ class InternalRunServiceEpicTest {
 
         var req = new InternalCreateStoryRequest("Story title", "Story desc");
         var expected = new StoryResponse(
-                UUID.randomUUID(), epicId, "Story title", "Story desc", "backlog", "backlog", null, null, null, null);
+                UUID.randomUUID(),
+                epicId,
+                "Story title",
+                "Story desc",
+                "backlog",
+                "backlog",
+                "medium",
+                null,
+                null,
+                null,
+                null);
         when(storyService.create(eq(epicId), any(), eq(runId), eq(PROJECT_ID))).thenReturn(expected);
 
         StoryResponse result = service.createStory(runId, epicId, req);
@@ -583,6 +593,7 @@ class InternalRunServiceEpicTest {
                 "motivation",
                 "backlog",
                 "backlog",
+                "medium",
                 new EpicResponse.Progress(0, 0),
                 new SoftwareProjectRef(projectId, "git_repo", "name"),
                 List.of(),

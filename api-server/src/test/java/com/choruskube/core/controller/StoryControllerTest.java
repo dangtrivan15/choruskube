@@ -338,6 +338,125 @@ public class StoryControllerTest extends BaseTest {
                 .andExpect(status().isForbidden());
     }
 
+    // --- priority field ---
+
+    @Test
+    void createStory_withPriority_returns201WithPriority() throws Exception {
+        EpicResponse epic = makeEpic("https://github.com/test/story-priority-create.git");
+
+        var body = Map.of("title", "Story title", "description", "Story desc", "priority", "high");
+
+        mockMvc.perform(post("/api/v1/epics/" + epic.id() + "/stories")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.priority").value("high"));
+    }
+
+    @Test
+    void createStory_withoutPriority_defaultsToMedium() throws Exception {
+        EpicResponse epic = makeEpic("https://github.com/test/story-priority-default.git");
+
+        var body = Map.of("title", "Story title", "description", "Story desc");
+
+        mockMvc.perform(post("/api/v1/epics/" + epic.id() + "/stories")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.priority").value("medium"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"low", "medium", "high"})
+    void updatePriority_withValidPriority_returns200WithUpdatedPriority(String priority) throws Exception {
+        EpicResponse epic = makeEpic("https://github.com/test/story-priority-" + priority + ".git");
+        StoryResponse story = makeStory(epic.id(), "Priority Story " + priority);
+
+        mockMvc.perform(patch("/api/v1/stories/" + story.id() + "/priority")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("priority", priority))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.priority").value(priority));
+    }
+
+    @Test
+    void updatePriority_withSyntacticallyUnknownPriority_returns400() throws Exception {
+        EpicResponse epic = makeEpic("https://github.com/test/story-priority-unknown.git");
+        StoryResponse story = makeStory(epic.id(), "Priority Story Unknown");
+
+        mockMvc.perform(patch("/api/v1/stories/" + story.id() + "/priority")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("priority", "not_a_real_priority"))))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void updatePriority_onNonexistentStory_returns404() throws Exception {
+        mockMvc.perform(patch("/api/v1/stories/" + UUID.randomUUID() + "/priority")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("priority", "high"))))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void listAllStories_filteredByPriority_returnsOnlyMatching() throws Exception {
+        EpicResponse epic = makeEpic("https://github.com/test/story-priority-filter.git");
+        StoryResponse highStory = makeStory(epic.id(), "High Priority Story");
+        storyService.updatePriority(highStory.id(), com.choruskube.core.model.enums.Priority.high);
+        StoryResponse lowStory = makeStory(epic.id(), "Low Priority Story");
+        storyService.updatePriority(lowStory.id(), com.choruskube.core.model.enums.Priority.low);
+
+        mockMvc.perform(get("/api/v1/stories").param("priority", "high"))
+                .andExpect(status().isOk())
+                .andExpect(
+                        jsonPath("$.content[?(@.id=='" + highStory.id() + "')]").exists())
+                .andExpect(
+                        jsonPath("$.content[?(@.id=='" + lowStory.id() + "')]").doesNotExist());
+    }
+
+    @Test
+    void listAllStories_sortedByPriorityDescending_ordersHighToLow() throws Exception {
+        EpicResponse epic = makeEpic("https://github.com/test/story-priority-sort.git");
+        StoryResponse lowStory = makeStory(epic.id(), "Sort Low");
+        storyService.updatePriority(lowStory.id(), com.choruskube.core.model.enums.Priority.low);
+        StoryResponse highStory = makeStory(epic.id(), "Sort High");
+        storyService.updatePriority(highStory.id(), com.choruskube.core.model.enums.Priority.high);
+
+        mockMvc.perform(get("/api/v1/stories").param("sort", "priority,desc").param("size", "100"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[?(@.priority == 'high')].id").exists());
+    }
+
+    @Test
+    void updatePriority_belowCanOperatePermission_returns403() throws Exception {
+        when(orgSecurity.canOperate()).thenReturn(false);
+
+        EpicResponse epic = makeEpic("https://github.com/test/story-priority-forbidden.git");
+        StoryResponse story = makeStory(epic.id(), "Priority Story Forbidden");
+
+        mockMvc.perform(patch("/api/v1/stories/" + story.id() + "/priority")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("priority", "high"))))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void updateStory_withStoryUpdateRequestBody_leavesPriorityUnchanged() throws Exception {
+        // The full PUT edit body (StoryUpdateRequest) carries no `priority` key at all — confirm the
+        // stored priority survives a PUT untouched, mirroring how `stage` is edit-immutable there.
+        EpicResponse epic = makeEpic("https://github.com/test/story-priority-put-noop.git");
+        StoryResponse story = makeStory(epic.id(), "Priority Put Noop");
+        storyService.updatePriority(story.id(), com.choruskube.core.model.enums.Priority.high);
+
+        var body = Map.of("title", "New Title", "description", "New Desc");
+
+        mockMvc.perform(put("/api/v1/stories/" + story.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.priority").value("high"));
+    }
+
     // --- helpers ---
 
     private EpicResponse makeEpic(String url) {
