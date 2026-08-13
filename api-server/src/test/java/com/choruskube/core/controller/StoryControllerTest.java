@@ -424,7 +424,11 @@ public class StoryControllerTest extends BaseTest {
 
         mockMvc.perform(get("/api/v1/stories").param("sort", "priority,desc").param("size", "100"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.content[?(@.priority == 'high')].id").exists());
+                // Ordinal position, not mere presence: the two Stories created above are the only
+                // rows in this @Transactional test's isolated view, so `high` must sort to index 0
+                // and `low` to index 1 under `?sort=priority,desc`.
+                .andExpect(jsonPath("$.content[0].id").value(highStory.id().toString()))
+                .andExpect(jsonPath("$.content[1].id").value(lowStory.id().toString()));
     }
 
     @Test

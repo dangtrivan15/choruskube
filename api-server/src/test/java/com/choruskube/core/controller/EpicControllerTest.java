@@ -496,7 +496,11 @@ public class EpicControllerTest extends BaseTest {
 
         mockMvc.perform(get("/api/v1/epics").param("sort", "priority,desc").param("size", "100"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.content[?(@.priority == 'high')].id").exists());
+                // Ordinal position, not mere presence: the two Epics created above are the only
+                // rows in this @Transactional test's isolated view, so `high` must sort to index 0
+                // and `low` to index 1 under `?sort=priority,desc`.
+                .andExpect(jsonPath("$.content[0].id").value(highEpic.getId().toString()))
+                .andExpect(jsonPath("$.content[1].id").value(lowEpic.getId().toString()));
     }
 
     @Test
