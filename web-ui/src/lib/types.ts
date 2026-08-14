@@ -257,6 +257,21 @@ export interface CandidateEpicProposal {
   stories: CandidateStoryProposal[];
 }
 
+/**
+ * Why a Supervisor gate is open and who opened it, mirroring the api-server's
+ * EscalationContext record (Jackson camelCase). `category` and `summary` are
+ * parsed from the escalating node's `escalation.md` front matter server-side
+ * and are `null` when it is absent or unparseable — see
+ * `parseEscalationCategory` in `decisions.ts` for how the UI degrades that.
+ */
+export interface EscalationContext {
+  escalatorLabel: string | null;
+  escalatorExecId: string | null;
+  escalatorLoopGroup: string | null;
+  category: string | null;
+  summary: string | null;
+}
+
 export interface PendingGateResponse {
   nodeExecutionId: string;
   runId: string;
@@ -283,6 +298,12 @@ export interface PendingGateResponse {
    * rendering in that case.
    */
   candidateBreakdown: CandidateEpicProposal[] | null;
+  /**
+   * Why this run was escalated to the Supervisor, or absent/`null` for an
+   * ordinary gate — the Supervisor has no inbound edges, so
+   * `predecessorOutputs` carries no context for it; this is the replacement.
+   */
+  escalation?: EscalationContext | null;
 }
 
 export interface PendingGateCountResponse {
