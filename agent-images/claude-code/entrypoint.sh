@@ -471,7 +471,7 @@ Submit exactly one of the following via \`report-result <decision>\`:
 
 ${DECISIONS_LIST}
 
-Knowing this set up-front frames how to approach the work. The absence of a decision (e.g. \`escalate\`) means this node is not authorized for that mode of conclusion — focus on the modes that are listed."
+Knowing this set up-front frames how to approach the work. The absence of a decision (e.g. \`redraft\`) means this node is not authorized for that mode of conclusion — focus on the modes that are listed."
       export SYSTEM_PROMPT
       DECISION_COUNT=$(echo "$VALID_DECISIONS" | wc -l | tr -d ' ')
       echo "Composed system prompt with $DECISION_COUNT valid decisions"
@@ -870,23 +870,35 @@ ${PROMPT}"
   fi
 
   # --- Escalation artifact enforcement ---
-  # Runs after decision verification because it needs the decision, and before the upload so the
-  # session is still resumable. The server rejects an escalate decision with no escalation.md, so
-  # repairing here is the difference between a fixed run and a failed node. Shares $ATTEMPT with
-  # the other retry phases.
-  if [ -n "${DECISION:-}" ] && [ "$DECISION" = "escalate" ]; then
-    while [ ! -f "$WORKSPACE_OUT/escalation.md" ] && [ $ATTEMPT -lt $MAX_RETRIES ] && [ -n "$CLAUDE_SESSION_ID" ]; do
-      ATTEMPT=$((ATTEMPT + 1))
-      echo "=== Escalation retry $ATTEMPT/$MAX_RETRIES — escalation.md missing ==="
-      ESCALATION_RETRY_PROMPT="You submitted the decision 'escalate' but did not write /workspace/out/escalation.md. Write it now, using the front matter and section structure from your system prompt, before finishing."
-      CLAUDE_OUTPUT=$(run_claude "$ESCALATION_RETRY_PROMPT" "--resume $CLAUDE_SESSION_ID")
-      parse_claude_output "$CLAUDE_OUTPUT"
-    done
+  # Gated on SUPERVISOR_LABEL, not NEED_DECISION: NEED_DECISION is purely edge-based
+  # (HasConditionalEdges) and knows nothing about the implicit escalate decision, so a node
+  # with zero conditional edges (need_decision=false) still gets told about escalate in its
+  # system prompt whenever a Supervisor is configured, and can still submit it. Fetches
+  # $DECISION itself when the decision-verification block above never ran (need_decision was
+  # false) rather than assuming it is already known; reuses it as-is when that block did run.
+  # Runs before the upload so the session is still resumable. The server rejects an escalate
+  # decision with no escalation.md, so repairing here is the difference between a fixed run
+  # and a failed node. Shares $ATTEMPT with the other retry phases.
+  if [ -n "$SUPERVISOR_LABEL" ] && [ -n "$API_SERVER_URL" ] && [ -n "$CLAUDE_RESULT" ]; then
+    if [ -z "${DECISION:-}" ]; then
+      DECISION=$(check-decision 2>/dev/null || echo "")
+      if [ "$DECISION" = "(none)" ]; then DECISION=""; fi
+    fi
 
-    if [ ! -f "$WORKSPACE_OUT/escalation.md" ]; then
-      echo "ERROR: decision 'escalate' submitted but escalation.md was not produced after $ATTEMPT attempts"
-      RESULT_STATUS="failed"
-      ERROR_MESSAGE="Decision 'escalate' requires /workspace/out/escalation.md, which was not produced after $ATTEMPT attempts"
+    if [ "$DECISION" = "escalate" ]; then
+      while [ ! -f "$WORKSPACE_OUT/escalation.md" ] && [ $ATTEMPT -lt $MAX_RETRIES ] && [ -n "$CLAUDE_SESSION_ID" ]; do
+        ATTEMPT=$((ATTEMPT + 1))
+        echo "=== Escalation retry $ATTEMPT/$MAX_RETRIES — escalation.md missing ==="
+        ESCALATION_RETRY_PROMPT="You submitted the decision 'escalate' but did not write /workspace/out/escalation.md. Write it now, using the front matter and section structure from your system prompt, before finishing."
+        CLAUDE_OUTPUT=$(run_claude "$ESCALATION_RETRY_PROMPT" "--resume $CLAUDE_SESSION_ID")
+        parse_claude_output "$CLAUDE_OUTPUT"
+      done
+
+      if [ ! -f "$WORKSPACE_OUT/escalation.md" ]; then
+        echo "ERROR: decision 'escalate' submitted but escalation.md was not produced after $ATTEMPT attempts"
+        RESULT_STATUS="failed"
+        ERROR_MESSAGE="Decision 'escalate' requires /workspace/out/escalation.md, which was not produced after $ATTEMPT attempts"
+      fi
     fi
   fi
 
