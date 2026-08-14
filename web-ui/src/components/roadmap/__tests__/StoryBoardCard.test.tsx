@@ -31,6 +31,7 @@ function makeStory(overrides: Partial<StoryResponse> = {}): StoryResponse {
     status: "backlog",
     stage: "backlog",
     priority: "medium",
+    targetDate: null,
     readiness: null,
     progress: { totalTasks: 3, doneTasks: 1 },
     createdAt: "2026-04-01T00:00:00Z",

@@ -8,6 +8,7 @@ import type {
   EpicUpdateRequest,
   EpicStageUpdateRequest,
   EpicPriorityUpdateRequest,
+  EpicTargetDateUpdateRequest,
   PageResponse,
   PaginationParams,
   Priority,
@@ -124,6 +125,31 @@ export function useUpdateEpicPriority() {
     },
     onError: () => {
       addEntry(showMutationToast("Failed to update epic priority", "error"));
+    },
+  });
+}
+
+/**
+ * Set or clear (via `null`) an Epic's target date via `PATCH /epics/{id}/target-date`,
+ * independent of the content-edit guard on the full PUT edit endpoint — the target-date
+ * equivalent of `useUpdateEpicPriority`. Invalidates the `["epics"]` query key on success so
+ * every Epic list/detail view re-fetches the new date; no optimistic update, mirroring
+ * `useUpdateEpicPriority`.
+ */
+export function useUpdateEpicTargetDate() {
+  const queryClient = useQueryClient();
+  const { addEntry } = useActivityFeed();
+  return useMutation({
+    mutationFn: ({ id, targetDate }: { id: string } & EpicTargetDateUpdateRequest) =>
+      api.patch<EpicResponse>(`/epics/${id}/target-date`, {
+        targetDate,
+      } satisfies EpicTargetDateUpdateRequest),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["epics"] });
+      addEntry(showMutationToast("Epic target date updated", "success"));
+    },
+    onError: () => {
+      addEntry(showMutationToast("Failed to update epic target date", "error"));
     },
   });
 }

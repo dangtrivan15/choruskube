@@ -23,6 +23,7 @@ import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.scope.ScopeProvider;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.LocalDate;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -270,6 +271,26 @@ public class DefaultStoryService implements StoryService {
         return response;
     }
 
+    @Override
+    @Transactional
+    public StoryResponse updateTargetDate(UUID id, LocalDate targetDate) {
+        Story story = findOrThrow(id);
+        authService.checkOrgAccess("story", id);
+        // Deliberately no hasStartedTasks(id) guard here: like updateStage/updatePriority, a target
+        // date change must succeed even after descendant Tasks have started. No value-subset check
+        // either — every LocalDate (including null, which clears it) is valid.
+        Map<String, Object> beforeSnapshot = snapshot(story);
+        story.setTargetDate(targetDate);
+        story = repo.save(story);
+
+        StoryResponse response = toResponse(story);
+        // Audited like every other roadmap mutation (create/update/delete/stage/priority): target
+        // date is a planning attribute moved in isolation, so its change belongs in the audit trail.
+        auditSink.record(AuditSink.STORY_TARGET_DATE_UPDATED, "story", id, detailJson(beforeSnapshot, snapshot(story)));
+        eventPublisher.publishRoadmapItemChanged("story", story.getId(), response.status());
+        return response;
+    }
+
     private boolean hasStartedTasks(UUID storyId) {
         List<Task> tasks = taskRepo.findByStoryIdOrderByCreatedAtDesc(storyId);
         return tasks.stream().anyMatch(t -> t.getStatus() != WorkItemStatus.backlog);
@@ -292,6 +313,7 @@ public class DefaultStoryService implements StoryService {
                 rollup.status(),
                 s.getStage().name(),
                 s.getPriority().name(),
+                s.getTargetDate(),
                 readiness,
                 new EpicResponse.Progress(rollup.totalTasks(), rollup.doneTasks()),
                 s.getCreatedAt(),
@@ -313,6 +335,7 @@ public class DefaultStoryService implements StoryService {
         snap.put("description", s.getDescription());
         snap.put("stage", s.getStage() != null ? s.getStage().name() : null);
         snap.put("priority", s.getPriority() != null ? s.getPriority().name() : null);
+        snap.put("target_date", s.getTargetDate() != null ? s.getTargetDate().toString() : null);
         return snap;
     }
 

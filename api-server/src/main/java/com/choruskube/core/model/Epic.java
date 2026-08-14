@@ -10,6 +10,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import java.time.LocalDate;
 import java.util.UUID;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
@@ -43,6 +44,9 @@ public class Epic extends BaseEntity {
     @JdbcTypeCode(SqlTypes.NAMED_ENUM)
     @Column(nullable = false, columnDefinition = "work_item_priority")
     private Priority priority = Priority.medium;
+
+    @Column(name = "target_date")
+    private LocalDate targetDate;
 
     public UUID getId() {
         return id;
@@ -98,5 +102,13 @@ public class Epic extends BaseEntity {
 
     public void setPriority(Priority priority) {
         this.priority = priority;
+    }
+
+    public LocalDate getTargetDate() {
+        return targetDate;
+    }
+
+    public void setTargetDate(LocalDate targetDate) {
+        this.targetDate = targetDate;
     }
 }

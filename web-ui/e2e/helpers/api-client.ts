@@ -109,6 +109,7 @@ export interface Epic {
   motivation: string | null;
   status: string;
   priority: string;
+  targetDate: string | null;
   progress: { totalTasks: number; doneTasks: number };
   softwareProject: SoftwareProjectRef;
   // Single source of truth for the shape — avoids drift with the production type.
@@ -122,6 +123,7 @@ export interface Story {
   description: string;
   status: string;
   priority: string;
+  targetDate: string | null;
   progress: { totalTasks: number; doneTasks: number };
 }
 
@@ -453,6 +455,14 @@ export class TestApiClient {
     return this.patch(`/api/v1/epics/${id}/priority`, { priority });
   }
 
+  /**
+   * Set or clear (via `null`) an Epic's target date via PATCH /epics/{id}/target-date
+   * (mirrors useUpdateEpicTargetDate).
+   */
+  async setEpicTargetDate(id: string, targetDate: string | null): Promise<Epic> {
+    return this.patch(`/api/v1/epics/${id}/target-date`, { targetDate });
+  }
+
   async listStories(epicId: string): Promise<Story[]> {
     return this.get(`/api/v1/epics/${epicId}/stories`);
   }
@@ -471,6 +481,14 @@ export class TestApiClient {
   /** Re-prioritize a Story via PATCH /stories/{id}/priority (mirrors useUpdateStoryPriority). */
   async setStoryPriority(id: string, priority: string): Promise<Story> {
     return this.patch(`/api/v1/stories/${id}/priority`, { priority });
+  }
+
+  /**
+   * Set or clear (via `null`) a Story's target date via PATCH /stories/{id}/target-date
+   * (mirrors useUpdateStoryTargetDate).
+   */
+  async setStoryTargetDate(id: string, targetDate: string | null): Promise<Story> {
+    return this.patch(`/api/v1/stories/${id}/target-date`, { targetDate });
   }
 
   async listTasks(storyId: string): Promise<Task[]> {

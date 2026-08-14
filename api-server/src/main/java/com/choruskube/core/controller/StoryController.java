@@ -4,6 +4,7 @@ import com.choruskube.core.dto.StoryPriorityUpdateRequest;
 import com.choruskube.core.dto.StoryRequest;
 import com.choruskube.core.dto.StoryResponse;
 import com.choruskube.core.dto.StoryStageUpdateRequest;
+import com.choruskube.core.dto.StoryTargetDateUpdateRequest;
 import com.choruskube.core.dto.StoryUpdateRequest;
 import com.choruskube.core.model.enums.Priority;
 import com.choruskube.core.model.enums.WorkItemStatus;
@@ -91,5 +92,12 @@ public class StoryController {
     @PatchMapping("/api/v1/stories/{id}/priority")
     public StoryResponse updatePriority(@PathVariable UUID id, @Valid @RequestBody StoryPriorityUpdateRequest request) {
         return service.updatePriority(id, request.priority());
+    }
+
+    @PreAuthorize("@orgSecurity.canOperate()")
+    @PatchMapping("/api/v1/stories/{id}/target-date")
+    public StoryResponse updateTargetDate(
+            @PathVariable UUID id, @Valid @RequestBody StoryTargetDateUpdateRequest request) {
+        return service.updateTargetDate(id, request.targetDate());
     }
 }

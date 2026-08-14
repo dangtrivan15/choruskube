@@ -23,6 +23,10 @@ export class RoadmapPage {
   readonly epicDetailPrioritySelect: Locator;
   readonly storyDetailPriorityBadge: Locator;
   readonly storyDetailPrioritySelect: Locator;
+  readonly epicDetailTargetDate: Locator;
+  readonly epicDetailTargetDateInput: Locator;
+  readonly storyDetailTargetDate: Locator;
+  readonly storyDetailTargetDateInput: Locator;
   readonly epicEditButton: Locator;
   readonly epicDeleteButton: Locator;
   readonly newStoryButton: Locator;
@@ -97,6 +101,10 @@ export class RoadmapPage {
     this.epicDetailPrioritySelect = page.getByTestId("epic-detail-priority-select");
     this.storyDetailPriorityBadge = page.getByTestId("story-detail-priority-badge");
     this.storyDetailPrioritySelect = page.getByTestId("story-detail-priority-select");
+    this.epicDetailTargetDate = page.getByTestId("epic-detail-target-date");
+    this.epicDetailTargetDateInput = page.getByTestId("epic-detail-target-date-input");
+    this.storyDetailTargetDate = page.getByTestId("story-detail-target-date");
+    this.storyDetailTargetDateInput = page.getByTestId("story-detail-target-date-input");
     this.epicEditButton = page.getByTestId("epic-edit-button");
     this.epicDeleteButton = page.getByTestId("epic-delete-button");
     this.newStoryButton = page.getByTestId("new-story-button");
@@ -209,6 +217,18 @@ export class RoadmapPage {
   async setPriorityViaSelect(trigger: Locator, level: "high" | "medium" | "low") {
     await trigger.click();
     await this.page.getByTestId(`priority-option-${level}`).click();
+  }
+
+  /** Set the target date via the inline detail-page native date input (`"YYYY-MM-DD"`). */
+  async fillTargetDate(input: Locator, date: string) {
+    await input.fill(date);
+    await input.blur();
+  }
+
+  /** Clear the target date via the inline detail-page native date input. */
+  async clearTargetDate(input: Locator) {
+    await input.fill("");
+    await input.blur();
   }
 
   /** The readiness "Blocked" badge on the Story row (Epic detail page) titled `title`, if present. */

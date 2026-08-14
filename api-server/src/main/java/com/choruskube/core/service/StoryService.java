@@ -5,6 +5,7 @@ import com.choruskube.core.dto.StoryResponse;
 import com.choruskube.core.dto.StoryUpdateRequest;
 import com.choruskube.core.model.enums.Priority;
 import com.choruskube.core.model.enums.WorkItemStatus;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
@@ -70,4 +71,11 @@ public interface StoryService {
      * enforces — mirrors {@link #updateStage} / {@link EpicService#updatePriority} exactly.
      */
     StoryResponse updatePriority(UUID id, Priority priority);
+
+    /**
+     * Sets or clears (via {@code null}) a Story's target date. Exempt from the "no edit once
+     * started" guard that {@link #update} enforces — mirrors {@link #updatePriority} /
+     * {@link EpicService#updateTargetDate} exactly.
+     */
+    StoryResponse updateTargetDate(UUID id, LocalDate targetDate);
 }

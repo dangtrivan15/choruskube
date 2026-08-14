@@ -32,6 +32,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.temporal.client.WorkflowClient;
 import io.temporal.serviceclient.WorkflowServiceStubs;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -555,6 +556,65 @@ public class EpicControllerTest extends BaseTest {
                         .content(objectMapper.writeValueAsString(body)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.priority").value("high"));
+    }
+
+    // --- target date field ---
+
+    @Test
+    void updateTargetDate_withValidDate_returns200WithEchoedDate() throws Exception {
+        GitRepo repo = createGitRepo("https://github.com/test/target-date-set.git");
+        Epic e = createEpic(repo, "Target Date Epic");
+
+        mockMvc.perform(patch("/api/v1/epics/" + e.getId() + "/target-date")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("targetDate", "2026-08-13"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.targetDate").value("2026-08-13"));
+    }
+
+    @Test
+    void updateTargetDate_withNull_clearsDate() throws Exception {
+        GitRepo repo = createGitRepo("https://github.com/test/target-date-clear.git");
+        Epic e = createEpic(repo, "Target Date Clear Epic");
+        epicService.updateTargetDate(e.getId(), java.time.LocalDate.parse("2026-08-13"));
+
+        mockMvc.perform(patch("/api/v1/epics/" + e.getId() + "/target-date")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Collections.singletonMap("targetDate", null))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.targetDate").doesNotExist());
+    }
+
+    @Test
+    void updateTargetDate_withMalformedDate_returns400() throws Exception {
+        GitRepo repo = createGitRepo("https://github.com/test/target-date-malformed.git");
+        Epic e = createEpic(repo, "Target Date Malformed Epic");
+
+        mockMvc.perform(patch("/api/v1/epics/" + e.getId() + "/target-date")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("targetDate", "2026-13-40"))))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void updateTargetDate_onNonexistentEpic_returns404() throws Exception {
+        mockMvc.perform(patch("/api/v1/epics/" + UUID.randomUUID() + "/target-date")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("targetDate", "2026-08-13"))))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void updateTargetDate_belowCanOperatePermission_returns403() throws Exception {
+        when(orgSecurity.canOperate()).thenReturn(false);
+
+        GitRepo repo = createGitRepo("https://github.com/test/target-date-forbidden.git");
+        Epic e = createEpic(repo, "Target Date Forbidden Epic");
+
+        mockMvc.perform(patch("/api/v1/epics/" + e.getId() + "/target-date")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("targetDate", "2026-08-13"))))
+                .andExpect(status().isForbidden());
     }
 
     // --- Test helpers ---

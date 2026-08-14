@@ -483,6 +483,66 @@ public class StoryControllerTest extends BaseTest {
                 .andExpect(jsonPath("$.priority").value("high"));
     }
 
+    // --- target date field ---
+
+    @Test
+    void updateTargetDate_withValidDate_returns200WithEchoedDate() throws Exception {
+        EpicResponse epic = makeEpic("https://github.com/test/story-target-date-set.git");
+        StoryResponse story = makeStory(epic.id(), "Target Date Story");
+
+        mockMvc.perform(patch("/api/v1/stories/" + story.id() + "/target-date")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("targetDate", "2026-08-13"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.targetDate").value("2026-08-13"));
+    }
+
+    @Test
+    void updateTargetDate_withNull_clearsDate() throws Exception {
+        EpicResponse epic = makeEpic("https://github.com/test/story-target-date-clear.git");
+        StoryResponse story = makeStory(epic.id(), "Target Date Clear Story");
+        storyService.updateTargetDate(story.id(), java.time.LocalDate.parse("2026-08-13"));
+
+        mockMvc.perform(patch("/api/v1/stories/" + story.id() + "/target-date")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                java.util.Collections.singletonMap("targetDate", null))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.targetDate").doesNotExist());
+    }
+
+    @Test
+    void updateTargetDate_withMalformedDate_returns400() throws Exception {
+        EpicResponse epic = makeEpic("https://github.com/test/story-target-date-malformed.git");
+        StoryResponse story = makeStory(epic.id(), "Target Date Malformed Story");
+
+        mockMvc.perform(patch("/api/v1/stories/" + story.id() + "/target-date")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("targetDate", "2026-13-40"))))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void updateTargetDate_onNonexistentStory_returns404() throws Exception {
+        mockMvc.perform(patch("/api/v1/stories/" + UUID.randomUUID() + "/target-date")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("targetDate", "2026-08-13"))))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void updateTargetDate_belowCanOperatePermission_returns403() throws Exception {
+        when(orgSecurity.canOperate()).thenReturn(false);
+
+        EpicResponse epic = makeEpic("https://github.com/test/story-target-date-forbidden.git");
+        StoryResponse story = makeStory(epic.id(), "Target Date Forbidden Story");
+
+        mockMvc.perform(patch("/api/v1/stories/" + story.id() + "/target-date")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("targetDate", "2026-08-13"))))
+                .andExpect(status().isForbidden());
+    }
+
     // --- helpers ---
 
     private EpicResponse makeEpic(String url) {

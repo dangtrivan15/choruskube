@@ -43,12 +43,12 @@ class DefaultRoadmapCandidateMaterializerTest {
 
     private static EpicResponse epicResponse(UUID id) {
         return new EpicResponse(
-                id, "t", "d", "m", "open", "active", "medium", null, null, null, Instant.now(), Instant.now(), 0);
+                id, "t", "d", "m", "open", "active", "medium", null, null, null, null, Instant.now(), Instant.now(), 0);
     }
 
     private static StoryResponse storyResponse(UUID id, UUID epicId) {
         return new StoryResponse(
-                id, epicId, "t", "d", "open", "backlog", "medium", null, null, Instant.now(), Instant.now());
+                id, epicId, "t", "d", "open", "backlog", "medium", null, null, null, Instant.now(), Instant.now());
     }
 
     private static TaskResponse taskResponse(UUID storyId) {

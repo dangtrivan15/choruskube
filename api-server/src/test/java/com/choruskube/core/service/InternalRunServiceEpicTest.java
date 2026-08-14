@@ -271,6 +271,7 @@ class InternalRunServiceEpicTest {
                 null,
                 null,
                 null,
+                null,
                 null);
         when(storyService.create(eq(epicId), any(), eq(runId), eq(PROJECT_ID))).thenReturn(expected);
 
@@ -594,6 +595,7 @@ class InternalRunServiceEpicTest {
                 "backlog",
                 "backlog",
                 "medium",
+                null,
                 new EpicResponse.Progress(0, 0),
                 new SoftwareProjectRef(projectId, "git_repo", "name"),
                 List.of(),

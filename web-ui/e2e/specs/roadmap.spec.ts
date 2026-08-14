@@ -296,6 +296,66 @@ test.describe("Roadmap drill-down", () => {
     await api.deleteEpic(lowEpic.id);
   });
 
+  test("set and clear a target date on an Epic detail view", async ({
+    roadmapPage,
+    api,
+    workerRepo,
+  }) => {
+    const epic = await api.createEpic({
+      title: uniqueName("E2E Target Date Epic"),
+      description: "desc",
+      softwareProjectId: workerRepo.gitRepo.id,
+    });
+
+    await roadmapPage.page.goto(`/roadmap/epics/${epic.id}`);
+    await expect(roadmapPage.epicDetailTargetDate).toHaveText(/No target date/);
+
+    await roadmapPage.fillTargetDate(roadmapPage.epicDetailTargetDateInput, "2026-08-13");
+    await expect(roadmapPage.epicDetailTargetDate).toHaveText(/Aug 13, 2026/);
+
+    // Reload — the value must have persisted server-side, not just in local state.
+    await roadmapPage.page.reload();
+    await expect(roadmapPage.epicDetailTargetDate).toHaveText(/Aug 13, 2026/);
+
+    await roadmapPage.clearTargetDate(roadmapPage.epicDetailTargetDateInput);
+    await expect(roadmapPage.epicDetailTargetDate).toHaveText(/No target date/);
+
+    // Clean up.
+    await api.deleteEpic(epic.id);
+  });
+
+  test("set and clear a target date on a Story detail view", async ({
+    roadmapPage,
+    api,
+    workerRepo,
+  }) => {
+    const epic = await api.createEpic({
+      title: uniqueName("E2E Target Date Story Epic"),
+      description: "desc",
+      softwareProjectId: workerRepo.gitRepo.id,
+    });
+    const story = await api.createStory(epic.id, {
+      title: uniqueName("E2E Target Date Story"),
+      description: "desc",
+    });
+
+    await roadmapPage.page.goto(`/roadmap/epics/${epic.id}/stories/${story.id}`);
+    await expect(roadmapPage.storyDetailTargetDate).toHaveText(/No target date/);
+
+    await roadmapPage.fillTargetDate(roadmapPage.storyDetailTargetDateInput, "2026-08-13");
+    await expect(roadmapPage.storyDetailTargetDate).toHaveText(/Aug 13, 2026/);
+
+    // Reload — the value must have persisted server-side, not just in local state.
+    await roadmapPage.page.reload();
+    await expect(roadmapPage.storyDetailTargetDate).toHaveText(/Aug 13, 2026/);
+
+    await roadmapPage.clearTargetDate(roadmapPage.storyDetailTargetDateInput);
+    await expect(roadmapPage.storyDetailTargetDate).toHaveText(/No target date/);
+
+    // Clean up.
+    await api.deleteEpic(epic.id);
+  });
+
   test("'Ready to start' filter on the Roadmap list shows only Epics with unblocked work", async ({
     roadmapPage,
     api,

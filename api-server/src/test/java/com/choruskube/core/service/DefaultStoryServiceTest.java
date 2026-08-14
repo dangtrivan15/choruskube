@@ -37,6 +37,7 @@ import io.temporal.client.WorkflowClient;
 import io.temporal.serviceclient.WorkflowServiceStubs;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -568,6 +569,96 @@ public class DefaultStoryServiceTest extends BaseTest {
         List<UUID> ids = page.getContent().stream().map(StoryResponse::id).toList();
         assertThat(ids.indexOf(highStory.id())).isLessThan(ids.indexOf(mediumStory.id()));
         assertThat(ids.indexOf(mediumStory.id())).isLessThan(ids.indexOf(lowStory.id()));
+    }
+
+    // ── updateTargetDate: Story target date field (mirrors updatePriority) ────────
+
+    @Test
+    void updateTargetDate_persistsNewDate() {
+        EpicResponse epic = makeEpic("https://github.com/test/story-target-date-persist.git");
+        StoryResponse created = service.create(epic.id(), new StoryRequest("S", "D"));
+
+        StoryResponse updated = service.updateTargetDate(created.id(), LocalDate.parse("2026-08-13"));
+
+        assertThat(updated.targetDate()).isEqualTo(LocalDate.parse("2026-08-13"));
+        StoryResponse refetched = service.get(created.id());
+        assertThat(refetched.targetDate()).isEqualTo(LocalDate.parse("2026-08-13"));
+    }
+
+    @Test
+    void updateTargetDate_withNull_clearsDate() {
+        EpicResponse epic = makeEpic("https://github.com/test/story-target-date-clear.git");
+        StoryResponse created = service.create(epic.id(), new StoryRequest("S", "D"));
+        service.updateTargetDate(created.id(), LocalDate.parse("2026-08-13"));
+
+        StoryResponse updated = service.updateTargetDate(created.id(), null);
+
+        assertThat(updated.targetDate()).isNull();
+    }
+
+    @Test
+    void updateTargetDate_clearingNeverSetDate_isNoopSuccess() {
+        EpicResponse epic = makeEpic("https://github.com/test/story-target-date-noop-clear.git");
+        StoryResponse created = service.create(epic.id(), new StoryRequest("S", "D"));
+
+        StoryResponse updated = service.updateTargetDate(created.id(), null);
+
+        assertThat(updated.targetDate()).isNull();
+    }
+
+    @Test
+    void updateTargetDate_withStartedDescendantTask_succeeds() {
+        // Proves the "no edit once started" guard used by the full update() edit path does NOT
+        // apply to target date moves — mirrors updatePriority_withStartedDescendantTask_succeeds.
+        EpicResponse epic = makeEpic("https://github.com/test/story-target-date-started-task.git");
+        StoryResponse story = service.create(epic.id(), new StoryRequest("S", "D"));
+        TaskResponse task = taskService.create(story.id(), new TaskRequest("T", "D"));
+        markTaskInProgress(task.id());
+
+        StoryResponse updated = service.updateTargetDate(story.id(), LocalDate.parse("2026-08-13"));
+
+        assertThat(updated.targetDate()).isEqualTo(LocalDate.parse("2026-08-13"));
+    }
+
+    @Test
+    void updateTargetDate_writesAuditEntryWithBeforeAfterDate() {
+        EpicResponse epic = makeEpic("https://github.com/test/story-target-date-audit.git");
+        StoryResponse created = service.create(epic.id(), new StoryRequest("S", "D"));
+
+        service.updateTargetDate(created.id(), LocalDate.parse("2026-08-13"));
+
+        ArgumentCaptor<String> detailCaptor = ArgumentCaptor.forClass(String.class);
+        verify(auditSink)
+                .record(eq(AuditSink.STORY_TARGET_DATE_UPDATED), eq("story"), eq(created.id()), detailCaptor.capture());
+        JsonNode detail = readTree(detailCaptor.getValue());
+        assertThat(detail.path("before").path("target_date").isNull()).isTrue();
+        assertThat(detail.path("after").path("target_date").asText()).isEqualTo("2026-08-13");
+    }
+
+    @Test
+    void updateTargetDate_publishesRoadmapItemChangedEvent() {
+        EpicResponse epic = makeEpic("https://github.com/test/story-target-date-event.git");
+        StoryResponse created = service.create(epic.id(), new StoryRequest("S", "D"));
+        // create() already published one "backlog" event above; reset so the verify below counts
+        // only the updateTargetDate() call (the rollup status doesn't change, so the two calls'
+        // arguments would otherwise collide).
+        org.mockito.Mockito.clearInvocations(runEventPublisher);
+
+        service.updateTargetDate(created.id(), LocalDate.parse("2026-08-13"));
+
+        verify(runEventPublisher).publishRoadmapItemChanged(eq("story"), eq(created.id()), any());
+    }
+
+    @Test
+    void update_leavesTargetDateUnchanged() {
+        // The full PUT edit (StoryUpdateRequest) has no targetDate field, so it must never move it.
+        EpicResponse epic = makeEpic("https://github.com/test/story-target-date-put-noop.git");
+        StoryResponse created = service.create(epic.id(), new StoryRequest("S", "D"));
+        service.updateTargetDate(created.id(), LocalDate.parse("2026-08-13"));
+
+        StoryResponse updated = service.update(created.id(), new StoryUpdateRequest("New", "New Desc"));
+
+        assertThat(updated.targetDate()).isEqualTo(LocalDate.parse("2026-08-13"));
     }
 
     private void markTaskInProgress(UUID taskId) {

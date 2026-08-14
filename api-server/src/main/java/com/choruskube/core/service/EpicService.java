@@ -7,6 +7,7 @@ import com.choruskube.core.dto.InternalUpdateEpicRequest;
 import com.choruskube.core.model.enums.Priority;
 import com.choruskube.core.model.enums.Readiness;
 import com.choruskube.core.model.enums.WorkItemStatus;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
@@ -73,4 +74,10 @@ public interface EpicService {
      * enforces — mirrors {@link #updateStage} exactly, not the full PUT edit.
      */
     EpicResponse updatePriority(UUID id, Priority priority);
+
+    /**
+     * Sets or clears (via {@code null}) an Epic's target date. Exempt from the "no edit once
+     * started" guard that {@link #update} enforces — mirrors {@link #updatePriority} exactly.
+     */
+    EpicResponse updateTargetDate(UUID id, LocalDate targetDate);
 }

@@ -30,6 +30,7 @@ function makeEpic(overrides: Partial<EpicResponse> = {}): EpicResponse {
     status: "backlog",
     stage: "backlog",
     priority: "medium",
+    targetDate: null,
     progress: { totalTasks: 0, doneTasks: 0 },
     softwareProject: { id: "r1", type: "git_repo", name: "backend-api" },
     repos: [],

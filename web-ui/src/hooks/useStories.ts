@@ -7,6 +7,7 @@ import type {
   StoryRequest,
   StoryStageUpdateRequest,
   StoryPriorityUpdateRequest,
+  StoryTargetDateUpdateRequest,
   PageResponse,
   PaginationParams,
   Priority,
@@ -179,6 +180,30 @@ export function useUpdateStoryPriority() {
     },
     onError: () => {
       addEntry(showMutationToast("Failed to update story priority", "error"));
+    },
+  });
+}
+
+/**
+ * Set or clear (via `null`) a Story's target date via `PATCH /stories/{id}/target-date` — the
+ * Story-level mirror of `useUpdateEpicTargetDate`. Invalidates the `["stories"]` query key on
+ * success (same pattern as `useUpdateStoryPriority`) so the Story detail page and any Story
+ * list re-fetch the new date.
+ */
+export function useUpdateStoryTargetDate() {
+  const queryClient = useQueryClient();
+  const { addEntry } = useActivityFeed();
+  return useMutation({
+    mutationFn: ({ id, targetDate }: { id: string } & StoryTargetDateUpdateRequest) =>
+      api.patch<StoryResponse>(`/stories/${id}/target-date`, {
+        targetDate,
+      } satisfies StoryTargetDateUpdateRequest),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["stories"] });
+      addEntry(showMutationToast("Story target date updated", "success"));
+    },
+    onError: () => {
+      addEntry(showMutationToast("Failed to update story target date", "error"));
     },
   });
 }
