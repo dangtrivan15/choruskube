@@ -91,4 +91,31 @@ class DecisionOptionsResolverTest {
         assertThat(DecisionOptionsResolver.isRoutingHub("{}", mapper)).isFalse();
         assertThat(DecisionOptionsResolver.isRoutingHub("{oops", mapper)).isFalse();
     }
+
+    @Test
+    void isRoutingHubRejectsTruthyNonBooleanShapes() {
+        // Jackson's asBoolean(false) coerces the string "true" and non-zero numbers to true; the
+        // orchestrator (a real .(bool) type assertion) and RunDag.tsx (=== true) both reject
+        // those shapes, so the Java side must match or a template becomes a hub to one component
+        // and not the other two.
+        assertThat(DecisionOptionsResolver.isRoutingHub("{\"routing_hub\": \"true\"}", mapper))
+                .isFalse();
+        assertThat(DecisionOptionsResolver.isRoutingHub("{\"routing_hub\": 1}", mapper))
+                .isFalse();
+    }
+
+    @Test
+    void resolveTreatsStringTrueRoutingHubAsNotAHub() throws Exception {
+        // Same coercion rejection, exercised through the snapshot-node path used at decision
+        // time (the private isRoutingHub(JsonNode) overload) rather than the entity-side string
+        // path above.
+        JsonNode snapshot = mapper.readTree("{\"nodes\":["
+                + "{\"template_node_id\":\"" + AI + "\",\"label\":\"code_review\",\"executor_type\":\"ai\"},"
+                + "{\"template_node_id\":\"" + HUB + "\",\"label\":\"supervisor\",\"executor_type\":\"human\","
+                + "\"config_overrides\":{\"routing_hub\":\"true\"}}"
+                + "],\"edges\":[]}");
+
+        assertThat(resolver.findRoutingHub(snapshot)).isNull();
+        assertThat(resolver.resolve(snapshot, AI)).doesNotContain("escalate");
+    }
 }

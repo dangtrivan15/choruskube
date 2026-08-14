@@ -314,6 +314,20 @@ describe("RunDag — Supervisor rendering", () => {
     expect(synthetic[0].getAttribute("data-id")).toBe(`supervisor:${CODE_REVIEW_ID}->${SUPERVISOR_ID}`);
   });
 
+  it("does not draw an escalation edge for a node that escalated but then failed the gate", async () => {
+    // A node can submit decision "escalate" and still end up "failed" — e.g. the
+    // escalation.md gate itself rejecting the pod. Without a status check, a synthetic edge
+    // would still be drawn for a node that never actually reached the Supervisor. The
+    // api-server's ArtifactResolutionService.resolveEscalatingExecution already scopes to
+    // completed executions via its repository query, so the two surfaces must agree here.
+    const { container } = renderDag(snapshotWithSupervisor(), {
+      nodeExecutions: [{ templateNodeId: CODE_REVIEW_ID, status: "failed", decision: "escalate" }],
+    });
+    await waitForGraphReady();
+
+    expect(container.querySelectorAll(".supervisor-edge")).toHaveLength(0);
+  });
+
   it("does not draw a synthetic edge for a route:<label> decision naming an unknown node", async () => {
     const { container } = renderDag(snapshotWithSupervisor(), {
       nodeExecutions: [{ templateNodeId: SUPERVISOR_ID, status: "completed", decision: "route:nonexistent" }],

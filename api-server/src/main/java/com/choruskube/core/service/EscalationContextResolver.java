@@ -54,7 +54,10 @@ public class EscalationContextResolver {
             category = frontMatterValue(markdown, "category");
             summary = frontMatterValue(markdown, "summary");
         } catch (Exception e) {
-            logger.warn("Could not read escalation.md for execution {}: {}", escalator.getId(), e.getMessage());
+            // Degradation, not a fault: the Approvals dashboard re-lists gates on every STOMP
+            // invalidation, so this would otherwise log repeatedly for a gate the reviewer simply
+            // hasn't attached escalation.md to yet.
+            logger.debug("Could not read escalation.md for execution {}: {}", escalator.getId(), e.getMessage());
         }
 
         return new EscalationContext(

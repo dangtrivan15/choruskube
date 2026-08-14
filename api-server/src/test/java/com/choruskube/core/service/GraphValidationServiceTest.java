@@ -318,6 +318,48 @@ class GraphValidationServiceTest {
         assertThat(result.errors()).anyMatch(e -> e.contains("No terminal node found"));
     }
 
+    @Test
+    void edgeConditionEqualToEscalateIsRejected() {
+        // graph.go's EvaluateEdges resolves an `escalate` result before any edge inspection, so
+        // an edge literally conditioned on "escalate" could never fire — silently shadowed by
+        // the routing-hub interpretation instead of erroring.
+        UUID a = UUID.randomUUID();
+        UUID b = UUID.randomUUID();
+
+        var nodes = List.of(makeNode(a, "A", true), makeNode(b, "B", false));
+        var edges = List.of(makeEdge(a, b, "Escalate"));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isFalse();
+        assertThat(result.errors()).anyMatch(e -> e.contains("A") && e.contains("reserved"));
+    }
+
+    @Test
+    void edgeConditionPrefixedRouteIsRejected() {
+        UUID a = UUID.randomUUID();
+        UUID b = UUID.randomUUID();
+
+        var nodes = List.of(makeNode(a, "A", true), makeNode(b, "B", false));
+        var edges = List.of(makeEdge(a, b, "ROUTE:final_approval"));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isFalse();
+        assertThat(result.errors()).anyMatch(e -> e.contains("A") && e.contains("reserved"));
+    }
+
+    @Test
+    void ordinaryEdgeConditionsAreUnaffectedByReservedVocabularyRule() {
+        UUID a = UUID.randomUUID();
+        UUID b = UUID.randomUUID();
+
+        var nodes = List.of(makeNode(a, "A", true), makeNode(b, "B", false));
+        var edges = List.of(makeEdge(a, b, "approved"));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isTrue();
+        assertThat(result.errors()).isEmpty();
+    }
+
     private TemplateNode makeNode(UUID id, String label, boolean entrypoint) {
         var node = new TemplateNode();
         node.setId(id);

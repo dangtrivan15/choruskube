@@ -31,18 +31,21 @@ public class ArtifactResolutionService {
     private final WorkflowRunRepository workflowRunRepo;
     private final GraphSnapshotBuilder snapshotBuilder;
     private final ObjectMapper objectMapper;
+    private final DecisionOptionsResolver decisionOptionsResolver;
 
     public ArtifactResolutionService(
             TemplateNodeRepository templateNodeRepo,
             NodeExecutionRepository nodeExecutionRepo,
             WorkflowRunRepository workflowRunRepo,
             GraphSnapshotBuilder snapshotBuilder,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            DecisionOptionsResolver decisionOptionsResolver) {
         this.templateNodeRepo = templateNodeRepo;
         this.nodeExecutionRepo = nodeExecutionRepo;
         this.workflowRunRepo = workflowRunRepo;
         this.snapshotBuilder = snapshotBuilder;
         this.objectMapper = objectMapper;
+        this.decisionOptionsResolver = decisionOptionsResolver;
     }
 
     /**
@@ -235,10 +238,25 @@ public class ArtifactResolutionService {
     /**
      * Passthrough arm: attachments from the human gate whose decision routed back to this node.
      *
-     * <p>Two ways a human gate can have routed work here: an ordinary gate fires an edge, which
-     * the orchestrator records in {@code traversed_edge_ids}, so that case is an exact lookup
-     * rather than a re-evaluation of edge conditions. The Supervisor fires no edge at all, so it
-     * is matched instead on its {@code route:<label>} decision string.
+     * <p>Two ways a human gate can have routed work here, and the two arms below are genuinely
+     * alternative — neither shares a precondition with the other, because the Supervisor's
+     * execution row is not reliably a {@code reviewerType == human} row (see below):
+     *
+     * <ul>
+     *   <li>An ordinary gate fires an edge, which the orchestrator records in {@code
+     *       traversed_edge_ids}, so that case is an exact lookup rather than a re-evaluation of
+     *       edge conditions, gated on {@code reviewerType == human} to exclude AI nodes that
+     *       happen to share a traversed edge id space.
+     *   <li>The Supervisor fires no edge at all, so it is matched instead on its {@code
+     *       route:<label>} decision string, structurally confirmed by requiring the deciding
+     *       execution's template node id to actually be the template's routing hub — not merely
+     *       inferred from the decision string shape. This cannot be folded into the same {@code
+     *       reviewerType == human} precondition as the edge-based arm: {@code reviewerType} is
+     *       only ever set by {@code InternalRunService.writeReviewHistory}, which the orchestrator
+     *       calls solely for nodes with a non-empty loop group, and the Supervisor has none by
+     *       design (its loop-group context comes from the escalator, not itself) — so its
+     *       execution row's {@code reviewerType} stays {@code null} in production.
+     * </ul>
      */
     private void collectRoutingGateArtifacts(UUID runId, NodeExecution exec, Map<String, String> artifacts) {
         try {
@@ -280,11 +298,20 @@ public class ArtifactResolutionService {
             }
             final String targetLabel = myLabel;
 
+            // The routing hub's own template node id — required to structurally confirm a
+            // route:<label> decision actually came from the hub, rather than trusting the decision
+            // string shape alone.
+            JsonNode hubNode = decisionOptionsResolver.findRoutingHub(snapshot);
+            final UUID hubNodeId = hubNode == null
+                    ? null
+                    : UUID.fromString(hubNode.path("template_node_id").asText());
+
             NodeExecution gate =
                     nodeExecutionRepo.findByWorkflowRunIdAndStatus(runId, NodeExecutionStatus.completed).stream()
-                            .filter(e -> e.getReviewerType() == ReviewerType.human)
-                            .filter(e -> traversedAny(e, inboundEdgeIds)
-                                    || (targetLabel != null
+                            .filter(e -> (e.getReviewerType() == ReviewerType.human && traversedAny(e, inboundEdgeIds))
+                                    || (hubNodeId != null
+                                            && hubNodeId.equals(e.getTemplateNodeId())
+                                            && targetLabel != null
                                             && targetLabel.equalsIgnoreCase(
                                                     DecisionOptionsResolver.routeTargetLabel(e.getDecision()))))
                             .max(Comparator.comparing(

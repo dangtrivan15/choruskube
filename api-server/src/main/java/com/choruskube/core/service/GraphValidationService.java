@@ -117,6 +117,29 @@ public class GraphValidationService {
             validateConfigOverrides(node, errors);
         }
 
+        // Rule 5: Edge conditions must not collide with the Supervisor's reserved decision
+        // vocabulary. orchestrator/internal/workflow/graph.go's EvaluateEdges resolves an
+        // `escalate` result and, for the hub's own completions, a `route:<label>` result before
+        // it ever inspects the completed node's outgoing edges. An edge condition written as
+        // either literal would therefore never fire — it is silently shadowed by the
+        // routing-hub interpretation rather than erroring, which makes the authoring mistake
+        // invisible until the run takes the wrong branch. Rejecting it here at authoring time
+        // surfaces the mistake immediately instead.
+        for (TemplateEdge edge : edges) {
+            String condition = edge.getCondition();
+            if (condition == null) {
+                continue;
+            }
+            boolean isEscalate = DecisionOptionsResolver.ESCALATE_DECISION.equalsIgnoreCase(condition);
+            boolean isRoutePrefixed = condition.regionMatches(
+                    true, 0, DecisionOptionsResolver.ROUTE_PREFIX, 0, DecisionOptionsResolver.ROUTE_PREFIX.length());
+            if (isEscalate || isRoutePrefixed) {
+                errors.add("Edge condition '" + condition + "' from node '" + nodeLabels.get(edge.getSourceNodeId())
+                        + "' is reserved for the Supervisor ('" + DecisionOptionsResolver.ESCALATE_DECISION + "' or '"
+                        + DecisionOptionsResolver.ROUTE_PREFIX + "*') and can never fire as an edge condition");
+            }
+        }
+
         return new ValidationResponse(errors.isEmpty(), errors);
     }
 

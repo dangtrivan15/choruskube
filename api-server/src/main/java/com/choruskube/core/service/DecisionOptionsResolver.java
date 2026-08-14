@@ -130,13 +130,20 @@ public class DecisionOptionsResolver {
      * Supervisor. Shared with the entity-side callers (graph validation, artifact resolution),
      * which hold a TemplateNode's raw JSON rather than a snapshot node, so the rule is written
      * once. Degrades to {@code false} on missing or malformed JSON.
+     *
+     * <p>Requires the strict JSON boolean shape ({@code isBoolean() && asBoolean()}), not
+     * Jackson's {@code asBoolean(false)} coercion — that coercion also accepts the string
+     * {@code "true"} and non-zero numbers, which {@code orchestrator/internal/workflow/graph.go}
+     * (a real {@code .(bool)} type assertion) and {@code RunDag.tsx} (a strict {@code === true})
+     * both reject. A truthy-but-non-boolean value must not be a hub to one component and not to
+     * the other two.
      */
     public static boolean isRoutingHub(String configOverridesJson, ObjectMapper mapper) {
         if (configOverridesJson == null || configOverridesJson.isBlank()) {
             return false;
         }
         try {
-            return mapper.readTree(configOverridesJson).path(ROUTING_HUB_KEY).asBoolean(false);
+            return isStrictlyTrue(mapper.readTree(configOverridesJson).path(ROUTING_HUB_KEY));
         } catch (Exception e) {
             return false;
         }
@@ -144,7 +151,11 @@ public class DecisionOptionsResolver {
 
     private boolean isRoutingHub(JsonNode node) {
         JsonNode overrides = configOverridesOf(node);
-        return overrides != null && overrides.path(ROUTING_HUB_KEY).asBoolean(false);
+        return overrides != null && isStrictlyTrue(overrides.path(ROUTING_HUB_KEY));
+    }
+
+    private static boolean isStrictlyTrue(JsonNode value) {
+        return value.isBoolean() && value.asBoolean();
     }
 
     private JsonNode findNode(JsonNode nodesArr, UUID nodeId) {

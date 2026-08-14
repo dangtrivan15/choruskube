@@ -65,7 +65,7 @@ function resolveEscalatingExecution(
   executions: NodeExecutionResponse[],
 ): NodeExecutionResponse | undefined {
   return [...executions]
-    .filter((e) => e.decision === "escalate")
+    .filter((e) => e.decision === "escalate" && e.status === "completed")
     .sort((a, b) => {
       const at = a.completedAt ? new Date(a.completedAt).getTime() : 0;
       const bt = b.completedAt ? new Date(b.completedAt).getTime() : 0;
