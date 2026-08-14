@@ -67,11 +67,17 @@ public class E2eTestDataSeeder implements ApplicationRunner {
     // via mock-agent.sh's "many_artifacts" scenario, for artifact-viewer-layout.spec.ts's
     // "content pane collapses when a node has many files" regression coverage.
     private static final String GRAPH_ID_MANY_ARTIFACTS = "e2e-many-artifacts";
+    // supervisor_node: a single entrypoint plus an edgeless human node declaring
+    // config_overrides.routing_hub — the Supervisor. It has no incoming or outgoing edges, so it
+    // is never dispatched by this template's own run; it exists purely so supervisor-node.spec.ts
+    // can assert the DAG renders it (pending, pinned outside the laid-out flow) from the graph
+    // snapshot alone, before any NodeExecution for it has ever been created.
+    private static final String GRAPH_ID_SUPERVISOR = "e2e-supervisor-node";
 
-    // Bumped to 3 so step_2's requiredInputArtifacts declaration re-seeds — run() early-returns
-    // when a template at the current VERSION already exists, so an edit without a bump is a no-op
+    // Bumped to 4 so the new supervisor_node template gets seeded — run() early-returns when a
+    // template at the current VERSION already exists, so an edit without a bump is a no-op
     // against any environment whose database survived the previous boot.
-    private static final int VERSION = 3;
+    private static final int VERSION = 4;
 
     private static final String E2E_REPO_URL = "https://github.com/e2e-test/mock-repo";
     private static final String E2E_SECONDARY_REPO_URL = "https://github.com/e2e-test/mock-frontend";
@@ -167,7 +173,9 @@ public class E2eTestDataSeeder implements ApplicationRunner {
 
         seedManyArtifacts(mockSuccess);
 
-        log.info("E2eTestDataSeeder: seeded 3 git repos, 1 repo group, 11 node definitions, and 12 E2E templates");
+        seedSupervisorTemplate(mockSuccess, mockGate);
+
+        log.info("E2eTestDataSeeder: seeded 3 git repos, 1 repo group, 11 node definitions, and 13 E2E templates");
     }
 
     private void seedDemoRepoGroup() {
@@ -543,6 +551,29 @@ public class E2eTestDataSeeder implements ApplicationRunner {
                 "E2E test: single node producing many output files (artifact viewer layout regression)");
 
         createNode(t, mockSuccess, "produce_files", true, cmd("many_artifacts --count 40"));
+    }
+
+    // --- Supervisor Node: start -> (no edges) <- supervisor (routing_hub) ---
+    //
+    // Mirrors the production Feature Development template's Supervisor shape: a human node
+    // labelled "supervisor" whose config_overrides is exactly {"routing_hub": true}, with no
+    // loop_group, no requiredInputArtifacts, and zero edges — GraphValidationService rejects any
+    // edge touching a routing_hub node. "start" is a normal mock-success entrypoint so the
+    // template is otherwise a valid, completable graph; the Supervisor is reachable only via the
+    // implicit `escalate` decision (AI-executor nodes only), which this all-script/human template
+    // never exercises. That keeps this template's coverage to what the harness can actually
+    // drive deterministically: the Supervisor rendering in the DAG, in "pending", pinned outside
+    // the laid-out flow, before it has ever run.
+
+    private void seedSupervisorTemplate(NodeDefinition mockSuccess, NodeDefinition mockGate) {
+        GraphTemplate t = createTemplate(
+                GRAPH_ID_SUPERVISOR,
+                "e2e-supervisor-node",
+                "E2E test: a template declaring an edgeless Supervisor (routing_hub) so the DAG can "
+                        + "be asserted to render it before it has ever run");
+
+        createNode(t, mockSuccess, "start", true, cmd("success --artifact start-done"));
+        createNode(t, mockGate, "supervisor", false, "{\"routing_hub\": true}");
     }
 
     // --- Helpers ---

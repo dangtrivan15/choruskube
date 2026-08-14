@@ -22,4 +22,11 @@ public record PendingGateResponse(
          * {@code roadmap_candidates.json}, or {@code null} if this gate's template doesn't produce
          * one, or the artifact is missing/malformed (falls back to the raw-artifact display).
          */
-        List<CandidateEpicProposal> candidateBreakdown) {}
+        List<CandidateEpicProposal> candidateBreakdown,
+        /**
+         * Why this run was escalated to the Supervisor, or {@code null} for an ordinary gate — the
+         * Supervisor has no inbound edges, so {@code predecessorOutputs} carries no context for it;
+         * this is the replacement. Also {@code null} when the gate IS the Supervisor but nothing has
+         * escalated yet.
+         */
+        EscalationContext escalation) {}

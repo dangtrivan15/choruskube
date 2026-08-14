@@ -120,7 +120,8 @@ class RunServiceRoadmapMaterializationTest {
                 new DecisionOptionsResolver(),
                 roadmapCandidateMaterializer,
                 roadmapCandidatesArtifactResolver,
-                nodeExecutionClaimService);
+                nodeExecutionClaimService,
+                null); // escalationContextResolver - unused (escalation not exercised)
     }
 
     private NodeExecution stubExec() {

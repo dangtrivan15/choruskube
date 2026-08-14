@@ -146,7 +146,8 @@ class RunServiceTest {
                 new DecisionOptionsResolver(),
                 null,
                 null,
-                nodeExecutionClaimService);
+                nodeExecutionClaimService,
+                null); // escalationContextResolver - unused (escalation not exercised)
     }
 
     // -----------------------------------------------------------------------

@@ -135,21 +135,22 @@ public class GraphSnapshotBuilderTest extends BaseTest {
 
     @Test
     void buildSnapshotIncludesDecisionOptionsForPlainEdgeGate() throws Exception {
-        // "Review Escalation" (feature-development, v35) has two outgoing edges — approved,
-        // rereview — and no terminal_decisions config: a plain edge-driven gate. Prior to v35
-        // this test targeted "Final Approval", but v35 (Decision 2 in the accompanying spec) gave
-        // Final Approval a terminal_decisions entry alongside its remaining edge, so it's no
-        // longer a plain edge-driven gate — that mixed edge+terminal_decisions shape is instead
-        // covered below by "Roadmap Human Gate" (a different node/template with the same general
-        // shape: one real edge plus a terminal_decisions entry), not by a dedicated Final-Approval
-        // -specific snapshot assertion. Final Approval's own edge/config-override data is covered
-        // separately by V1TemplateSeederTest#finalApprovalRereviewsBackToCodeReviewOnly.
+        // "Approve Spec & Plan" (feature-development) has three outgoing edges — approved,
+        // rereview, redraft — and no terminal_decisions config: a plain edge-driven gate. v35
+        // (Decision 2 in the accompanying spec) gave Final Approval a terminal_decisions entry
+        // alongside its remaining edge, so it's no longer a plain edge-driven gate — that mixed
+        // edge+terminal_decisions shape is instead covered below by "Roadmap Human Gate" (a
+        // different node/template with the same general shape: one real edge plus a
+        // terminal_decisions entry), not by a dedicated Final-Approval-specific snapshot
+        // assertion. v37 retired "Review Escalation" (which this test targeted previously)
+        // outright in favor of the edgeless Supervisor routing hub — see
+        // V1TemplateSeederTest#v37SupervisorHasNoEdges for that node's own coverage.
         var baseTemplate = templateRepo
                 .findFirstByGraphIdOrderByVersionDesc(GraphIds.FEATURE_DEVELOPMENT)
                 .orElseThrow();
         var nodes = templateNodeRepo.findByGraphTemplateId(baseTemplate.getId());
-        var reviewEscalation = nodes.stream()
-                .filter(n -> "review_escalation".equals(n.getLabel()))
+        var approveSpecAndPlan = nodes.stream()
+                .filter(n -> "approve_spec_and_plan".equals(n.getLabel()))
                 .findFirst()
                 .orElseThrow();
 
@@ -159,11 +160,11 @@ public class GraphSnapshotBuilderTest extends BaseTest {
         run = runRepo.save(run);
 
         JsonNode snapshotJson = objectMapper.readTree(snapshotBuilder.buildSnapshotForRun(run));
-        JsonNode node = findSnapshotNode(snapshotJson, reviewEscalation.getId());
+        JsonNode node = findSnapshotNode(snapshotJson, approveSpecAndPlan.getId());
 
         List<String> decisionOptions = new ArrayList<>();
         node.get("decision_options").forEach(o -> decisionOptions.add(o.asText()));
-        assertThat(decisionOptions).containsExactlyInAnyOrder("approved", "rereview");
+        assertThat(decisionOptions).containsExactlyInAnyOrder("approved", "rereview", "redraft");
     }
 
     @Test
@@ -195,14 +196,13 @@ public class GraphSnapshotBuilderTest extends BaseTest {
 
     @Test
     void buildSnapshotDecisionOptionsEmptyForNodeWithNoEdgesOrTerminalDecisions() throws Exception {
-        // Neither seeded template has a node with zero outgoing edges AND no terminal_decisions
-        // config any more: feature-development's old example of this shape, "push_create_pr", was
-        // retired in v35 (Decision 1 in the accompanying spec — PR creation moved into Implement
-        // and Code Review, and the dedicated node it lived on was deleted outright), and
-        // roadmap-provisioner's two nodes both have at least one outgoing edge. Build a minimal
-        // standalone template with exactly this shape instead of depending on seeded data having
-        // an incidental dead-end node — this decouples the regression guard from a structural
-        // property of a real template that is free to change for unrelated reasons.
+        // feature-development's Supervisor (v37) now has exactly this shape (routing_hub,
+        // zero edges, no terminal_decisions), but GraphSnapshotBuilder is expected to special-case
+        // routing hubs rather than fall through to this empty-options path — see
+        // DecisionOptionsResolver. Build a minimal standalone template with this shape instead of
+        // depending on seeded data having an incidental dead-end node — this decouples the
+        // regression guard from a structural property of a real template that is free to change
+        // for unrelated reasons.
         GraphTemplate template = new GraphTemplate();
         template.setName("Dead-End Node Test Template");
         template.setGraphId("dead-end-node-test");

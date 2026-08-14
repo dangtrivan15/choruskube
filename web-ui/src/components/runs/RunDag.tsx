@@ -50,6 +50,54 @@ function findLatestExecution(
   return latest;
 }
 
+/**
+ * The execution that paged the Supervisor: the most recently completed execution whose decision
+ * is `escalate`. Selection is by `completedAt`, not array position or iteration — the Supervisor
+ * is re-entered many times per run by design, `run.nodeExecutions` carries no ordering guarantee
+ * (the repository lookup behind it has no `ORDER BY`), and the relevant escalation is the one
+ * that just happened, not the first one Postgres happens to return. Mirrors the api-server's
+ * `ArtifactResolutionService.resolveEscalatingExecution`, which answers this identical question
+ * for the escalation gate panel, so the two surfaces agree on which execution escalated.
+ * `completedAt` sorts as oldest when null, matching this directory's existing
+ * `DetailPanel.tsx`#`findTriggerDecision` precedent for the same null-handling choice.
+ */
+function resolveEscalatingExecution(
+  executions: NodeExecutionResponse[],
+): NodeExecutionResponse | undefined {
+  return [...executions]
+    .filter((e) => e.decision === "escalate" && e.status === "completed")
+    .sort((a, b) => {
+      const at = a.completedAt ? new Date(a.completedAt).getTime() : 0;
+      const bt = b.completedAt ? new Date(b.completedAt).getTime() : 0;
+      return bt - at;
+    })[0];
+}
+
+/**
+ * The Supervisor: a template's single edgeless routing hub. It is deliberately excluded from
+ * the ELK layout below — it is not part of the happy path — and pinned beside the graph instead.
+ */
+function isRoutingHub(node: GraphSnapshot["nodes"][number]): boolean {
+  return node.config_overrides?.routing_hub === true;
+}
+
+/**
+ * A Supervisor connection. Uses React Flow's default bezier edge, not the project's custom
+ * `dag` type — `dag` renders an ELK-computed route, and these edges have none by construction,
+ * since the Supervisor fires no edges of its own.
+ */
+function synthEdge(source: string, target: string, label: string): Edge<DagEdgeData> {
+  return {
+    id: `supervisor:${source}->${target}`,
+    source,
+    target,
+    label,
+    animated: true,
+    className: "supervisor-edge",
+    style: { strokeDasharray: "6 4" },
+  };
+}
+
 /** Stable hash of graph topology — recomputed only on snapshot structure change. */
 function buildTopologyKey(snapshot: GraphSnapshot | null): string {
   if (!snapshot) return "empty";
@@ -90,27 +138,36 @@ function buildFallbackLayout(snapshot: GraphSnapshot): ElkLayoutResult {
 
 export default function RunDag({ run, onNodeSelect }: RunDagProps) {
   const snapshot = run.graphSnapshot;
-  const topologyKey = useMemo(() => buildTopologyKey(snapshot), [snapshot]);
+
+  // Fed to all three layout consumers below (topologyKey, computeElkLayout, buildFallbackLayout)
+  // so none of them ever sees the Supervisor — it is pinned beside the graph instead (see the
+  // `hub` block in the nodes/edges memo further down), not laid out as a step within it.
+  const laidOutSnapshot = useMemo<GraphSnapshot | null>(
+    () => (snapshot ? { ...snapshot, nodes: snapshot.nodes.filter((n) => !isRoutingHub(n)) } : null),
+    [snapshot],
+  );
+
+  const topologyKey = useMemo(() => buildTopologyKey(laidOutSnapshot), [laidOutSnapshot]);
 
   const [layout, setLayout] = useState<ElkLayoutResult | null>(null);
   const [fallback, setFallback] = useState(false);
 
   useEffect(() => {
-    if (!snapshot) {
+    if (!laidOutSnapshot) {
       setLayout(null);
       setFallback(false);
       return;
     }
     let cancelled = false;
     setFallback(false);
-    computeElkLayout(snapshot)
+    computeElkLayout(laidOutSnapshot)
       .then((result) => {
         if (!cancelled) setLayout(result);
       })
       .catch((err) => {
         if (cancelled) return;
         console.error("ELK layout failed", err);
-        setLayout(buildFallbackLayout(snapshot));
+        setLayout(buildFallbackLayout(laidOutSnapshot));
         setFallback(true);
       });
     return () => {
@@ -120,7 +177,9 @@ export default function RunDag({ run, onNodeSelect }: RunDagProps) {
   }, [topologyKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const { nodes, edges } = useMemo(() => {
-    if (!snapshot) return { nodes: [] as Node<DagNodeData>[], edges: [] as Edge<DagEdgeData>[] };
+    if (!snapshot || !laidOutSnapshot) {
+      return { nodes: [] as Node<DagNodeData>[], edges: [] as Edge<DagEdgeData>[] };
+    }
     if (!layout) {
       // Pre-layout: ELK promise not yet resolved (~100 ms). Render an empty canvas
       // so there is no misleading flash of incorrectly positioned nodes.
@@ -133,7 +192,7 @@ export default function RunDag({ run, onNodeSelect }: RunDagProps) {
     // predates V55, or node still running) is treated as "no edges fired".
     const statusByNode = new Map<string, string>();
     const firedEdgesBySource = new Map<string, Set<string>>();
-    const flowNodes: Node<DagNodeData>[] = snapshot.nodes.map((sn) => {
+    const flowNodes: Node<DagNodeData>[] = laidOutSnapshot.nodes.map((sn) => {
       const exec = findLatestExecution(run.nodeExecutions, sn.template_node_id);
       const status = exec?.status ?? "pending";
       statusByNode.set(sn.template_node_id, status);
@@ -198,8 +257,48 @@ export default function RunDag({ run, onNodeSelect }: RunDagProps) {
         return [edge];
       });
 
+    // The Supervisor: pinned beside the laid-out graph rather than positioned as a step in it.
+    // Searched for across the FULL snapshot (not laidOutSnapshot) — it was filtered out above.
+    const hub = snapshot.nodes.find(isRoutingHub);
+    if (hub) {
+      const xs = [...layout.nodes.values()].map((p) => p.x);
+      const ys = [...layout.nodes.values()].map((p) => p.y);
+      const hubPos = {
+        x: (xs.length ? Math.max(...xs) : 0) + 280,
+        y: ys.length ? (Math.min(...ys) + Math.max(...ys)) / 2 : 0,
+      };
+      const hubExec = findLatestExecution(run.nodeExecutions, hub.template_node_id);
+      flowNodes.push({
+        id: hub.template_node_id,
+        type: "dag",
+        position: hubPos,
+        data: {
+          label: hub.label,
+          executorType: hub.executor_type,
+          status: hubExec?.status ?? "pending",
+          iteration: hubExec?.iteration ?? 0,
+          isRoutingHub: true,
+        },
+      });
+
+      // The Supervisor fires no edges, so there is nothing in traversedEdgeIds to highlight.
+      // Draw its two connections from the decision strings instead: whoever decided `escalate`
+      // reached it, and its own route:<label> decision names where it sent the run.
+      const escalator = resolveEscalatingExecution(run.nodeExecutions);
+      if (escalator) {
+        flowEdges.push(synthEdge(escalator.templateNodeId, hub.template_node_id, "escalate"));
+      }
+      if (hubExec?.decision?.startsWith("route:")) {
+        const routedLabel = hubExec.decision.slice("route:".length);
+        const routedNode = snapshot.nodes.find((n) => n.label === routedLabel);
+        if (routedNode) {
+          flowEdges.push(synthEdge(hub.template_node_id, routedNode.template_node_id, hubExec.decision));
+        }
+      }
+    }
+
     return { nodes: flowNodes, edges: flowEdges };
-  }, [layout, run.nodeExecutions, snapshot]);
+  }, [layout, run.nodeExecutions, snapshot, laidOutSnapshot]);
 
   const onNodeClick: NodeMouseHandler<Node<DagNodeData>> = useCallback(
     (_event, node) => onNodeSelect(node.id),

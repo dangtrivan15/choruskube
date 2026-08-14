@@ -51,6 +51,7 @@ public class InternalRunService {
     private final RoadmapGraphService roadmapGraphService;
     private final DecisionOptionsResolver decisionOptionsResolver;
     private final WorkItemDependencyRepository dependencyRepo;
+    private final ArtifactService artifactService;
 
     @Value("${artifact.enforcement.mode:warn}")
     private String artifactEnforcementMode;
@@ -79,7 +80,8 @@ public class InternalRunService {
             EpicRepository epicRepo,
             RoadmapGraphService roadmapGraphService,
             DecisionOptionsResolver decisionOptionsResolver,
-            WorkItemDependencyRepository dependencyRepo) {
+            WorkItemDependencyRepository dependencyRepo,
+            ArtifactService artifactService) {
         this.runRepo = runRepo;
         this.execRepo = execRepo;
         this.logRepo = logRepo;
@@ -104,6 +106,7 @@ public class InternalRunService {
         this.roadmapGraphService = roadmapGraphService;
         this.decisionOptionsResolver = decisionOptionsResolver;
         this.dependencyRepo = dependencyRepo;
+        this.artifactService = artifactService;
     }
 
     public NodeExecutionResponse createNodeExecution(UUID runId, InternalCreateNodeExecutionRequest req) {
@@ -174,6 +177,38 @@ public class InternalRunService {
     }
 
     private void enforceOutputSpec(NodeExecution exec, String artifactRefs) {
+        // Platform contract: an `escalate` decision must be accompanied by escalation.md, so the
+        // Supervisor's reviewer is never asked to act on an unexplained escalation. Enforced
+        // unconditionally — unlike the legacy static required-file check below, this rule is new
+        // and has no pre-existing declarations whose lenient behaviour must be preserved, so it
+        // does not consult artifact.enforcement.mode.
+        if (DecisionOptionsResolver.ESCALATE_DECISION.equalsIgnoreCase(exec.getDecision())) {
+            List<String> names;
+            try {
+                // Pass the in-hand artifactRefs (already applied to `exec` above, in this same
+                // method, ahead of the execRepo.save below) rather than looking the execution back
+                // up by id — see ArtifactService.listArtifactNamesInternal's javadoc for why a
+                // fresh repository read here would race the callback that is persisting it.
+                names = artifactService.listArtifactNamesInternal(artifactRefs);
+            } catch (RuntimeException e) {
+                // Fail closed, deliberately: this is a security-relevant gate — an unverified
+                // escalation must never reach the Supervisor's human reviewer — so a storage
+                // outage must not be reported as "escalation.md is missing" (400, the wrong
+                // diagnosis) and must not be swallowed into silently admitting the escalation
+                // either. Surface it as a distinct status so the two failure modes stay
+                // distinguishable to the caller.
+                throw new ResponseStatusException(
+                        HttpStatus.SERVICE_UNAVAILABLE,
+                        "Could not verify escalation.md presence: object storage is unavailable",
+                        e);
+            }
+            if (names.stream().noneMatch("escalation.md"::equals)) {
+                throw new ResponseStatusException(
+                        HttpStatus.BAD_REQUEST,
+                        "Node execution submitted decision 'escalate' without producing escalation.md");
+            }
+        }
+
         TemplateNode templateNode =
                 templateNodeRepo.findById(exec.getTemplateNodeId()).orElse(null);
         if (templateNode == null) {
@@ -625,11 +660,7 @@ public class InternalRunService {
             WorkflowRun run =
                     runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Run not found: " + runId));
             var snapshot = objectMapper.readTree(snapshotBuilder.buildSnapshotForRun(run));
-            var edges = snapshot.get("edges");
-            var nodeConfigOverrides =
-                    decisionOptionsResolver.findNodeConfigOverrides(snapshot.get("nodes"), exec.getTemplateNodeId());
-            List<String> validConditions =
-                    decisionOptionsResolver.resolve(edges, exec.getTemplateNodeId(), nodeConfigOverrides);
+            List<String> validConditions = decisionOptionsResolver.resolve(snapshot, exec.getTemplateNodeId());
             return new DecisionsWithSnapshot(validConditions, snapshot);
         } catch (Exception e) {
             throw new RuntimeException("Failed to build graph snapshot", e);
@@ -908,6 +939,12 @@ public class InternalRunService {
         }
     }
 
+    /**
+     * Builds the internal/agent-facing (`/internal/**`) view of a node execution. Always leaves
+     * {@code requiredArtifacts}/{@code candidateBreakdown}/{@code escalation} null — those are
+     * human-gate UI concerns (Approvals dashboard, Run Detail page); an agent reads its own inputs
+     * from the workspace, not this DTO.
+     */
     private NodeExecutionResponse toNodeExecResponse(NodeExecution e) {
         UUID[] edges = e.getTraversedEdgeIds();
         List<UUID> edgeList = edges == null ? null : Arrays.asList(edges);
@@ -928,6 +965,7 @@ public class InternalRunService {
                 e.getLoopGroup(),
                 e.getReviewerType() != null ? e.getReviewerType().name() : null,
                 edgeList,
+                null,
                 null,
                 null);
     }

@@ -45,7 +45,14 @@ func GetPredecessorNodeIDs(snap *state.GraphRuntimeSnapshot, nodeID uuid.UUID) [
 
 // FindReadyNodes returns nodes that are pending and have all predecessors completed.
 // nodeStates maps template_node_id -> status for all activated nodes in this run.
-func FindReadyNodes(snap *state.GraphRuntimeSnapshot, nodeStates map[uuid.UUID]string) []state.SnapshotNode {
+// forceReady names nodes activated by a Supervisor routing decision: they bypass the
+// predecessor check entirely, because the human deliberately chose a target whose ordinary
+// upstream may never have run (e.g. routing to Final Approval to skip a wedged Test node).
+func FindReadyNodes(
+	snap *state.GraphRuntimeSnapshot,
+	nodeStates map[uuid.UUID]string,
+	forceReady map[uuid.UUID]bool,
+) []state.SnapshotNode {
 	var ready []state.SnapshotNode
 	for _, node := range snap.Nodes {
 		status, exists := nodeStates[node.TemplateNodeID]
@@ -53,8 +60,9 @@ func FindReadyNodes(snap *state.GraphRuntimeSnapshot, nodeStates map[uuid.UUID]s
 			continue
 		}
 
-		// Entrypoint nodes are always ready when pending (no predecessor check)
-		if node.IsEntrypoint {
+		// Entrypoint nodes are always ready when pending (no predecessor check).
+		// Force-ready nodes (Supervisor routing targets) skip the check for the same reason.
+		if node.IsEntrypoint || forceReady[node.TemplateNodeID] {
 			ready = append(ready, node)
 			continue
 		}
@@ -81,6 +89,52 @@ func FindReadyNodes(snap *state.GraphRuntimeSnapshot, nodeStates map[uuid.UUID]s
 	return ready
 }
 
+// RoutingHubKey marks the single out-of-graph human node (the Supervisor) a template may
+// declare. It carries no edges: any AI node reaches it with the `escalate` decision, and it
+// leaves via `route:<label>`. See the Supervisor design spec, §3.1.
+const RoutingHubKey = "routing_hub"
+
+// EscalateDecision is the implicit decision any AI node may submit to page the Supervisor.
+const EscalateDecision = "escalate"
+
+// RoutePrefix prefixes the Supervisor's implicit routing decisions.
+const RoutePrefix = "route:"
+
+// FindRoutingHub returns the template's Supervisor node, if it declares one.
+func FindRoutingHub(snap *state.GraphRuntimeSnapshot) (state.SnapshotNode, bool) {
+	for _, node := range snap.Nodes {
+		if node.ConfigOverrides == nil {
+			continue
+		}
+		if hub, ok := node.ConfigOverrides[RoutingHubKey].(bool); ok && hub {
+			return node, true
+		}
+	}
+	return state.SnapshotNode{}, false
+}
+
+// RouteTargetLabel returns the label named by a `route:<label>` decision, or "" for any other
+// decision. Matching is case-insensitive on the prefix, mirroring edge-condition matching.
+func RouteTargetLabel(decision string) string {
+	if len(decision) <= len(RoutePrefix) {
+		return ""
+	}
+	if !strings.EqualFold(decision[:len(RoutePrefix)], RoutePrefix) {
+		return ""
+	}
+	return decision[len(RoutePrefix):]
+}
+
+// findNodeByLabel returns the node with the given label.
+func findNodeByLabel(snap *state.GraphRuntimeSnapshot, label string) (state.SnapshotNode, bool) {
+	for _, node := range snap.Nodes {
+		if node.Label == label {
+			return node, true
+		}
+	}
+	return state.SnapshotNode{}, false
+}
+
 // EvaluateEdges evaluates outgoing edges for a completed node.
 // Returns target node IDs to activate AND the template_edge IDs that fired —
 // the latter is the source of truth the web UI uses to highlight traversed
@@ -101,6 +155,29 @@ func EvaluateEdges(
 	completedNodeID uuid.UUID,
 	result string,
 ) (targets []uuid.UUID, firedEdgeIDs []uuid.UUID, err error) {
+	// Supervisor routing is resolved before any edge inspection, for two reasons: an `escalate`
+	// decision has no matching edge and would fall through to the "no matching edge" error, and
+	// the Supervisor itself has zero outgoing edges and would be mistaken for a run terminus by
+	// the len(outgoing)==0 early return below.
+	if strings.EqualFold(result, EscalateDecision) {
+		hub, ok := FindRoutingHub(snap)
+		if !ok {
+			return nil, nil, fmt.Errorf("decision %q requires a routing_hub node, but this template declares none", result)
+		}
+		return []uuid.UUID{hub.TemplateNodeID}, []uuid.UUID{}, nil
+	}
+	if hub, ok := FindRoutingHub(snap); ok && hub.TemplateNodeID == completedNodeID {
+		label := RouteTargetLabel(result)
+		if label == "" {
+			return nil, nil, fmt.Errorf("routing_hub node emitted non-routing decision: %s", result)
+		}
+		target, found := findNodeByLabel(snap, label)
+		if !found {
+			return nil, nil, fmt.Errorf("routing_hub target label not found in template: %s", label)
+		}
+		return []uuid.UUID{target.TemplateNodeID}, []uuid.UUID{}, nil
+	}
+
 	var outgoing []state.SnapshotEdge
 	for _, edge := range snap.Edges {
 		if edge.SourceNodeID == completedNodeID {

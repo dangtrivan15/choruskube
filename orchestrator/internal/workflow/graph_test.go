@@ -148,7 +148,7 @@ func TestFindReadyNodes_AllPredecessorsCompleted(t *testing.T) {
 		nodeC: "pending",
 	}
 
-	ready := FindReadyNodes(snap, nodeStates)
+	ready := FindReadyNodes(snap, nodeStates, nil)
 	assert.Len(t, ready, 1)
 	assert.Equal(t, nodeC, ready[0].TemplateNodeID)
 }
@@ -176,7 +176,7 @@ func TestFindReadyNodes_NotAllPredecessorsCompleted(t *testing.T) {
 		nodeC: "pending",
 	}
 
-	ready := FindReadyNodes(snap, nodeStates)
+	ready := FindReadyNodes(snap, nodeStates, nil)
 	assert.Len(t, ready, 0)
 }
 
@@ -199,7 +199,7 @@ func TestFindReadyNodes_OnlyPendingNodesReturned(t *testing.T) {
 		nodeB: "pending",
 	}
 
-	ready := FindReadyNodes(snap, nodeStates)
+	ready := FindReadyNodes(snap, nodeStates, nil)
 	assert.Len(t, ready, 0)
 }
 
@@ -226,7 +226,7 @@ func TestFindReadyNodes_SelfLoopDoesNotBlock(t *testing.T) {
 		node: "pending",
 	}
 
-	ready := FindReadyNodes(snap, nodeStates)
+	ready := FindReadyNodes(snap, nodeStates, nil)
 	assert.Len(t, ready, 1)
 	assert.Equal(t, node, ready[0].TemplateNodeID)
 }
@@ -256,7 +256,7 @@ func TestFindReadyNodes_SelfLoopStillGatedByOtherPredecessor(t *testing.T) {
 		node:  "pending",
 	}
 
-	ready := FindReadyNodes(snap, nodeStates)
+	ready := FindReadyNodes(snap, nodeStates, nil)
 	assert.Len(t, ready, 0)
 }
 
@@ -604,4 +604,87 @@ func TestHasConditionalEdges_ImplementWithBypass(t *testing.T) {
 	}
 
 	assert.True(t, HasConditionalEdges(snap, implement))
+}
+
+// --- Supervisor routing hub: escalate / route:<label> ---
+
+func hubSnapshot(t *testing.T) (*state.GraphRuntimeSnapshot, uuid.UUID, uuid.UUID, uuid.UUID) {
+	t.Helper()
+	ai := uuid.New()
+	target := uuid.New()
+	hub := uuid.New()
+	snap := &state.GraphRuntimeSnapshot{
+		Nodes: []state.SnapshotNode{
+			{TemplateNodeID: ai, Label: "code_review", ExecutorType: "ai"},
+			{TemplateNodeID: target, Label: "final_approval", ExecutorType: "human"},
+			{TemplateNodeID: hub, Label: "supervisor", ExecutorType: "human",
+				ConfigOverrides: map[string]interface{}{"routing_hub": true}},
+		},
+		Edges: []state.SnapshotEdge{
+			{TemplateEdgeID: uuid.New(), SourceNodeID: ai, TargetNodeID: target, Condition: strPtr("approved")},
+		},
+	}
+	return snap, ai, target, hub
+}
+
+func TestEvaluateEdges_EscalateRoutesToHubWithoutFiringAnEdge(t *testing.T) {
+	snap, ai, _, hub := hubSnapshot(t)
+
+	targets, fired, err := EvaluateEdges(snap, ai, "escalate")
+
+	require.NoError(t, err)
+	assert.Equal(t, []uuid.UUID{hub}, targets)
+	assert.Empty(t, fired, "escalation fires no edge — there is none")
+}
+
+func TestEvaluateEdges_HubRoutesToNamedLabel(t *testing.T) {
+	snap, _, target, hub := hubSnapshot(t)
+
+	targets, fired, err := EvaluateEdges(snap, hub, "route:final_approval")
+
+	require.NoError(t, err)
+	assert.Equal(t, []uuid.UUID{target}, targets)
+	assert.Empty(t, fired)
+}
+
+// The hub has zero outgoing edges, so the len(outgoing)==0 early return would treat it as a
+// run terminus and silently end the run. The route branch must be evaluated first.
+func TestEvaluateEdges_HubIsNotMistakenForATerminalNode(t *testing.T) {
+	snap, _, _, hub := hubSnapshot(t)
+
+	targets, _, err := EvaluateEdges(snap, hub, "route:code_review")
+
+	require.NoError(t, err)
+	require.Len(t, targets, 1)
+}
+
+func TestEvaluateEdges_HubRejectsUnknownLabel(t *testing.T) {
+	snap, _, _, hub := hubSnapshot(t)
+
+	_, _, err := EvaluateEdges(snap, hub, "route:does_not_exist")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does_not_exist")
+}
+
+func TestEvaluateEdges_EscalateWithoutHubIsAnError(t *testing.T) {
+	snap, ai, _, _ := hubSnapshot(t)
+	snap.Nodes = snap.Nodes[:2] // drop the hub
+
+	_, _, err := EvaluateEdges(snap, ai, "escalate")
+
+	require.Error(t, err)
+}
+
+func TestFindReadyNodes_ForceReadySkipsPredecessorGating(t *testing.T) {
+	snap, ai, target, _ := hubSnapshot(t)
+	states := map[uuid.UUID]string{
+		ai:     "running", // would normally block `target`
+		target: "pending",
+	}
+
+	assert.Empty(t, FindReadyNodes(snap, states, nil))
+	ready := FindReadyNodes(snap, states, map[uuid.UUID]bool{target: true})
+	require.Len(t, ready, 1)
+	assert.Equal(t, target, ready[0].TemplateNodeID)
 }

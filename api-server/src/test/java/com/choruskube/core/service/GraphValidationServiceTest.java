@@ -250,6 +250,116 @@ class GraphValidationServiceTest {
         assertThat(result.valid()).isTrue();
     }
 
+    @Test
+    void routingHubIsExemptFromReachabilityAndTerminalRules() {
+        UUID a = UUID.randomUUID();
+        UUID b = UUID.randomUUID();
+        UUID hub = UUID.randomUUID();
+
+        var hubNode = makeNode(hub, "supervisor", false);
+        hubNode.setConfigOverrides("{\"routing_hub\": true}");
+        var nodes = List.of(makeNode(a, "A", true), makeNode(b, "B", false), hubNode);
+        var edges = List.of(makeEdge(a, b, null));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.errors()).isEmpty();
+        assertThat(result.valid()).isTrue();
+    }
+
+    @Test
+    void routingHubMayNotHaveEdges() {
+        UUID a = UUID.randomUUID();
+        UUID hub = UUID.randomUUID();
+
+        var hubNode = makeNode(hub, "supervisor", false);
+        hubNode.setConfigOverrides("{\"routing_hub\": true}");
+        var nodes = List.of(makeNode(a, "A", true), hubNode);
+        var edges = List.of(makeEdge(a, hub, "escalate"));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isFalse();
+        assertThat(result.errors()).anyMatch(e -> e.contains("supervisor") && e.contains("no edges"));
+    }
+
+    @Test
+    void atMostOneRoutingHub() {
+        UUID a = UUID.randomUUID();
+        UUID hub1 = UUID.randomUUID();
+        UUID hub2 = UUID.randomUUID();
+
+        var h1 = makeNode(hub1, "sup1", false);
+        h1.setConfigOverrides("{\"routing_hub\": true}");
+        var h2 = makeNode(hub2, "sup2", false);
+        h2.setConfigOverrides("{\"routing_hub\": true}");
+        var nodes = List.of(makeNode(a, "A", true), h1, h2);
+
+        var result = service.validate(nodes, List.of());
+        assertThat(result.valid()).isFalse();
+        assertThat(result.errors()).anyMatch(e -> e.contains("at most one"));
+    }
+
+    @Test
+    void routingHubIsNotCountedAsATerminalNodeForOthers() {
+        // A → B → A is a cycle: neither is terminal. If the hub were left in the terminal set,
+        // it would be the graph's only terminal and the errors would be about A and B failing to
+        // reach it. Excluding it means the graph has no terminal at all, which is the error we
+        // assert — so this test distinguishes the fixed behaviour from the unfixed.
+        UUID a = UUID.randomUUID();
+        UUID b = UUID.randomUUID();
+        UUID hub = UUID.randomUUID();
+
+        var hubNode = makeNode(hub, "supervisor", false);
+        hubNode.setConfigOverrides("{\"routing_hub\": true}");
+        var nodes = List.of(makeNode(a, "A", true), makeNode(b, "B", false), hubNode);
+        var edges = List.of(makeEdge(a, b, null), makeEdge(b, a, "loop"));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isFalse();
+        assertThat(result.errors()).anyMatch(e -> e.contains("No terminal node found"));
+    }
+
+    @Test
+    void edgeConditionEqualToEscalateIsRejected() {
+        // graph.go's EvaluateEdges resolves an `escalate` result before any edge inspection, so
+        // an edge literally conditioned on "escalate" could never fire — silently shadowed by
+        // the routing-hub interpretation instead of erroring.
+        UUID a = UUID.randomUUID();
+        UUID b = UUID.randomUUID();
+
+        var nodes = List.of(makeNode(a, "A", true), makeNode(b, "B", false));
+        var edges = List.of(makeEdge(a, b, "Escalate"));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isFalse();
+        assertThat(result.errors()).anyMatch(e -> e.contains("A") && e.contains("reserved"));
+    }
+
+    @Test
+    void edgeConditionPrefixedRouteIsRejected() {
+        UUID a = UUID.randomUUID();
+        UUID b = UUID.randomUUID();
+
+        var nodes = List.of(makeNode(a, "A", true), makeNode(b, "B", false));
+        var edges = List.of(makeEdge(a, b, "ROUTE:final_approval"));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isFalse();
+        assertThat(result.errors()).anyMatch(e -> e.contains("A") && e.contains("reserved"));
+    }
+
+    @Test
+    void ordinaryEdgeConditionsAreUnaffectedByReservedVocabularyRule() {
+        UUID a = UUID.randomUUID();
+        UUID b = UUID.randomUUID();
+
+        var nodes = List.of(makeNode(a, "A", true), makeNode(b, "B", false));
+        var edges = List.of(makeEdge(a, b, "approved"));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isTrue();
+        assertThat(result.errors()).isEmpty();
+    }
+
     private TemplateNode makeNode(UUID id, String label, boolean entrypoint) {
         var node = new TemplateNode();
         node.setId(id);

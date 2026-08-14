@@ -1365,6 +1365,89 @@ func TestExecuteAINodeFromSnapshot_OutputSpec_EmptyObject(t *testing.T) {
 	assert.False(t, exists, "output_spec should be absent from config.json when OutputSpec is \"{}\"")
 }
 
+// TestConfigJSON_SupervisorEmittedOnlyWhenDeclared verifies that config.json carries a
+// "supervisor" key exactly when SupervisorLabel is set, and that the key is absent
+// entirely — not present-but-empty — when it isn't, so an older template's config.json
+// keeps its exact current shape.
+func TestConfigJSON_SupervisorEmittedOnlyWhenDeclared(t *testing.T) {
+	tests := []struct {
+		name            string
+		supervisorLabel string
+		wantPresent     bool
+	}{
+		{
+			name:            "label set — supervisor key present with label and name",
+			supervisorLabel: "qa-lead",
+			wantPresent:     true,
+		},
+		{
+			name:            "label empty — supervisor key absent entirely",
+			supervisorLabel: "",
+			wantPresent:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var receivedConfigJSON map[string]interface{}
+
+			apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/internal/workloads/"):
+					var req map[string]interface{}
+					json.NewDecoder(r.Body).Decode(&req)
+					if cj, ok := req["configJson"].(map[string]interface{}); ok {
+						receivedConfigJSON = cj
+					}
+					w.WriteHeader(http.StatusCreated)
+					json.NewEncoder(w).Encode(map[string]interface{}{
+						"executionHandle": "agent-abc12345",
+						"jobSecretHash":   "hash123",
+					})
+				case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/logs"):
+					w.WriteHeader(http.StatusCreated)
+				default:
+					w.WriteHeader(http.StatusOK)
+				}
+			}))
+			defer apiServer.Close()
+
+			client := apiclient.NewClient(apiServer.URL)
+			cfg := &config.Config{
+				APIServerURL: apiServer.URL,
+				Callback:     config.CallbackConfig{URL: "http://callback:9090/api/v1/callback"},
+			}
+			acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
+
+			params := ExecuteAINodeFromSnapshotParams{
+				NodeExecutionID: uuid.New(),
+				RunID:           uuid.New(),
+				TemplateNodeID:  uuid.New(),
+				Label:           "implement",
+				ExecutorType:    "ai",
+				PromptTemplate:  "Do the thing",
+				Variables:       map[string]string{"run.id": "abc123"},
+				Iteration:       1,
+				SupervisorLabel: tt.supervisorLabel,
+			}
+
+			err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+			assert.ErrorIs(t, err, activity.ErrResultPending)
+
+			supervisor, exists := receivedConfigJSON["supervisor"]
+			if !tt.wantPresent {
+				assert.False(t, exists, "supervisor key should be absent from config.json when SupervisorLabel is empty")
+				return
+			}
+			require.True(t, exists, "supervisor key should be present in config.json when SupervisorLabel is set")
+			assert.Equal(t, map[string]interface{}{
+				"label": tt.supervisorLabel,
+				"name":  "Supervisor",
+			}, supervisor)
+		})
+	}
+}
+
 // TestExecuteAINodeFromSnapshot_ModelInConfigJson verifies that NodeDefinition.model
 // is propagated to the agent via config.json["model"] when set.
 func TestExecuteAINodeFromSnapshot_ModelInConfigJson(t *testing.T) {

@@ -110,7 +110,8 @@ class RunServiceCleanupTest {
                 new DecisionOptionsResolver(),
                 null,
                 null,
-                null); // nodeExecutionClaimService — unused (signalHumanDecision not exercised)
+                null, // nodeExecutionClaimService — unused (signalHumanDecision not exercised)
+                null); // escalationContextResolver — unused (escalation not exercised)
         // AuthorizationService is constructed with authEnabled=false, so
         // checkOrgAccess() is a no-op and storagePrefixResolver is not invoked — no stub needed.
     }

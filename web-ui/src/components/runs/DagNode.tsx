@@ -9,6 +9,13 @@ export interface DagNodeData {
   executorType: string;
   status: string;
   iteration: number;
+  /**
+   * True for the Supervisor — the template's single edgeless routing hub, pinned beside the
+   * laid-out graph rather than positioned as a step within it (RunDag never feeds it to ELK).
+   * Drives the dashed border and "out of graph" caption below, so it reads as deliberately
+   * separate rather than as an orphaned node.
+   */
+  isRoutingHub?: boolean;
   [key: string]: unknown;
 }
 
@@ -66,6 +73,7 @@ const secondaryHandleClass = "!bg-transparent !size-0 !min-w-0 !min-h-0 !border-
 function DagNode({ data, selected }: NodeProps<DagNodeType>) {
   const colors = getStatusColors(data.status);
   const isActive = ACTIVE_STATUSES.has(data.status);
+  const isRoutingHub = data.isRoutingHub === true;
 
   return (
     <>
@@ -79,12 +87,14 @@ function DagNode({ data, selected }: NodeProps<DagNodeType>) {
         data-testid="dag-node"
         data-label={data.label}
         data-active={isActive ? "true" : "false"}
+        data-routing-hub={isRoutingHub ? "true" : "false"}
         className={cn(
           "relative rounded-lg border-2 px-3 py-2 transition-shadow",
           "w-[160px]",
           isActive ? colors.bgActive : colors.bg,
           isActive ? colors.borderActive : colors.border,
           isActive ? "shadow-md" : "shadow-sm",
+          isRoutingHub && "border-dashed",
           selected && "ring-2 ring-ring ring-offset-2 ring-offset-background",
         )}
       >
@@ -96,6 +106,15 @@ function DagNode({ data, selected }: NodeProps<DagNodeType>) {
               colors.borderActive,
             )}
           />
+        )}
+
+        {isRoutingHub && (
+          <div
+            data-testid="dag-node-routing-hub-caption"
+            className="mb-1 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground"
+          >
+            Out of graph
+          </div>
         )}
 
         <div className="flex items-center gap-2">

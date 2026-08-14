@@ -118,7 +118,8 @@ class RunServiceCandidateBreakdownTest {
                 new DecisionOptionsResolver(),
                 roadmapCandidateMaterializer,
                 roadmapCandidatesArtifactResolver,
-                null); // nodeExecutionClaimService — unused (signalHumanDecision not exercised)
+                null, // nodeExecutionClaimService — unused (signalHumanDecision not exercised)
+                null); // escalationContextResolver — unused; see RunServiceEscalationContextTest
     }
 
     private WorkflowRun stubRun() {

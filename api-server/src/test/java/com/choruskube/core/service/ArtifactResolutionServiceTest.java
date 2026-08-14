@@ -37,7 +37,12 @@ class ArtifactResolutionServiceTest {
         workflowRunRepo = Mockito.mock(WorkflowRunRepository.class);
         snapshotBuilder = Mockito.mock(GraphSnapshotBuilder.class);
         service = new ArtifactResolutionService(
-                templateNodeRepo, nodeExecutionRepo, workflowRunRepo, snapshotBuilder, new ObjectMapper());
+                templateNodeRepo,
+                nodeExecutionRepo,
+                workflowRunRepo,
+                snapshotBuilder,
+                new ObjectMapper(),
+                new DecisionOptionsResolver());
     }
 
     @Test
@@ -294,6 +299,311 @@ class ArtifactResolutionServiceTest {
         assertThat(result).isNotNull().hasSize(1);
         // Should select exec2 (higher iteration)
         assertThat(result.get(0).nodeExecutionId()).isEqualTo(exec2Id);
+    }
+
+    // --- resolveRequiredArtifacts: Supervisor (routing hub) inbound arm ---
+
+    @Test
+    void resolveRequiredArtifacts_supervisorResolvesEscalatorsEscalationMd() {
+        UUID hubNodeId = UUID.randomUUID();
+        UUID runId = UUID.randomUUID();
+        UUID graphTemplateId = UUID.randomUUID();
+        UUID codeReviewNodeId = UUID.randomUUID();
+        UUID escalatorExecId = UUID.randomUUID();
+
+        // Supervisor template node declares no required_input_artifacts at all — it is
+        // template-agnostic.
+        TemplateNode hub = new TemplateNode();
+        hub.setId(hubNodeId);
+        hub.setGraphTemplateId(graphTemplateId);
+        hub.setLabel("supervisor");
+        hub.setConfigOverrides("{\"routing_hub\": true}");
+
+        NodeExecution escalator = new NodeExecution();
+        escalator.setId(escalatorExecId);
+        escalator.setTemplateNodeId(codeReviewNodeId);
+        escalator.setLabel("code_review");
+        escalator.setDecision("escalate");
+        escalator.setStatus(NodeExecutionStatus.completed);
+        escalator.setCompletedAt(Instant.parse("2026-08-14T10:00:00Z"));
+
+        Mockito.when(templateNodeRepo.findById(hubNodeId)).thenReturn(Optional.of(hub));
+        Mockito.when(nodeExecutionRepo.findByWorkflowRunIdAndStatus(runId, NodeExecutionStatus.completed))
+                .thenReturn(List.of(escalator));
+
+        List<ResolvedArtifactGroup> result = service.resolveRequiredArtifacts(hubNodeId, runId);
+
+        assertThat(result).hasSize(1);
+        ResolvedArtifactGroup group = result.get(0);
+        assertThat(group.nodeLabel()).isEqualTo("code_review");
+        assertThat(group.nodeExecutionId()).isEqualTo(escalatorExecId);
+        assertThat(group.artifacts()).singleElement().satisfies(a -> {
+            assertThat(a.name()).isEqualTo("escalation.md");
+            assertThat(a.required()).isTrue();
+        });
+    }
+
+    @Test
+    void resolveRequiredArtifacts_supervisorReturnsEmptyListWhenNothingHasEscalatedYet() {
+        UUID hubNodeId = UUID.randomUUID();
+        UUID runId = UUID.randomUUID();
+        UUID graphTemplateId = UUID.randomUUID();
+
+        TemplateNode hub = new TemplateNode();
+        hub.setId(hubNodeId);
+        hub.setGraphTemplateId(graphTemplateId);
+        hub.setLabel("supervisor");
+        hub.setConfigOverrides("{\"routing_hub\": true}");
+
+        Mockito.when(templateNodeRepo.findById(hubNodeId)).thenReturn(Optional.of(hub));
+        Mockito.when(nodeExecutionRepo.findByWorkflowRunIdAndStatus(runId, NodeExecutionStatus.completed))
+                .thenReturn(List.of());
+
+        List<ResolvedArtifactGroup> result = service.resolveRequiredArtifacts(hubNodeId, runId);
+
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    void resolveEscalatingExecution_selectsGreatestCompletedAtNotHighestIteration() {
+        UUID runId = UUID.randomUUID();
+
+        NodeExecution earlierButHigherIteration = new NodeExecution();
+        earlierButHigherIteration.setId(UUID.randomUUID());
+        earlierButHigherIteration.setDecision("escalate");
+        earlierButHigherIteration.setStatus(NodeExecutionStatus.completed);
+        earlierButHigherIteration.setIteration(5);
+        earlierButHigherIteration.setCompletedAt(Instant.parse("2026-08-14T09:00:00Z"));
+
+        NodeExecution laterButLowerIteration = new NodeExecution();
+        laterButLowerIteration.setId(UUID.randomUUID());
+        laterButLowerIteration.setDecision("escalate");
+        laterButLowerIteration.setStatus(NodeExecutionStatus.completed);
+        laterButLowerIteration.setIteration(1);
+        laterButLowerIteration.setCompletedAt(Instant.parse("2026-08-14T12:00:00Z"));
+
+        Mockito.when(nodeExecutionRepo.findByWorkflowRunIdAndStatus(runId, NodeExecutionStatus.completed))
+                .thenReturn(List.of(earlierButHigherIteration, laterButLowerIteration));
+
+        NodeExecution result = service.resolveEscalatingExecution(runId);
+
+        assertThat(result.getId()).isEqualTo(laterButLowerIteration.getId());
+    }
+
+    // --- resolveInputArtifactManifest: Supervisor (routing hub) outbound arm ---
+
+    @Test
+    void resolveInputArtifactManifest_supervisorGuidanceReachesTheNodeItRoutedTo() {
+        UUID runId = UUID.randomUUID();
+        UUID hubNodeId = UUID.randomUUID();
+        UUID implementNodeId = UUID.randomUUID();
+        UUID implementExecId = UUID.randomUUID();
+
+        NodeExecution implementExec = new NodeExecution();
+        implementExec.setId(implementExecId);
+        implementExec.setWorkflowRunId(runId);
+        implementExec.setTemplateNodeId(implementNodeId);
+        implementExec.setStatus(NodeExecutionStatus.running);
+
+        // Supervisor completed with decision route:implement — it fires no edge, so this must be
+        // matched by decision string, not traversed_edge_ids.
+        NodeExecution supervisorExec = new NodeExecution();
+        supervisorExec.setId(UUID.randomUUID());
+        supervisorExec.setWorkflowRunId(runId);
+        supervisorExec.setTemplateNodeId(hubNodeId);
+        supervisorExec.setLabel("supervisor");
+        supervisorExec.setDecision("route:implement");
+        // reviewerType intentionally left null — production never sets it for the Supervisor
+        // (InternalRunService.writeReviewHistory only runs when the node has a non-empty loop
+        // group, and the Supervisor has none by design).
+        supervisorExec.setStatus(NodeExecutionStatus.completed);
+        supervisorExec.setCompletedAt(Instant.parse("2026-08-14T11:00:00Z"));
+        supervisorExec.setArtifactRefs("{\"human_guidance.md\":\"system/runs/r/sup/out/human_guidance.md\"}");
+
+        WorkflowRun run = new WorkflowRun();
+        run.setId(runId);
+
+        String snapshot = "{\"nodes\":["
+                + "{\"template_node_id\":\"" + hubNodeId + "\",\"label\":\"supervisor\","
+                + "\"config_overrides\":{\"routing_hub\":true}},"
+                + "{\"template_node_id\":\"" + implementNodeId + "\",\"label\":\"implement\"}"
+                + "],\"edges\":[]}";
+
+        Mockito.when(nodeExecutionRepo.findById(implementExecId)).thenReturn(Optional.of(implementExec));
+        Mockito.when(nodeExecutionRepo.findByWorkflowRunIdAndStatus(runId, NodeExecutionStatus.completed))
+                .thenReturn(List.of(supervisorExec));
+        Mockito.when(workflowRunRepo.findById(runId)).thenReturn(Optional.of(run));
+        Mockito.when(snapshotBuilder.buildSnapshotForRun(run)).thenReturn(snapshot);
+
+        InputArtifactManifest manifest = service.resolveInputArtifactManifest(runId, implementExecId);
+
+        assertThat(manifest.artifacts())
+                .containsEntry("supervisor/human_guidance.md", "system/runs/r/sup/out/human_guidance.md");
+    }
+
+    @Test
+    void resolveInputArtifactManifest_supervisorGuidanceReachesNodeWithNoInboundEdgesAtAll() {
+        // Regression case: the Supervisor can route to the template's entrypoint, which has no
+        // inbound edges at all. Before the fix, an early return on an empty inboundEdgeIds set
+        // would have silently dropped the Supervisor's guidance for exactly this node.
+        UUID runId = UUID.randomUUID();
+        UUID hubNodeId = UUID.randomUUID();
+        UUID entrypointNodeId = UUID.randomUUID();
+        UUID entrypointExecId = UUID.randomUUID();
+
+        NodeExecution entrypointExec = new NodeExecution();
+        entrypointExec.setId(entrypointExecId);
+        entrypointExec.setWorkflowRunId(runId);
+        entrypointExec.setTemplateNodeId(entrypointNodeId);
+        entrypointExec.setStatus(NodeExecutionStatus.running);
+
+        NodeExecution supervisorExec = new NodeExecution();
+        supervisorExec.setId(UUID.randomUUID());
+        supervisorExec.setWorkflowRunId(runId);
+        supervisorExec.setTemplateNodeId(hubNodeId);
+        supervisorExec.setLabel("supervisor");
+        supervisorExec.setDecision("route:draft_spec_and_plan");
+        // reviewerType intentionally left null — see the sibling test above for why.
+        supervisorExec.setStatus(NodeExecutionStatus.completed);
+        supervisorExec.setCompletedAt(Instant.parse("2026-08-14T11:00:00Z"));
+        supervisorExec.setArtifactRefs("{\"human_guidance.md\":\"system/runs/r/sup/out/human_guidance.md\"}");
+
+        WorkflowRun run = new WorkflowRun();
+        run.setId(runId);
+
+        // No edges target this node at all — entrypoints have none.
+        String snapshot = "{\"nodes\":["
+                + "{\"template_node_id\":\"" + hubNodeId + "\",\"label\":\"supervisor\","
+                + "\"config_overrides\":{\"routing_hub\":true}},"
+                + "{\"template_node_id\":\"" + entrypointNodeId + "\",\"label\":\"draft_spec_and_plan\"}"
+                + "],\"edges\":[]}";
+
+        Mockito.when(nodeExecutionRepo.findById(entrypointExecId)).thenReturn(Optional.of(entrypointExec));
+        Mockito.when(nodeExecutionRepo.findByWorkflowRunIdAndStatus(runId, NodeExecutionStatus.completed))
+                .thenReturn(List.of(supervisorExec));
+        Mockito.when(workflowRunRepo.findById(runId)).thenReturn(Optional.of(run));
+        Mockito.when(snapshotBuilder.buildSnapshotForRun(run)).thenReturn(snapshot);
+
+        InputArtifactManifest manifest = service.resolveInputArtifactManifest(runId, entrypointExecId);
+
+        assertThat(manifest.artifacts())
+                .containsEntry("supervisor/human_guidance.md", "system/runs/r/sup/out/human_guidance.md");
+    }
+
+    @Test
+    void resolveInputArtifactManifest_supervisorRouteArmIgnoresDistractorHumanGateWithReviewerTypeSet() {
+        // Regression at the exact seam that broke: collectRoutingGateArtifacts used to apply
+        // `reviewerType == human` as a precondition shared by BOTH the edge-based arm and the
+        // Supervisor's route: arm, rather than as two genuinely alternative arms. That meant a
+        // Supervisor execution — whose reviewerType is null in production — was filtered out
+        // before the route: match was ever evaluated, and its human_guidance.md never reached
+        // the node it routed to. An unrelated ordinary human gate (reviewerType == human, but
+        // with no traversed edge into this node and no route: decision naming it) is present
+        // here specifically to prove the Supervisor's arm activates on its own merits rather
+        // than piggy-backing on the other execution satisfying the shared precondition.
+        UUID runId = UUID.randomUUID();
+        UUID hubNodeId = UUID.randomUUID();
+        UUID implementNodeId = UUID.randomUUID();
+        UUID implementExecId = UUID.randomUUID();
+
+        NodeExecution implementExec = new NodeExecution();
+        implementExec.setId(implementExecId);
+        implementExec.setWorkflowRunId(runId);
+        implementExec.setTemplateNodeId(implementNodeId);
+        implementExec.setStatus(NodeExecutionStatus.running);
+
+        NodeExecution supervisorExec = new NodeExecution();
+        supervisorExec.setId(UUID.randomUUID());
+        supervisorExec.setWorkflowRunId(runId);
+        supervisorExec.setTemplateNodeId(hubNodeId);
+        supervisorExec.setLabel("supervisor");
+        supervisorExec.setDecision("route:implement");
+        // reviewerType intentionally left null — this is what production actually writes.
+        supervisorExec.setStatus(NodeExecutionStatus.completed);
+        supervisorExec.setCompletedAt(Instant.parse("2026-08-14T11:00:00Z"));
+        supervisorExec.setArtifactRefs("{\"human_guidance.md\":\"system/runs/r/sup/out/human_guidance.md\"}");
+
+        NodeExecution distractorGate = new NodeExecution();
+        distractorGate.setId(UUID.randomUUID());
+        distractorGate.setWorkflowRunId(runId);
+        distractorGate.setTemplateNodeId(UUID.randomUUID());
+        distractorGate.setLabel("unrelated_gate");
+        distractorGate.setDecision("approved");
+        distractorGate.setReviewerType(ReviewerType.human);
+        distractorGate.setStatus(NodeExecutionStatus.completed);
+        distractorGate.setCompletedAt(Instant.parse("2026-08-14T12:00:00Z"));
+        distractorGate.setArtifactRefs("{\"unrelated.md\":\"system/runs/r/unrelated/out/unrelated.md\"}");
+
+        WorkflowRun run = new WorkflowRun();
+        run.setId(runId);
+
+        String snapshot = "{\"nodes\":["
+                + "{\"template_node_id\":\"" + hubNodeId + "\",\"label\":\"supervisor\","
+                + "\"config_overrides\":{\"routing_hub\":true}},"
+                + "{\"template_node_id\":\"" + implementNodeId + "\",\"label\":\"implement\"}"
+                + "],\"edges\":[]}";
+
+        Mockito.when(nodeExecutionRepo.findById(implementExecId)).thenReturn(Optional.of(implementExec));
+        Mockito.when(nodeExecutionRepo.findByWorkflowRunIdAndStatus(runId, NodeExecutionStatus.completed))
+                .thenReturn(List.of(distractorGate, supervisorExec));
+        Mockito.when(workflowRunRepo.findById(runId)).thenReturn(Optional.of(run));
+        Mockito.when(snapshotBuilder.buildSnapshotForRun(run)).thenReturn(snapshot);
+
+        InputArtifactManifest manifest = service.resolveInputArtifactManifest(runId, implementExecId);
+
+        assertThat(manifest.artifacts())
+                .containsEntry("supervisor/human_guidance.md", "system/runs/r/sup/out/human_guidance.md")
+                .doesNotContainKey("unrelated_gate/unrelated.md");
+    }
+
+    @Test
+    void resolveInputArtifactManifest_routeShapedDecisionFromNonHubNodeIsNotTreatedAsRoutingGate() {
+        // The route: arm now structurally requires the deciding execution's template node id to
+        // equal the routing hub's — not merely a decision string that happens to look like
+        // route:<label>. Closes a separately-deferred finding: previously the route: match relied
+        // on the implicit invariant that only the hub is ever offered a route: decision, with
+        // nothing enforcing it structurally.
+        UUID runId = UUID.randomUUID();
+        UUID hubNodeId = UUID.randomUUID();
+        UUID implementNodeId = UUID.randomUUID();
+        UUID implementExecId = UUID.randomUUID();
+        UUID impostorNodeId = UUID.randomUUID();
+
+        NodeExecution implementExec = new NodeExecution();
+        implementExec.setId(implementExecId);
+        implementExec.setWorkflowRunId(runId);
+        implementExec.setTemplateNodeId(implementNodeId);
+        implementExec.setStatus(NodeExecutionStatus.running);
+
+        // Not the routing hub, but happens to have a route:implement-shaped decision string.
+        NodeExecution impostorExec = new NodeExecution();
+        impostorExec.setId(UUID.randomUUID());
+        impostorExec.setWorkflowRunId(runId);
+        impostorExec.setTemplateNodeId(impostorNodeId);
+        impostorExec.setLabel("impostor");
+        impostorExec.setDecision("route:implement");
+        impostorExec.setStatus(NodeExecutionStatus.completed);
+        impostorExec.setCompletedAt(Instant.parse("2026-08-14T11:00:00Z"));
+        impostorExec.setArtifactRefs("{\"human_guidance.md\":\"system/runs/r/impostor/out/human_guidance.md\"}");
+
+        WorkflowRun run = new WorkflowRun();
+        run.setId(runId);
+
+        String snapshot = "{\"nodes\":["
+                + "{\"template_node_id\":\"" + hubNodeId + "\",\"label\":\"supervisor\","
+                + "\"config_overrides\":{\"routing_hub\":true}},"
+                + "{\"template_node_id\":\"" + implementNodeId + "\",\"label\":\"implement\"}"
+                + "],\"edges\":[]}";
+
+        Mockito.when(nodeExecutionRepo.findById(implementExecId)).thenReturn(Optional.of(implementExec));
+        Mockito.when(nodeExecutionRepo.findByWorkflowRunIdAndStatus(runId, NodeExecutionStatus.completed))
+                .thenReturn(List.of(impostorExec));
+        Mockito.when(workflowRunRepo.findById(runId)).thenReturn(Optional.of(run));
+        Mockito.when(snapshotBuilder.buildSnapshotForRun(run)).thenReturn(snapshot);
+
+        InputArtifactManifest manifest = service.resolveInputArtifactManifest(runId, implementExecId);
+
+        assertThat(manifest.artifacts()).doesNotContainKey("impostor/human_guidance.md");
     }
 
     // --- resolveInputArtifactManifest: declared arm ---

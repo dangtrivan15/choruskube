@@ -80,6 +80,7 @@ public class RunService {
     private final RoadmapCandidateMaterializer roadmapCandidateMaterializer;
     private final RoadmapCandidatesArtifactResolver roadmapCandidatesArtifactResolver;
     private final NodeExecutionClaimService nodeExecutionClaimService;
+    private final EscalationContextResolver escalationContextResolver;
 
     /** Config key on a gate's {@code config_overrides} that opts it into materialization (Decision 3). */
     static final String MATERIALIZE_CONFIG_KEY = "materialize";
@@ -122,7 +123,8 @@ public class RunService {
             DecisionOptionsResolver decisionOptionsResolver,
             @Lazy RoadmapCandidateMaterializer roadmapCandidateMaterializer,
             RoadmapCandidatesArtifactResolver roadmapCandidatesArtifactResolver,
-            NodeExecutionClaimService nodeExecutionClaimService) {
+            NodeExecutionClaimService nodeExecutionClaimService,
+            EscalationContextResolver escalationContextResolver) {
         this.runRepo = runRepo;
         this.execRepo = execRepo;
         this.edgeRepo = edgeRepo;
@@ -156,6 +158,7 @@ public class RunService {
         this.roadmapCandidateMaterializer = roadmapCandidateMaterializer;
         this.roadmapCandidatesArtifactResolver = roadmapCandidatesArtifactResolver;
         this.nodeExecutionClaimService = nodeExecutionClaimService;
+        this.escalationContextResolver = escalationContextResolver;
     }
 
     @Transactional
@@ -577,10 +580,7 @@ public class RunService {
      */
     private String validateDecisionAgainstEdges(JsonNode snapshot, UUID templateNodeId, String decision) {
         try {
-            JsonNode edges = snapshot.get("edges");
-            JsonNode nodeConfigOverrides =
-                    decisionOptionsResolver.findNodeConfigOverrides(snapshot.get("nodes"), templateNodeId);
-            List<String> validConditions = decisionOptionsResolver.resolve(edges, templateNodeId, nodeConfigOverrides);
+            List<String> validConditions = decisionOptionsResolver.resolve(snapshot, templateNodeId);
             if (validConditions.isEmpty()) {
                 throw new BadRequestException("This node has no conditional edges");
             }
@@ -843,12 +843,19 @@ public class RunService {
             logger.warn("Failed to build graph snapshot for run {}: {}", run.getId(), e.getMessage());
         }
 
+        // Resolved once per run (not per execution) — a cheap linear scan of the snapshot's nodes
+        // array, reused below to scope escalation resolution to the Supervisor's own gate
+        // execution. `snapshotJson` is null when the snapshot build above failed; findRoutingHub
+        // tolerates that and returns null.
+        JsonNode routingHub = decisionOptionsResolver.findRoutingHub(snapshotJson);
+
         List<NodeExecutionResponse> execResponses = execs.stream()
                 .map(e -> {
                     UUID[] edges = e.getTraversedEdgeIds();
                     List<UUID> edgeList = edges == null ? null : java.util.Arrays.asList(edges);
-                    List<ResolvedArtifactGroup> requiredArtifacts = e.getStatus() == NodeExecutionStatus.awaiting_human
-                                    || e.getStatus() == NodeExecutionStatus.live_chat
+                    boolean isGateStatus = e.getStatus() == NodeExecutionStatus.awaiting_human
+                            || e.getStatus() == NodeExecutionStatus.live_chat;
+                    List<ResolvedArtifactGroup> requiredArtifacts = isGateStatus
                             ? artifactResolutionService.resolveRequiredArtifacts(e.getTemplateNodeId(), run.getId())
                             : null;
                     // Mirrors PendingGateService's resolution of the same artifact, reusing the
@@ -858,6 +865,21 @@ public class RunService {
                     List<CandidateEpicProposal> candidateBreakdown = requiredArtifacts != null
                             ? roadmapCandidatesArtifactResolver.resolve(run.getId(), requiredArtifacts)
                             : null;
+                    // Mirrors PendingGateService's resolution of the same context — the Supervisor
+                    // has no inbound edges, so predecessorOutputs carries nothing for it; this is
+                    // the Run Detail page's replacement, exactly as it is for the Approvals
+                    // dashboard. Scoped to the routing-hub node so an ordinary gate never gets an
+                    // unrelated escalation banner, and to gate-status executions (like
+                    // requiredArtifacts above) so the resolution cost isn't paid for every
+                    // execution in the run.
+                    boolean isRoutingHubExec = isGateStatus
+                            && routingHub != null
+                            && routingHub
+                                    .get("template_node_id")
+                                    .asText()
+                                    .equals(e.getTemplateNodeId().toString());
+                    EscalationContext escalation =
+                            isRoutingHubExec ? escalationContextResolver.resolve(run.getId()) : null;
                     return new NodeExecutionResponse(
                             e.getId(),
                             e.getTemplateNodeId(),
@@ -876,7 +898,8 @@ public class RunService {
                             e.getReviewerType() != null ? e.getReviewerType().name() : null,
                             edgeList,
                             requiredArtifacts,
-                            candidateBreakdown);
+                            candidateBreakdown,
+                            escalation);
                 })
                 .toList();
         List<RunPullRequestResponse> pullRequests;

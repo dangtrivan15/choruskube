@@ -38,6 +38,30 @@ public class GraphValidationService {
             outgoing.get(edge.getSourceNodeId()).add(edge.getTargetNodeId());
         }
 
+        // A routing_hub (the Supervisor) is reachable via the implicit `escalate` decision from
+        // every AI node rather than by an edge, so it is exempt from the edge-based reachability
+        // and terminal rules below.
+        Set<UUID> routingHubs = new HashSet<>();
+        for (TemplateNode node : nodes) {
+            if (DecisionOptionsResolver.isRoutingHub(node.getConfigOverrides(), objectMapper)) {
+                routingHubs.add(node.getId());
+            }
+        }
+        if (routingHubs.size() > 1) {
+            String names = routingHubs.stream()
+                    .map(nodeLabels::get)
+                    .reduce((a, b) -> a + ", " + b)
+                    .orElse("");
+            errors.add("Multiple routing_hub nodes defined (" + names + "); at most one is allowed");
+        }
+        for (TemplateEdge edge : edges) {
+            if (routingHubs.contains(edge.getSourceNodeId()) || routingHubs.contains(edge.getTargetNodeId())) {
+                UUID hubId =
+                        routingHubs.contains(edge.getSourceNodeId()) ? edge.getSourceNodeId() : edge.getTargetNodeId();
+                errors.add("Node '" + nodeLabels.get(hubId) + "' is a routing_hub and must have no edges");
+            }
+        }
+
         // Rule 1: Exactly one entrypoint
         List<TemplateNode> entrypoints =
                 nodes.stream().filter(TemplateNode::isEntrypoint).toList();
@@ -55,6 +79,7 @@ public class GraphValidationService {
         if (entrypoints.size() == 1) {
             Set<UUID> reachable = findReachableFrom(entrypoints.get(0).getId(), outgoing);
             for (UUID nodeId : nodeIds) {
+                if (routingHubs.contains(nodeId)) continue;
                 if (!reachable.contains(nodeId)) {
                     errors.add("Node '" + nodeLabels.get(nodeId) + "' is not reachable from entrypoint");
                 }
@@ -70,6 +95,7 @@ public class GraphValidationService {
         Set<UUID> terminalNodes = new HashSet<>();
         for (TemplateNode node : nodes) {
             UUID id = node.getId();
+            if (routingHubs.contains(id)) continue;
             if (outgoing.get(id).isEmpty() || hasTerminalDecisions(node)) {
                 terminalNodes.add(id);
             }
@@ -79,6 +105,7 @@ public class GraphValidationService {
             errors.add("No terminal node found (all nodes have outgoing edges)");
         } else {
             for (UUID nodeId : nodeIds) {
+                if (routingHubs.contains(nodeId)) continue;
                 if (!canReachTerminal(nodeId, outgoing, terminalNodes)) {
                     errors.add("Node '" + nodeLabels.get(nodeId) + "' cannot reach any terminal node");
                 }
@@ -88,6 +115,29 @@ public class GraphValidationService {
         // Rule 4: Validate config_overrides for each node
         for (TemplateNode node : nodes) {
             validateConfigOverrides(node, errors);
+        }
+
+        // Rule 5: Edge conditions must not collide with the Supervisor's reserved decision
+        // vocabulary. orchestrator/internal/workflow/graph.go's EvaluateEdges resolves an
+        // `escalate` result and, for the hub's own completions, a `route:<label>` result before
+        // it ever inspects the completed node's outgoing edges. An edge condition written as
+        // either literal would therefore never fire — it is silently shadowed by the
+        // routing-hub interpretation rather than erroring, which makes the authoring mistake
+        // invisible until the run takes the wrong branch. Rejecting it here at authoring time
+        // surfaces the mistake immediately instead.
+        for (TemplateEdge edge : edges) {
+            String condition = edge.getCondition();
+            if (condition == null) {
+                continue;
+            }
+            boolean isEscalate = DecisionOptionsResolver.ESCALATE_DECISION.equalsIgnoreCase(condition);
+            boolean isRoutePrefixed = condition.regionMatches(
+                    true, 0, DecisionOptionsResolver.ROUTE_PREFIX, 0, DecisionOptionsResolver.ROUTE_PREFIX.length());
+            if (isEscalate || isRoutePrefixed) {
+                errors.add("Edge condition '" + condition + "' from node '" + nodeLabels.get(edge.getSourceNodeId())
+                        + "' is reserved for the Supervisor ('" + DecisionOptionsResolver.ESCALATE_DECISION + "' or '"
+                        + DecisionOptionsResolver.ROUTE_PREFIX + "*') and can never fire as an edge condition");
+            }
         }
 
         return new ValidationResponse(errors.isEmpty(), errors);

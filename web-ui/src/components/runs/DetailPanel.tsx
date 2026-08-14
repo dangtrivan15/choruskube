@@ -419,6 +419,7 @@ export default function DetailPanel({ run, nodeId, onBackToRunMeta }: DetailPane
             nodeResult={latestExec.result}
             triggerDecision={findTriggerDecision(run, nodeId)}
             decisionOptions={findDecisionOptions(run, nodeId)}
+            escalation={latestExec.escalation}
           />
         )}
 

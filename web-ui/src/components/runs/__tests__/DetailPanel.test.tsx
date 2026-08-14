@@ -539,6 +539,78 @@ describe("DetailPanel", () => {
     expect(screen.getByText("Effort: xhigh")).toBeInTheDocument();
   });
 
+  describe("Supervisor escalation gate", () => {
+    function makeSupervisorRun(escalation?: RunResponse["nodeExecutions"][number]["escalation"]) {
+      return makeRun({
+        graphSnapshot: {
+          nodes: [
+            {
+              template_node_id: "node-1",
+              label: "Supervisor",
+              executor_type: "human",
+              is_entrypoint: false,
+              decision_options: ["route:qa_review", "route:implement"],
+            },
+          ],
+          edges: [],
+        },
+        nodeExecutions: [
+          {
+            id: "exec-1",
+            templateNodeId: "node-1",
+            status: "awaiting_human",
+            result: null,
+            decision: null,
+            podName: null,
+            iteration: 1,
+            startedAt: null,
+            completedAt: null,
+            errorMessage: null,
+            graphVersion: 1,
+            artifactRefs: "{}",
+            label: null,
+            loopGroup: null,
+            reviewerType: null,
+            traversedEdgeIds: null,
+            requiredArtifacts: null,
+            candidateBreakdown: null,
+            escalation,
+          },
+        ],
+      });
+    }
+
+    it("delegates to EscalationGatePanel for a route:* gate carrying escalation data", () => {
+      const run = makeSupervisorRun({
+        escalatorLabel: "Code Review",
+        escalatorExecId: "escalator-exec-1",
+        escalatorLoopGroup: "loop-a",
+        category: "blocked_external",
+        summary: "CI runner is wedged and cannot be reached.",
+      });
+
+      renderWithProviders(<DetailPanel run={run} nodeId="node-1" />);
+
+      expect(screen.getByTestId("escalation-gate-panel")).toBeInTheDocument();
+      expect(screen.getByText("Code Review")).toBeInTheDocument();
+      expect(screen.getByText("CI runner is wedged and cannot be reached.")).toBeInTheDocument();
+    });
+
+    // Defensive coverage for a rolling deploy: an older API pod may omit `escalation`
+    // from NodeExecutionResponse (it's an optional field precisely for that case — see
+    // its doc comment in types.ts). The gate must still be routable even then — the
+    // picker degrades gracefully rather than crashing or hiding.
+    it("still renders a functional picker when the node execution carries no escalation data", () => {
+      const run = makeSupervisorRun(undefined);
+
+      renderWithProviders(<DetailPanel run={run} nodeId="node-1" />);
+
+      expect(screen.getByTestId("escalation-gate-panel")).toBeInTheDocument();
+      expect(screen.getByTestId("escalation-target-picker")).toBeInTheDocument();
+      expect(screen.getByTestId("escalation-confirm-button")).toBeInTheDocument();
+    });
+  });
+
   it("does not render an Effort badge when the node has no effort override", () => {
     const run = makeRun({
       graphSnapshot: {

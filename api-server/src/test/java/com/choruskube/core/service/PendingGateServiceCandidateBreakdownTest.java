@@ -66,7 +66,8 @@ class PendingGateServiceCandidateBreakdownTest {
                 artifactResolutionService,
                 new com.choruskube.core.scope.NoOpScopeProvider(),
                 new DecisionOptionsResolver(),
-                candidatesArtifactResolver);
+                candidatesArtifactResolver,
+                new EscalationContextResolver(artifactResolutionService, artifactService));
     }
 
     private void stubGate(String snapshot, List<ResolvedArtifactGroup> requiredArtifacts) {

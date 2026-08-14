@@ -1,6 +1,7 @@
 package com.choruskube.core.service;
 
 import com.choruskube.core.dto.CandidateEpicProposal;
+import com.choruskube.core.dto.EscalationContext;
 import com.choruskube.core.dto.PendingGateCountResponse;
 import com.choruskube.core.dto.PendingGateResponse;
 import com.choruskube.core.dto.PredecessorOutput;
@@ -38,6 +39,7 @@ public class PendingGateService {
     private final ScopeProvider scopeProvider;
     private final DecisionOptionsResolver decisionOptionsResolver;
     private final RoadmapCandidatesArtifactResolver candidatesArtifactResolver;
+    private final EscalationContextResolver escalationContextResolver;
 
     public PendingGateService(
             NodeExecutionRepository execRepo,
@@ -48,7 +50,8 @@ public class PendingGateService {
             ArtifactResolutionService artifactResolutionService,
             ScopeProvider scopeProvider,
             DecisionOptionsResolver decisionOptionsResolver,
-            RoadmapCandidatesArtifactResolver candidatesArtifactResolver) {
+            RoadmapCandidatesArtifactResolver candidatesArtifactResolver,
+            EscalationContextResolver escalationContextResolver) {
         this.execRepo = execRepo;
         this.runRepo = runRepo;
         this.snapshotBuilder = snapshotBuilder;
@@ -58,6 +61,7 @@ public class PendingGateService {
         this.scopeProvider = scopeProvider;
         this.decisionOptionsResolver = decisionOptionsResolver;
         this.candidatesArtifactResolver = candidatesArtifactResolver;
+        this.escalationContextResolver = escalationContextResolver;
     }
 
     private static final List<NodeExecutionStatus> GATE_STATUSES =
@@ -137,6 +141,7 @@ public class PendingGateService {
         Integer timeoutSeconds = null;
         List<PredecessorOutput> predecessorOutputs = List.of();
         List<String> decisionOptions = List.of();
+        EscalationContext escalation = null;
 
         {
             try {
@@ -167,12 +172,20 @@ public class PendingGateService {
                 predecessorOutputs = findPredecessorOutputs(
                         exec.getTemplateNodeId(), edgesArr, nodeMap, execsByRun.getOrDefault(run.getId(), List.of()));
 
-                // Decision options come from the union of outgoing edge conditions and this
-                // node's terminal_decisions config — same source RunService's validator uses,
-                // so the UI cannot drift from the contract.
-                JsonNode thisNodeConfigOverrides = thisNode != null ? thisNode.get("config_overrides") : null;
-                decisionOptions =
-                        decisionOptionsResolver.resolve(edgesArr, exec.getTemplateNodeId(), thisNodeConfigOverrides);
+                // Decision options come from DecisionOptionsResolver — the same source
+                // RunService's validator and the agent's list-decisions endpoint use, so the
+                // three cannot drift.
+                decisionOptions = decisionOptionsResolver.resolve(snapshot, exec.getTemplateNodeId());
+
+                // The Supervisor has no inbound edges, so predecessorOutputs above is empty for
+                // it — this is the replacement context, built only when this gate IS the hub.
+                JsonNode hub = decisionOptionsResolver.findRoutingHub(snapshot);
+                if (hub != null
+                        && hub.get("template_node_id")
+                                .asText()
+                                .equals(exec.getTemplateNodeId().toString())) {
+                    escalation = escalationContextResolver.resolve(run.getId());
+                }
             } catch (Exception e) {
                 logger.warn("Failed to parse graph snapshot for run {}: {}", run.getId(), e.getMessage());
             }
@@ -197,7 +210,8 @@ public class PendingGateService {
                 predecessorOutputs,
                 requiredArtifacts,
                 decisionOptions,
-                candidateBreakdown);
+                candidateBreakdown,
+                escalation);
     }
 
     private List<PredecessorOutput> findPredecessorOutputs(
