@@ -516,6 +516,14 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 			continue
 		}
 
+		// FindRoutingHub is a scan over the snapshot's nodes; resolved once per fan-out
+		// pass here (a Supervisor's label doesn't vary per node) rather than inside the
+		// loop below, so every AI node in the batch shares the same lookup.
+		supervisorLabel := ""
+		if hub, ok := FindRoutingHub(snap); ok {
+			supervisorLabel = hub.Label
+		}
+
 		// 4d: Fan-out ready nodes
 		for _, node := range readyNodes {
 			tracker := nodes[node.TemplateNodeID]
@@ -787,6 +795,7 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 						NeedsPR:                needsPR == "true",
 						Repos:                  repos,
 						OutputSpec:             snapshotNode.OutputSpec,
+						SupervisorLabel:        supervisorLabel,
 						TaskID:                 taskID,
 						TaskTitle:              taskTitle,
 						StoryID:                storyID,

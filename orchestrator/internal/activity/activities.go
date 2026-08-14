@@ -175,6 +175,7 @@ type ExecuteAINodeFromSnapshotParams struct {
 	NeedDecision           bool                     // true if node has conditional edges and is AI type
 	NeedsPR                bool                     // true if node must open/register a PR before finishing (config_overrides.needs_pr)
 	OutputSpec             string                   // JSON string describing required output files; "" or "{}" = no enforcement
+	SupervisorLabel        string                   // label of the template's routing-hub node; "" = template declares none
 	Repos                  []map[string]interface{} `json:"repos,omitempty"`
 	Model                  string                   `json:"model,omitempty"`  // optional override; empty = agent default
 	Effort                 string                   `json:"effort,omitempty"` // optional override; empty = agent default
@@ -310,6 +311,15 @@ func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params Execu
 	}
 	if params.OutputSpec != "" && params.OutputSpec != "{}" {
 		configJSON["output_spec"] = params.OutputSpec
+	}
+	// Emitted only when the template declares a Supervisor, so config.json keeps its exact
+	// current shape for every other template — and the entrypoint's escalation block, which is
+	// gated on this key, stays silent for them.
+	if params.SupervisorLabel != "" {
+		configJSON["supervisor"] = map[string]string{
+			"label": params.SupervisorLabel,
+			"name":  "Supervisor",
+		}
 	}
 	if params.Iteration > 0 {
 		configJSON["iteration"] = params.Iteration
