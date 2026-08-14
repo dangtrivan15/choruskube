@@ -471,7 +471,7 @@ Submit exactly one of the following via \`report-result <decision>\`:
 
 ${DECISIONS_LIST}
 
-Knowing this set up-front frames how to approach the work. The absence of a decision (e.g. \`need_human_decision:alternative_proposal\`) means this node is not authorized for that mode of conclusion — focus on the modes that are listed."
+Knowing this set up-front frames how to approach the work. The absence of a decision (e.g. \`escalate\`) means this node is not authorized for that mode of conclusion — focus on the modes that are listed."
       export SYSTEM_PROMPT
       DECISION_COUNT=$(echo "$VALID_DECISIONS" | wc -l | tr -d ' ')
       echo "Composed system prompt with $DECISION_COUNT valid decisions"
@@ -484,6 +484,55 @@ Knowing this set up-front frames how to approach the work. The absence of a deci
     RESULT_STATUS="failed"
     ERROR_MESSAGE="list-decisions failed at agent startup; aborting before invocation"
   fi
+fi
+
+# --- Compose the Supervisor escalation contract (AI nodes only) ---
+# Emitted only when the template declares a routing_hub node, which the orchestrator surfaces
+# as config.json's `supervisor` key. Absent for every template without one, so a frozen older
+# graph version gets no escalation framing it cannot act on.
+SUPERVISOR_LABEL=$(jq -r '.supervisor.label // ""' "$CONFIG_FILE")
+if [ -n "$SUPERVISOR_LABEL" ] && [ "$EXECUTOR_TYPE" != "script" ]; then
+  SYSTEM_PROMPT="${SYSTEM_PROMPT}
+
+## Escalating to the Supervisor
+
+This workflow's graph describes the happy path only. When you cannot proceed along it, do
+NOT guess and do NOT force a decision that misrepresents your confidence. Submit
+\`report-result escalate\` instead. That pages the Supervisor: a human who reads your
+escalation and then routes the run to whichever node they judge correct — which may be any
+node in the workflow, including one that skips steps ahead of you.
+
+Escalating is a normal, expected outcome, not a failure. Use it whenever a judgement call is
+genuinely not yours to make.
+
+**Before calling \`report-result escalate\` you MUST write \`/workspace/out/escalation.md\`.**
+An escalation without it is rejected and your node fails. Use exactly this structure:
+
+\`\`\`markdown
+---
+category: review_conflict | uncertainty | alternative_proposal | environment | blocked_external
+summary: <one line the reviewer sees before opening the document>
+---
+## What I was doing
+## Why I can't proceed
+## Options I considered
+(each with its tradeoff)
+## What I need from you
+(and, if you have one, a suggested next node — advisory only; the Supervisor decides)
+\`\`\`
+
+Pick \`category\` from exactly these five:
+
+- \`review_conflict\` — your fix would reverse or re-litigate a prior iteration's decision.
+- \`uncertainty\` — the flaw is real but no candidate fix is clearly correct.
+- \`alternative_proposal\` — a fundamentally different approach would be better.
+- \`environment\` — you are blocked by infrastructure or tooling, not by the code under change.
+- \`blocked_external\` — you are blocked on something outside this run's reach.
+
+If the Supervisor routes work back to you, their guidance arrives at
+\`/workspace/in/${SUPERVISOR_LABEL}/human_guidance.md\`. Read it first and honour it."
+  export SYSTEM_PROMPT
+  echo "Composed system prompt with Supervisor escalation contract (label=$SUPERVISOR_LABEL)"
 fi
 
 # Compose a PR-requirement note into the system prompt (AI nodes only) when this
@@ -820,6 +869,27 @@ ${PROMPT}"
     fi
   fi
 
+  # --- Escalation artifact enforcement ---
+  # Runs after decision verification because it needs the decision, and before the upload so the
+  # session is still resumable. The server rejects an escalate decision with no escalation.md, so
+  # repairing here is the difference between a fixed run and a failed node. Shares $ATTEMPT with
+  # the other retry phases.
+  if [ -n "${DECISION:-}" ] && [ "$DECISION" = "escalate" ]; then
+    while [ ! -f "$WORKSPACE_OUT/escalation.md" ] && [ $ATTEMPT -lt $MAX_RETRIES ] && [ -n "$CLAUDE_SESSION_ID" ]; do
+      ATTEMPT=$((ATTEMPT + 1))
+      echo "=== Escalation retry $ATTEMPT/$MAX_RETRIES — escalation.md missing ==="
+      ESCALATION_RETRY_PROMPT="You submitted the decision 'escalate' but did not write /workspace/out/escalation.md. Write it now, using the front matter and section structure from your system prompt, before finishing."
+      CLAUDE_OUTPUT=$(run_claude "$ESCALATION_RETRY_PROMPT" "--resume $CLAUDE_SESSION_ID")
+      parse_claude_output "$CLAUDE_OUTPUT"
+    done
+
+    if [ ! -f "$WORKSPACE_OUT/escalation.md" ]; then
+      echo "ERROR: decision 'escalate' submitted but escalation.md was not produced after $ATTEMPT attempts"
+      RESULT_STATUS="failed"
+      ERROR_MESSAGE="Decision 'escalate' requires /workspace/out/escalation.md, which was not produced after $ATTEMPT attempts"
+    fi
+  fi
+
   # PR verification: only for nodes that must register a pull request for every
   # repo they pushed to this run (Decision 3/§3.3). Unlike DECISION above,
   # check-prs has no single-value sentinel to string-match against — it prints a
@@ -827,7 +897,7 @@ ${PROMPT}"
   # "could not reach origin for <repo>" / "could not reach $API_SERVER_URL" message
   # if it fails loudly per Caveat 3), so branch on exit status instead: 0 = nothing
   # missing, non-zero = something missing or check-prs itself failed. This is a
-  # fourth phase drawing on the same shared $ATTEMPT budget as the three phases
+  # fifth phase drawing on the same shared $ATTEMPT budget as the four phases
   # above (Caveat 4) — it may start with little or no budget left.
   #
   # Capture check-prs's stderr along with its stdout (2>&1): check-prs's loud
