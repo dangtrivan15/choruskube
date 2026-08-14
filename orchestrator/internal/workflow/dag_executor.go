@@ -437,11 +437,25 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 						return
 					}
 
-					// Reset tracker with pre-decision. reviewPass and forceReady carry
-					// forward unchanged (see nodeTracker.reviewPass and
-					// nodeTracker.forceReady) — gated on ExecutorType == "human" above,
-					// so this path never reaches an AI review node, but the invariant is
-					// kept consistent at every nodeTracker construction site regardless.
+					// Reset tracker with pre-decision. reviewPass carries forward
+					// unchanged (see nodeTracker.reviewPass) for consistency: this path is
+					// gated on ExecutorType == "human" above, so it never reaches an AI
+					// review node and reviewPass's own gating never actually applies here —
+					// but the invariant is kept uniform across every construction site
+					// regardless.
+					//
+					// forceReady is a different story: this site IS the reachable case.
+					// A Supervisor route:<label> decision can name a human node (e.g. a
+					// downstream approval gate). If that node then times out before anyone
+					// acts on it, it lands in failedNodeIDs via the normal failure path
+					// (which mutates tracker.status in place without touching forceReady,
+					// so the flag survives on the existing tracker), and a late decision
+					// arriving afterward rebuilds the tracker right here. Dropping
+					// forceReady at this specific line — e.g. as a "no AI review node ever
+					// reaches this" cleanup — reintroduces the exact hang this task exists
+					// to prevent: the retried node falls back into ordinary predecessor
+					// gating on an upstream node the reviewer deliberately routed past, and
+					// FindReadyNodes never admits it again.
 					nodes[failedID] = &nodeTracker{
 						status:      "pending",
 						execID:      execID,

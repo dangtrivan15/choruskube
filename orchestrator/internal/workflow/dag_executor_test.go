@@ -1831,3 +1831,173 @@ func (s *DAGExecutorTestSuite) TestSupervisorRoutesPastAnUnrunPredecessor() {
 			"the force-ready bypass. Without it, final_approval would stay pending until test "+
 			"completes on its own, which this graph is built to never let happen in time.")
 }
+
+// TestForceReadyCarriesForwardThroughLateHumanDecisionRetry covers the OTHER reachable
+// forceReady carry-forward site (dag_executor.go's late-human-decision-retry handler,
+// gated on a failed node's ExecutorType == "human"): a Supervisor route:<label> decision
+// can name a human node — e.g. a downstream approval gate — and that gate can time out
+// before anyone acts on it. A late decision arriving afterward must still see the node
+// as force-ready, or it falls back into ordinary predecessor gating on the very upstream
+// node the reviewer routed past, and hangs forever.
+//
+// Graph: implement fans out to code_review and test, in parallel. test fails outright
+// (not "eventually completes" — this matters: it must never become "completed" for the
+// rest of the test, so the predecessor gate stays genuinely blocked, not just delayed).
+// code_review escalates; the Supervisor routes to final_approval, a HUMAN node whose
+// ordinary predecessor is test. final_approval's first execution times out unanswered
+// (nobody signals it), so it lands in failedNodeIDs alongside test — entering
+// awaiting_retry — at which point a late decision signal arrives on its original
+// execution's channel. That rebuilds final_approval's tracker at the line-445 site.
+//
+// The assertion is structural, not timing-based (unlike the sibling test above): since
+// test never completes, final_approval can only ever become ready again via the
+// force-ready flag surviving the rebuild. If it doesn't, final_approval's retried
+// execution (iteration 2) never reaches "awaiting_human"/"completed" — the .Once()
+// mocks below simply never fire, and testify's AssertExpectations (in AfterTest) fails
+// the test.
+func (s *DAGExecutorTestSuite) TestForceReadyCarriesForwardThroughLateHumanDecisionRetry() {
+	implement := uuid.New()
+	codeReview := uuid.New()
+	test := uuid.New()
+	finalApproval := uuid.New()
+	supervisor := uuid.New()
+
+	execImplement := uuid.New()
+	execCodeReview := uuid.New()
+	execTest := uuid.New()
+	execFinalApproval1 := uuid.New()
+	execFinalApproval2 := uuid.New()
+	execSupervisor := uuid.New()
+
+	runID := uuid.New()
+
+	snapshot := `{
+		"nodes": [
+			{"templateNodeId": "` + implement.String() + `", "label": "implement", "executorType": "ai", "timeoutSeconds": 1800, "isEntrypoint": true},
+			{"templateNodeId": "` + codeReview.String() + `", "label": "code_review", "executorType": "ai", "timeoutSeconds": 1800},
+			{"templateNodeId": "` + test.String() + `", "label": "test", "executorType": "ai", "timeoutSeconds": 1800},
+			{"templateNodeId": "` + finalApproval.String() + `", "label": "final_approval", "executorType": "human", "timeoutSeconds": 60},
+			{"templateNodeId": "` + supervisor.String() + `", "label": "supervisor", "executorType": "human", "timeoutSeconds": 3600, "configOverrides": {"routing_hub": true}}
+		],
+		"edges": [
+			{"sourceNodeId": "` + implement.String() + `", "targetNodeId": "` + codeReview.String() + `"},
+			{"sourceNodeId": "` + implement.String() + `", "targetNodeId": "` + test.String() + `"},
+			{"sourceNodeId": "` + test.String() + `", "targetNodeId": "` + finalApproval.String() + `", "condition": "approved"}
+		]
+	}`
+
+	s.env.OnActivity("UpdateWorkflowRunStatus", mock.Anything, mock.Anything).Return(nil)
+	s.env.OnActivity("GetGraphRuntime", mock.Anything, runID).Return(snapshot, nil)
+	s.env.OnActivity("WriteExecutionLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("InitRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("AppendRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("SetTraversedEdges", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("LoadPredecessorInputs", mock.Anything, mock.Anything).Return(map[string]string{}, nil).Maybe()
+	s.env.OnActivity("LoadRequiredInputArtifacts", mock.Anything, mock.Anything).Return(activity.LoadRequiredInputArtifactsResult{}, nil).Maybe()
+	s.env.OnActivity("LoadReviewHistoryJSON", mock.Anything, mock.Anything).Return("[]", nil).Maybe()
+	s.env.OnActivity("FetchPodLogs", mock.Anything, mock.Anything).Return("", nil).Maybe()
+	s.env.OnActivity("DeleteAgentJob", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == implement
+	})).Return(execImplement, nil).Once()
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == codeReview
+	})).Return(execCodeReview, nil).Once()
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == test
+	})).Return(execTest, nil).Once()
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == supervisor
+	})).Return(execSupervisor, nil).Once()
+	// final_approval is created twice: iteration 1 (routed to by the Supervisor, times
+	// out unanswered) and iteration 2 (the late-decision retry this test is about).
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == finalApproval && p.Iteration == 1
+	})).Return(execFinalApproval1, nil).Once()
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == finalApproval && p.Iteration == 2
+	})).Return(execFinalApproval2, nil).Once()
+
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.TemplateNodeID == implement
+	})).Return(nil).Once()
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.TemplateNodeID == codeReview
+	})).Return(nil).Once()
+	// test fails outright — permanently, never retried in this test — so the predecessor
+	// gate final_approval depends on stays blocked for the rest of the run. If forceReady
+	// is lost anywhere, final_approval has no other way to ever become ready again.
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.TemplateNodeID == test
+	})).Return(fmt.Errorf("test environment down")).Once()
+
+	// code_review escalates instead of following a normal edge.
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execImplement
+	})).Return("no_decision", nil).Once()
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execCodeReview
+	})).Return("escalate", nil).Once()
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execSupervisor
+	})).Return("route:final_approval", nil).Once()
+	// The retried (iteration 2) execution's decision — read back after SetNodeDecision
+	// persists it in the late-decision handler.
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execFinalApproval2
+	})).Return("approved", nil).Once()
+	// execTest and execFinalApproval1 never reach the decision-read step — both fail/time
+	// out, and the failure path returns before GetNodeDecision is ever called for them.
+
+	s.env.OnActivity("SetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.SetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execSupervisor && p.Decision == "route:final_approval"
+	})).Return(nil).Once()
+	s.env.OnActivity("SetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.SetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execFinalApproval2 && p.Decision == "approved"
+	})).Return(nil).Once()
+
+	// The Supervisor routes to final_approval as soon as it is paged.
+	s.env.RegisterDelayedCallback(func() {
+		s.env.SignalWorkflow(SignalHumanDecisionPrefix+execSupervisor.String(), HumanDecisionSignal{
+			NodeExecutionID: execSupervisor.String(),
+			Decision:        "route:final_approval",
+			Feedback:        "Routing straight to final approval",
+		})
+	}, 0)
+
+	// final_approval's FIRST execution must be left unsignaled until it genuinely times
+	// out (timeoutSeconds: 60) — waitForHumanDecision is actively blocked on Receive from
+	// this same channel name (SignalHumanDecisionPrefix+execFinalApproval1) from the
+	// moment final_approval is first dispatched, so a signal sent any earlier is
+	// delivered to THAT live listener and completes iteration 1 directly, short-circuiting
+	// the very failure/retry path this test exists to exercise. Only once that listener
+	// gives up (60s) and the workflow re-registers the same channel name inside
+	// awaiting_retry mode does a signal sent here reach the late-decision-retry handler
+	// this test is actually about.
+	s.env.RegisterDelayedCallback(func() {
+		s.env.SignalWorkflow(SignalHumanDecisionPrefix+execFinalApproval1.String(), HumanDecisionSignal{
+			NodeExecutionID: execFinalApproval1.String(),
+			Decision:        "approved",
+			Feedback:        "Late approval after the gate timed out",
+		})
+	}, 65*time.Second)
+
+	// The retried (iteration 2) execution must reach "awaiting_human" and then
+	// "completed" — proof that FindReadyNodes admitted it despite test (its ordinary,
+	// permanently-failed predecessor) never completing.
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.MatchedBy(func(p activity.UpdateNodeExecStatusParams) bool {
+		return p.NodeExecutionID == execFinalApproval2 && p.Status == "awaiting_human"
+	})).Return(nil).Once()
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.MatchedBy(func(p activity.UpdateNodeExecStatusParams) bool {
+		return p.NodeExecutionID == execFinalApproval2 && p.Status == "completed"
+	})).Return(nil).Once()
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
+		RunID: runID, GraphVersion: 1,
+	})
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+}
