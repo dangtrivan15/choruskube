@@ -28,6 +28,8 @@ class PendingGateServiceTest {
     private WorkflowRunRepository runRepo;
     private GraphSnapshotBuilder snapshotBuilder;
     private ObjectMapper objectMapper;
+    private ArtifactResolutionService artifactResolutionService;
+    private ArtifactService artifactService;
     private PendingGateService service;
 
     @BeforeEach
@@ -36,16 +38,68 @@ class PendingGateServiceTest {
         runRepo = Mockito.mock(WorkflowRunRepository.class);
         snapshotBuilder = Mockito.mock(GraphSnapshotBuilder.class);
         objectMapper = new ObjectMapper();
+        artifactResolutionService = Mockito.mock(ArtifactResolutionService.class);
+        artifactService = Mockito.mock(ArtifactService.class);
         service = new PendingGateService(
                 execRepo,
                 runRepo,
                 snapshotBuilder,
                 objectMapper,
                 new AuthorizationService(new AlwaysAllowAuthorizationStrategy(), false),
-                Mockito.mock(ArtifactResolutionService.class),
+                artifactResolutionService,
+                artifactService,
                 new com.choruskube.core.scope.NoOpScopeProvider(),
                 new DecisionOptionsResolver(),
                 Mockito.mock(RoadmapCandidatesArtifactResolver.class));
+    }
+
+    /** The two IDs a test needs to stub {@code artifactService.getArtifactContent(...)}. */
+    private record SupervisorGate(UUID runId, UUID escalatorExecId) {}
+
+    /**
+     * Wires a Supervisor gate (a routing-hub node with no edges) awaiting review, with a
+     * completed {@code escalate} execution as the escalator. Individual tests stub {@code
+     * artifactService.getArtifactContent} for {@code escalation.md} to exercise the front-matter
+     * parsing paths.
+     */
+    private SupervisorGate stubSupervisorGate() {
+        UUID runId = UUID.randomUUID();
+        UUID hubNodeId = UUID.randomUUID();
+        UUID escalatorExecId = UUID.randomUUID();
+
+        String snapshot = """
+                {"nodes": [{"template_node_id": "%s", "label": "Supervisor", "config_overrides": {"routing_hub": true}}], "edges": []}
+                """.formatted(hubNodeId);
+
+        WorkflowRun run = new WorkflowRun();
+        run.setId(runId);
+        run.setName("Escalation run");
+        run.setStatus(WorkflowRunStatus.awaiting_human);
+
+        NodeExecution hubExec = new NodeExecution();
+        hubExec.setId(UUID.randomUUID());
+        hubExec.setWorkflowRunId(runId);
+        hubExec.setTemplateNodeId(hubNodeId);
+        hubExec.setStatus(NodeExecutionStatus.awaiting_human);
+        hubExec.setIteration(1);
+
+        NodeExecution escalatorExec = new NodeExecution();
+        escalatorExec.setId(escalatorExecId);
+        escalatorExec.setWorkflowRunId(runId);
+        escalatorExec.setLabel("code_review");
+        escalatorExec.setLoopGroup("impl-review");
+        escalatorExec.setStatus(NodeExecutionStatus.completed);
+        escalatorExec.setDecision("escalate");
+
+        Mockito.when(execRepo.findAll(ArgumentMatchers.<Specification<NodeExecution>>any()))
+                .thenReturn(List.of(hubExec));
+        Mockito.when(runRepo.findAllById(Mockito.anyCollection())).thenReturn(List.of(run));
+        Mockito.when(execRepo.findByWorkflowRunIdIn(Mockito.anyCollection())).thenReturn(List.of(hubExec));
+        Mockito.when(snapshotBuilder.buildSnapshotForRun(run)).thenReturn(snapshot);
+        Mockito.when(artifactResolutionService.resolveEscalatingExecution(runId))
+                .thenReturn(escalatorExec);
+
+        return new SupervisorGate(runId, escalatorExecId);
     }
 
     @Test
@@ -327,6 +381,7 @@ class PendingGateServiceTest {
                 objectMapper,
                 new AuthorizationService(new AlwaysAllowAuthorizationStrategy(), false),
                 mockResolutionService,
+                artifactService,
                 new com.choruskube.core.scope.NoOpScopeProvider(),
                 new DecisionOptionsResolver(),
                 Mockito.mock(RoadmapCandidatesArtifactResolver.class));
@@ -496,5 +551,158 @@ class PendingGateServiceTest {
 
         assertThat(result).hasSize(1);
         assertThat(result.get(0).decisionOptions()).isEmpty();
+    }
+
+    @Test
+    void supervisorGateCarriesEscalationContext() {
+        // Escalator: code_review, loop group impl-review, decision escalate, with escalation.md.
+        // Gate under inspection: the Supervisor, awaiting_human.
+        SupervisorGate gate = stubSupervisorGate();
+        Mockito.when(artifactService.getArtifactContent(gate.runId(), gate.escalatorExecId(), "escalation.md"))
+                .thenReturn("---\ncategory: environment\nsummary: CI runner is wedged\n---\n## Why\n...");
+
+        var gates = service.getPendingGates();
+
+        assertThat(gates).singleElement().satisfies(g -> {
+            assertThat(g.escalation()).isNotNull();
+            assertThat(g.escalation().escalatorLabel()).isEqualTo("code_review");
+            assertThat(g.escalation().escalatorExecId()).isEqualTo(gate.escalatorExecId());
+            assertThat(g.escalation().escalatorLoopGroup()).isEqualTo("impl-review");
+            assertThat(g.escalation().category()).isEqualTo("environment");
+            assertThat(g.escalation().summary()).isEqualTo("CI runner is wedged");
+        });
+    }
+
+    @Test
+    void ordinaryGateHasNoEscalationContext() {
+        // A gate whose node has no config_overrides at all — the common case, and the one every
+        // other test in this file already exercises. escalation() must stay null for it.
+        UUID runId = UUID.randomUUID();
+        UUID nodeId = UUID.randomUUID();
+
+        String snapshot = """
+                {"nodes": [{"template_node_id": "%s", "label": "Ordinary Gate"}], "edges": []}
+                """.formatted(nodeId);
+
+        WorkflowRun run = new WorkflowRun();
+        run.setId(runId);
+        run.setName("Ordinary run");
+        run.setStatus(WorkflowRunStatus.awaiting_human);
+
+        NodeExecution exec = new NodeExecution();
+        exec.setId(UUID.randomUUID());
+        exec.setWorkflowRunId(runId);
+        exec.setTemplateNodeId(nodeId);
+        exec.setStatus(NodeExecutionStatus.awaiting_human);
+        exec.setIteration(1);
+
+        Mockito.when(execRepo.findAll(ArgumentMatchers.<Specification<NodeExecution>>any()))
+                .thenReturn(List.of(exec));
+        Mockito.when(runRepo.findAllById(Mockito.anyCollection())).thenReturn(List.of(run));
+        Mockito.when(execRepo.findByWorkflowRunIdIn(Mockito.anyCollection())).thenReturn(List.of(exec));
+        Mockito.when(snapshotBuilder.buildSnapshotForRun(run)).thenReturn(snapshot);
+
+        var gates = service.getPendingGates();
+
+        assertThat(gates).allSatisfy(g -> assertThat(g.escalation()).isNull());
+        Mockito.verifyNoInteractions(artifactService);
+    }
+
+    @Test
+    void malformedEscalationMdDegradesToNullCategory() {
+        SupervisorGate gate = stubSupervisorGate();
+        Mockito.when(artifactService.getArtifactContent(gate.runId(), gate.escalatorExecId(), "escalation.md"))
+                .thenThrow(new RuntimeException("object not found"));
+
+        var gates = service.getPendingGates();
+
+        assertThat(gates).singleElement().satisfies(g -> {
+            assertThat(g.escalation()).isNotNull();
+            assertThat(g.escalation().escalatorLabel()).isEqualTo("code_review");
+            assertThat(g.escalation().escalatorExecId()).isEqualTo(gate.escalatorExecId());
+            assertThat(g.escalation().escalatorLoopGroup()).isEqualTo("impl-review");
+            assertThat(g.escalation().category()).isNull();
+            assertThat(g.escalation().summary()).isNull();
+        });
+    }
+
+    @Test
+    void noEscalatorYetLeavesEscalationNull() {
+        // resolveEscalatingExecution returns null (nothing has escalated in this run yet) — the
+        // Supervisor gate must not construct a half-empty EscalationContext around a null escalator.
+        UUID runId = UUID.randomUUID();
+        UUID hubNodeId = UUID.randomUUID();
+
+        String snapshot = """
+                {"nodes": [{"template_node_id": "%s", "label": "Supervisor", "config_overrides": {"routing_hub": true}}], "edges": []}
+                """.formatted(hubNodeId);
+
+        WorkflowRun run = new WorkflowRun();
+        run.setId(runId);
+        run.setName("No escalation yet");
+        run.setStatus(WorkflowRunStatus.awaiting_human);
+
+        NodeExecution hubExec = new NodeExecution();
+        hubExec.setId(UUID.randomUUID());
+        hubExec.setWorkflowRunId(runId);
+        hubExec.setTemplateNodeId(hubNodeId);
+        hubExec.setStatus(NodeExecutionStatus.awaiting_human);
+        hubExec.setIteration(1);
+
+        Mockito.when(execRepo.findAll(ArgumentMatchers.<Specification<NodeExecution>>any()))
+                .thenReturn(List.of(hubExec));
+        Mockito.when(runRepo.findAllById(Mockito.anyCollection())).thenReturn(List.of(run));
+        Mockito.when(execRepo.findByWorkflowRunIdIn(Mockito.anyCollection())).thenReturn(List.of(hubExec));
+        Mockito.when(snapshotBuilder.buildSnapshotForRun(run)).thenReturn(snapshot);
+        Mockito.when(artifactResolutionService.resolveEscalatingExecution(runId))
+                .thenReturn(null);
+
+        var gates = service.getPendingGates();
+
+        assertThat(gates).singleElement().satisfies(g -> assertThat(g.escalation())
+                .isNull());
+        Mockito.verifyNoInteractions(artifactService);
+    }
+
+    @Test
+    void frontMatterMissingSummaryKeyLeavesSummaryNull() {
+        SupervisorGate gate = stubSupervisorGate();
+        Mockito.when(artifactService.getArtifactContent(gate.runId(), gate.escalatorExecId(), "escalation.md"))
+                .thenReturn("---\ncategory: environment\n---\n## Why\n...");
+
+        var gates = service.getPendingGates();
+
+        assertThat(gates).singleElement().satisfies(g -> {
+            assertThat(g.escalation().category()).isEqualTo("environment");
+            assertThat(g.escalation().summary()).isNull();
+        });
+    }
+
+    @Test
+    void frontMatterAbsentLeavesCategoryAndSummaryNull() {
+        SupervisorGate gate = stubSupervisorGate();
+        Mockito.when(artifactService.getArtifactContent(gate.runId(), gate.escalatorExecId(), "escalation.md"))
+                .thenReturn("## Why\nCI runner is wedged, no front matter block at all.");
+
+        var gates = service.getPendingGates();
+
+        assertThat(gates).singleElement().satisfies(g -> {
+            assertThat(g.escalation()).isNotNull();
+            assertThat(g.escalation().category()).isNull();
+            assertThat(g.escalation().summary()).isNull();
+        });
+    }
+
+    @Test
+    void frontMatterValueWithTrailingWhitespaceIsTrimmed() {
+        SupervisorGate gate = stubSupervisorGate();
+        Mockito.when(artifactService.getArtifactContent(gate.runId(), gate.escalatorExecId(), "escalation.md"))
+                .thenReturn("---\ncategory: environment   \nsummary: CI runner is wedged\n---\n## Why\n...");
+
+        var gates = service.getPendingGates();
+
+        assertThat(gates)
+                .singleElement()
+                .satisfies(g -> assertThat(g.escalation().category()).isEqualTo("environment"));
     }
 }

@@ -64,6 +64,7 @@ class PendingGateServiceCandidateBreakdownTest {
                 objectMapper,
                 new AuthorizationService(new AlwaysAllowAuthorizationStrategy(), false),
                 artifactResolutionService,
+                artifactService,
                 new com.choruskube.core.scope.NoOpScopeProvider(),
                 new DecisionOptionsResolver(),
                 candidatesArtifactResolver);
