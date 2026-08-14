@@ -47,3 +47,14 @@ export function parseEscalationCategory(category: string | null | undefined): Ga
   }
   return { kind: "approved" };
 }
+
+/**
+ * Whether every decision option for this gate is a Supervisor routing target
+ * (`route:<label>`). The Supervisor has no inbound edges and can name any node in
+ * the template as a target — potentially seven or more — so one button per option
+ * (`DecisionButtons`) is unusable here. Callers should render `EscalationGatePanel`'s
+ * target picker instead of the normal feedback/decision-buttons flow.
+ */
+export function isEscalationGate(options: readonly string[]): boolean {
+  return options.length > 0 && options.every((o) => o.startsWith("route:"));
+}

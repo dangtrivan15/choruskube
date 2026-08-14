@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseEscalationCategory, parseGateTrigger } from "./decisions";
+import { isEscalationGate, parseEscalationCategory, parseGateTrigger } from "./decisions";
 
 describe("parseGateTrigger", () => {
   it("returns approved for the approved decision", () => {
@@ -41,5 +41,31 @@ describe("parseEscalationCategory", () => {
 describe("parseGateTrigger (legacy v36 runs)", () => {
   it("still parses frozen need_human_decision decisions", () => {
     expect(parseGateTrigger("need_human_decision:review_conflict")).toEqual({ kind: "review_conflict" });
+  });
+});
+
+describe("isEscalationGate", () => {
+  it("is true when every option is a route: target", () => {
+    expect(isEscalationGate(["route:qa_review", "route:implement", "route:final_approval"])).toBe(true);
+  });
+
+  it("is true for a single route: option", () => {
+    expect(isEscalationGate(["route:qa_review"])).toBe(true);
+  });
+
+  it("is false for legacy approve/reject options", () => {
+    expect(isEscalationGate(["approved", "rejected"])).toBe(false);
+  });
+
+  it("is false for v23 rereview/redraft options", () => {
+    expect(isEscalationGate(["approved", "rereview", "redraft"])).toBe(false);
+  });
+
+  it("is false when options are empty", () => {
+    expect(isEscalationGate([])).toBe(false);
+  });
+
+  it("is false when options are mixed route: and non-route:", () => {
+    expect(isEscalationGate(["route:qa_review", "approved"])).toBe(false);
   });
 });

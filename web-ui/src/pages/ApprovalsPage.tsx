@@ -30,8 +30,10 @@ import ArtifactList from "@/components/runs/ArtifactList";
 import LiveChatPanel from "@/components/runs/LiveChatPanel";
 import FileUploadZone from "@/components/runs/FileUploadZone";
 import RoadmapCandidateBreakdown from "@/components/runs/RoadmapCandidateBreakdown";
+import EscalationGatePanel from "@/components/runs/EscalationGatePanel";
 import PageHeader from "@/components/layout/PageHeader";
 import PageShell from "@/components/layout/PageShell";
+import { isEscalationGate } from "@/lib/decisions";
 import type { PendingGateResponse, SortParam, PaginationParams, CandidateEpicProposal } from "@/lib/types";
 
 const SORT_OPTIONS = [
@@ -109,12 +111,17 @@ function GateCard({ gate }: { gate: PendingGateResponse }) {
   const signalMutation = useSignalFromDashboard();
   const isLiveChat = gate.status === "live_chat";
   const { canOperate } = usePermission();
+  const options = gate.decisionOptions ?? LEGACY_DECISION_OPTIONS;
+  const isEscalation = isEscalationGate(options);
 
   function handleSubmit(decision: string) {
-    // rereview/redraft expect the typed guidance as `human_guidance.md` so the
-    // next-iteration agent reads it from /workspace/in/<gate_label>/human_guidance.md.
+    // rereview/redraft/route:* expect the typed guidance as `human_guidance.md` so the
+    // next node reads it from /workspace/in/<gate_label>/human_guidance.md.
     let files = attachmentFiles;
-    if ((decision === "rereview" || decision === "redraft") && feedback.trim()) {
+    if (
+      (decision === "rereview" || decision === "redraft" || decision.startsWith("route:")) &&
+      feedback.trim()
+    ) {
       const guidanceFile = new File([feedback], "human_guidance.md", { type: "text/markdown" });
       files = [guidanceFile, ...attachmentFiles];
     }
@@ -178,74 +185,89 @@ function GateCard({ gate }: { gate: PendingGateResponse }) {
 
       <Separator className="my-3" />
 
-      {/* Predecessor outputs */}
-      {gate.predecessorOutputs.length > 0 && (
+      {isEscalation ? (
+        <EscalationGatePanel
+          runId={gate.runId}
+          escalation={gate.escalation}
+          decisionOptions={options}
+          guidance={feedback}
+          onGuidanceChange={setFeedback}
+          onConfirm={handleSubmit}
+          isPending={signalMutation.isPending || isLiveChat}
+          readOnly={!canOperate}
+        />
+      ) : (
         <>
-          <div className="space-y-2">
-            <button
-              type="button"
-              onClick={() => setOutputExpanded(!outputExpanded)}
-              className="flex w-full items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground hover:text-foreground/80"
-            >
-              {outputExpanded ? (
-                <ChevronDown className="h-4 w-4" />
-              ) : (
-                <ChevronRight className="h-4 w-4" />
-              )}
-              Previous Step Output ({gate.predecessorOutputs.length})
-            </button>
-            {outputExpanded &&
-              gate.predecessorOutputs.map((pred, i) => (
-                <div key={pred.templateNodeId} className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium text-muted-foreground">{pred.label}</span>
-                    {pred.result && (
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        onClick={() => setExpandedPredIdx(i)}
-                        aria-label="Expand predecessor output"
-                      >
-                        <Maximize2 className="h-3.5 w-3.5" />
-                      </Button>
-                    )}
-                  </div>
-                  {pred.result ? (
-                    <>
-                      <MarkdownViewer content={pred.result} maxHeight="max-h-48" />
-                      <PredecessorOutputDialog
-                        nodeLabel={pred.label}
-                        resultContent={pred.result}
-                        open={expandedPredIdx === i}
-                        onOpenChange={(open) => {
-                          if (!open) setExpandedPredIdx(null);
-                        }}
-                      />
-                    </>
+          {/* Predecessor outputs */}
+          {gate.predecessorOutputs.length > 0 && (
+            <>
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={() => setOutputExpanded(!outputExpanded)}
+                  className="flex w-full items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground hover:text-foreground/80"
+                >
+                  {outputExpanded ? (
+                    <ChevronDown className="h-4 w-4" />
                   ) : (
-                    <p className="text-xs italic text-muted-foreground">No output available</p>
+                    <ChevronRight className="h-4 w-4" />
                   )}
-                  {pred.nodeExecutionId && gate.requiredArtifacts == null && (
-                    <ArtifactBrowser runId={gate.runId} execId={pred.nodeExecutionId} />
-                  )}
-                </div>
-              ))}
-          </div>
-          <Separator className="my-3" />
-        </>
-      )}
+                  Previous Step Output ({gate.predecessorOutputs.length})
+                </button>
+                {outputExpanded &&
+                  gate.predecessorOutputs.map((pred, i) => (
+                    <div key={pred.templateNodeId} className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium text-muted-foreground">{pred.label}</span>
+                        {pred.result && (
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            onClick={() => setExpandedPredIdx(i)}
+                            aria-label="Expand predecessor output"
+                          >
+                            <Maximize2 className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                      </div>
+                      {pred.result ? (
+                        <>
+                          <MarkdownViewer content={pred.result} maxHeight="max-h-48" />
+                          <PredecessorOutputDialog
+                            nodeLabel={pred.label}
+                            resultContent={pred.result}
+                            open={expandedPredIdx === i}
+                            onOpenChange={(open) => {
+                              if (!open) setExpandedPredIdx(null);
+                            }}
+                          />
+                        </>
+                      ) : (
+                        <p className="text-xs italic text-muted-foreground">No output available</p>
+                      )}
+                      {pred.nodeExecutionId && gate.requiredArtifacts == null && (
+                        <ArtifactBrowser runId={gate.runId} execId={pred.nodeExecutionId} />
+                      )}
+                    </div>
+                  ))}
+              </div>
+              <Separator className="my-3" />
+            </>
+          )}
 
-      {gate.requiredArtifacts != null && gate.requiredArtifacts.length > 0 && (
-        <>
-          <ArtifactList runId={gate.runId} groups={gate.requiredArtifacts} />
-          <Separator className="my-3" />
-        </>
-      )}
+          {gate.requiredArtifacts != null && gate.requiredArtifacts.length > 0 && (
+            <>
+              <ArtifactList runId={gate.runId} groups={gate.requiredArtifacts} />
+              <Separator className="my-3" />
+            </>
+          )}
 
-      {gate.candidateBreakdown != null && (
-        <>
-          <RoadmapCandidateBreakdown value={editedCandidates} onChange={setEditedCandidates} />
-          <Separator className="my-3" />
+          {gate.candidateBreakdown != null && (
+            <>
+              <RoadmapCandidateBreakdown value={editedCandidates} onChange={setEditedCandidates} />
+              <Separator className="my-3" />
+            </>
+          )}
         </>
       )}
 
@@ -259,7 +281,7 @@ function GateCard({ gate }: { gate: PendingGateResponse }) {
       <Separator className="my-3" />
 
       {/* Feedback + Actions */}
-      {canOperate && (
+      {!isEscalation && canOperate && (
         <div className="space-y-3">
           <Textarea
             data-testid="gate-card-feedback"
@@ -271,7 +293,7 @@ function GateCard({ gate }: { gate: PendingGateResponse }) {
           />
           <FileUploadZone onFilesChange={setAttachmentFiles} disabled={signalMutation.isPending} />
           <DecisionButtons
-            options={gate.decisionOptions ?? LEGACY_DECISION_OPTIONS}
+            options={options}
             onSubmit={handleSubmit}
             isPending={signalMutation.isPending || isLiveChat}
             feedback={feedback}

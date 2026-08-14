@@ -466,6 +466,87 @@ describe("HumanGatePanel", () => {
     });
   });
 
+  describe("Supervisor escalation gate", () => {
+    const escalation = {
+      escalatorLabel: "Code Review",
+      escalatorExecId: "escalator-exec-1",
+      escalatorLoopGroup: "loop-a",
+      category: "blocked_external",
+      summary: "CI runner is wedged and cannot be reached.",
+    };
+    const escalationProps = {
+      ...defaultProps,
+      nodeLabel: "Supervisor",
+      decisionOptions: ["route:qa_review", "route:implement", "route:final_approval"],
+      escalation,
+    };
+
+    it("delegates to EscalationGatePanel instead of the normal Approve/Reject flow", () => {
+      renderWithProviders(<HumanGatePanel {...escalationProps} />);
+
+      expect(screen.getByTestId("escalation-gate-panel")).toBeInTheDocument();
+      expect(screen.queryByText("Approve")).not.toBeInTheDocument();
+      expect(screen.queryByText("Reject")).not.toBeInTheDocument();
+    });
+
+    it("renders the escalator context from the escalation prop", () => {
+      renderWithProviders(<HumanGatePanel {...escalationProps} />);
+
+      expect(screen.getByText("Code Review")).toBeInTheDocument();
+      expect(screen.getByText("CI runner is wedged and cannot be reached.")).toBeInTheDocument();
+    });
+
+    // Regression coverage for the mandatory fall-through fix: before it, any GateTrigger kind
+    // the old if/else chain didn't recognize (environment, blocked_external) fell through to
+    // the alternative_proposal banner — a confidently wrong label. EscalationGatePanel reuses
+    // the same TriggerBanner HumanGatePanel does, so this proves the fix end to end.
+    it("does not mislabel an environment escalation as an alternative design proposal", () => {
+      renderWithProviders(
+        <HumanGatePanel
+          {...escalationProps}
+          escalation={{ ...escalation, category: "environment" }}
+        />
+      );
+
+      expect(screen.queryByText("Alternative design proposed")).not.toBeInTheDocument();
+      expect(screen.getByText("Environment issue")).toBeInTheDocument();
+    });
+
+    it("submits the chosen route: decision with human_guidance.md attached when guidance is typed", async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<HumanGatePanel {...escalationProps} />);
+
+      await user.type(screen.getByTestId("escalation-guidance-input"), "Send to QA");
+      await user.click(screen.getByTestId("escalation-target-picker"));
+      await user.click(screen.getByTestId("escalation-target-option-qa_review"));
+      await user.click(screen.getByTestId("escalation-confirm-button"));
+
+      expect(mockMutate).toHaveBeenCalledWith(
+        {
+          nodeExecId: "exec-1",
+          decision: "route:qa_review",
+          feedback: "Send to QA",
+          files: [expect.objectContaining({ name: "human_guidance.md" })],
+        },
+        expect.objectContaining({ onSuccess: expect.any(Function) })
+      );
+    });
+
+    it("submits with an empty files array when no guidance is typed", async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<HumanGatePanel {...escalationProps} />);
+
+      await user.click(screen.getByTestId("escalation-target-picker"));
+      await user.click(screen.getByTestId("escalation-target-option-implement"));
+      await user.click(screen.getByTestId("escalation-confirm-button"));
+
+      expect(mockMutate).toHaveBeenCalledWith(
+        { nodeExecId: "exec-1", decision: "route:implement", feedback: "", files: [] },
+        expect.objectContaining({ onSuccess: expect.any(Function) })
+      );
+    });
+  });
+
   describe("v23 Final Approval gate", () => {
     const finalApprovalProps = {
       ...defaultProps,

@@ -703,6 +703,85 @@ describe("ApprovalsPage", () => {
     });
   });
 
+  describe("Supervisor escalation gate from approvals dashboard", () => {
+    function renderWithEscalationGate(overrides: Record<string, unknown> = {}) {
+      mockUsePendingGates.mockReturnValue({
+        data: {
+          content: [
+            {
+              nodeExecutionId: "exec-esc-1",
+              runId: "run-esc-1",
+              runStatus: "awaiting_human",
+              runName: "Feature Dev Run",
+              nodeLabel: "Supervisor",
+              iteration: 1,
+              timeoutSeconds: null,
+              waitingSince: null,
+              status: "awaiting_human",
+              predecessorOutputs: [],
+              decisionOptions: ["route:qa_review", "route:implement"],
+              escalation: {
+                escalatorLabel: "Code Review",
+                escalatorExecId: "escalator-exec-1",
+                escalatorLoopGroup: "loop-a",
+                category: "blocked_external",
+                summary: "CI runner is wedged and cannot be reached.",
+              },
+              ...overrides,
+            },
+          ],
+          totalElements: 1, totalPages: 1, number: 0, size: 20, first: true, last: true, empty: false,
+        },
+        isLoading: false,
+        isError: false,
+      });
+      renderWithProviders(<ApprovalsPage />);
+    }
+
+    it("delegates to EscalationGatePanel instead of DecisionButtons", () => {
+      renderWithEscalationGate();
+
+      expect(screen.getByTestId("escalation-gate-panel")).toBeInTheDocument();
+      expect(screen.queryByTestId("gate-card-approve-button")).not.toBeInTheDocument();
+    });
+
+    it("renders the escalator context from gate.escalation", () => {
+      renderWithEscalationGate();
+
+      expect(screen.getByText("Code Review")).toBeInTheDocument();
+      expect(screen.getByText("CI runner is wedged and cannot be reached.")).toBeInTheDocument();
+    });
+
+    it("submits the chosen route: decision with human_guidance.md attached", async () => {
+      const mockMutate = vi.fn();
+      const { useSignalFromDashboard } = await import("@/hooks/usePendingGates");
+      (useSignalFromDashboard as ReturnType<typeof vi.fn>).mockReturnValue({
+        mutate: mockMutate,
+        isPending: false,
+      });
+
+      const user = userEvent.setup();
+      renderWithEscalationGate();
+
+      await user.type(screen.getByTestId("escalation-guidance-input"), "Route to QA");
+      await user.click(screen.getByTestId("escalation-target-picker"));
+      await user.click(screen.getByTestId("escalation-target-option-qa_review"));
+      await user.click(screen.getByTestId("escalation-confirm-button"));
+
+      expect(mockMutate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runId: "run-esc-1",
+          nodeExecId: "exec-esc-1",
+          decision: "route:qa_review",
+          files: expect.arrayContaining([
+            expect.objectContaining({ name: "human_guidance.md" }),
+          ]),
+        }),
+        expect.objectContaining({ onSuccess: expect.any(Function) })
+      );
+    });
+  });
+
   describe("v23 spec gate from approvals dashboard (regression: 500 on Reject)", () => {
     function renderWithV23Gate() {
       mockUsePendingGates.mockReturnValue({

@@ -136,6 +136,16 @@ export interface NodeExecutionResponse {
    * the Approvals dashboard does.
    */
   candidateBreakdown: CandidateEpicProposal[] | null;
+  /**
+   * Why this run was escalated to the Supervisor, mirroring
+   * `PendingGateResponse.escalation`. Optional — the api-server does not yet emit
+   * this field on `NodeExecutionResponse` (only on the pending-gates dashboard
+   * response), so on the Run Detail page it is always `undefined` today. Threaded
+   * through anyway so `DetailPanel` compiles against the real shape and requires
+   * no frontend change the day the api-server starts sending it (same
+   * forward-compat pattern as `PendingGateResponse.decisionOptions?`).
+   */
+  escalation?: EscalationContext | null;
 }
 
 export interface ExecutionLogResponse {
