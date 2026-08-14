@@ -35,7 +35,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
     // and executor changes here never retroactively mutate prior versions. To ship a
     // change, edit the constants in this file (prompt, executor, schema), increment
     // CURRENT_VERSION, and the next boot creates the new snapshot.
-    static final int CURRENT_VERSION = 36;
+    static final int CURRENT_VERSION = 37;
 
     private static final String TEMPLATE_NAME = "Feature Development";
 
@@ -281,6 +281,10 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
 
             {review_history}
 
+            If the request is self-contradictory, or contradicts the codebase in a way no
+            reasonable assumption resolves, escalate rather than guess. Ordinary vagueness is
+            not grounds for escalation — make an assumption and record it as a Caveat.
+
             Save the document as /workspace/out/spec_and_plan.md.""";
 
     private static final String SPEC_REVIEW_PROMPT = """
@@ -296,9 +300,8 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             not reset when a human routes the workflow back to Spec Review, and
             it is not a budget. There is no iteration cap. The self-loop on
             `revised` ends only when you emit `approved`, or when you escalate
-            to a human via one of the `need_human_decision:*` decisions below.
-            Convergence is expected to happen through genuine resolution, not
-            through running out of attempts.
+            to the Supervisor. Convergence is expected to happen through
+            genuine resolution, not through running out of attempts.
 
             ## Inputs
 
@@ -312,8 +315,9 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
               decisions instead of reverting them.
             - `/workspace/in/run_log.md` — accumulated history of all prior nodes.
             - `/workspace/in/<gate_label>/human_guidance.md` — present only if a
-              downstream human gate sent this back via `rereview` or `redraft`.
-              When present, this is direction from the human reviewer; honor it.
+              downstream human gate or the Supervisor sent this back via
+              `rereview` or `redraft`. When present, this is direction from the
+              reviewer; honor it.
             - Repositories are cloned under `/workspace/repo/<name>/`. You may
               dispatch Task subagents to examine multiple repos in parallel.
 
@@ -336,9 +340,9 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             guidance note, or your own re-reading of the spec, pushes you
             toward undoing something a prior iteration deliberately decided.
 
-            If you detect such a conflict, do NOT apply the fix. Escalate via
-            `need_human_decision:review_conflict` instead — see the decision
-            tree below for what to write.
+            If you detect such a conflict, do NOT apply the fix. Escalate instead, with
+            `category: review_conflict`, and put the conflicting decisions, your proposal,
+            and the tradeoff between them in `escalation.md`.
 
             ## Outputs (REQUIRED on every invocation)
 
@@ -405,44 +409,19 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
               route this back to Spec Review for a fresh-session re-review on
               the next iteration.
 
-            - **`need_human_decision:review_conflict`** — Your fix or
-              decision would reverse, contradict, or re-litigate a specific
-              prior iteration's decision (see "Review History & Conflict
-              Check" above). Do NOT apply the fix. In
-              `/workspace/out/spec_review.md` write a structured section
-              with: (1) description of the conflict, (2) your current
-              proposal, (3) the specific prior decision/iteration it
-              conflicts with, (4) tradeoffs between honoring the new fix vs.
-              the prior decision, (5) your reasoning for why this can't be
-              resolved unilaterally. Still write `spec_and_plan.md` verbatim
-              (no partial fix applied).
+            ## When to escalate
 
-            - **`need_human_decision:uncertainty`** — A flaw is found but the
-              correct fix is unclear. Do not guess. In
-              `/workspace/out/spec_review.md` write a structured "Uncertain flaw"
-              section: describe the flaw, the candidate fixes you considered, and
-              why none of them is clearly correct. Still write the input spec
-              verbatim (no partial fixes when uncertain).
+            Your system prompt describes the escalation mechanism. Escalate from this node when:
 
-            - **`need_human_decision:alternative_proposal`** — A fundamentally
-              different architectural approach would be better. Do NOT apply the
-              alternative — submit it as a proposal so the human can decide. In
-              `/workspace/out/spec_review.md` write a structured proposal: (a)
-              current approach's limitations, (b) the alternative, (c) tradeoffs
-              between current and alternative. Still write the input spec
-              verbatim — the alternative is a proposal, not the new spec.
+            - your fix would reverse a prior iteration's decision (`review_conflict`);
+            - the flaw is real but no candidate fix is clearly correct (`uncertainty`);
+            - a fundamentally different architecture would be better — do NOT apply it, propose
+              it (`alternative_proposal`). Applying fixes is normal review work only while they
+              preserve the decomposition (which components, repos, boundaries) and the
+              architecture (sync vs async, data flow shape, ownership). If a fix would change
+              either, escalate rather than apply.
 
-            ## Boundary heuristic for `alternative_proposal`
-
-            Apply fixes (and emit `revised`) when they preserve:
-            - **Decomposition**: which components, which repos, which boundaries
-            - **Architecture**: sync vs async, data flow shape, ownership model
-
-            If a fix would change either, do NOT apply it. Emit
-            `need_human_decision:alternative_proposal` instead. The asymmetry is
-            deliberate: revising within the current architecture is normal review
-            work; proposing a new architecture is a design decision that needs a
-            human.
+            Still write `spec_and_plan.md` verbatim when you escalate — no partial fixes.
 
             ## Reasoning requirement
 
@@ -499,9 +478,9 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             - `/workspace/in/approve_spec_and_plan/<filename>` — any files the
               human reviewer attached at the approval gate. Present only if
               they attached something. Guidance a reviewer types when sending
-              work back arrives the same way, as `human_guidance.md`; when such
-              a file is present it is direction from the human reviewer, so
-              honor it.
+              work back — from a human gate or the Supervisor — arrives the
+              same way, as `human_guidance.md`; when such a file is present it
+              is direction from the reviewer, so honor it.
 
             The block below is the drafting node's short summary of the spec —
             orientation only, not a substitute for reading the document itself.
@@ -552,6 +531,9 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             compile or type-check is fine to catch obvious breakage, but the
             authoritative test gate is the Test node downstream — not your local
             invocation.
+
+            If the plan is unimplementable as written and Part 1 does not settle the correct
+            reading, escalate (`category: uncertainty`) rather than implement a guess.
 
             ## Opening and updating pull requests
 
@@ -717,16 +699,13 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             not reset when a human routes the workflow back to Code Review,
             and it is not a budget. There is no iteration cap. The self-loop
             on `revised` ends only when you emit `approved`, or when you
-            escalate to a human via one of the `need_human_decision:*`
-            decisions below. Convergence is expected to happen through
-            genuine resolution, not through running out of attempts.
+            escalate to the Supervisor. Convergence is expected to happen
+            through genuine resolution, not through running out of attempts.
 
             Note: by the time code reaches you, the spec is already approved.
             Architectural alternatives are NOT in scope here — if you find the
             implementation is structurally irrecoverable within the current spec,
-            escalate via `need_human_decision:review_conflict` (cannot converge) or
-            `need_human_decision:uncertainty` (don't know how to proceed). Do NOT
-            propose to discard the spec.
+            escalate (`uncertainty`). Do NOT propose to discard the spec.
 
             ## Review lenses
 
@@ -760,8 +739,9 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             - `/workspace/in/run_log.md` — accumulated history including the
               Implement node summary and any test reports.
             - `/workspace/in/<gate_label>/human_guidance.md` — present only if
-              Final Approval or Review Escalation sent this back via `rereview`.
-              When present, this is direction from the human reviewer; honor it.
+              Final Approval sent this back via `rereview`, or the Supervisor
+              routed work here. When present, this is direction from the
+              reviewer; honor it.
 
             **Iteration-1 special case:** if `/workspace/in/code_review/` is
             empty or absent, this is iteration 1. There is no prior review to
@@ -782,10 +762,10 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             guidance note, or your own re-reading of the code, pushes you
             toward undoing something a prior iteration deliberately decided.
 
-            If you detect such a conflict, do NOT apply the fix — do not
-            push a commit that reverts or contradicts it. Escalate via
-            `need_human_decision:review_conflict` instead — see the decision
-            tree below for what to write.
+            If you detect such a conflict, do NOT apply the fix — do not push a commit
+            that reverts or contradicts it. Escalate instead, with `category:
+            review_conflict`, and put the conflicting decisions, your proposal, and the
+            tradeoff between them in `escalation.md`.
 
             ## Outputs
 
@@ -819,13 +799,13 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
               more recent state); where only one lists a repo, include it
               anyway. This union — not Implement's file alone — is "the
               known-PRs set" for everything below. This matters because Code
-              Review is itself a self-looping node (`revised`, and re-entry
-              from Review Escalation/Final Approval on `rereview`): a later
-              pass must recognize a PR *it itself* opened for a repo Implement
-              never touched, not just PRs Implement opened — otherwise a
-              second pass pushing further fixes to that same repo would try to
-              `gh pr create` again for a branch that already has an open PR
-              and fail.
+              Review is itself a self-looping node (`revised`, re-entry from
+              Final Approval on `rereview`, or the Supervisor routing here
+              directly): a later pass must recognize a PR *it itself* opened
+              for a repo Implement never touched, not just PRs Implement
+              opened — otherwise a second pass pushing further fixes to that
+              same repo would try to `gh pr create` again for a branch that
+              already has an open PR and fail.
 
             - **After any `git push` this pass**, for each repo you just
               pushed to:
@@ -928,28 +908,20 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
               orchestrator will route this back to Code Review for a
               fresh-session re-review on the next iteration.
 
-            - **`need_human_decision:review_conflict`** — Your fix or
-              decision would reverse, contradict, or re-litigate a specific
-              prior iteration's decision (see "Review History & Conflict
-              Check" above). Do NOT push a commit that applies the fix. In
-              `/workspace/out/review.md` write a structured section with:
-              (1) description of the conflict, (2) your current proposal,
-              (3) the specific prior decision/iteration it conflicts with
-              (cite its commit SHA(s)), (4) tradeoffs between honoring the
-              new fix vs. the prior decision, (5) your reasoning for why
-              this can't be resolved unilaterally.
+            ## When to escalate
 
-            - **`need_human_decision:uncertainty`** — A flaw is found but the
-              correct fix is unclear, OR the implementation appears structurally
-              irrecoverable within the current spec. Do not guess and do not
-              push speculative commits. In `/workspace/out/review.md` write a
-              structured "Uncertain flaw" section: describe the flaw, the
-              candidate fixes you considered, and why none of them is clearly
-              correct. One more valid case of this decision is when the test is valid
-              but the testing environment isn't leading to consistent test failure,
-              and there is no clean way to fix the test without environmental workaround.
-              This decision will be escalated straight to Human without passing the Test Node,
-              so be extra careful when making this decision.
+            Your system prompt describes the escalation mechanism. Escalate from this node when:
+
+            - your fix would reverse a prior iteration's decision (`review_conflict`) — cite the
+              prior commit SHA(s) in `escalation.md`;
+            - the flaw is real but no candidate fix is clearly correct, or the implementation is
+              structurally irrecoverable within the approved spec (`uncertainty`);
+            - the tests are valid but the environment produces inconsistent failures with no
+              clean in-repo fix (`environment`). The Supervisor can route past the Test gate;
+              you cannot, so do not work around it in the repo.
+
+            Do not push speculative commits when you escalate. The spec is already approved by
+            this point — do not propose discarding it.
 
             ## Reasoning requirement
 
@@ -1036,11 +1008,11 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
         NodeDefinition specReview = createNodeDef("Spec Review", ExecutorType.ai, SPEC_REVIEW_PROMPT, 1800);
         specReview.setOutputSpec(
                 "{\"files\":[{\"name\":\"spec_review.md\",\"required\":true,\"description\":\"AI reviewer assessment and recommendations\"}]}");
-        // No iteration cap: the revised self-loop terminates only via `approved` or the
-        // reviewer's own escalation (need_human_decision:review_conflict when it detects
-        // its current fix would reverse a prior decision from {review_history}, or
-        // need_human_decision:uncertainty/alternative_proposal). There is no counter-based
-        // forced escalation — the prompt is the only thing driving convergence.
+        // No iteration cap: the revised self-loop terminates only via `approved` or by
+        // escalating to the Supervisor (when the reviewer detects its current fix would
+        // reverse a prior decision from {review_history}, or is otherwise uncertain). There
+        // is no counter-based forced escalation — the prompt is the only thing driving
+        // convergence.
         nodeDefRepo.save(specReview);
         defs.put("Spec Review", specReview);
 
@@ -1063,10 +1035,10 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
         nodeDefRepo.save(codeReview);
         defs.put("Code Review", codeReview);
 
-        // Human gate that Code Review's escalation decisions
-        // (need_human_decision:review_conflict / need_human_decision:uncertainty) route to
-        // directly, BEFORE Test runs — see v35 impl subgraph comment in seedTemplate().
-        defs.put("Review Escalation", createNodeDef("Review Escalation", ExecutorType.human, null, 86400));
+        // The Supervisor: the template's single routing hub. It has no edges — every AI node
+        // reaches it via the implicit `escalate` decision and it leaves via `route:<label>`.
+        // Nothing about it is Feature-Dev-specific; it is the platform primitive.
+        defs.put("Supervisor", createNodeDef("Supervisor", ExecutorType.human, null, 86400));
 
         // Terminal node (v35): its `approved` decision is declared via
         // terminal_decisions in seedTemplate() instead of routing to a
@@ -1089,36 +1061,21 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
         template.setSystem(true);
         template = templateRepo.save(template);
 
-        // v35 layout. Multi-repo coarse-rejection: a single Implement node operates
-        // across all repos (internally parallelized via Task subagents). Code Review
-        // can self-loop to apply fixes; a clean approval proceeds straight to the Test
-        // gate so commits Code Review pushes during its self-loop are validated before
-        // reaching Final Approval. Test failure routes back to Implement (single
-        // failure path; loop bound by external human intervention via Final Approval
-        // rereview). An uncertain or conflicted Code Review, however, no longer reaches
-        // Test unsupervised: it routes to the new Review Escalation human gate first,
-        // which decides whether to proceed to Test or send the change back to Code
-        // Review for another pass (see Decision 1 in the accompanying spec).
+        // v37 layout. The graph is the happy path and nothing else; every exception route left
+        // the topology and is handled by the edgeless [Supervisor] node (config_overrides
+        // routing_hub), which any AI node pages with `escalate` and which leaves via
+        // `route:<label>` to any node.
         //
-        // v35 retires the dedicated Push & Create PR node: Implement opens each
-        // repo's PR right after implementing, Code Review keeps it current, and
-        // Final Approval's `approved` decision is now terminal (ends the run)
-        // instead of routing to one more AI step — see Decisions 1 and 2.
+        //   [Draft S&P] → [Spec Review] ⇄ revised → [Approve S&P] ─approved→ [Implement]
+        //                                             ├─rereview→ [Spec Review]
+        //                                             └─redraft → [Draft S&P]
+        //   [Implement] → [Code Review] ⇄ revised ─approved→ [Test]
+        //   [Test] ├─passed→ [Final Approval] ├─approved→ (terminal — run ends)
+        //          │                          └─rereview→ [Code Review]
+        //          └─failed→ [Implement]      (a code-caused failure is a mechanical retry;
+        //                                      only Code Review judging it environmental escalates)
         //
-        //   Spec subgraph (unchanged from v23):
-        //     [Draft S&P] → [Spec Review] ⇄ (revised) → [Approve S&P]
-        //
-        //   Impl subgraph (v35):
-        //     [Implement] → [Code Review] ⇄ revised (self-loop)
-        //                       ├── approved ────────────────→ [Test]
-        //                       └── need_human_decision:* ──→ [Review Escalation]
-        //                                                          ├── approved ──→ [Test]
-        //                                                          └── rereview ──→ [Code Review]
-        //                    [Test]
-        //                       ├── passed ──→ [Final Approval]
-        //                       │                  ├── approved ──→ (terminal — run ends)
-        //                       │                  └── rereview ──→ [Code Review]
-        //                       └── failed ──→ [Implement]
+        //   [Supervisor]  no edges. escalate ↑ from any AI node, route:<label> ↓ to any node.
 
         TemplateNode tnDraftSpecAndPlan = createNode(
                 template,
@@ -1154,7 +1111,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                 "approve_spec_and_plan",
                 false,
                 "{\"loop_group\": \"spec-review\"}",
-                "[{\"template_node_label\":\"spec_review\",\"artifacts\":[{\"name\":\"spec_and_plan.md\",\"description\":\"The reviewed (and possibly revised) spec to approve\",\"required\":true},{\"name\":\"spec_review.md\",\"description\":\"Reviewer notes — needed when escalating via need_human_decision:*\",\"required\":true}]}]");
+                "[{\"template_node_label\":\"spec_review\",\"artifacts\":[{\"name\":\"spec_and_plan.md\",\"description\":\"The reviewed (and possibly revised) spec to approve\",\"required\":true},{\"name\":\"spec_review.md\",\"description\":\"reviewer notes\",\"required\":true}]}]");
 
         // Implement reads spec_and_plan.md from Spec Review (ownership transfer),
         // not from Draft Spec.
@@ -1189,17 +1146,8 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                         + "\"model_subsequent_iteration\": \"" + ModelIds.MODEL_SONNET + "\", "
                         + "\"effort_subsequent_iteration\": \"high\"}",
                 "[{\"template_node_label\":\"code_review\",\"artifacts\":[{\"name\":\"review.md\",\"description\":\"Prior iteration's code review notes including Reasoning for fixes (only present if iteration > 1)\",\"required\":false}]}]");
-        // Review Escalation gates entry to Test whenever Code Review can't confidently
-        // approve on its own. It reads the same evidence Final Approval already gets
-        // (the implementation summary and Code Review's findings) so the human isn't
-        // asked to decide blind.
-        TemplateNode tnReviewEscalation = createNode(
-                template,
-                nodeDefs.get("Review Escalation"),
-                "review_escalation",
-                false,
-                "{\"loop_group\": \"impl-review\"}",
-                "[{\"template_node_label\":\"implement\",\"artifacts\":[{\"name\":\"summary.md\",\"description\":\"Implementation summary describing changes made\",\"required\":true}]},{\"template_node_label\":\"code_review\",\"artifacts\":[{\"name\":\"review.md\",\"description\":\"Code review findings and approve/reject recommendation\",\"required\":true}]}]");
+        TemplateNode tnSupervisor =
+                createNode(template, nodeDefs.get("Supervisor"), "supervisor", false, "{\"routing_hub\": true}");
         // Terminal node (v35): `approved` has no outgoing edge — it's a
         // terminal_decisions entry (Decision 2) that ends the run instead of
         // routing to the now-retired Push & Create PR node.
@@ -1211,32 +1159,26 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                 "{\"loop_group\": \"impl-review\", \"terminal_decisions\": [\"approved\"]}",
                 "[{\"template_node_label\":\"implement\",\"artifacts\":[{\"name\":\"summary.md\",\"description\":\"Implementation summary describing changes made\",\"required\":true}]},{\"template_node_label\":\"code_review\",\"artifacts\":[{\"name\":\"review.md\",\"description\":\"Code review findings and approve/reject recommendation\",\"required\":true}]}]");
 
-        // Create edges. v23 introduces self-iterating review nodes: review nodes
-        // self-loop on `revised` (find AND fix in one session) and escalate to
-        // human gates via suffix-variant `need_human_decision:*` decisions.
-        // Approve Spec & Plan splits its rejection action into `rereview` (re-run
-        // Spec Review with human guidance) and `redraft` (full re-author). Final
-        // Approval gets only `rereview` — once a spec is approved, discarding the
-        // implementation entirely is rare enough not to be a routable action.
+        // Create edges. v37: the graph is happy-path-only. Review nodes still self-loop on
+        // `revised` (find AND fix in one session), but every human-escalation edge is gone —
+        // escalation now leaves the topology entirely via the Supervisor's implicit
+        // `escalate`/`route:<label>` decisions (see the [Supervisor] comment above), so the
+        // Supervisor itself gets no createEdge calls at all. Approve Spec & Plan still splits
+        // its rejection action into `rereview` (re-run Spec Review with human guidance) and
+        // `redraft` (full re-author). Final Approval gets only `rereview` — once a spec is
+        // approved, discarding the implementation entirely is rare enough not to be a
+        // routable action.
         // Spec-review loop
         createEdge(template, tnDraftSpecAndPlan, tnSpecReview, null);
         createEdge(template, tnSpecReview, tnApproveSpecAndPlan, "approved");
-        createEdge(template, tnSpecReview, tnApproveSpecAndPlan, "need_human_decision:alternative_proposal");
-        createEdge(template, tnSpecReview, tnApproveSpecAndPlan, "need_human_decision:review_conflict");
-        createEdge(template, tnSpecReview, tnApproveSpecAndPlan, "need_human_decision:uncertainty");
         createEdge(template, tnSpecReview, tnSpecReview, "revised");
         createEdge(template, tnApproveSpecAndPlan, tnImplement, "approved");
         createEdge(template, tnApproveSpecAndPlan, tnSpecReview, "rereview");
         createEdge(template, tnApproveSpecAndPlan, tnDraftSpecAndPlan, "redraft");
-        // Impl-review loop (v32: escalations from Code Review route to Review
-        // Escalation, a human gate, instead of straight to Test)
+        // Impl-review loop
         createEdge(template, tnImplement, tnCodeReview, null);
         createEdge(template, tnCodeReview, tnCodeReview, "revised");
         createEdge(template, tnCodeReview, tnTest, "approved");
-        createEdge(template, tnCodeReview, tnReviewEscalation, "need_human_decision:review_conflict");
-        createEdge(template, tnCodeReview, tnReviewEscalation, "need_human_decision:uncertainty");
-        createEdge(template, tnReviewEscalation, tnTest, "approved");
-        createEdge(template, tnReviewEscalation, tnCodeReview, "rereview");
         createEdge(template, tnTest, tnFinalApproval, "passed");
         createEdge(template, tnTest, tnImplement, "failed");
         // No `approved` edge for tnFinalApproval: it's a terminal_decisions entry
@@ -1244,7 +1186,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
         createEdge(template, tnFinalApproval, tnCodeReview, "rereview");
 
         log.info(
-                "BaseFeatureDevSeeder: seeded template graphId='{}' v{}: 8 template nodes, 19 edges (node defs shared)",
+                "BaseFeatureDevSeeder: seeded template graphId='{}' v{}: 8 template nodes, 12 edges (node defs shared)",
                 GRAPH_ID,
                 version);
     }

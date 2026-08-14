@@ -197,11 +197,11 @@ public class Phase4AEndToEndTest extends BaseTest {
         assertThat(snapshot.get("inputs").get("test_command").asText()).isEqualTo("npm test");
         assertThat(snapshot.get("inputs").get("agent_image").asText()).isEqualTo("my-agent:latest");
 
-        // Verify snapshot shape (v35: 8 nodes, 19 edges — Push & Create PR was retired;
-        // Implement and Code Review now open/update PRs themselves, and Final Approval's
-        // `approved` decision is terminal instead of routing to one more AI step).
+        // Verify snapshot shape (v37: 8 nodes, 12 edges — every need_human_decision:* edge (7
+        // of them) is gone in favor of the edgeless Supervisor routing hub, which any AI node
+        // pages via the implicit `escalate` decision instead of a graph edge).
         assertThat(snapshot.get("nodes")).hasSize(8);
-        assertThat(snapshot.get("edges")).hasSize(19);
+        assertThat(snapshot.get("edges")).hasSize(12);
     }
 
     @Test

@@ -3,6 +3,7 @@ package com.choruskube.core.config;
 import static org.assertj.core.api.Assertions.*;
 
 import com.choruskube.core.BaseTest;
+import com.choruskube.core.model.enums.ExecutorType;
 import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.NodeDefinitionRepository;
 import com.choruskube.core.repository.TemplateEdgeRepository;
@@ -43,11 +44,11 @@ class V1TemplateSeederTest extends BaseTest {
         var template = templateRepo.findByGraphIdAndVersion(
                 GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION);
         assertThat(template).isPresent();
-        // v35 retires the dedicated Push & Create PR node (Decision 1/2): 8 template nodes,
-        // 19 edges (down from 9/20).
+        // v37 removes every need_human_decision:* edge (7 of them) in favor of the
+        // edgeless Supervisor routing hub: 8 template nodes, 12 edges (down from 19).
         assertThat(templateNodeRepo.findByGraphTemplateId(template.get().getId()))
                 .hasSize(8);
-        assertThat(edgeRepo.findByGraphTemplateId(template.get().getId())).hasSize(19);
+        assertThat(edgeRepo.findByGraphTemplateId(template.get().getId())).hasSize(12);
     }
 
     @Test
@@ -168,7 +169,9 @@ class V1TemplateSeederTest extends BaseTest {
     }
 
     @Test
-    void specReviewSelfIteratesAndEscalatesToHumanGate() {
+    void specReviewHasOnlyApprovedAndRevisedEdges() {
+        // v37: the three need_human_decision:* suffix variants are gone. spec_review now
+        // escalates out-of-band via `escalate` to the edgeless Supervisor instead of an edge.
         var template = templateRepo
                 .findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION)
                 .orElseThrow();
@@ -183,8 +186,7 @@ class V1TemplateSeederTest extends BaseTest {
         var outgoing = edges.stream()
                 .filter(e -> e.getSourceNodeId().equals(specReview.getId()))
                 .toList();
-        // v23: approved + 3 need_human_decision suffix variants + revised self-loop
-        assertThat(outgoing).hasSize(5);
+        assertThat(outgoing).hasSize(2);
 
         var approveSpecAndPlan = nodes.stream()
                 .filter(n -> "approve_spec_and_plan".equals(n.getLabel()))
@@ -197,15 +199,6 @@ class V1TemplateSeederTest extends BaseTest {
                                 && e.getTargetNodeId().equals(approveSpecAndPlan.getId()))
                         .count())
                 .isEqualTo(1);
-        // each need_human_decision suffix variant → approve gate
-        for (String suffix : new String[] {"alternative_proposal", "review_conflict", "uncertainty"}) {
-            assertThat(outgoing.stream()
-                            .filter(e -> ("need_human_decision:" + suffix).equals(e.getCondition())
-                                    && e.getTargetNodeId().equals(approveSpecAndPlan.getId()))
-                            .count())
-                    .as("spec_review --need_human_decision:%s--> approve_spec_and_plan", suffix)
-                    .isEqualTo(1);
-        }
         // revised self-loops back to spec_review
         assertThat(outgoing.stream()
                         .filter(e -> "revised".equals(e.getCondition())
@@ -281,7 +274,10 @@ class V1TemplateSeederTest extends BaseTest {
     }
 
     @Test
-    void codeReviewSelfIteratesAndEscalatesViaSuffixVariants() {
+    void codeReviewHasOnlyApprovedAndRevisedEdges() {
+        // v37: the Review Escalation node and its two need_human_decision:* edges are gone.
+        // Code Review now escalates out-of-band via `escalate` to the edgeless Supervisor
+        // instead of routing to a dedicated human gate.
         var template = templateRepo
                 .findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION)
                 .orElseThrow();
@@ -290,81 +286,78 @@ class V1TemplateSeederTest extends BaseTest {
 
         var codeReview = nodes.stream()
                 .filter(n -> "code_review".equals(n.getLabel()))
-                .findFirst()
-                .orElseThrow();
-        var reviewEscalation = nodes.stream()
-                .filter(n -> "review_escalation".equals(n.getLabel()))
-                .findFirst()
-                .orElseThrow();
-
-        // revised self-loops back to code_review
-        assertThat(edges.stream()
-                        .filter(e -> e.getSourceNodeId().equals(codeReview.getId())
-                                && "revised".equals(e.getCondition())
-                                && e.getTargetNodeId().equals(codeReview.getId()))
-                        .count())
-                .isEqualTo(1);
-        // v32: Code Review's review_conflict and uncertainty exits route to Review
-        // Escalation (a human gate), not straight to Test. A human decides there
-        // whether to proceed to Test or send the change back to Code Review.
-        for (String suffix : new String[] {"review_conflict", "uncertainty"}) {
-            assertThat(edges.stream()
-                            .filter(e -> e.getSourceNodeId().equals(codeReview.getId())
-                                    && ("need_human_decision:" + suffix).equals(e.getCondition())
-                                    && e.getTargetNodeId().equals(reviewEscalation.getId()))
-                            .count())
-                    .as("code_review --need_human_decision:%s--> review_escalation", suffix)
-                    .isEqualTo(1);
-        }
-        // Code Review must NOT emit alternative_proposal — the spec is fixed by contract.
-        assertThat(edges.stream()
-                        .filter(e -> e.getSourceNodeId().equals(codeReview.getId())
-                                && "need_human_decision:alternative_proposal".equals(e.getCondition()))
-                        .count())
-                .as("code_review must not have an alternative_proposal edge")
-                .isZero();
-    }
-
-    @Test
-    void reviewEscalationRoutesApprovedToTestAndRereviewToCodeReview() {
-        var template = templateRepo
-                .findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION)
-                .orElseThrow();
-        var nodes = templateNodeRepo.findByGraphTemplateId(template.getId());
-        var edges = edgeRepo.findByGraphTemplateId(template.getId());
-
-        var reviewEscalation = nodes.stream()
-                .filter(n -> "review_escalation".equals(n.getLabel()))
                 .findFirst()
                 .orElseThrow();
         var test = nodes.stream()
                 .filter(n -> "test".equals(n.getLabel()))
                 .findFirst()
                 .orElseThrow();
-        var codeReview = nodes.stream()
-                .filter(n -> "code_review".equals(n.getLabel()))
-                .findFirst()
-                .orElseThrow();
 
         var outgoing = edges.stream()
-                .filter(e -> e.getSourceNodeId().equals(reviewEscalation.getId()))
+                .filter(e -> e.getSourceNodeId().equals(codeReview.getId()))
                 .toList();
-        // approved → test, rereview → code_review (mirrors final_approval's shape)
-        assertThat(outgoing)
-                .as("review_escalation has exactly two outgoing edges")
-                .hasSize(2);
+        assertThat(outgoing).hasSize(2);
+        // revised self-loops back to code_review
+        assertThat(outgoing.stream()
+                        .filter(e -> "revised".equals(e.getCondition())
+                                && e.getTargetNodeId().equals(codeReview.getId()))
+                        .count())
+                .isEqualTo(1);
+        // approved → test
         assertThat(outgoing.stream()
                         .filter(e -> "approved".equals(e.getCondition())
                                 && e.getTargetNodeId().equals(test.getId()))
                         .count())
-                .as("review_escalation --approved--> test")
                 .isEqualTo(1);
-        assertThat(outgoing.stream()
-                        .filter(e -> "rereview".equals(e.getCondition())
-                                && e.getTargetNodeId().equals(codeReview.getId()))
-                        .count())
-                .as("review_escalation --rereview--> code_review")
-                .isEqualTo(1);
+    }
+
+    @Test
+    void v37DeclaresExactlyOneHumanRoutingHub() {
+        var template = templateRepo
+                .findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION)
+                .orElseThrow();
+        var nodes = templateNodeRepo.findByGraphTemplateId(template.getId());
+
+        var hubs = nodes.stream()
+                .filter(n ->
+                        n.getConfigOverrides() != null && n.getConfigOverrides().contains("\"routing_hub\""))
+                .toList();
+
+        assertThat(hubs).singleElement().satisfies(hub -> {
+            assertThat(hub.getLabel()).isEqualTo("supervisor");
+            var def = nodeDefRepo.findById(hub.getNodeDefinitionId()).orElseThrow();
+            // Not enforced by GraphValidationService (it sees no NodeDefinition) — asserted here.
+            assertThat(def.getExecutorType()).isEqualTo(ExecutorType.human);
+        });
+    }
+
+    @Test
+    void v37SupervisorHasNoEdges() {
+        var template = templateRepo
+                .findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION)
+                .orElseThrow();
+        var nodes = templateNodeRepo.findByGraphTemplateId(template.getId());
+        var edges = edgeRepo.findByGraphTemplateId(template.getId());
+        var hubId = nodes.stream()
+                .filter(n -> n.getLabel().equals("supervisor"))
+                .findFirst()
+                .orElseThrow()
+                .getId();
+
+        assertThat(edges)
+                .noneMatch(e ->
+                        e.getSourceNodeId().equals(hubId) || e.getTargetNodeId().equals(hubId));
+    }
+
+    @Test
+    void v37HasNoNeedHumanDecisionEdgesLeft() {
+        var template = templateRepo
+                .findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION)
+                .orElseThrow();
+        var edges = edgeRepo.findByGraphTemplateId(template.getId());
+
+        assertThat(edges)
+                .noneMatch(e -> e.getCondition() != null && e.getCondition().startsWith("need_human_decision"));
     }
 
     @Test
@@ -773,14 +766,13 @@ class V1TemplateSeederTest extends BaseTest {
     }
 
     @Test
-    void reviewNodeDefinitionPromptsDeclareReviewConflictEscalation() {
-        // Regression guard for the removal of the counter-based iteration cap
-        // (and its epoch tracking) in favor of self-detected review-conflict
-        // escalation: both self-iterating review prompts must instruct the
-        // reviewer to check {review_history} for conflicts before finalizing,
-        // and must expose need_human_decision:review_conflict as the escalation
-        // decision. Neither prompt should reference the retired cap/epoch
-        // vocabulary anymore.
+    void reviewNodeDefinitionPromptsHaveWhenToEscalateSectionAndNoNeedHumanDecisionVocabulary() {
+        // Regression guard, updated for v37: escalation moved from graph edges
+        // (need_human_decision:*) to the Supervisor's out-of-band `escalate` decision. Both
+        // self-iterating review prompts must still check {review_history} for conflicts before
+        // finalizing, but the trigger for escalating is now a short "When to escalate" section,
+        // not a need_human_decision:* decision-tree branch or a routable edge condition. Neither
+        // prompt should reference that retired vocabulary, nor the older retired cap/epoch one.
         var template = templateRepo
                 .findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION)
                 .orElseThrow();
@@ -806,25 +798,26 @@ class V1TemplateSeederTest extends BaseTest {
 
         assertThat(specReviewPrompt)
                 .contains("## Review History & Conflict Check")
-                .contains("need_human_decision:review_conflict")
-                .doesNotContain("iteration_in_epoch")
-                .doesNotContain("need_human_decision:iteration_cap");
+                .contains("## When to escalate")
+                .contains("review_conflict")
+                .doesNotContain("need_human_decision")
+                .doesNotContain("iteration_in_epoch");
 
         assertThat(codeReviewPrompt)
                 .contains("## Review History & Conflict Check")
-                .contains("need_human_decision:review_conflict")
-                .doesNotContain("iteration_in_epoch")
-                .doesNotContain("need_human_decision:iteration_cap");
+                .contains("## When to escalate")
+                .contains("review_conflict")
+                .doesNotContain("need_human_decision")
+                .doesNotContain("iteration_in_epoch");
     }
 
     @Test
-    void currentVersionIsBumpedForPerNodeTypeModelEffortConfig() {
-        // v36 (Decision 1/2): per-node-type model/effort selection, keyed off
-        // node_definition.model and template_node.config_overrides. No schema
-        // changes — verifies only that the seeder actually bumped its version
-        // constant when it shipped this change.
-        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(36);
-        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 36))
+    void currentVersionIsBumpedForSupervisorNode() {
+        // v37: the graph becomes happy-path-only — every need_human_decision:* edge is
+        // removed and exception routing moves to the edgeless Supervisor node. Verifies only
+        // that the seeder actually bumped its version constant when it shipped this change.
+        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(37);
+        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 37))
                 .isPresent();
     }
 
