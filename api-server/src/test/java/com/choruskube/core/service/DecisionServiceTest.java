@@ -69,6 +69,7 @@ class DecisionServiceTest {
                 null, // epicRepo
                 null,
                 new DecisionOptionsResolver(),
+                null,
                 null);
     }
 

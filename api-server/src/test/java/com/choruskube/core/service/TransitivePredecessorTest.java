@@ -52,6 +52,7 @@ class TransitivePredecessorTest {
                 null, // epicRepo
                 null,
                 new DecisionOptionsResolver(),
+                null,
                 null);
     }
 

@@ -52,7 +52,31 @@ public class ArtifactService {
         if (prefix == null) {
             return List.of();
         }
+        return listEntriesUnder(prefix);
+    }
 
+    /**
+     * File names under an execution's output prefix, without an org-access check.
+     *
+     * <p>INTERNAL ONLY. The single caller is the node-completion callback path, which is already
+     * authenticated by {@code InternalAuthFilter} on {@code /internal/**} and operates on an
+     * execution id it was handed by the orchestrator — the request never carries a tenant context
+     * for an org-access check to consult. Do not call this from an {@code /api/**} controller —
+     * use {@link #listArtifacts}, which checks org access, instead.
+     */
+    public List<String> listArtifactNamesInternal(UUID runId, UUID execId) {
+        String prefix = resolveOutputPrefix(runId, execId);
+        if (prefix == null) {
+            return List.of();
+        }
+        return listEntriesUnder(prefix).stream().map(ArtifactEntry::name).toList();
+    }
+
+    /**
+     * Flat, recursive listing of every object under {@code prefix}, shared by {@link
+     * #listArtifacts} (org-checked) and {@link #listArtifactNamesInternal} (not).
+     */
+    private List<ArtifactEntry> listEntriesUnder(String prefix) {
         List<ArtifactEntry> entries = new ArrayList<>();
         try {
             // No delimiter → a flat, recursive listing so nested files (e.g.

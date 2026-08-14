@@ -167,7 +167,8 @@ class InternalRunServiceGraphRuntimeTest {
                 epicRepo,
                 null,
                 new DecisionOptionsResolver(),
-                dependencyRepo);
+                dependencyRepo,
+                null);
     }
 
     @Test

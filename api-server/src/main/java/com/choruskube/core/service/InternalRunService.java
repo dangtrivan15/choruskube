@@ -51,6 +51,7 @@ public class InternalRunService {
     private final RoadmapGraphService roadmapGraphService;
     private final DecisionOptionsResolver decisionOptionsResolver;
     private final WorkItemDependencyRepository dependencyRepo;
+    private final ArtifactService artifactService;
 
     @Value("${artifact.enforcement.mode:warn}")
     private String artifactEnforcementMode;
@@ -79,7 +80,8 @@ public class InternalRunService {
             EpicRepository epicRepo,
             RoadmapGraphService roadmapGraphService,
             DecisionOptionsResolver decisionOptionsResolver,
-            WorkItemDependencyRepository dependencyRepo) {
+            WorkItemDependencyRepository dependencyRepo,
+            ArtifactService artifactService) {
         this.runRepo = runRepo;
         this.execRepo = execRepo;
         this.logRepo = logRepo;
@@ -104,6 +106,7 @@ public class InternalRunService {
         this.roadmapGraphService = roadmapGraphService;
         this.decisionOptionsResolver = decisionOptionsResolver;
         this.dependencyRepo = dependencyRepo;
+        this.artifactService = artifactService;
     }
 
     public NodeExecutionResponse createNodeExecution(UUID runId, InternalCreateNodeExecutionRequest req) {
@@ -174,6 +177,20 @@ public class InternalRunService {
     }
 
     private void enforceOutputSpec(NodeExecution exec, String artifactRefs) {
+        // Platform contract: an `escalate` decision must be accompanied by escalation.md, so the
+        // Supervisor's reviewer is never asked to act on an unexplained escalation. Enforced
+        // unconditionally — unlike the legacy static required-file check below, this rule is new
+        // and has no pre-existing declarations whose lenient behaviour must be preserved, so it
+        // does not consult artifact.enforcement.mode.
+        if (DecisionOptionsResolver.ESCALATE_DECISION.equalsIgnoreCase(exec.getDecision())) {
+            List<String> names = artifactService.listArtifactNamesInternal(exec.getWorkflowRunId(), exec.getId());
+            if (names.stream().noneMatch("escalation.md"::equals)) {
+                throw new ResponseStatusException(
+                        HttpStatus.BAD_REQUEST,
+                        "Node execution submitted decision 'escalate' without producing escalation.md");
+            }
+        }
+
         TemplateNode templateNode =
                 templateNodeRepo.findById(exec.getTemplateNodeId()).orElse(null);
         if (templateNode == null) {

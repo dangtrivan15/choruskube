@@ -71,6 +71,7 @@ class AutoDecisionTest {
                 null, // epicRepo
                 null,
                 new DecisionOptionsResolver(),
+                null,
                 null);
     }
 

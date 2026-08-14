@@ -110,6 +110,7 @@ class InternalRunServiceEpicTest {
                 epicRepo,
                 roadmapGraphService,
                 new DecisionOptionsResolver(),
+                null,
                 null);
     }
 

@@ -28,6 +28,7 @@ class InternalRunServiceOutputValidationTest {
     private RunEventPublisher eventPublisher;
     private TemplateNodeRepository templateNodeRepo;
     private NodeDefinitionRepository nodeDefinitionRepo;
+    private ArtifactService artifactService;
 
     @BeforeEach
     void setUp() {
@@ -36,6 +37,7 @@ class InternalRunServiceOutputValidationTest {
         eventPublisher = Mockito.mock(RunEventPublisher.class);
         templateNodeRepo = Mockito.mock(TemplateNodeRepository.class);
         nodeDefinitionRepo = Mockito.mock(NodeDefinitionRepository.class);
+        artifactService = Mockito.mock(ArtifactService.class);
         // templateNodeRepo returns empty by default → enforceOutputSpec exits early (no NPE)
         Mockito.when(templateNodeRepo.findById(Mockito.any())).thenReturn(Optional.empty());
         service = new InternalRunService(
@@ -62,12 +64,14 @@ class InternalRunServiceOutputValidationTest {
                 null, // epicRepo
                 null,
                 new DecisionOptionsResolver(),
-                null);
+                null,
+                artifactService);
     }
 
     private NodeExecution stubExec(UUID id) {
         UUID runId = UUID.randomUUID();
         NodeExecution exec = new NodeExecution();
+        exec.setId(id); // mirrors real execRepo.findById(id): the fetched entity carries its own id
         exec.setWorkflowRunId(runId);
         exec.setTemplateNodeId(UUID.randomUUID());
         exec.setGraphVersion(1);
@@ -221,6 +225,53 @@ class InternalRunServiceOutputValidationTest {
         Mockito.verify(execRepo)
                 .save(Mockito.argThat(
                         e -> e.getStatus() == com.choruskube.core.model.enums.NodeExecutionStatus.paused));
+    }
+
+    @Test
+    void escalateWithoutEscalationMd_throws() {
+        UUID execId = UUID.randomUUID();
+        NodeExecution exec = stubExec(execId);
+        exec.setDecision("escalate");
+        Mockito.when(artifactService.listArtifactNamesInternal(exec.getWorkflowRunId(), execId))
+                .thenReturn(java.util.List.of("review.md"));
+
+        var req = new InternalUpdateNodeExecutionRequest(
+                "completed", "done", "{\"output\":\"runs/r/e/out/\"}", null, null, null);
+
+        assertThatThrownBy(() -> service.updateNodeExecutionStatus(exec.getWorkflowRunId(), execId, req))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("escalation.md");
+    }
+
+    @Test
+    void escalateWithEscalationMd_passes() {
+        UUID execId = UUID.randomUUID();
+        NodeExecution exec = stubExec(execId);
+        exec.setDecision("escalate");
+        Mockito.when(execRepo.save(Mockito.any())).thenReturn(exec);
+        Mockito.when(artifactService.listArtifactNamesInternal(exec.getWorkflowRunId(), execId))
+                .thenReturn(java.util.List.of("review.md", "escalation.md"));
+
+        var req = new InternalUpdateNodeExecutionRequest(
+                "completed", "done", "{\"output\":\"runs/r/e/out/\"}", null, null, null);
+
+        assertThatCode(() -> service.updateNodeExecutionStatus(exec.getWorkflowRunId(), execId, req))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void nonEscalateDecisionIsNotSubjectToEscalationMdCheck() {
+        UUID execId = UUID.randomUUID();
+        NodeExecution exec = stubExec(execId);
+        exec.setDecision("approved");
+        Mockito.when(execRepo.save(Mockito.any())).thenReturn(exec);
+
+        var req = new InternalUpdateNodeExecutionRequest(
+                "completed", "done", "{\"output\":\"runs/r/e/out/\"}", null, null, null);
+
+        assertThatCode(() -> service.updateNodeExecutionStatus(exec.getWorkflowRunId(), execId, req))
+                .doesNotThrowAnyException();
+        Mockito.verify(artifactService, Mockito.never()).listArtifactNamesInternal(Mockito.any(), Mockito.any());
     }
 
     @Test
