@@ -112,7 +112,12 @@ test.describe("Roadmap Milestones", () => {
     // Clear the assignment via the Edit Epic dialog's "None" option.
     await roadmapPage.openEpic(epicTitle);
     await roadmapPage.epicEditButton.click();
-    await expect(roadmapPage.editMilestoneSelect).toHaveText(milestoneName);
+    // Scope to the value slot, not the whole trigger button: Base UI's Select renders a
+    // hidden decorative chevron as a sibling text node inside the trigger, which a bare
+    // toHaveText on the trigger itself would sweep into the comparison and fail against.
+    await expect(
+      roadmapPage.editMilestoneSelect.locator("[data-slot='select-value']"),
+    ).toHaveText(milestoneName);
     await roadmapPage.selectMilestone(roadmapPage.editMilestoneSelect, "None");
     await roadmapPage.editSaveButton.click();
     await expect(roadmapPage.epicDetailMilestoneBadge).not.toBeVisible();
