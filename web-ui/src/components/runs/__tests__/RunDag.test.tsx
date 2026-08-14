@@ -287,6 +287,33 @@ describe("RunDag — Supervisor rendering", () => {
     }
   });
 
+  it("selects the most recently completed escalation, not the first one in array order", async () => {
+    const { container } = renderDag(snapshotWithSupervisor(), {
+      nodeExecutions: [
+        // Deliberately listed BEFORE the actual latest escalation, and with an earlier
+        // completedAt, so a naive `.find()` over array order (`run.nodeExecutions` carries no
+        // ordering guarantee) would wrongly pick this stale one.
+        {
+          templateNodeId: START_ID,
+          status: "completed",
+          decision: "escalate",
+          completedAt: "2026-01-01T00:00:00Z",
+        },
+        {
+          templateNodeId: CODE_REVIEW_ID,
+          status: "completed",
+          decision: "escalate",
+          completedAt: "2026-01-01T01:00:00Z",
+        },
+      ],
+    });
+    await waitForGraphReady();
+
+    const synthetic = container.querySelectorAll(".supervisor-edge");
+    expect(synthetic).toHaveLength(1);
+    expect(synthetic[0].getAttribute("data-id")).toBe(`supervisor:${CODE_REVIEW_ID}->${SUPERVISOR_ID}`);
+  });
+
   it("does not draw a synthetic edge for a route:<label> decision naming an unknown node", async () => {
     const { container } = renderDag(snapshotWithSupervisor(), {
       nodeExecutions: [{ templateNodeId: SUPERVISOR_ID, status: "completed", decision: "route:nonexistent" }],

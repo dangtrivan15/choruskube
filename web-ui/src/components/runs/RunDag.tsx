@@ -51,6 +51,29 @@ function findLatestExecution(
 }
 
 /**
+ * The execution that paged the Supervisor: the most recently completed execution whose decision
+ * is `escalate`. Selection is by `completedAt`, not array position or iteration — the Supervisor
+ * is re-entered many times per run by design, `run.nodeExecutions` carries no ordering guarantee
+ * (the repository lookup behind it has no `ORDER BY`), and the relevant escalation is the one
+ * that just happened, not the first one Postgres happens to return. Mirrors the api-server's
+ * `ArtifactResolutionService.resolveEscalatingExecution`, which answers this identical question
+ * for the escalation gate panel, so the two surfaces agree on which execution escalated.
+ * `completedAt` sorts as oldest when null, matching this directory's existing
+ * `DetailPanel.tsx`#`findTriggerDecision` precedent for the same null-handling choice.
+ */
+function resolveEscalatingExecution(
+  executions: NodeExecutionResponse[],
+): NodeExecutionResponse | undefined {
+  return [...executions]
+    .filter((e) => e.decision === "escalate")
+    .sort((a, b) => {
+      const at = a.completedAt ? new Date(a.completedAt).getTime() : 0;
+      const bt = b.completedAt ? new Date(b.completedAt).getTime() : 0;
+      return bt - at;
+    })[0];
+}
+
+/**
  * The Supervisor: a template's single edgeless routing hub. It is deliberately excluded from
  * the ELK layout below — it is not part of the happy path — and pinned beside the graph instead.
  */
@@ -261,7 +284,7 @@ export default function RunDag({ run, onNodeSelect }: RunDagProps) {
       // The Supervisor fires no edges, so there is nothing in traversedEdgeIds to highlight.
       // Draw its two connections from the decision strings instead: whoever decided `escalate`
       // reached it, and its own route:<label> decision names where it sent the run.
-      const escalator = run.nodeExecutions.find((e) => e.decision === "escalate");
+      const escalator = resolveEscalatingExecution(run.nodeExecutions);
       if (escalator) {
         flowEdges.push(synthEdge(escalator.templateNodeId, hub.template_node_id, "escalate"));
       }
