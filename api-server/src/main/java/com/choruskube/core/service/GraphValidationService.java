@@ -38,6 +38,30 @@ public class GraphValidationService {
             outgoing.get(edge.getSourceNodeId()).add(edge.getTargetNodeId());
         }
 
+        // A routing_hub (the Supervisor) is reachable via the implicit `escalate` decision from
+        // every AI node rather than by an edge, so it is exempt from the edge-based reachability
+        // and terminal rules below.
+        Set<UUID> routingHubs = new HashSet<>();
+        for (TemplateNode node : nodes) {
+            if (DecisionOptionsResolver.isRoutingHub(node.getConfigOverrides(), objectMapper)) {
+                routingHubs.add(node.getId());
+            }
+        }
+        if (routingHubs.size() > 1) {
+            String names = routingHubs.stream()
+                    .map(nodeLabels::get)
+                    .reduce((a, b) -> a + ", " + b)
+                    .orElse("");
+            errors.add("Multiple routing_hub nodes defined (" + names + "); at most one is allowed");
+        }
+        for (TemplateEdge edge : edges) {
+            if (routingHubs.contains(edge.getSourceNodeId()) || routingHubs.contains(edge.getTargetNodeId())) {
+                UUID hubId =
+                        routingHubs.contains(edge.getSourceNodeId()) ? edge.getSourceNodeId() : edge.getTargetNodeId();
+                errors.add("Node '" + nodeLabels.get(hubId) + "' is a routing_hub and must have no edges");
+            }
+        }
+
         // Rule 1: Exactly one entrypoint
         List<TemplateNode> entrypoints =
                 nodes.stream().filter(TemplateNode::isEntrypoint).toList();
@@ -55,6 +79,7 @@ public class GraphValidationService {
         if (entrypoints.size() == 1) {
             Set<UUID> reachable = findReachableFrom(entrypoints.get(0).getId(), outgoing);
             for (UUID nodeId : nodeIds) {
+                if (routingHubs.contains(nodeId)) continue;
                 if (!reachable.contains(nodeId)) {
                     errors.add("Node '" + nodeLabels.get(nodeId) + "' is not reachable from entrypoint");
                 }
@@ -70,6 +95,7 @@ public class GraphValidationService {
         Set<UUID> terminalNodes = new HashSet<>();
         for (TemplateNode node : nodes) {
             UUID id = node.getId();
+            if (routingHubs.contains(id)) continue;
             if (outgoing.get(id).isEmpty() || hasTerminalDecisions(node)) {
                 terminalNodes.add(id);
             }
@@ -79,6 +105,7 @@ public class GraphValidationService {
             errors.add("No terminal node found (all nodes have outgoing edges)");
         } else {
             for (UUID nodeId : nodeIds) {
+                if (routingHubs.contains(nodeId)) continue;
                 if (!canReachTerminal(nodeId, outgoing, terminalNodes)) {
                     errors.add("Node '" + nodeLabels.get(nodeId) + "' cannot reach any terminal node");
                 }
