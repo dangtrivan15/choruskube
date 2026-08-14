@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { Link } from "react-router";
 import { formatDistanceToNow } from "date-fns";
-import { Plus, GitBranch, Layers, LayoutGrid, Network, GanttChart } from "lucide-react";
+import { Plus, GitBranch, Layers, LayoutGrid, Network, GanttChart, Milestone as MilestoneIcon } from "lucide-react";
 import Authorized from "@/components/Authorized";
 import { useEpics } from "@/hooks/useEpics";
+import { useMilestones } from "@/hooks/useMilestones";
 import { useRoadmapSubscription } from "@/hooks/useRoadmapSubscription";
 import type { SortParam, PaginationParams, Priority } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
@@ -12,10 +13,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import TruncatedText from "@/components/ui/TruncatedText";
 import Pagination from "@/components/ui/Pagination";
 import SortDropdown from "@/components/ui/SortDropdown";
+import { cn } from "@/lib/utils";
 import CreateEpicDialog from "@/components/roadmap/CreateEpicDialog";
 import RoadmapReadyToggle from "@/components/roadmap/RoadmapReadyToggle";
 import PriorityFilter from "@/components/roadmap/PriorityFilter";
 import PriorityBadge from "@/components/roadmap/PriorityBadge";
+import MilestoneBadge from "@/components/roadmap/MilestoneBadge";
 import PageHeader from "@/components/layout/PageHeader";
 
 const SORT_OPTIONS = [
@@ -28,6 +31,70 @@ const SORT_OPTIONS = [
   { label: "Priority (High→Low)", field: "priority", direction: "desc" as const },
   { label: "Priority (Low→High)", field: "priority", direction: "asc" as const },
 ];
+
+interface MilestoneFilterProps {
+  /** The active Milestone filter (an id), or `undefined` for "All" (no filtering). */
+  value: string | undefined;
+  onChange: (value: string | undefined) => void;
+}
+
+/**
+ * Roadmap toolbar "milestone" filter — an All + one chip per Milestone in the org, styled
+ * consistently with `PriorityFilter` (Decision 4/3.5 of the "Group Epics under a named
+ * Milestone / Release" feature). Unlike `PriorityFilter`'s fixed three-value enum, the option
+ * set is dynamic (`useMilestones()`, unscoped — the Roadmap Epic list spans every software
+ * project), so this stays inline here rather than a reusable component with a bounded value
+ * union.
+ */
+function MilestoneFilter({ value, onChange }: MilestoneFilterProps) {
+  const { data } = useMilestones();
+  const milestones = data?.content ?? [];
+
+  return (
+    <div
+      data-testid="milestone-filter"
+      role="group"
+      aria-label="Filter by milestone"
+      className="inline-flex h-8 shrink-0 items-center gap-0.5 overflow-x-auto rounded-lg border border-border bg-background p-0.5 text-sm max-w-64"
+    >
+      <button
+        type="button"
+        data-testid="milestone-filter-all"
+        aria-pressed={value === undefined}
+        onClick={() => onChange(undefined)}
+        className={cn(
+          "inline-flex h-7 shrink-0 items-center rounded-md px-2.5 font-medium transition-colors outline-none select-none focus-visible:ring-3 focus-visible:ring-ring/50",
+          value === undefined
+            ? "bg-primary text-primary-foreground"
+            : "text-muted-foreground hover:text-foreground",
+        )}
+      >
+        All
+      </button>
+      {milestones.map((m) => {
+        const active = value === m.id;
+        return (
+          <button
+            key={m.id}
+            type="button"
+            data-testid={`milestone-filter-${m.id}`}
+            aria-pressed={active}
+            title={m.name}
+            onClick={() => onChange(m.id)}
+            className={cn(
+              "inline-flex h-7 max-w-32 shrink-0 items-center truncate rounded-md px-2.5 font-medium transition-colors outline-none select-none focus-visible:ring-3 focus-visible:ring-ring/50",
+              active
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {m.name}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 function statusBadge(status: string) {
   switch (status) {
@@ -53,9 +120,10 @@ export default function RoadmapPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [readyOnly, setReadyOnly] = useState(false);
   const [priority, setPriority] = useState<Priority | undefined>(undefined);
+  const [milestoneFilter, setMilestoneFilter] = useState<string | undefined>(undefined);
 
   const pagination: PaginationParams = { page, size: 20, sort };
-  const { data: pageData, isLoading } = useEpics(undefined, pagination, readyOnly, priority);
+  const { data: pageData, isLoading } = useEpics(undefined, pagination, readyOnly, priority, milestoneFilter);
   const epics = pageData?.content;
   useRoadmapSubscription();
 
@@ -78,8 +146,17 @@ export default function RoadmapPage() {
           <GanttChart className="size-4" />
           Timeline view
         </Link>
+        <Link
+          to="/roadmap/milestones"
+          data-testid="roadmap-milestones-link"
+          className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-transparent px-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
+          <MilestoneIcon className="size-4" />
+          Milestones
+        </Link>
         <RoadmapReadyToggle checked={readyOnly} onChange={setReadyOnly} />
         <PriorityFilter value={priority} onChange={setPriority} />
+        <MilestoneFilter value={milestoneFilter} onChange={setMilestoneFilter} />
         <SortDropdown options={SORT_OPTIONS} currentSort={sort} onSort={setSort} />
         <Authorized require="canOperate">
           <Button data-testid="new-epic-button" size="sm" onClick={() => setCreateOpen(true)}>
@@ -113,6 +190,7 @@ export default function RoadmapPage() {
                 <div className="mt-1 flex flex-wrap items-center gap-2">
                   {statusBadge(epic.status)}
                   <PriorityBadge priority={epic.priority} size="compact" data-testid="epic-priority-badge" />
+                  <MilestoneBadge milestone={epic.milestone} size="compact" data-testid="epic-milestone-badge" />
                   <span
                     data-testid="epic-progress"
                     className="text-xs text-muted-foreground"

@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { useUpdateEpic } from "@/hooks/useEpics";
+import { useAssignEpicMilestone } from "@/hooks/useMilestones";
 import type { EpicResponse } from "@/lib/types";
 import SoftwareProjectSelect from "@/components/software-projects/SoftwareProjectSelect";
+import MilestoneSelect from "@/components/roadmap/MilestoneSelect";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -30,8 +32,10 @@ export default function EditEpicDialog({ epic, open, onOpenChange }: Props) {
   const [description, setDescription] = useState("");
   const [motivation, setMotivation] = useState("");
   const [softwareProjectId, setSoftwareProjectId] = useState<string>("");
+  const [milestoneId, setMilestoneId] = useState<string | null>(null);
 
   const updateEpic = useUpdateEpic();
+  const assignMilestone = useAssignEpicMilestone();
 
   useEffect(() => {
     if (epic) {
@@ -39,6 +43,7 @@ export default function EditEpicDialog({ epic, open, onOpenChange }: Props) {
       setDescription(epic.description);
       setMotivation(epic.motivation ?? "");
       setSoftwareProjectId(epic.softwareProject.id);
+      setMilestoneId(epic.milestone?.id ?? null);
     }
   }, [epic]);
 
@@ -55,7 +60,20 @@ export default function EditEpicDialog({ epic, open, onOpenChange }: Props) {
         },
       },
       {
-        onSuccess: () => onOpenChange(false),
+        onSuccess: () => {
+          // Milestone assignment doesn't ride the full PUT (Decision 4: EpicUpdateRequest
+          // carries no milestoneId) — apply it as a second mutation only when it actually
+          // changed, mirroring CreateEpicDialog's post-create chain.
+          const currentMilestoneId = epic.milestone?.id ?? null;
+          if (milestoneId !== currentMilestoneId) {
+            assignMilestone.mutate(
+              { id: epic.id, milestoneId },
+              { onSettled: () => onOpenChange(false) }
+            );
+          } else {
+            onOpenChange(false);
+          }
+        },
       }
     );
   }
@@ -122,10 +140,20 @@ export default function EditEpicDialog({ epic, open, onOpenChange }: Props) {
               testId="edit-epic-software-project-select"
             />
           </div>
+
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium">Milestone</label>
+            <MilestoneSelect
+              value={milestoneId}
+              onChange={setMilestoneId}
+              softwareProjectId={softwareProjectId || undefined}
+              testId="edit-epic-milestone-select"
+            />
+          </div>
         </div>
 
         <DialogFooter>
-          {updateEpic.isError && (
+          {(updateEpic.isError || assignMilestone.isError) && (
             <p className="text-sm text-destructive mr-auto">
               Failed to update epic.
             </p>
@@ -140,10 +168,11 @@ export default function EditEpicDialog({ epic, open, onOpenChange }: Props) {
               !title.trim() ||
               !description.trim() ||
               !softwareProjectId ||
-              updateEpic.isPending
+              updateEpic.isPending ||
+              assignMilestone.isPending
             }
           >
-            {updateEpic.isPending ? "Saving..." : "Save"}
+            {updateEpic.isPending || assignMilestone.isPending ? "Saving..." : "Save"}
           </Button>
         </DialogFooter>
       </DialogContent>

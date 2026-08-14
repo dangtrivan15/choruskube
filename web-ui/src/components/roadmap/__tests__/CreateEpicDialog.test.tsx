@@ -15,6 +15,18 @@ vi.mock("@/hooks/useEpics", () => ({
   }),
 }));
 
+const mockAssignMutate = vi.fn();
+const mockUseMilestones = vi.fn();
+vi.mock("@/hooks/useMilestones", () => ({
+  useMilestones: (...args: unknown[]) => mockUseMilestones(...args),
+  useAssignEpicMilestone: () => ({
+    mutate: mockAssignMutate,
+    isPending: false,
+    isError: false,
+    reset: vi.fn(),
+  }),
+}));
+
 // SoftwareProjectSelect is sourced from useSoftwareProjects(); fixture covers
 // one repo group and two repos.
 vi.mock("@/hooks/useSoftwareProjects", () => ({
@@ -60,6 +72,9 @@ vi.mock("@/hooks/useSoftwareProjects", () => ({
 beforeEach(() => {
   mockMutate.mockReset();
   mockReset.mockReset();
+  mockAssignMutate.mockReset();
+  mockUseMilestones.mockReset();
+  mockUseMilestones.mockReturnValue({ data: { content: [] } });
 });
 
 describe("CreateEpicDialog", () => {
@@ -155,5 +170,48 @@ describe("CreateEpicDialog", () => {
     const [payload] = mockMutate.mock.calls[0];
     expect(payload.motivation).toBe("Why this matters");
     expect(payload.softwareProjectId).toBe("r2");
+  });
+
+  // --- Milestone assignment (post-create PATCH chain) ---
+
+  it("assigns the chosen milestone as a follow-up PATCH once the epic is created", async () => {
+    mockUseMilestones.mockReturnValue({ data: { content: [{ id: "m1", name: "Q3 Launch" }] } });
+    renderWithProviders(<CreateEpicDialog open={true} onOpenChange={() => {}} />);
+    const user = userEvent.setup({ pointerEventsCheck: 0, delay: null });
+    await user.type(screen.getByTestId("create-epic-title"), "Feature X");
+    await user.type(screen.getByTestId("create-epic-description"), "Desc Y");
+    await user.click(screen.getByTestId("create-epic-software-project-select"));
+    await user.click(screen.getByText("backend-api"));
+    await user.click(screen.getByTestId("create-epic-milestone-select"));
+    await user.click(screen.getByText("Q3 Launch"));
+
+    await user.click(screen.getByTestId("create-epic-submit"));
+
+    expect(mockMutate).toHaveBeenCalledTimes(1);
+    // EpicRequest carries no milestoneId — the create POST body itself must not include it.
+    const [payload, options] = mockMutate.mock.calls[0];
+    expect(payload.milestoneId).toBeUndefined();
+
+    // Simulate the create mutation's success, which the component chains into the PATCH.
+    options.onSuccess({ id: "epic-99" });
+    expect(mockAssignMutate).toHaveBeenCalledWith(
+      { id: "epic-99", milestoneId: "m1" },
+      expect.anything()
+    );
+  });
+
+  it("does not issue an assign PATCH when no milestone was chosen", async () => {
+    renderWithProviders(<CreateEpicDialog open={true} onOpenChange={() => {}} />);
+    const user = userEvent.setup({ pointerEventsCheck: 0, delay: null });
+    await user.type(screen.getByTestId("create-epic-title"), "Feature X");
+    await user.type(screen.getByTestId("create-epic-description"), "Desc Y");
+    await user.click(screen.getByTestId("create-epic-software-project-select"));
+    await user.click(screen.getByText("backend-api"));
+    await user.click(screen.getByTestId("create-epic-submit"));
+
+    const [, options] = mockMutate.mock.calls[0];
+    options.onSuccess({ id: "epic-99" });
+
+    expect(mockAssignMutate).not.toHaveBeenCalled();
   });
 });

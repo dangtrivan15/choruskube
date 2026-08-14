@@ -142,6 +142,7 @@ function makeSnapshot(overrides: Partial<RoadmapGraphSnapshot> = {}): RoadmapGra
       createdAt: "2026-04-01T00:00:00Z",
       updatedAt: "2026-04-01T00:00:00Z",
       readyItemCount: 0,
+      milestone: null,
     },
     stories: [
       {

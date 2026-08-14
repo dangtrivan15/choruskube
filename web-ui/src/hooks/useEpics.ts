@@ -39,7 +39,8 @@ export function useEpics(
   title?: string,
   pagination?: PaginationParams,
   readyOnly: boolean = false,
-  priority?: Priority
+  priority?: Priority,
+  milestoneId?: string
 ) {
   const params: string[] = [];
   if (title) params.push(`title=${encodeURIComponent(title)}`);
@@ -50,10 +51,13 @@ export function useEpics(
   // hasher, so a caller that never filters by priority (e.g. the Board's
   // `boardEpicsQueryKey`) still binds to the same cache entry it did before.
   if (priority) params.push(`priority=${encodeURIComponent(priority)}`);
+  // Same pass-through treatment as `priority` — backs RoadmapPage's Milestone filter
+  // (`EpicController#list`'s `milestoneId` query param, Decision 4).
+  if (milestoneId) params.push(`milestoneId=${encodeURIComponent(milestoneId)}`);
   const queryString = params.length > 0 ? `?${params.join("&")}` : "";
 
   return useQuery({
-    queryKey: ["epics", { title, pagination, readyOnly, priority }],
+    queryKey: ["epics", { title, pagination, readyOnly, priority, milestoneId }],
     queryFn: () =>
       api.getPage<PageResponse<EpicResponse>>(`/epics${queryString}`, pagination),
     refetchInterval: 15_000,

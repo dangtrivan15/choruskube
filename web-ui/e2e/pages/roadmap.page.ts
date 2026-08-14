@@ -14,6 +14,8 @@ export class RoadmapPage {
   readonly epicItems: Locator;
   readonly readyToStartToggle: Locator;
   readonly priorityFilter: Locator;
+  readonly milestoneFilter: Locator;
+  readonly milestonesLink: Locator;
 
   // Epic detail
   readonly epicDetailTitle: Locator;
@@ -21,6 +23,8 @@ export class RoadmapPage {
   readonly epicDetailStatus: Locator;
   readonly epicDetailPriorityBadge: Locator;
   readonly epicDetailPrioritySelect: Locator;
+  readonly epicDetailMilestoneBadge: Locator;
+  readonly epicDetailMilestoneSelect: Locator;
   readonly storyDetailPriorityBadge: Locator;
   readonly storyDetailPrioritySelect: Locator;
   readonly epicDetailTargetDate: Locator;
@@ -56,11 +60,13 @@ export class RoadmapPage {
   readonly createDescriptionInput: Locator;
   readonly createMotivationInput: Locator;
   readonly createSoftwareProjectSelect: Locator;
+  readonly createMilestoneSelect: Locator;
   readonly createSubmitButton: Locator;
 
   // Edit Epic dialog
   readonly editTitleInput: Locator;
   readonly editDescriptionInput: Locator;
+  readonly editMilestoneSelect: Locator;
   readonly editSaveButton: Locator;
 
   // Create Story dialog
@@ -93,12 +99,20 @@ export class RoadmapPage {
     // All/High/Medium/Low segmented filter (PriorityFilter) — rendered on the
     // Epic list and Epic detail (Story list) toolbars.
     this.priorityFilter = page.getByTestId("priority-filter");
+    // All + one chip per org Milestone (RoadmapPage's inline MilestoneFilter) — Epic list
+    // toolbar only.
+    this.milestoneFilter = page.getByTestId("milestone-filter");
+    // Toolbar link to the Milestone management page (/roadmap/milestones) — the Board/Timeline
+    // link's sibling; Milestones has no sidebar entry (see Sidebar.tsx's Board/Timeline precedent).
+    this.milestonesLink = page.getByTestId("roadmap-milestones-link");
 
     this.epicDetailTitle = page.getByTestId("epic-detail-title");
     this.epicDetailDescription = page.getByTestId("epic-detail-description");
     this.epicDetailStatus = page.getByTestId("epic-detail-status");
     this.epicDetailPriorityBadge = page.getByTestId("epic-detail-priority-badge");
     this.epicDetailPrioritySelect = page.getByTestId("epic-detail-priority-select");
+    this.epicDetailMilestoneBadge = page.getByTestId("epic-detail-milestone-badge");
+    this.epicDetailMilestoneSelect = page.getByTestId("epic-detail-milestone-select");
     this.storyDetailPriorityBadge = page.getByTestId("story-detail-priority-badge");
     this.storyDetailPrioritySelect = page.getByTestId("story-detail-priority-select");
     this.epicDetailTargetDate = page.getByTestId("epic-detail-target-date");
@@ -140,11 +154,13 @@ export class RoadmapPage {
     this.createSoftwareProjectSelect = page.getByTestId(
       "create-epic-software-project-select",
     );
+    this.createMilestoneSelect = page.getByTestId("create-epic-milestone-select");
     this.createSubmitButton = page.getByTestId("create-epic-submit");
 
     // Edit Epic dialog
     this.editTitleInput = page.getByTestId("edit-epic-title");
     this.editDescriptionInput = page.getByTestId("edit-epic-description");
+    this.editMilestoneSelect = page.getByTestId("edit-epic-milestone-select");
     this.editSaveButton = page.getByTestId("edit-epic-save");
 
     // Create Story dialog
@@ -200,6 +216,34 @@ export class RoadmapPage {
   /** Filter the Epic/Story list by priority via the segmented control ("all" clears it). */
   async filterByPriority(level: "all" | "high" | "medium" | "low") {
     await this.priorityFilter.getByTestId(`priority-filter-${level}`).click();
+  }
+
+  /** The Milestone badge on the Epic row (Roadmap list) titled `title`, if present. */
+  epicItemMilestoneBadge(title: string): Locator {
+    return this.epicItems.filter({ hasText: title }).getByTestId("epic-milestone-badge");
+  }
+
+  /**
+   * Filter the Epic list by Milestone via the segmented control (`MilestoneFilter`, cloned from
+   * `PriorityFilter`'s pattern). Pass `"all"` to clear, or a Milestone's exact name otherwise —
+   * unlike priority's fixed levels, chips are dynamic, so this locates by visible text.
+   */
+  async filterByMilestone(nameOrAll: "all" | string) {
+    if (nameOrAll === "all") {
+      await this.milestoneFilter.getByTestId("milestone-filter-all").click();
+      return;
+    }
+    await this.milestoneFilter.getByRole("button", { name: nameOrAll, exact: true }).click();
+  }
+
+  /**
+   * Selects a Milestone (or "None" to clear) in a `MilestoneSelect` dropdown by visible name.
+   * `trigger` is the specific selector instance — Create/Edit Epic dialogs and the Epic detail
+   * inline selector each render their own.
+   */
+  async selectMilestone(trigger: Locator, nameOrNone: "None" | string) {
+    await trigger.click();
+    await this.page.getByRole("option", { name: nameOrNone, exact: true }).click();
   }
 
   /**

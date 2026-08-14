@@ -8,6 +8,8 @@ import type { EpicResponse, StoryResponse } from "@/lib/types";
 const mockUseEpic = vi.fn();
 const mockUseStories = vi.fn();
 const mockDeleteMutate = vi.fn();
+const mockAssignMilestoneMutate = vi.fn();
+const mockUseMilestones = vi.fn();
 
 vi.mock("@/hooks/useEpics", () => ({
   useEpic: (id: string) => mockUseEpic(id),
@@ -31,6 +33,16 @@ vi.mock("@/hooks/useEpics", () => ({
   }),
   useUpdateEpicTargetDate: () => ({
     mutate: vi.fn(),
+    isPending: false,
+    isError: false,
+    reset: vi.fn(),
+  }),
+}));
+
+vi.mock("@/hooks/useMilestones", () => ({
+  useMilestones: (...args: unknown[]) => mockUseMilestones(...args),
+  useAssignEpicMilestone: () => ({
+    mutate: mockAssignMilestoneMutate,
     isPending: false,
     isError: false,
     reset: vi.fn(),
@@ -68,6 +80,9 @@ beforeEach(() => {
   mockUseEpic.mockReset();
   mockUseStories.mockReset();
   mockDeleteMutate.mockReset();
+  mockAssignMilestoneMutate.mockReset();
+  mockUseMilestones.mockReset();
+  mockUseMilestones.mockReturnValue({ data: { content: [] } });
 });
 
 function makeEpic(overrides: Partial<EpicResponse> = {}): EpicResponse {
@@ -86,6 +101,7 @@ function makeEpic(overrides: Partial<EpicResponse> = {}): EpicResponse {
     createdAt: "2026-04-01T00:00:00Z",
     updatedAt: "2026-04-01T00:00:00Z",
     readyItemCount: 0,
+    milestone: null,
     ...overrides,
   };
 }
@@ -274,5 +290,61 @@ describe("EpicDetailPage", () => {
     await user.click(screen.getByTestId("priority-filter-high"));
 
     expect(screen.getByText(/No stories match the current filters/)).toBeInTheDocument();
+  });
+
+  // --- Milestone badge & inline assignment ---
+
+  it("renders the milestone badge when the epic has an assigned milestone", () => {
+    mockUseEpic.mockReturnValue({
+      data: makeEpic({ milestone: { id: "m1", name: "Q3 Launch" } }),
+      isLoading: false,
+    });
+    mockUseStories.mockReturnValue({ data: [], isLoading: false });
+    renderWithProviders(<EpicDetailPage />);
+    expect(screen.getByTestId("epic-detail-milestone-badge")).toHaveTextContent("Q3 Launch");
+  });
+
+  it("renders no milestone badge when the epic is unassigned", () => {
+    mockUseEpic.mockReturnValue({ data: makeEpic({ milestone: null }), isLoading: false });
+    mockUseStories.mockReturnValue({ data: [], isLoading: false });
+    renderWithProviders(<EpicDetailPage />);
+    expect(screen.queryByTestId("epic-detail-milestone-badge")).not.toBeInTheDocument();
+  });
+
+  it("scopes the inline Milestone selector's options to the Epic's own software project", () => {
+    mockUseEpic.mockReturnValue({ data: makeEpic(), isLoading: false });
+    mockUseStories.mockReturnValue({ data: [], isLoading: false });
+    renderWithProviders(<EpicDetailPage />);
+    // makeEpic()'s softwareProject.id is "r1" (see fixture below).
+    expect(mockUseMilestones).toHaveBeenCalledWith("r1");
+  });
+
+  it("issues an assign PATCH when a milestone is picked from the inline selector", async () => {
+    mockUseMilestones.mockReturnValue({ data: { content: [{ id: "m1", name: "Q3 Launch" }] } });
+    mockUseEpic.mockReturnValue({ data: makeEpic({ milestone: null }), isLoading: false });
+    mockUseStories.mockReturnValue({ data: [], isLoading: false });
+    renderWithProviders(<EpicDetailPage />);
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+
+    await user.click(screen.getByTestId("epic-detail-milestone-select"));
+    await user.click(screen.getByText("Q3 Launch"));
+
+    expect(mockAssignMilestoneMutate).toHaveBeenCalledWith({ id: "epic-1", milestoneId: "m1" });
+  });
+
+  it("issues an assign PATCH with a null milestoneId when None is picked", async () => {
+    mockUseMilestones.mockReturnValue({ data: { content: [{ id: "m1", name: "Q3 Launch" }] } });
+    mockUseEpic.mockReturnValue({
+      data: makeEpic({ milestone: { id: "m1", name: "Q3 Launch" } }),
+      isLoading: false,
+    });
+    mockUseStories.mockReturnValue({ data: [], isLoading: false });
+    renderWithProviders(<EpicDetailPage />);
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+
+    await user.click(screen.getByTestId("epic-detail-milestone-select"));
+    await user.click(screen.getByTestId("milestone-option-none"));
+
+    expect(mockAssignMilestoneMutate).toHaveBeenCalledWith({ id: "epic-1", milestoneId: null });
   });
 });

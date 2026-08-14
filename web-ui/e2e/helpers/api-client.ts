@@ -10,7 +10,7 @@
  */
 
 import { createRequire } from "node:module";
-import type { RepoRef, SoftwareProjectRef } from "../../src/lib/types";
+import type { RepoRef, SoftwareProjectRef, MilestoneRef } from "../../src/lib/types";
 
 // E2e-mode defaults (2xxxx range). Local-mode runs on 1xxxx — override via
 // API_URL / AUTH_URL env vars if pointing Playwright at the local stack.
@@ -114,6 +114,18 @@ export interface Epic {
   softwareProject: SoftwareProjectRef;
   // Single source of truth for the shape — avoids drift with the production type.
   repos: RepoRef[];
+  // The Epic's assigned Milestone, or null if unassigned — see EpicResponse.milestone.
+  milestone: MilestoneRef | null;
+}
+
+/** Matches the backend MilestoneResponse record — see src/lib/types.ts's MilestoneResponse. */
+export interface Milestone {
+  id: string;
+  name: string;
+  description: string | null;
+  softwareProjectId: string;
+  targetDate: string | null;
+  epicCount: number;
 }
 
 export interface Story {
@@ -463,6 +475,15 @@ export class TestApiClient {
     return this.patch(`/api/v1/epics/${id}/target-date`, { targetDate });
   }
 
+  /**
+   * Assign or clear (via `null`) an Epic's Milestone via PATCH /epics/{id}/milestone
+   * (mirrors useAssignEpicMilestone, Decision 4 of the "Group Epics under a named
+   * Milestone / Release" feature).
+   */
+  async assignEpicToMilestone(epicId: string, milestoneId: string | null): Promise<Epic> {
+    return this.patch(`/api/v1/epics/${epicId}/milestone`, { milestoneId });
+  }
+
   async listStories(epicId: string): Promise<Story[]> {
     return this.get(`/api/v1/epics/${epicId}/stories`);
   }
@@ -532,6 +553,48 @@ export class TestApiClient {
 
   async deleteDependency(id: string): Promise<void> {
     return this.delete(`/api/v1/dependencies/${id}`);
+  }
+
+  // ── Milestones ───────────────────────────────────────────────────
+
+  /**
+   * Lists Milestones, optionally scoped to a single software project (mirrors
+   * `useMilestones`). Used by E2E specs to verify creation/rename via the UI and to
+   * clean up after tests run.
+   */
+  async listMilestones(softwareProjectId?: string): Promise<PageResponse<Milestone>> {
+    const params = new URLSearchParams({ size: "100" });
+    if (softwareProjectId) params.set("softwareProjectId", softwareProjectId);
+    return this.get(`/api/v1/milestones?${params.toString()}`);
+  }
+
+  async createMilestone(body: {
+    name: string;
+    description?: string | null;
+    softwareProjectId: string;
+    targetDate?: string | null;
+  }): Promise<Milestone> {
+    return this.post("/api/v1/milestones", {
+      name: body.name,
+      description: body.description ?? null,
+      softwareProjectId: body.softwareProjectId,
+      targetDate: body.targetDate ?? null,
+    });
+  }
+
+  async updateMilestone(
+    id: string,
+    body: { name: string; description?: string | null; targetDate?: string | null },
+  ): Promise<Milestone> {
+    return this.put(`/api/v1/milestones/${id}`, {
+      name: body.name,
+      description: body.description ?? null,
+      targetDate: body.targetDate ?? null,
+    });
+  }
+
+  async deleteMilestone(id: string): Promise<void> {
+    return this.delete(`/api/v1/milestones/${id}`);
   }
 
   // ── Repo Groups ──────────────────────────────────────────────────

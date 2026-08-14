@@ -32,6 +32,7 @@ function makeResponse(): RoadmapTimelineResponse {
         createdAt: "2026-04-01T00:00:00Z",
         updatedAt: "2026-04-01T00:00:00Z",
         stalled: false,
+        milestone: null,
         stories: [
           {
             id: "story-1",
