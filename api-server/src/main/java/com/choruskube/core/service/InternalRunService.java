@@ -939,6 +939,12 @@ public class InternalRunService {
         }
     }
 
+    /**
+     * Builds the internal/agent-facing (`/internal/**`) view of a node execution. Always leaves
+     * {@code requiredArtifacts}/{@code candidateBreakdown}/{@code escalation} null — those are
+     * human-gate UI concerns (Approvals dashboard, Run Detail page); an agent reads its own inputs
+     * from the workspace, not this DTO.
+     */
     private NodeExecutionResponse toNodeExecResponse(NodeExecution e) {
         UUID[] edges = e.getTraversedEdgeIds();
         List<UUID> edgeList = edges == null ? null : Arrays.asList(edges);
@@ -959,6 +965,7 @@ public class InternalRunService {
                 e.getLoopGroup(),
                 e.getReviewerType() != null ? e.getReviewerType().name() : null,
                 edgeList,
+                null,
                 null,
                 null);
     }

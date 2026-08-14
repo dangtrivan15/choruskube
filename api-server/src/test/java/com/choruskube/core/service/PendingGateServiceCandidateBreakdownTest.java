@@ -64,10 +64,10 @@ class PendingGateServiceCandidateBreakdownTest {
                 objectMapper,
                 new AuthorizationService(new AlwaysAllowAuthorizationStrategy(), false),
                 artifactResolutionService,
-                artifactService,
                 new com.choruskube.core.scope.NoOpScopeProvider(),
                 new DecisionOptionsResolver(),
-                candidatesArtifactResolver);
+                candidatesArtifactResolver,
+                new EscalationContextResolver(artifactResolutionService, artifactService));
     }
 
     private void stubGate(String snapshot, List<ResolvedArtifactGroup> requiredArtifacts) {

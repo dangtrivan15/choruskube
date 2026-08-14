@@ -50,7 +50,8 @@ class RunServiceInputValidationTest {
                 new DecisionOptionsResolver(),
                 null,
                 null,
-                null); // nodeExecutionClaimService — unused (signalHumanDecision not exercised)
+                null, // nodeExecutionClaimService — unused (signalHumanDecision not exercised)
+                null); // escalationContextResolver — unused (escalation not exercised)
     }
 
     @Test

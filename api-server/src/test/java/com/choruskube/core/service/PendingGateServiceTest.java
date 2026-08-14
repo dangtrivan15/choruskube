@@ -47,10 +47,10 @@ class PendingGateServiceTest {
                 objectMapper,
                 new AuthorizationService(new AlwaysAllowAuthorizationStrategy(), false),
                 artifactResolutionService,
-                artifactService,
                 new com.choruskube.core.scope.NoOpScopeProvider(),
                 new DecisionOptionsResolver(),
-                Mockito.mock(RoadmapCandidatesArtifactResolver.class));
+                Mockito.mock(RoadmapCandidatesArtifactResolver.class),
+                new EscalationContextResolver(artifactResolutionService, artifactService));
     }
 
     /** The two IDs a test needs to stub {@code artifactService.getArtifactContent(...)}. */
@@ -381,10 +381,10 @@ class PendingGateServiceTest {
                 objectMapper,
                 new AuthorizationService(new AlwaysAllowAuthorizationStrategy(), false),
                 mockResolutionService,
-                artifactService,
                 new com.choruskube.core.scope.NoOpScopeProvider(),
                 new DecisionOptionsResolver(),
-                Mockito.mock(RoadmapCandidatesArtifactResolver.class));
+                Mockito.mock(RoadmapCandidatesArtifactResolver.class),
+                new EscalationContextResolver(mockResolutionService, artifactService));
 
         String snapshot = """
                 {"nodes": [{"template_node_id": "%s", "label": "Gate"}], "edges": []}

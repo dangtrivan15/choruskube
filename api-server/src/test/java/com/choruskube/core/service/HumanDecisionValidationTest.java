@@ -106,7 +106,8 @@ class HumanDecisionValidationTest {
                 new DecisionOptionsResolver(),
                 null,
                 null,
-                nodeExecutionClaimService);
+                nodeExecutionClaimService,
+                null); // escalationContextResolver - unused (escalation not exercised)
     }
 
     private NodeExecution stubExec() {

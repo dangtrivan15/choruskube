@@ -36,10 +36,10 @@ public class PendingGateService {
     private final ObjectMapper objectMapper;
     private final AuthorizationService authService;
     private final ArtifactResolutionService artifactResolutionService;
-    private final ArtifactService artifactService;
     private final ScopeProvider scopeProvider;
     private final DecisionOptionsResolver decisionOptionsResolver;
     private final RoadmapCandidatesArtifactResolver candidatesArtifactResolver;
+    private final EscalationContextResolver escalationContextResolver;
 
     public PendingGateService(
             NodeExecutionRepository execRepo,
@@ -48,20 +48,20 @@ public class PendingGateService {
             ObjectMapper objectMapper,
             AuthorizationService authService,
             ArtifactResolutionService artifactResolutionService,
-            ArtifactService artifactService,
             ScopeProvider scopeProvider,
             DecisionOptionsResolver decisionOptionsResolver,
-            RoadmapCandidatesArtifactResolver candidatesArtifactResolver) {
+            RoadmapCandidatesArtifactResolver candidatesArtifactResolver,
+            EscalationContextResolver escalationContextResolver) {
         this.execRepo = execRepo;
         this.runRepo = runRepo;
         this.snapshotBuilder = snapshotBuilder;
         this.objectMapper = objectMapper;
         this.authService = authService;
         this.artifactResolutionService = artifactResolutionService;
-        this.artifactService = artifactService;
         this.scopeProvider = scopeProvider;
         this.decisionOptionsResolver = decisionOptionsResolver;
         this.candidatesArtifactResolver = candidatesArtifactResolver;
+        this.escalationContextResolver = escalationContextResolver;
     }
 
     private static final List<NodeExecutionStatus> GATE_STATUSES =
@@ -184,7 +184,7 @@ public class PendingGateService {
                         && hub.get("template_node_id")
                                 .asText()
                                 .equals(exec.getTemplateNodeId().toString())) {
-                    escalation = buildEscalationContext(run.getId());
+                    escalation = escalationContextResolver.resolve(run.getId());
                 }
             } catch (Exception e) {
                 logger.warn("Failed to parse graph snapshot for run {}: {}", run.getId(), e.getMessage());
@@ -212,58 +212,6 @@ public class PendingGateService {
                 decisionOptions,
                 candidateBreakdown,
                 escalation);
-    }
-
-    /**
-     * Resolves the escalating execution and its {@code escalation.md} front matter into an {@link
-     * EscalationContext}, or {@code null} if nothing has escalated in this run yet — a Supervisor
-     * gate with no escalator is not rendered with a half-empty banner.
-     *
-     * <p>A missing or unreadable {@code escalation.md} degrades only {@code category}/{@code
-     * summary} to {@code null}; the escalator's label, exec id, and loop group still come through,
-     * because a reviewer who can't see the category must still be able to route.
-     */
-    private EscalationContext buildEscalationContext(UUID runId) {
-        NodeExecution escalator = artifactResolutionService.resolveEscalatingExecution(runId);
-        if (escalator == null) {
-            return null;
-        }
-
-        String category = null;
-        String summary = null;
-        try {
-            String markdown = artifactService.getArtifactContent(runId, escalator.getId(), "escalation.md");
-            category = frontMatterValue(markdown, "category");
-            summary = frontMatterValue(markdown, "summary");
-        } catch (Exception e) {
-            logger.warn("Could not read escalation.md for execution {}: {}", escalator.getId(), e.getMessage());
-        }
-
-        return new EscalationContext(
-                escalator.getLabel(), escalator.getId(), escalator.getLoopGroup(), category, summary);
-    }
-
-    /**
-     * Reads one {@code key: value} pair out of a leading {@code ---} front-matter block. Returns
-     * {@code null} when the block or the key is absent — deliberately lenient, since the front
-     * matter is agent-authored and this must never throw.
-     */
-    private static String frontMatterValue(String markdown, String key) {
-        if (markdown == null || !markdown.startsWith("---")) {
-            return null;
-        }
-        int end = markdown.indexOf("\n---", 3);
-        if (end < 0) {
-            return null;
-        }
-        for (String line : markdown.substring(3, end).split("\n")) {
-            String trimmed = line.trim();
-            if (trimmed.startsWith(key + ":")) {
-                String value = trimmed.substring(key.length() + 1).trim();
-                return value.isEmpty() ? null : value;
-            }
-        }
-        return null;
     }
 
     private List<PredecessorOutput> findPredecessorOutputs(
