@@ -64,6 +64,11 @@ type nodeTracker struct {
 	artifactRefs string  // from completion
 	preDecision  string  // pre-supplied decision from retry-with-approval (skip human wait)
 	preFeedback  string  // pre-supplied feedback from retry-with-approval
+	// forceReady marks a node activated by a Supervisor routing decision. Such a node
+	// bypasses the predecessor-completed check in FindReadyNodes: the reviewer
+	// deliberately chose a target whose ordinary upstream may never have run. Carried
+	// forward unchanged by every other nodeTracker construction site.
+	forceReady bool
 }
 
 func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
@@ -249,10 +254,14 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 
 		// 4b: Find ready nodes
 		nodeStates := make(map[uuid.UUID]string)
+		forceReady := make(map[uuid.UUID]bool)
 		for id, tracker := range nodes {
 			nodeStates[id] = tracker.status
+			if tracker.forceReady {
+				forceReady[id] = true
+			}
 		}
-		readyNodes := FindReadyNodes(snap, nodeStates)
+		readyNodes := FindReadyNodes(snap, nodeStates, forceReady)
 
 		// 4c: Check termination
 		runningCount := 0
@@ -352,15 +361,18 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 					return
 				}
 
-				// Reset tracker. reviewPass carries forward unchanged — an operator
-				// retry of a failed execution is not a review decision, so it must
-				// not advance the counter that gates first-vs-subsequent-iteration
-				// model/effort resolution (see nodeTracker.reviewPass).
+				// Reset tracker. reviewPass and forceReady carry forward unchanged — an
+				// operator retry of a failed execution is not a review decision, so it
+				// must not advance the counter that gates first-vs-subsequent-iteration
+				// model/effort resolution (see nodeTracker.reviewPass); and if this node
+				// was routed here by the Supervisor, a retry must still bypass predecessor
+				// gating exactly as the original activation did (see nodeTracker.forceReady).
 				nodes[templateNodeID] = &nodeTracker{
 					status:     "pending",
 					execID:     execID,
 					iteration:  newIteration,
 					reviewPass: tracker.reviewPass,
+					forceReady: tracker.forceReady,
 				}
 
 				// Restore run status
@@ -425,16 +437,17 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 						return
 					}
 
-					// Reset tracker with pre-decision. reviewPass carries forward
-					// unchanged (see nodeTracker.reviewPass) — gated on
-					// ExecutorType == "human" above, so this path never reaches
-					// an AI review node, but the invariant is kept consistent at
-					// every nodeTracker construction site regardless.
+					// Reset tracker with pre-decision. reviewPass and forceReady carry
+					// forward unchanged (see nodeTracker.reviewPass and
+					// nodeTracker.forceReady) — gated on ExecutorType == "human" above,
+					// so this path never reaches an AI review node, but the invariant is
+					// kept consistent at every nodeTracker construction site regardless.
 					nodes[failedID] = &nodeTracker{
 						status:      "pending",
 						execID:      execID,
 						iteration:   newIteration,
 						reviewPass:  failedTracker.reviewPass,
+						forceReady:  failedTracker.forceReady,
 						preDecision: signal.Decision,
 						preFeedback: signal.Feedback,
 					}
@@ -837,14 +850,18 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 									"nodeID", completion.nodeID, "err", createErr)
 								// fall through to normal failure path
 							} else {
-								// reviewPass carries forward unchanged — a pause/heartbeat-
-								// timeout recovery is an infra retry of the same attempt, not
-								// a review decision (see nodeTracker.reviewPass).
+								// reviewPass and forceReady carry forward unchanged — a
+								// pause/heartbeat-timeout recovery is an infra retry of the
+								// same attempt, not a review decision (see
+								// nodeTracker.reviewPass), and must not drop a Supervisor
+								// routing target back into normal predecessor gating (see
+								// nodeTracker.forceReady).
 								nodes[completion.nodeID] = &nodeTracker{
 									status:     "pending",
 									execID:     newExecID,
 									iteration:  newIteration,
 									reviewPass: tracker.reviewPass,
+									forceReady: tracker.forceReady,
 								}
 								return // skip normal failure path; ready-nodes evaluator will re-schedule
 							}
@@ -1112,6 +1129,14 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 				).Get(ctx, nil)
 
 				// 4g: Activate target nodes
+				// A target is force-ready when the node that just completed is the
+				// Supervisor itself: only its route:<label> decisions deliberately choose
+				// a target whose ordinary upstream may not have run (see
+				// nodeTracker.forceReady). Computed once per completion, outside the loop,
+				// since it depends on the completing node, not the target.
+				hubNode, hasHub := FindRoutingHub(snap)
+				routedBySupervisor := hasHub && hubNode.TemplateNodeID == completion.nodeID
+
 				for _, targetID := range targets {
 					existingTracker, exists := nodes[targetID]
 					iteration := 1
@@ -1143,6 +1168,7 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 						execID:     execID,
 						iteration:  iteration,
 						reviewPass: reviewPass,
+						forceReady: routedBySupervisor,
 					}
 				}
 			})

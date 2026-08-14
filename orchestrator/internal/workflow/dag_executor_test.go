@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -1675,4 +1676,158 @@ func (s *DAGExecutorTestSuite) TestOpenBlockerFields_TaskContextWithNoOpenBlocke
 	s.Equal(taskID.String(), gotTaskID)
 	s.Equal("Task with no open blockers", gotTaskTitle)
 	s.Empty(openBlockerFields(snap), "OpenBlockers")
+}
+
+// TestSupervisorRoutesPastAnUnrunPredecessor verifies the force-ready bypass end to
+// end through the workflow (graph.go's FindReadyNodes/FindRoutingHub are covered at
+// the unit level in graph_test.go; this exercises the dag_executor.go wiring that
+// makes those functions meaningful).
+//
+// Graph: implement fans out to code_review and test in parallel. code_review
+// escalates instead of taking a normal edge, so the Supervisor (an edgeless
+// human "routing_hub" node) receives control and routes straight to
+// final_approval — final_approval's ordinary predecessor is test, but test is
+// deliberately routed around, mirroring a wedged test environment that a
+// reviewer chooses to skip.
+//
+// test's activity is held in-flight for 1 (virtual) second via .After(), so at
+// the moment the Supervisor's decision is processed, test is still "running" —
+// not absent from tracking, not completed. Without the force-ready flag,
+// FindReadyNodes would keep final_approval pending until test's predecessor
+// edge is satisfied, i.e. final_approval would only start once test finishes.
+// The test proves the opposite happened: final_approval's activity starts
+// while test is still incomplete. testCompleted/startedWhileTestIncomplete are
+// set from the mock's Run() callbacks, which the SDK invokes immediately
+// before an activity call returns (so test's callback fires only after its
+// 1-second .After() elapses) — see runBeforeMockCallReturns in the Temporal Go
+// SDK's test suite.
+func (s *DAGExecutorTestSuite) TestSupervisorRoutesPastAnUnrunPredecessor() {
+	implement := uuid.New()
+	codeReview := uuid.New()
+	test := uuid.New()
+	finalApproval := uuid.New()
+	supervisor := uuid.New()
+
+	execImplement := uuid.New()
+	execCodeReview := uuid.New()
+	execTest := uuid.New()
+	execFinalApproval := uuid.New()
+	execSupervisor := uuid.New()
+
+	runID := uuid.New()
+
+	snapshot := `{
+		"nodes": [
+			{"templateNodeId": "` + implement.String() + `", "label": "implement", "executorType": "ai", "timeoutSeconds": 1800, "isEntrypoint": true},
+			{"templateNodeId": "` + codeReview.String() + `", "label": "code_review", "executorType": "ai", "timeoutSeconds": 1800},
+			{"templateNodeId": "` + test.String() + `", "label": "test", "executorType": "ai", "timeoutSeconds": 1800, "configOverrides": {"terminal_decisions": ["no_decision"]}},
+			{"templateNodeId": "` + finalApproval.String() + `", "label": "final_approval", "executorType": "ai", "timeoutSeconds": 1800},
+			{"templateNodeId": "` + supervisor.String() + `", "label": "supervisor", "executorType": "human", "timeoutSeconds": 3600, "configOverrides": {"routing_hub": true}}
+		],
+		"edges": [
+			{"sourceNodeId": "` + implement.String() + `", "targetNodeId": "` + codeReview.String() + `"},
+			{"sourceNodeId": "` + implement.String() + `", "targetNodeId": "` + test.String() + `"},
+			{"sourceNodeId": "` + test.String() + `", "targetNodeId": "` + finalApproval.String() + `", "condition": "approved"}
+		]
+	}`
+
+	s.env.OnActivity("UpdateWorkflowRunStatus", mock.Anything, mock.Anything).Return(nil)
+	s.env.OnActivity("GetGraphRuntime", mock.Anything, runID).Return(snapshot, nil)
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("WriteExecutionLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("InitRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("AppendRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("SetTraversedEdges", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("LoadPredecessorInputs", mock.Anything, mock.Anything).Return(map[string]string{}, nil).Maybe()
+	s.env.OnActivity("LoadRequiredInputArtifacts", mock.Anything, mock.Anything).Return(activity.LoadRequiredInputArtifactsResult{}, nil).Maybe()
+	s.env.OnActivity("LoadReviewHistoryJSON", mock.Anything, mock.Anything).Return("[]", nil).Maybe()
+
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == implement
+	})).Return(execImplement, nil).Once()
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == codeReview
+	})).Return(execCodeReview, nil).Once()
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == test
+	})).Return(execTest, nil).Once()
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == supervisor
+	})).Return(execSupervisor, nil).Once()
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == finalApproval
+	})).Return(execFinalApproval, nil).Once()
+
+	var mu sync.Mutex
+	testCompleted := false
+	finalApprovalStartedWhileTestIncomplete := false
+
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.TemplateNodeID == implement
+	})).Return(nil).Once()
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.TemplateNodeID == codeReview
+	})).Return(nil).Once()
+	// test is held in-flight for 1 virtual second so it is still "running" — tracked,
+	// not absent — at the moment the Supervisor routes around it.
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.TemplateNodeID == test
+	})).After(time.Second).Run(func(args mock.Arguments) {
+		mu.Lock()
+		testCompleted = true
+		mu.Unlock()
+	}).Return(nil).Once()
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.TemplateNodeID == finalApproval
+	})).Run(func(args mock.Arguments) {
+		mu.Lock()
+		if !testCompleted {
+			finalApprovalStartedWhileTestIncomplete = true
+		}
+		mu.Unlock()
+	}).Return(nil).Once()
+
+	s.env.OnActivity("SetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.SetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execSupervisor && p.Decision == "route:final_approval"
+	})).Return(nil).Once()
+
+	// code_review escalates instead of following a normal edge.
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execImplement
+	})).Return("no_decision", nil).Once()
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execCodeReview
+	})).Return("escalate", nil).Once()
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execTest
+	})).Return("no_decision", nil).Once()
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execSupervisor
+	})).Return("route:final_approval", nil).Once()
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execFinalApproval
+	})).Return("no_decision", nil).Once()
+
+	// The Supervisor routes to final_approval as soon as it is paged.
+	s.env.RegisterDelayedCallback(func() {
+		s.env.SignalWorkflow(SignalHumanDecisionPrefix+execSupervisor.String(), HumanDecisionSignal{
+			NodeExecutionID: execSupervisor.String(),
+			Decision:        "route:final_approval",
+			Feedback:        "Test environment is wedged — skipping straight to final approval",
+		})
+	}, 0)
+
+	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
+		RunID: runID, GraphVersion: 1,
+	})
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+
+	mu.Lock()
+	defer mu.Unlock()
+	s.True(finalApprovalStartedWhileTestIncomplete,
+		"final_approval must start while test (its ordinary predecessor) is still incomplete — "+
+			"the force-ready bypass. Without it, final_approval would stay pending until test "+
+			"completes on its own, which this graph is built to never let happen in time.")
 }
