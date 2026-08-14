@@ -183,7 +183,25 @@ public class InternalRunService {
         // and has no pre-existing declarations whose lenient behaviour must be preserved, so it
         // does not consult artifact.enforcement.mode.
         if (DecisionOptionsResolver.ESCALATE_DECISION.equalsIgnoreCase(exec.getDecision())) {
-            List<String> names = artifactService.listArtifactNamesInternal(exec.getWorkflowRunId(), exec.getId());
+            List<String> names;
+            try {
+                // Pass the in-hand artifactRefs (already applied to `exec` above, in this same
+                // method, ahead of the execRepo.save below) rather than looking the execution back
+                // up by id — see ArtifactService.listArtifactNamesInternal's javadoc for why a
+                // fresh repository read here would race the callback that is persisting it.
+                names = artifactService.listArtifactNamesInternal(artifactRefs);
+            } catch (RuntimeException e) {
+                // Fail closed, deliberately: this is a security-relevant gate — an unverified
+                // escalation must never reach the Supervisor's human reviewer — so a storage
+                // outage must not be reported as "escalation.md is missing" (400, the wrong
+                // diagnosis) and must not be swallowed into silently admitting the escalation
+                // either. Surface it as a distinct status so the two failure modes stay
+                // distinguishable to the caller.
+                throw new ResponseStatusException(
+                        HttpStatus.SERVICE_UNAVAILABLE,
+                        "Could not verify escalation.md presence: object storage is unavailable",
+                        e);
+            }
             if (names.stream().noneMatch("escalation.md"::equals)) {
                 throw new ResponseStatusException(
                         HttpStatus.BAD_REQUEST,

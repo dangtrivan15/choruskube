@@ -162,6 +162,31 @@ class ArtifactServiceTest {
                         "test_output.txt", "playwright-report/index.html", "playwright-report/trace/index.html");
     }
 
+    @Test
+    void listArtifactNamesInternal_listsNamesFromGivenArtifactRefs_withNoRepositoryLookup() {
+        String prefix = "runs/" + RUN_ID + "/" + EXEC_ID + "/out/";
+        String artifactRefs = "{\"output\": \"" + prefix + "\"}";
+
+        List<S3Object> objects = List.of(s3Object(prefix + "escalation.md", 42L), s3Object(prefix + "review.md", 10L));
+        ListObjectsV2Iterable paginator = Mockito.mock(ListObjectsV2Iterable.class);
+        Mockito.when(paginator.contents()).thenReturn(objects::iterator);
+        Mockito.when(s3Client.listObjectsV2Paginator(ArgumentMatchers.<ListObjectsV2Request>any()))
+                .thenReturn(paginator);
+
+        List<String> names = service.listArtifactNamesInternal(artifactRefs);
+
+        assertThat(names).containsExactlyInAnyOrder("escalation.md", "review.md");
+        // The whole point of this method is to avoid an execId-keyed re-fetch (see its javadoc);
+        // confirm it never touches execRepo at all.
+        Mockito.verifyNoInteractions(execRepo);
+    }
+
+    @Test
+    void listArtifactNamesInternal_returnsEmptyForNullArtifactRefs_withNoRepositoryLookup() {
+        assertThat(service.listArtifactNamesInternal(null)).isEmpty();
+        Mockito.verifyNoInteractions(execRepo, s3Client);
+    }
+
     private static S3Object s3Object(String key, long size) {
         return S3Object.builder()
                 .key(key)

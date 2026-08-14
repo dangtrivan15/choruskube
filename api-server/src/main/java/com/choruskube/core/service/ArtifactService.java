@@ -56,16 +56,22 @@ public class ArtifactService {
     }
 
     /**
-     * File names under an execution's output prefix, without an org-access check.
+     * File names embedded in an already-known {@code artifactRefs} JSON blob (the {@code
+     * {"output": "<prefix>"}} shape written to {@code node_execution.artifact_refs}) — no
+     * repository lookup, no org-access check.
      *
-     * <p>INTERNAL ONLY. The single caller is the node-completion callback path, which is already
-     * authenticated by {@code InternalAuthFilter} on {@code /internal/**} and operates on an
-     * execution id it was handed by the orchestrator — the request never carries a tenant context
-     * for an org-access check to consult. Do not call this from an {@code /api/**} controller —
-     * use {@link #listArtifacts}, which checks org access, instead.
+     * <p>INTERNAL ONLY, package-private on purpose so an {@code /api/**} controller cannot reach
+     * it even by accident — use {@link #listArtifacts} there, which checks org access. The single
+     * caller is the node-completion callback path (already authenticated by {@code
+     * InternalAuthFilter} on {@code /internal/**}), which passes the execution's in-flight,
+     * not-yet-persisted {@code artifactRefs} deliberately: {@code updateNodeExecutionStatus} is
+     * not {@code @Transactional} and Spring Boot runs with {@code open-in-view=false}, so an
+     * execId-keyed re-fetch here would read the last-committed row instead of the mutation the
+     * caller just made in memory — exactly the state the agent's completion callback is racing
+     * to persist. Taking the JSON directly instead of an execId sidesteps that race structurally.
      */
-    public List<String> listArtifactNamesInternal(UUID runId, UUID execId) {
-        String prefix = resolveOutputPrefix(runId, execId);
+    List<String> listArtifactNamesInternal(String artifactRefs) {
+        String prefix = extractOutputPrefix(artifactRefs);
         if (prefix == null) {
             return List.of();
         }
@@ -153,8 +159,15 @@ public class ArtifactService {
         if (!exec.getWorkflowRunId().equals(runId)) {
             throw new NotFoundException("Node execution not found: " + execId);
         }
+        return extractOutputPrefix(exec.getArtifactRefs());
+    }
 
-        String artifactRefs = exec.getArtifactRefs();
+    /**
+     * Parses the {@code output} key out of an {@code artifactRefs} JSON blob, shared by {@link
+     * #resolveOutputPrefix} (execId-keyed) and {@link #listArtifactNamesInternal} (given
+     * directly).
+     */
+    private String extractOutputPrefix(String artifactRefs) {
         if (artifactRefs == null || artifactRefs.isBlank() || "{}".equals(artifactRefs)) {
             return null;
         }

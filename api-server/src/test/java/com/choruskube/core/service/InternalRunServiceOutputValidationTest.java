@@ -227,16 +227,17 @@ class InternalRunServiceOutputValidationTest {
                         e -> e.getStatus() == com.choruskube.core.model.enums.NodeExecutionStatus.paused));
     }
 
+    private static final String ARTIFACT_REFS = "{\"output\":\"runs/r/e/out/\"}";
+
     @Test
     void escalateWithoutEscalationMd_throws() {
         UUID execId = UUID.randomUUID();
         NodeExecution exec = stubExec(execId);
         exec.setDecision("escalate");
-        Mockito.when(artifactService.listArtifactNamesInternal(exec.getWorkflowRunId(), execId))
+        Mockito.when(artifactService.listArtifactNamesInternal(ARTIFACT_REFS))
                 .thenReturn(java.util.List.of("review.md"));
 
-        var req = new InternalUpdateNodeExecutionRequest(
-                "completed", "done", "{\"output\":\"runs/r/e/out/\"}", null, null, null);
+        var req = new InternalUpdateNodeExecutionRequest("completed", "done", ARTIFACT_REFS, null, null, null);
 
         assertThatThrownBy(() -> service.updateNodeExecutionStatus(exec.getWorkflowRunId(), execId, req))
                 .isInstanceOf(ResponseStatusException.class)
@@ -249,14 +250,58 @@ class InternalRunServiceOutputValidationTest {
         NodeExecution exec = stubExec(execId);
         exec.setDecision("escalate");
         Mockito.when(execRepo.save(Mockito.any())).thenReturn(exec);
-        Mockito.when(artifactService.listArtifactNamesInternal(exec.getWorkflowRunId(), execId))
+        Mockito.when(artifactService.listArtifactNamesInternal(ARTIFACT_REFS))
                 .thenReturn(java.util.List.of("review.md", "escalation.md"));
 
-        var req = new InternalUpdateNodeExecutionRequest(
-                "completed", "done", "{\"output\":\"runs/r/e/out/\"}", null, null, null);
+        var req = new InternalUpdateNodeExecutionRequest("completed", "done", ARTIFACT_REFS, null, null, null);
 
         assertThatCode(() -> service.updateNodeExecutionStatus(exec.getWorkflowRunId(), execId, req))
                 .doesNotThrowAnyException();
+    }
+
+    /**
+     * Regression test for a review finding: enforceOutputSpec must be driven by the artifactRefs
+     * carried on *this* completion request, never by re-deriving it from a fresh execution
+     * lookup. updateNodeExecutionStatus is not @Transactional and the app runs with
+     * open-in-view=false, so an execId-keyed re-fetch (as ArtifactService.listArtifactNamesInternal
+     * did before this fix) reads the last-*committed* row — which the agent's own completion
+     * callback (artifact upload, then this call, in one request) has not written yet. The
+     * persisted/pre-mutation execution here is stubbed with a null artifactRefs to stand in for
+     * that lagging committed state; the escalation must still be accepted because the request's
+     * artifactRefs is what actually gets checked.
+     */
+    @Test
+    void escalateChecksTheRequestsArtifactRefsNotAFreshRepositoryLookup() {
+        UUID execId = UUID.randomUUID();
+        NodeExecution exec = stubExec(execId);
+        exec.setDecision("escalate");
+        exec.setArtifactRefs(null);
+        Mockito.when(execRepo.save(Mockito.any())).thenReturn(exec);
+        Mockito.when(artifactService.listArtifactNamesInternal(ARTIFACT_REFS))
+                .thenReturn(java.util.List.of("escalation.md"));
+
+        var req = new InternalUpdateNodeExecutionRequest("completed", "done", ARTIFACT_REFS, null, null, null);
+
+        assertThatCode(() -> service.updateNodeExecutionStatus(exec.getWorkflowRunId(), execId, req))
+                .doesNotThrowAnyException();
+        Mockito.verify(artifactService).listArtifactNamesInternal(ARTIFACT_REFS);
+    }
+
+    @Test
+    void escalateWhenArtifactListingFails_failsClosedWith503() {
+        UUID execId = UUID.randomUUID();
+        NodeExecution exec = stubExec(execId);
+        exec.setDecision("escalate");
+        Mockito.when(artifactService.listArtifactNamesInternal(ARTIFACT_REFS))
+                .thenThrow(new RuntimeException("Failed to list artifacts from object storage"));
+
+        var req = new InternalUpdateNodeExecutionRequest("completed", "done", ARTIFACT_REFS, null, null, null);
+
+        assertThatThrownBy(() -> service.updateNodeExecutionStatus(exec.getWorkflowRunId(), execId, req))
+                .isInstanceOfSatisfying(ResponseStatusException.class, ex -> {
+                    assertThat(ex.getStatusCode().value()).isEqualTo(503);
+                    assertThat(ex.getReason()).contains("unavailable");
+                });
     }
 
     @Test
@@ -266,12 +311,11 @@ class InternalRunServiceOutputValidationTest {
         exec.setDecision("approved");
         Mockito.when(execRepo.save(Mockito.any())).thenReturn(exec);
 
-        var req = new InternalUpdateNodeExecutionRequest(
-                "completed", "done", "{\"output\":\"runs/r/e/out/\"}", null, null, null);
+        var req = new InternalUpdateNodeExecutionRequest("completed", "done", ARTIFACT_REFS, null, null, null);
 
         assertThatCode(() -> service.updateNodeExecutionStatus(exec.getWorkflowRunId(), execId, req))
                 .doesNotThrowAnyException();
-        Mockito.verify(artifactService, Mockito.never()).listArtifactNamesInternal(Mockito.any(), Mockito.any());
+        Mockito.verify(artifactService, Mockito.never()).listArtifactNamesInternal(Mockito.anyString());
     }
 
     @Test
