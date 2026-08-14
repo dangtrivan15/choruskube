@@ -630,31 +630,10 @@ class PendingGateServiceTest {
     void noEscalatorYetLeavesEscalationNull() {
         // resolveEscalatingExecution returns null (nothing has escalated in this run yet) — the
         // Supervisor gate must not construct a half-empty EscalationContext around a null escalator.
-        UUID runId = UUID.randomUUID();
-        UUID hubNodeId = UUID.randomUUID();
-
-        String snapshot = """
-                {"nodes": [{"template_node_id": "%s", "label": "Supervisor", "config_overrides": {"routing_hub": true}}], "edges": []}
-                """.formatted(hubNodeId);
-
-        WorkflowRun run = new WorkflowRun();
-        run.setId(runId);
-        run.setName("No escalation yet");
-        run.setStatus(WorkflowRunStatus.awaiting_human);
-
-        NodeExecution hubExec = new NodeExecution();
-        hubExec.setId(UUID.randomUUID());
-        hubExec.setWorkflowRunId(runId);
-        hubExec.setTemplateNodeId(hubNodeId);
-        hubExec.setStatus(NodeExecutionStatus.awaiting_human);
-        hubExec.setIteration(1);
-
-        Mockito.when(execRepo.findAll(ArgumentMatchers.<Specification<NodeExecution>>any()))
-                .thenReturn(List.of(hubExec));
-        Mockito.when(runRepo.findAllById(Mockito.anyCollection())).thenReturn(List.of(run));
-        Mockito.when(execRepo.findByWorkflowRunIdIn(Mockito.anyCollection())).thenReturn(List.of(hubExec));
-        Mockito.when(snapshotBuilder.buildSnapshotForRun(run)).thenReturn(snapshot);
-        Mockito.when(artifactResolutionService.resolveEscalatingExecution(runId))
+        // Re-stub over stubSupervisorGate()'s default: Mockito's last when() wins, so this overrides
+        // just the one stub that differs instead of re-wiring the whole gate by hand.
+        SupervisorGate gate = stubSupervisorGate();
+        Mockito.when(artifactResolutionService.resolveEscalatingExecution(gate.runId()))
                 .thenReturn(null);
 
         var gates = service.getPendingGates();
