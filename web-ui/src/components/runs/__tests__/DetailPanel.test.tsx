@@ -596,10 +596,10 @@ describe("DetailPanel", () => {
       expect(screen.getByText("CI runner is wedged and cannot be reached.")).toBeInTheDocument();
     });
 
-    // Forward-compat: the api-server does not yet emit `escalation` on
-    // NodeExecutionResponse (only on the pending-gates dashboard response), so on
-    // the Run Detail page this is `undefined` today. The gate must still be
-    // routable — the picker degrades gracefully rather than crashing or hiding.
+    // Defensive coverage for a rolling deploy: an older API pod may omit `escalation`
+    // from NodeExecutionResponse (it's an optional field precisely for that case — see
+    // its doc comment in types.ts). The gate must still be routable even then — the
+    // picker degrades gracefully rather than crashing or hiding.
     it("still renders a functional picker when the node execution carries no escalation data", () => {
       const run = makeSupervisorRun(undefined);
 

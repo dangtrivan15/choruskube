@@ -10,10 +10,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import ArtifactBrowser from "./ArtifactBrowser";
+import ArtifactList from "./ArtifactList";
 import ReviewHistory from "./ReviewHistory";
 import TriggerBanner from "./TriggerBanner";
 import { parseEscalationCategory } from "@/lib/decisions";
-import type { EscalationContext } from "@/lib/types";
+import type { EscalationContext, ResolvedArtifactGroup } from "@/lib/types";
 
 export interface EscalationGatePanelProps {
   runId: string;
@@ -23,6 +24,15 @@ export interface EscalationGatePanelProps {
    * either way the picker below must stay usable.
    */
   escalation?: EscalationContext | null;
+  /**
+   * The Supervisor's resolved required-reading artifacts. `ArtifactResolutionService`
+   * synthesises exactly one group for every Supervisor gate — the escalating node's
+   * `escalation.md`, flagged `required` — so this is normally that one document, not
+   * an arbitrary declared list. Distinct from (and complementary to) the escalator's
+   * full `ArtifactBrowser` below: this is "what you must read", that is "everything
+   * the escalator produced".
+   */
+  requiredArtifacts?: ResolvedArtifactGroup[] | null;
   /** The Supervisor's outgoing `route:<label>` options — one per candidate target node. */
   decisionOptions: readonly string[];
   guidance: string;
@@ -54,6 +64,7 @@ function targetLabel(option: string): string {
 export default function EscalationGatePanel({
   runId,
   escalation,
+  requiredArtifacts,
   decisionOptions,
   guidance,
   onGuidanceChange,
@@ -79,6 +90,10 @@ export default function EscalationGatePanel({
           <p className="italic text-muted-foreground">No summary available.</p>
         )}
       </div>
+
+      {requiredArtifacts != null && requiredArtifacts.length > 0 && (
+        <ArtifactList runId={runId} groups={requiredArtifacts} />
+      )}
 
       {escalation?.escalatorExecId && (
         <ArtifactBrowser runId={runId} execId={escalation.escalatorExecId} />

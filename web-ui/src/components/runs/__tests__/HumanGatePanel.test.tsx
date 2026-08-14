@@ -489,6 +489,28 @@ describe("HumanGatePanel", () => {
       expect(screen.queryByText("Reject")).not.toBeInTheDocument();
     });
 
+    // Regression coverage: ArtifactResolutionService synthesises exactly one required-artifact
+    // group for every Supervisor gate — the escalating node's escalation.md, flagged required.
+    // HumanGatePanel already receives `requiredArtifacts` as a prop for the ordinary-gate path;
+    // it must also thread it into EscalationGatePanel, not drop it on the floor.
+    it("threads requiredArtifacts into EscalationGatePanel (the escalator's required escalation.md)", () => {
+      const requiredArtifacts = [
+        {
+          nodeExecutionId: "escalator-exec-1",
+          nodeLabel: "Code Review",
+          artifacts: [
+            { name: "escalation.md", description: "Why this run was escalated to the Supervisor", required: true },
+          ],
+        },
+      ];
+      renderWithProviders(
+        <HumanGatePanel {...escalationProps} requiredArtifacts={requiredArtifacts} />
+      );
+
+      expect(screen.getByTestId("artifact-list-mock")).toBeInTheDocument();
+      expect(screen.getByText("ArtifactList (1 groups)")).toBeInTheDocument();
+    });
+
     it("renders the escalator context from the escalation prop", () => {
       renderWithProviders(<HumanGatePanel {...escalationProps} />);
 

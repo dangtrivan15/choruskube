@@ -136,6 +136,7 @@ export default function HumanGatePanel({
         <EscalationGatePanel
           runId={runId}
           escalation={escalation}
+          requiredArtifacts={requiredArtifacts}
           decisionOptions={options}
           guidance={feedback}
           onGuidanceChange={setFeedback}

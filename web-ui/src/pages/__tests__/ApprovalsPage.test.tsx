@@ -752,6 +752,27 @@ describe("ApprovalsPage", () => {
       expect(screen.getByText("CI runner is wedged and cannot be reached.")).toBeInTheDocument();
     });
 
+    // Regression coverage: ArtifactResolutionService synthesises exactly one required-artifact
+    // group for every Supervisor gate — the escalating node's escalation.md, flagged required.
+    // GateCard already threads `gate.requiredArtifacts` into the ordinary-gate ArtifactList; it
+    // must also thread it into EscalationGatePanel, not drop it on the floor.
+    it("threads gate.requiredArtifacts into EscalationGatePanel (the escalator's required escalation.md)", () => {
+      renderWithEscalationGate({
+        requiredArtifacts: [
+          {
+            nodeExecutionId: "escalator-exec-1",
+            nodeLabel: "Code Review",
+            artifacts: [
+              { name: "escalation.md", description: "Why this run was escalated to the Supervisor", required: true },
+            ],
+          },
+        ],
+      });
+
+      expect(screen.getByTestId("artifact-list-mock")).toBeInTheDocument();
+      expect(screen.getByText("ArtifactList (1 groups)")).toBeInTheDocument();
+    });
+
     it("submits the chosen route: decision with human_guidance.md attached", async () => {
       const mockMutate = vi.fn();
       const { useSignalFromDashboard } = await import("@/hooks/usePendingGates");

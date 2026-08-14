@@ -189,6 +189,7 @@ function GateCard({ gate }: { gate: PendingGateResponse }) {
         <EscalationGatePanel
           runId={gate.runId}
           escalation={gate.escalation}
+          requiredArtifacts={gate.requiredArtifacts}
           decisionOptions={options}
           guidance={feedback}
           onGuidanceChange={setFeedback}

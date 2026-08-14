@@ -17,6 +17,16 @@ vi.mock("@/hooks/useArtifacts", () => ({
     data: [],
     isLoading: false,
   })),
+  useArtifactContent: vi.fn(() => ({
+    data: undefined,
+    isLoading: false,
+  })),
+}));
+
+vi.mock("../ArtifactList", () => ({
+  default: ({ groups }: { runId: string; groups: unknown[] }) => (
+    <div data-testid="artifact-list-mock">ArtifactList ({groups.length} groups)</div>
+  ),
 }));
 
 import { useReviewHistory } from "@/hooks/useRuns";
@@ -32,6 +42,21 @@ const fullEscalation: EscalationContext = {
   category: "blocked_external",
   summary: "CI runner is wedged and cannot be reached.",
 };
+
+/**
+ * What ArtifactResolutionService.resolveRequiredArtifacts synthesises for every
+ * Supervisor gate: the escalator's escalation.md, flagged required — the one
+ * document the reviewer must read before routing.
+ */
+const requiredArtifacts = [
+  {
+    nodeExecutionId: "escalator-exec-1",
+    nodeLabel: "Code Review",
+    artifacts: [
+      { name: "escalation.md", description: "Why this run was escalated to the Supervisor", required: true },
+    ],
+  },
+];
 
 const routeOptions = ["route:qa_review", "route:implement", "route:final_approval"];
 
@@ -75,6 +100,88 @@ describe("EscalationGatePanel", () => {
 
     expect(screen.getByText("Code Review")).toBeInTheDocument();
     expect(screen.getByText("CI runner is wedged and cannot be reached.")).toBeInTheDocument();
+  });
+
+  // Regression coverage: ArtifactResolutionService synthesises exactly one required-artifact
+  // group for every Supervisor gate — the escalating node's escalation.md, flagged required.
+  // That's the one document the reviewer must read before routing; dropping it degrades the
+  // panel from "here is the required document" to "one filename in the escalator's file list,
+  // unmarked".
+  it("renders the required-artifact list (the escalator's escalation.md) when provided", () => {
+    renderWithProviders(
+      <EscalationGatePanel
+        runId="run-1"
+        escalation={fullEscalation}
+        decisionOptions={routeOptions}
+        requiredArtifacts={requiredArtifacts}
+        guidance=""
+        onGuidanceChange={noop}
+        onConfirm={noop}
+        isPending={false}
+      />
+    );
+
+    expect(screen.getByTestId("artifact-list-mock")).toBeInTheDocument();
+    expect(screen.getByText("ArtifactList (1 groups)")).toBeInTheDocument();
+  });
+
+  it("does not render the required-artifact list when requiredArtifacts is null", () => {
+    renderWithProviders(
+      <EscalationGatePanel
+        runId="run-1"
+        escalation={fullEscalation}
+        decisionOptions={routeOptions}
+        requiredArtifacts={null}
+        guidance=""
+        onGuidanceChange={noop}
+        onConfirm={noop}
+        isPending={false}
+      />
+    );
+
+    expect(screen.queryByTestId("artifact-list-mock")).not.toBeInTheDocument();
+  });
+
+  it("does not render the required-artifact list when requiredArtifacts is an empty array", () => {
+    renderWithProviders(
+      <EscalationGatePanel
+        runId="run-1"
+        escalation={fullEscalation}
+        decisionOptions={routeOptions}
+        requiredArtifacts={[]}
+        guidance=""
+        onGuidanceChange={noop}
+        onConfirm={noop}
+        isPending={false}
+      />
+    );
+
+    expect(screen.queryByTestId("artifact-list-mock")).not.toBeInTheDocument();
+  });
+
+  it("still renders the escalator's full ArtifactBrowser alongside the required-artifact list", () => {
+    // The two are complementary: ArtifactList is "what you must read" (escalation.md),
+    // ArtifactBrowser is "everything the escalator produced". Neither replaces the other.
+    mockUseArtifacts.mockReturnValue({
+      data: [{ name: "escalation.md", size: 128, lastModified: "2026-01-01T00:00:00Z" }],
+      isLoading: false,
+    });
+
+    renderWithProviders(
+      <EscalationGatePanel
+        runId="run-1"
+        escalation={fullEscalation}
+        decisionOptions={routeOptions}
+        requiredArtifacts={requiredArtifacts}
+        guidance=""
+        onGuidanceChange={noop}
+        onConfirm={noop}
+        isPending={false}
+      />
+    );
+
+    expect(screen.getByTestId("artifact-list-mock")).toBeInTheDocument();
+    expect(screen.getByTestId("artifact-browser")).toBeInTheDocument();
   });
 
   it("scopes ReviewHistory to the escalator's loop group, not the Supervisor's", () => {
