@@ -104,6 +104,16 @@ public class DecisionOptionsResolver {
         return null;
     }
 
+    /**
+     * Finds a node's {@code config_overrides} JsonNode within a snapshot's {@code nodes} array, by
+     * {@code template_node_id}. Returns {@code null} if the node or its config overrides can't be
+     * found. Kept public because callers outside decision resolution read other config keys
+     * through it — {@code RunService.isMaterializeNode} reads {@code materialize}.
+     */
+    public JsonNode findNodeConfigOverrides(JsonNode nodesArr, UUID nodeId) {
+        return configOverridesOf(findNode(nodesArr, nodeId));
+    }
+
     /** {@code "route:implement"} → {@code "implement"}; {@code null} for any other decision. */
     public static String routeTargetLabel(String decision) {
         if (decision == null || decision.length() <= ROUTE_PREFIX.length()) {

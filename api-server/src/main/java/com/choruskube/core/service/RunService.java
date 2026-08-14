@@ -577,10 +577,7 @@ public class RunService {
      */
     private String validateDecisionAgainstEdges(JsonNode snapshot, UUID templateNodeId, String decision) {
         try {
-            JsonNode edges = snapshot.get("edges");
-            JsonNode nodeConfigOverrides =
-                    decisionOptionsResolver.findNodeConfigOverrides(snapshot.get("nodes"), templateNodeId);
-            List<String> validConditions = decisionOptionsResolver.resolve(edges, templateNodeId, nodeConfigOverrides);
+            List<String> validConditions = decisionOptionsResolver.resolve(snapshot, templateNodeId);
             if (validConditions.isEmpty()) {
                 throw new BadRequestException("This node has no conditional edges");
             }

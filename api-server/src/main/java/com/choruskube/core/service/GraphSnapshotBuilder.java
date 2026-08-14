@@ -172,11 +172,18 @@ public class GraphSnapshotBuilder {
         // resolver the Approvals/pending-gates endpoint uses, so the run-detail sidebar can render
         // gates (like the Roadmap Provisioner's edge-less "approved" path) without re-deriving the
         // rule itself and drifting from the server's answer.
+        //
+        // resolve() reads the whole snapshot (it must see every node to answer the Supervisor
+        // rules), but we are still building it — so hand it a wrapper over the arrays as they
+        // stand. Both are fully populated by this point, including executor_type and
+        // config_overrides, so the wrapper is a faithful stand-in. Built once, not per node.
+        ObjectNode resolverView = objectMapper.createObjectNode();
+        resolverView.set("nodes", nodesArray);
+        resolverView.set("edges", edgesArray);
         for (JsonNode nodeNode : nodesArray) {
             ObjectNode node = (ObjectNode) nodeNode;
             UUID nodeId = UUID.fromString(node.get("template_node_id").asText());
-            JsonNode configOverrides = node.get("config_overrides");
-            List<String> decisionOptions = decisionOptionsResolver.resolve(edgesArray, nodeId, configOverrides);
+            List<String> decisionOptions = decisionOptionsResolver.resolve(resolverView, nodeId);
             ArrayNode decisionOptionsArray = objectMapper.createArrayNode();
             decisionOptions.forEach(decisionOptionsArray::add);
             node.set("decision_options", decisionOptionsArray);

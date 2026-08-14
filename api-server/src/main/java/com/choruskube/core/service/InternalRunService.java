@@ -625,11 +625,7 @@ public class InternalRunService {
             WorkflowRun run =
                     runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Run not found: " + runId));
             var snapshot = objectMapper.readTree(snapshotBuilder.buildSnapshotForRun(run));
-            var edges = snapshot.get("edges");
-            var nodeConfigOverrides =
-                    decisionOptionsResolver.findNodeConfigOverrides(snapshot.get("nodes"), exec.getTemplateNodeId());
-            List<String> validConditions =
-                    decisionOptionsResolver.resolve(edges, exec.getTemplateNodeId(), nodeConfigOverrides);
+            List<String> validConditions = decisionOptionsResolver.resolve(snapshot, exec.getTemplateNodeId());
             return new DecisionsWithSnapshot(validConditions, snapshot);
         } catch (Exception e) {
             throw new RuntimeException("Failed to build graph snapshot", e);

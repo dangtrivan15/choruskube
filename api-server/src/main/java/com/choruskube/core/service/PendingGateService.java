@@ -167,12 +167,10 @@ public class PendingGateService {
                 predecessorOutputs = findPredecessorOutputs(
                         exec.getTemplateNodeId(), edgesArr, nodeMap, execsByRun.getOrDefault(run.getId(), List.of()));
 
-                // Decision options come from the union of outgoing edge conditions and this
-                // node's terminal_decisions config — same source RunService's validator uses,
-                // so the UI cannot drift from the contract.
-                JsonNode thisNodeConfigOverrides = thisNode != null ? thisNode.get("config_overrides") : null;
-                decisionOptions =
-                        decisionOptionsResolver.resolve(edgesArr, exec.getTemplateNodeId(), thisNodeConfigOverrides);
+                // Decision options come from DecisionOptionsResolver — the same source
+                // RunService's validator and the agent's list-decisions endpoint use, so the
+                // three cannot drift.
+                decisionOptions = decisionOptionsResolver.resolve(snapshot, exec.getTemplateNodeId());
             } catch (Exception e) {
                 logger.warn("Failed to parse graph snapshot for run {}: {}", run.getId(), e.getMessage());
             }
