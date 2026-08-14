@@ -48,11 +48,34 @@ public class ArtifactResolutionService {
     /**
      * Resolves required input artifacts for a human-gate template node in a run.
      *
-     * @return List of resolved artifact groups, or null if no declarations exist (legacy mode).
+     * <p>The Supervisor (a routing-hub node) declares no {@code required_input_artifacts} of its
+     * own — it is template-agnostic — so it is resolved separately via {@link
+     * #resolveEscalatingExecution}.
+     *
+     * @return List of resolved artifact groups; {@code List.of()} for the Supervisor when nothing
+     *     has escalated yet; or {@code null} if no declarations exist (legacy mode).
      */
     public List<ResolvedArtifactGroup> resolveRequiredArtifacts(UUID templateNodeId, UUID runId) {
         TemplateNode gateNode = templateNodeRepo.findById(templateNodeId).orElse(null);
-        if (gateNode == null || gateNode.getRequiredInputArtifacts() == null) {
+        if (gateNode == null) {
+            return null;
+        }
+        // The Supervisor declares no required_input_artifacts — it is template-agnostic, so there
+        // is nothing to declare ahead of time. Its one guaranteed input is whichever execution
+        // escalated to it, surfaced as the platform-contract file the escalator is required to
+        // author.
+        if (DecisionOptionsResolver.isRoutingHub(gateNode.getConfigOverrides(), objectMapper)) {
+            NodeExecution escalator = resolveEscalatingExecution(runId);
+            if (escalator == null) {
+                return List.of();
+            }
+            return List.of(new ResolvedArtifactGroup(
+                    escalator.getId(),
+                    escalator.getLabel() == null ? "" : escalator.getLabel(),
+                    List.of(new ResolvedArtifactEntry(
+                            "escalation.md", "Why this run was escalated to the Supervisor", true))));
+        }
+        if (gateNode.getRequiredInputArtifacts() == null) {
             return null;
         }
 
@@ -128,6 +151,20 @@ public class ArtifactResolutionService {
     }
 
     /**
+     * The execution that paged the Supervisor: the most recently completed execution whose
+     * decision is {@code escalate}. Selection is by {@code completed_at}, not iteration — the
+     * Supervisor is re-entered many times per run and the relevant escalation is the one that just
+     * happened, not the highest-numbered one.
+     */
+    NodeExecution resolveEscalatingExecution(UUID runId) {
+        return nodeExecutionRepo.findByWorkflowRunIdAndStatus(runId, NodeExecutionStatus.completed).stream()
+                .filter(e -> DecisionOptionsResolver.ESCALATE_DECISION.equalsIgnoreCase(e.getDecision()))
+                .max(Comparator.comparing(
+                        NodeExecution::getCompletedAt, Comparator.nullsFirst(Comparator.naturalOrder())))
+                .orElse(null);
+    }
+
+    /**
      * Resolves the files to materialise under {@code /workspace/in/} before this node execution's
      * agent starts, so the agent reads them off disk instead of hunting object storage.
      *
@@ -198,8 +235,10 @@ public class ArtifactResolutionService {
     /**
      * Passthrough arm: attachments from the human gate whose decision routed back to this node.
      *
-     * <p>The orchestrator already recorded the answer in {@code traversed_edge_ids}, so this is an
-     * exact lookup rather than a re-evaluation of edge conditions or a decision-string heuristic.
+     * <p>Two ways a human gate can have routed work here: an ordinary gate fires an edge, which
+     * the orchestrator records in {@code traversed_edge_ids}, so that case is an exact lookup
+     * rather than a re-evaluation of edge conditions. The Supervisor fires no edge at all, so it
+     * is matched instead on its {@code route:<label>} decision string.
      */
     private void collectRoutingGateArtifacts(UUID runId, NodeExecution exec, Map<String, String> artifacts) {
         try {
@@ -209,7 +248,8 @@ public class ArtifactResolutionService {
             }
             JsonNode snapshot = objectMapper.readTree(snapshotBuilder.buildSnapshotForRun(run));
 
-            // Edges whose target is this node — the only ones that could have routed work here.
+            // Edges whose target is this node — the ones that could have routed work here via the
+            // ordinary edge-firing path.
             Set<UUID> inboundEdgeIds = new HashSet<>();
             JsonNode edges = snapshot.get("edges");
             if (edges != null) {
@@ -221,14 +261,32 @@ public class ArtifactResolutionService {
                     }
                 }
             }
-            if (inboundEdgeIds.isEmpty()) {
-                return;
+
+            // This node's own label, needed to recognise the Supervisor's route:<label> decision.
+            // The Supervisor fires no edge, so a node it routed to — including one with no inbound
+            // edges at all, e.g. the template's entrypoint — has nothing in traversed_edge_ids to
+            // match; the decision string is the only record of where it sent the run.
+            String myLabel = null;
+            JsonNode nodes = snapshot.get("nodes");
+            if (nodes != null) {
+                for (JsonNode node : nodes) {
+                    if (node.path("template_node_id")
+                            .asText()
+                            .equals(exec.getTemplateNodeId().toString())) {
+                        myLabel = node.path("label").asText(null);
+                        break;
+                    }
+                }
             }
+            final String targetLabel = myLabel;
 
             NodeExecution gate =
                     nodeExecutionRepo.findByWorkflowRunIdAndStatus(runId, NodeExecutionStatus.completed).stream()
                             .filter(e -> e.getReviewerType() == ReviewerType.human)
-                            .filter(e -> traversedAny(e, inboundEdgeIds))
+                            .filter(e -> traversedAny(e, inboundEdgeIds)
+                                    || (targetLabel != null
+                                            && targetLabel.equalsIgnoreCase(
+                                                    DecisionOptionsResolver.routeTargetLabel(e.getDecision()))))
                             .max(Comparator.comparing(
                                     NodeExecution::getCompletedAt, Comparator.nullsFirst(Comparator.naturalOrder())))
                             .orElse(null);
