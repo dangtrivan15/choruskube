@@ -16,6 +16,10 @@ public interface AuditSink {
     String EPIC_STAGE_UPDATED = "epic_stage_updated";
     String EPIC_PRIORITY_UPDATED = "epic_priority_updated";
     String EPIC_TARGET_DATE_UPDATED = "epic_target_date_updated";
+    String EPIC_MILESTONE_UPDATED = "epic_milestone_updated";
+    String MILESTONE_CREATED = "milestone_created";
+    String MILESTONE_UPDATED = "milestone_updated";
+    String MILESTONE_DELETED = "milestone_deleted";
     String STORY_CREATED = "story_created";
     String STORY_UPDATED = "story_updated";
     String STORY_DELETED = "story_deleted";

@@ -1,5 +1,6 @@
 package com.choruskube.core.controller;
 
+import com.choruskube.core.dto.EpicMilestoneUpdateRequest;
 import com.choruskube.core.dto.EpicPriorityUpdateRequest;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
@@ -56,8 +57,9 @@ public class EpicController {
             // handled as "no candidates match" in DefaultEpicService, not silently ignored.
             @RequestParam(required = false) Readiness readiness,
             @RequestParam(required = false) Priority priority,
+            @RequestParam(required = false) UUID milestoneId,
             @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
-        return service.list(title, readiness, priority, pageable);
+        return service.list(title, readiness, priority, milestoneId, pageable);
     }
 
     @PreAuthorize("@orgSecurity.canRead()")
@@ -96,5 +98,11 @@ public class EpicController {
     public EpicResponse updateTargetDate(
             @PathVariable UUID id, @Valid @RequestBody EpicTargetDateUpdateRequest request) {
         return service.updateTargetDate(id, request.targetDate());
+    }
+
+    @PreAuthorize("@orgSecurity.canOperate()")
+    @PatchMapping("/{id}/milestone")
+    public EpicResponse assignMilestone(@PathVariable UUID id, @Valid @RequestBody EpicMilestoneUpdateRequest request) {
+        return service.assignMilestone(id, request.milestoneId());
     }
 }

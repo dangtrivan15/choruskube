@@ -17,6 +17,9 @@ import java.util.UUID;
  * — it does NOT aggregate its Stories' {@code stalled} flags (that aggregation, if wanted, is a
  * UI-layer concern). There is no Epic-level {@code readiness} field: readiness is a dependency-
  * graph concept and Epics do not participate in the Story/Task dependency graph.
+ *
+ * <p>{@code milestone} is the Epic's assigned Milestone reference, or {@code null} if unassigned —
+ * populated by {@code DefaultRoadmapTimelineService}, mirroring {@code EpicResponse#milestone}.
  */
 public record TimelineEpicSummary(
         UUID id,
@@ -26,4 +29,5 @@ public record TimelineEpicSummary(
         Instant createdAt,
         Instant updatedAt,
         List<TimelineStorySummary> stories,
-        boolean stalled) {}
+        boolean stalled,
+        MilestoneRef milestone) {}

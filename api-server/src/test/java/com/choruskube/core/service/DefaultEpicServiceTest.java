@@ -375,7 +375,7 @@ public class DefaultEpicServiceTest extends BaseTest {
     }
 
     private long readyItemCountOf(UUID epicId) {
-        return service.list(null, null, null, PageRequest.of(0, 100)).getContent().stream()
+        return service.list(null, null, null, null, PageRequest.of(0, 100)).getContent().stream()
                 .filter(e -> e.id().equals(epicId))
                 .findFirst()
                 .orElseThrow()
@@ -394,7 +394,7 @@ public class DefaultEpicServiceTest extends BaseTest {
         var blockerStory = storyService.create(blockerEpic.id(), new StoryRequest("Blocker", "D"));
         dependencyService.create(new CreateDependencyRequest("story", blockerStory.id(), "story", blockedStory.id()));
 
-        Page<EpicResponse> page = service.list(null, Readiness.READY, null, PageRequest.of(0, 20));
+        Page<EpicResponse> page = service.list(null, Readiness.READY, null, null, PageRequest.of(0, 20));
 
         assertThat(page.getContent()).extracting(EpicResponse::id).contains(readyEpic.id());
         assertThat(page.getContent()).extracting(EpicResponse::id).doesNotContain(blockedEpic.id());
@@ -626,7 +626,7 @@ public class DefaultEpicServiceTest extends BaseTest {
         EpicResponse highEpic = service.create(new EpicRequest("High", "D", null, r.getId(), Priority.high), null);
         EpicResponse lowEpic = service.create(new EpicRequest("Low", "D", null, r.getId(), Priority.low), null);
 
-        Page<EpicResponse> highPage = service.list(null, null, Priority.high, PageRequest.of(0, 20));
+        Page<EpicResponse> highPage = service.list(null, null, Priority.high, null, PageRequest.of(0, 20));
 
         assertThat(highPage.getContent()).extracting(EpicResponse::id).contains(highEpic.id());
         assertThat(highPage.getContent()).extracting(EpicResponse::id).doesNotContain(lowEpic.id());
@@ -641,7 +641,11 @@ public class DefaultEpicServiceTest extends BaseTest {
                 service.create(new EpicRequest("Medium", "D", null, r.getId(), Priority.medium), null);
 
         Page<EpicResponse> page = service.list(
-                null, null, null, PageRequest.of(0, 20, Sort.by("priority").descending()));
+                null,
+                null,
+                null,
+                null,
+                PageRequest.of(0, 20, Sort.by("priority").descending()));
 
         List<UUID> ids = page.getContent().stream().map(EpicResponse::id).toList();
         assertThat(ids.indexOf(highEpic.id())).isLessThan(ids.indexOf(mediumEpic.id()));
@@ -661,6 +665,7 @@ public class DefaultEpicServiceTest extends BaseTest {
         Page<EpicResponse> page = service.list(
                 null,
                 Readiness.READY,
+                null,
                 null,
                 PageRequest.of(0, 20, Sort.by("priority").descending()));
 
