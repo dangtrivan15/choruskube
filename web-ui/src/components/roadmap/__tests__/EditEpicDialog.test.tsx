@@ -198,6 +198,34 @@ describe("EditEpicDialog", () => {
     );
   });
 
+  it("clears the milestone selection when the software project changes and un-tags on save", async () => {
+    // Regression: re-pointing the Epic to a different project must not silently retain the
+    // previously-chosen Milestone (scoped to the old project). The picker resets to "None" and
+    // the post-PUT PATCH clears the assignment, keeping the UI and the saved state in agreement.
+    mockUseMilestones.mockReturnValue({ data: { content: [{ id: "m1", name: "Q3 Launch" }] } });
+    renderWithProviders(
+      <EditEpicDialog
+        epic={makeEpic({ milestone: { id: "m1", name: "Q3 Launch" } })}
+        open={true}
+        onOpenChange={() => {}}
+      />
+    );
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+
+    await user.click(screen.getByTestId("edit-epic-software-project-select"));
+    await user.click(screen.getByText("Backend Stack"));
+    expect(screen.getByTestId("edit-epic-milestone-select")).toHaveTextContent("None");
+
+    await user.click(screen.getByTestId("edit-epic-save"));
+    const [, options] = mockMutate.mock.calls[0];
+    options.onSuccess();
+
+    expect(mockAssignMutate).toHaveBeenCalledWith(
+      { id: "epic-1", milestoneId: null },
+      expect.anything()
+    );
+  });
+
   it("does not issue an assign PATCH after save when the milestone selection is unchanged", async () => {
     mockUseMilestones.mockReturnValue({ data: { content: [{ id: "m1", name: "Q3 Launch" }] } });
     renderWithProviders(

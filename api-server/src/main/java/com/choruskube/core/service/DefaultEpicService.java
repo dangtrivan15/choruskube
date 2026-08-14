@@ -196,10 +196,21 @@ public class DefaultEpicService implements EpicService {
         // Epic itself was already checked via checkOrgAccess("epic", id) above, so the caller's
         // org == the Epic's org. No-op under always-allow; 403 on mismatch under auth.
         authService.checkOrgAccess("software_project", newProject.getId());
+        UUID previousProjectId = epic.getSoftwareProjectId();
         epic.setTitle(request.title());
         epic.setDescription(request.description());
         epic.setMotivation(request.motivation());
         epic.setSoftwareProjectId(newProject.getId());
+        // A Milestone is scoped to exactly one software_project (Decision 3 of the "Group Epics
+        // under a named Milestone / Release" feature), so re-pointing the Epic to a different
+        // project would leave it tagged with a Milestone that no longer shares its project — the
+        // same invariant assignMilestone rejects, but here on the project-change path update()
+        // owns. Un-tag it (the SET NULL un-grouping semantics a Milestone delete already uses)
+        // rather than let the invariant break; re-tagging under the new project stays a separate
+        // PATCH /{id}/milestone.
+        if (epic.getMilestoneId() != null && !newProject.getId().equals(previousProjectId)) {
+            epic.setMilestoneId(null);
+        }
         epic = repo.save(epic);
 
         EpicResponse response = toResponse(epic, newProject);

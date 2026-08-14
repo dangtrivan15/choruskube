@@ -37,6 +37,16 @@ export default function EditEpicDialog({ epic, open, onOpenChange }: Props) {
   const updateEpic = useUpdateEpic();
   const assignMilestone = useAssignEpicMilestone();
 
+  function handleSoftwareProjectChange(id: string) {
+    setSoftwareProjectId(id);
+    // A Milestone must belong to the same project as the Epic (Decision 3) — clear a stale
+    // selection from the previous project rather than silently retain a now cross-project
+    // Milestone tag when the Epic is re-pointed. Mirrors CreateEpicDialog; the backend's PUT
+    // additionally un-tags on a project change, so this keeps the picker and the saved state in
+    // agreement.
+    setMilestoneId(null);
+  }
+
   useEffect(() => {
     if (epic) {
       setTitle(epic.title);
@@ -136,7 +146,7 @@ export default function EditEpicDialog({ epic, open, onOpenChange }: Props) {
 
             <SoftwareProjectSelect
               value={softwareProjectId}
-              onChange={setSoftwareProjectId}
+              onChange={handleSoftwareProjectChange}
               testId="edit-epic-software-project-select"
             />
           </div>

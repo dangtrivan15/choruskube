@@ -32,7 +32,10 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Sole implementation of {@link MilestoneService} (Decision 8 of the roadmap-hierarchy feature). */
+/**
+ * Sole implementation of {@link MilestoneService} for the "Group Epics under a named Milestone /
+ * Release" feature (Decisions 1–5).
+ */
 @Service
 public class DefaultMilestoneService implements MilestoneService {
 

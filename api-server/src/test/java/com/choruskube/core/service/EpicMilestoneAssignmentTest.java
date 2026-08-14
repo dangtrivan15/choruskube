@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import com.choruskube.core.BaseTest;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
+import com.choruskube.core.dto.EpicUpdateRequest;
 import com.choruskube.core.dto.MilestoneRequest;
 import com.choruskube.core.dto.MilestoneResponse;
 import com.choruskube.core.dto.StoryRequest;
@@ -153,6 +154,42 @@ public class EpicMilestoneAssignmentTest extends BaseTest {
         epicService.assignMilestone(epic.id(), milestone.id());
 
         verify(runEventPublisher).publishRoadmapItemChanged(eq("epic"), eq(epic.id()), any());
+    }
+
+    @Test
+    void update_toDifferentProject_clearsMilestone() {
+        // A full-PUT edit that re-points the Epic to a different project must un-tag its
+        // Milestone: a Milestone is scoped to one software_project (Decision 3), so the old tag
+        // can no longer apply. Guards the invariant on the project-change path update() owns —
+        // otherwise the Epic would carry a cross-project Milestone reference.
+        GitRepo repoA = makeRepo("https://github.com/test/update-clear-a.git");
+        GitRepo repoB = makeRepo("https://github.com/test/update-clear-b.git");
+        EpicResponse epic = epicService.create(new EpicRequest("T", "D", null, repoA.getId()), null);
+        MilestoneResponse milestone =
+                milestoneService.create(new MilestoneRequest("Q3 Launch", null, repoA.getId(), null));
+        epicService.assignMilestone(epic.id(), milestone.id());
+
+        EpicResponse updated = epicService.update(epic.id(), new EpicUpdateRequest("T", "D", null, repoB.getId()));
+
+        assertThat(updated.milestone()).isNull();
+        assertThat(epicService.get(epic.id()).milestone()).isNull();
+    }
+
+    @Test
+    void update_sameProject_retainsMilestone() {
+        // A full-PUT edit that keeps the same project must NOT disturb the Milestone tag — only an
+        // actual project change un-tags.
+        GitRepo r = makeRepo("https://github.com/test/update-retain.git");
+        EpicResponse epic = epicService.create(new EpicRequest("T", "D", null, r.getId()), null);
+        MilestoneResponse milestone = milestoneService.create(new MilestoneRequest("Q3 Launch", null, r.getId(), null));
+        epicService.assignMilestone(epic.id(), milestone.id());
+
+        EpicResponse updated =
+                epicService.update(epic.id(), new EpicUpdateRequest("New title", "New desc", null, r.getId()));
+
+        assertThat(updated.milestone()).isNotNull();
+        assertThat(updated.milestone().id()).isEqualTo(milestone.id());
+        assertThat(epicService.get(epic.id()).milestone().id()).isEqualTo(milestone.id());
     }
 
     @Test
