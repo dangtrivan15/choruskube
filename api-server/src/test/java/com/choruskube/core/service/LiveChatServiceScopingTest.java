@@ -4,8 +4,10 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+import com.choruskube.core.dto.CompleteLiveChatRequest;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.executor.WorkloadExecutor;
+import com.choruskube.core.model.LiveChatSession;
 import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.NodeExecutionStatus;
@@ -100,5 +102,26 @@ class LiveChatServiceScopingTest {
 
         verifyNoInteractions(executor);
         verify(execRepo, never()).save(any());
+    }
+
+    @Test
+    void completeLiveChat_sessionBelongsToDifferentRun_throwsNotFoundAndTerminatesNothing() {
+        WorkflowRun run = new WorkflowRun();
+        run.setId(runId);
+        when(runRepo.findById(runId)).thenReturn(Optional.of(run));
+
+        LiveChatSession session = new LiveChatSession();
+        session.setId(UUID.randomUUID());
+        session.setNodeExecutionId(foreignExecId);
+        session.setWorkflowRunId(UUID.randomUUID()); // belongs to a DIFFERENT run
+        when(sessionRepo.findByNodeExecutionIdAndStatusIn(eq(foreignExecId), any()))
+                .thenReturn(Optional.of(session));
+
+        assertThrows(
+                NotFoundException.class,
+                () -> service.completeLiveChat(runId, foreignExecId, new CompleteLiveChatRequest("chat text")));
+
+        verifyNoInteractions(executor);
+        verify(sessionRepo, never()).save(any());
     }
 }

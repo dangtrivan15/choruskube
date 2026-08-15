@@ -409,6 +409,12 @@ public class LiveChatService {
                 .findByNodeExecutionIdAndStatusIn(nodeExecId, List.of(LiveChatStatus.pending, LiveChatStatus.active))
                 .orElseThrow(() -> new NotFoundException("No active live chat session for node: " + nodeExecId));
 
+        // Verify the live chat session belongs to the requested run before terminating its pod.
+        if (!runId.equals(session.getWorkflowRunId())) {
+            throw new NotFoundException(
+                    "Live chat session for node " + nodeExecId + " does not belong to run " + runId);
+        }
+
         // Build transcript from stored messages, falling back to the request transcript
         String transcript = buildTranscriptFromMessages(session.getId());
         if (transcript == null || transcript.isBlank()) {
@@ -435,6 +441,9 @@ public class LiveChatService {
         // Set the transcript as the gate node's result and return to awaiting_human
         NodeExecution gateExec = execRepo.findById(nodeExecId)
                 .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
+
+        // Verify the node execution belongs to the requested run before overwriting its result.
+        NodeExecutionUtil.requireInRun(gateExec, runId);
 
         gateExec.setStatus(NodeExecutionStatus.awaiting_human);
 
