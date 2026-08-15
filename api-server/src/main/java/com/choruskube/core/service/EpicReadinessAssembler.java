@@ -62,11 +62,15 @@ class EpicReadinessAssembler {
         this.authService = authService;
     }
 
-    /** Per-item readiness plus the intra-Epic edges and cross-Epic blocker refs touching {@code candidateIds}. */
+    /** Per-item readiness plus the intra-Epic edges and cross-Epic blocker refs touching {@code
+     * candidateIds}. {@code edges} is the raw row set the transitive walk ran over, handed back so
+     * a caller needing {@link TransitiveReadinessResolver#rootCauseBlockersOf} does not have to
+     * re-query it. */
     record Assembly(
             Map<UUID, Readiness> readinessById,
             List<DependencyEdgeResponse> dependencies,
-            List<ExternalBlockerRef> externalBlockers) {}
+            List<ExternalBlockerRef> externalBlockers,
+            List<WorkItemDependency> edges) {}
 
     /**
      * An Epic's full Story/Task set, pre-loaded once (Decision 3) so callers of {@link #assemble}
@@ -222,7 +226,7 @@ class EpicReadinessAssembler {
         // already BLOCKED, so the result does not depend on map iteration order.
         applyContainmentCascade(readinessById, parentOf);
 
-        return new Assembly(readinessById, dependencies, externalBlockers);
+        return new Assembly(readinessById, dependencies, externalBlockers, rows);
     }
 
     /**

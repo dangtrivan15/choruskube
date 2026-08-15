@@ -36,8 +36,10 @@ import com.choruskube.core.scope.ScopeProvider;
 import com.choruskube.core.util.RepoNameUtil;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -267,6 +269,11 @@ public class DefaultTaskService implements TaskService {
         Task task = findOrThrow(id);
         authService.checkOrgAccess("task", id);
 
+        // One definition of ready, enforced rather than displayed: starting a blocked Task would
+        // clone a base branch missing its blocker's work. The escape hatch is editing the
+        // dependency, not bypassing this check.
+        requireReady(task);
+
         if (task.getStatus() == WorkItemStatus.in_progress) {
             WorkflowRun mostRecent = mostRecentRun(id)
                     .orElseThrow(() -> new ConflictException("Task is in progress but has no linked run"));
@@ -307,6 +314,57 @@ public class DefaultTaskService implements TaskService {
         eventPublisher.publishRoadmapItemChanged(
                 "task", task.getId(), task.getStatus().name());
         return response;
+    }
+
+    /**
+     * Rejects a Task whose readiness resolves to BLOCKED, naming the blockers actually worth
+     * acting on. Root causes only — an intermediate blocker that is itself blocked is never
+     * reported, so the message points at work that can start now.
+     */
+    private void requireReady(Task task) {
+        Story story = storyRepo
+                .findById(task.getStoryId())
+                .orElseThrow(() -> new NotFoundException("Story not found: " + task.getStoryId()));
+        EpicReadinessAssembler.EpicCandidates candidates = readinessAssembler.loadEpicCandidates(story.getEpicId());
+        EpicReadinessAssembler.Assembly assembly = readinessAssembler.assemble(
+                candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), false, null);
+        if (assembly.readinessById().get(task.getId()) != Readiness.BLOCKED) {
+            return;
+        }
+        throw new ConflictException(
+                "Cannot start a blocked Task. Waiting on: " + describeBlockers(task, story, candidates, assembly));
+    }
+
+    /**
+     * Names the blockers actually worth acting on. Root causes only — an intermediate blocker that
+     * is itself blocked is never reported, so the message points at work that can start now. The
+     * block may sit on the Task, on its Story, or on its Epic, so each blocked ancestor contributes
+     * its own root causes.
+     */
+    private String describeBlockers(
+            Task task,
+            Story story,
+            EpicReadinessAssembler.EpicCandidates candidates,
+            EpicReadinessAssembler.Assembly assembly) {
+        LinkedHashSet<UUID> rootCauses = new LinkedHashSet<>();
+        for (UUID id : List.of(task.getId(), story.getId(), story.getEpicId())) {
+            if (assembly.readinessById().get(id) == Readiness.BLOCKED) {
+                rootCauses.addAll(TransitiveReadinessResolver.rootCauseBlockersOf(
+                        id, assembly.edges(), candidates.statusById()::get));
+            }
+        }
+        List<String> titles =
+                rootCauses.stream().map(this::titleOf).filter(Objects::nonNull).toList();
+        return titles.isEmpty() ? "an unfinished dependency" : String.join(", ", titles);
+    }
+
+    /** Resolves a blocker id to a display title, whichever tier it belongs to. */
+    private String titleOf(UUID id) {
+        return repo.findById(id)
+                .map(Task::getTitle)
+                .or(() -> storyRepo.findById(id).map(Story::getTitle))
+                .or(() -> epicRepo.findById(id).map(Epic::getTitle))
+                .orElse(null);
     }
 
     @Override

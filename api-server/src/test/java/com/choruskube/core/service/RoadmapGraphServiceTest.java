@@ -19,11 +19,14 @@ import com.choruskube.core.dto.TaskRequest;
 import com.choruskube.core.dto.TaskResponse;
 import com.choruskube.core.exception.ForbiddenException;
 import com.choruskube.core.model.GitRepo;
+import com.choruskube.core.model.Task;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.BlockerDirection;
 import com.choruskube.core.model.enums.Readiness;
+import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.GitRepoRepository;
+import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.util.RepoNameUtil;
 import io.temporal.client.WorkflowClient;
@@ -63,6 +66,9 @@ public class RoadmapGraphServiceTest extends BaseTest {
 
     @Autowired
     private WorkflowRunRepository runRepo;
+
+    @Autowired
+    private TaskRepository taskRepo;
 
     @MockitoBean
     private WorkflowServiceStubs workflowServiceStubs;
@@ -633,9 +639,12 @@ public class RoadmapGraphServiceTest extends BaseTest {
     }
 
     private void markTaskDone(UUID taskId) {
-        TaskResponse started = taskService.start(taskId);
-        markRunTerminal(started.latestRunId(), WorkflowRunStatus.completed);
-        taskService.complete(taskId);
+        // Writes status directly rather than going through start()/complete(): some callers mark a
+        // task done while its own blocker is still open, on purpose, to set up a multi-step chain —
+        // a scenario TaskService.start() now rejects outright.
+        Task t = taskRepo.findById(taskId).orElseThrow();
+        t.setStatus(WorkItemStatus.done);
+        taskRepo.saveAndFlush(t);
     }
 
     private static Readiness readinessOf(RoadmapGraphSnapshot snapshot, UUID taskId) {
