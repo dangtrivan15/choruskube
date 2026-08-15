@@ -231,10 +231,12 @@ public class DefaultEpicService implements EpicService {
         // Story/Task rows cascade-delete at the DB level (ON DELETE CASCADE on their FK to
         // Epic/Story respectively) when repo.delete(epic) below runs, but work_item_dependency has
         // no DB-level FK/ON DELETE CASCADE on its polymorphic blocking/blocked item columns, so any
-        // edge referencing a descendant Story or Task must be cleaned up here first — otherwise it
-        // dangles, referencing a now-deleted item id, and breaks the Roadmap Graph endpoint for
-        // whichever other, unrelated Epic is on the other end of that edge. Mirrors the same cleanup
-        // DefaultStoryService#delete and DefaultTaskService#delete already do for their own deletes.
+        // edge referencing the Epic itself or a descendant Story/Task must be cleaned up here first —
+        // otherwise it dangles, referencing a now-deleted item id, and breaks the Roadmap Graph
+        // endpoint for whichever other, unrelated Epic is on the other end of that edge. Mirrors the
+        // same cleanup DefaultStoryService#delete and DefaultTaskService#delete already do for their
+        // own deletes.
+        workItemDependencyService.deleteAllReferencing(BlockableItemType.epic, id);
         List<Story> stories = storyRepo.findByEpicIdOrderByCreatedAtDesc(id);
         for (Story story : stories) {
             workItemDependencyService.deleteAllReferencing(BlockableItemType.story, story.getId());

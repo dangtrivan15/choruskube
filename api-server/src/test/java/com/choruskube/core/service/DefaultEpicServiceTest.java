@@ -279,6 +279,22 @@ public class DefaultEpicServiceTest extends BaseTest {
     }
 
     @Test
+    void delete_withDependencyEdgeOnTheEpicItself_alsoRemovesDependency() {
+        // Edges can now name the Epic itself, not just its descendants. work_item_dependency has
+        // no DB-level FK on its polymorphic columns, so nothing removes those rows automatically.
+        GitRepo r = makeRepo("https://github.com/test/epic-delete-epic-dep.git");
+        EpicResponse epic = service.create(new EpicRequest("T", "D", null, r.getId()), null);
+        GitRepo otherRepo = makeRepo("https://github.com/test/epic-delete-epic-dep-other.git");
+        EpicResponse otherEpic = service.create(new EpicRequest("Other", "D", null, otherRepo.getId()), null);
+        DependencyEdgeResponse edge =
+                dependencyService.create(new CreateDependencyRequest("epic", otherEpic.id(), "epic", epic.id()));
+
+        service.delete(epic.id());
+
+        assertThat(dependencyRepo.findById(edge.id())).isEmpty();
+    }
+
+    @Test
     void rollup_allDescendantTasksDone_statusIsDone() {
         GitRepo r = makeRepo("https://github.com/test/rollup-done.git");
         EpicResponse epic = service.create(new EpicRequest("T", "D", null, r.getId()), null);
