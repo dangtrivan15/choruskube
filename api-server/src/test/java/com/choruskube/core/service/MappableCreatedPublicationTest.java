@@ -9,11 +9,18 @@ import com.choruskube.core.dto.NodeDefinitionRequest;
 import com.choruskube.core.event.MappableCreated;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.GraphTemplate;
+import com.choruskube.core.model.NodeDefinition;
+import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.RepoGroup;
+import com.choruskube.core.model.TemplateNode;
 import com.choruskube.core.model.WorkflowRun;
+import com.choruskube.core.model.enums.ExecutorType;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.GraphTemplateRepository;
+import com.choruskube.core.repository.NodeDefinitionRepository;
+import com.choruskube.core.repository.NodeExecutionRepository;
+import com.choruskube.core.repository.TemplateNodeRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.util.RepoNameUtil;
 import io.temporal.client.WorkflowClient;
@@ -127,6 +134,15 @@ class MappableCreatedPublicationTest extends BaseTest {
     @Autowired
     private WorkflowRunRepository runRepo;
 
+    @Autowired
+    private NodeDefinitionRepository nodeDefRepo;
+
+    @Autowired
+    private TemplateNodeRepository templateNodeRepo;
+
+    @Autowired
+    private NodeExecutionRepository execRepo;
+
     // -----------------------------------------------------------------------
     // Captured events
     // -----------------------------------------------------------------------
@@ -226,9 +242,36 @@ class MappableCreatedPublicationTest extends BaseTest {
         repo = gitRepoRepo.save(repo);
         UUID gitRepoId = repo.getId();
 
+        // Build a real NodeExecution row belonging to this run so it satisfies createPullRequest's
+        // run-scoping guard, which requires a genuine node_execution row (FK'd to template_node).
+        NodeDefinition nodeDef = new NodeDefinition();
+        nodeDef.setName("pr-event-test-node-" + UUID.randomUUID());
+        nodeDef.setExecutorType(ExecutorType.ai);
+        nodeDef.setImage("test:latest");
+        nodeDef.setPromptTemplate("test");
+        nodeDef.setSkills("[]");
+        nodeDef.setInputSpec("{}");
+        nodeDef.setOutputSpec("{}");
+        nodeDef.setSecrets("[]");
+        nodeDef = nodeDefRepo.save(nodeDef);
+
+        TemplateNode templateNode = new TemplateNode();
+        templateNode.setGraphTemplateId(template.getId());
+        templateNode.setNodeDefinitionId(nodeDef.getId());
+        templateNode.setLabel("PR Event Test Node");
+        templateNode.setConfigOverrides("{}");
+        templateNode.setEntrypoint(true);
+        templateNode = templateNodeRepo.save(templateNode);
+
+        NodeExecution exec = new NodeExecution();
+        exec.setWorkflowRunId(runId);
+        exec.setTemplateNodeId(templateNode.getId());
+        exec.setGraphVersion(1);
+        exec = execRepo.save(exec);
+        UUID nodeExecId = exec.getId();
+
         collector.clear(); // discard any events from the setup above
 
-        UUID nodeExecId = UUID.randomUUID();
         var req = new CreateRunPullRequestRequest(
                 gitRepoId, "https://github.com/test/pr-event-test/pull/1", 1, "feat: test PR", "pr-event-test");
 

@@ -7,6 +7,7 @@ import com.choruskube.core.model.*;
 import com.choruskube.core.model.enums.*;
 import com.choruskube.core.observability.UsageSink;
 import com.choruskube.core.repository.*;
+import com.choruskube.core.util.NodeExecutionUtil;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -776,7 +777,13 @@ public class InternalRunService {
      * {@link #createStory}/{@link #createTask} via the run's resolved software project.
      */
     @Transactional(readOnly = true)
-    public RoadmapGraphSnapshot getGraph(UUID runId, UUID epicId) {
+    public RoadmapGraphSnapshot getGraph(UUID runId, UUID nodeExecId, UUID epicId) {
+        NodeExecution exec = execRepo.findById(nodeExecId)
+                .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
+
+        // Verify the node execution belongs to the requested run before reading the roadmap graph.
+        NodeExecutionUtil.requireInRun(exec, runId);
+
         WorkflowRun run =
                 runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
         UUID softwareProjectId = resolveSoftwareProjectIdFromRun(run);
@@ -794,11 +801,17 @@ public class InternalRunService {
      * #buildTaskContext} for the same FK chain, but throws {@link NotFoundException} on any
      * unresolved link (a 404 is the correct signal for this endpoint) instead of returning a
      * nullable summary DTO for narration — do not merge the two methods. Delegates to the same
-     * {@link #getGraph(UUID, UUID)} authorization-checked path once {@code epicId} is resolved
-     * (Decision 3), so this method adds no new org-aware code of its own.
+     * {@link #getGraph(UUID, UUID, UUID)} authorization-checked path once {@code epicId} is
+     * resolved (Decision 3), so this method adds no new org-aware code of its own.
      */
     @Transactional(readOnly = true)
     public RoadmapGraphSnapshot getGraphForTriggeringTask(UUID runId, UUID nodeExecId) {
+        NodeExecution exec = execRepo.findById(nodeExecId)
+                .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
+
+        // Verify the node execution belongs to the requested run before reading the roadmap graph.
+        NodeExecutionUtil.requireInRun(exec, runId);
+
         WorkflowRun run =
                 runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
         if (run.getTaskId() == null) {
@@ -824,7 +837,13 @@ public class InternalRunService {
      * the calling agent pod for auth/scoping purposes; in the common case these are the same run.
      */
     @Transactional
-    public TaskResponse updateTaskStatus(UUID runId, UUID taskId, TaskStatusUpdateRequest request) {
+    public TaskResponse updateTaskStatus(UUID runId, UUID nodeExecId, UUID taskId, TaskStatusUpdateRequest request) {
+        NodeExecution exec = execRepo.findById(nodeExecId)
+                .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
+
+        // Verify the node execution belongs to the requested run before updating the task's status.
+        NodeExecutionUtil.requireInRun(exec, runId);
+
         WorkflowRun run =
                 runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
         UUID softwareProjectId = resolveSoftwareProjectIdFromRun(run);
