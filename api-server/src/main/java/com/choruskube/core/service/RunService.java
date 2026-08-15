@@ -167,6 +167,8 @@ public class RunService {
         GraphTemplate template = graphTemplateRepo
                 .findById(request.graphTemplateId())
                 .orElseThrow(() -> new NotFoundException("Template not found"));
+        // Template is exposed in run detail response and will be executed; verify read access.
+        authService.checkTemplateReadAccess(template.isSystem(), template.getId());
 
         List<TemplateNode> templateNodes = templateNodeRepo.findByGraphTemplateId(template.getId());
         List<TemplateEdge> edges = edgeRepo.findByGraphTemplateId(template.getId());
