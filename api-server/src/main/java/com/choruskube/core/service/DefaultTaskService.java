@@ -355,6 +355,9 @@ public class DefaultTaskService implements TaskService {
         }
         List<String> titles =
                 rootCauses.stream().map(this::titleOf).filter(Objects::nonNull).toList();
+        // titleOf queries the repositories directly, unbounded by this Epic, so a root cause
+        // outside it still resolves a title. This is reachable only when a root-cause id no longer
+        // resolves at all — i.e. the item was deleted between the readiness walk and this lookup.
         return titles.isEmpty() ? "an unfinished dependency" : String.join(", ", titles);
     }
 

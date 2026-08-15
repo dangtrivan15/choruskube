@@ -62,10 +62,12 @@ class EpicReadinessAssembler {
         this.authService = authService;
     }
 
-    /** Per-item readiness plus the intra-Epic edges and cross-Epic blocker refs touching {@code
+    /**
+     * Per-item readiness plus the intra-Epic edges and cross-Epic blocker refs touching {@code
      * candidateIds}. {@code edges} is the raw row set the transitive walk ran over, handed back so
      * a caller needing {@link TransitiveReadinessResolver#rootCauseBlockersOf} does not have to
-     * re-query it. */
+     * re-query it.
+     */
     record Assembly(
             Map<UUID, Readiness> readinessById,
             List<DependencyEdgeResponse> dependencies,

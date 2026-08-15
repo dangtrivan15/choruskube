@@ -203,6 +203,27 @@ public class DefaultTaskServiceTest extends BaseTest {
     }
 
     @Test
+    void start_blockedSolelyByBlockedStory_throwsConflictNamingStorysBlocker() {
+        // describeBlockers walks the Task, its Story, AND its Epic (not just the Task itself): a
+        // Task with no direct blocker of its own can still be BLOCKED purely through the
+        // containment cascade from its own Story, and the rejection must still name that Story's
+        // actual root-cause blocker rather than falling back to a generic message.
+        GitRepo r = makeRepo("https://github.com/test/task-start-story-gated.git");
+        EpicResponse epic = epicService.create(new EpicRequest("Epic", "Epic desc", null, r.getId()), null);
+        StoryResponse otherStory = storyService.create(epic.id(), new StoryRequest("Other Story", "D"));
+        TaskResponse storyBlocker = service.create(otherStory.id(), new TaskRequest("Fix the schema migration", "D"));
+        StoryResponse blockedStory = storyService.create(epic.id(), new StoryRequest("Blocked Story", "D"));
+        dependencyService.create(new CreateDependencyRequest("task", storyBlocker.id(), "story", blockedStory.id()));
+        TaskResponse task = service.create(blockedStory.id(), new TaskRequest("Task under blocked story", "D"));
+
+        assertThatThrownBy(() -> service.start(task.id()))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining("Fix the schema migration");
+
+        assertThat(service.get(task.id()).status()).isEqualTo("backlog");
+    }
+
+    @Test
     void start_afterBlockerDone_succeeds() {
         GitRepo r = makeRepo("https://github.com/test/task-start-ungated.git");
         StoryResponse story = makeStory(r.getId());

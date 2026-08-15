@@ -180,21 +180,6 @@ test.describe("Roadmap Graph View", () => {
       description: "desc",
     });
 
-    // A blocks B, B blocks C. taskA is never started below, so it's the only
-    // undone item in the chain.
-    await api.createDependency({
-      blockingItemType: "task",
-      blockingItemId: taskA.id,
-      blockedItemType: "task",
-      blockedItemId: taskB.id,
-    });
-    await api.createDependency({
-      blockingItemType: "task",
-      blockingItemId: taskB.id,
-      blockedItemType: "task",
-      blockedItemId: taskC.id,
-    });
-
     // Get taskB to "done" without depending on its Task-triggered run (the
     // real "Feature Development" template, unlike the trivial e2e-linear-pipeline
     // used elsewhere in this suite) actually completing — that template requires
@@ -215,6 +200,24 @@ test.describe("Roadmap Graph View", () => {
     await api.waitForRunStatus(started.latestRunId!, ["running"], 15_000);
     await api.cancelRun(started.latestRunId!);
     await api.completeTask(taskB.id);
+
+    // A blocks B, B blocks C — created only now, after taskB is already done:
+    // a blocked Task can no longer be started (TaskService#start rejects it),
+    // so creating the A->B edge before starting taskB above would have failed
+    // the start() call itself. taskA is never started, so it's the only
+    // undone item in the chain.
+    await api.createDependency({
+      blockingItemType: "task",
+      blockingItemId: taskA.id,
+      blockedItemType: "task",
+      blockedItemId: taskB.id,
+    });
+    await api.createDependency({
+      blockingItemType: "task",
+      blockingItemId: taskB.id,
+      blockedItemType: "task",
+      blockedItemId: taskC.id,
+    });
 
     await roadmapGraphPage.goto(epic.id);
 
