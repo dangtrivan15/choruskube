@@ -31,7 +31,7 @@ class NodeExecutionUtilTest {
         NotFoundException ex = assertThrows(NotFoundException.class, () -> NodeExecutionUtil.requireInRun(exec, runId));
 
         assertTrue(ex.getMessage().contains(exec.getId().toString()));
-        assertTrue(ex.getMessage().contains(runId.toString()));
+        assertFalse(ex.getMessage().contains(runId.toString()));
     }
 
     @Test

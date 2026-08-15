@@ -21,7 +21,10 @@ public final class NodeExecutionUtil {
 
     public static void requireInRun(NodeExecution exec, UUID runId) {
         if (!runId.equals(exec.getWorkflowRunId())) {
-            throw new NotFoundException("Node execution " + exec.getId() + " does not belong to run " + runId);
+            // Deliberately identical to the "no such execution" message below, not one that names
+            // runId or the mismatch — otherwise this call site would be usable to probe whether an
+            // execution id is valid for some other run.
+            throw new NotFoundException("Node execution not found: " + exec.getId());
         }
     }
 }
