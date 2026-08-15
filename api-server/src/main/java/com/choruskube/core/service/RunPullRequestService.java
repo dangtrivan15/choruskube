@@ -11,6 +11,7 @@ import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.NodeExecutionRepository;
 import com.choruskube.core.repository.RunPullRequestRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
+import com.choruskube.core.util.NodeExecutionUtil;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -47,6 +48,13 @@ public class RunPullRequestService {
 
     @Transactional
     public RunPullRequestResponse createPullRequest(UUID runId, UUID nodeExecId, CreateRunPullRequestRequest req) {
+        NodeExecution exec = execRepo.findById(nodeExecId)
+                .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
+
+        // Verify the node execution belongs to the requested run before registering a pull request
+        // for it — this row is later read by the run's own check-prs completion gate.
+        NodeExecutionUtil.requireInRun(exec, runId);
+
         // Validate the run exists; ownership of the PR row is written from the MappableCreated
         // withParent event below (resolved from the parent run), not stamped on the entity.
         runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));

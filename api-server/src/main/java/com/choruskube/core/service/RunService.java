@@ -15,6 +15,7 @@ import com.choruskube.core.observability.UsageSink;
 import com.choruskube.core.repository.*;
 import com.choruskube.core.scope.ScopeProvider;
 import com.choruskube.core.specification.LikePatterns;
+import com.choruskube.core.util.NodeExecutionUtil;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -166,6 +167,8 @@ public class RunService {
         GraphTemplate template = graphTemplateRepo
                 .findById(request.graphTemplateId())
                 .orElseThrow(() -> new NotFoundException("Template not found"));
+        // Template is exposed in run detail response and will be executed; verify read access.
+        authService.checkTemplateReadAccess(template.isSystem(), template.getId());
 
         List<TemplateNode> templateNodes = templateNodeRepo.findByGraphTemplateId(template.getId());
         List<TemplateEdge> edges = edgeRepo.findByGraphTemplateId(template.getId());
@@ -413,6 +416,9 @@ public class RunService {
         NodeExecution exec = execRepo.findById(nodeExecId)
                 .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
 
+        // Verify the node execution belongs to the requested run before retrying it.
+        NodeExecutionUtil.requireInRun(exec, runId);
+
         if (exec.getStatus() != NodeExecutionStatus.failed) {
             throw new ValidationException(
                     List.of("Cannot retry node: node status is " + exec.getStatus() + ", expected failed"));
@@ -475,6 +481,9 @@ public class RunService {
         authService.checkOrgAccess("workflow_run", runId);
         NodeExecution exec = execRepo.findById(nodeExecId)
                 .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
+
+        // Verify the node execution belongs to the requested run before claiming it.
+        NodeExecutionUtil.requireInRun(exec, runId);
 
         // Atomically claim the node before doing anything else. Two concurrent/duplicate
         // submissions (double-click, two open tabs, a client retry) would otherwise both pass

@@ -28,6 +28,7 @@ public class TemplateEdgeService {
     }
 
     public List<TemplateEdgeResponse> list(UUID templateId) {
+        graphTemplateService.get(templateId); // authorizes the template read (404/403)
         return repo.findByGraphTemplateId(templateId).stream()
                 .map(this::toResponse)
                 .toList();
@@ -62,6 +63,7 @@ public class TemplateEdgeService {
     }
 
     private TemplateEdge findOrThrow(UUID templateId, UUID edgeId) {
+        graphTemplateService.get(templateId); // authorizes the template read (404/403)
         TemplateEdge edge =
                 repo.findById(edgeId).orElseThrow(() -> new NotFoundException("Template edge not found: " + edgeId));
         if (!edge.getGraphTemplateId().equals(templateId)) {

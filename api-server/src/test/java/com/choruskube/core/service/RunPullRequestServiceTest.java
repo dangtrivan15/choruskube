@@ -59,6 +59,10 @@ class RunPullRequestServiceTest {
 
     @Test
     void createPullRequest_withValidRunAndRepo_succeeds() {
+        NodeExecution exec = new NodeExecution();
+        exec.setWorkflowRunId(RUN_ID);
+        when(execRepo.findById(NODE_EXEC_ID)).thenReturn(Optional.of(exec));
+
         WorkflowRun run = new WorkflowRun();
         when(runRepo.findById(RUN_ID)).thenReturn(Optional.of(run));
 
@@ -98,6 +102,10 @@ class RunPullRequestServiceTest {
 
     @Test
     void createPullRequest_reRegisterSameUrl_updatesExistingRowAndKeepsSingleRecord() {
+        NodeExecution exec = new NodeExecution();
+        exec.setWorkflowRunId(RUN_ID);
+        when(execRepo.findById(NODE_EXEC_ID)).thenReturn(Optional.of(exec));
+
         WorkflowRun run = new WorkflowRun();
         when(runRepo.findById(RUN_ID)).thenReturn(Optional.of(run));
 
@@ -147,6 +155,12 @@ class RunPullRequestServiceTest {
 
     @Test
     void createPullRequest_withInvalidRun_throwsNotFoundException() {
+        // The execution must still resolve to RUN_ID so the run-scoping guard passes and the test
+        // reaches the run lookup it's actually asserting on.
+        NodeExecution exec = new NodeExecution();
+        exec.setWorkflowRunId(RUN_ID);
+        when(execRepo.findById(NODE_EXEC_ID)).thenReturn(Optional.of(exec));
+
         when(runRepo.findById(RUN_ID)).thenReturn(Optional.empty());
 
         CreateRunPullRequestRequest req = new CreateRunPullRequestRequest(
@@ -158,6 +172,12 @@ class RunPullRequestServiceTest {
 
     @Test
     void createPullRequest_withInvalidRepo_throwsNotFoundException() {
+        // The execution must still resolve to RUN_ID so the run-scoping guard passes and the test
+        // reaches the git repo lookup it's actually asserting on.
+        NodeExecution exec = new NodeExecution();
+        exec.setWorkflowRunId(RUN_ID);
+        when(execRepo.findById(NODE_EXEC_ID)).thenReturn(Optional.of(exec));
+
         WorkflowRun run = new WorkflowRun();
         when(runRepo.findById(RUN_ID)).thenReturn(Optional.of(run));
         when(gitRepoRepo.findById(GIT_REPO_ID_1)).thenReturn(Optional.empty());

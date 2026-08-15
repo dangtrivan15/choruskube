@@ -14,12 +14,14 @@ import com.choruskube.core.dto.TaskResponse;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.Epic;
 import com.choruskube.core.model.GraphTemplate;
+import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.Story;
 import com.choruskube.core.model.Task;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.repository.EpicRepository;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.GraphTemplateRepository;
+import com.choruskube.core.repository.NodeExecutionRepository;
 import com.choruskube.core.repository.SoftwareProjectRepository;
 import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.repository.TaskRepository;
@@ -46,6 +48,9 @@ class InternalRunServiceEpicTest {
 
     @Mock
     private WorkflowRunRepository runRepo;
+
+    @Mock
+    private NodeExecutionRepository execRepo;
 
     @Mock
     private GitRepoRepository gitRepoRepo;
@@ -88,7 +93,7 @@ class InternalRunServiceEpicTest {
     void setUp() {
         service = new InternalRunService(
                 runRepo,
-                null,
+                execRepo,
                 null,
                 null,
                 null,
@@ -400,9 +405,11 @@ class InternalRunServiceEpicTest {
     @Test
     void getGraph_delegatesToRoadmapGraphServiceWithRunIdAndResolvedSoftwareProjectId() {
         UUID runId = UUID.randomUUID();
+        UUID nodeExecId = UUID.randomUUID();
         UUID epicId = UUID.randomUUID();
         WorkflowRun run = createRun(
                 runId, TEMPLATE_ID, "{\"software_project_id\":\"" + PROJECT_ID + "\",\"feature_request\":\"x\"}");
+        when(execRepo.findById(nodeExecId)).thenReturn(Optional.of(execInRun(nodeExecId, runId)));
         when(runRepo.findById(runId)).thenReturn(Optional.of(run));
         when(softwareProjectRepo.existsById(PROJECT_ID)).thenReturn(true);
 
@@ -410,7 +417,7 @@ class InternalRunServiceEpicTest {
                 epicResponseFor(PROJECT_ID), List.of(), List.of(), List.of(), List.of());
         when(roadmapGraphService.getGraph(epicId, runId, PROJECT_ID)).thenReturn(expected);
 
-        var result = service.getGraph(runId, epicId);
+        var result = service.getGraph(runId, nodeExecId, epicId);
 
         assertThat(result).isSameAs(expected);
         verify(roadmapGraphService).getGraph(epicId, runId, PROJECT_ID);
@@ -419,9 +426,13 @@ class InternalRunServiceEpicTest {
     @Test
     void getGraph_withUnknownRunId_throwsNotFound() {
         UUID unknownRunId = UUID.randomUUID();
+        UUID nodeExecId = UUID.randomUUID();
+        // The execution must still resolve to unknownRunId so the run-scoping guard passes and
+        // the test reaches the run lookup it's actually asserting on.
+        when(execRepo.findById(nodeExecId)).thenReturn(Optional.of(execInRun(nodeExecId, unknownRunId)));
         when(runRepo.findById(unknownRunId)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.getGraph(unknownRunId, UUID.randomUUID()))
+        assertThatThrownBy(() -> service.getGraph(unknownRunId, nodeExecId, UUID.randomUUID()))
                 .isInstanceOf(NotFoundException.class)
                 .hasMessageContaining("Workflow run not found");
     }
@@ -438,6 +449,7 @@ class InternalRunServiceEpicTest {
         WorkflowRun run = createRun(
                 runId, TEMPLATE_ID, "{\"software_project_id\":\"" + PROJECT_ID + "\",\"feature_request\":\"x\"}");
         run.setTaskId(taskId);
+        when(execRepo.findById(nodeExecId)).thenReturn(Optional.of(execInRun(nodeExecId, runId)));
         when(runRepo.findById(runId)).thenReturn(Optional.of(run));
         when(softwareProjectRepo.existsById(PROJECT_ID)).thenReturn(true);
         when(taskRepo.findById(taskId)).thenReturn(Optional.of(taskWithStory(taskId, storyId)));
@@ -457,10 +469,12 @@ class InternalRunServiceEpicTest {
     @Test
     void getGraphForTriggeringTask_withNoTaskIdOnRun_throwsNotFound() {
         UUID runId = UUID.randomUUID();
+        UUID nodeExecId = UUID.randomUUID();
         WorkflowRun run = createRun(runId, TEMPLATE_ID, "{}");
+        when(execRepo.findById(nodeExecId)).thenReturn(Optional.of(execInRun(nodeExecId, runId)));
         when(runRepo.findById(runId)).thenReturn(Optional.of(run));
 
-        assertThatThrownBy(() -> service.getGraphForTriggeringTask(runId, UUID.randomUUID()))
+        assertThatThrownBy(() -> service.getGraphForTriggeringTask(runId, nodeExecId))
                 .isInstanceOf(NotFoundException.class)
                 .hasMessageContaining("was not started from a Task");
     }
@@ -468,9 +482,13 @@ class InternalRunServiceEpicTest {
     @Test
     void getGraphForTriggeringTask_withUnknownRunId_throwsNotFound() {
         UUID unknownRunId = UUID.randomUUID();
+        UUID nodeExecId = UUID.randomUUID();
+        // The execution must still resolve to unknownRunId so the run-scoping guard passes and
+        // the test reaches the run lookup it's actually asserting on.
+        when(execRepo.findById(nodeExecId)).thenReturn(Optional.of(execInRun(nodeExecId, unknownRunId)));
         when(runRepo.findById(unknownRunId)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.getGraphForTriggeringTask(unknownRunId, UUID.randomUUID()))
+        assertThatThrownBy(() -> service.getGraphForTriggeringTask(unknownRunId, nodeExecId))
                 .isInstanceOf(NotFoundException.class)
                 .hasMessageContaining("Workflow run not found");
     }
@@ -478,15 +496,17 @@ class InternalRunServiceEpicTest {
     @Test
     void getGraphForTriggeringTask_withTaskButNoResolvableStory_throwsNotFound() {
         UUID runId = UUID.randomUUID();
+        UUID nodeExecId = UUID.randomUUID();
         UUID taskId = UUID.randomUUID();
         UUID storyId = UUID.randomUUID();
         WorkflowRun run = createRun(runId, TEMPLATE_ID, "{}");
         run.setTaskId(taskId);
+        when(execRepo.findById(nodeExecId)).thenReturn(Optional.of(execInRun(nodeExecId, runId)));
         when(runRepo.findById(runId)).thenReturn(Optional.of(run));
         when(taskRepo.findById(taskId)).thenReturn(Optional.of(taskWithStory(taskId, storyId)));
         when(storyRepo.findById(storyId)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.getGraphForTriggeringTask(runId, UUID.randomUUID()))
+        assertThatThrownBy(() -> service.getGraphForTriggeringTask(runId, nodeExecId))
                 .isInstanceOf(NotFoundException.class)
                 .hasMessageContaining("Story not found for task " + taskId);
     }
@@ -494,17 +514,19 @@ class InternalRunServiceEpicTest {
     @Test
     void getGraphForTriggeringTask_withStoryButNoResolvableEpic_throwsNotFound() {
         UUID runId = UUID.randomUUID();
+        UUID nodeExecId = UUID.randomUUID();
         UUID taskId = UUID.randomUUID();
         UUID storyId = UUID.randomUUID();
         UUID epicId = UUID.randomUUID();
         WorkflowRun run = createRun(runId, TEMPLATE_ID, "{}");
         run.setTaskId(taskId);
+        when(execRepo.findById(nodeExecId)).thenReturn(Optional.of(execInRun(nodeExecId, runId)));
         when(runRepo.findById(runId)).thenReturn(Optional.of(run));
         when(taskRepo.findById(taskId)).thenReturn(Optional.of(taskWithStory(taskId, storyId)));
         when(storyRepo.findById(storyId)).thenReturn(Optional.of(storyWithEpic(storyId, epicId)));
         when(epicRepo.findById(epicId)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.getGraphForTriggeringTask(runId, UUID.randomUUID()))
+        assertThatThrownBy(() -> service.getGraphForTriggeringTask(runId, nodeExecId))
                 .isInstanceOf(NotFoundException.class)
                 .hasMessageContaining("Epic not found for story " + storyId);
     }
@@ -512,10 +534,12 @@ class InternalRunServiceEpicTest {
     @Test
     void updateTaskStatus_delegatesToTaskServiceWithRunIdAndResolvedSoftwareProjectId() {
         UUID runId = UUID.randomUUID();
+        UUID nodeExecId = UUID.randomUUID();
         UUID taskId = UUID.randomUUID();
         UUID outcomeRunId = UUID.randomUUID();
         WorkflowRun run = createRun(
                 runId, TEMPLATE_ID, "{\"software_project_id\":\"" + PROJECT_ID + "\",\"feature_request\":\"x\"}");
+        when(execRepo.findById(nodeExecId)).thenReturn(Optional.of(execInRun(nodeExecId, runId)));
         when(runRepo.findById(runId)).thenReturn(Optional.of(run));
         when(softwareProjectRepo.existsById(PROJECT_ID)).thenReturn(true);
 
@@ -545,7 +569,7 @@ class InternalRunServiceEpicTest {
                         "done via agent"))
                 .thenReturn(expected);
 
-        TaskResponse result = service.updateTaskStatus(runId, taskId, req);
+        TaskResponse result = service.updateTaskStatus(runId, nodeExecId, taskId, req);
 
         assertThat(result).isSameAs(expected);
     }
@@ -553,14 +577,26 @@ class InternalRunServiceEpicTest {
     @Test
     void updateTaskStatus_withUnknownRunId_throwsNotFound() {
         UUID unknownRunId = UUID.randomUUID();
+        UUID nodeExecId = UUID.randomUUID();
+        // The execution must still resolve to unknownRunId so the run-scoping guard passes and
+        // the test reaches the run lookup it's actually asserting on.
+        when(execRepo.findById(nodeExecId)).thenReturn(Optional.of(execInRun(nodeExecId, unknownRunId)));
         when(runRepo.findById(unknownRunId)).thenReturn(Optional.empty());
 
         var req = new com.choruskube.core.dto.TaskStatusUpdateRequest(
                 com.choruskube.core.model.enums.WorkItemStatus.done, null, null);
 
-        assertThatThrownBy(() -> service.updateTaskStatus(unknownRunId, UUID.randomUUID(), req))
+        assertThatThrownBy(() -> service.updateTaskStatus(unknownRunId, nodeExecId, UUID.randomUUID(), req))
                 .isInstanceOf(NotFoundException.class)
                 .hasMessageContaining("Workflow run not found");
+    }
+
+    /** A node execution belonging to {@code runId}, for satisfying the run-scoping guard. */
+    private NodeExecution execInRun(UUID nodeExecId, UUID runId) {
+        NodeExecution exec = new NodeExecution();
+        exec.setId(nodeExecId);
+        exec.setWorkflowRunId(runId);
+        return exec;
     }
 
     private Story storyWithEpic(UUID storyId, UUID epicId) {

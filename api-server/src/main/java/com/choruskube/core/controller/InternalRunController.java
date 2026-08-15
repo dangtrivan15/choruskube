@@ -219,7 +219,7 @@ public class InternalRunController {
     @GetMapping("/{runId}/node-executions/{nodeExecId}/feature-proposals/{epicId}/graph")
     public RoadmapGraphSnapshot getGraph(
             @PathVariable UUID runId, @PathVariable UUID nodeExecId, @PathVariable UUID epicId) {
-        return service.getGraph(runId, epicId);
+        return service.getGraph(runId, nodeExecId, epicId);
     }
 
     /**
@@ -244,7 +244,7 @@ public class InternalRunController {
             @PathVariable UUID nodeExecId,
             @PathVariable UUID taskId,
             @Valid @RequestBody TaskStatusUpdateRequest request) {
-        return service.updateTaskStatus(runId, taskId, request);
+        return service.updateTaskStatus(runId, nodeExecId, taskId, request);
     }
 
     @PostMapping("/{runId}/node-executions/{nodeExecId}/pull-requests")
