@@ -1,5 +1,6 @@
 package com.choruskube.core.model;
 
+import com.choruskube.core.model.enums.PullRequestState;
 import jakarta.persistence.*;
 import java.time.Instant;
 import java.util.UUID;
@@ -32,6 +33,16 @@ public class RunPullRequest {
 
     @Column(name = "repo_name")
     private String repoName;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "state")
+    private PullRequestState state;
+
+    @Column(name = "merged_at")
+    private Instant mergedAt;
+
+    @Column(name = "state_checked_at")
+    private Instant stateCheckedAt;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
@@ -115,5 +126,29 @@ public class RunPullRequest {
 
     public void setCreatedAt(Instant createdAt) {
         this.createdAt = createdAt;
+    }
+
+    public PullRequestState getState() {
+        return state;
+    }
+
+    public void setState(PullRequestState state) {
+        this.state = state;
+    }
+
+    public Instant getMergedAt() {
+        return mergedAt;
+    }
+
+    public void setMergedAt(Instant mergedAt) {
+        this.mergedAt = mergedAt;
+    }
+
+    public Instant getStateCheckedAt() {
+        return stateCheckedAt;
+    }
+
+    public void setStateCheckedAt(Instant stateCheckedAt) {
+        this.stateCheckedAt = stateCheckedAt;
     }
 }
