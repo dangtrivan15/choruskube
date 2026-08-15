@@ -64,6 +64,54 @@ public class GitHubAppService {
         }
     }
 
+    /** A pull request's state as GitHub reports it. {@code mergedAt} is null unless merged. */
+    public record PullRequestSnapshot(String state, Instant mergedAt) {}
+
+    /**
+     * Reads a pull request's state. {@code ownerRepo} is the {@code owner/repo} slug — derive it
+     * with {@link com.choruskube.core.util.RepoNameUtil#deriveOwnerRepoName(String)} from the
+     * {@code GitRepo}'s URL. The caller supplies an already-resolved token, so this method stays
+     * agnostic about whether it came from a GitHub App installation or a PAT.
+     *
+     * @throws RuntimeException if GitHub returns a non-200 status. The message deliberately omits
+     *     the response body, which can echo the request's Authorization header on some errors.
+     */
+    public PullRequestSnapshot fetchPullRequest(String token, String ownerRepo, int prNumber) {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(githubApiUrl + "/repos/" + ownerRepo + "/pulls/" + prNumber))
+                .header("Authorization", "Bearer " + token)
+                .header("Accept", "application/vnd.github+json")
+                .header("X-GitHub-Api-Version", "2022-11-28")
+                .timeout(Duration.ofSeconds(10))
+                .GET()
+                .build();
+        try {
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() != 200) {
+                throw new RuntimeException(
+                        "GitHub returned " + response.statusCode() + " for " + ownerRepo + "#" + prNumber);
+            }
+            return parsePullRequest(response.body());
+        } catch (java.io.IOException | InterruptedException e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            throw new RuntimeException("Failed to read " + ownerRepo + "#" + prNumber + ": " + e.getMessage(), e);
+        }
+    }
+
+    PullRequestSnapshot parsePullRequest(String json) {
+        try {
+            JsonNode node = objectMapper.readTree(json);
+            JsonNode mergedAt = node.get("merged_at");
+            return new PullRequestSnapshot(
+                    node.path("state").asText(null),
+                    mergedAt == null || mergedAt.isNull() ? null : Instant.parse(mergedAt.asText()));
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to parse GitHub pull request payload: " + e.getMessage(), e);
+        }
+    }
+
     String createSignedJwt(String appId, String privateKeyPem) throws Exception {
         String base64Key = privateKeyPem
                 .replace("-----BEGIN RSA PRIVATE KEY-----", "")
