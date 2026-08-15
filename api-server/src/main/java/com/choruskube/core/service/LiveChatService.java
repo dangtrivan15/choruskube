@@ -21,6 +21,7 @@ import com.choruskube.core.repository.LiveChatMessageRepository;
 import com.choruskube.core.repository.LiveChatSessionRepository;
 import com.choruskube.core.repository.NodeExecutionRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
+import com.choruskube.core.util.NodeExecutionUtil;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
@@ -95,6 +96,9 @@ public class LiveChatService {
     public LiveChatSessionResponse startLiveChat(UUID runId, UUID nodeExecId) {
         NodeExecution gateExec = execRepo.findById(nodeExecId)
                 .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
+
+        // Verify the node execution belongs to the requested run before starting a chat session.
+        NodeExecutionUtil.requireInRun(gateExec, runId);
 
         if (gateExec.getStatus() != NodeExecutionStatus.awaiting_human) {
             throw new BadRequestException("Node must be in awaiting_human status to start live chat");
