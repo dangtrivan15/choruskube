@@ -167,7 +167,7 @@ BLOCKER_COUNT=$(echo "$OPEN_BLOCKERS_JSON" | jq 'length')
 # matching this file's existing `--max-turns` flag assertion) rather than copying one.
 grep -q "## Open Blockers" "$ENTRYPOINT" \
   && ok "entrypoint narrates Open Blockers section" || fail "entrypoint narrates Open Blockers section"
-grep -q "does not prevent the run" "$ENTRYPOINT" \
+grep -q "Factor the change into your remaining work" "$ENTRYPOINT" \
   && ok "Open Blockers narration states it's informational only" || fail "Open Blockers narration states it's informational only"
 
 # --- Test 13: open_blockers absent (older API server) — defaults to empty, no crash ---
