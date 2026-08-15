@@ -7,6 +7,7 @@ import com.choruskube.core.exception.DependencyCycleException;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.WorkItemDependency;
 import com.choruskube.core.model.enums.BlockableItemType;
+import com.choruskube.core.repository.EpicRepository;
 import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkItemDependencyRepository;
@@ -20,6 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class DefaultWorkItemDependencyService implements WorkItemDependencyService {
 
     private final WorkItemDependencyRepository repo;
+    private final EpicRepository epicRepo;
     private final StoryRepository storyRepo;
     private final TaskRepository taskRepo;
     private final AuthorizationService authService;
@@ -27,11 +29,13 @@ public class DefaultWorkItemDependencyService implements WorkItemDependencyServi
 
     public DefaultWorkItemDependencyService(
             WorkItemDependencyRepository repo,
+            EpicRepository epicRepo,
             StoryRepository storyRepo,
             TaskRepository taskRepo,
             AuthorizationService authService,
             RunEventPublisher eventPublisher) {
         this.repo = repo;
+        this.epicRepo = epicRepo;
         this.storyRepo = storyRepo;
         this.taskRepo = taskRepo;
         this.authService = authService;
@@ -123,6 +127,7 @@ public class DefaultWorkItemDependencyService implements WorkItemDependencyServi
     private void assertItemExists(BlockableItemType type, UUID id) {
         boolean exists =
                 switch (type) {
+                    case epic -> epicRepo.existsById(id);
                     case story -> storyRepo.existsById(id);
                     case task -> taskRepo.existsById(id);
                 };
@@ -135,7 +140,7 @@ public class DefaultWorkItemDependencyService implements WorkItemDependencyServi
         try {
             return BlockableItemType.valueOf(raw);
         } catch (IllegalArgumentException | NullPointerException e) {
-            throw new BadRequestException("Invalid item type: " + raw + " (must be 'story' or 'task')");
+            throw new BadRequestException("Invalid item type: " + raw + " (must be 'epic', 'story' or 'task')");
         }
     }
 

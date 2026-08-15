@@ -218,12 +218,39 @@ public class WorkItemDependencyServiceTest extends BaseTest {
         verify(runEventPublisher, never()).publishDependencyChanged(any(), eq("deleted"));
     }
 
-    private TaskResponse makeTask(String url) {
+    @Test
+    void create_epicBlocksEpic_isAccepted() {
+        EpicResponse blocking = makeEpic("https://github.com/test/dep-epic-blocking.git");
+        EpicResponse blocked = makeEpic("https://github.com/test/dep-epic-blocked.git");
+
+        DependencyEdgeResponse edge =
+                service.create(new CreateDependencyRequest("epic", blocking.id(), "epic", blocked.id()));
+
+        assertThat(edge.blockingItemType()).isEqualTo("epic");
+        assertThat(edge.blockedItemType()).isEqualTo("epic");
+        assertThat(dependencyRepo.findById(edge.id())).isPresent();
+    }
+
+    @Test
+    void create_unknownEpic_throwsNotFound() {
+        TaskResponse blocked = makeTask("https://github.com/test/dep-epic-missing.git");
+
+        assertThatThrownBy(() ->
+                        service.create(new CreateDependencyRequest("epic", UUID.randomUUID(), "task", blocked.id())))
+                .isInstanceOf(NotFoundException.class)
+                .hasMessageContaining("epic not found");
+    }
+
+    private EpicResponse makeEpic(String url) {
         GitRepo r = new GitRepo();
         r.setUrl(url);
         r.setName(RepoNameUtil.deriveOwnerRepoName(url));
         r = gitRepoRepo.save(r);
-        EpicResponse epic = epicService.create(new EpicRequest("Epic", "Epic desc", null, r.getId()), null);
+        return epicService.create(new EpicRequest("Epic", "Epic desc", null, r.getId()), null);
+    }
+
+    private TaskResponse makeTask(String url) {
+        EpicResponse epic = makeEpic(url);
         StoryResponse story = storyService.create(epic.id(), new StoryRequest("Story", "Story desc"));
         return taskService.create(story.id(), new TaskRequest("Task", "Task desc"));
     }
