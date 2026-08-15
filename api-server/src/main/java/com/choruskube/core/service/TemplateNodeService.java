@@ -42,6 +42,7 @@ public class TemplateNodeService {
     }
 
     public List<TemplateNodeResponse> list(UUID templateId) {
+        graphTemplateService.get(templateId); // authorizes the template read (404/403)
         return repo.findByGraphTemplateId(templateId).stream()
                 .map(this::toResponse)
                 .toList();
@@ -76,6 +77,7 @@ public class TemplateNodeService {
     }
 
     private TemplateNode findOrThrow(UUID templateId, UUID nodeId) {
+        graphTemplateService.get(templateId); // authorizes the template read (404/403)
         TemplateNode tn =
                 repo.findById(nodeId).orElseThrow(() -> new NotFoundException("Template node not found: " + nodeId));
         if (!tn.getGraphTemplateId().equals(templateId)) {
