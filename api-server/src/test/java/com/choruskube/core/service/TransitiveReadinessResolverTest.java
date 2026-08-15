@@ -211,7 +211,7 @@ class TransitiveReadinessResolverTest {
 
     @Test
     void wouldCreateCycle_noExistingEdges_isFalse() {
-        assertThat(TransitiveReadinessResolver.wouldCreateCycle(A, B, List.of()))
+        assertThat(TransitiveReadinessResolver.wouldCreateCycle(A, B, List.of(), Map.of()))
                 .isFalse();
     }
 
@@ -220,7 +220,8 @@ class TransitiveReadinessResolverTest {
         // A already blocks B; proposing B blocks A would close a 2-node loop.
         List<WorkItemDependency> edges = List.of(edge(A, B));
 
-        assertThat(TransitiveReadinessResolver.wouldCreateCycle(B, A, edges)).isTrue();
+        assertThat(TransitiveReadinessResolver.wouldCreateCycle(B, A, edges, Map.of()))
+                .isTrue();
     }
 
     @Test
@@ -228,7 +229,8 @@ class TransitiveReadinessResolverTest {
         // A blocks B, B blocks C; proposing C blocks A would close a 3-node loop.
         List<WorkItemDependency> edges = List.of(edge(A, B), edge(B, C));
 
-        assertThat(TransitiveReadinessResolver.wouldCreateCycle(C, A, edges)).isTrue();
+        assertThat(TransitiveReadinessResolver.wouldCreateCycle(C, A, edges, Map.of()))
+                .isTrue();
     }
 
     @Test
@@ -236,7 +238,8 @@ class TransitiveReadinessResolverTest {
         // A blocks B, B blocks C; proposing A blocks C is a valid extra edge, not a cycle.
         List<WorkItemDependency> edges = List.of(edge(A, B), edge(B, C));
 
-        assertThat(TransitiveReadinessResolver.wouldCreateCycle(A, C, edges)).isFalse();
+        assertThat(TransitiveReadinessResolver.wouldCreateCycle(A, C, edges, Map.of()))
+                .isFalse();
     }
 
     @Test
@@ -244,7 +247,55 @@ class TransitiveReadinessResolverTest {
         // A blocks B, C blocks D — proposing D blocks A touches a disjoint branch, no cycle.
         List<WorkItemDependency> edges = List.of(edge(A, B), edge(C, D));
 
-        assertThat(TransitiveReadinessResolver.wouldCreateCycle(D, A, edges)).isFalse();
+        assertThat(TransitiveReadinessResolver.wouldCreateCycle(D, A, edges, Map.of()))
+                .isFalse();
+    }
+
+    /**
+     * E1 blocks E2, and a Story inside E2 blocks a Story inside E1. No cycle exists among the
+     * declared edges alone, but the two Epics can never both complete: E1 cannot finish until
+     * StoryA finishes, StoryA is blocked by StoryB, and StoryB inherits E1's block through E2.
+     */
+    @Test
+    void wouldCreateCycle_crossTierDeadlockThroughContainment_isDetected() {
+        UUID e1 = UUID.randomUUID();
+        UUID e2 = UUID.randomUUID();
+        UUID storyInE1 = UUID.randomUUID();
+        UUID storyInE2 = UUID.randomUUID();
+
+        Map<UUID, UUID> parentOf = Map.of(storyInE1, e1, storyInE2, e2);
+
+        // Already declared: E1 blocks E2. This class's existing edge(blockingId, blockedId) helper
+        // stamps BlockableItemType.task on both ends; the cycle walk is purely id-based, so the
+        // tier recorded on the row makes no difference to what is being tested here.
+        List<WorkItemDependency> existing = List.of(edge(e1, e2));
+
+        // Proposed: storyInE2 blocks storyInE1 — closes the loop through containment.
+        assertThat(TransitiveReadinessResolver.wouldCreateCycle(storyInE2, storyInE1, existing, parentOf))
+                .isTrue();
+    }
+
+    @Test
+    void wouldCreateCycle_epicBlocksEpicWithNoOtherEdges_isNotACycle() {
+        UUID e1 = UUID.randomUUID();
+        UUID e2 = UUID.randomUUID();
+        UUID storyInE1 = UUID.randomUUID();
+        UUID storyInE2 = UUID.randomUUID();
+        Map<UUID, UUID> parentOf = Map.of(storyInE1, e1, storyInE2, e2);
+
+        assertThat(TransitiveReadinessResolver.wouldCreateCycle(e1, e2, List.of(), parentOf))
+                .isFalse();
+    }
+
+    @Test
+    void wouldCreateCycle_selfBlockThroughOwnParent_isDetected() {
+        UUID epic = UUID.randomUUID();
+        UUID story = UUID.randomUUID();
+        Map<UUID, UUID> parentOf = Map.of(story, epic);
+
+        // "The Epic blocks its own Story" — the Story can never finish, so the Epic never can.
+        assertThat(TransitiveReadinessResolver.wouldCreateCycle(epic, story, List.of(), parentOf))
+                .isTrue();
     }
 
     // ── blockingChainOf ────────────────────────────────────────────────────

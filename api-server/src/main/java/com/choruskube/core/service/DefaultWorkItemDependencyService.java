@@ -11,7 +11,9 @@ import com.choruskube.core.repository.EpicRepository;
 import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkItemDependencyRepository;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -82,8 +84,17 @@ public class DefaultWorkItemDependencyService implements WorkItemDependencyServi
         // rather than a pre-scoped subset. The traversal-time guard in TransitiveReadinessResolver
         // itself remains the second line of defense (Caveat 4: this read-then-write check has no
         // locking, so two concurrent creates could still jointly close a cycle).
+        //
+        // The cycle check needs containment as well as declared edges: an Epic blocking another
+        // Epic can deadlock against a Story-level edge pointing the other way, and that loop is
+        // invisible to a walk over declared edges alone. Loaded whole for the same reason
+        // findAll() above is: a cycle is not confined to one Epic.
+        Map<UUID, UUID> parentOf = new HashMap<>();
+        storyRepo.findAll().forEach(s -> parentOf.put(s.getId(), s.getEpicId()));
+        taskRepo.findAll().forEach(t -> parentOf.put(t.getId(), t.getStoryId()));
+
         List<WorkItemDependency> existingEdges = repo.findAll();
-        if (TransitiveReadinessResolver.wouldCreateCycle(blockingId, blockedId, existingEdges)) {
+        if (TransitiveReadinessResolver.wouldCreateCycle(blockingId, blockedId, existingEdges, parentOf)) {
             throw new DependencyCycleException(blockingId, blockedId);
         }
 
