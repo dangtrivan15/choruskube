@@ -321,6 +321,45 @@ public class DefaultTaskServiceTest extends BaseTest {
                 .hasMessageContaining("pull/1");
     }
 
+    /**
+     * {@code closeForMergedPullRequests} is the one closure path that skips the org check, because
+     * its only caller is a scheduler with no request context to authorize against. It must skip
+     * NOTHING else — these two tests pin that it still delegates to {@code completeCore}, so a
+     * future refactor that inlines the body cannot silently create an unauthenticated, unguarded
+     * {@code done} write while leaving the suite green.
+     */
+    @Test
+    void closeForMergedPullRequests_withUnmergedPullRequest_throwsConflict() {
+        GitRepo r = makeRepo("https://github.com/test/task-pr-reconciler-blocked.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
+        TaskResponse started = service.start(task.id());
+        registerPr(started.latestRunId(), r.getId(), "https://github.com/test/task-pr-reconciler-blocked/pull/1", null);
+        markRunTerminal(started.latestRunId(), WorkflowRunStatus.completed);
+
+        assertThatThrownBy(() -> service.closeForMergedPullRequests(task.id()))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining("pull/1");
+    }
+
+    @Test
+    void closeForMergedPullRequests_withMergedPullRequest_transitionsToDone() {
+        GitRepo r = makeRepo("https://github.com/test/task-pr-reconciler-closes.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
+        TaskResponse started = service.start(task.id());
+        registerPr(
+                started.latestRunId(),
+                r.getId(),
+                "https://github.com/test/task-pr-reconciler-closes/pull/1",
+                Instant.now());
+        markRunTerminal(started.latestRunId(), WorkflowRunStatus.completed);
+
+        TaskResponse closed = service.closeForMergedPullRequests(task.id());
+
+        assertThat(closed.status()).isEqualTo("done");
+    }
+
     @Test
     void complete_withMergedPullRequest_transitionsToDone() {
         GitRepo r = makeRepo("https://github.com/test/task-pr-merged.git");
