@@ -7,10 +7,13 @@ import com.choruskube.core.exception.DependencyCycleException;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.WorkItemDependency;
 import com.choruskube.core.model.enums.BlockableItemType;
+import com.choruskube.core.repository.EpicRepository;
 import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkItemDependencyRepository;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class DefaultWorkItemDependencyService implements WorkItemDependencyService {
 
     private final WorkItemDependencyRepository repo;
+    private final EpicRepository epicRepo;
     private final StoryRepository storyRepo;
     private final TaskRepository taskRepo;
     private final AuthorizationService authService;
@@ -27,11 +31,13 @@ public class DefaultWorkItemDependencyService implements WorkItemDependencyServi
 
     public DefaultWorkItemDependencyService(
             WorkItemDependencyRepository repo,
+            EpicRepository epicRepo,
             StoryRepository storyRepo,
             TaskRepository taskRepo,
             AuthorizationService authService,
             RunEventPublisher eventPublisher) {
         this.repo = repo;
+        this.epicRepo = epicRepo;
         this.storyRepo = storyRepo;
         this.taskRepo = taskRepo;
         this.authService = authService;
@@ -78,8 +84,20 @@ public class DefaultWorkItemDependencyService implements WorkItemDependencyServi
         // rather than a pre-scoped subset. The traversal-time guard in TransitiveReadinessResolver
         // itself remains the second line of defense (Caveat 4: this read-then-write check has no
         // locking, so two concurrent creates could still jointly close a cycle).
+        //
+        // The cycle check needs containment as well as declared edges: an Epic blocking another
+        // Epic can deadlock against a Story-level edge pointing the other way, and that loop is
+        // invisible to a walk over declared edges alone. Loaded whole, same as repo.findAll()
+        // below: a cycle is not confined to one Epic. TransitiveReadinessResolver rebuilds its
+        // internal graph from these two lists on every call (each existing edge rescans parentOf
+        // to expand inheritance) — O(edges * items), acceptable at roadmap scale but a candidate
+        // to cache/index if this path ever sees high-volume concurrent edge creation.
+        Map<UUID, UUID> parentOf = new HashMap<>();
+        storyRepo.findAll().forEach(s -> parentOf.put(s.getId(), s.getEpicId()));
+        taskRepo.findAll().forEach(t -> parentOf.put(t.getId(), t.getStoryId()));
+
         List<WorkItemDependency> existingEdges = repo.findAll();
-        if (TransitiveReadinessResolver.wouldCreateCycle(blockingId, blockedId, existingEdges)) {
+        if (TransitiveReadinessResolver.wouldCreateCycle(blockingId, blockedId, existingEdges, parentOf)) {
             throw new DependencyCycleException(blockingId, blockedId);
         }
 
@@ -123,6 +141,7 @@ public class DefaultWorkItemDependencyService implements WorkItemDependencyServi
     private void assertItemExists(BlockableItemType type, UUID id) {
         boolean exists =
                 switch (type) {
+                    case epic -> epicRepo.existsById(id);
                     case story -> storyRepo.existsById(id);
                     case task -> taskRepo.existsById(id);
                 };
@@ -135,7 +154,7 @@ public class DefaultWorkItemDependencyService implements WorkItemDependencyServi
         try {
             return BlockableItemType.valueOf(raw);
         } catch (IllegalArgumentException | NullPointerException e) {
-            throw new BadRequestException("Invalid item type: " + raw + " (must be 'story' or 'task')");
+            throw new BadRequestException("Invalid item type: " + raw + " (must be 'epic', 'story' or 'task')");
         }
     }
 

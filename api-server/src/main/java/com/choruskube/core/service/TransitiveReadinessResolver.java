@@ -82,20 +82,54 @@ final class TransitiveReadinessResolver {
     }
 
     /**
-     * True if inserting a new "{@code newBlockingId} blocks {@code newBlockedId}" edge would close
-     * a cycle with {@code existingEdges} (Decision 5) — i.e. {@code newBlockingId} is already
-     * reachable FROM {@code newBlockedId} by walking forward along existing "blocks" edges, so the
-     * new edge would complete a loop back to where it started.
+     * True if inserting "{@code newBlockingId} blocks {@code newBlockedId}" would make some item
+     * permanently unfinishable, given {@code existingEdges} and the containment map {@code
+     * parentOf} (child id → parent id; task→story, story→epic).
+     *
+     * <p>Walks the graph G where an edge {@code U → V} means "V cannot be done until U is done".
+     * G has three kinds of edge, and all three are required — a walk over declared edges alone
+     * misses deadlocks that containment creates:
+     *
+     * <ul>
+     *   <li>declared: {@code U blocks V} contributes {@code U → V};
+     *   <li>completion: a container is done only once its children are, contributing
+     *       {@code child → parent};
+     *   <li>inheritance: if {@code U} blocks a container {@code P}, then {@code U} blocks
+     *       everything inside {@code P}, contributing {@code U → descendant(P)}.
+     * </ul>
+     *
+     * <p>Example this exists to catch: {@code E1 blocks E2}, and a Story in {@code E2} blocks a
+     * Story in {@code E1}. No declared cycle exists, yet neither Epic can ever complete.
      */
-    static boolean wouldCreateCycle(UUID newBlockingId, UUID newBlockedId, List<WorkItemDependency> existingEdges) {
+    static boolean wouldCreateCycle(
+            UUID newBlockingId, UUID newBlockedId, List<WorkItemDependency> existingEdges, Map<UUID, UUID> parentOf) {
         if (newBlockingId.equals(newBlockedId)) {
             return true;
         }
-        Map<UUID, List<UUID>> blocksOf = indexBlockedByBlockingItem(existingEdges);
+        Map<UUID, List<UUID>> blocksOf = buildPrecedenceGraph(existingEdges, parentOf);
+        addBlockingEdge(blocksOf, newBlockingId, newBlockedId, parentOf);
+
+        // The new edge set added above is newBlockingId -> {newBlockedId} U descendants(newBlockedId)
+        // (addBlockingEdge's own inheritance expansion) — a cycle exists if ANY of those heads can
+        // reach back to newBlockingId, not just newBlockedId itself: the other heads are just as much
+        // a starting point for a loop, and seeding the walk with newBlockedId alone misses cycles
+        // that close through one of the inherited heads instead (e.g. the new edge is authored at
+        // the container tier while the closing edge already exists at a descendant tier).
         Set<UUID> visited = new LinkedHashSet<>();
         Deque<UUID> stack = new ArrayDeque<>();
-        stack.push(newBlockedId);
-        visited.add(newBlockedId);
+        List<UUID> seeds = new ArrayList<>();
+        seeds.add(newBlockedId);
+        parentOf.keySet().stream()
+                .filter(id -> isDescendantOf(id, newBlockedId, parentOf))
+                .forEach(seeds::add);
+        for (UUID seed : seeds) {
+            if (seed.equals(newBlockingId)) {
+                return true;
+            }
+            if (visited.add(seed)) {
+                stack.push(seed);
+            }
+        }
         while (!stack.isEmpty()) {
             UUID current = stack.pop();
             for (UUID next : blocksOf.getOrDefault(current, List.of())) {
@@ -106,6 +140,47 @@ final class TransitiveReadinessResolver {
                     stack.push(next);
                 }
             }
+        }
+        return false;
+    }
+
+    /** Builds graph G (declared, completion, and inheritance edges — see {@link #wouldCreateCycle}). */
+    private static Map<UUID, List<UUID>> buildPrecedenceGraph(
+            List<WorkItemDependency> edges, Map<UUID, UUID> parentOf) {
+        Map<UUID, List<UUID>> blocksOf = new HashMap<>();
+        for (WorkItemDependency edge : edges) {
+            addBlockingEdge(blocksOf, edge.getBlockingItemId(), edge.getBlockedItemId(), parentOf);
+        }
+        // Completion: a parent cannot be done until each child is.
+        for (Map.Entry<UUID, UUID> entry : parentOf.entrySet()) {
+            blocksOf.computeIfAbsent(entry.getKey(), k -> new ArrayList<>()).add(entry.getValue());
+        }
+        return blocksOf;
+    }
+
+    /** Adds {@code blockingId → blockedId} plus {@code blockingId → each descendant of blockedId}. */
+    private static void addBlockingEdge(
+            Map<UUID, List<UUID>> blocksOf, UUID blockingId, UUID blockedId, Map<UUID, UUID> parentOf) {
+        blocksOf.computeIfAbsent(blockingId, k -> new ArrayList<>()).add(blockedId);
+        for (Map.Entry<UUID, UUID> entry : parentOf.entrySet()) {
+            if (isDescendantOf(entry.getKey(), blockedId, parentOf)) {
+                blocksOf.computeIfAbsent(blockingId, k -> new ArrayList<>()).add(entry.getKey());
+            }
+        }
+    }
+
+    /**
+     * True if {@code candidate} sits strictly under {@code ancestor} via one or more parent hops
+     * ({@code candidate} itself does not count, even though the walk starts at its own parent).
+     */
+    private static boolean isDescendantOf(UUID candidate, UUID ancestor, Map<UUID, UUID> parentOf) {
+        Set<UUID> seen = new LinkedHashSet<>();
+        UUID current = parentOf.get(candidate);
+        while (current != null && seen.add(current)) {
+            if (current.equals(ancestor)) {
+                return true;
+            }
+            current = parentOf.get(current);
         }
         return false;
     }
@@ -289,15 +364,5 @@ final class TransitiveReadinessResolver {
                     .add(edge.getBlockingItemId());
         }
         return blockersOf;
-    }
-
-    /** {@code blockingItemId -> [blockedItemId, ...]} — "what this item blocks". */
-    private static Map<UUID, List<UUID>> indexBlockedByBlockingItem(List<WorkItemDependency> edges) {
-        Map<UUID, List<UUID>> blocksOf = new HashMap<>();
-        for (WorkItemDependency edge : edges) {
-            blocksOf.computeIfAbsent(edge.getBlockingItemId(), k -> new ArrayList<>())
-                    .add(edge.getBlockedItemId());
-        }
-        return blocksOf;
     }
 }

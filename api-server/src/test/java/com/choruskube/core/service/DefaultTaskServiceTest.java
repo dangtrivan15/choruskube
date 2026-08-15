@@ -184,15 +184,53 @@ public class DefaultTaskServiceTest extends BaseTest {
     }
 
     @Test
-    void start_taskWithOpenBlockers_stillSucceeds() {
-        // Blocking is informational only (Decision 2) — Task.start() does not gate on open
-        // blockers, matching how the Roadmap Graph View already lets a human start a blocked Task
-        // today. This characterization test guards against that intentionally never changing here.
-        GitRepo r = makeRepo("https://github.com/test/task-start-blocked.git");
+    void start_blockedTask_throwsConflictNamingTheBlocker() {
+        // Readiness is enforced, not merely displayed (spec Decision 10): starting a blocked Task
+        // would clone a base branch missing its blocker's work. Supersedes the earlier
+        // characterization that blocking was informational only. The escape hatch is editing the
+        // dependency, not bypassing this check.
+        GitRepo r = makeRepo("https://github.com/test/task-start-gated.git");
         StoryResponse story = makeStory(r.getId());
-        TaskResponse blocker = service.create(story.id(), new TaskRequest("Prerequisite", "D"));
+        TaskResponse blocker = service.create(story.id(), new TaskRequest("Set up the schema", "D"));
         TaskResponse task = service.create(story.id(), new TaskRequest("Blocked task", "D"));
         dependencyService.create(new CreateDependencyRequest("task", blocker.id(), "task", task.id()));
+
+        assertThatThrownBy(() -> service.start(task.id()))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining("Set up the schema");
+
+        assertThat(service.get(task.id()).status()).isEqualTo("backlog");
+    }
+
+    @Test
+    void start_blockedSolelyByBlockedStory_throwsConflictNamingStorysBlocker() {
+        // describeBlockers walks the Task, its Story, AND its Epic (not just the Task itself): a
+        // Task with no direct blocker of its own can still be BLOCKED purely through the
+        // containment cascade from its own Story, and the rejection must still name that Story's
+        // actual root-cause blocker rather than falling back to a generic message.
+        GitRepo r = makeRepo("https://github.com/test/task-start-story-gated.git");
+        EpicResponse epic = epicService.create(new EpicRequest("Epic", "Epic desc", null, r.getId()), null);
+        StoryResponse otherStory = storyService.create(epic.id(), new StoryRequest("Other Story", "D"));
+        TaskResponse storyBlocker = service.create(otherStory.id(), new TaskRequest("Fix the schema migration", "D"));
+        StoryResponse blockedStory = storyService.create(epic.id(), new StoryRequest("Blocked Story", "D"));
+        dependencyService.create(new CreateDependencyRequest("task", storyBlocker.id(), "story", blockedStory.id()));
+        TaskResponse task = service.create(blockedStory.id(), new TaskRequest("Task under blocked story", "D"));
+
+        assertThatThrownBy(() -> service.start(task.id()))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining("Fix the schema migration");
+
+        assertThat(service.get(task.id()).status()).isEqualTo("backlog");
+    }
+
+    @Test
+    void start_afterBlockerDone_succeeds() {
+        GitRepo r = makeRepo("https://github.com/test/task-start-ungated.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse blocker = service.create(story.id(), new TaskRequest("Prerequisite", "D"));
+        TaskResponse task = service.create(story.id(), new TaskRequest("Dependent task", "D"));
+        dependencyService.create(new CreateDependencyRequest("task", blocker.id(), "task", task.id()));
+        markDone(blocker.id());
 
         TaskResponse started = service.start(task.id());
 

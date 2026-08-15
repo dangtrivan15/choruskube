@@ -189,20 +189,35 @@ test.describe("Roadmap drill-down", () => {
     // Readiness is computed per-item from its own direct/transitive dependency
     // edges (Part 1 §3.1 — "this feature does not change the algorithm"), not
     // rolled up from a Story's child Tasks. A Task-to-Task edge alone leaves
-    // the parent Story itself un-blocked, so a second edge blocks the Story
-    // directly — exactly how a user would flag "this Story can't start yet"
-    // via the same dependency picker used for Task-to-Task edges.
+    // the parent Story itself un-blocked, so a second, independent edge blocks
+    // a Story directly — exactly how a user would flag "this Story can't
+    // start yet" via the same dependency picker used for Task-to-Task edges.
+    // That blocked Story is a second, otherwise-empty Story rather than
+    // `story` itself: blockingTask blocking `story` — its own container —
+    // would, once the containment cascade lands, cascade `story`'s BLOCKED
+    // status back down onto blockingTask (a child blocking its own blocked
+    // parent), a real deadlock the containment-aware cycle check correctly
+    // rejects with 409. A second Story under the same Epic sidesteps that
+    // without changing what this test demonstrates, and lets blockingTask
+    // keep doing double duty — one Task, one completion, both badges clear.
+    const blockedStory = await api.createStory(epic.id, {
+      title: uniqueName("List Readiness Blocked Story"),
+      description: "desc",
+    });
     await api.createDependency({
       blockingItemType: "task",
       blockingItemId: blockingTask.id,
       blockedItemType: "story",
-      blockedItemId: story.id,
+      blockedItemId: blockedStory.id,
     });
 
     // Not the graph — the Epic detail page's flat Story list.
     await roadmapPage.goto();
     await roadmapPage.openEpic(epic.title);
-    await expect(roadmapPage.storyItemReadinessBadge(story.title)).toBeVisible();
+    await expect(roadmapPage.storyItemReadinessBadge(blockedStory.title)).toBeVisible();
+    // Proves the comment above: a Task-to-Task edge inside `story` never
+    // propagates up to block `story` itself.
+    await expect(roadmapPage.storyItemReadinessBadge(story.title)).not.toBeVisible();
 
     // Not the graph — the Story detail page's flat Task list.
     await roadmapPage.openStory(story.title);
@@ -223,7 +238,7 @@ test.describe("Roadmap drill-down", () => {
     await expect(roadmapPage.taskItemReadinessBadge(blockedTask.title)).not.toBeVisible();
 
     await roadmapPage.page.goto(`/roadmap/epics/${epic.id}`);
-    await expect(roadmapPage.storyItemReadinessBadge(story.title)).not.toBeVisible();
+    await expect(roadmapPage.storyItemReadinessBadge(blockedStory.title)).not.toBeVisible();
 
     // No cleanup: starting blockingTask moved it out of backlog, and
     // DefaultEpicService#delete refuses to delete an Epic with any started
