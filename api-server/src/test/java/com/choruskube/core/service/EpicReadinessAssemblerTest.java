@@ -263,6 +263,51 @@ public class EpicReadinessAssemblerTest extends BaseTest {
         assertThat(assembly.readinessById().get(task.id())).isEqualTo(Readiness.READY);
     }
 
+    @Test
+    void assemble_blockingEpicRolledOutWithUndoneTask_dependentEpicIsReady() {
+        // Pins the rolled_out clause of epicStatus, which the rollup-only tests above never
+        // touch: the Task is deliberately left undone, so if the stage check were dropped (or
+        // came second instead of first) this would read BLOCKED, not READY.
+        EpicResponse blockingEpic = makeEpic("https://github.com/test/assembler-epic-rolled-out-a.git");
+        StoryResponse blockingStory = makeStory(blockingEpic.id(), "Prerequisite story");
+        makeTask(blockingStory.id(), "Prerequisite"); // left undone
+        epicService.updateStage(blockingEpic.id(), WorkItemStatus.rolled_out);
+
+        EpicResponse blockedEpic = makeEpic("https://github.com/test/assembler-epic-rolled-out-b.git");
+        StoryResponse story = makeStory(blockedEpic.id(), "Story");
+        TaskResponse task = makeTask(story.id(), "Task");
+        dependencyService.create(new CreateDependencyRequest("epic", blockingEpic.id(), "epic", blockedEpic.id()));
+
+        EpicReadinessAssembler.EpicCandidates candidates = assembler.loadEpicCandidates(blockedEpic.id());
+        EpicReadinessAssembler.Assembly assembly = assembler.assemble(
+                candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), false, null);
+
+        assertThat(assembly.readinessById().get(blockedEpic.id())).isEqualTo(Readiness.READY);
+        assertThat(assembly.readinessById().get(task.id())).isEqualTo(Readiness.READY);
+    }
+
+    @Test
+    void assemble_blockingStoryRolledOutWithUndoneTask_dependentIsReady() {
+        // Story-tier equivalent of the Epic rolled_out test above: pins storyStatus's rolled_out
+        // clause via loadEpicCandidates (both Stories are under the same Epic, so this is the
+        // in-candidate-set path, not resolveExternalBlocker's story branch).
+        EpicResponse epic = makeEpic("https://github.com/test/assembler-story-rolled-out.git");
+        StoryResponse blockingStory = makeStory(epic.id(), "Blocking story");
+        makeTask(blockingStory.id(), "Prerequisite"); // left undone
+        storyService.updateStage(blockingStory.id(), WorkItemStatus.rolled_out);
+
+        StoryResponse blockedStory = makeStory(epic.id(), "Blocked story");
+        TaskResponse task = makeTask(blockedStory.id(), "Task");
+        dependencyService.create(new CreateDependencyRequest("story", blockingStory.id(), "story", blockedStory.id()));
+
+        EpicReadinessAssembler.EpicCandidates candidates = assembler.loadEpicCandidates(epic.id());
+        EpicReadinessAssembler.Assembly assembly = assembler.assemble(
+                candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), false, null);
+
+        assertThat(assembly.readinessById().get(blockedStory.id())).isEqualTo(Readiness.READY);
+        assertThat(assembly.readinessById().get(task.id())).isEqualTo(Readiness.READY);
+    }
+
     private void markDone(UUID taskId) {
         Task t = taskRepo.findById(taskId).orElseThrow();
         t.setStatus(WorkItemStatus.done);

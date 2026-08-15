@@ -75,7 +75,6 @@ class EpicReadinessAssembler {
      * agree on exactly one "load this Epic's candidates" behavior.
      */
     record EpicCandidates(
-            UUID epicId,
             List<Story> stories,
             Map<UUID, List<Task>> tasksByStoryId,
             Set<UUID> candidateIds,
@@ -100,7 +99,7 @@ class EpicReadinessAssembler {
             tasksByStoryId.put(story.getId(), tasks);
             candidateIds.add(story.getId());
             parentOf.put(story.getId(), epicId);
-            statusById.put(story.getId(), RollupCalculator.compute(tasks).status());
+            statusById.put(story.getId(), storyStatus(story, tasks));
             for (Task task : tasks) {
                 candidateIds.add(task.getId());
                 parentOf.put(task.getId(), story.getId());
@@ -112,13 +111,14 @@ class EpicReadinessAssembler {
         // rollup of every descendant Task, matching how DefaultEpicService renders it.
         candidateIds.add(epicId);
         statusById.put(epicId, epicStatus(epicId, allTasks));
-        return new EpicCandidates(epicId, stories, tasksByStoryId, candidateIds, statusById, parentOf);
+        return new EpicCandidates(stories, tasksByStoryId, candidateIds, statusById, parentOf);
     }
 
     /**
      * An Epic counts as satisfied when its Tasks all report done, or when a human has moved it to
      * the {@code rolled_out} board lane — the only signal in the model that says "shipped", which
-     * a Task rollup cannot express. An Epic with no Tasks at all is never satisfied.
+     * a Task rollup cannot express. The stage check runs first, so an explicit human "shipped"
+     * outranks emptiness: an Epic with no Tasks and no {@code rolled_out} stage is never satisfied.
      */
     private String epicStatus(UUID epicId, List<Task> allTasks) {
         Epic epic = findEpic(epicId);
@@ -126,6 +126,19 @@ class EpicReadinessAssembler {
             return WorkItemStatus.done.name();
         }
         return RollupCalculator.compute(allTasks).status();
+    }
+
+    /**
+     * A Story counts as satisfied when its Tasks all report done, or when a human has moved it to
+     * the {@code rolled_out} board lane — the only signal in the model that says "shipped", which
+     * a Task rollup cannot express. The stage check runs first, so an explicit human "shipped"
+     * outranks emptiness: a Story with no Tasks and no {@code rolled_out} stage is never satisfied.
+     */
+    private String storyStatus(Story story, List<Task> tasks) {
+        if (story.getStage() == WorkItemStatus.rolled_out) {
+            return WorkItemStatus.done.name();
+        }
+        return RollupCalculator.compute(tasks).status();
     }
 
     /**
@@ -204,9 +217,9 @@ class EpicReadinessAssembler {
                 TransitiveReadinessResolver.computeReadiness(candidateIds, rows, effectiveStatusById::get);
 
         // Cascade: a blocked container blocks the work inside it. Applied after the walk rather
-        // than by expanding the edge set, because inheritance only needs to reach an item's own
-        // ancestors — three lookups, no graph rewriting. Resolved parent-first so a Task picks up
-        // an Epic-level block through its Story in one pass.
+        // than by expanding the edge set. Each item walks its own ancestor chain (at most two
+        // hops in this 3-tier model: task -> story -> epic) checking whether any ancestor is
+        // already BLOCKED, so the result does not depend on map iteration order.
         applyContainmentCascade(readinessById, parentOf);
 
         return new Assembly(readinessById, dependencies, externalBlockers);
@@ -294,7 +307,7 @@ class EpicReadinessAssembler {
             Story story = storyRepo.findById(id).orElseThrow(() -> new NotFoundException("Story not found: " + id));
             Epic epic = findEpic(story.getEpicId());
             List<Task> tasks = taskRepo.findByStoryIdOrderByCreatedAtDesc(id);
-            String status = RollupCalculator.compute(tasks).status();
+            String status = storyStatus(story, tasks);
             return new ExternalBlockerResolution(
                     new ExternalBlockerRef(
                             "story", id, story.getTitle(), epic.getId(), epic.getTitle(), direction, internalItemId),
