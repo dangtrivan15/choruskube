@@ -197,8 +197,8 @@ public class DefaultTaskService implements TaskService {
      */
     private List<TaskResponse> listWithReadiness(Story story, boolean internal, UUID runId) {
         EpicReadinessAssembler.EpicCandidates candidates = readinessAssembler.loadEpicCandidates(story.getEpicId());
-        EpicReadinessAssembler.Assembly assembly =
-                readinessAssembler.assemble(candidates.candidateIds(), candidates.statusById(), internal, runId);
+        EpicReadinessAssembler.Assembly assembly = readinessAssembler.assemble(
+                candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), internal, runId);
         List<Task> ownTasks = candidates.tasksByStoryId().getOrDefault(story.getId(), List.of());
         return ownTasks.stream()
                 .map(t -> toResponse(t, assembly.readinessById().get(t.getId())))

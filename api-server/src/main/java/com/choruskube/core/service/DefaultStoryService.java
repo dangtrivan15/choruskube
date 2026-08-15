@@ -169,8 +169,8 @@ public class DefaultStoryService implements StoryService {
      */
     private List<StoryResponse> listWithReadiness(UUID epicId, boolean internal, UUID runId) {
         EpicReadinessAssembler.EpicCandidates candidates = readinessAssembler.loadEpicCandidates(epicId);
-        EpicReadinessAssembler.Assembly assembly =
-                readinessAssembler.assemble(candidates.candidateIds(), candidates.statusById(), internal, runId);
+        EpicReadinessAssembler.Assembly assembly = readinessAssembler.assemble(
+                candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), internal, runId);
         return candidates.stories().stream()
                 .map(s -> toResponse(
                         s,

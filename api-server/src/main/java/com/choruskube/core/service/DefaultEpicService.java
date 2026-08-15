@@ -474,10 +474,13 @@ public class DefaultEpicService implements EpicService {
 
     private long computeReadyItemCount(UUID epicId) {
         EpicReadinessAssembler.EpicCandidates candidates = readinessAssembler.loadEpicCandidates(epicId);
-        EpicReadinessAssembler.Assembly assembly =
-                readinessAssembler.assemble(candidates.candidateIds(), candidates.statusById(), false, null);
-        return assembly.readinessById().values().stream()
-                .filter(r -> r == Readiness.READY)
+        EpicReadinessAssembler.Assembly assembly = readinessAssembler.assemble(
+                candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), false, null);
+        // Deliberately excludes the Epic's own entry: readyItemCount counts startable descendants,
+        // and the Epic became a candidate in its own right when edges gained an Epic tier.
+        return assembly.readinessById().entrySet().stream()
+                .filter(e -> !e.getKey().equals(epicId))
+                .filter(e -> e.getValue() == Readiness.READY)
                 .count();
     }
 

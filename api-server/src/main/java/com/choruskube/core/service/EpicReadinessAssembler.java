@@ -10,6 +10,7 @@ import com.choruskube.core.model.WorkItemDependency;
 import com.choruskube.core.model.enums.BlockableItemType;
 import com.choruskube.core.model.enums.BlockerDirection;
 import com.choruskube.core.model.enums.Readiness;
+import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.repository.EpicRepository;
 import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.repository.TaskRepository;
@@ -17,6 +18,7 @@ import com.choruskube.core.repository.WorkItemDependencyRepository;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -73,10 +75,12 @@ class EpicReadinessAssembler {
      * agree on exactly one "load this Epic's candidates" behavior.
      */
     record EpicCandidates(
+            UUID epicId,
             List<Story> stories,
             Map<UUID, List<Task>> tasksByStoryId,
             Set<UUID> candidateIds,
-            Map<UUID, String> statusById) {}
+            Map<UUID, String> statusById,
+            Map<UUID, UUID> parentOf) {}
 
     /**
      * Loads every Story under {@code epicId} plus every Task under each of those Stories, and
@@ -88,18 +92,40 @@ class EpicReadinessAssembler {
         List<Story> stories = storyRepo.findByEpicIdOrderByCreatedAtDesc(epicId);
         Map<UUID, List<Task>> tasksByStoryId = new HashMap<>();
         Map<UUID, String> statusById = new HashMap<>();
+        Map<UUID, UUID> parentOf = new HashMap<>();
         Set<UUID> candidateIds = new HashSet<>();
+        List<Task> allTasks = new ArrayList<>();
         for (Story story : stories) {
             List<Task> tasks = taskRepo.findByStoryIdOrderByCreatedAtDesc(story.getId());
             tasksByStoryId.put(story.getId(), tasks);
             candidateIds.add(story.getId());
+            parentOf.put(story.getId(), epicId);
             statusById.put(story.getId(), RollupCalculator.compute(tasks).status());
             for (Task task : tasks) {
                 candidateIds.add(task.getId());
+                parentOf.put(task.getId(), story.getId());
                 statusById.put(task.getId(), task.getStatus().name());
+                allTasks.add(task);
             }
         }
-        return new EpicCandidates(stories, tasksByStoryId, candidateIds, statusById);
+        // The Epic is a candidate in its own right now that edges can target it. Its status is the
+        // rollup of every descendant Task, matching how DefaultEpicService renders it.
+        candidateIds.add(epicId);
+        statusById.put(epicId, epicStatus(epicId, allTasks));
+        return new EpicCandidates(epicId, stories, tasksByStoryId, candidateIds, statusById, parentOf);
+    }
+
+    /**
+     * An Epic counts as satisfied when its Tasks all report done, or when a human has moved it to
+     * the {@code rolled_out} board lane — the only signal in the model that says "shipped", which
+     * a Task rollup cannot express. An Epic with no Tasks at all is never satisfied.
+     */
+    private String epicStatus(UUID epicId, List<Task> allTasks) {
+        Epic epic = findEpic(epicId);
+        if (epic.getStage() == WorkItemStatus.rolled_out) {
+            return WorkItemStatus.done.name();
+        }
+        return RollupCalculator.compute(allTasks).status();
     }
 
     /**
@@ -109,11 +135,18 @@ class EpicReadinessAssembler {
      *
      * @param statusById status for every id in {@code candidateIds}; mutated copies are made
      *     internally, the caller's map is left untouched
+     * @param parentOf maps a Story to its Epic and a Task to its Story, so a blocked container's
+     *     readiness can be cascaded onto the work inside it after the walk below
      * @param internal whether to authorize cross-Epic references via the internal ({@code
      *     assertSameOrg}) path or the public ({@code checkOrgAccess}) path
      * @param runId the calling run's id, used only when {@code internal} is true
      */
-    Assembly assemble(Set<UUID> candidateIds, Map<UUID, String> statusById, boolean internal, UUID runId) {
+    Assembly assemble(
+            Set<UUID> candidateIds,
+            Map<UUID, String> statusById,
+            Map<UUID, UUID> parentOf,
+            boolean internal,
+            UUID runId) {
         List<WorkItemDependency> rows = candidateIds.isEmpty()
                 ? List.of()
                 : dependencyRepo.findByBlockingItemIdInOrBlockedItemIdIn(candidateIds, candidateIds);
@@ -170,7 +203,35 @@ class EpicReadinessAssembler {
         Map<UUID, Readiness> readinessById =
                 TransitiveReadinessResolver.computeReadiness(candidateIds, rows, effectiveStatusById::get);
 
+        // Cascade: a blocked container blocks the work inside it. Applied after the walk rather
+        // than by expanding the edge set, because inheritance only needs to reach an item's own
+        // ancestors — three lookups, no graph rewriting. Resolved parent-first so a Task picks up
+        // an Epic-level block through its Story in one pass.
+        applyContainmentCascade(readinessById, parentOf);
+
         return new Assembly(readinessById, dependencies, externalBlockers);
+    }
+
+    /**
+     * Marks an item BLOCKED when any ancestor is BLOCKED. {@code parentOf} maps task→story and
+     * story→epic, so walking upward from each item covers both tiers. An item whose ancestor is
+     * absent from the map (a cross-Epic reference resolved for display only) simply stops the walk.
+     */
+    private static void applyContainmentCascade(Map<UUID, Readiness> readinessById, Map<UUID, UUID> parentOf) {
+        for (Map.Entry<UUID, Readiness> entry : readinessById.entrySet()) {
+            if (entry.getValue() == Readiness.BLOCKED) {
+                continue;
+            }
+            UUID ancestor = parentOf.get(entry.getKey());
+            Set<UUID> seen = new LinkedHashSet<>();
+            while (ancestor != null && seen.add(ancestor)) {
+                if (readinessById.get(ancestor) == Readiness.BLOCKED) {
+                    entry.setValue(Readiness.BLOCKED);
+                    break;
+                }
+                ancestor = parentOf.get(ancestor);
+            }
+        }
     }
 
     private DependencyEdgeResponse toEdgeResponse(WorkItemDependency row) {
@@ -215,6 +276,19 @@ class EpicReadinessAssembler {
             authService.assertSameOrg(type.name(), id, "workflow_run", runId);
         } else {
             authService.checkOrgAccess(type.name(), id);
+        }
+        if (type == BlockableItemType.epic) {
+            Epic epic = findEpic(id);
+            List<Story> stories = storyRepo.findByEpicIdOrderByCreatedAtDesc(id);
+            List<Task> allTasks = new ArrayList<>();
+            for (Story story : stories) {
+                allTasks.addAll(taskRepo.findByStoryIdOrderByCreatedAtDesc(story.getId()));
+            }
+            String status = epicStatus(id, allTasks);
+            return new ExternalBlockerResolution(
+                    new ExternalBlockerRef(
+                            "epic", id, epic.getTitle(), epic.getId(), epic.getTitle(), direction, internalItemId),
+                    status);
         }
         if (type == BlockableItemType.story) {
             Story story = storyRepo.findById(id).orElseThrow(() -> new NotFoundException("Story not found: " + id));
