@@ -50,7 +50,6 @@ public class GateAttachmentController {
         NodeExecution nodeExec = nodeExecRepo
                 .findById(nodeExecId)
                 .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
-        // Validate that the node execution belongs to this run (prevents cross-run upload path injection)
         NodeExecutionUtil.requireInRun(nodeExec, runId);
         String orgSlug = storagePrefixResolver.storagePrefixForRun(runId);
         String attachmentRefs = uploadService.uploadGateFiles(orgSlug, runId, nodeExecId, files);
