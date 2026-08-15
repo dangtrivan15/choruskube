@@ -145,4 +145,14 @@ class RunServiceNodeExecutionScopingTest {
 
         verify(claimService, never()).compareAndSetStatus(any(), any(), any());
     }
+
+    @Test
+    void retryNode_execBelongsToDifferentRun_throwsNotFoundAndDoesNotTerminateWorkload() {
+        stubRun(WorkflowRunStatus.awaiting_retry);
+        stubForeignExec(NodeExecutionStatus.failed);
+
+        assertThrows(NotFoundException.class, () -> service.retryNode(runId, foreignExecId));
+
+        verifyNoInteractions(workloadService);
+    }
 }

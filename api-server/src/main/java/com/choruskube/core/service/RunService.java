@@ -414,6 +414,8 @@ public class RunService {
         NodeExecution exec = execRepo.findById(nodeExecId)
                 .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
 
+        NodeExecutionUtil.requireInRun(exec, runId);
+
         if (exec.getStatus() != NodeExecutionStatus.failed) {
             throw new ValidationException(
                     List.of("Cannot retry node: node status is " + exec.getStatus() + ", expected failed"));
