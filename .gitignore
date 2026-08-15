@@ -16,3 +16,5 @@ docs/superpowers/
 # build's own output (the timing report lands in /build) — each component keeps its own rule.
 /.gradle/
 /build/
+.project
+.settings
