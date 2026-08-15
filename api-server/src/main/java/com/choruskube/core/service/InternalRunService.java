@@ -794,10 +794,11 @@ public class InternalRunService {
      * Reads the Roadmap Graph View for the Epic that owns the calling run's own triggering Task
      * (Decision 1, Decision 2) — lets an agent fetch its dependency context with no Epic ID at
      * all, resolving {@code run.task_id -> Task.story_id -> Story.epic_id} at request time rather
-     * than relying on a client-side default computed once at pod start. {@code nodeExecId} is
-     * accepted for route symmetry with the other {@code /{runId}/node-executions/{nodeExecId}/...}
-     * internal endpoints and for future use (e.g. logging), but is not otherwise consulted;
-     * resolution is entirely driven by {@code runId}'s own {@code task_id}. Mirrors {@link
+     * than relying on a client-side default computed once at pod start. {@code nodeExecId} is the
+     * authenticated identifier on this route — {@code InternalAuthFilter} matches the caller's
+     * JOB_SECRET against it — and is verified against {@code runId} before any resolution
+     * proceeds; that resolution is then driven entirely by {@code runId}'s own {@code task_id}.
+     * Mirrors {@link
      * #buildTaskContext} for the same FK chain, but throws {@link NotFoundException} on any
      * unresolved link (a 404 is the correct signal for this endpoint) instead of returning a
      * nullable summary DTO for narration — do not merge the two methods. Delegates to the same

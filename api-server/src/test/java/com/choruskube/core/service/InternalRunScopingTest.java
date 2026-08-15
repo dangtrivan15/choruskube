@@ -75,7 +75,8 @@ class InternalRunScopingTest {
                 UUID.randomUUID(), "https://github.com/org/repo/pull/1", 1, "title", "repo");
 
         assertThatThrownBy(() -> service.createPullRequest(runId, foreignExecId, req))
-                .isInstanceOf(NotFoundException.class);
+                .isInstanceOf(NotFoundException.class)
+                .hasMessage("Node execution not found: " + foreignExecId);
 
         verify(prRepo, never()).save(any());
     }
@@ -88,7 +89,8 @@ class InternalRunScopingTest {
         var req = new TaskStatusUpdateRequest(WorkItemStatus.done, null, null);
 
         assertThatThrownBy(() -> service.updateTaskStatus(runId, foreignExecId, UUID.randomUUID(), req))
-                .isInstanceOf(NotFoundException.class);
+                .isInstanceOf(NotFoundException.class)
+                .hasMessage("Node execution not found: " + foreignExecId);
 
         verifyNoInteractions(taskService);
     }
@@ -99,7 +101,8 @@ class InternalRunScopingTest {
         InternalRunService service = newInternalRunService();
 
         assertThatThrownBy(() -> service.getGraph(runId, foreignExecId, UUID.randomUUID()))
-                .isInstanceOf(NotFoundException.class);
+                .isInstanceOf(NotFoundException.class)
+                .hasMessage("Node execution not found: " + foreignExecId);
 
         verifyNoInteractions(roadmapGraphService);
     }
@@ -110,7 +113,8 @@ class InternalRunScopingTest {
         InternalRunService service = newInternalRunService();
 
         assertThatThrownBy(() -> service.getGraphForTriggeringTask(runId, foreignExecId))
-                .isInstanceOf(NotFoundException.class);
+                .isInstanceOf(NotFoundException.class)
+                .hasMessage("Node execution not found: " + foreignExecId);
 
         verifyNoInteractions(roadmapGraphService);
     }
@@ -127,7 +131,7 @@ class InternalRunScopingTest {
                 null, // storyService
                 taskService,
                 null, // runService
-                java.util.Optional.empty(), // quotaService
+                Optional.empty(), // quotaService
                 null, // usageSink
                 gitRepoRepo,
                 null, // runPullRequestService
