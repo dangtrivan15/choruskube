@@ -106,14 +106,30 @@ final class TransitiveReadinessResolver {
         if (newBlockingId.equals(newBlockedId)) {
             return true;
         }
-        Map<UUID, List<UUID>> blocksOf = buildCompletionGraph(existingEdges, parentOf);
+        Map<UUID, List<UUID>> blocksOf = buildPrecedenceGraph(existingEdges, parentOf);
         addBlockingEdge(blocksOf, newBlockingId, newBlockedId, parentOf);
 
-        // Reachable from newBlockedId back to newBlockingId ⇒ the new edge closes a loop.
+        // The new edge set added above is newBlockingId -> {newBlockedId} U descendants(newBlockedId)
+        // (addBlockingEdge's own inheritance expansion) — a cycle exists if ANY of those heads can
+        // reach back to newBlockingId, not just newBlockedId itself: the other heads are just as much
+        // a starting point for a loop, and seeding the walk with newBlockedId alone misses cycles
+        // that close through one of the inherited heads instead (e.g. the new edge is authored at
+        // the container tier while the closing edge already exists at a descendant tier).
         Set<UUID> visited = new LinkedHashSet<>();
         Deque<UUID> stack = new ArrayDeque<>();
-        stack.push(newBlockedId);
-        visited.add(newBlockedId);
+        List<UUID> seeds = new ArrayList<>();
+        seeds.add(newBlockedId);
+        parentOf.keySet().stream()
+                .filter(id -> isDescendantOf(id, newBlockedId, parentOf))
+                .forEach(seeds::add);
+        for (UUID seed : seeds) {
+            if (seed.equals(newBlockingId)) {
+                return true;
+            }
+            if (visited.add(seed)) {
+                stack.push(seed);
+            }
+        }
         while (!stack.isEmpty()) {
             UUID current = stack.pop();
             for (UUID next : blocksOf.getOrDefault(current, List.of())) {
@@ -128,8 +144,8 @@ final class TransitiveReadinessResolver {
         return false;
     }
 
-    /** Declared edges (with inheritance expanded) plus child → parent completion edges. */
-    private static Map<UUID, List<UUID>> buildCompletionGraph(
+    /** Builds graph G (declared, completion, and inheritance edges — see {@link #wouldCreateCycle}). */
+    private static Map<UUID, List<UUID>> buildPrecedenceGraph(
             List<WorkItemDependency> edges, Map<UUID, UUID> parentOf) {
         Map<UUID, List<UUID>> blocksOf = new HashMap<>();
         for (WorkItemDependency edge : edges) {
@@ -153,7 +169,10 @@ final class TransitiveReadinessResolver {
         }
     }
 
-    /** True if {@code candidate} sits under {@code ancestor} via zero or more parent hops. */
+    /**
+     * True if {@code candidate} sits strictly under {@code ancestor} via one or more parent hops
+     * ({@code candidate} itself does not count, even though the walk starts at its own parent).
+     */
     private static boolean isDescendantOf(UUID candidate, UUID ancestor, Map<UUID, UUID> parentOf) {
         Set<UUID> seen = new LinkedHashSet<>();
         UUID current = parentOf.get(candidate);

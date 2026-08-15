@@ -87,8 +87,11 @@ public class DefaultWorkItemDependencyService implements WorkItemDependencyServi
         //
         // The cycle check needs containment as well as declared edges: an Epic blocking another
         // Epic can deadlock against a Story-level edge pointing the other way, and that loop is
-        // invisible to a walk over declared edges alone. Loaded whole for the same reason
-        // findAll() above is: a cycle is not confined to one Epic.
+        // invisible to a walk over declared edges alone. Loaded whole, same as repo.findAll()
+        // below: a cycle is not confined to one Epic. TransitiveReadinessResolver rebuilds its
+        // internal graph from these two lists on every call (each existing edge rescans parentOf
+        // to expand inheritance) — O(edges * items), acceptable at roadmap scale but a candidate
+        // to cache/index if this path ever sees high-volume concurrent edge creation.
         Map<UUID, UUID> parentOf = new HashMap<>();
         storyRepo.findAll().forEach(s -> parentOf.put(s.getId(), s.getEpicId()));
         taskRepo.findAll().forEach(t -> parentOf.put(t.getId(), t.getStoryId()));

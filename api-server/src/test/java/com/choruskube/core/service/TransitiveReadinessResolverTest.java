@@ -288,6 +288,37 @@ class TransitiveReadinessResolverTest {
     }
 
     @Test
+    void wouldCreateCycle_crossTierDeadlockWithContainerEdgeAuthoredSecond_isDetected() {
+        UUID e1 = UUID.randomUUID();
+        UUID e2 = UUID.randomUUID();
+        UUID storyInE1 = UUID.randomUUID();
+        UUID storyInE2 = UUID.randomUUID();
+        Map<UUID, UUID> parentOf = Map.of(storyInE1, e1, storyInE2, e2);
+
+        // Same deadlock as the test above, authored in the opposite order: the Story-level edge
+        // already exists and the container-level edge is the one being proposed.
+        List<WorkItemDependency> existing = List.of(edge(storyInE2, storyInE1));
+
+        assertThat(TransitiveReadinessResolver.wouldCreateCycle(e1, e2, existing, parentOf))
+                .isTrue();
+    }
+
+    @Test
+    void wouldCreateCycle_sameDirectionStoryEdgeUnderBlockedEpics_isNotACycle() {
+        UUID e1 = UUID.randomUUID();
+        UUID e2 = UUID.randomUUID();
+        UUID storyInE1 = UUID.randomUUID();
+        UUID storyInE2 = UUID.randomUUID();
+        Map<UUID, UUID> parentOf = Map.of(storyInE1, e1, storyInE2, e2);
+
+        // E1 already blocks E2; a Story edge pointing the SAME way adds no loop.
+        List<WorkItemDependency> existing = List.of(edge(e1, e2));
+
+        assertThat(TransitiveReadinessResolver.wouldCreateCycle(storyInE1, storyInE2, existing, parentOf))
+                .isFalse();
+    }
+
+    @Test
     void wouldCreateCycle_selfBlockThroughOwnParent_isDetected() {
         UUID epic = UUID.randomUUID();
         UUID story = UUID.randomUUID();
