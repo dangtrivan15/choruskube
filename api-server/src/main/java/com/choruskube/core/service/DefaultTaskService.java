@@ -16,6 +16,7 @@ import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.Epic;
 import com.choruskube.core.model.GraphTemplate;
 import com.choruskube.core.model.RepoGroup;
+import com.choruskube.core.model.RunPullRequest;
 import com.choruskube.core.model.SoftwareProject;
 import com.choruskube.core.model.Story;
 import com.choruskube.core.model.Task;
@@ -28,6 +29,7 @@ import com.choruskube.core.observability.AuditDetail;
 import com.choruskube.core.observability.AuditSink;
 import com.choruskube.core.repository.EpicRepository;
 import com.choruskube.core.repository.GraphTemplateRepository;
+import com.choruskube.core.repository.RunPullRequestRepository;
 import com.choruskube.core.repository.SoftwareProjectRepository;
 import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.repository.TaskRepository;
@@ -93,6 +95,7 @@ public class DefaultTaskService implements TaskService {
     // the Roadmap Graph View uses (Decision 2/3), so the two can never disagree.
     private final EpicReadinessAssembler readinessAssembler;
     private final ScopeProvider scopeProvider;
+    private final RunPullRequestRepository prRepo;
 
     public DefaultTaskService(
             TaskRepository repo,
@@ -109,7 +112,8 @@ public class DefaultTaskService implements TaskService {
             ApplicationEventPublisher applicationEventPublisher,
             WorkItemDependencyService workItemDependencyService,
             EpicReadinessAssembler readinessAssembler,
-            ScopeProvider scopeProvider) {
+            ScopeProvider scopeProvider,
+            RunPullRequestRepository prRepo) {
         this.repo = repo;
         this.storyRepo = storyRepo;
         this.epicRepo = epicRepo;
@@ -125,6 +129,7 @@ public class DefaultTaskService implements TaskService {
         this.workItemDependencyService = workItemDependencyService;
         this.readinessAssembler = readinessAssembler;
         this.scopeProvider = scopeProvider;
+        this.prRepo = prRepo;
     }
 
     @Override
@@ -361,6 +366,29 @@ public class DefaultTaskService implements TaskService {
         return titles.isEmpty() ? "an unfinished dependency" : String.join(", ", titles);
     }
 
+    /**
+     * "done" means merged (Decision 8). A Task cannot close while a pull request from its most
+     * recent run is still unmerged — a dependant started on a lying {@code done} would clone a
+     * base branch without this Task's code.
+     *
+     * <p>Scoped to the most recent run rather than every run the Task ever had: retrying a Task
+     * after a rejected PR is the normal path, and that abandoned PR will never merge. A Task
+     * whose runs registered no PRs is vacuously satisfied and closes normally — which is what
+     * keeps the board working on an OSS install with no GitHub credential configured.
+     */
+    private void requireMostRecentRunPullRequestsMerged(WorkflowRun mostRecent) {
+        List<String> unmerged = prRepo.findByWorkflowRunId(mostRecent.getId()).stream()
+                .filter(pr -> pr.getMergedAt() == null)
+                .map(RunPullRequest::getPrUrl)
+                .toList();
+        if (unmerged.isEmpty()) {
+            return;
+        }
+        throw new ConflictException("Cannot complete: this Task's most recent run has "
+                + unmerged.size() + " unmerged pull request(s): " + String.join(", ", unmerged)
+                + ". A Task closes automatically once they are merged.");
+    }
+
     /** Resolves a blocker id to a display title, whichever tier it belongs to. */
     private String titleOf(UUID id) {
         return repo.findById(id)
@@ -375,6 +403,13 @@ public class DefaultTaskService implements TaskService {
     public TaskResponse complete(UUID id) {
         Task task = findOrThrow(id);
         authService.checkOrgAccess("task", id);
+        return completeCore(task, null);
+    }
+
+    @Override
+    @Transactional
+    public TaskResponse closeForMergedPullRequests(UUID id) {
+        Task task = findOrThrow(id);
         return completeCore(task, null);
     }
 
@@ -442,6 +477,7 @@ public class DefaultTaskService implements TaskService {
             throw new ConflictException(
                     "runId " + outcomeRunId + " does not match the Task's most recent run " + mostRecent.getId());
         }
+        requireMostRecentRunPullRequestsMerged(mostRecent);
 
         task.setStatus(WorkItemStatus.done);
         task = repo.save(task);
