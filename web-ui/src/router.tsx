@@ -8,6 +8,7 @@ import ApprovalsPage from "@/pages/ApprovalsPage";
 import SoftwareProjectsPage from "@/pages/SoftwareProjectsPage";
 import AnalyticsPage from "@/pages/AnalyticsPage";
 import RoadmapPage from "@/pages/RoadmapPage";
+import MilestonesPage from "@/pages/MilestonesPage";
 import RoadmapBoardPage from "@/pages/RoadmapBoardPage";
 import TaskBoardPage from "@/pages/TaskBoardPage";
 import StoryBoardPage from "@/pages/StoryBoardPage";
@@ -29,6 +30,7 @@ const coreChildren: RouteObject[] = [
   { path: "git-repos", element: <SoftwareProjectsPage /> },
   { path: "analytics", element: <AnalyticsPage /> },
   { path: "roadmap", element: <RoadmapPage /> },
+  { path: "roadmap/milestones", element: <MilestonesPage /> },
   { path: "roadmap/board", element: <RoadmapBoardPage /> },
   { path: "roadmap/timeline", element: <RoadmapTimelinePage /> },
   { path: "roadmap/board/tasks", element: <TaskBoardPage /> },

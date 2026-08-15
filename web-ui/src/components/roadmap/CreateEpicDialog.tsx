@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { useCreateEpic } from "@/hooks/useEpics";
+import { useAssignEpicMilestone } from "@/hooks/useMilestones";
 import SoftwareProjectSelect from "@/components/software-projects/SoftwareProjectSelect";
 import PrioritySelect from "@/components/roadmap/PrioritySelect";
+import MilestoneSelect from "@/components/roadmap/MilestoneSelect";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -35,8 +37,21 @@ export default function CreateEpicDialog({ open, onOpenChange }: Props) {
   // Defaults to "medium" — the same fallback the backend applies when priority
   // is omitted, made explicit here so the picker always shows a concrete value.
   const [priority, setPriority] = useState<Priority>("medium");
+  // "" = no Milestone chosen. Unlike priority, this can't ride the create POST — EpicRequest
+  // carries no milestoneId field (Decision 4: assignment is a dedicated PATCH) — so a chosen
+  // Milestone is applied as a second mutation right after the Epic is created.
+  const [milestoneId, setMilestoneId] = useState<string | null>(null);
 
   const createEpic = useCreateEpic();
+  const assignMilestone = useAssignEpicMilestone();
+
+  function handleSoftwareProjectChange(id: string) {
+    setSoftwareProjectId(id);
+    // A Milestone must belong to the same project as the Epic (Decision 3) — clear a
+    // stale selection from a previously-chosen project rather than let it silently PATCH
+    // a mismatched milestoneId after create.
+    setMilestoneId(null);
+  }
 
   function handleCreate() {
     if (!title.trim() || !description.trim() || !softwareProjectId) return;
@@ -49,12 +64,23 @@ export default function CreateEpicDialog({ open, onOpenChange }: Props) {
         priority,
       },
       {
-        onSuccess: () => {
-          onOpenChange(false);
-          resetForm();
+        onSuccess: (created) => {
+          if (milestoneId) {
+            assignMilestone.mutate(
+              { id: created.id, milestoneId },
+              { onSettled: () => finish() }
+            );
+          } else {
+            finish();
+          }
         },
       }
     );
+  }
+
+  function finish() {
+    onOpenChange(false);
+    resetForm();
   }
 
   function resetForm() {
@@ -63,6 +89,7 @@ export default function CreateEpicDialog({ open, onOpenChange }: Props) {
     setMotivation("");
     setSoftwareProjectId("");
     setPriority("medium");
+    setMilestoneId(null);
     createEpic.reset();
   }
 
@@ -132,7 +159,7 @@ export default function CreateEpicDialog({ open, onOpenChange }: Props) {
 
             <SoftwareProjectSelect
               value={softwareProjectId}
-              onChange={setSoftwareProjectId}
+              onChange={handleSoftwareProjectChange}
               testId="create-epic-software-project-select"
             />
           </div>
@@ -145,10 +172,20 @@ export default function CreateEpicDialog({ open, onOpenChange }: Props) {
               testId="create-epic-priority-select"
             />
           </div>
+
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium">Milestone</label>
+            <MilestoneSelect
+              value={milestoneId}
+              onChange={setMilestoneId}
+              softwareProjectId={softwareProjectId || undefined}
+              testId="create-epic-milestone-select"
+            />
+          </div>
         </div>
 
         <DialogFooter>
-          {createEpic.isError && (
+          {(createEpic.isError || assignMilestone.isError) && (
             <p className="text-sm text-destructive mr-auto">
               Failed to create epic.
             </p>
@@ -160,10 +197,11 @@ export default function CreateEpicDialog({ open, onOpenChange }: Props) {
               !title.trim() ||
               !description.trim() ||
               !softwareProjectId ||
-              createEpic.isPending
+              createEpic.isPending ||
+              assignMilestone.isPending
             }
           >
-            {createEpic.isPending ? "Creating..." : "Create"}
+            {createEpic.isPending || assignMilestone.isPending ? "Creating..." : "Create"}
           </Button>
         </DialogFooter>
       </DialogContent>

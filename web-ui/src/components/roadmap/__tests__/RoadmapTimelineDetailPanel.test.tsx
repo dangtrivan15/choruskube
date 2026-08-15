@@ -49,6 +49,7 @@ function makeEpic(overrides: Partial<TimelineEpicSummary> = {}): TimelineEpicSum
     updatedAt: "2026-04-01T00:00:00Z",
     stories: [],
     stalled: false,
+    milestone: null,
     ...overrides,
   };
 }

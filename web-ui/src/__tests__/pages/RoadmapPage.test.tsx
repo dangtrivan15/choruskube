@@ -25,8 +25,21 @@ vi.mock("@/hooks/useSoftwareProjects", () => ({
   useSoftwareProjects: () => ({ data: [] }),
 }));
 
+const mockUseMilestones = vi.fn();
+vi.mock("@/hooks/useMilestones", () => ({
+  useMilestones: (...args: unknown[]) => mockUseMilestones(...args),
+  useAssignEpicMilestone: () => ({
+    mutate: vi.fn(),
+    isPending: false,
+    isError: false,
+    reset: vi.fn(),
+  }),
+}));
+
 beforeEach(() => {
   mockUseEpics.mockReset();
+  mockUseMilestones.mockReset();
+  mockUseMilestones.mockReturnValue({ data: { content: [] } });
 });
 
 function makeEpic(overrides: Partial<EpicResponse> = {}): EpicResponse {
@@ -45,6 +58,7 @@ function makeEpic(overrides: Partial<EpicResponse> = {}): EpicResponse {
     createdAt: "2026-04-01T00:00:00Z",
     updatedAt: "2026-04-01T00:00:00Z",
     readyItemCount: 0,
+    milestone: null,
     ...overrides,
   };
 }
@@ -248,5 +262,78 @@ describe("RoadmapPage", () => {
     await user.click(screen.getByTestId("priority-filter-high"));
 
     expect(screen.getByText(/No epics match the current filters/)).toBeInTheDocument();
+  });
+
+  // --- Milestone badge & filter ---
+
+  it("renders the milestone badge when the epic has an assigned milestone", () => {
+    const epic = makeEpic({ milestone: { id: "m1", name: "Q3 Launch" } });
+    mockUseEpics.mockReturnValue({
+      data: { ...emptyPage, content: [epic], totalElements: 1, empty: false },
+      isLoading: false,
+    });
+    renderWithProviders(<RoadmapPage />);
+    expect(screen.getByTestId("epic-milestone-badge")).toHaveTextContent("Q3 Launch");
+  });
+
+  it("renders no milestone badge when the epic is unassigned", () => {
+    const epic = makeEpic({ milestone: null });
+    mockUseEpics.mockReturnValue({
+      data: { ...emptyPage, content: [epic], totalElements: 1, empty: false },
+      isLoading: false,
+    });
+    renderWithProviders(<RoadmapPage />);
+    expect(screen.queryByTestId("epic-milestone-badge")).not.toBeInTheDocument();
+  });
+
+  it("renders a milestone filter chip per org Milestone plus All", () => {
+    mockUseMilestones.mockReturnValue({
+      data: { content: [{ id: "m1", name: "Q3 Launch" }, { id: "m2", name: "Q4 Launch" }] },
+    });
+    mockUseEpics.mockReturnValue({ data: emptyPage, isLoading: false });
+    renderWithProviders(<RoadmapPage />);
+
+    expect(screen.getByTestId("milestone-filter-all")).toBeInTheDocument();
+    expect(screen.getByTestId("milestone-filter-m1")).toHaveTextContent("Q3 Launch");
+    expect(screen.getByTestId("milestone-filter-m2")).toHaveTextContent("Q4 Launch");
+  });
+
+  it("selecting a milestone filter chip threads the id into the query (milestoneId arg)", async () => {
+    mockUseMilestones.mockReturnValue({
+      data: { content: [{ id: "m1", name: "Q3 Launch" }] },
+    });
+    mockUseEpics.mockReturnValue({ data: emptyPage, isLoading: false });
+    renderWithProviders(<RoadmapPage />);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByTestId("milestone-filter-m1"));
+
+    const lastCall = mockUseEpics.mock.calls[mockUseEpics.mock.calls.length - 1];
+    // milestoneId is the 5th positional arg (after title, pagination, readyOnly, priority).
+    expect(lastCall?.[4]).toBe("m1");
+  });
+
+  it("selecting 'All' clears the milestone filter", async () => {
+    mockUseMilestones.mockReturnValue({
+      data: { content: [{ id: "m1", name: "Q3 Launch" }] },
+    });
+    mockUseEpics.mockReturnValue({ data: emptyPage, isLoading: false });
+    renderWithProviders(<RoadmapPage />);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByTestId("milestone-filter-m1"));
+    await user.click(screen.getByTestId("milestone-filter-all"));
+
+    const lastCall = mockUseEpics.mock.calls[mockUseEpics.mock.calls.length - 1];
+    expect(lastCall?.[4]).toBeUndefined();
+  });
+
+  it("links the Milestones toolbar action to the /roadmap/milestones route", () => {
+    mockUseEpics.mockReturnValue({ data: emptyPage, isLoading: false });
+    renderWithProviders(<RoadmapPage />);
+    expect(screen.getByTestId("roadmap-milestones-link")).toHaveAttribute(
+      "href",
+      "/roadmap/milestones",
+    );
   });
 });

@@ -49,6 +49,7 @@ const epic: EpicResponse = {
   createdAt: "2026-04-01T00:00:00Z",
   updatedAt: "2026-04-01T00:00:00Z",
   readyItemCount: 1,
+  milestone: null,
 };
 
 const story: StoryResponse = {

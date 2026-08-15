@@ -4,6 +4,7 @@ import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
 import com.choruskube.core.dto.EpicUpdateRequest;
 import com.choruskube.core.dto.InternalUpdateEpicRequest;
+import com.choruskube.core.dto.MilestoneRef;
 import com.choruskube.core.dto.RepoRef;
 import com.choruskube.core.dto.SoftwareProjectRef;
 import com.choruskube.core.event.MappableCreated;
@@ -12,6 +13,7 @@ import com.choruskube.core.exception.ConflictException;
 import com.choruskube.core.exception.ForbiddenException;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.Epic;
+import com.choruskube.core.model.Milestone;
 import com.choruskube.core.model.RepoGroup;
 import com.choruskube.core.model.SoftwareProject;
 import com.choruskube.core.model.Story;
@@ -23,6 +25,7 @@ import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.observability.AuditDetail;
 import com.choruskube.core.observability.AuditSink;
 import com.choruskube.core.repository.EpicRepository;
+import com.choruskube.core.repository.MilestoneRepository;
 import com.choruskube.core.repository.SoftwareProjectRepository;
 import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.repository.TaskRepository;
@@ -52,6 +55,7 @@ public class DefaultEpicService implements EpicService {
     private final StoryRepository storyRepo;
     private final TaskRepository taskRepo;
     private final SoftwareProjectRepository softwareProjectRepo;
+    private final MilestoneRepository milestoneRepo;
     private final AuthorizationService authService;
     private final RunEventPublisher eventPublisher;
     private final AuditSink auditSink;
@@ -66,6 +70,7 @@ public class DefaultEpicService implements EpicService {
             StoryRepository storyRepo,
             TaskRepository taskRepo,
             SoftwareProjectRepository softwareProjectRepo,
+            MilestoneRepository milestoneRepo,
             AuthorizationService authService,
             RunEventPublisher eventPublisher,
             AuditSink auditSink,
@@ -78,6 +83,7 @@ public class DefaultEpicService implements EpicService {
         this.storyRepo = storyRepo;
         this.taskRepo = taskRepo;
         this.softwareProjectRepo = softwareProjectRepo;
+        this.milestoneRepo = milestoneRepo;
         this.authService = authService;
         this.eventPublisher = eventPublisher;
         this.auditSink = auditSink;
@@ -130,7 +136,8 @@ public class DefaultEpicService implements EpicService {
 
     @Override
     @Transactional(readOnly = true)
-    public Page<EpicResponse> list(String title, Readiness readiness, Priority priority, Pageable pageable) {
+    public Page<EpicResponse> list(
+            String title, Readiness readiness, Priority priority, UUID milestoneId, Pageable pageable) {
         Specification<Epic> spec = scopeProvider.scope(Epic.class);
         if (title != null && !title.isBlank()) {
             String pattern = LikePatterns.containsIgnoreCase(title);
@@ -138,6 +145,9 @@ public class DefaultEpicService implements EpicService {
         }
         if (priority != null) {
             spec = spec.and((root, query, cb) -> cb.equal(root.get("priority"), priority));
+        }
+        if (milestoneId != null) {
+            spec = spec.and((root, query, cb) -> cb.equal(root.get("milestoneId"), milestoneId));
         }
         if (readiness == null) {
             // Pre-feature path, unchanged: SQL-level pagination. readyItemCount is still populated
@@ -186,10 +196,21 @@ public class DefaultEpicService implements EpicService {
         // Epic itself was already checked via checkOrgAccess("epic", id) above, so the caller's
         // org == the Epic's org. No-op under always-allow; 403 on mismatch under auth.
         authService.checkOrgAccess("software_project", newProject.getId());
+        UUID previousProjectId = epic.getSoftwareProjectId();
         epic.setTitle(request.title());
         epic.setDescription(request.description());
         epic.setMotivation(request.motivation());
         epic.setSoftwareProjectId(newProject.getId());
+        // A Milestone is scoped to exactly one software_project (Decision 3 of the "Group Epics
+        // under a named Milestone / Release" feature), so re-pointing the Epic to a different
+        // project would leave it tagged with a Milestone that no longer shares its project — the
+        // same invariant assignMilestone rejects, but here on the project-change path update()
+        // owns. Un-tag it (the SET NULL un-grouping semantics a Milestone delete already uses)
+        // rather than let the invariant break; re-tagging under the new project stays a separate
+        // PATCH /{id}/milestone.
+        if (epic.getMilestoneId() != null && !newProject.getId().equals(previousProjectId)) {
+            epic.setMilestoneId(null);
+        }
         epic = repo.save(epic);
 
         EpicResponse response = toResponse(epic, newProject);
@@ -345,6 +366,36 @@ public class DefaultEpicService implements EpicService {
         return response;
     }
 
+    @Override
+    @Transactional
+    public EpicResponse assignMilestone(UUID id, UUID milestoneId) {
+        Epic epic = findOrThrow(id);
+        authService.checkOrgAccess("epic", id);
+        // Deliberately no hasStartedDescendantTasks(id) guard here: like updateStage/
+        // updatePriority/updateTargetDate, a Milestone assignment must succeed even after
+        // descendant Tasks have started (Decision 4).
+        Map<String, Object> beforeSnapshot = snapshot(epic);
+        if (milestoneId != null) {
+            Milestone milestone = milestoneRepo
+                    .findById(milestoneId)
+                    .orElseThrow(() -> new NotFoundException("Milestone not found: " + milestoneId));
+            if (!milestone.getSoftwareProjectId().equals(epic.getSoftwareProjectId())) {
+                throw new BadRequestException(
+                        "Milestone " + milestoneId + " does not belong to the same project as Epic " + id);
+            }
+        }
+        epic.setMilestoneId(milestoneId);
+        epic = repo.save(epic);
+
+        EpicResponse response = toResponse(epic);
+        // Audited like every other roadmap mutation (create/update/delete/stage/priority/target
+        // date): a Milestone assignment is a planning attribute moved in isolation, so its change
+        // belongs in the audit trail too.
+        auditSink.record(AuditSink.EPIC_MILESTONE_UPDATED, "epic", id, detailJson(beforeSnapshot, snapshot(epic)));
+        eventPublisher.publishRoadmapItemChanged("epic", epic.getId(), response.status());
+        return response;
+    }
+
     /**
      * True if any Task under any Story of this Epic has left {@code backlog}. Mirrors the
      * old proposal rule ("can only edit/delete while in backlog") one level down the hierarchy.
@@ -359,8 +410,12 @@ public class DefaultEpicService implements EpicService {
 
     /**
      * Batch-projection of a list of {@link Epic} entities into response DTOs. Avoids the N+1 that
-     * a per-epic {@code toResponse} would incur by loading all referenced software_project rows
-     * and all descendant Story/Task rows (for the rollup) in a fixed number of queries.
+     * a per-epic {@code toResponse} would incur by loading all referenced software_project rows,
+     * all referenced Milestone rows, and all descendant Story/Task rows (for the rollup) in a
+     * fixed number of queries. This is the path that backs {@code GET /epics} (list/board/
+     * timeline) — without batch-loading Milestones here too, the returned {@code milestone} field
+     * would never be populated on the list endpoint (only on the single-Epic {@link #toResponse}
+     * path).
      */
     private List<EpicResponse> toResponses(List<Epic> epics) {
         Set<UUID> projectIds = epics.stream()
@@ -371,6 +426,15 @@ public class DefaultEpicService implements EpicService {
                 ? Map.of()
                 : softwareProjectRepo.findAllById(projectIds).stream()
                         .collect(Collectors.toMap(SoftwareProject::getId, p -> p));
+
+        Set<UUID> milestoneIds = epics.stream()
+                .map(Epic::getMilestoneId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        Map<UUID, MilestoneRef> milestoneRefsById = milestoneIds.isEmpty()
+                ? Map.of()
+                : milestoneRepo.findAllById(milestoneIds).stream()
+                        .collect(Collectors.toMap(Milestone::getId, m -> new MilestoneRef(m.getId(), m.getName())));
 
         Map<UUID, RollupCalculator.Rollup> rollupsByEpicId = computeRollups(epics);
         Map<UUID, Long> readyItemCountsByEpicId = computeReadyItemCounts(epics);
@@ -385,7 +449,8 @@ public class DefaultEpicService implements EpicService {
             RollupCalculator.Rollup rollup =
                     rollupsByEpicId.getOrDefault(e.getId(), new RollupCalculator.Rollup(0, 0, "backlog"));
             long readyItemCount = readyItemCountsByEpicId.getOrDefault(e.getId(), 0L);
-            out.add(buildResponse(e, project, rollup, readyItemCount));
+            MilestoneRef milestone = e.getMilestoneId() != null ? milestoneRefsById.get(e.getMilestoneId()) : null;
+            out.add(buildResponse(e, project, rollup, readyItemCount, milestone));
         }
         return out;
     }
@@ -442,7 +507,11 @@ public class DefaultEpicService implements EpicService {
     }
 
     private EpicResponse buildResponse(
-            Epic e, SoftwareProject project, RollupCalculator.Rollup rollup, long readyItemCount) {
+            Epic e,
+            SoftwareProject project,
+            RollupCalculator.Rollup rollup,
+            long readyItemCount,
+            MilestoneRef milestone) {
         SoftwareProjectRef projectRef = toProjectRef(project);
         List<RepoRef> repos = project.resolveRepos().stream()
                 .map(g -> new RepoRef(g.getId(), g.getUrl(), RepoNameUtil.deriveRepoName(g.getUrl())))
@@ -461,7 +530,8 @@ public class DefaultEpicService implements EpicService {
                 repos,
                 e.getCreatedAt(),
                 e.getUpdatedAt(),
-                readyItemCount);
+                readyItemCount,
+                milestone);
     }
 
     private SoftwareProjectRef toProjectRef(SoftwareProject project) {
@@ -499,6 +569,7 @@ public class DefaultEpicService implements EpicService {
         snap.put("stage", e.getStage() != null ? e.getStage().name() : null);
         snap.put("priority", e.getPriority() != null ? e.getPriority().name() : null);
         snap.put("target_date", e.getTargetDate() != null ? e.getTargetDate().toString() : null);
+        snap.put("milestone_id", e.getMilestoneId() != null ? e.getMilestoneId().toString() : null);
         return snap;
     }
 
@@ -532,6 +603,12 @@ public class DefaultEpicService implements EpicService {
         // calls) for callers like DefaultRoadmapGraphService that already do their own. Only the
         // list page (Decision 2) populates it — no UI reachable through this single-Epic path
         // renders readyItemCount today.
-        return buildResponse(e, project, rollup, 0);
+        MilestoneRef milestone = e.getMilestoneId() != null
+                ? milestoneRepo
+                        .findById(e.getMilestoneId())
+                        .map(m -> new MilestoneRef(m.getId(), m.getName()))
+                        .orElse(null)
+                : null;
+        return buildResponse(e, project, rollup, 0, milestone);
     }
 }

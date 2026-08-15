@@ -48,6 +48,9 @@ public class Epic extends BaseEntity {
     @Column(name = "target_date")
     private LocalDate targetDate;
 
+    @Column(name = "milestone_id")
+    private UUID milestoneId;
+
     public UUID getId() {
         return id;
     }
@@ -110,5 +113,13 @@ public class Epic extends BaseEntity {
 
     public void setTargetDate(LocalDate targetDate) {
         this.targetDate = targetDate;
+    }
+
+    public UUID getMilestoneId() {
+        return milestoneId;
+    }
+
+    public void setMilestoneId(UUID milestoneId) {
+        this.milestoneId = milestoneId;
     }
 }

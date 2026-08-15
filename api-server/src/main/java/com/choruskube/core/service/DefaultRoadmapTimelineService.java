@@ -1,21 +1,26 @@
 package com.choruskube.core.service;
 
+import com.choruskube.core.dto.MilestoneRef;
 import com.choruskube.core.dto.RoadmapTimelineResponse;
 import com.choruskube.core.dto.TimelineEpicSummary;
 import com.choruskube.core.dto.TimelineStorySummary;
 import com.choruskube.core.model.Epic;
+import com.choruskube.core.model.Milestone;
 import com.choruskube.core.model.Story;
 import com.choruskube.core.model.enums.Readiness;
 import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.repository.EpicRepository;
+import com.choruskube.core.repository.MilestoneRepository;
 import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.scope.ScopeProvider;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -37,6 +42,7 @@ public class DefaultRoadmapTimelineService implements RoadmapTimelineService {
 
     private final EpicRepository epicRepo;
     private final StoryRepository storyRepo;
+    private final MilestoneRepository milestoneRepo;
     private final ScopeProvider scopeProvider;
     private final EpicReadinessAssembler readinessAssembler;
     private final Clock clock;
@@ -44,11 +50,13 @@ public class DefaultRoadmapTimelineService implements RoadmapTimelineService {
     public DefaultRoadmapTimelineService(
             EpicRepository epicRepo,
             StoryRepository storyRepo,
+            MilestoneRepository milestoneRepo,
             ScopeProvider scopeProvider,
             EpicReadinessAssembler readinessAssembler,
             Clock clock) {
         this.epicRepo = epicRepo;
         this.storyRepo = storyRepo;
+        this.milestoneRepo = milestoneRepo;
         this.scopeProvider = scopeProvider;
         this.readinessAssembler = readinessAssembler;
         this.clock = clock;
@@ -72,12 +80,25 @@ public class DefaultRoadmapTimelineService implements RoadmapTimelineService {
         List<Story> stories = storyRepo.findByEpicIdIn(epicIds);
         Map<UUID, List<Story>> storiesByEpicId = stories.stream().collect(Collectors.groupingBy(Story::getEpicId));
 
-        List<TimelineEpicSummary> epicSummaries =
-                epics.stream().map(e -> toEpicSummary(e, storiesByEpicId)).toList();
+        // Batch-load Milestones referenced by any Epic on this page (mirrors DefaultEpicService's
+        // own batch-load in #toResponses) — avoids an N+1 lookup per Epic lane.
+        Set<UUID> milestoneIds = epics.stream()
+                .map(Epic::getMilestoneId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        Map<UUID, MilestoneRef> milestoneRefsById = milestoneIds.isEmpty()
+                ? Map.of()
+                : milestoneRepo.findAllById(milestoneIds).stream()
+                        .collect(Collectors.toMap(Milestone::getId, m -> new MilestoneRef(m.getId(), m.getName())));
+
+        List<TimelineEpicSummary> epicSummaries = epics.stream()
+                .map(e -> toEpicSummary(e, storiesByEpicId, milestoneRefsById))
+                .toList();
         return new RoadmapTimelineResponse(epicSummaries);
     }
 
-    private TimelineEpicSummary toEpicSummary(Epic epic, Map<UUID, List<Story>> storiesByEpicId) {
+    private TimelineEpicSummary toEpicSummary(
+            Epic epic, Map<UUID, List<Story>> storiesByEpicId, Map<UUID, MilestoneRef> milestoneRefsById) {
         // Per-Epic readiness pass (accepted N+1-per-Epic tradeoff, Decision 1 of the blocked/
         // stalled feature) — mirrors DefaultRoadmapGraphService#assemble's own single-Epic call,
         // just run once per scoped Epic in this loop instead of once for a single requested Epic.
@@ -90,6 +111,7 @@ public class DefaultRoadmapTimelineService implements RoadmapTimelineService {
                 .sorted(Comparator.comparing(Story::getCreatedAt))
                 .map(s -> toStorySummary(s, assembly))
                 .toList();
+        MilestoneRef milestone = epic.getMilestoneId() != null ? milestoneRefsById.get(epic.getMilestoneId()) : null;
         return new TimelineEpicSummary(
                 epic.getId(),
                 epic.getTitle(),
@@ -98,7 +120,8 @@ public class DefaultRoadmapTimelineService implements RoadmapTimelineService {
                 epic.getCreatedAt(),
                 epic.getUpdatedAt(),
                 stories,
-                stalled(epic.getStage(), epic.getUpdatedAt(), clock));
+                stalled(epic.getStage(), epic.getUpdatedAt(), clock),
+                milestone);
     }
 
     private TimelineStorySummary toStorySummary(Story story, EpicReadinessAssembler.Assembly assembly) {

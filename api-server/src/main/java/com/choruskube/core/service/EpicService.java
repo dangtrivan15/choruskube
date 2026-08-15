@@ -34,9 +34,11 @@ public interface EpicService {
      * (Decision 3) since {@code readyItemCount} is not a stored column. Every returned {@link
      * EpicResponse} carries {@code readyItemCount} regardless of whether the filter is active
      * (Decision 2). A non-null {@code priority} additionally narrows the result to Epics with that
-     * priority (a plain persisted-column predicate, applied in both the DB and readiness paths).
+     * priority (a plain persisted-column predicate, applied in both the DB and readiness paths). A
+     * non-null {@code milestoneId} additionally narrows the result to Epics tagged with that
+     * Milestone (§3.3 of the Milestone spec) — also a plain persisted-column predicate.
      */
-    Page<EpicResponse> list(String title, Readiness readiness, Priority priority, Pageable pageable);
+    Page<EpicResponse> list(String title, Readiness readiness, Priority priority, UUID milestoneId, Pageable pageable);
 
     EpicResponse get(UUID id);
 
@@ -80,4 +82,13 @@ public interface EpicService {
      * started" guard that {@link #update} enforces — mirrors {@link #updatePriority} exactly.
      */
     EpicResponse updateTargetDate(UUID id, LocalDate targetDate);
+
+    /**
+     * Sets or clears (via {@code null}) an Epic's Milestone assignment (Decision 4 of the "Group
+     * Epics under a named Milestone / Release" feature). Exempt from the "no edit once started"
+     * guard that {@link #update} enforces — mirrors {@link #updatePriority}/{@link
+     * #updateTargetDate} exactly. Rejects (via {@code BadRequestException}) a non-null {@code
+     * milestoneId} that does not belong to the same {@code software_project} as the Epic.
+     */
+    EpicResponse assignMilestone(UUID id, UUID milestoneId);
 }

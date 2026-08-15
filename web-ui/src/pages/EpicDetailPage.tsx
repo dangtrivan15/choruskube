@@ -4,6 +4,7 @@ import { formatDistanceToNow } from "date-fns";
 import { ArrowLeft, Pencil, Trash2, Plus, GitBranch, Layers } from "lucide-react";
 import Authorized from "@/components/Authorized";
 import { useEpic, useDeleteEpic, useUpdateEpicPriority, useUpdateEpicTargetDate } from "@/hooks/useEpics";
+import { useAssignEpicMilestone } from "@/hooks/useMilestones";
 import { useStories } from "@/hooks/useStories";
 import { useRoadmapSubscription } from "@/hooks/useRoadmapSubscription";
 import type { SortParam, Priority } from "@/lib/types";
@@ -29,6 +30,8 @@ import RoadmapReadyToggle from "@/components/roadmap/RoadmapReadyToggle";
 import PriorityBadge from "@/components/roadmap/PriorityBadge";
 import PrioritySelect from "@/components/roadmap/PrioritySelect";
 import PriorityFilter from "@/components/roadmap/PriorityFilter";
+import MilestoneBadge from "@/components/roadmap/MilestoneBadge";
+import MilestoneSelect from "@/components/roadmap/MilestoneSelect";
 import TargetDateField from "@/components/roadmap/TargetDateField";
 import LevelBadge from "@/components/roadmap/LevelBadge";
 import PageHeader from "@/components/layout/PageHeader";
@@ -67,6 +70,7 @@ export default function EpicDetailPage() {
   const deleteEpic = useDeleteEpic();
   const updateEpicPriority = useUpdateEpicPriority();
   const updateEpicTargetDate = useUpdateEpicTargetDate();
+  const assignMilestone = useAssignEpicMilestone();
 
   const [editOpen, setEditOpen] = useState(false);
   const [createStoryOpen, setCreateStoryOpen] = useState(false);
@@ -135,6 +139,7 @@ export default function EpicDetailPage() {
           <div className="flex flex-wrap items-center gap-2">
             <span data-testid="epic-detail-status">{statusBadge(epic.status)}</span>
             <PriorityBadge priority={epic.priority} data-testid="epic-detail-priority-badge" />
+            <MilestoneBadge milestone={epic.milestone} data-testid="epic-detail-milestone-badge" />
             <TargetDateField value={epic.targetDate} readOnly testId="epic-detail-target-date" />
             <span data-testid="epic-detail-progress" className="text-sm text-muted-foreground">
               {epic.progress.doneTasks}/{epic.progress.totalTasks} tasks done
@@ -161,6 +166,17 @@ export default function EpicDetailPage() {
                 disabled={updateEpicTargetDate.isPending}
                 onChange={(targetDate) => updateEpicTargetDate.mutate({ id: epic.id, targetDate })}
                 testId="epic-detail-target-date-input"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">Milestone</span>
+              <MilestoneSelect
+                value={epic.milestone?.id ?? null}
+                softwareProjectId={epic.softwareProject.id}
+                disabled={assignMilestone.isPending}
+                onChange={(milestoneId) => assignMilestone.mutate({ id: epic.id, milestoneId })}
+                size="sm"
+                testId="epic-detail-milestone-select"
               />
             </div>
           </Authorized>

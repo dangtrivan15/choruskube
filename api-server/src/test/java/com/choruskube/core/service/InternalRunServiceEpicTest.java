@@ -602,7 +602,8 @@ class InternalRunServiceEpicTest {
                 List.of(),
                 null,
                 null,
-                0);
+                0,
+                null);
     }
 
     private WorkflowRun createRun(UUID runId, UUID templateId, String inputs) {

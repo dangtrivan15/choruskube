@@ -393,6 +393,12 @@ export interface EpicResponse {
    * Populated on every EpicResponse, not just filtered ones.
    */
   readyItemCount: number;
+  /**
+   * The Epic's assigned Milestone (release grouping), or `null` if unassigned
+   * (Decision 2/4 of the "Group Epics under a named Milestone / Release" feature). Set/cleared via
+   * `PATCH /epics/{id}/milestone` (`EpicMilestoneUpdateRequest`).
+   */
+  milestone: MilestoneRef | null;
 }
 
 export interface EpicStageUpdateRequest {
@@ -438,6 +444,64 @@ export interface EpicPriorityUpdateRequest {
  */
 export interface EpicTargetDateUpdateRequest {
   targetDate: string | null;
+}
+
+// --- Milestones ---
+
+/**
+ * Lightweight Milestone reference embedded in an `EpicResponse`/`TimelineEpicSummary` — mirrors
+ * the backend `MilestoneRef` record. An Epic's `milestone` field is `null` when unassigned
+ * (Decision 2 of the "Group Epics under a named Milestone / Release" feature).
+ */
+export interface MilestoneRef {
+  id: string;
+  name: string;
+}
+
+/**
+ * Matches the backend `MilestoneResponse` record. `epicCount` is a read-time aggregate computed
+ * from `EpicRepository` (never persisted) — see `DefaultMilestoneService`'s batched `list()`
+ * computation for the multi-Milestone case.
+ */
+export interface MilestoneResponse {
+  id: string;
+  name: string;
+  description: string | null;
+  softwareProjectId: string;
+  targetDate: string | null;
+  epicCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * POST /milestones body — mirrors the backend `MilestoneRequest` record. `targetDate` is
+ * reserved (Caveat 1 of that feature) — not yet surfaced in the create UI.
+ */
+export interface MilestoneRequest {
+  name: string;
+  description: string | null;
+  softwareProjectId: string;
+  targetDate: string | null;
+}
+
+/**
+ * PUT /milestones/{id} body — mirrors the backend `MilestoneUpdateRequest` record (rename/edit).
+ * Unlike `MilestoneRequest`, there is no `softwareProjectId` — a Milestone's project is fixed at
+ * create time.
+ */
+export interface MilestoneUpdateRequest {
+  name: string;
+  description: string | null;
+  targetDate: string | null;
+}
+
+/**
+ * PATCH /epics/{id}/milestone body — mirrors the backend `EpicMilestoneUpdateRequest` record.
+ * `milestoneId: null` clears the Epic's assignment.
+ */
+export interface EpicMilestoneUpdateRequest {
+  milestoneId: string | null;
 }
 
 /**
@@ -660,6 +724,8 @@ export interface TimelineEpicSummary {
   updatedAt: string;
   stories: TimelineStorySummary[];
   stalled: boolean;
+  /** The Epic's assigned Milestone, or `null` if unassigned — see `EpicResponse.milestone`. */
+  milestone: MilestoneRef | null;
 }
 
 /**
@@ -718,13 +784,24 @@ export interface BlockingChainResponse {
  *   `null` in that case — see RunEventPublisher.publishRunStatusChanged), or
  *   `"dependency_changed"` for a blocking-dependency edge create/delete (Roadmap
  *   Graph View) — in that case `itemId` is the `work_item_dependency` row's own
- *   id, not either endpoint's id.
+ *   id, not either endpoint's id. `"milestone_changed"` is reserved for a future
+ *   Milestone-typed realtime event (Caveat 5 of the "Group Epics under a named
+ *   Milestone / Release" feature) — nothing publishes it today; Milestone
+ *   rename/delete propagates only via client-side query invalidation plus the
+ *   existing Epic-list refetch, and assigning an Epic already emits
+ *   `"epic_changed"`.
  * - `status` is the item's new `work_item_status` (`backlog`/`in_progress`/`done`),
  *   `"deleted"` on delete, the run's terminal status for the bridge event, or
  *   `"created"`/`"deleted"` for a dependency-changed event.
  */
 export interface RoadmapItemEvent {
-  itemType: "epic_changed" | "story_changed" | "task_changed" | "run_status_changed" | "dependency_changed";
+  itemType:
+    | "epic_changed"
+    | "story_changed"
+    | "task_changed"
+    | "run_status_changed"
+    | "dependency_changed"
+    | "milestone_changed";
   itemId: string | null;
   status: string;
 }
