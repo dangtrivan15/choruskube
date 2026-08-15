@@ -15,6 +15,7 @@ import com.choruskube.core.observability.UsageSink;
 import com.choruskube.core.repository.*;
 import com.choruskube.core.scope.ScopeProvider;
 import com.choruskube.core.specification.LikePatterns;
+import com.choruskube.core.util.NodeExecutionUtil;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -475,6 +476,9 @@ public class RunService {
         authService.checkOrgAccess("workflow_run", runId);
         NodeExecution exec = execRepo.findById(nodeExecId)
                 .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
+
+        // Verify the node execution belongs to the requested run before claiming it.
+        NodeExecutionUtil.requireInRun(exec, runId);
 
         // Atomically claim the node before doing anything else. Two concurrent/duplicate
         // submissions (double-click, two open tabs, a client retry) would otherwise both pass
