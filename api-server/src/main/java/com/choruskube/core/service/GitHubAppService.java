@@ -6,6 +6,7 @@ import com.nimbusds.jose.*;
 import com.nimbusds.jose.crypto.RSASSASigner;
 import com.nimbusds.jwt.JWTClaimsSet;
 import com.nimbusds.jwt.SignedJWT;
+import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -92,7 +93,7 @@ public class GitHubAppService {
                         "GitHub returned " + response.statusCode() + " for " + ownerRepo + "#" + prNumber);
             }
             return parsePullRequest(response.body());
-        } catch (java.io.IOException | InterruptedException e) {
+        } catch (IOException | InterruptedException e) {
             if (e instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
             }
@@ -108,7 +109,11 @@ public class GitHubAppService {
                     node.path("state").asText(null),
                     mergedAt == null || mergedAt.isNull() ? null : Instant.parse(mergedAt.asText()));
         } catch (Exception e) {
-            throw new RuntimeException("Failed to parse GitHub pull request payload: " + e.getMessage(), e);
+            // Deliberately does not interpolate the exception's message: it can quote the response
+            // content that failed to parse. Harmless for a timestamp, but this is a pattern worth
+            // not leaving around to be copied onto a field that carries something sensitive. The
+            // cause is chained, so the detail is still available to a debugger and to logs.
+            throw new RuntimeException("Failed to parse GitHub pull request payload", e);
         }
     }
 
