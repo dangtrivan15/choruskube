@@ -43,7 +43,10 @@ import java.util.UUID;
  *       be bound, that is a failure and must be thrown.
  * </ul>
  *
- * <p><strong>An implementation must not open a transaction.</strong> The pass it is handed is four
+ * <p><strong>An implementation must hold no transaction open around the pass.</strong> Reading its
+ * own state first is fine and downstream implementations need to — resolving which scope owns an
+ * Autopilot is a database read. What must not happen is that read, or anything else, still being
+ * inside an open transaction when the pass runs. The pass it is handed is four
  * short transactions plus a tick lease, deliberately separate; wrapping it in one — a
  * {@code @Transactional} on the implementation is enough, since both phase templates are {@code
  * PROPAGATION_REQUIRED} — merges all of them into the single long transaction that structure exists
