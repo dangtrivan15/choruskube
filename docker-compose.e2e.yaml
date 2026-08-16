@@ -162,6 +162,13 @@ services:
       CHORUSKUBE_TELEMETRY: "off"
       # Single-tenant OSS mode — no OIDC provider.
       AUTH_ENABLED: "false"
+      # The Autopilot's candidate source is every Epic on the board, with no per-worker
+      # scoping. Leaving the 30s scheduler (AutopilotReconciler) running against this shared
+      # stack means the instant any Playwright worker engages the singleton, background ticks
+      # start Tasks belonging to OTHER parallel workers — flipping them out of `backlog`
+      # underneath specs that assert on it. `web-ui/e2e/specs/autopilot.spec.ts` drives every
+      # assertion through `POST /api/v1/autopilot/tick` instead, so the scheduler must stay off.
+      AUTOPILOT_ENABLED: "false"
       # Activate the e2e Spring profile to trigger E2eTestDataSeeder at boot.
       SPRING_PROFILES_ACTIVE: e2e
       # api-server owns the workload executor; spawns agent containers via DooD.
