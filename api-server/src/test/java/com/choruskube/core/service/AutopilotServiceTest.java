@@ -61,6 +61,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.mockito.stubbing.Answer;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Propagation;
@@ -1241,6 +1242,36 @@ class AutopilotServiceTest {
             // prevent it.
             assertThat(annotation.propagation())
                     .as("%s must not open a transaction of its own", method.getName())
+                    .isEqualTo(Propagation.REQUIRED);
+        });
+    }
+
+    /**
+     * The same property one level down. The guard above covers the service's methods; a statement
+     * that opened its own transaction would defeat it from underneath — {@code insertDefaults} on
+     * {@code REQUIRES_NEW} commits the row before the ownership event is published, and no longer
+     * rolls back with a failing listener, which is the orphan-without-an-owner case again.
+     *
+     * <p>Derived over every {@code @Modifying} statement rather than named ones, because the same
+     * reasoning applies to all of them: a phase's writes are atomic only while they share the
+     * phase's transaction.
+     */
+    @Test
+    void everyModifyingStatementJoinsItsCallersTransaction() {
+        List<Method> statements = Arrays.stream(AutopilotRepository.class.getDeclaredMethods())
+                .filter(method -> method.isAnnotationPresent(Modifying.class))
+                .toList();
+
+        assertThat(statements)
+                .as("derived from the interface, so an empty set would mean the derivation broke")
+                .isNotEmpty();
+        assertThat(statements).allSatisfy(method -> {
+            Transactional annotation = method.getAnnotation(Transactional.class);
+            assertThat(annotation)
+                    .as("%s must join the phase transaction it is issued from", method.getName())
+                    .isNotNull();
+            assertThat(annotation.propagation())
+                    .as("%s must not commit independently of the phase that issued it", method.getName())
                     .isEqualTo(Propagation.REQUIRED);
         });
     }
