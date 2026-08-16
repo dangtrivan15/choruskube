@@ -10,6 +10,7 @@ import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import java.time.Instant;
 import java.util.UUID;
+import org.hibernate.annotations.DynamicUpdate;
 
 /**
  * The Autopilot: a standing controller that starts READY Tasks unattended (Decision 1). One row
@@ -21,6 +22,12 @@ import java.util.UUID;
  */
 @Entity
 @Table(name = "autopilot")
+// The tick and the three mutators write disjoint sets of columns — counters and last_tick_at on
+// one side, engaged and max_parallel on the other — and both serialise on the same advisory lock,
+// so this changes nothing today. It is here for the day someone adds a fourth write path and
+// forgets the lock: a full-column UPDATE would then silently restore `engaged` after a human hit
+// Disengage, while a dynamic one writes only what it actually changed and the stop survives.
+@DynamicUpdate
 public class Autopilot {
 
     @Id

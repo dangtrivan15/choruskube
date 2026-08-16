@@ -478,7 +478,7 @@ public class AutopilotService {
     /** Get-or-create, then set. A null {@code maxParallel} leaves it alone. */
     @Transactional
     public AutopilotStatusResponse update(Integer maxParallel) {
-        Autopilot autopilot = getOrCreate();
+        Autopilot autopilot = lockedForMutation();
         if (maxParallel != null) {
             if (maxParallel < 1) {
                 throw new BadRequestException("maxParallel must be at least 1");
@@ -497,7 +497,7 @@ public class AutopilotService {
      */
     @Transactional
     public AutopilotStatusResponse engage() {
-        Autopilot autopilot = getOrCreate();
+        Autopilot autopilot = lockedForMutation();
         autopilot.setEngaged(true);
         autopilot.setConsecutiveFailures(0);
         autopilot.setDisengagedReason(null);
@@ -509,13 +509,48 @@ public class AutopilotService {
      * Turns it off. Never touches in-flight runs — work already started stays started, and the
      * humans reviewing it are unaffected. The reason is cleared because a human switching it off
      * is not a fault, and the UI shows that field as a fault banner.
+     *
+     * <p>This is the emergency stop, so {@link #lockedForMutation()} matters most here: without
+     * it, a tick already in flight would write its own copy of the row back afterwards and turn
+     * the Autopilot straight back on.
      */
     @Transactional
     public AutopilotStatusResponse disengage() {
-        Autopilot autopilot = getOrCreate();
+        Autopilot autopilot = lockedForMutation();
         autopilot.setEngaged(false);
         autopilot.setDisengagedReason(null);
         return saveAndPublish(autopilot);
+    }
+
+    /**
+     * Get-or-create, serialised against a tick in flight.
+     *
+     * <p>Without this the advisory lock covered tick-against-tick only, and a mutation could land
+     * in the middle of a tick — which spans a full readiness sweep plus every {@code
+     * startForAutopilot} call, Temporal round trips included. {@code Autopilot} carries no {@code
+     * @Version}, so both sides flush a full-column UPDATE and the later writer wins every column:
+     * a human's Disengage would commit, the tick's write-back would land after it, and {@code
+     * engaged} would go back to true while the user watched the emergency stop succeed.
+     *
+     * <p>The refresh is the same point in reverse. This read happened before the lock, so a
+     * mutation that queued behind a tick would otherwise write back the counters the tick had just
+     * settled, erasing its failure count.
+     *
+     * <p>Still the advisory lock, never a row lock — see {@link #tick()} for why that distinction
+     * is load-bearing. Nothing reached from here starts a {@code REQUIRES_NEW} transaction, so
+     * these three mutators cannot block on the foreign key the way a row lock would.
+     *
+     * <p>A row that does not exist yet is not locked: there is no tick to race with until it does.
+     * Two concurrent first-writes can therefore still produce a second row — see {@link
+     * #findSingleton()}.
+     */
+    private Autopilot lockedForMutation() {
+        Autopilot autopilot = getOrCreate();
+        if (autopilot.getId() != null) {
+            lockService.acquireLock(autopilot.getId());
+            entityManager.refresh(autopilot);
+        }
+        return autopilot;
     }
 
     private AutopilotStatusResponse saveAndPublish(Autopilot autopilot) {
@@ -566,6 +601,9 @@ public class AutopilotService {
                         task.getId(), task.getTitle(), null, task.getStatus().name()))
                 .toList();
 
+        // Both buckets are named from the same batch, rather than one findById per run per bucket.
+        Map<UUID, String> titles = taskTitles(live);
+
         return new AutopilotStatusResponse(
                 autopilot.isEngaged(),
                 autopilot.getMaxParallel(),
@@ -573,8 +611,8 @@ public class AutopilotService {
                 slots,
                 nextUp,
                 whyIdle(autopilot, live, frontier, nextUp, inFlight, slots, notes),
-                refsFor(live, Bucket.AWAITING_YOU),
-                refsFor(live, Bucket.NEEDS_ATTENTION),
+                refsFor(live, Bucket.AWAITING_YOU, titles),
+                refsFor(live, Bucket.NEEDS_ATTENTION, titles),
                 autopilot.getConsecutiveFailures(),
                 autopilot.getDisengagedReason(),
                 autopilot.getLastTickAt());
@@ -640,19 +678,33 @@ public class AutopilotService {
         return reasons;
     }
 
-    private List<AutopilotTaskRef> refsFor(List<WorkflowRun> live, Bucket bucket) {
+    private static List<AutopilotTaskRef> refsFor(
+            List<WorkflowRun> live, Bucket bucket, Map<UUID, String> titlesByTaskId) {
         return live.stream()
                 .filter(run -> classify(run.getStatus()).bucket() == bucket)
                 .map(run -> new AutopilotTaskRef(
                         run.getTaskId(),
-                        run.getTaskId() == null
-                                ? null
-                                : taskRepo.findById(run.getTaskId())
-                                        .map(Task::getTitle)
-                                        .orElse(null),
+                        // Guarded rather than looked up blind: an immutable Map throws on get(null),
+                        // and a run with no Task is exactly what an empty title map is made of.
+                        run.getTaskId() == null ? null : titlesByTaskId.get(run.getTaskId()),
                         run.getId(),
                         run.getStatus().name()))
                 .toList();
+    }
+
+    /** One batched lookup for every Task named in the reported lists — mirrors {@link
+     * #affinityEpicIds}, which already loads its Tasks this way. */
+    private Map<UUID, String> taskTitles(List<WorkflowRun> live) {
+        Set<UUID> taskIds = live.stream()
+                .map(WorkflowRun::getTaskId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if (taskIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<UUID, String> titles = new HashMap<>();
+        taskRepo.findAllById(taskIds).forEach(task -> titles.put(task.getId(), task.getTitle()));
+        return titles;
     }
 
     private static int countOccupyingSlots(List<WorkflowRun> live) {
@@ -685,6 +737,11 @@ public class AutopilotService {
      * The singleton (Decision 7). Ordered rather than "whichever row came back first" so that if a
      * concurrent first-write ever does produce a second row, every replica still agrees on which
      * one is the Autopilot instead of alternating between them.
+     *
+     * <p>The loser of such a race is inert — it is never ticked and holds no runs — but it is not
+     * invisible: the request that created it returns and publishes the ORPHAN's status, so that one
+     * client briefly renders a row that will never tick. The next tick publishes the canonical row
+     * within the scheduler interval and the display corrects itself.
      */
     private Optional<Autopilot> findSingleton() {
         return autopilotRepo.findAll().stream()

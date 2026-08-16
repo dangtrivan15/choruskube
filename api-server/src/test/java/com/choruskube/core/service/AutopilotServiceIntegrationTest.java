@@ -1,6 +1,7 @@
 package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.choruskube.core.BaseTest;
 import com.choruskube.core.CommittedFixtureCleaner;
@@ -27,6 +28,13 @@ import io.temporal.client.WorkflowStub;
 import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -35,6 +43,8 @@ import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * The tick against real Postgres, real readiness and a real {@code REQUIRES_NEW} start.
@@ -77,6 +87,12 @@ public class AutopilotServiceIntegrationTest extends BaseTest {
 
     @Autowired
     private AutopilotRepository autopilotRepo;
+
+    @Autowired
+    private LockService lockService;
+
+    @Autowired
+    private PlatformTransactionManager txManager;
 
     @Autowired
     private JdbcTemplate jdbc;
@@ -211,6 +227,98 @@ public class AutopilotServiceIntegrationTest extends BaseTest {
         assertThat(autopilot.getConsecutiveFailures()).isEqualTo(3);
         assertThat(autopilot.isEngaged()).isFalse();
         assertThat(autopilot.getDisengagedReason()).contains("3 consecutive failures");
+    }
+
+    /**
+     * The emergency stop must not be revertible by a tick that was already running.
+     *
+     * <p>Deterministic on purpose. Rather than racing two threads and hoping the mutation lands
+     * inside the tick's window, this test holds the tick's own advisory lock itself and asserts
+     * that {@code disengage()} cannot proceed until it is released — which is the property the fix
+     * actually adds. Before the fix the mutators took no lock at all, so the {@code get} below
+     * returned immediately instead of timing out.
+     */
+    @Test
+    void disengage_waitsForATickHoldingTheAutopilotLock() throws Exception {
+        StoryResponse story = makeStory(makeRepo("autopilot-lock").getId());
+        TaskResponse task = taskService.create(story.id(), new TaskRequest("Work", "D"));
+        UUID autopilotId = engage();
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            Future<Boolean> disengaged = new TransactionTemplate(txManager).execute(status -> {
+                lockService.acquireLock(autopilotId);
+                Future<Boolean> pending = pool.submit(() -> {
+                    autopilotService.disengage();
+                    return true;
+                });
+                assertThatThrownBy(() -> pending.get(3, TimeUnit.SECONDS))
+                        .as("a mutation must not slip past a tick that holds the lock")
+                        .isInstanceOf(TimeoutException.class);
+
+                // Re-verifying the hazard the tick's javadoc is about, in the new configuration:
+                // giving the mutators a lock must not recreate it. The lock is advisory, so
+                // neither this transaction nor the queued Disengage holds a row lock on
+                // autopilot(id), and a REQUIRES_NEW start — whose foreign key needs FOR KEY SHARE
+                // on exactly that row — still goes through. Bounded, so the failure mode is a
+                // failed assertion rather than the hang a row lock would produce.
+                Future<String> started = pool.submit(() ->
+                        taskService.startForAutopilot(task.id(), autopilotId).status());
+                try {
+                    assertThat(started.get(20, TimeUnit.SECONDS)).isEqualTo("in_progress");
+                } catch (Exception e) {
+                    throw new IllegalStateException(
+                            "a REQUIRES_NEW start did not complete while the advisory lock was held", e);
+                }
+                return pending;
+            });
+
+            assertThat(disengaged.get(30, TimeUnit.SECONDS)).isTrue();
+        } finally {
+            pool.shutdownNow();
+        }
+        assertThat(autopilotRepo.findById(autopilotId).orElseThrow().isEngaged())
+                .as("the human's Disengage is the last word")
+                .isFalse();
+    }
+
+    /**
+     * The same property end to end: a real tick and a real Disengage, released together. Whichever
+     * order they take, the Autopilot must end up off — the tick either sees the row already
+     * disengaged and returns, or holds the lock and lets the mutation land after it.
+     */
+    @Test
+    void concurrentTickAndDisengage_theHumanWins() throws Exception {
+        StoryResponse story = makeStory(makeRepo("autopilot-stop").getId());
+        taskService.create(story.id(), new TaskRequest("Work", "D"));
+        UUID autopilotId = engage();
+
+        CyclicBarrier startLine = new CyclicBarrier(2);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            List<Future<Throwable>> outcomes = pool.invokeAll(List.of(
+                    released(startLine, () -> autopilotService.tick()),
+                    released(startLine, () -> autopilotService.disengage())));
+            for (Future<Throwable> outcome : outcomes) {
+                assertThat(outcome.get(60, TimeUnit.SECONDS)).isNull();
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+
+        assertThat(autopilotRepo.findById(autopilotId).orElseThrow().isEngaged())
+                .isFalse();
+    }
+
+    private static Callable<Throwable> released(CyclicBarrier startLine, Runnable action) {
+        return () -> {
+            startLine.await(30, TimeUnit.SECONDS);
+            try {
+                action.run();
+                return null;
+            } catch (Throwable t) {
+                return t;
+            }
+        };
     }
 
     @Test

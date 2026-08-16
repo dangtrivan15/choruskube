@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -50,6 +51,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -649,6 +651,42 @@ class AutopilotServiceTest {
         assertThatThrownBy(() -> service.update(0)).isInstanceOf(BadRequestException.class);
     }
 
+    @Test
+    void everyMutatorSerialisesAgainstATickOnTheSameAdvisoryLock() {
+        // The advisory lock used to cover tick-against-tick only. A mutation could then land in
+        // the middle of a tick — a window spanning a full readiness sweep and every
+        // startForAutopilot call — and the tick's later full-column write-back would restore
+        // `engaged`, silently reverting a human's emergency stop.
+        newService().engage();
+        newService().disengage();
+        newService().update(2);
+
+        verify(lockService, times(3)).acquireLock(autopilotId);
+        verify(entityManager, times(3)).refresh(autopilot);
+    }
+
+    @Test
+    void mutatingWhenNoRowExists_takesNoLock() {
+        // Nothing to serialise against: no row means no tick can be running on it.
+        autopilot = null;
+
+        newService().engage();
+
+        verifyNoInteractions(lockService);
+    }
+
+    @Test
+    void mutatorRereadsTheRowAfterTakingTheLock() {
+        // Symmetric to the tick's own refresh: this read happened before the lock, so a mutation
+        // queued behind a tick would otherwise write back the counters that tick just settled.
+        InOrder inOrder = inOrder(lockService, entityManager);
+
+        newService().disengage();
+
+        inOrder.verify(lockService).acquireLock(autopilotId);
+        inOrder.verify(entityManager).refresh(autopilot);
+    }
+
     // -----------------------------------------------------------------------------------
     // Harness
     // -----------------------------------------------------------------------------------
@@ -665,13 +703,16 @@ class AutopilotServiceTest {
             }
             return saved;
         });
+        // The null guards are not defensive padding: re-stubbing calls the mock with null
+        // arguments, so a test that builds the service twice would otherwise NPE inside the
+        // answer installed by the first build.
         when(runRepo.findByAutopilotIdAndStatusIn(any(), any())).thenAnswer(invocation -> {
-            Set<?> statuses = new HashSet<>((java.util.Collection<?>) invocation.getArgument(1));
+            Set<?> statuses = statusesOf(invocation.getArgument(1));
             return live.stream().filter(r -> statuses.contains(r.getStatus())).toList();
         });
         when(runRepo.findByAutopilotIdAndAutopilotSettledAtIsNullAndStatusIn(any(), any()))
                 .thenAnswer(invocation -> {
-                    Set<?> statuses = new HashSet<>((java.util.Collection<?>) invocation.getArgument(1));
+                    Set<?> statuses = statusesOf(invocation.getArgument(1));
                     return settleBatch.stream()
                             .filter(r -> r.getAutopilotSettledAt() == null)
                             .filter(r -> statuses.contains(r.getStatus()))
@@ -682,6 +723,9 @@ class AutopilotServiceTest {
         when(taskRepo.findAllById(any())).thenAnswer(invocation -> {
             Iterable<?> ids = invocation.getArgument(0);
             List<Task> found = new ArrayList<>();
+            if (ids == null) {
+                return found;
+            }
             ids.forEach(id -> {
                 Task task = tasksById.get(id);
                 if (task != null) {
@@ -718,6 +762,10 @@ class AutopilotServiceTest {
                 eventPublisher,
                 entityManager,
                 Duration.ofMinutes(15));
+    }
+
+    private static Set<?> statusesOf(Object argument) {
+        return argument == null ? Set.of() : new HashSet<>((java.util.Collection<?>) argument);
     }
 
     /** Runs a tick and returns the status it broadcast — the tick's own view of what it did. */
