@@ -16,6 +16,7 @@ import static org.mockito.Mockito.when;
 
 import com.choruskube.core.dto.AutopilotStatusResponse;
 import com.choruskube.core.dto.AutopilotTaskRef;
+import com.choruskube.core.event.MappableCreated;
 import com.choruskube.core.exception.BadRequestException;
 import com.choruskube.core.exception.ConflictException;
 import com.choruskube.core.exception.QuotaExceededException;
@@ -122,6 +123,10 @@ class AutopilotServiceTest {
     private Instant leaseUntil;
 
     private Autopilot autopilot;
+
+    /** Everything the service published as a Spring application event — the ownership event. */
+    private final List<Object> ownershipEvents = new ArrayList<>();
+
     private final List<EpicFixture> epics = new ArrayList<>();
     private final List<WorkflowRun> live = new ArrayList<>();
     private final List<WorkflowRun> settleBatch = new ArrayList<>();
@@ -739,8 +744,8 @@ class AutopilotServiceTest {
             }
 
             @Override
-            public UUID getOrCreateForCurrentScope() {
-                return engaged.getFirst();
+            public Resolved getOrCreateForCurrentScope() {
+                return new Resolved(engaged.getFirst(), false);
             }
 
             @Override
@@ -1083,6 +1088,66 @@ class AutopilotServiceTest {
         inOrder.verify(autopilotRepo).engage(any(), any());
     }
 
+    /**
+     * The insert gives the row an owner, and the service is what says so.
+     *
+     * <p>Published here rather than by the resolver on purpose. The resolver is a seam: an
+     * implementation that forgot to publish would create the row, return 200, and leave the
+     * ownership row silently absent — a convention nobody can see being broken. Reporting {@code
+     * created} is all a resolver can get wrong, and getting that wrong is loud.
+     */
+    @Test
+    void creatingTheRow_publishesTheOwnershipEvent() {
+        autopilot = null;
+
+        newService().engage();
+
+        assertThat(ownershipEvents)
+                .as("\"autopilot\" is the resource type the ownership writer switches on")
+                .containsExactly(MappableCreated.of("autopilot", autopilot.getId()));
+    }
+
+    /**
+     * The ownership event has to land in the same transaction as the insert, and that rests on two
+     * things: the publish being synchronous and inside {@code ensureRow} (which {@link
+     * #creatingTheRow_publishesTheOwnershipEvent()} observes, since the event arrives during the
+     * call rather than after it), and every route to {@code ensureRow} carrying a transaction. This
+     * is the second.
+     *
+     * <p>Asserted rather than assumed, and asserted here rather than by watching a real transaction
+     * from a Spring test: a test class that registers its own listener needs a Spring context of its
+     * own, and one more context is one more connection pool against the single container the whole
+     * suite shares. That is not a price worth paying for a property that decomposes this cleanly.
+     *
+     * <p>If a mutator loses its annotation, the insert commits on its own and the event fires
+     * against no transaction — a row that keeps its owner even when the request rolls back, or
+     * loses it when the publish fails.
+     */
+    @Test
+    void everyMutatorThatCanCreateTheRowIsTransactional() throws NoSuchMethodException {
+        assertThat(AutopilotService.class.getMethod("engage").getAnnotation(Transactional.class))
+                .isNotNull();
+        assertThat(AutopilotService.class.getMethod("disengage").getAnnotation(Transactional.class))
+                .isNotNull();
+        assertThat(AutopilotService.class.getMethod("update", Integer.class).getAnnotation(Transactional.class))
+                .isNotNull();
+    }
+
+    @Test
+    void mutatingAnExistingRow_publishesNoOwnershipEvent() {
+        // One row, one owner. `created` is false for every mutation after the first, so a panel
+        // left open on Engage/Disengage does not republish ownership on every click.
+        AutopilotService service = newService();
+
+        service.engage();
+        service.update(3);
+        service.disengage();
+
+        assertThat(ownershipEvents)
+                .as("nothing was created, so nothing acquired an owner")
+                .isEmpty();
+    }
+
     // -----------------------------------------------------------------------------------
     // 9 — the regression guard
     // -----------------------------------------------------------------------------------
@@ -1177,7 +1242,7 @@ class AutopilotServiceTest {
      * several.
      */
     private AutopilotService newService(Duration tickLeaseTtl) {
-        return newService(tickLeaseTtl, new SingleTenantAutopilotResolver(autopilotRepo, event -> {}));
+        return newService(tickLeaseTtl, new SingleTenantAutopilotResolver(autopilotRepo));
     }
 
     private AutopilotService newService(Duration tickLeaseTtl, AutopilotResolver resolver) {
@@ -1345,6 +1410,7 @@ class AutopilotServiceTest {
                 candidateSource,
                 taskService,
                 eventPublisher,
+                ownershipEvents::add,
                 transactionManager,
                 Duration.ofMinutes(15),
                 tickLeaseTtl,

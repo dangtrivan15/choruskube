@@ -1,6 +1,5 @@
 package com.choruskube.core.service;
 
-import com.choruskube.core.event.MappableCreated;
 import com.choruskube.core.model.Autopilot;
 import com.choruskube.core.repository.AutopilotRepository;
 import java.util.Comparator;
@@ -8,7 +7,6 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 
 /**
@@ -29,12 +27,9 @@ import org.springframework.stereotype.Component;
 public class SingleTenantAutopilotResolver implements AutopilotResolver {
 
     private final AutopilotRepository autopilotRepo;
-    private final ApplicationEventPublisher applicationEventPublisher;
 
-    public SingleTenantAutopilotResolver(
-            AutopilotRepository autopilotRepo, ApplicationEventPublisher applicationEventPublisher) {
+    public SingleTenantAutopilotResolver(AutopilotRepository autopilotRepo) {
         this.autopilotRepo = autopilotRepo;
-        this.applicationEventPublisher = applicationEventPublisher;
     }
 
     @Override
@@ -43,17 +38,17 @@ public class SingleTenantAutopilotResolver implements AutopilotResolver {
     }
 
     @Override
-    public UUID getOrCreateForCurrentScope() {
-        return forCurrentScope().orElseGet(() -> {
-            UUID id = UUID.randomUUID();
-            autopilotRepo.insertDefaults(id);
-            // Same transaction as the insert, and immediately after it — the shape every other
-            // creation site in this codebase uses. Core has no listener for it; downstream this is
-            // what writes the row's ownership, and a row created without one is one the scope
-            // provider cannot resolve afterwards.
-            applicationEventPublisher.publishEvent(MappableCreated.of("autopilot", id));
-            return id;
-        });
+    public Resolved getOrCreateForCurrentScope() {
+        return forCurrentScope()
+                .map(id -> new Resolved(id, false))
+                // Reports the insert rather than acting on it. The ownership event that has to
+                // accompany a new row is published by the caller, in the same transaction, so an
+                // implementation of this seam cannot omit it by forgetting.
+                .orElseGet(() -> {
+                    UUID id = UUID.randomUUID();
+                    autopilotRepo.insertDefaults(id);
+                    return new Resolved(id, true);
+                });
     }
 
     @Override

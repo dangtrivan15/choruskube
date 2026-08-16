@@ -2,6 +2,7 @@ package com.choruskube.core.service;
 
 import com.choruskube.core.dto.AutopilotStatusResponse;
 import com.choruskube.core.dto.AutopilotTaskRef;
+import com.choruskube.core.event.MappableCreated;
 import com.choruskube.core.exception.BadRequestException;
 import com.choruskube.core.exception.ConflictException;
 import com.choruskube.core.exception.QuotaExceededException;
@@ -38,6 +39,7 @@ import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
@@ -99,6 +101,7 @@ public class AutopilotService implements AutopilotSafetyValve {
     private final AutopilotCandidateSource candidateSource;
     private final TaskService taskService;
     private final RunEventPublisher eventPublisher;
+    private final ApplicationEventPublisher applicationEventPublisher;
     private final Duration stalePendingAfter;
 
     /**
@@ -135,6 +138,7 @@ public class AutopilotService implements AutopilotSafetyValve {
             AutopilotCandidateSource candidateSource,
             TaskService taskService,
             RunEventPublisher eventPublisher,
+            ApplicationEventPublisher applicationEventPublisher,
             PlatformTransactionManager transactionManager,
             @Value("${choruskube.autopilot.stale-pending-after:PT15M}") Duration stalePendingAfter,
             @Value("${choruskube.autopilot.tick-lease-ttl:PT5M}") Duration tickLeaseTtl,
@@ -149,6 +153,7 @@ public class AutopilotService implements AutopilotSafetyValve {
         this.candidateSource = candidateSource;
         this.taskService = taskService;
         this.eventPublisher = eventPublisher;
+        this.applicationEventPublisher = applicationEventPublisher;
         this.stalePendingAfter = stalePendingAfter;
         Assert.isTrue(
                 tickLeaseTtl.compareTo(MINIMUM_TICK_LEASE_TTL) >= 0,
@@ -881,13 +886,27 @@ public class AutopilotService implements AutopilotSafetyValve {
      * The caller's Autopilot, created at its column defaults if this scope has never configured
      * one. Callers then apply the statement they actually wanted.
      *
-     * <p>Creation belongs to {@link AutopilotResolver} rather than here because only the resolver
-     * knows what scope a new row belongs to, and because the ownership event that has to accompany
-     * the insert is resolved from request-scoped state — see {@link
-     * AutopilotResolver#getOrCreateForCurrentScope()}.
+     * <p>The insert itself belongs to {@link AutopilotResolver}, because only the resolver knows
+     * what scope a new row belongs to. The ownership event does not: it is published here, off the
+     * flag the resolver reports, so that an implementation of that seam cannot leave a row without
+     * an owner by forgetting to publish. A row created without one is one the downstream scope
+     * provider cannot resolve afterwards — and nothing fails at the time, which is what makes the
+     * convention version of this unsafe.
+     *
+     * <p>Every caller is {@code @Transactional} and the publish is synchronous, so the event lands
+     * in the same transaction as the insert and rolls back with it. Both halves of that are
+     * asserted rather than trusted — see {@code
+     * AutopilotServiceTest#everyMutatorThatCanCreateTheRowIsTransactional}.
+     *
+     * <p>Published on the insert only. {@code created} is false for every later {@code engage()} or
+     * {@code update()}, so one row produces one event however many times it is mutated.
      */
     private UUID ensureRow() {
-        return autopilotResolver.getOrCreateForCurrentScope();
+        AutopilotResolver.Resolved resolved = autopilotResolver.getOrCreateForCurrentScope();
+        if (resolved.created()) {
+            applicationEventPublisher.publishEvent(MappableCreated.of("autopilot", resolved.id()));
+        }
+        return resolved.id();
     }
 
     /** Reads the row back after a statement changed it, and broadcasts what it now says. */

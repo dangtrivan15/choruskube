@@ -369,15 +369,17 @@ class MappableCreatedPublicationTest extends BaseTest {
     }
 
     @Test
-    void autopilotGetOrCreate_onAnExistingRow_publishesNothing() {
-        autopilotService.update(null);
-        collector.clear();
-
-        autopilotService.update(2);
+    void autopilotEngagedTwice_publishesExactlyOneEvent() {
+        // Get-or-create sits under every mutator, so the row is reached again on every Engage,
+        // Disengage and PATCH. One row must acquire one owner: a second event for a row that
+        // already has one is a duplicate the downstream writer has to defend against.
+        autopilotService.engage();
+        autopilotService.engage();
+        autopilotService.disengage();
 
         assertThat(collector.getCaptured())
-                .as("nothing was created, so nothing acquired an owner")
-                .isEmpty();
+                .as("the insert happened once, so the ownership event happened once")
+                .hasSize(1);
     }
 
     // -----------------------------------------------------------------------

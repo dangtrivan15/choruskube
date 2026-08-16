@@ -6,14 +6,12 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.choruskube.core.event.MappableCreated;
 import com.choruskube.core.model.Autopilot;
 import com.choruskube.core.repository.AutopilotRepository;
 import com.choruskube.core.scope.NoOpScopeProvider;
 import com.choruskube.core.scope.ScopeProvider;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -21,15 +19,17 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 
 /**
  * The core half of the Autopilot tenancy seam: which row a caller means, and which rows the
  * scheduler passes over.
  *
- * <p>Two of these are structural rather than behavioural — the gating and the absence of a {@code
- * ScopeProvider} — because the point of a seam is that a downstream implementation can replace it,
- * and both are conditions a replacement depends on rather than properties this class alone has.
+ * <p>Two of these are structural rather than behavioural — the gating, and what the constructor is
+ * not allowed to reach — because the point of a seam is that a downstream implementation replaces
+ * it, and both are conditions such a replacement depends on rather than properties this class alone
+ * has.
  */
 @ExtendWith(MockitoExtension.class)
 class SingleTenantAutopilotResolverTest {
@@ -37,10 +37,8 @@ class SingleTenantAutopilotResolverTest {
     @Mock
     private AutopilotRepository autopilotRepo;
 
-    private final List<Object> published = new ArrayList<>();
-
     private SingleTenantAutopilotResolver newResolver() {
-        return new SingleTenantAutopilotResolver(autopilotRepo, published::add);
+        return new SingleTenantAutopilotResolver(autopilotRepo);
     }
 
     // -----------------------------------------------------------------------------------
@@ -70,30 +68,27 @@ class SingleTenantAutopilotResolverTest {
     // -----------------------------------------------------------------------------------
 
     @Test
-    void getOrCreate_withNoRow_insertsAndPublishesTheOwnershipEvent() {
-        // The publish is the whole reason creation is a seam method. Downstream it is what writes
-        // the row's ownership; without it the row exists and the scope provider cannot resolve it.
+    void getOrCreate_withNoRow_insertsAndReportsTheInsert() {
+        // `created` is what AutopilotService publishes the ownership event off. Getting it wrong in
+        // this direction is a row with no owner, which nothing downstream can resolve.
         when(autopilotRepo.findAll()).thenReturn(List.of());
 
-        UUID id = newResolver().getOrCreateForCurrentScope();
+        AutopilotResolver.Resolved resolved = newResolver().getOrCreateForCurrentScope();
 
-        verify(autopilotRepo).insertDefaults(id);
-        assertThat(published)
-                .as("\"autopilot\" is a cross-repository contract — the ownership writer switches on it")
-                .containsExactly(MappableCreated.of("autopilot", id));
+        verify(autopilotRepo).insertDefaults(resolved.id());
+        assertThat(resolved.created()).isTrue();
     }
 
     @Test
-    void getOrCreate_withARow_returnsItAndInsertsNothing() {
+    void getOrCreate_withARow_returnsItAndReportsNoInsert() {
+        // And wrong in this direction is a second ownership event for a row that already has one.
         Autopilot existing = row(Instant.now(), false);
         when(autopilotRepo.findAll()).thenReturn(List.of(existing));
 
-        assertThat(newResolver().getOrCreateForCurrentScope()).isEqualTo(existing.getId());
+        AutopilotResolver.Resolved resolved = newResolver().getOrCreateForCurrentScope();
 
+        assertThat(resolved).isEqualTo(new AutopilotResolver.Resolved(existing.getId(), false));
         verify(autopilotRepo, never()).insertDefaults(any());
-        assertThat(published)
-                .as("no row was created, so nothing acquired an owner")
-                .isEmpty();
     }
 
     // -----------------------------------------------------------------------------------
@@ -131,7 +126,19 @@ class SingleTenantAutopilotResolverTest {
         newResolver().findAllEngaged();
 
         verify(autopilotRepo, never()).insertDefaults(any());
-        assertThat(published).isEmpty();
+    }
+
+    @Test
+    void findAllEngaged_withAnOrphanSecondRow_returnsOnlyTheCanonicalOne() {
+        // A first-write race can leave a scope holding two engaged rows. Passing over both would
+        // give one installation two concurrent passes, each counting the other's containers as
+        // free capacity — max_parallel exceeded for as long as the orphan exists.
+        Autopilot canonical = row(Instant.now().minus(Duration.ofHours(1)), true);
+        when(autopilotRepo.findAll()).thenReturn(List.of(row(Instant.now(), true), canonical));
+
+        assertThat(newResolver().findAllEngaged())
+                .as("one Autopilot per scope, so the budget stays a budget")
+                .containsExactly(canonical.getId());
     }
 
     // -----------------------------------------------------------------------------------
@@ -158,13 +165,21 @@ class SingleTenantAutopilotResolverTest {
     }
 
     @Test
-    void readsNoRequestScopedTenantState() {
-        // findAllEngaged() runs on the tick's timer thread, and ScopeProvider reads a
-        // request-scoped context that throws there. Having no way to reach one is the enforcement;
-        // the interface's javadoc is only the instruction.
+    void reachesNeitherRequestScopedStateNorTheEventBus() {
+        // Two structural guards in one place, both about what a resolver must NOT be able to do.
+        //
+        // ScopeProvider: findAllEngaged() runs on the tick's timer thread, and ScopeProvider reads
+        // a request-scoped context that throws there.
+        //
+        // ApplicationEventPublisher: the ownership event belongs to AutopilotService, off the
+        // `created` flag this class reports. A resolver that could publish would be a resolver a
+        // downstream author could forget to make publish — and a row created without an owner
+        // fails nothing at the time, which is what makes the convention version unsafe.
+        //
+        // If either appears here, do not delete the assertion — the parameter is the regression.
         assertThat(SingleTenantAutopilotResolver.class.getDeclaredConstructors()[0].getParameterTypes())
-                .as("see AutopilotResolver#findAllEngaged — a timer thread has no request scope")
-                .doesNotContain(ScopeProvider.class);
+                .as("a timer thread has no request scope, and the seam does not own the side effect")
+                .doesNotContain(ScopeProvider.class, ApplicationEventPublisher.class);
     }
 
     private static Autopilot row(Instant createdAt, boolean engaged) {

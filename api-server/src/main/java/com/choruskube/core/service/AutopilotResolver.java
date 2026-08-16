@@ -28,16 +28,31 @@ public interface AutopilotResolver {
     /**
      * The caller's Autopilot, creating it at its column defaults if absent. Request-scoped.
      *
-     * <p>Implementations that insert <strong>must</strong> publish {@code
-     * MappableCreated.of("autopilot", id)} in the same transaction, immediately after the insert —
-     * that event is what writes the row's ownership downstream, and a row without one is invisible
-     * to the scope provider that has to resolve it afterwards. {@code "autopilot"} is a
-     * cross-repository contract: it is the resource-type string the ownership writer switches on.
+     * <p><strong>Report the insert; do not act on it.</strong> An implementation says whether it
+     * created the row and stops there — {@code AutopilotService} publishes the ownership event
+     * ({@code MappableCreated.of("autopilot", id)}) off {@link Resolved#created()}, in the same
+     * transaction as the insert. That event is what gives the row an owner downstream, and a row
+     * without one is invisible to the scope provider that has to resolve it afterwards: the row
+     * exists, the request returns 200, and the ownership row silently never does.
      *
-     * <p>Creation lives on the request path only, and this is why: the ownership event is resolved
-     * against request-scoped tenant state, which a timer thread does not have.
+     * <p>Which is exactly why publishing is not an obligation on implementations. An obligation is
+     * something an implementer can forget, and forgetting this one is silent. Reporting {@code
+     * created} truthfully is the only thing that can be got wrong here, and getting it wrong is
+     * loud.
+     *
+     * <p>Creation lives on the request path only: the ownership event is resolved against
+     * request-scoped tenant state, which a timer thread does not have.
      */
-    UUID getOrCreateForCurrentScope();
+    Resolved getOrCreateForCurrentScope();
+
+    /**
+     * An Autopilot the caller may act on, and whether resolving it is what created the row.
+     *
+     * @param created true only on the call that inserted the row — never on a lookup that found
+     *     one. It is the signal core publishes the ownership event off, so it is published once
+     *     per row rather than on every mutation.
+     */
+    record Resolved(UUID id, boolean created) {}
 
     /**
      * Every engaged Autopilot in the installation, for the scheduler to pass over.
@@ -48,6 +63,13 @@ public interface AutopilotResolver {
      *
      * <p>Returning only the first, or only the oldest, is the defect this interface exists to
      * prevent: every other organisation's Autopilot would then never tick, and silently.
+     *
+     * <p><strong>Return at most one Autopilot per scope.</strong> Two concurrent first-writes can
+     * leave a scope holding a second, orphan row, and an implementation that simply returns every
+     * engaged row would hand the scheduler both: two passes over one organisation, each counting
+     * the other's containers as free capacity, and {@code max_parallel} exceeded for as long as
+     * the orphan exists. Selecting one row per scope — the same choice that makes the orphan inert
+     * for {@link #forCurrentScope()} — is what keeps the budget a budget.
      */
     List<UUID> findAllEngaged();
 }
