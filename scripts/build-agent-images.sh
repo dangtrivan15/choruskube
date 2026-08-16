@@ -25,9 +25,14 @@ DIND_IMAGE="${DIND_IMAGE:-docker:29-dind}"
 echo "=== Building base agent image: $AGENT_IMAGE ==="
 docker build -t "$AGENT_IMAGE" "$IMAGES_DIR/claude-code"
 
+# The dev image's Gradle warmup layer reads the api-server's build files via
+# `COPY --from=api-server`, which resolves against a NAMED BUILD CONTEXT rather than
+# a build stage or a build-arg. Without --build-context, Docker falls back to treating
+# `api-server` as an image reference and fails on `docker.io/library/api-server:latest`.
 echo "=== Building dev agent image: $DEV_IMAGE (BASE_AGENT_IMAGE=$AGENT_IMAGE) ==="
 docker build \
     --build-arg "BASE_AGENT_IMAGE=$AGENT_IMAGE" \
+    --build-context "api-server=$REPO_ROOT/api-server" \
     -t "$DEV_IMAGE" \
     "$IMAGES_DIR/choruskube-dev"
 
