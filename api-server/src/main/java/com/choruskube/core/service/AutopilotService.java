@@ -69,6 +69,22 @@ public class AutopilotService {
     /** {@code nextUp} is a preview panel, not a queue dump. */
     private static final int NEXT_UP_LIMIT = 10;
 
+    /**
+     * The shortest configurable tick lease.
+     *
+     * <p>A lease shorter than a pass is not a narrower safety margin, it is a permanent outage: the
+     * lease is already expired by the time phase 1 commits, every renewal fails, every pass
+     * abandons, and nothing is ever started again. It is silent, too — phase 1 still stamps {@code
+     * last_tick_at} before the first renewal, so the panel reports an Autopilot ticking healthily
+     * forever while the board never moves. That is the failure mode worth failing at boot over: a
+     * setting whose wrong value produces silence rather than an error.
+     *
+     * <p>Thirty seconds is a floor, not a recommendation. A real pass includes a readiness sweep
+     * and several container starts with Temporal round trips, so anything near this is still far
+     * too short — the default is ten times it.
+     */
+    private static final Duration MINIMUM_TICK_LEASE_TTL = Duration.ofSeconds(30);
+
     private final AutopilotRepository autopilotRepo;
     private final WorkflowRunRepository runRepo;
     private final EpicRepository epicRepo;
@@ -127,6 +143,13 @@ public class AutopilotService {
         this.taskService = taskService;
         this.eventPublisher = eventPublisher;
         this.stalePendingAfter = stalePendingAfter;
+        Assert.isTrue(
+                tickLeaseTtl.compareTo(MINIMUM_TICK_LEASE_TTL) >= 0,
+                "choruskube.autopilot.tick-lease-ttl is " + tickLeaseTtl + ", below the minimum of "
+                        + MINIMUM_TICK_LEASE_TTL + ". A lease shorter than one pass expires before the pass "
+                        + "can renew it, so every pass would abandon after settling and the Autopilot would "
+                        + "start nothing, ever — while last_tick_at kept moving and the panel kept reporting "
+                        + "a healthy tick. Refusing to start is the only way an operator finds out.");
         this.tickLeaseTtl = tickLeaseTtl;
         // Generated rather than required: an operator who never sets it still gets a distinct
         // owner per process, which is all the lease needs. Configurable so a deployment can make
@@ -224,8 +247,14 @@ public class AutopilotService {
     /**
      * Everything phase 2 works out. Deliberately carries no {@code maxParallel}: the ceiling is a
      * live setting a human can lower with a PATCH mid-pass, so phase 3 re-reads it rather than
-     * spending a budget computed before the change. {@code slots} is this pass's own starting
-     * budget and is only ever spent downward.
+     * spending a budget computed before the change.
+     *
+     * <p><strong>Live in one direction only, on purpose.</strong> {@code slots} is this pass's own
+     * budget, banked here and only ever spent downward, so <em>lowering</em> the ceiling mid-pass
+     * takes effect immediately while <em>raising</em> it does nothing until the next tick. That
+     * asymmetry is the conservative choice rather than an oversight: acting on a stale ceiling that
+     * is too low costs one scheduler interval of latency, and acting on one that is too high costs
+     * agent containers that were never authorised.
      */
     private record Plan(int slots, Frontier frontier) {}
 
@@ -312,8 +341,8 @@ public class AutopilotService {
             Plan plan = plan(autopilotId);
             frontier = plan.frontier();
             if (!renewLease(autopilotId) || !start(autopilotId, plan, startedTaskIds, notes)) {
-                // The instance that took the lease over owns the reporting too. Publishing this
-                // pass's view on top of theirs would be two writers on one live panel.
+                // Whoever holds the lease next owns the reporting too. Publishing this pass's view
+                // on top of theirs would be two writers on one live panel.
                 return;
             }
         }
@@ -321,14 +350,18 @@ public class AutopilotService {
     }
 
     /**
-     * @return false when this pass overran its lease and another instance has taken over. Never a
-     *     failure — the work is fine, this instance simply stopped being the one allowed to do it.
+     * @return false when the renewal matched nothing — this instance no longer holds the lease.
+     *     Whether it expired unclaimed or ownership has already moved on is not distinguishable
+     *     from here, and the response is the same either way. Never a failure: the work is fine,
+     *     this instance simply stopped being the one allowed to do it.
      */
     private boolean renewLease(UUID autopilotId) {
         if (autopilotRepo.renewTickLease(autopilotId, instanceId, leaseTtlSeconds()) > 0) {
             return true;
         }
-        log.warn("Autopilot pass abandoned: the tick lease expired and another instance took over");
+        // Says what was observed and not why. The renewal returning 0 does not distinguish an
+        // expiry from a takeover, and a log that guesses is one somebody later debugs against.
+        log.warn("Autopilot pass abandoned: this instance no longer holds the tick lease on {}", autopilotId);
         return false;
     }
 

@@ -932,6 +932,27 @@ class AutopilotServiceTest {
     // -----------------------------------------------------------------------------------
 
     @Test
+    void aTickLeaseTtlBelowTheFloor_refusesToStartRatherThanBrickingTheAutopilotSilently() {
+        // The failure this prevents has no symptom. A sub-second TTL writes a lease that is
+        // already expired, so every renewal returns 0 and every pass abandons — but phase 1 has
+        // already stamped last_tick_at by then, so the panel reports a healthy tick forever while
+        // nothing is ever started. Truncation makes it worse: Duration.toSeconds() turns PT0.5S
+        // into a zero-second lease. Boot is the only place an operator can be told.
+        assertThatThrownBy(() -> newService(Duration.ofMillis(500)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("tick-lease-ttl")
+                .hasMessageContaining("start nothing, ever");
+
+        assertThatThrownBy(() -> newService(Duration.ofSeconds(29))).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void theFloorItselfIsAccepted() {
+        // The boundary, so the guard cannot drift into rejecting the value it documents.
+        assertThat(newService(Duration.ofSeconds(30))).isNotNull();
+    }
+
+    @Test
     void tickCarriesNoTransactionalAnnotation() throws NoSuchMethodException {
         // The companion to the runtime assertion below. Both TransactionTemplates are
         // PROPAGATION_REQUIRED, so a @Transactional here — or on the class — would merge all four
@@ -990,6 +1011,10 @@ class AutopilotServiceTest {
     // -----------------------------------------------------------------------------------
 
     private AutopilotService newService() {
+        return newService(Duration.ofMinutes(5));
+    }
+
+    private AutopilotService newService(Duration tickLeaseTtl) {
         when(autopilotRepo.findAll()).thenReturn(autopilot == null ? List.of() : List.of(autopilot));
         when(autopilotRepo.findById(any())).thenAnswer(invocation -> Optional.ofNullable(autopilot));
         when(autopilotRepo.findEngagedById(any()))
@@ -1145,7 +1170,7 @@ class AutopilotServiceTest {
                 eventPublisher,
                 transactionManager,
                 Duration.ofMinutes(15),
-                Duration.ofMinutes(5),
+                tickLeaseTtl,
                 THIS_INSTANCE);
     }
 
