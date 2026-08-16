@@ -191,10 +191,10 @@ public interface AutopilotRepository extends Repository<Autopilot, UUID> {
      * Extends a lease this instance still holds — called between phases and before every start.
      * Same single-clock rule as {@link #acquireTickLease}.
      *
-     * @return 0 when the pass overran its lease and another instance has since taken over. The
-     *     caller must then abandon the pass without starting anything further. That is not a
-     *     failure and must not reach the breaker: the work is fine, this instance simply stopped
-     *     being the one allowed to do it.
+     * @return 0 when this instance no longer holds the lease — it overran the TTL, and another
+     *     instance may or may not have claimed it since. The caller must abandon the pass without
+     *     starting anything further. That is not a failure and must not reach the breaker: the work
+     *     is fine, this instance simply stopped being the one allowed to do it.
      */
     @Transactional
     @Modifying(flushAutomatically = true, clearAutomatically = true)
