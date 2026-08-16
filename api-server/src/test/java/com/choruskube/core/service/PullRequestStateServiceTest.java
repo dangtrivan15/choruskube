@@ -4,6 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.contains;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -24,6 +27,8 @@ import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
@@ -131,7 +136,7 @@ class PullRequestStateServiceTest {
         int merged = newService().refreshBatch(10);
 
         assertThat(merged).isZero();
-        verify(safetyValve).disengageForExternalFailure(reason.capture());
+        verify(safetyValve).disengageForExternalFailure(eq("git_repo"), eq(gitRepoId), reason.capture());
         assertThat(reason.getValue())
                 .as("a human reading the panel must learn which repository and what went wrong")
                 .contains("401")
@@ -150,7 +155,7 @@ class PullRequestStateServiceTest {
 
         newService().refreshBatch(10);
 
-        verify(safetyValve).disengageForExternalFailure(reason.capture());
+        verify(safetyValve).disengageForExternalFailure(eq("git_repo"), eq(gitRepoId), reason.capture());
         assertThat(reason.getValue()).contains("404").contains("org/backend-api#42");
     }
 
@@ -163,7 +168,7 @@ class PullRequestStateServiceTest {
 
         newService().refreshBatch(10);
 
-        verify(safetyValve).disengageForExternalFailure(reason.capture());
+        verify(safetyValve).disengageForExternalFailure(eq("git_repo"), eq(gitRepoId), reason.capture());
         assertThat(reason.getValue()).contains("403").contains("org/backend-api#42");
     }
 
@@ -193,6 +198,44 @@ class PullRequestStateServiceTest {
                 .isEqualTo(1);
         verifyNoInteractions(safetyValve);
         verify(taskService).closeForMergedPullRequests(taskId);
+    }
+
+    /**
+     * The rule's own direction, applied to the statuses nobody enumerated.
+     *
+     * <p>This used to be {@code default -> null}: every status not named was transient, which is the
+     * unsafe side of the very trade the javadoc above it argues for. 410 Gone and 451 are as
+     * permanent as a 404 and produced a two-minute retry loop forever while the Autopilot kept
+     * dispatching against Tasks that could never close. A 3xx was transient too, and this client
+     * does not follow redirects, so it would never have resolved one.
+     */
+    @ParameterizedTest
+    @ValueSource(ints = {301, 410, 422, 451})
+    void refreshBatch_gitHubReturnsAPermanentStatus_disengages(int status) {
+        stubBatch(pr(42));
+        stubRepoAndRun();
+        when(gitHubAppService.fetchPullRequest(anyString(), anyString(), anyInt()))
+                .thenThrow(new GitHubApiException(status, "org/backend-api", 42));
+
+        newService().refreshBatch(10);
+
+        verify(safetyValve).disengageForExternalFailure(eq("git_repo"), eq(gitRepoId), reason.capture());
+        assertThat(reason.getValue()).contains(String.valueOf(status)).contains("org/backend-api#42");
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {500, 502, 504})
+    void refreshBatch_gitHubReturnsAServerError_doesNotDisengage(int status) {
+        // The closed list of what a retry loop fixes on its own. Widening the persistent side must
+        // not narrow this one, or a bad minute at GitHub stops the Autopilot.
+        stubBatch(pr(42));
+        stubRepoAndRun();
+        when(gitHubAppService.fetchPullRequest(anyString(), anyString(), anyInt()))
+                .thenThrow(new GitHubApiException(status, "org/backend-api", 42));
+
+        newService().refreshBatch(10);
+
+        verifyNoInteractions(safetyValve);
     }
 
     @Test
@@ -232,7 +275,7 @@ class PullRequestStateServiceTest {
 
         assertThat(merged).isZero();
         verify(taskService, never()).closeForMergedPullRequests(any());
-        verify(safetyValve).disengageForExternalFailure(reason.capture());
+        verify(safetyValve).disengageForExternalFailure(eq("git_repo"), eq(gitRepoId), reason.capture());
         assertThat(reason.getValue()).contains("org/backend-api").contains("credential");
     }
 
@@ -269,13 +312,96 @@ class PullRequestStateServiceTest {
 
         int merged = newService().refreshBatch(10);
 
-        verify(safetyValve, times(1)).disengageForExternalFailure(reason.capture());
+        verify(safetyValve, times(1)).disengageForExternalFailure(eq("git_repo"), eq(gitRepoId), reason.capture());
         assertThat(reason.getValue())
                 .as("one fault with one remedy — the first row's reason is the one a human needs")
                 .contains("org/backend-api#1");
         assertThat(merged)
                 .as("a fault on one repository says nothing about another, so the batch runs to the end")
                 .isEqualTo(1);
+    }
+
+    // -----------------------------------------------------------------------------------
+    // One stop per owning scope
+    // -----------------------------------------------------------------------------------
+
+    /**
+     * The unmerged scan is installation-wide, so a batch is only single-scoped by accident of core
+     * having one organisation. Downstream it spans them, and "disengage once per batch" would stop
+     * whichever Autopilot owned the first failing repository — silencing one organisation over
+     * another's revoked credential, which is the cross-organisation defect the seam removes.
+     *
+     * <p>The repository is what names the scope, so the reasons are keyed on it. Two repositories
+     * sharing a scope resolve to the same Autopilot and the statement's {@code engaged} guard makes
+     * the second call a no-op.
+     */
+    @Test
+    void refreshBatch_twoRepositoriesFailing_stopsEachOwningScopeWithItsOwnReason() {
+        UUID otherRepoId = UUID.randomUUID();
+        stubBatch(pr(1), pr(2, otherRepoId));
+        stubRepoAndRun();
+        stubRepo(otherRepoId, "https://github.com/org/frontend-web.git");
+        when(gitHubAppService.fetchPullRequest(anyString(), eq("org/backend-api"), anyInt()))
+                .thenThrow(new GitHubApiException(401, "org/backend-api", 1));
+        when(gitHubAppService.fetchPullRequest(anyString(), eq("org/frontend-web"), anyInt()))
+                .thenThrow(new GitHubApiException(404, "org/frontend-web", 2));
+
+        newService().refreshBatch(10);
+
+        verify(safetyValve).disengageForExternalFailure(eq("git_repo"), eq(gitRepoId), contains("401"));
+        verify(safetyValve).disengageForExternalFailure(eq("git_repo"), eq(otherRepoId), contains("404"));
+    }
+
+    @Test
+    void refreshBatch_oneScopesStopThrowing_stillStopsTheOther() {
+        // The scopes in a batch are independent. The reconciler's catch is a batch-wide boundary,
+        // so without containment here the first unresolvable scope would take the stop away from
+        // every scope behind it.
+        UUID otherRepoId = UUID.randomUUID();
+        stubBatch(pr(1), pr(2, otherRepoId));
+        stubRepoAndRun();
+        stubRepo(otherRepoId, "https://github.com/org/frontend-web.git");
+        when(gitHubAppService.fetchPullRequest(anyString(), eq("org/backend-api"), anyInt()))
+                .thenThrow(new GitHubApiException(401, "org/backend-api", 1));
+        when(gitHubAppService.fetchPullRequest(anyString(), eq("org/frontend-web"), anyInt()))
+                .thenThrow(new GitHubApiException(404, "org/frontend-web", 2));
+        doThrow(new IllegalStateException("no ownership scope for that repository"))
+                .when(safetyValve)
+                .disengageForExternalFailure(anyString(), eq(gitRepoId), anyString());
+
+        newService().refreshBatch(10);
+
+        verify(safetyValve).disengageForExternalFailure(eq("git_repo"), eq(otherRepoId), contains("404"));
+    }
+
+    /**
+     * A stop that fails must not strand pull requests that genuinely merged.
+     *
+     * <p>Closing is the record of work that finished; disengaging is the reaction to work that could
+     * not be observed. Running the stops first — as this did — meant one failed scope resolution
+     * threw out of the batch before a single Task was closed, freezing exactly the graph the valve
+     * exists to protect.
+     */
+    @Test
+    void refreshBatch_everyStopThrowing_stillClosesTheTasksThatMerged() {
+        UUID otherRepoId = UUID.randomUUID();
+        RunPullRequest merged = pr(2, otherRepoId);
+        stubBatch(pr(1), merged);
+        stubRepoAndRun();
+        stubRepo(otherRepoId, "https://github.com/org/frontend-web.git");
+        when(gitHubAppService.fetchPullRequest(anyString(), eq("org/backend-api"), anyInt()))
+                .thenThrow(new GitHubApiException(401, "org/backend-api", 1));
+        when(gitHubAppService.fetchPullRequest(anyString(), eq("org/frontend-web"), anyInt()))
+                .thenReturn(new GitHubAppService.PullRequestSnapshot("closed", Instant.parse("2026-08-16T10:00:00Z")));
+        when(prRepo.findByWorkflowRunId(runId)).thenReturn(List.of(merged));
+        doThrow(new IllegalStateException("no ownership scope for that repository"))
+                .when(safetyValve)
+                .disengageForExternalFailure(anyString(), any(), anyString());
+
+        int newlyMerged = newService().refreshBatch(10);
+
+        assertThat(newlyMerged).isEqualTo(1);
+        verify(taskService).closeForMergedPullRequests(taskId);
     }
 
     @Test
@@ -299,12 +425,23 @@ class PullRequestStateServiceTest {
     }
 
     private RunPullRequest pr(int number) {
+        return pr(number, gitRepoId);
+    }
+
+    private RunPullRequest pr(int number, UUID repoId) {
         RunPullRequest pr = new RunPullRequest();
         pr.setWorkflowRunId(runId);
-        pr.setGitRepoId(gitRepoId);
+        pr.setGitRepoId(repoId);
         pr.setPrUrl("https://github.com/org/backend-api/pull/" + number);
         pr.setPrNumber(number);
         return pr;
+    }
+
+    /** A second repository, so a batch can span more than one owning scope. */
+    private void stubRepo(UUID repoId, String url) {
+        GitRepo repo = new GitRepo();
+        repo.setUrl(url);
+        when(gitRepoRepo.findById(repoId)).thenReturn(Optional.of(repo));
     }
 
     private void stubBatch(RunPullRequest... prs) {

@@ -13,6 +13,7 @@ import com.choruskube.core.dto.StoryRequest;
 import com.choruskube.core.dto.StoryResponse;
 import com.choruskube.core.dto.TaskRequest;
 import com.choruskube.core.dto.TaskResponse;
+import com.choruskube.core.event.MappableCreated;
 import com.choruskube.core.model.Autopilot;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.WorkflowRun;
@@ -26,6 +27,7 @@ import io.temporal.client.WorkflowOptions;
 import io.temporal.client.WorkflowStub;
 import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.Callable;
@@ -42,8 +44,13 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentMatchers;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEvent;
+import org.springframework.context.ApplicationListener;
+import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.context.PayloadApplicationEvent;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * The tick against real Postgres, real readiness and a real start.
@@ -104,8 +111,41 @@ public class AutopilotServiceIntegrationTest extends BaseTest {
     @MockitoBean
     private RunEventPublisher runEventPublisher;
 
+    /**
+     * Registered per test rather than declared as a {@code @TestConfiguration} bean, and that
+     * distinction is the whole reason this observation is affordable. A {@code @TestConfiguration}
+     * changes the class's context cache key: this class would stop sharing its cached context with
+     * its {@code @MockitoBean} siblings, get one of its own, and bring one more Hikari pool to the
+     * single Postgres container the suite shares — which exhausts {@code max_connections} and fails
+     * an unrelated test class with a context-load error. Autowiring the context and adding the
+     * listener by hand changes no key at all.
+     *
+     * <p>Removed in {@code @AfterEach} for the same reason it is added here: the context is shared,
+     * so a listener left behind would follow every class that reuses it.
+     */
+    @Autowired
+    private ConfigurableApplicationContext applicationContext;
+
+    private final List<MappableCreated> ownershipEvents = new ArrayList<>();
+    private final List<Boolean> ownershipEventsSawATransaction = new ArrayList<>();
+
+    /**
+     * Typed on {@code ApplicationEvent} and narrowed by hand, because {@link MappableCreated} is a
+     * plain record rather than an {@code ApplicationEvent}: Spring wraps it in a {@code
+     * PayloadApplicationEvent} on the way out, and that wrapper is what a listener registered
+     * programmatically actually sees.
+     */
+    private final ApplicationListener<ApplicationEvent> ownershipEventRecorder = event -> {
+        if (event instanceof PayloadApplicationEvent<?> payload
+                && payload.getPayload() instanceof MappableCreated created) {
+            ownershipEvents.add(created);
+            ownershipEventsSawATransaction.add(TransactionSynchronizationManager.isActualTransactionActive());
+        }
+    };
+
     @BeforeEach
     void setUp() {
+        applicationContext.addApplicationListener(ownershipEventRecorder);
         cleaner = new CommittedFixtureCleaner(jdbc);
         WorkflowStub mockStub = Mockito.mock(WorkflowStub.class);
         Mockito.when(workflowClient.newUntypedWorkflowStub(
@@ -467,6 +507,29 @@ public class AutopilotServiceIntegrationTest extends BaseTest {
     }
 
     /**
+     * The ownership event lands inside the transaction that inserted the row.
+     *
+     * <p>Observed here rather than inferred, and observable here specifically because this class is
+     * NOT {@code @Transactional}: it opens no transaction of its own, so the only one that can be
+     * active when the listener runs is the one {@code engage()} opened around the insert. In a
+     * {@code @Transactional} test the assertion would pass for free and prove nothing.
+     *
+     * <p>If the publish ever moved to an {@code afterCommit} hook, or a mutator lost its
+     * {@code @Transactional}, the row would commit with no owner and this would say so.
+     */
+    @Test
+    void creatingTheRow_publishesTheOwnershipEventInsideTheInsertsTransaction() {
+        UUID autopilotId = engage();
+
+        assertThat(ownershipEvents)
+                .as("one insert, one ownership event, naming the row and the type the writer switches on")
+                .containsExactly(MappableCreated.of("autopilot", autopilotId));
+        assertThat(ownershipEventsSawATransaction)
+                .as("a synchronous listener inside the mutator's own transaction, not after it")
+                .containsExactly(true);
+    }
+
+    /**
      * What the scheduler passes over, against the real table.
      *
      * <p>The tick loops over exactly this list, so an id that is missing here is an Autopilot that
@@ -571,6 +634,7 @@ public class AutopilotServiceIntegrationTest extends BaseTest {
 
     @AfterEach
     void removeEverythingThisTestCommitted() {
+        applicationContext.removeApplicationListener(ownershipEventRecorder);
         cleaner.deleteAll();
     }
 }

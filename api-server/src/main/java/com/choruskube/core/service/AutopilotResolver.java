@@ -55,6 +55,29 @@ public interface AutopilotResolver {
     record Resolved(UUID id, boolean created) {}
 
     /**
+     * The Autopilot that owns a resource, or empty when its scope has never configured one.
+     *
+     * <p>The timer-side counterpart to {@link #forCurrentScope()}, and the only resolution a
+     * background caller may use. Scope is derived from the resource rather than from the thread, so
+     * implementations must not read request-scoped tenant state and must not use {@code
+     * ScopeProvider} — the same rule, and the same reason, as {@link #findAllEngaged()}.
+     *
+     * <p>Both failure modes of getting this wrong are worth naming, because a reconciler that
+     * reached for {@code forCurrentScope()} instead would hit one of them and neither is visible in
+     * core. It either throws for want of a tenant context, stranding whatever the caller was in the
+     * middle of; or it resolves to whatever scope the timer thread happens to default to and stops
+     * <em>that</em> organisation's Autopilot over a failure in a repository it does not own. The
+     * second is the cross-organisation control defect this seam exists to remove, arrived at from
+     * the back.
+     *
+     * @param resourceType an ownership type name, as {@code AuthorizationStrategy#assertSameOrg}
+     *     takes — {@code git_repo}, {@code workflow_run}, {@code task}. Implementations normalize it
+     *     the same way ({@code git_repo}/{@code repo_group} → {@code software_project}).
+     * @param resourceId the resource whose owning scope is wanted
+     */
+    Optional<UUID> forResource(String resourceType, UUID resourceId);
+
+    /**
      * Every engaged Autopilot in the installation, for the scheduler to pass over.
      *
      * <p>Called from a timer thread: implementations must not read request-scoped tenant state,

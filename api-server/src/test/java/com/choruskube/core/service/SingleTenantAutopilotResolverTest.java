@@ -92,6 +92,39 @@ class SingleTenantAutopilotResolverTest {
     }
 
     // -----------------------------------------------------------------------------------
+    // forResource — the timer-safe resolution
+    // -----------------------------------------------------------------------------------
+
+    @Test
+    void forResource_returnsTheSingleton() {
+        // One installation, one Autopilot: every resource in it belongs to that one, so the
+        // arguments carry no information here. They exist because downstream they carry all of it.
+        Autopilot only = row(Instant.now(), false);
+        when(autopilotRepo.findAll()).thenReturn(List.of(only));
+
+        assertThat(newResolver().forResource("git_repo", UUID.randomUUID())).contains(only.getId());
+    }
+
+    @Test
+    void forResource_withNoRow_isEmpty() {
+        when(autopilotRepo.findAll()).thenReturn(List.of());
+
+        assertThat(newResolver().forResource("git_repo", UUID.randomUUID())).isEmpty();
+    }
+
+    @Test
+    void forResource_neverCreatesTheRow() {
+        // Its caller is the safety valve, on a reconciler thread. An installation that never
+        // configured an Autopilot must not acquire a disengaged one complaining about a repository
+        // it does not automate.
+        when(autopilotRepo.findAll()).thenReturn(List.of());
+
+        newResolver().forResource("git_repo", UUID.randomUUID());
+
+        verify(autopilotRepo, never()).insertDefaults(any());
+    }
+
+    // -----------------------------------------------------------------------------------
     // findAllEngaged
     // -----------------------------------------------------------------------------------
 

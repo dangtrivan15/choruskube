@@ -52,6 +52,14 @@ public class SingleTenantAutopilotResolver implements AutopilotResolver {
     }
 
     @Override
+    public Optional<UUID> forResource(String resourceType, UUID resourceId) {
+        // One installation, one Autopilot: every resource in it belongs to that one, so the
+        // arguments carry no information here. They are not ignored downstream, which is the whole
+        // point of taking them — a timer thread has no other way to name a scope.
+        return forCurrentScope();
+    }
+
+    @Override
     public List<UUID> findAllEngaged() {
         // The singleton, filtered — not every engaged row. A concurrent first-write can leave a
         // second row behind (see findSingleton), and that loser is inert by definition: ticking it

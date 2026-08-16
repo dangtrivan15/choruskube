@@ -861,13 +861,25 @@ public class AutopilotService implements AutopilotSafetyValve {
      * <p>Never creates the row. No Autopilot has ever been configured here, so there is nothing to
      * stop, and inserting one would put an installation that never opted in into a disengaged state
      * complaining about a repository it does not automate.
+     *
+     * <p><strong>Scope comes from the failing resource, not from the thread.</strong> Every caller
+     * is a reconciler, and {@link AutopilotResolver#forCurrentScope()} is request-scoped — reaching
+     * for it here would either throw for want of a tenant context or stop whichever Autopilot the
+     * timer thread defaulted to, over a repository belonging to somebody else. {@link
+     * AutopilotResolver#forResource} is the timer-safe resolution, and taking the resource as a
+     * parameter is what makes using it unavoidable.
      */
     @Override
     @Transactional
-    public void disengageForExternalFailure(String reason) {
-        Optional<UUID> found = autopilotResolver.forCurrentScope();
+    public void disengageForExternalFailure(String resourceType, UUID resourceId, String reason) {
+        Optional<UUID> found = autopilotResolver.forResource(resourceType, resourceId);
         if (found.isEmpty()) {
-            log.debug("External failure reported with no Autopilot configured; nothing to disengage: {}", reason);
+            log.debug(
+                    "External failure reported on {} {} with no Autopilot configured for it; nothing to "
+                            + "disengage: {}",
+                    resourceType,
+                    resourceId,
+                    reason);
             return;
         }
         UUID autopilotId = found.get();

@@ -37,6 +37,7 @@ import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -116,6 +117,9 @@ class AutopilotServiceTest {
     private static final String ANOTHER_INSTANCE = "the-other-replica";
 
     private final UUID autopilotId = UUID.randomUUID();
+
+    /** The failing resource the safety valve resolves its scope from — see {@link AutopilotResolver#forResource}. */
+    private final UUID gitRepoId = UUID.randomUUID();
 
     /** The lease columns, emulated so the tests exercise the real acquire/renew/release conditions. */
     private String leaseOwner;
@@ -437,7 +441,7 @@ class AutopilotServiceTest {
     void disengageForExternalFailure_stopsItAndRecordsTheReason() {
         String reason = "GitHub returned 401 for org/backend-api#42 — check the GitHub credential";
 
-        newService().disengageForExternalFailure(reason);
+        newService().disengageForExternalFailure("git_repo", gitRepoId, reason);
 
         assertThat(autopilot.isEngaged()).isFalse();
         assertThat(autopilot.getDisengagedReason()).isEqualTo(reason);
@@ -453,7 +457,7 @@ class AutopilotServiceTest {
     void disengageForExternalFailure_leavesTheRunFailureBreakerAlone() {
         autopilot.setConsecutiveFailures(1);
 
-        newService().disengageForExternalFailure("GitHub returned 404 for org/backend-api#42");
+        newService().disengageForExternalFailure("git_repo", gitRepoId, "GitHub returned 404 for org/backend-api#42");
 
         assertThat(autopilot.getConsecutiveFailures())
                 .as("the breaker counts run outcomes, and no run failed here")
@@ -462,11 +466,72 @@ class AutopilotServiceTest {
         assertThat(autopilot.getDisengagedReason()).doesNotContain("consecutive failures");
     }
 
+    /**
+     * The valve runs on a timer thread, so it must resolve its scope from the failing resource and
+     * never from the caller's.
+     *
+     * <p>Downstream, {@code forCurrentScope()} on that thread either throws for want of a tenant
+     * context or answers with whatever scope the timer defaulted to — and the second is worse than
+     * the first: one organisation's Autopilot stopped over a repository belonging to another. Core
+     * cannot show either, because both resolutions return the same single row here. So the
+     * assertion is on which one was asked.
+     */
+    @Test
+    void disengageForExternalFailure_resolvesScopeFromTheResource_neverFromTheCaller() {
+        AutopilotResolver resolver = new RecordingResolver(autopilotId);
+        AutopilotService service = newService(Duration.ofMinutes(5), resolver);
+
+        service.disengageForExternalFailure("git_repo", gitRepoId, "GitHub returned 401 for org/backend-api#42");
+
+        RecordingResolver recorder = (RecordingResolver) resolver;
+        assertThat(recorder.resourcesAsked)
+                .as("scope comes from the row that failed")
+                .containsExactly("git_repo:" + gitRepoId);
+        assertThat(recorder.currentScopeCalls)
+                .as("a request-scoped resolution on a timer thread is the defect, not the fix")
+                .isZero();
+        assertThat(autopilot.isEngaged()).isFalse();
+    }
+
+    /** Answers like the single-tenant resolver, and remembers which resolution was used. */
+    private static final class RecordingResolver implements AutopilotResolver {
+
+        private final UUID id;
+        private final List<String> resourcesAsked = new ArrayList<>();
+        private int currentScopeCalls;
+
+        private RecordingResolver(UUID id) {
+            this.id = id;
+        }
+
+        @Override
+        public Optional<UUID> forCurrentScope() {
+            currentScopeCalls++;
+            return Optional.of(id);
+        }
+
+        @Override
+        public Resolved getOrCreateForCurrentScope() {
+            return new Resolved(forCurrentScope().orElseThrow(), false);
+        }
+
+        @Override
+        public Optional<UUID> forResource(String resourceType, UUID resourceId) {
+            resourcesAsked.add(resourceType + ":" + resourceId);
+            return Optional.of(id);
+        }
+
+        @Override
+        public List<UUID> findAllEngaged() {
+            return List.of(id);
+        }
+    }
+
     @Test
     void disengageForExternalFailure_withNoRowConfigured_isANoOp() {
         autopilot = null;
 
-        newService().disengageForExternalFailure("GitHub returned 401 for org/backend-api#42");
+        newService().disengageForExternalFailure("git_repo", gitRepoId, "GitHub returned 401 for org/backend-api#42");
 
         verify(autopilotRepo, never()).insertDefaults(any());
         verify(autopilotRepo, never()).disengageIfEngagedWithReason(any(), any(), any());
@@ -483,7 +548,7 @@ class AutopilotServiceTest {
         autopilot.setEngaged(false);
         autopilot.setDisengagedReason("Disengaged after 3 consecutive failures — the last failure was: boom");
 
-        newService().disengageForExternalFailure("GitHub returned 401 for org/backend-api#42");
+        newService().disengageForExternalFailure("git_repo", gitRepoId, "GitHub returned 401 for org/backend-api#42");
 
         assertThat(autopilot.getDisengagedReason())
                 .as("the first reason is the one the human is already reading")
@@ -494,7 +559,7 @@ class AutopilotServiceTest {
     @Test
     void disengageForExternalFailure_thenEngage_clearsTheReason() {
         AutopilotService service = newService();
-        service.disengageForExternalFailure("GitHub returned 401 for org/backend-api#42");
+        service.disengageForExternalFailure("git_repo", gitRepoId, "GitHub returned 401 for org/backend-api#42");
 
         service.engage();
 
@@ -746,6 +811,11 @@ class AutopilotServiceTest {
             @Override
             public Resolved getOrCreateForCurrentScope() {
                 return new Resolved(engaged.getFirst(), false);
+            }
+
+            @Override
+            public Optional<UUID> forResource(String resourceType, UUID resourceId) {
+                return engaged.stream().findFirst();
             }
 
             @Override
@@ -1114,23 +1184,30 @@ class AutopilotServiceTest {
      * call rather than after it), and every route to {@code ensureRow} carrying a transaction. This
      * is the second.
      *
-     * <p>Asserted rather than assumed, and asserted here rather than by watching a real transaction
-     * from a Spring test: a test class that registers its own listener needs a Spring context of its
-     * own, and one more context is one more connection pool against the single container the whole
-     * suite shares. That is not a price worth paying for a property that decomposes this cleanly.
+     * <p>The transaction itself is watched for real in {@code
+     * AutopilotServiceIntegrationTest#creatingTheRow_publishesTheOwnershipEventInsideTheInsertsTransaction}.
+     * This guard is the half that test cannot give: it covers a method nobody has written yet.
      *
      * <p>If a mutator loses its annotation, the insert commits on its own and the event fires
      * against no transaction — a row that keeps its owner even when the request rolls back, or
      * loses it when the publish fails.
      */
     @Test
-    void everyMutatorThatCanCreateTheRowIsTransactional() throws NoSuchMethodException {
-        assertThat(AutopilotService.class.getMethod("engage").getAnnotation(Transactional.class))
-                .isNotNull();
-        assertThat(AutopilotService.class.getMethod("disengage").getAnnotation(Transactional.class))
-                .isNotNull();
-        assertThat(AutopilotService.class.getMethod("update", Integer.class).getAnnotation(Transactional.class))
-                .isNotNull();
+    void everyPublicMethodExceptTickIsTransactional() {
+        List<Method> shouldBeTransactional = Arrays.stream(AutopilotService.class.getDeclaredMethods())
+                .filter(method -> Modifier.isPublic(method.getModifiers()))
+                .filter(method -> !method.isSynthetic())
+                // The one public method that must NOT be, asserted by
+                // tickCarriesNoTransactionalAnnotation. Everything else has to argue its way out.
+                .filter(method -> !"tick".equals(method.getName()))
+                .toList();
+
+        assertThat(shouldBeTransactional)
+                .as("derived from the class, so an empty set would mean the derivation broke, not that it passed")
+                .isNotEmpty();
+        assertThat(shouldBeTransactional).allSatisfy(method -> assertThat(method.getAnnotation(Transactional.class))
+                .as("%s must join its caller's transaction, or the insert commits without its owner", method.getName())
+                .isNotNull());
     }
 
     @Test
