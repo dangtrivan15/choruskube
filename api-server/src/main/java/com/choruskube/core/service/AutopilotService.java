@@ -42,7 +42,9 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.util.Assert;
 
 /**
  * The Autopilot: a standing controller that starts READY Tasks unattended (Decision 1). One row
@@ -98,6 +100,7 @@ public class AutopilotService {
      */
     private final TransactionTemplate writes;
 
+    /** Phases 2 and 4, which only read. Read-only, so neither can write this row even by accident. */
     private final TransactionTemplate reads;
 
     public AutopilotService(
@@ -132,8 +135,10 @@ public class AutopilotService {
                 instanceId == null || instanceId.isBlank() ? UUID.randomUUID().toString() : instanceId;
         this.writes = new TransactionTemplate(transactionManager);
         this.reads = new TransactionTemplate(transactionManager);
-        // Read-only puts Hibernate in MANUAL flush mode, so the reporting phase cannot write this
-        // row even by accident — a structural echo of the repository having no save method.
+        // Read-only puts Hibernate in MANUAL flush mode, so the sweeping and reporting phases
+        // cannot write this row even by accident — a structural echo of the repository having no
+        // save method. Both templates are PROPAGATION_REQUIRED, which is why tick() asserts that
+        // nothing has already opened a transaction around them.
         this.reads.setReadOnly(true);
     }
 
@@ -216,16 +221,20 @@ public class AutopilotService {
         PROCEED
     }
 
-    /** Everything phase 2 works out, carried into the phases that act on it. Every figure in it is
-     *  a snapshot, and phase 3 re-checks both of them before each start. */
-    private record Plan(int maxParallel, int slots, Frontier frontier) {}
+    /**
+     * Everything phase 2 works out. Deliberately carries no {@code maxParallel}: the ceiling is a
+     * live setting a human can lower with a PATCH mid-pass, so phase 3 re-reads it rather than
+     * spending a budget computed before the change. {@code slots} is this pass's own starting
+     * budget and is only ever spent downward.
+     */
+    private record Plan(int slots, Frontier frontier) {}
 
     /**
      * One pass of the loop, as four short transactions rather than one long one.
      *
      * <pre>
      *   phase 1  SETTLE   tx           stamp the tick, count settled outcomes, apply the breaker
-     *   phase 2  PLAN     no tx        read the ceiling and the live runs, sweep readiness, order it
+     *   phase 2  PLAN     read-only tx read the ceiling and the live runs, sweep readiness, order it
      *   phase 3  START    tx per item  startForAutopilot, re-checking engagement and slots each time
      *   phase 4  REPORT   read-only tx re-read the row and the runs, publish
      * </pre>
@@ -247,8 +256,22 @@ public class AutopilotService {
      * <p>Whoever loses the lease race skips the pass entirely rather than waiting for it. Waiting
      * would queue instances behind a slow tick; skipping costs one scheduler interval, and the
      * work is still there next time.
+     *
+     * <p><strong>Must not be called inside a transaction, and says so out loud.</strong> Both
+     * templates below are {@code PROPAGATION_REQUIRED}, so an ambient transaction — a
+     * {@code @Transactional} added to this method, or any transactional bean calling it — would
+     * silently swallow all four phases, every {@code startForAutopilot}, and the lease's own
+     * acquire and release into one long transaction. That is exactly the defect this structure
+     * removes, and it would reappear with no test failing: a phase exception would then poison the
+     * release in the {@code finally}, rolling it back and leaking the lease for a full TTL. The
+     * assertion is the enforcement, since propagation cannot express "there must be no parent".
      */
     public void tick() {
+        Assert.state(
+                !TransactionSynchronizationManager.isActualTransactionActive(),
+                "AutopilotService.tick() must not run inside a transaction: its four phases and the "
+                        + "tick lease are separate short transactions on purpose, and an ambient one would "
+                        + "merge them back into the single long transaction this design exists to remove.");
         Optional<Autopilot> found = findSingleton();
         if (found.isEmpty() || !found.get().isEngaged()) {
             // Absent means never configured; disengaged means a human said no. Neither claims a
@@ -257,7 +280,7 @@ public class AutopilotService {
         }
         UUID autopilotId = found.get().getId();
         Instant now = Instant.now();
-        if (autopilotRepo.acquireTickLease(autopilotId, instanceId, now.plus(tickLeaseTtl), now) == 0) {
+        if (autopilotRepo.acquireTickLease(autopilotId, instanceId, leaseTtlSeconds()) == 0) {
             log.debug("Autopilot pass skipped: another instance holds the tick lease");
             return;
         }
@@ -266,7 +289,7 @@ public class AutopilotService {
         } finally {
             // Guarded on ownership inside the statement, so this is a no-op if the lease was lost
             // and taken over. Skipping the release entirely would only cost one TTL of idleness.
-            autopilotRepo.releaseTickLease(autopilotId, instanceId, Instant.now());
+            autopilotRepo.releaseTickLease(autopilotId, instanceId);
         }
     }
 
@@ -302,12 +325,17 @@ public class AutopilotService {
      *     failure — the work is fine, this instance simply stopped being the one allowed to do it.
      */
     private boolean renewLease(UUID autopilotId) {
-        Instant now = Instant.now();
-        if (autopilotRepo.renewTickLease(autopilotId, instanceId, now.plus(tickLeaseTtl), now) > 0) {
+        if (autopilotRepo.renewTickLease(autopilotId, instanceId, leaseTtlSeconds()) > 0) {
             return true;
         }
         log.warn("Autopilot pass abandoned: the tick lease expired and another instance took over");
         return false;
+    }
+
+    /** The TTL as the lease statements take it — seconds, never a timestamp. See {@link
+     * AutopilotRepository#acquireTickLease} for why the caller supplies no clock of its own. */
+    private int leaseTtlSeconds() {
+        return Math.toIntExact(tickLeaseTtl.toSeconds());
     }
 
     /**
@@ -369,28 +397,35 @@ public class AutopilotService {
     }
 
     /**
-     * Phase 2, outside any transaction. A full readiness sweep with no writes to make atomic and
-     * nothing worth pinning a snapshot for — everything it produces is re-checked in phase 3
-     * before it is acted on.
+     * Phase 2, in a read-only transaction that ends before anything is started.
+     *
+     * <p>Read-only because it writes nothing and must be unable to: Hibernate switches to MANUAL
+     * flush, so a readiness sweep cannot dirty a row on its way past. Transactional at all because
+     * a full sweep is one query plus roughly two per candidate Epic plus one per in-flight Task,
+     * and running them outside a transaction borrows and returns a pooled connection for every one
+     * of them, thirty seconds apart, forever. It commits before phase 3 begins, so it extends over
+     * no container start — which is the only property that mattered about keeping it short.
      */
     private Plan plan(UUID autopilotId) {
-        int maxParallel = autopilotRepo.findMaxParallelById(autopilotId).orElse(0);
-        List<WorkflowRun> live = runRepo.findByAutopilotIdAndStatusIn(autopilotId, REPORTED_LIVE);
-        return new Plan(
-                maxParallel,
-                maxParallel - countOccupyingSlots(live),
-                computeFrontier(autopilotId, affinityEpicIds(live)));
+        return reads.execute(status -> {
+            int maxParallel = autopilotRepo.findMaxParallelById(autopilotId).orElse(0);
+            List<WorkflowRun> live = runRepo.findByAutopilotIdAndStatusIn(autopilotId, REPORTED_LIVE);
+            return new Plan(
+                    maxParallel - countOccupyingSlots(live), computeFrontier(autopilotId, affinityEpicIds(live)));
+        });
     }
 
     /**
      * Phase 3. Starts Tasks until the slots run out, the frontier empties, or something goes wrong
      * — each start its own top-level transaction, with two re-reads in front of it.
      *
-     * <p>Both re-reads exist because phase 2's answers are already history by the time the second
+     * <p>The re-reads exist because phase 2's answers are already history by the time the second
      * container starts. Engagement, so a Disengage takes effect <em>during</em> a pass rather than
      * only between passes — this is new behaviour, and the reason the emergency stop no longer
-     * needs to be fast to be effective. Slots, because another replica may have consumed capacity
-     * since the plan counted it; a bounded count, not a second sweep.
+     * needs to be fast to be effective. Occupancy, because another instance may have consumed
+     * capacity since the plan counted it. And the ceiling itself, because {@code max_parallel} is a
+     * live setting: a human lowering it mid-pass must be obeyed for the rest of that pass, not from
+     * the next one. All bounded reads, not a second sweep.
      *
      * <p>Failure accounting is per item and immediate: the increment is a statement of its own, so
      * a process that dies mid-pass has already recorded what it learned. Only genuine failures
@@ -412,7 +447,8 @@ public class AutopilotService {
                 log.info("Autopilot was disengaged mid-pass; {} start(s) not attempted", remaining);
                 break;
             }
-            if (runRepo.countByAutopilotIdAndStatusIn(autopilotId, OCCUPIES_A_SLOT) >= plan.maxParallel()) {
+            int maxParallel = autopilotRepo.findMaxParallelById(autopilotId).orElse(0);
+            if (runRepo.countByAutopilotIdAndStatusIn(autopilotId, OCCUPIES_A_SLOT) >= maxParallel) {
                 break;
             }
             try {

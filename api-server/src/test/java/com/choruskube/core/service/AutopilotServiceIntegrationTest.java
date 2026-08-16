@@ -25,7 +25,6 @@ import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowOptions;
 import io.temporal.client.WorkflowStub;
 import io.temporal.serviceclient.WorkflowServiceStubs;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -239,8 +238,7 @@ public class AutopilotServiceIntegrationTest extends BaseTest {
         StoryResponse story = makeStory(makeRepo("autopilot-lease").getId());
         TaskResponse task = taskService.create(story.id(), new TaskRequest("Work", "D"));
         UUID autopilotId = engage();
-        Instant now = Instant.now();
-        assertThat(autopilotRepo.acquireTickLease(autopilotId, "another-instance", now.plusSeconds(120), now))
+        assertThat(autopilotRepo.acquireTickLease(autopilotId, "another-instance", 120))
                 .as("stand in for a pass that is running right now, on another instance")
                 .isEqualTo(1);
 
@@ -318,8 +316,7 @@ public class AutopilotServiceIntegrationTest extends BaseTest {
         StoryResponse story = makeStory(makeRepo("autopilot-second-instance").getId());
         taskService.create(story.id(), new TaskRequest("Work", "D"));
         UUID autopilotId = engage();
-        Instant now = Instant.now();
-        autopilotRepo.acquireTickLease(autopilotId, "another-instance", now.plusSeconds(120), now);
+        autopilotRepo.acquireTickLease(autopilotId, "another-instance", 120);
 
         autopilotService.tick();
 
@@ -337,8 +334,8 @@ public class AutopilotServiceIntegrationTest extends BaseTest {
         StoryResponse story = makeStory(makeRepo("autopilot-stale-lease").getId());
         TaskResponse task = taskService.create(story.id(), new TaskRequest("Work", "D"));
         UUID autopilotId = engage();
-        Instant longAgo = Instant.now().minus(Duration.ofHours(1));
-        autopilotRepo.acquireTickLease(autopilotId, "instance-that-died", longAgo.plusSeconds(1), longAgo);
+        // A zero-second TTL is expired the moment the database's clock moves on.
+        autopilotRepo.acquireTickLease(autopilotId, "instance-that-died", 0);
 
         autopilotService.tick();
 

@@ -5,6 +5,15 @@ import java.util.UUID;
 /**
  * Abstraction for acquiring distributed/coordination locks.
  * Implementations must hold the lock for the duration of the current transaction.
+ *
+ * <p>An OSS seam with no core caller: {@code QuotaChecker}'s downstream implementation acquires a
+ * per-org lock through this interface, and can only inject it because core supplies
+ * {@link AdvisoryLockService} as an implementing bean. Both must stay even though nothing in this
+ * repository calls them, or the overlay's compile-time seam becomes a runtime missing-bean failure.
+ *
+ * <p>A second method, {@code acquireLock(UUID)}, was removed when the Autopilot tick stopped using
+ * a transaction-scoped advisory lock. It served exactly one caller and could not survive the tick
+ * being split into four short transactions — see {@code AutopilotRepository#acquireTickLease}.
  */
 public interface LockService {
 
@@ -20,14 +29,4 @@ public interface LockService {
      * @param orgId the organisation whose run-start operations should be serialised
      */
     void acquireOrgRunLock(UUID orgId);
-
-    /**
-     * Acquires an exclusive lock on an arbitrary entity id. Same mechanism as
-     * {@link #acquireOrgRunLock(UUID)} — the md5-to-bigint hash is generic over any UUID; only the
-     * naming of that method is org-specific.
-     *
-     * <p>Blocks until available; released when the surrounding transaction ends. Must be called
-     * from within an active transaction.
-     */
-    void acquireLock(UUID id);
 }

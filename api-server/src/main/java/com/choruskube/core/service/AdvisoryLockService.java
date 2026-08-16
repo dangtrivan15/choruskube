@@ -38,14 +38,4 @@ public class AdvisoryLockService implements LockService {
                 .setParameter(1, orgId.toString())
                 .getSingleResult();
     }
-
-    @Override
-    @Transactional(propagation = Propagation.MANDATORY)
-    public void acquireLock(UUID id) {
-        entityManager
-                .createNativeQuery(
-                        "SELECT pg_advisory_xact_lock(" + "('x' || substring(md5(?), 1, 16))::bit(64)::bigint" + ")")
-                .setParameter(1, id.toString())
-                .getSingleResult();
-    }
 }

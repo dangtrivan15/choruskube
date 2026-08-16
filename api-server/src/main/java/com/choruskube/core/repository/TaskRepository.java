@@ -21,8 +21,8 @@ public interface TaskRepository extends JpaRepository<Task, UUID>, JpaSpecificat
      * by every path that starts a workflow run for a Task, so the manual Start button and the
      * Autopilot tick serialise against each other: under READ COMMITTED both would otherwise read
      * the Task as {@code backlog}, both pass the status guard, and both commit — two agent
-     * containers for one Task. The Autopilot's own advisory lock does not cover this, since it is
-     * keyed on the Autopilot and only serialises tick against tick.
+     * containers for one Task. The Autopilot's own tick lease does not cover this, since it is
+     * keyed on the Autopilot and only serialises pass against pass.
      */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     Optional<Task> findWithLockById(UUID id);

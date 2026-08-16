@@ -316,9 +316,9 @@ public class DefaultTaskService implements TaskService {
      */
     private TaskResponse startCore(Task task, UUID autopilotId) {
         // Both entry points serialise here, on the Task row itself. Nothing upstream does: the
-        // Autopilot's advisory lock is keyed on the Autopilot (tick vs tick), and the manual path
-        // takes no lock at all, so under READ COMMITTED a tick and a user clicking Start could
-        // both read `backlog`, both pass the guard below, and both commit.
+        // Autopilot's tick lease is keyed on the Autopilot (pass vs pass), and the manual path
+        // takes no lease and no lock at all, so under READ COMMITTED a tick and a user clicking
+        // Start could both read `backlog`, both pass the guard below, and both commit.
         Task locked = repo.findWithLockById(task.getId())
                 .orElseThrow(() -> new NotFoundException("Task not found: " + task.getId()));
         // The lock alone is not enough. It makes the DATABASE value authoritative, but the finder

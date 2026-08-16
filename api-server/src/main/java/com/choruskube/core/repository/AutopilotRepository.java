@@ -22,7 +22,8 @@ import org.springframework.transaction.annotation.Transactional;
  * express "this write is valid only if nobody changed the row since I read it". Removing the
  * read-modify-write removes the class of defect; removing the method that makes one possible is
  * what stops it coming back. Re-adding {@code extends JpaRepository} here is a compile-time-visible
- * decision, not an accident, and {@code AutopilotEntityWriteGuardTest} fails loudly if it happens.
+ * decision, not an accident, and {@code AutopilotServiceTest}'s
+ * {@code nothingCanWriteTheAutopilotRowThroughTheEntity} fails loudly if it happens.
  *
  * <p>Two consequences worth stating:
  *
@@ -157,22 +158,38 @@ public interface AutopilotRepository extends Repository<Autopilot, UUID> {
      * <p>The condition and the write are one statement, so two instances racing here cannot both
      * win: Postgres serialises the row update and the loser's {@code WHERE} no longer holds.
      *
+     * <p><strong>One clock, and it is the database's.</strong> These three statements take a TTL in
+     * seconds and never a timestamp, so no caller can supply the time an expiry is judged against.
+     * The obvious alternative — the caller passing {@code now} and {@code now + ttl} — compares
+     * instance A's written expiry against instance B's wall clock, and a B running ahead treats A's
+     * live lease as expired and steals it. A finds out only at its next renewal, so both can have a
+     * start in flight, {@code max_parallel} is exceeded by one, and it recurs every interval for as
+     * long as the skew lasts. Reintroducing an {@code Instant} parameter here reintroduces that;
+     * {@code AutopilotRepositoryTest} asserts by reflection that none appears.
+     *
+     * <p>{@code clock_timestamp()} rather than {@code now()}, which in Postgres is transaction
+     * start time. Each of these runs in its own short transaction today, so the two agree — but if
+     * one ever joined a longer transaction, {@code now()} would be stale by that transaction's
+     * length and a live lease would read as expired. Same failure as the skew above, from inside a
+     * single instance.
+     *
      * @return 1 when the caller owns the pass, 0 when someone else is already ticking — in which
      *     case the caller must return immediately rather than wait. A skipped pass costs one
      *     scheduler interval; a queued one would pile instances up behind a slow tick.
      */
     @Transactional
     @Modifying(flushAutomatically = true, clearAutomatically = true)
-    @Query("UPDATE Autopilot a SET a.tickOwner = :owner, a.tickLeaseUntil = :leaseUntil, a.updatedAt = :now "
-            + "WHERE a.id = :id AND (a.tickLeaseUntil IS NULL OR a.tickLeaseUntil < :now)")
-    int acquireTickLease(
-            @Param("id") UUID id,
-            @Param("owner") String owner,
-            @Param("leaseUntil") Instant leaseUntil,
-            @Param("now") Instant now);
+    @Query(
+            value = "UPDATE autopilot SET tick_owner = :owner, "
+                    + "tick_lease_until = clock_timestamp() + (CAST(:ttlSeconds AS int) * INTERVAL '1 second'), "
+                    + "updated_at = clock_timestamp() "
+                    + "WHERE id = :id AND (tick_lease_until IS NULL OR tick_lease_until < clock_timestamp())",
+            nativeQuery = true)
+    int acquireTickLease(@Param("id") UUID id, @Param("owner") String owner, @Param("ttlSeconds") int ttlSeconds);
 
     /**
      * Extends a lease this instance still holds — called between phases and before every start.
+     * Same single-clock rule as {@link #acquireTickLease}.
      *
      * @return 0 when the pass overran its lease and another instance has since taken over. The
      *     caller must then abandon the pass without starting anything further. That is not a
@@ -181,13 +198,13 @@ public interface AutopilotRepository extends Repository<Autopilot, UUID> {
      */
     @Transactional
     @Modifying(flushAutomatically = true, clearAutomatically = true)
-    @Query("UPDATE Autopilot a SET a.tickLeaseUntil = :leaseUntil, a.updatedAt = :now "
-            + "WHERE a.id = :id AND a.tickOwner = :owner AND a.tickLeaseUntil >= :now")
-    int renewTickLease(
-            @Param("id") UUID id,
-            @Param("owner") String owner,
-            @Param("leaseUntil") Instant leaseUntil,
-            @Param("now") Instant now);
+    @Query(
+            value = "UPDATE autopilot SET "
+                    + "tick_lease_until = clock_timestamp() + (CAST(:ttlSeconds AS int) * INTERVAL '1 second'), "
+                    + "updated_at = clock_timestamp() "
+                    + "WHERE id = :id AND tick_owner = :owner AND tick_lease_until >= clock_timestamp()",
+            nativeQuery = true)
+    int renewTickLease(@Param("id") UUID id, @Param("owner") String owner, @Param("ttlSeconds") int ttlSeconds);
 
     /**
      * Hands the lease back at the end of a pass, so the next scheduler interval can start one
@@ -199,7 +216,9 @@ public interface AutopilotRepository extends Repository<Autopilot, UUID> {
      */
     @Transactional
     @Modifying(flushAutomatically = true, clearAutomatically = true)
-    @Query("UPDATE Autopilot a SET a.tickOwner = null, a.tickLeaseUntil = null, a.updatedAt = :now "
-            + "WHERE a.id = :id AND a.tickOwner = :owner")
-    int releaseTickLease(@Param("id") UUID id, @Param("owner") String owner, @Param("now") Instant now);
+    @Query(
+            value = "UPDATE autopilot SET tick_owner = NULL, tick_lease_until = NULL, "
+                    + "updated_at = clock_timestamp() WHERE id = :id AND tick_owner = :owner",
+            nativeQuery = true)
+    int releaseTickLease(@Param("id") UUID id, @Param("owner") String owner);
 }

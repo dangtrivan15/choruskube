@@ -61,6 +61,8 @@ import org.mockito.stubbing.Answer;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * The tick's decision-making, isolated from the database. The arithmetic this pins — slot
@@ -149,7 +151,7 @@ class AutopilotServiceTest {
 
         newService().tick();
 
-        verify(autopilotRepo, never()).acquireTickLease(any(), any(), any(), any());
+        verify(autopilotRepo, never()).acquireTickLease(any(), any(), anyInt());
         verify(taskService, never()).startForAutopilot(any(), any());
         assertThat(ready.getStatus()).isEqualTo(WorkItemStatus.backlog);
     }
@@ -160,7 +162,7 @@ class AutopilotServiceTest {
 
         newService().tick();
 
-        verify(autopilotRepo, never()).acquireTickLease(any(), any(), any(), any());
+        verify(autopilotRepo, never()).acquireTickLease(any(), any(), anyInt());
         verify(autopilotRepo, never()).insertDefaults(any());
     }
 
@@ -226,6 +228,26 @@ class AutopilotServiceTest {
         newService().tick();
 
         verify(taskService, never()).startForAutopilot(any(), any());
+    }
+
+    @Test
+    void tick_ceilingLoweredMidPass_isObeyedForTheRestOfThePass() {
+        // max_parallel is a live setting, not a figure the pass gets to bank at the start. Someone
+        // watching costs climb and dropping the ceiling to 1 must not be told to wait out a pass
+        // that already decided it could afford two.
+        Task first = task(story(epic("High", Priority.high)), "First", WorkItemStatus.backlog, Readiness.READY);
+        Task second = task(story(epic("Low", Priority.low)), "Second", WorkItemStatus.backlog, Readiness.READY);
+        autopilot.setMaxParallel(2);
+        when(taskService.startForAutopilot(eq(first.getId()), any())).thenAnswer(invocation -> {
+            run(WorkflowRunStatus.running, null);
+            autopilot.setMaxParallel(1);
+            return null;
+        });
+
+        newService().tick();
+
+        verify(taskService).startForAutopilot(first.getId(), autopilotId);
+        verify(taskService, never()).startForAutopilot(eq(second.getId()), any());
     }
 
     @Test
@@ -421,7 +443,7 @@ class AutopilotServiceTest {
 
         newService().tick();
 
-        verify(autopilotRepo).acquireTickLease(eq(autopilotId), eq(THIS_INSTANCE), any(), any());
+        verify(autopilotRepo).acquireTickLease(eq(autopilotId), eq(THIS_INSTANCE), anyInt());
         assertThat(Arrays.stream(AutopilotRepository.class.getMethods())
                         .filter(m -> m.isAnnotationPresent(Lock.class))
                         .map(Method::getName))
@@ -441,8 +463,8 @@ class AutopilotServiceTest {
         service.update(2);
         service.disengage();
 
-        verify(autopilotRepo, never()).acquireTickLease(any(), any(), any(), any());
-        verify(autopilotRepo, never()).renewTickLease(any(), any(), any(), any());
+        verify(autopilotRepo, never()).acquireTickLease(any(), any(), anyInt());
+        verify(autopilotRepo, never()).renewTickLease(any(), any(), anyInt());
     }
 
     @Test
@@ -456,11 +478,11 @@ class AutopilotServiceTest {
 
         newService().tick();
 
-        inOrder.verify(autopilotRepo).acquireTickLease(eq(autopilotId), eq(THIS_INSTANCE), any(), any());
+        inOrder.verify(autopilotRepo).acquireTickLease(eq(autopilotId), eq(THIS_INSTANCE), anyInt());
         inOrder.verify(autopilotRepo).stampTick(eq(autopilotId), any());
         inOrder.verify(autopilotRepo).findById(autopilotId);
         inOrder.verify(eventPublisher).publishAutopilotChanged(any(), any());
-        inOrder.verify(autopilotRepo).releaseTickLease(eq(autopilotId), eq(THIS_INSTANCE), any());
+        inOrder.verify(autopilotRepo).releaseTickLease(eq(autopilotId), eq(THIS_INSTANCE));
     }
 
     @Test
@@ -477,7 +499,7 @@ class AutopilotServiceTest {
         verify(autopilotRepo, never()).stampTick(any(), any());
         verify(taskService, never()).startForAutopilot(any(), any());
         verify(eventPublisher, never()).publishAutopilotChanged(any(), any());
-        verify(autopilotRepo, never()).releaseTickLease(any(), eq(ANOTHER_INSTANCE), any());
+        verify(autopilotRepo, never()).releaseTickLease(any(), eq(ANOTHER_INSTANCE));
     }
 
     @Test
@@ -529,7 +551,7 @@ class AutopilotServiceTest {
 
         assertThatThrownBy(service::tick).isInstanceOf(IllegalStateException.class);
 
-        verify(autopilotRepo).releaseTickLease(eq(autopilotId), eq(THIS_INSTANCE), any());
+        verify(autopilotRepo).releaseTickLease(eq(autopilotId), eq(THIS_INSTANCE));
     }
 
     @Test
@@ -546,7 +568,7 @@ class AutopilotServiceTest {
         verify(autopilotRepo, never()).stampTick(any(), any());
         verify(taskService, never()).startForAutopilot(any(), any());
         verify(eventPublisher, never()).publishAutopilotChanged(any(), any());
-        verify(autopilotRepo).releaseTickLease(eq(autopilotId), eq(THIS_INSTANCE), any());
+        verify(autopilotRepo).releaseTickLease(eq(autopilotId), eq(THIS_INSTANCE));
     }
 
     @Test
@@ -910,6 +932,41 @@ class AutopilotServiceTest {
     // -----------------------------------------------------------------------------------
 
     @Test
+    void tickCarriesNoTransactionalAnnotation() throws NoSuchMethodException {
+        // The companion to the runtime assertion below. Both TransactionTemplates are
+        // PROPAGATION_REQUIRED, so a @Transactional here — or on the class — would merge all four
+        // phases, every startForAutopilot, and the lease's own acquire and release into one long
+        // transaction: the exact defect this structure removes, reintroduced with no test failing.
+        // A phase exception would then poison the release in the finally, rolling it back and
+        // leaking the lease for a full TTL.
+        //
+        // If this fails, do not delete the assertion — the annotation is the regression.
+        assertThat(AutopilotService.class.getAnnotation(Transactional.class))
+                .as("a class-level @Transactional would wrap tick() just as surely as a method-level one")
+                .isNull();
+        assertThat(AutopilotService.class.getMethod("tick").getAnnotation(Transactional.class))
+                .as("tick() must own its transaction boundaries, not inherit one")
+                .isNull();
+    }
+
+    @Test
+    void tick_insideAnAmbientTransaction_failsLoudlyRatherThanCollapsingThePhases() {
+        // The annotation guard above cannot see a transactional *caller*. This one can: propagation
+        // has no way to say "there must be no parent", so the assertion is the enforcement.
+        story(epic("E"));
+        AutopilotService service = newService();
+        TransactionSynchronizationManager.setActualTransactionActive(true);
+        try {
+            assertThatThrownBy(service::tick)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("must not run inside a transaction");
+        } finally {
+            TransactionSynchronizationManager.setActualTransactionActive(false);
+        }
+        verify(autopilotRepo, never()).acquireTickLease(any(), any(), anyInt());
+    }
+
+    @Test
     void nothingCanWriteTheAutopilotRowThroughTheEntity() {
         // The whole design in one assertion. Three rounds of concurrency fixes on this row were
         // the same defect at different offsets — a read-modify-write patched with ordering tools
@@ -994,29 +1051,31 @@ class AutopilotServiceTest {
         // The lease conditions, emulated rather than stubbed to a constant: whether a pass may run
         // is the property under test in half a dozen cases below, and a mock that always says yes
         // would make all of them pass for the wrong reason.
-        when(autopilotRepo.acquireTickLease(any(), any(), any(), any())).thenAnswer(invocation -> {
+        // Instant.now() stands in for clock_timestamp(): the statements take a TTL and read the
+        // clock themselves, so there is no caller-supplied time for the emulation to accept either.
+        when(autopilotRepo.acquireTickLease(any(), any(), anyInt())).thenAnswer(invocation -> {
             if (invocation.getArgument(0) == null) {
                 return 0;
             }
-            Instant now = invocation.getArgument(3);
+            Instant now = Instant.now();
             if (leaseUntil != null && leaseUntil.isAfter(now)) {
                 return 0;
             }
             leaseOwner = invocation.getArgument(1);
-            leaseUntil = invocation.getArgument(2);
+            leaseUntil = now.plusSeconds((int) invocation.getArgument(2));
             return 1;
         });
-        when(autopilotRepo.renewTickLease(any(), any(), any(), any())).thenAnswer(invocation -> {
-            Instant now = invocation.getArgument(3);
+        when(autopilotRepo.renewTickLease(any(), any(), anyInt())).thenAnswer(invocation -> {
+            Instant now = Instant.now();
             if (!java.util.Objects.equals(leaseOwner, invocation.getArgument(1))
                     || leaseUntil == null
                     || leaseUntil.isBefore(now)) {
                 return 0;
             }
-            leaseUntil = invocation.getArgument(2);
+            leaseUntil = now.plusSeconds((int) invocation.getArgument(2));
             return 1;
         });
-        when(autopilotRepo.releaseTickLease(any(), any(), any())).thenAnswer(invocation -> {
+        when(autopilotRepo.releaseTickLease(any(), any())).thenAnswer(invocation -> {
             if (!java.util.Objects.equals(leaseOwner, invocation.getArgument(1))) {
                 return 0;
             }
