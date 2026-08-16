@@ -20,4 +20,14 @@ public interface LockService {
      * @param orgId the organisation whose run-start operations should be serialised
      */
     void acquireOrgRunLock(UUID orgId);
+
+    /**
+     * Acquires an exclusive lock on an arbitrary entity id. Same mechanism as
+     * {@link #acquireOrgRunLock(UUID)} — the md5-to-bigint hash is generic over any UUID; only the
+     * naming of that method is org-specific.
+     *
+     * <p>Blocks until available; released when the surrounding transaction ends. Must be called
+     * from within an active transaction.
+     */
+    void acquireLock(UUID id);
 }

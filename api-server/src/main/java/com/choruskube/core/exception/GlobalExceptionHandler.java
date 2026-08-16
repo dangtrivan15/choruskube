@@ -34,6 +34,11 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         return new ResponseEntity<>(ex.getMessage(), HttpStatus.CONFLICT);
     }
 
+    @ExceptionHandler(QuotaExceededException.class)
+    public ResponseEntity<String> handleQuotaExceeded(QuotaExceededException ex) {
+        return new ResponseEntity<>(ex.getMessage(), HttpStatus.TOO_MANY_REQUESTS);
+    }
+
     @ExceptionHandler(ValidationException.class)
     public ResponseEntity<ValidationResponse> handleValidation(ValidationException ex) {
         return ResponseEntity.badRequest().body(new ValidationResponse(false, ex.getErrors()));
