@@ -1243,3 +1243,28 @@ export interface OrgAiCredentialResponse {
   createdAt: string;
   updatedAt: string;
 }
+
+export interface AutopilotTaskRef {
+  taskId: string;
+  title: string;
+  runId: string | null;
+  status: string;
+}
+
+export interface AutopilotStatus {
+  engaged: boolean;
+  maxParallel: number;
+  inFlight: number;
+  slots: number;
+  nextUp: AutopilotTaskRef[];
+  whyIdle: string[];
+  awaitingYou: AutopilotTaskRef[];
+  needsAttention: AutopilotTaskRef[];
+  consecutiveFailures: number;
+  disengagedReason: string | null;
+  lastTickAt: string | null;
+}
+
+export interface AutopilotUpdateRequest {
+  maxParallel: number;
+}
