@@ -22,6 +22,23 @@ public interface WorkflowRunRepository extends JpaRepository<WorkflowRun, UUID>,
     Page<WorkflowRun> findByTaskIdOrderByCreatedAtDesc(UUID taskId, Pageable pageable);
 
     /**
+     * The Autopilot's live view of its own runs — slot accounting, epic affinity, and the
+     * "awaiting you" / "needs attention" lists all read from this one result. Returns entities
+     * rather than a count because the tick needs the runs themselves for the last three; the
+     * entity's {@code @SQLRestriction} keeps soft-deleted rows out.
+     */
+    List<WorkflowRun> findByAutopilotIdAndStatusIn(UUID autopilotId, Collection<WorkflowRunStatus> statuses);
+
+    /**
+     * The settle batch: runs of one Autopilot whose outcome has not yet been counted toward the
+     * failure breaker. Keyed on the marker column rather than on a {@code last_tick_at} window
+     * because {@code awaiting_retry} is a durable status, not an event — see
+     * {@code V15__autopilot_settled.sql}.
+     */
+    List<WorkflowRun> findByAutopilotIdAndAutopilotSettledAtIsNullAndStatusIn(
+            UUID autopilotId, Collection<WorkflowRunStatus> statuses);
+
+    /**
      * Count non-terminal runs whose {@code inputs} jsonb references the given SoftwareProject id
      * via the {@code software_project_id} key. Used by RepoGroup delete-safety.
      * Native SQL because the jsonb path extraction is Postgres-specific and we want an explicit
