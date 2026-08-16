@@ -63,6 +63,7 @@ import org.mockito.stubbing.Answer;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -478,53 +479,18 @@ class AutopilotServiceTest {
      */
     @Test
     void disengageForExternalFailure_resolvesScopeFromTheResource_neverFromTheCaller() {
-        AutopilotResolver resolver = new RecordingResolver(autopilotId);
+        RecordingResolver resolver = engaged(autopilotId);
         AutopilotService service = newService(Duration.ofMinutes(5), resolver);
 
         service.disengageForExternalFailure("git_repo", gitRepoId, "GitHub returned 401 for org/backend-api#42");
 
-        RecordingResolver recorder = (RecordingResolver) resolver;
-        assertThat(recorder.resourcesAsked)
+        assertThat(resolver.resourcesAsked)
                 .as("scope comes from the row that failed")
                 .containsExactly("git_repo:" + gitRepoId);
-        assertThat(recorder.currentScopeCalls)
+        assertThat(resolver.requestScopedCalls)
                 .as("a request-scoped resolution on a timer thread is the defect, not the fix")
                 .isZero();
         assertThat(autopilot.isEngaged()).isFalse();
-    }
-
-    /** Answers like the single-tenant resolver, and remembers which resolution was used. */
-    private static final class RecordingResolver implements AutopilotResolver {
-
-        private final UUID id;
-        private final List<String> resourcesAsked = new ArrayList<>();
-        private int currentScopeCalls;
-
-        private RecordingResolver(UUID id) {
-            this.id = id;
-        }
-
-        @Override
-        public Optional<UUID> forCurrentScope() {
-            currentScopeCalls++;
-            return Optional.of(id);
-        }
-
-        @Override
-        public Resolved getOrCreateForCurrentScope() {
-            return new Resolved(forCurrentScope().orElseThrow(), false);
-        }
-
-        @Override
-        public Optional<UUID> forResource(String resourceType, UUID resourceId) {
-            resourcesAsked.add(resourceType + ":" + resourceId);
-            return Optional.of(id);
-        }
-
-        @Override
-        public List<UUID> findAllEngaged() {
-            return List.of(id);
-        }
     }
 
     @Test
@@ -799,30 +765,84 @@ class AutopilotServiceTest {
         verify(autopilotRepo, never()).stampTick(any(), any());
     }
 
-    /** A resolver that reports exactly these Autopilots as engaged. */
-    private static AutopilotResolver engaged(UUID... ids) {
-        List<UUID> engaged = List.of(ids);
-        return new AutopilotResolver() {
-            @Override
-            public Optional<UUID> forCurrentScope() {
-                return engaged.stream().findFirst();
-            }
+    /**
+     * The tick may only resolve through the timer-safe half of the seam.
+     *
+     * <p>The companion to {@link #disengageForExternalFailure_resolvesScopeFromTheResource_neverFromTheCaller()},
+     * and the same defect: {@code forCurrentScope()} reads request-scoped tenant state, and a
+     * scheduler thread has none. Downstream that either throws — an installation whose Autopilot
+     * simply stops ticking, with a stack trace nobody is watching for — or resolves to whatever
+     * scope the timer defaulted to and passes over one organisation's Autopilot on every other
+     * organisation's behalf.
+     *
+     * <p>{@code tick()} is clean today. It is asserted anyway because nothing else would notice: in
+     * core both resolutions answer with the same row, so the wrong one is invisible in every other
+     * test in this file, and the valve reached for it exactly once already.
+     */
+    @Test
+    void tick_resolvesOnlyThroughTheTimerSafeHalfOfTheSeam() {
+        RecordingResolver resolver = engaged(autopilotId, UUID.randomUUID());
 
-            @Override
-            public Resolved getOrCreateForCurrentScope() {
-                return new Resolved(engaged.getFirst(), false);
-            }
+        newService(Duration.ofMinutes(5), resolver).tick();
 
-            @Override
-            public Optional<UUID> forResource(String resourceType, UUID resourceId) {
-                return engaged.stream().findFirst();
-            }
+        assertThat(resolver.engagedLookups)
+                .as("findAllEngaged is the tick's one route to a row")
+                .isEqualTo(1);
+        assertThat(resolver.requestScopedCalls)
+                .as("neither forCurrentScope nor getOrCreateForCurrentScope may be reached from a timer thread")
+                .isZero();
+        assertThat(resolver.resourcesAsked)
+                .as("the tick already holds its ids; forResource is the valve's route, not its")
+                .isEmpty();
+    }
 
-            @Override
-            public List<UUID> findAllEngaged() {
-                return engaged;
-            }
-        };
+    /** A resolver that reports exactly these Autopilots as engaged, and remembers how it was asked. */
+    private static RecordingResolver engaged(UUID... ids) {
+        return new RecordingResolver(List.of(ids));
+    }
+
+    /**
+     * Answers like the single-tenant resolver, and counts which half of the seam each caller used.
+     *
+     * <p>Counting is the only way to assert this in core, where every resolution returns the same
+     * row and a caller on the wrong one behaves identically.
+     */
+    private static final class RecordingResolver implements AutopilotResolver {
+
+        private final List<UUID> engaged;
+        private final List<String> resourcesAsked = new ArrayList<>();
+        private int requestScopedCalls;
+        private int engagedLookups;
+
+        private RecordingResolver(List<UUID> engaged) {
+            this.engaged = engaged;
+        }
+
+        @Override
+        public Optional<UUID> forCurrentScope() {
+            requestScopedCalls++;
+            return engaged.stream().findFirst();
+        }
+
+        @Override
+        public Resolved getOrCreateForCurrentScope() {
+            // Counted in its own right rather than delegating to forCurrentScope(): both are
+            // request-scoped, and a guard that only saw one of them would miss the other.
+            requestScopedCalls++;
+            return new Resolved(engaged.getFirst(), false);
+        }
+
+        @Override
+        public Optional<UUID> forResource(String resourceType, UUID resourceId) {
+            resourcesAsked.add(resourceType + ":" + resourceId);
+            return engaged.stream().findFirst();
+        }
+
+        @Override
+        public List<UUID> findAllEngaged() {
+            engagedLookups++;
+            return engaged;
+        }
     }
 
     // -----------------------------------------------------------------------------------
@@ -1185,7 +1205,7 @@ class AutopilotServiceTest {
      * is the second.
      *
      * <p>The transaction itself is watched for real in {@code
-     * AutopilotServiceIntegrationTest#creatingTheRow_publishesTheOwnershipEventInsideTheInsertsTransaction}.
+     * AutopilotServiceIntegrationTest#creatingTheRow_publishesTheOwnershipEventWhileATransactionIsActive}.
      * This guard is the half that test cannot give: it covers a method nobody has written yet.
      *
      * <p>If a mutator loses its annotation, the insert commits on its own and the event fires
@@ -1193,21 +1213,36 @@ class AutopilotServiceTest {
      * loses it when the publish fails.
      */
     @Test
-    void everyPublicMethodExceptTickIsTransactional() {
+    void everyPublicMethodExceptTickJoinsItsCallersTransaction() {
         List<Method> shouldBeTransactional = Arrays.stream(AutopilotService.class.getDeclaredMethods())
                 .filter(method -> Modifier.isPublic(method.getModifiers()))
                 .filter(method -> !method.isSynthetic())
                 // The one public method that must NOT be, asserted by
-                // tickCarriesNoTransactionalAnnotation. Everything else has to argue its way out.
-                .filter(method -> !"tick".equals(method.getName()))
+                // tickCarriesNoTransactionalAnnotation. Matched on its signature and not just its
+                // name: a future tick(UUID) is a different method with different obligations, and
+                // exempting it by name alone would hand it the carve-out for free.
+                .filter(method -> !("tick".equals(method.getName()) && method.getParameterCount() == 0))
                 .toList();
 
         assertThat(shouldBeTransactional)
                 .as("derived from the class, so an empty set would mean the derivation broke, not that it passed")
                 .isNotEmpty();
-        assertThat(shouldBeTransactional).allSatisfy(method -> assertThat(method.getAnnotation(Transactional.class))
-                .as("%s must join its caller's transaction, or the insert commits without its owner", method.getName())
-                .isNotNull());
+        assertThat(shouldBeTransactional).allSatisfy(method -> {
+            Transactional annotation = method.getAnnotation(Transactional.class);
+            assertThat(annotation)
+                    .as(
+                            "%s must join its caller's transaction, or the insert commits without its owner",
+                            method.getName())
+                    .isNotNull();
+            // Presence is not the property; propagation is. REQUIRES_NEW would satisfy an
+            // is-annotated check while suspending the caller's transaction and committing the
+            // insert on its own — the row durable before the ownership event, and no longer rolled
+            // back with it. That is the orphan case wearing the annotation that was meant to
+            // prevent it.
+            assertThat(annotation.propagation())
+                    .as("%s must not open a transaction of its own", method.getName())
+                    .isEqualTo(Propagation.REQUIRED);
+        });
     }
 
     @Test

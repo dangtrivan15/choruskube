@@ -908,7 +908,7 @@ public class AutopilotService implements AutopilotSafetyValve {
      * <p>Every caller is {@code @Transactional} and the publish is synchronous, so the event lands
      * in the same transaction as the insert and rolls back with it. Both halves of that are
      * asserted rather than trusted — see {@code
-     * AutopilotServiceTest#everyMutatorThatCanCreateTheRowIsTransactional}.
+     * AutopilotServiceTest#everyPublicMethodExceptTickJoinsItsCallersTransaction}.
      *
      * <p>Published on the insert only. {@code created} is false for every later {@code engage()} or
      * {@code update()}, so one row produces one event however many times it is mutated.

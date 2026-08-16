@@ -28,6 +28,7 @@ import io.temporal.client.WorkflowStub;
 import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.Callable;
@@ -126,8 +127,15 @@ public class AutopilotServiceIntegrationTest extends BaseTest {
     @Autowired
     private ConfigurableApplicationContext applicationContext;
 
-    private final List<MappableCreated> ownershipEvents = new ArrayList<>();
-    private final List<Boolean> ownershipEventsSawATransaction = new ArrayList<>();
+    /**
+     * Synchronized because the publishing thread is whichever thread called the mutator, and this
+     * class runs mutators on a pool in several places. No test races them onto the creating call
+     * today; a plain {@code ArrayList} would make the first one that does fail intermittently and
+     * for a reason nobody would look for here.
+     */
+    private final List<MappableCreated> ownershipEvents = Collections.synchronizedList(new ArrayList<>());
+
+    private final List<Boolean> aTransactionWasActiveAtPublish = Collections.synchronizedList(new ArrayList<>());
 
     /**
      * Typed on {@code ApplicationEvent} and narrowed by hand, because {@link MappableCreated} is a
@@ -139,7 +147,7 @@ public class AutopilotServiceIntegrationTest extends BaseTest {
         if (event instanceof PayloadApplicationEvent<?> payload
                 && payload.getPayload() instanceof MappableCreated created) {
             ownershipEvents.add(created);
-            ownershipEventsSawATransaction.add(TransactionSynchronizationManager.isActualTransactionActive());
+            aTransactionWasActiveAtPublish.add(TransactionSynchronizationManager.isActualTransactionActive());
         }
     };
 
@@ -507,25 +515,32 @@ public class AutopilotServiceIntegrationTest extends BaseTest {
     }
 
     /**
-     * The ownership event lands inside the transaction that inserted the row.
+     * A transaction is active when the ownership event is published.
      *
-     * <p>Observed here rather than inferred, and observable here specifically because this class is
-     * NOT {@code @Transactional}: it opens no transaction of its own, so the only one that can be
-     * active when the listener runs is the one {@code engage()} opened around the insert. In a
-     * {@code @Transactional} test the assertion would pass for free and prove nothing.
+     * <p>Observable here specifically because this class is NOT {@code @Transactional}: it opens
+     * none of its own, so the only transaction that can be active when the listener runs is one
+     * {@code engage()} opened. In a {@code @Transactional} test the assertion would pass for free
+     * and prove nothing.
      *
-     * <p>If the publish ever moved to an {@code afterCommit} hook, or a mutator lost its
-     * {@code @Transactional}, the row would commit with no owner and this would say so.
+     * <p><strong>What this does and does not prove.</strong> It catches the publish moving to an
+     * {@code afterCommit} hook, and a mutator losing its {@code @Transactional} — both of which
+     * leave no transaction active here. It does <em>not</em> prove the publish shares the
+     * <em>insert's</em> transaction: were {@code insertDefaults} to become {@code REQUIRES_NEW}, the
+     * outer transaction would still be active while the insert had already committed on its own,
+     * and this would still pass. That case is covered by {@code
+     * AutopilotServiceTest#everyPublicMethodExceptTickJoinsItsCallersTransaction}, which asserts
+     * propagation rather than presence. Named for what it observes so the two are not mistaken for
+     * one.
      */
     @Test
-    void creatingTheRow_publishesTheOwnershipEventInsideTheInsertsTransaction() {
+    void creatingTheRow_publishesTheOwnershipEventWhileATransactionIsActive() {
         UUID autopilotId = engage();
 
         assertThat(ownershipEvents)
                 .as("one insert, one ownership event, naming the row and the type the writer switches on")
                 .containsExactly(MappableCreated.of("autopilot", autopilotId));
-        assertThat(ownershipEventsSawATransaction)
-                .as("a synchronous listener inside the mutator's own transaction, not after it")
+        assertThat(aTransactionWasActiveAtPublish)
+                .as("a synchronous listener with a transaction still open, not a post-commit hook")
                 .containsExactly(true);
     }
 
