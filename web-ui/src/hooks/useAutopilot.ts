@@ -8,6 +8,21 @@ import type { AutopilotStatus, AutopilotUpdateRequest } from "@/lib/types";
 
 const AUTOPILOT_QUERY_KEY = ["autopilot"] as const;
 
+/**
+ * Minimal runtime shape guard for `useAutopilotSubscription`'s STOMP payload — deliberately not a
+ * full schema validator, just enough to catch a well-formed-but-wrong-shape message before it's
+ * written straight into the query cache. `JSON.parse` alone only rejects invalid JSON *syntax*; a
+ * differently-shaped object (or array, or primitive) parses fine and satisfies `AutopilotStatus`'s
+ * compile-time-only type annotation, so without this check it would sail into `setQueryData` and
+ * sit there until something else happens to invalidate the query — unlike `invalidateQueries`,
+ * which self-heals on the next refetch.
+ */
+function isAutopilotStatus(value: unknown): value is AutopilotStatus {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return typeof v.engaged === "boolean" && typeof v.maxParallel === "number" && Array.isArray(v.nextUp);
+}
+
 export function useAutopilot() {
   return useQuery({
     queryKey: AUTOPILOT_QUERY_KEY,
@@ -84,8 +99,9 @@ export function useTickAutopilot() {
  * `AutopilotStatusResponse`'s javadoc documents why: the backend publishes the exact same
  * snapshot it just committed on every engage/disengage/update/tick, specifically so a
  * subscriber can render from the event alone instead of a refetch racing the transaction
- * that produced it. A parse failure falls back to `invalidateQueries` so the panel still
- * catches up on the next poll.
+ * that produced it. A malformed payload — invalid JSON, or valid JSON of the wrong shape
+ * (`isAutopilotStatus` above) — falls back to `invalidateQueries` so the panel still catches
+ * up on the next poll instead of caching bad data indefinitely.
  */
 export function useAutopilotSubscription() {
   const queryClient = useQueryClient();
@@ -93,8 +109,12 @@ export function useAutopilotSubscription() {
 
   useStompSubscription(resolveFeedTopic("autopilot"), (message) => {
     try {
-      const status: AutopilotStatus = JSON.parse(message.body);
-      queryClient.setQueryData(AUTOPILOT_QUERY_KEY, status);
+      const parsed: unknown = JSON.parse(message.body);
+      if (isAutopilotStatus(parsed)) {
+        queryClient.setQueryData(AUTOPILOT_QUERY_KEY, parsed);
+      } else {
+        queryClient.invalidateQueries({ queryKey: AUTOPILOT_QUERY_KEY });
+      }
     } catch {
       queryClient.invalidateQueries({ queryKey: AUTOPILOT_QUERY_KEY });
     }

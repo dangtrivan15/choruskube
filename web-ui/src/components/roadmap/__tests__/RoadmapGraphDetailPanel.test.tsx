@@ -101,6 +101,9 @@ const externalBlocker: ExternalBlockerRef = {
 };
 
 const blockableItems: BlockableItemRef[] = [
+  // RoadmapGraphPage.buildBlockableItems always includes the Epic itself
+  // (Epic-tier dependencies) ahead of its Stories/Tasks — mirrored here.
+  { id: epic.id, itemType: "epic", title: epic.title },
   { id: story.id, itemType: "story", title: story.title },
   { id: task.id, itemType: "task", title: task.title },
   { id: otherTask.id, itemType: "task", title: otherTask.title },
@@ -392,6 +395,34 @@ describe("RoadmapGraphDetailPanel", () => {
       expect(mockApi.post).toHaveBeenCalledWith("/dependencies", {
         blockingItemType: "story",
         blockingItemId: story.id,
+        blockedItemType: "task",
+        blockedItemId: task.id,
+      }),
+    );
+  });
+
+  it("offers the Epic itself as a pickable blocker option (Epic-tier dependencies)", async () => {
+    mockApi.post.mockResolvedValue({
+      id: "dep-new",
+      blockingItemType: "epic",
+      blockingItemId: epic.id,
+      blockedItemType: "task",
+      blockedItemId: task.id,
+      createdAt: "2026-04-01T00:00:00Z",
+    });
+    renderPanel({ detail: { itemType: "task", item: task } });
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("roadmap-add-blocker-select"));
+    expect(await screen.findByText("Add dark mode (epic)")).toBeInTheDocument();
+
+    await user.click(screen.getByText("Add dark mode (epic)"));
+    await user.click(screen.getByTestId("roadmap-add-blocker-submit"));
+
+    await waitFor(() =>
+      expect(mockApi.post).toHaveBeenCalledWith("/dependencies", {
+        blockingItemType: "epic",
+        blockingItemId: epic.id,
         blockedItemType: "task",
         blockedItemId: task.id,
       }),

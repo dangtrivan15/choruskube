@@ -12,9 +12,28 @@ vi.mock("@/lib/api", () => ({
     patch: vi.fn(),
     delete: vi.fn(),
   },
+  ApiError: class ApiError extends Error {
+    status: number;
+    body: unknown;
+    constructor(status: number, body: unknown) {
+      super(`API error ${status}`);
+      this.status = status;
+      this.body = body;
+    }
+  },
+}));
+
+vi.mock("@/lib/toast-messages", () => ({
+  showMutationToast: vi.fn((message: string, variant: string) => ({
+    id: "mock-toast-id",
+    timestamp: Date.now(),
+    message,
+    variant,
+  })),
 }));
 
 import { api } from "@/lib/api";
+import { showMutationToast } from "@/lib/toast-messages";
 import { useCreateDependency, useDeleteDependency } from "@/hooks/useDependencies";
 
 const mockApi = api as unknown as {
@@ -68,6 +87,37 @@ describe("useCreateDependency", () => {
     await waitFor(() => expect(result.current.isError).toBe(true));
 
     expect(invalidateSpy).not.toHaveBeenCalled();
+  });
+
+  it("shows the backend's cycle-conflict message on a 409, not a generic failure toast", async () => {
+    const { ApiError: MockApiError } = await import("@/lib/api");
+    mockApi.post.mockRejectedValueOnce(
+      new MockApiError(
+        409,
+        "Creating 'task-1' blocks 'task-2' would close a cycle in the dependency graph",
+      ),
+    );
+    const { wrapper } = createTestHookWrapper();
+
+    const { result } = renderHook(() => useCreateDependency("epic-1"), { wrapper });
+    result.current.mutate(createRequest);
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(showMutationToast).toHaveBeenCalledWith(
+      "Creating 'task-1' blocks 'task-2' would close a cycle in the dependency graph",
+      "warning",
+    );
+  });
+
+  it("falls back to a generic failure toast for a non-409 or non-string-body error", async () => {
+    mockApi.post.mockRejectedValueOnce(new Error("network down"));
+    const { wrapper } = createTestHookWrapper();
+
+    const { result } = renderHook(() => useCreateDependency("epic-1"), { wrapper });
+    result.current.mutate(createRequest);
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(showMutationToast).toHaveBeenCalledWith("Failed to create dependency", "error");
   });
 });
 

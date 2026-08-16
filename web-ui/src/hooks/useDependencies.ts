@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { showMutationToast } from "@/lib/toast-messages";
 import { useActivityFeed } from "./useActivityFeed";
 import type { CreateDependencyRequest, DependencyEdgeResponse } from "@/lib/types";
@@ -19,8 +19,16 @@ export function useCreateDependency(epicId: string) {
       queryClient.invalidateQueries({ queryKey: ["epics", epicId, "graph"] });
       addEntry(showMutationToast("Dependency created", "success"));
     },
-    onError: () => {
-      addEntry(showMutationToast("Failed to create dependency", "error"));
+    onError: (error) => {
+      // A 409 here is DependencyCycleException — the backend's message names the
+      // specific blocking/blocked pair that would close the cycle, which is far
+      // more actionable than a generic failure toast (mirrors useStartRun's
+      // handling of its own plain-string 400 body).
+      if (error instanceof ApiError && error.status === 409 && typeof error.body === "string") {
+        addEntry(showMutationToast(error.body, "warning"));
+      } else {
+        addEntry(showMutationToast("Failed to create dependency", "error"));
+      }
     },
   });
 }
