@@ -31,6 +31,9 @@ public class WorkflowRun {
     @Column(name = "task_id")
     private UUID taskId;
 
+    @Column(name = "autopilot_id")
+    private UUID autopilotId;
+
     @Enumerated(EnumType.STRING)
     @JdbcTypeCode(SqlTypes.NAMED_ENUM)
     @Column(nullable = false)
@@ -92,6 +95,14 @@ public class WorkflowRun {
 
     public void setTaskId(UUID taskId) {
         this.taskId = taskId;
+    }
+
+    public UUID getAutopilotId() {
+        return autopilotId;
+    }
+
+    public void setAutopilotId(UUID autopilotId) {
+        this.autopilotId = autopilotId;
     }
 
     public WorkflowRunStatus getStatus() {
