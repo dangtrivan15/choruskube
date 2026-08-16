@@ -4,13 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -38,8 +35,6 @@ import com.choruskube.core.repository.EpicRepository;
 import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
-import jakarta.persistence.EntityManager;
-import jakarta.persistence.LockModeType;
 import java.lang.reflect.Method;
 import java.time.Duration;
 import java.time.Instant;
@@ -53,7 +48,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -63,16 +58,22 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.mockito.stubbing.Answer;
-import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.PlatformTransactionManager;
 
 /**
  * The tick's decision-making, isolated from the database. The arithmetic this pins — slot
  * accounting, the failure breaker, settle idempotence, ordering — is where the Autopilot decides
  * to spend money on agent containers, and every branch of it is reachable with mocks. The
- * end-to-end path against real Postgres, real readiness and a real {@code REQUIRES_NEW} start is
- * pinned separately by {@code AutopilotServiceIntegrationTest}.
+ * end-to-end path against real Postgres, real readiness and a real start is pinned separately by
+ * {@code AutopilotServiceIntegrationTest}.
+ *
+ * <p>The repository mocks <strong>emulate the row</strong> rather than record calls: each
+ * {@code @Modifying} statement's answer applies that statement's effect to the fixture, so the
+ * behavioural assertions below read the same way they did when the tick wrote the row through an
+ * entity. That is deliberate — the restructure changed the mechanism, not the arithmetic, and a
+ * test suite that had to be rewritten to accommodate it would have hidden exactly that.
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -103,15 +104,20 @@ class AutopilotServiceTest {
     private TaskService taskService;
 
     @Mock
-    private LockService lockService;
-
-    @Mock
     private RunEventPublisher eventPublisher;
 
     @Mock
-    private EntityManager entityManager;
+    private PlatformTransactionManager transactionManager;
+
+    private static final String THIS_INSTANCE = "instance-under-test";
+    private static final String ANOTHER_INSTANCE = "the-other-replica";
 
     private final UUID autopilotId = UUID.randomUUID();
+
+    /** The lease columns, emulated so the tests exercise the real acquire/renew/release conditions. */
+    private String leaseOwner;
+
+    private Instant leaseUntil;
 
     private Autopilot autopilot;
     private final List<EpicFixture> epics = new ArrayList<>();
@@ -128,6 +134,8 @@ class AutopilotServiceTest {
         autopilot.setId(autopilotId);
         autopilot.setCreatedAt(Instant.now());
         autopilot.setEngaged(true);
+        leaseOwner = null;
+        leaseUntil = null;
     }
 
     // -----------------------------------------------------------------------------------
@@ -141,7 +149,7 @@ class AutopilotServiceTest {
 
         newService().tick();
 
-        verifyNoInteractions(lockService);
+        verify(autopilotRepo, never()).acquireTickLease(any(), any(), any(), any());
         verify(taskService, never()).startForAutopilot(any(), any());
         assertThat(ready.getStatus()).isEqualTo(WorkItemStatus.backlog);
     }
@@ -152,8 +160,8 @@ class AutopilotServiceTest {
 
         newService().tick();
 
-        verifyNoInteractions(lockService);
-        verify(autopilotRepo, never()).save(any());
+        verify(autopilotRepo, never()).acquireTickLease(any(), any(), any(), any());
+        verify(autopilotRepo, never()).insertDefaults(any());
     }
 
     // -----------------------------------------------------------------------------------
@@ -220,6 +228,26 @@ class AutopilotServiceTest {
         verify(taskService, never()).startForAutopilot(any(), any());
     }
 
+    @Test
+    void tick_slotTakenByAnotherReplicaMidPass_stopsStarting() {
+        // The planning phase counted slots before anything started, and it runs in no transaction
+        // of its own — so by the second start another replica's pods may already fill the ceiling.
+        // Cheaper to ask again than to hand out capacity that no longer exists.
+        Task first = task(story(epic("High", Priority.high)), "First", WorkItemStatus.backlog, Readiness.READY);
+        Task second = task(story(epic("Low", Priority.low)), "Second", WorkItemStatus.backlog, Readiness.READY);
+        autopilot.setMaxParallel(2);
+        when(taskService.startForAutopilot(eq(first.getId()), any())).thenAnswer(invocation -> {
+            run(WorkflowRunStatus.running, null);
+            run(WorkflowRunStatus.running, null);
+            return null;
+        });
+
+        newService().tick();
+
+        verify(taskService).startForAutopilot(first.getId(), autopilotId);
+        verify(taskService, never()).startForAutopilot(eq(second.getId()), any());
+    }
+
     // -----------------------------------------------------------------------------------
     // 3 — the failure breaker
     // -----------------------------------------------------------------------------------
@@ -251,6 +279,20 @@ class AutopilotServiceTest {
 
         assertThat(autopilot.getConsecutiveFailures()).isEqualTo(1);
         assertThat(autopilot.isEngaged()).isTrue();
+    }
+
+    @Test
+    void tick_startThrows_addsToTheCounterRatherThanSettingIt() {
+        // The statement is `consecutive_failures = consecutive_failures + 1`, so the caller never
+        // supplies the old value and cannot overwrite a concurrent replica's contribution. Pinned
+        // here at the call, and against real Postgres by AutopilotServiceIntegrationTest.
+        StoryFixture s = story(epic("E"));
+        Task first = task(s, "First", WorkItemStatus.backlog, Readiness.READY);
+        when(taskService.startForAutopilot(eq(first.getId()), any())).thenThrow(new IllegalStateException("boom"));
+
+        newService().tick();
+
+        verify(autopilotRepo).addFailures(eq(autopilotId), eq(1), any());
     }
 
     @Test
@@ -310,6 +352,8 @@ class AutopilotServiceTest {
 
         assertThat(autopilot.getConsecutiveFailures()).isEqualTo(1);
         assertThat(cancelled.getAutopilotSettledAt()).isNotNull();
+        verify(autopilotRepo, never()).addFailures(any(), anyInt(), any());
+        verify(autopilotRepo, never()).resetFailures(any(), any());
     }
 
     @Test
@@ -359,23 +403,25 @@ class AutopilotServiceTest {
     }
 
     // -----------------------------------------------------------------------------------
-    // 4 — locking
+    // 4 — the tick lease and the phase boundaries
     // -----------------------------------------------------------------------------------
 
     @Test
-    void tick_takesTheAdvisoryLockAndNeverARowLockOnTheAutopilotRow() {
-        // startForAutopilot runs REQUIRES_NEW, on a second connection and therefore a separate
-        // Postgres session; its insert takes FOR KEY SHARE on autopilot(id) for the foreign key.
-        // That is compatible with the FOR NO KEY UPDATE a plain UPDATE takes, but NOT with FOR
-        // UPDATE — and because the tick would not itself be waiting on anything, Postgres would
-        // see no cycle and never fire deadlock detection. Every start would block to statement
-        // timeout, presenting as a hang rather than an error.
+    void tick_claimsTheLeaseAndNeverTakesARowLockOnTheAutopilotRow() {
+        // The lease replaced pg_advisory_xact_lock because that lock is TRANSACTION-scoped: once
+        // the tick became four short transactions it was released when phase 1 committed, leaving
+        // planning and starting open to a second instance counting the same free slots.
+        //
+        // What must never change is the shape. A start inserts a run whose foreign key takes FOR
+        // KEY SHARE on autopilot(id). That is compatible with the FOR NO KEY UPDATE a plain UPDATE
+        // takes — including every lease statement — but NOT with FOR UPDATE, and because the tick
+        // would not itself be waiting on anything, Postgres would see no cycle and never fire
+        // deadlock detection. Every start would block to statement timeout: a hang, not an error.
         story(epic("E"));
 
         newService().tick();
 
-        verify(lockService).acquireLock(autopilotId);
-        verify(entityManager, never()).lock(any(), any(LockModeType.class));
+        verify(autopilotRepo).acquireTickLease(eq(autopilotId), eq(THIS_INSTANCE), any(), any());
         assertThat(Arrays.stream(AutopilotRepository.class.getMethods())
                         .filter(m -> m.isAnnotationPresent(Lock.class))
                         .map(Method::getName))
@@ -384,30 +430,194 @@ class AutopilotServiceTest {
     }
 
     @Test
-    void tick_rereadsTheRowTwice_afterTakingTheLockAndAgainBeforePublishing() {
-        // Two different staleness problems, one mechanism.
-        //
-        // After the lock: the row was read BEFORE it, so on a second replica it may already be
-        // another tick's stale "before" image, and saving that back would undo its failure count.
-        //
-        // Before publishing: a lock-free disengage may have landed during the pass, and the
-        // payload must carry the row's state rather than this tick's copy of it.
+    void mutatorsNeverTouchTheLease() {
+        // Every mutation is a single statement now, so there is nothing to serialise them against
+        // and nothing for them to wait out. This is what retired the lock_timeout and the 409 that
+        // used to tell an HTTP caller its change had lost a race with an in-flight tick — an
+        // emergency stop must not be refused because a pass happens to be running.
+        AutopilotService service = newService();
+
+        service.engage();
+        service.update(2);
+        service.disengage();
+
+        verify(autopilotRepo, never()).acquireTickLease(any(), any(), any(), any());
+        verify(autopilotRepo, never()).renewTickLease(any(), any(), any(), any());
+    }
+
+    @Test
+    void tick_claimsTheLeaseFirst_rereadsTheRowBeforePublishing_andReleasesLast() {
+        // The whole pass, in the only order that makes the phases worth splitting: the lease is
+        // claimed before any phase and given back after all of them, and the published payload is
+        // built from a read that happens AFTER the starts rather than from the row the pass began
+        // with.
         story(epic("E"));
-        InOrder inOrder = inOrder(lockService, entityManager, autopilotRepo, eventPublisher);
+        InOrder inOrder = inOrder(autopilotRepo, eventPublisher);
 
         newService().tick();
 
-        inOrder.verify(lockService).acquireLock(autopilotId);
-        inOrder.verify(entityManager).refresh(autopilot);
-        // Flushed first, so the re-read merges the tick's own columns with the human's change
-        // instead of discarding them.
-        inOrder.verify(autopilotRepo).saveAndFlush(autopilot);
-        inOrder.verify(entityManager).refresh(autopilot);
+        inOrder.verify(autopilotRepo).acquireTickLease(eq(autopilotId), eq(THIS_INSTANCE), any(), any());
+        inOrder.verify(autopilotRepo).stampTick(eq(autopilotId), any());
+        inOrder.verify(autopilotRepo).findById(autopilotId);
         inOrder.verify(eventPublisher).publishAutopilotChanged(any(), any());
+        inOrder.verify(autopilotRepo).releaseTickLease(eq(autopilotId), eq(THIS_INSTANCE), any());
+    }
+
+    @Test
+    void tick_whenAnotherInstanceHoldsTheLease_returnsImmediatelyAndDoesNothing() {
+        // Skipped, not queued. Waiting would pile instances up behind one slow pass; skipping
+        // costs a scheduler interval and the work is still there next time.
+        story(epic("E"));
+        task(story(epic("Work")), "Ready", WorkItemStatus.backlog, Readiness.READY);
+        leaseOwner = ANOTHER_INSTANCE;
+        leaseUntil = Instant.now().plus(Duration.ofMinutes(5));
+
+        newService().tick();
+
+        verify(autopilotRepo, never()).stampTick(any(), any());
+        verify(taskService, never()).startForAutopilot(any(), any());
+        verify(eventPublisher, never()).publishAutopilotChanged(any(), any());
+        verify(autopilotRepo, never()).releaseTickLease(any(), eq(ANOTHER_INSTANCE), any());
+    }
+
+    @Test
+    void tick_whenAnotherInstancesLeaseHasExpired_reclaimsIt() {
+        // Self-healing is the reason this is a lease and not a session-scoped lock: an instance
+        // that died mid-pass must not wedge the Autopilot until someone restarts something.
+        Task ready = task(story(epic("E")), "Ready", WorkItemStatus.backlog, Readiness.READY);
+        leaseOwner = ANOTHER_INSTANCE;
+        leaseUntil = Instant.now().minus(Duration.ofMinutes(1));
+
+        newService().tick();
+
+        assertThat(leaseOwner).isNull();
+        verify(taskService).startForAutopilot(ready.getId(), autopilotId);
+    }
+
+    @Test
+    void tick_leaseLostMidPass_stopsStartingAndCountsNoFailure() {
+        // Overrunning the TTL means another instance is now the one allowed to do this work.
+        // Abandoning the pass is the correct response, and it is emphatically not a failure —
+        // counting it would let three slow passes disengage the Autopilot.
+        Task first = task(story(epic("High", Priority.high)), "First", WorkItemStatus.backlog, Readiness.READY);
+        Task second = task(story(epic("Low", Priority.low)), "Second", WorkItemStatus.backlog, Readiness.READY);
+        autopilot.setMaxParallel(2);
+        when(taskService.startForAutopilot(eq(first.getId()), any())).thenAnswer(invocation -> {
+            leaseOwner = ANOTHER_INSTANCE;
+            return null;
+        });
+
+        newService().tick();
+
+        verify(taskService, never()).startForAutopilot(eq(second.getId()), any());
+        assertThat(autopilot.getConsecutiveFailures()).isZero();
+        assertThat(autopilot.isEngaged()).isTrue();
+        // The instance that took the lease over owns the reporting too — two writers on one live
+        // panel would fight, and its view is the current one.
+        verify(eventPublisher, never()).publishAutopilotChanged(any(), any());
+    }
+
+    @Test
+    void tick_releasesTheLeaseEvenWhenAPhaseThrows() {
+        // A pass that dies without releasing costs a whole TTL of idleness. Cheap to prevent.
+        story(epic("E"));
+        // Stubbed after the service is built: newService() re-stubs this mock, and re-stubbing a
+        // thenThrow would make the harness itself throw.
+        AutopilotService service = newService();
+        when(runRepo.findByAutopilotIdAndAutopilotSettledAtIsNullAndStatusIn(any(), any()))
+                .thenThrow(new IllegalStateException("database went away"));
+
+        assertThatThrownBy(service::tick).isInstanceOf(IllegalStateException.class);
+
+        verify(autopilotRepo).releaseTickLease(eq(autopilotId), eq(THIS_INSTANCE), any());
+    }
+
+    @Test
+    void tick_disengagedBetweenTheFirstReadAndTheLease_stopsWithoutStampingOrPublishing() {
+        // The read in tick() precedes the lease, so it can already be stale by the time the pass
+        // actually begins.
+        story(epic("E"));
+        // Stubbed after the service is built, so newService()'s own stubbing does not undo it.
+        AutopilotService service = newService();
+        when(autopilotRepo.findEngagedById(any())).thenReturn(Optional.of(false));
+
+        service.tick();
+
+        verify(autopilotRepo, never()).stampTick(any(), any());
+        verify(taskService, never()).startForAutopilot(any(), any());
+        verify(eventPublisher, never()).publishAutopilotChanged(any(), any());
+        verify(autopilotRepo).releaseTickLease(eq(autopilotId), eq(THIS_INSTANCE), any());
+    }
+
+    @Test
+    void tick_startRejectedAsAConflict_isNotAFailureAndThePassContinues() {
+        // A ConflictException out of startForAutopilot always means the same thing: this Task is
+        // no longer the backlog, READY Task the frontier was swept for — a human clicked Start, a
+        // dependency appeared, or an instance that overran its lease got here first. The roadmap
+        // moved under a plan; the platform is fine. Counting it would disengage the Autopilot
+        // after three lost races.
+        Task contended = task(story(epic("High", Priority.high)), "Contended", WorkItemStatus.backlog, Readiness.READY);
+        Task next = task(story(epic("Low", Priority.low)), "Next", WorkItemStatus.backlog, Readiness.READY);
+        autopilot.setMaxParallel(2);
+        autopilot.setConsecutiveFailures(2);
+        when(taskService.startForAutopilot(eq(contended.getId()), any()))
+                .thenThrow(new ConflictException("Can only start tasks in backlog status"));
+
+        newService().tick();
+
+        assertThat(autopilot.getConsecutiveFailures())
+                .as("a lost race must never reach the breaker")
+                .isEqualTo(2);
+        assertThat(autopilot.isEngaged()).isTrue();
+        verify(taskService).startForAutopilot(next.getId(), autopilotId);
     }
 
     // -----------------------------------------------------------------------------------
-    // 5 — ordering
+    // 5 — a stop that lands mid-pass
+    // -----------------------------------------------------------------------------------
+
+    @Test
+    void tick_disengagedMidPass_startsNothingFurther() {
+        // New behaviour, and the reason the emergency stop no longer has to be fast to be
+        // effective: previously a pass that had begun ran to the end of its slots whatever a human
+        // did, because `engaged` was read once. It is now re-read before every start.
+        Task first = task(story(epic("High", Priority.high)), "First", WorkItemStatus.backlog, Readiness.READY);
+        Task second = task(story(epic("Low", Priority.low)), "Second", WorkItemStatus.backlog, Readiness.READY);
+        autopilot.setMaxParallel(2);
+        when(taskService.startForAutopilot(eq(first.getId()), any())).thenAnswer(invocation -> {
+            autopilot.setEngaged(false);
+            return null;
+        });
+
+        newService().tick();
+
+        verify(taskService).startForAutopilot(first.getId(), autopilotId);
+        verify(taskService, never()).startForAutopilot(eq(second.getId()), any());
+    }
+
+    @Test
+    void tick_disengagedMidPass_publishesTheStopRatherThanTheRowThePassBeganWith() {
+        // The UI renders STOMP payloads directly, so a stale `engaged: true` here flips the panel
+        // back to "Engaged" moments after the user stopped it — while they are watching to confirm
+        // the stop worked. Phase 4 re-reads for exactly this.
+        Task first = task(story(epic("High", Priority.high)), "First", WorkItemStatus.backlog, Readiness.READY);
+        task(story(epic("Low", Priority.low)), "Second", WorkItemStatus.backlog, Readiness.READY);
+        autopilot.setMaxParallel(2);
+        when(taskService.startForAutopilot(eq(first.getId()), any())).thenAnswer(invocation -> {
+            autopilot.setEngaged(false);
+            return null;
+        });
+
+        AutopilotStatusResponse published = tickAndCapturePublished();
+
+        assertThat(published.engaged())
+                .as("the published payload must reflect the row, not the tick's copy of it")
+                .isFalse();
+        assertThat(published.whyIdle()).containsExactly("Autopilot is not engaged");
+    }
+
+    // -----------------------------------------------------------------------------------
+    // 6 — ordering
     // -----------------------------------------------------------------------------------
 
     @Test
@@ -432,7 +642,7 @@ class AutopilotServiceTest {
     }
 
     // -----------------------------------------------------------------------------------
-    // 6 — the four reported lists
+    // 7 — the four reported lists
     // -----------------------------------------------------------------------------------
 
     @Test
@@ -457,8 +667,8 @@ class AutopilotServiceTest {
         AutopilotStatusResponse published = tickAndCapturePublished();
 
         verify(taskService).startForAutopilot(started.getId(), autopilotId);
-        // The start committed on another connection, so this persistence context still holds the
-        // Task at its pre-start `backlog` — excluding it by id is what keeps nextUp honest.
+        // The frontier was swept before any of them moved out of backlog, so excluding by id is
+        // what keeps nextUp honest without a second sweep.
         assertThat(published.nextUp()).extracting(AutopilotTaskRef::taskId).containsExactly(queued.getId());
     }
 
@@ -586,7 +796,7 @@ class AutopilotServiceTest {
     }
 
     // -----------------------------------------------------------------------------------
-    // 7 — read and mutate
+    // 8 — read and mutate
     // -----------------------------------------------------------------------------------
 
     @Test
@@ -600,7 +810,7 @@ class AutopilotServiceTest {
         assertThat(status.whyIdle()).containsExactly("Autopilot has never been configured");
         assertThat(status.nextUp()).isEmpty();
         assertThat(status.lastTickAt()).isNull();
-        verify(autopilotRepo, never()).save(any());
+        verify(autopilotRepo, never()).insertDefaults(any());
     }
 
     @Test
@@ -612,7 +822,7 @@ class AutopilotServiceTest {
         assertThat(status.engaged()).isTrue();
         assertThat(status.consecutiveFailures()).isZero();
         assertThat(status.disengagedReason()).isNull();
-        verify(autopilotRepo).save(any(Autopilot.class));
+        verify(autopilotRepo).insertDefaults(any());
         verify(eventPublisher).publishAutopilotChanged(any(), eq(status));
     }
 
@@ -629,6 +839,15 @@ class AutopilotServiceTest {
         assertThat(status.lastTickAt()).isNotNull();
         assertThat(autopilot.getConsecutiveFailures()).isZero();
         assertThat(autopilot.getDisengagedReason()).isNull();
+    }
+
+    @Test
+    void engage_afterAStop_turnsItBackOn() {
+        // No witness, no 409: engage is one statement and waits on nothing, so the later of two
+        // clicks is simply the later statement.
+        autopilot.setEngaged(false);
+
+        assertThat(newService().engage().engaged()).isTrue();
     }
 
     @Test
@@ -662,6 +881,7 @@ class AutopilotServiceTest {
         autopilot.setMaxParallel(3);
 
         assertThat(newService().update(null).maxParallel()).isEqualTo(3);
+        verify(autopilotRepo, never()).setMaxParallel(any(), anyInt(), any());
     }
 
     @Test
@@ -669,118 +889,43 @@ class AutopilotServiceTest {
         AutopilotService service = newService();
 
         assertThatThrownBy(() -> service.update(0)).isInstanceOf(BadRequestException.class);
+        verify(autopilotRepo, never()).setMaxParallel(any(), anyInt(), any());
     }
 
     @Test
-    void engageAndUpdateSerialiseAgainstATickOnTheSameAdvisoryLock() {
-        // The advisory lock used to cover tick-against-tick only. A mutation could then land in
-        // the middle of a tick — a window spanning a full readiness sweep and every
-        // startForAutopilot call — and the tick's later write-back would restore the counters it
-        // shares with them.
-        newService().engage();
-        newService().update(2);
-
-        verify(lockService, times(2)).acquireLock(autopilotId);
-        verify(entityManager, times(2)).refresh(autopilot);
-    }
-
-    @Test
-    void disengage_takesNoLockAtAll() {
-        // The emergency stop must not wait out an in-flight tick. It is safe without the lock
-        // because the tick's write-back omits `engaged` unless the breaker set it — and the
-        // breaker sets it to false too, so no interleaving turns the Autopilot back ON.
-        newService().disengage();
-
-        verifyNoInteractions(lockService);
-        verify(autopilotRepo).disengage(autopilotId);
-        verify(autopilotRepo, never()).save(any());
-    }
-
-    @Test
-    void engage_boundsItsWaitAndReportsAConflictRatherThanHanging() {
-        // A tick can hold the lock for a full sweep plus every container start, so an untimed
-        // wait would leave the HTTP request hanging for as long as the tick runs.
-        AutopilotService service = newService();
-        doThrow(new CannotAcquireLockException("lock timeout"))
-                .when(lockService)
-                .acquireLock(any());
-
-        assertThatThrownBy(service::engage)
-                .isInstanceOf(ConflictException.class)
-                .hasMessageContaining("tick is in progress");
-        verify(entityManager).createNativeQuery(argThat(sql -> sql.startsWith("SET LOCAL lock_timeout")));
-    }
-
-    @Test
-    void engage_refusesWhenTheAutopilotWasStoppedWhileItWaited() {
-        // Making disengage lock-free removed the FIFO ordering the lock used to give both sides,
-        // so a stop issued DURING this call's wait would otherwise commit first and be overwritten
-        // by it — the Autopilot back on because of a click that came earlier.
-        AutopilotService service = newService();
-        doAnswer(invocation -> {
-                    autopilot.setEngaged(false);
-                    return null;
-                })
-                .when(entityManager)
-                .refresh(autopilot);
-
-        assertThatThrownBy(service::engage)
-                .isInstanceOf(ConflictException.class)
-                .hasMessageContaining("disengaged while this request was waiting");
-        assertThat(autopilot.isEngaged()).isFalse();
-        verify(eventPublisher, never()).publishAutopilotChanged(any(), any());
-    }
-
-    @Test
-    void engage_proceedsWhenTheRowWasAlreadyOffBeforeItWaited() {
-        // A tick returns before taking the lock when the row is off, so an off row on entry means
-        // the stop preceded this request and engaging is the correct answer.
-        autopilot.setEngaged(false);
-
-        assertThat(newService().engage().engaged()).isTrue();
-    }
-
-    @Test
-    void tick_publishesTheRereadRow_soAStopThatLandedMidPassIsNotShownAsEngaged() {
-        // The UI renders STOMP payloads directly, so a stale `engaged: true` here flips the panel
-        // back to "Engaged" moments after the user stopped it — while they are watching to confirm
-        // the stop worked. The second refresh below stands in for the disengage landing mid-pass.
-        story(epic("E"));
-        AtomicInteger refreshes = new AtomicInteger();
-        doAnswer(invocation -> {
-                    if (refreshes.incrementAndGet() == 2) {
-                        autopilot.setEngaged(false);
-                    }
-                    return null;
-                })
-                .when(entityManager)
-                .refresh(autopilot);
-
-        assertThat(tickAndCapturePublished().engaged())
-                .as("the published payload must reflect the row, not the tick's copy of it")
-                .isFalse();
-    }
-
-    @Test
-    void mutatingWhenNoRowExists_takesNoLock() {
-        // Nothing to serialise against: no row means no tick can be running on it.
+    void mutatingWhenNoRowExists_insertsThenAppliesTheStatement() {
+        // Two statements rather than an entity save: get-or-create, then the change that was
+        // actually asked for.
         autopilot = null;
 
         newService().engage();
 
-        verifyNoInteractions(lockService);
+        InOrder inOrder = inOrder(autopilotRepo);
+        inOrder.verify(autopilotRepo).insertDefaults(any());
+        inOrder.verify(autopilotRepo).engage(any(), any());
     }
 
+    // -----------------------------------------------------------------------------------
+    // 9 — the regression guard
+    // -----------------------------------------------------------------------------------
+
     @Test
-    void mutatorRereadsTheRowAfterTakingTheLock() {
-        // Symmetric to the tick's own refresh: this read happened before the lock, so a mutation
-        // queued behind a tick would otherwise write back the counters that tick just settled.
-        InOrder inOrder = inOrder(lockService, entityManager);
+    void nothingCanWriteTheAutopilotRowThroughTheEntity() {
+        // The whole design in one assertion. Three rounds of concurrency fixes on this row were
+        // the same defect at different offsets — a read-modify-write patched with ordering tools
+        // that cannot express "valid only if nobody changed the row since I read it". Every write
+        // is now a single statement, and the protection is structural: there is no save on this
+        // repository to forget to avoid, and no EntityManager in the service to merge one back.
+        //
+        // If this fails, someone has re-added an entity write path. Do not delete the assertion —
+        // the path is the regression.
+        assertThat(Arrays.stream(AutopilotRepository.class.getMethods()).map(Method::getName))
+                .as("AutopilotRepository must expose no entity write path — see its javadoc")
+                .doesNotContain("save", "saveAll", "saveAndFlush", "saveAllAndFlush", "flush", "delete", "deleteAll");
 
-        newService().engage();
-
-        inOrder.verify(lockService).acquireLock(autopilotId);
-        inOrder.verify(entityManager).refresh(autopilot);
+        assertThat(AutopilotService.class.getDeclaredConstructors()[0].getParameterTypes())
+                .as("an EntityManager here would put persist/merge back within reach")
+                .doesNotContain(jakarta.persistence.EntityManager.class);
     }
 
     // -----------------------------------------------------------------------------------
@@ -788,37 +933,107 @@ class AutopilotServiceTest {
     // -----------------------------------------------------------------------------------
 
     private AutopilotService newService() {
-        // The mutators bound their lock wait with a SET LOCAL statement before acquiring.
-        when(entityManager.createNativeQuery(anyString())).thenReturn(mock(jakarta.persistence.Query.class));
         when(autopilotRepo.findAll()).thenReturn(autopilot == null ? List.of() : List.of(autopilot));
-        when(autopilotRepo.disengage(any())).thenAnswer(invocation -> {
-            // Stands in for the UPDATE statement plus the refresh that follows it: the row really
-            // does change, so a test can assert on the status the service builds afterwards.
-            if (autopilot == null) {
+        when(autopilotRepo.findById(any())).thenAnswer(invocation -> Optional.ofNullable(autopilot));
+        when(autopilotRepo.findEngagedById(any()))
+                .thenAnswer(invocation -> Optional.of(autopilot != null && autopilot.isEngaged()));
+        when(autopilotRepo.findMaxParallelById(any()))
+                .thenAnswer(
+                        invocation -> autopilot == null ? Optional.empty() : Optional.of(autopilot.getMaxParallel()));
+        when(autopilotRepo.findConsecutiveFailuresById(any()))
+                .thenAnswer(invocation ->
+                        autopilot == null ? Optional.empty() : Optional.of(autopilot.getConsecutiveFailures()));
+        // The row really does change, so a test can assert on the state the service reads back.
+        when(autopilotRepo.insertDefaults(any())).thenAnswer(invocation -> {
+            UUID id = invocation.getArgument(0);
+            if (id == null) {
+                return 0;
+            }
+            autopilot = new Autopilot();
+            autopilot.setId(id);
+            autopilot.setCreatedAt(Instant.now());
+            return 1;
+        });
+        when(autopilotRepo.engage(any(), any())).thenAnswer(statement(row -> {
+            row.setEngaged(true);
+            row.setConsecutiveFailures(0);
+            row.setDisengagedReason(null);
+            row.setLastTickAt(Instant.now());
+        }));
+        when(autopilotRepo.disengage(any(), any())).thenAnswer(statement(row -> {
+            row.setEngaged(false);
+            row.setDisengagedReason(null);
+        }));
+        when(autopilotRepo.disengageWithReason(any(), any(), any())).thenAnswer(invocation -> {
+            if (invocation.getArgument(0) == null || autopilot == null) {
                 return 0;
             }
             autopilot.setEngaged(false);
-            autopilot.setDisengagedReason(null);
+            autopilot.setDisengagedReason(invocation.getArgument(1));
             return 1;
         });
-        Answer<Autopilot> persist = invocation -> {
-            Autopilot saved = invocation.getArgument(0);
-            if (saved.getId() == null) {
-                // Stands in for the identifier generator, so a first-write path has an id to
-                // publish and to query runs by.
-                saved.setId(UUID.randomUUID());
-                saved.setCreatedAt(Instant.now());
+        when(autopilotRepo.setMaxParallel(any(), anyInt(), any())).thenAnswer(invocation -> {
+            if (invocation.getArgument(0) == null || autopilot == null) {
+                return 0;
             }
-            return saved;
-        };
-        when(autopilotRepo.save(any(Autopilot.class))).thenAnswer(persist);
-        when(autopilotRepo.saveAndFlush(any(Autopilot.class))).thenAnswer(persist);
+            autopilot.setMaxParallel(invocation.getArgument(1));
+            return 1;
+        });
+        when(autopilotRepo.addFailures(any(), anyInt(), any())).thenAnswer(invocation -> {
+            if (invocation.getArgument(0) == null || autopilot == null) {
+                return 0;
+            }
+            // Note the shape: adds to whatever the row currently holds, never writes back a value
+            // the caller read earlier. That is the property AutopilotRepository#addFailures exists
+            // for, so emulating it any other way here would let a lost update pass unnoticed.
+            autopilot.setConsecutiveFailures(autopilot.getConsecutiveFailures() + (int) invocation.getArgument(1));
+            return 1;
+        });
+        when(autopilotRepo.resetFailures(any(), any())).thenAnswer(statement(row -> row.setConsecutiveFailures(0)));
+        when(autopilotRepo.stampTick(any(), any())).thenAnswer(statement(row -> row.setLastTickAt(Instant.now())));
+        // The lease conditions, emulated rather than stubbed to a constant: whether a pass may run
+        // is the property under test in half a dozen cases below, and a mock that always says yes
+        // would make all of them pass for the wrong reason.
+        when(autopilotRepo.acquireTickLease(any(), any(), any(), any())).thenAnswer(invocation -> {
+            if (invocation.getArgument(0) == null) {
+                return 0;
+            }
+            Instant now = invocation.getArgument(3);
+            if (leaseUntil != null && leaseUntil.isAfter(now)) {
+                return 0;
+            }
+            leaseOwner = invocation.getArgument(1);
+            leaseUntil = invocation.getArgument(2);
+            return 1;
+        });
+        when(autopilotRepo.renewTickLease(any(), any(), any(), any())).thenAnswer(invocation -> {
+            Instant now = invocation.getArgument(3);
+            if (!java.util.Objects.equals(leaseOwner, invocation.getArgument(1))
+                    || leaseUntil == null
+                    || leaseUntil.isBefore(now)) {
+                return 0;
+            }
+            leaseUntil = invocation.getArgument(2);
+            return 1;
+        });
+        when(autopilotRepo.releaseTickLease(any(), any(), any())).thenAnswer(invocation -> {
+            if (!java.util.Objects.equals(leaseOwner, invocation.getArgument(1))) {
+                return 0;
+            }
+            leaseOwner = null;
+            leaseUntil = null;
+            return 1;
+        });
         // The null guards are not defensive padding: re-stubbing calls the mock with null
-        // arguments, so a test that builds the service twice would otherwise NPE inside the
-        // answer installed by the first build.
+        // arguments, so a test that builds the service twice would otherwise run the answer
+        // installed by the first build — and these answers MUTATE the fixture.
         when(runRepo.findByAutopilotIdAndStatusIn(any(), any())).thenAnswer(invocation -> {
             Set<?> statuses = statusesOf(invocation.getArgument(1));
             return live.stream().filter(r -> statuses.contains(r.getStatus())).toList();
+        });
+        when(runRepo.countByAutopilotIdAndStatusIn(any(), any())).thenAnswer(invocation -> {
+            Set<?> statuses = statusesOf(invocation.getArgument(1));
+            return live.stream().filter(r -> statuses.contains(r.getStatus())).count();
         });
         when(runRepo.findByAutopilotIdAndAutopilotSettledAtIsNullAndStatusIn(any(), any()))
                 .thenAnswer(invocation -> {
@@ -868,10 +1083,22 @@ class AutopilotServiceTest {
                 readinessAssembler,
                 candidateSource,
                 taskService,
-                lockService,
                 eventPublisher,
-                entityManager,
-                Duration.ofMinutes(15));
+                transactionManager,
+                Duration.ofMinutes(15),
+                Duration.ofMinutes(5),
+                THIS_INSTANCE);
+    }
+
+    /** One targeted UPDATE, applied to the fixture — and a no-op for the null call re-stubbing makes. */
+    private Answer<Integer> statement(Consumer<Autopilot> change) {
+        return invocation -> {
+            if (invocation.getArgument(0) == null || autopilot == null) {
+                return 0;
+            }
+            change.accept(autopilot);
+            return 1;
+        };
     }
 
     private static Set<?> statusesOf(Object argument) {

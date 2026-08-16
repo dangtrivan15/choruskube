@@ -73,10 +73,11 @@ public interface TaskService {
      * assembled through the Autopilot authorization mode, because the public mode resolves
      * cross-Epic blockers via request-scoped {@code checkOrgAccess}.
      *
-     * <p>It also runs in its OWN transaction ({@code REQUIRES_NEW}). The Autopilot starts several
-     * Tasks per tick inside one transaction and counts the failures; joining that transaction
-     * would let a single failed start mark it rollback-only, so the tick's commit would throw and
-     * discard both its bookkeeping and every Task it had already started in the same loop.
+     * <p>It is an ordinary {@code @Transactional} method and must stay one. The Autopilot calls it
+     * from outside any transaction, once per Task, so each start is already top level: a failure
+     * rolls back only itself, and the tick observes the runs it started with a plain query rather
+     * than through a snapshot that predates them. {@code REQUIRES_NEW} here would recreate the
+     * nesting that made both of those problems, on a second pooled connection nothing needs.
      */
     TaskResponse startForAutopilot(UUID id, UUID autopilotId);
 

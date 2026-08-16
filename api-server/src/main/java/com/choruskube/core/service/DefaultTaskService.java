@@ -54,7 +54,6 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /** Sole implementation of {@link TaskService} (Decision 8). */
@@ -290,8 +289,14 @@ public class DefaultTaskService implements TaskService {
         return startCore(task, null);
     }
 
+    // Plain REQUIRED, not REQUIRES_NEW. It used to need its own transaction because the Autopilot
+    // tick was one long transaction wrapped around every start, so a failure here would have marked
+    // the tick rollback-only and discarded both its bookkeeping and the starts that had already
+    // succeeded. The tick now calls this from no transaction at all, one top-level transaction per
+    // Task, so there is no parent to poison — and no parent whose snapshot predates these commits,
+    // which is what forced the tick to re-read its own runs.
     @Override
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    @Transactional
     public TaskResponse startForAutopilot(UUID id, UUID autopilotId) {
         Task task = findOrThrow(id);
         // No request context on a timer thread, so org is derived from the data rather than from a

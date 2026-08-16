@@ -13,7 +13,6 @@ import com.choruskube.core.dto.StoryResponse;
 import com.choruskube.core.dto.TaskRequest;
 import com.choruskube.core.dto.TaskResponse;
 import com.choruskube.core.exception.ConflictException;
-import com.choruskube.core.model.Autopilot;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.repository.AutopilotRepository;
@@ -24,6 +23,7 @@ import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowOptions;
 import io.temporal.client.WorkflowStub;
 import io.temporal.serviceclient.WorkflowServiceStubs;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -44,15 +44,13 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * The Autopilot start path. Deliberately NOT {@code @Transactional}, unlike its sibling {@link
- * DefaultTaskServiceTest}: {@code startForAutopilot} runs in its own {@code REQUIRES_NEW}
- * transaction, which takes a separate connection and therefore cannot see rows a test-managed,
- * roll-back-only transaction has written but not committed. Fixtures here must be committed for
- * the method under test to see them at all — and the transaction-isolation guarantee this class
- * exists to pin is only observable across a real commit boundary.
+ * DefaultTaskServiceTest}: this class drives {@code startForAutopilot} the way the tick does, as a
+ * top-level transaction per call, and the properties it pins — that one failed start leaves its
+ * neighbours intact, and that two concurrent starters produce exactly one run — are only
+ * observable across real commit boundaries.
  *
  * <p>Committing means the usual rollback safety net is gone, so {@link
  * #removeEverythingThisTestCommitted()} does that job by hand — the shared container is one
@@ -160,16 +158,21 @@ public class DefaultTaskServiceAutopilotTest extends BaseTest {
     }
 
     /**
-     * Correction 1: {@code REQUIRES_NEW} is load-bearing, not decoration. The Autopilot tick is
-     * itself transactional and starts several Tasks in a loop, catching failures to count them.
-     * Under the default {@code REQUIRED} propagation the failing start would join — and mark
-     * rollback-only — the tick's own transaction, so the tick's commit would throw {@code
-     * UnexpectedRollbackException}, discarding its bookkeeping AND the start that had already
-     * succeeded in the same loop.
+     * A failed start costs only itself.
+     *
+     * <p>This used to be pinned the other way round, with {@code REQUIRES_NEW} and a caller
+     * transaction wrapping both calls — because the Autopilot tick was one long transaction that
+     * started several Tasks in a loop, and a failure joining it would have marked it rollback-only
+     * and discarded the earlier start along with the tick's bookkeeping.
+     *
+     * <p>The tick is now four short transactions and calls this from none of them, so each start
+     * is already top level and the propagation that made the old test necessary is gone. What
+     * still has to hold is the property the old test was protecting: one failure in a pass leaves
+     * the starts around it intact. That is what this drives, in the shape phase 3 actually uses.
      */
     @Test
-    void startForAutopilot_failedStart_doesNotDiscardAnEarlierStartInTheSameCallerTransaction() {
-        GitRepo r = makeRepo("autopilot-requires-new");
+    void startForAutopilot_failedStart_leavesAnEarlierStartInTheSamePassIntact() {
+        GitRepo r = makeRepo("autopilot-independent-starts");
         StoryResponse story = makeStory(r.getId());
         TaskResponse ready = service.create(story.id(), new TaskRequest("Ready", "D"));
         TaskResponse blocker = service.create(story.id(), new TaskRequest("Blocker", "D"));
@@ -178,14 +181,12 @@ public class DefaultTaskServiceAutopilotTest extends BaseTest {
         UUID autopilotId = makeAutopilot();
 
         List<String> failures = new ArrayList<>();
-        new TransactionTemplate(txManager).executeWithoutResult(status -> {
-            service.startForAutopilot(ready.id(), autopilotId);
-            try {
-                service.startForAutopilot(blocked.id(), autopilotId);
-            } catch (ConflictException e) {
-                failures.add(e.getMessage());
-            }
-        });
+        service.startForAutopilot(ready.id(), autopilotId);
+        try {
+            service.startForAutopilot(blocked.id(), autopilotId);
+        } catch (ConflictException e) {
+            failures.add(e.getMessage());
+        }
 
         assertThat(failures).hasSize(1);
         assertThat(service.get(ready.id()).status()).isEqualTo("in_progress");
@@ -193,11 +194,11 @@ public class DefaultTaskServiceAutopilotTest extends BaseTest {
     }
 
     /**
-     * Correction 3: the Autopilot's advisory lock is on {@code autopilot.id} and serialises tick
-     * against tick only, while the manual Start path takes no lock at all. Under READ COMMITTED
-     * both callers can read the Task as {@code backlog}, both pass the status guard and both
-     * commit — two agent containers for one Task. The row lock inside {@code startCore} closes it
-     * for BOTH entry points, which is why this drives one of each concurrently.
+     * Correction 3: the Autopilot's tick lease serialises pass against pass, and the manual Start
+     * path is outside it entirely — it takes no lease and no lock. Under READ COMMITTED both
+     * callers can read the Task as {@code backlog}, both pass the status guard and both commit —
+     * two agent containers for one Task. The row lock inside {@code startCore} closes it for BOTH
+     * entry points, which is why this drives one of each concurrently.
      */
     @Test
     void concurrentManualAndAutopilotStart_produceExactlyOneRun() throws Exception {
@@ -258,9 +259,12 @@ public class DefaultTaskServiceAutopilotTest extends BaseTest {
      * cannot be stamped with an arbitrary UUID — the run's save fails at commit, not at the call.
      */
     private UUID makeAutopilot() {
-        Autopilot autopilot = new Autopilot();
-        autopilot.setEngaged(true);
-        return cleaner.trackAutopilot(autopilotRepo.saveAndFlush(autopilot).getId());
+        // Two statements rather than a save: AutopilotRepository deliberately exposes no entity
+        // write path, so that the tick cannot grow one back. See its javadoc.
+        UUID id = UUID.randomUUID();
+        autopilotRepo.insertDefaults(id);
+        autopilotRepo.engage(id, Instant.now());
+        return cleaner.trackAutopilot(id);
     }
 
     private StoryResponse makeStory(UUID softwareProjectId) {

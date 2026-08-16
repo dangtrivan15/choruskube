@@ -2,11 +2,7 @@ package com.choruskube.core.model;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
-import jakarta.persistence.PrePersist;
-import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import java.time.Instant;
 import java.util.UUID;
@@ -22,18 +18,20 @@ import org.hibernate.annotations.DynamicUpdate;
  */
 @Entity
 @Table(name = "autopilot")
-// Load-bearing, not an optimisation. The emergency stop is a targeted UPDATE that deliberately
-// does NOT take the tick's advisory lock, so a tick can be mid-pass when it lands. What keeps the
-// stop from being undone is precisely this: the tick's write-back carries only the columns it
-// actually changed — its counters and last_tick_at — so `engaged` is absent from the statement
-// unless the tick set it itself, and the only thing that does is the failure breaker, which
-// writes false too. Remove this and a full-column UPDATE restores engaged = true after a human
-// has hit Disengage. AutopilotServiceIntegrationTest pins that with a deterministic interleaving.
+// An optimisation and nothing more. It used to be load-bearing: while the tick wrote this row
+// back through a managed entity, narrowing that UPDATE to the changed columns was the only thing
+// stopping it from restoring `engaged = true` over a human's Disengage. Every write is now a
+// single-statement UPDATE in AutopilotRepository, so there is no write-back left to narrow and no
+// correctness claim resting on this annotation — it is kept because emitting fewer columns is
+// still cheaper on the reads-plus-statements path this entity now has.
 @DynamicUpdate
 public class Autopilot {
 
+    // No identifier generator and no @PrePersist/@PreUpdate, because nothing persists or merges
+    // this entity: the row is INSERTed by AutopilotRepository#insertDefaults with a caller-chosen
+    // id, and created_at/updated_at are maintained by the statements that write them. Callbacks
+    // left here would claim JPA still maintains those columns, and would never fire.
     @Id
-    @GeneratedValue(strategy = GenerationType.AUTO)
     private UUID id;
 
     @Column(nullable = false)
@@ -51,25 +49,23 @@ public class Autopilot {
     @Column(name = "last_tick_at")
     private Instant lastTickAt;
 
+    /**
+     * Which api-server instance owns the pass currently running, and until when. Read-only from
+     * here — {@link com.choruskube.core.repository.AutopilotRepository#acquireTickLease} and its
+     * two siblings are the only things that move them, and each does so in one conditional
+     * statement so that "take the lease" and "check nobody else has it" cannot come apart.
+     */
+    @Column(name = "tick_owner")
+    private String tickOwner;
+
+    @Column(name = "tick_lease_until")
+    private Instant tickLeaseUntil;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
-
-    @PrePersist
-    protected void onCreate() {
-        Instant now = Instant.now();
-        if (createdAt == null) {
-            createdAt = now;
-        }
-        updatedAt = now;
-    }
-
-    @PreUpdate
-    protected void onUpdate() {
-        updatedAt = Instant.now();
-    }
 
     public UUID getId() {
         return id;
@@ -117,6 +113,14 @@ public class Autopilot {
 
     public void setLastTickAt(Instant lastTickAt) {
         this.lastTickAt = lastTickAt;
+    }
+
+    public String getTickOwner() {
+        return tickOwner;
+    }
+
+    public Instant getTickLeaseUntil() {
+        return tickLeaseUntil;
     }
 
     public Instant getCreatedAt() {

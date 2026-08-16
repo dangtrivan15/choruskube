@@ -19,9 +19,6 @@ import com.choruskube.core.repository.EpicRepository;
 import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
-import jakarta.persistence.EntityManager;
-import jakarta.persistence.LockTimeoutException;
-import jakarta.persistence.PessimisticLockException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -42,9 +39,10 @@ import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * The Autopilot: a standing controller that starts READY Tasks unattended (Decision 1). One row
@@ -69,12 +67,6 @@ public class AutopilotService {
     /** {@code nextUp} is a preview panel, not a queue dump. */
     private static final int NEXT_UP_LIMIT = 10;
 
-    /**
-     * How long {@code engage}/{@code update} wait behind an in-flight tick before giving up and
-     * telling the caller to retry. Short on purpose: an HTTP request must not sit out a tick.
-     */
-    private static final Duration MUTATION_LOCK_TIMEOUT = Duration.ofSeconds(3);
-
     private final AutopilotRepository autopilotRepo;
     private final WorkflowRunRepository runRepo;
     private final EpicRepository epicRepo;
@@ -83,10 +75,30 @@ public class AutopilotService {
     private final EpicReadinessAssembler readinessAssembler;
     private final AutopilotCandidateSource candidateSource;
     private final TaskService taskService;
-    private final LockService lockService;
     private final RunEventPublisher eventPublisher;
-    private final EntityManager entityManager;
     private final Duration stalePendingAfter;
+
+    /**
+     * How long a claimed pass stays claimed without a renewal. Generous on purpose: overrunning it
+     * costs an abandoned tick, and the only thing a shorter value buys is faster recovery from an
+     * instance that died mid-pass — which the next interval after expiry handles anyway.
+     */
+    private final Duration tickLeaseTtl;
+
+    /** This api-server instance, as the lease's owner. Stable for the life of the process. */
+    private final String instanceId;
+
+    /**
+     * The tick's phase boundaries, held as templates rather than expressed as {@code @Transactional}
+     * on private methods. {@link #tick()} calls its phases directly, and a self-invocation never
+     * reaches the proxy — annotating them would produce four <em>silent</em> non-transactions and
+     * an accidental return to one long transaction, which is the exact defect this structure
+     * exists to remove. A template cannot be defeated that way, and inlining a phase back into
+     * {@code tick()} still keeps its boundary.
+     */
+    private final TransactionTemplate writes;
+
+    private final TransactionTemplate reads;
 
     public AutopilotService(
             AutopilotRepository autopilotRepo,
@@ -97,10 +109,11 @@ public class AutopilotService {
             EpicReadinessAssembler readinessAssembler,
             AutopilotCandidateSource candidateSource,
             TaskService taskService,
-            LockService lockService,
             RunEventPublisher eventPublisher,
-            EntityManager entityManager,
-            @Value("${choruskube.autopilot.stale-pending-after:PT15M}") Duration stalePendingAfter) {
+            PlatformTransactionManager transactionManager,
+            @Value("${choruskube.autopilot.stale-pending-after:PT15M}") Duration stalePendingAfter,
+            @Value("${choruskube.autopilot.tick-lease-ttl:PT5M}") Duration tickLeaseTtl,
+            @Value("${choruskube.instance-id:}") String instanceId) {
         this.autopilotRepo = autopilotRepo;
         this.runRepo = runRepo;
         this.epicRepo = epicRepo;
@@ -109,10 +122,19 @@ public class AutopilotService {
         this.readinessAssembler = readinessAssembler;
         this.candidateSource = candidateSource;
         this.taskService = taskService;
-        this.lockService = lockService;
         this.eventPublisher = eventPublisher;
-        this.entityManager = entityManager;
         this.stalePendingAfter = stalePendingAfter;
+        this.tickLeaseTtl = tickLeaseTtl;
+        // Generated rather than required: an operator who never sets it still gets a distinct
+        // owner per process, which is all the lease needs. Configurable so a deployment can make
+        // the owner recognisable in the row, and so tests can stand in for a second instance.
+        this.instanceId =
+                instanceId == null || instanceId.isBlank() ? UUID.randomUUID().toString() : instanceId;
+        this.writes = new TransactionTemplate(transactionManager);
+        this.reads = new TransactionTemplate(transactionManager);
+        // Read-only puts Hibernate in MANUAL flush mode, so the reporting phase cannot write this
+        // row even by accident — a structural echo of the repository having no save method.
+        this.reads.setReadOnly(true);
     }
 
     // ---------------------------------------------------------------------------------------
@@ -185,76 +207,112 @@ public class AutopilotService {
     // The tick
     // ---------------------------------------------------------------------------------------
 
+    /** What phase 1 leaves for the rest of the pass to do. */
+    private enum Settled {
+        /** A human stopped it between the pre-lease read and the lease. Nothing ran; nothing to say. */
+        DISENGAGED,
+        /** The breaker fired. Start nothing, but still report — the panel has to show the reason. */
+        BREAKER_TRIPPED,
+        PROCEED
+    }
+
+    /** Everything phase 2 works out, carried into the phases that act on it. Every figure in it is
+     *  a snapshot, and phase 3 re-checks both of them before each start. */
+    private record Plan(int maxParallel, int slots, Frontier frontier) {}
+
     /**
-     * One pass of the loop: settle, count slots, build the frontier, start what fits, report.
+     * One pass of the loop, as four short transactions rather than one long one.
      *
-     * <p>Serialised across replicas by {@code pg_advisory_xact_lock(autopilot.id)}, which is
-     * <strong>not</strong> a row lock, and must never become one. {@link
-     * TaskService#startForAutopilot} runs {@code REQUIRES_NEW}, i.e. on a second pooled connection
-     * and therefore a separate Postgres session; the run it inserts takes {@code FOR KEY SHARE} on
-     * {@code autopilot(id)} for the foreign key, which is compatible with the {@code FOR NO KEY
-     * UPDATE} a plain {@code UPDATE} of this row takes. Add a {@code SELECT … FOR UPDATE} on the
-     * autopilot row here and every start blocks until statement timeout with no deadlock to
-     * detect — this transaction is not waiting on anything, so there is no cycle for Postgres to
-     * find, and it presents as a mysterious hang rather than an error.
+     * <pre>
+     *   phase 1  SETTLE   tx           stamp the tick, count settled outcomes, apply the breaker
+     *   phase 2  PLAN     no tx        read the ceiling and the live runs, sweep readiness, order it
+     *   phase 3  START    tx per item  startForAutopilot, re-checking engagement and slots each time
+     *   phase 4  REPORT   read-only tx re-read the row and the runs, publish
+     * </pre>
+     *
+     * <p>The single transaction this replaces spanned every {@code startForAutopilot} call,
+     * Temporal round trips included, and was the common cause of four separate defects: a human's
+     * Disengage reverted by a write-back minutes older than it, an emergency stop queued behind a
+     * whole pass, a tick unable to observe the runs it had just started, and a panel reporting a
+     * stale {@code engaged}. Each was patched in turn and each patch opened the next. None of them
+     * is reachable from here: nothing is read then written back, and no phase outlives a statement
+     * or two.
+     *
+     * <p>The four phases are protected as one unit by the <strong>tick lease</strong>, not by the
+     * transaction-scoped advisory lock this used to take. That lock could not survive the split:
+     * being transaction-scoped it was released the moment phase 1 committed, leaving phases 2 to 4
+     * open to a second instance that would count the same free slots and start the same work,
+     * violating {@code max_parallel}. See {@link AutopilotRepository#acquireTickLease}.
+     *
+     * <p>Whoever loses the lease race skips the pass entirely rather than waiting for it. Waiting
+     * would queue instances behind a slow tick; skipping costs one scheduler interval, and the
+     * work is still there next time.
      */
-    @Transactional
     public void tick() {
         Optional<Autopilot> found = findSingleton();
         if (found.isEmpty() || !found.get().isEngaged()) {
-            // Absent means never configured; disengaged means a human said no. Neither takes the
-            // lock: an idle installation must not serialise on a lock it will do nothing with.
+            // Absent means never configured; disengaged means a human said no. Neither claims a
+            // lease: an idle installation must not write to the row on every scheduler interval.
             return;
         }
-        Autopilot autopilot = found.get();
-        lockService.acquireLock(autopilot.getId());
-        // The row was read BEFORE the lock, so on a second replica it may already be another
-        // tick's stale "before" image — saving it back would silently undo that tick's failure
-        // count. refresh() re-reads with a plain SELECT and takes no lock of its own.
-        entityManager.refresh(autopilot);
-        if (!autopilot.isEngaged()) {
-            return;
-        }
-
+        UUID autopilotId = found.get().getId();
         Instant now = Instant.now();
+        if (autopilotRepo.acquireTickLease(autopilotId, instanceId, now.plus(tickLeaseTtl), now) == 0) {
+            log.debug("Autopilot pass skipped: another instance holds the tick lease");
+            return;
+        }
+        try {
+            runPass(autopilotId, now);
+        } finally {
+            // Guarded on ownership inside the statement, so this is a no-op if the lease was lost
+            // and taken over. Skipping the release entirely would only cost one TTL of idleness.
+            autopilotRepo.releaseTickLease(autopilotId, instanceId, Instant.now());
+        }
+    }
+
+    /** The four phases, once this instance owns the pass. */
+    private void runPass(UUID autopilotId, Instant now) {
         List<String> notes = new ArrayList<>();
         Set<UUID> startedTaskIds = new LinkedHashSet<>();
         Frontier frontier = Frontier.EMPTY;
 
-        if (!settle(autopilot, now)) {
-            List<WorkflowRun> live = runRepo.findByAutopilotIdAndStatusIn(autopilot.getId(), REPORTED_LIVE);
-            int slots = autopilot.getMaxParallel() - countOccupyingSlots(live);
-            frontier = computeFrontier(autopilot.getId(), affinityEpicIds(live));
-            start(autopilot, frontier, slots, startedTaskIds, notes);
+        Settled settled = writes.execute(status -> settle(autopilotId, now));
+        if (settled == Settled.DISENGAGED) {
+            return;
         }
-
-        autopilot.setLastTickAt(now);
-        // Flushed and then re-read, in that order, because a lock-free disengage may have landed
-        // while this pass was running. Flushing first writes the tick's own columns — and only
-        // those, per @DynamicUpdate — so the re-read merges them with whatever the human changed
-        // instead of overwriting it. Without the re-read the payload below would carry
-        // `engaged: true` from this stale copy, and the UI, which renders STOMP payloads directly,
-        // would flip the panel back to "Engaged" moments after the user stopped it: the state and
-        // the behaviour would be right and only the display wrong, at exactly the moment someone
-        // is watching to confirm the stop worked.
-        Autopilot saved = autopilotRepo.saveAndFlush(autopilot);
-        entityManager.refresh(saved);
-        // Published on EVERY tick, not only ticks that started something: last_tick_at moved, and
-        // the panel is live over STOMP and never polls, so without this its "last tick" goes stale
-        // and an idle Autopilot becomes indistinguishable from a dead one.
-        //
-        // The frontier is reused rather than recomputed — it is a full readiness sweep, and the
-        // only thing the starts above changed about it is which entries are gone, which
-        // startedTaskIds already says. The RUNS are re-read, because those starts committed on
-        // their own connections and this READ COMMITTED transaction sees them only in a fresh
-        // query.
-        List<WorkflowRun> liveAfter = runRepo.findByAutopilotIdAndStatusIn(saved.getId(), REPORTED_LIVE);
-        publish(saved, buildStatus(saved, liveAfter, frontier, startedTaskIds, notes));
+        if (settled == Settled.PROCEED) {
+            // Renewed between phases as well as inside phase 3: a readiness sweep over a large
+            // roadmap is the longest thing here that makes no database write of its own.
+            if (!renewLease(autopilotId)) {
+                return;
+            }
+            Plan plan = plan(autopilotId);
+            frontier = plan.frontier();
+            if (!renewLease(autopilotId) || !start(autopilotId, plan, startedTaskIds, notes)) {
+                // The instance that took the lease over owns the reporting too. Publishing this
+                // pass's view on top of theirs would be two writers on one live panel.
+                return;
+            }
+        }
+        report(autopilotId, frontier, startedTaskIds, notes);
     }
 
     /**
-     * Counts every run of this Autopilot whose outcome has not been counted yet, then stamps them
-     * so no later tick can count them again.
+     * @return false when this pass overran its lease and another instance has taken over. Never a
+     *     failure — the work is fine, this instance simply stopped being the one allowed to do it.
+     */
+    private boolean renewLease(UUID autopilotId) {
+        Instant now = Instant.now();
+        if (autopilotRepo.renewTickLease(autopilotId, instanceId, now.plus(tickLeaseTtl), now) > 0) {
+            return true;
+        }
+        log.warn("Autopilot pass abandoned: the tick lease expired and another instance took over");
+        return false;
+    }
+
+    /**
+     * Phase 1. Counts every run of this Autopilot whose outcome has not been counted yet, then
+     * stamps them so no later tick can count them again.
      *
      * <p>Idempotence comes from the marker column, not from a time window over {@code
      * last_tick_at}: {@code awaiting_retry} is a durable status rather than an event, so any
@@ -265,13 +323,23 @@ public class AutopilotService {
      * failed} must increment rather than reset; otherwise the outcome depends on the row order the
      * query happened to return.
      *
-     * @return true if the breaker tripped and the tick must stop
+     * <p>Reading the batch and adjusting the counter are two statements, so without the tick lease
+     * two instances could both see the same unsettled failure and both add to the counter. The
+     * lease covers this phase along with the rest of the pass.
      */
-    private boolean settle(Autopilot autopilot, Instant now) {
+    private Settled settle(UUID autopilotId, Instant now) {
+        // Read again now the lease is held: the check in tick() preceded it, so a Disengage that
+        // arrived in between would otherwise go unnoticed until the next pass. A scalar re-read
+        // rather than a refresh, because no entity is held to refresh.
+        if (!isEngaged(autopilotId)) {
+            return Settled.DISENGAGED;
+        }
+        autopilotRepo.stampTick(autopilotId, now);
+
         List<WorkflowRun> batch =
-                runRepo.findByAutopilotIdAndAutopilotSettledAtIsNullAndStatusIn(autopilot.getId(), SETTLEABLE);
+                runRepo.findByAutopilotIdAndAutopilotSettledAtIsNullAndStatusIn(autopilotId, SETTLEABLE);
         if (batch.isEmpty()) {
-            return false;
+            return Settled.PROCEED;
         }
         int failures = 0;
         int successes = 0;
@@ -288,23 +356,67 @@ public class AutopilotService {
         runRepo.saveAll(batch);
 
         if (failures > 0) {
-            autopilot.setConsecutiveFailures(autopilot.getConsecutiveFailures() + failures);
+            autopilotRepo.addFailures(autopilotId, failures, now);
         } else if (successes > 0) {
-            autopilot.setConsecutiveFailures(0);
+            autopilotRepo.resetFailures(autopilotId, now);
         }
         return applyBreaker(
-                autopilot, "its runs failed instead of completing. Nothing is retried automatically (Decision 5)");
+                        autopilotId,
+                        "its runs failed instead of completing. Nothing is retried automatically (Decision 5)",
+                        now)
+                ? Settled.BREAKER_TRIPPED
+                : Settled.PROCEED;
     }
 
-    /** Starts Tasks until the slots run out, the frontier empties, or something goes wrong. */
-    private void start(Autopilot autopilot, Frontier frontier, int slots, Set<UUID> started, List<String> notes) {
-        int remaining = slots;
-        for (Task task : frontier.readyTasks()) {
+    /**
+     * Phase 2, outside any transaction. A full readiness sweep with no writes to make atomic and
+     * nothing worth pinning a snapshot for — everything it produces is re-checked in phase 3
+     * before it is acted on.
+     */
+    private Plan plan(UUID autopilotId) {
+        int maxParallel = autopilotRepo.findMaxParallelById(autopilotId).orElse(0);
+        List<WorkflowRun> live = runRepo.findByAutopilotIdAndStatusIn(autopilotId, REPORTED_LIVE);
+        return new Plan(
+                maxParallel,
+                maxParallel - countOccupyingSlots(live),
+                computeFrontier(autopilotId, affinityEpicIds(live)));
+    }
+
+    /**
+     * Phase 3. Starts Tasks until the slots run out, the frontier empties, or something goes wrong
+     * — each start its own top-level transaction, with two re-reads in front of it.
+     *
+     * <p>Both re-reads exist because phase 2's answers are already history by the time the second
+     * container starts. Engagement, so a Disengage takes effect <em>during</em> a pass rather than
+     * only between passes — this is new behaviour, and the reason the emergency stop no longer
+     * needs to be fast to be effective. Slots, because another replica may have consumed capacity
+     * since the plan counted it; a bounded count, not a second sweep.
+     *
+     * <p>Failure accounting is per item and immediate: the increment is a statement of its own, so
+     * a process that dies mid-pass has already recorded what it learned. Only genuine failures
+     * count — see the two narrower catches, both of which describe a world that moved rather than
+     * a platform that broke.
+     *
+     * @return false if the lease was lost and the caller must abandon the pass
+     */
+    private boolean start(UUID autopilotId, Plan plan, Set<UUID> started, List<String> notes) {
+        int remaining = plan.slots();
+        for (Task task : plan.frontier().readyTasks()) {
             if (remaining <= 0) {
                 break;
             }
+            if (!renewLease(autopilotId)) {
+                return false;
+            }
+            if (!isEngaged(autopilotId)) {
+                log.info("Autopilot was disengaged mid-pass; {} start(s) not attempted", remaining);
+                break;
+            }
+            if (runRepo.countByAutopilotIdAndStatusIn(autopilotId, OCCUPIES_A_SLOT) >= plan.maxParallel()) {
+                break;
+            }
             try {
-                taskService.startForAutopilot(task.getId(), autopilot.getId());
+                taskService.startForAutopilot(task.getId(), autopilotId);
                 started.add(task.getId());
                 remaining--;
             } catch (QuotaExceededException e) {
@@ -313,33 +425,90 @@ public class AutopilotService {
                 notes.add("Held back by a quota: " + e.getMessage());
                 log.info("Autopilot tick stopped early on a quota: {}", e.getMessage());
                 break;
+            } catch (ConflictException e) {
+                // Every ConflictException out of startForAutopilot says the same thing: this Task
+                // is no longer the backlog, READY Task the frontier was swept for. Someone clicked
+                // Start, or added a dependency, or an instance that overran its lease got here
+                // first. That is the roadmap changing under a plan, not the platform failing, so
+                // it must not reach the breaker — three lost races would otherwise disengage the
+                // Autopilot for no reason at all. The next Task is unaffected, so the pass goes on.
+                notes.add("Task '" + task.getTitle() + "' was no longer startable: " + e.getMessage());
+                log.info("Autopilot skipped Task {}: {}", task.getId(), e.getMessage());
             } catch (RuntimeException e) {
-                // startForAutopilot is REQUIRES_NEW, so its rollback does not mark this
-                // transaction rollback-only and the starts already made in this loop survive.
-                autopilot.setConsecutiveFailures(autopilot.getConsecutiveFailures() + 1);
+                // The start ran in its own top-level transaction, so its rollback is its own and
+                // the starts already made in this loop are committed and unaffected.
                 notes.add("Could not start Task '" + task.getTitle() + "': " + e.getMessage());
                 log.warn("Autopilot failed to start Task {}: {}", task.getId(), e.getMessage());
-                if (applyBreaker(autopilot, "the last failure was: " + e.getMessage())) {
+                if (recordFailure(autopilotId, "the last failure was: " + e.getMessage())) {
                     break;
                 }
             }
         }
+        return true;
+    }
+
+    /**
+     * Phase 4. Re-reads rather than reporting what phase 2 believed, so a Disengage that landed
+     * mid-pass shows as off. The UI renders STOMP payloads directly, and a stale {@code engaged:
+     * true} here would flip the panel back to "Engaged" moments after the user stopped it — at
+     * exactly the moment someone is watching to confirm the stop worked.
+     *
+     * <p>Published on EVERY tick, not only ticks that started something: {@code last_tick_at}
+     * moved, the panel is live over STOMP and never polls, and without this an idle Autopilot
+     * becomes indistinguishable from a dead one.
+     *
+     * <p>The frontier is reused rather than recomputed — it is a full readiness sweep, and the only
+     * thing the starts changed about it is which entries are gone, which {@code startedTaskIds}
+     * already says. The runs are re-read, because those starts committed on their own connections.
+     */
+    private void report(UUID autopilotId, Frontier frontier, Set<UUID> started, List<String> notes) {
+        reads.executeWithoutResult(status -> {
+            Optional<Autopilot> current = autopilotRepo.findById(autopilotId);
+            if (current.isEmpty()) {
+                // Deleted mid-pass. There is no status to publish and no row to publish it for.
+                return;
+            }
+            Autopilot autopilot = current.get();
+            List<WorkflowRun> live = runRepo.findByAutopilotIdAndStatusIn(autopilotId, REPORTED_LIVE);
+            publish(autopilot, buildStatus(autopilot, live, frontier, started, notes));
+        });
+    }
+
+    /**
+     * Records one failed start and decides whether that was the third. Its own short transaction,
+     * so the increment is durable the moment it happens rather than at the end of the pass.
+     */
+    private boolean recordFailure(UUID autopilotId, String detail) {
+        return Boolean.TRUE.equals(writes.execute(status -> {
+            Instant now = Instant.now();
+            autopilotRepo.addFailures(autopilotId, 1, now);
+            return applyBreaker(autopilotId, detail, now);
+        }));
     }
 
     /**
      * Disengages when the failure count reaches the limit, recording something a human can act on.
      *
+     * <p>The count is re-read rather than carried, because {@link AutopilotRepository#addFailures}
+     * increments in the database and the caller therefore never knew the result. That is the point:
+     * the number in the reason is the number in the row, including a concurrent replica's
+     * contribution.
+     *
      * @return true if the Autopilot was disengaged by this call or is already over the limit
      */
-    private boolean applyBreaker(Autopilot autopilot, String detail) {
-        if (autopilot.getConsecutiveFailures() < FAILURE_LIMIT) {
+    private boolean applyBreaker(UUID autopilotId, String detail, Instant now) {
+        int failures = autopilotRepo.findConsecutiveFailuresById(autopilotId).orElse(0);
+        if (failures < FAILURE_LIMIT) {
             return false;
         }
-        autopilot.setEngaged(false);
-        autopilot.setDisengagedReason(
-                "Disengaged after " + autopilot.getConsecutiveFailures() + " consecutive failures — " + detail);
-        log.warn("Autopilot disengaged itself: {}", autopilot.getDisengagedReason());
+        String reason = "Disengaged after " + failures + " consecutive failures — " + detail;
+        autopilotRepo.disengageWithReason(autopilotId, reason, now);
+        log.warn("Autopilot disengaged itself: {}", reason);
         return true;
+    }
+
+    private boolean isEngaged(UUID autopilotId) {
+        return autopilotRepo.findEngagedById(autopilotId).orElse(false);
     }
 
     // ---------------------------------------------------------------------------------------
@@ -498,14 +667,14 @@ public class AutopilotService {
     /** Get-or-create, then set. A null {@code maxParallel} leaves it alone. */
     @Transactional
     public AutopilotStatusResponse update(Integer maxParallel) {
-        Autopilot autopilot = lockedForMutation();
-        if (maxParallel != null) {
-            if (maxParallel < 1) {
-                throw new BadRequestException("maxParallel must be at least 1");
-            }
-            autopilot.setMaxParallel(maxParallel);
+        if (maxParallel != null && maxParallel < 1) {
+            throw new BadRequestException("maxParallel must be at least 1");
         }
-        return saveAndPublish(autopilot);
+        UUID autopilotId = ensureRow();
+        if (maxParallel != null) {
+            autopilotRepo.setMaxParallel(autopilotId, maxParallel, Instant.now());
+        }
+        return publishCurrent(autopilotId);
     }
 
     /**
@@ -515,127 +684,55 @@ public class AutopilotService {
      * failures impossible, but the panel's "last tick" would otherwise show a time from before the
      * Autopilot was even engaged.
      *
-     * <p>Refuses if the Autopilot was switched off while this request was queued. Making {@link
-     * #disengage()} lock-free removed the FIFO ordering the lock used to give both sides, so a
-     * stop issued <em>during</em> this call's wait would otherwise commit first and then be
-     * overwritten by it — the Autopilot back ON because of a click that came earlier. The witness
-     * is the {@code engaged} flag itself rather than {@code updatedAt}, which every tick bumps and
-     * which would therefore reject every contended engage.
-     *
-     * <p>The check is only meaningful when this call had something to wait for, and it is exactly
-     * then that it applies: a tick returns before taking the lock when the row is already off, so
-     * the row being off on entry means the stop preceded this request and engaging is the correct
-     * answer.
+     * <p>One statement, waiting on nothing but the row itself, so the later of two clicks is
+     * simply the later statement. There is no advisory lock to queue behind and therefore no
+     * window in which a Disengage issued <em>after</em> this request could be overwritten by it —
+     * which is what the pre-wait witness this used to carry was for.
      */
     @Transactional
     public AutopilotStatusResponse engage() {
-        boolean engagedBeforeWaiting = findSingleton().map(Autopilot::isEngaged).orElse(false);
-        Autopilot autopilot = lockedForMutation();
-        if (engagedBeforeWaiting && !autopilot.isEngaged()) {
-            throw new ConflictException("The Autopilot was disengaged while this request was waiting for a tick to "
-                    + "finish, so it was left off. Engage again if that is still what you want.");
-        }
-        autopilot.setEngaged(true);
-        autopilot.setConsecutiveFailures(0);
-        autopilot.setDisengagedReason(null);
-        autopilot.setLastTickAt(Instant.now());
-        return saveAndPublish(autopilot);
+        UUID autopilotId = ensureRow();
+        autopilotRepo.engage(autopilotId, Instant.now());
+        return publishCurrent(autopilotId);
     }
 
     /**
      * Turns it off. Never touches in-flight runs — work already started stays started, and the
-     * humans reviewing it are unaffected, so a tick that is mid-flight finishing its current
-     * starts is expected rather than a leak.
+     * humans reviewing it are unaffected.
      *
-     * <p>The one mutator that does <strong>not</strong> take the advisory lock. It is the
-     * emergency stop: waiting out an in-flight tick would make it slow at exactly the moment it
-     * has to be fast. {@link AutopilotRepository#disengage} carries the full argument for why
-     * dropping the lock cannot cost correctness here.
-     *
-     * <p>A tick that has already passed its own {@code engaged} re-check carries on to the end of
-     * this pass — it starts no more than the slots it had already counted, and its write-back
-     * leaves {@code engaged} alone. The next tick loads the row, sees it off, and returns before
-     * taking any lock at all.
+     * <p>The emergency stop, and it waits for nothing: no advisory lock, and no tick phase holds
+     * the row for longer than a statement. A tick that is mid-pass sees this before its next start
+     * (phase 3 re-reads {@code engaged} per item) and reports it (phase 4 re-reads the row), so the
+     * stop takes effect within the pass rather than after it.
      */
     @Transactional
     public AutopilotStatusResponse disengage() {
-        Optional<Autopilot> existing = findSingleton();
-        if (existing.isEmpty()) {
-            // Never configured. Creating the row cannot race a tick — there is nothing to tick.
-            Autopilot created = new Autopilot();
-            created.setEngaged(false);
-            return saveAndPublish(created);
-        }
-        Autopilot autopilot = existing.get();
-        autopilotRepo.disengage(autopilot.getId());
-        // The row was changed by a statement, not through this entity, so the managed copy is now
-        // stale. Refreshing also leaves it clean, so the flush at commit writes nothing back.
-        entityManager.refresh(autopilot);
-        return publish(autopilot, snapshot(autopilot));
+        UUID autopilotId = ensureRow();
+        autopilotRepo.disengage(autopilotId, Instant.now());
+        return publishCurrent(autopilotId);
     }
 
     /**
-     * Get-or-create, serialised against a tick in flight.
+     * The id of the singleton, creating the row at its column defaults if this installation has
+     * never configured one. Callers then apply the statement they actually wanted.
      *
-     * <p>Without this the advisory lock covered tick-against-tick only, and a mutation could land
-     * in the middle of a tick — which spans a full readiness sweep plus every {@code
-     * startForAutopilot} call, Temporal round trips included. {@code Autopilot} carries no {@code
-     * @Version}, so both sides flush a full-column UPDATE and the later writer wins every column:
-     * a human's Disengage would commit, the tick's write-back would land after it, and {@code
-     * engaged} would go back to true while the user watched the emergency stop succeed.
-     *
-     * <p>The refresh is the same point in reverse. This read happened before the lock, so a
-     * mutation that queued behind a tick would otherwise write back the counters the tick had just
-     * settled, erasing its failure count.
-     *
-     * <p>Still the advisory lock, never a row lock — see {@link #tick()} for why that distinction
-     * is load-bearing. Nothing reached from here starts a {@code REQUIRES_NEW} transaction, so
-     * these mutators cannot block on the foreign key the way a row lock would.
-     *
-     * <p><strong>The wait is bounded.</strong> A tick can hold this lock for a full readiness
-     * sweep plus every container start, so an untimed wait would leave an HTTP request hanging for
-     * as long as the tick runs. Unlike the row-lock hazard in {@link #tick()}, this one is
-     * boundable: the wait is a statement in this session, where {@code SET LOCAL lock_timeout}
-     * applies. On expiry the caller gets a 409 telling it to retry, which is an acceptable answer
-     * for turning the Autopilot on or changing its ceiling — and is why {@link #disengage()}, for
-     * which it would not be acceptable, does not come through here.
-     *
-     * <p>{@code SET LOCAL} lasts the whole transaction, so the bound also covers this mutator's
-     * own commit-time {@code UPDATE} of the row. A timeout there would surface as a 500 rather
-     * than the 409 above, since it happens after this method has returned; the window is the same
-     * short flush-to-commit one {@link AutopilotRepository#disengage} describes, so it is left as
-     * it is rather than papered over with a second timeout setting.
-     *
-     * <p>A row that does not exist yet is not locked: there is no tick to race with until it does.
-     * Two concurrent first-writes can therefore still produce a second row — see {@link
-     * #findSingleton()}.
+     * <p>Two concurrent first-writes can still produce a second row — see {@link #findSingleton()}
+     * for why that is survivable.
      */
-    private Autopilot lockedForMutation() {
-        Autopilot autopilot = getOrCreate();
-        if (autopilot.getId() == null) {
-            return autopilot;
-        }
-        // Interpolated because SET takes no bind parameters; the value is a long, not text.
-        entityManager
-                .createNativeQuery("SET LOCAL lock_timeout = " + MUTATION_LOCK_TIMEOUT.toMillis())
-                .executeUpdate();
-        try {
-            lockService.acquireLock(autopilot.getId());
-        } catch (PessimisticLockException | LockTimeoutException | PessimisticLockingFailureException e) {
-            // Postgres cancels the waiting statement with 55P03, which Hibernate surfaces through
-            // the JPA API as PessimisticLockException. The Spring type is listed too because
-            // AdvisoryLockService is a @Service and therefore untranslated — a LockService backed
-            // by a @Repository would throw the translated one instead.
-            throw new ConflictException(
-                    "An Autopilot tick is in progress; the change was not applied. Try again in a moment.");
-        }
-        entityManager.refresh(autopilot);
-        return autopilot;
+    private UUID ensureRow() {
+        return findSingleton().map(Autopilot::getId).orElseGet(() -> {
+            UUID id = UUID.randomUUID();
+            autopilotRepo.insertDefaults(id);
+            return id;
+        });
     }
 
-    private AutopilotStatusResponse saveAndPublish(Autopilot autopilot) {
-        Autopilot saved = autopilotRepo.save(autopilot);
-        return publish(saved, snapshot(saved));
+    /** Reads the row back after a statement changed it, and broadcasts what it now says. */
+    private AutopilotStatusResponse publishCurrent(UUID autopilotId) {
+        Autopilot autopilot = autopilotRepo
+                .findById(autopilotId)
+                .orElseThrow(() -> new IllegalStateException("Autopilot row disappeared mid-request: " + autopilotId));
+        return publish(autopilot, snapshot(autopilot));
     }
 
     private AutopilotStatusResponse publish(Autopilot autopilot, AutopilotStatusResponse status) {
@@ -659,9 +756,9 @@ public class AutopilotService {
     }
 
     /**
-     * @param excludedTaskIds Tasks started earlier in this same transaction. They are filtered out
-     *     of {@code nextUp} rather than re-read, because the start committed on another connection
-     *     and this persistence context still holds each Task at its pre-start {@code backlog}.
+     * @param excludedTaskIds Tasks this pass already started. They are filtered out of {@code
+     *     nextUp} rather than re-read, because the frontier they came from is phase 2's and was
+     *     swept before any of them moved out of {@code backlog}.
      * @param notes findings from the tick that produced this snapshot — quota back-pressure, a
      *     failed start — which have no other route into {@code whyIdle}
      */
@@ -830,9 +927,5 @@ public class AutopilotService {
         return autopilotRepo.findAll().stream()
                 .min(Comparator.comparing(Autopilot::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder()))
                         .thenComparing(Autopilot::getId));
-    }
-
-    private Autopilot getOrCreate() {
-        return findSingleton().orElseGet(Autopilot::new);
     }
 }

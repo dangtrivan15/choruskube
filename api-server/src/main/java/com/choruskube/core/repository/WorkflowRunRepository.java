@@ -30,6 +30,14 @@ public interface WorkflowRunRepository extends JpaRepository<WorkflowRun, UUID>,
     List<WorkflowRun> findByAutopilotIdAndStatusIn(UUID autopilotId, Collection<WorkflowRunStatus> statuses);
 
     /**
+     * Slot occupancy alone, re-checked before each start in a pass. The planning phase's count is
+     * a snapshot taken before any container was launched, and another replica may have consumed
+     * capacity since — so the tick asks again, with a bounded count rather than a second readiness
+     * sweep.
+     */
+    long countByAutopilotIdAndStatusIn(UUID autopilotId, Collection<WorkflowRunStatus> statuses);
+
+    /**
      * The settle batch: runs of one Autopilot whose outcome has not yet been counted toward the
      * failure breaker. Keyed on the marker column rather than on a {@code last_tick_at} window
      * because {@code awaiting_retry} is a durable status, not an event — see

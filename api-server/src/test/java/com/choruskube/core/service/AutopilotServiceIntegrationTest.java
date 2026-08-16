@@ -1,7 +1,6 @@
 package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.choruskube.core.BaseTest;
 import com.choruskube.core.CommittedFixtureCleaner;
@@ -14,7 +13,6 @@ import com.choruskube.core.dto.StoryRequest;
 import com.choruskube.core.dto.StoryResponse;
 import com.choruskube.core.dto.TaskRequest;
 import com.choruskube.core.dto.TaskResponse;
-import com.choruskube.core.exception.ConflictException;
 import com.choruskube.core.model.Autopilot;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.WorkflowRun;
@@ -27,6 +25,7 @@ import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowOptions;
 import io.temporal.client.WorkflowStub;
 import io.temporal.serviceclient.WorkflowServiceStubs;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -46,19 +45,17 @@ import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * The tick against real Postgres, real readiness and a real {@code REQUIRES_NEW} start.
+ * The tick against real Postgres, real readiness and a real start.
  *
- * <p>Deliberately NOT {@code @Transactional}. {@link TaskService#startForAutopilot} runs in its own
- * transaction on a separate connection, so it cannot see rows a roll-back-only test transaction
- * has written but not committed — its fixtures have to be committed for the tick to find them at
- * all. What that buys, beyond the unit suite: the {@code V15} settle column exists and round-trips,
- * {@code workflow_run.autopilot_id}'s foreign key is satisfied by a real row, and the advisory lock
- * plus the {@code REQUIRES_NEW} start genuinely coexist rather than blocking each other — the last
- * of which is invisible to mocks and would present as a hang, not a failure.
+ * <p>Deliberately NOT {@code @Transactional}. Every phase of the tick opens its own transaction, so
+ * none of them can see rows a roll-back-only test transaction has written but not committed — the
+ * fixtures have to be committed for the tick to find them at all. What that buys, beyond the unit
+ * suite: the {@code V15} settle column and {@code V16}'s lease columns exist and round-trip,
+ * {@code workflow_run.autopilot_id}'s foreign key is satisfied by a real row, the failure counter's
+ * in-database increment survives two concurrent writers, and the lease statements genuinely
+ * exclude a second instance rather than merely appearing to — none of which a mock can show.
  *
  * <p>Committing means the usual rollback safety net is gone, so {@link
  * #removeEverythingThisTestCommitted()} does that job by hand; the shared container is one database
@@ -90,12 +87,6 @@ public class AutopilotServiceIntegrationTest extends BaseTest {
 
     @Autowired
     private AutopilotRepository autopilotRepo;
-
-    @Autowired
-    private LockService lockService;
-
-    @Autowired
-    private PlatformTransactionManager txManager;
 
     @Autowired
     private JdbcTemplate jdbc;
@@ -233,90 +224,157 @@ public class AutopilotServiceIntegrationTest extends BaseTest {
     }
 
     /**
-     * No mutation may block indefinitely behind an in-flight tick.
+     * No mutation may block behind an in-flight pass — not even for a bounded wait.
      *
-     * <p>Deterministic rather than a two-thread race: the test holds the tick's own advisory lock
-     * and drives each mutator against it. The lock is held for the whole body, so anything that
-     * waits on it waits for the test, which is the worst case a real tick can produce.
+     * <p>Deterministic rather than a two-thread race: the test claims the tick lease on behalf of
+     * another instance and drives each mutator against it. Nothing a pass holds is a row lock on
+     * the autopilot row, so a mutation contends with at most one statement.
+     *
+     * <p>This used to assert that {@code engage()} came back with a {@code ConflictException}
+     * after a bounded wait on the advisory lock. That machinery is gone: every mutation is a
+     * single statement, so there is nothing to wait for and nothing to refuse.
      */
     @Test
-    void noMutationBlocksIndefinitelyWhileATickHoldsTheLock() throws Exception {
-        StoryResponse story = makeStory(makeRepo("autopilot-lock").getId());
+    void noMutationWaitsForAnInFlightPass() throws Exception {
+        StoryResponse story = makeStory(makeRepo("autopilot-lease").getId());
         TaskResponse task = taskService.create(story.id(), new TaskRequest("Work", "D"));
         UUID autopilotId = engage();
+        Instant now = Instant.now();
+        assertThat(autopilotRepo.acquireTickLease(autopilotId, "another-instance", now.plusSeconds(120), now))
+                .as("stand in for a pass that is running right now, on another instance")
+                .isEqualTo(1);
+
         ExecutorService pool = Executors.newFixedThreadPool(3);
         try {
-            new TransactionTemplate(txManager).executeWithoutResult(status -> {
-                lockService.acquireLock(autopilotId);
+            assertThat(awaiting(pool.submit(() -> autopilotService.disengage()), 10))
+                    .as("Disengage must never wait out a pass")
+                    .isNull();
+            assertThat(awaiting(pool.submit(() -> autopilotService.engage()), 10))
+                    .as("nor may engage — it no longer contends with anything")
+                    .isNull();
+            assertThat(awaiting(pool.submit(() -> autopilotService.update(2)), 10))
+                    .isNull();
 
-                // The emergency stop does not wait for the tick at all — it takes no advisory
-                // lock, and its row lock is compatible with everything the tick holds.
-                assertThat(awaiting(pool.submit(() -> autopilotService.disengage()), 10))
-                        .as("Disengage must never wait out a tick")
-                        .isNull();
-
-                // engage() does contend, but gives up and says so. A retry is an acceptable
-                // answer for turning it on; it would not be for turning it off.
-                assertThat(awaiting(pool.submit(() -> autopilotService.engage()), 15))
-                        .as("a contended mutation must fail fast, not hang")
-                        .isInstanceOf(ConflictException.class);
-
-                // The hazard the tick's javadoc is about, re-checked in this configuration: the
-                // lock is advisory, so nothing here holds a row lock on autopilot(id), and a
-                // REQUIRES_NEW start — whose foreign key needs FOR KEY SHARE on exactly that row
-                // — still completes. Bounded, so a regression fails rather than hangs.
-                assertThat(awaiting(pool.submit(() -> taskService.startForAutopilot(task.id(), autopilotId)), 20))
-                        .as("a REQUIRES_NEW start must still complete while the advisory lock is held")
-                        .isNull();
-            });
+            // The hazard the tick's javadoc is about, re-checked in this configuration: nothing
+            // holds a row lock on autopilot(id), so a start — whose foreign key needs FOR KEY
+            // SHARE on exactly that row — still completes. Bounded, so a regression fails rather
+            // than hangs.
+            assertThat(awaiting(pool.submit(() -> taskService.startForAutopilot(task.id(), autopilotId)), 20))
+                    .as("a start must still complete while a pass holds the lease")
+                    .isNull();
         } finally {
             pool.shutdownNow();
         }
-        assertThat(autopilotRepo.findById(autopilotId).orElseThrow().isEngaged())
-                .isFalse();
+        assertThat(autopilotRepo.findById(autopilotId).orElseThrow().getMaxParallel())
+                .isEqualTo(2);
     }
 
     /**
-     * The lock-free Disengage is still the last word.
+     * A pass may write its own columns without ever restoring one a human just changed.
      *
-     * <p>This is the interleaving that makes dropping the lock safe or unsafe, reproduced exactly:
-     * a tick loads the row while it is engaged, a human stops it mid-tick, and the tick then
-     * writes its pass back. {@code @DynamicUpdate} means the write-back carries only the columns
-     * the tick actually changed, so {@code engaged} is not among them. Without that annotation the
-     * full-column UPDATE restores {@code engaged = true} and this test fails — which is how the
-     * claim was checked rather than assumed.
+     * <p>The interleaving is the one that produced the original defect: a pass reads the row while
+     * it is engaged, a human stops it mid-pass, and the pass then records what it did. It used to
+     * be survivable only because {@code @DynamicUpdate} narrowed the tick's entity write-back to
+     * the columns it had touched — one annotation away from turning the Autopilot back on under a
+     * user watching the emergency stop succeed.
+     *
+     * <p>Nothing is written back now. {@code stampTick} and {@code addFailures} name their columns
+     * in the statement, so {@code engaged} is not merely absent from the UPDATE by good fortune —
+     * there is no expression in which it could appear.
      */
     @Test
-    void disengage_isNotRevertedByATickWriteBackThatLandsAfterIt() throws Exception {
+    void aPassRecordingItsWorkAfterADisengage_doesNotTurnTheAutopilotBackOn() {
         UUID autopilotId = engage();
-        ExecutorService pool = Executors.newSingleThreadExecutor();
+        Autopilot asThePassSawIt = autopilotRepo.findById(autopilotId).orElseThrow();
+        assertThat(asThePassSawIt.isEngaged()).as("the pass began with it ON").isTrue();
+
+        autopilotService.disengage();
+
+        // What a pass does after its starts: its own columns, by name, from statements that never
+        // supply a value they read earlier.
+        autopilotRepo.stampTick(autopilotId, Instant.now());
+        autopilotRepo.addFailures(autopilotId, 1, Instant.now());
+
+        Autopilot after = autopilotRepo.findById(autopilotId).orElseThrow();
+        assertThat(after.isEngaged())
+                .as("a pass must not turn the Autopilot back on")
+                .isFalse();
+        assertThat(after.getConsecutiveFailures())
+                .as("while the pass's own columns still land")
+                .isEqualTo(1);
+        assertThat(after.getLastTickAt()).isNotNull();
+    }
+
+    /**
+     * Two passes cannot run at once, and the loser does not wait.
+     *
+     * <p>This is what the tick lease exists for. The advisory lock it replaced was
+     * transaction-scoped, so once the tick became four short transactions it was released the
+     * moment the settle phase committed — and two instances would each go on to count the same
+     * free slots and start the same work, breaking {@code max_parallel}.
+     */
+    @Test
+    void aSecondInstanceSkipsThePassRatherThanRunningItToo() {
+        StoryResponse story = makeStory(makeRepo("autopilot-second-instance").getId());
+        taskService.create(story.id(), new TaskRequest("Work", "D"));
+        UUID autopilotId = engage();
+        Instant now = Instant.now();
+        autopilotRepo.acquireTickLease(autopilotId, "another-instance", now.plusSeconds(120), now);
+
+        autopilotService.tick();
+
+        assertThat(runsFor(autopilotId))
+                .as("the pass belongs to the instance holding the lease")
+                .isEmpty();
+        assertThat(autopilotRepo.findById(autopilotId).orElseThrow().getTickOwner())
+                .as("and the loser must not have stolen or released it")
+                .isEqualTo("another-instance");
+    }
+
+    /** An instance that died mid-pass must not wedge the Autopilot past the lease TTL. */
+    @Test
+    void anExpiredLeaseIsReclaimedByTheNextPass() {
+        StoryResponse story = makeStory(makeRepo("autopilot-stale-lease").getId());
+        TaskResponse task = taskService.create(story.id(), new TaskRequest("Work", "D"));
+        UUID autopilotId = engage();
+        Instant longAgo = Instant.now().minus(Duration.ofHours(1));
+        autopilotRepo.acquireTickLease(autopilotId, "instance-that-died", longAgo.plusSeconds(1), longAgo);
+
+        autopilotService.tick();
+
+        assertThat(runsFor(autopilotId)).hasSize(1);
+        assertThat(runsFor(autopilotId).getFirst().getTaskId()).isEqualTo(task.id());
+        assertThat(autopilotRepo.findById(autopilotId).orElseThrow().getTickOwner())
+                .as("released at the end of the pass, so the next interval need not wait out a TTL")
+                .isNull();
+    }
+
+    /**
+     * The failure counter under two concurrent writers.
+     *
+     * <p>{@code consecutive_failures = consecutive_failures + 1} in the statement, so the answer
+     * is 2. The read-increment-write this replaced would produce 1 whenever the two overlapped,
+     * and one real failure would vanish — which is how a broken platform kept the Autopilot
+     * engaged.
+     */
+    @Test
+    void concurrentFailureIncrements_bothCount() throws Exception {
+        UUID autopilotId = engage();
+        CyclicBarrier startLine = new CyclicBarrier(2);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
         try {
-            new TransactionTemplate(txManager).executeWithoutResult(status -> {
-                Autopilot asTheTickSeesIt = autopilotRepo.findById(autopilotId).orElseThrow();
-                assertThat(asTheTickSeesIt.isEngaged())
-                        .as("the tick's loaded-state snapshot has it ON")
-                        .isTrue();
-                lockService.acquireLock(autopilotId);
-
-                assertThat(awaiting(pool.submit(() -> autopilotService.disengage()), 10))
-                        .isNull();
-
-                // What a tick does at the end of a pass: its own two columns, nothing else.
-                asTheTickSeesIt.setConsecutiveFailures(asTheTickSeesIt.getConsecutiveFailures() + 1);
-                asTheTickSeesIt.setLastTickAt(Instant.now());
-                autopilotRepo.save(asTheTickSeesIt);
-            });
+            for (Future<Throwable> outcome : pool.invokeAll(List.of(
+                    released(startLine, () -> autopilotRepo.addFailures(autopilotId, 1, Instant.now())),
+                    released(startLine, () -> autopilotRepo.addFailures(autopilotId, 1, Instant.now()))))) {
+                assertThat(outcome.get(30, TimeUnit.SECONDS)).isNull();
+            }
         } finally {
             pool.shutdownNow();
         }
 
-        Autopilot after = autopilotRepo.findById(autopilotId).orElseThrow();
-        assertThat(after.isEngaged())
-                .as("a tick write-back must not turn the Autopilot back on")
-                .isFalse();
-        assertThat(after.getConsecutiveFailures())
-                .as("while the tick's own columns still land")
-                .isEqualTo(1);
+        assertThat(autopilotRepo.findConsecutiveFailuresById(autopilotId))
+                .as("two increments, two failures — a lost update would leave 1")
+                .contains(2);
     }
 
     /** Runs {@code work}, returning the throwable it produced or null — never blocking past {@code seconds}. */
@@ -337,7 +395,7 @@ public class AutopilotServiceIntegrationTest extends BaseTest {
     /**
      * The same property end to end: a real tick and a real Disengage, released together. Whichever
      * order they take, the Autopilot must end up off — the tick either sees the row already
-     * disengaged and returns, or runs its pass and leaves {@code engaged} untouched on write-back.
+     * disengaged and returns, or runs its pass writing only the columns it names.
      */
     @Test
     void concurrentTickAndDisengage_theHumanWins() throws Exception {
@@ -370,47 +428,29 @@ public class AutopilotServiceIntegrationTest extends BaseTest {
     }
 
     /**
-     * A stop must never be undone by a mutation that was issued before it.
+     * The later of two clicks wins, in both directions.
      *
-     * <p>Making {@code disengage()} lock-free bought a fast emergency stop but gave up the FIFO
-     * ordering the advisory lock used to impose on both sides. This is the interleaving that
-     * opened up: an {@code engage()} queued on the lock, a stop issued while it waits, and the
-     * engage then acquiring and committing on top of it — the Autopilot back ON because of a click
-     * that came earlier.
+     * <p>There used to be a hole here, and a pre-wait witness in {@code engage()} guarding it: an
+     * {@code engage()} could sit queued on the advisory lock while a lock-free stop jumped ahead
+     * of it, and then commit on top — the Autopilot back ON because of a click that came earlier.
      *
-     * <p>Deterministic rather than timing-dependent. The {@code get} that times out is what proves
-     * the engage has already read the row and is genuinely queued, so the stop that follows is
-     * unambiguously the later of the two. The message assertion matters: a 409 from the lock
-     * timeout would otherwise let this pass for the wrong reason.
+     * <p>Neither mutator queues on anything now. Each is a single statement, so ordering is the
+     * order the statements arrive in, which for a user is the order they clicked. The witness and
+     * the 409 it threw are gone with the wait that made them necessary; this is what remains to
+     * assert, and it holds by construction rather than by arbitration.
      */
     @Test
-    void engage_doesNotUndoADisengageIssuedWhileItWasWaiting() throws Exception {
+    void theLaterClickWins() {
         UUID autopilotId = engage();
-        ExecutorService pool = Executors.newFixedThreadPool(2);
-        try {
-            Future<?> engaging = new TransactionTemplate(txManager).execute(status -> {
-                lockService.acquireLock(autopilotId);
 
-                Future<?> pending = pool.submit(() -> autopilotService.engage());
-                assertThatThrownBy(() -> pending.get(500, TimeUnit.MILLISECONDS))
-                        .as("engage must have read the row and be queued on the lock by now")
-                        .isInstanceOf(TimeoutException.class);
-
-                assertThat(awaiting(pool.submit(() -> autopilotService.disengage()), 10))
-                        .as("the stop is lock-free, so it lands while the engage is still waiting")
-                        .isNull();
-                return pending;
-            });
-
-            assertThat(awaiting(engaging, 30))
-                    .isInstanceOf(ConflictException.class)
-                    .hasMessageContaining("disengaged while this request was waiting");
-        } finally {
-            pool.shutdownNow();
-        }
-
+        autopilotService.disengage();
+        autopilotService.engage();
         assertThat(autopilotRepo.findById(autopilotId).orElseThrow().isEngaged())
-                .as("the later of the two clicks wins")
+                .isTrue();
+
+        autopilotService.engage();
+        autopilotService.disengage();
+        assertThat(autopilotRepo.findById(autopilotId).orElseThrow().isEngaged())
                 .isFalse();
     }
 
