@@ -4,9 +4,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -16,6 +19,7 @@ import static org.mockito.Mockito.when;
 import com.choruskube.core.dto.AutopilotStatusResponse;
 import com.choruskube.core.dto.AutopilotTaskRef;
 import com.choruskube.core.exception.BadRequestException;
+import com.choruskube.core.exception.ConflictException;
 import com.choruskube.core.exception.QuotaExceededException;
 import com.choruskube.core.model.Autopilot;
 import com.choruskube.core.model.Epic;
@@ -56,6 +60,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -652,17 +657,43 @@ class AutopilotServiceTest {
     }
 
     @Test
-    void everyMutatorSerialisesAgainstATickOnTheSameAdvisoryLock() {
+    void engageAndUpdateSerialiseAgainstATickOnTheSameAdvisoryLock() {
         // The advisory lock used to cover tick-against-tick only. A mutation could then land in
         // the middle of a tick — a window spanning a full readiness sweep and every
-        // startForAutopilot call — and the tick's later full-column write-back would restore
-        // `engaged`, silently reverting a human's emergency stop.
+        // startForAutopilot call — and the tick's later write-back would restore the counters it
+        // shares with them.
         newService().engage();
-        newService().disengage();
         newService().update(2);
 
-        verify(lockService, times(3)).acquireLock(autopilotId);
-        verify(entityManager, times(3)).refresh(autopilot);
+        verify(lockService, times(2)).acquireLock(autopilotId);
+        verify(entityManager, times(2)).refresh(autopilot);
+    }
+
+    @Test
+    void disengage_takesNoLockAtAll() {
+        // The emergency stop must not wait out an in-flight tick. It is safe without the lock
+        // because the tick's write-back omits `engaged` unless the breaker set it — and the
+        // breaker sets it to false too, so no interleaving turns the Autopilot back ON.
+        newService().disengage();
+
+        verifyNoInteractions(lockService);
+        verify(autopilotRepo).disengage(autopilotId);
+        verify(autopilotRepo, never()).save(any());
+    }
+
+    @Test
+    void engage_boundsItsWaitAndReportsAConflictRatherThanHanging() {
+        // A tick can hold the lock for a full sweep plus every container start, so an untimed
+        // wait would leave the HTTP request hanging for as long as the tick runs.
+        AutopilotService service = newService();
+        doThrow(new CannotAcquireLockException("lock timeout"))
+                .when(lockService)
+                .acquireLock(any());
+
+        assertThatThrownBy(service::engage)
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining("tick is in progress");
+        verify(entityManager).createNativeQuery(argThat(sql -> sql.startsWith("SET LOCAL lock_timeout")));
     }
 
     @Test
@@ -681,7 +712,7 @@ class AutopilotServiceTest {
         // queued behind a tick would otherwise write back the counters that tick just settled.
         InOrder inOrder = inOrder(lockService, entityManager);
 
-        newService().disengage();
+        newService().engage();
 
         inOrder.verify(lockService).acquireLock(autopilotId);
         inOrder.verify(entityManager).refresh(autopilot);
@@ -692,7 +723,19 @@ class AutopilotServiceTest {
     // -----------------------------------------------------------------------------------
 
     private AutopilotService newService() {
+        // The mutators bound their lock wait with a SET LOCAL statement before acquiring.
+        when(entityManager.createNativeQuery(anyString())).thenReturn(mock(jakarta.persistence.Query.class));
         when(autopilotRepo.findAll()).thenReturn(autopilot == null ? List.of() : List.of(autopilot));
+        when(autopilotRepo.disengage(any())).thenAnswer(invocation -> {
+            // Stands in for the UPDATE statement plus the refresh that follows it: the row really
+            // does change, so a test can assert on the status the service builds afterwards.
+            if (autopilot == null) {
+                return 0;
+            }
+            autopilot.setEngaged(false);
+            autopilot.setDisengagedReason(null);
+            return 1;
+        });
         when(autopilotRepo.save(any(Autopilot.class))).thenAnswer(invocation -> {
             Autopilot saved = invocation.getArgument(0);
             if (saved.getId() == null) {

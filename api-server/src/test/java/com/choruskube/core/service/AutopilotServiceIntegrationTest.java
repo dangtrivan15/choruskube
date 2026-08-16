@@ -1,7 +1,6 @@
 package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.choruskube.core.BaseTest;
 import com.choruskube.core.CommittedFixtureCleaner;
@@ -14,6 +13,7 @@ import com.choruskube.core.dto.StoryRequest;
 import com.choruskube.core.dto.StoryResponse;
 import com.choruskube.core.dto.TaskRequest;
 import com.choruskube.core.dto.TaskResponse;
+import com.choruskube.core.exception.ConflictException;
 import com.choruskube.core.model.Autopilot;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.WorkflowRun;
@@ -26,10 +26,12 @@ import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowOptions;
 import io.temporal.client.WorkflowStub;
 import io.temporal.serviceclient.WorkflowServiceStubs;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -230,61 +232,111 @@ public class AutopilotServiceIntegrationTest extends BaseTest {
     }
 
     /**
-     * The emergency stop must not be revertible by a tick that was already running.
+     * No mutation may block indefinitely behind an in-flight tick.
      *
-     * <p>Deterministic on purpose. Rather than racing two threads and hoping the mutation lands
-     * inside the tick's window, this test holds the tick's own advisory lock itself and asserts
-     * that {@code disengage()} cannot proceed until it is released — which is the property the fix
-     * actually adds. Before the fix the mutators took no lock at all, so the {@code get} below
-     * returned immediately instead of timing out.
+     * <p>Deterministic rather than a two-thread race: the test holds the tick's own advisory lock
+     * and drives each mutator against it. The lock is held for the whole body, so anything that
+     * waits on it waits for the test, which is the worst case a real tick can produce.
      */
     @Test
-    void disengage_waitsForATickHoldingTheAutopilotLock() throws Exception {
+    void noMutationBlocksIndefinitelyWhileATickHoldsTheLock() throws Exception {
         StoryResponse story = makeStory(makeRepo("autopilot-lock").getId());
         TaskResponse task = taskService.create(story.id(), new TaskRequest("Work", "D"));
         UUID autopilotId = engage();
-        ExecutorService pool = Executors.newFixedThreadPool(2);
+        ExecutorService pool = Executors.newFixedThreadPool(3);
         try {
-            Future<Boolean> disengaged = new TransactionTemplate(txManager).execute(status -> {
+            new TransactionTemplate(txManager).executeWithoutResult(status -> {
                 lockService.acquireLock(autopilotId);
-                Future<Boolean> pending = pool.submit(() -> {
-                    autopilotService.disengage();
-                    return true;
-                });
-                assertThatThrownBy(() -> pending.get(3, TimeUnit.SECONDS))
-                        .as("a mutation must not slip past a tick that holds the lock")
-                        .isInstanceOf(TimeoutException.class);
 
-                // Re-verifying the hazard the tick's javadoc is about, in the new configuration:
-                // giving the mutators a lock must not recreate it. The lock is advisory, so
-                // neither this transaction nor the queued Disengage holds a row lock on
-                // autopilot(id), and a REQUIRES_NEW start — whose foreign key needs FOR KEY SHARE
-                // on exactly that row — still goes through. Bounded, so the failure mode is a
-                // failed assertion rather than the hang a row lock would produce.
-                Future<String> started = pool.submit(() ->
-                        taskService.startForAutopilot(task.id(), autopilotId).status());
-                try {
-                    assertThat(started.get(20, TimeUnit.SECONDS)).isEqualTo("in_progress");
-                } catch (Exception e) {
-                    throw new IllegalStateException(
-                            "a REQUIRES_NEW start did not complete while the advisory lock was held", e);
-                }
-                return pending;
+                // The emergency stop does not wait for the tick at all — it takes no advisory
+                // lock, and its row lock is compatible with everything the tick holds.
+                assertThat(awaiting(pool.submit(() -> autopilotService.disengage()), 10))
+                        .as("Disengage must never wait out a tick")
+                        .isNull();
+
+                // engage() does contend, but gives up and says so. A retry is an acceptable
+                // answer for turning it on; it would not be for turning it off.
+                assertThat(awaiting(pool.submit(() -> autopilotService.engage()), 15))
+                        .as("a contended mutation must fail fast, not hang")
+                        .isInstanceOf(ConflictException.class);
+
+                // The hazard the tick's javadoc is about, re-checked in this configuration: the
+                // lock is advisory, so nothing here holds a row lock on autopilot(id), and a
+                // REQUIRES_NEW start — whose foreign key needs FOR KEY SHARE on exactly that row
+                // — still completes. Bounded, so a regression fails rather than hangs.
+                assertThat(awaiting(pool.submit(() -> taskService.startForAutopilot(task.id(), autopilotId)), 20))
+                        .as("a REQUIRES_NEW start must still complete while the advisory lock is held")
+                        .isNull();
             });
-
-            assertThat(disengaged.get(30, TimeUnit.SECONDS)).isTrue();
         } finally {
             pool.shutdownNow();
         }
         assertThat(autopilotRepo.findById(autopilotId).orElseThrow().isEngaged())
-                .as("the human's Disengage is the last word")
                 .isFalse();
+    }
+
+    /**
+     * The lock-free Disengage is still the last word.
+     *
+     * <p>This is the interleaving that makes dropping the lock safe or unsafe, reproduced exactly:
+     * a tick loads the row while it is engaged, a human stops it mid-tick, and the tick then
+     * writes its pass back. {@code @DynamicUpdate} means the write-back carries only the columns
+     * the tick actually changed, so {@code engaged} is not among them. Without that annotation the
+     * full-column UPDATE restores {@code engaged = true} and this test fails — which is how the
+     * claim was checked rather than assumed.
+     */
+    @Test
+    void disengage_isNotRevertedByATickWriteBackThatLandsAfterIt() throws Exception {
+        UUID autopilotId = engage();
+        ExecutorService pool = Executors.newSingleThreadExecutor();
+        try {
+            new TransactionTemplate(txManager).executeWithoutResult(status -> {
+                Autopilot asTheTickSeesIt = autopilotRepo.findById(autopilotId).orElseThrow();
+                assertThat(asTheTickSeesIt.isEngaged())
+                        .as("the tick's loaded-state snapshot has it ON")
+                        .isTrue();
+                lockService.acquireLock(autopilotId);
+
+                assertThat(awaiting(pool.submit(() -> autopilotService.disengage()), 10))
+                        .isNull();
+
+                // What a tick does at the end of a pass: its own two columns, nothing else.
+                asTheTickSeesIt.setConsecutiveFailures(asTheTickSeesIt.getConsecutiveFailures() + 1);
+                asTheTickSeesIt.setLastTickAt(Instant.now());
+                autopilotRepo.save(asTheTickSeesIt);
+            });
+        } finally {
+            pool.shutdownNow();
+        }
+
+        Autopilot after = autopilotRepo.findById(autopilotId).orElseThrow();
+        assertThat(after.isEngaged())
+                .as("a tick write-back must not turn the Autopilot back on")
+                .isFalse();
+        assertThat(after.getConsecutiveFailures())
+                .as("while the tick's own columns still land")
+                .isEqualTo(1);
+    }
+
+    /** Runs {@code work}, returning the throwable it produced or null — never blocking past {@code seconds}. */
+    private static Throwable awaiting(Future<?> work, int seconds) {
+        try {
+            work.get(seconds, TimeUnit.SECONDS);
+            return null;
+        } catch (ExecutionException e) {
+            return e.getCause();
+        } catch (TimeoutException e) {
+            return new AssertionError("did not complete within " + seconds + "s", e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(e);
+        }
     }
 
     /**
      * The same property end to end: a real tick and a real Disengage, released together. Whichever
      * order they take, the Autopilot must end up off — the tick either sees the row already
-     * disengaged and returns, or holds the lock and lets the mutation land after it.
+     * disengaged and returns, or runs its pass and leaves {@code engaged} untouched on write-back.
      */
     @Test
     void concurrentTickAndDisengage_theHumanWins() throws Exception {
@@ -307,6 +359,13 @@ public class AutopilotServiceIntegrationTest extends BaseTest {
 
         assertThat(autopilotRepo.findById(autopilotId).orElseThrow().isEngaged())
                 .isFalse();
+
+        // The other half of "sensibly": whichever way the race went, the stop is durable. A tick
+        // that had already passed its engaged re-check finishes the pass it was on — expected,
+        // since Disengage never touches in-flight runs — but no later tick starts anything more.
+        int startedByTheRace = runsFor(autopilotId).size();
+        autopilotService.tick();
+        assertThat(runsFor(autopilotId)).hasSize(startedByTheRace);
     }
 
     private static Callable<Throwable> released(CyclicBarrier startLine, Runnable action) {

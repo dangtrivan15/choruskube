@@ -3,6 +3,7 @@ package com.choruskube.core.service;
 import com.choruskube.core.dto.AutopilotStatusResponse;
 import com.choruskube.core.dto.AutopilotTaskRef;
 import com.choruskube.core.exception.BadRequestException;
+import com.choruskube.core.exception.ConflictException;
 import com.choruskube.core.exception.QuotaExceededException;
 import com.choruskube.core.model.Autopilot;
 import com.choruskube.core.model.Epic;
@@ -19,10 +20,13 @@ import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockTimeoutException;
+import jakarta.persistence.PessimisticLockException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -38,6 +42,7 @@ import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -63,6 +68,12 @@ public class AutopilotService {
 
     /** {@code nextUp} is a preview panel, not a queue dump. */
     private static final int NEXT_UP_LIMIT = 10;
+
+    /**
+     * How long {@code engage}/{@code update} wait behind an in-flight tick before giving up and
+     * telling the caller to retry. Short on purpose: an HTTP request must not sit out a tick.
+     */
+    private static final Duration MUTATION_LOCK_TIMEOUT = Duration.ofSeconds(3);
 
     private final AutopilotRepository autopilotRepo;
     private final WorkflowRunRepository runRepo;
@@ -507,19 +518,34 @@ public class AutopilotService {
 
     /**
      * Turns it off. Never touches in-flight runs — work already started stays started, and the
-     * humans reviewing it are unaffected. The reason is cleared because a human switching it off
-     * is not a fault, and the UI shows that field as a fault banner.
+     * humans reviewing it are unaffected, so a tick that is mid-flight finishing its current
+     * starts is expected rather than a leak.
      *
-     * <p>This is the emergency stop, so {@link #lockedForMutation()} matters most here: without
-     * it, a tick already in flight would write its own copy of the row back afterwards and turn
-     * the Autopilot straight back on.
+     * <p>The one mutator that does <strong>not</strong> take the advisory lock. It is the
+     * emergency stop: waiting out an in-flight tick would make it slow at exactly the moment it
+     * has to be fast. {@link AutopilotRepository#disengage} carries the full argument for why
+     * dropping the lock cannot cost correctness here.
+     *
+     * <p>A tick that has already passed its own {@code engaged} re-check carries on to the end of
+     * this pass — it starts no more than the slots it had already counted, and its write-back
+     * leaves {@code engaged} alone. The next tick loads the row, sees it off, and returns before
+     * taking any lock at all.
      */
     @Transactional
     public AutopilotStatusResponse disengage() {
-        Autopilot autopilot = lockedForMutation();
-        autopilot.setEngaged(false);
-        autopilot.setDisengagedReason(null);
-        return saveAndPublish(autopilot);
+        Optional<Autopilot> existing = findSingleton();
+        if (existing.isEmpty()) {
+            // Never configured. Creating the row cannot race a tick — there is nothing to tick.
+            Autopilot created = new Autopilot();
+            created.setEngaged(false);
+            return saveAndPublish(created);
+        }
+        Autopilot autopilot = existing.get();
+        autopilotRepo.disengage(autopilot.getId());
+        // The row was changed by a statement, not through this entity, so the managed copy is now
+        // stale. Refreshing also leaves it clean, so the flush at commit writes nothing back.
+        entityManager.refresh(autopilot);
+        return publish(autopilot, snapshot(autopilot));
     }
 
     /**
@@ -538,7 +564,15 @@ public class AutopilotService {
      *
      * <p>Still the advisory lock, never a row lock — see {@link #tick()} for why that distinction
      * is load-bearing. Nothing reached from here starts a {@code REQUIRES_NEW} transaction, so
-     * these three mutators cannot block on the foreign key the way a row lock would.
+     * these mutators cannot block on the foreign key the way a row lock would.
+     *
+     * <p><strong>The wait is bounded.</strong> A tick can hold this lock for a full readiness
+     * sweep plus every container start, so an untimed wait would leave an HTTP request hanging for
+     * as long as the tick runs. Unlike the row-lock hazard in {@link #tick()}, this one is
+     * boundable: the wait is a statement in this session, where {@code SET LOCAL lock_timeout}
+     * applies. On expiry the caller gets a 409 telling it to retry, which is an acceptable answer
+     * for turning the Autopilot on or changing its ceiling — and is why {@link #disengage()}, for
+     * which it would not be acceptable, does not come through here.
      *
      * <p>A row that does not exist yet is not locked: there is no tick to race with until it does.
      * Two concurrent first-writes can therefore still produce a second row — see {@link
@@ -546,10 +580,24 @@ public class AutopilotService {
      */
     private Autopilot lockedForMutation() {
         Autopilot autopilot = getOrCreate();
-        if (autopilot.getId() != null) {
-            lockService.acquireLock(autopilot.getId());
-            entityManager.refresh(autopilot);
+        if (autopilot.getId() == null) {
+            return autopilot;
         }
+        // Interpolated because SET takes no bind parameters; the value is a long, not text.
+        entityManager
+                .createNativeQuery("SET LOCAL lock_timeout = " + MUTATION_LOCK_TIMEOUT.toMillis())
+                .executeUpdate();
+        try {
+            lockService.acquireLock(autopilot.getId());
+        } catch (PessimisticLockException | LockTimeoutException | PessimisticLockingFailureException e) {
+            // Postgres cancels the waiting statement with 55P03, which Hibernate surfaces through
+            // the JPA API as PessimisticLockException. The Spring type is listed too because
+            // AdvisoryLockService is a @Service and therefore untranslated — a LockService backed
+            // by a @Repository would throw the translated one instead.
+            throw new ConflictException(
+                    "An Autopilot tick is in progress; the change was not applied. Try again in a moment.");
+        }
+        entityManager.refresh(autopilot);
         return autopilot;
     }
 
@@ -700,7 +748,10 @@ public class AutopilotService {
                 .filter(Objects::nonNull)
                 .collect(Collectors.toSet());
         if (taskIds.isEmpty()) {
-            return Map.of();
+            // Not Map.of(): a run with no linked Task is a legitimate lookup here, and an
+            // immutable map is the one implementation that throws on a null key rather than
+            // missing it. Both branches now tolerate one.
+            return Collections.emptyMap();
         }
         Map<UUID, String> titles = new HashMap<>();
         taskRepo.findAllById(taskIds).forEach(task -> titles.put(task.getId(), task.getTitle()));
