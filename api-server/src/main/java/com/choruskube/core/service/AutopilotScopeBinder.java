@@ -30,9 +30,17 @@ import java.util.UUID;
  *       caller isolates passes from one another and re-throws the first failure, and both depend on
  *       seeing it; a binder that caught it would report every pass as successful and, worse, keep
  *       the failure breaker from ever noticing a broken installation.
- *   <li><strong>Restore, do not clear.</strong> If a scope is somehow already bound, put the
- *       previous value back rather than clearing to empty, so a caller that had one is not left
- *       without it.
+ *   <li><strong>Restore, do not clear.</strong> A scope is often already bound: besides the
+ *       scheduler, {@code AutopilotController} calls {@code tick()} from {@code POST
+ *       /api/v1/autopilot/tick}, which is a request thread with its own scope, and the e2e suite
+ *       drives exactly that endpoint. So put the previous value back rather than clearing to
+ *       empty. This is a routine path, not a defensive one, and it is the case a scheduler-only
+ *       test will never reach.
+ *   <li><strong>Run the pass, exactly once, on the calling thread — and throw rather than
+ *       skip.</strong> An implementation that resolves the scope optionally and runs the pass only
+ *       when it succeeds does nothing at all when it does not: no exception, no failure recorded,
+ *       nothing logged, and an Autopilot that is engaged and permanently idle. If the scope cannot
+ *       be bound, that is a failure and must be thrown.
  * </ul>
  *
  * <p><strong>An implementation must not open a transaction.</strong> The pass it is handed is four
@@ -47,10 +55,15 @@ public interface AutopilotScopeBinder {
     /**
      * Runs {@code pass} in the scope that owns {@code autopilotId}.
      *
-     * @param autopilotId the Autopilot whose pass this is — the only thing naming a scope on a
-     *     thread that has none
+     * @param autopilotId the Autopilot whose pass this is — the only thing naming a scope when the
+     *     caller is the scheduler, and the authority even when the caller is a request that
+     *     already has one of its own
      * @param pass one complete pass over that Autopilot: claiming the tick lease, the four phases,
      *     and giving the lease back
+     * @throws RuntimeException if the scope cannot be established. A throw here skips {@code
+     *     settle}, so it never reaches the failure breaker — an installation whose scopes cannot be
+     *     resolved retries every interval rather than disengaging after three. That is deliberate:
+     *     a platform fault should not spend an organisation's failure budget.
      */
     void runInScopeOf(UUID autopilotId, Runnable pass);
 }
