@@ -107,6 +107,25 @@ public interface AutopilotRepository extends Repository<Autopilot, UUID> {
             + "WHERE a.id = :id")
     int disengageWithReason(@Param("id") UUID id, @Param("reason") String reason, @Param("now") Instant now);
 
+    /**
+     * The same stop, for a caller that must not report one it did not cause.
+     *
+     * <p>{@code engaged = true} is in the WHERE clause rather than checked by the caller first, so
+     * "was it on?" and "turn it off" are one statement and cannot interleave. The safety valve
+     * ({@link com.choruskube.core.service.AutopilotSafetyValve}) is driven by a reconciler that
+     * observes the same external failure on every pass; without the guard, each pass would overwrite
+     * a reason a human is already reading, and publish a STOMP event saying the Autopilot had just
+     * disengaged when it had been off for an hour.
+     *
+     * @return 1 when this call is what turned it off, 0 when it was already off or the row is gone
+     *     — the caller publishes only on 1
+     */
+    @Transactional
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("UPDATE Autopilot a SET a.engaged = false, a.disengagedReason = :reason, a.updatedAt = :now "
+            + "WHERE a.id = :id AND a.engaged = true")
+    int disengageIfEngagedWithReason(@Param("id") UUID id, @Param("reason") String reason, @Param("now") Instant now);
+
     @Transactional
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("UPDATE Autopilot a SET a.maxParallel = :maxParallel, a.updatedAt = :now WHERE a.id = :id")

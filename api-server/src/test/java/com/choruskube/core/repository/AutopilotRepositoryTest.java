@@ -107,6 +107,10 @@ public class AutopilotRepositoryTest extends BaseTest {
         statements.put("disengage", new Statement(noSetup(), id -> repo.disengage(id, now)));
         statements.put(
                 "disengageWithReason", new Statement(noSetup(), id -> repo.disengageWithReason(id, "reason", now)));
+        // Guarded on engaged, so it only matches a row somebody turned on first.
+        statements.put(
+                "disengageIfEngagedWithReason",
+                new Statement(id -> repo.engage(id, now), id -> repo.disengageIfEngagedWithReason(id, "reason", now)));
         statements.put("setMaxParallel", new Statement(noSetup(), id -> repo.setMaxParallel(id, 3, now)));
         statements.put("addFailures", new Statement(noSetup(), id -> repo.addFailures(id, 1, now)));
         statements.put("resetFailures", new Statement(noSetup(), id -> repo.resetFailures(id, now)));
@@ -153,6 +157,38 @@ public class AutopilotRepositoryTest extends BaseTest {
         repo.resetFailures(id, Instant.now());
 
         assertThat(repo.findConsecutiveFailuresById(id)).contains(0);
+    }
+
+    /**
+     * The safety valve's statement, and the whole reason it is not {@link
+     * AutopilotRepository#disengageWithReason}. Its caller is a reconciler that meets the same
+     * broken credential on every pass, so "already off" has to be decided by the statement rather
+     * than by a read the caller took first — otherwise each pass overwrites a reason a human is
+     * reading and publishes a STOMP event announcing a stop that happened an hour ago.
+     */
+    @Test
+    void disengageIfEngagedWithReason_matchesOnlyAnEngagedRow() {
+        String first = "GitHub returned 401 for org/backend-api#42 — check the GitHub credential";
+        UUID id = insertRow();
+        assertThat(repo.findById(id).orElseThrow().isEngaged()).isFalse();
+
+        assertThat(repo.disengageIfEngagedWithReason(id, first, Instant.now()))
+                .as("nothing to stop, so nothing to report")
+                .isZero();
+        assertThat(repo.findById(id).orElseThrow().getDisengagedReason()).isNull();
+
+        repo.engage(id, Instant.now());
+        assertThat(repo.disengageIfEngagedWithReason(id, first, Instant.now())).isEqualTo(1);
+        Autopilot after = repo.findById(id).orElseThrow();
+        assertThat(after.isEngaged()).isFalse();
+        assertThat(after.getDisengagedReason()).isEqualTo(first);
+        assertThat(after.getConsecutiveFailures())
+                .as("an external failure is not a run failure")
+                .isZero();
+
+        assertThat(repo.disengageIfEngagedWithReason(id, "a second pass, two minutes later", Instant.now()))
+                .isZero();
+        assertThat(repo.findById(id).orElseThrow().getDisengagedReason()).isEqualTo(first);
     }
 
     @Test

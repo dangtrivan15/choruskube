@@ -425,6 +425,81 @@ class AutopilotServiceTest {
     }
 
     // -----------------------------------------------------------------------------------
+    // 3b — the safety valve
+    // -----------------------------------------------------------------------------------
+
+    @Test
+    void disengageForExternalFailure_stopsItAndRecordsTheReason() {
+        String reason = "GitHub returned 401 for org/backend-api#42 — check the GitHub credential";
+
+        newService().disengageForExternalFailure(reason);
+
+        assertThat(autopilot.isEngaged()).isFalse();
+        assertThat(autopilot.getDisengagedReason()).isEqualTo(reason);
+        verify(eventPublisher).publishAutopilotChanged(eq(autopilotId), any());
+    }
+
+    /**
+     * The reason the valve is a separate path from the breaker. One credential failure plus two
+     * unrelated failed runs must not add up to three, or the Autopilot disengages with a reason
+     * naming the wrong cause and a human fixes the wrong thing.
+     */
+    @Test
+    void disengageForExternalFailure_leavesTheRunFailureBreakerAlone() {
+        autopilot.setConsecutiveFailures(1);
+
+        newService().disengageForExternalFailure("GitHub returned 404 for org/backend-api#42");
+
+        assertThat(autopilot.getConsecutiveFailures())
+                .as("the breaker counts run outcomes, and no run failed here")
+                .isEqualTo(1);
+        verify(autopilotRepo, never()).addFailures(any(), anyInt(), any());
+        assertThat(autopilot.getDisengagedReason()).doesNotContain("consecutive failures");
+    }
+
+    @Test
+    void disengageForExternalFailure_withNoRowConfigured_isANoOp() {
+        autopilot = null;
+
+        newService().disengageForExternalFailure("GitHub returned 401 for org/backend-api#42");
+
+        verify(autopilotRepo, never()).insertDefaults(any());
+        verify(autopilotRepo, never()).disengageIfEngagedWithReason(any(), any(), any());
+        verifyNoInteractions(eventPublisher);
+    }
+
+    /**
+     * The reconciler observes the same broken credential every two minutes. Without the statement's
+     * guard each pass would overwrite the reason and publish a STOMP event, so the panel would keep
+     * announcing a stop that happened an hour ago.
+     */
+    @Test
+    void disengageForExternalFailure_whenAlreadyDisengaged_writesNothingAndPublishesNothing() {
+        autopilot.setEngaged(false);
+        autopilot.setDisengagedReason("Disengaged after 3 consecutive failures — the last failure was: boom");
+
+        newService().disengageForExternalFailure("GitHub returned 401 for org/backend-api#42");
+
+        assertThat(autopilot.getDisengagedReason())
+                .as("the first reason is the one the human is already reading")
+                .contains("3 consecutive failures");
+        verifyNoInteractions(eventPublisher);
+    }
+
+    @Test
+    void disengageForExternalFailure_thenEngage_clearsTheReason() {
+        AutopilotService service = newService();
+        service.disengageForExternalFailure("GitHub returned 401 for org/backend-api#42");
+
+        service.engage();
+
+        assertThat(autopilot.isEngaged()).isTrue();
+        assertThat(autopilot.getDisengagedReason())
+                .as("a human who has fixed the credential must not be left with a fault banner")
+                .isNull();
+    }
+
+    // -----------------------------------------------------------------------------------
     // 4 — the tick lease and the phase boundaries
     // -----------------------------------------------------------------------------------
 
@@ -1048,6 +1123,16 @@ class AutopilotServiceTest {
         }));
         when(autopilotRepo.disengageWithReason(any(), any(), any())).thenAnswer(invocation -> {
             if (invocation.getArgument(0) == null || autopilot == null) {
+                return 0;
+            }
+            autopilot.setEngaged(false);
+            autopilot.setDisengagedReason(invocation.getArgument(1));
+            return 1;
+        });
+        // The guard is emulated, not assumed: whether this statement matches is exactly what stops
+        // the safety valve overwriting a reason and re-publishing on every reconciler pass.
+        when(autopilotRepo.disengageIfEngagedWithReason(any(), any(), any())).thenAnswer(invocation -> {
+            if (invocation.getArgument(0) == null || autopilot == null || !autopilot.isEngaged()) {
                 return 0;
             }
             autopilot.setEngaged(false);

@@ -59,7 +59,7 @@ import org.springframework.util.Assert;
  * {@link AutopilotCandidateSource}, and authorization from {@link ReadinessAuthMode#AUTOPILOT}.
  */
 @Service
-public class AutopilotService {
+public class AutopilotService implements AutopilotSafetyValve {
 
     private static final Logger log = LoggerFactory.getLogger(AutopilotService.class);
 
@@ -779,6 +779,42 @@ public class AutopilotService {
         UUID autopilotId = ensureRow();
         autopilotRepo.disengage(autopilotId, Instant.now());
         return publishCurrent(autopilotId);
+    }
+
+    /**
+     * The safety valve: something the Autopilot depends on can no longer be observed, so it stops.
+     * Today's one caller is {@code PullRequestStateService}, which learns from GitHub that
+     * a Task's pull requests have merged — and therefore that the Task is done. If those reads fail
+     * persistently, Tasks stop closing, the dependency graph goes stale, and the Autopilot would
+     * keep dispatching work against a picture of the roadmap it can no longer trust.
+     *
+     * <p>Deliberately does <strong>not</strong> touch {@code consecutiveFailures}. That counter
+     * measures run outcomes, and mixing an external failure into it would let one credential hiccup
+     * plus two unrelated run failures trip the breaker with a reason naming the wrong cause. This
+     * disengages on the first occurrence, with a reason of its own.
+     *
+     * <p>Never creates the row. No Autopilot has ever been configured here, so there is nothing to
+     * stop, and inserting one would put an installation that never opted in into a disengaged state
+     * complaining about a repository it does not automate.
+     */
+    @Override
+    @Transactional
+    public void disengageForExternalFailure(String reason) {
+        Optional<Autopilot> found = findSingleton();
+        if (found.isEmpty()) {
+            log.debug("External failure reported with no Autopilot configured; nothing to disengage: {}", reason);
+            return;
+        }
+        UUID autopilotId = found.get().getId();
+        // The read above supplies the id and nothing else: whether it is engaged is decided inside
+        // the statement, so a human's Engage landing between the two cannot be silently undone by a
+        // decision taken before it.
+        if (autopilotRepo.disengageIfEngagedWithReason(autopilotId, reason, Instant.now()) == 0) {
+            log.debug("Autopilot already disengaged; leaving the existing reason in place: {}", reason);
+            return;
+        }
+        log.warn("Autopilot disengaged itself: {}", reason);
+        publishCurrent(autopilotId);
     }
 
     /**

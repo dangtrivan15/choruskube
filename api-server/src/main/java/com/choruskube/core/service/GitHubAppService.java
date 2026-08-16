@@ -1,5 +1,6 @@
 package com.choruskube.core.service;
 
+import com.choruskube.core.exception.GitHubApiException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nimbusds.jose.*;
@@ -50,7 +51,11 @@ public class GitHubAppService {
 
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() != 201) {
-                throw new RuntimeException("GitHub API returned " + response.statusCode() + ": " + response.body());
+                // The body is deliberately omitted, for the reason given on fetchPullRequest: a
+                // GitHub error payload can echo the request, Authorization header included, and
+                // this message is logged.
+                throw new RuntimeException("GitHub API returned " + response.statusCode()
+                        + " minting an installation token for installation " + installationId);
             }
 
             JsonNode body = objectMapper.readTree(response.body());
@@ -74,8 +79,13 @@ public class GitHubAppService {
      * {@code GitRepo}'s URL. The caller supplies an already-resolved token, so this method stays
      * agnostic about whether it came from a GitHub App installation or a PAT.
      *
-     * @throws RuntimeException if GitHub returns a non-200 status. The message deliberately omits
-     *     the response body, which can echo the request's Authorization header on some errors.
+     * @throws GitHubApiException if GitHub returns a non-200 status. It carries the status as a
+     *     field so a caller can tell a revoked credential from an outage; the message deliberately
+     *     omits the response body, which can echo the request's Authorization header on some
+     *     errors.
+     * @throws RuntimeException if the call never produced a status at all — a timeout, a DNS
+     *     failure, a reset connection. Deliberately NOT a {@link GitHubApiException}: there is no
+     *     status to classify, and every such failure is transient by nature.
      */
     public PullRequestSnapshot fetchPullRequest(String token, String ownerRepo, int prNumber) {
         HttpRequest request = HttpRequest.newBuilder()
@@ -89,8 +99,7 @@ public class GitHubAppService {
         try {
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() != 200) {
-                throw new RuntimeException(
-                        "GitHub returned " + response.statusCode() + " for " + ownerRepo + "#" + prNumber);
+                throw new GitHubApiException(response.statusCode(), ownerRepo, prNumber);
             }
             return parsePullRequest(response.body());
         } catch (IOException | InterruptedException e) {
