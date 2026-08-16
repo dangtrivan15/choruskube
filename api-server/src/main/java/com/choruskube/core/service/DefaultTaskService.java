@@ -37,6 +37,7 @@ import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.scope.ScopeProvider;
 import com.choruskube.core.util.RepoNameUtil;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.persistence.EntityManager;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -53,6 +54,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /** Sole implementation of {@link TaskService} (Decision 8). */
@@ -96,6 +98,10 @@ public class DefaultTaskService implements TaskService {
     private final EpicReadinessAssembler readinessAssembler;
     private final ScopeProvider scopeProvider;
     private final RunPullRequestRepository prRepo;
+    // Needed for one thing only: refreshing a Task's in-memory state after its row lock is taken
+    // (see startCore) — Spring Data has no refresh, and a locking finder alone returns the
+    // already-loaded instance with its pre-lock state.
+    private final EntityManager entityManager;
 
     public DefaultTaskService(
             TaskRepository repo,
@@ -113,7 +119,8 @@ public class DefaultTaskService implements TaskService {
             WorkItemDependencyService workItemDependencyService,
             EpicReadinessAssembler readinessAssembler,
             ScopeProvider scopeProvider,
-            RunPullRequestRepository prRepo) {
+            RunPullRequestRepository prRepo,
+            EntityManager entityManager) {
         this.repo = repo;
         this.storyRepo = storyRepo;
         this.epicRepo = epicRepo;
@@ -130,6 +137,7 @@ public class DefaultTaskService implements TaskService {
         this.readinessAssembler = readinessAssembler;
         this.scopeProvider = scopeProvider;
         this.prRepo = prRepo;
+        this.entityManager = entityManager;
     }
 
     @Override
@@ -180,7 +188,7 @@ public class DefaultTaskService implements TaskService {
     public List<TaskResponse> list(UUID storyId) {
         Story story = findStoryOrThrow(storyId);
         authService.checkOrgAccess("story", storyId);
-        return listWithReadiness(story, false, null);
+        return listWithReadiness(story, ReadinessAuthMode.PUBLIC, null);
     }
 
     @Override
@@ -192,7 +200,7 @@ public class DefaultTaskService implements TaskService {
         if (!epic.getSoftwareProjectId().equals(runSoftwareProjectId)) {
             throw new ForbiddenException("Story " + storyId + " does not belong to the run's software project");
         }
-        return listWithReadiness(story, true, runId);
+        return listWithReadiness(story, ReadinessAuthMode.INTERNAL_RUN, runId);
     }
 
     /**
@@ -202,10 +210,10 @@ public class DefaultTaskService implements TaskService {
      * helper {@link DefaultStoryService#list} uses, so the two list endpoints can never disagree
      * on what an Epic's candidate set is. Only this Story's own Tasks are returned.
      */
-    private List<TaskResponse> listWithReadiness(Story story, boolean internal, UUID runId) {
+    private List<TaskResponse> listWithReadiness(Story story, ReadinessAuthMode mode, UUID contextId) {
         EpicReadinessAssembler.EpicCandidates candidates = readinessAssembler.loadEpicCandidates(story.getEpicId());
         EpicReadinessAssembler.Assembly assembly = readinessAssembler.assemble(
-                candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), internal, runId);
+                candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), mode, contextId);
         List<Task> ownTasks = candidates.tasksByStoryId().getOrDefault(story.getId(), List.of());
         return ownTasks.stream()
                 .map(t -> toResponse(t, assembly.readinessById().get(t.getId())))
@@ -279,20 +287,55 @@ public class DefaultTaskService implements TaskService {
         // dependency, not bypassing this check.
         requireReady(task);
 
-        if (task.getStatus() == WorkItemStatus.in_progress) {
-            WorkflowRun mostRecent = mostRecentRun(id)
+        return startCore(task, null);
+    }
+
+    @Override
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public TaskResponse startForAutopilot(UUID id, UUID autopilotId) {
+        Task task = findOrThrow(id);
+        // No request context on a timer thread, so org is derived from the data rather than from a
+        // caller's token — the same mechanism the agent path uses.
+        authService.assertSameOrg("task", id, "autopilot", autopilotId);
+        // AUTOPILOT mode because the public path resolves cross-Epic blockers through
+        // request-scoped authorization that a timer thread does not have — and a cross-Epic
+        // dependency is precisely the case the Autopilot exists to work through.
+        requireReadyForAutopilot(task, autopilotId);
+        return startCore(task, autopilotId);
+    }
+
+    /**
+     * Shared body for the manual ({@link #start}) and Autopilot ({@link #startForAutopilot}) start
+     * paths, from the status guard onward. {@code autopilotId} is null for a manual start, and is
+     * stamped on the run so the Autopilot can tell its own in-flight work from a human's.
+     */
+    private TaskResponse startCore(Task task, UUID autopilotId) {
+        // Both entry points serialise here, on the Task row itself. Nothing upstream does: the
+        // Autopilot's advisory lock is keyed on the Autopilot (tick vs tick), and the manual path
+        // takes no lock at all, so under READ COMMITTED a tick and a user clicking Start could
+        // both read `backlog`, both pass the guard below, and both commit.
+        Task locked = repo.findWithLockById(task.getId())
+                .orElseThrow(() -> new NotFoundException("Task not found: " + task.getId()));
+        // The lock alone is not enough. It makes the DATABASE value authoritative, but the finder
+        // returns the instance ALREADY in this persistence context — still carrying the status
+        // read before the lock was granted, which is exactly the value the competing starter
+        // invalidated while we were queued. Only an explicit refresh re-reads it.
+        entityManager.refresh(locked);
+
+        if (locked.getStatus() == WorkItemStatus.in_progress) {
+            WorkflowRun mostRecent = mostRecentRun(locked.getId())
                     .orElseThrow(() -> new ConflictException("Task is in progress but has no linked run"));
             if (!TERMINAL_STATUSES.contains(mostRecent.getStatus())) {
                 throw new ConflictException(
                         "Cannot re-trigger: most recent run is still active (status: " + mostRecent.getStatus() + ")");
             }
-        } else if (task.getStatus() != WorkItemStatus.backlog) {
+        } else if (locked.getStatus() != WorkItemStatus.backlog) {
             throw new ConflictException("Can only start tasks in backlog status");
         }
 
         StringBuilder featureRequest = new StringBuilder();
-        featureRequest.append("## ").append(task.getTitle()).append("\n\n");
-        featureRequest.append(task.getDescription());
+        featureRequest.append("## ").append(locked.getTitle()).append("\n\n");
+        featureRequest.append(locked.getDescription());
 
         GraphTemplate featureDevTemplate = graphTemplateRepo
                 .findFirstByGraphIdOrderByVersionDesc(GraphIds.FEATURE_DEVELOPMENT)
@@ -301,23 +344,26 @@ public class DefaultTaskService implements TaskService {
         CreateRunRequest runRequest = new CreateRunRequest(
                 featureDevTemplate.getId(),
                 Map.of(
-                        "software_project_id", task.getSoftwareProjectId().toString(),
+                        "software_project_id", locked.getSoftwareProjectId().toString(),
                         "feature_request", featureRequest.toString()),
-                task.getTitle(),
+                locked.getTitle(),
                 null);
 
+        // startRun performs the run-quota check itself; a second one here would be a duplicate.
         RunResponse runResponse = runService.startRun(runRequest);
 
+        // CreateRunRequest carries neither field, so both attributions are stamped on the re-fetch.
         WorkflowRun run = runRepo.findById(runResponse.id())
                 .orElseThrow(() -> new NotFoundException("Workflow run not found: " + runResponse.id()));
-        run.setTaskId(task.getId());
+        run.setTaskId(locked.getId());
+        run.setAutopilotId(autopilotId);
         runRepo.save(run);
 
-        task.setStatus(WorkItemStatus.in_progress);
-        task = repo.save(task);
-        TaskResponse response = toResponse(task);
+        locked.setStatus(WorkItemStatus.in_progress);
+        Task saved = repo.save(locked);
+        TaskResponse response = toResponse(saved);
         eventPublisher.publishRoadmapItemChanged(
-                "task", task.getId(), task.getStatus().name());
+                "task", saved.getId(), saved.getStatus().name());
         return response;
     }
 
@@ -327,12 +373,25 @@ public class DefaultTaskService implements TaskService {
      * reported, so the message points at work that can start now.
      */
     private void requireReady(Task task) {
+        requireReady(task, ReadinessAuthMode.PUBLIC, null);
+    }
+
+    /**
+     * {@link #requireReady} for the Autopilot: identical gate, resolved through the mode that does
+     * not need a request context. Re-checked inside the start transaction because the frontier the
+     * tick computed was assembled before the Task row was locked.
+     */
+    private void requireReadyForAutopilot(Task task, UUID autopilotId) {
+        requireReady(task, ReadinessAuthMode.AUTOPILOT, autopilotId);
+    }
+
+    private void requireReady(Task task, ReadinessAuthMode mode, UUID contextId) {
         Story story = storyRepo
                 .findById(task.getStoryId())
                 .orElseThrow(() -> new NotFoundException("Story not found: " + task.getStoryId()));
         EpicReadinessAssembler.EpicCandidates candidates = readinessAssembler.loadEpicCandidates(story.getEpicId());
         EpicReadinessAssembler.Assembly assembly = readinessAssembler.assemble(
-                candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), false, null);
+                candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), mode, contextId);
         if (assembly.readinessById().get(task.getId()) != Readiness.BLOCKED) {
             return;
         }

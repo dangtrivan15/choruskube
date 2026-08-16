@@ -1,17 +1,31 @@
 package com.choruskube.core.repository;
 
 import com.choruskube.core.model.Task;
+import jakarta.persistence.LockModeType;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface TaskRepository extends JpaRepository<Task, UUID>, JpaSpecificationExecutor<Task> {
     List<Task> findByStoryIdOrderByCreatedAtDesc(UUID storyId);
+
+    /**
+     * {@code SELECT ... FOR UPDATE} on one Task, held until the surrounding transaction ends. Used
+     * by every path that starts a workflow run for a Task, so the manual Start button and the
+     * Autopilot tick serialise against each other: under READ COMMITTED both would otherwise read
+     * the Task as {@code backlog}, both pass the status guard, and both commit — two agent
+     * containers for one Task. The Autopilot's own advisory lock does not cover this, since it is
+     * keyed on the Autopilot and only serialises tick against tick.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    Optional<Task> findWithLockById(UUID id);
 
     /** Batch finder used to avoid N+1 when computing a Story/Epic list's rollup status/progress. */
     List<Task> findByStoryIdIn(Collection<UUID> storyIds);

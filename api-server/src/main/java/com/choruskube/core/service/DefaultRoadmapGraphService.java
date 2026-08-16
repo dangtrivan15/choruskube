@@ -63,7 +63,7 @@ public class DefaultRoadmapGraphService implements RoadmapGraphService {
         // same trust boundary DefaultStoryService/DefaultTaskService's own list() methods already
         // rely on when they call EpicReadinessAssembler#loadEpicCandidates.
         EpicResponse epic = epicService.get(epicId);
-        return assemble(epic, epicId, false, null);
+        return assemble(epic, epicId, ReadinessAuthMode.PUBLIC, null);
     }
 
     @Override
@@ -73,7 +73,7 @@ public class DefaultRoadmapGraphService implements RoadmapGraphService {
         // assertSameOrg/project-match instead of checkOrgAccess (no tenant context on this path —
         // see Decision 1, Decision 5, and the javadoc on EpicService#getInternal).
         EpicResponse epic = epicService.getInternal(epicId, runId, runSoftwareProjectId);
-        return assemble(epic, epicId, true, runId);
+        return assemble(epic, epicId, ReadinessAuthMode.INTERNAL_RUN, runId);
     }
 
     /**
@@ -82,14 +82,14 @@ public class DefaultRoadmapGraphService implements RoadmapGraphService {
      * (Decision 2, delegated to {@link EpicReadinessAssembler}), and embeds per-Task capped run
      * history (Decision 3).
      *
-     * @param internal whether to authorize/resolve cross-epic references via the internal
-     *     ({@code assertSameOrg}) path or the public ({@code checkOrgAccess}) path
-     * @param runId the calling run's id, used only when {@code internal} is true
+     * @param mode which authorization path cross-Epic references are resolved through
+     * @param contextId the id {@code mode} authorizes against (the calling run, on the internal
+     *     path); unused on the public path
      */
-    private RoadmapGraphSnapshot assemble(EpicResponse epic, UUID epicId, boolean internal, UUID runId) {
+    private RoadmapGraphSnapshot assemble(EpicResponse epic, UUID epicId, ReadinessAuthMode mode, UUID contextId) {
         EpicReadinessAssembler.EpicCandidates candidates = readinessAssembler.loadEpicCandidates(epicId);
         EpicReadinessAssembler.Assembly assembly = readinessAssembler.assemble(
-                candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), internal, runId);
+                candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), mode, contextId);
 
         List<StoryResponse> stories = candidates.stories().stream()
                 .map(s -> toStoryResponse(
@@ -99,7 +99,8 @@ public class DefaultRoadmapGraphService implements RoadmapGraphService {
                 .toList();
         List<TaskResponse> tasks = candidates.stories().stream()
                 .flatMap(s -> candidates.tasksByStoryId().getOrDefault(s.getId(), List.of()).stream())
-                .map(t -> toTaskResponse(t, assembly.readinessById().get(t.getId()), internal))
+                .map(t -> toTaskResponse(
+                        t, assembly.readinessById().get(t.getId()), mode == ReadinessAuthMode.INTERNAL_RUN))
                 .toList();
 
         return new RoadmapGraphSnapshot(epic, stories, tasks, assembly.dependencies(), assembly.externalBlockers());

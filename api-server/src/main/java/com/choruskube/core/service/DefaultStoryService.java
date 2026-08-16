@@ -130,7 +130,7 @@ public class DefaultStoryService implements StoryService {
     public List<StoryResponse> list(UUID epicId) {
         findEpicOrThrow(epicId);
         authService.checkOrgAccess("epic", epicId);
-        return listWithReadiness(epicId, false, null);
+        return listWithReadiness(epicId, ReadinessAuthMode.PUBLIC, null);
     }
 
     @Override
@@ -141,7 +141,7 @@ public class DefaultStoryService implements StoryService {
         if (!epic.getSoftwareProjectId().equals(runSoftwareProjectId)) {
             throw new ForbiddenException("Epic " + epicId + " does not belong to the run's software project");
         }
-        return listWithReadiness(epicId, true, runId);
+        return listWithReadiness(epicId, ReadinessAuthMode.INTERNAL_RUN, runId);
     }
 
     @Override
@@ -167,10 +167,10 @@ public class DefaultStoryService implements StoryService {
      * {@code readiness} instead of the {@code null} every other read path still returns (Decision
      * 1 — only the flat list endpoints and the Roadmap Graph View compute it).
      */
-    private List<StoryResponse> listWithReadiness(UUID epicId, boolean internal, UUID runId) {
+    private List<StoryResponse> listWithReadiness(UUID epicId, ReadinessAuthMode mode, UUID contextId) {
         EpicReadinessAssembler.EpicCandidates candidates = readinessAssembler.loadEpicCandidates(epicId);
         EpicReadinessAssembler.Assembly assembly = readinessAssembler.assemble(
-                candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), internal, runId);
+                candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), mode, contextId);
         return candidates.stories().stream()
                 .map(s -> toResponse(
                         s,

@@ -14,13 +14,18 @@ import com.choruskube.core.dto.TaskResponse;
 import com.choruskube.core.model.Task;
 import com.choruskube.core.model.enums.Readiness;
 import com.choruskube.core.model.enums.WorkItemStatus;
+import com.choruskube.core.repository.EpicRepository;
 import com.choruskube.core.repository.GitRepoRepository;
+import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.repository.TaskRepository;
+import com.choruskube.core.repository.WorkItemDependencyRepository;
 import com.choruskube.core.util.RepoNameUtil;
 import io.temporal.client.WorkflowClient;
 import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
+import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
@@ -56,6 +61,17 @@ public class EpicReadinessAssemblerTest extends BaseTest {
     @Autowired
     private TaskRepository taskRepo;
 
+    @Autowired
+    private StoryRepository storyRepo;
+
+    @Autowired
+    private EpicRepository epicRepo;
+
+    @Autowired
+    private WorkItemDependencyRepository dependencyRepo;
+
+    private final AuthorizationService probeAuthService = Mockito.mock(AuthorizationService.class);
+
     @MockitoBean
     private WorkflowServiceStubs workflowServiceStubs;
 
@@ -73,7 +89,11 @@ public class EpicReadinessAssemblerTest extends BaseTest {
 
         EpicReadinessAssembler.EpicCandidates candidates = assembler.loadEpicCandidates(epic.id());
         EpicReadinessAssembler.Assembly assembly = assembler.assemble(
-                candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), false, null);
+                candidates.candidateIds(),
+                candidates.statusById(),
+                candidates.parentOf(),
+                ReadinessAuthMode.PUBLIC,
+                null);
 
         assertThat(assembly.readinessById().get(task.id())).isEqualTo(Readiness.READY);
         assertThat(assembly.readinessById().get(story.id())).isEqualTo(Readiness.READY);
@@ -91,7 +111,11 @@ public class EpicReadinessAssemblerTest extends BaseTest {
 
         EpicReadinessAssembler.EpicCandidates candidates = assembler.loadEpicCandidates(epic.id());
         EpicReadinessAssembler.Assembly assembly = assembler.assemble(
-                candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), false, null);
+                candidates.candidateIds(),
+                candidates.statusById(),
+                candidates.parentOf(),
+                ReadinessAuthMode.PUBLIC,
+                null);
 
         assertThat(assembly.readinessById().get(blocked.id())).isEqualTo(Readiness.BLOCKED);
         assertThat(assembly.readinessById().get(blocking.id())).isEqualTo(Readiness.READY);
@@ -115,7 +139,11 @@ public class EpicReadinessAssemblerTest extends BaseTest {
 
         EpicReadinessAssembler.EpicCandidates candidates = assembler.loadEpicCandidates(epic.id());
         EpicReadinessAssembler.Assembly assembly = assembler.assemble(
-                candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), false, null);
+                candidates.candidateIds(),
+                candidates.statusById(),
+                candidates.parentOf(),
+                ReadinessAuthMode.PUBLIC,
+                null);
 
         assertThat(assembly.readinessById().get(tail.id())).isEqualTo(Readiness.BLOCKED);
     }
@@ -143,7 +171,11 @@ public class EpicReadinessAssemblerTest extends BaseTest {
 
         EpicReadinessAssembler.EpicCandidates candidates = assembler.loadEpicCandidates(epicA.id());
         EpicReadinessAssembler.Assembly assembly = assembler.assemble(
-                candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), false, null);
+                candidates.candidateIds(),
+                candidates.statusById(),
+                candidates.parentOf(),
+                ReadinessAuthMode.PUBLIC,
+                null);
 
         assertThat(assembly.readinessById().get(blockedInA.id())).isEqualTo(Readiness.READY);
         assertThat(assembly.externalBlockers()).hasSize(1);
@@ -166,7 +198,11 @@ public class EpicReadinessAssemblerTest extends BaseTest {
 
         EpicReadinessAssembler.EpicCandidates candidates = assembler.loadEpicCandidates(epicA.id());
         EpicReadinessAssembler.Assembly assembly = assembler.assemble(
-                candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), false, null);
+                candidates.candidateIds(),
+                candidates.statusById(),
+                candidates.parentOf(),
+                ReadinessAuthMode.PUBLIC,
+                null);
 
         assertThat(assembly.readinessById().get(blockedInA.id())).isEqualTo(Readiness.BLOCKED);
     }
@@ -202,7 +238,11 @@ public class EpicReadinessAssemblerTest extends BaseTest {
 
         EpicReadinessAssembler.EpicCandidates candidates = assembler.loadEpicCandidates(epic.id());
         EpicReadinessAssembler.Assembly assembly = assembler.assemble(
-                candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), false, null);
+                candidates.candidateIds(),
+                candidates.statusById(),
+                candidates.parentOf(),
+                ReadinessAuthMode.PUBLIC,
+                null);
 
         assertThat(assembly.readinessById().get(blockedStory.id())).isEqualTo(Readiness.BLOCKED);
         assertThat(assembly.readinessById().get(taskUnderBlocked.id())).isEqualTo(Readiness.BLOCKED);
@@ -221,7 +261,11 @@ public class EpicReadinessAssemblerTest extends BaseTest {
 
         EpicReadinessAssembler.EpicCandidates candidates = assembler.loadEpicCandidates(blockedEpic.id());
         EpicReadinessAssembler.Assembly assembly = assembler.assemble(
-                candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), false, null);
+                candidates.candidateIds(),
+                candidates.statusById(),
+                candidates.parentOf(),
+                ReadinessAuthMode.PUBLIC,
+                null);
 
         assertThat(assembly.readinessById().get(blockedEpic.id())).isEqualTo(Readiness.BLOCKED);
         assertThat(assembly.readinessById().get(story.id())).isEqualTo(Readiness.BLOCKED);
@@ -236,7 +280,11 @@ public class EpicReadinessAssemblerTest extends BaseTest {
 
         EpicReadinessAssembler.EpicCandidates candidates = assembler.loadEpicCandidates(epic.id());
         EpicReadinessAssembler.Assembly assembly = assembler.assemble(
-                candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), false, null);
+                candidates.candidateIds(),
+                candidates.statusById(),
+                candidates.parentOf(),
+                ReadinessAuthMode.PUBLIC,
+                null);
 
         assertThat(assembly.readinessById().get(epic.id())).isEqualTo(Readiness.READY);
         assertThat(assembly.readinessById().get(story.id())).isEqualTo(Readiness.READY);
@@ -257,7 +305,11 @@ public class EpicReadinessAssemblerTest extends BaseTest {
 
         EpicReadinessAssembler.EpicCandidates candidates = assembler.loadEpicCandidates(blockedEpic.id());
         EpicReadinessAssembler.Assembly assembly = assembler.assemble(
-                candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), false, null);
+                candidates.candidateIds(),
+                candidates.statusById(),
+                candidates.parentOf(),
+                ReadinessAuthMode.PUBLIC,
+                null);
 
         assertThat(assembly.readinessById().get(blockedEpic.id())).isEqualTo(Readiness.READY);
         assertThat(assembly.readinessById().get(task.id())).isEqualTo(Readiness.READY);
@@ -280,7 +332,11 @@ public class EpicReadinessAssemblerTest extends BaseTest {
 
         EpicReadinessAssembler.EpicCandidates candidates = assembler.loadEpicCandidates(blockedEpic.id());
         EpicReadinessAssembler.Assembly assembly = assembler.assemble(
-                candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), false, null);
+                candidates.candidateIds(),
+                candidates.statusById(),
+                candidates.parentOf(),
+                ReadinessAuthMode.PUBLIC,
+                null);
 
         assertThat(assembly.readinessById().get(blockedEpic.id())).isEqualTo(Readiness.READY);
         assertThat(assembly.readinessById().get(task.id())).isEqualTo(Readiness.READY);
@@ -302,10 +358,82 @@ public class EpicReadinessAssemblerTest extends BaseTest {
 
         EpicReadinessAssembler.EpicCandidates candidates = assembler.loadEpicCandidates(epic.id());
         EpicReadinessAssembler.Assembly assembly = assembler.assemble(
-                candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), false, null);
+                candidates.candidateIds(),
+                candidates.statusById(),
+                candidates.parentOf(),
+                ReadinessAuthMode.PUBLIC,
+                null);
 
         assertThat(assembly.readinessById().get(blockedStory.id())).isEqualTo(Readiness.READY);
         assertThat(assembly.readinessById().get(task.id())).isEqualTo(Readiness.READY);
+    }
+
+    // ── ReadinessAuthMode: which authorization path a cross-Epic blocker is resolved through ──
+    // Core's AlwaysAllowAuthorizationStrategy no-ops both calls, so the choice is invisible from
+    // behaviour alone. These three tests are the only place it is pinned — and the reason it
+    // matters is that checkOrgAccess reads a request-scoped tenant context, which the Autopilot's
+    // timer thread does not have. A probe assembler with a mocked AuthorizationService is used
+    // rather than a bean override so the rest of the context keeps its real collaborator.
+
+    @Test
+    void assemble_publicMode_resolvesExternalBlockersThroughTheRequestScopedCheck() {
+        CrossEpicFixture f = crossEpicFixture("assembler-mode-public");
+
+        assembleWith(f, ReadinessAuthMode.PUBLIC, null);
+
+        Mockito.verify(probeAuthService).checkOrgAccess("task", f.externalBlockerId());
+        Mockito.verify(probeAuthService, Mockito.never())
+                .assertSameOrg(
+                        ArgumentMatchers.anyString(),
+                        ArgumentMatchers.any(),
+                        ArgumentMatchers.anyString(),
+                        ArgumentMatchers.any());
+    }
+
+    @Test
+    void assemble_internalRunMode_resolvesExternalBlockersAgainstTheCallingRun() {
+        CrossEpicFixture f = crossEpicFixture("assembler-mode-internal");
+        UUID runId = UUID.randomUUID();
+
+        assembleWith(f, ReadinessAuthMode.INTERNAL_RUN, runId);
+
+        Mockito.verify(probeAuthService).assertSameOrg("task", f.externalBlockerId(), "workflow_run", runId);
+        Mockito.verify(probeAuthService, Mockito.never())
+                .checkOrgAccess(ArgumentMatchers.anyString(), ArgumentMatchers.any());
+    }
+
+    @Test
+    void assemble_autopilotMode_resolvesExternalBlockersAgainstTheAutopilotNotTheRequestContext() {
+        CrossEpicFixture f = crossEpicFixture("assembler-mode-autopilot");
+        UUID autopilotId = UUID.randomUUID();
+
+        assembleWith(f, ReadinessAuthMode.AUTOPILOT, autopilotId);
+
+        Mockito.verify(probeAuthService).assertSameOrg("task", f.externalBlockerId(), "autopilot", autopilotId);
+        Mockito.verify(probeAuthService, Mockito.never())
+                .checkOrgAccess(ArgumentMatchers.anyString(), ArgumentMatchers.any());
+    }
+
+    private record CrossEpicFixture(UUID epicId, UUID externalBlockerId) {}
+
+    private CrossEpicFixture crossEpicFixture(String slug) {
+        EpicResponse epicA = makeEpic("https://github.com/test/" + slug + "-a.git");
+        StoryResponse storyA = makeStory(epicA.id(), "Story A");
+        TaskResponse blockedInA = makeTask(storyA.id(), "Blocked in A");
+
+        EpicResponse epicB = makeEpic("https://github.com/test/" + slug + "-b.git");
+        StoryResponse storyB = makeStory(epicB.id(), "Story B");
+        TaskResponse externalBlocker = makeTask(storyB.id(), "External Blocker in B");
+        dependencyService.create(new CreateDependencyRequest("task", externalBlocker.id(), "task", blockedInA.id()));
+
+        return new CrossEpicFixture(epicA.id(), externalBlocker.id());
+    }
+
+    private void assembleWith(CrossEpicFixture f, ReadinessAuthMode mode, UUID contextId) {
+        EpicReadinessAssembler probe =
+                new EpicReadinessAssembler(storyRepo, taskRepo, epicRepo, dependencyRepo, probeAuthService);
+        EpicReadinessAssembler.EpicCandidates candidates = probe.loadEpicCandidates(f.epicId());
+        probe.assemble(candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), mode, contextId);
     }
 
     private void markDone(UUID taskId) {

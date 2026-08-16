@@ -61,6 +61,25 @@ public interface TaskService {
     /** Starts (or restarts, once the most recent run is terminal) a workflow run for this Task. */
     TaskResponse start(UUID id);
 
+    /**
+     * {@link #start} for the Autopilot, and called ONLY by {@code AutopilotService}: same run, same
+     * readiness gate, same row lock — plus the {@code autopilot_id} attribution that lets the
+     * Autopilot recognise its own in-flight runs when counting slots. Never call it from a
+     * controller.
+     *
+     * <p>Differs from {@link #start} in two ways that both follow from the caller being a timer
+     * thread with no request context. Authorization asserts the Task and the Autopilot share an
+     * org rather than reading a tenant context, mirroring the agent path; and readiness is
+     * assembled through the Autopilot authorization mode, because the public mode resolves
+     * cross-Epic blockers via request-scoped {@code checkOrgAccess}.
+     *
+     * <p>It also runs in its OWN transaction ({@code REQUIRES_NEW}). The Autopilot starts several
+     * Tasks per tick inside one transaction and counts the failures; joining that transaction
+     * would let a single failed start mark it rollback-only, so the tick's commit would throw and
+     * discard both its bookkeeping and every Task it had already started in the same loop.
+     */
+    TaskResponse startForAutopilot(UUID id, UUID autopilotId);
+
     /** Marks the Task done, gated on its most recent run being terminal. */
     TaskResponse complete(UUID id);
 

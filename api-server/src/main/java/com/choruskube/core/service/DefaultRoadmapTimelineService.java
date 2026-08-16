@@ -105,7 +105,11 @@ public class DefaultRoadmapTimelineService implements RoadmapTimelineService {
         // Public (non-run-scoped) read path: internal=false, runId=null.
         EpicReadinessAssembler.EpicCandidates candidates = readinessAssembler.loadEpicCandidates(epic.getId());
         EpicReadinessAssembler.Assembly assembly = readinessAssembler.assemble(
-                candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), false, null);
+                candidates.candidateIds(),
+                candidates.statusById(),
+                candidates.parentOf(),
+                ReadinessAuthMode.PUBLIC,
+                null);
 
         List<TimelineStorySummary> stories = storiesByEpicId.getOrDefault(epic.getId(), List.of()).stream()
                 .sorted(Comparator.comparing(Story::getCreatedAt))
