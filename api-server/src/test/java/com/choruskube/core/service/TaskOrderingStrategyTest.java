@@ -68,6 +68,43 @@ class TaskOrderingStrategyTest {
         assertThat(sorted).containsExactly(t1, t2, t3);
     }
 
+    @Test
+    void storyTargetDateOutranksEpicTargetDate() {
+        // epicLate's own target date is LATER than epicEarly's — if Epic target date were
+        // consulted before Story target date, the task under epicEarly would sort first. The
+        // Story target dates are set the opposite way round, so only a comparator that checks
+        // Story date before Epic date produces the correct (expected) order below.
+        Epic epicLate = epic(Priority.medium, LocalDate.of(2027, 1, 1));
+        Epic epicEarly = epic(Priority.medium, LocalDate.of(2026, 1, 1));
+        Story storyUnderLateEpicButEarlyItself = story(epicLate, Priority.medium, LocalDate.of(2025, 1, 1));
+        Story storyUnderEarlyEpicButLateItself = story(epicEarly, Priority.medium, LocalDate.of(2028, 1, 1));
+        Task expectedFirst = task(storyUnderLateEpicButEarlyItself);
+        Task expectedSecond = task(storyUnderEarlyEpicButLateItself);
+
+        List<Task> sorted = sort(
+                List.of(expectedSecond, expectedFirst),
+                Map.of(epicLate.getId(), epicLate, epicEarly.getId(), epicEarly),
+                Map.of(
+                        storyUnderLateEpicButEarlyItself.getId(), storyUnderLateEpicButEarlyItself,
+                        storyUnderEarlyEpicButLateItself.getId(), storyUnderEarlyEpicButLateItself));
+
+        assertThat(sorted).containsExactly(expectedFirst, expectedSecond);
+    }
+
+    @Test
+    void tiedOnEveryPriorKey_taskIdBreaksTheTieDeterministically() {
+        Epic e = epic(Priority.medium, null);
+        Story s = story(e, Priority.medium, null);
+        Task smallerId = task(s);
+        smallerId.setId(UUID.fromString("00000000-0000-0000-0000-000000000001"));
+        Task largerId = task(s);
+        largerId.setId(UUID.fromString("00000000-0000-0000-0000-000000000002"));
+
+        List<Task> sorted = sort(List.of(largerId, smallerId), Map.of(e.getId(), e), Map.of(s.getId(), s));
+
+        assertThat(sorted).containsExactly(smallerId, largerId);
+    }
+
     private static List<Task> sort(List<Task> tasks, Map<UUID, Epic> epics, Map<UUID, Story> stories) {
         Comparator<Task> c = TaskOrderingStrategy.comparator(epics, stories);
         return tasks.stream().sorted(c).toList();

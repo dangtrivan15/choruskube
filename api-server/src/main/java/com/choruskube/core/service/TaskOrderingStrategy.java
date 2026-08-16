@@ -10,16 +10,30 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Orders the Autopilot's READY frontier (Decision 6): Epic priority, then Story priority, then
- * epic affinity, then target dates, then creation order.
+ * Orders the Autopilot's READY frontier (Decision 6), in this exact order:
  *
- * <p>Epic affinity — preferring another Task from an Epic already in flight — is deliberately a
- * tiebreak rather than a primary key: it reduces context-switching without letting a low-priority
- * Epic monopolise the frontier because it happened to start first.
+ * <ol>
+ *   <li>Epic priority, descending
+ *   <li>Story priority, descending
+ *   <li>epic affinity — deliberately NOT here; applied later as a stable partition of this
+ *       comparator's output, since it depends on which Epics currently have runs in flight
+ *   <li>Story target date, ascending, null last
+ *   <li>Epic target date, ascending, null last
+ *   <li>{@code created_at}
+ *   <li>Task id — a final total-order tiebreak
+ * </ol>
+ *
+ * <p>Story target date is checked before Epic target date: a Story deadline inside an undated (or
+ * later-dated) Epic is the more specific signal, so the narrower scope wins.
  *
  * <p>{@link Priority} is declared {@code low, medium, high}, so its natural order is ascending and
  * every priority comparison here is explicitly reversed. A null target date sorts LAST: undated
  * work is not urgent work.
+ *
+ * <p>The trailing {@code Task::getId} comparison exists because {@code maxParallel = 1} is the
+ * default: with every prior key tied, which Task the Autopilot picks is the entire user-visible
+ * behaviour of a tick, so the pick must be deterministic across ticks and across replicas rather
+ * than left to sort stability.
  *
  * <p>Deliberately a static factory rather than an injectable strategy bean — there is exactly one
  * ordering today. The seam Decision 6 leaves open for critical-path ordering is this class's
@@ -32,9 +46,10 @@ public final class TaskOrderingStrategy {
     public static Comparator<Task> comparator(Map<UUID, Epic> epicsById, Map<UUID, Story> storiesById) {
         return Comparator.<Task, Integer>comparing(t -> priorityRank(epicOf(t, storiesById, epicsById)))
                 .thenComparing(t -> priorityRank(storiesById.get(t.getStoryId())))
-                .thenComparing(t -> targetDateKey(epicOf(t, storiesById, epicsById)))
                 .thenComparing(t -> targetDateKey(storiesById.get(t.getStoryId())))
-                .thenComparing(Task::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder()));
+                .thenComparing(t -> targetDateKey(epicOf(t, storiesById, epicsById)))
+                .thenComparing(Task::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder()))
+                .thenComparing(Task::getId);
     }
 
     /** Higher priority sorts first, so the ascending enum ordinal is negated. */
