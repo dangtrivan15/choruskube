@@ -62,7 +62,9 @@ import org.springframework.util.Assert;
  * <p><strong>The tick may not read request-scoped state.</strong> It runs on a timer thread: no
  * {@code ScopeProvider}, no tenant context. Scope comes from the Autopilot's own id, through
  * {@link AutopilotResolver#findAllEngaged()} and {@link AutopilotCandidateSource}, and
- * authorization from {@link ReadinessAuthMode#AUTOPILOT}.
+ * authorization from {@link ReadinessAuthMode#AUTOPILOT}. What the tick cannot avoid reaching is
+ * {@code startForAutopilot}, whose own collaborators do read that state downstream — so each pass
+ * is run inside {@link AutopilotScopeBinder}, the boundary core declares and downstream fills in.
  */
 @Service
 public class AutopilotService implements AutopilotSafetyValve {
@@ -93,6 +95,7 @@ public class AutopilotService implements AutopilotSafetyValve {
 
     private final AutopilotRepository autopilotRepo;
     private final AutopilotResolver autopilotResolver;
+    private final AutopilotScopeBinder scopeBinder;
     private final WorkflowRunRepository runRepo;
     private final EpicRepository epicRepo;
     private final StoryRepository storyRepo;
@@ -130,6 +133,7 @@ public class AutopilotService implements AutopilotSafetyValve {
     public AutopilotService(
             AutopilotRepository autopilotRepo,
             AutopilotResolver autopilotResolver,
+            AutopilotScopeBinder scopeBinder,
             WorkflowRunRepository runRepo,
             EpicRepository epicRepo,
             StoryRepository storyRepo,
@@ -145,6 +149,7 @@ public class AutopilotService implements AutopilotSafetyValve {
             @Value("${choruskube.instance-id:}") String instanceId) {
         this.autopilotRepo = autopilotRepo;
         this.autopilotResolver = autopilotResolver;
+        this.scopeBinder = scopeBinder;
         this.runRepo = runRepo;
         this.epicRepo = epicRepo;
         this.storyRepo = storyRepo;
@@ -286,6 +291,15 @@ public class AutopilotService implements AutopilotSafetyValve {
      * nothing in its place. Later failures ride along as suppressed exceptions, so a pass is never
      * lost to the one that happened to be first.
      *
+     * <p><strong>Each pass runs inside a scope named by its Autopilot's id.</strong> This is the
+     * one place that boundary can be drawn — the loop is what knows where a pass begins and ends —
+     * and {@link AutopilotScopeBinder} is where a downstream implementation says what binding
+     * means. Core binds nothing, so nothing here changes single-tenant behaviour; downstream, a
+     * pass reaches collaborators that read request-scoped state and would otherwise throw on a
+     * timer thread, on every attempt, until the breaker disengaged that organisation. The binder
+     * call sits INSIDE the try, so a scope that cannot be bound is one organisation's failed pass
+     * and not the whole tick's — the same isolation a failing pass already gets.
+     *
      * <p>Passes over different Autopilots are safe to interleave with other instances' passes
      * without further arbitration: the tick lease is keyed on {@code autopilot.id}, so it
      * serialises per row and never across rows.
@@ -309,7 +323,11 @@ public class AutopilotService implements AutopilotSafetyValve {
         RuntimeException failure = null;
         for (UUID autopilotId : autopilotResolver.findAllEngaged()) {
             try {
-                tickOne(autopilotId);
+                // The whole pass, lease included, and never tickOne() directly — a pass reached
+                // outside the binder is a pass with no scope bound. Asserted by
+                // AutopilotServiceTest#tick_reachesThePassOnlyThroughTheScopeBinder, because core's
+                // binder is a pass-through and cannot show the difference behaviourally.
+                scopeBinder.runInScopeOf(autopilotId, () -> tickOne(autopilotId));
             } catch (RuntimeException e) {
                 // Named here and only summarised, because the re-throw below carries the stack to
                 // the reconciler. Which Autopilot it was is the part that would otherwise be lost.

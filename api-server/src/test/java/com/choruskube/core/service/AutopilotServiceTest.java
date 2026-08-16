@@ -847,6 +847,122 @@ class AutopilotServiceTest {
     }
 
     // -----------------------------------------------------------------------------------
+    // 4c — the scope boundary
+    // -----------------------------------------------------------------------------------
+
+    @Test
+    void tick_bindsAScopePerEngagedAutopilot_namedByThatAutopilotsId() {
+        UUID second = UUID.randomUUID();
+        RecordingBinder binder = bindingBinder();
+
+        newService(Duration.ofMinutes(5), engaged(autopilotId, second), binder).tick();
+
+        assertThat(binder.bound)
+                .as("one scope per pass, in the loop's order, named by the id the pass is for")
+                .containsExactly(autopilotId, second);
+        // And the pass still ran inside each of them: a binder is a wrapper, not a substitute.
+        verify(autopilotRepo).stampTick(eq(autopilotId), any());
+        verify(autopilotRepo).stampTick(eq(second), any());
+    }
+
+    /**
+     * A scope that cannot be bound is one organisation's problem, which is why the binder call is
+     * inside the existing per-pass try rather than around the loop.
+     *
+     * <p>Downstream this is the realistic failure: an organisation whose row has no owner, or whose
+     * tenant lookup fails. Binding outside the try would turn that into every other organisation's
+     * outage — the same "only some of them ever run" defect the loop already exists to prevent.
+     */
+    @Test
+    void tick_aScopeThatCannotBeBound_costsOnlyItsOwnPass_andStillSurfaces() {
+        UUID second = UUID.randomUUID();
+        RecordingBinder binder = bindingBinder();
+        binder.failOn(autopilotId);
+        AutopilotService service = newService(Duration.ofMinutes(5), engaged(autopilotId, second), binder);
+
+        assertThatThrownBy(service::tick)
+                .as("the reconciler is the failure boundary, so a pass that never got a scope must surface")
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("no scope for");
+
+        assertThat(binder.bound).containsExactly(autopilotId, second);
+        verify(autopilotRepo, never()).acquireTickLease(eq(autopilotId), any(), anyInt());
+        verify(autopilotRepo).stampTick(eq(second), any());
+    }
+
+    /**
+     * The structural guard, and the one that matters most here: core's binder is a pass-through, so
+     * no behavioural test in this file can tell a pass that ran inside a scope from one that ran
+     * outside it. This can — by handing the tick a binder that records the scope and then does
+     * <strong>not</strong> run the pass. If the pass is reachable any other way, something happens,
+     * and something happening is the failure.
+     *
+     * <p>What it protects is a later edit, not today's code: {@code tick()} calling {@code tickOne}
+     * directly, or "just this once, outside the binder" alongside it. Both are invisible in core —
+     * every test here would still pass — and downstream both are an organisation whose Autopilot
+     * throws on every start until the breaker disengages it.
+     *
+     * <p>If this fails, do not relax it — the unbound pass is the regression.
+     */
+    @Test
+    void tick_reachesThePassOnlyThroughTheScopeBinder() {
+        UUID second = UUID.randomUUID();
+        RecordingBinder binder = recordingBinderThatNeverRunsThePass();
+        task(story(epic("E")), "Ready", WorkItemStatus.backlog, Readiness.READY);
+
+        newService(Duration.ofMinutes(5), engaged(autopilotId, second), binder).tick();
+
+        assertThat(binder.bound)
+                .as("invoked once per engaged Autopilot — the count the assertions below are measured against")
+                .containsExactly(autopilotId, second);
+        verify(autopilotRepo, never()).acquireTickLease(any(), any(), anyInt());
+        verify(autopilotRepo, never()).stampTick(any(), any());
+        verify(taskService, never()).startForAutopilot(any(), any());
+        verify(eventPublisher, never()).publishAutopilotChanged(any(), any());
+    }
+
+    /** A binder that runs the pass, as a downstream one would once it has bound its scope. */
+    private static RecordingBinder bindingBinder() {
+        return new RecordingBinder(true);
+    }
+
+    /**
+     * A binder that records and returns. Nothing else may run the pass, so under this binder a tick
+     * must have no effect at all.
+     */
+    private static RecordingBinder recordingBinderThatNeverRunsThePass() {
+        return new RecordingBinder(false);
+    }
+
+    /** Stands in for a downstream binder, and remembers which scopes it was asked for. */
+    private static final class RecordingBinder implements AutopilotScopeBinder {
+
+        private final boolean runsThePass;
+        private final List<UUID> bound = new ArrayList<>();
+        private final Set<UUID> cannotBind = new HashSet<>();
+
+        private RecordingBinder(boolean runsThePass) {
+            this.runsThePass = runsThePass;
+        }
+
+        /** Makes binding fail for one Autopilot, the way a missing tenant mapping would. */
+        void failOn(UUID autopilotId) {
+            cannotBind.add(autopilotId);
+        }
+
+        @Override
+        public void runInScopeOf(UUID autopilotId, Runnable pass) {
+            bound.add(autopilotId);
+            if (cannotBind.contains(autopilotId)) {
+                throw new IllegalStateException("no scope for " + autopilotId);
+            }
+            if (runsThePass) {
+                pass.run();
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------------------
     // 5 — a stop that lands mid-pass
     // -----------------------------------------------------------------------------------
 
@@ -1388,7 +1504,17 @@ class AutopilotServiceTest {
         return newService(tickLeaseTtl, new SingleTenantAutopilotResolver(autopilotRepo));
     }
 
+    /**
+     * The real core binder, for the same reason: every test below runs its pass through the
+     * boundary production runs it through. Only the scope-boundary tests substitute one of their
+     * own, because core's binds nothing and so cannot show what a binder is for.
+     */
     private AutopilotService newService(Duration tickLeaseTtl, AutopilotResolver resolver) {
+        return newService(tickLeaseTtl, resolver, new SingleTenantAutopilotScopeBinder());
+    }
+
+    private AutopilotService newService(
+            Duration tickLeaseTtl, AutopilotResolver resolver, AutopilotScopeBinder scopeBinder) {
         when(autopilotRepo.findAll()).thenReturn(autopilot == null ? List.of() : List.of(autopilot));
         when(autopilotRepo.findById(any())).thenAnswer(invocation -> Optional.ofNullable(autopilot));
         when(autopilotRepo.findEngagedById(any()))
@@ -1545,6 +1671,7 @@ class AutopilotServiceTest {
         return new AutopilotService(
                 autopilotRepo,
                 resolver,
+                scopeBinder,
                 runRepo,
                 epicRepo,
                 storyRepo,
