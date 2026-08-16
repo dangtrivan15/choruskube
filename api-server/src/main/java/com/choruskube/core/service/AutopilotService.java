@@ -229,7 +229,16 @@ public class AutopilotService {
         }
 
         autopilot.setLastTickAt(now);
-        Autopilot saved = autopilotRepo.save(autopilot);
+        // Flushed and then re-read, in that order, because a lock-free disengage may have landed
+        // while this pass was running. Flushing first writes the tick's own columns — and only
+        // those, per @DynamicUpdate — so the re-read merges them with whatever the human changed
+        // instead of overwriting it. Without the re-read the payload below would carry
+        // `engaged: true` from this stale copy, and the UI, which renders STOMP payloads directly,
+        // would flip the panel back to "Engaged" moments after the user stopped it: the state and
+        // the behaviour would be right and only the display wrong, at exactly the moment someone
+        // is watching to confirm the stop worked.
+        Autopilot saved = autopilotRepo.saveAndFlush(autopilot);
+        entityManager.refresh(saved);
         // Published on EVERY tick, not only ticks that started something: last_tick_at moved, and
         // the panel is live over STOMP and never polls, so without this its "last tick" goes stale
         // and an idle Autopilot becomes indistinguishable from a dead one.
@@ -505,10 +514,27 @@ public class AutopilotService {
      * <p>{@code lastTickAt} is stamped here too. The settle marker already makes replaying old
      * failures impossible, but the panel's "last tick" would otherwise show a time from before the
      * Autopilot was even engaged.
+     *
+     * <p>Refuses if the Autopilot was switched off while this request was queued. Making {@link
+     * #disengage()} lock-free removed the FIFO ordering the lock used to give both sides, so a
+     * stop issued <em>during</em> this call's wait would otherwise commit first and then be
+     * overwritten by it — the Autopilot back ON because of a click that came earlier. The witness
+     * is the {@code engaged} flag itself rather than {@code updatedAt}, which every tick bumps and
+     * which would therefore reject every contended engage.
+     *
+     * <p>The check is only meaningful when this call had something to wait for, and it is exactly
+     * then that it applies: a tick returns before taking the lock when the row is already off, so
+     * the row being off on entry means the stop preceded this request and engaging is the correct
+     * answer.
      */
     @Transactional
     public AutopilotStatusResponse engage() {
+        boolean engagedBeforeWaiting = findSingleton().map(Autopilot::isEngaged).orElse(false);
         Autopilot autopilot = lockedForMutation();
+        if (engagedBeforeWaiting && !autopilot.isEngaged()) {
+            throw new ConflictException("The Autopilot was disengaged while this request was waiting for a tick to "
+                    + "finish, so it was left off. Engage again if that is still what you want.");
+        }
         autopilot.setEngaged(true);
         autopilot.setConsecutiveFailures(0);
         autopilot.setDisengagedReason(null);
@@ -573,6 +599,12 @@ public class AutopilotService {
      * applies. On expiry the caller gets a 409 telling it to retry, which is an acceptable answer
      * for turning the Autopilot on or changing its ceiling — and is why {@link #disengage()}, for
      * which it would not be acceptable, does not come through here.
+     *
+     * <p>{@code SET LOCAL} lasts the whole transaction, so the bound also covers this mutator's
+     * own commit-time {@code UPDATE} of the row. A timeout there would surface as a 500 rather
+     * than the 409 above, since it happens after this method has returned; the window is the same
+     * short flush-to-commit one {@link AutopilotRepository#disengage} describes, so it is left as
+     * it is rather than papered over with a second timeout setting.
      *
      * <p>A row that does not exist yet is not locked: there is no tick to race with until it does.
      * Two concurrent first-writes can therefore still produce a second row — see {@link

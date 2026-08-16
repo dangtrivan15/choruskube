@@ -22,11 +22,13 @@ import org.hibernate.annotations.DynamicUpdate;
  */
 @Entity
 @Table(name = "autopilot")
-// The tick and the three mutators write disjoint sets of columns — counters and last_tick_at on
-// one side, engaged and max_parallel on the other — and both serialise on the same advisory lock,
-// so this changes nothing today. It is here for the day someone adds a fourth write path and
-// forgets the lock: a full-column UPDATE would then silently restore `engaged` after a human hit
-// Disengage, while a dynamic one writes only what it actually changed and the stop survives.
+// Load-bearing, not an optimisation. The emergency stop is a targeted UPDATE that deliberately
+// does NOT take the tick's advisory lock, so a tick can be mid-pass when it lands. What keeps the
+// stop from being undone is precisely this: the tick's write-back carries only the columns it
+// actually changed — its counters and last_tick_at — so `engaged` is absent from the statement
+// unless the tick set it itself, and the only thing that does is the failure breaker, which
+// writes false too. Remove this and a full-column UPDATE restores engaged = true after a human
+// has hit Disengage. AutopilotServiceIntegrationTest pins that with a deterministic interleaving.
 @DynamicUpdate
 public class Autopilot {
 

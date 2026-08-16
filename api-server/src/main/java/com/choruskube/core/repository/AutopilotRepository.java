@@ -27,6 +27,11 @@ public interface AutopilotRepository extends JpaRepository<Autopilot, UUID> {
      * <p>{@code disengaged_reason} is cleared for the same reason the service does it: a human
      * switching it off is not a fault, and the UI renders that field as a fault banner.
      *
+     * <p>Not entirely wait-free, to be honest about it: this statement can still queue behind the
+     * tick's own {@code UPDATE} of the same row, and it carries no {@code lock_timeout}. The
+     * window is only from the tick's commit-time flush to its commit, so it is short — nothing
+     * like the whole pass the advisory lock would have made it wait for.
+     *
      * @return rows affected — 0 when the row has been deleted underneath the caller
      */
     @Modifying

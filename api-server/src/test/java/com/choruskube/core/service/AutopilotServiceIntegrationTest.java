@@ -1,6 +1,7 @@
 package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.choruskube.core.BaseTest;
 import com.choruskube.core.CommittedFixtureCleaner;
@@ -366,6 +367,51 @@ public class AutopilotServiceIntegrationTest extends BaseTest {
         int startedByTheRace = runsFor(autopilotId).size();
         autopilotService.tick();
         assertThat(runsFor(autopilotId)).hasSize(startedByTheRace);
+    }
+
+    /**
+     * A stop must never be undone by a mutation that was issued before it.
+     *
+     * <p>Making {@code disengage()} lock-free bought a fast emergency stop but gave up the FIFO
+     * ordering the advisory lock used to impose on both sides. This is the interleaving that
+     * opened up: an {@code engage()} queued on the lock, a stop issued while it waits, and the
+     * engage then acquiring and committing on top of it — the Autopilot back ON because of a click
+     * that came earlier.
+     *
+     * <p>Deterministic rather than timing-dependent. The {@code get} that times out is what proves
+     * the engage has already read the row and is genuinely queued, so the stop that follows is
+     * unambiguously the later of the two. The message assertion matters: a 409 from the lock
+     * timeout would otherwise let this pass for the wrong reason.
+     */
+    @Test
+    void engage_doesNotUndoADisengageIssuedWhileItWasWaiting() throws Exception {
+        UUID autopilotId = engage();
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            Future<?> engaging = new TransactionTemplate(txManager).execute(status -> {
+                lockService.acquireLock(autopilotId);
+
+                Future<?> pending = pool.submit(() -> autopilotService.engage());
+                assertThatThrownBy(() -> pending.get(500, TimeUnit.MILLISECONDS))
+                        .as("engage must have read the row and be queued on the lock by now")
+                        .isInstanceOf(TimeoutException.class);
+
+                assertThat(awaiting(pool.submit(() -> autopilotService.disengage()), 10))
+                        .as("the stop is lock-free, so it lands while the engage is still waiting")
+                        .isNull();
+                return pending;
+            });
+
+            assertThat(awaiting(engaging, 30))
+                    .isInstanceOf(ConflictException.class)
+                    .hasMessageContaining("disengaged while this request was waiting");
+        } finally {
+            pool.shutdownNow();
+        }
+
+        assertThat(autopilotRepo.findById(autopilotId).orElseThrow().isEngaged())
+                .as("the later of the two clicks wins")
+                .isFalse();
     }
 
     private static Callable<Throwable> released(CyclicBarrier startLine, Runnable action) {

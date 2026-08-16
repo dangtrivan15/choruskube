@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
@@ -52,6 +53,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -60,6 +62,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.mockito.stubbing.Answer;
 import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -381,14 +384,26 @@ class AutopilotServiceTest {
     }
 
     @Test
-    void tick_rereadsTheRowAfterTakingTheLock() {
-        // The row is read BEFORE the lock, so on a second replica it may already be another tick's
-        // stale "before" image; saving that back would silently undo that tick's failure count.
+    void tick_rereadsTheRowTwice_afterTakingTheLockAndAgainBeforePublishing() {
+        // Two different staleness problems, one mechanism.
+        //
+        // After the lock: the row was read BEFORE it, so on a second replica it may already be
+        // another tick's stale "before" image, and saving that back would undo its failure count.
+        //
+        // Before publishing: a lock-free disengage may have landed during the pass, and the
+        // payload must carry the row's state rather than this tick's copy of it.
         story(epic("E"));
+        InOrder inOrder = inOrder(lockService, entityManager, autopilotRepo, eventPublisher);
 
         newService().tick();
 
-        verify(entityManager).refresh(autopilot);
+        inOrder.verify(lockService).acquireLock(autopilotId);
+        inOrder.verify(entityManager).refresh(autopilot);
+        // Flushed first, so the re-read merges the tick's own columns with the human's change
+        // instead of discarding them.
+        inOrder.verify(autopilotRepo).saveAndFlush(autopilot);
+        inOrder.verify(entityManager).refresh(autopilot);
+        inOrder.verify(eventPublisher).publishAutopilotChanged(any(), any());
     }
 
     // -----------------------------------------------------------------------------------
@@ -697,6 +712,56 @@ class AutopilotServiceTest {
     }
 
     @Test
+    void engage_refusesWhenTheAutopilotWasStoppedWhileItWaited() {
+        // Making disengage lock-free removed the FIFO ordering the lock used to give both sides,
+        // so a stop issued DURING this call's wait would otherwise commit first and be overwritten
+        // by it — the Autopilot back on because of a click that came earlier.
+        AutopilotService service = newService();
+        doAnswer(invocation -> {
+                    autopilot.setEngaged(false);
+                    return null;
+                })
+                .when(entityManager)
+                .refresh(autopilot);
+
+        assertThatThrownBy(service::engage)
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining("disengaged while this request was waiting");
+        assertThat(autopilot.isEngaged()).isFalse();
+        verify(eventPublisher, never()).publishAutopilotChanged(any(), any());
+    }
+
+    @Test
+    void engage_proceedsWhenTheRowWasAlreadyOffBeforeItWaited() {
+        // A tick returns before taking the lock when the row is off, so an off row on entry means
+        // the stop preceded this request and engaging is the correct answer.
+        autopilot.setEngaged(false);
+
+        assertThat(newService().engage().engaged()).isTrue();
+    }
+
+    @Test
+    void tick_publishesTheRereadRow_soAStopThatLandedMidPassIsNotShownAsEngaged() {
+        // The UI renders STOMP payloads directly, so a stale `engaged: true` here flips the panel
+        // back to "Engaged" moments after the user stopped it — while they are watching to confirm
+        // the stop worked. The second refresh below stands in for the disengage landing mid-pass.
+        story(epic("E"));
+        AtomicInteger refreshes = new AtomicInteger();
+        doAnswer(invocation -> {
+                    if (refreshes.incrementAndGet() == 2) {
+                        autopilot.setEngaged(false);
+                    }
+                    return null;
+                })
+                .when(entityManager)
+                .refresh(autopilot);
+
+        assertThat(tickAndCapturePublished().engaged())
+                .as("the published payload must reflect the row, not the tick's copy of it")
+                .isFalse();
+    }
+
+    @Test
     void mutatingWhenNoRowExists_takesNoLock() {
         // Nothing to serialise against: no row means no tick can be running on it.
         autopilot = null;
@@ -736,7 +801,7 @@ class AutopilotServiceTest {
             autopilot.setDisengagedReason(null);
             return 1;
         });
-        when(autopilotRepo.save(any(Autopilot.class))).thenAnswer(invocation -> {
+        Answer<Autopilot> persist = invocation -> {
             Autopilot saved = invocation.getArgument(0);
             if (saved.getId() == null) {
                 // Stands in for the identifier generator, so a first-write path has an id to
@@ -745,7 +810,9 @@ class AutopilotServiceTest {
                 saved.setCreatedAt(Instant.now());
             }
             return saved;
-        });
+        };
+        when(autopilotRepo.save(any(Autopilot.class))).thenAnswer(persist);
+        when(autopilotRepo.saveAndFlush(any(Autopilot.class))).thenAnswer(persist);
         // The null guards are not defensive padding: re-stubbing calls the mock with null
         // arguments, so a test that builds the service twice would otherwise NPE inside the
         // answer installed by the first build.
