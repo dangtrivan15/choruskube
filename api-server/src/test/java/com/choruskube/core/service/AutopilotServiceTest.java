@@ -670,6 +670,87 @@ class AutopilotServiceTest {
     }
 
     // -----------------------------------------------------------------------------------
+    // 4b — one pass per engaged Autopilot
+    // -----------------------------------------------------------------------------------
+
+    /**
+     * The defect this seam exists to remove, pinned. Row selection used to be {@code
+     * findAll().min(oldest)} inside the service, so a tick reached exactly one Autopilot however
+     * many were engaged — and downstream, where an Autopilot belongs to an organisation, every
+     * organisation but the oldest would silently never run.
+     *
+     * <p>Writable here even though core only ever has one row: the loop is what is under test, and
+     * the resolver is the seam that decides how many rows go into it.
+     */
+    @Test
+    void tick_passesOverEveryEngagedAutopilot_notOnlyTheFirst() {
+        UUID second = UUID.randomUUID();
+
+        newService(Duration.ofMinutes(5), engaged(autopilotId, second)).tick();
+
+        verify(autopilotRepo).acquireTickLease(eq(autopilotId), eq(THIS_INSTANCE), anyInt());
+        verify(autopilotRepo).acquireTickLease(eq(second), eq(THIS_INSTANCE), anyInt());
+        verify(autopilotRepo).stampTick(eq(autopilotId), any());
+        verify(autopilotRepo).stampTick(eq(second), any());
+        // Per-row, so two passes never hold one lease between them — which is also why the loop
+        // needs no arbitration of its own.
+        verify(autopilotRepo).releaseTickLease(eq(autopilotId), eq(THIS_INSTANCE));
+        verify(autopilotRepo).releaseTickLease(eq(second), eq(THIS_INSTANCE));
+    }
+
+    @Test
+    void tick_onePassThrowing_doesNotCostTheNextAutopilotItsPass() {
+        // Downstream a pass belongs to one organisation. Abandoning the loop on the first
+        // exception would turn one organisation's broken start into every other organisation's
+        // outage — the same "only the first one runs" failure, arrived at from the other side.
+        UUID second = UUID.randomUUID();
+        AutopilotService service = newService(Duration.ofMinutes(5), engaged(autopilotId, second));
+        // Stubbed after the service is built, and narrowed to the first id: the harness's own
+        // any()/any() answer still serves the second.
+        when(runRepo.findByAutopilotIdAndAutopilotSettledAtIsNullAndStatusIn(eq(autopilotId), any()))
+                .thenThrow(new IllegalStateException("database went away"));
+
+        assertThatThrownBy(service::tick)
+                .as("the reconciler is the failure boundary, so a failed pass must still surface")
+                .isInstanceOf(IllegalStateException.class);
+
+        verify(autopilotRepo).stampTick(eq(second), any());
+        verify(autopilotRepo).releaseTickLease(eq(autopilotId), eq(THIS_INSTANCE));
+        verify(autopilotRepo).releaseTickLease(eq(second), eq(THIS_INSTANCE));
+    }
+
+    @Test
+    void tick_withNothingEngaged_claimsNoLease() {
+        // findAllEngaged() has already filtered, so an idle installation writes nothing at all on
+        // every scheduler interval — no stamp, and not even a lease acquire.
+        newService(Duration.ofMinutes(5), engaged()).tick();
+
+        verify(autopilotRepo, never()).acquireTickLease(any(), any(), anyInt());
+        verify(autopilotRepo, never()).stampTick(any(), any());
+    }
+
+    /** A resolver that reports exactly these Autopilots as engaged. */
+    private static AutopilotResolver engaged(UUID... ids) {
+        List<UUID> engaged = List.of(ids);
+        return new AutopilotResolver() {
+            @Override
+            public Optional<UUID> forCurrentScope() {
+                return engaged.stream().findFirst();
+            }
+
+            @Override
+            public UUID getOrCreateForCurrentScope() {
+                return engaged.getFirst();
+            }
+
+            @Override
+            public List<UUID> findAllEngaged() {
+                return engaged;
+            }
+        };
+    }
+
+    // -----------------------------------------------------------------------------------
     // 5 — a stop that lands mid-pass
     // -----------------------------------------------------------------------------------
 
@@ -1089,7 +1170,17 @@ class AutopilotServiceTest {
         return newService(Duration.ofMinutes(5));
     }
 
+    /**
+     * The real single-tenant resolver over the same emulated row, so every test below still selects
+     * the Autopilot exactly the way production does. Only the two tick-loop tests substitute a
+     * resolver of their own, because core has one row and the loop's isolation is about having
+     * several.
+     */
     private AutopilotService newService(Duration tickLeaseTtl) {
+        return newService(tickLeaseTtl, new SingleTenantAutopilotResolver(autopilotRepo, event -> {}));
+    }
+
+    private AutopilotService newService(Duration tickLeaseTtl, AutopilotResolver resolver) {
         when(autopilotRepo.findAll()).thenReturn(autopilot == null ? List.of() : List.of(autopilot));
         when(autopilotRepo.findById(any())).thenAnswer(invocation -> Optional.ofNullable(autopilot));
         when(autopilotRepo.findEngagedById(any()))
@@ -1245,6 +1336,7 @@ class AutopilotServiceTest {
         }
         return new AutopilotService(
                 autopilotRepo,
+                resolver,
                 runRepo,
                 epicRepo,
                 storyRepo,

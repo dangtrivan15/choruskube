@@ -67,6 +67,9 @@ public class AutopilotServiceIntegrationTest extends BaseTest {
     private AutopilotService autopilotService;
 
     @Autowired
+    private AutopilotResolver autopilotResolver;
+
+    @Autowired
     private TaskService taskService;
 
     @Autowired
@@ -461,6 +464,37 @@ public class AutopilotServiceIntegrationTest extends BaseTest {
                 return t;
             }
         };
+    }
+
+    /**
+     * What the scheduler passes over, against the real table.
+     *
+     * <p>The tick loops over exactly this list, so an id that is missing here is an Autopilot that
+     * silently never runs — the failure mode the seam exists to prevent, and one no assertion on
+     * {@code tick()} alone would name.
+     */
+    @Test
+    void findAllEngaged_followsTheRowsEngagement() {
+        assertThat(autopilotResolver.findAllEngaged())
+                .as("no row at all is not an Autopilot to pass over")
+                .isEmpty();
+
+        UUID autopilotId = engage();
+        assertThat(autopilotResolver.findAllEngaged()).containsExactly(autopilotId);
+
+        autopilotService.disengage();
+        assertThat(autopilotResolver.findAllEngaged())
+                .as("a human said no; the scheduler must not claim a lease on it")
+                .isEmpty();
+    }
+
+    @Test
+    void findAllEngaged_neverCreatesTheRow() {
+        // It runs on a timer thread, where the ownership event an insert has to publish cannot be
+        // resolved. An installation that never engaged the Autopilot must stay that way.
+        assertThat(autopilotResolver.findAllEngaged()).isEmpty();
+
+        assertThat(autopilotRepo.count()).isZero();
     }
 
     @Test

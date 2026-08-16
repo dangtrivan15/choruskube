@@ -24,7 +24,6 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -47,16 +46,21 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.Assert;
 
 /**
- * The Autopilot: a standing controller that starts READY Tasks unattended (Decision 1). One row
- * per installation (Decision 7), no terminal state — an empty ready frontier means idle, not
- * finished.
+ * The Autopilot: a standing controller that starts READY Tasks unattended (Decision 1). No
+ * terminal state — an empty ready frontier means idle, not finished.
  *
  * <p>Lives in this package because {@link EpicReadinessAssembler} and both of its methods are
  * package-private, and the Autopilot has to compute readiness exactly the way the board does.
  *
- * <p><strong>Nothing here may read request-scoped state.</strong> The tick runs on a timer thread:
- * no {@code ScopeProvider}, no tenant context. Scope comes from the Autopilot's own id, through
- * {@link AutopilotCandidateSource}, and authorization from {@link ReadinessAuthMode#AUTOPILOT}.
+ * <p><strong>Which row this is acting on is never decided here.</strong> It comes from {@link
+ * AutopilotResolver} — one Autopilot per installation in core (Decision 7), one per organisation
+ * downstream. Nothing in this class enumerates or orders {@code autopilot} rows itself, which is
+ * what stops "the singleton" quietly meaning "somebody else's" once there is more than one.
+ *
+ * <p><strong>The tick may not read request-scoped state.</strong> It runs on a timer thread: no
+ * {@code ScopeProvider}, no tenant context. Scope comes from the Autopilot's own id, through
+ * {@link AutopilotResolver#findAllEngaged()} and {@link AutopilotCandidateSource}, and
+ * authorization from {@link ReadinessAuthMode#AUTOPILOT}.
  */
 @Service
 public class AutopilotService implements AutopilotSafetyValve {
@@ -86,6 +90,7 @@ public class AutopilotService implements AutopilotSafetyValve {
     private static final Duration MINIMUM_TICK_LEASE_TTL = Duration.ofSeconds(30);
 
     private final AutopilotRepository autopilotRepo;
+    private final AutopilotResolver autopilotResolver;
     private final WorkflowRunRepository runRepo;
     private final EpicRepository epicRepo;
     private final StoryRepository storyRepo;
@@ -121,6 +126,7 @@ public class AutopilotService implements AutopilotSafetyValve {
 
     public AutopilotService(
             AutopilotRepository autopilotRepo,
+            AutopilotResolver autopilotResolver,
             WorkflowRunRepository runRepo,
             EpicRepository epicRepo,
             StoryRepository storyRepo,
@@ -134,6 +140,7 @@ public class AutopilotService implements AutopilotSafetyValve {
             @Value("${choruskube.autopilot.tick-lease-ttl:PT5M}") Duration tickLeaseTtl,
             @Value("${choruskube.instance-id:}") String instanceId) {
         this.autopilotRepo = autopilotRepo;
+        this.autopilotResolver = autopilotResolver;
         this.runRepo = runRepo;
         this.epicRepo = epicRepo;
         this.storyRepo = storyRepo;
@@ -259,6 +266,87 @@ public class AutopilotService implements AutopilotSafetyValve {
     private record Plan(int slots, Frontier frontier) {}
 
     /**
+     * Every engaged Autopilot, one pass each.
+     *
+     * <p><strong>Each pass is isolated from the next.</strong> The catch is inside the loop because
+     * a pass belongs to one organisation downstream, and one organisation's broken start — or
+     * vanished row, or failing database call — must not cost every other organisation its tick.
+     * That is the whole reason row selection moved behind {@link AutopilotResolver}: a loop that
+     * abandoned on the first exception would reintroduce, as an outage instead of a leak, exactly
+     * the "only the first one ever runs" defect the seam exists to remove.
+     *
+     * <p>The failure is re-thrown once the loop is done rather than swallowed. {@code
+     * AutopilotReconciler} is the failure boundary — it owns the schedule and the logging — and a
+     * tick that reported success while a pass had thrown would take that boundary away with
+     * nothing in its place. Later failures ride along as suppressed exceptions, so a pass is never
+     * lost to the one that happened to be first.
+     *
+     * <p>Passes over different Autopilots are safe to interleave with other instances' passes
+     * without further arbitration: the tick lease is keyed on {@code autopilot.id}, so it
+     * serialises per row and never across rows.
+     *
+     * <p><strong>Must not be called inside a transaction, and says so out loud.</strong> The
+     * assertion sits here, ahead of resolution and of the loop, because both phase templates below
+     * are {@code PROPAGATION_REQUIRED}: an ambient transaction — a {@code @Transactional} added to
+     * this method, or any transactional bean calling it — would silently swallow every pass, every
+     * phase, every {@code startForAutopilot}, and the lease's own acquire and release into one long
+     * transaction. That is exactly the defect this structure removes, and it would reappear with no
+     * test failing: a phase exception would then poison the release in the {@code finally}, rolling
+     * it back and leaking the lease for a full TTL. The assertion is the enforcement, since
+     * propagation cannot express "there must be no parent".
+     */
+    public void tick() {
+        Assert.state(
+                !TransactionSynchronizationManager.isActualTransactionActive(),
+                "AutopilotService.tick() must not run inside a transaction: its four phases and the "
+                        + "tick lease are separate short transactions on purpose, and an ambient one would "
+                        + "merge them back into the single long transaction this design exists to remove.");
+        RuntimeException failure = null;
+        for (UUID autopilotId : autopilotResolver.findAllEngaged()) {
+            try {
+                tickOne(autopilotId);
+            } catch (RuntimeException e) {
+                // Named here and only summarised, because the re-throw below carries the stack to
+                // the reconciler. Which Autopilot it was is the part that would otherwise be lost.
+                log.warn("Autopilot pass failed on {}: {}", autopilotId, e.getMessage());
+                if (failure == null) {
+                    failure = e;
+                } else if (failure != e) {
+                    // Guarded on identity: two passes can fail on the same exception instance, and
+                    // suppressing a throwable into itself is an IllegalArgumentException — a
+                    // second fault raised while reporting the first.
+                    failure.addSuppressed(e);
+                }
+            }
+        }
+        if (failure != null) {
+            throw failure;
+        }
+    }
+
+    /**
+     * One Autopilot's pass, from claiming the lease to giving it back.
+     *
+     * <p>Whoever loses the lease race skips the pass entirely rather than waiting for it. Waiting
+     * would queue instances behind a slow tick; skipping costs one scheduler interval, and the
+     * work is still there next time.
+     */
+    private void tickOne(UUID autopilotId) {
+        Instant now = Instant.now();
+        if (autopilotRepo.acquireTickLease(autopilotId, instanceId, leaseTtlSeconds()) == 0) {
+            log.debug("Autopilot pass skipped: another instance holds the tick lease on {}", autopilotId);
+            return;
+        }
+        try {
+            runPass(autopilotId, now);
+        } finally {
+            // Guarded on ownership inside the statement, so this is a no-op if the lease was lost
+            // and taken over. Skipping the release entirely would only cost one TTL of idleness.
+            autopilotRepo.releaseTickLease(autopilotId, instanceId);
+        }
+    }
+
+    /**
      * One pass of the loop, as four short transactions rather than one long one.
      *
      * <pre>
@@ -282,47 +370,12 @@ public class AutopilotService implements AutopilotSafetyValve {
      * open to a second instance that would count the same free slots and start the same work,
      * violating {@code max_parallel}. See {@link AutopilotRepository#acquireTickLease}.
      *
-     * <p>Whoever loses the lease race skips the pass entirely rather than waiting for it. Waiting
-     * would queue instances behind a slow tick; skipping costs one scheduler interval, and the
-     * work is still there next time.
-     *
-     * <p><strong>Must not be called inside a transaction, and says so out loud.</strong> Both
-     * templates below are {@code PROPAGATION_REQUIRED}, so an ambient transaction — a
-     * {@code @Transactional} added to this method, or any transactional bean calling it — would
-     * silently swallow all four phases, every {@code startForAutopilot}, and the lease's own
-     * acquire and release into one long transaction. That is exactly the defect this structure
-     * removes, and it would reappear with no test failing: a phase exception would then poison the
-     * release in the {@code finally}, rolling it back and leaking the lease for a full TTL. The
-     * assertion is the enforcement, since propagation cannot express "there must be no parent".
+     * <p>An Autopilot that a human disengaged between {@link AutopilotResolver#findAllEngaged()}
+     * and the lease claims a pass and does nothing with it — phase 1 re-reads {@code engaged}
+     * under the lease and settles as {@code DISENGAGED} without stamping. An absent or disengaged
+     * Autopilot is simply not in the loop, so an idle installation still writes nothing on every
+     * scheduler interval.
      */
-    public void tick() {
-        Assert.state(
-                !TransactionSynchronizationManager.isActualTransactionActive(),
-                "AutopilotService.tick() must not run inside a transaction: its four phases and the "
-                        + "tick lease are separate short transactions on purpose, and an ambient one would "
-                        + "merge them back into the single long transaction this design exists to remove.");
-        Optional<Autopilot> found = findSingleton();
-        if (found.isEmpty() || !found.get().isEngaged()) {
-            // Absent means never configured; disengaged means a human said no. Neither claims a
-            // lease: an idle installation must not write to the row on every scheduler interval.
-            return;
-        }
-        UUID autopilotId = found.get().getId();
-        Instant now = Instant.now();
-        if (autopilotRepo.acquireTickLease(autopilotId, instanceId, leaseTtlSeconds()) == 0) {
-            log.debug("Autopilot pass skipped: another instance holds the tick lease");
-            return;
-        }
-        try {
-            runPass(autopilotId, now);
-        } finally {
-            // Guarded on ownership inside the statement, so this is a no-op if the lease was lost
-            // and taken over. Skipping the release entirely would only cost one TTL of idleness.
-            autopilotRepo.releaseTickLease(autopilotId, instanceId);
-        }
-    }
-
-    /** The four phases, once this instance owns the pass. */
     private void runPass(UUID autopilotId, Instant now) {
         List<String> notes = new ArrayList<>();
         Set<UUID> startedTaskIds = new LinkedHashSet<>();
@@ -730,7 +783,14 @@ public class AutopilotService implements AutopilotSafetyValve {
     /** Never inserts. No row means never configured, and a read must not change that. */
     @Transactional(readOnly = true)
     public AutopilotStatusResponse getStatus() {
-        return findSingleton().map(this::snapshot).orElseGet(AutopilotService::unconfiguredStatus);
+        return autopilotResolver
+                .forCurrentScope()
+                .flatMap(autopilotRepo::findById)
+                .map(this::snapshot)
+                // Empty either because this scope has no Autopilot, or because the row it named
+                // was deleted between the two reads. Both are "never configured" as far as a
+                // caller is concerned, and neither may insert one to say so.
+                .orElseGet(AutopilotService::unconfiguredStatus);
     }
 
     /** Get-or-create, then set. A null {@code maxParallel} leaves it alone. */
@@ -800,12 +860,12 @@ public class AutopilotService implements AutopilotSafetyValve {
     @Override
     @Transactional
     public void disengageForExternalFailure(String reason) {
-        Optional<Autopilot> found = findSingleton();
+        Optional<UUID> found = autopilotResolver.forCurrentScope();
         if (found.isEmpty()) {
             log.debug("External failure reported with no Autopilot configured; nothing to disengage: {}", reason);
             return;
         }
-        UUID autopilotId = found.get().getId();
+        UUID autopilotId = found.get();
         // The read above supplies the id and nothing else: whether it is engaged is decided inside
         // the statement, so a human's Engage landing between the two cannot be silently undone by a
         // decision taken before it.
@@ -818,18 +878,16 @@ public class AutopilotService implements AutopilotSafetyValve {
     }
 
     /**
-     * The id of the singleton, creating the row at its column defaults if this installation has
-     * never configured one. Callers then apply the statement they actually wanted.
+     * The caller's Autopilot, created at its column defaults if this scope has never configured
+     * one. Callers then apply the statement they actually wanted.
      *
-     * <p>Two concurrent first-writes can still produce a second row — see {@link #findSingleton()}
-     * for why that is survivable.
+     * <p>Creation belongs to {@link AutopilotResolver} rather than here because only the resolver
+     * knows what scope a new row belongs to, and because the ownership event that has to accompany
+     * the insert is resolved from request-scoped state — see {@link
+     * AutopilotResolver#getOrCreateForCurrentScope()}.
      */
     private UUID ensureRow() {
-        return findSingleton().map(Autopilot::getId).orElseGet(() -> {
-            UUID id = UUID.randomUUID();
-            autopilotRepo.insertDefaults(id);
-            return id;
-        });
+        return autopilotResolver.getOrCreateForCurrentScope();
     }
 
     /** Reads the row back after a statement changed it, and broadcasts what it now says. */
@@ -1016,21 +1074,5 @@ public class AutopilotService implements AutopilotSafetyValve {
                 unconfigured.getConsecutiveFailures(),
                 null,
                 null);
-    }
-
-    /**
-     * The singleton (Decision 7). Ordered rather than "whichever row came back first" so that if a
-     * concurrent first-write ever does produce a second row, every replica still agrees on which
-     * one is the Autopilot instead of alternating between them.
-     *
-     * <p>The loser of such a race is inert — it is never ticked and holds no runs — but it is not
-     * invisible: the request that created it returns and publishes the ORPHAN's status, so that one
-     * client briefly renders a row that will never tick. The next tick publishes the canonical row
-     * within the scheduler interval and the display corrects itself.
-     */
-    private Optional<Autopilot> findSingleton() {
-        return autopilotRepo.findAll().stream()
-                .min(Comparator.comparing(Autopilot::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder()))
-                        .thenComparing(Autopilot::getId));
     }
 }

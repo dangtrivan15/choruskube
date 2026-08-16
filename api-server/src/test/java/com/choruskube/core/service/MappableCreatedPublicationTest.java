@@ -16,6 +16,7 @@ import com.choruskube.core.model.TemplateNode;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.ExecutorType;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
+import com.choruskube.core.repository.AutopilotRepository;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.NodeDefinitionRepository;
@@ -121,12 +122,18 @@ class MappableCreatedPublicationTest extends BaseTest {
     @Autowired
     private RepoGroupService repoGroupService;
 
+    @Autowired
+    private AutopilotService autopilotService;
+
     // -----------------------------------------------------------------------
     // Repos
     // -----------------------------------------------------------------------
 
     @Autowired
     private GitRepoRepository gitRepoRepo;
+
+    @Autowired
+    private AutopilotRepository autopilotRepo;
 
     @Autowired
     private GraphTemplateRepository graphTemplateRepo;
@@ -325,6 +332,52 @@ class MappableCreatedPublicationTest extends BaseTest {
                 .as("resourceId must match the saved RepoGroup id")
                 .isEqualTo(group.getId());
         assertThat(evt.parent()).as("of(...) factory → parent must be null").isNull();
+    }
+
+    // -----------------------------------------------------------------------
+    // Request-scoped site: AutopilotResolver.getOrCreateForCurrentScope →
+    //                      of("autopilot", id)
+    // -----------------------------------------------------------------------
+
+    /**
+     * The Autopilot row is created lazily by the first mutation, not by a create endpoint, which is
+     * how it went without an ownership event at all. Downstream this event is what gives the row an
+     * owner; a row created without one is one the scope provider cannot resolve afterwards.
+     *
+     * <p>{@code update(null)} is the cheapest way through get-or-create — it inserts and then
+     * changes nothing. {@code engage()} would reach the same insert and then sweep readiness across
+     * every Epic in the shared test database on its way back out.
+     */
+    @Test
+    void autopilotGetOrCreate_publishesMappableCreated_withAutopilotType_andNoParent() {
+        autopilotService.update(null);
+
+        List<MappableCreated> events = collector.getCaptured();
+        assertThat(events)
+                .as("exactly one MappableCreated should be published for Autopilot creation")
+                .hasSize(1);
+
+        MappableCreated evt = events.get(0);
+        assertThat(evt.resourceType())
+                .as("resourceType must be the table name 'autopilot' — the downstream ownership "
+                        + "writer switches on this string")
+                .isEqualTo("autopilot");
+        assertThat(evt.resourceId())
+                .as("resourceId must be the inserted row")
+                .isEqualTo(autopilotRepo.findAll().getFirst().getId());
+        assertThat(evt.parent()).as("of(...) factory → parent must be null").isNull();
+    }
+
+    @Test
+    void autopilotGetOrCreate_onAnExistingRow_publishesNothing() {
+        autopilotService.update(null);
+        collector.clear();
+
+        autopilotService.update(2);
+
+        assertThat(collector.getCaptured())
+                .as("nothing was created, so nothing acquired an owner")
+                .isEmpty();
     }
 
     // -----------------------------------------------------------------------
