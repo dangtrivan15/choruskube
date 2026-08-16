@@ -297,6 +297,10 @@ class EpicReadinessAssembler {
             case PUBLIC -> authService.checkOrgAccess(type.name(), id);
             case INTERNAL_RUN -> authService.assertSameOrg(type.name(), id, "workflow_run", contextId);
             case AUTOPILOT -> authService.assertSameOrg(type.name(), id, "autopilot", contextId);
+            // javac does not exhaustiveness-check a switch STATEMENT, so a fourth
+            // ReadinessAuthMode would compile straight through this block and perform no
+            // authorization at all — in the method whose entire job is that gate. Fail closed.
+            default -> throw new IllegalStateException("Unhandled ReadinessAuthMode: " + mode);
         }
         if (type == BlockableItemType.epic) {
             Epic epic = findEpic(id);

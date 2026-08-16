@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.choruskube.core.BaseTest;
+import com.choruskube.core.CommittedFixtureCleaner;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.RepoGroup;
 import com.choruskube.core.model.Task;
@@ -29,6 +30,7 @@ import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentMatchers;
@@ -36,6 +38,7 @@ import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -73,6 +76,11 @@ public class Phase2WorkHierarchyIntegrationTest extends BaseTest {
     @Autowired
     private WorkflowRunRepository runRepo;
 
+    @Autowired
+    private JdbcTemplate jdbc;
+
+    private CommittedFixtureCleaner cleaner;
+
     @MockitoBean
     private WorkflowServiceStubs workflowServiceStubs;
 
@@ -84,6 +92,7 @@ public class Phase2WorkHierarchyIntegrationTest extends BaseTest {
 
     @BeforeEach
     void setUp() {
+        cleaner = new CommittedFixtureCleaner(jdbc);
         // Stub Temporal so RunService.startRun() can hand off without a real worker.
         // Core is single-tenant and stamps no org, so no tenant setup is needed for
         // MockMvc-driven calls.
@@ -112,7 +121,7 @@ public class Phase2WorkHierarchyIntegrationTest extends BaseTest {
                 .andReturn();
 
         JsonNode json = objectMapper.readTree(result.getResponse().getContentAsString());
-        UUID epicId = UUID.fromString(json.get("id").asText());
+        UUID epicId = cleaner.trackEpic(UUID.fromString(json.get("id").asText()));
         assertThat(epicId).isNotNull();
     }
 
@@ -125,19 +134,25 @@ public class Phase2WorkHierarchyIntegrationTest extends BaseTest {
                 null,
                 null,
                 List.of(r1.getId(), r2.getId()));
+        cleaner.trackSoftwareProject(group.getId());
 
         Map<String, Object> body = Map.of(
                 "title", "Phase 2 multi-repo epic",
                 "description", "Targets a user-created RepoGroup",
                 "softwareProjectId", group.getId());
 
-        mockMvc.perform(post("/api/v1/epics")
+        MvcResult result = mockMvc.perform(post("/api/v1/epics")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(body)))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.softwareProject.id").value(group.getId().toString()))
                 .andExpect(jsonPath("$.softwareProject.type").value("repo_group"))
-                .andExpect(jsonPath("$.repos.length()").value(2));
+                .andExpect(jsonPath("$.repos.length()").value(2))
+                .andReturn();
+        cleaner.trackEpic(UUID.fromString(objectMapper
+                .readTree(result.getResponse().getContentAsString())
+                .get("id")
+                .asText()));
     }
 
     @Test
@@ -254,10 +269,10 @@ public class Phase2WorkHierarchyIntegrationTest extends BaseTest {
                         .content(objectMapper.writeValueAsString(body)))
                 .andExpect(status().isCreated())
                 .andReturn();
-        return UUID.fromString(objectMapper
+        return cleaner.trackEpic(UUID.fromString(objectMapper
                 .readTree(result.getResponse().getContentAsString())
                 .get("id")
-                .asText());
+                .asText()));
     }
 
     private UUID createStory(UUID epicId, String title, String description) throws Exception {
@@ -290,6 +305,19 @@ public class Phase2WorkHierarchyIntegrationTest extends BaseTest {
         GitRepo repo = new GitRepo();
         repo.setUrl(url);
         repo.setName(RepoNameUtil.deriveOwnerRepoName(url));
-        return gitRepoRepo.save(repo);
+        GitRepo saved = gitRepoRepo.save(repo);
+        cleaner.trackSoftwareProject(saved.getId());
+        return saved;
+    }
+
+    /**
+     * This class drives the real REST API and therefore COMMITS, unlike the {@code @Transactional}
+     * majority of the suite. Without this, its Epics outlive it and fail {@code
+     * RoadmapTimelineServiceTest}, which asserts on an empty roadmap — a cross-package failure
+     * that only appears under certain execution orders.
+     */
+    @AfterEach
+    void removeEverythingThisTestCommitted() {
+        cleaner.deleteAll();
     }
 }

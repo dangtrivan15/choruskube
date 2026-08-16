@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.choruskube.core.BaseTest;
+import com.choruskube.core.CommittedFixtureCleaner;
 import com.choruskube.core.dto.CreateDependencyRequest;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
@@ -87,9 +88,7 @@ public class DefaultTaskServiceAutopilotTest extends BaseTest {
     @Autowired
     private JdbcTemplate jdbc;
 
-    private final List<UUID> epicIds = new ArrayList<>();
-    private final List<UUID> autopilotIds = new ArrayList<>();
-    private final List<UUID> repoIds = new ArrayList<>();
+    private CommittedFixtureCleaner cleaner;
 
     @MockitoBean
     private WorkflowServiceStubs workflowServiceStubs;
@@ -102,6 +101,7 @@ public class DefaultTaskServiceAutopilotTest extends BaseTest {
 
     @BeforeEach
     void setUp() {
+        cleaner = new CommittedFixtureCleaner(jdbc);
         WorkflowStub mockStub = Mockito.mock(WorkflowStub.class);
         Mockito.when(workflowClient.newUntypedWorkflowStub(
                         ArgumentMatchers.anyString(), ArgumentMatchers.any(WorkflowOptions.class)))
@@ -260,9 +260,7 @@ public class DefaultTaskServiceAutopilotTest extends BaseTest {
     private UUID makeAutopilot() {
         Autopilot autopilot = new Autopilot();
         autopilot.setEngaged(true);
-        UUID id = autopilotRepo.saveAndFlush(autopilot).getId();
-        autopilotIds.add(id);
-        return id;
+        return cleaner.trackAutopilot(autopilotRepo.saveAndFlush(autopilot).getId());
     }
 
     private StoryResponse makeStory(UUID softwareProjectId) {
@@ -272,7 +270,7 @@ public class DefaultTaskServiceAutopilotTest extends BaseTest {
 
     private EpicResponse makeEpic(UUID softwareProjectId, String title) {
         EpicResponse epic = epicService.create(new EpicRequest(title, "Epic desc", null, softwareProjectId), null);
-        epicIds.add(epic.id());
+        cleaner.trackEpic(epic.id());
         return epic;
     }
 
@@ -284,52 +282,17 @@ public class DefaultTaskServiceAutopilotTest extends BaseTest {
         r.setUrl(url);
         r.setName(RepoNameUtil.deriveOwnerRepoName(url));
         GitRepo saved = gitRepoRepo.save(r);
-        repoIds.add(saved.getId());
+        cleaner.trackSoftwareProject(saved.getId());
         return saved;
     }
 
     /**
-     * Rolls back by hand what the missing test transaction would have rolled back for us. This is
-     * not tidiness: {@code RoadmapTimelineServiceTest} asserts on an EMPTY roadmap and documents
-     * that it relies on no test ever committing an Epic. Leaving these rows behind fails that
-     * class, in a different package, depending on execution order.
+     * Undoes what the missing test transaction would have undone. Not tidiness: {@code
+     * RoadmapTimelineServiceTest} asserts on an EMPTY roadmap and documents that it relies on no
+     * test ever committing an Epic.
      */
     @AfterEach
     void removeEverythingThisTestCommitted() {
-        if (!epicIds.isEmpty()) {
-            Object[] epics = epicIds.toArray();
-            String tasksUnderEpics = "SELECT t.id FROM task t JOIN story s ON t.story_id = s.id WHERE s.epic_id IN ("
-                    + placeholders(epicIds) + ")";
-            jdbc.update(
-                    "DELETE FROM work_item_dependency WHERE blocking_item_id IN (" + tasksUnderEpics
-                            + ") OR blocked_item_id IN (" + tasksUnderEpics + ")",
-                    concat(epics, epics));
-            // workflow_run.task_id is a plain FK, so runs must go before the task tree; the Epic
-            // delete then cascades story and task (V2).
-            jdbc.update("DELETE FROM workflow_run WHERE task_id IN (" + tasksUnderEpics + ")", epics);
-            jdbc.update("DELETE FROM epic WHERE id IN (" + placeholders(epicIds) + ")", epics);
-        }
-        if (!autopilotIds.isEmpty()) {
-            jdbc.update(
-                    "DELETE FROM autopilot WHERE id IN (" + placeholders(autopilotIds) + ")", autopilotIds.toArray());
-        }
-        if (!repoIds.isEmpty()) {
-            // git_repo.id -> software_project.id is ON DELETE CASCADE, so one delete covers both.
-            jdbc.update("DELETE FROM software_project WHERE id IN (" + placeholders(repoIds) + ")", repoIds.toArray());
-        }
-        epicIds.clear();
-        autopilotIds.clear();
-        repoIds.clear();
-    }
-
-    private static String placeholders(List<UUID> ids) {
-        return String.join(",", java.util.Collections.nCopies(ids.size(), "?"));
-    }
-
-    private static Object[] concat(Object[] a, Object[] b) {
-        Object[] all = new Object[a.length + b.length];
-        System.arraycopy(a, 0, all, 0, a.length);
-        System.arraycopy(b, 0, all, a.length, b.length);
-        return all;
+        cleaner.deleteAll();
     }
 }

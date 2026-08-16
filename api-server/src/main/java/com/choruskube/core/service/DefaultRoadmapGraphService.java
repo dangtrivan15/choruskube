@@ -97,13 +97,32 @@ public class DefaultRoadmapGraphService implements RoadmapGraphService {
                         candidates.tasksByStoryId().getOrDefault(s.getId(), List.of()),
                         assembly.readinessById().get(s.getId())))
                 .toList();
+        boolean useInternalRunListing = usesInternalRunListing(mode);
         List<TaskResponse> tasks = candidates.stories().stream()
                 .flatMap(s -> candidates.tasksByStoryId().getOrDefault(s.getId(), List.of()).stream())
-                .map(t -> toTaskResponse(
-                        t, assembly.readinessById().get(t.getId()), mode == ReadinessAuthMode.INTERNAL_RUN))
+                .map(t -> toTaskResponse(t, assembly.readinessById().get(t.getId()), useInternalRunListing))
                 .toList();
 
         return new RoadmapGraphSnapshot(epic, stories, tasks, assembly.dependencies(), assembly.externalBlockers());
+    }
+
+    /**
+     * Which of {@code TaskService}'s two run-listing methods the embedded run history comes from —
+     * a separate concern from readiness authorization that happens to be decided by the same mode.
+     * Spelled out rather than written as {@code mode == INTERNAL_RUN} because the fallback matters:
+     * a boolean comparison silently maps any future mode to the REQUEST-SCOPED {@code listRuns},
+     * which is precisely the trap {@link ReadinessAuthMode#AUTOPILOT} exists to avoid. This graph
+     * has no Autopilot caller today, so that mode is rejected rather than guessed at.
+     */
+    private static boolean usesInternalRunListing(ReadinessAuthMode mode) {
+        return switch (mode) {
+            case PUBLIC -> false;
+            case INTERNAL_RUN -> true;
+            case AUTOPILOT ->
+                throw new IllegalArgumentException(
+                        "The roadmap graph has no Autopilot caller; run history would fall back to the "
+                                + "request-scoped listing, which has no tenant context on a timer thread");
+        };
     }
 
     private static StoryResponse toStoryResponse(Story s, List<Task> tasks, Readiness readiness) {
