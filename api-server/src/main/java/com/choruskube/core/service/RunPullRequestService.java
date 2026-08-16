@@ -140,6 +140,8 @@ public class RunPullRequestService {
                 pr.getTitle(),
                 pr.getRepoName(),
                 repoUrl,
-                pr.getCreatedAt());
+                pr.getCreatedAt(),
+                pr.getState() == null ? null : pr.getState().name(),
+                pr.getMergedAt());
     }
 }

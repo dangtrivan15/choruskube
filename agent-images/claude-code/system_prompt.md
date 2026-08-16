@@ -98,9 +98,10 @@ The following helper scripts are available on the PATH:
   selecting a Task to work on, so you pick one that is actually READY rather than
   blocked on an unfinished dependency.
 - `update-task-status --task-id UUID --status STATUS [--run-id UUID] [--note NOTE]` —
-  Report a Task's outcome (`--status done` on success, `--status backlog` to reopen it
-  for retry after a failed/aborted run). Call this to report your run's outcome instead
-  of leaving the Task status stale — it is the same status-changing path a human uses.
+  Reopen a Task for retry after a failed or aborted run (`--status backlog`). Do not
+  mark a Task done: a Task closes by itself once every pull request from its most
+  recent run is merged, which happens after your run has ended. Reporting `done` from
+  inside the run is rejected while its pull requests are still open.
 - `register-pr --repo-id <uuid> --pr-url <url> [--pr-number <n>] [--title <t>] [--repo-name <name>]` —
   Register a pull request for tracking and display in the ChorusKube UI. Idempotent on
   `(run, pr_url)` — calling it twice with the same URL refreshes metadata in place.

@@ -16,12 +16,14 @@ import com.choruskube.core.exception.ConflictException;
 import com.choruskube.core.exception.ForbiddenException;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.GitRepo;
+import com.choruskube.core.model.RunPullRequest;
 import com.choruskube.core.model.Task;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.Readiness;
 import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.GitRepoRepository;
+import com.choruskube.core.repository.RunPullRequestRepository;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkItemDependencyRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
@@ -30,6 +32,7 @@ import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowOptions;
 import io.temporal.client.WorkflowStub;
 import io.temporal.serviceclient.WorkflowServiceStubs;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -69,6 +72,9 @@ public class DefaultTaskServiceTest extends BaseTest {
 
     @Autowired
     private TaskRepository taskRepo;
+
+    @Autowired
+    private RunPullRequestRepository prRepo;
 
     @MockitoBean
     private WorkflowServiceStubs workflowServiceStubs;
@@ -297,6 +303,117 @@ public class DefaultTaskServiceTest extends BaseTest {
         TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
 
         assertThatThrownBy(() -> service.complete(task.id())).isInstanceOf(ConflictException.class);
+    }
+
+    // ── "done" means merged (Decision 8): the closure guard ──────────────────────
+
+    @Test
+    void complete_withUnmergedPullRequest_throwsConflict() {
+        GitRepo r = makeRepo("https://github.com/test/task-pr-unmerged.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
+        TaskResponse started = service.start(task.id());
+        registerPr(started.latestRunId(), r.getId(), "https://github.com/test/task-pr-unmerged/pull/1", null);
+        markRunTerminal(started.latestRunId(), WorkflowRunStatus.completed);
+
+        assertThatThrownBy(() -> service.complete(task.id()))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining("pull/1");
+    }
+
+    /**
+     * {@code closeForMergedPullRequests} is the one closure path that skips the org check, because
+     * its only caller is a scheduler with no request context to authorize against. It must skip
+     * NOTHING else — these two tests pin that it still delegates to {@code completeCore}, so a
+     * future refactor that inlines the body cannot silently create an unauthenticated, unguarded
+     * {@code done} write while leaving the suite green.
+     */
+    @Test
+    void closeForMergedPullRequests_withUnmergedPullRequest_throwsConflict() {
+        GitRepo r = makeRepo("https://github.com/test/task-pr-reconciler-blocked.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
+        TaskResponse started = service.start(task.id());
+        registerPr(started.latestRunId(), r.getId(), "https://github.com/test/task-pr-reconciler-blocked/pull/1", null);
+        markRunTerminal(started.latestRunId(), WorkflowRunStatus.completed);
+
+        assertThatThrownBy(() -> service.closeForMergedPullRequests(task.id()))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining("pull/1");
+    }
+
+    @Test
+    void closeForMergedPullRequests_withMergedPullRequest_transitionsToDone() {
+        GitRepo r = makeRepo("https://github.com/test/task-pr-reconciler-closes.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
+        TaskResponse started = service.start(task.id());
+        registerPr(
+                started.latestRunId(),
+                r.getId(),
+                "https://github.com/test/task-pr-reconciler-closes/pull/1",
+                Instant.now());
+        markRunTerminal(started.latestRunId(), WorkflowRunStatus.completed);
+
+        TaskResponse closed = service.closeForMergedPullRequests(task.id());
+
+        assertThat(closed.status()).isEqualTo("done");
+    }
+
+    @Test
+    void complete_withMergedPullRequest_transitionsToDone() {
+        GitRepo r = makeRepo("https://github.com/test/task-pr-merged.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
+        TaskResponse started = service.start(task.id());
+        registerPr(started.latestRunId(), r.getId(), "https://github.com/test/task-pr-merged/pull/1", Instant.now());
+        markRunTerminal(started.latestRunId(), WorkflowRunStatus.completed);
+
+        TaskResponse completed = service.complete(task.id());
+
+        assertThat(completed.status()).isEqualTo("done");
+    }
+
+    /**
+     * The OSS zero-config guarantee: with no GitHub credential configured an agent cannot push,
+     * so no PR is ever registered and the board must keep working. Never weaken this test.
+     */
+    @Test
+    void complete_withNoRegisteredPullRequests_transitionsToDone() {
+        GitRepo r = makeRepo("https://github.com/test/task-pr-none.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
+        TaskResponse started = service.start(task.id());
+        markRunTerminal(started.latestRunId(), WorkflowRunStatus.completed);
+
+        TaskResponse completed = service.complete(task.id());
+
+        assertThat(completed.status()).isEqualTo("done");
+    }
+
+    /**
+     * Decision B: only the MOST RECENT run's PRs gate closure. A PR abandoned by an earlier,
+     * retried run would otherwise freeze the Task forever, since it will never merge.
+     */
+    @Test
+    void complete_withUnmergedPrFromEarlierRun_stillTransitionsToDone() {
+        GitRepo r = makeRepo("https://github.com/test/task-pr-superseded.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
+
+        TaskResponse firstRun = service.start(task.id());
+        registerPr(firstRun.latestRunId(), r.getId(), "https://github.com/test/task-pr-superseded/pull/1", null);
+        markRunTerminal(firstRun.latestRunId(), WorkflowRunStatus.failed);
+        service.updateStatus(task.id(), WorkItemStatus.backlog, null, "run failed");
+
+        TaskResponse secondRun = service.start(task.id());
+        registerPr(
+                secondRun.latestRunId(), r.getId(), "https://github.com/test/task-pr-superseded/pull/2", Instant.now());
+        markRunTerminal(secondRun.latestRunId(), WorkflowRunStatus.completed);
+
+        TaskResponse completed = service.complete(task.id());
+
+        assertThat(completed.status()).isEqualTo("done");
     }
 
     // ── list(status, pageable): global Kanban board listing ──────────────────────
@@ -597,6 +714,15 @@ public class DefaultTaskServiceTest extends BaseTest {
         WorkflowRun run = runRepo.findById(runId).orElseThrow();
         run.setStatus(status);
         runRepo.saveAndFlush(run);
+    }
+
+    private void registerPr(UUID runId, UUID gitRepoId, String prUrl, Instant mergedAt) {
+        RunPullRequest pr = new RunPullRequest();
+        pr.setWorkflowRunId(runId);
+        pr.setGitRepoId(gitRepoId);
+        pr.setPrUrl(prUrl);
+        pr.setMergedAt(mergedAt);
+        prRepo.saveAndFlush(pr);
     }
 
     private StoryResponse makeStory(UUID softwareProjectId) {

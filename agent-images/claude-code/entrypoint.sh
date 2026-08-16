@@ -318,12 +318,13 @@ This run was started from Task: ${TASK_TITLE}${STORY_TITLE:+
 Story: ${STORY_TITLE}}${EPIC_TITLE:+
 Epic: ${EPIC_TITLE}}
 
-You can call \`update-task-status\` and \`get-roadmap-graph\` without passing
---task-id/--epic-id — they default to this run's Task/Epic automatically."
+You can call \`get-roadmap-graph\` without passing --epic-id — it defaults to this
+run's Epic automatically. Do not mark this Task done: it closes by itself once this
+run's pull requests are merged."
 
-  # Narrate open blockers (Decision 2/3) — only when the triggering Task has at
-  # least one direct, not-yet-done incoming blocking edge. This does not gate the
-  # run; it's context for the agent to factor into its plan.
+  # Narrate open blockers (Decision 2/3/10) — readiness now gates Task start, so
+  # open_blockers is empty at launch for every run. This block can therefore only
+  # fire for an edge added mid-run: a change of circumstances, not routine context.
   BLOCKER_COUNT=$(echo "$OPEN_BLOCKERS_JSON" | jq 'length')
   if [ "$BLOCKER_COUNT" -gt 0 ]; then
     BLOCKER_LINES=$(echo "$OPEN_BLOCKERS_JSON" | jq -r '.[] | "- \(.title) (\(.item_type), status: \(.status))"')
@@ -333,7 +334,8 @@ You can call \`update-task-status\` and \`get-roadmap-graph\` without passing
 This Task has ${BLOCKER_COUNT} unresolved blocking dependencies not yet done:
 ${BLOCKER_LINES}
 
-This does not prevent the run — factor these into your work."
+These appeared after this run started — this Task was ready when it launched.
+Factor the change into your remaining work."
   fi
 fi
 export SYSTEM_PROMPT

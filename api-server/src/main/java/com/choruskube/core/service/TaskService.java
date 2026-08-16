@@ -65,6 +65,19 @@ public interface TaskService {
     TaskResponse complete(UUID id);
 
     /**
+     * Closes a Task whose most recent run's pull requests have all merged (Decision 9). Called
+     * ONLY by the pull-request state reconciler, which runs on a scheduler with no request
+     * context and finds Tasks by a cross-org query — the same shape as {@code GitRepoReconciler}.
+     *
+     * <p>This deliberately skips the org check that every other closure path performs, because
+     * there is no authenticated caller to check against. It skips nothing else: every invariant
+     * in {@code completeCore} — in-progress status, terminal run, all PRs merged — still applies,
+     * so this cannot close a Task that a user could not have closed themselves. Never call it
+     * from a controller.
+     */
+    TaskResponse closeForMergedPullRequests(UUID id);
+
+    /**
      * Validated-transition status write (Decision 4) covering both success and failure outcomes
      * for a request-scoped (checkOrgAccess-gated) caller: {@code backlog→in_progress} (delegates
      * to {@link #start}), {@code in_progress→done} (delegates to {@link #complete}, after

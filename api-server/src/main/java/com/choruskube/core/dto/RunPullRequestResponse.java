@@ -13,4 +13,6 @@ public record RunPullRequestResponse(
         String title,
         String repoName,
         String repoUrl,
-        Instant createdAt) {}
+        Instant createdAt,
+        String state,
+        Instant mergedAt) {}

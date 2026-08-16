@@ -7,6 +7,7 @@ import com.nimbusds.jose.JWSAlgorithm;
 import com.nimbusds.jwt.SignedJWT;
 import java.security.KeyPairGenerator;
 import java.security.interfaces.RSAPrivateKey;
+import java.time.Instant;
 import java.util.Base64;
 import org.junit.jupiter.api.Test;
 
@@ -40,5 +41,36 @@ class GitHubAppServiceTest {
     void createSignedJwt_withMalformedPem_throws() {
         assertThatThrownBy(() -> service.createSignedJwt("12345", "not a real pem"))
                 .isInstanceOf(Exception.class);
+    }
+
+    @Test
+    void parsePullRequest_openPr_hasNullMergedAt() {
+        var snapshot = service.parsePullRequest("{\"state\":\"open\",\"merged_at\":null}");
+
+        assertThat(snapshot.state()).isEqualTo("open");
+        assertThat(snapshot.mergedAt()).isNull();
+    }
+
+    @Test
+    void parsePullRequest_mergedPr_parsesMergedAt() {
+        var snapshot = service.parsePullRequest("{\"state\":\"closed\",\"merged_at\":\"2026-08-16T10:00:00Z\"}");
+
+        assertThat(snapshot.state()).isEqualTo("closed");
+        assertThat(snapshot.mergedAt()).isEqualTo(Instant.parse("2026-08-16T10:00:00Z"));
+    }
+
+    @Test
+    void parsePullRequest_closedUnmergedPr_hasNullMergedAt() {
+        var snapshot = service.parsePullRequest("{\"state\":\"closed\",\"merged_at\":null}");
+
+        assertThat(snapshot.state()).isEqualTo("closed");
+        assertThat(snapshot.mergedAt()).isNull();
+    }
+
+    @Test
+    void parsePullRequest_missingMergedAtField_hasNullMergedAt() {
+        var snapshot = service.parsePullRequest("{\"state\":\"open\"}");
+
+        assertThat(snapshot.mergedAt()).isNull();
     }
 }
