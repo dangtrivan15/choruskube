@@ -190,6 +190,21 @@ public class DefaultTaskServiceTest extends BaseTest {
     }
 
     @Test
+    void start_manualPath_leavesAttributionNull() {
+        // autopilot_id is the attribution column that tells the Autopilot which in-flight runs are
+        // its own (slot accounting) and which failures count against it. A human-driven start must
+        // never claim one of its slots.
+        GitRepo r = makeRepo("https://github.com/test/task-manual-no-attribution.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
+
+        TaskResponse started = service.start(task.id());
+
+        assertThat(runRepo.findById(started.latestRunId()).orElseThrow().getAutopilotId())
+                .isNull();
+    }
+
+    @Test
     void start_blockedTask_throwsConflictNamingTheBlocker() {
         // Readiness is enforced, not merely displayed (spec Decision 10): starting a blocked Task
         // would clone a base branch missing its blocker's work. Supersedes the earlier

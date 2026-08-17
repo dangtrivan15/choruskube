@@ -16,8 +16,16 @@ import { Skeleton } from "@/components/ui/skeleton";
 import PageHeader from "@/components/layout/PageHeader";
 import type { RoadmapGraphSnapshot } from "@/lib/types";
 
+/**
+ * Every item in this Epic's graph a Story/Task can pick as a blocker — its
+ * own Stories/Tasks, plus the Epic itself (Epic-tier dependencies): the
+ * backend treats the Epic as a candidate in its own right for an edge whose
+ * other endpoint is inside its own tree (`EpicReadinessAssembler.loadEpicCandidates`
+ * adds `epicId` to `candidateIds`), so the picker must offer it too.
+ */
 function buildBlockableItems(snapshot: RoadmapGraphSnapshot): BlockableItemRef[] {
   return [
+    { id: snapshot.epic.id, itemType: "epic", title: snapshot.epic.title },
     ...snapshot.stories.map((s): BlockableItemRef => ({ id: s.id, itemType: "story", title: s.title })),
     ...snapshot.tasks.map((t): BlockableItemRef => ({ id: t.id, itemType: "task", title: t.title })),
   ];

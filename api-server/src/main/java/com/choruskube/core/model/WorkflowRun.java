@@ -31,6 +31,18 @@ public class WorkflowRun {
     @Column(name = "task_id")
     private UUID taskId;
 
+    @Column(name = "autopilot_id")
+    private UUID autopilotId;
+
+    /**
+     * When the Autopilot's failure breaker counted this run's outcome. Set once, never cleared —
+     * it is what makes settling idempotent, since {@code awaiting_retry} is a durable status and
+     * not an event, so a time window over "runs that finished recently" would re-count the same
+     * dead run on every tick that touched it.
+     */
+    @Column(name = "autopilot_settled_at")
+    private Instant autopilotSettledAt;
+
     @Enumerated(EnumType.STRING)
     @JdbcTypeCode(SqlTypes.NAMED_ENUM)
     @Column(nullable = false)
@@ -92,6 +104,22 @@ public class WorkflowRun {
 
     public void setTaskId(UUID taskId) {
         this.taskId = taskId;
+    }
+
+    public UUID getAutopilotId() {
+        return autopilotId;
+    }
+
+    public void setAutopilotId(UUID autopilotId) {
+        this.autopilotId = autopilotId;
+    }
+
+    public Instant getAutopilotSettledAt() {
+        return autopilotSettledAt;
+    }
+
+    public void setAutopilotSettledAt(Instant autopilotSettledAt) {
+        this.autopilotSettledAt = autopilotSettledAt;
     }
 
     public WorkflowRunStatus getStatus() {

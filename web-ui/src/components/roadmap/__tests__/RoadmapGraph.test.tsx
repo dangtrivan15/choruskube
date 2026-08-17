@@ -303,6 +303,48 @@ describe("RoadmapGraph", () => {
     expect(dependencyEdge?.getAttribute("stroke")).not.toBe(hierarchyEdge?.getAttribute("stroke"));
   });
 
+  it("renders an Epic-tier dependency edge (touching the Epic itself) visually distinct from a within-Epic dependency edge", async () => {
+    const snapshot = makeSnapshot({
+      dependencies: [
+        {
+          id: "dep-1",
+          blockingItemType: "task",
+          blockingItemId: "task-1",
+          blockedItemType: "task",
+          blockedItemId: "task-2",
+          createdAt: "2026-04-01T00:00:00Z",
+        },
+        {
+          // The Epic itself is the blocked side — a Story/Task can't proceed
+          // to affect the Epic until "task-1" is done (Epic-tier dependency,
+          // see EpicReadinessAssembler.loadEpicCandidates adding the Epic's
+          // own id to its candidate set).
+          id: "dep-epic-1",
+          blockingItemType: "task",
+          blockingItemId: "task-1",
+          blockedItemType: "epic",
+          blockedItemId: "epic-1",
+          createdAt: "2026-04-01T00:00:00Z",
+        },
+      ],
+    });
+    renderWithProviders(<RoadmapGraph snapshot={snapshot} onNodeSelect={vi.fn()} />);
+    await waitForGraphReady();
+
+    const dependencyEdge = screen.getByTestId("mock-edge-dep:dep-1").querySelector("path");
+    const epicDependencyEdge = screen.getByTestId("mock-edge-dep:dep-epic-1").querySelector("path");
+
+    expect(epicDependencyEdge).toBeTruthy();
+    // Epic-tier edges are dashed + carry an arrowhead, same as an ordinary
+    // dependency edge, but with a distinct dash pattern and color.
+    expect(epicDependencyEdge?.getAttribute("stroke-dasharray")).toBeTruthy();
+    expect(epicDependencyEdge?.getAttribute("marker-end")).toBeTruthy();
+    expect(epicDependencyEdge?.getAttribute("stroke-dasharray")).not.toBe(
+      dependencyEdge?.getAttribute("stroke-dasharray"),
+    );
+    expect(epicDependencyEdge?.getAttribute("stroke")).not.toBe(dependencyEdge?.getAttribute("stroke"));
+  });
+
   it("renders a cross-Epic dependency edge visually distinct from a within-Epic dependency edge", async () => {
     const externalBlocker: ExternalBlockerRef = {
       itemType: "task",

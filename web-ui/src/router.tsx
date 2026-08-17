@@ -21,6 +21,7 @@ import NotFoundPage from "@/pages/NotFoundPage";
 import DagPlaygroundPage from "@/pages/DagPlaygroundPage";
 import { config } from "@/config";
 import DocsPage from "@/pages/DocsPage";
+import AutopilotPage from "@/pages/AutopilotPage";
 
 const coreChildren: RouteObject[] = [
   { index: true, element: <Navigate to="/runs" replace /> },
@@ -35,6 +36,7 @@ const coreChildren: RouteObject[] = [
   { path: "roadmap/timeline", element: <RoadmapTimelinePage /> },
   { path: "roadmap/board/tasks", element: <TaskBoardPage /> },
   { path: "roadmap/board/stories", element: <StoryBoardPage /> },
+  { path: "autopilot", element: <AutopilotPage /> },
   { path: "roadmap/epics/:epicId", element: <EpicDetailPage /> },
   { path: "roadmap/epics/:epicId/graph", element: <RoadmapGraphPage /> },
   { path: "roadmap/epics/:epicId/stories/:storyId", element: <StoryDetailPage /> },

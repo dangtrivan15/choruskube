@@ -102,10 +102,15 @@ public class DefaultRoadmapTimelineService implements RoadmapTimelineService {
         // Per-Epic readiness pass (accepted N+1-per-Epic tradeoff, Decision 1 of the blocked/
         // stalled feature) — mirrors DefaultRoadmapGraphService#assemble's own single-Epic call,
         // just run once per scoped Epic in this loop instead of once for a single requested Epic.
-        // Public (non-run-scoped) read path: internal=false, runId=null.
+        // A request-scoped read, so cross-Epic blockers are authorized against the caller's own
+        // tenant context (PUBLIC) and there is no context id to assert against.
         EpicReadinessAssembler.EpicCandidates candidates = readinessAssembler.loadEpicCandidates(epic.getId());
         EpicReadinessAssembler.Assembly assembly = readinessAssembler.assemble(
-                candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), false, null);
+                candidates.candidateIds(),
+                candidates.statusById(),
+                candidates.parentOf(),
+                ReadinessAuthMode.PUBLIC,
+                null);
 
         List<TimelineStorySummary> stories = storiesByEpicId.getOrDefault(epic.getId(), List.of()).stream()
                 .sorted(Comparator.comparing(Story::getCreatedAt))

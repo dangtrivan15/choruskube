@@ -29,6 +29,9 @@ import {
 import RoadmapGraphNode, { type RoadmapGraphNodeData, type RoadmapItemType } from "./RoadmapGraphNode";
 import RoadmapGraphEdge, { type RoadmapGraphEdgeData } from "./RoadmapGraphEdge";
 import RoadmapDependencyEdge, { type RoadmapDependencyEdgeData } from "./RoadmapDependencyEdge";
+import RoadmapEpicDependencyEdge, {
+  type RoadmapEpicDependencyEdgeData,
+} from "./RoadmapEpicDependencyEdge";
 import RoadmapExternalNode, { type RoadmapExternalNodeData } from "./RoadmapExternalNode";
 import RoadmapCrossEpicEdge, { type RoadmapCrossEpicEdgeData } from "./RoadmapCrossEpicEdge";
 import RoadmapGraphLegend from "./RoadmapGraphLegend";
@@ -38,6 +41,7 @@ const nodeTypes = { roadmap: RoadmapGraphNode, "roadmap-external": RoadmapExtern
 const edgeTypes = {
   "roadmap-hierarchy": RoadmapGraphEdge,
   "roadmap-dependency": RoadmapDependencyEdge,
+  "roadmap-epic-dependency": RoadmapEpicDependencyEdge,
   "roadmap-cross-epic-dependency": RoadmapCrossEpicEdge,
 };
 
@@ -48,6 +52,7 @@ type RoadmapFlowNode =
 type RoadmapFlowEdge =
   | Edge<RoadmapGraphEdgeData, "roadmap-hierarchy">
   | Edge<RoadmapDependencyEdgeData, "roadmap-dependency">
+  | Edge<RoadmapEpicDependencyEdgeData, "roadmap-epic-dependency">
   | Edge<RoadmapCrossEpicEdgeData, "roadmap-cross-epic-dependency">;
 
 /** One unique external item (Decision 4's dedup key: `itemType:itemId`). */
@@ -369,25 +374,43 @@ export default function RoadmapGraph({ snapshot, onNodeSelect }: RoadmapGraphPro
     // to an actual value here (not a CSS var()), since it becomes a literal
     // SVG attribute rather than an inline style.
     const dependencyMarkerColor = resolveStatusColors()["--status-warning"];
-    const dependencyEdges: Edge<RoadmapDependencyEdgeData, "roadmap-dependency">[] = visibleDependencies.flatMap(
-      (d) => {
-        const id = roadmapDependencyEdgeId(d.id);
-        const route = layout.edges.get(id);
-        if (!route) return [];
-        return [
-          {
-            id,
-            source: d.blockingItemId,
-            target: d.blockedItemId,
-            sourceHandle: "source-bottom",
-            targetHandle: "target-top",
-            type: "roadmap-dependency",
-            markerEnd: { type: MarkerType.ArrowClosed, color: dependencyMarkerColor, width: 18, height: 18 },
-            data: { points: route.points },
-          } satisfies Edge<RoadmapDependencyEdgeData, "roadmap-dependency">,
-        ];
-      },
-    );
+    const epicDependencyMarkerColor = resolveStatusColors()["--status-info"];
+    // Epic-tier dependencies (an edge where the Epic itself is the blocking or
+    // blocked endpoint, not one of its Stories/Tasks — see
+    // RoadmapEpicDependencyEdge's doc comment) get their own edge type so
+    // they read as visually distinct from an ordinary within-Epic Story/Task
+    // dependency, the same way cross-Epic edges are split out below.
+    const dependencyEdges: Edge<RoadmapDependencyEdgeData, "roadmap-dependency">[] = [];
+    const epicDependencyEdges: Edge<RoadmapEpicDependencyEdgeData, "roadmap-epic-dependency">[] = [];
+    for (const d of visibleDependencies) {
+      const id = roadmapDependencyEdgeId(d.id);
+      const route = layout.edges.get(id);
+      if (!route) continue;
+      const touchesEpic = d.blockingItemId === snapshot.epic.id || d.blockedItemId === snapshot.epic.id;
+      if (touchesEpic) {
+        epicDependencyEdges.push({
+          id,
+          source: d.blockingItemId,
+          target: d.blockedItemId,
+          sourceHandle: "source-bottom",
+          targetHandle: "target-top",
+          type: "roadmap-epic-dependency",
+          markerEnd: { type: MarkerType.ArrowClosed, color: epicDependencyMarkerColor, width: 18, height: 18 },
+          data: { points: route.points },
+        } satisfies Edge<RoadmapEpicDependencyEdgeData, "roadmap-epic-dependency">);
+      } else {
+        dependencyEdges.push({
+          id,
+          source: d.blockingItemId,
+          target: d.blockedItemId,
+          sourceHandle: "source-bottom",
+          targetHandle: "target-top",
+          type: "roadmap-dependency",
+          markerEnd: { type: MarkerType.ArrowClosed, color: dependencyMarkerColor, width: 18, height: 18 },
+          data: { points: route.points },
+        } satisfies Edge<RoadmapDependencyEdgeData, "roadmap-dependency">);
+      }
+    }
 
     // Cross-Epic edges (Decision 1). Layout always attaches the external node
     // as a leaf below its in-Epic anchor (internalItemId__source-bottom ->
@@ -423,10 +446,11 @@ export default function RoadmapGraph({ snapshot, onNodeSelect }: RoadmapGraphPro
 
     return {
       nodes: [...flowNodes, ...externalFlowNodes],
-      edges: [...hierarchyEdges, ...dependencyEdges, ...crossEpicEdges],
+      edges: [...hierarchyEdges, ...dependencyEdges, ...epicDependencyEdges, ...crossEpicEdges],
     };
   }, [
     layout,
+    snapshot.epic.id,
     visibleNodes,
     visibleDependencies,
     visibleExternalNodeInfos,

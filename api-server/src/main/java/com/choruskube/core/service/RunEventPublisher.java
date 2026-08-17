@@ -1,5 +1,6 @@
 package com.choruskube.core.service;
 
+import com.choruskube.core.dto.AutopilotStatusResponse;
 import com.choruskube.core.dto.DependencyEdgeResponse;
 import com.choruskube.core.dto.RoadmapItemEvent;
 import com.choruskube.core.dto.RunEvent;
@@ -59,6 +60,20 @@ public class RunEventPublisher {
     public void publishDependencyChanged(DependencyEdgeResponse edge, String status) {
         RoadmapItemEvent event = new RoadmapItemEvent("dependency_changed", edge.id(), status);
         feedPublisher.roadmapItemChanged(edge.blockedItemType(), edge.blockedItemId(), event);
+    }
+
+    /**
+     * Publishes the Autopilot's new status. Delegates to the org-scoping seam rather than calling
+     * {@code convertAndSend} directly — publishing straight to {@code /topic/autopilot} would work
+     * in single-tenant core while broadcasting one org's Autopilot state to every subscriber
+     * downstream, and the UI subscribes to the resolved destination.
+     *
+     * <p>The whole status is the payload, not a bare signal: this is published from inside the
+     * tick's transaction, so a subscriber that responded by refetching could read the state the
+     * tick has not committed yet.
+     */
+    public void publishAutopilotChanged(UUID autopilotId, AutopilotStatusResponse status) {
+        feedPublisher.autopilotChanged(autopilotId, status);
     }
 
     public void publishNodeStatusChanged(UUID runId, UUID nodeExecutionId, String status) {

@@ -6,9 +6,11 @@ import { useTask, useDeleteTask, useStartTask, useCompleteTask } from "@/hooks/u
 import { useStory } from "@/hooks/useStories";
 import { useTaskRuns } from "@/hooks/useTaskRuns";
 import { useRoadmapSubscription } from "@/hooks/useRoadmapSubscription";
+import { useBlockingChain } from "@/hooks/useBlockingChain";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import MarkdownViewer from "@/components/ui/MarkdownViewer";
 import {
   Dialog,
@@ -53,6 +55,14 @@ export default function TaskDetailPage() {
   // Task route/DTO carry `storyId` but not the `epicId` the Story route also needs.
   const { data: parentStory } = useStory(task?.storyId);
   const { data: runsPage, isLoading: runsLoading } = useTaskRuns(id);
+  // `useTask` never populates `readiness` on this single-item read path (DefaultTaskService
+  // documents `get`/`create`/`update`/`start` all pass `readiness = null`; only `list()` and the
+  // graph view compute it) — so whether Start/Restart is safe to click can't be read off `task`
+  // at all. The blocking-chain endpoint is the one read path that answers it here, and doubles as
+  // the tooltip content when it says no. Called unconditionally (`id` may still be undefined on
+  // first render) so hook order stays stable, same as `useStory` above.
+  const chainQuery = useBlockingChain("task", id ?? "", !!id);
+  const isBlocked = chainQuery.data?.readiness === "BLOCKED";
   const deleteTask = useDeleteTask(task?.storyId ?? "");
   const startTask = useStartTask();
   const completeTask = useCompleteTask();
@@ -105,6 +115,38 @@ export default function TaskDetailPage() {
     ? `/roadmap/epics/${parentStory.epicId}/stories/${parentStory.id}`
     : "/roadmap";
 
+  // Shared by the Start (backlog) and Restart (in_progress + canRestart) triggers below — both
+  // hit the same `POST /tasks/{id}/start`, and the backend's `requireReady` gates both identically
+  // (DefaultTaskService.start() calls it before either a fresh start or a re-trigger), so a
+  // dependency added after the Task already started can block a Restart exactly the same way it
+  // blocks the original Start. A disabled native <button> stops receiving pointer events entirely
+  // (`disabled:pointer-events-none`), so the Tooltip's hover trigger is a wrapping <span> instead —
+  // hovering where the button visually sits still reaches the span underneath it.
+  function renderStartTrigger(testId: string, label: string) {
+    const button = (
+      <Button data-testid={testId} size="sm" onClick={() => setStartOpen(true)} disabled={isBlocked}>
+        <Play className="size-4" />
+        {label}
+      </Button>
+    );
+    if (!isBlocked) return button;
+    return (
+      <Tooltip>
+        <TooltipTrigger data-testid={`${testId}-tooltip-trigger`} render={<span className="inline-flex" />}>
+          {button}
+        </TooltipTrigger>
+        <TooltipContent data-testid="task-start-blocked-tooltip">
+          <p className="font-medium">Blocked by</p>
+          <ul className="list-disc pl-4">
+            {(chainQuery.data?.blockedBy ?? []).map((blocker) => (
+              <li key={`${blocker.itemType}-${blocker.itemId}`}>{blocker.title}</li>
+            ))}
+          </ul>
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+
   return (
     <div className="min-w-0 space-y-6 p-4 md:p-6 max-w-3xl">
       <Link
@@ -143,10 +185,7 @@ export default function TaskDetailPage() {
         {task.status === "backlog" && (
           <>
             <Authorized require="canOperate">
-              <Button data-testid="task-start-button" size="sm" onClick={() => setStartOpen(true)}>
-                <Play className="size-4" />
-                Start
-              </Button>
+              {renderStartTrigger("task-start-button", "Start")}
             </Authorized>
             <Authorized require="canAdmin">
               <Button
@@ -163,12 +202,7 @@ export default function TaskDetailPage() {
         )}
         {task.status === "in_progress" && (
           <Authorized require="canOperate">
-            {canRestart && (
-              <Button data-testid="task-restart-button" size="sm" onClick={() => setStartOpen(true)}>
-                <Play className="size-4" />
-                Restart
-              </Button>
-            )}
+            {canRestart && renderStartTrigger("task-restart-button", "Restart")}
             <Button
               data-testid="task-complete-button"
               size="sm"

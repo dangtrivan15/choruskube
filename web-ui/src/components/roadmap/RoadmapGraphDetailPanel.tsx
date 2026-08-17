@@ -44,7 +44,12 @@ interface Props {
   epicId: string;
   /** Every intra-Epic "blocking" dependency edge (RoadmapGraphSnapshot.dependencies). */
   dependencies: DependencyEdgeResponse[];
-  /** Every Story/Task in the Epic, for the "add blocker" picker (Epics can't participate — BlockableItemType has no "epic" variant). */
+  /**
+   * Every item a Story/Task in the Epic can pick as a blocker in the "add
+   * blocker" picker: the Epic's own Stories/Tasks, plus the Epic itself
+   * (Epic-tier dependencies — the Epic is a candidate in its own right, see
+   * `RoadmapGraphPage.buildBlockableItems`).
+   */
   blockableItems: BlockableItemRef[];
   /**
    * The Epic graph's full external-blockers list (RoadmapGraphSnapshot.externalBlockers).
@@ -138,9 +143,11 @@ function ExternalBlockersSection({ blockers }: { blockers: ExternalBlockerRef[] 
 
 /**
  * "Blocked by" management for a Story/Task node — lists existing blocking
- * edges (with a remove action) and a picker + button to add a new one.
- * Epics are excluded: BlockableItemType only has story/task variants, so an
- * Epic node can neither block nor be blocked.
+ * edges (with a remove action) and a picker + button to add a new one. Only
+ * rendered for a Story/Task node (never an Epic node): this section manages
+ * the *selected item's own* blockers, and an Epic node has no such list of
+ * its own to manage here — but the Epic itself is still offered as a pickable
+ * blocker for a Story/Task (Epic-tier dependencies), via `blockableItems`.
  */
 function BlockingDependenciesSection({
   itemType,
@@ -265,8 +272,9 @@ export default function RoadmapGraphDetailPanel({
 }: Props) {
   const { itemType, item } = detail;
 
-  // Epics have no `readiness` field at all (BlockableItemType has no "epic"
-  // variant), so this is only ever enabled for a BLOCKED Story/Task. Hooks
+  // Epics have no `readiness` field at all — Readiness is only ever computed
+  // for a Story/Task, even though an Epic can now be an edge endpoint — so
+  // this is only ever enabled for a BLOCKED Story/Task. Hooks
   // must be called unconditionally on every render, so the item-type/id
   // arguments are always computed (harmlessly unused when itemType is
   // "epic") and only `enabled` varies — mirrors the `itemType !== "epic" &&

@@ -156,16 +156,17 @@ class EpicReadinessAssembler {
      *     internally, the caller's map is left untouched
      * @param parentOf maps a Story to its Epic and a Task to its Story, so a blocked container's
      *     readiness can be cascaded onto the work inside it after the walk below
-     * @param internal whether to authorize cross-Epic references via the internal ({@code
-     *     assertSameOrg}) path or the public ({@code checkOrgAccess}) path
-     * @param runId the calling run's id, used only when {@code internal} is true
+     * @param mode which authorization path cross-Epic references are resolved through
+     * @param contextId the id {@code mode} authorizes against — the calling run for {@link
+     *     ReadinessAuthMode#INTERNAL_RUN}, the Autopilot for {@link ReadinessAuthMode#AUTOPILOT},
+     *     unused (and normally null) for {@link ReadinessAuthMode#PUBLIC}
      */
     Assembly assemble(
             Set<UUID> candidateIds,
             Map<UUID, String> statusById,
             Map<UUID, UUID> parentOf,
-            boolean internal,
-            UUID runId) {
+            ReadinessAuthMode mode,
+            UUID contextId) {
         List<WorkItemDependency> rows = candidateIds.isEmpty()
                 ? List.of()
                 : dependencyRepo.findByBlockingItemIdInOrBlockedItemIdIn(candidateIds, candidateIds);
@@ -187,8 +188,8 @@ class EpicReadinessAssembler {
                 ExternalBlockerResolution resolution = resolveExternalBlocker(
                         row.getBlockingItemType(),
                         row.getBlockingItemId(),
-                        internal,
-                        runId,
+                        mode,
+                        contextId,
                         BlockerDirection.BLOCKING,
                         row.getBlockedItemId());
                 externalBlockers.add(resolution.ref());
@@ -205,8 +206,8 @@ class EpicReadinessAssembler {
                 ExternalBlockerResolution resolution = resolveExternalBlocker(
                         row.getBlockedItemType(),
                         row.getBlockedItemId(),
-                        internal,
-                        runId,
+                        mode,
+                        contextId,
                         BlockerDirection.BLOCKED,
                         row.getBlockingItemId());
                 externalBlockers.add(resolution.ref());
@@ -270,7 +271,8 @@ class EpicReadinessAssembler {
      * leaking it to a caller outside its org first. Uses {@code checkOrgAccess} (request-scoped)
      * on the public path or {@code assertSameOrg} against the calling run (no tenant context) on
      * the internal path — mirrors the split between {@link EpicService#get} and {@link
-     * EpicService#getInternal}.
+     * EpicService#getInternal}. The Autopilot path is a third case: no tenant context AND no run,
+     * so it asserts against the Autopilot's own org.
      *
      * <p>Today every dependency edge is created with both endpoints in the same org as the caller
      * (DefaultWorkItemDependencyService#create), so this never rejects in practice — but it closes
@@ -287,14 +289,18 @@ class EpicReadinessAssembler {
     private ExternalBlockerResolution resolveExternalBlocker(
             BlockableItemType type,
             UUID id,
-            boolean internal,
-            UUID runId,
+            ReadinessAuthMode mode,
+            UUID contextId,
             BlockerDirection direction,
             UUID internalItemId) {
-        if (internal) {
-            authService.assertSameOrg(type.name(), id, "workflow_run", runId);
-        } else {
-            authService.checkOrgAccess(type.name(), id);
+        switch (mode) {
+            case PUBLIC -> authService.checkOrgAccess(type.name(), id);
+            case INTERNAL_RUN -> authService.assertSameOrg(type.name(), id, "workflow_run", contextId);
+            case AUTOPILOT -> authService.assertSameOrg(type.name(), id, "autopilot", contextId);
+            // javac does not exhaustiveness-check a switch STATEMENT, so a fourth
+            // ReadinessAuthMode would compile straight through this block and perform no
+            // authorization at all — in the method whose entire job is that gate. Fail closed.
+            default -> throw new IllegalStateException("Unhandled ReadinessAuthMode: " + mode);
         }
         if (type == BlockableItemType.epic) {
             Epic epic = findEpic(id);

@@ -24,4 +24,9 @@ public class DefaultOrgScopedFeedPublisher implements OrgScopedFeedPublisher {
     public void roadmapItemChanged(String resourceType, UUID resourceId, Object payload) {
         messagingTemplate.convertAndSend("/topic/roadmap-items", payload);
     }
+
+    @Override
+    public void autopilotChanged(UUID autopilotId, Object payload) {
+        messagingTemplate.convertAndSend("/topic/autopilot", payload);
+    }
 }

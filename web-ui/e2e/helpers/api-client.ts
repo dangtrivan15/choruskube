@@ -10,7 +10,13 @@
  */
 
 import { createRequire } from "node:module";
-import type { RepoRef, SoftwareProjectRef, MilestoneRef } from "../../src/lib/types";
+import type {
+  RepoRef,
+  SoftwareProjectRef,
+  MilestoneRef,
+  Readiness,
+  AutopilotStatus,
+} from "../../src/lib/types";
 
 // E2e-mode defaults (2xxxx range). Local-mode runs on 1xxxx — override via
 // API_URL / AUTH_URL env vars if pointing Playwright at the local stack.
@@ -149,6 +155,9 @@ export interface Task {
   repos: RepoRef[];
   latestRunId: string | null;
   latestRunStatus: string | null;
+  // Only populated by listTasks() (GET /stories/{storyId}/tasks) — see TaskResponse's own
+  // doc comment on the backend. Single-item reads (get/create/start/...) leave this null.
+  readiness: Readiness | null;
 }
 
 export interface PageResponse<T> {
@@ -406,6 +415,17 @@ export class TestApiClient {
 
   async cancelRun(id: string): Promise<void> {
     return this.post(`/api/v1/runs/${id}/cancel`);
+  }
+
+  /**
+   * Pauses a run in place (mirrors the Run Monitor's Pause action). Unlike cancel, this does
+   * not set the run's status synchronously — it signals the orchestrator's DAG-executor
+   * workflow, which stamps `status: "paused"` (and any currently-running node the same way)
+   * as soon as it next reaches a decision point, ordinarily within a couple of seconds. Pair
+   * with `waitForRunStatus(id, ["paused"], ...)`.
+   */
+  async pauseRun(id: string): Promise<void> {
+    return this.post(`/api/v1/runs/${id}/pause`);
   }
 
   async signalNode(
@@ -676,6 +696,37 @@ export class TestApiClient {
 
   async deleteOrgAiCredential(orgId: string): Promise<void> {
     return this.delete(`/api/v1/organizations/${orgId}/ai-credential`);
+  }
+
+  // ── Autopilot (spec §10) ─────────────────────────────────────────
+  //
+  // The Autopilot is a SINGLETON, org-wide, with no per-caller scope filter (Decision 7) — every
+  // method below mutates or reads state shared by every Playwright worker. Only
+  // e2e/specs/autopilot.spec.ts is expected to call these; see that file's top-of-file comment for
+  // the parallel-safety reasoning (serialised tests, generous-but-bounded maxParallel headroom,
+  // disengage in afterAll).
+
+  async getAutopilot(): Promise<AutopilotStatus> {
+    return this.get("/api/v1/autopilot");
+  }
+
+  async updateAutopilot(maxParallel: number): Promise<AutopilotStatus> {
+    return this.patch("/api/v1/autopilot", { maxParallel });
+  }
+
+  async engageAutopilot(): Promise<AutopilotStatus> {
+    return this.post("/api/v1/autopilot/engage");
+  }
+
+  async disengageAutopilot(): Promise<AutopilotStatus> {
+    return this.post("/api/v1/autopilot/disengage");
+  }
+
+  /** Runs one tick synchronously and returns the resulting status — see AUTOPILOT_ENABLED=false
+   *  in docker-compose.e2e.yaml for why this manual endpoint, not the 30s scheduler, drives
+   *  every Autopilot assertion in this suite. */
+  async tickAutopilot(): Promise<AutopilotStatus> {
+    return this.post("/api/v1/autopilot/tick");
   }
 
   // ── Polling helpers ──────────────────────────────────────────────

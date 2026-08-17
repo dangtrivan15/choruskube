@@ -621,10 +621,14 @@ export interface TaskStatusUpdateRequest {
 // --- Roadmap Graph View ---
 
 /**
- * Matches the backend BlockableItemType enum — the only two work-item kinds
- * that can participate in a blocking dependency edge (Epics can't).
+ * Matches the backend BlockableItemType enum — the three work-item kinds
+ * that can participate in a blocking dependency edge. An Epic is a candidate
+ * in its own right (it can block, or be blocked by, a Story/Task — including
+ * one inside its own tree, or across Epics via `ExternalBlockerRef`), even
+ * though it never carries a `readiness` field itself: `Readiness` is only
+ * ever computed for the Story/Task endpoints of an edge, never for an Epic.
  */
-export type BlockableItemType = "story" | "task";
+export type BlockableItemType = "epic" | "story" | "task";
 
 /**
  * Matches the backend DependencyEdgeResponse record — a "blocking" dependency
@@ -1242,4 +1246,29 @@ export interface OrgAiCredentialResponse {
   healthDetail?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface AutopilotTaskRef {
+  taskId: string;
+  title: string;
+  runId: string | null;
+  status: string;
+}
+
+export interface AutopilotStatus {
+  engaged: boolean;
+  maxParallel: number;
+  inFlight: number;
+  slots: number;
+  nextUp: AutopilotTaskRef[];
+  whyIdle: string[];
+  awaitingYou: AutopilotTaskRef[];
+  needsAttention: AutopilotTaskRef[];
+  consecutiveFailures: number;
+  disengagedReason: string | null;
+  lastTickAt: string | null;
+}
+
+export interface AutopilotUpdateRequest {
+  maxParallel: number;
 }

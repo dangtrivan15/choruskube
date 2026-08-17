@@ -10,6 +10,7 @@ import {
   ChevronsUpDown,
   Check,
   BookOpen,
+  Bot,
 } from "lucide-react";
 import { usePendingGatesCount } from "@/hooks/usePendingGates";
 import { usePendingGatesSubscription } from "@/hooks/usePendingGatesSubscription";
@@ -30,6 +31,7 @@ const coreNavItems: NavItem[] = [
   { to: "/runs", label: "Runs", icon: Play, shortcutHint: "g r" },
   { to: "/git-repos", label: "Software Projects", icon: GitBranch, shortcutHint: "g g" },
   { to: "/docs", label: "Documentation", icon: BookOpen, shortcutHint: "g d" },
+  { to: "/autopilot", label: "Autopilot", icon: Bot, shortcutHint: "g p" },
 ];
 
 /**

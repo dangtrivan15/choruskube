@@ -63,7 +63,7 @@ public class DefaultRoadmapGraphService implements RoadmapGraphService {
         // same trust boundary DefaultStoryService/DefaultTaskService's own list() methods already
         // rely on when they call EpicReadinessAssembler#loadEpicCandidates.
         EpicResponse epic = epicService.get(epicId);
-        return assemble(epic, epicId, false, null);
+        return assemble(epic, epicId, ReadinessAuthMode.PUBLIC, null);
     }
 
     @Override
@@ -73,7 +73,7 @@ public class DefaultRoadmapGraphService implements RoadmapGraphService {
         // assertSameOrg/project-match instead of checkOrgAccess (no tenant context on this path —
         // see Decision 1, Decision 5, and the javadoc on EpicService#getInternal).
         EpicResponse epic = epicService.getInternal(epicId, runId, runSoftwareProjectId);
-        return assemble(epic, epicId, true, runId);
+        return assemble(epic, epicId, ReadinessAuthMode.INTERNAL_RUN, runId);
     }
 
     /**
@@ -82,14 +82,14 @@ public class DefaultRoadmapGraphService implements RoadmapGraphService {
      * (Decision 2, delegated to {@link EpicReadinessAssembler}), and embeds per-Task capped run
      * history (Decision 3).
      *
-     * @param internal whether to authorize/resolve cross-epic references via the internal
-     *     ({@code assertSameOrg}) path or the public ({@code checkOrgAccess}) path
-     * @param runId the calling run's id, used only when {@code internal} is true
+     * @param mode which authorization path cross-Epic references are resolved through
+     * @param contextId the id {@code mode} authorizes against (the calling run, on the internal
+     *     path); unused on the public path
      */
-    private RoadmapGraphSnapshot assemble(EpicResponse epic, UUID epicId, boolean internal, UUID runId) {
+    private RoadmapGraphSnapshot assemble(EpicResponse epic, UUID epicId, ReadinessAuthMode mode, UUID contextId) {
         EpicReadinessAssembler.EpicCandidates candidates = readinessAssembler.loadEpicCandidates(epicId);
         EpicReadinessAssembler.Assembly assembly = readinessAssembler.assemble(
-                candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), internal, runId);
+                candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), mode, contextId);
 
         List<StoryResponse> stories = candidates.stories().stream()
                 .map(s -> toStoryResponse(
@@ -97,12 +97,32 @@ public class DefaultRoadmapGraphService implements RoadmapGraphService {
                         candidates.tasksByStoryId().getOrDefault(s.getId(), List.of()),
                         assembly.readinessById().get(s.getId())))
                 .toList();
+        boolean useInternalRunListing = usesInternalRunListing(mode);
         List<TaskResponse> tasks = candidates.stories().stream()
                 .flatMap(s -> candidates.tasksByStoryId().getOrDefault(s.getId(), List.of()).stream())
-                .map(t -> toTaskResponse(t, assembly.readinessById().get(t.getId()), internal))
+                .map(t -> toTaskResponse(t, assembly.readinessById().get(t.getId()), useInternalRunListing))
                 .toList();
 
         return new RoadmapGraphSnapshot(epic, stories, tasks, assembly.dependencies(), assembly.externalBlockers());
+    }
+
+    /**
+     * Which of {@code TaskService}'s two run-listing methods the embedded run history comes from —
+     * a separate concern from readiness authorization that happens to be decided by the same mode.
+     * Spelled out rather than written as {@code mode == INTERNAL_RUN} because the fallback matters:
+     * a boolean comparison silently maps any future mode to the REQUEST-SCOPED {@code listRuns},
+     * which is precisely the trap {@link ReadinessAuthMode#AUTOPILOT} exists to avoid. This graph
+     * has no Autopilot caller today, so that mode is rejected rather than guessed at.
+     */
+    private static boolean usesInternalRunListing(ReadinessAuthMode mode) {
+        return switch (mode) {
+            case PUBLIC -> false;
+            case INTERNAL_RUN -> true;
+            case AUTOPILOT ->
+                throw new IllegalArgumentException(
+                        "The roadmap graph has no Autopilot caller; run history would fall back to the "
+                                + "request-scoped listing, which has no tenant context on a timer thread");
+        };
     }
 
     private static StoryResponse toStoryResponse(Story s, List<Task> tasks, Readiness readiness) {
