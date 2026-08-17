@@ -378,7 +378,17 @@ picture of the roadmap nobody can trust is worse than stopping.
 It disengages on the **first** occurrence and deliberately does **not** touch
 `consecutive_failures` — mixing an external failure into that counter would let one
 credential hiccup plus two unrelated run failures trip the breaker with a reason naming
-the wrong cause. It takes the failing resource as a parameter (`resourceType`,
+the wrong cause.
+
+Stopping on the first occurrence only works if "cannot be fixed by waiting" is judged
+accurately, and one status makes that hard: GitHub answers a secondary rate limit with
+**403**, the same status as a credential that genuinely lacks access. Only the response
+headers separate them, so `retry-after` and `x-ratelimit-remaining` are read into the
+exception and consulted before the status is — as a positive signal only, so a 403 with
+no such header keeps its old persistent meaning. The headers rather than the body,
+because a GitHub error payload can echo the request's `Authorization` header and this
+text reaches a log and the `disengagedReason` panel. The same applies to minting an
+installation token, which is rate limited too and reaches the classifier wrapped. It takes the failing resource as a parameter (`resourceType`,
 `resourceId`) because every caller is on a timer thread with no request context, and it
 resolves the owning Autopilot from that resource. The `engaged = true` guard lives inside
 the UPDATE (`disengageIfEngagedWithReason`), so a reconciler that reports the same failure
@@ -483,8 +493,9 @@ status where there is no run, the run's status where there is.
 
 `whyIdle` is the trust-critical field. An unattended dispatcher that has stopped for a
 structural reason — at capacity, nothing ready, an Epic with no Tasks blocking everything
-downstream, a run stuck in `pending` holding a slot — has to read differently from one
-that has silently died.
+downstream, a run stuck in `pending` holding a slot, a registered pull request with no
+number whose merge state can never be read — has to read differently from one that has
+silently died.
 
 The same payload is published over STOMP to **`/topic/autopilot`** on every engage,
 disengage, update, safety-valve stop, and **every tick** (including ticks that started

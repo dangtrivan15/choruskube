@@ -33,6 +33,7 @@ import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.AutopilotRepository;
 import com.choruskube.core.repository.EpicRepository;
+import com.choruskube.core.repository.RunPullRequestRepository;
 import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
@@ -99,6 +100,14 @@ class AutopilotServiceTest {
 
     @Mock
     private TaskRepository taskRepo;
+
+    /**
+     * Only reached by {@code whyIdle}, which asks how many of this Autopilot's registered pull
+     * requests can never be resolved. Lenient settings leave the unstubbed answer at 0, which is
+     * the "nothing wrong" case every pre-existing assertion here was written against.
+     */
+    @Mock
+    private RunPullRequestRepository prRepo;
 
     @Mock
     private EpicReadinessAssembler readinessAssembler;
@@ -1676,6 +1685,7 @@ class AutopilotServiceTest {
                 epicRepo,
                 storyRepo,
                 taskRepo,
+                prRepo,
                 readinessAssembler,
                 candidateSource,
                 taskService,

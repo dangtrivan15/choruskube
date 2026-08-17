@@ -19,17 +19,33 @@ package com.choruskube.core.exception;
  * {@code RuntimeException} → 500 is the right answer for the case where one ever escapes to a
  * controller.
  */
-public class GitHubApiException extends RuntimeException {
+public class GitHubApiException extends RuntimeException implements GitHubRateLimited {
 
     private final int status;
     private final String ownerRepo;
     private final int prNumber;
+    private final GitHubRateLimitHints rateLimitHints;
 
+    /**
+     * For a response whose headers were not read, and for the many tests that only care about the
+     * status. Equivalent to supplying {@link GitHubRateLimitHints#NONE}, which classifies as "not a
+     * rate limit" — the safe direction, since a 403 then keeps its old persistent meaning.
+     */
     public GitHubApiException(int status, String ownerRepo, int prNumber) {
+        this(status, ownerRepo, prNumber, GitHubRateLimitHints.NONE);
+    }
+
+    public GitHubApiException(int status, String ownerRepo, int prNumber, GitHubRateLimitHints rateLimitHints) {
         super("GitHub returned " + status + " for " + ownerRepo + "#" + prNumber);
         this.status = status;
         this.ownerRepo = ownerRepo;
         this.prNumber = prNumber;
+        this.rateLimitHints = rateLimitHints == null ? GitHubRateLimitHints.NONE : rateLimitHints;
+    }
+
+    @Override
+    public GitHubRateLimitHints getRateLimitHints() {
+        return rateLimitHints;
     }
 
     public int getStatus() {
