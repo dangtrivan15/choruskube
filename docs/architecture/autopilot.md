@@ -402,10 +402,11 @@ them.
 ## Extension points
 
 The core runs single-tenant; a downstream implementation may supply real multi-tenant
-behaviour. Four seams exist for that, each with a core default gated by the same idiom
-used by every other OSS seam in this repo — `@ConditionalOnProperty(name = "auth.enabled",
+behaviour. Five seams exist for that. Four use the same idiom as every other OSS seam in
+this repo — a core default gated by `@ConditionalOnProperty(name = "auth.enabled",
 havingValue = "false", matchIfMissing = true)` — so a downstream bean **replaces** the
-core one rather than colliding with it.
+core one rather than colliding with it. The fifth, `AutopilotTickOrder`, is gated
+differently, and the difference carries meaning: see below.
 
 | Seam | Core default bean | Contract |
 |---|---|---|
@@ -413,6 +414,35 @@ core one rather than colliding with it.
 | [`AutopilotScopeBinder`](../../api-server/src/main/java/com/choruskube/core/service/AutopilotScopeBinder.java) | `SingleTenantAutopilotScopeBinder` | Runs one pass in the scope that owns an Autopilot. Core binds nothing and just runs the pass |
 | [`AutopilotCandidateSource`](../../api-server/src/main/java/com/choruskube/core/service/AutopilotCandidateSource.java) | `AllEpicsCandidateSource` | Which Epics the frontier may draw from, keyed on `autopilotId`. Core returns every Epic |
 | [`OrgScopedFeedPublisher#autopilotChanged`](../../api-server/src/main/java/com/choruskube/core/event/OrgScopedFeedPublisher.java) | `DefaultOrgScopedFeedPublisher` | Where the status snapshot is published. Core sends it to `/topic/autopilot` |
+| [`AutopilotTickOrder`](../../api-server/src/main/java/com/choruskube/core/service/AutopilotTickOrder.java) | `ShufflingTickOrder` (not a bean — see below) | The order one tick visits the engaged Autopilots in. Must return a permutation |
+
+### `AutopilotTickOrder`, and why its gate differs
+
+Which Autopilots are engaged is a fact about the data; which one goes first is a
+scheduling policy. They used to share one answer — a resolver has to sort by *something*
+for its query to be well defined, and whatever it sorted by silently became the tick
+order, on every tick, forever. The last Autopilot in that order was last every time, and
+every replica walked the identical list and contended for the identical lease in lockstep
+before finding work.
+
+The seam may only **reorder**. `tick()` checks that the result is a permutation of its
+input and throws otherwise, for the same reason `AutopilotScopeBinder` says "throw rather
+than skip": an id quietly dropped leaves that Autopilot engaged, ticking and permanently
+idle — no start, no exception, no failure counted, and a panel still reporting a healthy
+`last_tick_at`. Admission control is a reasonable thing to want, but it must be a decision
+the system can see rather than arriving disguised as an ordering.
+
+The default is **not a bean**. `AutopilotService` holds it behind an `ObjectProvider` and
+falls back to `ShufflingTickOrder` when nothing is registered, so an implementation
+replaces it simply by existing. `@ConditionalOnMissingBean` would be the obvious
+alternative and is unsafe here — it is only reliable inside auto-configuration, and in an
+ordinary `@Configuration` it is evaluated when that class is parsed, so whether it sees a
+downstream bean depends on scan order. The `auth.enabled` idiom the other four use is also
+wrong for this one, and that is the distinction worth carrying away: **the gate encodes
+whether a safe default exists.** Those seams have none — falling back to "every Epic in
+the installation" would be a scope leak — so their core bean is absent downstream and the
+context refuses to start without a replacement. Ordering has a safe default, so requiring
+an implementation to supply one would be asking for something it may not care about.
 
 The shape is always the same: **core declares and invokes the boundary; a downstream
 implementation decides what it means.** `tick()` is core code, so core is the only place

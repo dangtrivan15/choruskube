@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.springframework.stereotype.Component;
 
 /**
@@ -100,8 +101,20 @@ class EpicReadinessAssembler {
         Map<UUID, UUID> parentOf = new HashMap<>();
         Set<UUID> candidateIds = new HashSet<>();
         List<Task> allTasks = new ArrayList<>();
+        // One query for every Story's Tasks rather than one per Story. The Autopilot calls this
+        // once per candidate Epic on every tick, so the per-Story round trip was the dominant cost
+        // of a pass — and it is the same read the board makes, so both get shorter.
+        Map<UUID, List<Task>> batched = stories.isEmpty()
+                ? Map.of()
+                : taskRepo
+                        .findByStoryIdInOrderByCreatedAtDesc(
+                                stories.stream().map(Story::getId).toList())
+                        .stream()
+                        .collect(Collectors.groupingBy(Task::getStoryId));
         for (Story story : stories) {
-            List<Task> tasks = taskRepo.findByStoryIdOrderByCreatedAtDesc(story.getId());
+            // A Story with no Tasks is absent from the grouping and must still map to an empty
+            // list: emptiness is meaningful here — it is what drives the empty-container reasons.
+            List<Task> tasks = batched.getOrDefault(story.getId(), List.of());
             tasksByStoryId.put(story.getId(), tasks);
             candidateIds.add(story.getId());
             parentOf.put(story.getId(), epicId);

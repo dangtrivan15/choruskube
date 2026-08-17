@@ -30,6 +30,14 @@ public interface TaskRepository extends JpaRepository<Task, UUID>, JpaSpecificat
     /** Batch finder used to avoid N+1 when computing a Story/Epic list's rollup status/progress. */
     List<Task> findByStoryIdIn(Collection<UUID> storyIds);
 
+    /**
+     * The same batch, ordered the way {@link #findByStoryIdOrderByCreatedAtDesc} orders one Story's
+     * Tasks — so a caller can replace a per-Story loop with one query and group the result without
+     * changing what any Story's list looks like. The sort is global, but grouping a sorted stream
+     * preserves encounter order inside each group, so each Story's list comes out identical.
+     */
+    List<Task> findByStoryIdInOrderByCreatedAtDesc(Collection<UUID> storyIds);
+
     @Query("SELECT count(t) FROM Task t " + "WHERE t.status <> 'done' AND t.softwareProjectId = :id")
     long countNonDoneBySoftwareProjectId(@Param("id") UUID id);
 
