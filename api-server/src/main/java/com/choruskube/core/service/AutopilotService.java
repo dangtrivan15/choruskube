@@ -17,6 +17,7 @@ import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.AutopilotRepository;
 import com.choruskube.core.repository.EpicRepository;
+import com.choruskube.core.repository.RunPullRequestRepository;
 import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
@@ -100,6 +101,7 @@ public class AutopilotService implements AutopilotSafetyValve {
     private final EpicRepository epicRepo;
     private final StoryRepository storyRepo;
     private final TaskRepository taskRepo;
+    private final RunPullRequestRepository prRepo;
     private final EpicReadinessAssembler readinessAssembler;
     private final AutopilotCandidateSource candidateSource;
     private final TaskService taskService;
@@ -138,6 +140,7 @@ public class AutopilotService implements AutopilotSafetyValve {
             EpicRepository epicRepo,
             StoryRepository storyRepo,
             TaskRepository taskRepo,
+            RunPullRequestRepository prRepo,
             EpicReadinessAssembler readinessAssembler,
             AutopilotCandidateSource candidateSource,
             TaskService taskService,
@@ -154,6 +157,7 @@ public class AutopilotService implements AutopilotSafetyValve {
         this.epicRepo = epicRepo;
         this.storyRepo = storyRepo;
         this.taskRepo = taskRepo;
+        this.prRepo = prRepo;
         this.readinessAssembler = readinessAssembler;
         this.candidateSource = candidateSource;
         this.taskService = taskService;
@@ -1025,6 +1029,7 @@ public class AutopilotService implements AutopilotSafetyValve {
         }
         Set<String> reasons = new LinkedHashSet<>(notes);
         reasons.addAll(stalePendingReasons(live));
+        reasons.addAll(unresolvablePullRequestReasons(autopilot.getId()));
         if (slots == 0) {
             reasons.add("At capacity — " + inFlight + " of " + autopilot.getMaxParallel() + " slot(s) in use");
         }
@@ -1065,6 +1070,34 @@ public class AutopilotService implements AutopilotSafetyValve {
                     + " minute(s) and is holding a slot — its workflow may never have started");
         }
         return reasons;
+    }
+
+    /**
+     * Pull requests this Autopilot's own runs registered without a PR number, and so whose merge
+     * state can never be read.
+     *
+     * <p>These rows used to be selected by the state reconciler's scan, reach its refresh, and
+     * return without an exception — no stamp, no classification, nothing above a debug log — so
+     * they held a batch slot forever and starved every healthy row behind them. V17 keeps them out
+     * of the scan entirely, which fixes the starvation but would otherwise make them invisible: a
+     * Task whose PR can never be observed as merged can never close, and under {@code done ⟺
+     * merged} that is work the Autopilot will wait on indefinitely.
+     *
+     * <p>Named here rather than reaped or auto-closed for the same reason as a stale {@code
+     * pending} run: the remedy is a human deciding what that pull request actually was.
+     *
+     * <p>Counted, not listed. The panel's job is to say that some work can never finish; which rows
+     * is a question for the database, and an unbounded list on a status endpoint is a different
+     * kind of mistake.
+     */
+    private List<String> unresolvablePullRequestReasons(UUID autopilotId) {
+        long unresolvable = prRepo.countUnresolvableForAutopilot(autopilotId);
+        if (unresolvable == 0) {
+            return List.of();
+        }
+        return List.of(unresolvable
+                + " registered pull request(s) have no PR number, so their merge state can never be read "
+                + "and the Task(s) behind them can never close");
     }
 
     private static List<AutopilotTaskRef> refsFor(

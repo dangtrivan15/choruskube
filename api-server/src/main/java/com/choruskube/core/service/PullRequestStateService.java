@@ -3,6 +3,8 @@ package com.choruskube.core.service;
 import com.choruskube.core.credential.GitHubCredentialResolver;
 import com.choruskube.core.exception.GitHubApiException;
 import com.choruskube.core.exception.GitHubCredentialUnavailableException;
+import com.choruskube.core.exception.GitHubRateLimitHints;
+import com.choruskube.core.exception.GitHubRateLimited;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.RunPullRequest;
 import com.choruskube.core.model.WorkflowRun;
@@ -11,6 +13,7 @@ import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.RunPullRequestRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.util.RepoNameUtil;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -20,6 +23,7 @@ import java.util.Set;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
@@ -42,6 +46,9 @@ public class PullRequestStateService {
 
     private static final Logger log = LoggerFactory.getLogger(PullRequestStateService.class);
 
+    /** Deep enough for any real wrapping chain, finite so a cyclic one cannot hang the scheduler. */
+    private static final int MAX_CAUSE_DEPTH = 32;
+
     private final RunPullRequestRepository prRepo;
     private final WorkflowRunRepository runRepo;
     private final GitRepoRepository gitRepoRepo;
@@ -49,6 +56,8 @@ public class PullRequestStateService {
     private final GitHubCredentialResolver credentialResolver;
     private final TaskService taskService;
     private final AutopilotSafetyValve autopilotSafetyValve;
+    private final Duration backoffBase;
+    private final Duration backoffCap;
 
     public PullRequestStateService(
             RunPullRequestRepository prRepo,
@@ -57,7 +66,9 @@ public class PullRequestStateService {
             GitHubAppService gitHubAppService,
             GitHubCredentialResolver credentialResolver,
             TaskService taskService,
-            AutopilotSafetyValve autopilotSafetyValve) {
+            AutopilotSafetyValve autopilotSafetyValve,
+            @Value("${choruskube.reconciler.pull-request-state.backoff-base:PT2M}") Duration backoffBase,
+            @Value("${choruskube.reconciler.pull-request-state.backoff-cap:PT30M}") Duration backoffCap) {
         this.prRepo = prRepo;
         this.runRepo = runRepo;
         this.gitRepoRepo = gitRepoRepo;
@@ -65,13 +76,26 @@ public class PullRequestStateService {
         this.credentialResolver = credentialResolver;
         this.taskService = taskService;
         this.autopilotSafetyValve = autopilotSafetyValve;
+        // A base below the tick interval buys nothing — the row simply becomes due again before
+        // anything looks at it — but a base of zero is a defect, not a tuning choice: it is the
+        // pre-V17 behaviour, and it reintroduces the starvation this exists to remove.
+        if (backoffBase.isZero() || backoffBase.isNegative()) {
+            throw new IllegalArgumentException(
+                    "pull-request-state.backoff-base must be positive; a zero delay is what starved the scan");
+        }
+        if (backoffCap.compareTo(backoffBase) < 0) {
+            throw new IllegalArgumentException("pull-request-state.backoff-cap must be at least the base");
+        }
+        this.backoffBase = backoffBase;
+        this.backoffCap = backoffCap;
     }
 
     /**
      * One tick: refresh a batch of unmerged PRs, then try to close the Tasks behind any that just
-     * merged. A row that fails is left exactly as it was — unmerged and, since nothing writes
-     * {@code stateCheckedAt} on a failure, still at the front of the least-recently-checked order
-     * the next batch reads — so a transient failure costs one interval and nothing else.
+     * merged. A row that fails is deferred by {@link #backOff} rather than left where it was: it
+     * keeps its state, but yields its place in the scan for a delay that doubles with each
+     * consecutive failure. A single transient failure therefore still costs about one interval,
+     * while a row nothing can fix stops crowding healthy rows out of the batch.
      *
      * <p>A <em>persistent</em> failure additionally disengages the Autopilot — <strong>once per
      * repository</strong>, not once per batch. Once per repository, because fifty rows behind one
@@ -96,7 +120,8 @@ public class PullRequestStateService {
      * @return how many pull requests transitioned to merged
      */
     public int refreshBatch(int batchSize) {
-        List<RunPullRequest> batch = prRepo.findUnmergedBatch(PageRequest.of(0, batchSize));
+        Instant now = Instant.now();
+        List<RunPullRequest> batch = prRepo.findUnmergedBatch(now, PageRequest.of(0, batchSize));
         Set<UUID> newlyMergedRunIds = new LinkedHashSet<>();
         // Insertion-ordered and first-wins per repository: the reason a human acts on is the one
         // from the first row that failed, exactly as it was when this was a single reason.
@@ -104,11 +129,15 @@ public class PullRequestStateService {
         int newlyMerged = 0;
         for (RunPullRequest pr : batch) {
             try {
-                if (refreshOne(pr)) {
+                if (refreshOne(pr, now)) {
                     newlyMerged++;
                     newlyMergedRunIds.add(pr.getWorkflowRunId());
                 }
             } catch (Exception e) {
+                // Before anything is decided about the Autopilot: this row yields its place.
+                // Independent of the classification below, because the two answer different
+                // questions — whether a human must act, and when this row may be tried again.
+                backOff(pr, now);
                 String reason = persistentReason(e);
                 if (reason == null) {
                     log.warn("PR state refresh for {} failed; will retry next tick: {}", pr.getId(), e.getMessage());
@@ -167,16 +196,31 @@ public class PullRequestStateService {
      * all — a timeout, a reset connection — stay transient by nature: there was no response to
      * classify, and the next tick is the right answer.
      *
-     * <p>Two judgement calls worth stating. A 403 is persistent although GitHub also uses it for
-     * secondary rate limits, so a heavily rate-limited installation can be stopped by something that
-     * would have cleared itself; the trade is deliberate, and it is the same trade as the default
-     * above. And a credential that cannot be resolved is persistent whatever went wrong underneath,
-     * including a transient failure while minting an installation token: not having a credential at
-     * all is not a state to keep automating through.
+     * <p><strong>A rate limit is transient whatever status carries it.</strong> GitHub answers a
+     * secondary rate limit with 403 — the same status as a credential that genuinely lacks access —
+     * so status alone put a heavily used installation on the persistent side and stopped it for
+     * something that would have cleared in seconds. The response says which it is, but only in its
+     * headers, so {@link #rateLimited} is consulted before the status is. That check reads a
+     * whitelist of three parsed header values and never the body, which can echo the request's
+     * {@code Authorization} header; see {@link GitHubRateLimitHints}.
+     *
+     * <p>The check is a <em>positive</em> signal only. Absent or malformed headers leave a 403
+     * exactly as persistent as before, so the failure this can produce is missing a rate limit — the
+     * problem it started from — never mistaking a revoked credential for one.
+     *
+     * <p>It runs over the whole cause chain rather than the exception in hand, because the second
+     * way a rate limit arrives is buried: the credential resolver is a seam, so a 403 while minting
+     * an installation token surfaces as a {@link GitHubCredentialUnavailableException} wrapping
+     * whatever the implementation threw. Not having a credential is still persistent by default —
+     * that part is unchanged — but "GitHub told us to wait" is not the same thing as "there is no
+     * credential", and only the chain can tell them apart.
      *
      * @return the reason to record on the Autopilot, or null when the failure is transient
      */
     private static String persistentReason(Exception e) {
+        if (rateLimited(e)) {
+            return null;
+        }
         if (e instanceof GitHubCredentialUnavailableException) {
             return e.getMessage() + " — check the GitHub credential configuration";
         }
@@ -198,6 +242,29 @@ public class PullRequestStateService {
     }
 
     /**
+     * Whether anything in this failure's cause chain came back from GitHub saying "rate limited".
+     *
+     * <p>Bounded rather than a plain {@code while (cause != null)} loop: a cause chain can be
+     * cyclic — a wrapper whose cause is itself is the common accident — and this runs inside a
+     * reconciler where an infinite loop is a hung scheduler thread, not a stack trace.
+     */
+    private static boolean rateLimited(Throwable failure) {
+        Throwable cause = failure;
+        for (int depth = 0; cause != null && depth < MAX_CAUSE_DEPTH; depth++) {
+            if (cause instanceof GitHubRateLimited limited
+                    && limited.getRateLimitHints().indicatesRateLimit()) {
+                return true;
+            }
+            Throwable next = cause.getCause();
+            if (next == cause) {
+                break;
+            }
+            cause = next;
+        }
+        return false;
+    }
+
+    /**
      * Refreshes one PR's state. Deliberately NOT {@code @Transactional}: it would be a
      * self-invoked call that never reaches the proxy, and none is needed — {@code prRepo.save}
      * is transactional on its own and each row is independent, with per-row failures already
@@ -205,16 +272,15 @@ public class PullRequestStateService {
      *
      * @return true if this PR was unmerged and is now merged
      */
-    private boolean refreshOne(RunPullRequest pr) {
-        if (pr.getPrNumber() == null) {
-            log.debug("PR {} has no number; cannot query GitHub", pr.getId());
-            return false;
-        }
-        GitRepo repo = gitRepoRepo.findById(pr.getGitRepoId()).orElse(null);
-        if (repo == null) {
-            log.debug("PR {} references a missing git repo {}", pr.getId(), pr.getGitRepoId());
-            return false;
-        }
+    private boolean refreshOne(RunPullRequest pr, Instant now) {
+        GitRepo repo = gitRepoRepo
+                .findById(pr.getGitRepoId())
+                // Unreachable while `run_pull_request.git_repo_id` keeps its NOT NULL foreign key
+                // with no ON DELETE clause. Thrown rather than returned so that if the schema ever
+                // loosens, the row takes the normal failure path and backs off, instead of
+                // returning false forever and holding a batch slot on a debug log.
+                .orElseThrow(() -> new IllegalStateException(
+                        "PR " + pr.getId() + " references a missing git repo " + pr.getGitRepoId()));
         String ownerRepo = RepoNameUtil.deriveOwnerRepoName(repo.getUrl());
         String token = resolveToken(pr.getWorkflowRunId(), ownerRepo);
         GitHubAppService.PullRequestSnapshot snapshot =
@@ -222,9 +288,52 @@ public class PullRequestStateService {
 
         pr.setState(parseState(snapshot.state()));
         pr.setMergedAt(snapshot.mergedAt());
-        pr.setStateCheckedAt(Instant.now());
+        pr.setStateCheckedAt(now);
+        pr.setFailureCount(0);
+        // Due again on the next tick. The scan takes rows whose time has passed, so "now" is the
+        // way to say "no delay" without special-casing zero anywhere.
+        pr.setNextCheckAt(now);
         prRepo.save(pr);
         return snapshot.mergedAt() != null;
+    }
+
+    /**
+     * Defers one failed row, geometrically further each consecutive time.
+     *
+     * <p>The first failure delays by one base interval, so a transient blip still costs about one
+     * tick — the property the old always-front behaviour was protecting. What it adds is a bound
+     * for the other case: a row that cannot be fixed by waiting doubles its way to the cap and
+     * stops crowding healthy rows out of the batch, instead of holding the front of the queue
+     * forever.
+     *
+     * <p>Deliberately not the alternative one-liner of stamping {@code stateCheckedAt} on failure.
+     * That also rotates the queue, but it rotates it by a full lap: with several thousand unmerged
+     * rows and a batch of fifty, a row that failed once would not be retried for hours, and a pull
+     * request that merged during a brief outage would keep its Task open for all of it.
+     *
+     * <p>Written outside any transaction of this class's own, exactly like the success path —
+     * {@code prRepo.save} carries its own, each row is independent, and the caller has already
+     * isolated per-row failures.
+     */
+    private void backOff(RunPullRequest pr, Instant now) {
+        int failures = pr.getFailureCount() + 1;
+        // Clamped before the shift, not after: the exponent is unbounded over time and 1L << 64 is
+        // 1 in Java rather than an overflow anyone would notice.
+        long multiplier = 1L << Math.min(failures - 1, 32);
+        Duration delay = backoffBase.multipliedBy(multiplier);
+        if (delay.compareTo(backoffCap) > 0) {
+            delay = backoffCap;
+        }
+        pr.setFailureCount(failures);
+        pr.setNextCheckAt(now.plus(delay));
+        try {
+            prRepo.save(pr);
+        } catch (RuntimeException e) {
+            // The row keeps its old due time and is retried sooner than intended — the pre-V17
+            // behaviour for this one row. Never allowed to replace the original failure, which is
+            // the one that says whether a human has to act.
+            log.warn("Could not record the backoff for PR {}: {}", pr.getId(), e.getMessage());
+        }
     }
 
     /**
