@@ -39,6 +39,7 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
@@ -97,6 +98,7 @@ public class AutopilotService implements AutopilotSafetyValve {
     private final AutopilotRepository autopilotRepo;
     private final AutopilotResolver autopilotResolver;
     private final AutopilotScopeBinder scopeBinder;
+    private final AutopilotTickOrder tickOrder;
     private final WorkflowRunRepository runRepo;
     private final EpicRepository epicRepo;
     private final StoryRepository storyRepo;
@@ -136,6 +138,7 @@ public class AutopilotService implements AutopilotSafetyValve {
             AutopilotRepository autopilotRepo,
             AutopilotResolver autopilotResolver,
             AutopilotScopeBinder scopeBinder,
+            ObjectProvider<AutopilotTickOrder> tickOrderProvider,
             WorkflowRunRepository runRepo,
             EpicRepository epicRepo,
             StoryRepository storyRepo,
@@ -153,6 +156,11 @@ public class AutopilotService implements AutopilotSafetyValve {
         this.autopilotRepo = autopilotRepo;
         this.autopilotResolver = autopilotResolver;
         this.scopeBinder = scopeBinder;
+        // Resolved once, and by getIfAvailable rather than getIfUnique: two registered orderings is
+        // an ambiguity somebody has to settle, and silently keeping the core default while a
+        // downstream implementation sits unused is the kind of quiet wrong answer this whole seam
+        // is trying to avoid. NoUniqueBeanDefinitionException at startup is the right failure.
+        this.tickOrder = tickOrderProvider.getIfAvailable(ShufflingTickOrder::new);
         this.runRepo = runRepo;
         this.epicRepo = epicRepo;
         this.storyRepo = storyRepo;
@@ -325,7 +333,7 @@ public class AutopilotService implements AutopilotSafetyValve {
                         + "tick lease are separate short transactions on purpose, and an ambient one would "
                         + "merge them back into the single long transaction this design exists to remove.");
         RuntimeException failure = null;
-        for (UUID autopilotId : autopilotResolver.findAllEngaged()) {
+        for (UUID autopilotId : orderedForThisTick(autopilotResolver.findAllEngaged())) {
             try {
                 // The whole pass, lease included, and never tickOne() directly — a pass reached
                 // outside the binder is a pass with no scope bound. Asserted by
@@ -349,6 +357,35 @@ public class AutopilotService implements AutopilotSafetyValve {
         if (failure != null) {
             throw failure;
         }
+    }
+
+    /**
+     * The tick order, with the seam's one contract clause enforced here rather than trusted.
+     *
+     * <p>Checked because the failure it prevents is silent. An implementation that returns a subset
+     * — a budget, a tier that ran out, a filter meant to be temporary — leaves the missing
+     * Autopilots engaged, ticking, and permanently idle: no start, no exception, no failure
+     * counted, and a panel that still reports a healthy {@code last_tick_at}. That is the same
+     * failure {@link AutopilotScopeBinder}'s "throw rather than skip" clause exists for, and it
+     * deserves the same answer. A duplicate is checked for too, since it would give one Autopilot
+     * two passes in a tick, each treating the other's containers as free capacity.
+     *
+     * <p>Multiset equality via a sorted copy rather than a {@code Set}, so a returned duplicate
+     * cannot hide behind a set comparison that finds the same elements.
+     */
+    private List<UUID> orderedForThisTick(List<UUID> engaged) {
+        List<UUID> ordered = tickOrder.order(engaged);
+        Assert.state(ordered != null, "AutopilotTickOrder returned null; it must return a permutation of its input");
+        if (ordered.size() != engaged.size() || !sortedCopy(ordered).equals(sortedCopy(engaged))) {
+            throw new IllegalStateException("AutopilotTickOrder returned " + ordered.size() + " id(s) for "
+                    + engaged.size() + " engaged Autopilot(s); it must return a permutation of its input, since "
+                    + "an id it drops becomes an Autopilot that is engaged, ticking and permanently idle");
+        }
+        return ordered;
+    }
+
+    private static List<UUID> sortedCopy(List<UUID> ids) {
+        return ids.stream().sorted().toList();
     }
 
     /**
@@ -771,9 +808,18 @@ public class AutopilotService implements AutopilotSafetyValve {
         if (taskIds.isEmpty()) {
             return Set.of();
         }
+        // Two batched reads, not one per in-flight Task. This runs inside phase 2 on every tick,
+        // so a per-Task lookup here is a round trip per live agent pod, every interval, forever.
+        Set<UUID> storyIds = taskRepo.findAllById(taskIds).stream()
+                .map(Task::getStoryId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if (storyIds.isEmpty()) {
+            return Set.of();
+        }
         Set<UUID> epicIds = new HashSet<>();
-        for (Task task : taskRepo.findAllById(taskIds)) {
-            storyRepo.findById(task.getStoryId()).ifPresent(story -> epicIds.add(story.getEpicId()));
+        for (Story story : storyRepo.findAllById(storyIds)) {
+            epicIds.add(story.getEpicId());
         }
         return epicIds;
     }

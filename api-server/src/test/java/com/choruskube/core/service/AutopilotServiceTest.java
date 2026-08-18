@@ -52,6 +52,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -61,6 +62,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.mockito.stubbing.Answer;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -856,6 +858,106 @@ class AutopilotServiceTest {
     }
 
     // -----------------------------------------------------------------------------------
+    // 4b — the tick order
+    // -----------------------------------------------------------------------------------
+
+    @Test
+    void tick_visitsEveryEngagedAutopilot_inTheOrderTheTickOrderChose() {
+        UUID second = UUID.randomUUID();
+        RecordingBinder binder = bindingBinder();
+        AutopilotTickOrder reversed = engagedIds -> engagedIds.reversed();
+
+        newService(Duration.ofMinutes(5), engaged(autopilotId, second), binder, reversed)
+                .tick();
+
+        assertThat(binder.bound)
+                .as("the loop follows the tick order, and visits all of them either way")
+                .containsExactly(second, autopilotId);
+    }
+
+    /**
+     * The failure this guard exists for is silent. An id the ordering drops is an Autopilot that
+     * stays engaged and ticking and never starts anything — no exception, no failure counted, and a
+     * panel still reporting a healthy {@code last_tick_at}. Exactly the hazard {@code
+     * AutopilotScopeBinder}'s "throw rather than skip" clause covers, so it gets the same answer.
+     */
+    @Test
+    void tick_aTickOrderThatDropsAnAutopilot_throwsRatherThanSilentlySkippingIt() {
+        UUID second = UUID.randomUUID();
+        AutopilotTickOrder drops = engagedIds -> List.of(engagedIds.getFirst());
+        AutopilotService service = newService(
+                Duration.ofMinutes(5), engaged(autopilotId, second), new SingleTenantAutopilotScopeBinder(), drops);
+
+        assertThatThrownBy(service::tick)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("permutation");
+    }
+
+    /** A duplicate would give one Autopilot two passes, each treating the other's pods as free capacity. */
+    @Test
+    void tick_aTickOrderThatDuplicatesAnAutopilot_throws() {
+        UUID second = UUID.randomUUID();
+        AutopilotTickOrder duplicates = engagedIds -> List.of(engagedIds.getFirst(), engagedIds.getFirst());
+        AutopilotService service = newService(
+                Duration.ofMinutes(5),
+                engaged(autopilotId, second),
+                new SingleTenantAutopilotScopeBinder(),
+                duplicates);
+
+        assertThatThrownBy(service::tick)
+                .as("the same count as the input is not enough — it has to be the same ids")
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("permutation");
+    }
+
+    @Test
+    void tick_aTickOrderThatInventsAnAutopilot_throws() {
+        AutopilotTickOrder invents = engagedIds -> {
+            List<UUID> extra = new ArrayList<>(engagedIds);
+            extra.add(UUID.randomUUID());
+            return extra;
+        };
+        AutopilotService service = newService(
+                Duration.ofMinutes(5), engaged(autopilotId), new SingleTenantAutopilotScopeBinder(), invents);
+
+        assertThatThrownBy(service::tick)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("permutation");
+    }
+
+    /** The default is only allowed to reorder, so it can never trip the guard it sits behind. */
+    @Test
+    void theDefaultTickOrder_alwaysReturnsAPermutation() {
+        AutopilotTickOrder order = new ShufflingTickOrder();
+        List<UUID> engaged =
+                IntStream.range(0, 8).mapToObj(i -> UUID.randomUUID()).toList();
+
+        for (int attempt = 0; attempt < 50; attempt++) {
+            assertThat(order.order(engaged)).containsExactlyInAnyOrderElementsOf(engaged);
+        }
+        assertThat(order.order(List.of())).isEmpty();
+    }
+
+    /**
+     * The point of shuffling: with a fixed order the same Autopilot is last on every tick forever,
+     * and every replica contends for the same lease in the same sequence. Asserted over enough
+     * rolls that a correct shuffle effectively never fails — 50 rolls of an 8-element list.
+     */
+    @Test
+    void theDefaultTickOrder_doesNotAlwaysReturnTheSameOrder() {
+        AutopilotTickOrder order = new ShufflingTickOrder();
+        List<UUID> engaged =
+                IntStream.range(0, 8).mapToObj(i -> UUID.randomUUID()).toList();
+
+        Set<List<UUID>> seen = new HashSet<>();
+        for (int attempt = 0; attempt < 50; attempt++) {
+            seen.add(order.order(engaged));
+        }
+
+        assertThat(seen).hasSizeGreaterThan(1);
+    }
+
+    // -----------------------------------------------------------------------------------
     // 4c — the scope boundary
     // -----------------------------------------------------------------------------------
 
@@ -867,8 +969,9 @@ class AutopilotServiceTest {
         newService(Duration.ofMinutes(5), engaged(autopilotId, second), binder).tick();
 
         assertThat(binder.bound)
-                .as("one scope per pass, in the loop's order, named by the id the pass is for")
-                .containsExactly(autopilotId, second);
+                .as("one scope per pass, named by the id that pass is for — the order is the tick order's "
+                        + "business, and the default one is deliberately not fixed")
+                .containsExactlyInAnyOrder(autopilotId, second);
         // And the pass still ran inside each of them: a binder is a wrapper, not a substitute.
         verify(autopilotRepo).stampTick(eq(autopilotId), any());
         verify(autopilotRepo).stampTick(eq(second), any());
@@ -894,7 +997,9 @@ class AutopilotServiceTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("no scope for");
 
-        assertThat(binder.bound).containsExactly(autopilotId, second);
+        // In any order: the isolation being asserted is that the failing pass did not cost the
+        // other one its turn, which is true whichever of them the tick order put first.
+        assertThat(binder.bound).containsExactlyInAnyOrder(autopilotId, second);
         verify(autopilotRepo, never()).acquireTickLease(eq(autopilotId), any(), anyInt());
         verify(autopilotRepo).stampTick(eq(second), any());
     }
@@ -922,8 +1027,9 @@ class AutopilotServiceTest {
         newService(Duration.ofMinutes(5), engaged(autopilotId, second), binder).tick();
 
         assertThat(binder.bound)
-                .as("invoked once per engaged Autopilot — the count the assertions below are measured against")
-                .containsExactly(autopilotId, second);
+                .as("invoked once per engaged Autopilot — the count the assertions below are measured against, "
+                        + "and a count is all this needs: the order is the tick order's business")
+                .containsExactlyInAnyOrder(autopilotId, second);
         verify(autopilotRepo, never()).acquireTickLease(any(), any(), anyInt());
         verify(autopilotRepo, never()).stampTick(any(), any());
         verify(taskService, never()).startForAutopilot(any(), any());
@@ -1499,6 +1605,36 @@ class AutopilotServiceTest {
     // Harness
     // -----------------------------------------------------------------------------------
 
+    /**
+     * A one-bean {@link ObjectProvider}, which is how the service is wired when a downstream
+     * implementation has supplied an ordering. The zero-bean case — core's own, where the provider
+     * falls back to {@link ShufflingTickOrder} — is covered by the Spring context tests that build
+     * the real bean graph, since it is exactly the absence of a bean that is under test there.
+     */
+    private static ObjectProvider<AutopilotTickOrder> providerOf(AutopilotTickOrder order) {
+        return new ObjectProvider<>() {
+            @Override
+            public AutopilotTickOrder getObject() {
+                return order;
+            }
+
+            @Override
+            public AutopilotTickOrder getObject(Object... args) {
+                return order;
+            }
+
+            @Override
+            public AutopilotTickOrder getIfAvailable() {
+                return order;
+            }
+
+            @Override
+            public AutopilotTickOrder getIfUnique() {
+                return order;
+            }
+        };
+    }
+
     private AutopilotService newService() {
         return newService(Duration.ofMinutes(5));
     }
@@ -1522,8 +1658,22 @@ class AutopilotServiceTest {
         return newService(tickLeaseTtl, resolver, new SingleTenantAutopilotScopeBinder());
     }
 
+    /**
+     * The real shuffling order, for the same reason as the real resolver and the real binder: every
+     * test below runs through the ordering production runs through. Core has one Autopilot and
+     * shuffling a one-element list is the identity, so this is deterministic for all but the
+     * multi-Autopilot loop tests — which assert on the set they visited rather than the sequence.
+     */
     private AutopilotService newService(
             Duration tickLeaseTtl, AutopilotResolver resolver, AutopilotScopeBinder scopeBinder) {
+        return newService(tickLeaseTtl, resolver, scopeBinder, new ShufflingTickOrder());
+    }
+
+    private AutopilotService newService(
+            Duration tickLeaseTtl,
+            AutopilotResolver resolver,
+            AutopilotScopeBinder scopeBinder,
+            AutopilotTickOrder tickOrder) {
         when(autopilotRepo.findAll()).thenReturn(autopilot == null ? List.of() : List.of(autopilot));
         when(autopilotRepo.findById(any())).thenAnswer(invocation -> Optional.ofNullable(autopilot));
         when(autopilotRepo.findEngagedById(any()))
@@ -1664,6 +1814,22 @@ class AutopilotServiceTest {
         });
         when(taskRepo.findById(any())).thenAnswer(inv -> Optional.ofNullable(tasksById.get(inv.getArgument(0))));
         when(storyRepo.findById(any())).thenAnswer(inv -> Optional.ofNullable(storiesById.get(inv.getArgument(0))));
+        // Epic affinity resolves Stories in one batch rather than one query per in-flight Task, so
+        // the fixture has to answer the batch finder for the affinity assertions to mean anything.
+        when(storyRepo.findAllById(any())).thenAnswer(inv -> {
+            List<Story> found = new ArrayList<>();
+            if (inv.getArgument(0) == null) {
+                // The null call re-stubbing makes, same as insertDefaults above.
+                return found;
+            }
+            for (UUID id : (Iterable<UUID>) inv.getArgument(0)) {
+                Story story = storiesById.get(id);
+                if (story != null) {
+                    found.add(story);
+                }
+            }
+            return found;
+        });
         for (EpicFixture fixture : epics) {
             when(epicRepo.findById(fixture.epic.getId())).thenReturn(Optional.of(fixture.epic));
             when(readinessAssembler.loadEpicCandidates(fixture.epic.getId())).thenReturn(fixture.candidates());
@@ -1681,6 +1847,7 @@ class AutopilotServiceTest {
                 autopilotRepo,
                 resolver,
                 scopeBinder,
+                providerOf(tickOrder),
                 runRepo,
                 epicRepo,
                 storyRepo,
