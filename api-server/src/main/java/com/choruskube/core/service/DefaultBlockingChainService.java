@@ -56,7 +56,7 @@ public class DefaultBlockingChainService implements BlockingChainService {
         if (itemType == BlockableItemType.story) {
             StoryResponse root = storyService.get(itemId);
             titleById.put(itemId, root.title());
-            statusById.put(itemId, root.status());
+            statusById.put(itemId, RollupCalculator.effectiveStatus(root.stage(), root.progress()));
         } else {
             TaskResponse root = taskService.get(itemId);
             titleById.put(itemId, root.title());
@@ -100,7 +100,8 @@ public class DefaultBlockingChainService implements BlockingChainService {
                     if (row.getBlockingItemType() == BlockableItemType.story) {
                         StoryResponse blocker = storyService.get(blockerId);
                         titleById.put(blockerId, blocker.title());
-                        statusById.put(blockerId, blocker.status());
+                        statusById.put(
+                                blockerId, RollupCalculator.effectiveStatus(blocker.stage(), blocker.progress()));
                     } else {
                         TaskResponse blocker = taskService.get(blockerId);
                         titleById.put(blockerId, blocker.title());

@@ -48,11 +48,10 @@ function makeEpic(overrides: Partial<EpicResponse> = {}): EpicResponse {
     title: "Add dark mode",
     description: "Add a dark theme",
     motivation: null,
-    status: "backlog",
     stage: "backlog",
     priority: "medium",
     targetDate: null,
-    progress: { totalTasks: 0, doneTasks: 0 },
+    progress: { totalTasks: 0, doneTasks: 0, startedTasks: 0 },
     softwareProject: { id: "r1", type: "git_repo", name: "backend-api" },
     repos: [],
     createdAt: "2026-04-01T00:00:00Z",
@@ -94,8 +93,12 @@ describe("RoadmapPage", () => {
     expect(screen.getByText(/No epics yet/)).toBeInTheDocument();
   });
 
-  it("renders an epic list with title, status, and progress", () => {
-    const epic = makeEpic({ title: "Add dark mode", status: "in_progress", progress: { totalTasks: 3, doneTasks: 1 } });
+  it("renders an epic list with title, stage, and progress", () => {
+    const epic = makeEpic({
+      title: "Add dark mode",
+      stage: "in_progress",
+      progress: { totalTasks: 3, doneTasks: 1, startedTasks: 1 },
+    });
     mockUseEpics.mockReturnValue({
       data: { ...emptyPage, content: [epic], totalElements: 1, empty: false },
       isLoading: false,

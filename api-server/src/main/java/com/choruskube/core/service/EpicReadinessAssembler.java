@@ -10,7 +10,6 @@ import com.choruskube.core.model.WorkItemDependency;
 import com.choruskube.core.model.enums.BlockableItemType;
 import com.choruskube.core.model.enums.BlockerDirection;
 import com.choruskube.core.model.enums.Readiness;
-import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.repository.EpicRepository;
 import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.repository.TaskRepository;
@@ -133,31 +132,14 @@ class EpicReadinessAssembler {
         return new EpicCandidates(stories, tasksByStoryId, candidateIds, statusById, parentOf);
     }
 
-    /**
-     * An Epic counts as satisfied when its Tasks all report done, or when a human has moved it to
-     * the {@code rolled_out} board lane — the only signal in the model that says "shipped", which
-     * a Task rollup cannot express. The stage check runs first, so an explicit human "shipped"
-     * outranks emptiness: an Epic with no Tasks and no {@code rolled_out} stage is never satisfied.
-     */
+    /** @see RollupCalculator#effectiveStatus */
     private String epicStatus(UUID epicId, List<Task> allTasks) {
-        Epic epic = findEpic(epicId);
-        if (epic.getStage() == WorkItemStatus.rolled_out) {
-            return WorkItemStatus.done.name();
-        }
-        return RollupCalculator.compute(allTasks).status();
+        return RollupCalculator.effectiveStatus(findEpic(epicId).getStage(), allTasks);
     }
 
-    /**
-     * A Story counts as satisfied when its Tasks all report done, or when a human has moved it to
-     * the {@code rolled_out} board lane — the only signal in the model that says "shipped", which
-     * a Task rollup cannot express. The stage check runs first, so an explicit human "shipped"
-     * outranks emptiness: a Story with no Tasks and no {@code rolled_out} stage is never satisfied.
-     */
+    /** @see RollupCalculator#effectiveStatus */
     private String storyStatus(Story story, List<Task> tasks) {
-        if (story.getStage() == WorkItemStatus.rolled_out) {
-            return WorkItemStatus.done.name();
-        }
-        return RollupCalculator.compute(tasks).status();
+        return RollupCalculator.effectiveStatus(story.getStage(), tasks);
     }
 
     /**

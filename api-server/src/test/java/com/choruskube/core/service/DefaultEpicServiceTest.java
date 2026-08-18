@@ -114,7 +114,7 @@ public class DefaultEpicServiceTest extends BaseTest {
         assertThat(created.softwareProject().type()).isEqualTo("git_repo");
         assertThat(created.repos()).hasSize(1);
         assertThat(created.repos().get(0).id()).isEqualTo(r.getId());
-        assertThat(created.status()).isEqualTo("backlog");
+        assertThat(created.stage()).isEqualTo("backlog");
         assertThat(created.progress().totalTasks()).isZero();
         assertThat(created.progress().doneTasks()).isZero();
     }
@@ -295,7 +295,7 @@ public class DefaultEpicServiceTest extends BaseTest {
     }
 
     @Test
-    void rollup_allDescendantTasksDone_statusIsDone() {
+    void rollup_allDescendantTasksDone_reportsCompleteProgress_andLeavesStageAlone() {
         GitRepo r = makeRepo("https://github.com/test/rollup-done.git");
         EpicResponse epic = service.create(new EpicRequest("T", "D", null, r.getId()), null);
         var story = storyService.create(epic.id(), new StoryRequest("S", "D"));
@@ -303,13 +303,16 @@ public class DefaultEpicServiceTest extends BaseTest {
         markTaskDone(task.id());
 
         EpicResponse fetched = service.get(epic.id());
-        assertThat(fetched.status()).isEqualTo("done");
         assertThat(fetched.progress().totalTasks()).isEqualTo(1);
         assertThat(fetched.progress().doneTasks()).isEqualTo(1);
+        // The counts say the work is finished; the board lane still says nobody shipped it. Both
+        // are true at once, and the Epic reports only the first — there is no synthesized "done"
+        // status to contradict the stage it is served alongside.
+        assertThat(fetched.stage()).isEqualTo("backlog");
     }
 
     @Test
-    void rollup_anyDescendantTaskStarted_statusIsInProgress() {
+    void rollup_anyDescendantTaskStarted_countsItAsStarted_withoutMovingTheStage() {
         GitRepo r = makeRepo("https://github.com/test/rollup-in-progress.git");
         EpicResponse epic = service.create(new EpicRequest("T", "D", null, r.getId()), null);
         var story = storyService.create(epic.id(), new StoryRequest("S", "D"));
@@ -317,17 +320,20 @@ public class DefaultEpicServiceTest extends BaseTest {
         markTaskInProgress(task.id());
 
         EpicResponse fetched = service.get(epic.id());
-        assertThat(fetched.status()).isEqualTo("in_progress");
+        assertThat(fetched.progress().startedTasks()).isEqualTo(1);
+        assertThat(fetched.progress().doneTasks()).isZero();
+        assertThat(fetched.stage()).isEqualTo("backlog");
     }
 
     @Test
-    void rollup_emptyEpic_statusIsBacklog_neverDone() {
+    void rollup_emptyEpic_reportsNothingStarted_neverComplete() {
         GitRepo r = makeRepo("https://github.com/test/rollup-empty.git");
         EpicResponse epic = service.create(new EpicRequest("T", "D", null, r.getId()), null);
 
         EpicResponse fetched = service.get(epic.id());
-        assertThat(fetched.status()).isEqualTo("backlog");
+        assertThat(fetched.stage()).isEqualTo("backlog");
         assertThat(fetched.progress().totalTasks()).isZero();
+        assertThat(fetched.progress().startedTasks()).isZero();
     }
 
     // ── readyItemCount rollup ("ready to start" roadmap filter, Decision 2) ───────
@@ -499,8 +505,8 @@ public class DefaultEpicServiceTest extends BaseTest {
         EpicResponse updated = service.updateStage(created.id(), WorkItemStatus.rolled_out);
 
         assertThat(updated.stage()).isEqualTo("rolled_out");
-        // Decision: stage is fully decoupled from the read-time status rollup.
-        assertThat(updated.status()).isEqualTo(beforeStageMove.status());
+        // Decision: stage is fully decoupled from the read-time Task rollup — moving the lane
+        // neither reads nor rewrites the counts.
         assertThat(updated.progress().totalTasks())
                 .isEqualTo(beforeStageMove.progress().totalTasks());
         assertThat(updated.progress().doneTasks())

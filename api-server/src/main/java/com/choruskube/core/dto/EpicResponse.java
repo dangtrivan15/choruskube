@@ -20,7 +20,6 @@ public record EpicResponse(
         String title,
         String description,
         String motivation,
-        String status,
         String stage,
         String priority,
         LocalDate targetDate,
@@ -32,6 +31,15 @@ public record EpicResponse(
         long readyItemCount,
         MilestoneRef milestone) {
 
-    /** Rollup completion figure derived from descendant Tasks (Decision 2) — never stored. */
-    public record Progress(long totalTasks, long doneTasks) {}
+    /**
+     * Rollup completion figures derived from descendant Tasks (Decision 2) — never stored. These
+     * counts are the whole of what an Epic reports about completion: there is no synthesized
+     * status field, because an Epic has no {@code done} lane to be in and a rollup that claimed
+     * one would contradict {@link #stage}. Render "{@code doneTasks} of {@code totalTasks} tasks
+     * done" and let {@code stage} say where the item sits.
+     *
+     * @param startedTasks descendant Tasks that have left {@code backlog} — the "has any work
+     *     begun?" question, which {@code doneTasks} cannot answer and which the delete guard needs.
+     */
+    public record Progress(long totalTasks, long doneTasks, long startedTasks) {}
 }

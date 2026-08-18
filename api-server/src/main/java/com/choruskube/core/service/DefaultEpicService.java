@@ -215,7 +215,8 @@ public class DefaultEpicService implements EpicService {
 
         EpicResponse response = toResponse(epic, newProject);
         auditSink.record(AuditSink.EPIC_UPDATED, "epic", id, detailJson(beforeSnapshot, snapshot(epic)));
-        eventPublisher.publishRoadmapItemChanged("epic", epic.getId(), response.status());
+        eventPublisher.publishRoadmapItemChanged(
+                "epic", epic.getId(), epic.getStage().name());
         return response;
     }
 
@@ -293,7 +294,8 @@ public class DefaultEpicService implements EpicService {
 
         epic = repo.save(epic);
         EpicResponse response = toResponse(epic);
-        eventPublisher.publishRoadmapItemChanged("epic", epic.getId(), response.status());
+        eventPublisher.publishRoadmapItemChanged(
+                "epic", epic.getId(), epic.getStage().name());
         return response;
     }
 
@@ -344,7 +346,8 @@ public class DefaultEpicService implements EpicService {
         // Audited like every other roadmap mutation (create/update/delete/stage): priority is a
         // planning attribute moved in isolation, so its change belongs in the audit trail too.
         auditSink.record(AuditSink.EPIC_PRIORITY_UPDATED, "epic", id, detailJson(beforeSnapshot, snapshot(epic)));
-        eventPublisher.publishRoadmapItemChanged("epic", epic.getId(), response.status());
+        eventPublisher.publishRoadmapItemChanged(
+                "epic", epic.getId(), epic.getStage().name());
         return response;
     }
 
@@ -364,7 +367,8 @@ public class DefaultEpicService implements EpicService {
         // Audited like every other roadmap mutation (create/update/delete/stage/priority): target
         // date is a planning attribute moved in isolation, so its change belongs in the audit trail.
         auditSink.record(AuditSink.EPIC_TARGET_DATE_UPDATED, "epic", id, detailJson(beforeSnapshot, snapshot(epic)));
-        eventPublisher.publishRoadmapItemChanged("epic", epic.getId(), response.status());
+        eventPublisher.publishRoadmapItemChanged(
+                "epic", epic.getId(), epic.getStage().name());
         return response;
     }
 
@@ -394,7 +398,8 @@ public class DefaultEpicService implements EpicService {
         // date): a Milestone assignment is a planning attribute moved in isolation, so its change
         // belongs in the audit trail too.
         auditSink.record(AuditSink.EPIC_MILESTONE_UPDATED, "epic", id, detailJson(beforeSnapshot, snapshot(epic)));
-        eventPublisher.publishRoadmapItemChanged("epic", epic.getId(), response.status());
+        eventPublisher.publishRoadmapItemChanged(
+                "epic", epic.getId(), epic.getStage().name());
         return response;
     }
 
@@ -449,7 +454,7 @@ public class DefaultEpicService implements EpicService {
                         "SoftwareProject not found for epic " + e.getId() + ": " + e.getSoftwareProjectId());
             }
             RollupCalculator.Rollup rollup =
-                    rollupsByEpicId.getOrDefault(e.getId(), new RollupCalculator.Rollup(0, 0, "backlog"));
+                    rollupsByEpicId.getOrDefault(e.getId(), new RollupCalculator.Rollup(0, 0, 0));
             long readyItemCount = readyItemCountsByEpicId.getOrDefault(e.getId(), 0L);
             MilestoneRef milestone = e.getMilestoneId() != null ? milestoneRefsById.get(e.getMilestoneId()) : null;
             out.add(buildResponse(e, project, rollup, readyItemCount, milestone));
@@ -530,11 +535,10 @@ public class DefaultEpicService implements EpicService {
                 e.getTitle(),
                 e.getDescription(),
                 e.getMotivation(),
-                rollup.status(),
                 e.getStage().name(),
                 e.getPriority().name(),
                 e.getTargetDate(),
-                new EpicResponse.Progress(rollup.totalTasks(), rollup.doneTasks()),
+                new EpicResponse.Progress(rollup.totalTasks(), rollup.doneTasks(), rollup.startedTasks()),
                 projectRef,
                 repos,
                 e.getCreatedAt(),

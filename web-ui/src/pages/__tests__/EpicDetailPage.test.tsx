@@ -8,11 +8,18 @@ import type { EpicResponse, StoryResponse } from "@/lib/types";
 const mockUseEpic = vi.fn();
 const mockUseStories = vi.fn();
 const mockDeleteMutate = vi.fn();
+const mockStageMutate = vi.fn();
 const mockAssignMilestoneMutate = vi.fn();
 const mockUseMilestones = vi.fn();
 
 vi.mock("@/hooks/useEpics", () => ({
   useEpic: (id: string) => mockUseEpic(id),
+  useUpdateEpicStage: () => ({
+    mutate: mockStageMutate,
+    isPending: false,
+    isError: false,
+    reset: vi.fn(),
+  }),
   useDeleteEpic: () => ({
     mutate: mockDeleteMutate,
     isPending: false,
@@ -91,11 +98,10 @@ function makeEpic(overrides: Partial<EpicResponse> = {}): EpicResponse {
     title: "Add dark mode",
     description: "Add a dark theme",
     motivation: null,
-    status: "backlog",
     stage: "backlog",
     priority: "medium",
     targetDate: null,
-    progress: { totalTasks: 2, doneTasks: 1 },
+    progress: { totalTasks: 2, doneTasks: 1, startedTasks: 1 },
     softwareProject: { id: "r1", type: "git_repo", name: "backend-api" },
     repos: [],
     createdAt: "2026-04-01T00:00:00Z",
@@ -112,12 +118,11 @@ function makeStory(overrides: Partial<StoryResponse> = {}): StoryResponse {
     epicId: "epic-1",
     title: "Dark theme toggle",
     description: "desc",
-    status: "backlog",
     stage: "backlog",
     priority: "medium",
     targetDate: null,
     readiness: null,
-    progress: { totalTasks: 1, doneTasks: 0 },
+    progress: { totalTasks: 1, doneTasks: 0, startedTasks: 0 },
     createdAt: "2026-04-01T00:00:00Z",
     updatedAt: "2026-04-01T00:00:00Z",
     ...overrides,
@@ -137,7 +142,7 @@ describe("EpicDetailPage", () => {
     mockUseStories.mockReturnValue({ data: [], isLoading: false });
     renderWithProviders(<EpicDetailPage />);
     expect(screen.getByTestId("epic-detail-title")).toHaveTextContent("Add dark mode");
-    expect(screen.getByTestId("epic-detail-status")).toHaveTextContent("backlog");
+    expect(screen.getByTestId("epic-detail-stage")).toHaveTextContent("backlog");
     expect(screen.getByTestId("epic-detail-progress")).toHaveTextContent("1/2 tasks done");
   });
 
@@ -173,16 +178,48 @@ describe("EpicDetailPage", () => {
     expect(link).toHaveAttribute("href", "/roadmap");
   });
 
-  it("shows Edit and Delete buttons when the epic is in backlog", () => {
-    mockUseEpic.mockReturnValue({ data: makeEpic({ status: "backlog" }), isLoading: false });
+  it("offers the roll-out move once every descendant Task is done", async () => {
+    mockUseEpic.mockReturnValue({
+      data: makeEpic({ stage: "backlog", progress: { totalTasks: 4, doneTasks: 4, startedTasks: 4 } }),
+      isLoading: false,
+    });
+    mockUseStories.mockReturnValue({ data: [], isLoading: false });
+    renderWithProviders(<EpicDetailPage />);
+
+    // The contradiction this replaces: the page used to read "done" while the board read
+    // "Backlog", with no control anywhere to reconcile them.
+    expect(screen.getByTestId("epic-detail-stage")).toHaveTextContent("backlog");
+    expect(screen.getByTestId("epic-detail-progress")).toHaveTextContent("4/4 tasks done");
+    await userEvent.click(screen.getByTestId("epic-detail-roll-out-button"));
+    expect(mockStageMutate).toHaveBeenCalledWith({ id: "epic-1", stage: "rolled_out" });
+  });
+
+  it("does not offer the roll-out move while work is outstanding", () => {
+    mockUseEpic.mockReturnValue({
+      data: makeEpic({ stage: "backlog", progress: { totalTasks: 4, doneTasks: 3, startedTasks: 4 } }),
+      isLoading: false,
+    });
+    mockUseStories.mockReturnValue({ data: [], isLoading: false });
+    renderWithProviders(<EpicDetailPage />);
+    expect(screen.queryByTestId("epic-detail-roll-out")).not.toBeInTheDocument();
+  });
+
+  it("shows Edit and Delete buttons while no descendant Task has started", () => {
+    mockUseEpic.mockReturnValue({
+      data: makeEpic({ progress: { totalTasks: 2, doneTasks: 0, startedTasks: 0 } }),
+      isLoading: false,
+    });
     mockUseStories.mockReturnValue({ data: [], isLoading: false });
     renderWithProviders(<EpicDetailPage />);
     expect(screen.getByTestId("epic-edit-button")).toBeInTheDocument();
     expect(screen.getByTestId("epic-delete-button")).toBeInTheDocument();
   });
 
-  it("hides Edit and Delete buttons once the epic has left backlog", () => {
-    mockUseEpic.mockReturnValue({ data: makeEpic({ status: "in_progress" }), isLoading: false });
+  it("hides Edit and Delete buttons once a descendant Task has started", () => {
+    mockUseEpic.mockReturnValue({
+      data: makeEpic({ progress: { totalTasks: 2, doneTasks: 0, startedTasks: 1 } }),
+      isLoading: false,
+    });
     mockUseStories.mockReturnValue({ data: [], isLoading: false });
     renderWithProviders(<EpicDetailPage />);
     expect(screen.queryByTestId("epic-edit-button")).not.toBeInTheDocument();

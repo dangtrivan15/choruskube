@@ -2,7 +2,13 @@ import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { ArrowLeft, Trash2, Plus } from "lucide-react";
 import Authorized from "@/components/Authorized";
-import { useStory, useDeleteStory, useUpdateStoryPriority, useUpdateStoryTargetDate } from "@/hooks/useStories";
+import {
+  useStory,
+  useDeleteStory,
+  useUpdateStoryPriority,
+  useUpdateStoryTargetDate,
+  useUpdateStoryStage,
+} from "@/hooks/useStories";
 import { useTasks } from "@/hooks/useTasks";
 import { useRoadmapSubscription } from "@/hooks/useRoadmapSubscription";
 import { Badge } from "@/components/ui/badge";
@@ -25,6 +31,8 @@ import PriorityBadge from "@/components/roadmap/PriorityBadge";
 import PrioritySelect from "@/components/roadmap/PrioritySelect";
 import TargetDateField from "@/components/roadmap/TargetDateField";
 import LevelBadge from "@/components/roadmap/LevelBadge";
+import StageBadge from "@/components/roadmap/StageBadge";
+import RollOutPrompt from "@/components/roadmap/RollOutPrompt";
 import PageHeader from "@/components/layout/PageHeader";
 
 function statusBadge(status: string) {
@@ -47,6 +55,7 @@ export default function StoryDetailPage() {
   useRoadmapSubscription();
 
   const { data: story, isLoading } = useStory(storyId);
+  const updateStoryStage = useUpdateStoryStage();
   const { data: tasks, isLoading: tasksLoading } = useTasks(storyId);
   const deleteStory = useDeleteStory(epicId ?? "");
   const updateStoryPriority = useUpdateStoryPriority();
@@ -94,7 +103,7 @@ export default function StoryDetailPage() {
             {story.title}
           </h2>
           <div className="flex flex-wrap items-center gap-2">
-            <span data-testid="story-detail-status">{statusBadge(story.status)}</span>
+            <StageBadge stage={story.stage} data-testid="story-detail-stage" />
             <PriorityBadge priority={story.priority} data-testid="story-detail-priority-badge" />
             <TargetDateField value={story.targetDate} readOnly testId="story-detail-target-date" />
             <span data-testid="story-detail-progress" className="text-sm text-muted-foreground">
@@ -130,7 +139,15 @@ export default function StoryDetailPage() {
         <MarkdownViewer content={story.description} maxHeight="max-h-72" />
       </div>
 
-      {story.status === "backlog" && (
+      <RollOutPrompt
+        stage={story.stage}
+        progress={story.progress}
+        pending={updateStoryStage.isPending}
+        onRollOut={() => updateStoryStage.mutate({ id: story.id, stage: "rolled_out" })}
+        testId="story-detail-roll-out"
+      />
+
+      {story.progress.startedTasks === 0 && (
         <div className="flex flex-wrap gap-2 pt-2 border-t">
           <Authorized require="canAdmin">
             <Button

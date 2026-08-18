@@ -12,7 +12,7 @@ export type RoadmapItemType = "epic" | "story" | "task";
 export interface RoadmapGraphNodeData {
   label: string;
   itemType: RoadmapItemType;
-  /** Work-item status: "backlog" | "in_progress" | "done". */
+  /** Task `status` ("backlog"/"in_progress"/"done") or container `stage` ("backlog"/"in_progress"/"rolled_out"). */
   status: string;
   /**
    * Dependency-readiness (Decision 2). `null`/undefined (Epics, which can't
@@ -37,15 +37,21 @@ export interface RoadmapGraphNodeData {
 export type RoadmapGraphNodeType = Node<RoadmapGraphNodeData, "roadmap">;
 
 /**
- * Work-item statuses (backlog/in_progress/done) don't share a vocabulary with
- * run-execution statuses (running/awaiting_human/...), but the same semantic
- * color tokens apply once translated: backlog reads as neutral/pending,
- * in_progress as the "active" info color, done as success.
+ * Work-item states don't share a vocabulary with run-execution statuses
+ * (running/awaiting_human/...), but the same semantic color tokens apply once
+ * translated: backlog reads as neutral/pending, in_progress as the "active"
+ * info color, and both terminal states as success.
+ *
+ * Two vocabularies land here on purpose: Epic/Story nodes carry a board `stage`
+ * (whose terminal value is `rolled_out`), Task nodes carry a `status` (whose
+ * terminal value is `done`). They are deliberately not merged upstream — only
+ * a Task can be "done", only a container can be "rolled out" — so both map here.
  */
 const STATUS_TOKEN_MAP: Record<string, string> = {
   backlog: "pending",
   in_progress: "running",
   done: "completed",
+  rolled_out: "completed",
 };
 
 function getStatusColors(status: string) {

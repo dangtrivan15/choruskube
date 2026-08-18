@@ -39,11 +39,10 @@ const epic: EpicResponse = {
   title: "Add dark mode",
   description: "Epic description",
   motivation: null,
-  status: "in_progress",
   stage: "in_progress",
   priority: "medium",
   targetDate: null,
-  progress: { totalTasks: 2, doneTasks: 1 },
+  progress: { totalTasks: 2, doneTasks: 1, startedTasks: 1 },
   softwareProject: { id: "r1", type: "git_repo", name: "backend-api" },
   repos: [],
   createdAt: "2026-04-01T00:00:00Z",
@@ -57,12 +56,11 @@ const story: StoryResponse = {
   epicId: "epic-1",
   title: "Dark theme toggle",
   description: "Story description",
-  status: "backlog",
   stage: "backlog",
   priority: "medium",
   targetDate: null,
   readiness: "READY",
-  progress: { totalTasks: 1, doneTasks: 0 },
+  progress: { totalTasks: 1, doneTasks: 0, startedTasks: 0 },
   createdAt: "2026-04-01T00:00:00Z",
   updatedAt: "2026-04-01T00:00:00Z",
 };
@@ -139,7 +137,7 @@ describe("RoadmapGraphDetailPanel", () => {
 
     expect(screen.getByTestId("roadmap-detail-title")).toHaveTextContent(detail.item.title);
     expect(screen.getByTestId("roadmap-detail-status")).toHaveTextContent(
-      detail.item.status.replace("_", " "),
+      (detail.itemType === "task" ? detail.item.status : detail.item.stage).replace("_", " "),
     );
     expect(screen.getByTestId("roadmap-detail-description")).toHaveTextContent(
       detail.item.description,
@@ -595,7 +593,7 @@ describe("RoadmapGraphDetailPanel", () => {
         itemType: "story",
         itemId: blockedStory.id,
         title: blockedStory.title,
-        status: blockedStory.status,
+        status: "in_progress",
         readiness: "BLOCKED",
         blockedBy: [],
         truncated: false,

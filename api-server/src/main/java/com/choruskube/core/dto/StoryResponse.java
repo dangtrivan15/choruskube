@@ -13,14 +13,15 @@ import java.util.UUID;
  * just to return the one item just written.
  *
  * <p>{@code stage} is the persisted Story board column, mirroring {@code EpicResponse#stage}
- * exactly — separate from the computed {@code status} rollup above.
+ * exactly. It is the only statement this DTO makes about where the Story sits; completion is
+ * reported as the {@code progress} counts, never as a synthesized status (see {@code
+ * RollupCalculator}).
  */
 public record StoryResponse(
         UUID id,
         UUID epicId,
         String title,
         String description,
-        String status,
         String stage,
         String priority,
         LocalDate targetDate,

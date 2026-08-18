@@ -8,9 +8,16 @@ import type { StoryResponse, TaskResponse } from "@/lib/types";
 const mockUseStory = vi.fn();
 const mockUseTasks = vi.fn();
 const mockDeleteMutate = vi.fn();
+const mockStageMutate = vi.fn();
 
 vi.mock("@/hooks/useStories", () => ({
   useStory: (id: string) => mockUseStory(id),
+  useUpdateStoryStage: () => ({
+    mutate: mockStageMutate,
+    isPending: false,
+    isError: false,
+    reset: vi.fn(),
+  }),
   useDeleteStory: () => ({
     mutate: mockDeleteMutate,
     isPending: false,
@@ -66,12 +73,11 @@ function makeStory(overrides: Partial<StoryResponse> = {}): StoryResponse {
     epicId: "epic-1",
     title: "Dark theme toggle",
     description: "desc",
-    status: "backlog",
     stage: "backlog",
     priority: "medium",
     targetDate: null,
     readiness: null,
-    progress: { totalTasks: 2, doneTasks: 1 },
+    progress: { totalTasks: 2, doneTasks: 1, startedTasks: 1 },
     createdAt: "2026-04-01T00:00:00Z",
     updatedAt: "2026-04-01T00:00:00Z",
     ...overrides,
@@ -99,12 +105,12 @@ function makeTask(overrides: Partial<TaskResponse> = {}): TaskResponse {
 }
 
 describe("StoryDetailPage", () => {
-  it("renders story title, status, and progress", () => {
+  it("renders story title, stage, and progress", () => {
     mockUseStory.mockReturnValue({ data: makeStory(), isLoading: false });
     mockUseTasks.mockReturnValue({ data: [], isLoading: false });
     renderWithProviders(<StoryDetailPage />);
     expect(screen.getByTestId("story-detail-title")).toHaveTextContent("Dark theme toggle");
-    expect(screen.getByTestId("story-detail-status")).toHaveTextContent("backlog");
+    expect(screen.getByTestId("story-detail-stage")).toHaveTextContent("backlog");
     expect(screen.getByTestId("story-detail-progress")).toHaveTextContent("1/2 tasks done");
   });
 
@@ -140,15 +146,44 @@ describe("StoryDetailPage", () => {
     expect(link).toHaveAttribute("href", "/roadmap/epics/epic-1");
   });
 
-  it("shows Delete button when the story is in backlog", () => {
-    mockUseStory.mockReturnValue({ data: makeStory({ status: "backlog" }), isLoading: false });
+  it("offers the roll-out move once every Task is done but the board still says otherwise", async () => {
+    mockUseStory.mockReturnValue({
+      data: makeStory({ stage: "in_progress", progress: { totalTasks: 2, doneTasks: 2, startedTasks: 2 } }),
+      isLoading: false,
+    });
+    mockUseTasks.mockReturnValue({ data: [], isLoading: false });
+    renderWithProviders(<StoryDetailPage />);
+
+    expect(screen.getByTestId("story-detail-stage")).toHaveTextContent("in progress");
+    await userEvent.click(screen.getByTestId("story-detail-roll-out-button"));
+    expect(mockStageMutate).toHaveBeenCalledWith({ id: "story-1", stage: "rolled_out" });
+  });
+
+  it("does not offer the roll-out move once the story is already rolled out", () => {
+    mockUseStory.mockReturnValue({
+      data: makeStory({ stage: "rolled_out", progress: { totalTasks: 2, doneTasks: 2, startedTasks: 2 } }),
+      isLoading: false,
+    });
+    mockUseTasks.mockReturnValue({ data: [], isLoading: false });
+    renderWithProviders(<StoryDetailPage />);
+    expect(screen.queryByTestId("story-detail-roll-out")).not.toBeInTheDocument();
+  });
+
+  it("shows Delete button while no Task has started", () => {
+    mockUseStory.mockReturnValue({
+      data: makeStory({ progress: { totalTasks: 2, doneTasks: 0, startedTasks: 0 } }),
+      isLoading: false,
+    });
     mockUseTasks.mockReturnValue({ data: [], isLoading: false });
     renderWithProviders(<StoryDetailPage />);
     expect(screen.getByTestId("story-delete-button")).toBeInTheDocument();
   });
 
-  it("hides Delete button once the story has left backlog", () => {
-    mockUseStory.mockReturnValue({ data: makeStory({ status: "in_progress" }), isLoading: false });
+  it("hides Delete button once a Task has started", () => {
+    mockUseStory.mockReturnValue({
+      data: makeStory({ progress: { totalTasks: 2, doneTasks: 0, startedTasks: 1 } }),
+      isLoading: false,
+    });
     mockUseTasks.mockReturnValue({ data: [], isLoading: false });
     renderWithProviders(<StoryDetailPage />);
     expect(screen.queryByTestId("story-delete-button")).not.toBeInTheDocument();

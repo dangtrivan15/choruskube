@@ -204,7 +204,8 @@ public class DefaultStoryService implements StoryService {
         story = repo.save(story);
         StoryResponse response = toResponse(story);
         auditSink.record(AuditSink.STORY_UPDATED, "story", id, detailJson(beforeSnapshot, snapshot(story)));
-        eventPublisher.publishRoadmapItemChanged("story", story.getId(), response.status());
+        eventPublisher.publishRoadmapItemChanged(
+                "story", story.getId(), story.getStage().name());
         return response;
     }
 
@@ -267,7 +268,8 @@ public class DefaultStoryService implements StoryService {
         // Audited like every other roadmap mutation (create/update/delete/stage): priority is a
         // planning attribute moved in isolation, so its change belongs in the audit trail too.
         auditSink.record(AuditSink.STORY_PRIORITY_UPDATED, "story", id, detailJson(beforeSnapshot, snapshot(story)));
-        eventPublisher.publishRoadmapItemChanged("story", story.getId(), response.status());
+        eventPublisher.publishRoadmapItemChanged(
+                "story", story.getId(), story.getStage().name());
         return response;
     }
 
@@ -287,7 +289,8 @@ public class DefaultStoryService implements StoryService {
         // Audited like every other roadmap mutation (create/update/delete/stage/priority): target
         // date is a planning attribute moved in isolation, so its change belongs in the audit trail.
         auditSink.record(AuditSink.STORY_TARGET_DATE_UPDATED, "story", id, detailJson(beforeSnapshot, snapshot(story)));
-        eventPublisher.publishRoadmapItemChanged("story", story.getId(), response.status());
+        eventPublisher.publishRoadmapItemChanged(
+                "story", story.getId(), story.getStage().name());
         return response;
     }
 
@@ -310,12 +313,11 @@ public class DefaultStoryService implements StoryService {
                 s.getEpicId(),
                 s.getTitle(),
                 s.getDescription(),
-                rollup.status(),
                 s.getStage().name(),
                 s.getPriority().name(),
                 s.getTargetDate(),
                 readiness,
-                new EpicResponse.Progress(rollup.totalTasks(), rollup.doneTasks()),
+                new EpicResponse.Progress(rollup.totalTasks(), rollup.doneTasks(), rollup.startedTasks()),
                 s.getCreatedAt(),
                 s.getUpdatedAt());
     }

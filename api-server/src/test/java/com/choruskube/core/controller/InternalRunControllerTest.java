@@ -223,7 +223,7 @@ public class InternalRunControllerTest extends BaseTest {
                 .andExpect(jsonPath("$.title").value("Add dark mode"))
                 .andExpect(jsonPath("$.description").value("Users want a dark mode option"))
                 .andExpect(jsonPath("$.motivation").value("Improves accessibility"))
-                .andExpect(jsonPath("$.status").value("backlog"))
+                .andExpect(jsonPath("$.stage").value("backlog"))
                 .andExpect(
                         jsonPath("$.softwareProject.id").value(gitRepo.getId().toString()))
                 .andExpect(jsonPath("$.softwareProject.type").value("git_repo"))

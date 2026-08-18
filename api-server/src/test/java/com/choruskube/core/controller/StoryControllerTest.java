@@ -99,7 +99,7 @@ public class StoryControllerTest extends BaseTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.epicId").value(epic.id().toString()))
                 .andExpect(jsonPath("$.title").value("Story title"))
-                .andExpect(jsonPath("$.status").value("backlog"));
+                .andExpect(jsonPath("$.stage").value("backlog"));
     }
 
     @Test

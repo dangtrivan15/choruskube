@@ -117,7 +117,7 @@ public class Phase2WorkHierarchyIntegrationTest extends BaseTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.softwareProject.id").value(repo.getId().toString()))
                 .andExpect(jsonPath("$.softwareProject.type").value("git_repo"))
-                .andExpect(jsonPath("$.status").value("backlog"))
+                .andExpect(jsonPath("$.stage").value("backlog"))
                 .andReturn();
 
         JsonNode json = objectMapper.readTree(result.getResponse().getContentAsString());
@@ -177,11 +177,17 @@ public class Phase2WorkHierarchyIntegrationTest extends BaseTest {
         Task started = taskRepo.findById(taskId).orElseThrow();
         assertThat(started.getStatus()).isEqualTo(WorkItemStatus.in_progress);
 
-        // Epic and Story status now read "in_progress" purely from re-aggregating Task status.
+        // Epic and Story re-aggregate the Task counts on read. They do NOT acquire a status of
+        // their own from it, and their board lane is untouched: starting work is not a board move.
         mockMvc.perform(get("/api/v1/epics/" + epicId))
-                .andExpect(jsonPath("$.status").value("in_progress"));
+                .andExpect(jsonPath("$.status").doesNotExist())
+                .andExpect(jsonPath("$.stage").value("backlog"))
+                .andExpect(jsonPath("$.progress.startedTasks").value(1))
+                .andExpect(jsonPath("$.progress.doneTasks").value(0));
         mockMvc.perform(get("/api/v1/stories/" + storyId))
-                .andExpect(jsonPath("$.status").value("in_progress"));
+                .andExpect(jsonPath("$.status").doesNotExist())
+                .andExpect(jsonPath("$.stage").value("backlog"))
+                .andExpect(jsonPath("$.progress.startedTasks").value(1));
 
         // Fetch the run id via the run-history endpoint and drive it to a terminal status.
         MvcResult historyResult = mockMvc.perform(get("/api/v1/tasks/" + taskId + "/runs"))
@@ -200,11 +206,15 @@ public class Phase2WorkHierarchyIntegrationTest extends BaseTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("done"));
 
-        // Epic/Story now read "done" purely from re-aggregating Task status — no separate update.
+        // Every Task is done, so the counts read complete — and the board lane STILL says backlog.
+        // Finishing the work is not shipping it; only a human move to `rolled_out` says that.
         mockMvc.perform(get("/api/v1/epics/" + epicId))
-                .andExpect(jsonPath("$.status").value("done"));
+                .andExpect(jsonPath("$.progress.totalTasks").value(1))
+                .andExpect(jsonPath("$.progress.doneTasks").value(1))
+                .andExpect(jsonPath("$.stage").value("backlog"));
         mockMvc.perform(get("/api/v1/stories/" + storyId))
-                .andExpect(jsonPath("$.status").value("done"));
+                .andExpect(jsonPath("$.progress.doneTasks").value(1))
+                .andExpect(jsonPath("$.stage").value("backlog"));
     }
 
     @Test

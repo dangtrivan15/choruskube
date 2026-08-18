@@ -168,6 +168,14 @@ function mapRoadmapItemEvent(event: RoadmapItemEvent): ToastConfig | null {
         variant: "success",
         actionUrl: "/roadmap",
       };
+    case "rolled_out":
+      // Epic/Story events carry the board `stage`, whose terminal value is `rolled_out`; only
+      // Task events can report `done`. Both are a completion, so both read as success.
+      return {
+        message: "Roadmap item rolled out",
+        variant: "success",
+        actionUrl: "/roadmap",
+      };
     case "deleted":
       return {
         message: "Roadmap item deleted",

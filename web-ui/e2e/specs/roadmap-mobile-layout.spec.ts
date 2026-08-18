@@ -27,8 +27,7 @@ const FAKE_EPIC = {
   title: LONG_TITLE,
   description: "A short description.",
   motivation: null,
-  status: "backlog",
-  progress: { totalTasks: 0, doneTasks: 0 },
+  progress: { totalTasks: 0, doneTasks: 0, startedTasks: 0 },
   softwareProject: {
     id: "sp-long",
     type: "repo_group",

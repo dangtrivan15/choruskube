@@ -509,10 +509,13 @@ public class InternalRunService {
                 return;
             }
             titleById.put(id, blockingStory.getTitle());
+            // Stage-aware, like every other reader of "is this blocker cleared?": a Story a human
+            // moved to `rolled_out` is cleared even if its Tasks say otherwise. Reading the bare
+            // Task rollup here (as this did) made an agent see a shipped blocker as still open.
             statusById.put(
                     id,
-                    RollupCalculator.compute(taskRepo.findByStoryIdOrderByCreatedAtDesc(id))
-                            .status());
+                    RollupCalculator.effectiveStatus(
+                            blockingStory.getStage(), taskRepo.findByStoryIdOrderByCreatedAtDesc(id)));
             typeById.put(id, BlockableItemType.story);
         } else {
             Task blockingTask = taskRepo.findById(id).orElse(null);

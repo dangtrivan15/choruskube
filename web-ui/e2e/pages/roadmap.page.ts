@@ -20,7 +20,7 @@ export class RoadmapPage {
   // Epic detail
   readonly epicDetailTitle: Locator;
   readonly epicDetailDescription: Locator;
-  readonly epicDetailStatus: Locator;
+  readonly epicDetailStage: Locator;
   readonly epicDetailPriorityBadge: Locator;
   readonly epicDetailPrioritySelect: Locator;
   readonly epicDetailMilestoneBadge: Locator;
@@ -108,7 +108,7 @@ export class RoadmapPage {
 
     this.epicDetailTitle = page.getByTestId("epic-detail-title");
     this.epicDetailDescription = page.getByTestId("epic-detail-description");
-    this.epicDetailStatus = page.getByTestId("epic-detail-status");
+    this.epicDetailStage = page.getByTestId("epic-detail-stage");
     this.epicDetailPriorityBadge = page.getByTestId("epic-detail-priority-badge");
     this.epicDetailPrioritySelect = page.getByTestId("epic-detail-priority-select");
     this.epicDetailMilestoneBadge = page.getByTestId("epic-detail-milestone-badge");

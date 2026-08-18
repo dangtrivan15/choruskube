@@ -3,13 +3,18 @@ import { Link, useParams } from "react-router";
 import { formatDistanceToNow } from "date-fns";
 import { ArrowLeft, Pencil, Trash2, Plus, GitBranch, Layers } from "lucide-react";
 import Authorized from "@/components/Authorized";
-import { useEpic, useDeleteEpic, useUpdateEpicPriority, useUpdateEpicTargetDate } from "@/hooks/useEpics";
+import {
+  useEpic,
+  useDeleteEpic,
+  useUpdateEpicPriority,
+  useUpdateEpicTargetDate,
+  useUpdateEpicStage,
+} from "@/hooks/useEpics";
 import { useAssignEpicMilestone } from "@/hooks/useMilestones";
 import { useStories } from "@/hooks/useStories";
 import { useRoadmapSubscription } from "@/hooks/useRoadmapSubscription";
 import type { SortParam, Priority } from "@/lib/types";
 import { priorityMeta } from "@/lib/priorityMeta";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import MarkdownViewer from "@/components/ui/MarkdownViewer";
@@ -34,6 +39,8 @@ import MilestoneBadge from "@/components/roadmap/MilestoneBadge";
 import MilestoneSelect from "@/components/roadmap/MilestoneSelect";
 import TargetDateField from "@/components/roadmap/TargetDateField";
 import LevelBadge from "@/components/roadmap/LevelBadge";
+import StageBadge from "@/components/roadmap/StageBadge";
+import RollOutPrompt from "@/components/roadmap/RollOutPrompt";
 import PageHeader from "@/components/layout/PageHeader";
 import { useNavigate } from "react-router";
 
@@ -46,18 +53,6 @@ const STORY_SORT_OPTIONS = [
   { label: "Priority (Low→High)", field: "priority", direction: "asc" as const },
 ];
 
-function statusBadge(status: string) {
-  switch (status) {
-    case "backlog":
-      return <Badge variant="outline">backlog</Badge>;
-    case "in_progress":
-      return <Badge variant="secondary">in progress</Badge>;
-    case "done":
-      return <Badge variant="default">done</Badge>;
-    default:
-      return <Badge variant="outline">{status}</Badge>;
-  }
-}
 
 /** Epic detail — shows the Epic itself plus the Story list underneath it. */
 export default function EpicDetailPage() {
@@ -66,6 +61,9 @@ export default function EpicDetailPage() {
   useRoadmapSubscription();
 
   const { data: epic, isLoading } = useEpic(epicId);
+  // `false`: this page has no "ready to start" filter, so the hook's optimistic write targets the
+  // unfiltered board cache. The detail view itself refreshes off the hook's ["epics"] invalidation.
+  const updateEpicStage = useUpdateEpicStage(false);
   const { data: stories, isLoading: storiesLoading } = useStories(epicId);
   const deleteEpic = useDeleteEpic();
   const updateEpicPriority = useUpdateEpicPriority();
@@ -137,7 +135,7 @@ export default function EpicDetailPage() {
             {epic.title}
           </h2>
           <div className="flex flex-wrap items-center gap-2">
-            <span data-testid="epic-detail-status">{statusBadge(epic.status)}</span>
+            <StageBadge stage={epic.stage} data-testid="epic-detail-stage" />
             <PriorityBadge priority={epic.priority} data-testid="epic-detail-priority-badge" />
             <MilestoneBadge milestone={epic.milestone} data-testid="epic-detail-milestone-badge" />
             <TargetDateField value={epic.targetDate} readOnly testId="epic-detail-target-date" />
@@ -218,7 +216,15 @@ export default function EpicDetailPage() {
         </div>
       )}
 
-      {epic.status === "backlog" && (
+      <RollOutPrompt
+        stage={epic.stage}
+        progress={epic.progress}
+        pending={updateEpicStage.isPending}
+        onRollOut={() => updateEpicStage.mutate({ id: epic.id, stage: "rolled_out" })}
+        testId="epic-detail-roll-out"
+      />
+
+      {epic.progress.startedTasks === 0 && (
         <div className="flex flex-wrap gap-2 pt-2 border-t">
           <Authorized require="canAdmin">
             <Button data-testid="epic-edit-button" variant="ghost" size="sm" onClick={() => setEditOpen(true)}>
@@ -266,7 +272,7 @@ export default function EpicDetailPage() {
                   {story.title}
                 </TruncatedText>
                 <div className="mt-1 flex flex-wrap items-center gap-2">
-                  {statusBadge(story.status)}
+                  <StageBadge stage={story.stage} data-testid="story-item-stage" />
                   <PriorityBadge priority={story.priority} size="compact" data-testid="story-item-priority-badge" />
                   <ReadinessBadge readiness={story.readiness} data-testid="story-item-readiness-badge" />
                   <span className="text-xs text-muted-foreground">

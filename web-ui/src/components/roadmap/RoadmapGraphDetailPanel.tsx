@@ -14,6 +14,7 @@ import MarkdownViewer from "@/components/ui/MarkdownViewer";
 import TaskRunHistoryList from "@/components/roadmap/TaskRunHistoryList";
 import BlockingChainSection from "@/components/roadmap/BlockingChainSection";
 import ReadinessBadge from "@/components/roadmap/ReadinessBadge";
+import StageBadge from "@/components/roadmap/StageBadge";
 import PriorityBadge from "@/components/roadmap/PriorityBadge";
 import { useCreateDependency, useDeleteDependency } from "@/hooks/useDependencies";
 import { useBlockingChain } from "@/hooks/useBlockingChain";
@@ -298,7 +299,11 @@ export default function RoadmapGraphDetailPanel({
           {item.title}
         </h2>
         <div data-testid="roadmap-detail-status" className="flex items-center gap-2">
-          {statusBadge(item.status)}
+          {detail.itemType === "task" ? (
+            statusBadge(detail.item.status)
+          ) : (
+            <StageBadge stage={detail.item.stage} />
+          )}
           {itemType !== "task" && (
             <PriorityBadge priority={item.priority} data-testid="roadmap-detail-priority-badge" />
           )}

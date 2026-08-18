@@ -121,7 +121,7 @@ public class EpicControllerTest extends BaseTest {
                         .content(objectMapper.writeValueAsString(body)))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.title").value("Add login page"))
-                .andExpect(jsonPath("$.status").value("backlog"))
+                .andExpect(jsonPath("$.stage").value("backlog"))
                 .andExpect(jsonPath("$.progress.totalTasks").value(0))
                 .andExpect(jsonPath("$.softwareProject.id").value(repo.getId().toString()))
                 .andExpect(jsonPath("$.softwareProject.type").value("git_repo"))
@@ -267,7 +267,7 @@ public class EpicControllerTest extends BaseTest {
         mockMvc.perform(get("/api/v1/epics/" + e.getId()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.title").value("My Feature"))
-                .andExpect(jsonPath("$.status").value("backlog"));
+                .andExpect(jsonPath("$.stage").value("backlog"));
     }
 
     @Test

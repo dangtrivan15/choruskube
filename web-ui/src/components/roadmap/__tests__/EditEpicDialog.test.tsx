@@ -82,11 +82,10 @@ function makeEpic(overrides: Partial<EpicResponse> = {}): EpicResponse {
     title: "Existing title",
     description: "Existing desc",
     motivation: null,
-    status: "backlog",
     stage: "backlog",
     priority: "medium",
     targetDate: null,
-    progress: { totalTasks: 0, doneTasks: 0 },
+    progress: { totalTasks: 0, doneTasks: 0, startedTasks: 0 },
     softwareProject: {
       id: "r1",
       type: "git_repo",

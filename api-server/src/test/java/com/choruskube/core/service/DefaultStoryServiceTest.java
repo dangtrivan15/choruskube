@@ -96,7 +96,7 @@ public class DefaultStoryServiceTest extends BaseTest {
 
         assertThat(story.epicId()).isEqualTo(epic.id());
         assertThat(story.title()).isEqualTo("Story title");
-        assertThat(story.status()).isEqualTo("backlog");
+        assertThat(story.stage()).isEqualTo("backlog");
         assertThat(story.progress().totalTasks()).isZero();
     }
 
@@ -377,8 +377,8 @@ public class DefaultStoryServiceTest extends BaseTest {
         StoryResponse updated = service.updateStage(created.id(), WorkItemStatus.rolled_out);
 
         assertThat(updated.stage()).isEqualTo("rolled_out");
-        // Decision: stage is fully decoupled from the read-time status rollup.
-        assertThat(updated.status()).isEqualTo(beforeStageMove.status());
+        // Decision: stage is fully decoupled from the read-time Task rollup — moving the lane
+        // neither reads nor rewrites the counts.
         assertThat(updated.progress().totalTasks())
                 .isEqualTo(beforeStageMove.progress().totalTasks());
         assertThat(updated.progress().doneTasks())
@@ -450,24 +450,28 @@ public class DefaultStoryServiceTest extends BaseTest {
     }
 
     @Test
-    void rollup_allTasksDone_statusIsDone() {
+    void rollup_allTasksDone_reportsCompleteProgress_andLeavesStageAlone() {
         EpicResponse epic = makeEpic("https://github.com/test/story-rollup-done.git");
         StoryResponse story = service.create(epic.id(), new StoryRequest("S", "D"));
         var task = taskService.create(story.id(), new TaskRequest("T", "D"));
         markTaskDone(task.id());
 
         StoryResponse fetched = service.get(story.id());
-        assertThat(fetched.status()).isEqualTo("done");
         assertThat(fetched.progress().doneTasks()).isEqualTo(1);
+        assertThat(fetched.progress().totalTasks()).isEqualTo(1);
+        // Finishing every Task is not shipping: the lane is human-owned and stays where it was.
+        assertThat(fetched.stage()).isEqualTo("backlog");
     }
 
     @Test
-    void rollup_emptyStory_statusIsBacklog() {
+    void rollup_emptyStory_reportsNothingStarted() {
         EpicResponse epic = makeEpic("https://github.com/test/story-rollup-empty.git");
         StoryResponse story = service.create(epic.id(), new StoryRequest("S", "D"));
 
         StoryResponse fetched = service.get(story.id());
-        assertThat(fetched.status()).isEqualTo("backlog");
+        assertThat(fetched.stage()).isEqualTo("backlog");
+        assertThat(fetched.progress().totalTasks()).isZero();
+        assertThat(fetched.progress().startedTasks()).isZero();
     }
 
     // ── updatePriority: Story priority field (mirrors updateStage) ────────────────

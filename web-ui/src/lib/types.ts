@@ -347,11 +347,17 @@ export interface SoftwareProjectRef {
 export interface WorkItemProgress {
   totalTasks: number;
   doneTasks: number;
+  /**
+   * Descendant Tasks that have left `backlog`. Distinct from `doneTasks`: "nothing has started"
+   * and "nothing has finished" are different questions, and the delete affordance asks the first.
+   */
+  startedTasks: number;
 }
 
 /**
- * Roadmap board column an Epic sits in. Persisted separately from the
- * read-time {@code status} rollup (never "done" — a rolled-out Epic can
+ * Roadmap board column an Epic sits in. The only statement the API makes about where the item
+ * sits — completion is reported as `progress` counts, never a synthesized status (never "done" —
+ * a rolled-out Epic can
  * still have in-progress descendant Tasks). See PATCH /epics/{id}/stage.
  */
 export type EpicStage = "backlog" | "in_progress" | "rolled_out";
@@ -372,7 +378,6 @@ export interface EpicResponse {
   title: string;
   description: string;
   motivation: string | null;
-  status: "backlog" | "in_progress" | "done";
   stage: EpicStage;
   priority: Priority;
   /**
@@ -518,9 +523,8 @@ export interface EpicMilestoneUpdateRequest {
 export type Readiness = "READY" | "BLOCKED";
 
 /**
- * Roadmap board column a Story sits in. Persisted separately from the
- * read-time {@code status} rollup, mirroring {@code EpicStage} exactly. See
- * PATCH /stories/{id}/stage.
+ * Roadmap board column a Story sits in, mirroring {@code EpicStage} exactly — the only statement
+ * the API makes about where the Story sits. See PATCH /stories/{id}/stage.
  */
 export type StoryStage = "backlog" | "in_progress" | "rolled_out";
 
@@ -529,7 +533,6 @@ export interface StoryResponse {
   epicId: string;
   title: string;
   description: string;
-  status: "backlog" | "in_progress" | "done";
   stage: StoryStage;
   priority: Priority;
   /** Optional calendar due-date, ISO-8601 (`"YYYY-MM-DD"`) — see `EpicResponse.targetDate`. */

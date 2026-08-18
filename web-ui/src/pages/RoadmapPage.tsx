@@ -7,7 +7,6 @@ import { useEpics } from "@/hooks/useEpics";
 import { useMilestones } from "@/hooks/useMilestones";
 import { useRoadmapSubscription } from "@/hooks/useRoadmapSubscription";
 import type { SortParam, PaginationParams, Priority } from "@/lib/types";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import TruncatedText from "@/components/ui/TruncatedText";
@@ -18,6 +17,7 @@ import CreateEpicDialog from "@/components/roadmap/CreateEpicDialog";
 import RoadmapReadyToggle from "@/components/roadmap/RoadmapReadyToggle";
 import PriorityFilter from "@/components/roadmap/PriorityFilter";
 import PriorityBadge from "@/components/roadmap/PriorityBadge";
+import StageBadge from "@/components/roadmap/StageBadge";
 import MilestoneBadge from "@/components/roadmap/MilestoneBadge";
 import PageHeader from "@/components/layout/PageHeader";
 
@@ -96,18 +96,6 @@ function MilestoneFilter({ value, onChange }: MilestoneFilterProps) {
   );
 }
 
-function statusBadge(status: string) {
-  switch (status) {
-    case "backlog":
-      return <Badge variant="outline">backlog</Badge>;
-    case "in_progress":
-      return <Badge variant="secondary">in progress</Badge>;
-    case "done":
-      return <Badge variant="default">done</Badge>;
-    default:
-      return <Badge variant="outline">{status}</Badge>;
-  }
-}
 
 /**
  * Roadmap — the Epic list. Drilling into an Epic (Story list) or a Story
@@ -188,7 +176,7 @@ export default function RoadmapPage() {
                   {epic.title}
                 </TruncatedText>
                 <div className="mt-1 flex flex-wrap items-center gap-2">
-                  {statusBadge(epic.status)}
+                  <StageBadge stage={epic.stage} data-testid="epic-stage-badge" />
                   <PriorityBadge priority={epic.priority} size="compact" data-testid="epic-priority-badge" />
                   <MilestoneBadge milestone={epic.milestone} size="compact" data-testid="epic-milestone-badge" />
                   <span

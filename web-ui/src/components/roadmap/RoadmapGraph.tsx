@@ -112,7 +112,7 @@ function buildInternalNodes(snapshot: RoadmapGraphSnapshot): InternalNode[] {
       itemType: "epic",
       parentId: null,
       label: snapshot.epic.title,
-      status: snapshot.epic.status,
+      status: snapshot.epic.stage,
       readiness: null,
       priority: snapshot.epic.priority,
     },
@@ -123,7 +123,7 @@ function buildInternalNodes(snapshot: RoadmapGraphSnapshot): InternalNode[] {
       itemType: "story",
       parentId: story.epicId,
       label: story.title,
-      status: story.status,
+      status: story.stage,
       readiness: story.readiness,
       priority: story.priority,
     });
