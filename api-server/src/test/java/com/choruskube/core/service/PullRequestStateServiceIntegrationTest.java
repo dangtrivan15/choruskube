@@ -19,6 +19,8 @@ import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.RunPullRequestRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -165,8 +167,15 @@ public class PullRequestStateServiceIntegrationTest extends BaseTest {
                 .as("GitHub having a bad minute must never stop the Autopilot")
                 .isTrue();
         assertThat(after.getDisengagedReason()).isNull();
-        assertThat(prRepo.findUnmergedBatch(PageRequest.of(0, 10)))
-                .as("the row is untouched, so the next tick reads it again")
+        // Since V17 the row yields its place instead of holding the front of the queue: it is not
+        // due right now, but it is due one backoff base from now and the scan will read it then.
+        // Asserted against a future clock rather than "is not empty", because "still selected
+        // immediately" is exactly the starving behaviour that was removed.
+        assertThat(prRepo.findUnmergedBatch(Instant.now(), PageRequest.of(0, 10)))
+                .as("the failed row has stepped aside for this tick")
+                .isEmpty();
+        assertThat(prRepo.findUnmergedBatch(Instant.now().plus(Duration.ofHours(1)), PageRequest.of(0, 10)))
+                .as("...but it is retried, not abandoned")
                 .isNotEmpty();
     }
 

@@ -1,6 +1,8 @@
 package com.choruskube.core.service;
 
 import com.choruskube.core.exception.GitHubApiException;
+import com.choruskube.core.exception.GitHubRateLimitHints;
+import com.choruskube.core.exception.GitHubTokenMintException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nimbusds.jose.*;
@@ -10,6 +12,7 @@ import com.nimbusds.jwt.SignedJWT;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
+import java.net.http.HttpHeaders;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.security.KeyFactory;
@@ -53,9 +56,11 @@ public class GitHubAppService {
             if (response.statusCode() != 201) {
                 // The body is deliberately omitted, for the reason given on fetchPullRequest: a
                 // GitHub error payload can echo the request, Authorization header included, and
-                // this message is logged.
-                throw new RuntimeException("GitHub API returned " + response.statusCode()
-                        + " minting an installation token for installation " + installationId);
+                // this message is logged. The rate-limit headers are read instead — minting is the
+                // other path a secondary rate limit arrives on, and a bare RuntimeException here
+                // used to make every such failure indistinguishable from an unreadable key.
+                throw new GitHubTokenMintException(
+                        response.statusCode(), installationId, rateLimitHints(response.headers()));
             }
 
             JsonNode body = objectMapper.readTree(response.body());
@@ -99,7 +104,8 @@ public class GitHubAppService {
         try {
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() != 200) {
-                throw new GitHubApiException(response.statusCode(), ownerRepo, prNumber);
+                throw new GitHubApiException(
+                        response.statusCode(), ownerRepo, prNumber, rateLimitHints(response.headers()));
             }
             return parsePullRequest(response.body());
         } catch (IOException | InterruptedException e) {
@@ -107,6 +113,42 @@ public class GitHubAppService {
                 Thread.currentThread().interrupt();
             }
             throw new RuntimeException("Failed to read " + ownerRepo + "#" + prNumber + ": " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * The three rate-limit headers, parsed. The only thing kept from a failed response.
+     *
+     * <p>Every parse is total: a missing, blank or malformed value becomes null rather than an
+     * exception. A header GitHub changed the format of must not be able to turn a classification
+     * problem into a crash inside a reconciler, and null is already the answer that means "no
+     * signal", which classifies the response the same way it was classified before this existed.
+     *
+     * <p>{@code HttpHeaders} lookup is case-insensitive, so the lower-case names here match
+     * whatever casing the response used.
+     */
+    private static GitHubRateLimitHints rateLimitHints(HttpHeaders headers) {
+        return new GitHubRateLimitHints(
+                parseInt(headers, "retry-after"),
+                parseInt(headers, "x-ratelimit-remaining"),
+                parseLong(headers, "x-ratelimit-reset"));
+    }
+
+    private static Integer parseInt(HttpHeaders headers, String name) {
+        Long value = parseLong(headers, name);
+        return value == null || value > Integer.MAX_VALUE || value < Integer.MIN_VALUE ? null : value.intValue();
+    }
+
+    private static Long parseLong(HttpHeaders headers, String name) {
+        try {
+            return headers.firstValue(name)
+                    .map(String::trim)
+                    .map(Long::parseLong)
+                    .orElse(null);
+        } catch (NumberFormatException e) {
+            // Deliberately not interpolated into the log: the value is attacker-adjacent input and
+            // this runs on every failed GitHub call.
+            return null;
         }
     }
 

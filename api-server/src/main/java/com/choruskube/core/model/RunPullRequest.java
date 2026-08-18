@@ -41,8 +41,25 @@ public class RunPullRequest {
     @Column(name = "merged_at")
     private Instant mergedAt;
 
+    /** When GitHub last answered for this row. Written on success only — see {@link #nextCheckAt}. */
     @Column(name = "state_checked_at")
     private Instant stateCheckedAt;
+
+    /**
+     * Consecutive failed refresh attempts; reset to zero the moment GitHub answers. Drives the
+     * backoff exponent, and is the only durable record that a row is in trouble.
+     */
+    @Column(name = "failure_count", nullable = false)
+    private int failureCount;
+
+    /**
+     * When this row is next eligible for the scan — the scan's sort key, and the one column a
+     * failure is allowed to write. Separate from {@link #stateCheckedAt} on purpose: deferring a row
+     * that failed and recording that GitHub answered are different facts, and collapsing them would
+     * mean a failure either lies about having been checked or cannot yield its place at all.
+     */
+    @Column(name = "next_check_at", nullable = false)
+    private Instant nextCheckAt;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
@@ -51,6 +68,12 @@ public class RunPullRequest {
     protected void onCreate() {
         if (createdAt == null) {
             createdAt = Instant.now();
+        }
+        if (nextCheckAt == null) {
+            // Due immediately: a freshly registered PR is the case the reconciler most wants to
+            // pick up on its next tick. The column's DEFAULT says the same thing, but Hibernate
+            // sends an explicit null over it unless the field is populated here.
+            nextCheckAt = createdAt;
         }
     }
 
@@ -150,5 +173,21 @@ public class RunPullRequest {
 
     public void setStateCheckedAt(Instant stateCheckedAt) {
         this.stateCheckedAt = stateCheckedAt;
+    }
+
+    public int getFailureCount() {
+        return failureCount;
+    }
+
+    public void setFailureCount(int failureCount) {
+        this.failureCount = failureCount;
+    }
+
+    public Instant getNextCheckAt() {
+        return nextCheckAt;
+    }
+
+    public void setNextCheckAt(Instant nextCheckAt) {
+        this.nextCheckAt = nextCheckAt;
     }
 }

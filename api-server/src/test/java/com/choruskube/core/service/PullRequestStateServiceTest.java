@@ -1,11 +1,14 @@
 package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -15,13 +18,17 @@ import static org.mockito.Mockito.when;
 
 import com.choruskube.core.credential.GitHubCredentialResolver;
 import com.choruskube.core.exception.GitHubApiException;
+import com.choruskube.core.exception.GitHubRateLimitHints;
+import com.choruskube.core.exception.GitHubTokenMintException;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.RunPullRequest;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.RunPullRequestRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -40,6 +47,9 @@ import org.springframework.data.domain.Pageable;
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 class PullRequestStateServiceTest {
+
+    private static final Duration BACKOFF_BASE = Duration.ofMinutes(2);
+    private static final Duration BACKOFF_CAP = Duration.ofMinutes(30);
 
     @Mock
     private RunPullRequestRepository prRepo;
@@ -190,14 +200,191 @@ class PullRequestStateServiceTest {
 
         assertThat(service.refreshBatch(10)).isZero();
         assertThat(pr.getStateCheckedAt())
-                .as("nothing is written on a failure, so the row keeps its place at the front of the batch")
+                .as("a failure records no answer from GitHub, because there was none")
                 .isNull();
+        assertThat(pr.getFailureCount()).isEqualTo(1);
+        assertThat(pr.getNextCheckAt())
+                .as("one base interval, so a blip still costs about one tick")
+                .isCloseTo(Instant.now().plus(BACKOFF_BASE), within(5, ChronoUnit.SECONDS));
 
         assertThat(service.refreshBatch(10))
-                .as("the very next tick picks the same row up and finds it merged")
+                .as("the next tick that reads it finds it merged")
                 .isEqualTo(1);
+        assertThat(pr.getFailureCount())
+                .as("an answer from GitHub clears the row's history; the next failure starts at one step again")
+                .isZero();
         verifyNoInteractions(safetyValve);
         verify(taskService).closeForMergedPullRequests(taskId);
+    }
+
+    /**
+     * The defect V17 exists for. Before it, a row that always failed was never stamped and so kept
+     * its place at the front of an order always read from page zero — enough such rows and the scan
+     * never reached a healthy pull request again, so merges were never learned and Tasks never
+     * closed.
+     */
+    @Test
+    void refreshBatch_aRowThatKeepsFailing_backsOffGeometrically() {
+        RunPullRequest pr = pr(42);
+        stubBatch(pr);
+        stubRepoAndRun();
+        when(gitHubAppService.fetchPullRequest(anyString(), anyString(), anyInt()))
+                .thenThrow(new GitHubApiException(503, "org/backend-api", 42));
+        PullRequestStateService service = newService();
+
+        service.refreshBatch(10);
+        Instant afterFirst = pr.getNextCheckAt();
+        service.refreshBatch(10);
+        Instant afterSecond = pr.getNextCheckAt();
+        service.refreshBatch(10);
+        Instant afterThird = pr.getNextCheckAt();
+
+        assertThat(pr.getFailureCount()).isEqualTo(3);
+        assertThat(Duration.between(Instant.now(), afterFirst))
+                .isLessThan(Duration.between(Instant.now(), afterSecond));
+        assertThat(Duration.between(Instant.now(), afterSecond))
+                .isLessThan(Duration.between(Instant.now(), afterThird));
+    }
+
+    @Test
+    void refreshBatch_backoffNeverExceedsTheCap() {
+        RunPullRequest pr = pr(42);
+        stubBatch(pr);
+        stubRepoAndRun();
+        when(gitHubAppService.fetchPullRequest(anyString(), anyString(), anyInt()))
+                .thenThrow(new GitHubApiException(503, "org/backend-api", 42));
+        PullRequestStateService service = newService();
+
+        for (int i = 0; i < 40; i++) {
+            service.refreshBatch(10);
+        }
+
+        assertThat(pr.getFailureCount()).isEqualTo(40);
+        assertThat(pr.getNextCheckAt())
+                .as("40 doublings of two minutes would be geological; the cap is what makes a recovered repo "
+                        + "come back in half an hour rather than never")
+                .isCloseTo(Instant.now().plus(BACKOFF_CAP), within(5, ChronoUnit.SECONDS));
+    }
+
+    /**
+     * A persistent failure stops the Autopilot <em>and</em> defers the row. Two independent
+     * questions: whether a human must act, and when this row may be tried again. Leaving the row at
+     * the front is what starved the scan, and a human re-engaging without fixing the cause would
+     * have restored dispatch on top of a scan that was still stuck.
+     */
+    @Test
+    void refreshBatch_aPersistentFailure_backsTheRowOffAsWellAsDisengaging() {
+        RunPullRequest pr = pr(42);
+        stubBatch(pr);
+        stubRepoAndRun();
+        when(gitHubAppService.fetchPullRequest(anyString(), anyString(), anyInt()))
+                .thenThrow(new GitHubApiException(404, "org/backend-api", 42));
+
+        newService().refreshBatch(10);
+
+        verify(safetyValve).disengageForExternalFailure(eq("git_repo"), eq(gitRepoId), anyString());
+        assertThat(pr.getFailureCount()).isEqualTo(1);
+        assertThat(pr.getNextCheckAt()).isAfter(Instant.now());
+    }
+
+    /**
+     * A 403 that carries GitHub's own rate-limit headers is a secondary rate limit, not a revoked
+     * permission — the ambiguity this whole change exists for. It clears itself in seconds, so
+     * stopping the Autopilot for it is exactly the false stop the classifier is meant to avoid.
+     */
+    @Test
+    void refreshBatch_gitHubReturns403WithARetryAfterHeader_doesNotDisengage() {
+        stubBatch(pr(42));
+        stubRepoAndRun();
+        when(gitHubAppService.fetchPullRequest(anyString(), anyString(), anyInt()))
+                .thenThrow(
+                        new GitHubApiException(403, "org/backend-api", 42, new GitHubRateLimitHints(60, null, null)));
+
+        newService().refreshBatch(10);
+
+        verifyNoInteractions(safetyValve);
+    }
+
+    @Test
+    void refreshBatch_gitHubReturns403WithNoRemainingQuota_doesNotDisengage() {
+        stubBatch(pr(42));
+        stubRepoAndRun();
+        when(gitHubAppService.fetchPullRequest(anyString(), anyString(), anyInt()))
+                .thenThrow(new GitHubApiException(
+                        403, "org/backend-api", 42, new GitHubRateLimitHints(null, 0, 1_800_000_000L)));
+
+        newService().refreshBatch(10);
+
+        verifyNoInteractions(safetyValve);
+    }
+
+    /**
+     * The other direction, and the one that must not regress: a bare 403 still means a credential
+     * that is not allowed to read the repository, and still stops the Autopilot. The rate-limit
+     * check is a positive signal only, so anything it cannot read leaves the old answer standing.
+     */
+    @Test
+    void refreshBatch_gitHubReturns403WithQuotaRemaining_stillDisengages() {
+        stubBatch(pr(42));
+        stubRepoAndRun();
+        when(gitHubAppService.fetchPullRequest(anyString(), anyString(), anyInt()))
+                .thenThrow(new GitHubApiException(
+                        403, "org/backend-api", 42, new GitHubRateLimitHints(null, 4_999, 1_800_000_000L)));
+
+        newService().refreshBatch(10);
+
+        verify(safetyValve).disengageForExternalFailure(eq("git_repo"), eq(gitRepoId), anyString());
+    }
+
+    /**
+     * The second, less obvious path a rate limit arrives on. Minting an installation token is also
+     * rate limited, and its failure reaches the classifier wrapped — the credential resolver is a
+     * seam, so whatever an implementation throws surfaces as a
+     * {@code GitHubCredentialUnavailableException}. Classifying only the exception in hand would
+     * see "no credential" and stop the Autopilot, which is what a busy installation actually hits.
+     */
+    @Test
+    void refreshBatch_aRateLimitedTokenMint_doesNotDisengage() {
+        stubBatch(pr(42));
+        stubRepo(gitRepoId, "https://github.com/org/backend-api.git");
+        when(credentialResolver.getTokenForRun(runId))
+                .thenThrow(new IllegalStateException(
+                        "Failed to mint GitHub App installation token from env",
+                        new GitHubTokenMintException(403, "12345", new GitHubRateLimitHints(30, null, null))));
+
+        newService().refreshBatch(10);
+
+        verifyNoInteractions(safetyValve);
+    }
+
+    /** Not having a credential at all is still persistent — only "GitHub said wait" is not. */
+    @Test
+    void refreshBatch_aTokenMintFailureWithNoRateLimitSignal_stillDisengages() {
+        stubBatch(pr(42));
+        stubRepo(gitRepoId, "https://github.com/org/backend-api.git");
+        when(credentialResolver.getTokenForRun(runId))
+                .thenThrow(new IllegalStateException(
+                        "Failed to mint GitHub App installation token from env",
+                        new GitHubTokenMintException(401, "12345", GitHubRateLimitHints.NONE)));
+
+        newService().refreshBatch(10);
+
+        verify(safetyValve).disengageForExternalFailure(eq("git_repo"), eq(gitRepoId), contains("credential"));
+    }
+
+    /** A zero base is the pre-V17 behaviour wearing a config flag, so it is refused at construction. */
+    @Test
+    void aZeroBackoffBase_isRejected() {
+        assertThatThrownBy(() -> newService(Duration.ZERO, BACKOFF_CAP))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("backoff-base");
+    }
+
+    @Test
+    void aCapBelowTheBase_isRejected() {
+        assertThatThrownBy(() -> newService(Duration.ofMinutes(5), Duration.ofMinutes(1)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("backoff-cap");
     }
 
     /**
@@ -445,7 +632,7 @@ class PullRequestStateServiceTest {
     }
 
     private void stubBatch(RunPullRequest... prs) {
-        when(prRepo.findUnmergedBatch(any(Pageable.class))).thenReturn(List.of(prs));
+        when(prRepo.findUnmergedBatch(any(Instant.class), any(Pageable.class))).thenReturn(List.of(prs));
         when(prRepo.save(any(RunPullRequest.class))).thenAnswer(inv -> inv.getArgument(0));
     }
 
@@ -460,7 +647,26 @@ class PullRequestStateServiceTest {
     }
 
     private PullRequestStateService newService() {
+        return newService(BACKOFF_BASE, BACKOFF_CAP);
+    }
+
+    private PullRequestStateService newService(Duration backoffBase, Duration backoffCap) {
         return new PullRequestStateService(
-                prRepo, runRepo, gitRepoRepo, gitHubAppService, credentialResolver, taskService, safetyValve);
+                prRepo,
+                runRepo,
+                gitRepoRepo,
+                gitHubAppService,
+                credentialResolver,
+                taskService,
+                safetyValve,
+                backoffBase,
+                backoffCap);
+    }
+
+    /** The saved row for the single PR in the batch, so a test can assert what a failure wrote. */
+    private RunPullRequest savedRow() {
+        ArgumentCaptor<RunPullRequest> saved = ArgumentCaptor.forClass(RunPullRequest.class);
+        verify(prRepo, atLeastOnce()).save(saved.capture());
+        return saved.getValue();
     }
 }
