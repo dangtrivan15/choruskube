@@ -130,3 +130,98 @@ test.describe("Epic detail mobile layout", () => {
     expect(new Set(allTops).size).toBeGreaterThan(1);
   });
 });
+
+// The Roadmap Board header used to render seven undifferentiated controls in one non-wrapping
+// row, so it overflowed a phone viewport by construction and took the whole document into
+// horizontal scroll with it. This is the cheapest proof the redesign fixed something real:
+// one ticket-type dropdown, one view button per view that exists, one Graph action, one filter —
+// in a header that wraps. Pinned to a hermetic mock so it does not depend on seed data.
+const BOARD_EPICS = [
+  {
+    id: "00000000-0000-0000-0000-0000000000b1",
+    title: "an-epic-with-a-deliberately-long-unbreakable-title-token-for-the-narrow-viewport",
+    description: "desc",
+    motivation: null,
+    stage: "backlog",
+    priority: "high",
+    targetDate: null,
+    progress: { totalTasks: 3, doneTasks: 1, startedTasks: 1 },
+    softwareProject: { id: "sp-b1", type: "git_repo", name: "backend-api" },
+    repos: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    readyItemCount: 1,
+    milestone: null,
+  },
+  {
+    id: "00000000-0000-0000-0000-0000000000b2",
+    title: "Second board epic",
+    description: "desc",
+    motivation: null,
+    stage: "in_progress",
+    priority: "low",
+    targetDate: null,
+    progress: { totalTasks: 2, doneTasks: 0, startedTasks: 0 },
+    softwareProject: { id: "sp-b2", type: "git_repo", name: "web-ui" },
+    repos: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    readyItemCount: 0,
+    milestone: null,
+  },
+];
+
+test.describe("Roadmap Board mobile layout", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.route("**/api/v1/epics?**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          content: BOARD_EPICS,
+          totalElements: BOARD_EPICS.length,
+          totalPages: 1,
+          size: 200,
+          number: 0,
+          first: true,
+          last: true,
+          empty: false,
+        }),
+      });
+    });
+    await page.setViewportSize({ width: 375, height: 800 });
+  });
+
+  test("the header does not push the document into horizontal scroll at 375 px", async ({ page }) => {
+    await page.goto("/roadmap/board");
+    await expect(page.getByTestId("roadmap-board-heading")).toBeVisible();
+    await expect(page.getByTestId("roadmap-view-controls")).toBeVisible();
+
+    const docOverflow = await page.evaluate(() => {
+      const el = document.documentElement;
+      return el.scrollWidth - el.clientWidth;
+    });
+    expect(docOverflow).toBeLessThanOrEqual(1);
+  });
+
+  test("every header control stays inside the viewport, wrapping onto more rows as needed", async ({
+    page,
+  }) => {
+    await page.goto("/roadmap/board");
+    await expect(page.getByTestId("roadmap-view-controls")).toBeVisible();
+
+    // Right edges, not widths: a control can be narrow and still overhang if the row it sits on
+    // never wrapped. Measured on the controls themselves rather than their wrapper, whose width
+    // is bounded by the header column anyway and would pass trivially.
+    const rights = await page
+      .locator(
+        '[data-testid="roadmap-level-select"], [data-testid="roadmap-view-list"], [data-testid="roadmap-view-board"], [data-testid="roadmap-view-timeline"], [data-testid="roadmap-graph-action"], [data-testid="ready-to-start-toggle"]',
+      )
+      .evaluateAll((els) => els.map((el) => el.getBoundingClientRect().right));
+
+    expect(rights.length).toBeGreaterThan(0);
+    for (const right of rights) {
+      expect(right).toBeLessThanOrEqual(375);
+    }
+  });
+});

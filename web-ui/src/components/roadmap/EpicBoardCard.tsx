@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router";
 import { useDraggable } from "@dnd-kit/core";
 import { ChevronDown, ChevronRight, CircleCheck } from "lucide-react";
 import { useStories } from "@/hooks/useStories";
@@ -97,12 +98,22 @@ export default function EpicBoardCard({
         <div className="flex items-start justify-between gap-2">
           <span className="flex min-w-0 flex-1 items-center gap-1.5">
             <levelMeta.Icon className={cn("size-3.5 shrink-0", levelMeta.textClass)} />
-            <span
+            <Link
+              to={`/roadmap/epics/${epic.id}`}
               data-testid="epic-board-card-title"
-              className="min-w-0 flex-1 truncate text-sm font-medium"
+              className="min-w-0 truncate text-sm font-medium hover:underline"
+              // Two guards, not the one TaskBoardCard's title needs. `onPointerDown` keeps the
+              // press from reaching the card's dnd-kit `listeners` so this reads as a click, not a
+              // drag. `onClick` is the extra one: this Card *also* carries a root `onClick` that
+              // focuses the Epic, and react-router's `Link` doesn't stop propagation — without it
+              // both fire, and `setSearchParams` rewrites the just-navigated location into
+              // `/roadmap/epics/:id?epic=:id`. Widths stay hugging (no `flex-1`) so the rest of the
+              // row is still grab area for the drag.
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
             >
               {epic.title}
-            </span>
+            </Link>
           </span>
           <button
             type="button"

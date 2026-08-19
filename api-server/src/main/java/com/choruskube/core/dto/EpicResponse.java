@@ -6,10 +6,15 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * @param readyItemCount Count of this Epic's descendant Stories/Tasks with {@code
- *     Readiness.READY} (roadmap "ready to start" filter, Decision 2 of that feature) — computed
- *     at read time from the same {@code EpicReadinessAssembler} walk the Story/Task list
- *     endpoints use, never persisted.
+ * @param readyItemCount How much of this Epic's work could be started right now: descendant
+ *     Tasks that are still in {@code backlog} AND {@code Readiness.READY} (roadmap "ready to
+ *     start" filter, Decision 2 of that feature) — computed at read time from the same {@code
+ *     EpicReadinessAssembler} walk the Story/Task list endpoints use, never persisted. Tasks
+ *     only: Stories and the Epic itself are containers, so this is directly comparable with
+ *     {@code progress.totalTasks} rather than counting a different tier. A finished Epic reports
+ *     0 even though nothing blocks it. The predicate is {@code
+ *     EpicReadinessAssembler#isStartable}, shared with the Autopilot's ready frontier — what this
+ *     advertises is exactly what the Autopilot would pick up.
  * @param milestone The Epic's assigned Milestone (release grouping), or {@code null} if unassigned
  *     (Decision 2/4 of the "Group Epics under a named Milestone / Release" feature). Populated on
  *     both the single-Epic {@code toResponse} path and the batched multi-Epic {@code toResponses}

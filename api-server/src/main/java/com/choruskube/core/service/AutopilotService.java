@@ -713,7 +713,9 @@ public class AutopilotService implements AutopilotSafetyValve {
     }
 
     /**
-     * Every backlog Task in a candidate Epic whose readiness is READY, ordered per Decision 6.
+     * Every startable Task in a candidate Epic ({@link EpicReadinessAssembler#isStartable} —
+     * backlog and READY), ordered per Decision 6. That predicate is shared with the Epic list's
+     * {@code readyItemCount}, so the board's "N ready" badge names exactly this frontier.
      *
      * <p>{@link TaskOrderingStrategy} deliberately leaves epic affinity out, because it depends on
      * what is currently in flight; it is applied here as a stable partition of that comparator's
@@ -755,11 +757,14 @@ public class AutopilotService implements AutopilotSafetyValve {
                 }
                 for (Task task : tasks) {
                     totalCount++;
+                    // The backlog test appears twice on purpose: here it drives backlogCount (the
+                    // denominator the why-idle report quotes), while isStartable is the authority
+                    // on what actually joins the frontier.
                     if (task.getStatus() != WorkItemStatus.backlog) {
                         continue;
                     }
                     backlogCount++;
-                    if (assembly.readinessById().get(task.getId()) == Readiness.READY) {
+                    if (EpicReadinessAssembler.isStartable(task, assembly)) {
                         ready.add(task);
                     }
                 }

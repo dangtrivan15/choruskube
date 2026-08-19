@@ -1,7 +1,13 @@
 import type { RoadmapDetailItem } from "@/components/roadmap/RoadmapGraphDetailPanel";
 
-/** The three Roadmap views a focus can be carried between. */
-export type RoadmapView = "graph" | "board" | "timeline";
+/**
+ * The Roadmap views a focus can be carried between. `"list"`, `"board"` and `"timeline"` are the
+ * three interchangeable *view types* the shared header offers for a ticket type; `"graph"` is not
+ * one of them — it renders a single Epic's whole mixed-level tree and so needs a focused Epic id
+ * rather than a ticket type (see `roadmapNavigation.ts`) — but it still shares this vocabulary
+ * because it, too, is a destination a focus is carried to.
+ */
+export type RoadmapView = "graph" | "list" | "board" | "timeline";
 
 /**
  * The shared "what's focused" vocabulary every Roadmap view and the switcher agree on (§3.1): an
@@ -46,11 +52,22 @@ export function focusToSearchParamsInit(focus: RoadmapFocus): Record<string, str
   return init;
 }
 
+/** The Epic-level page each focus-carrying view is served from. */
+const EPIC_LEVEL_PATHS: Record<Exclude<RoadmapView, "graph">, string> = {
+  list: "/roadmap",
+  board: "/roadmap/board",
+  timeline: "/roadmap/timeline",
+};
+
 /**
- * Computes the destination URL for switching to `view` while carrying `focus` along (§3.2).
- * Returns `null` for `"graph"` when there's no focused Epic — Graph is strictly per-Epic, so there
- * is nowhere to send an unfocused Graph click (Decision 3); the switcher uses a `null` result to
- * render a disabled control instead of a link.
+ * Computes the destination URL for switching to `view` at the *Epic* level while carrying `focus`
+ * along (§3.2). Returns `null` for `"graph"` when there's no focused Epic — Graph is strictly
+ * per-Epic, so there is nowhere to send an unfocused Graph click (Decision 3); callers use a
+ * `null` result to render a disabled control instead of a link.
+ *
+ * Story- and Task-level destinations are deliberately not handled here: they drop the focus rather
+ * than carry it, so they never need this function's query assembly. `roadmapNavigation.ts` owns
+ * that split and calls this for the Epic-level (and Graph) half.
  */
 export function buildFocusedUrl(view: RoadmapView, focus: RoadmapFocus): string | null {
   if (view === "graph") {
@@ -58,7 +75,7 @@ export function buildFocusedUrl(view: RoadmapView, focus: RoadmapFocus): string 
     return `/roadmap/epics/${focus.epicId}/graph`;
   }
 
-  const path = view === "board" ? "/roadmap/board" : "/roadmap/timeline";
+  const path = EPIC_LEVEL_PATHS[view];
   const query = new URLSearchParams(focusToSearchParamsInit(focus)).toString();
   return query ? `${path}?${query}` : path;
 }

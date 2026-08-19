@@ -32,6 +32,7 @@ function makeStory(overrides: Partial<StoryResponse> = {}): StoryResponse {
     priority: "medium",
     targetDate: null,
     readiness: null,
+    readyTaskCount: null,
     progress: { totalTasks: 3, doneTasks: 1, startedTasks: 1 },
     createdAt: "2026-04-01T00:00:00Z",
     updatedAt: "2026-04-01T00:00:00Z",
@@ -69,6 +70,16 @@ describe("StoryBoardCard", () => {
     expect(screen.getByTestId("story-board-card-title")).toHaveTextContent("Dark theme toggle");
     expect(screen.getByTestId("story-board-card-progress")).toHaveTextContent(
       "1 of 3 tasks complete"
+    );
+  });
+
+  it("title links to the Story detail page, nested under its Epic", () => {
+    renderWithProviders(
+      <StoryBoardCard story={makeStory({ id: "story-7", epicId: "epic-3" })} />
+    );
+    expect(screen.getByTestId("story-board-card-title")).toHaveAttribute(
+      "href",
+      "/roadmap/epics/epic-3/stories/story-7"
     );
   });
 

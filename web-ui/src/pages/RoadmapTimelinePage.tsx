@@ -6,7 +6,7 @@ import { useMobileBreakpoint } from "@/hooks/useMobileBreakpoint";
 import { parseFocusParams, focusToSearchParamsInit } from "@/lib/roadmapFocus";
 import RoadmapTimeline from "@/components/roadmap/RoadmapTimeline";
 import RoadmapTimelineDetailPanel from "@/components/roadmap/RoadmapTimelineDetailPanel";
-import RoadmapViewSwitcher from "@/components/roadmap/RoadmapViewSwitcher";
+import RoadmapViewControls from "@/components/roadmap/RoadmapViewControls";
 import { Skeleton } from "@/components/ui/skeleton";
 import PageHeader from "@/components/layout/PageHeader";
 
@@ -56,8 +56,9 @@ export default function RoadmapTimelinePage() {
   return (
     <div className="flex h-full flex-col">
       <PageHeader title="Roadmap — Timeline" data-testid="roadmap-timeline-heading">
-        <RoadmapViewSwitcher
-          activeView="timeline"
+        <RoadmapViewControls
+          level="epic"
+          view="timeline"
           focusedEpicId={focusedEpicId}
           focusedStoryId={focusedStoryId}
         />

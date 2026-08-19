@@ -1,4 +1,5 @@
 import { type Page, type Locator, expect } from "@playwright/test";
+import { RoadmapViewControls } from "./roadmap-view-controls.page";
 
 export type EpicStage = "backlog" | "in_progress" | "rolled_out";
 
@@ -10,26 +11,29 @@ export class RoadmapBoardPage {
   readonly page: Page;
 
   readonly heading: Locator;
-  readonly listViewLink: Locator;
   readonly board: Locator;
   readonly cards: Locator;
   readonly readyToStartToggle: Locator;
 
-  /** The switcher's Graph entry — a disabled `<button>` until an Epic is focused (Decision 3). */
-  readonly viewSwitcherGraphEntry: Locator;
-  readonly viewSwitcherTimelineLink: Locator;
+  /** Shared Roadmap header control — ticket type, view types, and the Graph action. */
+  readonly viewControls: RoadmapViewControls;
+  readonly listViewLink: Locator;
+  readonly timelineViewLink: Locator;
+  /** The Graph action — a disabled `<button>` until an Epic is focused (Decision 3). */
+  readonly graphAction: Locator;
 
   constructor(page: Page) {
     this.page = page;
 
     this.heading = page.getByTestId("roadmap-board-heading");
-    this.listViewLink = page.getByTestId("roadmap-board-list-view-link");
     this.board = page.getByTestId("roadmap-board");
     this.cards = page.getByTestId("epic-board-card");
     this.readyToStartToggle = page.getByTestId("ready-to-start-toggle");
 
-    this.viewSwitcherGraphEntry = page.getByTestId("roadmap-view-switcher-graph");
-    this.viewSwitcherTimelineLink = page.getByTestId("roadmap-view-switcher-timeline");
+    this.viewControls = new RoadmapViewControls(page);
+    this.listViewLink = this.viewControls.view("list");
+    this.timelineViewLink = this.viewControls.view("timeline");
+    this.graphAction = this.viewControls.graphAction;
   }
 
   async goto() {
@@ -40,6 +44,15 @@ export class RoadmapBoardPage {
 
   column(stage: EpicStage): Locator {
     return this.page.getByTestId(`board-column-${stage}`);
+  }
+
+  /**
+   * Focuses a card (sets `?epic=`) without navigating. Clicks the progress line rather than the
+   * card, because `click()` targets a locator's geometric centre and the card's title is a `Link`
+   * to the Epic detail page — a centre click that lands on it would navigate away instead.
+   */
+  async focusCard(title: string) {
+    await this.cardByTitle(title).getByTestId("epic-board-card-progress").click();
   }
 
   cardByTitle(title: string): Locator {

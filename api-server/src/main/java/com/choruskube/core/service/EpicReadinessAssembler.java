@@ -10,6 +10,7 @@ import com.choruskube.core.model.WorkItemDependency;
 import com.choruskube.core.model.enums.BlockableItemType;
 import com.choruskube.core.model.enums.BlockerDirection;
 import com.choruskube.core.model.enums.Readiness;
+import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.repository.EpicRepository;
 import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.repository.TaskRepository;
@@ -73,6 +74,36 @@ class EpicReadinessAssembler {
             List<DependencyEdgeResponse> dependencies,
             List<ExternalBlockerRef> externalBlockers,
             List<WorkItemDependency> edges) {}
+
+    /**
+     * Whether {@code task} is work that can be picked up right now: still in {@code backlog} AND
+     * {@link Readiness#READY} in {@code assembly}. Both halves are load-bearing — {@link
+     * TransitiveReadinessResolver#computeReadiness} derives READY from "nothing upstream is still
+     * open" and never consults the item's own status, so a {@code done} Task is READY too.
+     *
+     * <p>This is the one definition of "ready to start" in the codebase. The Autopilot's ready
+     * frontier ({@code AutopilotService#computeFrontier}) and the Epic list's {@code
+     * readyItemCount} ({@code DefaultEpicService#computeReadyItemCount}) both go through it, so
+     * what the roadmap advertises as ready is exactly what the Autopilot would start next. It
+     * lives here because {@link Assembly} is the only input it needs beyond the Task itself.
+     *
+     * <p>Tasks only: a Story or an Epic is a container, not startable work, so counting one
+     * alongside its own Tasks would double-count a single unit of work across two tiers.
+     */
+    static boolean isStartable(Task task, Assembly assembly) {
+        return task.getStatus() == WorkItemStatus.backlog
+                && assembly.readinessById().get(task.getId()) == Readiness.READY;
+    }
+
+    /**
+     * How many of {@code tasks} are startable. Exists so the three surfaces that report a "ready"
+     * count — an Epic's {@code readyItemCount}, a Story's {@code readyTaskCount}, and the Roadmap
+     * Graph's Story nodes — all reduce the same Tasks the same way, rather than each writing its
+     * own loop over {@link #isStartable}.
+     */
+    static long startableCount(List<Task> tasks, Assembly assembly) {
+        return tasks.stream().filter(task -> isStartable(task, assembly)).count();
+    }
 
     /**
      * An Epic's full Story/Task set, pre-loaded once (Decision 3) so callers of {@link #assemble}

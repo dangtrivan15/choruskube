@@ -470,6 +470,11 @@ public class DefaultEpicService implements EpicService {
      * per-item {@code readiness} the Story/Task lists render (Decision 1). Called with {@code
      * internal=false, runId=null} since every caller of {@link #list}/{@link #toResponses} is on
      * the public (request-scoped) path, never the internal run-scoped one.
+     *
+     * <p>What counts is decided by {@link EpicReadinessAssembler#isStartable}, shared with the
+     * Autopilot's ready frontier: backlog Tasks that are READY. Stories and the Epic itself are
+     * containers and never counted, so this figure and {@code progress.totalTasks} are two
+     * statements about the same tier.
      */
     private Map<UUID, Long> computeReadyItemCounts(List<Epic> epics) {
         Map<UUID, Long> result = new HashMap<>();
@@ -487,12 +492,14 @@ public class DefaultEpicService implements EpicService {
                 candidates.parentOf(),
                 ReadinessAuthMode.PUBLIC,
                 null);
-        // Deliberately excludes the Epic's own entry: readyItemCount counts startable descendants,
-        // and the Epic became a candidate in its own right when edges gained an Epic tier.
-        return assembly.readinessById().entrySet().stream()
-                .filter(e -> !e.getKey().equals(epicId))
-                .filter(e -> e.getValue() == Readiness.READY)
-                .count();
+        // Walks the Tasks rather than the readiness map, because the map also holds an entry for
+        // every Story and for the Epic itself — containers, which EpicReadinessAssembler#isStartable
+        // excludes by construction.
+        long count = 0;
+        for (List<Task> tasks : candidates.tasksByStoryId().values()) {
+            count += EpicReadinessAssembler.startableCount(tasks, assembly);
+        }
+        return count;
     }
 
     /** Batched (N+1-avoiding) rollup computation for a page/list of Epics — one query per level. */

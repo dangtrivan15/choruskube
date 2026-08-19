@@ -122,6 +122,8 @@ function makeStory(overrides: Partial<StoryResponse> = {}): StoryResponse {
     priority: "medium",
     targetDate: null,
     readiness: null,
+    // Consistent with the `progress` default below: one Task, not started and not blocked.
+    readyTaskCount: 1,
     progress: { totalTasks: 1, doneTasks: 0, startedTasks: 0 },
     createdAt: "2026-04-01T00:00:00Z",
     updatedAt: "2026-04-01T00:00:00Z",
@@ -269,8 +271,14 @@ describe("EpicDetailPage", () => {
     mockUseEpic.mockReturnValue({ data: makeEpic(), isLoading: false });
     mockUseStories.mockReturnValue({
       data: [
-        makeStory({ id: "story-ready", title: "Ready Story", readiness: "READY" }),
-        makeStory({ id: "story-blocked", title: "Blocked Story", readiness: "BLOCKED" }),
+        makeStory({ id: "story-ready", title: "Ready Story", readiness: "READY", readyTaskCount: 1 }),
+        makeStory({
+          id: "story-blocked",
+          title: "Blocked Story",
+          readiness: "BLOCKED",
+          // A blocked Story cascades to its Tasks, so none of them are startable.
+          readyTaskCount: 0,
+        }),
       ],
       isLoading: false,
     });
@@ -289,7 +297,10 @@ describe("EpicDetailPage", () => {
 
   it("shows filter-specific empty-state copy when the filter yields zero results despite non-empty story data", async () => {
     mockUseEpic.mockReturnValue({ data: makeEpic(), isLoading: false });
-    mockUseStories.mockReturnValue({ data: [makeStory({ readiness: "BLOCKED" })], isLoading: false });
+    mockUseStories.mockReturnValue({
+      data: [makeStory({ readiness: "BLOCKED", readyTaskCount: 0 })],
+      isLoading: false,
+    });
     renderWithProviders(<EpicDetailPage />);
     const user = userEvent.setup();
 
@@ -298,6 +309,31 @@ describe("EpicDetailPage", () => {
     await user.click(screen.getByTestId("ready-to-start-toggle"));
 
     expect(screen.getByText(/No stories are ready to start/)).toBeInTheDocument();
+  });
+
+  it("hides a READY Story whose Tasks are all finished", async () => {
+    // The reason this filter reads `readyTaskCount` rather than `readiness`: a Story with no
+    // blockers stays READY after its work ships, so filtering on readiness alone would keep
+    // offering a completed Story as somewhere to start.
+    mockUseEpic.mockReturnValue({ data: makeEpic(), isLoading: false });
+    mockUseStories.mockReturnValue({
+      data: [
+        makeStory({
+          id: "story-done",
+          title: "Finished Story",
+          readiness: "READY",
+          readyTaskCount: 0,
+          progress: { totalTasks: 2, doneTasks: 2, startedTasks: 2 },
+        }),
+      ],
+      isLoading: false,
+    });
+    renderWithProviders(<EpicDetailPage />);
+    expect(screen.getByText("Finished Story")).toBeInTheDocument();
+
+    await userEvent.setup().click(screen.getByTestId("ready-to-start-toggle"));
+
+    expect(screen.queryByText("Finished Story")).not.toBeInTheDocument();
   });
 
   it("shows priority-specific empty-state copy when only the priority filter yields zero results", async () => {
@@ -317,7 +353,7 @@ describe("EpicDetailPage", () => {
   it("shows combined-filter empty-state copy when both the ready-to-start and priority filters are active", async () => {
     mockUseEpic.mockReturnValue({ data: makeEpic(), isLoading: false });
     mockUseStories.mockReturnValue({
-      data: [makeStory({ priority: "medium", readiness: "BLOCKED" })],
+      data: [makeStory({ priority: "medium", readiness: "BLOCKED", readyTaskCount: 0 })],
       isLoading: false,
     });
     renderWithProviders(<EpicDetailPage />);

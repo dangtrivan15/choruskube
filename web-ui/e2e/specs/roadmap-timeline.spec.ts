@@ -22,10 +22,10 @@ test.describe("Roadmap Timeline View", () => {
     const timelinePage = new RoadmapTimelinePage(page);
 
     try {
-      // Reachable from the Epic list's nav link, not just by direct URL — mirrors
+      // Reachable from the Epic list's Timeline view button, not just by direct URL — mirrors
       // roadmap-graph.spec.ts's "reachable from the Epic list" assertion for the Graph view.
       await roadmapPage.goto();
-      await roadmapPage.page.getByTestId("roadmap-timeline-view-link").click();
+      await roadmapPage.timelineViewLink.click();
       await expect(page).toHaveURL("/roadmap/timeline");
       await expect(timelinePage.heading).toBeVisible();
 

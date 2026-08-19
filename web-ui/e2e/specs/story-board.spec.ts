@@ -17,43 +17,51 @@ test.describe("Story Board", () => {
     await expect(storyBoardPage.column("rolled_out")).toBeVisible();
   });
 
-  test("Epic board link opens the Roadmap (Epic) board", async ({ storyBoardPage, page }) => {
+  // Switching ticket type keeps the *view* — Board stays Board across Epics/Stories/Tasks. These
+  // four tests pin that both ways, since it is what replaced the per-board cross-links.
+  test("switching the ticket type to Epics keeps the Board view", async ({ storyBoardPage, page }) => {
     await storyBoardPage.goto();
-    await storyBoardPage.epicBoardLink.click();
+    await storyBoardPage.viewControls.selectTicketType("epic");
     await expect(page.getByTestId("roadmap-board-heading")).toBeVisible();
     await expect(page).toHaveURL(/\/roadmap\/board$/);
   });
 
-  test("Task board link opens the Task board", async ({ storyBoardPage, page }) => {
+  test("switching the ticket type to Tasks keeps the Board view", async ({ storyBoardPage, page }) => {
     await storyBoardPage.goto();
-    await storyBoardPage.taskBoardLink.click();
+    await storyBoardPage.viewControls.selectTicketType("task");
     await expect(page.getByTestId("task-board-heading")).toBeVisible();
     await expect(page).toHaveURL(/\/roadmap\/board\/tasks$/);
   });
 
-  test("List view link opens the Epic list", async ({ storyBoardPage, page }) => {
+  test("List view opens the Story list, not the Epic list", async ({ storyBoardPage, page }) => {
     await storyBoardPage.goto();
     await storyBoardPage.listViewLink.click();
-    await expect(page.getByTestId("roadmap-heading")).toBeVisible();
-    await expect(page).toHaveURL(/\/roadmap$/);
+    await expect(page.getByTestId("story-list-heading")).toBeVisible();
+    await expect(page).toHaveURL(/\/roadmap\/stories$/);
   });
 
-  test("Story board link from the Epic board opens the Story board", async ({
+  test("Timeline is not offered for Stories at all", async ({ storyBoardPage }) => {
+    await storyBoardPage.goto();
+    // Not "disabled" — absent. There is no Story timeline page to send anyone to.
+    await expect(storyBoardPage.viewControls.view("timeline")).toHaveCount(0);
+  });
+
+  test("switching the ticket type from the Epic board reaches the Story board", async ({
     roadmapBoardPage,
     page,
   }) => {
     await roadmapBoardPage.goto();
-    await page.getByTestId("roadmap-board-story-board-link").click();
+    await roadmapBoardPage.viewControls.selectTicketType("story");
     await expect(page.getByTestId("story-board-heading")).toBeVisible();
     await expect(page).toHaveURL(/\/roadmap\/board\/stories$/);
   });
 
-  test("Story board link from the Task board opens the Story board", async ({
+  test("switching the ticket type from the Task board reaches the Story board", async ({
     taskBoardPage,
     page,
   }) => {
     await taskBoardPage.goto();
-    await page.getByTestId("task-board-story-board-link").click();
+    await taskBoardPage.viewControls.selectTicketType("story");
     await expect(page.getByTestId("story-board-heading")).toBeVisible();
     await expect(page).toHaveURL(/\/roadmap\/board\/stories$/);
   });

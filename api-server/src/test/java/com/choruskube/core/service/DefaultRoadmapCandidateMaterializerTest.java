@@ -48,7 +48,7 @@ class DefaultRoadmapCandidateMaterializerTest {
 
     private static StoryResponse storyResponse(UUID id, UUID epicId) {
         return new StoryResponse(
-                id, epicId, "t", "d", "backlog", "medium", null, null, null, Instant.now(), Instant.now());
+                id, epicId, "t", "d", "backlog", "medium", null, null, null, null, Instant.now(), Instant.now());
     }
 
     private static TaskResponse taskResponse(UUID storyId) {

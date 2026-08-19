@@ -355,6 +355,9 @@ public class DefaultEpicServiceTest extends BaseTest {
         GitRepo r = makeRepo("https://github.com/test/ready-all-blocked.git");
         EpicResponse epic = service.create(new EpicRequest("T", "D", null, r.getId()), null);
         var blocked = storyService.create(epic.id(), new StoryRequest("Blocked", "D"));
+        // Real backlog work under the blocked Story, so the zero below is earned by the block and
+        // not merely by the Epic having nothing in it.
+        taskService.create(blocked.id(), new TaskRequest("T", "D"));
         EpicResponse blockerEpic = service.create(new EpicRequest("Blocker Owner", "D", null, r.getId()), null);
         var blocker = storyService.create(blockerEpic.id(), new StoryRequest("Blocker", "D"));
         dependencyService.create(new CreateDependencyRequest("story", blocker.id(), "story", blocked.id()));
@@ -363,14 +366,18 @@ public class DefaultEpicServiceTest extends BaseTest {
     }
 
     @Test
-    void readyItemCount_epicWithMixOfReadyAndBlockedStories_countsOnlyReady() {
+    void readyItemCount_epicWithMixOfReadyAndBlockedStories_countsOnlyTasksUnderReadyStories() {
         GitRepo r = makeRepo("https://github.com/test/ready-mix.git");
         EpicResponse epic = service.create(new EpicRequest("T", "D", null, r.getId()), null);
-        storyService.create(epic.id(), new StoryRequest("Ready", "D"));
+        var ready = storyService.create(epic.id(), new StoryRequest("Ready", "D"));
         var blocked = storyService.create(epic.id(), new StoryRequest("Blocked", "D"));
         var blocker = storyService.create(epic.id(), new StoryRequest("Blocker", "D"));
+        taskService.create(ready.id(), new TaskRequest("T", "D"));
+        taskService.create(blocked.id(), new TaskRequest("T", "D"));
+        taskService.create(blocker.id(), new TaskRequest("T", "D"));
         dependencyService.create(new CreateDependencyRequest("story", blocker.id(), "story", blocked.id()));
-        // "Ready" and "Blocker" both have no incoming blocking edge -> READY; "Blocked" -> BLOCKED.
+        // "Ready" and "Blocker" both have no incoming blocking edge -> READY, and their Tasks
+        // inherit that; "Blocked" -> BLOCKED, which cascades onto the Task inside it.
 
         assertThat(readyItemCountOf(epic.id())).isEqualTo(2);
     }
@@ -384,6 +391,7 @@ public class DefaultEpicServiceTest extends BaseTest {
         GitRepo r = makeRepo("https://github.com/test/ready-external.git");
         EpicResponse epic = service.create(new EpicRequest("T", "D", null, r.getId()), null);
         var dependent = storyService.create(epic.id(), new StoryRequest("Dependent", "D"));
+        taskService.create(dependent.id(), new TaskRequest("T", "D"));
         EpicResponse otherEpic = service.create(new EpicRequest("Other", "D", null, r.getId()), null);
         var external = storyService.create(otherEpic.id(), new StoryRequest("External", "D"));
         var externalTask = taskService.create(external.id(), new TaskRequest("T", "D"));
@@ -394,6 +402,70 @@ public class DefaultEpicServiceTest extends BaseTest {
         markTaskDone(externalTask.id());
 
         assertThat(readyItemCountOf(epic.id())).isEqualTo(1);
+    }
+
+    @Test
+    void readyItemCount_countsTasksNotStories_soItAgreesWithTheProgressRollup() {
+        // readyItemCount and progress.totalTasks are statements about the same tier. One Story
+        // holding one backlog Task is one startable item, not two.
+        GitRepo r = makeRepo("https://github.com/test/ready-tier-agreement.git");
+        EpicResponse epic = service.create(new EpicRequest("T", "D", null, r.getId()), null);
+        var story = storyService.create(epic.id(), new StoryRequest("S", "D"));
+        taskService.create(story.id(), new TaskRequest("T", "D"));
+
+        assertThat(readyItemCountOf(epic.id())).isEqualTo(1);
+        assertThat(service.get(epic.id()).progress().totalTasks()).isEqualTo(1);
+    }
+
+    @Test
+    void readyItemCount_epicWhoseStoriesHoldNoTasks_isZero() {
+        // A Story is a container, not startable work: an Epic of empty Stories offers nothing
+        // anyone could pick up, however unblocked those Stories are.
+        GitRepo r = makeRepo("https://github.com/test/ready-empty-stories.git");
+        EpicResponse epic = service.create(new EpicRequest("T", "D", null, r.getId()), null);
+        storyService.create(epic.id(), new StoryRequest("Unblocked A", "D"));
+        storyService.create(epic.id(), new StoryRequest("Unblocked B", "D"));
+
+        assertThat(readyItemCountOf(epic.id())).isZero();
+    }
+
+    @Test
+    void readyItemCount_doneTask_isNotCounted() {
+        // Readiness alone says only "nothing upstream is still open", which a finished Task
+        // satisfies trivially. Startable work has to still be waiting to be started.
+        GitRepo r = makeRepo("https://github.com/test/ready-done-task.git");
+        EpicResponse epic = service.create(new EpicRequest("T", "D", null, r.getId()), null);
+        var story = storyService.create(epic.id(), new StoryRequest("S", "D"));
+        var task = taskService.create(story.id(), new TaskRequest("T", "D"));
+
+        assertThat(readyItemCountOf(epic.id())).isEqualTo(1);
+
+        markTaskDone(task.id());
+
+        assertThat(readyItemCountOf(epic.id())).isZero();
+    }
+
+    @Test
+    void readyItemCount_inProgressTask_isNotCounted() {
+        GitRepo r = makeRepo("https://github.com/test/ready-in-progress-task.git");
+        EpicResponse epic = service.create(new EpicRequest("T", "D", null, r.getId()), null);
+        var story = storyService.create(epic.id(), new StoryRequest("S", "D"));
+        var task = taskService.create(story.id(), new TaskRequest("T", "D"));
+        markTaskInProgress(task.id());
+
+        assertThat(readyItemCountOf(epic.id())).isZero();
+    }
+
+    @Test
+    void readyItemCount_epicWithEveryTaskDone_isZero() {
+        GitRepo r = makeRepo("https://github.com/test/ready-fully-done-epic.git");
+        EpicResponse epic = service.create(new EpicRequest("T", "D", null, r.getId()), null);
+        var storyA = storyService.create(epic.id(), new StoryRequest("A", "D"));
+        var storyB = storyService.create(epic.id(), new StoryRequest("B", "D"));
+        markTaskDone(taskService.create(storyA.id(), new TaskRequest("T1", "D")).id());
+        markTaskDone(taskService.create(storyB.id(), new TaskRequest("T2", "D")).id());
+
+        assertThat(readyItemCountOf(epic.id())).isZero();
     }
 
     private long readyItemCountOf(UUID epicId) {
@@ -408,10 +480,12 @@ public class DefaultEpicServiceTest extends BaseTest {
     void list_readyFilter_excludesEpicsWithNoReadyDescendants_andPaginatesFilteredSetInMemory() {
         GitRepo r = makeRepo("https://github.com/test/ready-filter-service.git");
         EpicResponse readyEpic = service.create(new EpicRequest("Ready", "D", null, r.getId()), null);
-        storyService.create(readyEpic.id(), new StoryRequest("Unblocked", "D"));
+        var unblockedStory = storyService.create(readyEpic.id(), new StoryRequest("Unblocked", "D"));
+        taskService.create(unblockedStory.id(), new TaskRequest("T", "D"));
 
         EpicResponse blockedEpic = service.create(new EpicRequest("Blocked", "D", null, r.getId()), null);
         var blockedStory = storyService.create(blockedEpic.id(), new StoryRequest("Blocked", "D"));
+        taskService.create(blockedStory.id(), new TaskRequest("T", "D"));
         EpicResponse blockerEpic = service.create(new EpicRequest("Blocker Owner", "D", null, r.getId()), null);
         var blockerStory = storyService.create(blockerEpic.id(), new StoryRequest("Blocker", "D"));
         dependencyService.create(new CreateDependencyRequest("story", blockerStory.id(), "story", blockedStory.id()));
@@ -420,6 +494,26 @@ public class DefaultEpicServiceTest extends BaseTest {
 
         assertThat(page.getContent()).extracting(EpicResponse::id).contains(readyEpic.id());
         assertThat(page.getContent()).extracting(EpicResponse::id).doesNotContain(blockedEpic.id());
+    }
+
+    @Test
+    void list_readyFilter_excludesEpicWhoseTasksAreAllDone() {
+        // The finished Epic is still READY in the dependency sense — nothing blocks it — so it is
+        // only excluded because "ready" now also means "not started yet".
+        GitRepo r = makeRepo("https://github.com/test/ready-filter-all-done.git");
+        EpicResponse doneEpic = service.create(new EpicRequest("Done", "D", null, r.getId()), null);
+        var doneStory = storyService.create(doneEpic.id(), new StoryRequest("Shipped", "D"));
+        markTaskDone(
+                taskService.create(doneStory.id(), new TaskRequest("T", "D")).id());
+
+        EpicResponse openEpic = service.create(new EpicRequest("Open", "D", null, r.getId()), null);
+        var openStory = storyService.create(openEpic.id(), new StoryRequest("Pending", "D"));
+        taskService.create(openStory.id(), new TaskRequest("T", "D"));
+
+        Page<EpicResponse> page = service.list(null, Readiness.READY, null, null, PageRequest.of(0, 20));
+
+        assertThat(page.getContent()).extracting(EpicResponse::id).contains(openEpic.id());
+        assertThat(page.getContent()).extracting(EpicResponse::id).doesNotContain(doneEpic.id());
     }
 
     // ── updateInternal: PATCH preserve semantics ──────────────────────────────────
@@ -680,9 +774,11 @@ public class DefaultEpicServiceTest extends BaseTest {
         // just the DB-paginated path above.
         GitRepo r = makeRepo("https://github.com/test/priority-sort-readiness.git");
         EpicResponse lowEpic = service.create(new EpicRequest("Low", "D", null, r.getId(), Priority.low), null);
-        storyService.create(lowEpic.id(), new StoryRequest("S", "D"));
+        taskService.create(
+                storyService.create(lowEpic.id(), new StoryRequest("S", "D")).id(), new TaskRequest("T", "D"));
         EpicResponse highEpic = service.create(new EpicRequest("High", "D", null, r.getId(), Priority.high), null);
-        storyService.create(highEpic.id(), new StoryRequest("S", "D"));
+        taskService.create(
+                storyService.create(highEpic.id(), new StoryRequest("S", "D")).id(), new TaskRequest("T", "D"));
 
         Page<EpicResponse> page = service.list(
                 null,

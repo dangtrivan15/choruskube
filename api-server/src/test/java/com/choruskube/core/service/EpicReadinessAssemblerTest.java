@@ -414,6 +414,63 @@ public class EpicReadinessAssemblerTest extends BaseTest {
                 .checkOrgAccess(ArgumentMatchers.anyString(), ArgumentMatchers.any());
     }
 
+    // ── isStartable: the one shared "ready to start" predicate ───────────────────
+
+    @Test
+    void isStartable_onlyABacklogTaskCounts_evenThoughFinishedWorkIsAlsoReady() {
+        EpicResponse epic = makeEpic("https://github.com/test/assembler-startable-status.git");
+        StoryResponse story = makeStory(epic.id(), "Story");
+        TaskResponse waiting = makeTask(story.id(), "Waiting");
+        TaskResponse started = makeTask(story.id(), "Started");
+        TaskResponse finished = makeTask(story.id(), "Finished");
+        markInProgress(started.id());
+        markDone(finished.id());
+
+        EpicReadinessAssembler.Assembly assembly = assembleFor(epic.id());
+
+        // The trap this predicate exists to close: readiness is a statement about an item's
+        // dependencies, so work that is already under way or finished is READY too.
+        assertThat(assembly.readinessById().get(started.id())).isEqualTo(Readiness.READY);
+        assertThat(assembly.readinessById().get(finished.id())).isEqualTo(Readiness.READY);
+
+        assertThat(EpicReadinessAssembler.isStartable(entity(waiting.id()), assembly))
+                .isTrue();
+        assertThat(EpicReadinessAssembler.isStartable(entity(started.id()), assembly))
+                .isFalse();
+        assertThat(EpicReadinessAssembler.isStartable(entity(finished.id()), assembly))
+                .isFalse();
+    }
+
+    @Test
+    void isStartable_isFalseForABlockedBacklogTask() {
+        EpicResponse epic = makeEpic("https://github.com/test/assembler-startable-blocked.git");
+        StoryResponse story = makeStory(epic.id(), "Story");
+        TaskResponse blocker = makeTask(story.id(), "Blocker");
+        TaskResponse blocked = makeTask(story.id(), "Blocked");
+        dependencyService.create(new CreateDependencyRequest("task", blocker.id(), "task", blocked.id()));
+
+        EpicReadinessAssembler.Assembly assembly = assembleFor(epic.id());
+
+        assertThat(EpicReadinessAssembler.isStartable(entity(blocker.id()), assembly))
+                .isTrue();
+        assertThat(EpicReadinessAssembler.isStartable(entity(blocked.id()), assembly))
+                .isFalse();
+    }
+
+    private EpicReadinessAssembler.Assembly assembleFor(UUID epicId) {
+        EpicReadinessAssembler.EpicCandidates candidates = assembler.loadEpicCandidates(epicId);
+        return assembler.assemble(
+                candidates.candidateIds(),
+                candidates.statusById(),
+                candidates.parentOf(),
+                ReadinessAuthMode.PUBLIC,
+                null);
+    }
+
+    private Task entity(UUID taskId) {
+        return taskRepo.findById(taskId).orElseThrow();
+    }
+
     private record CrossEpicFixture(UUID epicId, UUID externalBlockerId) {}
 
     private CrossEpicFixture crossEpicFixture(String slug) {
@@ -434,6 +491,12 @@ public class EpicReadinessAssemblerTest extends BaseTest {
                 new EpicReadinessAssembler(storyRepo, taskRepo, epicRepo, dependencyRepo, probeAuthService);
         EpicReadinessAssembler.EpicCandidates candidates = probe.loadEpicCandidates(f.epicId());
         probe.assemble(candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), mode, contextId);
+    }
+
+    private void markInProgress(UUID taskId) {
+        Task t = taskRepo.findById(taskId).orElseThrow();
+        t.setStatus(WorkItemStatus.in_progress);
+        taskRepo.saveAndFlush(t);
     }
 
     private void markDone(UUID taskId) {

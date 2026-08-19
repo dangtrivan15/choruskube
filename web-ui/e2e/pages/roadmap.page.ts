@@ -1,4 +1,5 @@
 import { type Page, type Locator, expect } from "@playwright/test";
+import { RoadmapViewControls } from "./roadmap-view-controls.page";
 
 /**
  * Page object for the Roadmap drill-down: Epic list (/roadmap) -> Epic detail
@@ -16,6 +17,9 @@ export class RoadmapPage {
   readonly priorityFilter: Locator;
   readonly milestoneFilter: Locator;
   readonly milestonesLink: Locator;
+  readonly viewControls: RoadmapViewControls;
+  readonly boardViewLink: Locator;
+  readonly timelineViewLink: Locator;
 
   // Epic detail
   readonly epicDetailTitle: Locator;
@@ -102,9 +106,15 @@ export class RoadmapPage {
     // All + one chip per org Milestone (RoadmapPage's inline MilestoneFilter) — Epic list
     // toolbar only.
     this.milestoneFilter = page.getByTestId("milestone-filter");
-    // Toolbar link to the Milestone management page (/roadmap/milestones) — the Board/Timeline
-    // link's sibling; Milestones has no sidebar entry (see Sidebar.tsx's Board/Timeline precedent).
+    // Toolbar link to the Milestone management page (/roadmap/milestones). A Milestone is a
+    // fourth entity rather than a hierarchy level, so it stays a standalone link beside the
+    // ticket-type/view control rather than joining either of its axes; Milestones has no sidebar
+    // entry either (see Sidebar.tsx's precedent).
     this.milestonesLink = page.getByTestId("roadmap-milestones-link");
+    // Shared Roadmap header control — this page is Epics x List.
+    this.viewControls = new RoadmapViewControls(page);
+    this.boardViewLink = this.viewControls.view("board");
+    this.timelineViewLink = this.viewControls.view("timeline");
 
     this.epicDetailTitle = page.getByTestId("epic-detail-title");
     this.epicDetailDescription = page.getByTestId("epic-detail-description");
@@ -248,12 +258,12 @@ export class RoadmapPage {
 
   /**
    * Pick a sort option from a `SortDropdown` by its visible label (e.g.
-   * "Priority (High→Low)"). The dropdown has no test id, so it's reached via the
-   * combobox role — pass the specific trigger locator when a view mounts more
-   * than one (Epic detail mounts the Story sort dropdown).
+   * "Priority (High→Low)"). Reached by the shared `sort-dropdown` test id rather than the
+   * combobox role, which the Roadmap header's ticket-type Select also answers to — pass the
+   * specific trigger locator when a view mounts more than one sort dropdown.
    */
   async selectSort(label: string | RegExp, trigger?: Locator) {
-    await (trigger ?? this.page.getByRole("combobox")).click();
+    await (trigger ?? this.page.getByTestId("sort-dropdown")).click();
     await this.page.getByRole("option", { name: label }).click();
   }
 

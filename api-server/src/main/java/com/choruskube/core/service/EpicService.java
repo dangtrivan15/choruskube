@@ -27,8 +27,10 @@ public interface EpicService {
     EpicResponse create(EpicRequest request, UUID runId);
 
     /**
-     * Lists Epics, optionally filtered to those with at least one {@code READY} descendant
-     * Story/Task (roadmap "ready to start" filter, Decision 1/3 of that feature). {@code
+     * Lists Epics, optionally filtered to those with at least one startable descendant Task — one
+     * still in {@code backlog} and {@code READY} (roadmap "ready to start" filter, Decision 1/3 of
+     * that feature). An Epic whose Tasks are all done or already under way is therefore excluded,
+     * as is one holding only empty Stories. {@code
      * readiness == null} preserves the pre-feature behavior exactly (no filter, DB-level
      * pagination); {@code readiness == Readiness.READY} switches to an in-memory-paginated path
      * (Decision 3) since {@code readyItemCount} is not a stored column. Every returned {@link

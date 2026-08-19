@@ -24,9 +24,9 @@ test.describe("Roadmap Board", () => {
     await expect(page).toHaveURL(/\/roadmap$/);
   });
 
-  test("Board view link from the Epic list opens the board", async ({ roadmapPage, page }) => {
+  test("Board view button from the Epic list opens the board", async ({ roadmapPage, page }) => {
     await roadmapPage.goto();
-    await page.getByTestId("roadmap-board-view-link").click();
+    await roadmapPage.boardViewLink.click();
     await expect(page.getByTestId("roadmap-board-heading")).toBeVisible();
     await expect(page).toHaveURL(/\/roadmap\/board$/);
   });
@@ -77,7 +77,14 @@ test.describe("Roadmap Board", () => {
       description: "desc",
       softwareProjectId: workerRepo.gitRepo.id,
     });
-    await api.createStory(readyEpic.id, { title: "Unblocked story", description: "desc" });
+    const unblockedStory = await api.createStory(readyEpic.id, {
+      title: "Unblocked story",
+      description: "desc",
+    });
+    // The filter counts startable Tasks, not Stories, so each Epic needs real backlog work under
+    // it — otherwise both would be filtered out for being empty and the blocked one would drop
+    // out for the wrong reason.
+    await api.createTask(unblockedStory.id, { title: "Unblocked task", description: "desc" });
 
     const blockedEpic = await api.createEpic({
       title: uniqueName("E2E Board Ready Filter Blocked Epic"),
@@ -88,6 +95,7 @@ test.describe("Roadmap Board", () => {
       title: "Blocked story",
       description: "desc",
     });
+    await api.createTask(blockedStory.id, { title: "Blocked task", description: "desc" });
     const blockerEpic = await api.createEpic({
       title: uniqueName("E2E Board Ready Filter Blocker Owner Epic"),
       description: "desc",
@@ -135,7 +143,10 @@ test.describe("Roadmap Board", () => {
       description: "Epic for the ready-filtered drag E2E test",
       softwareProjectId: workerRepo.gitRepo.id,
     });
-    await api.createStory(epic.id, { title: "Unblocked story", description: "desc" });
+    const story = await api.createStory(epic.id, { title: "Unblocked story", description: "desc" });
+    // Backlog work under the Story, or the Epic has nothing startable and the toggle below hides
+    // the very card this spec drags.
+    await api.createTask(story.id, { title: "Unblocked task", description: "desc" });
 
     try {
       await roadmapBoardPage.goto();

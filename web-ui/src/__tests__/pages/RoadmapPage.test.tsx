@@ -177,8 +177,8 @@ describe("RoadmapPage", () => {
     renderWithProviders(<RoadmapPage />);
     const user = userEvent.setup({ pointerEventsCheck: 0 });
 
-    // The only Select on the page is the SortDropdown (the create dialog is closed).
-    await user.click(screen.getByRole("combobox"));
+    // Two Selects sit in the header now — the ticket-type control and this one.
+    await user.click(screen.getByTestId("sort-dropdown"));
     await user.click(screen.getByText(/Priority \(High/));
 
     const lastCall = mockUseEpics.mock.calls[mockUseEpics.mock.calls.length - 1];

@@ -77,6 +77,7 @@ function makeStory(overrides: Partial<StoryResponse> = {}): StoryResponse {
     priority: "medium",
     targetDate: null,
     readiness: null,
+    readyTaskCount: null,
     progress: { totalTasks: 2, doneTasks: 1, startedTasks: 1 },
     createdAt: "2026-04-01T00:00:00Z",
     updatedAt: "2026-04-01T00:00:00Z",
@@ -248,6 +249,29 @@ describe("StoryDetailPage", () => {
     // The filter is purely local — useTasks must never be called with anything but the
     // storyId, i.e. toggling never fires a new network request.
     mockUseTasks.mock.calls.forEach((call) => expect(call).toEqual(["story-1"]));
+  });
+
+  it("toggling the filter hides Tasks that have already left backlog even when they are READY", async () => {
+    // Readiness only says "nothing upstream is still open", which a finished Task satisfies
+    // trivially — so the status guard is what keeps this list matching the server's own
+    // "ready to start" definition (backlog AND READY).
+    mockUseStory.mockReturnValue({ data: makeStory(), isLoading: false });
+    mockUseTasks.mockReturnValue({
+      data: [
+        makeTask({ id: "task-backlog", title: "Backlog Task", status: "backlog", readiness: "READY" }),
+        makeTask({ id: "task-running", title: "Running Task", status: "in_progress", readiness: "READY" }),
+        makeTask({ id: "task-done", title: "Done Task", status: "done", readiness: "READY" }),
+      ],
+      isLoading: false,
+    });
+    renderWithProviders(<StoryDetailPage />);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("ready-to-start-toggle"));
+
+    expect(screen.getByText("Backlog Task")).toBeInTheDocument();
+    expect(screen.queryByText("Running Task")).not.toBeInTheDocument();
+    expect(screen.queryByText("Done Task")).not.toBeInTheDocument();
   });
 
   it("shows filter-specific empty-state copy when the filter yields zero results despite non-empty task data", async () => {

@@ -393,9 +393,13 @@ export interface EpicResponse {
   createdAt: string;
   updatedAt: string;
   /**
-   * Count of this Epic's descendant Stories/Tasks with `readiness === "READY"`
-   * (roadmap "ready to start" filter) — computed at read time, never stored.
-   * Populated on every EpicResponse, not just filtered ones.
+   * How much of this Epic's work could be started right now: descendant Tasks that are still
+   * `status === "backlog"` AND `readiness === "READY"` (roadmap "ready to start" filter) —
+   * computed at read time, never stored. Populated on every EpicResponse, not just filtered ones.
+   *
+   * Tasks only — Stories and the Epic itself are containers, so this is directly comparable with
+   * `progress.totalTasks` rather than counting a different tier. A fully finished Epic reports 0
+   * even though nothing blocks it, and `?readiness=READY` excludes it.
    */
   readyItemCount: number;
   /**
@@ -519,6 +523,10 @@ export interface EpicMilestoneUpdateRequest {
  * something further upstream in the chain is not. `null` on single-item
  * reads (create/get/update) — those have no reason to join dependency edges
  * just to return the one item just written.
+ *
+ * This is a statement about the item's *dependencies*, not about the item: a finished Task is
+ * `READY` too, because nothing upstream of it is still open. "Ready to start" therefore always
+ * means `READY` AND still in `backlog` — see `EpicResponse.readyItemCount`.
  */
 export type Readiness = "READY" | "BLOCKED";
 
@@ -538,6 +546,14 @@ export interface StoryResponse {
   /** Optional calendar due-date, ISO-8601 (`"YYYY-MM-DD"`) — see `EpicResponse.targetDate`. */
   targetDate: string | null;
   readiness: Readiness | null;
+  /**
+   * How many of this Story's Tasks can be started right now — still `backlog` and unblocked. Use
+   * this, not `readiness`, to ask "is there work to pick up here": a Story with no blockers stays
+   * `READY` after all its Tasks have shipped, so `readiness === "READY"` alone would present a
+   * finished Story as somewhere to start. Populated on exactly the paths `readiness` is, and
+   * `null` on single-item reads.
+   */
+  readyTaskCount: number | null;
   progress: WorkItemProgress;
   createdAt: string;
   updatedAt: string;

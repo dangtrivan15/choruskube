@@ -16,26 +16,33 @@ test.describe("Task Board", () => {
     await expect(taskBoardPage.column("done")).toBeVisible();
   });
 
-  test("Epic board link opens the Roadmap (Epic) board", async ({ taskBoardPage, page }) => {
+  test("switching the ticket type to Epics keeps the Board view", async ({ taskBoardPage, page }) => {
     await taskBoardPage.goto();
-    await taskBoardPage.epicBoardLink.click();
+    await taskBoardPage.viewControls.selectTicketType("epic");
     await expect(page.getByTestId("roadmap-board-heading")).toBeVisible();
     await expect(page).toHaveURL(/\/roadmap\/board$/);
   });
 
-  test("List view link opens the Epic list", async ({ taskBoardPage, page }) => {
+  test("List view opens the Task list, not the Epic list", async ({ taskBoardPage, page }) => {
     await taskBoardPage.goto();
     await taskBoardPage.listViewLink.click();
-    await expect(page.getByTestId("roadmap-heading")).toBeVisible();
-    await expect(page).toHaveURL(/\/roadmap$/);
+    await expect(page.getByTestId("task-list-heading")).toBeVisible();
+    await expect(page).toHaveURL(/\/roadmap\/tasks$/);
   });
 
-  test("Task board link from the Epic board opens the Task board", async ({
+  test("Timeline is not offered for Tasks at all", async ({ taskBoardPage }) => {
+    await taskBoardPage.goto();
+    // The timeline endpoint returns Epic lanes and Story markers and no Task data, so there is
+    // nothing to render — the button is absent rather than disabled.
+    await expect(taskBoardPage.viewControls.view("timeline")).toHaveCount(0);
+  });
+
+  test("switching the ticket type from the Epic board reaches the Task board", async ({
     roadmapBoardPage,
     page,
   }) => {
     await roadmapBoardPage.goto();
-    await page.getByTestId("roadmap-board-task-board-link").click();
+    await roadmapBoardPage.viewControls.selectTicketType("task");
     await expect(page.getByTestId("task-board-heading")).toBeVisible();
     await expect(page).toHaveURL(/\/roadmap\/board\/tasks$/);
   });

@@ -83,7 +83,11 @@ export default function EpicDetailPage() {
   const visibleStories = (() => {
     let list = stories;
     if (!list) return list;
-    if (readyOnly) list = list.filter((s) => s.readiness === "READY");
+    // `readyTaskCount`, not `readiness === "READY"`: readiness describes the Story's dependencies,
+    // so a Story whose Tasks have all shipped is still READY and would survive this filter. The
+    // count is the same predicate the server applies to `readyItemCount` and the Autopilot applies
+    // to its frontier, so all three surfaces agree on what "ready to start" means.
+    if (readyOnly) list = list.filter((s) => (s.readyTaskCount ?? 0) > 0);
     if (priorityFilter) list = list.filter((s) => s.priority === priorityFilter);
     if (storySort?.field === "priority") {
       const dir = storySort.direction;

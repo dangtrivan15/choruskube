@@ -226,13 +226,13 @@ describe("RoadmapTimelinePage", () => {
     expect(mockApi.get).toHaveBeenCalledWith("/roadmap/timeline");
   });
 
-  it("RoadmapPage's Timeline nav link points at /roadmap/timeline", () => {
+  it("RoadmapPage's Timeline view button points at /roadmap/timeline", () => {
     renderWithProviders(<RoadmapPage />);
 
-    expect(screen.getByTestId("roadmap-timeline-view-link")).toHaveAttribute("href", "/roadmap/timeline");
+    expect(screen.getByTestId("roadmap-view-timeline")).toHaveAttribute("href", "/roadmap/timeline");
   });
 
-  // --- Focus / RoadmapViewSwitcher wiring ---
+  // --- Focus / RoadmapViewControls wiring ---
 
   it("reads the epic query param and passes it to RoadmapTimeline as focusedEpicId", async () => {
     mockApi.get.mockResolvedValue(makeResponse());
@@ -271,13 +271,13 @@ describe("RoadmapTimelinePage", () => {
     expect(searchParamsSpy.latestSearch).not.toContain("story");
   });
 
-  it("with no query params, RoadmapViewSwitcher's Graph entry is disabled", async () => {
+  it("with no query params, the header's Graph action is disabled", async () => {
     mockApi.get.mockResolvedValue(makeResponse());
 
     renderWithProviders(<RoadmapTimelinePage />);
 
     await waitFor(() => expect(screen.getByTestId("mock-roadmap-timeline")).toBeInTheDocument());
-    expect(screen.getByTestId("roadmap-view-switcher-graph")).toBeDisabled();
+    expect(screen.getByTestId("roadmap-graph-action")).toBeDisabled();
   });
 
   it("an epic/story param matching no loaded Epic/Story renders exactly like the no-focus case — no throw, no blank canvas, Graph stays disabled", async () => {
@@ -291,7 +291,7 @@ describe("RoadmapTimelinePage", () => {
     expect(screen.getByText("Add dark mode")).toBeInTheDocument();
     expect(screen.getByTestId("mock-roadmap-timeline")).toHaveAttribute("data-focused-epic", "");
     expect(screen.getByTestId("mock-roadmap-timeline")).toHaveAttribute("data-focused-story", "");
-    expect(screen.getByTestId("roadmap-view-switcher-graph")).toBeDisabled();
+    expect(screen.getByTestId("roadmap-graph-action")).toBeDisabled();
   });
 
   // --- Detail panel (item-detail hover/click) ---
