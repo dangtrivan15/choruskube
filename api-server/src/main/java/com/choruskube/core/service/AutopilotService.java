@@ -1137,13 +1137,24 @@ public class AutopilotService implements AutopilotSafetyValve {
      * kind of mistake.
      */
     private List<String> unresolvablePullRequestReasons(UUID autopilotId) {
+        List<String> reasons = new ArrayList<>();
         long unresolvable = prRepo.countUnresolvableForAutopilot(autopilotId);
-        if (unresolvable == 0) {
-            return List.of();
+        if (unresolvable > 0) {
+            reasons.add(unresolvable
+                    + " registered pull request(s) have no PR number, so their merge state can never be read "
+                    + "and the Task(s) behind them can never close");
         }
-        return List.of(unresolvable
-                + " registered pull request(s) have no PR number, so their merge state can never be read "
-                + "and the Task(s) behind them can never close");
+        // Deliberately a reason and not a stop. GitHub going dark on one pull request cannot make
+        // the Autopilot start work it should not — a failed read never sets merged_at, so the Task
+        // stays open and its dependents stay blocked — so the honest report is "these are stuck",
+        // not "everything is off". See PullRequestStateService.FaultResponse.
+        long blocked = prRepo.countTasksBlockedByUnreadablePullRequests(autopilotId, WorkItemStatus.done);
+        if (blocked > 0) {
+            reasons.add(blocked
+                    + " open Task(s) have a pull request GitHub can no longer be asked about, so they "
+                    + "cannot close and anything depending on them stays blocked");
+        }
+        return List.copyOf(reasons);
     }
 
     private static List<AutopilotTaskRef> refsFor(

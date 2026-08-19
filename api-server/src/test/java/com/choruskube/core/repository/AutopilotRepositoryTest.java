@@ -8,6 +8,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -76,7 +77,12 @@ public class AutopilotRepositoryTest extends BaseTest {
                 .as("a new @Modifying statement must be listed here — nothing else checks updated_at")
                 .containsExactlyInAnyOrderElementsOf(declared);
 
-        Instant longAgo = Instant.now().minus(Duration.ofDays(1));
+        // Truncated to microseconds because the pgjdbc driver ROUNDS to the column's precision
+        // rather than truncating: a sub-microsecond remainder of 500ns or more comes back one
+        // microsecond LATER than it went in, and the parking assertion below then fails on a value
+        // it wrote itself. It is invisible on macOS, where Instant.now() is already
+        // microsecond-precise, and roughly a coin flip on Linux CI, where it is not.
+        Instant longAgo = Instant.now().minus(Duration.ofDays(1)).truncatedTo(ChronoUnit.MICROS);
         covered.forEach((name, statement) -> {
             statement.prepare().accept(id);
             // Park the timestamp in the past through a statement already proven to write it, so
@@ -84,8 +90,8 @@ public class AutopilotRepositoryTest extends BaseTest {
             repo.stampTick(id, longAgo);
             assertThat(repo.findById(id).orElseThrow().getUpdatedAt())
                     .as("%s: parked in the past before the statement runs", name)
-                    // Postgres keeps microseconds, so the round trip can lose precision downward
-                    // but can never land later than what was written.
+                    // Safe only because longAgo is already truncated to the column's precision —
+                    // see above; an untruncated value can come back later than it was written.
                     .isBeforeOrEqualTo(longAgo);
 
             assertThat(statement.run().applyAsInt(id))
