@@ -37,9 +37,18 @@ import org.springframework.stereotype.Service;
  *
  * <p>It is also the Autopilot's eyes. A Task is done when its pull requests are merged, and this is
  * the only thing that learns they were — so a GitHub failure nobody can fix by waiting does not
- * merely delay a closure, it freezes the dependency graph the Autopilot dispatches from while
- * leaving it looking healthy. Such a failure therefore disengages the Autopilot; see {@link
- * #persistentReason}.
+ * merely delay a closure, it leaves a Task open that the Autopilot's dependents are waiting on.
+ *
+ * <p><strong>How wide the reaction is depends on how wide the fault is</strong> — see {@link
+ * FaultResponse}. A fault confined to one pull request quarantines that row and nothing else; the
+ * Autopilot keeps dispatching every Task the fault does not touch, and the stuck ones are reported
+ * rather than hidden. Only a fault that makes the whole scope unreadable — a credential that is
+ * refused or absent — stops the Autopilot outright.
+ *
+ * <p>That asymmetry is safe because a failed read is fail-closed: {@link #refreshOne} throws before
+ * it touches the entity, so an unread pull request keeps its state and its Task stays open. The
+ * Autopilot can therefore be made to start <em>less</em> than it might have, never something it
+ * should not have.
  */
 @Service
 public class PullRequestStateService {
@@ -97,7 +106,10 @@ public class PullRequestStateService {
      * consecutive failure. A single transient failure therefore still costs about one interval,
      * while a row nothing can fix stops crowding healthy rows out of the batch.
      *
-     * <p>A <em>persistent</em> failure additionally disengages the Autopilot — <strong>once per
+     * <p>A failure classified {@link FaultResponse#QUARANTINE} is flagged on its own row and goes no
+     * further; the Autopilot is told about it through the status panel, not stopped by it.
+     *
+     * <p>A {@link FaultResponse#DISENGAGE} failure additionally disengages the Autopilot — <strong>once per
      * repository</strong>, not once per batch. Once per repository, because fifty rows behind one
      * revoked credential are one fault with one remedy and the first reason is the one a human
      * needs. Not once per batch, because a batch is only single-scoped here: the unmerged scan is
@@ -138,8 +150,14 @@ public class PullRequestStateService {
                 // Independent of the classification below, because the two answer different
                 // questions — whether a human must act, and when this row may be tried again.
                 backOff(pr, now);
-                String reason = persistentReason(e);
-                if (reason == null) {
+                Fault fault = classifyFault(e);
+                String reason = fault.response() == FaultResponse.DISENGAGE ? fault.reason() : null;
+                if (fault.response() == FaultResponse.QUARANTINE) {
+                    // Confined to this row: the Task behind it cannot close, and nothing else is
+                    // affected. Recorded on the row rather than on the Autopilot, so the panel can
+                    // name the Task without the reconciler needing to know which Autopilot owns it.
+                    quarantine(pr, fault.reason(), e);
+                } else if (reason == null) {
                     log.warn("PR state refresh for {} failed; will retry next tick: {}", pr.getId(), e.getMessage());
                 } else if (reasonByGitRepoId.putIfAbsent(pr.getGitRepoId(), reason) == null) {
                     // The cause is chained rather than flattened into the message: neither exception
@@ -159,12 +177,81 @@ public class PullRequestStateService {
     }
 
     /**
+     * What a failure to read one pull request means for the Autopilot.
+     *
+     * <p>The three answers differ in <em>blast radius</em>, which is the only axis that matters
+     * here. A read failure is fail-closed by construction — {@link #refreshOne} throws before it
+     * touches the entity, so an unread pull request keeps whatever state it had and its Task stays
+     * open. The Autopilot therefore cannot be misled into starting work it should not; the worst it
+     * can do is start <em>less</em> than it might have. That asymmetry is what makes anything
+     * short of a full stop safe.
+     */
+    enum FaultResponse {
+        /** Waiting fixes it. Back off and say nothing — the next tick is the whole remedy. */
+        RETRY,
+
+        /**
+         * Permanent, but confined to this pull request. The Task behind it can never close, so it
+         * is surfaced for a human; every other Task is unaffected and dispatch continues.
+         */
+        QUARANTINE,
+
+        /**
+         * Permanent and wider than one pull request — a credential fault breaks every repository
+         * in the scope at once. Quarantining each Task in turn would drain the roadmap one item at
+         * a time instead of stopping cleanly and naming the one thing a human must fix.
+         */
+        DISENGAGE
+    }
+
+    /**
+     * @param reason rendered verbatim in the UI — must name the resource and the fault, and must
+     *     never contain a token or a response body
+     */
+    record Fault(FaultResponse response, String reason) {
+        static final Fault RETRY = new Fault(FaultResponse.RETRY, null);
+
+        static Fault quarantine(String reason) {
+            return new Fault(FaultResponse.QUARANTINE, reason);
+        }
+
+        static Fault disengage(String reason) {
+            return new Fault(FaultResponse.DISENGAGE, reason);
+        }
+    }
+
+    /**
      * Stops the Autopilot that owns one repository, and never more than that.
      *
      * <p>Contained rather than allowed to propagate: the scopes in a batch are independent, so a
      * resolution that fails for one must not take the stop away from the next. The reconciler's own
      * catch is a batch-wide boundary and would.
      */
+    /**
+     * Flags one pull request as permanently unreadable, and stops there.
+     *
+     * <p>Idempotent on the timestamp: the reason is refreshed on every pass so a fault that
+     * changes shape reports its current form, but {@code unreadableSince} keeps its first value so
+     * the panel can say how long a Task has been stuck rather than always "just now".
+     *
+     * <p>Logged at WARN rather than ERROR, and only when the flag is newly set. This runs every
+     * tick for as long as the condition lasts, and a row nobody intends to fix — a repository that
+     * really is gone — must not reprint a stack trace forever.
+     */
+    private void quarantine(RunPullRequest pr, String reason, Exception e) {
+        boolean firstTime = pr.getUnreadableSince() == null;
+        if (firstTime) {
+            pr.setUnreadableSince(Instant.now());
+        }
+        pr.setUnreadableReason(reason);
+        prRepo.save(pr);
+        if (firstTime) {
+            log.warn("PR {} can no longer be read; the Task behind it cannot close: {}", pr.getId(), reason, e);
+        } else {
+            log.debug("PR {} still unreadable: {}", pr.getId(), reason);
+        }
+    }
+
     private void disengageOwnerOf(UUID gitRepoId, String reason) {
         try {
             autopilotSafetyValve.disengageForExternalFailure("git_repo", gitRepoId, reason);
@@ -217,28 +304,52 @@ public class PullRequestStateService {
      *
      * @return the reason to record on the Autopilot, or null when the failure is transient
      */
-    private static String persistentReason(Exception e) {
+    private static Fault classifyFault(Exception e) {
+        // Unchanged, and deliberately ahead of everything else: a rate limit arrives as a 403 and
+        // must never be read as a credential fault. See rateLimited().
         if (rateLimited(e)) {
-            return null;
+            return Fault.RETRY;
         }
+
+        // No credential at all is a property of the scope, not of any one repository: the next row
+        // in the batch will fail identically, and so will every row after that.
         if (e instanceof GitHubCredentialUnavailableException) {
-            return e.getMessage() + " — check the GitHub credential configuration";
+            return Fault.disengage(e.getMessage() + " — check the GitHub credential configuration");
         }
         if (e instanceof GitHubApiException api) {
             int status = api.getStatus();
             if (status == 429 || status >= 500) {
-                return null;
+                return Fault.RETRY;
             }
             return switch (status) {
-                case 401 -> api.getMessage() + " — check the GitHub credential";
-                case 403 -> api.getMessage() + " — the GitHub credential is not allowed to read that repository";
+                // 401 and 403 are the credential answering for itself. One repository reporting
+                // them means every repository the credential covers is about to, so stopping
+                // once with the right reason beats quarantining the roadmap one Task at a time.
+                case 401 -> Fault.disengage(api.getMessage() + " — check the GitHub credential");
+                case 403 ->
+                    Fault.disengage(
+                            api.getMessage() + " — the GitHub credential is not allowed to read that repository");
+                // 404 is about this pull request and says nothing about the next one: a deleted
+                // PR, a deleted repository, or — the case that produced this classification — a
+                // repository renamed away while another took its name.
                 case 404 ->
-                    api.getMessage() + " — the repository or pull request is gone, or not visible to the "
-                            + "GitHub credential";
-                default -> api.getMessage() + " — GitHub will keep answering that until somebody changes something";
+                    Fault.quarantine(
+                            api.getMessage() + " — the repository or pull request is gone, or not visible to the "
+                                    + "GitHub credential");
+                // Unknown, and therefore confined. 301, 410, 422 and 451 all reach here, and
+                // none of them is evidence about any repository but this one. The old code
+                // stopped the Autopilot for all of them because a stop was the only response it
+                // had; with quarantine available, confining an unrecognised status is both the
+                // conservative answer and the honest one.
+                default ->
+                    Fault.quarantine(
+                            api.getMessage() + " — GitHub will keep answering that until somebody changes something");
             };
         }
-        return null;
+
+        // Exceptions carrying no status at all — a timeout, a reset connection — stay transient by
+        // nature: there was no response to classify, and the next tick is the right answer.
+        return Fault.RETRY;
     }
 
     /**
@@ -290,6 +401,11 @@ public class PullRequestStateService {
         pr.setMergedAt(snapshot.mergedAt());
         pr.setStateCheckedAt(now);
         pr.setFailureCount(0);
+        // GitHub answered, so whatever made this unreadable is over. Cleared here rather than only
+        // on merge: a repository that was renamed back, or a credential that regained access, must
+        // leave quarantine without a human touching the row.
+        pr.setUnreadableSince(null);
+        pr.setUnreadableReason(null);
         // Due again on the next tick. The scan takes rows whose time has passed, so "now" is the
         // way to say "no delay" without special-casing zero anywhere.
         pr.setNextCheckAt(now);

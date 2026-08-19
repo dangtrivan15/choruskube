@@ -61,6 +61,18 @@ public class RunPullRequest {
     @Column(name = "next_check_at", nullable = false)
     private Instant nextCheckAt;
 
+    /**
+     * Set when GitHub answers in a way waiting cannot fix, cleared the moment it answers again.
+     * Its presence — not {@link #failureCount}, which also rises on transient faults — is what
+     * makes a row's Task reportable as stuck.
+     */
+    @Column(name = "unreadable_since")
+    private Instant unreadableSince;
+
+    /** Why {@link #unreadableSince} is set, in the words the Autopilot panel renders verbatim. */
+    @Column(name = "unreadable_reason")
+    private String unreadableReason;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -78,6 +90,22 @@ public class RunPullRequest {
     }
 
     // --- Getters and Setters ---
+
+    public Instant getUnreadableSince() {
+        return unreadableSince;
+    }
+
+    public void setUnreadableSince(Instant unreadableSince) {
+        this.unreadableSince = unreadableSince;
+    }
+
+    public String getUnreadableReason() {
+        return unreadableReason;
+    }
+
+    public void setUnreadableReason(String unreadableReason) {
+        this.unreadableReason = unreadableReason;
+    }
 
     public UUID getId() {
         return id;

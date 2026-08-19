@@ -154,19 +154,28 @@ class PullRequestStateServiceTest {
                 .contains("credential");
     }
 
+    /**
+     * A deleted pull request, a deleted repository, or — the case that produced this rule — one
+     * renamed away while another repository took its name. None of them is evidence about any
+     * repository but this one, so the row is quarantined and the Autopilot keeps going.
+     *
+     * <p>This used to disengage. A single stale row from a repository nobody was working in could
+     * therefore halt an entire roadmap, and re-engaging without deleting the row simply stopped it
+     * again on the next tick.
+     */
     @Test
-    void refreshBatch_gitHubReturns404_disengages() {
-        // A deleted or renamed repository, or one the credential can no longer see. Waiting does
-        // not fix any of them, and every Task with a PR there is frozen until someone looks.
-        stubBatch(pr(42));
+    void refreshBatch_gitHubReturns404_quarantinesTheRowAndLeavesTheAutopilotAlone() {
+        RunPullRequest pr = pr(42);
+        stubBatch(pr);
         stubRepoAndRun();
         when(gitHubAppService.fetchPullRequest(anyString(), anyString(), anyInt()))
                 .thenThrow(new GitHubApiException(404, "org/backend-api", 42));
 
         newService().refreshBatch(10);
 
-        verify(safetyValve).disengageForExternalFailure(eq("git_repo"), eq(gitRepoId), reason.capture());
-        assertThat(reason.getValue()).contains("404").contains("org/backend-api#42");
+        verify(safetyValve, never()).disengageForExternalFailure(anyString(), any(), anyString());
+        assertThat(pr.getUnreadableSince()).isNotNull();
+        assertThat(pr.getUnreadableReason()).contains("404").contains("org/backend-api#42");
     }
 
     @Test
@@ -273,7 +282,7 @@ class PullRequestStateServiceTest {
      * have restored dispatch on top of a scan that was still stuck.
      */
     @Test
-    void refreshBatch_aPersistentFailure_backsTheRowOffAsWellAsDisengaging() {
+    void refreshBatch_aPersistentFailure_backsTheRowOffAsWellAsQuarantiningIt() {
         RunPullRequest pr = pr(42);
         stubBatch(pr);
         stubRepoAndRun();
@@ -282,9 +291,30 @@ class PullRequestStateServiceTest {
 
         newService().refreshBatch(10);
 
-        verify(safetyValve).disengageForExternalFailure(eq("git_repo"), eq(gitRepoId), anyString());
+        assertThat(pr.getUnreadableSince()).isNotNull();
         assertThat(pr.getFailureCount()).isEqualTo(1);
         assertThat(pr.getNextCheckAt()).isAfter(Instant.now());
+    }
+
+    /**
+     * Quarantine is a live condition, not an event log: the moment GitHub answers again the flag
+     * goes, so a repository renamed back or a credential that regains access recovers with nobody
+     * touching the row.
+     */
+    @Test
+    void refreshBatch_aQuarantinedRowThatAnswersAgain_leavesQuarantine() {
+        RunPullRequest pr = pr(42);
+        pr.setUnreadableSince(Instant.now().minusSeconds(3600));
+        pr.setUnreadableReason("GitHub returned 404 for org/backend-api#42 — the repository is gone");
+        stubBatch(pr);
+        stubRepoAndRun();
+        when(gitHubAppService.fetchPullRequest(anyString(), anyString(), anyInt()))
+                .thenReturn(new GitHubAppService.PullRequestSnapshot("open", null));
+
+        newService().refreshBatch(10);
+
+        assertThat(pr.getUnreadableSince()).isNull();
+        assertThat(pr.getUnreadableReason()).isNull();
     }
 
     /**
@@ -388,26 +418,30 @@ class PullRequestStateServiceTest {
     }
 
     /**
-     * The rule's own direction, applied to the statuses nobody enumerated.
+     * The rule's own direction, applied to the statuses nobody enumerated — and it has moved twice.
      *
-     * <p>This used to be {@code default -> null}: every status not named was transient, which is the
-     * unsafe side of the very trade the javadoc above it argues for. 410 Gone and 451 are as
-     * permanent as a 404 and produced a two-minute retry loop forever while the Autopilot kept
-     * dispatching against Tasks that could never close. A 3xx was transient too, and this client
-     * does not follow redirects, so it would never have resolved one.
+     * <p>It began as {@code default -> null}: every unnamed status was transient, so 410 Gone and
+     * 451 retried every two minutes forever while the Autopilot dispatched against Tasks that could
+     * never close. That was corrected to "unknown means stop", which was right while stopping was
+     * the only response available.
+     *
+     * <p>Now that a fault can be confined, unknown means <em>quarantine</em>. None of these statuses
+     * is evidence about any repository but the one that answered, so none of them justifies
+     * silencing an organisation — while still never being left to a retry loop that cannot fix them.
      */
     @ParameterizedTest
     @ValueSource(ints = {301, 410, 422, 451})
-    void refreshBatch_gitHubReturnsAPermanentStatus_disengages(int status) {
-        stubBatch(pr(42));
+    void refreshBatch_gitHubReturnsAPermanentStatus_quarantinesWithoutStopping(int status) {
+        RunPullRequest pr = pr(42);
+        stubBatch(pr);
         stubRepoAndRun();
         when(gitHubAppService.fetchPullRequest(anyString(), anyString(), anyInt()))
                 .thenThrow(new GitHubApiException(status, "org/backend-api", 42));
 
         newService().refreshBatch(10);
 
-        verify(safetyValve).disengageForExternalFailure(eq("git_repo"), eq(gitRepoId), reason.capture());
-        assertThat(reason.getValue()).contains(String.valueOf(status)).contains("org/backend-api#42");
+        verify(safetyValve, never()).disengageForExternalFailure(anyString(), any(), anyString());
+        assertThat(pr.getUnreadableReason()).contains(String.valueOf(status)).contains("org/backend-api#42");
     }
 
     @ParameterizedTest
@@ -531,12 +565,14 @@ class PullRequestStateServiceTest {
         when(gitHubAppService.fetchPullRequest(anyString(), eq("org/backend-api"), anyInt()))
                 .thenThrow(new GitHubApiException(401, "org/backend-api", 1));
         when(gitHubAppService.fetchPullRequest(anyString(), eq("org/frontend-web"), anyInt()))
-                .thenThrow(new GitHubApiException(404, "org/frontend-web", 2));
+                // 403, not 404: this test is about one stop per scope, so both repositories must
+                // fail in a way that stops a scope. A 404 is quarantined now and would stop nothing.
+                .thenThrow(new GitHubApiException(403, "org/frontend-web", 2));
 
         newService().refreshBatch(10);
 
         verify(safetyValve).disengageForExternalFailure(eq("git_repo"), eq(gitRepoId), contains("401"));
-        verify(safetyValve).disengageForExternalFailure(eq("git_repo"), eq(otherRepoId), contains("404"));
+        verify(safetyValve).disengageForExternalFailure(eq("git_repo"), eq(otherRepoId), contains("403"));
     }
 
     @Test
@@ -551,14 +587,16 @@ class PullRequestStateServiceTest {
         when(gitHubAppService.fetchPullRequest(anyString(), eq("org/backend-api"), anyInt()))
                 .thenThrow(new GitHubApiException(401, "org/backend-api", 1));
         when(gitHubAppService.fetchPullRequest(anyString(), eq("org/frontend-web"), anyInt()))
-                .thenThrow(new GitHubApiException(404, "org/frontend-web", 2));
+                // 403, not 404: this test is about one stop per scope, so both repositories must
+                // fail in a way that stops a scope. A 404 is quarantined now and would stop nothing.
+                .thenThrow(new GitHubApiException(403, "org/frontend-web", 2));
         doThrow(new IllegalStateException("no ownership scope for that repository"))
                 .when(safetyValve)
                 .disengageForExternalFailure(anyString(), eq(gitRepoId), anyString());
 
         newService().refreshBatch(10);
 
-        verify(safetyValve).disengageForExternalFailure(eq("git_repo"), eq(otherRepoId), contains("404"));
+        verify(safetyValve).disengageForExternalFailure(eq("git_repo"), eq(otherRepoId), contains("403"));
     }
 
     /**

@@ -1,6 +1,7 @@
 package com.choruskube.core.repository;
 
 import com.choruskube.core.model.RunPullRequest;
+import com.choruskube.core.model.enums.WorkItemStatus;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -63,4 +64,39 @@ public interface RunPullRequestRepository extends JpaRepository<RunPullRequest, 
               AND p.mergedAt IS NULL AND p.prNumber IS NULL
             """)
     long countUnresolvableForAutopilot(UUID autopilotId);
+
+    /**
+     * Open Tasks this Autopilot started whose pull requests GitHub can no longer be asked about —
+     * quarantined by {@code PullRequestStateService} rather than allowed to stop the Autopilot.
+     *
+     * <p>Counted by <em>Task</em>, not by row: one Task with four unreadable pull requests is one
+     * thing for a human to fix, and reporting it as four reads like four separate problems.
+     *
+     * <p><strong>{@code status <> done} is the point of the query.</strong> A quarantined pull
+     * request on a closed Task blocks nothing — its Task already reached the state the merge would
+     * have produced — and reporting it would put permanent noise in a panel whose whole job is to
+     * say why the Autopilot is idle right now.
+     *
+     * <p><strong>Scoped through {@code workflow_run.autopilot_id}</strong>, matching {@link
+     * #countUnresolvableForAutopilot} and every other background-caller query here. That leaves one
+     * blind spot worth naming: a Task whose run a <em>human</em> started carries no {@code
+     * autopilot_id}, so if its pull request becomes unreadable it will block dependents in the
+     * frontier without appearing in this count. Closing that gap means scoping by the Autopilot's
+     * candidate Epics instead — the same set {@code computeFrontier} walks — which is a wider
+     * change than this reason line justifies on its own.
+     *
+     * <p>{@code done} is a bind parameter rather than a JPQL enum literal because {@code
+     * Task.status} maps to a Postgres named enum ({@code work_item_status}). Hibernate renders an
+     * inline literal with a cast built from the <em>Java</em> type name — {@code
+     * 'done'::WorkItemStatus} — which no database has ever had a type for, and the failure is a
+     * runtime SQL error rather than anything the compiler or a JPQL parse would catch.
+     */
+    @Query("""
+            SELECT COUNT(DISTINCT t.id) FROM RunPullRequest p, WorkflowRun r, Task t
+            WHERE p.workflowRunId = r.id AND r.taskId = t.id
+              AND r.autopilotId = :autopilotId
+              AND p.unreadableSince IS NOT NULL
+              AND t.status <> :done
+            """)
+    long countTasksBlockedByUnreadablePullRequests(UUID autopilotId, WorkItemStatus done);
 }

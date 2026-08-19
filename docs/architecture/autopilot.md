@@ -34,6 +34,7 @@ Two consequences of that framing shape everything below:
 | [`V14__autopilot.sql`](../../api-server/src/main/resources/db/migration/V14__autopilot.sql) | `autopilot` table; `workflow_run.autopilot_id` (FK, `ON DELETE SET NULL`) + partial index |
 | [`V15__autopilot_settled.sql`](../../api-server/src/main/resources/db/migration/V15__autopilot_settled.sql) | `workflow_run.autopilot_settled_at` + partial index on unsettled rows |
 | [`V16__autopilot_tick_lease.sql`](../../api-server/src/main/resources/db/migration/V16__autopilot_tick_lease.sql) | `autopilot.tick_owner`, `autopilot.tick_lease_until` |
+| [`V19__run_pull_request_quarantine.sql`](../../api-server/src/main/resources/db/migration/V19__run_pull_request_quarantine.sql) | `run_pull_request.unreadable_since`, `run_pull_request.unreadable_reason` + partial index — see [the safety valve](#the-safety-valve--a-separate-stop) |
 
 `autopilot` columns: `id`, `engaged` (default `false`), `max_parallel` (default `1`,
 `CHECK (max_parallel >= 1)`), `consecutive_failures` (default `0`), `disengaged_reason`,
@@ -372,13 +373,46 @@ rather than in whatever enforces quotas, precisely because core callers must be 
 is a one-method interface implemented by `AutopilotService` and injected wherever a
 component discovers that the world the Autopilot reasons about has gone dark. Today's one
 caller is `PullRequestStateService`: if pull-request state can no longer be read, Tasks
-stop closing, the dependency graph goes stale, and dispatching more work against a
-picture of the roadmap nobody can trust is worse than stopping.
+stop closing and the dependency graph stops advancing.
 
 It disengages on the **first** occurrence and deliberately does **not** touch
 `consecutive_failures` — mixing an external failure into that counter would let one
 credential hiccup plus two unrelated run failures trip the breaker with a reason naming
 the wrong cause.
+
+#### Not every unreadable pull request is a stop
+
+The valve is reached only for faults whose blast radius is the whole scope. A fault
+confined to one pull request is **quarantined** instead: the row is flagged
+(`unreadable_since`, `unreadable_reason`), the Task behind it is reported through
+`whyIdle`, and the Autopilot keeps dispatching everything the fault does not touch.
+`PullRequestStateService.FaultResponse` names the three answers — `RETRY`, `QUARANTINE`,
+`DISENGAGE` — and the classification is by blast radius, not by how alarming the status
+looks:
+
+| Fault | Reach | Response |
+|---|---|---|
+| 429, 5xx, timeout, reset connection, any rate limit | none — waiting fixes it | `RETRY` |
+| a PR or repository that is gone or renamed away | one pull request | `QUARANTINE` |
+| credential refused, absent, or not permitted | every repository in the scope | `DISENGAGE` |
+
+What makes anything short of a stop safe is that **a failed read is fail-closed**.
+`refreshOne` throws before it touches the entity, so an unread pull request keeps its
+state and its Task stays open. The Autopilot can therefore be made to start *less* than
+it might have, never something it should not have — so an unreadable pull request can
+never produce dispatch against a graph that is wrong, only against one that is behind.
+
+This is also why the default direction is inverted from the original design. That design
+enumerated the transient statuses and treated every unknown one as persistent, arguing a
+false stop costs an operator one click while a false continue costs an Autopilot
+dispatching blind. The argument held while stopping was the only available response. With
+`QUARANTINE` in the set, the cheap conservative answer for an unrecognised status is to
+confine it, not to silence the organisation — a single stale row in a repository nobody
+is working in should not be able to halt an entire roadmap.
+
+The quarantine flag is cleared the moment GitHub answers again, so a repository that is
+renamed back or a credential that regains access leaves quarantine with no human touching
+the row.
 
 Stopping on the first occurrence only works if "cannot be fixed by waiting" is judged
 accurately, and one status makes that hard: GitHub answers a secondary rate limit with
