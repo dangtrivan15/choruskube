@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "@/__tests__/test-utils";
 import EpicBoardCard from "@/components/roadmap/EpicBoardCard";
@@ -174,6 +174,25 @@ describe("EpicBoardCard", () => {
       "href",
       "/roadmap/epics/epic-42"
     );
+  });
+
+  it("title lets pointerdown through, so a drag can still start on it", () => {
+    // The card is a dnd-kit draggable whose listeners sit on the Card root. A title that swallowed
+    // the press would silently cost the card its most obvious grab handle — and the only signal
+    // would be a drag that never starts. `draggable={false}` suppresses the browser's own
+    // link-drag without taking the press away from dnd-kit.
+    const onPointerDown = vi.fn();
+    renderWithProviders(
+      <div onPointerDown={onPointerDown}>
+        <EpicBoardCard epic={makeEpic()} />
+      </div>
+    );
+
+    const title = screen.getByTestId("epic-board-card-title");
+    expect(title).toHaveAttribute("draggable", "false");
+
+    fireEvent.pointerDown(title);
+    expect(onPointerDown).toHaveBeenCalled();
   });
 
   it("clicking the title navigates without also focusing the card", async () => {

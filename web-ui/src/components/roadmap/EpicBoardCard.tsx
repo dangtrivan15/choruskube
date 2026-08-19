@@ -102,14 +102,19 @@ export default function EpicBoardCard({
               to={`/roadmap/epics/${epic.id}`}
               data-testid="epic-board-card-title"
               className="min-w-0 truncate text-sm font-medium hover:underline"
-              // Two guards, not the one TaskBoardCard's title needs. `onPointerDown` keeps the
-              // press from reaching the card's dnd-kit `listeners` so this reads as a click, not a
-              // drag. `onClick` is the extra one: this Card *also* carries a root `onClick` that
-              // focuses the Epic, and react-router's `Link` doesn't stop propagation — without it
-              // both fire, and `setSearchParams` rewrites the just-navigated location into
-              // `/roadmap/epics/:id?epic=:id`. Widths stay hugging (no `flex-1`) so the rest of the
-              // row is still grab area for the drag.
-              onPointerDown={(e) => e.stopPropagation()}
+              // `draggable={false}` rather than swallowing `pointerdown`: an `<a>` is natively
+              // draggable, and letting the browser start its own link-drag would pre-empt dnd-kit.
+              // Blocking the press instead would also stop dnd-kit arming, which costs the title
+              // its share of the card's drag surface — a card you cannot pick up by its most
+              // obvious handle. dnd-kit's `PointerSensor` has an activation distance and does not
+              // `preventDefault` the press, so a still click still produces a click (navigate)
+              // while a moved one becomes a drag whose trailing click dnd-kit suppresses itself.
+              //
+              // `onClick` still has to stop: this Card *also* carries a root `onClick` that focuses
+              // the Epic, and react-router's `Link` doesn't stop propagation — without this, a real
+              // navigation lands and `setSearchParams` then rewrites the fresh location into
+              // `/roadmap/epics/:id?epic=:id`.
+              draggable={false}
               onClick={(e) => e.stopPropagation()}
             >
               {epic.title}

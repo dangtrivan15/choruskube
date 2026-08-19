@@ -85,7 +85,12 @@ export default function RoadmapViewControls({
   }
 
   return (
-    <div className="flex items-center gap-2" data-testid="roadmap-view-controls">
+    // `flex-wrap` here as well as on PageHeader's row: this control is a single child of that row,
+    // so the wrapping it gained only lets this whole unit move to a line of its own. At 375px the
+    // unit is itself wider than the viewport, and every part of it is `shrink-0`, so without its
+    // own wrapping it just overhangs — invisibly, because the page column is `min-w-0` and clips
+    // rather than scrolling. `gap-2` already supplies the row gap the wrapped lines need.
+    <div className="flex flex-wrap items-center gap-2" data-testid="roadmap-view-controls">
       <Select value={level} onValueChange={handleLevelChange}>
         <SelectTrigger data-testid="roadmap-level-select" aria-label="Ticket type" className="w-auto">
           <SelectValue>
