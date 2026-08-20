@@ -42,7 +42,10 @@ export default function SortDropdown({
 
   return (
     <Select value={value} onValueChange={handleChange}>
-      <SelectTrigger className="w-auto gap-1.5">
+      {/* Labelled and test-id'd because the trigger's only content is `SelectValue`, which Base UI
+          leaves empty until the popup has mounted — so it has no accessible name of its own, and a
+          toolbar with a second Select next to it has nothing to tell them apart by. */}
+      <SelectTrigger data-testid="sort-dropdown" aria-label="Sort" className="w-auto gap-1.5">
         <ArrowUpDown className="size-3.5" />
         <SelectValue />
       </SelectTrigger>

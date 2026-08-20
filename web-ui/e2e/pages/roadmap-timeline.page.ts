@@ -1,4 +1,5 @@
 import { type Page, type Locator, expect } from "@playwright/test";
+import { RoadmapViewControls } from "./roadmap-view-controls.page";
 
 /**
  * Page object for the Roadmap Timeline View (/roadmap/timeline) — Epics as horizontal swimlanes
@@ -15,9 +16,11 @@ export class RoadmapTimelinePage {
   readonly markers: Locator;
   readonly emptyState: Locator;
 
-  /** The switcher's Graph entry — a disabled `<button>` until an Epic is focused (Decision 3). */
-  readonly viewSwitcherGraphEntry: Locator;
-  readonly viewSwitcherBoardLink: Locator;
+  /** Shared Roadmap header control — ticket type, view types, and the Graph action. */
+  readonly viewControls: RoadmapViewControls;
+  /** The Graph action — a disabled `<button>` until an Epic is focused (Decision 3). */
+  readonly graphAction: Locator;
+  readonly boardViewLink: Locator;
 
   /** Item-detail hover/click feature (§5, Task 6). */
   readonly itemPreview: Locator;
@@ -37,8 +40,9 @@ export class RoadmapTimelinePage {
     this.markers = page.getByTestId("roadmap-timeline-story-node");
     this.emptyState = page.getByTestId("roadmap-timeline-empty");
 
-    this.viewSwitcherGraphEntry = page.getByTestId("roadmap-view-switcher-graph");
-    this.viewSwitcherBoardLink = page.getByTestId("roadmap-view-switcher-board");
+    this.viewControls = new RoadmapViewControls(page);
+    this.graphAction = this.viewControls.graphAction;
+    this.boardViewLink = this.viewControls.view("board");
 
     this.itemPreview = page.getByTestId("roadmap-timeline-item-preview");
     this.detailPanel = page.getByTestId("roadmap-timeline-detail-panel");

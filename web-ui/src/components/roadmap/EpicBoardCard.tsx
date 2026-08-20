@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router";
 import { useDraggable } from "@dnd-kit/core";
 import { ChevronDown, ChevronRight, CircleCheck } from "lucide-react";
 import { useStories } from "@/hooks/useStories";
@@ -97,12 +98,29 @@ export default function EpicBoardCard({
         <div className="flex items-start justify-between gap-2">
           <span className="flex min-w-0 flex-1 items-center gap-1.5">
             <levelMeta.Icon className={cn("size-3.5 shrink-0", levelMeta.textClass)} />
-            <span
+            <Link
+              to={`/roadmap/epics/${epic.id}`}
               data-testid="epic-board-card-title"
-              className="min-w-0 flex-1 truncate text-sm font-medium"
+              className="min-w-0 truncate text-sm font-medium hover:underline"
+              // The title is deliberately NOT part of the card's drag surface, and it cannot be.
+              // A drag keeps the cursor at the same point within the card, so a drag that begins on
+              // the title also ends on it — and dnd-kit's post-drag click suppression is
+              // `documentListeners.add("click", stopPropagation, {capture: true})`, which hides the
+              // click from React but does nothing about an `<a href>`'s *default action*. The drop
+              // would navigate. Stopping `pointerdown` keeps dnd-kit from ever arming here, so the
+              // title stays a link and the rest of the card stays the drag handle;
+              // `draggable={false}` additionally suppresses the browser's own link-drag.
+              //
+              // `onClick` stops as well: this Card *also* carries a root `onClick` that focuses the
+              // Epic, and react-router's `Link` doesn't stop propagation — without this, a real
+              // navigation lands and `setSearchParams` then rewrites the fresh location into
+              // `/roadmap/epics/:id?epic=:id`.
+              draggable={false}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
             >
               {epic.title}
-            </span>
+            </Link>
           </span>
           <button
             type="button"

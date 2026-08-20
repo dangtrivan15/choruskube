@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router";
 import { useDraggable } from "@dnd-kit/core";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useTasks } from "@/hooks/useTasks";
@@ -60,12 +61,18 @@ export default function StoryBoardCard({ story }: Props) {
         <div className="flex items-start justify-between gap-2">
           <span className="flex min-w-0 flex-1 items-center gap-1.5">
             <levelMeta.Icon className={cn("size-3.5 shrink-0", levelMeta.textClass)} />
-            <span
+            <Link
+              to={`/roadmap/epics/${story.epicId}/stories/${story.id}`}
               data-testid="story-board-card-title"
-              className="min-w-0 flex-1 truncate text-sm font-medium"
+              className="min-w-0 truncate text-sm font-medium hover:underline"
+              // Keeps the title out of the card's drag surface — see EpicBoardCard's title for
+              // why a link inside a dnd-kit draggable must not be droppable-on (dnd-kit's click
+              // suppression stops propagation but never the `<a>`'s default navigation).
+              draggable={false}
+              onPointerDown={(e) => e.stopPropagation()}
             >
               {story.title}
-            </span>
+            </Link>
           </span>
           <button
             type="button"

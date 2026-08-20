@@ -381,7 +381,14 @@ test.describe("Roadmap drill-down", () => {
       description: "desc",
       softwareProjectId: workerRepo.gitRepo.id,
     });
-    await api.createStory(readyEpic.id, { title: "Unblocked story", description: "desc" });
+    const unblockedStory = await api.createStory(readyEpic.id, {
+      title: "Unblocked story",
+      description: "desc",
+    });
+    // The filter counts startable Tasks, not Stories, so each Epic needs real backlog work under
+    // it — otherwise both would be filtered out for being empty and the blocked one would drop
+    // out for the wrong reason.
+    await api.createTask(unblockedStory.id, { title: "Unblocked task", description: "desc" });
 
     const blockedEpic = await api.createEpic({
       title: uniqueName("E2E Ready Filter Blocked Epic"),
@@ -392,6 +399,7 @@ test.describe("Roadmap drill-down", () => {
       title: "Blocked story",
       description: "desc",
     });
+    await api.createTask(blockedStory.id, { title: "Blocked task", description: "desc" });
     const blockerEpic = await api.createEpic({
       title: uniqueName("E2E Ready Filter Blocker Owner Epic"),
       description: "desc",

@@ -186,10 +186,12 @@ public class EpicControllerTest extends BaseTest {
     void listEpics_readyFilter_returnsOnlyEpicsWithReadyDescendants() throws Exception {
         GitRepo repo = createGitRepo("https://github.com/test/ready-filter.git");
         Epic readyEpic = createEpic(repo, "Ready Epic");
-        storyService.create(readyEpic.getId(), new StoryRequest("Unblocked", "D")); // no incoming edge -> READY
+        var unblockedStory = storyService.create(readyEpic.getId(), new StoryRequest("Unblocked", "D"));
+        taskService.create(unblockedStory.id(), new TaskRequest("T", "D")); // no incoming edge -> READY
 
         Epic blockedEpic = createEpic(repo, "Blocked Epic");
         var blockedStory = storyService.create(blockedEpic.getId(), new StoryRequest("Blocked", "D"));
+        taskService.create(blockedStory.id(), new TaskRequest("T", "D"));
         Epic blockerEpic = createEpic(repo, "Blocker Owner Epic");
         var blockerStory = storyService.create(blockerEpic.getId(), new StoryRequest("Blocker", "D"));
         dependencyService.create(new CreateDependencyRequest("story", blockerStory.id(), "story", blockedStory.id()));
@@ -207,7 +209,8 @@ public class EpicControllerTest extends BaseTest {
         GitRepo repo = createGitRepo("https://github.com/test/ready-filter-paging.git");
         for (int i = 0; i < 3; i++) {
             Epic epic = createEpic(repo, "Ready Epic " + i);
-            storyService.create(epic.getId(), new StoryRequest("S" + i, "D"));
+            var story = storyService.create(epic.getId(), new StoryRequest("S" + i, "D"));
+            taskService.create(story.id(), new TaskRequest("T" + i, "D"));
         }
 
         mockMvc.perform(get("/api/v1/epics").param("readiness", "READY").param("size", "2"))
@@ -231,7 +234,8 @@ public class EpicControllerTest extends BaseTest {
         // list and the READY-filtered list, to prove ?readiness=BLOCKED excludes it too.
         GitRepo repo = createGitRepo("https://github.com/test/ready-filter-blocked-value.git");
         Epic readyEpic = createEpic(repo, "Ready Epic For Blocked Value Filter");
-        storyService.create(readyEpic.getId(), new StoryRequest("Unblocked", "D"));
+        var unblockedStory = storyService.create(readyEpic.getId(), new StoryRequest("Unblocked", "D"));
+        taskService.create(unblockedStory.id(), new TaskRequest("T", "D"));
 
         mockMvc.perform(get("/api/v1/epics").param("readiness", "BLOCKED"))
                 .andExpect(status().isOk())
@@ -243,10 +247,12 @@ public class EpicControllerTest extends BaseTest {
     void listEpics_noFilter_includesReadyItemCountOnEveryEpic() throws Exception {
         GitRepo repo = createGitRepo("https://github.com/test/ready-count.git");
         Epic readyEpic = createEpic(repo, "Ready Count Epic");
-        storyService.create(readyEpic.getId(), new StoryRequest("Unblocked", "D"));
+        var unblockedStory = storyService.create(readyEpic.getId(), new StoryRequest("Unblocked", "D"));
+        taskService.create(unblockedStory.id(), new TaskRequest("T", "D"));
 
         Epic blockedEpic = createEpic(repo, "Blocked Count Epic");
         var blockedStory = storyService.create(blockedEpic.getId(), new StoryRequest("Blocked", "D"));
+        taskService.create(blockedStory.id(), new TaskRequest("T", "D"));
         Epic blockerEpic = createEpic(repo, "Blocker Count Owner Epic");
         var blockerStory = storyService.create(blockerEpic.getId(), new StoryRequest("Blocker", "D"));
         dependencyService.create(new CreateDependencyRequest("story", blockerStory.id(), "story", blockedStory.id()));
@@ -257,6 +263,43 @@ public class EpicControllerTest extends BaseTest {
                         .value(1))
                 .andExpect(jsonPath("$.content[?(@.id == '" + blockedEpic.getId() + "')].readyItemCount")
                         .value(0));
+    }
+
+    @Test
+    void listEpics_readyFilter_excludesEpicWhoseTasksAreAllDone() throws Exception {
+        // Nothing blocks a finished Epic, so it stays READY in the dependency sense — it drops
+        // out only because "ready" also means "not started yet".
+        GitRepo repo = createGitRepo("https://github.com/test/ready-filter-all-done.git");
+        Epic doneEpic = createEpic(repo, "Done Epic");
+        var doneStory = storyService.create(doneEpic.getId(), new StoryRequest("Shipped", "D"));
+        markTaskDone(
+                taskService.create(doneStory.id(), new TaskRequest("T", "D")).id());
+
+        Epic openEpic = createEpic(repo, "Open Epic");
+        var openStory = storyService.create(openEpic.getId(), new StoryRequest("Pending", "D"));
+        taskService.create(openStory.id(), new TaskRequest("T", "D"));
+
+        mockMvc.perform(get("/api/v1/epics").param("readiness", "READY"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[?(@.id == '" + openEpic.getId() + "')]")
+                        .exists())
+                .andExpect(jsonPath("$.content[?(@.id == '" + doneEpic.getId() + "')]")
+                        .doesNotExist());
+    }
+
+    @Test
+    void listEpics_noFilter_excludesDoneTasksFromReadyItemCount() throws Exception {
+        GitRepo repo = createGitRepo("https://github.com/test/ready-count-done-task.git");
+        Epic epic = createEpic(repo, "Half Done Epic");
+        var story = storyService.create(epic.getId(), new StoryRequest("S", "D"));
+        markTaskDone(
+                taskService.create(story.id(), new TaskRequest("Finished", "D")).id());
+        taskService.create(story.id(), new TaskRequest("Pending", "D"));
+
+        mockMvc.perform(get("/api/v1/epics"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[?(@.id == '" + epic.getId() + "')].readyItemCount")
+                        .value(1));
     }
 
     @Test
@@ -632,6 +675,12 @@ public class EpicControllerTest extends BaseTest {
     }
 
     /** Creates a backlog Epic targeting {@code repo}'s software_project id. */
+    private void markTaskDone(UUID taskId) {
+        Task t = taskRepo.findById(taskId).orElseThrow();
+        t.setStatus(WorkItemStatus.done);
+        taskRepo.saveAndFlush(t);
+    }
+
     private Epic createEpic(GitRepo repo, String title) {
         var response = epicService.create(
                 new com.choruskube.core.dto.EpicRequest(title, "Description for " + title, null, repo.getId()), null);

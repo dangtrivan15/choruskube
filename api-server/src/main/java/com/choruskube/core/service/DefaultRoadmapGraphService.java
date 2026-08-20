@@ -92,10 +92,14 @@ public class DefaultRoadmapGraphService implements RoadmapGraphService {
                 candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), mode, contextId);
 
         List<StoryResponse> stories = candidates.stories().stream()
-                .map(s -> toStoryResponse(
-                        s,
-                        candidates.tasksByStoryId().getOrDefault(s.getId(), List.of()),
-                        assembly.readinessById().get(s.getId())))
+                .map(s -> {
+                    List<Task> storyTasks = candidates.tasksByStoryId().getOrDefault(s.getId(), List.of());
+                    return toStoryResponse(
+                            s,
+                            storyTasks,
+                            assembly.readinessById().get(s.getId()),
+                            EpicReadinessAssembler.startableCount(storyTasks, assembly));
+                })
                 .toList();
         boolean useInternalRunListing = usesInternalRunListing(mode);
         List<TaskResponse> tasks = candidates.stories().stream()
@@ -125,7 +129,7 @@ public class DefaultRoadmapGraphService implements RoadmapGraphService {
         };
     }
 
-    private static StoryResponse toStoryResponse(Story s, List<Task> tasks, Readiness readiness) {
+    private static StoryResponse toStoryResponse(Story s, List<Task> tasks, Readiness readiness, Long readyTaskCount) {
         RollupCalculator.Rollup rollup = RollupCalculator.compute(tasks);
         return new StoryResponse(
                 s.getId(),
@@ -136,6 +140,7 @@ public class DefaultRoadmapGraphService implements RoadmapGraphService {
                 s.getPriority().name(),
                 s.getTargetDate(),
                 readiness,
+                readyTaskCount,
                 new EpicResponse.Progress(rollup.totalTasks(), rollup.doneTasks(), rollup.startedTasks()),
                 s.getCreatedAt(),
                 s.getUpdatedAt());

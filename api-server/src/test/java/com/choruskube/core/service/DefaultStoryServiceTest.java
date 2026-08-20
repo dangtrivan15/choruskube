@@ -208,6 +208,73 @@ public class DefaultStoryServiceTest extends BaseTest {
                 .readiness();
     }
 
+    // ── readyTaskCount — "is there work to pick up in this Story", which readiness alone cannot
+    // answer: READY describes the Story's dependencies, not whether its Tasks are still open ────
+
+    @Test
+    void list_readyTaskCount_countsOnlyBacklogTasks() {
+        EpicResponse epic = makeEpic("https://github.com/test/story-ready-count-mixed.git");
+        StoryResponse story = service.create(epic.id(), new StoryRequest("S", "D"));
+        taskService.create(story.id(), new TaskRequest("Still open", "D"));
+        markTaskDone(
+                taskService.create(story.id(), new TaskRequest("Finished", "D")).id());
+        markTaskInProgress(
+                taskService.create(story.id(), new TaskRequest("Underway", "D")).id());
+
+        List<StoryResponse> result = service.list(epic.id());
+
+        assertThat(result)
+                .singleElement()
+                .extracting(StoryResponse::readyTaskCount)
+                .isEqualTo(1L);
+    }
+
+    @Test
+    void list_readyTaskCount_isZeroWhenEveryTaskIsDone_thoughTheStoryIsStillReady() {
+        // The whole reason this field exists. A Story with no blockers is READY forever, including
+        // after all its work has shipped — so READY on its own would advertise a finished Story as
+        // somewhere to start.
+        EpicResponse epic = makeEpic("https://github.com/test/story-ready-count-all-done.git");
+        StoryResponse story = service.create(epic.id(), new StoryRequest("S", "D"));
+        markTaskDone(taskService.create(story.id(), new TaskRequest("T", "D")).id());
+
+        List<StoryResponse> result = service.list(epic.id());
+
+        assertThat(result).singleElement().satisfies(s -> {
+            assertThat(s.readiness()).isEqualTo(Readiness.READY);
+            assertThat(s.readyTaskCount()).isZero();
+        });
+    }
+
+    @Test
+    void list_readyTaskCount_excludesABacklogTaskThatIsItselfBlocked() {
+        // Containment cascades downward, so a READY Story can still hold a Task blocked by its own
+        // edge — the count has to consult per-Task readiness, not just the Story's.
+        EpicResponse epic = makeEpic("https://github.com/test/story-ready-count-blocked-task.git");
+        StoryResponse story = service.create(epic.id(), new StoryRequest("S", "D"));
+        var blocker = taskService.create(story.id(), new TaskRequest("Blocker", "D"));
+        var blocked = taskService.create(story.id(), new TaskRequest("Blocked", "D"));
+        dependencyService.create(new CreateDependencyRequest("task", blocker.id(), "task", blocked.id()));
+
+        List<StoryResponse> result = service.list(epic.id());
+
+        // Only the blocker itself is startable; the Task it blocks is not.
+        assertThat(result)
+                .singleElement()
+                .extracting(StoryResponse::readyTaskCount)
+                .isEqualTo(1L);
+    }
+
+    @Test
+    void get_doesNotPopulateReadyTaskCount() {
+        // Same scoping as readiness (Decision 1): single-item reads don't join dependency edges.
+        EpicResponse epic = makeEpic("https://github.com/test/story-ready-count-get-null.git");
+        StoryResponse story = service.create(epic.id(), new StoryRequest("S", "D"));
+        taskService.create(story.id(), new TaskRequest("T", "D"));
+
+        assertThat(service.get(story.id()).readyTaskCount()).isNull();
+    }
+
     @Test
     void update_replacesFields() {
         EpicResponse epic = makeEpic("https://github.com/test/story-update.git");

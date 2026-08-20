@@ -65,7 +65,12 @@ export default function StoryDetailPage() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [readyOnly, setReadyOnly] = useState(false);
 
-  const visibleTasks = readyOnly ? tasks?.filter((t) => t.readiness === "READY") : tasks;
+  // "Ready to start" is the same predicate the server counts into `EpicResponse.readyItemCount`
+  // (EpicReadinessAssembler#isStartable): still in backlog AND unblocked. Readiness alone would
+  // keep finished Tasks in the list, since nothing upstream blocks work that is already done.
+  const visibleTasks = readyOnly
+    ? tasks?.filter((t) => t.status === "backlog" && t.readiness === "READY")
+    : tasks;
 
   function handleDelete() {
     if (!storyId || !epicId) return;

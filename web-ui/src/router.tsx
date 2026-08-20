@@ -12,6 +12,8 @@ import MilestonesPage from "@/pages/MilestonesPage";
 import RoadmapBoardPage from "@/pages/RoadmapBoardPage";
 import TaskBoardPage from "@/pages/TaskBoardPage";
 import StoryBoardPage from "@/pages/StoryBoardPage";
+import StoryListPage from "@/pages/StoryListPage";
+import TaskListPage from "@/pages/TaskListPage";
 import RoadmapGraphPage from "@/pages/RoadmapGraphPage";
 import RoadmapTimelinePage from "@/pages/RoadmapTimelinePage";
 import EpicDetailPage from "@/pages/EpicDetailPage";
@@ -33,6 +35,8 @@ const coreChildren: RouteObject[] = [
   { path: "roadmap", element: <RoadmapPage /> },
   { path: "roadmap/milestones", element: <MilestonesPage /> },
   { path: "roadmap/board", element: <RoadmapBoardPage /> },
+  { path: "roadmap/stories", element: <StoryListPage /> },
+  { path: "roadmap/tasks", element: <TaskListPage /> },
   { path: "roadmap/timeline", element: <RoadmapTimelinePage /> },
   { path: "roadmap/board/tasks", element: <TaskBoardPage /> },
   { path: "roadmap/board/stories", element: <StoryBoardPage /> },

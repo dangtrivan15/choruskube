@@ -1,4 +1,5 @@
 import { type Page, type Locator, expect } from "@playwright/test";
+import { RoadmapViewControls } from "./roadmap-view-controls.page";
 
 export type StoryStage = "backlog" | "in_progress" | "rolled_out";
 
@@ -11,21 +12,27 @@ export class StoryBoardPage {
   readonly page: Page;
 
   readonly heading: Locator;
-  readonly epicBoardLink: Locator;
-  readonly taskBoardLink: Locator;
-  readonly listViewLink: Locator;
   readonly board: Locator;
   readonly cards: Locator;
+
+  /**
+   * Shared Roadmap header control. The Epic and Task boards are no longer reachable from here by
+   * their own links — they are the *same* view of a different ticket type, so they are reached by
+   * switching the ticket type (`viewControls.selectTicketType`).
+   */
+  readonly viewControls: RoadmapViewControls;
+  /** The Story list — this board's own list view, not the Epic list. */
+  readonly listViewLink: Locator;
 
   constructor(page: Page) {
     this.page = page;
 
     this.heading = page.getByTestId("story-board-heading");
-    this.epicBoardLink = page.getByTestId("story-board-epic-board-link");
-    this.taskBoardLink = page.getByTestId("story-board-task-board-link");
-    this.listViewLink = page.getByTestId("story-board-list-view-link");
     this.board = page.getByTestId("story-board");
     this.cards = page.getByTestId("story-board-card");
+
+    this.viewControls = new RoadmapViewControls(page);
+    this.listViewLink = this.viewControls.view("list");
   }
 
   async goto() {
@@ -61,7 +68,11 @@ export class StoryBoardPage {
     const card = this.cardByTitle(title);
     const targetColumn = this.column(targetStage);
 
-    const sourceBox = await card.boundingBox();
+    // Measured from a non-interactive part of the card, never the card box: `.click()`-style
+    // centre coordinates can land on the title, which is a `<Link>` deliberately excluded from the
+    // drag surface (it stops `pointerdown`), so a press there starts no drag at all.
+    const grip = card.getByTestId("story-board-card-progress");
+    const sourceBox = await grip.boundingBox();
     const targetBox = await targetColumn.boundingBox();
     if (!sourceBox || !targetBox) {
       throw new Error(`Could not measure drag source/target for "${title}" -> ${targetStage}`);

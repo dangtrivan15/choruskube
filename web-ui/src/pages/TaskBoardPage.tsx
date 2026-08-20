@@ -1,6 +1,4 @@
 import { useMemo } from "react";
-import { Link } from "react-router";
-import { Kanban, List, BookOpen } from "lucide-react";
 import {
   DndContext,
   PointerSensor,
@@ -15,6 +13,7 @@ import type { TaskResponse } from "@/lib/types";
 import { Skeleton } from "@/components/ui/skeleton";
 import PageHeader from "@/components/layout/PageHeader";
 import TaskBoardColumn from "@/components/roadmap/TaskBoardColumn";
+import RoadmapViewControls from "@/components/roadmap/RoadmapViewControls";
 
 const COLUMNS: { status: "backlog" | "in_progress" | "done"; label: string }[] = [
   { status: "backlog", label: "Backlog" },
@@ -79,30 +78,7 @@ export default function TaskBoardPage() {
   return (
     <div className="flex h-full min-w-0 flex-col p-4 md:p-6">
       <PageHeader title="Task Board" data-testid="task-board-heading">
-        <Link
-          to="/roadmap/board"
-          data-testid="task-board-epic-board-link"
-          className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-transparent px-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-        >
-          <Kanban className="size-4" />
-          Epic board
-        </Link>
-        <Link
-          to="/roadmap/board/stories"
-          data-testid="task-board-story-board-link"
-          className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-transparent px-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-        >
-          <BookOpen className="size-4" />
-          Story board
-        </Link>
-        <Link
-          to="/roadmap"
-          data-testid="task-board-list-view-link"
-          className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-transparent px-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-        >
-          <List className="size-4" />
-          List view
-        </Link>
+        <RoadmapViewControls level="task" view="board" />
       </PageHeader>
 
       {isLoading && (

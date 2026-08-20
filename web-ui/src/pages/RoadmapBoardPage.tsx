@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useSearchParams } from "react-router";
-import { List, ListChecks, BookOpen } from "lucide-react";
+import { useSearchParams } from "react-router";
 import {
   DndContext,
   PointerSensor,
@@ -17,7 +16,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import PageHeader from "@/components/layout/PageHeader";
 import BoardColumn from "@/components/roadmap/BoardColumn";
 import RoadmapReadyToggle from "@/components/roadmap/RoadmapReadyToggle";
-import RoadmapViewSwitcher from "@/components/roadmap/RoadmapViewSwitcher";
+import RoadmapViewControls from "@/components/roadmap/RoadmapViewControls";
+import { Separator } from "@/components/ui/separator";
 
 const COLUMNS: { stage: EpicStage; label: string }[] = [
   { stage: "backlog", label: "Backlog" },
@@ -119,31 +119,13 @@ export default function RoadmapBoardPage() {
   return (
     <div className="flex h-full min-w-0 flex-col p-4 md:p-6">
       <PageHeader title="Roadmap Board" data-testid="roadmap-board-heading">
-        <RoadmapViewSwitcher activeView="board" focusedEpicId={focusedEpicId} focusedStoryId={focusedStoryId} />
-        <Link
-          to="/roadmap/board/stories"
-          data-testid="roadmap-board-story-board-link"
-          className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-transparent px-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-        >
-          <BookOpen className="size-4" />
-          Story board
-        </Link>
-        <Link
-          to="/roadmap/board/tasks"
-          data-testid="roadmap-board-task-board-link"
-          className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-transparent px-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-        >
-          <ListChecks className="size-4" />
-          Task board
-        </Link>
-        <Link
-          to="/roadmap"
-          data-testid="roadmap-board-list-view-link"
-          className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-transparent px-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-        >
-          <List className="size-4" />
-          List view
-        </Link>
+        <RoadmapViewControls
+          level="epic"
+          view="board"
+          focusedEpicId={focusedEpicId}
+          focusedStoryId={focusedStoryId}
+        />
+        <Separator orientation="vertical" className="h-6 w-px" />
         <RoadmapReadyToggle checked={readyOnly} onChange={setReadyOnly} />
       </PageHeader>
 

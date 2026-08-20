@@ -16,6 +16,14 @@ import java.util.UUID;
  * exactly. It is the only statement this DTO makes about where the Story sits; completion is
  * reported as the {@code progress} counts, never as a synthesized status (see {@code
  * RollupCalculator}).
+ *
+ * <p>{@code readyTaskCount} is how many of this Story's Tasks can be started right now — still
+ * {@code backlog} and unblocked, per {@code EpicReadinessAssembler#isStartable}. It is the Story
+ * tier's counterpart to {@code EpicResponse#readyItemCount} and exists because {@code readiness}
+ * alone cannot answer "is there work to pick up here": READY is a statement about this Story's
+ * *dependencies*, so a Story whose Tasks are all finished is still READY. It is populated on
+ * exactly the paths {@code readiness} is, and is {@code null} on the single-item reads for the
+ * same reason.
  */
 public record StoryResponse(
         UUID id,
@@ -26,6 +34,7 @@ public record StoryResponse(
         String priority,
         LocalDate targetDate,
         @Nullable Readiness readiness,
+        @Nullable Long readyTaskCount,
         EpicResponse.Progress progress,
         Instant createdAt,
         Instant updatedAt) {}

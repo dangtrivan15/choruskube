@@ -111,6 +111,7 @@ function makeStory(overrides: Partial<StoryResponse> = {}): StoryResponse {
     priority: "medium",
     targetDate: null,
     readiness: null,
+    readyTaskCount: null,
     progress: { totalTasks: 2, doneTasks: 1, startedTasks: 1 },
     createdAt: "2026-04-01T00:00:00Z",
     updatedAt: "2026-04-01T00:00:00Z",
@@ -432,7 +433,7 @@ describe("RoadmapBoardPage", () => {
     );
   });
 
-  // --- Focus / RoadmapViewSwitcher wiring ---
+  // --- Focus / RoadmapViewControls wiring ---
 
   describe("focus", () => {
     it("with ?epic=epic-1 in the URL, that Epic's card receives the highlight/isFocused treatment", async () => {
@@ -463,7 +464,9 @@ describe("RoadmapBoardPage", () => {
       renderWithProviders(<RoadmapBoardPage />);
       await waitFor(() => expect(screen.getByText("Clickable Epic")).toBeInTheDocument());
 
-      await user.click(screen.getByTestId("epic-board-card-title"));
+      // Not the title — that is a Link to the Epic detail page and stops the click precisely so it
+      // does not also focus. The progress line is card body that carries no navigation of its own.
+      await user.click(screen.getByTestId("epic-board-card-progress"));
 
       await waitFor(() => expect(searchParamsSpy.latestSearch).toBe("epic=epic-1"));
       expect(searchParamsSpy.calls[searchParamsSpy.calls.length - 1]?.options).toEqual({ replace: true });
@@ -500,7 +503,7 @@ describe("RoadmapBoardPage", () => {
         screen.getByText("Unfocused Epic").closest('[data-testid="epic-board-card"]')
       ).toHaveAttribute("data-focused", "false");
       expect(screen.queryByTestId("epic-board-card-stories")).not.toBeInTheDocument();
-      expect(screen.getByTestId("roadmap-view-switcher-graph")).toBeDisabled();
+      expect(screen.getByTestId("roadmap-graph-action")).toBeDisabled();
     });
   });
 });

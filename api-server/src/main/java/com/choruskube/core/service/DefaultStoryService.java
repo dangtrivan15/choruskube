@@ -172,10 +172,14 @@ public class DefaultStoryService implements StoryService {
         EpicReadinessAssembler.Assembly assembly = readinessAssembler.assemble(
                 candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), mode, contextId);
         return candidates.stories().stream()
-                .map(s -> toResponse(
-                        s,
-                        candidates.tasksByStoryId().getOrDefault(s.getId(), List.of()),
-                        assembly.readinessById().get(s.getId())))
+                .map(s -> {
+                    List<Task> tasks = candidates.tasksByStoryId().getOrDefault(s.getId(), List.of());
+                    return toResponse(
+                            s,
+                            tasks,
+                            assembly.readinessById().get(s.getId()),
+                            EpicReadinessAssembler.startableCount(tasks, assembly));
+                })
                 .toList();
     }
 
@@ -303,10 +307,10 @@ public class DefaultStoryService implements StoryService {
      * scopes real readiness to the flat list endpoints and the Roadmap Graph View only). */
     private StoryResponse toResponse(Story s) {
         List<Task> tasks = taskRepo.findByStoryIdOrderByCreatedAtDesc(s.getId());
-        return toResponse(s, tasks, null);
+        return toResponse(s, tasks, null, null);
     }
 
-    private StoryResponse toResponse(Story s, List<Task> tasks, Readiness readiness) {
+    private StoryResponse toResponse(Story s, List<Task> tasks, Readiness readiness, Long readyTaskCount) {
         RollupCalculator.Rollup rollup = RollupCalculator.compute(tasks);
         return new StoryResponse(
                 s.getId(),
@@ -317,6 +321,7 @@ public class DefaultStoryService implements StoryService {
                 s.getPriority().name(),
                 s.getTargetDate(),
                 readiness,
+                readyTaskCount,
                 new EpicResponse.Progress(rollup.totalTasks(), rollup.doneTasks(), rollup.startedTasks()),
                 s.getCreatedAt(),
                 s.getUpdatedAt());

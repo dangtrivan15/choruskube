@@ -9,7 +9,7 @@ import RoadmapGraphDetailPanel, {
   type RoadmapDetailItem,
   type BlockableItemRef,
 } from "@/components/roadmap/RoadmapGraphDetailPanel";
-import RoadmapViewSwitcher from "@/components/roadmap/RoadmapViewSwitcher";
+import RoadmapViewControls from "@/components/roadmap/RoadmapViewControls";
 import { clampFocusToStory } from "@/lib/roadmapFocus";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -80,8 +80,9 @@ export default function RoadmapGraphPage() {
   return (
     <div className="flex h-full flex-col">
       <PageHeader title={`${snapshot.epic.title} — Graph`} data-testid="roadmap-graph-heading">
-        <RoadmapViewSwitcher
-          activeView="graph"
+        <RoadmapViewControls
+          level="epic"
+          view="graph"
           focusedEpicId={snapshot.epic.id}
           focusedStoryId={outgoingFocus.storyId}
         />

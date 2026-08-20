@@ -1,4 +1,5 @@
 import { type Page, type Locator, expect } from "@playwright/test";
+import { RoadmapViewControls } from "./roadmap-view-controls.page";
 
 /**
  * Page object for the Roadmap Graph View (/roadmap/epics/:epicId/graph) — an
@@ -13,8 +14,10 @@ export class RoadmapGraphPage {
   readonly graphContainer: Locator;
   readonly nodes: Locator;
 
-  readonly viewSwitcherBoardLink: Locator;
-  readonly viewSwitcherTimelineLink: Locator;
+  /** Shared Roadmap header control — ticket type, view types, and the Graph action. */
+  readonly viewControls: RoadmapViewControls;
+  readonly boardViewLink: Locator;
+  readonly timelineViewLink: Locator;
 
   readonly detailPanel: Locator;
   readonly detailTitle: Locator;
@@ -47,8 +50,9 @@ export class RoadmapGraphPage {
     this.graphContainer = page.getByTestId("roadmap-graph-container");
     this.nodes = page.getByTestId("roadmap-graph-node");
 
-    this.viewSwitcherBoardLink = page.getByTestId("roadmap-view-switcher-board");
-    this.viewSwitcherTimelineLink = page.getByTestId("roadmap-view-switcher-timeline");
+    this.viewControls = new RoadmapViewControls(page);
+    this.boardViewLink = this.viewControls.view("board");
+    this.timelineViewLink = this.viewControls.view("timeline");
 
     this.detailPanel = page.getByTestId("roadmap-detail-panel");
     this.detailTitle = page.getByTestId("roadmap-detail-title");

@@ -37,6 +37,7 @@ function makeStory(overrides: Partial<StoryResponse> = {}): StoryResponse {
     priority: "medium",
     targetDate: null,
     readiness: null,
+    readyTaskCount: null,
     progress: { totalTasks: 1, doneTasks: 0, startedTasks: 0 },
     createdAt: "2026-04-01T00:00:00Z",
     updatedAt: "2026-04-01T00:00:00Z",
@@ -90,6 +91,14 @@ describe("buildFocusedUrl", () => {
   it("returns the bare path for board/timeline when nothing is focused", () => {
     expect(buildFocusedUrl("board", {})).toBe("/roadmap/board");
     expect(buildFocusedUrl("timeline", {})).toBe("/roadmap/timeline");
+  });
+
+  it("resolves the Epic list the same way, bare and with a focus", () => {
+    expect(buildFocusedUrl("list", {})).toBe("/roadmap");
+    expect(buildFocusedUrl("list", { epicId: "epic-1" })).toBe("/roadmap?epic=epic-1");
+    expect(buildFocusedUrl("list", { epicId: "epic-1", storyId: "story-1" })).toBe(
+      "/roadmap?epic=epic-1&story=story-1",
+    );
   });
 });
 

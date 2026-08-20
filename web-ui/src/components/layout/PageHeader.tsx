@@ -13,7 +13,11 @@ export default function PageHeader({ title, "data-testid": testId, children }: P
         {title}
       </h1>
       {children && (
-        <div className="flex items-center gap-2">
+        // `flex-wrap`, not a single row: several pages put a navigation control, filters, and a
+        // primary action side by side here, which cannot fit a phone's width. Without wrapping the
+        // row simply overflows the viewport and takes the whole document into horizontal scroll,
+        // since nothing in this column establishes a scroll container of its own.
+        <div className="flex flex-wrap items-center gap-2">
           {children}
         </div>
       )}

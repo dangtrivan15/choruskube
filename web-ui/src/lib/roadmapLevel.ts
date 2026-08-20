@@ -14,6 +14,12 @@ export type RoadmapLevel = RoadmapItemType;
 export interface RoadmapLevelInfo {
   /** Human-readable "kind" label — exactly "Epic" | "Story" | "Task". */
   label: string;
+  /**
+   * The same label naming a *set* of items rather than one — "Epics" | "Stories" | "Tasks".
+   * Carried here rather than derived by appending an "s" at the call site, because "Story"
+   * doesn't pluralize that way.
+   */
+  pluralLabel: string;
   /** Level icon, reusing the vocabulary the roadmap graph already established. */
   Icon: LucideIcon;
   /** Text/icon accent class. */
@@ -37,6 +43,7 @@ export interface RoadmapLevelInfo {
 const LEVEL_INFO: Record<RoadmapLevel, RoadmapLevelInfo> = {
   epic: {
     label: "Epic",
+    pluralLabel: "Epics",
     Icon: Milestone,
     textClass: "text-chart-2",
     bgClass: "bg-chart-2/10",
@@ -44,6 +51,7 @@ const LEVEL_INFO: Record<RoadmapLevel, RoadmapLevelInfo> = {
   },
   story: {
     label: "Story",
+    pluralLabel: "Stories",
     Icon: BookOpen,
     textClass: "text-chart-3",
     bgClass: "bg-chart-3/10",
@@ -51,12 +59,22 @@ const LEVEL_INFO: Record<RoadmapLevel, RoadmapLevelInfo> = {
   },
   task: {
     label: "Task",
+    pluralLabel: "Tasks",
     Icon: ListTodo,
     textClass: "text-chart-1",
     bgClass: "bg-chart-1/10",
     borderClass: "border-chart-1/30",
   },
 };
+
+/**
+ * The order the three hierarchy levels are offered in every selector, top of
+ * the hierarchy first. Exported next to `roadmapLevelMeta` for the same reason
+ * `PRIORITY_ORDER` sits next to `priorityMeta`: `LEVEL_INFO` is module-private,
+ * so a selector that wants to render one control per level would otherwise have
+ * to re-list the three values itself.
+ */
+export const ROADMAP_LEVEL_ORDER: RoadmapLevel[] = ["epic", "story", "task"];
 
 /** Returns the icon/label/accent for a given roadmap hierarchy level. */
 export function roadmapLevelMeta(level: RoadmapLevel): RoadmapLevelInfo {

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router";
 import { formatDistanceToNow } from "date-fns";
-import { Plus, GitBranch, Layers, LayoutGrid, Network, GanttChart, Milestone as MilestoneIcon } from "lucide-react";
+import { Plus, GitBranch, Layers, Network, Milestone as MilestoneIcon } from "lucide-react";
 import Authorized from "@/components/Authorized";
 import { useEpics } from "@/hooks/useEpics";
 import { useMilestones } from "@/hooks/useMilestones";
@@ -16,10 +16,12 @@ import { cn } from "@/lib/utils";
 import CreateEpicDialog from "@/components/roadmap/CreateEpicDialog";
 import RoadmapReadyToggle from "@/components/roadmap/RoadmapReadyToggle";
 import PriorityFilter from "@/components/roadmap/PriorityFilter";
+import RoadmapViewControls from "@/components/roadmap/RoadmapViewControls";
 import PriorityBadge from "@/components/roadmap/PriorityBadge";
 import StageBadge from "@/components/roadmap/StageBadge";
 import MilestoneBadge from "@/components/roadmap/MilestoneBadge";
 import PageHeader from "@/components/layout/PageHeader";
+import { Separator } from "@/components/ui/separator";
 
 const SORT_OPTIONS = [
   { label: "Newest first", field: "createdAt", direction: "desc" as const },
@@ -118,22 +120,7 @@ export default function RoadmapPage() {
   return (
     <div className="flex h-full min-w-0 flex-col p-4 md:p-6">
       <PageHeader title="Roadmap" data-testid="roadmap-heading">
-        <Link
-          to="/roadmap/board"
-          data-testid="roadmap-board-view-link"
-          className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-transparent px-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-        >
-          <LayoutGrid className="size-4" />
-          Board view
-        </Link>
-        <Link
-          to="/roadmap/timeline"
-          data-testid="roadmap-timeline-view-link"
-          className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-transparent px-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-        >
-          <GanttChart className="size-4" />
-          Timeline view
-        </Link>
+        <RoadmapViewControls level="epic" view="list" />
         <Link
           to="/roadmap/milestones"
           data-testid="roadmap-milestones-link"
@@ -142,6 +129,7 @@ export default function RoadmapPage() {
           <MilestoneIcon className="size-4" />
           Milestones
         </Link>
+        <Separator orientation="vertical" className="h-6 w-px" />
         <RoadmapReadyToggle checked={readyOnly} onChange={setReadyOnly} />
         <PriorityFilter value={priority} onChange={setPriority} />
         <MilestoneFilter value={milestoneFilter} onChange={setMilestoneFilter} />

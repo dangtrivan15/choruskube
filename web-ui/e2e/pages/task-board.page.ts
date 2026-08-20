@@ -1,4 +1,5 @@
 import { type Page, type Locator, expect } from "@playwright/test";
+import { RoadmapViewControls } from "./roadmap-view-controls.page";
 
 export type TaskStatus = "backlog" | "in_progress" | "done";
 
@@ -10,19 +11,27 @@ export class TaskBoardPage {
   readonly page: Page;
 
   readonly heading: Locator;
-  readonly epicBoardLink: Locator;
-  readonly listViewLink: Locator;
   readonly board: Locator;
   readonly cards: Locator;
+
+  /**
+   * Shared Roadmap header control. The Epic and Story boards are no longer reachable from here by
+   * their own links — they are the *same* view of a different ticket type, so they are reached by
+   * switching the ticket type (`viewControls.selectTicketType`).
+   */
+  readonly viewControls: RoadmapViewControls;
+  /** The Task list — this board's own list view, not the Epic list. */
+  readonly listViewLink: Locator;
 
   constructor(page: Page) {
     this.page = page;
 
     this.heading = page.getByTestId("task-board-heading");
-    this.epicBoardLink = page.getByTestId("task-board-epic-board-link");
-    this.listViewLink = page.getByTestId("task-board-list-view-link");
     this.board = page.getByTestId("task-board");
     this.cards = page.getByTestId("task-board-card");
+
+    this.viewControls = new RoadmapViewControls(page);
+    this.listViewLink = this.viewControls.view("list");
   }
 
   async goto() {
@@ -58,7 +67,11 @@ export class TaskBoardPage {
     const card = this.cardByTitle(title);
     const targetColumn = this.column(targetStatus);
 
-    const sourceBox = await card.boundingBox();
+    // Measured from a non-interactive part of the card, never the card box: `.click()`-style
+    // centre coordinates can land on the title, which is a `<Link>` deliberately excluded from the
+    // drag surface (it stops `pointerdown`), so a press there starts no drag at all.
+    const grip = card.getByTestId("task-board-card-status");
+    const sourceBox = await grip.boundingBox();
     const targetBox = await targetColumn.boundingBox();
     if (!sourceBox || !targetBox) {
       throw new Error(`Could not measure drag source/target for "${title}" -> ${targetStatus}`);

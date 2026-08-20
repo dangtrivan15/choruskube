@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "@/__tests__/test-utils";
 import EpicBoardCard from "@/components/roadmap/EpicBoardCard";
@@ -52,6 +52,7 @@ function makeStory(overrides: Partial<StoryResponse> = {}): StoryResponse {
     priority: "medium",
     targetDate: null,
     readiness: null,
+    readyTaskCount: null,
     progress: { totalTasks: 2, doneTasks: 1, startedTasks: 1 },
     createdAt: "2026-04-01T00:00:00Z",
     updatedAt: "2026-04-01T00:00:00Z",
@@ -160,9 +161,56 @@ describe("EpicBoardCard", () => {
     renderWithProviders(<EpicBoardCard epic={makeEpic({ id: "epic-9" })} onFocus={onFocus} />);
     const user = userEvent.setup();
 
-    await user.click(screen.getByTestId("epic-board-card-title"));
+    // The progress line, not the title: the title is a Link to the detail page and deliberately
+    // stops the click, so it is the one part of the card body that must NOT reach onFocus.
+    await user.click(screen.getByTestId("epic-board-card-progress"));
 
     expect(onFocus).toHaveBeenCalledWith("epic-9");
+  });
+
+  it("title links to the Epic detail page", () => {
+    renderWithProviders(<EpicBoardCard epic={makeEpic({ id: "epic-42" })} />);
+    expect(screen.getByTestId("epic-board-card-title")).toHaveAttribute(
+      "href",
+      "/roadmap/epics/epic-42"
+    );
+  });
+
+  it("title keeps pointerdown away from the card, so no drag can start on the link", () => {
+    // Not a style choice — a correctness one, and the reason is easy to talk yourself out of.
+    // A drag holds the cursor at a fixed point within the card, so a drag begun on the title also
+    // ENDS on it, and dnd-kit's post-drag click suppression is `stopPropagation` on a capture-phase
+    // document listener: that hides the click from React but leaves an `<a href>`'s default action
+    // intact, so the drop navigates away. Letting the press through here costs the drag entirely.
+    const onPointerDown = vi.fn();
+    renderWithProviders(
+      <div onPointerDown={onPointerDown}>
+        <EpicBoardCard epic={makeEpic()} />
+      </div>
+    );
+
+    const title = screen.getByTestId("epic-board-card-title");
+    // Suppresses the browser's own link-drag, which `stopPropagation` alone would not.
+    expect(title).toHaveAttribute("draggable", "false");
+
+    fireEvent.pointerDown(title);
+    expect(onPointerDown).not.toHaveBeenCalled();
+
+    // The badge row is the grab surface the e2e drag helpers measure from; it must stay clear.
+    fireEvent.pointerDown(screen.getByTestId("epic-board-card-progress"));
+    expect(onPointerDown).toHaveBeenCalled();
+  });
+
+  it("clicking the title navigates without also focusing the card", async () => {
+    const onFocus = vi.fn();
+    renderWithProviders(<EpicBoardCard epic={makeEpic({ id: "epic-9" })} onFocus={onFocus} />);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByTestId("epic-board-card-title"));
+
+    // Both handlers firing would navigate to the detail page and then let the card's onFocus
+    // rewrite that fresh location's query string — `/roadmap/epics/epic-9?epic=epic-9`.
+    expect(onFocus).not.toHaveBeenCalled();
   });
 
   it("clicking the expand chevron does not call onFocus", async () => {
