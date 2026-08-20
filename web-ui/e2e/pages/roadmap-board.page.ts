@@ -102,12 +102,16 @@ export class RoadmapBoardPage {
    */
   async dragCardToColumn(title: string, targetStage: EpicStage, attempts = 3) {
     const card = this.cardByTitle(title);
+    // Measured from a non-interactive part of the card, never the card box: centre coordinates can
+    // land on the title, which is a `<Link>` deliberately excluded from the drag surface (it stops
+    // `pointerdown`), so a press there starts no drag at all.
+    const grip = card.getByTestId("epic-board-card-progress");
     const targetColumn = this.column(targetStage);
 
     for (let attempt = 1; attempt <= attempts; attempt++) {
       await card.waitFor({ state: "visible" });
 
-      const sourceBox = await card.boundingBox();
+      const sourceBox = await grip.boundingBox();
       const targetBox = await targetColumn.boundingBox();
       if (!sourceBox || !targetBox) continue;
 
@@ -120,7 +124,7 @@ export class RoadmapBoardPage {
 
       // The pointer is in position but nothing is pressed yet — the last point
       // at which a re-render is still recoverable.
-      const settledBox = await card.boundingBox();
+      const settledBox = await grip.boundingBox();
       if (
         !settledBox ||
         Math.abs(settledBox.x - sourceBox.x) > 2 ||

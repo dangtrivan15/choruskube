@@ -67,7 +67,11 @@ export class TaskBoardPage {
     const card = this.cardByTitle(title);
     const targetColumn = this.column(targetStatus);
 
-    const sourceBox = await card.boundingBox();
+    // Measured from a non-interactive part of the card, never the card box: `.click()`-style
+    // centre coordinates can land on the title, which is a `<Link>` deliberately excluded from the
+    // drag surface (it stops `pointerdown`), so a press there starts no drag at all.
+    const grip = card.getByTestId("task-board-card-status");
+    const sourceBox = await grip.boundingBox();
     const targetBox = await targetColumn.boundingBox();
     if (!sourceBox || !targetBox) {
       throw new Error(`Could not measure drag source/target for "${title}" -> ${targetStatus}`);

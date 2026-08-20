@@ -102,19 +102,21 @@ export default function EpicBoardCard({
               to={`/roadmap/epics/${epic.id}`}
               data-testid="epic-board-card-title"
               className="min-w-0 truncate text-sm font-medium hover:underline"
-              // `draggable={false}` rather than swallowing `pointerdown`: an `<a>` is natively
-              // draggable, and letting the browser start its own link-drag would pre-empt dnd-kit.
-              // Blocking the press instead would also stop dnd-kit arming, which costs the title
-              // its share of the card's drag surface — a card you cannot pick up by its most
-              // obvious handle. dnd-kit's `PointerSensor` has an activation distance and does not
-              // `preventDefault` the press, so a still click still produces a click (navigate)
-              // while a moved one becomes a drag whose trailing click dnd-kit suppresses itself.
+              // The title is deliberately NOT part of the card's drag surface, and it cannot be.
+              // A drag keeps the cursor at the same point within the card, so a drag that begins on
+              // the title also ends on it — and dnd-kit's post-drag click suppression is
+              // `documentListeners.add("click", stopPropagation, {capture: true})`, which hides the
+              // click from React but does nothing about an `<a href>`'s *default action*. The drop
+              // would navigate. Stopping `pointerdown` keeps dnd-kit from ever arming here, so the
+              // title stays a link and the rest of the card stays the drag handle;
+              // `draggable={false}` additionally suppresses the browser's own link-drag.
               //
-              // `onClick` still has to stop: this Card *also* carries a root `onClick` that focuses
-              // the Epic, and react-router's `Link` doesn't stop propagation — without this, a real
+              // `onClick` stops as well: this Card *also* carries a root `onClick` that focuses the
+              // Epic, and react-router's `Link` doesn't stop propagation — without this, a real
               // navigation lands and `setSearchParams` then rewrites the fresh location into
               // `/roadmap/epics/:id?epic=:id`.
               draggable={false}
+              onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => e.stopPropagation()}
             >
               {epic.title}

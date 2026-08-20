@@ -63,10 +63,11 @@ export default function TaskBoardCard({ task }: Props) {
             to={`/tasks/${task.id}`}
             data-testid="task-board-card-title"
             className="min-w-0 truncate text-sm font-medium hover:underline"
-            // Suppresses the browser's own link-drag so dnd-kit sees the press — see
-            // EpicBoardCard's title for why this is `draggable={false}` and not a `pointerdown`
-            // guard, which would cost the title its share of the card's drag surface.
+            // Keeps the title out of the card's drag surface — see EpicBoardCard's title for
+            // why a link inside a dnd-kit draggable must not be droppable-on (dnd-kit's click
+            // suppression stops propagation but never the `<a>`'s default navigation).
             draggable={false}
+            onPointerDown={(e) => e.stopPropagation()}
           >
             {task.title}
           </Link>

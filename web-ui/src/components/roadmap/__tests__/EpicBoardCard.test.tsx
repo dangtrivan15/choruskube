@@ -176,11 +176,12 @@ describe("EpicBoardCard", () => {
     );
   });
 
-  it("title lets pointerdown through, so a drag can still start on it", () => {
-    // The card is a dnd-kit draggable whose listeners sit on the Card root. A title that swallowed
-    // the press would silently cost the card its most obvious grab handle — and the only signal
-    // would be a drag that never starts. `draggable={false}` suppresses the browser's own
-    // link-drag without taking the press away from dnd-kit.
+  it("title keeps pointerdown away from the card, so no drag can start on the link", () => {
+    // Not a style choice — a correctness one, and the reason is easy to talk yourself out of.
+    // A drag holds the cursor at a fixed point within the card, so a drag begun on the title also
+    // ENDS on it, and dnd-kit's post-drag click suppression is `stopPropagation` on a capture-phase
+    // document listener: that hides the click from React but leaves an `<a href>`'s default action
+    // intact, so the drop navigates away. Letting the press through here costs the drag entirely.
     const onPointerDown = vi.fn();
     renderWithProviders(
       <div onPointerDown={onPointerDown}>
@@ -189,9 +190,14 @@ describe("EpicBoardCard", () => {
     );
 
     const title = screen.getByTestId("epic-board-card-title");
+    // Suppresses the browser's own link-drag, which `stopPropagation` alone would not.
     expect(title).toHaveAttribute("draggable", "false");
 
     fireEvent.pointerDown(title);
+    expect(onPointerDown).not.toHaveBeenCalled();
+
+    // The badge row is the grab surface the e2e drag helpers measure from; it must stay clear.
+    fireEvent.pointerDown(screen.getByTestId("epic-board-card-progress"));
     expect(onPointerDown).toHaveBeenCalled();
   });
 
