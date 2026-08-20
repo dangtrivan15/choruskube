@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useUpdateMilestone } from "@/hooks/useMilestones";
 import type { MilestoneResponse } from "@/lib/types";
+import TargetDateField from "@/components/roadmap/TargetDateField";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -26,6 +27,7 @@ interface Props {
 export default function EditMilestoneDialog({ milestone, open, onOpenChange }: Props) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [targetDate, setTargetDate] = useState<string | null>(null);
 
   const updateMilestone = useUpdateMilestone();
 
@@ -33,6 +35,7 @@ export default function EditMilestoneDialog({ milestone, open, onOpenChange }: P
     if (milestone) {
       setName(milestone.name);
       setDescription(milestone.description ?? "");
+      setTargetDate(milestone.targetDate);
     }
   }, [milestone]);
 
@@ -44,7 +47,7 @@ export default function EditMilestoneDialog({ milestone, open, onOpenChange }: P
         body: {
           name: name.trim(),
           description: description.trim() || null,
-          targetDate: milestone.targetDate,
+          targetDate,
         },
       },
       {
@@ -89,6 +92,15 @@ export default function EditMilestoneDialog({ milestone, open, onOpenChange }: P
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={3}
+            />
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-sm font-medium">Target Date</label>
+            <TargetDateField
+              value={targetDate}
+              onChange={setTargetDate}
+              testId="edit-milestone-target-date"
             />
           </div>
         </div>

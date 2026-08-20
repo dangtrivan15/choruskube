@@ -26,12 +26,13 @@ import { api } from "@/lib/api";
 import {
   useMilestones,
   useMilestone,
+  useMilestoneAtRiskItems,
   useCreateMilestone,
   useUpdateMilestone,
   useDeleteMilestone,
   useAssignEpicMilestone,
 } from "@/hooks/useMilestones";
-import type { MilestoneResponse, EpicResponse } from "@/lib/types";
+import type { MilestoneResponse, MilestoneAtRiskItemsResponse, EpicResponse } from "@/lib/types";
 
 const mockApi = api as unknown as {
   get: ReturnType<typeof vi.fn>;
@@ -50,6 +51,9 @@ function makeMilestone(overrides: Partial<MilestoneResponse> = {}): MilestoneRes
     softwareProjectId: "r1",
     targetDate: null,
     epicCount: 0,
+    progress: { totalTasks: 0, doneTasks: 0, inProgressTasks: 0, notStartedTasks: 0 },
+    atRisk: false,
+    atRiskItemCount: 0,
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
     ...overrides,
@@ -133,6 +137,39 @@ describe("useMilestones hooks", () => {
       const { result } = renderHook(() => useMilestone(undefined), { wrapper });
       expect(result.current.isFetching).toBe(false);
       expect(mockApi.get).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("useMilestoneAtRiskItems", () => {
+    it("fetches the drill-down via GET /milestones/{id}/at-risk-items when enabled", async () => {
+      const response: MilestoneAtRiskItemsResponse = {
+        items: [{ id: "e1", tier: "EPIC", title: "Overdue Epic", targetDate: "2026-01-01", status: "backlog" }],
+      };
+      mockApi.get.mockResolvedValueOnce(response);
+      const { wrapper } = createTestHookWrapper();
+
+      const { result } = renderHook(() => useMilestoneAtRiskItems("m1", true), { wrapper });
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(mockApi.get).toHaveBeenCalledWith("/milestones/m1/at-risk-items");
+      expect(result.current.data).toEqual(response);
+    });
+
+    it("does not fetch when disabled", () => {
+      const { wrapper } = createTestHookWrapper();
+      const { result } = renderHook(() => useMilestoneAtRiskItems("m1", false), { wrapper });
+      expect(result.current.isFetching).toBe(false);
+      expect(mockApi.get).not.toHaveBeenCalled();
+    });
+
+    it("uses a query key scoped to the Milestone id", async () => {
+      mockApi.get.mockResolvedValueOnce({ items: [] });
+      const { wrapper, queryClient } = createTestHookWrapper();
+
+      const { result } = renderHook(() => useMilestoneAtRiskItems("m1", true), { wrapper });
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(queryClient.getQueryData(["milestones", "m1", "at-risk-items"])).toEqual({ items: [] });
     });
   });
 

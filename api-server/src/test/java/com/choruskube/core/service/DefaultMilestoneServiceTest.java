@@ -11,13 +11,18 @@ import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.MilestoneRequest;
 import com.choruskube.core.dto.MilestoneResponse;
 import com.choruskube.core.dto.MilestoneUpdateRequest;
+import com.choruskube.core.dto.StoryRequest;
+import com.choruskube.core.dto.TaskRequest;
 import com.choruskube.core.event.MappableCreated;
 import com.choruskube.core.exception.BadRequestException;
 import com.choruskube.core.exception.ConflictException;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.GitRepo;
+import com.choruskube.core.model.Task;
+import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.observability.AuditSink;
 import com.choruskube.core.repository.GitRepoRepository;
+import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.util.RepoNameUtil;
 import io.temporal.client.WorkflowClient;
 import io.temporal.serviceclient.WorkflowServiceStubs;
@@ -71,6 +76,15 @@ public class DefaultMilestoneServiceTest extends BaseTest {
 
     @Autowired
     private EpicService epicService;
+
+    @Autowired
+    private StoryService storyService;
+
+    @Autowired
+    private TaskService taskService;
+
+    @Autowired
+    private TaskRepository taskRepo;
 
     @Autowired
     private GitRepoRepository gitRepoRepo;
@@ -225,6 +239,58 @@ public class DefaultMilestoneServiceTest extends BaseTest {
 
         assertThatThrownBy(() -> service.get(created.id())).isInstanceOf(NotFoundException.class);
         verify(auditSink).record(eq(AuditSink.MILESTONE_DELETED), eq("milestone"), eq(created.id()), any());
+    }
+
+    // ── progress rollup ──
+
+    @Test
+    void get_computesProgress_fromMixedStatusTasksUnderTaggedEpic() {
+        GitRepo r = makeRepo("https://github.com/test/milestone-progress-mixed.git");
+        MilestoneResponse milestone = service.create(new MilestoneRequest("Progress Milestone", null, r.getId(), null));
+        var epic = epicService.create(new EpicRequest("E", "D", null, r.getId()), null);
+        epicService.assignMilestone(epic.id(), milestone.id());
+        var story = storyService.create(epic.id(), new StoryRequest("S", "D"));
+        var doneTask = taskService.create(story.id(), new TaskRequest("T1", "D"));
+        var inProgressTask = taskService.create(story.id(), new TaskRequest("T2", "D"));
+        taskService.create(story.id(), new TaskRequest("T3 (left in backlog)", "D"));
+        setTaskStatus(doneTask.id(), WorkItemStatus.done);
+        setTaskStatus(inProgressTask.id(), WorkItemStatus.in_progress);
+
+        MilestoneResponse fetched = service.get(milestone.id());
+
+        assertThat(fetched.epicCount()).isEqualTo(1);
+        assertThat(fetched.progress().totalTasks()).isEqualTo(3);
+        assertThat(fetched.progress().doneTasks()).isEqualTo(1);
+        assertThat(fetched.progress().inProgressTasks()).isEqualTo(1);
+        assertThat(fetched.progress().notStartedTasks()).isEqualTo(1);
+        assertThat(fetched.progress().doneTasks()
+                        + fetched.progress().inProgressTasks()
+                        + fetched.progress().notStartedTasks())
+                .isEqualTo(fetched.progress().totalTasks());
+    }
+
+    @Test
+    void get_rolledOutEpicWithNoTasks_progressAllZero_andNotAtRisk() {
+        GitRepo r = makeRepo("https://github.com/test/milestone-rolled-out-empty.git");
+        MilestoneResponse milestone =
+                service.create(new MilestoneRequest("Rolled Out Milestone", null, r.getId(), null));
+        var epic = epicService.create(new EpicRequest("E", "D", null, r.getId()), null);
+        epicService.assignMilestone(epic.id(), milestone.id());
+        epicService.updateStage(epic.id(), WorkItemStatus.rolled_out);
+
+        MilestoneResponse fetched = service.get(milestone.id());
+
+        assertThat(fetched.progress().totalTasks()).isZero();
+        assertThat(fetched.progress().doneTasks()).isZero();
+        assertThat(fetched.progress().inProgressTasks()).isZero();
+        assertThat(fetched.progress().notStartedTasks()).isZero();
+        assertThat(fetched.atRisk()).isFalse();
+    }
+
+    private void setTaskStatus(UUID taskId, WorkItemStatus status) {
+        Task t = taskRepo.findById(taskId).orElseThrow();
+        t.setStatus(status);
+        taskRepo.saveAndFlush(t);
     }
 
     // ── list(): batched epicCount via findByMilestoneIdIn (not per-Milestone countByMilestoneId) ──

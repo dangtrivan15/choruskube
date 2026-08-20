@@ -1,5 +1,6 @@
 package com.choruskube.core.controller;
 
+import com.choruskube.core.dto.MilestoneAtRiskItemsResponse;
 import com.choruskube.core.dto.MilestoneRequest;
 import com.choruskube.core.dto.MilestoneResponse;
 import com.choruskube.core.dto.MilestoneUpdateRequest;
@@ -56,6 +57,12 @@ public class MilestoneController {
     @GetMapping("/{id}")
     public MilestoneResponse get(@PathVariable UUID id) {
         return service.get(id);
+    }
+
+    @PreAuthorize("@orgSecurity.canRead()")
+    @GetMapping("/{id}/at-risk-items")
+    public MilestoneAtRiskItemsResponse getAtRiskItems(@PathVariable UUID id) {
+        return service.getAtRiskItems(id);
     }
 
     @PreAuthorize("@orgSecurity.canAdmin()")

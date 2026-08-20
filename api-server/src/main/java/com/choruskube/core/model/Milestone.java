@@ -15,9 +15,10 @@ import java.util.UUID;
  * Milestone via a nullable {@code milestone_id} FK with {@code ON DELETE SET NULL} (Decision 2),
  * so deleting a Milestone un-tags its Epics rather than deleting them.
  *
- * <p>{@code targetDate} is persisted now but is currently inert — not surfaced, validated, or used
- * to position Milestones on the timeline (Caveat 1); it exists to avoid a second migration when
- * that sibling task ships.
+ * <p>{@code targetDate} drives the rollup progress bar and at-risk verdict on {@code
+ * MilestoneResponse} ({@code DefaultMilestoneService}): a Milestone is "at risk" when this date is
+ * strictly in the past (per the injected {@code Clock}) and at least one tagged Epic is still
+ * incomplete. It is not yet used to position Milestones on the timeline.
  */
 @Entity
 @Table(name = "milestone")

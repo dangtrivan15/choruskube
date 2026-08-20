@@ -35,4 +35,11 @@ public interface EpicRepository extends JpaRepository<Epic, UUID>, JpaSpecificat
      * {@code DefaultEpicService#toResponses}, mirrored onto the Milestone→Epic direction here).
      */
     List<Epic> findByMilestoneIdIn(Collection<UUID> milestoneIds);
+
+    /**
+     * Backs {@code DefaultMilestoneService#getAtRiskItems} — the single-Milestone drill-down
+     * behind {@code MilestoneResponse#atRiskItemCount}, where there is exactly one Milestone to
+     * load Epics for and nothing to batch.
+     */
+    List<Epic> findByMilestoneId(UUID milestoneId);
 }

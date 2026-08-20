@@ -1,5 +1,7 @@
 package com.choruskube.core.service;
 
+import com.choruskube.core.dto.AtRiskItem;
+import com.choruskube.core.dto.MilestoneAtRiskItemsResponse;
 import com.choruskube.core.dto.MilestoneRequest;
 import com.choruskube.core.dto.MilestoneResponse;
 import com.choruskube.core.dto.MilestoneUpdateRequest;
@@ -10,13 +12,24 @@ import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.Epic;
 import com.choruskube.core.model.Milestone;
 import com.choruskube.core.model.SoftwareProject;
+import com.choruskube.core.model.Story;
+import com.choruskube.core.model.Task;
+import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.observability.AuditDetail;
 import com.choruskube.core.observability.AuditSink;
 import com.choruskube.core.repository.EpicRepository;
 import com.choruskube.core.repository.MilestoneRepository;
 import com.choruskube.core.repository.SoftwareProjectRepository;
+import com.choruskube.core.repository.StoryRepository;
+import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.scope.ScopeProvider;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Clock;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -41,30 +54,39 @@ public class DefaultMilestoneService implements MilestoneService {
 
     private final MilestoneRepository repo;
     private final EpicRepository epicRepo;
+    private final StoryRepository storyRepo;
+    private final TaskRepository taskRepo;
     private final SoftwareProjectRepository softwareProjectRepo;
     private final AuthorizationService authService;
     private final AuditSink auditSink;
     private final ObjectMapper objectMapper;
     private final ApplicationEventPublisher applicationEventPublisher;
     private final ScopeProvider scopeProvider;
+    private final Clock clock;
 
     public DefaultMilestoneService(
             MilestoneRepository repo,
             EpicRepository epicRepo,
+            StoryRepository storyRepo,
+            TaskRepository taskRepo,
             SoftwareProjectRepository softwareProjectRepo,
             AuthorizationService authService,
             AuditSink auditSink,
             ObjectMapper objectMapper,
             ApplicationEventPublisher applicationEventPublisher,
-            ScopeProvider scopeProvider) {
+            ScopeProvider scopeProvider,
+            Clock clock) {
         this.repo = repo;
         this.epicRepo = epicRepo;
+        this.storyRepo = storyRepo;
+        this.taskRepo = taskRepo;
         this.softwareProjectRepo = softwareProjectRepo;
         this.authService = authService;
         this.auditSink = auditSink;
         this.objectMapper = objectMapper;
         this.applicationEventPublisher = applicationEventPublisher;
         this.scopeProvider = scopeProvider;
+        this.clock = clock;
     }
 
     @Override
@@ -142,6 +164,49 @@ public class DefaultMilestoneService implements MilestoneService {
         repo.delete(milestone);
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public MilestoneAtRiskItemsResponse getAtRiskItems(UUID id) {
+        Milestone milestone = findOrThrow(id);
+        authService.checkOrgAccess("milestone", id);
+        LocalDate today = LocalDate.ofInstant(clock.instant(), ZoneOffset.UTC);
+
+        List<Epic> epics = epicRepo.findByMilestoneId(id);
+        if (epics.isEmpty()) {
+            return new MilestoneAtRiskItemsResponse(List.of());
+        }
+        Set<UUID> epicIds = epics.stream().map(Epic::getId).collect(Collectors.toCollection(LinkedHashSet::new));
+        List<Story> stories = storyRepo.findByEpicIdIn(epicIds);
+        Map<UUID, List<Story>> storiesByEpicId = stories.stream().collect(Collectors.groupingBy(Story::getEpicId));
+        Set<UUID> storyIds = stories.stream().map(Story::getId).collect(Collectors.toCollection(LinkedHashSet::new));
+        List<Task> tasks = storyIds.isEmpty() ? List.of() : taskRepo.findByStoryIdIn(storyIds);
+        Map<UUID, List<Task>> tasksByStoryId = tasks.stream().collect(Collectors.groupingBy(Task::getStoryId));
+
+        List<AtRiskItem> items = new ArrayList<>();
+        for (Epic epic : epics) {
+            List<Story> epicStories = storiesByEpicId.getOrDefault(epic.getId(), List.of());
+            List<Task> epicTasks = new ArrayList<>();
+            for (Story story : epicStories) {
+                List<Task> storyTasks = tasksByStoryId.getOrDefault(story.getId(), List.of());
+                epicTasks.addAll(storyTasks);
+                String storyStatus = RollupCalculator.effectiveStatus(story.getStage(), storyTasks);
+                if (isAtRisk(story.getTargetDate(), storyStatus, today)) {
+                    items.add(new AtRiskItem(
+                            story.getId(), "STORY", story.getTitle(), story.getTargetDate(), storyStatus));
+                }
+            }
+            String epicStatus = RollupCalculator.effectiveStatus(epic.getStage(), epicTasks);
+            if (isAtRisk(epic.getTargetDate(), epicStatus, today)) {
+                items.add(new AtRiskItem(epic.getId(), "EPIC", epic.getTitle(), epic.getTargetDate(), epicStatus));
+            }
+        }
+        // Every item in this list was added because it is overdue (isAtRisk requires targetDate !=
+        // null), so targetDate is never null here — no null-safe Comparator needed.
+        items.sort(
+                Comparator.comparing(AtRiskItem::targetDate).thenComparing(item -> "EPIC".equals(item.tier()) ? 0 : 1));
+        return new MilestoneAtRiskItemsResponse(items);
+    }
+
     /**
      * Rejects a create/rename when another Milestone in the same project already uses {@code
      * name} (case-insensitive, Decision 3). {@code currentName} is the Milestone's own current
@@ -162,34 +227,128 @@ public class DefaultMilestoneService implements MilestoneService {
      * a per-Milestone {@code countByMilestoneId} call would incur by loading every Epic tagged
      * with any Milestone on the page in one query and grouping in memory (mirrors {@code
      * DefaultEpicService#computeRollups}/{@code DefaultRoadmapTimelineService.getTimeline}'s own
-     * batched-per-parent-aggregate pattern).
+     * batched-per-parent-aggregate pattern). {@code epicCount}, {@code progress}, {@code atRisk}
+     * and {@code atRiskItemCount} are all derived from the same {@link #computeAggregates} walk,
+     * so this page costs a fixed three queries (Epic → Story → Task) regardless of page size.
      */
     private List<MilestoneResponse> toResponses(List<Milestone> milestones) {
-        Set<UUID> milestoneIds =
-                milestones.stream().map(Milestone::getId).collect(Collectors.toCollection(LinkedHashSet::new));
-        Map<UUID, Long> epicCountsByMilestoneId = milestoneIds.isEmpty()
-                ? Map.of()
-                : epicRepo.findByMilestoneIdIn(milestoneIds).stream()
-                        .collect(Collectors.groupingBy(Epic::getMilestoneId, Collectors.counting()));
+        Map<UUID, MilestoneAggregate> aggregatesByMilestoneId = computeAggregates(milestones);
         return milestones.stream()
-                .map(m -> buildResponse(m, epicCountsByMilestoneId.getOrDefault(m.getId(), 0L)))
+                .map(m -> buildResponse(m, aggregatesByMilestoneId.get(m.getId())))
                 .toList();
     }
 
     private MilestoneResponse toResponse(Milestone milestone) {
-        return buildResponse(milestone, epicRepo.countByMilestoneId(milestone.getId()));
+        MilestoneAggregate aggregate = computeAggregates(List.of(milestone)).get(milestone.getId());
+        return buildResponse(milestone, aggregate);
     }
 
-    private MilestoneResponse buildResponse(Milestone m, long epicCount) {
+    private MilestoneResponse buildResponse(Milestone m, MilestoneAggregate aggregate) {
         return new MilestoneResponse(
                 m.getId(),
                 m.getName(),
                 m.getDescription(),
                 m.getSoftwareProjectId(),
                 m.getTargetDate(),
-                epicCount,
+                aggregate.epicCount(),
+                aggregate.progress(),
+                aggregate.atRisk(),
+                aggregate.atRiskItemCount(),
                 m.getCreatedAt(),
                 m.getUpdatedAt());
+    }
+
+    /**
+     * Per-Milestone aggregate bundle: how many Epics are tagged with it, its Task-count {@link
+     * MilestoneResponse.Progress} rollup, and its at-risk verdict/count — everything {@link
+     * #buildResponse} needs beyond the Milestone row itself.
+     */
+    private record MilestoneAggregate(
+            long epicCount, MilestoneResponse.Progress progress, boolean atRisk, long atRiskItemCount) {}
+
+    /**
+     * Batch-computes {@link MilestoneAggregate} for every given Milestone in a fixed three queries
+     * (Epic → Story → Task), mirroring {@code DefaultEpicService#computeRollups}'s own
+     * batched-per-parent pattern one level up the hierarchy. Every Milestone passed in gets an
+     * entry, including ones with no Epics (all-zero aggregate, never at risk).
+     *
+     * <p>Per Epic/Story, "at risk" is {@code targetDate} strictly before today (per the injected
+     * {@link Clock}, never {@link Clock#getZone()} — see {@code DefaultRoadmapTimelineService}) AND
+     * {@link RollupCalculator#effectiveStatus} not {@code done}. A Milestone itself is at risk iff
+     * its own {@code targetDate} is overdue AND at least one of its Epics is incomplete;
+     * {@code atRiskItemCount} separately counts every at-risk Epic and Story under it, regardless
+     * of the Milestone-level verdict.
+     */
+    private Map<UUID, MilestoneAggregate> computeAggregates(List<Milestone> milestones) {
+        if (milestones.isEmpty()) {
+            return Map.of();
+        }
+        Set<UUID> milestoneIds =
+                milestones.stream().map(Milestone::getId).collect(Collectors.toCollection(LinkedHashSet::new));
+        LocalDate today = LocalDate.ofInstant(clock.instant(), ZoneOffset.UTC);
+
+        List<Epic> epics = epicRepo.findByMilestoneIdIn(milestoneIds);
+        Map<UUID, List<Epic>> epicsByMilestoneId = epics.stream().collect(Collectors.groupingBy(Epic::getMilestoneId));
+
+        Set<UUID> epicIds = epics.stream().map(Epic::getId).collect(Collectors.toCollection(LinkedHashSet::new));
+        List<Story> stories = epicIds.isEmpty() ? List.of() : storyRepo.findByEpicIdIn(epicIds);
+        Map<UUID, List<Story>> storiesByEpicId = stories.stream().collect(Collectors.groupingBy(Story::getEpicId));
+
+        Set<UUID> storyIds = stories.stream().map(Story::getId).collect(Collectors.toCollection(LinkedHashSet::new));
+        List<Task> tasks = storyIds.isEmpty() ? List.of() : taskRepo.findByStoryIdIn(storyIds);
+        Map<UUID, List<Task>> tasksByStoryId = tasks.stream().collect(Collectors.groupingBy(Task::getStoryId));
+
+        Map<UUID, MilestoneAggregate> result = new HashMap<>();
+        for (Milestone milestone : milestones) {
+            List<Epic> milestoneEpics = epicsByMilestoneId.getOrDefault(milestone.getId(), List.of());
+            List<Task> milestoneTasks = new ArrayList<>();
+            boolean anyIncompleteEpic = false;
+            long atRiskItemCount = 0;
+            for (Epic epic : milestoneEpics) {
+                List<Story> epicStories = storiesByEpicId.getOrDefault(epic.getId(), List.of());
+                List<Task> epicTasks = new ArrayList<>();
+                for (Story story : epicStories) {
+                    List<Task> storyTasks = tasksByStoryId.getOrDefault(story.getId(), List.of());
+                    epicTasks.addAll(storyTasks);
+                    String storyStatus = RollupCalculator.effectiveStatus(story.getStage(), storyTasks);
+                    if (isAtRisk(story.getTargetDate(), storyStatus, today)) {
+                        atRiskItemCount++;
+                    }
+                }
+                milestoneTasks.addAll(epicTasks);
+                String epicStatus = RollupCalculator.effectiveStatus(epic.getStage(), epicTasks);
+                if (isAtRisk(epic.getTargetDate(), epicStatus, today)) {
+                    atRiskItemCount++;
+                }
+                if (!WorkItemStatus.done.name().equals(epicStatus)) {
+                    anyIncompleteEpic = true;
+                }
+            }
+            RollupCalculator.Rollup rollup = RollupCalculator.compute(milestoneTasks);
+            MilestoneResponse.Progress progress = new MilestoneResponse.Progress(
+                    rollup.totalTasks(),
+                    rollup.doneTasks(),
+                    rollup.startedTasks() - rollup.doneTasks(),
+                    rollup.totalTasks() - rollup.startedTasks());
+            boolean milestoneOverdue = milestone.getTargetDate() != null
+                    && milestone.getTargetDate().isBefore(today);
+            boolean atRisk = milestoneOverdue && anyIncompleteEpic;
+            result.put(
+                    milestone.getId(),
+                    new MilestoneAggregate(milestoneEpics.size(), progress, atRisk, atRiskItemCount));
+        }
+        return result;
+    }
+
+    /**
+     * {@code true} iff {@code targetDate} is strictly before {@code today} AND {@code
+     * effectiveStatus} is not {@code done} — the same rule applied at the Epic/Story tier in {@link
+     * #computeAggregates} and in {@link #getAtRiskItems}.
+     */
+    private static boolean isAtRisk(LocalDate targetDate, String effectiveStatus, LocalDate today) {
+        boolean overdue = targetDate != null && targetDate.isBefore(today);
+        boolean incomplete = !WorkItemStatus.done.name().equals(effectiveStatus);
+        return overdue && incomplete;
     }
 
     private SoftwareProject loadSoftwareProject(UUID softwareProjectId) {

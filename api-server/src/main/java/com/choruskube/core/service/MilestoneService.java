@@ -1,5 +1,6 @@
 package com.choruskube.core.service;
 
+import com.choruskube.core.dto.MilestoneAtRiskItemsResponse;
 import com.choruskube.core.dto.MilestoneRequest;
 import com.choruskube.core.dto.MilestoneResponse;
 import com.choruskube.core.dto.MilestoneUpdateRequest;
@@ -32,4 +33,11 @@ public interface MilestoneService {
 
     /** Deletes the Milestone. Its Epics are un-tagged (not deleted) via the FK's ON DELETE SET NULL. */
     void delete(UUID id);
+
+    /**
+     * Drill-down behind {@link MilestoneResponse#atRiskItemCount()}: every Epic tagged with this
+     * Milestone, and every Story under one of those Epics, whose {@code targetDate} is strictly
+     * before today and whose {@code RollupCalculator} effective status is not {@code done}.
+     */
+    MilestoneAtRiskItemsResponse getAtRiskItems(UUID id);
 }

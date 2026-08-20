@@ -167,6 +167,47 @@ public class MilestoneControllerTest extends BaseTest {
     }
 
     @Test
+    void getMilestone_exposesProgressAndAtRiskFields() throws Exception {
+        GitRepo repo = createGitRepo("https://github.com/test/milestone-progress-shape.git");
+        UUID id = createMilestone(repo.getId(), "Shape Milestone");
+
+        mockMvc.perform(get("/api/v1/milestones/" + id))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.progress.totalTasks").value(0))
+                .andExpect(jsonPath("$.progress.doneTasks").value(0))
+                .andExpect(jsonPath("$.progress.inProgressTasks").value(0))
+                .andExpect(jsonPath("$.progress.notStartedTasks").value(0))
+                .andExpect(jsonPath("$.atRisk").value(false))
+                .andExpect(jsonPath("$.atRiskItemCount").value(0));
+    }
+
+    @Test
+    void getAtRiskItems_returnsEmptyList_forMilestoneWithNoEpics() throws Exception {
+        GitRepo repo = createGitRepo("https://github.com/test/milestone-at-risk-empty.git");
+        UUID id = createMilestone(repo.getId(), "Empty At-Risk Milestone");
+
+        mockMvc.perform(get("/api/v1/milestones/" + id + "/at-risk-items"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items").isArray())
+                .andExpect(jsonPath("$.items").isEmpty());
+    }
+
+    @Test
+    void getAtRiskItems_belowCanReadPermission_returns403() throws Exception {
+        GitRepo repo = createGitRepo("https://github.com/test/milestone-at-risk-forbidden.git");
+        UUID id = createMilestone(repo.getId(), "Forbidden At-Risk Milestone");
+        when(orgSecurity.canRead()).thenReturn(false);
+
+        mockMvc.perform(get("/api/v1/milestones/" + id + "/at-risk-items")).andExpect(status().isForbidden());
+    }
+
+    @Test
+    void getAtRiskItems_notFound_returns404() throws Exception {
+        mockMvc.perform(get("/api/v1/milestones/" + UUID.randomUUID() + "/at-risk-items"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
     void updateMilestone_renames_returns200() throws Exception {
         GitRepo repo = createGitRepo("https://github.com/test/milestone-rename.git");
         UUID id = createMilestone(repo.getId(), "Old Name");

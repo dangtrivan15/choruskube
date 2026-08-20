@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useCreateMilestone } from "@/hooks/useMilestones";
 import SoftwareProjectSelect from "@/components/software-projects/SoftwareProjectSelect";
+import TargetDateField from "@/components/roadmap/TargetDateField";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -20,13 +21,15 @@ interface Props {
 
 /**
  * Create-Milestone dialog (Decision 1/3 of the "Group Epics under a named Milestone / Release"
- * feature) — a release label scoped to a single software project, named uniquely within it.
- * `targetDate` (Caveat 1: reserved, not yet surfaced) is intentionally not collected here.
+ * feature, plus the rollup progress / at-risk feature) — a release label scoped to a single
+ * software project, named uniquely within it, with an optional target date that later drives the
+ * at-risk verdict server-side.
  */
 export default function CreateMilestoneDialog({ open, onOpenChange }: Props) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [softwareProjectId, setSoftwareProjectId] = useState<string>("");
+  const [targetDate, setTargetDate] = useState<string | null>(null);
 
   const createMilestone = useCreateMilestone();
 
@@ -37,7 +40,7 @@ export default function CreateMilestoneDialog({ open, onOpenChange }: Props) {
         name: name.trim(),
         description: description.trim() || null,
         softwareProjectId,
-        targetDate: null,
+        targetDate,
       },
       {
         onSuccess: () => {
@@ -52,6 +55,7 @@ export default function CreateMilestoneDialog({ open, onOpenChange }: Props) {
     setName("");
     setDescription("");
     setSoftwareProjectId("");
+    setTargetDate(null);
     createMilestone.reset();
   }
 
@@ -107,6 +111,15 @@ export default function CreateMilestoneDialog({ open, onOpenChange }: Props) {
               value={softwareProjectId}
               onChange={setSoftwareProjectId}
               testId="create-milestone-software-project-select"
+            />
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-sm font-medium">Target Date</label>
+            <TargetDateField
+              value={targetDate}
+              onChange={setTargetDate}
+              testId="create-milestone-target-date"
             />
           </div>
         </div>

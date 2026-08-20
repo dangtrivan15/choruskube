@@ -18,15 +18,23 @@ export class MilestonesPage {
   readonly createNameInput: Locator;
   readonly createDescriptionInput: Locator;
   readonly createSoftwareProjectSelect: Locator;
+  readonly createTargetDateInput: Locator;
   readonly createSubmitButton: Locator;
 
   // Edit Milestone dialog
   readonly editNameInput: Locator;
   readonly editDescriptionInput: Locator;
+  readonly editTargetDateInput: Locator;
   readonly editSaveButton: Locator;
 
   // Delete confirmation dialog
   readonly deleteConfirmButton: Locator;
+
+  // Progress / at-risk (rollup progress + at-risk feature)
+  readonly progressBars: Locator;
+  readonly atRiskBadges: Locator;
+  readonly atRiskToggles: Locator;
+  readonly atRiskDrilldownItems: Locator;
 
   constructor(page: Page) {
     this.page = page;
@@ -44,13 +52,20 @@ export class MilestonesPage {
     this.createSoftwareProjectSelect = page.getByTestId(
       "create-milestone-software-project-select",
     );
+    this.createTargetDateInput = page.getByTestId("create-milestone-target-date");
     this.createSubmitButton = page.getByTestId("create-milestone-submit");
 
     this.editNameInput = page.getByTestId("edit-milestone-name");
     this.editDescriptionInput = page.getByTestId("edit-milestone-description");
+    this.editTargetDateInput = page.getByTestId("edit-milestone-target-date");
     this.editSaveButton = page.getByTestId("edit-milestone-save");
 
     this.deleteConfirmButton = page.getByTestId("delete-milestone-confirm");
+
+    this.progressBars = page.getByTestId("milestone-progress-bar");
+    this.atRiskBadges = page.getByTestId("milestone-at-risk-badge");
+    this.atRiskToggles = page.getByTestId("milestone-at-risk-toggle");
+    this.atRiskDrilldownItems = page.getByTestId("milestone-at-risk-item");
   }
 
   async goto() {
@@ -77,15 +92,28 @@ export class MilestonesPage {
     await this.page.getByRole("option", { name: projectName, exact: true }).click();
   }
 
-  async createMilestone(name: string, projectName: string, description?: string) {
+  async createMilestone(
+    name: string,
+    projectName: string,
+    description?: string,
+    targetDate?: string,
+  ) {
     await this.openCreateDialog();
     await this.createNameInput.fill(name);
     if (description) {
       await this.createDescriptionInput.fill(description);
     }
     await this.selectSoftwareProjectInCreateDialog(projectName);
+    if (targetDate) {
+      await this.createTargetDateInput.fill(targetDate);
+    }
     await this.createSubmitButton.click();
     await expect(this.createDialogTitle).not.toBeVisible();
+  }
+
+  /** Toggles open (or closed) the at-risk drill-down row for the Milestone titled `name`. */
+  async toggleAtRiskDrilldown(name: string) {
+    await this.item(name).getByTestId("milestone-at-risk-toggle").click();
   }
 
   async openEditDialog(name: string) {

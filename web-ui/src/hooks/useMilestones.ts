@@ -6,6 +6,7 @@ import type {
   MilestoneResponse,
   MilestoneRequest,
   MilestoneUpdateRequest,
+  MilestoneAtRiskItemsResponse,
   EpicResponse,
   EpicMilestoneUpdateRequest,
   PageResponse,
@@ -44,6 +45,20 @@ export function useMilestone(id: string | undefined) {
     queryKey: ["milestones", id],
     queryFn: () => api.get<MilestoneResponse>(`/milestones/${id}`),
     enabled: !!id,
+  });
+}
+
+/**
+ * Drill-down behind `MilestoneResponse.atRiskItemCount` — every individually at-risk Epic/Story
+ * under this Milestone (`GET /milestones/{id}/at-risk-items`). Disabled unless {@code enabled} is
+ * true, mirroring `useMilestone`'s "don't fetch until needed" shape: `MilestonesPage` only wants
+ * this once a row's at-risk drill-down is expanded, not for every row on the page.
+ */
+export function useMilestoneAtRiskItems(id: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["milestones", id, "at-risk-items"],
+    queryFn: () => api.get<MilestoneAtRiskItemsResponse>(`/milestones/${id}/at-risk-items`),
+    enabled,
   });
 }
 
