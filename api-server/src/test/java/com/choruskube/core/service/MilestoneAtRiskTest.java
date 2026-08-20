@@ -141,6 +141,26 @@ public class MilestoneAtRiskTest extends BaseTest {
     }
 
     @Test
+    void milestoneOverdueButAllEpicsComplete_notAtRisk() {
+        GitRepo r = makeRepo("https://github.com/test/atrisk-milestone-epics-done.git");
+        MilestoneResponse milestone =
+                milestoneService.create(new MilestoneRequest("M", null, r.getId(), TODAY.minusDays(1)));
+        EpicResponse epic = makeTaggedEpic(r.getId(), milestone.id());
+        // The Milestone's own target date is overdue, but its only Epic is shipped (rolled_out ->
+        // effectiveStatus "done"), so the Milestone-level verdict's "AND at least one incomplete
+        // Epic" conjunct is false and the Milestone is NOT at risk even though its date has passed.
+        // This isolates that second conjunct: every other atRisk-true/false case either has an
+        // incomplete Epic or a non-overdue Milestone date, so a regression that dropped it (e.g.
+        // atRisk = milestoneOverdue alone) would otherwise pass the whole suite.
+        epicService.updateStage(epic.id(), WorkItemStatus.rolled_out);
+
+        MilestoneResponse fetched = milestoneService.get(milestone.id());
+        assertThat(fetched.atRisk()).isFalse();
+        assertThat(fetched.atRiskItemCount()).isZero();
+        assertThat(milestoneService.getAtRiskItems(milestone.id()).items()).isEmpty();
+    }
+
+    @Test
     void nullTargetDates_neverAtRisk() {
         GitRepo r = makeRepo("https://github.com/test/atrisk-null-dates.git");
         MilestoneResponse milestone = milestoneService.create(new MilestoneRequest("M", null, r.getId(), null));
