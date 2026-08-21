@@ -1075,16 +1075,32 @@ if [ -n "$QUOTA_RESET_AT" ] && [ -n "$CLAUDE_SESSION_ID" ]; then
   TRANSCRIPT_REDACTED="/tmp/session_redacted.jsonl"
 
   if [ -f "$TRANSCRIPT_SRC" ]; then
-    GITHUB_TOKEN_FOR_REDACTION=$(fetch-github-token 2>/dev/null || true)
+    # Diagnosability is the point of this feature -- the incident that motivated
+    # it was diagnosed from pod logs, so a token or upload failure must leave a
+    # cause behind, not just a generic warning. Capture stderr to a private file
+    # rather than discarding it, but only ever excerpt a short, truncated prefix:
+    # these are the token-fetch and presign endpoints' own diagnostics (HTTP
+    # status, response body), never a token or transcript value -- neither
+    # fetch-github-token nor artifact ever writes a secret to stderr.
+    TOKEN_FETCH_ERR_FILE="/tmp/session_token_fetch.err"
+    if ! GITHUB_TOKEN_FOR_REDACTION=$(fetch-github-token 2>"$TOKEN_FETCH_ERR_FILE"); then
+      GITHUB_TOKEN_FOR_REDACTION=""
+      TOKEN_FETCH_ERR=$(head -c 200 "$TOKEN_FETCH_ERR_FILE" 2>/dev/null || true)
+      echo "WARNING: could not fetch a GitHub token for redaction, continuing without it${TOKEN_FETCH_ERR:+ ($TOKEN_FETCH_ERR)}" >&2
+    fi
+    rm -f "$TOKEN_FETCH_ERR_FILE"
     export GITHUB_TOKEN_FOR_REDACTION
     if redact_transcript "$TRANSCRIPT_SRC" "$TRANSCRIPT_REDACTED"; then
       SESSION_ARTIFACT_PATH="${OUTPUT_PATH%out/}session/${CLAUDE_SESSION_ID}.jsonl"
-      if artifact put "$TRANSCRIPT_REDACTED" "$SESSION_ARTIFACT_PATH" 2>/dev/null; then
+      UPLOAD_ERR_FILE="/tmp/session_upload.err"
+      if artifact put "$TRANSCRIPT_REDACTED" "$SESSION_ARTIFACT_PATH" 2>"$UPLOAD_ERR_FILE"; then
         echo "QUOTA: parked session $CLAUDE_SESSION_ID at $SESSION_ARTIFACT_PATH"
       else
         SESSION_ARTIFACT_PATH=""  # upload failed; park without a session
-        echo "WARNING: could not upload the session transcript; the retry will start fresh" >&2
+        UPLOAD_ERR=$(head -c 200 "$UPLOAD_ERR_FILE" 2>/dev/null || true)
+        echo "WARNING: could not upload the session transcript; the retry will start fresh${UPLOAD_ERR:+ ($UPLOAD_ERR)}" >&2
       fi
+      rm -f "$UPLOAD_ERR_FILE"
     fi
     unset GITHUB_TOKEN_FOR_REDACTION
     rm -f "$TRANSCRIPT_REDACTED"
@@ -1112,7 +1128,7 @@ CALLBACK_BODY=$(jq -n \
   --arg result "$RESULT" \
   --argjson artifacts "$ARTIFACT_REFS" \
   --arg error "$ERROR_MESSAGE" \
-  --arg resume_at "${QUOTA_RESET_AT:+$(date -u -d "@$QUOTA_RESET_AT" '+%Y-%m-%dT%H:%M:%SZ')}" \
+  --arg resume_at "${QUOTA_RESET_AT:+$(date -u -d "@$QUOTA_RESET_AT" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || true)}" \
   --arg session_id "${SESSION_ARTIFACT_PATH:+$CLAUDE_SESSION_ID}" \
   --arg session_path "$SESSION_ARTIFACT_PATH" \
   '{

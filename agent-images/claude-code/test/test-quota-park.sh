@@ -298,6 +298,192 @@ grep -q 'SESSION_ARTIFACT_PATH=""  # upload failed' "$ENTRYPOINT" \
   && ok "upload failure degrades to a sessionless park" \
   || fail "upload failure degrades to a sessionless park"
 
+# --- Test 30: the callback's null-vs-empty serialisation, exercised for real ---
+# Tests 26-29 above are static greps over entrypoint.sh's source text; none of
+# them ever run the code. This test extracts the actual `jq -n ...` filter
+# from entrypoint.sh's Step 6 by marker (not hand-copied, so it cannot drift
+# from what ships) and runs it for real, once with the park fields empty and
+# once with them populated, asserting on the resulting JSON with `jq -e`
+# rather than string-matching the serialised text -- a filter that always
+# printed the literal word "null" would fool a text match but not this.
+CALLBACK_CAPTURE="$TESTDIR/callback_body.json"
+
+# entrypoint.sh's callback deliberately uses GNU `date -u -d "@epoch"` (the
+# agent image is Linux); a BSD/macOS dev shell's plain `date` lacks -d. Prefer
+# the system date if it already understands -d (true in CI/the agent image),
+# else shim in Homebrew's coreutils `gdate` -- the identical GNU
+# implementation used in the container, just under a different name -- so the
+# positive case below exercises real GNU date semantics instead of being
+# quietly skipped.
+GNU_DATE_DIR=""
+if date -u -d "@0" '+%Y' >/dev/null 2>&1; then
+  :
+elif command -v gdate >/dev/null 2>&1 && gdate -u -d "@0" '+%Y' >/dev/null 2>&1; then
+  GNU_DATE_DIR="$TESTDIR/gnu-date-bin"
+  mkdir -p "$GNU_DATE_DIR"
+  ln -sf "$(command -v gdate)" "$GNU_DATE_DIR/date"
+fi
+
+build_callback_harness() {
+  # $1 = QUOTA_RESET_AT, $2 = SESSION_ARTIFACT_PATH, $3 = CLAUDE_SESSION_ID.
+  # send-callback is stubbed to capture its argument instead of POSTing it.
+  {
+    echo 'set -euo pipefail'
+    printf 'send-callback() { printf %%s "$1" > %q; }\n' "$CALLBACK_CAPTURE"
+    echo 'NODE_EXECUTION_ID=exec-1'
+    echo 'RUN_ID=run-1'
+    echo 'RESULT_STATUS=failed'
+    echo 'RESULT=""'
+    echo 'ARTIFACT_REFS="{}"'
+    echo 'ERROR_MESSAGE="boom"'
+    printf 'QUOTA_RESET_AT=%q\n' "$1"
+    printf 'SESSION_ARTIFACT_PATH=%q\n' "$2"
+    printf 'CLAUDE_SESSION_ID=%q\n' "$3"
+    awk '/^# --- Step 6: POST callback to orchestrator ---/{f=1} f{print} /^send-callback "\$CALLBACK_BODY"/{f=0}' "$ENTRYPOINT"
+  }
+}
+
+run_callback_harness() {
+  if [ -n "$GNU_DATE_DIR" ]; then
+    PATH="$GNU_DATE_DIR:$PATH" bash "$1" 2>"$TESTDIR/callback_run.err"
+  else
+    bash "$1" 2>"$TESTDIR/callback_run.err"
+  fi
+}
+
+# 30a: negative case -- both park fields absent must serialise as JSON null,
+# not the empty string the shell variables actually hold. A filter that just
+# passed the empty string through (dropping the `if $x == "" then null` guard)
+# would pass a text-matching test looking for the field name, but fails this.
+build_callback_harness "" "" "" > "$TESTDIR/callback_neg.sh"
+if run_callback_harness "$TESTDIR/callback_neg.sh" && jq -e \
+    '(.resume_at == null) and (.session_id == null) and (.session_artifact_path == null)' \
+    "$CALLBACK_CAPTURE" >/dev/null 2>&1; then
+  ok "callback serialises absent park fields as JSON null"
+else
+  fail "callback serialises absent park fields as JSON null ($(cat "$CALLBACK_CAPTURE" 2>/dev/null) $(cat "$TESTDIR/callback_run.err" 2>/dev/null))"
+fi
+
+# 30b: positive case -- populated fields must be non-null AND carry the exact
+# expected values. The negative case alone would pass against a filter that
+# always emits null; this half alone would pass against a filter that always
+# emits some fixed placeholder. Together they pin the real behaviour down.
+QUOTA_EPOCH=1787230680
+EXPECTED_RESUME_AT=$(date -u -d "@$QUOTA_EPOCH" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null \
+  || gdate -u -d "@$QUOTA_EPOCH" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || true)
+SESSION_PATH="acme/runs/run-1/exec-1/session/sess-abc123.jsonl"
+build_callback_harness "$QUOTA_EPOCH" "$SESSION_PATH" "sess-abc123" > "$TESTDIR/callback_pos.sh"
+if [ -n "$EXPECTED_RESUME_AT" ] \
+    && run_callback_harness "$TESTDIR/callback_pos.sh" \
+    && jq -e \
+      --arg ts "$EXPECTED_RESUME_AT" --arg sid "sess-abc123" --arg sp "$SESSION_PATH" \
+      '(.resume_at == $ts) and (.session_id == $sid) and (.session_artifact_path == $sp)' \
+      "$CALLBACK_CAPTURE" >/dev/null 2>&1; then
+  ok "callback serialises populated park fields as their exact non-null values"
+else
+  fail "callback serialises populated park fields as their exact non-null values ($(cat "$CALLBACK_CAPTURE" 2>/dev/null) $(cat "$TESTDIR/callback_run.err" 2>/dev/null))"
+fi
+
+# --- Test 31: the park block survives every named failure mode, for real ---
+# The property with no assertion at all until now: an unguarded failing
+# command inside the quota-park block would abort the pod under
+# `set -euo pipefail` *before the callback is ever sent* -- a worse outcome
+# than the quota-hit bug this feature exists to fix. Extracts the real
+# `# --- Quota park:` block by marker (the same technique
+# test-config-parsing.sh already uses for its safety-net fragment, and the
+# same boundary that fragment now stops at) and runs it with
+# fetch-github-token, redact_transcript, and artifact stubbed as shell
+# functions, once per failure mode, asserting the harness both survives
+# (reaches a sentinel after the block) and leaves SESSION_ARTIFACT_PATH in the
+# state that failure mode should produce.
+build_park_harness() {
+  # $1 = scenario tag, selecting which single stub fails and whether a
+  # transcript file exists at the discovered path.
+  local scenario="$1"
+  local home_dir="$TESTDIR/park_home_$scenario"
+  local proj_dir="$home_dir/.claude/projects/proj1"
+  mkdir -p "$proj_dir"
+  local sess="sess-$scenario"
+  if [ "$scenario" != "no_transcript" ]; then
+    echo '{"type":"result","result":"partial"}' > "$proj_dir/$sess.jsonl"
+  fi
+
+  {
+    echo 'set -euo pipefail'
+    printf 'export HOME=%q\n' "$home_dir"
+    printf 'QUOTA_RESET_AT=%q\n' "1787230680"
+    printf 'CLAUDE_SESSION_ID=%q\n' "$sess"
+    printf 'OUTPUT_PATH=%q\n' "acme/runs/run-1/exec-1/out/"
+    echo 'RESULT_STATUS=failed'
+
+    if [ "$scenario" = "token_fetch_fail" ]; then
+      echo 'fetch-github-token() { echo "token endpoint unreachable" >&2; return 1; }'
+    else
+      echo 'fetch-github-token() { echo "gh-token"; return 0; }'
+    fi
+
+    if [ "$scenario" = "redact_fail" ]; then
+      echo 'redact_transcript() { echo "redaction failed" >&2; return 1; }'
+    else
+      echo 'redact_transcript() { cp "$1" "$2"; }'
+    fi
+
+    if [ "$scenario" = "upload_fail" ]; then
+      echo 'artifact() { [ "$1" = "put" ] && { echo "presign failed" >&2; return 1; } || return 0; }'
+    else
+      echo 'artifact() { return 0; }'
+    fi
+
+    awk '/^# --- Quota park:/{f=1} /^# --- Step 5:/{f=0} f' "$ENTRYPOINT"
+    echo 'echo "PARK_BLOCK_SENTINEL"'
+    echo 'echo "SESSION_ARTIFACT_PATH_RESULT:${SESSION_ARTIFACT_PATH}"'
+  }
+}
+
+run_park_scenario() {
+  local scenario="$1" expect_session="$2"
+  build_park_harness "$scenario" > "$TESTDIR/park_$scenario.sh"
+  local out rc
+  set +e
+  out=$(bash "$TESTDIR/park_$scenario.sh" 2>&1)
+  rc=$?
+  set -e
+
+  if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q '^PARK_BLOCK_SENTINEL$'; then
+    ok "park block survives: $scenario"
+  else
+    fail "park block survives: $scenario (exit=$rc, output: $out)"
+  fi
+
+  local got_path
+  got_path=$(printf '%s\n' "$out" | sed -n 's/^SESSION_ARTIFACT_PATH_RESULT://p')
+  if [ "$expect_session" = "empty" ]; then
+    [ -z "$got_path" ] \
+      && ok "SESSION_ARTIFACT_PATH stays empty: $scenario" \
+      || fail "SESSION_ARTIFACT_PATH stays empty: $scenario (got '$got_path')"
+  else
+    [ -n "$got_path" ] \
+      && ok "SESSION_ARTIFACT_PATH still carries a session: $scenario" \
+      || fail "SESSION_ARTIFACT_PATH still carries a session: $scenario (got empty)"
+  fi
+}
+
+# No transcript at the discovered path, redaction failing, and upload failing
+# each cut the chain before a session reference is produced -- the node still
+# parks (see Test 31's survival assertion), just without one.
+run_park_scenario no_transcript empty
+run_park_scenario redact_fail empty
+run_park_scenario upload_fail empty
+# fetch-github-token failing is deliberately NOT fatal to parking: the block
+# continues with GITHUB_TOKEN_FOR_REDACTION empty (redact_transcript simply
+# skips the exact-value GitHub-token substitution), and quota-lib.sh's
+# shape-based scrub (Test 13) still catches common GitHub token shapes
+# regardless of whether the exact value was ever fetched. The correct outcome
+# here is therefore a *sessioned* park, not a sessionless one -- confirmed
+# against a mutation that made a token-fetch failure wrongly skip parking
+# entirely (see the fix-round-1 report for the mutation and its result).
+run_park_scenario token_fetch_fail nonempty
+
 echo
 echo "PASS: $PASS  FAIL: $FAIL"
 [ "$FAIL" -eq 0 ]
