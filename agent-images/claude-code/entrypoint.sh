@@ -777,10 +777,31 @@ ${PROMPT}"
   # Restoring the transcript alone is sufficient; the directory is keyed on the
   # claude cwd, which is always /workspace/repo.
   if [ -n "$RESUME_SESSION_ID" ] && [ -n "$RESUME_SESSION_PATH" ]; then
-    RESTORE_DIR="$HOME/.claude/projects/-workspace-repo"
-    mkdir -p "$RESTORE_DIR"
-    if artifact get "$RESUME_SESSION_PATH" "$RESTORE_DIR/${RESUME_SESSION_ID}.jsonl" 2>/dev/null; then
-      echo "Restored parked session $RESUME_SESSION_ID"
+    # Claude Code's own project-directory encoding: substitute "/" for "-"
+    # across the absolute cwd. Derived by substitution from the literal cwd
+    # (not written as the opaque string "-workspace-repo") so a change to
+    # either side is visibly a change to the other. Verified empirically:
+    # restoring a transcript into the matching directory and resuming it
+    # succeeds; deleting the directory instead reproduces "No conversation
+    # found" from claude. If Claude Code's encoding ever changes, this
+    # mismatches and --resume silently finds nothing -- the guard below still
+    # degrades to a fresh run rather than failing the node, and the restored
+    # path is echoed on success so a mismatch is diagnosable on first contact
+    # instead of a permanent, silent no-op.
+    RESTORE_CWD="/workspace/repo"
+    RESTORE_DIR="$HOME/.claude/projects/${RESTORE_CWD//\//-}"
+    RESTORE_TRANSCRIPT="$RESTORE_DIR/${RESUME_SESSION_ID}.jsonl"
+    # mkdir failure (unwritable $HOME, disk pressure, a stray non-directory
+    # file already at that path) must not abort the pod under set -e -- fold
+    # it into the same guarded `if` as the fetch below so both fall back to a
+    # fresh run instead of failing the node.
+    #
+    # stderr suppressed deliberately on both mkdir and artifact get: artifact's
+    # failure output can include a presigned URL, which embeds a signature --
+    # unlike the token-fetch diagnostics captured on the park side, this must
+    # never reach pod logs.
+    if mkdir -p "$RESTORE_DIR" 2>/dev/null && artifact get "$RESUME_SESSION_PATH" "$RESTORE_TRANSCRIPT" 2>/dev/null; then
+      echo "Restored parked session $RESUME_SESSION_ID -> $RESTORE_TRANSCRIPT"
       # Consume-once: overwrite the object with zero bytes. The parked transcript
       # may hold credentials the agent discovered and that no redaction we can
       # write would have caught, so the bytes must not outlive the resume.
@@ -788,6 +809,8 @@ ${PROMPT}"
       # allows only GET and PUT; PUT already permits overwriting anything in the
       # run's scope, so this costs no extra privilege.
       : > /tmp/empty_session
+      # stderr suppressed deliberately (see the artifact-get comment above): a
+      # presigned URL, not a diagnostic, is what artifact would print here.
       artifact put /tmp/empty_session "$RESUME_SESSION_PATH" 2>/dev/null || \
         echo "WARNING: could not clear the parked session object" >&2
       rm -f /tmp/empty_session

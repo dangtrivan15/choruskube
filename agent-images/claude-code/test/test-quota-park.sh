@@ -491,11 +491,14 @@ grep -q "RESUME_SESSION_PATH=\$(jq -r '.session_artifact_path // empty'" "$ENTRY
   && ok "session_artifact_path read from config" || fail "session_artifact_path read from config"
 
 # --- Test 33: the config reads actually parse a fixture, run for real (behavioral) ---
-# Test 32 greps a fixed prefix, which would still pass if the jq filter after that
-# prefix were subtly wrong (e.g. keyed on the wrong field, or missing "// empty").
-# Extract the real two-line assignment by marker and execute it against fixture
-# config.json files so a broken filter fails here even when the grep above still
-# matches.
+# Test 32's grep already pins the full filter text through the closing quote,
+# so it is not "a fixed prefix" a subtly-wrong filter could slip past. What it
+# cannot tell is whether that line is live: a grep matches the same substring
+# whether the assignment executes, is commented out, sits in a dead branch, or
+# is shadowed by a later reassignment before use. Extract the real two-line
+# assignment by marker and execute it against fixture config.json files, so a
+# read that text-matches but never actually runs -- or a fixture the jq filter
+# resolves incorrectly -- fails here even when Test 32 still passes.
 build_config_read_harness() {
   {
     echo 'set -euo pipefail'
@@ -643,6 +646,14 @@ run_resume_scenario() {
   local scenario="$1"
   local home_dir="$TESTDIR/resume_home_$scenario"
   mkdir -p "$home_dir"
+  if [ "$scenario" = "mkdir_fails" ]; then
+    # Pre-create the exact target path as a regular FILE, not a directory, so
+    # `mkdir -p` deterministically fails with "not a directory"/"File exists"
+    # rather than relying on something environmental (permissions, disk
+    # pressure) that would make the scenario flaky.
+    mkdir -p "$home_dir/.claude/projects"
+    touch "$home_dir/.claude/projects/-workspace-repo"
+  fi
   local call_log="$TESTDIR/resume_calls_$scenario.log"
   : > "$call_log"
   build_resume_harness "$scenario" "$home_dir" "$call_log" > "$TESTDIR/resume_$scenario.sh"
@@ -667,18 +678,33 @@ else
 fi
 
 # 38b: successful restore -- correct destination path, consume-once ships zero bytes,
-# and RESUME_SESSION_ID survives so Attempt 1 will take the resume branch.
+# RESUME_SESSION_ID survives so Attempt 1 will take the resume branch, and the
+# restored transcript's absolute path is echoed (fix round 1, REQUIRED 2) so a
+# real pod's log shows exactly where the file landed.
 OUT_SUCCESS=$(run_resume_scenario restore_success)
 EXPECT_DEST="resume_home_restore_success/.claude/projects/-workspace-repo/sess-resume-2.jsonl"
 if echo "$OUT_SUCCESS" | grep -q "RESUME_BLOCK_SENTINEL" \
     && echo "$OUT_SUCCESS" | grep -qF "artifact get acme/runs/r1/e1/session/sess-resume-2.jsonl" \
     && echo "$OUT_SUCCESS" | grep -qF "$EXPECT_DEST" \
+    && echo "$OUT_SUCCESS" | grep -qF "Restored parked session sess-resume-2 -> " \
     && echo "$OUT_SUCCESS" | grep -qF "artifact put /tmp/empty_session acme/runs/r1/e1/session/sess-resume-2.jsonl" \
     && echo "$OUT_SUCCESS" | grep -qF "SIZE:0" \
     && echo "$OUT_SUCCESS" | grep -q '^RESUME_SESSION_ID_RESULT:sess-resume-2$'; then
-  ok "resume block: successful restore lands at the right path and clears the object with zero bytes"
+  ok "resume block: successful restore lands at the right path, echoes it, and clears the object with zero bytes"
 else
-  fail "resume block: successful restore lands at the right path and clears the object with zero bytes (got: $OUT_SUCCESS)"
+  fail "resume block: successful restore lands at the right path, echoes it, and clears the object with zero bytes (got: $OUT_SUCCESS)"
+fi
+
+# 38b2: the echoed line names the resolved transcript path specifically, not
+# merely some line elsewhere in the output that happens to contain the path
+# substring (which 38b's grep alone would not distinguish). EXPECT_DEST above
+# is deliberately just a suffix (portable across whatever $TESTDIR mktemp
+# picked), so build the exact full path here for an exact-line check.
+FULL_EXPECTED_TRANSCRIPT="$TESTDIR/resume_home_restore_success/.claude/projects/-workspace-repo/sess-resume-2.jsonl"
+if echo "$OUT_SUCCESS" | grep -qF "Restored parked session sess-resume-2 -> $FULL_EXPECTED_TRANSCRIPT"; then
+  ok "resume block: the restored transcript path is echoed on its own line"
+else
+  fail "resume block: the restored transcript path is echoed on its own line (got: $OUT_SUCCESS)"
 fi
 
 # 38c: restore fails -- RESUME_SESSION_ID must be cleared (fresh-path fallback), the
@@ -703,6 +729,24 @@ if echo "$OUT_PUT_FAILS" | grep -q "RESUME_BLOCK_SENTINEL" \
   ok "resume block: a failed consume-once clear still lets the node resume"
 else
   fail "resume block: a failed consume-once clear still lets the node resume (got: $OUT_PUT_FAILS)"
+fi
+
+# 38e: mkdir -p fails -- fix round 1. A stray non-directory file already
+# occupies the exact target path (planted by run_resume_scenario), so
+# `mkdir -p "$RESTORE_DIR"` fails deterministically. Before this fix the mkdir
+# ran as a bare command under `set -euo pipefail`, so its failure aborted the
+# whole script before the else-branch fallback ever ran -- a lost session
+# costing the node, not just the resume. It must now degrade exactly like a
+# failed fetch: RESUME_SESSION_ID cleared, the block survives to its sentinel,
+# and `artifact` is never called at all (the mkdir failure short-circuits the
+# `&&` before the fetch is even attempted).
+OUT_MKDIR_FAILS=$(run_resume_scenario mkdir_fails)
+if echo "$OUT_MKDIR_FAILS" | grep -q "RESUME_BLOCK_SENTINEL" \
+    && echo "$OUT_MKDIR_FAILS" | grep -q '^RESUME_SESSION_ID_RESULT:$' \
+    && ! echo "$OUT_MKDIR_FAILS" | grep -q "^artifact "; then
+  ok "resume block: a failed mkdir degrades to a fresh run without calling artifact"
+else
+  fail "resume block: a failed mkdir degrades to a fresh run without calling artifact (got: $OUT_MKDIR_FAILS)"
 fi
 
 echo
