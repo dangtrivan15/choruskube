@@ -484,6 +484,227 @@ run_park_scenario upload_fail empty
 # entirely (see the fix-round-1 report for the mutation and its result).
 run_park_scenario token_fetch_fail nonempty
 
+# --- Test 32: the session reference is read from config.json ---
+grep -q "RESUME_SESSION_ID=\$(jq -r '.session_id // empty'" "$ENTRYPOINT" \
+  && ok "session_id read from config" || fail "session_id read from config"
+grep -q "RESUME_SESSION_PATH=\$(jq -r '.session_artifact_path // empty'" "$ENTRYPOINT" \
+  && ok "session_artifact_path read from config" || fail "session_artifact_path read from config"
+
+# --- Test 33: the config reads actually parse a fixture, run for real (behavioral) ---
+# Test 32 greps a fixed prefix, which would still pass if the jq filter after that
+# prefix were subtly wrong (e.g. keyed on the wrong field, or missing "// empty").
+# Extract the real two-line assignment by marker and execute it against fixture
+# config.json files so a broken filter fails here even when the grep above still
+# matches.
+build_config_read_harness() {
+  {
+    echo 'set -euo pipefail'
+    printf 'CONFIG_FILE=%q\n' "$1"
+    awk '/^RESUME_SESSION_ID=\$\(jq/,/^RESUME_SESSION_PATH=\$\(jq/' "$ENTRYPOINT"
+    echo 'echo "ID:$RESUME_SESSION_ID"'
+    echo 'echo "PATH:$RESUME_SESSION_PATH"'
+  }
+}
+
+RESUME_CONFIG="$TESTDIR/resume_config.json"
+cat > "$RESUME_CONFIG" <<'EOF'
+{"run_id":"r1","node_execution_id":"e1","prompt":"x","session_id":"sess-789","session_artifact_path":"acme/runs/r1/e1/session/sess-789.jsonl"}
+EOF
+build_config_read_harness "$RESUME_CONFIG" > "$TESTDIR/config_read.sh"
+set +e
+CONFIG_READ_OUT=$(bash "$TESTDIR/config_read.sh" 2>&1)
+set -e
+if echo "$CONFIG_READ_OUT" | grep -qF "ID:sess-789" && echo "$CONFIG_READ_OUT" | grep -qF "PATH:acme/runs/r1/e1/session/sess-789.jsonl"; then
+  ok "session_id and session_artifact_path parse from config (behavioral)"
+else
+  fail "session_id and session_artifact_path parse from config (behavioral) (got: $CONFIG_READ_OUT)"
+fi
+
+RESUME_CONFIG_ABSENT="$TESTDIR/resume_config_absent.json"
+cat > "$RESUME_CONFIG_ABSENT" <<'EOF'
+{"run_id":"r1","node_execution_id":"e1","prompt":"x"}
+EOF
+build_config_read_harness "$RESUME_CONFIG_ABSENT" > "$TESTDIR/config_read_absent.sh"
+set +e
+CONFIG_READ_ABSENT_OUT=$(bash "$TESTDIR/config_read_absent.sh" 2>&1)
+set -e
+if echo "$CONFIG_READ_ABSENT_OUT" | grep -qx "ID:" && echo "$CONFIG_READ_ABSENT_OUT" | grep -qx "PATH:"; then
+  ok "absent session fields read blank, not null (behavioral)"
+else
+  fail "absent session fields read blank, not null (behavioral) (got: $CONFIG_READ_ABSENT_OUT)"
+fi
+
+# --- Test 34: a restored session resumes instead of starting fresh ---
+grep -q 'run_claude "\$RESUME_PROMPT" "--resume \$RESUME_SESSION_ID"' "$ENTRYPOINT" \
+  && ok "restored session is resumed" || fail "restored session is resumed"
+
+# --- Test 35: the parked object is consumed exactly once ---
+# Overwrite, not delete: the presign endpoint allows only GET and PUT.
+grep -q 'artifact put /tmp/empty_session "\$RESUME_SESSION_PATH"' "$ENTRYPOINT" \
+  && ok "parked object is cleared after restore" || fail "parked object is cleared after restore"
+
+# --- Test 36: a failed restore falls back to a fresh run ---
+grep -q 'RESUME_SESSION_ID=""  # restore failed' "$ENTRYPOINT" \
+  && ok "failed restore falls back to a fresh run" || fail "failed restore falls back to a fresh run"
+
+# --- Test 37: Attempt 1 actually branches on RESUME_SESSION_ID, exercised for real (behavioral) ---
+# Tests 34 and the fresh-path invocation (entrypoint.sh:773 historically) are both
+# source-text greps; neither runs the branch. Extract the real "Attempt 1" block by
+# marker and run it twice with run_claude stubbed to capture its arguments: once
+# with a resume session set, once without. This also answers the self-review
+# question of whether the fresh path still gets FULL_PROMPT/SYSTEM_PROMPT correctly
+# now that the branch exists.
+build_attempt1_harness() {
+  # $1 = RESUME_SESSION_ID, $2 = FULL_PROMPT, $3 = SYSTEM_PROMPT, $4 = call-log path
+  {
+    echo 'set -euo pipefail'
+    printf 'RESUME_SESSION_ID=%q\n' "$1"
+    printf 'FULL_PROMPT=%q\n' "$2"
+    printf 'SYSTEM_PROMPT=%q\n' "$3"
+    printf 'CALL_LOG=%q\n' "$4"
+    echo 'MAX_RETRIES=3'
+    echo 'ATTEMPT=1'
+    echo 'CLAUDE_SUBTYPE=""; CLAUDE_TURNS=""; CLAUDE_RESULT=""'
+    echo 'run_claude() { { printf "ARG1:%s\n" "$1"; printf "ARG2:%s\n" "${2:-}"; printf "ARG3:%s\n" "${3:-}"; } >> "$CALL_LOG"; echo ""; }'
+    echo 'parse_claude_output() { :; }'
+    awk '/^  # Attempt 1:/{f=1} /^  # Retry loop:/{f=0} f' "$ENTRYPOINT"
+  }
+}
+
+ATTEMPT1_LOG_RESUME="$TESTDIR/attempt1_resume.log"
+build_attempt1_harness "sess-resume-1" "Run ID: r1
+
+do the thing" "sys prompt text" "$ATTEMPT1_LOG_RESUME" > "$TESTDIR/attempt1_resume.sh"
+set +e
+bash "$TESTDIR/attempt1_resume.sh" >/dev/null 2>"$TESTDIR/attempt1_resume.err"
+set -e
+if [ -f "$ATTEMPT1_LOG_RESUME" ] \
+    && grep -q '^ARG2:--resume sess-resume-1$' "$ATTEMPT1_LOG_RESUME" \
+    && grep -q '^ARG3:$' "$ATTEMPT1_LOG_RESUME"; then
+  ok "resume branch calls run_claude with --resume and no system prompt (behavioral)"
+else
+  fail "resume branch calls run_claude with --resume and no system prompt (behavioral) (log: $(cat "$ATTEMPT1_LOG_RESUME" 2>/dev/null))"
+fi
+
+ATTEMPT1_LOG_FRESH="$TESTDIR/attempt1_fresh.log"
+build_attempt1_harness "" "Run ID: r1
+
+do the thing" "sys prompt text" "$ATTEMPT1_LOG_FRESH" > "$TESTDIR/attempt1_fresh.sh"
+set +e
+bash "$TESTDIR/attempt1_fresh.sh" >/dev/null 2>"$TESTDIR/attempt1_fresh.err"
+set -e
+if [ -f "$ATTEMPT1_LOG_FRESH" ] \
+    && grep -qF 'ARG1:Run ID: r1' "$ATTEMPT1_LOG_FRESH" \
+    && grep -q '^ARG2:$' "$ATTEMPT1_LOG_FRESH" \
+    && grep -qF 'ARG3:sys prompt text' "$ATTEMPT1_LOG_FRESH"; then
+  ok "fresh path still calls run_claude with FULL_PROMPT and SYSTEM_PROMPT (behavioral)"
+else
+  fail "fresh path still calls run_claude with FULL_PROMPT and SYSTEM_PROMPT (behavioral) (log: $(cat "$ATTEMPT1_LOG_FRESH" 2>/dev/null))"
+fi
+
+# --- Test 38: the quota-resume restore block, exercised for real (behavioral) ---
+# Mirrors the quota-park block harness (Test 31 above): extract the real
+# "# --- Quota resume:" block by marker and run it with `artifact` stubbed as a
+# shell function, once per scenario. Verifies four properties that no grep above
+# can: the restore destination path is correct, the consume-once overwrite ships
+# a genuinely empty file, a failed restore clears RESUME_SESSION_ID so Attempt 1
+# takes the fresh path, and a failed clear does not undo a successful restore.
+build_resume_harness() {
+  # $1 = scenario, $2 = HOME dir, $3 = call-log path
+  local scenario="$1" home_dir="$2" call_log="$3"
+  {
+    echo 'set -euo pipefail'
+    printf 'export HOME=%q\n' "$home_dir"
+    printf 'CALL_LOG=%q\n' "$call_log"
+
+    if [ "$scenario" = "not_configured" ]; then
+      printf 'RESUME_SESSION_ID=%q\n' ""
+      printf 'RESUME_SESSION_PATH=%q\n' ""
+    else
+      printf 'RESUME_SESSION_ID=%q\n' "sess-resume-2"
+      printf 'RESUME_SESSION_PATH=%q\n' "acme/runs/r1/e1/session/sess-resume-2.jsonl"
+    fi
+
+    if [ "$scenario" = "get_fails" ]; then
+      echo 'artifact() { echo "artifact $*" >> "$CALL_LOG"; [ "$1" = "get" ] && return 1; return 0; }'
+    elif [ "$scenario" = "put_fails" ]; then
+      echo 'artifact() { echo "artifact $*" >> "$CALL_LOG"; if [ "$1" = "get" ]; then printf stub > "$3"; return 0; fi; [ "$1" = "put" ] && { echo "SIZE:$(wc -c < "$2" | tr -d " ")" >> "$CALL_LOG"; return 1; }; return 0; }'
+    else
+      echo 'artifact() { echo "artifact $*" >> "$CALL_LOG"; if [ "$1" = "get" ]; then printf stub > "$3"; return 0; fi; if [ "$1" = "put" ]; then echo "SIZE:$(wc -c < "$2" | tr -d " ")" >> "$CALL_LOG"; return 0; fi; return 0; }'
+    fi
+
+    awk '/^  # --- Quota resume:/{f=1} /^  # Attempt 1:/{f=0} f' "$ENTRYPOINT"
+    echo 'echo "RESUME_BLOCK_SENTINEL"'
+    echo 'echo "RESUME_SESSION_ID_RESULT:${RESUME_SESSION_ID}"'
+  }
+}
+
+run_resume_scenario() {
+  local scenario="$1"
+  local home_dir="$TESTDIR/resume_home_$scenario"
+  mkdir -p "$home_dir"
+  local call_log="$TESTDIR/resume_calls_$scenario.log"
+  : > "$call_log"
+  build_resume_harness "$scenario" "$home_dir" "$call_log" > "$TESTDIR/resume_$scenario.sh"
+  local out rc
+  set +e
+  out=$(bash "$TESTDIR/resume_$scenario.sh" 2>&1)
+  rc=$?
+  set -e
+  # Newline-separated on purpose (not a single echo's space-joined args): the
+  # script's own output can end mid-word, and joining it to $rc / the call log
+  # with a bare space would silently glue two unrelated tokens onto one line.
+  printf '%s\n---RC:%s---\n%s\n' "$out" "$rc" "$(cat "$call_log" 2>/dev/null)"
+}
+
+# 38a: no session parked for this run -- the block must be a complete no-op.
+OUT_NOT_CONFIGURED=$(run_resume_scenario not_configured)
+if echo "$OUT_NOT_CONFIGURED" | grep -q "RESUME_BLOCK_SENTINEL" \
+    && ! echo "$OUT_NOT_CONFIGURED" | grep -q "^artifact "; then
+  ok "resume block: no-op when nothing is parked"
+else
+  fail "resume block: no-op when nothing is parked (got: $OUT_NOT_CONFIGURED)"
+fi
+
+# 38b: successful restore -- correct destination path, consume-once ships zero bytes,
+# and RESUME_SESSION_ID survives so Attempt 1 will take the resume branch.
+OUT_SUCCESS=$(run_resume_scenario restore_success)
+EXPECT_DEST="resume_home_restore_success/.claude/projects/-workspace-repo/sess-resume-2.jsonl"
+if echo "$OUT_SUCCESS" | grep -q "RESUME_BLOCK_SENTINEL" \
+    && echo "$OUT_SUCCESS" | grep -qF "artifact get acme/runs/r1/e1/session/sess-resume-2.jsonl" \
+    && echo "$OUT_SUCCESS" | grep -qF "$EXPECT_DEST" \
+    && echo "$OUT_SUCCESS" | grep -qF "artifact put /tmp/empty_session acme/runs/r1/e1/session/sess-resume-2.jsonl" \
+    && echo "$OUT_SUCCESS" | grep -qF "SIZE:0" \
+    && echo "$OUT_SUCCESS" | grep -q '^RESUME_SESSION_ID_RESULT:sess-resume-2$'; then
+  ok "resume block: successful restore lands at the right path and clears the object with zero bytes"
+else
+  fail "resume block: successful restore lands at the right path and clears the object with zero bytes (got: $OUT_SUCCESS)"
+fi
+
+# 38c: restore fails -- RESUME_SESSION_ID must be cleared (fresh-path fallback), the
+# object must NOT be touched (nothing to clear -- restore never happened), and the
+# block must survive under set -euo pipefail rather than aborting the pod.
+OUT_GET_FAILS=$(run_resume_scenario get_fails)
+if echo "$OUT_GET_FAILS" | grep -q "RESUME_BLOCK_SENTINEL" \
+    && echo "$OUT_GET_FAILS" | grep -q '^RESUME_SESSION_ID_RESULT:$' \
+    && ! echo "$OUT_GET_FAILS" | grep -q "^artifact put"; then
+  ok "resume block: failed restore falls back and never attempts to clear the object"
+else
+  fail "resume block: failed restore falls back and never attempts to clear the object (got: $OUT_GET_FAILS)"
+fi
+
+# 38d: restore succeeds but the consume-once clear fails -- the node must still
+# resume (losing the clear costs a lingering parked object, not the node), and the
+# block must survive.
+OUT_PUT_FAILS=$(run_resume_scenario put_fails)
+if echo "$OUT_PUT_FAILS" | grep -q "RESUME_BLOCK_SENTINEL" \
+    && echo "$OUT_PUT_FAILS" | grep -q '^RESUME_SESSION_ID_RESULT:sess-resume-2$' \
+    && echo "$OUT_PUT_FAILS" | grep -qF "SIZE:0"; then
+  ok "resume block: a failed consume-once clear still lets the node resume"
+else
+  fail "resume block: a failed consume-once clear still lets the node resume (got: $OUT_PUT_FAILS)"
+fi
+
 echo
 echo "PASS: $PASS  FAIL: $FAIL"
 [ "$FAIL" -eq 0 ]

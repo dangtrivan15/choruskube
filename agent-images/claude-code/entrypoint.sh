@@ -24,6 +24,11 @@ export GITHUB_TOKEN_URL=$(jq -r '.github_token_url // empty' "$CONFIG_FILE")
 COMMAND=$(jq -r '.command // empty' "$CONFIG_FILE")
 EXECUTOR_TYPE=$(jq -r '.executor_type // "ai"' "$CONFIG_FILE")
 MODEL=$(jq -r '.model // empty' "$CONFIG_FILE")
+# A session parked by a previous iteration on a quota hit (see the "Quota resume"
+# block below). Both empty on an ordinary run — Task 8's orchestrator step sets
+# them only when this execution carries a park reference forward.
+RESUME_SESSION_ID=$(jq -r '.session_id // empty' "$CONFIG_FILE")
+RESUME_SESSION_PATH=$(jq -r '.session_artifact_path // empty' "$CONFIG_FILE")
 # Whatever effort the node configures reaches claude's argv verbatim — the set of
 # levels is claude's to define, not this entrypoint's, so no allowlist is kept in
 # sync here. Unlike max_turns/max_retries below, a bad value is not structurally
@@ -768,9 +773,38 @@ else
 
 ${PROMPT}"
 
-  # Attempt 1: run the original prompt
+  # --- Quota resume: restore a session parked by a previous iteration ---
+  # Restoring the transcript alone is sufficient; the directory is keyed on the
+  # claude cwd, which is always /workspace/repo.
+  if [ -n "$RESUME_SESSION_ID" ] && [ -n "$RESUME_SESSION_PATH" ]; then
+    RESTORE_DIR="$HOME/.claude/projects/-workspace-repo"
+    mkdir -p "$RESTORE_DIR"
+    if artifact get "$RESUME_SESSION_PATH" "$RESTORE_DIR/${RESUME_SESSION_ID}.jsonl" 2>/dev/null; then
+      echo "Restored parked session $RESUME_SESSION_ID"
+      # Consume-once: overwrite the object with zero bytes. The parked transcript
+      # may hold credentials the agent discovered and that no redaction we can
+      # write would have caught, so the bytes must not outlive the resume.
+      # This is an overwrite rather than a delete because the presign endpoint
+      # allows only GET and PUT; PUT already permits overwriting anything in the
+      # run's scope, so this costs no extra privilege.
+      : > /tmp/empty_session
+      artifact put /tmp/empty_session "$RESUME_SESSION_PATH" 2>/dev/null || \
+        echo "WARNING: could not clear the parked session object" >&2
+      rm -f /tmp/empty_session
+    else
+      RESUME_SESSION_ID=""  # restore failed; fall back to a fresh run
+      echo "WARNING: could not restore the parked session; starting fresh" >&2
+    fi
+  fi
+
+  # Attempt 1: resume the parked session if there is one, else run the prompt.
   echo "=== AI attempt $ATTEMPT/$MAX_RETRIES ==="
-  CLAUDE_OUTPUT=$(run_claude "$FULL_PROMPT" "" "$SYSTEM_PROMPT")
+  if [ -n "$RESUME_SESSION_ID" ]; then
+    RESUME_PROMPT="Your previous session was paused because the Claude usage quota was exhausted. Quota has now reset. Continue exactly where you left off and finish the task."
+    CLAUDE_OUTPUT=$(run_claude "$RESUME_PROMPT" "--resume $RESUME_SESSION_ID")
+  else
+    CLAUDE_OUTPUT=$(run_claude "$FULL_PROMPT" "" "$SYSTEM_PROMPT")
+  fi
   parse_claude_output "$CLAUDE_OUTPUT"
   echo "Attempt $ATTEMPT: subtype=$CLAUDE_SUBTYPE turns=$CLAUDE_TURNS result_length=${#CLAUDE_RESULT}"
 
