@@ -657,6 +657,19 @@ JSON
     # and the same one activities.go writes back into the next iteration's
     # config.json once a park sets it — so we complete instead of parking again.
     #
+    # session_id and session_artifact_path are coupled in the real emission and
+    # must stay that way here: entrypoint.sh:1191 derives session_id as
+    # "${SESSION_ARTIFACT_PATH:+$CLAUDE_SESSION_ID}", so session_id is non-empty
+    # ONLY when SESSION_ARTIFACT_PATH is non-empty, and entrypoint.sh:1158 clears
+    # SESSION_ARTIFACT_PATH="" on an upload failure precisely so both fields go
+    # null together (a sessionless park; the next iteration starts fresh, per
+    # activities.go's own comment on the pair). A non-null session_id next to a
+    # null session_artifact_path is a combination the real agent can never
+    # produce, so this scenario emits the successful-park shape: both fields
+    # non-null, session_artifact_path a synthetic path of the same
+    # runs/<run>/<exec>/session/<session-id>.jsonl shape entrypoint.sh builds
+    # from "${OUTPUT_PATH%out/}session/${CLAUDE_SESSION_ID}.jsonl".
+    #
     # Completion here is a bare exit 0, the same idiom as the 'success' scenario,
     # not a report-result call: report-result's contract is a single positional
     # <decision> argument for a human-gate node's routing decision (see
@@ -673,17 +686,19 @@ JSON
     fi
     RESET_AT=$(date -u -d "@$(( $(date -u +%s) + ${MOCK_RESUME_SECONDS:-5} ))" '+%Y-%m-%dT%H:%M:%SZ')
     SESSION="mock-session-${NODE_EXECUTION_ID}"
+    SESSION_PATH="runs/${RUN_ID}/${NODE_EXECUTION_ID}/session/${SESSION}.jsonl"
     # Assigned to a variable first, then passed, rather than
     # send-callback "$(jq -n ...)" inline — the same two-step shape
     # entrypoint.sh's own Step 6 uses to build CALLBACK_BODY.
     CALLBACK_BODY=$(jq -n \
       --arg id "$NODE_EXECUTION_ID" --arg run_id "$RUN_ID" \
       --arg resume_at "$RESET_AT" --arg session_id "$SESSION" \
+      --arg session_path "$SESSION_PATH" \
       '{node_execution_id:$id, run_id:$run_id, status:"rate_limited",
         result:"You'"'"'ve hit your session limit",
         artifact_refs:{}, error_message:"Claude quota exhausted",
         resume_at:$resume_at, session_id:$session_id,
-        session_artifact_path:null}')
+        session_artifact_path:$session_path}')
     send-callback "$CALLBACK_BODY"
     echo "Mock agent: rate_limited — parked session $SESSION until $RESET_AT"
     exit 0

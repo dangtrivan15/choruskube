@@ -257,13 +257,21 @@ grep -q '"session_id":' "$RL_CALLBACK_CAPTURE" \
 # The greps above would also pass against a body with unrelated fields mixed in,
 # so parse the exact JSON send-callback received and check it field-for-field
 # against the real agent's callback contract (entrypoint.sh's Step 6): all nine
-# keys present, and non-null exactly where the real agent's park path is always
-# non-null (status/resume_at/session_id), null where a mock never uploads a real
-# transcript (session_artifact_path).
+# keys present, non-null where the real agent's park path is always non-null
+# (status/resume_at/session_id/session_artifact_path), and — the property a
+# review round caught missing here — session_id and session_artifact_path are
+# COUPLED, not just independently present: entrypoint.sh:1191 derives session_id
+# as "${SESSION_ARTIFACT_PATH:+$CLAUDE_SESSION_ID}", so a non-null session_id next
+# to a null session_artifact_path is a combination the real agent can never
+# produce. The biconditional below pins that; the exact-path check pins the mock
+# to the real runs/<run>/<exec>/session/<session-id>.jsonl shape rather than any
+# arbitrary non-null string.
 jq -e \
   '(.node_execution_id == "exec-1") and (.run_id == "run-1")
    and (.status == "rate_limited") and (.session_id | startswith("mock-session-"))
-   and (.session_artifact_path == null) and (.error_message != null)
+   and ((.session_id == null) == (.session_artifact_path == null))
+   and (.session_artifact_path == ("runs/" + .run_id + "/" + .node_execution_id + "/session/" + .session_id + ".jsonl"))
+   and (.error_message != null)
    and (.artifact_refs != null) and (.result != null)
    and (.resume_at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))' \
   "$RL_CALLBACK_CAPTURE" >/dev/null 2>&1 \
@@ -275,13 +283,20 @@ jq -e \
 # activities.go writes back into the next iteration's config.json once
 # params.SessionID is non-empty), so this run must complete rather than park again.
 SESSION_ID=$(jq -r '.session_id // empty' "$RL_CALLBACK_CAPTURE" 2>/dev/null || true)
+SESSION_ARTIFACT_PATH=$(jq -r '.session_artifact_path // empty' "$RL_CALLBACK_CAPTURE" 2>/dev/null || true)
 # Guard against the pattern going vacuous: an empty SESSION_ID would make the
 # grep below match unconditionally (an empty pattern matches every line), so a
 # broken park step that never produced a session id must fail here explicitly
 # rather than let the resume check pass for the wrong reason.
 [ -n "$SESSION_ID" ] && ok "the park step produced a non-empty session id to resume with" \
   || fail "the park step produced a non-empty session id to resume with"
-jq -n --arg sid "$SESSION_ID" '{session_id: $sid, session_artifact_path: null}' > "$RL_CONFIG"
+# Carries the park step's ACTUAL session_artifact_path through, rather than
+# hardcoding null — activities.go writes config.json's session_id and
+# session_artifact_path verbatim from whatever the callback sent (both together
+# or neither), so a fixture that hardcoded null here would itself model the same
+# impossible combination this round's fix removed from the mock's own emission.
+jq -n --arg sid "$SESSION_ID" --arg spath "$SESSION_ARTIFACT_PATH" \
+  '{session_id: $sid, session_artifact_path: $spath}' > "$RL_CONFIG"
 rm -f "$RL_CALLBACK_CAPTURE"
 set +e
 RESUME_OUT=$(run_rate_limited exec-2 2>&1)
