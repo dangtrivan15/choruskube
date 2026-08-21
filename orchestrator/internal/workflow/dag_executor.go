@@ -919,6 +919,19 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 							// the main loop (completionCh.Send does both jobs here).
 							logger.Warn("Could not invalidate the parked execution; failing the node",
 								"execID", parkedExecID, "err", invErr)
+							// A concurrent manual pause may have stamped this same
+							// execID into pauseInterrupted while it was parked (its
+							// tracker still read "running" — see the comment above
+							// this branch). Left in place, the pre-existing
+							// wasPaused recovery below would intercept this
+							// synthetic completion first, re-queue silently with no
+							// sessionID/sessionArtifactPath, and bypass the explicit
+							// failure this branch exists to guarantee. This
+							// execution is failing because its own bookkeeping
+							// write failed, not because a human paused it, so that
+							// recovery is the wrong handler for it — sever the
+							// misroute at its source.
+							delete(pauseInterrupted, parkedExecID)
 							completionCh.Send(gCtx, nodeCompletion{
 								nodeID: parkedNodeID,
 								err:    fmt.Errorf("invalidate parked execution after quota reset: %w", invErr),
@@ -938,6 +951,12 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 							}).Get(gCtx, &newExecID); createErr != nil {
 							logger.Error("Could not create the resumed execution; failing the node",
 								"nodeID", parkedNodeID, "err", createErr)
+							// Same misroute risk as the invalidate-failure branch above:
+							// a concurrent pause may have stamped parkedExecID into
+							// pauseInterrupted while this node was parked. Clear it so
+							// this synthetic completion reaches the normal failure path,
+							// not the session-blind wasPaused recovery.
+							delete(pauseInterrupted, parkedExecID)
 							completionCh.Send(gCtx, nodeCompletion{
 								nodeID: parkedNodeID,
 								err:    fmt.Errorf("create resumed execution after quota reset: %w", createErr),
@@ -961,6 +980,14 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 							sessionID:           sessionID,
 							sessionArtifactPath: sessionArtifactPath,
 						}
+						// A stale pauseInterrupted[parkedExecID] entry here (from a
+						// pause stamped during the park) is inert, not misleading: no
+						// completion for the old execID is ever sent on this success
+						// path, and execIDs are fresh UUIDs that are never reused, so
+						// it could never be matched by a future lookup. Deleted anyway
+						// so pauseInterrupted does not accumulate a dead entry per
+						// paused-and-parked node over a long-running workflow.
+						delete(pauseInterrupted, parkedExecID)
 						requeueCh.Send(gCtx, struct{}{})
 					})
 					return

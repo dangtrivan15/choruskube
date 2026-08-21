@@ -1675,6 +1675,115 @@ func (s *DAGExecutorTestSuite) TestRateLimitedNodeCarriesForceReadyThroughRequeu
 	s.env.AssertExpectations(s.T())
 }
 
+// TestRateLimitedNodeParkedDuringPauseStillFailsExplicitly covers the fix-round-2 finding:
+// a manual pause landing during a park, followed by a bookkeeping failure, used to silently
+// misroute into the pre-existing wasPaused recovery — which has no sessionID/
+// sessionArtifactPath fields at all — discarding the parked session and re-queuing without
+// error instead of failing the node as TestRateLimitedNodeInvalidateFailureMarksNodeFailed
+// established.
+//
+// Sequence: A parks (rate_limited). While it sleeps, a pause signal arrives — the parked
+// node's tracker still reads "running" (that's what keeps runningCount correct during the
+// park), so the pre-existing pause-stamping loop matches it and adds its execID to
+// pauseInterrupted; this window did not exist before the fix-round-1 change moved the sleep
+// off the synchronous callback. A resume signal follows so the workflow can proceed
+// normally once the park ends. The invalidate write is mocked to fail 3 times (exhausting
+// dbCtx's RetryPolicy) — a transient failure — and then to SUCCEED on any further call: this
+// shape specifically distinguishes "the fix applied" (no further call ever happens; the node
+// simply fails) from "the fix missing" (the wasPaused branch's own independent invalidate
+// retry succeeds on that later call, and it silently re-queues without a session — an
+// always-failing invalidate would reach "failed" either way and not tell the two cases
+// apart).
+//
+// Assertions: the node ends explicitly "failed", and CreateNodeExecution for iteration 2 is
+// never attempted at all — proving no fresh execution (with or without a session reference)
+// is silently created.
+func (s *DAGExecutorTestSuite) TestRateLimitedNodeParkedDuringPauseStillFailsExplicitly() {
+	nodeA := uuid.New()
+	execA := uuid.New()
+	runID := uuid.New()
+
+	snapshot := `{
+		"nodes": [
+			{"templateNodeId": "` + nodeA.String() + `", "label": "A", "executorType": "ai", "timeoutSeconds": 1800, "isEntrypoint": true}
+		],
+		"edges": []
+	}`
+
+	s.env.OnActivity("GetGraphRuntime", mock.Anything, runID).Return(snapshot, nil)
+	s.env.OnActivity("WriteExecutionLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("InitRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("AppendRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("FetchPodLogs", mock.Anything, mock.Anything).Return("", nil).Maybe()
+	s.env.OnActivity("LoadPredecessorInputs", mock.Anything, mock.Anything).Return(map[string]string{}, nil).Maybe()
+	s.env.OnActivity("LoadRequiredInputArtifacts", mock.Anything, mock.Anything).Return(activity.LoadRequiredInputArtifactsResult{}, nil).Maybe()
+	s.env.OnActivity("LoadReviewHistoryJSON", mock.Anything, mock.Anything).Return("[]", nil).Maybe()
+	s.env.OnActivity("DeleteAgentJob", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("SetTraversedEdges", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("UpdateWorkflowRunStatus", mock.Anything, mock.Anything).Return(nil)
+
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == nodeA && p.Iteration == 1
+	})).Return(execA, nil).Once()
+
+	// No fresh execution — with or without a session — may ever be created for this node:
+	// the bookkeeping failure must end in an explicit failure, never a silent re-queue.
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == nodeA && p.Iteration == 2
+	})).Return(uuid.Nil, fmt.Errorf("must not be called")).Maybe().Run(func(args mock.Arguments) {
+		s.Fail("a node whose bookkeeping failed while paused must never be silently re-queued")
+	})
+
+	resumeAt := s.env.Now().Add(30 * time.Minute)
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.NodeExecutionID == execA
+	})).Return(activity.CallbackResult{
+		Status:              "rate_limited",
+		ResumeAt:            resumeAt,
+		SessionID:           "sess-1",
+		SessionArtifactPath: "runs/r/e/session/sess-1.jsonl",
+	}, nil).Once()
+
+	// The parked node's own invalidate write fails 3 times (dbCtx's RetryPolicy is
+	// MaximumAttempts: 3) — a transient failure. Registered as a SEPARATE, later
+	// expectation: any call beyond those 3 succeeds. Under the fix, no such further call
+	// ever happens (pauseInterrupted is cleared before the synthetic failure completion
+	// is sent, so the wasPaused recovery branch — the only other code that would retry
+	// this write — is never reached). This is deliberately not "always fails": an
+	// always-failing invalidate reaches "failed" via either code path and would not tell
+	// the fixed and unfixed behavior apart.
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.MatchedBy(func(p activity.UpdateNodeExecStatusParams) bool {
+		return p.NodeExecutionID == execA && p.Status == "invalidated"
+	})).Return(fmt.Errorf("db unavailable")).Times(3)
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.MatchedBy(func(p activity.UpdateNodeExecStatusParams) bool {
+		return p.NodeExecutionID == execA && p.Status == "invalidated"
+	})).Return(nil).Maybe()
+
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.MatchedBy(func(p activity.UpdateNodeExecStatusParams) bool {
+		return p.NodeExecutionID == execA && p.Status == "failed"
+	})).Return(nil).Once()
+
+	// Everything else (the pause stamp, etc.) — no assertion needed on these.
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	// A pause lands while A is parked: its tracker still reads "running" (that is what
+	// keeps runningCount correct through the whole park), so the top-of-loop pause-stamp
+	// matches it and adds its execID to pauseInterrupted. Resume follows so the run
+	// proceeds normally once the park itself ends ~30 (virtual) minutes later.
+	s.env.RegisterDelayedCallback(func() {
+		s.env.SignalWorkflow(SignalPause, nil)
+	}, 50*time.Millisecond)
+	s.env.RegisterDelayedCallback(func() {
+		s.env.SignalWorkflow(SignalResume, nil)
+	}, 100*time.Millisecond)
+
+	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{RunID: runID, GraphVersion: 1})
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+	s.env.AssertExpectations(s.T())
+}
+
 // TestGraphWithLoopBackEdge_Rejected verifies the loop-back path through back-edges.
 // Same graph as TestGraphWithLoopBackEdge.
 // Signals A (approved), C (rejected) → B loops back, then C (approved) → D completes.
