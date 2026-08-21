@@ -796,11 +796,13 @@ ${PROMPT}"
     # it into the same guarded `if` as the fetch below so both fall back to a
     # fresh run instead of failing the node.
     #
-    # stderr suppressed deliberately on both mkdir and artifact get: artifact's
-    # failure output can include a presigned URL, which embeds a signature --
-    # unlike the token-fetch diagnostics captured on the park side, this must
-    # never reach pod logs.
-    if mkdir -p "$RESTORE_DIR" 2>/dev/null && artifact get "$RESUME_SESSION_PATH" "$RESTORE_TRANSCRIPT" 2>/dev/null; then
+    # mkdir's stderr is deliberately left UNsuppressed: "Permission denied",
+    # "No space left on device", "File exists" are plain OS diagnostics with
+    # nothing secret in them -- exactly what an operator needs to see in pod
+    # logs when a restore degrades to a fresh run. artifact's stderr below is
+    # different and stays suppressed: on failure it can echo a presigned URL,
+    # which embeds a signature, so it must never reach pod logs.
+    if mkdir -p "$RESTORE_DIR" && artifact get "$RESUME_SESSION_PATH" "$RESTORE_TRANSCRIPT" 2>/dev/null; then
       echo "Restored parked session $RESUME_SESSION_ID -> $RESTORE_TRANSCRIPT"
       # Consume-once: overwrite the object with zero bytes. The parked transcript
       # may hold credentials the agent discovered and that no redaction we can
