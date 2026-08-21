@@ -1231,9 +1231,16 @@ func (s *DAGExecutorTestSuite) TestRateLimitedNodeSleepsThenRequeues() {
 	execA2 := uuid.New()
 	runID := uuid.New()
 
+	// model_first_iteration/model_subsequent_iteration let this test prove reviewPass
+	// carries forward across the park (see nodeTracker.reviewPass): a rate-limited
+	// park-and-resume is an infra retry, not a review decision, so the resumed
+	// iteration must still resolve reviewPass == 1 and pick the first-iteration
+	// model — not silently downgrade to the subsequent-iteration one, which is what
+	// a regression that reset reviewPass to its Go zero value (0) would cause,
+	// since the gating check is `tracker.reviewPass == 1`, not `!= 0`.
 	snapshot := `{
 		"nodes": [
-			{"templateNodeId": "` + nodeA.String() + `", "label": "A", "executorType": "ai", "timeoutSeconds": 1800, "isEntrypoint": true}
+			{"templateNodeId": "` + nodeA.String() + `", "label": "A", "executorType": "ai", "timeoutSeconds": 1800, "isEntrypoint": true, "configOverrides": {"model_first_iteration": "model-first", "model_subsequent_iteration": "model-subsequent"}}
 		],
 		"edges": []
 	}`
@@ -1283,7 +1290,8 @@ func (s *DAGExecutorTestSuite) TestRateLimitedNodeSleepsThenRequeues() {
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
 		return p.NodeExecutionID == execA2 &&
 			p.SessionID == "sess-1" &&
-			p.SessionArtifactPath == "runs/r/e/session/sess-1.jsonl"
+			p.SessionArtifactPath == "runs/r/e/session/sess-1.jsonl" &&
+			p.Model == "model-first"
 	})).Return(activity.CallbackResult{Status: "completed", Result: "done"}, nil).Once()
 
 	// "completed" for execA2 — the re-queued execution succeeds. Without this
@@ -1301,6 +1309,366 @@ func (s *DAGExecutorTestSuite) TestRateLimitedNodeSleepsThenRequeues() {
 	})).Return("no_decision", nil).Once()
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{RunID: runID, GraphVersion: 1})
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+	s.env.AssertExpectations(s.T())
+}
+
+// TestRateLimitedNodeInvalidateFailureMarksNodeFailed proves the fix for Finding 1: if the
+// park-and-resume coroutine's own bookkeeping write (invalidating the parked execution)
+// itself fails, the node must end up explicitly "failed" — never silently "completed".
+//
+// Before this fix, completion.err is nil on the rate-limited path (see the future-await
+// goroutine), so simply falling through past a failed invalidate write landed in the
+// SUCCESS finalization a few lines below (completion.err != nil evaluates false), marking
+// the node "completed" with an empty result. The fix sends a synthetic errored
+// nodeCompletion through completionCh instead, routing through the existing, already-tested
+// failure path.
+func (s *DAGExecutorTestSuite) TestRateLimitedNodeInvalidateFailureMarksNodeFailed() {
+	nodeA := uuid.New()
+	execA := uuid.New()
+	runID := uuid.New()
+
+	snapshot := `{
+		"nodes": [
+			{"templateNodeId": "` + nodeA.String() + `", "label": "A", "executorType": "ai", "timeoutSeconds": 1800, "isEntrypoint": true}
+		],
+		"edges": []
+	}`
+
+	s.env.OnActivity("UpdateWorkflowRunStatus", mock.Anything, mock.Anything).Return(nil)
+	s.env.OnActivity("GetGraphRuntime", mock.Anything, runID).Return(snapshot, nil)
+	s.env.OnActivity("WriteExecutionLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("InitRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("AppendRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("FetchPodLogs", mock.Anything, mock.Anything).Return("", nil).Maybe()
+	s.env.OnActivity("LoadPredecessorInputs", mock.Anything, mock.Anything).Return(map[string]string{}, nil).Maybe()
+	s.env.OnActivity("LoadRequiredInputArtifacts", mock.Anything, mock.Anything).Return(activity.LoadRequiredInputArtifactsResult{}, nil).Maybe()
+	s.env.OnActivity("LoadReviewHistoryJSON", mock.Anything, mock.Anything).Return("[]", nil).Maybe()
+	s.env.OnActivity("DeleteAgentJob", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("SetTraversedEdges", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == nodeA && p.Iteration == 1
+	})).Return(execA, nil).Once()
+	// Iteration 2 must never be created — the invalidate write (below) fails before the
+	// coroutine ever gets there.
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == nodeA && p.Iteration == 2
+	})).Return(uuid.Nil, fmt.Errorf("must not be called")).Maybe().Run(func(args mock.Arguments) {
+		s.Fail("iteration 2 must never be created when the invalidate write itself fails")
+	})
+
+	resumeAt := s.env.Now().Add(30 * time.Minute)
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.NodeExecutionID == execA
+	})).Return(activity.CallbackResult{
+		Status:   "rate_limited",
+		ResumeAt: resumeAt,
+	}, nil).Once()
+
+	// The invalidate write itself fails — simulating a transient DB/activity error after
+	// the quota reset. dbCtx carries RetryPolicy{MaximumAttempts: 3}, so this activity is
+	// actually invoked up to 3 times before .Get returns the error to the coroutine;
+	// Times(3) (not Once) keeps every attempt answered by the same deliberate error
+	// instead of the 2nd/3rd attempts falling through as unmocked calls.
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.MatchedBy(func(p activity.UpdateNodeExecStatusParams) bool {
+		return p.NodeExecutionID == execA && p.Status == "invalidated"
+	})).Return(fmt.Errorf("db unavailable")).Times(3)
+
+	// The node must end up explicitly failed...
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.MatchedBy(func(p activity.UpdateNodeExecStatusParams) bool {
+		return p.NodeExecutionID == execA && p.Status == "failed"
+	})).Return(nil).Once()
+
+	// ...and never silently completed.
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.MatchedBy(func(p activity.UpdateNodeExecStatusParams) bool {
+		return p.NodeExecutionID == execA && p.Status == "completed"
+	})).Return(nil).Maybe().Run(func(args mock.Arguments) {
+		s.Fail("a node whose park bookkeeping failed must never be marked completed")
+	})
+
+	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{RunID: runID, GraphVersion: 1})
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+	s.env.AssertExpectations(s.T())
+}
+
+// TestRateLimitedNodeParkDoesNotBlockConcurrentSibling proves the fix for Finding 2: the
+// sleep must not block the selector for the whole park, or a sibling node's own completion
+// (its DB writes, job cleanup, and edge evaluation) would stall for the entire quota window.
+//
+// Model: TestFanOutGraph's A → B, A → C parallel shape. B parks on quota for 30 (virtual)
+// minutes; C is an independent sibling that finishes on its own a (virtual) minute later.
+// The assertion is timing-based: C's "completed" DB write must land well before B's
+// post-park "invalidated" write — proof C was never stalled waiting for B's sleep to
+// return. Against the pre-fix synchronous implementation this fails hard: the main loop's
+// Select call cannot return (and therefore cannot rebuild the selector and pick up C's
+// already-pending Send) until the synchronous sleep inside the callback itself returns, so
+// C's completion would only be processed AFTER B's entire 30-minute park elapses — see the
+// report for the empirical run against the pre-fix code proving this.
+func (s *DAGExecutorTestSuite) TestRateLimitedNodeParkDoesNotBlockConcurrentSibling() {
+	nodeA := uuid.New()
+	nodeB := uuid.New()
+	nodeC := uuid.New()
+	execA := uuid.New()
+	execB := uuid.New()
+	execB2 := uuid.New()
+	execC := uuid.New()
+	runID := uuid.New()
+
+	snapshot := `{
+		"nodes": [
+			{"templateNodeId": "` + nodeA.String() + `", "label": "A", "executorType": "ai", "timeoutSeconds": 1800, "isEntrypoint": true},
+			{"templateNodeId": "` + nodeB.String() + `", "label": "B", "executorType": "ai", "timeoutSeconds": 1800},
+			{"templateNodeId": "` + nodeC.String() + `", "label": "C", "executorType": "ai", "timeoutSeconds": 1800}
+		],
+		"edges": [
+			{"sourceNodeId": "` + nodeA.String() + `", "targetNodeId": "` + nodeB.String() + `"},
+			{"sourceNodeId": "` + nodeA.String() + `", "targetNodeId": "` + nodeC.String() + `"}
+		]
+	}`
+
+	s.env.OnActivity("UpdateWorkflowRunStatus", mock.Anything, mock.Anything).Return(nil)
+	s.env.OnActivity("GetGraphRuntime", mock.Anything, runID).Return(snapshot, nil)
+	s.env.OnActivity("WriteExecutionLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("InitRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("AppendRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("FetchPodLogs", mock.Anything, mock.Anything).Return("", nil).Maybe()
+	s.env.OnActivity("LoadPredecessorInputs", mock.Anything, mock.Anything).Return(map[string]string{}, nil).Maybe()
+	s.env.OnActivity("LoadRequiredInputArtifacts", mock.Anything, mock.Anything).Return(activity.LoadRequiredInputArtifactsResult{}, nil).Maybe()
+	s.env.OnActivity("LoadReviewHistoryJSON", mock.Anything, mock.Anything).Return("[]", nil).Maybe()
+	s.env.OnActivity("DeleteAgentJob", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("SetTraversedEdges", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == nodeA
+	})).Return(execA, nil).Once()
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == nodeB && p.Iteration == 1
+	})).Return(execB, nil).Once()
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == nodeB && p.Iteration == 2
+	})).Return(execB2, nil).Once()
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == nodeC
+	})).Return(execC, nil).Once()
+
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.NodeExecutionID == execA
+	})).Return(activity.CallbackResult{}, nil).Once()
+
+	resumeAt := s.env.Now().Add(30 * time.Minute)
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.NodeExecutionID == execB
+	})).Return(activity.CallbackResult{
+		Status:   "rate_limited",
+		ResumeAt: resumeAt,
+	}, nil).Once()
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.NodeExecutionID == execB2
+	})).Return(activity.CallbackResult{}, nil).Once()
+
+	// C is an independent sibling: a short (virtual) delay, well under B's 30-minute
+	// park, so its completion timestamp is a distinct, meaningfully-earlier point than
+	// B's post-park write rather than both happening to land at t=0.
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.NodeExecutionID == execC
+	})).After(1*time.Minute).Return(activity.CallbackResult{}, nil).Once()
+
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execA
+	})).Return("no_decision", nil).Once()
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execB2
+	})).Return("no_decision", nil).Once()
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execC
+	})).Return("no_decision", nil).Once()
+
+	var mu sync.Mutex
+	var cCompletedAt, bInvalidatedAt time.Time
+
+	// Specific, timestamp-capturing matchers must be registered before the broad
+	// catch-all below so they win the match for these two exact calls.
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.MatchedBy(func(p activity.UpdateNodeExecStatusParams) bool {
+		return p.NodeExecutionID == execC && p.Status == "completed"
+	})).Run(func(args mock.Arguments) {
+		mu.Lock()
+		cCompletedAt = s.env.Now()
+		mu.Unlock()
+	}).Return(nil).Once()
+
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.MatchedBy(func(p activity.UpdateNodeExecStatusParams) bool {
+		return p.NodeExecutionID == execB && p.Status == "invalidated"
+	})).Run(func(args mock.Arguments) {
+		mu.Lock()
+		bInvalidatedAt = s.env.Now()
+		mu.Unlock()
+	}).Return(nil).Once()
+
+	// Everything else (A's completion, B2's completion) — no timing assertion needed.
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{RunID: runID, GraphVersion: 1})
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+	s.env.AssertExpectations(s.T())
+
+	mu.Lock()
+	defer mu.Unlock()
+	s.False(cCompletedAt.IsZero(), "C's completion must have been recorded")
+	s.False(bInvalidatedAt.IsZero(), "B's post-park invalidate must have been recorded")
+	s.True(cCompletedAt.Before(bInvalidatedAt),
+		"C (an independent sibling) must complete before B's park ends — if the sleep "+
+			"blocked the selector, C's own completion processing would be stalled until "+
+			"after B's entire 30-minute park finishes")
+	s.True(cCompletedAt.Before(resumeAt),
+		"C must complete well within B's park window, not just barely before B's post-park write")
+}
+
+// TestRateLimitedNodeCarriesForceReadyThroughRequeue proves the Minor finding: forceReady
+// (like reviewPass, proved in TestRateLimitedNodeSleepsThenRequeues) must survive the
+// park-and-resume carry-forward at the rate-limited requeue site specifically. This is a
+// THIRD reachable forceReady carry-forward site alongside the two already covered by
+// TestSupervisorRoutesPastAnUnrunPredecessor (original activation) and
+// TestForceReadyCarriesForwardThroughLateHumanDecisionRetry (late-human-decision retry) —
+// neither of those exercises the rate-limited requeue path this task adds.
+//
+// Graph mirrors TestForceReadyCarriesForwardThroughLateHumanDecisionRetry: implement fans
+// out to code_review (which escalates) and test (which fails outright and never completes,
+// so final_approval's ordinary predecessor gate stays genuinely, permanently blocked — not
+// just delayed). The Supervisor routes to final_approval (force-ready). Unlike that sibling
+// test, final_approval is an AI node here, and its first execution rate-limits instead of
+// timing out unanswered.
+//
+// The assertion is structural: final_approval's iteration-2 ExecuteAINodeFromSnapshot call
+// can only ever happen if forceReady survived the coroutine's tracker rebuild — test never
+// completes, so without forceReady, FindReadyNodes never re-admits final_approval and the
+// .Once() mock below simply never fires, caught by AssertExpectations.
+func (s *DAGExecutorTestSuite) TestRateLimitedNodeCarriesForceReadyThroughRequeue() {
+	implement := uuid.New()
+	codeReview := uuid.New()
+	test := uuid.New()
+	finalApproval := uuid.New()
+	supervisor := uuid.New()
+
+	execImplement := uuid.New()
+	execCodeReview := uuid.New()
+	execTest := uuid.New()
+	execFinalApproval1 := uuid.New()
+	execFinalApproval2 := uuid.New()
+	execSupervisor := uuid.New()
+
+	runID := uuid.New()
+
+	snapshot := `{
+		"nodes": [
+			{"templateNodeId": "` + implement.String() + `", "label": "implement", "executorType": "ai", "timeoutSeconds": 1800, "isEntrypoint": true},
+			{"templateNodeId": "` + codeReview.String() + `", "label": "code_review", "executorType": "ai", "timeoutSeconds": 1800},
+			{"templateNodeId": "` + test.String() + `", "label": "test", "executorType": "ai", "timeoutSeconds": 1800},
+			{"templateNodeId": "` + finalApproval.String() + `", "label": "final_approval", "executorType": "ai", "timeoutSeconds": 1800},
+			{"templateNodeId": "` + supervisor.String() + `", "label": "supervisor", "executorType": "human", "timeoutSeconds": 3600, "configOverrides": {"routing_hub": true}}
+		],
+		"edges": [
+			{"sourceNodeId": "` + implement.String() + `", "targetNodeId": "` + codeReview.String() + `"},
+			{"sourceNodeId": "` + implement.String() + `", "targetNodeId": "` + test.String() + `"},
+			{"sourceNodeId": "` + test.String() + `", "targetNodeId": "` + finalApproval.String() + `", "condition": "approved"}
+		]
+	}`
+
+	s.env.OnActivity("UpdateWorkflowRunStatus", mock.Anything, mock.Anything).Return(nil)
+	s.env.OnActivity("GetGraphRuntime", mock.Anything, runID).Return(snapshot, nil)
+	s.env.OnActivity("WriteExecutionLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("InitRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("AppendRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("SetTraversedEdges", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("LoadPredecessorInputs", mock.Anything, mock.Anything).Return(map[string]string{}, nil).Maybe()
+	s.env.OnActivity("LoadRequiredInputArtifacts", mock.Anything, mock.Anything).Return(activity.LoadRequiredInputArtifactsResult{}, nil).Maybe()
+	s.env.OnActivity("LoadReviewHistoryJSON", mock.Anything, mock.Anything).Return("[]", nil).Maybe()
+	s.env.OnActivity("FetchPodLogs", mock.Anything, mock.Anything).Return("", nil).Maybe()
+	s.env.OnActivity("DeleteAgentJob", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == implement
+	})).Return(execImplement, nil).Once()
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == codeReview
+	})).Return(execCodeReview, nil).Once()
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == test
+	})).Return(execTest, nil).Once()
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == supervisor
+	})).Return(execSupervisor, nil).Once()
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == finalApproval && p.Iteration == 1
+	})).Return(execFinalApproval1, nil).Once()
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == finalApproval && p.Iteration == 2
+	})).Return(execFinalApproval2, nil).Once()
+
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.TemplateNodeID == implement
+	})).Return(activity.CallbackResult{}, nil).Once()
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.TemplateNodeID == codeReview
+	})).Return(activity.CallbackResult{}, nil).Once()
+	// test fails outright — permanently, never retried in this test — so the predecessor
+	// gate final_approval depends on stays blocked for the rest of the run.
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.TemplateNodeID == test
+	})).Return(activity.CallbackResult{}, fmt.Errorf("test environment down")).Once()
+
+	resumeAt := s.env.Now().Add(30 * time.Minute)
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.NodeExecutionID == execFinalApproval1
+	})).Return(activity.CallbackResult{
+		Status:   "rate_limited",
+		ResumeAt: resumeAt,
+	}, nil).Once()
+	// This call can only happen if forceReady survived the coroutine's tracker rebuild —
+	// test (final_approval's ordinary predecessor) never completes in this graph.
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.NodeExecutionID == execFinalApproval2
+	})).Return(activity.CallbackResult{}, nil).Once()
+
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execImplement
+	})).Return("no_decision", nil).Once()
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execCodeReview
+	})).Return("escalate", nil).Once()
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execSupervisor
+	})).Return("route:final_approval", nil).Once()
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execFinalApproval2
+	})).Return("no_decision", nil).Once()
+	// execTest and execFinalApproval1 never reach the decision-read step: test fails
+	// outright and execFinalApproval1's rate-limited outcome routes through the park
+	// branch, not the normal decision-evaluation path.
+
+	s.env.OnActivity("SetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.SetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execSupervisor && p.Decision == "route:final_approval"
+	})).Return(nil).Once()
+
+	// The Supervisor routes to final_approval as soon as it is paged.
+	s.env.RegisterDelayedCallback(func() {
+		s.env.SignalWorkflow(SignalHumanDecisionPrefix+execSupervisor.String(), HumanDecisionSignal{
+			NodeExecutionID: execSupervisor.String(),
+			Decision:        "route:final_approval",
+			Feedback:        "Routing straight to final approval",
+		})
+	}, 0)
+
+	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
+		RunID: runID, GraphVersion: 1,
+	})
 
 	s.True(s.env.IsWorkflowCompleted())
 	s.NoError(s.env.GetWorkflowError())
