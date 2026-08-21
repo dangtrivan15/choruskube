@@ -77,3 +77,40 @@ quota_reset_at() {
 
     echo "$target"
 }
+
+# redact_transcript <src> <dst>
+#
+# Writes a redacted copy of a Claude session transcript. The transcript is a
+# verbatim record of everything the agent read, so it can contain credentials the
+# agent printed: fetch-github-token is on PATH, and an agent that runs `env`
+# captures CLAUDE_CODE_OAUTH_TOKEN, which is a roughly year-long org credential.
+#
+# Exact value substitution for the two tokens we hold, plus a shape scrub for
+# GitHub tokens we do not. Byte substitution cannot corrupt the JSONL framing
+# because these tokens are [A-Za-z0-9_-] only and are therefore never
+# JSON-escaped — which would not hold for, say, a PEM body with newlines.
+#
+# The sed program is written to a private file rather than passed as arguments,
+# because a secret in argv is visible in `ps` to anything sharing the pod's PID
+# namespace.
+redact_transcript() {
+    local src="$1" dst="$2"
+    local script
+    script=$(umask 077 && mktemp)
+    # shellcheck disable=SC2064
+    trap "rm -f '$script'" RETURN
+
+    if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+        printf 's|%s|[redacted-oauth-token]|g\n' "$CLAUDE_CODE_OAUTH_TOKEN" >> "$script"
+    fi
+    if [ -n "${GITHUB_TOKEN_FOR_REDACTION:-}" ]; then
+        printf 's|%s|[redacted-github-token]|g\n' "$GITHUB_TOKEN_FOR_REDACTION" >> "$script"
+    fi
+    # Defence in depth for credentials we never held.
+    cat >> "$script" <<'SEDRULES'
+s|gh[psuro]_[A-Za-z0-9]\{16,\}|[redacted-github-token]|g
+s|github_pat_[A-Za-z0-9_]\{20,\}|[redacted-github-token]|g
+SEDRULES
+
+    sed -f "$script" "$src" > "$dst"
+}

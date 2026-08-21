@@ -74,7 +74,7 @@ quota_reset_at "You've hit your session limit" "$NOW_A" >/dev/null 2>&1 \
 
 # --- Test 11: a reset landing at exactly +21600s (the boundary) must park ---
 # NOW_D is 12:00pm on 2026-08-21. 6:00pm is 6 hours later = 21600s exactly.
-# Expected: $((NOW_D + 21600)) = $((1787305200 + 21600)) = 1787326800
+# Expected: $((NOW_D + 21600)) = $((1787313600 + 21600)) = 1787335200
 GOT=$(quota_reset_at "You've hit your session limit · resets 6:00pm (UTC)" "$NOW_D") \
   && [ "$GOT" = "$((NOW_D + 21600))" ] \
   && ok "parks a reset at exactly +21600s" || fail "parks a reset at exactly +21600s"
@@ -84,6 +84,42 @@ GOT=$(quota_reset_at "You've hit your session limit · resets 6:00pm (UTC)" "$NO
 # This is 60 seconds beyond the 21600s bound.
 quota_reset_at "You've hit your session limit · resets 6:01pm (UTC)" "$NOW_D" >/dev/null 2>&1 \
   && fail "refuses a reset at +21660s" || ok "refuses a reset at +21660s"
+
+# --- Test 13: exact token values are substituted out ---
+export CLAUDE_CODE_OAUTH_TOKEN="sk-ant-oat01-EXAMPLEEXAMPLEEXAMPLE"
+export GITHUB_TOKEN_FOR_REDACTION="ghs_EXAMPLE0000000000000000000000000000"
+SRC="$TESTDIR/transcript.jsonl"
+DST="$TESTDIR/redacted.jsonl"
+cat > "$SRC" <<JSONL
+{"type":"user","message":{"content":"token is $CLAUDE_CODE_OAUTH_TOKEN ok"}}
+{"type":"assistant","message":{"content":"gh token $GITHUB_TOKEN_FOR_REDACTION here"}}
+{"type":"assistant","message":{"content":"unrelated ghp_OTHER0000000000000000000000000000 value"}}
+{"type":"result","result":"done"}
+JSONL
+redact_transcript "$SRC" "$DST"
+
+grep -qF "$CLAUDE_CODE_OAUTH_TOKEN" "$DST" \
+  && fail "oauth token removed" || ok "oauth token removed"
+grep -qF "$GITHUB_TOKEN_FOR_REDACTION" "$DST" \
+  && fail "github token removed" || ok "github token removed"
+grep -q "ghp_OTHER" "$DST" \
+  && fail "unknown github token shape scrubbed" || ok "unknown github token shape scrubbed"
+
+# --- Test 14: redaction preserves valid JSONL, line for line ---
+[ "$(wc -l < "$SRC")" = "$(wc -l < "$DST")" ] \
+  && ok "line count preserved" || fail "line count preserved"
+if jq -e . "$DST" >/dev/null 2>&1; then ok "every line still parses as JSON"; else fail "every line still parses as JSON"; fi
+[ "$(jq -r 'select(.type=="result") | .result' "$DST")" = "done" ] \
+  && ok "untouched content survives" || fail "untouched content survives"
+
+# --- Test 15: no secret value reaches a process argument list ---
+# A secret passed as a sed expression would be visible in `ps` to anything
+# sharing the pod's PID namespace.
+grep -qE 's\|\$(CLAUDE_CODE_OAUTH_TOKEN|GITHUB_TOKEN_FOR_REDACTION)' "$LIB" \
+  && fail "secrets kept out of argv" || ok "secrets kept out of argv"
+grep -q -- '-f "\$script"' "$LIB" \
+  && ok "redaction uses a sed script file" || fail "redaction uses a sed script file"
+unset CLAUDE_CODE_OAUTH_TOKEN GITHUB_TOKEN_FOR_REDACTION
 
 echo
 echo "PASS: $PASS  FAIL: $FAIL"
