@@ -175,31 +175,102 @@ unset CLAUDE_CODE_OAUTH_TOKEN
 
 ENTRYPOINT="$(dirname "${BASH_SOURCE[0]}")/../entrypoint.sh"
 
-# --- Test 12: the entrypoint sources the library ---
+# --- Test 17: the entrypoint sources the library ---
 grep -q 'source .*quota-lib.sh' "$ENTRYPOINT" \
   && ok "entrypoint sources quota-lib.sh" || fail "entrypoint sources quota-lib.sh"
 
-# --- Test 13: a quota hit is detected off the result text ---
+# --- Test 18: a quota hit is detected off the result text ---
 grep -q 'QUOTA_RESET_AT=$(quota_reset_at' "$ENTRYPOINT" \
   && ok "entrypoint detects a quota hit" || fail "entrypoint detects a quota hit"
 
-# --- Test 14: every post-main retry loop is guarded on QUOTA_RESET_AT ---
+# --- Test 19: every post-main retry loop is guarded on QUOTA_RESET_AT ---
 # The reference failure spent all three attempts in 28 seconds because the
 # artifact loop re-entered run_claude after the limit was already known.
 GUARDED=$(grep -c 'z "\$QUOTA_RESET_AT" \] && \[ \$ATTEMPT -lt \$MAX_RETRIES' "$ENTRYPOINT" || true)
 [ "$GUARDED" -eq 4 ] \
   && ok "all four retry loops guarded" || fail "all four retry loops guarded (found $GUARDED of 4)"
 
-# --- Test 15: the quota reason is not overwritten by a later branch ---
+# --- Test 20: the quota reason is not overwritten by a later branch ---
 grep -q 'ERROR_MESSAGE="Claude quota exhausted' "$ENTRYPOINT" \
   && ok "quota reason is set" || fail "quota reason is set"
 grep -q 'if \[ -z "\$QUOTA_RESET_AT" \] && \[ -n "\$MISSING_FILES" \]' "$ENTRYPOINT" \
   && ok "artifact branch cannot overwrite the quota reason" \
   || fail "artifact branch cannot overwrite the quota reason"
 
-# --- Test 16: the library ships in the image ---
+# --- Test 21: the library ships in the image ---
 grep -q 'COPY quota-lib.sh' "$(dirname "${BASH_SOURCE[0]}")/../Dockerfile" \
   && ok "quota-lib.sh is copied into the image" || fail "quota-lib.sh is copied into the image"
+
+# --- Test 22: every post-detection failure-message `if` is guarded on QUOTA_RESET_AT ---
+# Test 19 counts the four `while` loops; this counts a different set of lines --
+# the four `if` blocks that assign RESULT_STATUS/ERROR_MESSAGE after them, at
+# entrypoint.sh:850 (artifact), :875 (decision), :909 (escalation), and :953 (PR).
+# Test 20 only asserts the artifact one by name; losing the guard on any of the
+# other three would silently reopen the exact bug this task fixes -- a later
+# phase's diagnostic overwriting the quota reason -- with the rest of the suite
+# still green.
+MSG_GUARDED=$(grep -c 'if \[ -z "\$QUOTA_RESET_AT" \] && ' "$ENTRYPOINT" || true)
+[ "$MSG_GUARDED" -eq 4 ] \
+  && ok "all four failure-message ifs guarded" \
+  || fail "all four failure-message ifs guarded (found $MSG_GUARDED of 4)"
+
+# --- Test 23: the errexit fallback pattern is itself errexit-safe (positive control) ---
+# entrypoint.sh:796 assigns from quota_reset_at's refuse path under the entrypoint's
+# own `set -euo pipefail`, tolerated only by the trailing `|| QUOTA_RESET_AT=""`.
+# Reproduce that exact pattern in a fresh subshell with the same shell options and
+# assert the subshell survives and the variable ends up empty.
+#
+# The subshell below is run as a bare statement, never as the direct condition of
+# `if`/`&&`/`||` -- bash documents that when a compound command's return status is
+# being tested that way, -e is ignored for every command inside it, EVEN ONE THAT
+# re-enables -e internally. Wrapping it in `if (...); then` here would silently
+# defeat the very thing this test is trying to exercise, so the exit status is
+# captured with `set +e` / `set -e` around a standalone statement instead, and
+# tested afterward with a plain `[ ... ]` that runs no risky command itself.
+set +e
+(
+  set -euo pipefail
+  source "$LIB"
+  QUOTA_RESET_AT=$(quota_reset_at "an unrelated, non-quota error") || QUOTA_RESET_AT=""
+  [ -z "$QUOTA_RESET_AT" ]
+)
+RC_POSITIVE=$?
+set -e
+if [ "$RC_POSITIVE" -eq 0 ]; then
+  ok "errexit fallback pattern survives set -e and leaves the var empty"
+else
+  fail "errexit fallback pattern survives set -e and leaves the var empty"
+fi
+
+# --- Test 24: without the fallback, the same assignment kills the shell (negative control) ---
+# Without this control, Test 23 passing would prove nothing about why the `||`
+# fallback matters. This shows the fallback is load-bearing: dropping it aborts
+# the whole script on every ordinary is_error result, not just quota ones --
+# a regression worse than the bug this task fixes. Same bare-statement technique
+# as Test 23, for the same reason: run inside `if (...); then` and bash's
+# conditional-context exemption would swallow the very errexit this test proves.
+set +e
+(
+  set -euo pipefail
+  source "$LIB"
+  QUOTA_RESET_AT=$(quota_reset_at "an unrelated, non-quota error")
+  echo "unreachable: errexit did not fire"
+)
+RC_NEGATIVE=$?
+set -e
+if [ "$RC_NEGATIVE" -ne 0 ]; then
+  ok "assignment without the fallback aborts under set -e"
+else
+  fail "assignment without the fallback aborts under set -e"
+fi
+
+# --- Test 25: the call site still carries the errexit fallback ---
+# Structural counterpart to Tests 23/24: Test 18 only greps the
+# `QUOTA_RESET_AT=$(quota_reset_at` prefix, so it would still pass even if the
+# trailing `|| QUOTA_RESET_AT=""` at entrypoint.sh:796 were deleted.
+grep -qF 'QUOTA_RESET_AT=$(quota_reset_at "${CLAUDE_RESULT:-}") || QUOTA_RESET_AT=""' "$ENTRYPOINT" \
+  && ok "quota_reset_at call site keeps its errexit fallback" \
+  || fail "quota_reset_at call site keeps its errexit fallback"
 
 echo
 echo "PASS: $PASS  FAIL: $FAIL"
