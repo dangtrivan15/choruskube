@@ -207,6 +207,11 @@ type ExecuteAINodeFromSnapshotParams struct {
 	// (nil or zero-length) omits the key entirely, matching how task_context itself is
 	// omitted when TaskID == "".
 	OpenBlockers []OpenBlockerParam
+	// Set only when this iteration resumes a session parked by a previous one.
+	// The entrypoint restores the transcript and runs `claude --resume`; empty
+	// means start a fresh session.
+	SessionID           string `json:"session_id,omitempty"`
+	SessionArtifactPath string `json:"session_artifact_path,omitempty"`
 }
 
 // OpenBlockerParam mirrors one entry of state.SnapshotOpenBlocker, flattened into the
@@ -350,6 +355,10 @@ func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params Execu
 	// that set no budget and the agent applies its own defaults.
 	if params.MaxTurns != "" {
 		configJSON["max_turns"] = params.MaxTurns
+	}
+	if params.SessionID != "" {
+		configJSON["session_id"] = params.SessionID
+		configJSON["session_artifact_path"] = params.SessionArtifactPath
 	}
 	if params.MaxRetries != "" {
 		configJSON["max_retries"] = params.MaxRetries

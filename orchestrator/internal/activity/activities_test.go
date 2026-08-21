@@ -1843,6 +1843,107 @@ func TestExecuteAINodeFromSnapshot_TurnBudgetOmittedWhenEmpty(t *testing.T) {
 	assert.False(t, hasMaxRetries, "config.json must omit max_retries when not set on the snapshot")
 }
 
+// TestExecuteAINodeFromSnapshot_SessionInConfigJson verifies that a session parked by a
+// previous iteration (SessionID/SessionArtifactPath set by the workflow's rate-limited
+// re-queue) reaches the agent via config.json's session_id/session_artifact_path — the
+// exact keys the entrypoint reads to resume instead of starting a fresh session.
+func TestExecuteAINodeFromSnapshot_SessionInConfigJson(t *testing.T) {
+	var receivedConfigJSON map[string]interface{}
+
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/internal/workloads/"):
+			var req map[string]interface{}
+			json.NewDecoder(r.Body).Decode(&req)
+			if cj, ok := req["configJson"].(map[string]interface{}); ok {
+				receivedConfigJSON = cj
+			}
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"executionHandle": "agent-abc12345",
+				"jobSecretHash":   "hash123",
+			})
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer apiServer.Close()
+
+	client := apiclient.NewClient(apiServer.URL)
+	cfg := &config.Config{
+		APIServerURL: apiServer.URL,
+		Callback:     config.CallbackConfig{URL: "http://callback:9090/api/v1/callback"},
+	}
+	acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
+
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+		NodeExecutionID:     uuid.New(),
+		RunID:               uuid.New(),
+		TemplateNodeID:      uuid.New(),
+		Label:               "implement",
+		ExecutorType:        "ai",
+		PromptTemplate:      "irrelevant",
+		SessionID:           "sess-1",
+		SessionArtifactPath: "runs/r/e/session/sess-1.jsonl",
+	})
+	assert.ErrorIs(t, err, activity.ErrResultPending)
+
+	assert.Equal(t, "sess-1", receivedConfigJSON["session_id"],
+		"config.json must include session_id when the iteration resumes a parked session")
+	assert.Equal(t, "runs/r/e/session/sess-1.jsonl", receivedConfigJSON["session_artifact_path"],
+		"config.json must include session_artifact_path when the iteration resumes a parked session")
+}
+
+// TestExecuteAINodeFromSnapshot_SessionOmittedWhenEmpty verifies session_id/
+// session_artifact_path are absent from config.json for an ordinary iteration that
+// resumes no parked session — not present as empty strings, which the agent would have
+// to special-case instead of simply starting a fresh session.
+func TestExecuteAINodeFromSnapshot_SessionOmittedWhenEmpty(t *testing.T) {
+	var receivedConfigJSON map[string]interface{}
+
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/internal/workloads/"):
+			var req map[string]interface{}
+			json.NewDecoder(r.Body).Decode(&req)
+			if cj, ok := req["configJson"].(map[string]interface{}); ok {
+				receivedConfigJSON = cj
+			}
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"executionHandle": "agent-abc12345",
+				"jobSecretHash":   "hash123",
+			})
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer apiServer.Close()
+
+	client := apiclient.NewClient(apiServer.URL)
+	cfg := &config.Config{
+		APIServerURL: apiServer.URL,
+		Callback:     config.CallbackConfig{URL: "http://callback:9090/api/v1/callback"},
+	}
+	acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
+
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+		NodeExecutionID: uuid.New(),
+		RunID:           uuid.New(),
+		TemplateNodeID:  uuid.New(),
+		Label:           "implement",
+		ExecutorType:    "ai",
+		PromptTemplate:  "irrelevant",
+		// SessionID intentionally not set
+	})
+	assert.ErrorIs(t, err, activity.ErrResultPending)
+
+	_, hasSessionID := receivedConfigJSON["session_id"]
+	assert.False(t, hasSessionID, "config.json must omit session_id when the iteration resumes no parked session")
+	_, hasSessionArtifactPath := receivedConfigJSON["session_artifact_path"]
+	assert.False(t, hasSessionArtifactPath, "config.json must omit session_artifact_path when the iteration resumes no parked session")
+}
+
 // TestExecuteAINodeFromSnapshot_NeedsPRInConfigJson verifies that NeedsPR true (derived
 // from config_overrides.needs_pr == "true") is propagated to the agent via
 // config.json["needs_pr"].

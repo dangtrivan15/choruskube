@@ -42,6 +42,11 @@ type nodeCompletion struct {
 	err          error
 	artifactRefs string // AI nodes: artifact refs from callback
 	errorMessage string // from CallbackResult.ErrorMessage
+	// Set when the agent reported a quota hit rather than a result.
+	rateLimited         bool
+	resumeAt            time.Time
+	sessionID           string
+	sessionArtifactPath string
 }
 
 // nodeTracker tracks in-workflow state for each activated node
@@ -69,6 +74,12 @@ type nodeTracker struct {
 	// deliberately chose a target whose ordinary upstream may never have run. Carried
 	// forward unchanged by every other nodeTracker construction site.
 	forceReady bool
+	// sessionID and sessionArtifactPath carry a session parked by a previous
+	// iteration into ExecuteAINodeFromSnapshotParams, so the next pod resumes
+	// the same Claude session instead of starting over. Empty for every
+	// tracker except the one created by the rate-limited re-queue path.
+	sessionID           string
+	sessionArtifactPath string
 }
 
 func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
@@ -787,6 +798,8 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 						Variables:              vars,
 						LoopGroup:              loopGroup,
 						Iteration:              tracker.iteration,
+						SessionID:              tracker.sessionID,
+						SessionArtifactPath:    tracker.sessionArtifactPath,
 						RepoURL:                repoURL,
 						WorkingBranch:          workingBranch,
 						Command:                command,
@@ -818,11 +831,15 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 						errorMessage = cbResult.ErrorMessage
 					}
 					completionCh.Send(gCtx, nodeCompletion{
-						nodeID:       nodeID,
-						result:       result,
-						err:          err,
-						artifactRefs: artifactRefs,
-						errorMessage: errorMessage,
+						nodeID:              nodeID,
+						result:              result,
+						err:                 err,
+						artifactRefs:        artifactRefs,
+						errorMessage:        errorMessage,
+						rateLimited:         err == nil && cbResult.Status == "rate_limited",
+						resumeAt:            cbResult.ResumeAt,
+						sessionID:           cbResult.SessionID,
+						sessionArtifactPath: cbResult.SessionArtifactPath,
 					})
 				})
 			}
@@ -839,6 +856,57 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 
 				tracker := nodes[completion.nodeID]
 				snapshotNode, _ := GetNodeByID(snap, completion.nodeID)
+
+				// Quota exhaustion: sleep until the reset, then re-queue as a fresh
+				// iteration carrying the parked session. Statuses stay untouched
+				// while sleeping — the node remains `running`, so the run keeps its
+				// Autopilot slot and nothing prompts a human. The activity has
+				// already completed, so no StartToClose or heartbeat timeout applies.
+				if completion.rateLimited {
+					wait := completion.resumeAt.Sub(workflow.Now(ctx))
+					if wait > 0 {
+						if err := workflow.Sleep(ctx, wait); err != nil {
+							logger.Error("Sleep interrupted while parked on quota", "err", err)
+						}
+					}
+
+					if invErr := workflow.ExecuteActivity(dbCtx, activities.UpdateNodeExecutionStatus,
+						activity.UpdateNodeExecStatusParams{
+							RunID:           params.RunID,
+							NodeExecutionID: tracker.execID,
+							Status:          "invalidated",
+						}).Get(ctx, nil); invErr != nil {
+						logger.Warn("Could not invalidate the parked execution; falling through to failure",
+							"execID", tracker.execID, "err", invErr)
+					} else {
+						newIteration := tracker.iteration + 1
+						var newExecID uuid.UUID
+						if createErr := workflow.ExecuteActivity(dbCtx, activities.CreateNodeExecution,
+							activity.CreateNodeExecParams{
+								WorkflowRunID:  params.RunID,
+								TemplateNodeID: completion.nodeID,
+								GraphVersion:   params.GraphVersion,
+								Iteration:      newIteration,
+								Label:          snapshotNode.Label,
+							}).Get(ctx, &newExecID); createErr != nil {
+							logger.Error("Could not create the resumed execution; node will fail",
+								"nodeID", completion.nodeID, "err", createErr)
+						} else {
+							// reviewPass and forceReady carry forward unchanged: this is
+							// an infra retry of the same attempt, not a review decision.
+							nodes[completion.nodeID] = &nodeTracker{
+								status:              "pending",
+								execID:              newExecID,
+								iteration:           newIteration,
+								reviewPass:          tracker.reviewPass,
+								forceReady:          tracker.forceReady,
+								sessionID:           completion.sessionID,
+								sessionArtifactPath: completion.sessionArtifactPath,
+							}
+							return
+						}
+					}
+				}
 
 				if completion.err != nil {
 					// Check if this is a heartbeat timeout arriving after a deliberate pause.
