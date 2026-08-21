@@ -42,6 +42,31 @@ type CallbackRequest struct {
 	SessionArtifactPath *string    `json:"session_artifact_path"`
 }
 
+// maxParkDuration is the longest quota park the orchestrator will schedule. It
+// mirrors QUOTA_MAX_PARK_SECONDS in the agent's quota-lib.sh; the two are the
+// same safety property enforced at each end of the callback.
+const maxParkDuration = 6 * time.Hour
+
+// formatParkWait renders a park duration the way an operator reads it: whole
+// minutes, no seconds component. Duration.String() would render 42 minutes as
+// "42m0s" and two hours as "2h0m0s".
+func formatParkWait(d time.Duration) string {
+	d = d.Round(time.Minute)
+	if d < time.Minute {
+		return "<1m"
+	}
+	h := int(d / time.Hour)
+	m := int((d % time.Hour) / time.Minute)
+	switch {
+	case h == 0:
+		return fmt.Sprintf("%dm", m)
+	case m == 0:
+		return fmt.Sprintf("%dh", h)
+	default:
+		return fmt.Sprintf("%dh%dm", h, m)
+	}
+}
+
 // Handler is the HTTP handler for agent pod callbacks
 type Handler struct {
 	client    *apiclient.Client
@@ -147,6 +172,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "rate_limited requires resume_at", http.StatusBadRequest)
 			return
 		}
+		// The agent's quota-lib.sh refuses to park beyond maxParkDuration, but the
+		// wait itself happens here: the workflow sleeps for exactly this instant
+		// with no clamp of its own. A parse bug, a clock skew, or an upstream
+		// change to the message format must degrade to the node's existing failure
+		// path, never to an unbounded wait -- so the bound is re-checked at the
+		// boundary that actually schedules it, the same way the missing-resume_at
+		// case is.
+		wait := time.Until(*req.ResumeAt)
+		if wait <= 0 || wait > maxParkDuration {
+			http.Error(w, "rate_limited requires resume_at in the future and within "+maxParkDuration.String(),
+				http.StatusBadRequest)
+			return
+		}
 		if err := h.completer.CompleteActivityRateLimited(ctx, execID, workflowID,
 			*req.ResumeAt, ptrOrEmpty(req.SessionID), ptrOrEmpty(req.SessionArtifactPath)); err != nil {
 			log.Printf("ERROR: failed to complete rate-limited activity for %s: %v", execID, err)
@@ -171,9 +209,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			log.Printf("ERROR: failed to clear pod_name for %s: %v", execID, err)
 		}
 
+		// The relative half is what disambiguates a rollover park: the reset is a
+		// wall-clock time with no date, so "00:15 UTC" alone leaves a reader unable
+		// to tell tonight from tomorrow.
 		h.client.WriteExecutionLog(ctx, runID, execID, "info",
-			fmt.Sprintf("Claude quota exhausted. Resuming automatically at %s. No action needed.",
-				req.ResumeAt.UTC().Format("15:04 UTC")))
+			fmt.Sprintf("Claude quota exhausted. Resuming automatically at %s (in ~%s). No action needed.",
+				req.ResumeAt.UTC().Format("15:04 UTC"), formatParkWait(wait)))
 
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(map[string]string{"status": "parked"})

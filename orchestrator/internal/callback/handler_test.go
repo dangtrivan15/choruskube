@@ -521,6 +521,7 @@ func TestRateLimitedCallbackLeavesStatusUntouched(t *testing.T) {
 	validStatuses := map[string]bool{"running": true, "completed": true, "failed": true, "invalidated": true, "paused": true}
 
 	var putCalls []nodeExecStatusUpdate
+	var logMessages []string
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == "GET" && contains(r.URL.Path, "job-secret-hash"):
@@ -544,6 +545,10 @@ func TestRateLimitedCallbackLeavesStatusUntouched(t *testing.T) {
 				"iteration": 1, "graphVersion": 1, "artifactRefs": "{}",
 			})
 		case r.Method == "POST" && contains(r.URL.Path, "logs"):
+			var payload map[string]string
+			raw, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(raw, &payload)
+			logMessages = append(logMessages, payload["message"])
 			w.WriteHeader(http.StatusCreated)
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -555,7 +560,10 @@ func TestRateLimitedCallbackLeavesStatusUntouched(t *testing.T) {
 	completer := &mockActivityCompleter{}
 	handler := NewHandler(client, completer)
 
-	resumeAt := time.Date(2026, 8, 20, 15, 40, 0, 0, time.UTC)
+	// Relative, not a fixed calendar instant: the handler now rejects a
+	// resume_at outside (now, now+6h], so a hard-coded date would decay into a
+	// rejected request the moment the wall clock passed it.
+	resumeAt := time.Now().UTC().Add(42 * time.Minute).Truncate(time.Second)
 	sessionID := "63527525-b042-4779-9bd1-f28c203abb62"
 	sessionArtifactPath := "runs/r/e/session/63527525.jsonl"
 	body := CallbackRequest{
@@ -601,6 +609,166 @@ func TestRateLimitedCallbackLeavesStatusUntouched(t *testing.T) {
 	// pointing at it.
 	require.NotNil(t, putCalls[0].PodName, "pod_name must be included in the update")
 	assert.Empty(t, *putCalls[0].PodName, "pod_name must be cleared while parked")
+
+	// The park's user-facing line. The absolute time alone is ambiguous: the
+	// reset is a wall-clock time with no date, so a rollover park reads as
+	// "00:15 UTC" whether that is tonight or tomorrow. The relative half is what
+	// resolves it, and is asserted here for that reason.
+	require.Len(t, logMessages, 1, "the park must write exactly one execution log line")
+	assert.Contains(t, logMessages[0], resumeAt.Format("15:04 UTC"),
+		"the park line must name the absolute reset time")
+	assert.Contains(t, logMessages[0], "(in ~42m)",
+		"the park line must name the wait relative to now")
+	assert.Contains(t, logMessages[0], "No action needed.")
+}
+
+func TestFormatParkWait(t *testing.T) {
+	// Duration.String() renders these as "42m0s", "2h0m0s" and "2h42m0s", which
+	// is not what the park line should read like.
+	assert.Equal(t, "42m", formatParkWait(42*time.Minute))
+	assert.Equal(t, "2h", formatParkWait(2*time.Hour))
+	assert.Equal(t, "2h42m", formatParkWait(2*time.Hour+42*time.Minute))
+	assert.Equal(t, "6h", formatParkWait(maxParkDuration))
+	// Rounds to the nearest minute rather than truncating, so a wait of just
+	// under a minute still reads as a wait.
+	assert.Equal(t, "1m", formatParkWait(50*time.Second))
+	assert.Equal(t, "<1m", formatParkWait(10*time.Second))
+}
+
+func TestRateLimitedCallbackWithOutOfBoundsResumeAt_Rejected(t *testing.T) {
+	// quota-lib.sh refuses to park beyond QUOTA_MAX_PARK_SECONDS, but the wait
+	// itself happens in the workflow, which sleeps for resumeAt with no clamp and
+	// no rejection of a past instant. The bound therefore has to be re-checked at
+	// this boundary — the one that schedules the sleep — so a parse bug or an
+	// upstream change to the quota message degrades to the node's existing
+	// failure path rather than to an unbounded wait.
+	cases := []struct {
+		name     string
+		resumeAt time.Time
+	}{
+		{"already past", time.Now().UTC().Add(-time.Minute)},
+		{"exactly now", time.Now().UTC().Add(-time.Millisecond)},
+		{"beyond the 6h bound", time.Now().UTC().Add(maxParkDuration + 5*time.Minute)},
+		{"absurdly far out", time.Now().UTC().AddDate(1, 0, 0)},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			jobSecret := "test-secret-value"
+			hash := sha256.Sum256([]byte(jobSecret))
+			hashStr := hex.EncodeToString(hash[:])
+
+			execID := uuid.New()
+			runID := uuid.New()
+
+			var putCalled bool
+			apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == "GET" && contains(r.URL.Path, "job-secret-hash"):
+					json.NewEncoder(w).Encode(map[string]string{"hash": hashStr})
+				case r.Method == "GET" && contains(r.URL.Path, "node-executions/"+execID.String()):
+					json.NewEncoder(w).Encode(map[string]interface{}{
+						"id": execID, "templateNodeId": uuid.New(), "status": "running",
+						"iteration": 1, "graphVersion": 1, "artifactRefs": "{}",
+					})
+				case r.Method == "PUT" && contains(r.URL.Path, "status"):
+					putCalled = true
+					w.WriteHeader(http.StatusOK)
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer apiServer.Close()
+
+			client := apiclient.NewClient(apiServer.URL)
+			completer := &mockActivityCompleter{}
+			handler := NewHandler(client, completer)
+
+			resumeAt := tc.resumeAt
+			body := CallbackRequest{
+				NodeExecutionID: execID.String(),
+				RunID:           runID.String(),
+				Status:          "rate_limited",
+				Result:          "quota exhausted",
+				ResumeAt:        &resumeAt,
+			}
+			bodyBytes, _ := json.Marshal(body)
+
+			req := httptest.NewRequest("POST", "/api/v1/callback", bytes.NewReader(bodyBytes))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+jobSecret)
+			rec := httptest.NewRecorder()
+
+			handler.ServeHTTP(rec, req)
+
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
+			assert.False(t, completer.rateLimitedCalled, "no park may be scheduled for an out-of-bounds resume_at")
+			assert.False(t, completer.failCalled, "activity must not be failed either — same as every other malformed-request early return in this handler")
+			assert.False(t, putCalled, "no DB write for a rejected callback")
+		})
+	}
+}
+
+func TestRateLimitedCallbackAtTheParkBound_Accepted(t *testing.T) {
+	// The bound is inclusive at the top: quota-lib.sh will hand over a reset
+	// landing at exactly +21600s, and rejecting it here would fail the very park
+	// the library considers legal. Paired with the out-of-bounds cases above so
+	// neither a too-tight nor a too-loose bound passes both.
+	jobSecret := "test-secret-value"
+	hash := sha256.Sum256([]byte(jobSecret))
+	hashStr := hex.EncodeToString(hash[:])
+
+	execID := uuid.New()
+	runID := uuid.New()
+
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && contains(r.URL.Path, "job-secret-hash"):
+			json.NewEncoder(w).Encode(map[string]string{"hash": hashStr})
+		case r.Method == "GET" && contains(r.URL.Path, "node-executions/"+execID.String()):
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"id": execID, "templateNodeId": uuid.New(), "status": "running",
+				"iteration": 1, "graphVersion": 1, "artifactRefs": "{}",
+			})
+		case r.Method == "PUT" && contains(r.URL.Path, "status"):
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"id": execID, "templateNodeId": uuid.New(), "status": "running",
+				"iteration": 1, "graphVersion": 1, "artifactRefs": "{}",
+			})
+		case r.Method == "POST" && contains(r.URL.Path, "logs"):
+			w.WriteHeader(http.StatusCreated)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer apiServer.Close()
+
+	client := apiclient.NewClient(apiServer.URL)
+	completer := &mockActivityCompleter{}
+	handler := NewHandler(client, completer)
+
+	// A few seconds of slack absorbs the time the request itself takes; the
+	// point of the case is that a park at the very top of the range is accepted,
+	// not that it is accepted to the nanosecond.
+	resumeAt := time.Now().UTC().Add(maxParkDuration - 5*time.Second)
+	body := CallbackRequest{
+		NodeExecutionID: execID.String(),
+		RunID:           runID.String(),
+		Status:          "rate_limited",
+		Result:          "quota exhausted",
+		ResumeAt:        &resumeAt,
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest("POST", "/api/v1/callback", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+jobSecret)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.True(t, completer.rateLimitedCalled, "a park at the bound must still be scheduled")
 }
 
 func TestRateLimitedCallbackWithoutResumeAt_Rejected(t *testing.T) {
