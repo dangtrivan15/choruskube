@@ -121,6 +121,29 @@ grep -q -- '-f "\$script"' "$LIB" \
   && ok "redaction uses a sed script file" || fail "redaction uses a sed script file"
 unset CLAUDE_CODE_OAUTH_TOKEN GITHUB_TOKEN_FOR_REDACTION
 
+
+# --- Test 16: failure path cleans up both script and partial output ---
+export CLAUDE_CODE_OAUTH_TOKEN="sk-ant-oat01-EXAMPLEEXAMPLEEXAMPLE"
+NONEXISTENT="$TESTDIR/does_not_exist.jsonl"
+BADOUTPUT="$TESTDIR/bad_output.jsonl"
+if redact_transcript "$NONEXISTENT" "$BADOUTPUT" >/dev/null 2>&1; then
+  fail "failure path returns non-zero"
+else
+  ok "failure path returns non-zero"
+fi
+# Check that no sed script temp file was left in /tmp
+if grep -r "EXAMPLEEXAMPLEEXAMPLE" /tmp 2>/dev/null | grep -q "sk-ant"; then
+  fail "no secret-bearing script left in /tmp"
+else
+  ok "no secret-bearing script left in /tmp"
+fi
+# Check that no partial output file was left
+if [ -f "$BADOUTPUT" ]; then
+  fail "no partial output file left"
+else
+  ok "no partial output file left"
+fi
+unset CLAUDE_CODE_OAUTH_TOKEN
 echo
 echo "PASS: $PASS  FAIL: $FAIL"
 [ "$FAIL" -eq 0 ]

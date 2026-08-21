@@ -112,5 +112,6 @@ s|gh[psuro]_[A-Za-z0-9]\{16,\}|[redacted-github-token]|g
 s|github_pat_[A-Za-z0-9_]\{20,\}|[redacted-github-token]|g
 SEDRULES
 
-    sed -f "$script" "$src" > "$dst"
+    sed -f "$script" "$src" > "$dst" || { rm -f "$script" "$dst"; return 1; }
+    rm -f "$script"
 }
