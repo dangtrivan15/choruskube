@@ -384,7 +384,7 @@ sn_build_harness() {
     printf 'REPOS_JSON=%q\n' "$1"
     printf 'REPO_URL=%q\n' "$2"
     printf 'WORKING_BRANCH=%q\n' "$3"
-    awk '/^# --- Failure safety net/{f=1} /^# --- Step 5:/{f=0} f' "$ENTRYPOINT"
+    awk '/^# --- Failure safety net/{f=1} /^# --- Quota park:/{f=0} f' "$ENTRYPOINT"
     echo 'echo "FINAL_STATUS:$RESULT_STATUS"'
     echo 'echo "$RESULT"'
   }

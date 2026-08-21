@@ -1060,6 +1060,39 @@ Last agent output before the failure:
 ${RESULT}}"
 fi
 
+# --- Quota park: carry the Claude session across the pod's eviction ---
+# The transcript is the whole of the session's portable state: restoring only
+# that file into a fresh pod is sufficient for `claude --resume`, verified
+# against a deleted project directory. Nothing else in ~/.claude is needed.
+SESSION_ARTIFACT_PATH=""
+if [ -n "$QUOTA_RESET_AT" ] && [ -n "$CLAUDE_SESSION_ID" ]; then
+  RESULT_STATUS="rate_limited"
+
+  # Discover the directory rather than reconstructing it from cwd, so a change
+  # to Claude Code's path encoding cannot silently park a sessionless run.
+  CLAUDE_PROJECT_DIR=$(ls -d "$HOME"/.claude/projects/*/ 2>/dev/null | head -1)
+  TRANSCRIPT_SRC="${CLAUDE_PROJECT_DIR%/}/${CLAUDE_SESSION_ID}.jsonl"
+  TRANSCRIPT_REDACTED="/tmp/session_redacted.jsonl"
+
+  if [ -f "$TRANSCRIPT_SRC" ]; then
+    GITHUB_TOKEN_FOR_REDACTION=$(fetch-github-token 2>/dev/null || true)
+    export GITHUB_TOKEN_FOR_REDACTION
+    if redact_transcript "$TRANSCRIPT_SRC" "$TRANSCRIPT_REDACTED"; then
+      SESSION_ARTIFACT_PATH="${OUTPUT_PATH%out/}session/${CLAUDE_SESSION_ID}.jsonl"
+      if artifact put "$TRANSCRIPT_REDACTED" "$SESSION_ARTIFACT_PATH" 2>/dev/null; then
+        echo "QUOTA: parked session $CLAUDE_SESSION_ID at $SESSION_ARTIFACT_PATH"
+      else
+        SESSION_ARTIFACT_PATH=""  # upload failed; park without a session
+        echo "WARNING: could not upload the session transcript; the retry will start fresh" >&2
+      fi
+    fi
+    unset GITHUB_TOKEN_FOR_REDACTION
+    rm -f "$TRANSCRIPT_REDACTED"
+  else
+    echo "WARNING: no transcript at $TRANSCRIPT_SRC; the retry will start fresh" >&2
+  fi
+fi
+
 # --- Step 5: Push output artifacts via presigned URLs ---
 ARTIFACT_REFS="{}"
 if [ -d "$WORKSPACE_OUT" ] && [ "$(ls -A "$WORKSPACE_OUT" 2>/dev/null)" ]; then
@@ -1079,13 +1112,19 @@ CALLBACK_BODY=$(jq -n \
   --arg result "$RESULT" \
   --argjson artifacts "$ARTIFACT_REFS" \
   --arg error "$ERROR_MESSAGE" \
+  --arg resume_at "${QUOTA_RESET_AT:+$(date -u -d "@$QUOTA_RESET_AT" '+%Y-%m-%dT%H:%M:%SZ')}" \
+  --arg session_id "${SESSION_ARTIFACT_PATH:+$CLAUDE_SESSION_ID}" \
+  --arg session_path "$SESSION_ARTIFACT_PATH" \
   '{
     node_execution_id: $id,
     run_id: $run_id,
     status: $status,
     result: $result,
     artifact_refs: $artifacts,
-    error_message: (if $error == "" then null else $error end)
+    error_message: (if $error == "" then null else $error end),
+    resume_at: (if $resume_at == "" then null else $resume_at end),
+    session_id: (if $session_id == "" then null else $session_id end),
+    session_artifact_path: (if $session_path == "" then null else $session_path end)
   }')
 
 send-callback "$CALLBACK_BODY"

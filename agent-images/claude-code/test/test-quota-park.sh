@@ -272,6 +272,32 @@ grep -qF 'QUOTA_RESET_AT=$(quota_reset_at "${CLAUDE_RESULT:-}") || QUOTA_RESET_A
   && ok "quota_reset_at call site keeps its errexit fallback" \
   || fail "quota_reset_at call site keeps its errexit fallback"
 
+# --- Test 26: the transcript directory is discovered, not reconstructed ---
+grep -q 'CLAUDE_PROJECT_DIR=\$(ls -d "\$HOME"/.claude/projects/\*' "$ENTRYPOINT" \
+  && ok "transcript directory is discovered" || fail "transcript directory is discovered"
+
+# --- Test 27: the uploaded copy is the redacted one, never the original ---
+grep -q 'redact_transcript "\$TRANSCRIPT_SRC" "\$TRANSCRIPT_REDACTED"' "$ENTRYPOINT" \
+  && ok "transcript is redacted before upload" || fail "transcript is redacted before upload"
+grep -q 'artifact put "\$TRANSCRIPT_REDACTED" "\$SESSION_ARTIFACT_PATH"' "$ENTRYPOINT" \
+  && ok "the redacted copy is what is uploaded" || fail "the redacted copy is what is uploaded"
+grep -q 'artifact put "\$TRANSCRIPT_SRC"' "$ENTRYPOINT" \
+  && fail "the raw transcript is never uploaded" || ok "the raw transcript is never uploaded"
+
+# --- Test 28: the callback carries the park fields ---
+for f in resume_at session_id session_artifact_path; do
+  grep -q "$f:" "$ENTRYPOINT" \
+    && ok "callback carries $f" || fail "callback carries $f"
+done
+grep -q 'RESULT_STATUS="rate_limited"' "$ENTRYPOINT" \
+  && ok "callback status is rate_limited" || fail "callback status is rate_limited"
+
+# --- Test 29: an upload failure still parks, just without a session ---
+# Losing the session costs re-derivation; it must never cost the node.
+grep -q 'SESSION_ARTIFACT_PATH=""  # upload failed' "$ENTRYPOINT" \
+  && ok "upload failure degrades to a sessionless park" \
+  || fail "upload failure degrades to a sessionless park"
+
 echo
 echo "PASS: $PASS  FAIL: $FAIL"
 [ "$FAIL" -eq 0 ]
