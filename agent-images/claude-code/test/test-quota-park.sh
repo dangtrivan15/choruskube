@@ -124,26 +124,55 @@ unset CLAUDE_CODE_OAUTH_TOKEN GITHUB_TOKEN_FOR_REDACTION
 
 # --- Test 16: failure path cleans up both script and partial output ---
 export CLAUDE_CODE_OAUTH_TOKEN="sk-ant-oat01-EXAMPLEEXAMPLEEXAMPLE"
-NONEXISTENT="$TESTDIR/does_not_exist.jsonl"
-BADOUTPUT="$TESTDIR/bad_output.jsonl"
-if redact_transcript "$NONEXISTENT" "$BADOUTPUT" >/dev/null 2>&1; then
+SCRATCH="$TESTDIR/failpath"
+mkdir -p "$SCRATCH"
+SRC_FAIL="$SCRATCH/missing.jsonl"
+DST_FAIL="$SCRATCH/output.jsonl"
+
+# Save and set TMPDIR to control where mktemp creates the script file
+SAVED_TMPDIR="${TMPDIR:-}"
+export TMPDIR="$SCRATCH"
+
+# Call redact_transcript with missing source file (will fail)
+if redact_transcript "$SRC_FAIL" "$DST_FAIL" >/dev/null 2>&1; then
   fail "failure path returns non-zero"
 else
   ok "failure path returns non-zero"
 fi
-# Check that no sed script temp file was left in /tmp
-if grep -r "EXAMPLEEXAMPLEEXAMPLE" /tmp 2>/dev/null | grep -q "sk-ant"; then
-  fail "no secret-bearing script left in /tmp"
+
+# Restore TMPDIR
+if [ -n "$SAVED_TMPDIR" ]; then
+  export TMPDIR="$SAVED_TMPDIR"
 else
-  ok "no secret-bearing script left in /tmp"
+  unset TMPDIR
 fi
-# Check that no partial output file was left
-if [ -f "$BADOUTPUT" ]; then
-  fail "no partial output file left"
+
+# Positive control: verify the emptiness check actually detects leftover files.
+# Plant a dummy file and assert it is detected, then clean up.
+touch "$SCRATCH/dummy_test_file"
+if [ -z "$(find "$SCRATCH" -type f 2>/dev/null)" ]; then
+  fail "positive control: emptiness check detects files"
 else
-  ok "no partial output file left"
+  ok "positive control: emptiness check detects files"
 fi
+rm -f "$SCRATCH/dummy_test_file"
+
+# Assert: the scratch directory is now empty (no leaked sed script, no partial output file)
+if [ -z "$(find "$SCRATCH" -type f 2>/dev/null)" ]; then
+  ok "scratch directory is empty after failure"
+else
+  fail "scratch directory is empty after failure"
+fi
+
+# Assert: the output file specifically does not exist
+if [ -f "$DST_FAIL" ]; then
+  fail "output file does not exist after failure"
+else
+  ok "output file does not exist after failure"
+fi
+
 unset CLAUDE_CODE_OAUTH_TOKEN
+
 echo
 echo "PASS: $PASS  FAIL: $FAIL"
 [ "$FAIL" -eq 0 ]
