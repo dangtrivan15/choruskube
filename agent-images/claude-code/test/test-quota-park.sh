@@ -17,10 +17,12 @@ source "$LIB"
 # Fixtures. NOW_A is the reference incident time. NOW_B is late evening, which is
 # the only window where a midnight rollover can still land inside the 6h bound --
 # from any earlier hour, "tomorrow" is by definition more than 6h away. NOW_C is
-# morning, so noon is both in the future and in bounds.
+# morning, so noon is both in the future and in bounds. NOW_D is noon on a day
+# where 6pm and 6:01pm land at exactly +21600 and +21660 seconds respectively.
 NOW_A=1787230680   # 2026-08-20T12:58:00Z
 NOW_B=1787268600   # 2026-08-20T23:30:00Z
 NOW_C=1787216400   # 2026-08-20T09:00:00Z
+NOW_D=1787313600   # 2026-08-21T12:00:00Z
 LIMIT_MSG="You've hit your session limit · resets 3:40pm (UTC)"
 
 # --- Test 1: the observed message parses to the right instant (15:40Z, +2h42m) ---
@@ -69,6 +71,19 @@ quota_reset_at "Error: connection reset by peer" "$NOW_A" >/dev/null 2>&1 \
 # --- Test 10: the signature without a parseable time must not park ---
 quota_reset_at "You've hit your session limit" "$NOW_A" >/dev/null 2>&1 \
   && fail "refuses the signature with no time" || ok "refuses the signature with no time"
+
+# --- Test 11: a reset landing at exactly +21600s (the boundary) must park ---
+# NOW_D is 12:00pm on 2026-08-21. 6:00pm is 6 hours later = 21600s exactly.
+# Expected: $((NOW_D + 21600)) = $((1787305200 + 21600)) = 1787326800
+GOT=$(quota_reset_at "You've hit your session limit · resets 6:00pm (UTC)" "$NOW_D") \
+  && [ "$GOT" = "$((NOW_D + 21600))" ] \
+  && ok "parks a reset at exactly +21600s" || fail "parks a reset at exactly +21600s"
+
+# --- Test 12: a reset landing at +21660s (one minute over) must refuse ---
+# NOW_D is 12:00pm on 2026-08-21. 6:01pm is 6 hours 1 minute later = 21660s.
+# This is 60 seconds beyond the 21600s bound.
+quota_reset_at "You've hit your session limit · resets 6:01pm (UTC)" "$NOW_D" >/dev/null 2>&1 \
+  && fail "refuses a reset at +21660s" || ok "refuses a reset at +21660s"
 
 echo
 echo "PASS: $PASS  FAIL: $FAIL"

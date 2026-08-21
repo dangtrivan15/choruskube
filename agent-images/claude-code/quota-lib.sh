@@ -5,6 +5,11 @@
 # pure function over its arguments so the tests need no container and no network.
 #
 # Not executable on its own; there is no main.
+#
+# No `set -euo pipefail` here, deliberately: this file is sourced, and shell
+# options set in a sourced file apply to the caller's shell. Callers set their
+# own options — entrypoint.sh sets them at the top and uses `set +e` in places
+# where it needs them off.
 
 # The longest park we will ever schedule. A parse bug or an upstream change to
 # the message format must degrade to the node's existing failure path, never to
