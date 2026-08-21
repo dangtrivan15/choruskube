@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/google/uuid"
 	"go.temporal.io/sdk/client"
@@ -149,6 +150,16 @@ func (c *temporalActivityCompleter) CompleteActivity(ctx context.Context, nodeEx
 
 func (c *temporalActivityCompleter) FailActivity(ctx context.Context, nodeExecID uuid.UUID, workflowID string, reason error) error {
 	return c.client.CompleteActivityByID(ctx, c.namespace, workflowID, "", nodeExecID.String(), nil, reason)
+}
+
+func (c *temporalActivityCompleter) CompleteActivityRateLimited(ctx context.Context, nodeExecID uuid.UUID, workflowID string, resumeAt time.Time, sessionID, sessionArtifactPath string) error {
+	return c.client.CompleteActivityByID(ctx, c.namespace, workflowID, "", nodeExecID.String(),
+		activity.CallbackResult{
+			Status:              "rate_limited",
+			ResumeAt:            resumeAt,
+			SessionID:           sessionID,
+			SessionArtifactPath: sessionArtifactPath,
+		}, nil)
 }
 
 func (c *temporalActivityCompleter) RecordHeartbeat(ctx context.Context, nodeExecID uuid.UUID, workflowID string) error {

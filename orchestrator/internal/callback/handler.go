@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -20,6 +21,11 @@ import (
 type ActivityCompleter interface {
 	CompleteActivity(ctx context.Context, nodeExecID uuid.UUID, workflowID string, result, artifactRefs, errorMessage string) error
 	FailActivity(ctx context.Context, nodeExecID uuid.UUID, workflowID string, reason error) error
+	// CompleteActivityRateLimited completes the activity successfully with a
+	// rate-limited outcome. It must not fail the activity: a quota hit is
+	// transient, and the failure path would park the run for a human instead of
+	// resuming it.
+	CompleteActivityRateLimited(ctx context.Context, nodeExecID uuid.UUID, workflowID string, resumeAt time.Time, sessionID, sessionArtifactPath string) error
 }
 
 // CallbackRequest is the JSON body sent by agent pods

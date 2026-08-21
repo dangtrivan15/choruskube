@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -44,6 +45,10 @@ func (m *mockActivityCompleter) FailActivity(ctx context.Context, nodeExecID uui
 	m.failedExecID = nodeExecID
 	m.failedErr = reason
 	return m.failErr
+}
+
+func (m *mockActivityCompleter) CompleteActivityRateLimited(ctx context.Context, nodeExecID uuid.UUID, workflowID string, resumeAt time.Time, sessionID, sessionArtifactPath string) error {
+	return nil
 }
 
 func TestCallback_ValidRequest(t *testing.T) {
