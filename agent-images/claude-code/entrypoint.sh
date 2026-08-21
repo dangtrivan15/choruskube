@@ -456,6 +456,15 @@ RESULT_STATUS="completed"
 RESULT="completed"
 ERROR_MESSAGE=""
 CLAUDE_OUTPUT=""
+# Read unconditionally below -- by the quota-park block and by the callback's jq
+# filter -- but assigned only inside the AI branch. A script-executor node and a
+# skipped-agent node both fall through to those reads without ever entering that
+# branch, and under `set -u` an unset variable there aborts the pod *before*
+# send-callback runs: no callback at all, so the orchestrator only learns of the
+# node when its heartbeat timeout expires. Initialised here for the same reason
+# as the four above; the AI branch's own resets stay where they are.
+QUOTA_RESET_AT=""
+CLAUDE_SESSION_ID=""
 
 # --- Compose decisions suffix into the system prompt (AI nodes only) ---
 # Query the api-server for the set of decisions this node may submit via

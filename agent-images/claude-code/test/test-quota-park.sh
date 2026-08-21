@@ -749,6 +749,90 @@ else
   fail "resume block: a failed mkdir degrades to a fresh run without calling artifact (got: $OUT_MKDIR_FAILS)"
 fi
 
+# --- Test 39: a node that never enters the AI branch still reaches the callback ---
+# Every park test above pre-seeds QUOTA_RESET_AT and CLAUDE_SESSION_ID into its
+# harness, so none of them can see what happens when nothing ever assigns them.
+# Only the AI branch does: a script-executor node and a skipped-agent node both
+# fall straight through to the quota-park block and the callback without
+# entering it, and under `set -euo pipefail` reading an unset variable there
+# aborts the pod BEFORE send-callback runs -- no callback at all, and the node
+# only surfaces when its heartbeat timeout expires.
+#
+# So this harness deliberately declares neither variable. It takes the real
+# top-level initialisations by marker (Step 4's opening lines) and then the real
+# fall-through region (failure safety net through send-callback), with `artifact`
+# and `send-callback` stubbed. Anything the AI branch alone would have set is
+# absent by construction, which is exactly the shape of a script-executor run.
+build_fallthrough_harness() {
+  # $1 = home/work dir, $2 = capture file, $3 = extra lines to inject after the
+  # top-level initialisations (the executor branch's own effect on RESULT_STATUS).
+  local dir="$1" capture="$2" extra="$3"
+  mkdir -p "$dir/out"
+  echo "report body" > "$dir/out/test_output.txt"
+  {
+    echo 'set -euo pipefail'
+    printf 'export HOME=%q\n' "$dir"
+    printf 'WORKSPACE_OUT=%q\n' "$dir/out"
+    echo 'OUTPUT_PATH="acme/runs/run-1/exec-1/out/"'
+    echo 'RUN_ID=run-1'
+    echo 'NODE_EXECUTION_ID=exec-1'
+    echo 'REPOS_JSON=""'
+    echo 'REPO_URL=""'
+    echo 'WORKING_BRANCH=""'
+    echo 'artifact() { return 0; }'
+    printf 'send-callback() { printf %%s "$1" > %q; }\n' "$capture"
+    awk '/^# --- Step 4: Execute ---/{f=1} /^# --- Compose decisions suffix/{f=0} f' "$ENTRYPOINT"
+    printf '%s\n' "$extra"
+    awk '/^# --- Failure safety net/{f=1} f; /^send-callback "\$CALLBACK_BODY"/{exit}' "$ENTRYPOINT"
+    echo 'echo "FALLTHROUGH_SENTINEL"'
+  }
+}
+
+run_fallthrough() {
+  # $1 = tag, $2 = extra lines. Echoes "<rc>|<stdout+stderr>".
+  local tag="$1" extra="$2"
+  local dir="$TESTDIR/fallthrough_$tag"
+  local capture="$TESTDIR/fallthrough_$tag.json"
+  rm -f "$capture"
+  build_fallthrough_harness "$dir" "$capture" "$extra" > "$TESTDIR/fallthrough_$tag.sh"
+  local out rc
+  set +e
+  out=$(bash "$TESTDIR/fallthrough_$tag.sh" 2>&1)
+  rc=$?
+  set -e
+  printf '%s|%s\n' "$rc" "$(printf '%s' "$out" | tr '\n' ' ')"
+}
+
+# 39a: the passing script-executor shape -- RESULT_STATUS left at "completed",
+# RESULT replaced by the script branch's pointer text.
+FT_A=$(run_fallthrough script 'RESULT="Read test_output.txt for full script output"')
+FT_A_CAPTURE="$TESTDIR/fallthrough_script.json"
+if [ "${FT_A%%|*}" -eq 0 ] \
+    && printf '%s' "$FT_A" | grep -q 'FALLTHROUGH_SENTINEL' \
+    && [ -s "$FT_A_CAPTURE" ] \
+    && jq -e '(.status == "completed") and (.resume_at == null) and (.session_id == null) and (.session_artifact_path == null)' \
+      "$FT_A_CAPTURE" >/dev/null 2>&1; then
+  ok "script-executor node reaches send-callback with an unparked body"
+else
+  fail "script-executor node reaches send-callback with an unparked body ($FT_A / $(cat "$FT_A_CAPTURE" 2>/dev/null))"
+fi
+
+# 39b: the skipped-agent shape -- the branch reports a failure and clears RESULT,
+# so the failure safety net runs on the way to the callback as well.
+FT_B=$(run_fallthrough skipped 'RESULT=""
+RESULT_STATUS="failed"
+ERROR_MESSAGE="Could not fetch valid decisions for this node"')
+FT_B_CAPTURE="$TESTDIR/fallthrough_skipped.json"
+if [ "${FT_B%%|*}" -eq 0 ] \
+    && printf '%s' "$FT_B" | grep -q 'FALLTHROUGH_SENTINEL' \
+    && [ -s "$FT_B_CAPTURE" ] \
+    && jq -e '(.status == "failed") and (.resume_at == null) and (.session_id == null)' \
+      "$FT_B_CAPTURE" >/dev/null 2>&1; then
+  ok "skipped-agent node reaches send-callback with an unparked body"
+else
+  fail "skipped-agent node reaches send-callback with an unparked body ($FT_B / $(cat "$FT_B_CAPTURE" 2>/dev/null))"
+fi
+
 echo
 echo "PASS: $PASS  FAIL: $FAIL"
 [ "$FAIL" -eq 0 ]
