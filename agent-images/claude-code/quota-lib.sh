@@ -88,7 +88,10 @@ quota_reset_at() {
 # Exact value substitution for the two tokens we hold, plus a shape scrub for
 # GitHub tokens we do not. Byte substitution cannot corrupt the JSONL framing
 # because these tokens are [A-Za-z0-9_-] only and are therefore never
-# JSON-escaped — which would not hold for, say, a PEM body with newlines.
+# JSON-escaped — which would not hold for, say, a PEM body with newlines. The
+# same alphabet is what makes interpolating the value into the sed program safe:
+# it contains neither the `|` delimiter nor any BRE metacharacter, so a token
+# can neither terminate the s/// command early nor be reinterpreted as a pattern.
 #
 # The sed program is written to a private file rather than passed as arguments,
 # because a secret in argv is visible in `ps` to anything sharing the pod's PID

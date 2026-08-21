@@ -325,14 +325,16 @@ elif command -v gdate >/dev/null 2>&1 && gdate -u -d "@0" '+%Y' >/dev/null 2>&1;
 fi
 
 build_callback_harness() {
-  # $1 = QUOTA_RESET_AT, $2 = SESSION_ARTIFACT_PATH, $3 = CLAUDE_SESSION_ID.
+  # $1 = QUOTA_RESET_AT, $2 = SESSION_ARTIFACT_PATH, $3 = CLAUDE_SESSION_ID,
+  # $4 = RESULT_STATUS on entry (default "failed"; the park block would have set
+  # "rate_limited" before this region runs).
   # send-callback is stubbed to capture its argument instead of POSTing it.
   {
     echo 'set -euo pipefail'
     printf 'send-callback() { printf %%s "$1" > %q; }\n' "$CALLBACK_CAPTURE"
     echo 'NODE_EXECUTION_ID=exec-1'
     echo 'RUN_ID=run-1'
-    echo 'RESULT_STATUS=failed'
+    printf 'RESULT_STATUS=%q\n' "${4:-failed}"
     echo 'RESULT=""'
     echo 'ARTIFACT_REFS="{}"'
     echo 'ERROR_MESSAGE="boom"'
@@ -384,6 +386,22 @@ else
   fail "callback serialises populated park fields as their exact non-null values ($(cat "$CALLBACK_CAPTURE" 2>/dev/null) $(cat "$TESTDIR/callback_run.err" 2>/dev/null))"
 fi
 
+# 30c: the RFC3339 conversion fails. resume_at is the one field the orchestrator
+# hard-requires on a rate_limited callback -- it answers 400 without it -- and
+# send-callback has no retry, so emitting `status: "rate_limited"` with
+# `resume_at: null` aborts the pod with no callback at all and the node only
+# surfaces on its heartbeat timeout. The node must fall back to reporting an
+# ordinary failure instead. An unparseable epoch makes `date` fail identically
+# under GNU and BSD date, so this scenario is deterministic on both.
+build_callback_harness "not-an-epoch" "$SESSION_PATH" "sess-abc123" "rate_limited" > "$TESTDIR/callback_baddate.sh"
+if run_callback_harness "$TESTDIR/callback_baddate.sh" && jq -e \
+    '(.status == "failed") and (.resume_at == null) and (.session_id == null) and (.session_artifact_path == null)' \
+    "$CALLBACK_CAPTURE" >/dev/null 2>&1; then
+  ok "an unrenderable reset instant reports a failure instead of a rejectable park"
+else
+  fail "an unrenderable reset instant reports a failure instead of a rejectable park ($(cat "$CALLBACK_CAPTURE" 2>/dev/null) $(cat "$TESTDIR/callback_run.err" 2>/dev/null))"
+fi
+
 # --- Test 31: the park block survives every named failure mode, for real ---
 # The property with no assertion at all until now: an unguarded failing
 # command inside the quota-park block would abort the pod under
@@ -404,9 +422,17 @@ build_park_harness() {
   local proj_dir="$home_dir/.claude/projects/proj1"
   mkdir -p "$proj_dir"
   local sess="sess-$scenario"
-  if [ "$scenario" != "no_transcript" ]; then
+  # A quota hit that lands before the stream's `init` event carries no session
+  # id at all, so the harness must be able to express that.
+  case "$scenario" in no_session|no_projects_dir) sess="" ;; esac
+  if [ "$scenario" != "no_transcript" ] && [ -n "$sess" ]; then
     echo '{"type":"result","result":"partial"}' > "$proj_dir/$sess.jsonl"
   fi
+  # A second project directory makes `head -1`'s pick arbitrary.
+  [ "$scenario" = "multi_dirs" ] && mkdir -p "$home_dir/.claude/projects/proj2"
+  # ...and no projects directory at all is now reachable: parking no longer
+  # implies that claude ever ran far enough to create one.
+  [ "$scenario" = "no_projects_dir" ] && rm -rf "$home_dir/.claude"
 
   {
     echo 'set -euo pipefail'
@@ -424,6 +450,16 @@ build_park_harness() {
 
     if [ "$scenario" = "redact_fail" ]; then
       echo 'redact_transcript() { echo "redaction failed" >&2; return 1; }'
+    elif [ "$scenario" = "token_scope" ]; then
+      # Reports what the redaction function itself sees versus what a child
+      # process spawned from the same shell sees.
+      cat <<'STUB'
+redact_transcript() {
+  echo "FUNC_SEES:${GITHUB_TOKEN_FOR_REDACTION:-<unset>}"
+  echo "CHILD_SEES:$(bash -c 'printf %s "${GITHUB_TOKEN_FOR_REDACTION:-<unset>}"')"
+  cp "$1" "$2"
+}
+STUB
     else
       echo 'redact_transcript() { cp "$1" "$2"; }'
     fi
@@ -437,6 +473,7 @@ build_park_harness() {
     awk '/^# --- Quota park:/{f=1} /^# --- Step 5:/{f=0} f' "$ENTRYPOINT"
     echo 'echo "PARK_BLOCK_SENTINEL"'
     echo 'echo "SESSION_ARTIFACT_PATH_RESULT:${SESSION_ARTIFACT_PATH}"'
+    echo 'echo "RESULT_STATUS_RESULT:${RESULT_STATUS}"'
   }
 }
 
@@ -466,7 +503,21 @@ run_park_scenario() {
       && ok "SESSION_ARTIFACT_PATH still carries a session: $scenario" \
       || fail "SESSION_ARTIFACT_PATH still carries a session: $scenario (got empty)"
   fi
+
+  # The park itself -- distinct from whether a session reference survived. Every
+  # degraded mode above must still leave RESULT_STATUS at rate_limited: losing
+  # the session costs the resume, never the park. Without this assertion a gate
+  # that refused to park at all would still pass the two checks above, because
+  # "no session" is exactly what they expect from a degraded scenario.
+  local got_status
+  got_status=$(printf '%s\n' "$out" | sed -n 's/^RESULT_STATUS_RESULT://p')
+  [ "$got_status" = "rate_limited" ] \
+    && ok "the node still parks: $scenario" \
+    || fail "the node still parks: $scenario (RESULT_STATUS='$got_status')"
+
+  PARK_SCENARIO_OUT="$out"
 }
+PARK_SCENARIO_OUT=""
 
 # No transcript at the discovered path, redaction failing, and upload failing
 # each cut the chain before a session reference is produced -- the node still
@@ -483,6 +534,42 @@ run_park_scenario upload_fail empty
 # against a mutation that made a token-fetch failure wrongly skip parking
 # entirely (see the fix-round-1 report for the mutation and its result).
 run_park_scenario token_fetch_fail nonempty
+
+# A quota hit that lands before the stream's `init` event has no session id to
+# park. That is a supported degraded outcome -- the next iteration starts fresh
+# -- and strictly better than not parking at all, since parking is what stops
+# the node spending its retries against an exhausted quota. Same expected shape
+# as a failed upload: parked, with session_id and session_artifact_path null.
+run_park_scenario no_session empty
+
+# The same park with no ~/.claude/projects at all -- a quota hit before claude
+# created it. The discovery `ls` fails outright here, and under `set -o pipefail`
+# an unguarded pipeline assignment would abort the pod before the callback: the
+# same class of defect as reading an uninitialised variable, in the same block.
+run_park_scenario no_projects_dir empty
+
+# Two project directories under ~/.claude/projects: `head -1` then picks one
+# arbitrarily and can park a transcript from the wrong session, whose resume
+# fails obscurely a pod later. The park must still happen; the anomaly must be
+# named at park time.
+run_park_scenario multi_dirs nonempty
+if printf '%s' "$PARK_SCENARIO_OUT" | grep -q 'Claude project directories found' \
+    && printf '%s' "$PARK_SCENARIO_OUT" | grep -q 'proj2'; then
+  ok "multiple project directories are named in a warning"
+else
+  fail "multiple project directories are named in a warning (got: $PARK_SCENARIO_OUT)"
+fi
+
+# The redaction token must reach redact_transcript -- a shell function in this
+# same shell -- without being exported into the environment of the `artifact`
+# and `curl` children the block spawns straight afterwards.
+run_park_scenario token_scope nonempty
+if printf '%s' "$PARK_SCENARIO_OUT" | grep -q '^FUNC_SEES:gh-token$' \
+    && printf '%s' "$PARK_SCENARIO_OUT" | grep -q '^CHILD_SEES:<unset>$'; then
+  ok "the redaction token reaches the function but not its child processes"
+else
+  fail "the redaction token reaches the function but not its child processes (got: $PARK_SCENARIO_OUT)"
+fi
 
 # --- Test 32: the session reference is read from config.json ---
 grep -q "RESUME_SESSION_ID=\$(jq -r '.session_id // empty'" "$ENTRYPOINT" \
@@ -629,7 +716,10 @@ build_resume_harness() {
     fi
 
     if [ "$scenario" = "get_fails" ]; then
-      echo 'artifact() { echo "artifact $*" >> "$CALL_LOG"; [ "$1" = "get" ] && return 1; return 0; }'
+      # Writes a realistic diagnostic to stderr: `artifact` prints the presign
+      # endpoint's error body there, never the signed URL, so it is exactly the
+      # text the warning must carry.
+      echo 'artifact() { echo "artifact $*" >> "$CALL_LOG"; if [ "$1" = "get" ]; then echo "Access denied: path outside allowed scope" >&2; return 1; fi; return 0; }'
     elif [ "$scenario" = "put_fails" ]; then
       echo 'artifact() { echo "artifact $*" >> "$CALL_LOG"; if [ "$1" = "get" ]; then printf stub > "$3"; return 0; fi; [ "$1" = "put" ] && { echo "SIZE:$(wc -c < "$2" | tr -d " ")" >> "$CALL_LOG"; return 1; }; return 0; }'
     else
@@ -717,6 +807,17 @@ if echo "$OUT_GET_FAILS" | grep -q "RESUME_BLOCK_SENTINEL" \
   ok "resume block: failed restore falls back and never attempts to clear the object"
 else
   fail "resume block: failed restore falls back and never attempts to clear the object (got: $OUT_GET_FAILS)"
+fi
+
+# 38c2: the warning names the cause. `artifact` never prints the signed URL --
+# on failure it prints the presign endpoint's error body, and curl's -f message
+# carries no URL either -- so discarding its stderr threw away the whole
+# diagnosis of a silently degrading restore. Asserted as an exact substring of
+# the warning line, not merely as "the text appears somewhere in the output".
+if echo "$OUT_GET_FAILS" | grep -qF "could not restore the parked session; starting fresh (Access denied: path outside allowed scope)"; then
+  ok "resume block: the restore warning carries artifact's own diagnostic"
+else
+  fail "resume block: the restore warning carries artifact's own diagnostic (got: $OUT_GET_FAILS)"
 fi
 
 # 38d: restore succeeds but the consume-once clear fails -- the node must still
@@ -832,6 +933,134 @@ if [ "${FT_B%%|*}" -eq 0 ] \
 else
   fail "skipped-agent node reaches send-callback with an unparked body ($FT_B / $(cat "$FT_B_CAPTURE" 2>/dev/null))"
 fi
+
+# --- Test 40: a quota hit inside a retry loop parks instead of burning the budget ---
+# QUOTA_RESET_AT was computed once, from attempt 1's result. Quota is fleet-wide
+# and resets on a wall clock, so a hit can land on any later attempt just as
+# easily -- and an artifact/decision/escalation/PR retry that met one still spent
+# the rest of the budget and still reported its own diagnostic ("Required output
+# files not produced after N attempts"), which is the exact pair of defects this
+# feature exists to remove, in a narrower window.
+#
+# Run the real artifact-enforcement block (extracted by marker) with the real
+# refresh_quota_reset_at helper (also extracted by marker) and the real
+# quota_reset_at from quota-lib.sh. Only run_claude and parse_claude_output are
+# stubbed, and parse_claude_output returns a genuine quota message.
+
+# The library parses a wall-clock time against the real "now", so the fixture
+# has to be built relative to it. Inverse of quota_reset_at's own arithmetic.
+make_quota_message() {
+  local now target hh mm h12 mer
+  now=$(date -u +%s)
+  target=$((now + ${1:-3600}))
+  hh=$(( (target % 86400) / 3600 ))
+  mm=$(( (target % 3600) / 60 ))
+  mer=am
+  h12=$hh
+  [ "$hh" -ge 12 ] && mer=pm
+  if [ "$hh" -eq 0 ]; then
+    h12=12
+  elif [ "$hh" -gt 12 ]; then
+    h12=$((hh - 12))
+  fi
+  printf "You've hit your session limit · resets %d:%02d%s (UTC)" "$h12" "$mm" "$mer"
+}
+
+# Sanity-check the fixture itself before relying on it: a message the library
+# refuses would make the assertions below vacuous in the wrong direction.
+LOOP_QUOTA_MSG=$(make_quota_message 3600)
+quota_reset_at "$LOOP_QUOTA_MSG" >/dev/null \
+  && ok "the in-loop quota fixture is one the library actually parses" \
+  || fail "the in-loop quota fixture is one the library actually parses ($LOOP_QUOTA_MSG)"
+
+build_artifact_loop_harness() {
+  # $1 = call log, $2 = WORKSPACE_OUT, $3 = config file, $4 = the quota message
+  # parse_claude_output will report on the first in-loop attempt.
+  {
+    echo 'set -euo pipefail'
+    printf 'source %q\n' "$LIB"
+    printf 'CALL_LOG=%q\n' "$1"
+    printf 'WORKSPACE_OUT=%q\n' "$2"
+    printf 'CONFIG_FILE=%q\n' "$3"
+    printf 'QUOTA_MESSAGE=%q\n' "$4"
+    # Attempt 1 succeeded: a result, no error, status still completed. Only the
+    # required output file is missing, which is what sends the loop round again.
+    echo 'ATTEMPT=1'
+    echo 'MAX_RETRIES=3'
+    echo 'CLAUDE_SESSION_ID=sess-loop'
+    echo 'CLAUDE_RESULT="the first attempt finished"'
+    echo 'CLAUDE_PARTIAL_TEXT=""'
+    echo 'CLAUDE_IS_ERROR=false'
+    echo 'CLAUDE_SUBTYPE=""; CLAUDE_TERMINAL_REASON=""; CLAUDE_ERRORS=""'
+    echo 'QUOTA_RESET_AT=""'
+    echo 'RESULT="the first attempt finished"'
+    echo 'RESULT_STATUS="completed"'
+    echo 'ERROR_MESSAGE=""'
+    echo 'run_claude() { echo "call" >> "$CALL_LOG"; echo ""; }'
+    echo 'parse_claude_output() { CLAUDE_IS_ERROR=true; CLAUDE_RESULT="$QUOTA_MESSAGE"; }'
+    awk '/^  # Helper: \(re-\)decide/{f=1} /^  # Defaults; config.json/{f=0} f' "$ENTRYPOINT"
+    awk '/^  # --- Artifact enforcement:/{f=1} /^  # Decision verification:/{f=0} f' "$ENTRYPOINT"
+    echo 'echo "LOOP_SENTINEL"'
+    echo 'echo "QUOTA_RESET_AT_RESULT:${QUOTA_RESET_AT}"'
+    echo 'echo "RESULT_STATUS_RESULT:${RESULT_STATUS}"'
+    echo 'echo "ERROR_MESSAGE_RESULT:${ERROR_MESSAGE}"'
+    echo 'echo "RUN_CLAUDE_CALLS:$(grep -c . "$CALL_LOG" || true)"'
+  }
+}
+
+LOOP_OUT_DIR="$TESTDIR/loop_out"
+mkdir -p "$LOOP_OUT_DIR"
+LOOP_CONFIG="$TESTDIR/loop_config.json"
+cat > "$LOOP_CONFIG" <<'EOF'
+{"output_spec": {"files": [{"name": "report.md", "required": true}]}}
+EOF
+LOOP_CALL_LOG="$TESTDIR/loop_calls.log"
+: > "$LOOP_CALL_LOG"
+build_artifact_loop_harness "$LOOP_CALL_LOG" "$LOOP_OUT_DIR" "$LOOP_CONFIG" "$LOOP_QUOTA_MSG" \
+  > "$TESTDIR/artifact_loop.sh"
+set +e
+LOOP_OUT=$(bash "$TESTDIR/artifact_loop.sh" 2>&1)
+LOOP_RC=$?
+set -e
+
+# 40a: the loop stops the moment the quota is seen. MAX_RETRIES is 3 and the
+# required file never appears, so without the re-evaluation the loop makes two
+# calls (attempts 2 and 3); with it, exactly one.
+if [ "$LOOP_RC" -eq 0 ] \
+    && echo "$LOOP_OUT" | grep -q '^LOOP_SENTINEL$' \
+    && echo "$LOOP_OUT" | grep -q '^RUN_CLAUDE_CALLS:1$'; then
+  ok "an in-loop quota hit stops the retry loop after one attempt"
+else
+  fail "an in-loop quota hit stops the retry loop after one attempt (rc=$LOOP_RC, got: $LOOP_OUT)"
+fi
+
+# 40b: the park is armed, so the quota-park block downstream will actually park.
+if echo "$LOOP_OUT" | grep -qE '^QUOTA_RESET_AT_RESULT:[0-9]+$'; then
+  ok "an in-loop quota hit sets the reset instant"
+else
+  fail "an in-loop quota hit sets the reset instant (got: $LOOP_OUT)"
+fi
+
+# 40c: the reported reason is the quota, not the loop's own diagnostic. This is
+# the half a purely count-based assertion would miss -- and RESULT_STATUS must
+# be "failed" here, because that is what runs the failure safety net (committing
+# and pushing the pod's work) before the park block flips it to rate_limited.
+if echo "$LOOP_OUT" | grep -q '^ERROR_MESSAGE_RESULT:Claude quota exhausted' \
+    && ! echo "$LOOP_OUT" | grep -q 'Required output files not produced' \
+    && echo "$LOOP_OUT" | grep -q '^RESULT_STATUS_RESULT:failed$'; then
+  ok "an in-loop quota hit reports the quota, not the missing-artifact diagnostic"
+else
+  fail "an in-loop quota hit reports the quota, not the missing-artifact diagnostic (got: $LOOP_OUT)"
+fi
+
+# 40d: the helper is wired into every one of the four retry loops, not just the
+# artifact one exercised above. Structural, deliberately: standing up four
+# behavioral harnesses would test the same helper four times, whereas losing the
+# call in any single loop is what silently reopens the bug.
+LOOP_REFRESH_CALLS=$(grep -c '^ *refresh_quota_reset_at$' "$ENTRYPOINT" || true)
+[ "$LOOP_REFRESH_CALLS" -eq 5 ] \
+  && ok "the quota re-check runs at the first detection and in all four retry loops" \
+  || fail "the quota re-check runs at the first detection and in all four retry loops (found $LOOP_REFRESH_CALLS of 5)"
 
 echo
 echo "PASS: $PASS  FAIL: $FAIL"
