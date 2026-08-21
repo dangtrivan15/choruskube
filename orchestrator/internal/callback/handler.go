@@ -176,12 +176,24 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// wait itself happens here: the workflow sleeps for exactly this instant
 		// with no clamp of its own. A parse bug, a clock skew, or an upstream
 		// change to the message format must degrade to the node's existing failure
-		// path, never to an unbounded wait -- so the bound is re-checked at the
-		// boundary that actually schedules it, the same way the missing-resume_at
-		// case is.
+		// path, never to an unbounded wait -- so the UPPER bound is re-checked at
+		// the boundary that actually schedules it, the same way the
+		// missing-resume_at case is.
+		//
+		// There is deliberately no lower bound. A resume_at already in the past is
+		// not an anomaly, it is the expected shape of a near-boundary park: the
+		// agent computes the reset instant when it detects the quota hit, then
+		// redacts, uploads the transcript, and only then posts here, so seconds
+		// pass by construction. The workflow already handles it correctly -- see
+		// the `if wait > 0` guard in dag_executor.go's park coroutine, which skips
+		// the sleep and re-queues immediately, which is exactly right when the
+		// quota has already reset. Rejecting it would turn that benign,
+		// self-correcting case into the worst outcome available: send-callback has
+		// no retry, so a 400 kills the pod with no callback at all and the node
+		// only surfaces when its heartbeat timeout expires.
 		wait := time.Until(*req.ResumeAt)
-		if wait <= 0 || wait > maxParkDuration {
-			http.Error(w, "rate_limited requires resume_at in the future and within "+maxParkDuration.String(),
+		if wait > maxParkDuration {
+			http.Error(w, "rate_limited requires resume_at within "+maxParkDuration.String(),
 				http.StatusBadRequest)
 			return
 		}

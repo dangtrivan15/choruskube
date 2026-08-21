@@ -633,21 +633,26 @@ func TestFormatParkWait(t *testing.T) {
 	// under a minute still reads as a wait.
 	assert.Equal(t, "1m", formatParkWait(50*time.Second))
 	assert.Equal(t, "<1m", formatParkWait(10*time.Second))
+	// Reachable now that a past resume_at is accepted: the park line for one
+	// still has to render, and "in ~-2m0s" is not a thing to show an operator.
+	assert.Equal(t, "<1m", formatParkWait(-30*time.Second))
+	assert.Equal(t, "<1m", formatParkWait(-2*time.Hour))
 }
 
-func TestRateLimitedCallbackWithOutOfBoundsResumeAt_Rejected(t *testing.T) {
+func TestRateLimitedCallbackBeyondTheParkBound_Rejected(t *testing.T) {
 	// quota-lib.sh refuses to park beyond QUOTA_MAX_PARK_SECONDS, but the wait
-	// itself happens in the workflow, which sleeps for resumeAt with no clamp and
-	// no rejection of a past instant. The bound therefore has to be re-checked at
-	// this boundary — the one that schedules the sleep — so a parse bug or an
-	// upstream change to the quota message degrades to the node's existing
-	// failure path rather than to an unbounded wait.
+	// itself happens in the workflow, which sleeps for resumeAt with no clamp of
+	// its own. The upper bound therefore has to be re-checked at this boundary —
+	// the one that schedules the sleep — so a parse bug or an upstream change to
+	// the quota message degrades to the node's existing failure path rather than
+	// to an unbounded wait.
+	//
+	// Only the upper bound. A past resume_at is accepted; see
+	// TestRateLimitedCallbackWithPastResumeAt_Accepted below.
 	cases := []struct {
 		name     string
 		resumeAt time.Time
 	}{
-		{"already past", time.Now().UTC().Add(-time.Minute)},
-		{"exactly now", time.Now().UTC().Add(-time.Millisecond)},
 		{"beyond the 6h bound", time.Now().UTC().Add(maxParkDuration + 5*time.Minute)},
 		{"absurdly far out", time.Now().UTC().AddDate(1, 0, 0)},
 	}
@@ -769,6 +774,103 @@ func TestRateLimitedCallbackAtTheParkBound_Accepted(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.True(t, completer.rateLimitedCalled, "a park at the bound must still be scheduled")
+}
+
+func TestRateLimitedCallbackWithPastResumeAt_Accepted(t *testing.T) {
+	// A resume_at already in the past is the expected shape of a near-boundary
+	// park, not an anomaly: the agent computes the reset instant when it detects
+	// the quota hit, then redacts, uploads the transcript and only then posts the
+	// callback, so seconds pass by construction (mock-agent.sh parks 5s out).
+	//
+	// dag_executor.go's park coroutine already handles it — it guards the sleep
+	// on `if wait > 0`, so a past instant simply re-queues the node immediately,
+	// which is exactly right when the quota has already reset. Rejecting it here
+	// would convert that benign, self-correcting case into the worst outcome in
+	// the system: send-callback has no retry, so a 400 kills the pod with no
+	// callback at all and the node only surfaces on its heartbeat timeout — the
+	// same failure shape as an uninitialised variable in the agent's own
+	// fall-through path.
+	cases := []struct {
+		name     string
+		resumeAt time.Time
+	}{
+		{"a few seconds past", time.Now().UTC().Add(-5 * time.Second)},
+		{"a minute past", time.Now().UTC().Add(-time.Minute)},
+		{"well past", time.Now().UTC().Add(-2 * time.Hour)},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			jobSecret := "test-secret-value"
+			hash := sha256.Sum256([]byte(jobSecret))
+			hashStr := hex.EncodeToString(hash[:])
+
+			execID := uuid.New()
+			runID := uuid.New()
+
+			apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == "GET" && contains(r.URL.Path, "job-secret-hash"):
+					json.NewEncoder(w).Encode(map[string]string{"hash": hashStr})
+				case r.Method == "GET" && contains(r.URL.Path, "node-executions/"+execID.String()):
+					json.NewEncoder(w).Encode(map[string]interface{}{
+						"id": execID, "templateNodeId": uuid.New(), "status": "running",
+						"iteration": 1, "graphVersion": 1, "artifactRefs": "{}",
+					})
+				case r.Method == "PUT" && contains(r.URL.Path, "status"):
+					json.NewEncoder(w).Encode(map[string]interface{}{
+						"id": execID, "templateNodeId": uuid.New(), "status": "running",
+						"iteration": 1, "graphVersion": 1, "artifactRefs": "{}",
+					})
+				case r.Method == "POST" && contains(r.URL.Path, "logs"):
+					w.WriteHeader(http.StatusCreated)
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer apiServer.Close()
+
+			client := apiclient.NewClient(apiServer.URL)
+			completer := &mockActivityCompleter{}
+			handler := NewHandler(client, completer)
+
+			resumeAt := tc.resumeAt
+			sessionID := "63527525-b042-4779-9bd1-f28c203abb62"
+			sessionArtifactPath := "runs/r/e/session/63527525.jsonl"
+			body := CallbackRequest{
+				NodeExecutionID:     execID.String(),
+				RunID:               runID.String(),
+				Status:              "rate_limited",
+				Result:              "quota exhausted",
+				ResumeAt:            &resumeAt,
+				SessionID:           &sessionID,
+				SessionArtifactPath: &sessionArtifactPath,
+			}
+			bodyBytes, _ := json.Marshal(body)
+
+			req := httptest.NewRequest("POST", "/api/v1/callback", bytes.NewReader(bodyBytes))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+jobSecret)
+			rec := httptest.NewRecorder()
+
+			handler.ServeHTTP(rec, req)
+
+			assert.Equal(t, http.StatusOK, rec.Code, "a past resume_at must not be rejected")
+			require.True(t, completer.rateLimitedCalled, "the park must still be scheduled")
+			assert.False(t, completer.failCalled, "a past resume_at must not fail the activity")
+
+			// Passed through unchanged rather than clamped here: the workflow's own
+			// `if wait > 0` guard is what turns it into "resume immediately", and
+			// rewriting the instant here would hide that from anyone reading it.
+			assert.True(t, resumeAt.Equal(completer.resumeAt),
+				"resumeAt must reach the workflow unchanged, got %v", completer.resumeAt)
+
+			// The session reference must survive too — a park that lost it would
+			// silently restart the agent from scratch.
+			assert.Equal(t, sessionID, completer.sessionID)
+			assert.Equal(t, sessionArtifactPath, completer.sessionArtifactPath)
+		})
+	}
 }
 
 func TestRateLimitedCallbackWithoutResumeAt_Rejected(t *testing.T) {
