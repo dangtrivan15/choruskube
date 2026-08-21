@@ -48,6 +48,16 @@
 #   many_artifacts   Write --count small output files (default: 40), for E2E fixtures
 #                    exercising the artifact viewer's many-files layout (see
 #                    ArtifactViewerDialog.tsx)
+#   rate_limited     Mock parity for the Claude quota park-and-resume contract
+#                    (entrypoint.sh's Step 6): reports status "rate_limited" with a
+#                    resume_at MOCK_RESUME_SECONDS out (env var, default 5 — no
+#                    --flag, since this is the only scenario that parks) and a
+#                    synthetic session_id, instead of waiting on a real quota
+#                    event, which cannot be summoned on demand. Reads
+#                    /workspace/config.json's session_id (the same key the real
+#                    entrypoint reads as RESUME_SESSION_ID) on each invocation: if
+#                    present, this is a resumed iteration and completes instead of
+#                    parking again.
 #
 # Options:
 #   --delay <seconds>         Sleep duration for 'slow' scenario (default: 30)
@@ -636,16 +646,59 @@ JSON
     exit 0
     ;;
 
+  rate_limited)
+    # Parks like a real agent that hit the org's Claude quota: reports the park
+    # status with a reset time MOCK_RESUME_SECONDS out (default 5s so E2E does
+    # not wait), plus a synthetic session reference, matching the real agent's
+    # callback field-for-field (entrypoint.sh's Step 6: node_execution_id, run_id,
+    # status, result, artifact_refs, error_message, resume_at, session_id,
+    # session_artifact_path). On the resumed iteration config.json carries
+    # session_id — the same key the real entrypoint reads as RESUME_SESSION_ID,
+    # and the same one activities.go writes back into the next iteration's
+    # config.json once a park sets it — so we complete instead of parking again.
+    #
+    # Completion here is a bare exit 0, the same idiom as the 'success' scenario,
+    # not a report-result call: report-result's contract is a single positional
+    # <decision> argument for a human-gate node's routing decision (see
+    # submit_decision above), a different node type from the script-executor one
+    # this scenario is designed for. entrypoint.sh's own script-executor path
+    # already submits the passed/failed decision and default "completed" status
+    # once this command returns, so nothing more is needed on the resume path.
+    echo "Mock agent: rate_limited scenario"
+    RESUMED=$(jq -r '.session_id // empty' /workspace/config.json)
+    if [ -n "$RESUMED" ]; then
+      echo "Mock agent: resumed session $RESUMED — completing instead of parking again"
+      write_artifact "result.txt" "Resumed after quota park (session $RESUMED)"
+      exit 0
+    fi
+    RESET_AT=$(date -u -d "@$(( $(date -u +%s) + ${MOCK_RESUME_SECONDS:-5} ))" '+%Y-%m-%dT%H:%M:%SZ')
+    SESSION="mock-session-${NODE_EXECUTION_ID}"
+    # Assigned to a variable first, then passed, rather than
+    # send-callback "$(jq -n ...)" inline — the same two-step shape
+    # entrypoint.sh's own Step 6 uses to build CALLBACK_BODY.
+    CALLBACK_BODY=$(jq -n \
+      --arg id "$NODE_EXECUTION_ID" --arg run_id "$RUN_ID" \
+      --arg resume_at "$RESET_AT" --arg session_id "$SESSION" \
+      '{node_execution_id:$id, run_id:$run_id, status:"rate_limited",
+        result:"You'"'"'ve hit your session limit",
+        artifact_refs:{}, error_message:"Claude quota exhausted",
+        resume_at:$resume_at, session_id:$session_id,
+        session_artifact_path:null}')
+    send-callback "$CALLBACK_BODY"
+    echo "Mock agent: rate_limited — parked session $SESSION until $RESET_AT"
+    exit 0
+    ;;
+
   "")
     echo "ERROR: No scenario specified" >&2
     echo "Usage: mock-agent.sh <scenario> [options]" >&2
-    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, live_chat, multi_repo_pr, check_prs_gate, roadmap_status_update, roadmap_status_update_env_default, roadmap_status_update_missing_task_id, roadmap_candidates, single_repo_claude_md, dind_isolation, dind_network_connectivity, many_artifacts" >&2
+    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, live_chat, multi_repo_pr, check_prs_gate, roadmap_status_update, roadmap_status_update_env_default, roadmap_status_update_missing_task_id, roadmap_candidates, single_repo_claude_md, dind_isolation, dind_network_connectivity, many_artifacts, rate_limited" >&2
     exit 1
     ;;
 
   *)
     echo "ERROR: Unknown scenario '$SCENARIO'" >&2
-    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, live_chat, multi_repo_pr, check_prs_gate, roadmap_status_update, roadmap_status_update_env_default, roadmap_status_update_missing_task_id, roadmap_candidates, single_repo_claude_md, dind_isolation, dind_network_connectivity, many_artifacts" >&2
+    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, live_chat, multi_repo_pr, check_prs_gate, roadmap_status_update, roadmap_status_update_env_default, roadmap_status_update_missing_task_id, roadmap_candidates, single_repo_claude_md, dind_isolation, dind_network_connectivity, many_artifacts, rate_limited" >&2
     exit 1
     ;;
 esac
