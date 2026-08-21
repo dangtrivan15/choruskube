@@ -173,6 +173,34 @@ fi
 
 unset CLAUDE_CODE_OAUTH_TOKEN
 
+ENTRYPOINT="$(dirname "${BASH_SOURCE[0]}")/../entrypoint.sh"
+
+# --- Test 12: the entrypoint sources the library ---
+grep -q 'source .*quota-lib.sh' "$ENTRYPOINT" \
+  && ok "entrypoint sources quota-lib.sh" || fail "entrypoint sources quota-lib.sh"
+
+# --- Test 13: a quota hit is detected off the result text ---
+grep -q 'QUOTA_RESET_AT=$(quota_reset_at' "$ENTRYPOINT" \
+  && ok "entrypoint detects a quota hit" || fail "entrypoint detects a quota hit"
+
+# --- Test 14: every post-main retry loop is guarded on QUOTA_RESET_AT ---
+# The reference failure spent all three attempts in 28 seconds because the
+# artifact loop re-entered run_claude after the limit was already known.
+GUARDED=$(grep -c 'z "\$QUOTA_RESET_AT" \] && \[ \$ATTEMPT -lt \$MAX_RETRIES' "$ENTRYPOINT" || true)
+[ "$GUARDED" -eq 4 ] \
+  && ok "all four retry loops guarded" || fail "all four retry loops guarded (found $GUARDED of 4)"
+
+# --- Test 15: the quota reason is not overwritten by a later branch ---
+grep -q 'ERROR_MESSAGE="Claude quota exhausted' "$ENTRYPOINT" \
+  && ok "quota reason is set" || fail "quota reason is set"
+grep -q 'if \[ -z "\$QUOTA_RESET_AT" \] && \[ -n "\$MISSING_FILES" \]' "$ENTRYPOINT" \
+  && ok "artifact branch cannot overwrite the quota reason" \
+  || fail "artifact branch cannot overwrite the quota reason"
+
+# --- Test 16: the library ships in the image ---
+grep -q 'COPY quota-lib.sh' "$(dirname "${BASH_SOURCE[0]}")/../Dockerfile" \
+  && ok "quota-lib.sh is copied into the image" || fail "quota-lib.sh is copied into the image"
+
 echo
 echo "PASS: $PASS  FAIL: $FAIL"
 [ "$FAIL" -eq 0 ]

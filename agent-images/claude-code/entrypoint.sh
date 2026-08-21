@@ -424,6 +424,9 @@ export HEARTBEAT_URL="${CALLBACK_URL%/callback}/heartbeat"
 # fires instead of silently running out the full activity deadline.
 export CLAUDE_STREAM_FILE="/tmp/claude_stream_current.jsonl"
 
+# shellcheck source=/dev/null
+source /usr/local/bin/quota-lib.sh
+
 # --- Heartbeat loop (background) ---
 # Reports liveness to Temporal via orchestrator every 60s, but only if the
 # Claude stream has advanced. Killed on exit so it doesn't outlive the agent.
@@ -785,15 +788,22 @@ ${PROMPT}"
 
   CLAUDE_EXIT_CODE=$(cat /tmp/claude_exit_code 2>/dev/null || echo 0)
 
+  QUOTA_RESET_AT=""
   if [ "$CLAUDE_IS_ERROR" = "true" ]; then
-    # The run ended in a documented failure (turn cap, budget cap, execution
-    # error, ...). Carry whatever text it produced so the work isn't discarded,
-    # but never report it as completed — that is what let a truncated run look
-    # like a finished one downstream.
+    # A quota hit is transient and shared across the whole org: retrying costs
+    # nothing but gains nothing, and the retry budget is the wrong resource to
+    # spend on it. Detect it before anything else can consume an attempt.
+    QUOTA_RESET_AT=$(quota_reset_at "${CLAUDE_RESULT:-}") || QUOTA_RESET_AT=""
+
     RESULT="${CLAUDE_RESULT:-$CLAUDE_PARTIAL_TEXT}"
     RESULT_STATUS="failed"
-    ERROR_MESSAGE="Claude reported is_error after $ATTEMPT attempts (subtype=${CLAUDE_SUBTYPE:-unknown}${CLAUDE_TERMINAL_REASON:+, terminal_reason=$CLAUDE_TERMINAL_REASON})${CLAUDE_ERRORS:+: $CLAUDE_ERRORS}"
-    echo "ERROR: $ERROR_MESSAGE"
+    if [ -n "$QUOTA_RESET_AT" ]; then
+      ERROR_MESSAGE="Claude quota exhausted; resuming at $(date -u -d "@$QUOTA_RESET_AT" '+%H:%M UTC' 2>/dev/null || echo "the reset")"
+      echo "QUOTA: $ERROR_MESSAGE"
+    else
+      ERROR_MESSAGE="Claude reported is_error after $ATTEMPT attempts (subtype=${CLAUDE_SUBTYPE:-unknown}${CLAUDE_TERMINAL_REASON:+, terminal_reason=$CLAUDE_TERMINAL_REASON})${CLAUDE_ERRORS:+: $CLAUDE_ERRORS}"
+      echo "ERROR: $ERROR_MESSAGE"
+    fi
   elif [ -n "$CLAUDE_RESULT" ]; then
     RESULT="$CLAUDE_RESULT"
     echo "AI result captured (${#RESULT} chars)"
@@ -822,7 +832,7 @@ ${PROMPT}"
       fi
     done <<< "$REQUIRED_FILES"
 
-    while [ -n "$MISSING_FILES" ] && [ $ATTEMPT -lt $MAX_RETRIES ] && [ -n "$CLAUDE_SESSION_ID" ]; do
+    while [ -z "$QUOTA_RESET_AT" ] && [ $ATTEMPT -lt $MAX_RETRIES ] && [ -n "$MISSING_FILES" ] && [ -n "$CLAUDE_SESSION_ID" ]; do
       ATTEMPT=$((ATTEMPT + 1))
       echo "=== Artifact retry $ATTEMPT/$MAX_RETRIES — missing:$MISSING_FILES ==="
       ARTIFACT_RETRY_PROMPT="You completed your task but did not produce required output files:$MISSING_FILES. Write these files to /workspace/out/ before finishing."
@@ -837,7 +847,7 @@ ${PROMPT}"
       done <<< "$REQUIRED_FILES"
     done
 
-    if [ -n "$MISSING_FILES" ]; then
+    if [ -z "$QUOTA_RESET_AT" ] && [ -n "$MISSING_FILES" ]; then
       echo "ERROR: Required output files still missing after $ATTEMPT attempts:$MISSING_FILES"
       RESULT_STATUS="failed"
       ERROR_MESSAGE="Required output files not produced after $ATTEMPT attempts: $MISSING_FILES"
@@ -849,7 +859,7 @@ ${PROMPT}"
     DECISION=$(check-decision 2>/dev/null || echo "")
     if [ "$DECISION" = "(none)" ]; then DECISION=""; fi
 
-    while [ -z "$DECISION" ] && [ $ATTEMPT -lt $MAX_RETRIES ] && [ -n "$CLAUDE_SESSION_ID" ]; do
+    while [ -z "$QUOTA_RESET_AT" ] && [ $ATTEMPT -lt $MAX_RETRIES ] && [ -z "$DECISION" ] && [ -n "$CLAUDE_SESSION_ID" ]; do
       ATTEMPT=$((ATTEMPT + 1))
       echo "=== Decision retry $ATTEMPT/$MAX_RETRIES (resuming session $CLAUDE_SESSION_ID) ==="
 
@@ -862,11 +872,11 @@ ${PROMPT}"
       if [ "$DECISION" = "(none)" ]; then DECISION=""; fi
     done
 
-    if [ -z "$DECISION" ]; then
+    if [ -z "$QUOTA_RESET_AT" ] && [ -z "$DECISION" ]; then
       echo "ERROR: Node requires a decision but none was submitted after $ATTEMPT attempts"
       RESULT_STATUS="failed"
       ERROR_MESSAGE="Node requires a decision but agent did not call report-result after $ATTEMPT attempts"
-    else
+    elif [ -n "$DECISION" ]; then
       echo "Decision verified: $DECISION"
     fi
   fi
@@ -888,7 +898,7 @@ ${PROMPT}"
     fi
 
     if [ "$DECISION" = "escalate" ]; then
-      while [ ! -f "$WORKSPACE_OUT/escalation.md" ] && [ $ATTEMPT -lt $MAX_RETRIES ] && [ -n "$CLAUDE_SESSION_ID" ]; do
+      while [ -z "$QUOTA_RESET_AT" ] && [ $ATTEMPT -lt $MAX_RETRIES ] && [ ! -f "$WORKSPACE_OUT/escalation.md" ] && [ -n "$CLAUDE_SESSION_ID" ]; do
         ATTEMPT=$((ATTEMPT + 1))
         echo "=== Escalation retry $ATTEMPT/$MAX_RETRIES — escalation.md missing ==="
         ESCALATION_RETRY_PROMPT="You submitted the decision 'escalate' but did not write /workspace/out/escalation.md. Write it now, using the front matter and section structure from your system prompt, before finishing."
@@ -896,7 +906,7 @@ ${PROMPT}"
         parse_claude_output "$CLAUDE_OUTPUT"
       done
 
-      if [ ! -f "$WORKSPACE_OUT/escalation.md" ]; then
+      if [ -z "$QUOTA_RESET_AT" ] && [ ! -f "$WORKSPACE_OUT/escalation.md" ]; then
         echo "ERROR: decision 'escalate' submitted but escalation.md was not produced after $ATTEMPT attempts"
         RESULT_STATUS="failed"
         ERROR_MESSAGE="Decision 'escalate' requires /workspace/out/escalation.md, which was not produced after $ATTEMPT attempts"
@@ -925,7 +935,7 @@ ${PROMPT}"
     PR_CHECK_STATUS=$?
     set -e
 
-    while [ "$PR_CHECK_STATUS" -ne 0 ] && [ $ATTEMPT -lt $MAX_RETRIES ] && [ -n "$CLAUDE_SESSION_ID" ]; do
+    while [ -z "$QUOTA_RESET_AT" ] && [ $ATTEMPT -lt $MAX_RETRIES ] && [ "$PR_CHECK_STATUS" -ne 0 ] && [ -n "$CLAUDE_SESSION_ID" ]; do
       ATTEMPT=$((ATTEMPT + 1))
       echo "=== PR retry $ATTEMPT/$MAX_RETRIES (resuming session $CLAUDE_SESSION_ID) ==="
 
@@ -940,7 +950,7 @@ ${PROMPT}"
       set -e
     done
 
-    if [ "$PR_CHECK_STATUS" -ne 0 ]; then
+    if [ -z "$QUOTA_RESET_AT" ] && [ "$PR_CHECK_STATUS" -ne 0 ]; then
       PR_FAILURE_MESSAGE="PR registration missing for ${PR_CHECK_OUTPUT:-unknown repo(s)} after $ATTEMPT/$MAX_RETRIES total resume attempts this node"
       echo "ERROR: $PR_FAILURE_MESSAGE"
       # Don't clobber an earlier phase's diagnosis (e.g. decision verification
@@ -955,7 +965,7 @@ ${PROMPT}"
         RESULT_STATUS="failed"
         ERROR_MESSAGE="$PR_FAILURE_MESSAGE"
       fi
-    else
+    elif [ "$PR_CHECK_STATUS" -eq 0 ]; then
       echo "PR verification passed"
     fi
   fi
