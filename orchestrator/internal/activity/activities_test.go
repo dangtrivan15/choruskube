@@ -235,7 +235,7 @@ func TestExecuteAINodeFromSnapshot_OutputPathKeyedByExecutionID(t *testing.T) {
 	}
 	acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
 
-	err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: execID,
 		RunID:           runID,
 		TemplateNodeID:  templateNodeID,
@@ -299,7 +299,7 @@ func TestExecuteAINodeFromSnapshot_ScriptNode_ConfigJson(t *testing.T) {
 		Iteration:       1,
 	}
 
-	err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
 	assert.ErrorIs(t, err, activity.ErrResultPending)
 
 	// Verify config.json fields
@@ -359,7 +359,7 @@ func TestExecuteAINodeFromSnapshot_NoSystemPromptInConfigJson(t *testing.T) {
 		RunLogPath:      "runs/" + runID.String() + "/run_log.md",
 	}
 
-	err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
 	assert.ErrorIs(t, err, activity.ErrResultPending)
 
 	// System prompt is now built by the entrypoint from the image-local template,
@@ -422,7 +422,7 @@ func TestExecuteAINodeFromSnapshot_TaskContextInConfigJson(t *testing.T) {
 		EpicTitle:       "Roadmap-aware agents",
 	}
 
-	err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
 	assert.ErrorIs(t, err, activity.ErrResultPending)
 
 	taskContext, ok := receivedConfigJSON["task_context"].(map[string]interface{})
@@ -480,7 +480,7 @@ func TestExecuteAINodeFromSnapshot_NoTaskContextWhenTaskIDEmpty(t *testing.T) {
 		RunLogPath:      "runs/" + runID.String() + "/run_log.md",
 	}
 
-	err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
 	assert.ErrorIs(t, err, activity.ErrResultPending)
 
 	_, hasTaskContext := receivedConfigJSON["task_context"]
@@ -538,7 +538,7 @@ func TestExecuteAINodeFromSnapshot_TaskContextIncludesOpenBlockers(t *testing.T)
 		},
 	}
 
-	err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
 	assert.ErrorIs(t, err, activity.ErrResultPending)
 
 	taskContext, ok := receivedConfigJSON["task_context"].(map[string]interface{})
@@ -603,7 +603,7 @@ func TestExecuteAINodeFromSnapshot_NoOpenBlockersKeyWhenEmpty(t *testing.T) {
 		TaskTitle:       "No blockers here",
 	}
 
-	err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
 	assert.ErrorIs(t, err, activity.ErrResultPending)
 
 	taskContext, ok := receivedConfigJSON["task_context"].(map[string]interface{})
@@ -655,7 +655,7 @@ func TestExecuteAINodeFromSnapshot_IterationInConfigJson(t *testing.T) {
 		Iteration:       3,
 	}
 
-	err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
 	assert.ErrorIs(t, err, activity.ErrResultPending)
 
 	assert.Equal(t, float64(3), receivedConfigJSON["iteration"])
@@ -707,7 +707,7 @@ func TestExecuteAINodeFromSnapshot_IterationZeroOmitted(t *testing.T) {
 		Iteration:       0,
 	}
 
-	err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
 	assert.ErrorIs(t, err, activity.ErrResultPending)
 
 	_, exists := receivedConfigJSON["iteration"]
@@ -885,7 +885,7 @@ func TestExecuteAINodeFromSnapshot_PredecessorArtifactAnnotation(t *testing.T) {
 		Iteration: 1,
 	}
 
-	err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
 	assert.ErrorIs(t, err, activity.ErrResultPending)
 
 	prompt, ok := receivedConfigJSON["prompt"].(string)
@@ -943,7 +943,7 @@ func TestExecuteAINodeFromSnapshot_OnlyResultEntries_NoAnnotation(t *testing.T) 
 		Iteration: 1,
 	}
 
-	err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
 	assert.ErrorIs(t, err, activity.ErrResultPending)
 
 	prompt, ok := receivedConfigJSON["prompt"].(string)
@@ -1048,7 +1048,7 @@ func TestExecuteAINodeFromSnapshot_PredecessorArtifactAnnotation_MaterialisedFil
 			}
 			acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
 
-			err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+			_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 				NodeExecutionID: uuid.New(),
 				RunID:           uuid.New(),
 				TemplateNodeID:  uuid.New(),
@@ -1133,7 +1133,7 @@ func TestExecuteAINodeFromSnapshot_RunInputAnnotation(t *testing.T) {
 		Iteration: 1,
 	}
 
-	err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
 	assert.ErrorIs(t, err, activity.ErrResultPending)
 
 	prompt, ok := receivedConfigJSON["prompt"].(string)
@@ -1201,7 +1201,7 @@ func TestExecuteAINodeFromSnapshot_NoRunInputs_NoAnnotation(t *testing.T) {
 		Iteration:       1,
 	}
 
-	err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
 	assert.ErrorIs(t, err, activity.ErrResultPending)
 
 	prompt, ok := receivedConfigJSON["prompt"].(string)
@@ -1255,7 +1255,7 @@ func TestExecuteAINodeFromSnapshot_OutputSpec_Present(t *testing.T) {
 		OutputSpec:      outputSpec,
 	}
 
-	err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
 	assert.ErrorIs(t, err, activity.ErrResultPending)
 
 	assert.Equal(t, outputSpec, receivedConfigJSON["output_spec"], "output_spec should be forwarded to config.json")
@@ -1306,7 +1306,7 @@ func TestExecuteAINodeFromSnapshot_OutputSpec_Empty(t *testing.T) {
 		OutputSpec:      "", // empty — should not appear in config.json
 	}
 
-	err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
 	assert.ErrorIs(t, err, activity.ErrResultPending)
 
 	_, exists := receivedConfigJSON["output_spec"]
@@ -1358,7 +1358,7 @@ func TestExecuteAINodeFromSnapshot_OutputSpec_EmptyObject(t *testing.T) {
 		OutputSpec:      "{}", // empty object — should not appear in config.json
 	}
 
-	err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
 	assert.ErrorIs(t, err, activity.ErrResultPending)
 
 	_, exists := receivedConfigJSON["output_spec"]
@@ -1431,7 +1431,7 @@ func TestConfigJSON_SupervisorEmittedOnlyWhenDeclared(t *testing.T) {
 				SupervisorLabel: tt.supervisorLabel,
 			}
 
-			err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+			_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
 			assert.ErrorIs(t, err, activity.ErrResultPending)
 
 			supervisor, exists := receivedConfigJSON["supervisor"]
@@ -1479,7 +1479,7 @@ func TestExecuteAINodeFromSnapshot_ModelInConfigJson(t *testing.T) {
 	}
 	acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
 
-	err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
 		RunID:           uuid.New(),
 		TemplateNodeID:  uuid.New(),
@@ -1525,7 +1525,7 @@ func TestExecuteAINodeFromSnapshot_ModelOmittedWhenEmpty(t *testing.T) {
 	}
 	acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
 
-	err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
 		RunID:           uuid.New(),
 		TemplateNodeID:  uuid.New(),
@@ -1572,7 +1572,7 @@ func TestExecuteAINodeFromSnapshot_EffortInConfigJson(t *testing.T) {
 	}
 	acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
 
-	err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
 		RunID:           uuid.New(),
 		TemplateNodeID:  uuid.New(),
@@ -1618,7 +1618,7 @@ func TestExecuteAINodeFromSnapshot_EffortOmittedWhenEmpty(t *testing.T) {
 	}
 	acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
 
-	err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
 		RunID:           uuid.New(),
 		TemplateNodeID:  uuid.New(),
@@ -1678,7 +1678,7 @@ func TestExecuteAINodeFromSnapshot_ResolvedModelEffortReachConfigJSONUnchanged_B
 	// model_first_iteration/effort_first_iteration).
 	var firstIterationConfigJSON map[string]interface{}
 	firstActs := newServerAndActs(&firstIterationConfigJSON)
-	err := firstActs.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+	_, err := firstActs.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
 		RunID:           uuid.New(),
 		TemplateNodeID:  uuid.New(),
@@ -1703,7 +1703,7 @@ func TestExecuteAINodeFromSnapshot_ResolvedModelEffortReachConfigJSONUnchanged_B
 	// model_subsequent_iteration/effort_subsequent_iteration).
 	var subsequentIterationConfigJSON map[string]interface{}
 	subsequentActs := newServerAndActs(&subsequentIterationConfigJSON)
-	err = subsequentActs.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+	_, err = subsequentActs.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
 		RunID:           uuid.New(),
 		TemplateNodeID:  uuid.New(),
@@ -1757,7 +1757,7 @@ func TestExecuteAINodeFromSnapshot_TurnBudgetInConfigJson(t *testing.T) {
 	}
 	acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
 
-	err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
 		RunID:           uuid.New(),
 		TemplateNodeID:  uuid.New(),
@@ -1808,7 +1808,7 @@ func TestExecuteAINodeFromSnapshot_TurnBudgetOmittedWhenEmpty(t *testing.T) {
 	}
 	acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
 
-	err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
 		RunID:           uuid.New(),
 		TemplateNodeID:  uuid.New(),
@@ -1826,7 +1826,7 @@ func TestExecuteAINodeFromSnapshot_TurnBudgetOmittedWhenEmpty(t *testing.T) {
 	assert.False(t, hasMaxRetries, "config.json must omit max_retries when not set on the snapshot")
 
 	receivedConfigJSON = nil
-	err = acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+	_, err = acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
 		RunID:           uuid.New(),
 		TemplateNodeID:  uuid.New(),
@@ -1841,6 +1841,107 @@ func TestExecuteAINodeFromSnapshot_TurnBudgetOmittedWhenEmpty(t *testing.T) {
 	assert.False(t, hasMaxTurns, "config.json must omit max_turns when not set on the snapshot")
 	_, hasMaxRetries = receivedConfigJSON["max_retries"]
 	assert.False(t, hasMaxRetries, "config.json must omit max_retries when not set on the snapshot")
+}
+
+// TestExecuteAINodeFromSnapshot_SessionInConfigJson verifies that a session parked by a
+// previous iteration (SessionID/SessionArtifactPath set by the workflow's rate-limited
+// re-queue) reaches the agent via config.json's session_id/session_artifact_path — the
+// exact keys the entrypoint reads to resume instead of starting a fresh session.
+func TestExecuteAINodeFromSnapshot_SessionInConfigJson(t *testing.T) {
+	var receivedConfigJSON map[string]interface{}
+
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/internal/workloads/"):
+			var req map[string]interface{}
+			json.NewDecoder(r.Body).Decode(&req)
+			if cj, ok := req["configJson"].(map[string]interface{}); ok {
+				receivedConfigJSON = cj
+			}
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"executionHandle": "agent-abc12345",
+				"jobSecretHash":   "hash123",
+			})
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer apiServer.Close()
+
+	client := apiclient.NewClient(apiServer.URL)
+	cfg := &config.Config{
+		APIServerURL: apiServer.URL,
+		Callback:     config.CallbackConfig{URL: "http://callback:9090/api/v1/callback"},
+	}
+	acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
+
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+		NodeExecutionID:     uuid.New(),
+		RunID:               uuid.New(),
+		TemplateNodeID:      uuid.New(),
+		Label:               "implement",
+		ExecutorType:        "ai",
+		PromptTemplate:      "irrelevant",
+		SessionID:           "sess-1",
+		SessionArtifactPath: "runs/r/e/session/sess-1.jsonl",
+	})
+	assert.ErrorIs(t, err, activity.ErrResultPending)
+
+	assert.Equal(t, "sess-1", receivedConfigJSON["session_id"],
+		"config.json must include session_id when the iteration resumes a parked session")
+	assert.Equal(t, "runs/r/e/session/sess-1.jsonl", receivedConfigJSON["session_artifact_path"],
+		"config.json must include session_artifact_path when the iteration resumes a parked session")
+}
+
+// TestExecuteAINodeFromSnapshot_SessionOmittedWhenEmpty verifies session_id/
+// session_artifact_path are absent from config.json for an ordinary iteration that
+// resumes no parked session — not present as empty strings, which the agent would have
+// to special-case instead of simply starting a fresh session.
+func TestExecuteAINodeFromSnapshot_SessionOmittedWhenEmpty(t *testing.T) {
+	var receivedConfigJSON map[string]interface{}
+
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/internal/workloads/"):
+			var req map[string]interface{}
+			json.NewDecoder(r.Body).Decode(&req)
+			if cj, ok := req["configJson"].(map[string]interface{}); ok {
+				receivedConfigJSON = cj
+			}
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"executionHandle": "agent-abc12345",
+				"jobSecretHash":   "hash123",
+			})
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer apiServer.Close()
+
+	client := apiclient.NewClient(apiServer.URL)
+	cfg := &config.Config{
+		APIServerURL: apiServer.URL,
+		Callback:     config.CallbackConfig{URL: "http://callback:9090/api/v1/callback"},
+	}
+	acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
+
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+		NodeExecutionID: uuid.New(),
+		RunID:           uuid.New(),
+		TemplateNodeID:  uuid.New(),
+		Label:           "implement",
+		ExecutorType:    "ai",
+		PromptTemplate:  "irrelevant",
+		// SessionID intentionally not set
+	})
+	assert.ErrorIs(t, err, activity.ErrResultPending)
+
+	_, hasSessionID := receivedConfigJSON["session_id"]
+	assert.False(t, hasSessionID, "config.json must omit session_id when the iteration resumes no parked session")
+	_, hasSessionArtifactPath := receivedConfigJSON["session_artifact_path"]
+	assert.False(t, hasSessionArtifactPath, "config.json must omit session_artifact_path when the iteration resumes no parked session")
 }
 
 // TestExecuteAINodeFromSnapshot_NeedsPRInConfigJson verifies that NeedsPR true (derived
@@ -1875,7 +1976,7 @@ func TestExecuteAINodeFromSnapshot_NeedsPRInConfigJson(t *testing.T) {
 	}
 	acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
 
-	err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
 		RunID:           uuid.New(),
 		TemplateNodeID:  uuid.New(),
@@ -1921,7 +2022,7 @@ func TestExecuteAINodeFromSnapshot_NeedsPROmittedWhenFalse(t *testing.T) {
 	}
 	acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
 
-	err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
 		RunID:           uuid.New(),
 		TemplateNodeID:  uuid.New(),

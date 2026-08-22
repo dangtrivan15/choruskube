@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -20,6 +21,11 @@ import (
 type ActivityCompleter interface {
 	CompleteActivity(ctx context.Context, nodeExecID uuid.UUID, workflowID string, result, artifactRefs, errorMessage string) error
 	FailActivity(ctx context.Context, nodeExecID uuid.UUID, workflowID string, reason error) error
+	// CompleteActivityRateLimited completes the activity successfully with a
+	// rate-limited outcome. It must not fail the activity: a quota hit is
+	// transient, and the failure path would park the run for a human instead of
+	// resuming it.
+	CompleteActivityRateLimited(ctx context.Context, nodeExecID uuid.UUID, workflowID string, resumeAt time.Time, sessionID, sessionArtifactPath string) error
 }
 
 // CallbackRequest is the JSON body sent by agent pods
@@ -30,6 +36,35 @@ type CallbackRequest struct {
 	Result          string          `json:"result"`
 	ArtifactRefs    json.RawMessage `json:"artifact_refs"`
 	ErrorMessage    *string         `json:"error_message"`
+	// Set only when Status == "rate_limited".
+	ResumeAt            *time.Time `json:"resume_at"`
+	SessionID           *string    `json:"session_id"`
+	SessionArtifactPath *string    `json:"session_artifact_path"`
+}
+
+// maxParkDuration is the longest quota park the orchestrator will schedule. It
+// mirrors QUOTA_MAX_PARK_SECONDS in the agent's quota-lib.sh; the two are the
+// same safety property enforced at each end of the callback.
+const maxParkDuration = 6 * time.Hour
+
+// formatParkWait renders a park duration the way an operator reads it: whole
+// minutes, no seconds component. Duration.String() would render 42 minutes as
+// "42m0s" and two hours as "2h0m0s".
+func formatParkWait(d time.Duration) string {
+	d = d.Round(time.Minute)
+	if d < time.Minute {
+		return "<1m"
+	}
+	h := int(d / time.Hour)
+	m := int((d % time.Hour) / time.Minute)
+	switch {
+	case h == 0:
+		return fmt.Sprintf("%dm", m)
+	case m == 0:
+		return fmt.Sprintf("%dh", h)
+	default:
+		return fmt.Sprintf("%dh%dm", h, m)
+	}
 }
 
 // Handler is the HTTP handler for agent pod callbacks
@@ -124,6 +159,77 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(map[string]string{"status": "rejected", "reason": "empty result"})
+		return
+	}
+
+	// A quota hit is transient and org-wide. Complete the activity so the
+	// workflow can sleep and re-queue, and leave every status untouched: the
+	// node stays `running`, which keeps the run occupying its Autopilot slot.
+	// That is deliberate backpressure — freeing the slot would start another run
+	// against the same exhausted quota.
+	if req.Status == "rate_limited" {
+		if req.ResumeAt == nil {
+			http.Error(w, "rate_limited requires resume_at", http.StatusBadRequest)
+			return
+		}
+		// The agent's quota-lib.sh refuses to park beyond maxParkDuration, but the
+		// wait itself happens here: the workflow sleeps for exactly this instant
+		// with no clamp of its own. A parse bug, a clock skew, or an upstream
+		// change to the message format must degrade to the node's existing failure
+		// path, never to an unbounded wait -- so the UPPER bound is re-checked at
+		// the boundary that actually schedules it, the same way the
+		// missing-resume_at case is.
+		//
+		// There is deliberately no lower bound. A resume_at already in the past is
+		// not an anomaly, it is the expected shape of a near-boundary park: the
+		// agent computes the reset instant when it detects the quota hit, then
+		// redacts, uploads the transcript, and only then posts here, so seconds
+		// pass by construction. The workflow already handles it correctly -- see
+		// the `if wait > 0` guard in dag_executor.go's park coroutine, which skips
+		// the sleep and re-queues immediately, which is exactly right when the
+		// quota has already reset. Rejecting it would turn that benign,
+		// self-correcting case into the worst outcome available: send-callback has
+		// no retry, so a 400 kills the pod with no callback at all and the node
+		// only surfaces when its heartbeat timeout expires.
+		wait := time.Until(*req.ResumeAt)
+		if wait > maxParkDuration {
+			http.Error(w, "rate_limited requires resume_at within "+maxParkDuration.String(),
+				http.StatusBadRequest)
+			return
+		}
+		if err := h.completer.CompleteActivityRateLimited(ctx, execID, workflowID,
+			*req.ResumeAt, ptrOrEmpty(req.SessionID), ptrOrEmpty(req.SessionArtifactPath)); err != nil {
+			log.Printf("ERROR: failed to complete rate-limited activity for %s: %v", execID, err)
+		}
+
+		// Clear the pod reference: the pod is gone for the whole sleep, and the Run
+		// info panel would otherwise point at a deleted one for hours.
+		//
+		// Status is re-asserted as "running" rather than omitted. The API server's
+		// updateNodeExecutionStatus null-guards every field EXCEPT status, which it
+		// applies unconditionally via NodeExecutionStatus.valueOf(req.status()) — so
+		// an empty status throws IllegalArgumentException and a null one throws NPE.
+		// A partial update is therefore impossible on this endpoint. Re-asserting the
+		// status the row already has is inert: startedAt is only set when it is null,
+		// completedAt only on completed/failed, and the decision and output-spec
+		// branches only on completed.
+		emptyPod := ""
+		if err := h.client.UpdateNodeExecution(ctx, runID, execID, state.UpdateNodeExecutionParams{
+			Status:  "running",
+			PodName: &emptyPod,
+		}); err != nil {
+			log.Printf("ERROR: failed to clear pod_name for %s: %v", execID, err)
+		}
+
+		// The relative half is what disambiguates a rollover park: the reset is a
+		// wall-clock time with no date, so "00:15 UTC" alone leaves a reader unable
+		// to tell tonight from tomorrow.
+		h.client.WriteExecutionLog(ctx, runID, execID, "info",
+			fmt.Sprintf("Claude quota exhausted. Resuming automatically at %s (in ~%s). No action needed.",
+				req.ResumeAt.UTC().Format("15:04 UTC"), formatParkWait(wait)))
+
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"status": "parked"})
 		return
 	}
 

@@ -42,6 +42,11 @@ type nodeCompletion struct {
 	err          error
 	artifactRefs string // AI nodes: artifact refs from callback
 	errorMessage string // from CallbackResult.ErrorMessage
+	// Set when the agent reported a quota hit rather than a result.
+	rateLimited         bool
+	resumeAt            time.Time
+	sessionID           string
+	sessionArtifactPath string
 }
 
 // nodeTracker tracks in-workflow state for each activated node
@@ -69,6 +74,12 @@ type nodeTracker struct {
 	// deliberately chose a target whose ordinary upstream may never have run. Carried
 	// forward unchanged by every other nodeTracker construction site.
 	forceReady bool
+	// sessionID and sessionArtifactPath carry a session parked by a previous
+	// iteration into ExecuteAINodeFromSnapshotParams, so the next pod resumes
+	// the same Claude session instead of starting over. Empty for every
+	// tracker except the one created by the rate-limited re-queue path.
+	sessionID           string
+	sessionArtifactPath string
 }
 
 func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
@@ -161,6 +172,14 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 
 	// Completion channel for tracking node completions
 	completionCh := workflow.NewChannel(ctx)
+
+	// requeueCh wakes the main loop when a background park-and-resume coroutine (see
+	// the completionCh.rateLimited branch below) finishes updating the nodes map.
+	// It carries no completion semantics — the node hasn't finished, it's only been
+	// requeued — so it's a separate channel from completionCh rather than a flag on
+	// nodeCompletion: reusing completionCh here would run the freshly-requeued node
+	// through the same edge-evaluation/decision-reading logic real completions get.
+	requeueCh := workflow.NewChannel(ctx)
 
 	// Step 4: Main execution loop
 	for {
@@ -787,6 +806,8 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 						Variables:              vars,
 						LoopGroup:              loopGroup,
 						Iteration:              tracker.iteration,
+						SessionID:              tracker.sessionID,
+						SessionArtifactPath:    tracker.sessionArtifactPath,
 						RepoURL:                repoURL,
 						WorkingBranch:          workingBranch,
 						Command:                command,
@@ -818,11 +839,15 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 						errorMessage = cbResult.ErrorMessage
 					}
 					completionCh.Send(gCtx, nodeCompletion{
-						nodeID:       nodeID,
-						result:       result,
-						err:          err,
-						artifactRefs: artifactRefs,
-						errorMessage: errorMessage,
+						nodeID:              nodeID,
+						result:              result,
+						err:                 err,
+						artifactRefs:        artifactRefs,
+						errorMessage:        errorMessage,
+						rateLimited:         err == nil && cbResult.Status == "rate_limited",
+						resumeAt:            cbResult.ResumeAt,
+						sessionID:           cbResult.SessionID,
+						sessionArtifactPath: cbResult.SessionArtifactPath,
 					})
 				})
 			}
@@ -839,6 +864,134 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 
 				tracker := nodes[completion.nodeID]
 				snapshotNode, _ := GetNodeByID(snap, completion.nodeID)
+
+				// Quota exhaustion: sleep until the reset, then re-queue as a fresh
+				// iteration carrying the parked session. Statuses stay untouched
+				// while sleeping — the node remains `running`, so the run keeps its
+				// Autopilot slot and nothing prompts a human. The activity has
+				// already completed, so no StartToClose or heartbeat timeout applies.
+				//
+				// The sleep itself must not happen here, synchronously, in this
+				// callback. completionCh is unbuffered and this AddReceive is torn
+				// down and rebuilt every outer-loop pass, so Select does not return
+				// until this callback does — a synchronous sleep would stall every
+				// sibling node's own completion (its DB writes, job cleanup, and
+				// edge evaluation) for the whole park. Spawning a coroutine lets
+				// this callback return immediately so the selector stays live for
+				// siblings. The parked node's tracker is left untouched (still
+				// "running") until the coroutine finishes, so it keeps counting
+				// toward runningCount and the main loop cannot decide the run is
+				// done while parked; requeueCh.Send below is what wakes the main
+				// loop back up once the coroutine has something for it to see.
+				if completion.rateLimited {
+					parkedNodeID := completion.nodeID
+					parkedExecID := tracker.execID
+					parkedIteration := tracker.iteration
+					parkedReviewPass := tracker.reviewPass
+					parkedForceReady := tracker.forceReady
+					parkedLabel := snapshotNode.Label
+					resumeAt := completion.resumeAt
+					sessionID := completion.sessionID
+					sessionArtifactPath := completion.sessionArtifactPath
+
+					workflow.Go(ctx, func(gCtx workflow.Context) {
+						wait := resumeAt.Sub(workflow.Now(gCtx))
+						if wait > 0 {
+							if err := workflow.Sleep(gCtx, wait); err != nil {
+								logger.Error("Sleep interrupted while parked on quota", "err", err)
+							}
+						}
+
+						if invErr := workflow.ExecuteActivity(dbCtx, activities.UpdateNodeExecutionStatus,
+							activity.UpdateNodeExecStatusParams{
+								RunID:           params.RunID,
+								NodeExecutionID: parkedExecID,
+								Status:          "invalidated",
+							}).Get(gCtx, nil); invErr != nil {
+							// The park itself succeeded; only this bookkeeping write
+							// failed. completion.err is nil on the rate-limited path
+							// (see the future-await goroutine above), so simply
+							// returning here would fall through to the SUCCESS
+							// finalization below with an empty result, not to any
+							// failure path. Send a synthetic errored completion
+							// instead — this both fails the node explicitly through
+							// the existing, already-tested failure path and wakes
+							// the main loop (completionCh.Send does both jobs here).
+							logger.Warn("Could not invalidate the parked execution; failing the node",
+								"execID", parkedExecID, "err", invErr)
+							// A concurrent manual pause may have stamped this same
+							// execID into pauseInterrupted while it was parked (its
+							// tracker still read "running" — see the comment above
+							// this branch). Left in place, the pre-existing
+							// wasPaused recovery below would intercept this
+							// synthetic completion first, re-queue silently with no
+							// sessionID/sessionArtifactPath, and bypass the explicit
+							// failure this branch exists to guarantee. This
+							// execution is failing because its own bookkeeping
+							// write failed, not because a human paused it, so that
+							// recovery is the wrong handler for it — sever the
+							// misroute at its source.
+							delete(pauseInterrupted, parkedExecID)
+							completionCh.Send(gCtx, nodeCompletion{
+								nodeID: parkedNodeID,
+								err:    fmt.Errorf("invalidate parked execution after quota reset: %w", invErr),
+							})
+							return
+						}
+
+						newIteration := parkedIteration + 1
+						var newExecID uuid.UUID
+						if createErr := workflow.ExecuteActivity(dbCtx, activities.CreateNodeExecution,
+							activity.CreateNodeExecParams{
+								WorkflowRunID:  params.RunID,
+								TemplateNodeID: parkedNodeID,
+								GraphVersion:   params.GraphVersion,
+								Iteration:      newIteration,
+								Label:          parkedLabel,
+							}).Get(gCtx, &newExecID); createErr != nil {
+							logger.Error("Could not create the resumed execution; failing the node",
+								"nodeID", parkedNodeID, "err", createErr)
+							// Same misroute risk as the invalidate-failure branch above:
+							// a concurrent pause may have stamped parkedExecID into
+							// pauseInterrupted while this node was parked. Clear it so
+							// this synthetic completion reaches the normal failure path,
+							// not the session-blind wasPaused recovery.
+							delete(pauseInterrupted, parkedExecID)
+							completionCh.Send(gCtx, nodeCompletion{
+								nodeID: parkedNodeID,
+								err:    fmt.Errorf("create resumed execution after quota reset: %w", createErr),
+							})
+							return
+						}
+
+						// reviewPass and forceReady carry forward unchanged: this is
+						// an infra retry of the same attempt, not a review decision.
+						// Mutating nodes from this coroutine is safe: workflow
+						// coroutines are cooperatively scheduled and deterministic,
+						// so there is no concurrent access to race against — only
+						// the ordering relative to other coroutines' yield points,
+						// which is exactly what requeueCh.Send below coordinates.
+						nodes[parkedNodeID] = &nodeTracker{
+							status:              "pending",
+							execID:              newExecID,
+							iteration:           newIteration,
+							reviewPass:          parkedReviewPass,
+							forceReady:          parkedForceReady,
+							sessionID:           sessionID,
+							sessionArtifactPath: sessionArtifactPath,
+						}
+						// A stale pauseInterrupted[parkedExecID] entry here (from a
+						// pause stamped during the park) is inert, not misleading: no
+						// completion for the old execID is ever sent on this success
+						// path, and execIDs are fresh UUIDs that are never reused, so
+						// it could never be matched by a future lookup. Deleted anyway
+						// so pauseInterrupted does not accumulate a dead entry per
+						// paused-and-parked node over a long-running workflow.
+						delete(pauseInterrupted, parkedExecID)
+						requeueCh.Send(gCtx, struct{}{})
+					})
+					return
+				}
 
 				if completion.err != nil {
 					// Check if this is a heartbeat timeout arriving after a deliberate pause.
@@ -1194,6 +1347,16 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 						forceReady: routedBySupervisor,
 					}
 				}
+			})
+
+			// Also listen for a park-and-resume coroutine (see the rateLimited
+			// branch above) finishing. It carries no payload worth reading — the
+			// coroutine already installed the fresh pending tracker in `nodes`
+			// itself before sending — this receive exists purely to unblock
+			// Select so the loop re-evaluates ready nodes.
+			selector.AddReceive(requeueCh, func(ch workflow.ReceiveChannel, more bool) {
+				var sig struct{}
+				ch.Receive(ctx, &sig)
 			})
 
 			// Also listen for pause

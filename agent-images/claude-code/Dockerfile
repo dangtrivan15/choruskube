@@ -63,6 +63,7 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 # Copy helper scripts
 COPY report-result /usr/local/bin/report-result
 COPY fetch-github-token /usr/local/bin/fetch-github-token
+COPY quota-lib.sh /usr/local/bin/quota-lib.sh
 COPY check-decision /usr/local/bin/check-decision
 COPY list-decisions /usr/local/bin/list-decisions
 COPY send-heartbeat /usr/local/bin/send-heartbeat
@@ -100,7 +101,8 @@ RUN chmod +x /usr/local/bin/report-result \
     /usr/local/bin/get-roadmap-graph \
     /usr/local/bin/update-task-status \
     /usr/local/bin/run-all-tests \
-    /usr/local/bin/normalize-lockfiles
+    /usr/local/bin/normalize-lockfiles \
+    /usr/local/bin/quota-lib.sh
 
 # Disable telemetry, update checks, and other non-essential network traffic.
 # Set via ENV (not settings.json) so it applies to all processes in the container.

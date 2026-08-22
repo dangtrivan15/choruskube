@@ -116,7 +116,7 @@ func (s *DAGExecutorTestSuite) TestCancelStep5ToleratesDeleteAgentJob404() {
 		Run(func(mock.Arguments) {
 			s.env.SignalWorkflow("cancel", nil)
 		}).
-		After(time.Second).Return(nil)
+		After(time.Second).Return(activity.CallbackResult{}, nil)
 
 	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
 
@@ -192,10 +192,10 @@ func (s *DAGExecutorTestSuite) TestScriptNodeRetry_RefreshesSnapshot() {
 		return p.TemplateNodeID == nodeA && p.Iteration == 1
 	})).Return(execA, nil).Once()
 
-	// First execution fails — activity returns error (single return value)
+	// First execution fails — activity returns a zero CallbackResult and an error
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
 		return p.TemplateNodeID == nodeA && p.Command == oldCommand
-	})).Return(fmt.Errorf("script failed (exit 127)")).Once()
+	})).Return(activity.CallbackResult{}, fmt.Errorf("script failed (exit 127)")).Once()
 
 	// Retry execution created
 	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
@@ -205,7 +205,7 @@ func (s *DAGExecutorTestSuite) TestScriptNodeRetry_RefreshesSnapshot() {
 	// Retry execution succeeds with the NEW command
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
 		return p.TemplateNodeID == nodeA && p.Command == newCommand
-	})).Return(nil).Once()
+	})).Return(activity.CallbackResult{}, nil).Once()
 
 	// Send retry signal after the first execution fails
 	s.env.RegisterDelayedCallback(func() {
@@ -266,14 +266,14 @@ func (s *DAGExecutorTestSuite) TestModelEffortResolution_RetryNodeSignal_Preserv
 	// config, then fails, sending the node into the awaiting_retry state.
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
 		return p.NodeExecutionID == execA1 && p.Iteration == 1 && p.Model == "opus-x" && p.Effort == "xhigh"
-	})).Return(fmt.Errorf("boom")).Once()
+	})).Return(activity.CallbackResult{}, fmt.Errorf("boom")).Once()
 
 	// Retried attempt (iteration 2, but reviewPass STILL == 1 — this is an infra
 	// retry, not a review decision): must still resolve the first-iteration
 	// config, not the subsequent-iteration one.
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
 		return p.NodeExecutionID == execA2 && p.Iteration == 2 && p.Model == "opus-x" && p.Effort == "xhigh"
-	})).Return(nil).Once()
+	})).Return(activity.CallbackResult{}, nil).Once()
 
 	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
 		return p.NodeExecutionID == execA2
@@ -336,13 +336,13 @@ func (s *DAGExecutorTestSuite) TestModelEffortResolution_PauseHeartbeatTimeoutRe
 	// (simulated heartbeat timeout) after the pause/resume cycle below.
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
 		return p.NodeExecutionID == execA
-	})).After(500 * time.Millisecond).Return(fmt.Errorf("heartbeat timeout"))
+	})).After(500*time.Millisecond).Return(activity.CallbackResult{}, fmt.Errorf("heartbeat timeout"))
 
 	// Re-queued execution (iteration 2, reviewPass STILL 1): must still resolve
 	// the first-iteration config, not the subsequent-iteration one.
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
 		return p.NodeExecutionID == execA2 && p.Model == "opus-x" && p.Effort == "xhigh"
-	})).Return(nil)
+	})).Return(activity.CallbackResult{}, nil)
 
 	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.MatchedBy(func(p activity.UpdateNodeExecStatusParams) bool {
 		return p.NodeExecutionID == execA && p.Status == "paused"

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"go.temporal.io/sdk/activity"
@@ -88,6 +89,13 @@ type CallbackResult struct {
 	Result       string `json:"result"`
 	ArtifactRefs string `json:"artifact_refs"`
 	ErrorMessage string `json:"error_message"`
+	// Set only when Status == "rate_limited". ResumeAt is when the org's Claude
+	// quota resets; the workflow sleeps until then rather than failing the node.
+	// SessionArtifactPath is empty when the transcript upload failed, in which
+	// case the next iteration starts a fresh Claude session.
+	ResumeAt            time.Time `json:"resume_at"`
+	SessionID           string    `json:"session_id"`
+	SessionArtifactPath string    `json:"session_artifact_path"`
 }
 
 func (a *Activities) ExecuteAINode(ctx context.Context, params ExecuteAINodeParams) error {
@@ -199,6 +207,11 @@ type ExecuteAINodeFromSnapshotParams struct {
 	// (nil or zero-length) omits the key entirely, matching how task_context itself is
 	// omitted when TaskID == "".
 	OpenBlockers []OpenBlockerParam
+	// Set only when this iteration resumes a session parked by a previous one.
+	// The entrypoint restores the transcript and runs `claude --resume`; empty
+	// means start a fresh session.
+	SessionID           string `json:"session_id,omitempty"`
+	SessionArtifactPath string `json:"session_artifact_path,omitempty"`
 }
 
 // OpenBlockerParam mirrors one entry of state.SnapshotOpenBlocker, flattened into the
@@ -210,7 +223,7 @@ type OpenBlockerParam struct {
 	Status   string
 }
 
-func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params ExecuteAINodeFromSnapshotParams) error {
+func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params ExecuteAINodeFromSnapshotParams) (CallbackResult, error) {
 	// Resolve prompt template
 	vars := params.Variables
 	if vars == nil {
@@ -218,7 +231,7 @@ func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params Execu
 	}
 	resolvedPrompt, err := a.resolver.Resolve(params.PromptTemplate, vars)
 	if err != nil {
-		return fmt.Errorf("resolve prompt: %w", err)
+		return CallbackResult{}, fmt.Errorf("resolve prompt: %w", err)
 	}
 
 	// Append predecessor artifact annotation to prompt when artifact refs are present.
@@ -343,6 +356,10 @@ func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params Execu
 	if params.MaxTurns != "" {
 		configJSON["max_turns"] = params.MaxTurns
 	}
+	if params.SessionID != "" {
+		configJSON["session_id"] = params.SessionID
+		configJSON["session_artifact_path"] = params.SessionArtifactPath
+	}
 	if params.MaxRetries != "" {
 		configJSON["max_retries"] = params.MaxRetries
 	}
@@ -378,7 +395,7 @@ func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params Execu
 		ConfigJSON:     configJSON,
 	})
 	if err != nil {
-		return fmt.Errorf("create workload: %w", err)
+		return CallbackResult{}, fmt.Errorf("create workload: %w", err)
 	}
 
 	a.client.WriteExecutionLog(ctx, params.RunID, params.NodeExecutionID, "info",
@@ -386,7 +403,7 @@ func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params Execu
 	a.client.WriteExecutionLog(ctx, params.RunID, params.NodeExecutionID, "info",
 		fmt.Sprintf("Prompt resolved (%d chars)", len(resolvedPrompt)))
 
-	return activity.ErrResultPending
+	return CallbackResult{}, activity.ErrResultPending
 }
 
 // --- Activity: WriteReviewHistory ---

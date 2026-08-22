@@ -24,6 +24,11 @@ export GITHUB_TOKEN_URL=$(jq -r '.github_token_url // empty' "$CONFIG_FILE")
 COMMAND=$(jq -r '.command // empty' "$CONFIG_FILE")
 EXECUTOR_TYPE=$(jq -r '.executor_type // "ai"' "$CONFIG_FILE")
 MODEL=$(jq -r '.model // empty' "$CONFIG_FILE")
+# A session parked by a previous iteration on a quota hit (see the "Quota resume"
+# block below). Both empty on an ordinary run — Task 8's orchestrator step sets
+# them only when this execution carries a park reference forward.
+RESUME_SESSION_ID=$(jq -r '.session_id // empty' "$CONFIG_FILE")
+RESUME_SESSION_PATH=$(jq -r '.session_artifact_path // empty' "$CONFIG_FILE")
 # Whatever effort the node configures reaches claude's argv verbatim — the set of
 # levels is claude's to define, not this entrypoint's, so no allowlist is kept in
 # sync here. Unlike max_turns/max_retries below, a bad value is not structurally
@@ -424,6 +429,9 @@ export HEARTBEAT_URL="${CALLBACK_URL%/callback}/heartbeat"
 # fires instead of silently running out the full activity deadline.
 export CLAUDE_STREAM_FILE="/tmp/claude_stream_current.jsonl"
 
+# shellcheck source=/dev/null
+source /usr/local/bin/quota-lib.sh
+
 # --- Heartbeat loop (background) ---
 # Reports liveness to Temporal via orchestrator every 60s, but only if the
 # Claude stream has advanced. Killed on exit so it doesn't outlive the agent.
@@ -448,6 +456,15 @@ RESULT_STATUS="completed"
 RESULT="completed"
 ERROR_MESSAGE=""
 CLAUDE_OUTPUT=""
+# Read unconditionally below -- by the quota-park block and by the callback's jq
+# filter -- but assigned only inside the AI branch. A script-executor node and a
+# skipped-agent node both fall through to those reads without ever entering that
+# branch, and under `set -u` an unset variable there aborts the pod *before*
+# send-callback runs: no callback at all, so the orchestrator only learns of the
+# node when its heartbeat timeout expires. Initialised here for the same reason
+# as the four above; the AI branch's own resets stay where they are.
+QUOTA_RESET_AT=""
+CLAUDE_SESSION_ID=""
 
 # --- Compose decisions suffix into the system prompt (AI nodes only) ---
 # Query the api-server for the set of decisions this node may submit via
@@ -736,6 +753,34 @@ else
       jq -r '[.message.content[]? | select(.type == "text") | .text] | join("\n")' 2>/dev/null || true)
   }
 
+  # Helper: (re-)decide whether this attempt's result is a quota exhaustion.
+  #
+  # Quota is fleet-wide and resets on a wall clock, so a hit can land on ANY
+  # attempt, not just the first: the artifact, decision, escalation and PR retry
+  # loops below each call run_claude again and are just as exposed. Called after
+  # every retry parse so a mid-loop hit parks the node instead of spending the
+  # rest of the budget against an exhausted quota and then reporting that loop's
+  # own diagnostic ("Required output files not produced after 3 attempts") --
+  # the exact pair of defects this feature exists to remove, in a narrower
+  # window. Every loop is guarded on `[ -z "$QUOTA_RESET_AT" ]`, so setting it
+  # here is what makes the loop exit on its own.
+  #
+  # Only ever sets, never clears: a park already decided must not be revoked by
+  # a later parse. Sets RESULT_STATUS="failed" for the same reason the first
+  # detection does -- that is what runs the failure safety net, so the pod's
+  # in-progress work is committed and pushed before it is evicted for the park.
+  # The quota-park block below then flips the status to rate_limited.
+  refresh_quota_reset_at() {
+    [ -z "$QUOTA_RESET_AT" ] || return 0
+    [ "${CLAUDE_IS_ERROR:-false}" = "true" ] || return 0
+    QUOTA_RESET_AT=$(quota_reset_at "${CLAUDE_RESULT:-}") || QUOTA_RESET_AT=""
+    [ -n "$QUOTA_RESET_AT" ] || return 0
+    RESULT="${CLAUDE_RESULT:-$CLAUDE_PARTIAL_TEXT}"
+    RESULT_STATUS="failed"
+    ERROR_MESSAGE="Claude quota exhausted; resuming at $(date -u -d "@$QUOTA_RESET_AT" '+%H:%M UTC' 2>/dev/null || echo "the reset")"
+    echo "QUOTA: $ERROR_MESSAGE"
+  }
+
   # Defaults; config.json's max_retries/max_turns (read and validated at the top
   # of this script) win over them, so a node that configures nothing keeps the
   # budget it has always had.
@@ -765,9 +810,76 @@ else
 
 ${PROMPT}"
 
-  # Attempt 1: run the original prompt
+  # --- Quota resume: restore a session parked by a previous iteration ---
+  # Restoring the transcript alone is sufficient; the directory is keyed on the
+  # claude cwd, which is always /workspace/repo.
+  if [ -n "$RESUME_SESSION_ID" ] && [ -n "$RESUME_SESSION_PATH" ]; then
+    # Claude Code's own project-directory encoding: substitute "/" for "-"
+    # across the absolute cwd. Derived by substitution from the literal cwd
+    # (not written as the opaque string "-workspace-repo") so a change to
+    # either side is visibly a change to the other. Verified empirically:
+    # restoring a transcript into the matching directory and resuming it
+    # succeeds; deleting the directory instead reproduces "No conversation
+    # found" from claude. If Claude Code's encoding ever changes, this
+    # mismatches and --resume silently finds nothing -- the guard below still
+    # degrades to a fresh run rather than failing the node, and the restored
+    # path is echoed on success so a mismatch is diagnosable on first contact
+    # instead of a permanent, silent no-op.
+    RESTORE_CWD="/workspace/repo"
+    RESTORE_DIR="$HOME/.claude/projects/${RESTORE_CWD//\//-}"
+    RESTORE_TRANSCRIPT="$RESTORE_DIR/${RESUME_SESSION_ID}.jsonl"
+    # mkdir failure (unwritable $HOME, disk pressure, a stray non-directory
+    # file already at that path) must not abort the pod under set -e -- fold
+    # it into the same guarded `if` as the fetch below so both fall back to a
+    # fresh run instead of failing the node.
+    #
+    # mkdir's stderr is deliberately left UNsuppressed: "Permission denied",
+    # "No space left on device", "File exists" are plain OS diagnostics with
+    # nothing secret in them -- exactly what an operator needs to see in pod
+    # logs when a restore degrades to a fresh run.
+    #
+    # artifact's stderr is the same kind of thing and is captured for the same
+    # reason: it never prints the signed URL, only the presign endpoint's own
+    # error body or curl's -f message, neither of which carries a signature.
+    # Excerpted into the warning the way the quota-park block below already
+    # does it, because "Access denied: path outside allowed scope" would
+    # otherwise be the entire lost diagnosis of a silently degrading restore.
+    RESTORE_ERR_FILE="/tmp/session_restore.err"
+    # Truncated up front: a failing mkdir short-circuits the `&&` before the
+    # redirection below ever creates the file, and a stale one would attach the
+    # wrong cause to the warning.
+    : > "$RESTORE_ERR_FILE" 2>/dev/null || true
+    if mkdir -p "$RESTORE_DIR" && artifact get "$RESUME_SESSION_PATH" "$RESTORE_TRANSCRIPT" 2>"$RESTORE_ERR_FILE"; then
+      echo "Restored parked session $RESUME_SESSION_ID -> $RESTORE_TRANSCRIPT"
+      # Consume-once: overwrite the object with zero bytes. The parked transcript
+      # may hold credentials the agent discovered and that no redaction we can
+      # write would have caught, so the bytes must not outlive the resume.
+      # This is an overwrite rather than a delete because the presign endpoint
+      # allows only GET and PUT; PUT already permits overwriting anything in the
+      # run's scope, so this costs no extra privilege.
+      : > /tmp/empty_session
+      CLEAR_ERR_FILE="/tmp/session_clear.err"
+      if ! artifact put /tmp/empty_session "$RESUME_SESSION_PATH" 2>"$CLEAR_ERR_FILE"; then
+        CLEAR_ERR=$(head -c 200 "$CLEAR_ERR_FILE" 2>/dev/null || true)
+        echo "WARNING: could not clear the parked session object${CLEAR_ERR:+ ($CLEAR_ERR)}" >&2
+      fi
+      rm -f /tmp/empty_session "$CLEAR_ERR_FILE"
+    else
+      RESUME_SESSION_ID=""  # restore failed; fall back to a fresh run
+      RESTORE_ERR=$(head -c 200 "$RESTORE_ERR_FILE" 2>/dev/null || true)
+      echo "WARNING: could not restore the parked session; starting fresh${RESTORE_ERR:+ ($RESTORE_ERR)}" >&2
+    fi
+    rm -f "$RESTORE_ERR_FILE"
+  fi
+
+  # Attempt 1: resume the parked session if there is one, else run the prompt.
   echo "=== AI attempt $ATTEMPT/$MAX_RETRIES ==="
-  CLAUDE_OUTPUT=$(run_claude "$FULL_PROMPT" "" "$SYSTEM_PROMPT")
+  if [ -n "$RESUME_SESSION_ID" ]; then
+    RESUME_PROMPT="Your previous session was paused because the Claude usage quota was exhausted. Quota has now reset. Continue exactly where you left off and finish the task."
+    CLAUDE_OUTPUT=$(run_claude "$RESUME_PROMPT" "--resume $RESUME_SESSION_ID")
+  else
+    CLAUDE_OUTPUT=$(run_claude "$FULL_PROMPT" "" "$SYSTEM_PROMPT")
+  fi
   parse_claude_output "$CLAUDE_OUTPUT"
   echo "Attempt $ATTEMPT: subtype=$CLAUDE_SUBTYPE turns=$CLAUDE_TURNS result_length=${#CLAUDE_RESULT}"
 
@@ -785,15 +897,18 @@ ${PROMPT}"
 
   CLAUDE_EXIT_CODE=$(cat /tmp/claude_exit_code 2>/dev/null || echo 0)
 
+  QUOTA_RESET_AT=""
   if [ "$CLAUDE_IS_ERROR" = "true" ]; then
-    # The run ended in a documented failure (turn cap, budget cap, execution
-    # error, ...). Carry whatever text it produced so the work isn't discarded,
-    # but never report it as completed — that is what let a truncated run look
-    # like a finished one downstream.
-    RESULT="${CLAUDE_RESULT:-$CLAUDE_PARTIAL_TEXT}"
-    RESULT_STATUS="failed"
-    ERROR_MESSAGE="Claude reported is_error after $ATTEMPT attempts (subtype=${CLAUDE_SUBTYPE:-unknown}${CLAUDE_TERMINAL_REASON:+, terminal_reason=$CLAUDE_TERMINAL_REASON})${CLAUDE_ERRORS:+: $CLAUDE_ERRORS}"
-    echo "ERROR: $ERROR_MESSAGE"
+    # A quota hit is transient and shared across the whole org: retrying costs
+    # nothing but gains nothing, and the retry budget is the wrong resource to
+    # spend on it. Detect it before anything else can consume an attempt.
+    refresh_quota_reset_at
+    if [ -z "$QUOTA_RESET_AT" ]; then
+      RESULT="${CLAUDE_RESULT:-$CLAUDE_PARTIAL_TEXT}"
+      RESULT_STATUS="failed"
+      ERROR_MESSAGE="Claude reported is_error after $ATTEMPT attempts (subtype=${CLAUDE_SUBTYPE:-unknown}${CLAUDE_TERMINAL_REASON:+, terminal_reason=$CLAUDE_TERMINAL_REASON})${CLAUDE_ERRORS:+: $CLAUDE_ERRORS}"
+      echo "ERROR: $ERROR_MESSAGE"
+    fi
   elif [ -n "$CLAUDE_RESULT" ]; then
     RESULT="$CLAUDE_RESULT"
     echo "AI result captured (${#RESULT} chars)"
@@ -822,12 +937,13 @@ ${PROMPT}"
       fi
     done <<< "$REQUIRED_FILES"
 
-    while [ -n "$MISSING_FILES" ] && [ $ATTEMPT -lt $MAX_RETRIES ] && [ -n "$CLAUDE_SESSION_ID" ]; do
+    while [ -z "$QUOTA_RESET_AT" ] && [ $ATTEMPT -lt $MAX_RETRIES ] && [ -n "$MISSING_FILES" ] && [ -n "$CLAUDE_SESSION_ID" ]; do
       ATTEMPT=$((ATTEMPT + 1))
       echo "=== Artifact retry $ATTEMPT/$MAX_RETRIES — missing:$MISSING_FILES ==="
       ARTIFACT_RETRY_PROMPT="You completed your task but did not produce required output files:$MISSING_FILES. Write these files to /workspace/out/ before finishing."
       CLAUDE_OUTPUT=$(run_claude "$ARTIFACT_RETRY_PROMPT" "--resume $CLAUDE_SESSION_ID")
       parse_claude_output "$CLAUDE_OUTPUT"
+      refresh_quota_reset_at
       MISSING_FILES=""
       while IFS= read -r fname; do
         [ -z "$fname" ] && continue
@@ -837,7 +953,7 @@ ${PROMPT}"
       done <<< "$REQUIRED_FILES"
     done
 
-    if [ -n "$MISSING_FILES" ]; then
+    if [ -z "$QUOTA_RESET_AT" ] && [ -n "$MISSING_FILES" ]; then
       echo "ERROR: Required output files still missing after $ATTEMPT attempts:$MISSING_FILES"
       RESULT_STATUS="failed"
       ERROR_MESSAGE="Required output files not produced after $ATTEMPT attempts: $MISSING_FILES"
@@ -849,7 +965,7 @@ ${PROMPT}"
     DECISION=$(check-decision 2>/dev/null || echo "")
     if [ "$DECISION" = "(none)" ]; then DECISION=""; fi
 
-    while [ -z "$DECISION" ] && [ $ATTEMPT -lt $MAX_RETRIES ] && [ -n "$CLAUDE_SESSION_ID" ]; do
+    while [ -z "$QUOTA_RESET_AT" ] && [ $ATTEMPT -lt $MAX_RETRIES ] && [ -z "$DECISION" ] && [ -n "$CLAUDE_SESSION_ID" ]; do
       ATTEMPT=$((ATTEMPT + 1))
       echo "=== Decision retry $ATTEMPT/$MAX_RETRIES (resuming session $CLAUDE_SESSION_ID) ==="
 
@@ -857,16 +973,17 @@ ${PROMPT}"
 
       CLAUDE_OUTPUT=$(run_claude "$DECISION_RETRY_PROMPT" "--resume $CLAUDE_SESSION_ID")
       parse_claude_output "$CLAUDE_OUTPUT"
+      refresh_quota_reset_at
 
       DECISION=$(check-decision 2>/dev/null || echo "")
       if [ "$DECISION" = "(none)" ]; then DECISION=""; fi
     done
 
-    if [ -z "$DECISION" ]; then
+    if [ -z "$QUOTA_RESET_AT" ] && [ -z "$DECISION" ]; then
       echo "ERROR: Node requires a decision but none was submitted after $ATTEMPT attempts"
       RESULT_STATUS="failed"
       ERROR_MESSAGE="Node requires a decision but agent did not call report-result after $ATTEMPT attempts"
-    else
+    elif [ -n "$DECISION" ]; then
       echo "Decision verified: $DECISION"
     fi
   fi
@@ -888,15 +1005,16 @@ ${PROMPT}"
     fi
 
     if [ "$DECISION" = "escalate" ]; then
-      while [ ! -f "$WORKSPACE_OUT/escalation.md" ] && [ $ATTEMPT -lt $MAX_RETRIES ] && [ -n "$CLAUDE_SESSION_ID" ]; do
+      while [ -z "$QUOTA_RESET_AT" ] && [ $ATTEMPT -lt $MAX_RETRIES ] && [ ! -f "$WORKSPACE_OUT/escalation.md" ] && [ -n "$CLAUDE_SESSION_ID" ]; do
         ATTEMPT=$((ATTEMPT + 1))
         echo "=== Escalation retry $ATTEMPT/$MAX_RETRIES — escalation.md missing ==="
         ESCALATION_RETRY_PROMPT="You submitted the decision 'escalate' but did not write /workspace/out/escalation.md. Write it now, using the front matter and section structure from your system prompt, before finishing."
         CLAUDE_OUTPUT=$(run_claude "$ESCALATION_RETRY_PROMPT" "--resume $CLAUDE_SESSION_ID")
         parse_claude_output "$CLAUDE_OUTPUT"
+        refresh_quota_reset_at
       done
 
-      if [ ! -f "$WORKSPACE_OUT/escalation.md" ]; then
+      if [ -z "$QUOTA_RESET_AT" ] && [ ! -f "$WORKSPACE_OUT/escalation.md" ]; then
         echo "ERROR: decision 'escalate' submitted but escalation.md was not produced after $ATTEMPT attempts"
         RESULT_STATUS="failed"
         ERROR_MESSAGE="Decision 'escalate' requires /workspace/out/escalation.md, which was not produced after $ATTEMPT attempts"
@@ -925,7 +1043,7 @@ ${PROMPT}"
     PR_CHECK_STATUS=$?
     set -e
 
-    while [ "$PR_CHECK_STATUS" -ne 0 ] && [ $ATTEMPT -lt $MAX_RETRIES ] && [ -n "$CLAUDE_SESSION_ID" ]; do
+    while [ -z "$QUOTA_RESET_AT" ] && [ $ATTEMPT -lt $MAX_RETRIES ] && [ "$PR_CHECK_STATUS" -ne 0 ] && [ -n "$CLAUDE_SESSION_ID" ]; do
       ATTEMPT=$((ATTEMPT + 1))
       echo "=== PR retry $ATTEMPT/$MAX_RETRIES (resuming session $CLAUDE_SESSION_ID) ==="
 
@@ -933,6 +1051,7 @@ ${PROMPT}"
 
       CLAUDE_OUTPUT=$(run_claude "$PR_RETRY_PROMPT" "--resume $CLAUDE_SESSION_ID")
       parse_claude_output "$CLAUDE_OUTPUT"
+      refresh_quota_reset_at
 
       set +e
       PR_CHECK_OUTPUT=$(check-prs 2>&1)
@@ -940,7 +1059,7 @@ ${PROMPT}"
       set -e
     done
 
-    if [ "$PR_CHECK_STATUS" -ne 0 ]; then
+    if [ -z "$QUOTA_RESET_AT" ] && [ "$PR_CHECK_STATUS" -ne 0 ]; then
       PR_FAILURE_MESSAGE="PR registration missing for ${PR_CHECK_OUTPUT:-unknown repo(s)} after $ATTEMPT/$MAX_RETRIES total resume attempts this node"
       echo "ERROR: $PR_FAILURE_MESSAGE"
       # Don't clobber an earlier phase's diagnosis (e.g. decision verification
@@ -955,7 +1074,7 @@ ${PROMPT}"
         RESULT_STATUS="failed"
         ERROR_MESSAGE="$PR_FAILURE_MESSAGE"
       fi
-    else
+    elif [ "$PR_CHECK_STATUS" -eq 0 ]; then
       echo "PR verification passed"
     fi
   fi
@@ -1050,6 +1169,80 @@ Last agent output before the failure:
 ${RESULT}}"
 fi
 
+# --- Quota park: carry the Claude session across the pod's eviction ---
+# The transcript is the whole of the session's portable state: restoring only
+# that file into a fresh pod is sufficient for `claude --resume`, verified
+# against a deleted project directory. Nothing else in ~/.claude is needed.
+SESSION_ARTIFACT_PATH=""
+if [ -n "$QUOTA_RESET_AT" ]; then
+  RESULT_STATUS="rate_limited"
+
+  # Discover the directory rather than reconstructing it from cwd, so a change
+  # to Claude Code's path encoding cannot silently park a sessionless run.
+  # The trailing `|| true` is load-bearing now that a park no longer implies a
+  # session: with no session id there may be no projects directory at all, and
+  # a failing `ls` inside a pipeline under `set -o pipefail` would abort the pod
+  # before the callback -- the one outcome this whole block exists to avoid.
+  CLAUDE_PROJECT_DIR=$(ls -d "$HOME"/.claude/projects/*/ 2>/dev/null | head -1 || true)
+  # More than one project directory means `head -1` is choosing arbitrarily, so
+  # the transcript parked here may belong to a different session than the one
+  # the next pod resumes -- which shows up a pod later as an obscure resume
+  # failure. Name what was found while it is still a visible anomaly.
+  CLAUDE_PROJECT_DIR_COUNT=$(ls -d "$HOME"/.claude/projects/*/ 2>/dev/null | wc -l | tr -d '[:space:]' || true)
+  if [ "${CLAUDE_PROJECT_DIR_COUNT:-0}" -gt 1 ]; then
+    CLAUDE_PROJECT_DIRS=$(ls -d "$HOME"/.claude/projects/*/ 2>/dev/null | tr '\n' ' ' || true)
+    echo "WARNING: $CLAUDE_PROJECT_DIR_COUNT Claude project directories found ($CLAUDE_PROJECT_DIRS); parking the session under ${CLAUDE_PROJECT_DIR:-(none)}" >&2
+  fi
+  TRANSCRIPT_SRC="${CLAUDE_PROJECT_DIR%/}/${CLAUDE_SESSION_ID}.jsonl"
+  TRANSCRIPT_REDACTED="/tmp/session_redacted.jsonl"
+
+  # The session id comes from the stream's `init` event, so it can legitimately
+  # be empty -- a quota hit before the first event carries none. A park with no
+  # session reference is a supported, degraded outcome: the next iteration just
+  # starts fresh. Parking is most of the value on its own (it is what stops the
+  # node spending its retry budget against an exhausted quota), so a missing
+  # session id costs the resume, never the park. Handled exactly like a failed
+  # upload below -- session_id and session_artifact_path both null.
+  if [ -z "$CLAUDE_SESSION_ID" ]; then
+    echo "WARNING: the quota hit carries no Claude session id; parking without one, the retry will start fresh" >&2
+  elif [ -f "$TRANSCRIPT_SRC" ]; then
+    # Diagnosability is the point of this feature -- the incident that motivated
+    # it was diagnosed from pod logs, so a token or upload failure must leave a
+    # cause behind, not just a generic warning. Capture stderr to a private file
+    # rather than discarding it, but only ever excerpt a short, truncated prefix:
+    # these are the token-fetch and presign endpoints' own diagnostics (HTTP
+    # status, response body), never a token or transcript value -- neither
+    # fetch-github-token nor artifact ever writes a secret to stderr.
+    TOKEN_FETCH_ERR_FILE="/tmp/session_token_fetch.err"
+    if ! GITHUB_TOKEN_FOR_REDACTION=$(fetch-github-token 2>"$TOKEN_FETCH_ERR_FILE"); then
+      GITHUB_TOKEN_FOR_REDACTION=""
+      TOKEN_FETCH_ERR=$(head -c 200 "$TOKEN_FETCH_ERR_FILE" 2>/dev/null || true)
+      echo "WARNING: could not fetch a GitHub token for redaction, continuing without it${TOKEN_FETCH_ERR:+ ($TOKEN_FETCH_ERR)}" >&2
+    fi
+    rm -f "$TOKEN_FETCH_ERR_FILE"
+    # Deliberately NOT exported: redact_transcript is a shell function sourced
+    # into this same shell, so it reads the plain variable. Exporting would only
+    # widen the blast radius -- the token would be inherited by every child this
+    # block spawns (artifact, and the curl inside it).
+    if redact_transcript "$TRANSCRIPT_SRC" "$TRANSCRIPT_REDACTED"; then
+      SESSION_ARTIFACT_PATH="${OUTPUT_PATH%out/}session/${CLAUDE_SESSION_ID}.jsonl"
+      UPLOAD_ERR_FILE="/tmp/session_upload.err"
+      if artifact put "$TRANSCRIPT_REDACTED" "$SESSION_ARTIFACT_PATH" 2>"$UPLOAD_ERR_FILE"; then
+        echo "QUOTA: parked session $CLAUDE_SESSION_ID at $SESSION_ARTIFACT_PATH"
+      else
+        SESSION_ARTIFACT_PATH=""  # upload failed; park without a session
+        UPLOAD_ERR=$(head -c 200 "$UPLOAD_ERR_FILE" 2>/dev/null || true)
+        echo "WARNING: could not upload the session transcript; the retry will start fresh${UPLOAD_ERR:+ ($UPLOAD_ERR)}" >&2
+      fi
+      rm -f "$UPLOAD_ERR_FILE"
+    fi
+    unset GITHUB_TOKEN_FOR_REDACTION
+    rm -f "$TRANSCRIPT_REDACTED"
+  else
+    echo "WARNING: no transcript at $TRANSCRIPT_SRC; the retry will start fresh" >&2
+  fi
+fi
+
 # --- Step 5: Push output artifacts via presigned URLs ---
 ARTIFACT_REFS="{}"
 if [ -d "$WORKSPACE_OUT" ] && [ "$(ls -A "$WORKSPACE_OUT" 2>/dev/null)" ]; then
@@ -1062,6 +1255,26 @@ if [ -d "$WORKSPACE_OUT" ] && [ "$(ls -A "$WORKSPACE_OUT" 2>/dev/null)" ]; then
 fi
 
 # --- Step 6: POST callback to orchestrator ---
+# resume_at is the one field the orchestrator hard-requires on a rate_limited
+# callback -- it rejects the body with 400 without it -- and send-callback has no
+# retry, so a conversion that came back empty would abort the pod with no
+# callback at all. Convert first and check: if `date` cannot render the epoch,
+# report the node as an ordinary failure instead. A failed node is retried; a pod
+# that dies silently is not.
+RESUME_AT_RFC3339=""
+if [ -n "$QUOTA_RESET_AT" ]; then
+  RESUME_AT_RFC3339=$(date -u -d "@$QUOTA_RESET_AT" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || true)
+  if [ -z "$RESUME_AT_RFC3339" ]; then
+    echo "WARNING: could not render the quota reset instant ($QUOTA_RESET_AT) as RFC3339; failing the node instead of parking" >&2
+    RESULT_STATUS="failed"
+    ERROR_MESSAGE="${ERROR_MESSAGE:-Claude quota exhausted}; the reset instant could not be encoded for the callback, so this node fails rather than parking"
+    # A failed node is retried from scratch, so a session reference on it would
+    # point at an object nothing will read. Clearing the path clears the id too:
+    # session_id below is written as ${SESSION_ARTIFACT_PATH:+$CLAUDE_SESSION_ID}.
+    SESSION_ARTIFACT_PATH=""
+  fi
+fi
+
 CALLBACK_BODY=$(jq -n \
   --arg id "$NODE_EXECUTION_ID" \
   --arg run_id "$RUN_ID" \
@@ -1069,13 +1282,19 @@ CALLBACK_BODY=$(jq -n \
   --arg result "$RESULT" \
   --argjson artifacts "$ARTIFACT_REFS" \
   --arg error "$ERROR_MESSAGE" \
+  --arg resume_at "$RESUME_AT_RFC3339" \
+  --arg session_id "${SESSION_ARTIFACT_PATH:+$CLAUDE_SESSION_ID}" \
+  --arg session_path "$SESSION_ARTIFACT_PATH" \
   '{
     node_execution_id: $id,
     run_id: $run_id,
     status: $status,
     result: $result,
     artifact_refs: $artifacts,
-    error_message: (if $error == "" then null else $error end)
+    error_message: (if $error == "" then null else $error end),
+    resume_at: (if $resume_at == "" then null else $resume_at end),
+    session_id: (if $session_id == "" then null else $session_id end),
+    session_artifact_path: (if $session_path == "" then null else $session_path end)
   }')
 
 send-callback "$CALLBACK_BODY"
