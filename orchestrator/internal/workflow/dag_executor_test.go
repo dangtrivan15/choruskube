@@ -1292,6 +1292,88 @@ func (s *DAGExecutorTestSuite) TestParkedNodeIsFrozenByPause() {
 		"a paused run must not create the resumed iteration: the deferred worker slept through the pause")
 }
 
+// TestResumeRebuildsTheParkWorker asserts that resuming a paused run rebuilds the
+// deferred worker, so the park continues to its original reset instant and the
+// rebuilt worker still carries the session the original park captured.
+// TestRateLimitedNodesBothResumeAfterPause already proves the rebuild happens;
+// this test adds the piece that one doesn't cover — that the rebuilt worker's
+// iteration-2 execution actually receives the parked SessionID, not a blank one.
+func (s *DAGExecutorTestSuite) TestResumeRebuildsTheParkWorker() {
+	nodeA, execA, execA2, runID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	s.parkFixture(runID, nodeA, execA, execA2)
+
+	sessionCarried := false
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.NodeExecutionID == execA2 && p.SessionID == "sess-1"
+	})).Return(activity.CallbackResult{Status: "completed", Result: "done"}, nil).Maybe().
+		Run(func(mock.Arguments) { sessionCarried = true })
+
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execA2
+	})).Return("no_decision", nil).Maybe()
+
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	s.env.RegisterDelayedCallback(func() { s.env.SignalWorkflow(SignalPause, nil) }, 5*time.Minute)
+	s.env.RegisterDelayedCallback(func() { s.env.SignalWorkflow(SignalResume, nil) }, 10*time.Minute)
+
+	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{RunID: runID, GraphVersion: 1})
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+	s.True(s.parkIter2Created, "resume must rebuild the deferred worker so the park completes")
+	s.True(sessionCarried, "the rebuilt worker must carry the parked session forward")
+}
+
+// TestResumeAfterResetFiresImmediately asserts that a park whose reset elapsed
+// during the pause re-queues as soon as the run resumes, rather than waiting again.
+// The pause fires well before the fixture's 30-minute reset; the resume fires well
+// after it (45m). parkIter2Created alone would not catch a worker that re-waits the
+// full duration instead of recomputing the remaining wait from parkedUntil: the
+// virtual clock auto-skips to the next timer regardless, so the run would still
+// reach completion, just 30 minutes later than it should. The timing assertion
+// below is what actually distinguishes "fired immediately at resume" from "re-slept
+// the full window and fired at ~75m".
+func (s *DAGExecutorTestSuite) TestResumeAfterResetFiresImmediately() {
+	nodeA, execA, execA2, runID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	s.parkFixture(runID, nodeA, execA, execA2)
+
+	var mu sync.Mutex
+	var iter2FiredAt time.Time
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.NodeExecutionID == execA2
+	})).Return(activity.CallbackResult{Status: "completed", Result: "done"}, nil).Maybe().
+		Run(func(mock.Arguments) {
+			mu.Lock()
+			iter2FiredAt = s.env.Now()
+			mu.Unlock()
+		})
+
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execA2
+	})).Return("no_decision", nil).Maybe()
+
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	start := s.env.Now()
+
+	// Pause before the 30m reset, resume well after it.
+	s.env.RegisterDelayedCallback(func() { s.env.SignalWorkflow(SignalPause, nil) }, 5*time.Minute)
+	s.env.RegisterDelayedCallback(func() { s.env.SignalWorkflow(SignalResume, nil) }, 45*time.Minute)
+
+	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{RunID: runID, GraphVersion: 1})
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+	s.True(s.parkIter2Created, "a park whose reset elapsed during the pause must re-queue on resume")
+
+	mu.Lock()
+	defer mu.Unlock()
+	s.False(iter2FiredAt.IsZero(), "iteration 2 must actually have run")
+	s.LessOrEqual(iter2FiredAt.Sub(start), 46*time.Minute,
+		"the resumed park must fire at resume (~45m), not re-wait out another full reset window (~75m)")
+}
+
 // TestRateLimitedNodeSleepsThenRequeues verifies that a rate-limited outcome
 // invalidates the execution, waits for the reset, and re-queues iteration 2
 // carrying the session reference — without the node ever entering the failure path.
