@@ -2102,6 +2102,64 @@ func TestLoadReviewHistoryJSON_PreservesFeedbackText(t *testing.T) {
 	assert.NotContains(t, jsonStr, `"Result":null`)
 }
 
+// TestClearParkedSession_EmptyPathIsNoOp, TestClearParkedSession_OverwritesWithZeroBytes,
+// and TestClearParkedSession_WrapsPutObjectError exercise ClearParkedSession's own
+// body directly — the workflow tests mock the activity out entirely and never run
+// this code.
+
+func TestClearParkedSession_EmptyPathIsNoOp(t *testing.T) {
+	store := newFakeObjectStore()
+	acts := NewActivities(nil, nil, nil, store)
+
+	err := acts.ClearParkedSession(context.Background(), ClearParkedSessionParams{ObjectPath: ""})
+
+	require.NoError(t, err)
+	assert.Empty(t, store.objects, "a park with no session artifact must not touch the object store")
+}
+
+func TestClearParkedSession_OverwritesWithZeroBytes(t *testing.T) {
+	store := newFakeObjectStore()
+	const path = "runs/r/e/session/sess-1.jsonl"
+	store.objects[path] = []byte(`{"role":"user","content":"..."}`)
+	acts := NewActivities(nil, nil, nil, store)
+
+	err := acts.ClearParkedSession(context.Background(), ClearParkedSessionParams{ObjectPath: path})
+
+	require.NoError(t, err)
+	require.Contains(t, store.objects, path)
+	assert.Equal(t, []byte{}, store.objects[path],
+		"the transcript can carry credentials the agent discovered, so it must be overwritten empty, not left readable")
+}
+
+// erroringObjectStore always fails PutObject, to exercise ClearParkedSession's
+// error-wrap branch — newFakeObjectStore (used above) never fails.
+type erroringObjectStore struct {
+	putErr error
+}
+
+func (e *erroringObjectStore) PutObject(_ context.Context, _ string, _ []byte) error {
+	return e.putErr
+}
+
+func (e *erroringObjectStore) GetObject(_ context.Context, _ string) ([]byte, error) {
+	return nil, nil
+}
+
+func TestClearParkedSession_WrapsPutObjectError(t *testing.T) {
+	putErr := errors.New("minio: connection refused")
+	store := &erroringObjectStore{putErr: putErr}
+	acts := NewActivities(nil, nil, nil, store)
+
+	err := acts.ClearParkedSession(context.Background(), ClearParkedSessionParams{
+		ObjectPath: "runs/r/e/session/sess-1.jsonl",
+	})
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, putErr, "the underlying object-store error must be unwrappable")
+	assert.Contains(t, err.Error(), "runs/r/e/session/sess-1.jsonl",
+		"the error must name the object path for operators reading the workflow's non-fatal warning log")
+}
+
 func testConfig() *config.Config {
 	return &config.Config{
 		APIServerURL: "http://localhost:8080",

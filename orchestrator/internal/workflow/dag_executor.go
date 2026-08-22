@@ -504,6 +504,17 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 					failedNodeIDs = append(failedNodeIDs, nodeID)
 				}
 			}
+			// Every entry below emits the same activity type (WriteExecutionLog),
+			// so an unsorted order would only mispair which log message lands on
+			// which failed node, not mismatch command types the way Step 5's
+			// per-node cleanup can. Sorted anyway, for the same reason as the
+			// resume respawn and Step 5's cleanup loop: fixing the order removes
+			// any dependence on Go's randomized map iteration outright, rather
+			// than relying on an argument about what the replay checker happens
+			// to compare.
+			sort.Slice(failedNodeIDs, func(i, j int) bool {
+				return failedNodeIDs[i].String() < failedNodeIDs[j].String()
+			})
 
 			if len(failedNodeIDs) == 0 || cancelled {
 				break // all completed or cancelled
@@ -1502,7 +1513,26 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 
 	// Step 5: Cancel cleanup — mark active nodes as skipped, delete K8s Jobs
 	if cancelled {
-		for nodeID, tracker := range nodes {
+		// A parked node emits three commands here (UpdateNodeExecutionStatus,
+		// ClearParkedSession, DeleteAgentJob) where a structurally identical
+		// non-parked node emits two (UpdateNodeExecutionStatus alone, or plus
+		// DeleteAgentJob) — the same command-order hazard as the resume respawn
+		// above (see its comment at deferredCtx, deferredCancel = ...): with two
+		// or more concurrently-active nodes of different shapes at cancel time,
+		// Go's randomized map iteration would let a replay try to emit
+		// UpdateNodeExecutionStatus at a position where history recorded
+		// ClearParkedSession, a hard NonDeterministicWorkflowError. Collect and
+		// sort the IDs first so the cleanup order — and thus the command
+		// sequence — is fixed regardless of map iteration.
+		cleanupNodeIDs := make([]uuid.UUID, 0, len(nodes))
+		for nodeID := range nodes {
+			cleanupNodeIDs = append(cleanupNodeIDs, nodeID)
+		}
+		sort.Slice(cleanupNodeIDs, func(i, j int) bool {
+			return cleanupNodeIDs[i].String() < cleanupNodeIDs[j].String()
+		})
+		for _, nodeID := range cleanupNodeIDs {
+			tracker := nodes[nodeID]
 			if tracker.status == "pending" || tracker.status == "running" || tracker.status == "awaiting_human" {
 				workflow.ExecuteActivity(dbCtx, activities.UpdateNodeExecutionStatus,
 					activity.UpdateNodeExecStatusParams{
