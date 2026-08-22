@@ -80,6 +80,12 @@ type nodeTracker struct {
 	// tracker except the one created by the rate-limited re-queue path.
 	sessionID           string
 	sessionArtifactPath string
+	// parkedUntil is set while this node is waiting out a deferred condition —
+	// today, a Claude quota reset. The tracker is the source of truth and the
+	// worker that waits is a disposable executor re-derived from it, so pause can
+	// discard the worker and resume can rebuild it without losing the park. Zero
+	// means not parked.
+	parkedUntil time.Time
 }
 
 func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
@@ -181,6 +187,148 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 	// through the same edge-evaluation/decision-reading logic real completions get.
 	requeueCh := workflow.NewChannel(ctx)
 
+	// One cancellable scope for every piece of deferred work attached to this run.
+	// Cancelling a context aborts every Sleep, Timer and activity derived from it,
+	// so pause and cancel reach deferred work structurally rather than each feature
+	// having to remember them. Re-created on resume — a cancelled context stays
+	// cancelled.
+	//
+	// dbCtx is deliberately NOT derived from this scope: a worker past its Sleep
+	// must finish its bookkeeping rather than be torn in half.
+	deferredCtx, deferredCancel := workflow.WithCancel(ctx)
+	// nodeID -> a worker is live for that tracker's parkedUntil. Cleared wholesale
+	// when the scope is cancelled, and consulted before re-spawning on resume, so a
+	// tracker never ends up with two workers racing to re-queue it.
+	parkWorkers := make(map[uuid.UUID]bool)
+
+	// spawnParkWorker starts the waiter for an already-parked tracker on the shared
+	// deferred scope. Safe to call again after a resume: the tracker carries the
+	// park, so a rebuilt worker resumes the same wait.
+	spawnParkWorker := func(scope workflow.Context, nodeID uuid.UUID) {
+		tracker := nodes[nodeID]
+		if tracker == nil || tracker.parkedUntil.IsZero() || parkWorkers[nodeID] {
+			return
+		}
+		parkWorkers[nodeID] = true
+
+		parkedExecID := tracker.execID
+		parkedIteration := tracker.iteration
+		parkedReviewPass := tracker.reviewPass
+		parkedForceReady := tracker.forceReady
+		parkedUntil := tracker.parkedUntil
+		sessionID := tracker.sessionID
+		sessionArtifactPath := tracker.sessionArtifactPath
+		snapshotNode, _ := GetNodeByID(snap, nodeID)
+		parkedLabel := snapshotNode.Label
+		parkedNodeID := nodeID
+
+		workflow.Go(scope, func(gCtx workflow.Context) {
+			wait := parkedUntil.Sub(workflow.Now(gCtx))
+			if wait > 0 {
+				if err := workflow.Sleep(gCtx, wait); err != nil {
+					// Cancelled by pause or cancel. Write nothing: the park stays on
+					// the tracker, so resume rebuilds this worker and the wait picks
+					// up where it left off.
+					return
+				}
+			}
+			// Past the Sleep the sequence runs to completion on dbCtx, which this
+			// scope cannot cancel. See the plan's global constraint.
+
+			if invErr := workflow.ExecuteActivity(dbCtx, activities.UpdateNodeExecutionStatus,
+				activity.UpdateNodeExecStatusParams{
+					RunID:           params.RunID,
+					NodeExecutionID: parkedExecID,
+					Status:          "invalidated",
+				}).Get(gCtx, nil); invErr != nil {
+				// The park itself succeeded; only this bookkeeping write
+				// failed. completion.err is nil on the rate-limited path
+				// (see the future-await goroutine above), so simply
+				// returning here would fall through to the SUCCESS
+				// finalization below with an empty result, not to any
+				// failure path. Send a synthetic errored completion
+				// instead — this both fails the node explicitly through
+				// the existing, already-tested failure path and wakes
+				// the main loop (completionCh.Send does both jobs here).
+				logger.Warn("Could not invalidate the parked execution; failing the node",
+					"execID", parkedExecID, "err", invErr)
+				// A concurrent manual pause may have stamped this same
+				// execID into pauseInterrupted while it was parked (its
+				// tracker still read "running" — see the comment above
+				// this branch). Left in place, the pre-existing
+				// wasPaused recovery below would intercept this
+				// synthetic completion first, re-queue silently with no
+				// sessionID/sessionArtifactPath, and bypass the explicit
+				// failure this branch exists to guarantee. This
+				// execution is failing because its own bookkeeping
+				// write failed, not because a human paused it, so that
+				// recovery is the wrong handler for it — sever the
+				// misroute at its source.
+				delete(pauseInterrupted, parkedExecID)
+				completionCh.Send(gCtx, nodeCompletion{
+					nodeID: parkedNodeID,
+					err:    fmt.Errorf("invalidate parked execution after quota reset: %w", invErr),
+				})
+				return
+			}
+
+			newIteration := parkedIteration + 1
+			var newExecID uuid.UUID
+			if createErr := workflow.ExecuteActivity(dbCtx, activities.CreateNodeExecution,
+				activity.CreateNodeExecParams{
+					WorkflowRunID:  params.RunID,
+					TemplateNodeID: parkedNodeID,
+					GraphVersion:   params.GraphVersion,
+					Iteration:      newIteration,
+					Label:          parkedLabel,
+				}).Get(gCtx, &newExecID); createErr != nil {
+				logger.Error("Could not create the resumed execution; failing the node",
+					"nodeID", parkedNodeID, "err", createErr)
+				// Same misroute risk as the invalidate-failure branch above:
+				// a concurrent pause may have stamped parkedExecID into
+				// pauseInterrupted while this node was parked. Clear it so
+				// this synthetic completion reaches the normal failure path,
+				// not the session-blind wasPaused recovery.
+				delete(pauseInterrupted, parkedExecID)
+				completionCh.Send(gCtx, nodeCompletion{
+					nodeID: parkedNodeID,
+					err:    fmt.Errorf("create resumed execution after quota reset: %w", createErr),
+				})
+				return
+			}
+
+			// reviewPass and forceReady carry forward unchanged: this is
+			// an infra retry of the same attempt, not a review decision.
+			// Mutating nodes from this coroutine is safe: workflow
+			// coroutines are cooperatively scheduled and deterministic,
+			// so there is no concurrent access to race against — only
+			// the ordering relative to other coroutines' yield points,
+			// which is exactly what requeueCh.Send below coordinates.
+			nodes[parkedNodeID] = &nodeTracker{
+				status:              "pending",
+				execID:              newExecID,
+				iteration:           newIteration,
+				reviewPass:          parkedReviewPass,
+				forceReady:          parkedForceReady,
+				sessionID:           sessionID,
+				sessionArtifactPath: sessionArtifactPath,
+			}
+			// A stale pauseInterrupted[parkedExecID] entry here (from a
+			// pause stamped during the park) is inert, not misleading: no
+			// completion for the old execID is ever sent on this success
+			// path, and execIDs are fresh UUIDs that are never reused, so
+			// it could never be matched by a future lookup. Deleted anyway
+			// so pauseInterrupted does not accumulate a dead entry per
+			// paused-and-parked node over a long-running workflow.
+			delete(pauseInterrupted, parkedExecID)
+			// The new tracker replaces the old one, so clear parkedUntil on the
+			// tracker that is actually installed, not on the captured old one.
+			nodes[parkedNodeID].parkedUntil = time.Time{}
+			delete(parkWorkers, parkedNodeID)
+			requeueCh.Send(gCtx, struct{}{})
+		})
+	}
+
 	// Step 4: Main execution loop
 	for {
 		// 4a: Check for cancel signal (non-blocking drain)
@@ -244,6 +392,11 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 					}
 				}
 			}
+
+			// Stop every deferred worker. A parked tracker keeps its parkedUntil, so
+			// resume rebuilds the worker; this only discards the executor.
+			deferredCancel()
+			parkWorkers = make(map[uuid.UUID]bool)
 		}
 
 		// Block if paused — listen for both resume and cancel
@@ -268,6 +421,18 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 					activity.UpdateRunStatusParams{RunID: params.RunID, Status: "running"},
 				).Get(ctx, nil)
 				logger.Info("Workflow resumed")
+
+				// A cancelled context stays cancelled (see the comment where
+				// deferredCtx is created), so pause's deferredCancel() permanently
+				// disabled every waiter it stopped. Re-derive the scope from ctx and
+				// re-spawn a worker for every tracker still carrying a park.
+				// spawnParkWorker is a no-op for any tracker that isn't parked and
+				// guards against double-spawning via parkWorkers, so this is safe to
+				// run unconditionally, whether or not anything was actually parked.
+				deferredCtx, deferredCancel = workflow.WithCancel(ctx)
+				for nodeID := range nodes {
+					spawnParkWorker(deferredCtx, nodeID)
+				}
 			}
 		}
 
@@ -884,112 +1049,12 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 				// done while parked; requeueCh.Send below is what wakes the main
 				// loop back up once the coroutine has something for it to see.
 				if completion.rateLimited {
-					parkedNodeID := completion.nodeID
-					parkedExecID := tracker.execID
-					parkedIteration := tracker.iteration
-					parkedReviewPass := tracker.reviewPass
-					parkedForceReady := tracker.forceReady
-					parkedLabel := snapshotNode.Label
-					resumeAt := completion.resumeAt
-					sessionID := completion.sessionID
-					sessionArtifactPath := completion.sessionArtifactPath
-
-					workflow.Go(ctx, func(gCtx workflow.Context) {
-						wait := resumeAt.Sub(workflow.Now(gCtx))
-						if wait > 0 {
-							if err := workflow.Sleep(gCtx, wait); err != nil {
-								logger.Error("Sleep interrupted while parked on quota", "err", err)
-							}
-						}
-
-						if invErr := workflow.ExecuteActivity(dbCtx, activities.UpdateNodeExecutionStatus,
-							activity.UpdateNodeExecStatusParams{
-								RunID:           params.RunID,
-								NodeExecutionID: parkedExecID,
-								Status:          "invalidated",
-							}).Get(gCtx, nil); invErr != nil {
-							// The park itself succeeded; only this bookkeeping write
-							// failed. completion.err is nil on the rate-limited path
-							// (see the future-await goroutine above), so simply
-							// returning here would fall through to the SUCCESS
-							// finalization below with an empty result, not to any
-							// failure path. Send a synthetic errored completion
-							// instead — this both fails the node explicitly through
-							// the existing, already-tested failure path and wakes
-							// the main loop (completionCh.Send does both jobs here).
-							logger.Warn("Could not invalidate the parked execution; failing the node",
-								"execID", parkedExecID, "err", invErr)
-							// A concurrent manual pause may have stamped this same
-							// execID into pauseInterrupted while it was parked (its
-							// tracker still read "running" — see the comment above
-							// this branch). Left in place, the pre-existing
-							// wasPaused recovery below would intercept this
-							// synthetic completion first, re-queue silently with no
-							// sessionID/sessionArtifactPath, and bypass the explicit
-							// failure this branch exists to guarantee. This
-							// execution is failing because its own bookkeeping
-							// write failed, not because a human paused it, so that
-							// recovery is the wrong handler for it — sever the
-							// misroute at its source.
-							delete(pauseInterrupted, parkedExecID)
-							completionCh.Send(gCtx, nodeCompletion{
-								nodeID: parkedNodeID,
-								err:    fmt.Errorf("invalidate parked execution after quota reset: %w", invErr),
-							})
-							return
-						}
-
-						newIteration := parkedIteration + 1
-						var newExecID uuid.UUID
-						if createErr := workflow.ExecuteActivity(dbCtx, activities.CreateNodeExecution,
-							activity.CreateNodeExecParams{
-								WorkflowRunID:  params.RunID,
-								TemplateNodeID: parkedNodeID,
-								GraphVersion:   params.GraphVersion,
-								Iteration:      newIteration,
-								Label:          parkedLabel,
-							}).Get(gCtx, &newExecID); createErr != nil {
-							logger.Error("Could not create the resumed execution; failing the node",
-								"nodeID", parkedNodeID, "err", createErr)
-							// Same misroute risk as the invalidate-failure branch above:
-							// a concurrent pause may have stamped parkedExecID into
-							// pauseInterrupted while this node was parked. Clear it so
-							// this synthetic completion reaches the normal failure path,
-							// not the session-blind wasPaused recovery.
-							delete(pauseInterrupted, parkedExecID)
-							completionCh.Send(gCtx, nodeCompletion{
-								nodeID: parkedNodeID,
-								err:    fmt.Errorf("create resumed execution after quota reset: %w", createErr),
-							})
-							return
-						}
-
-						// reviewPass and forceReady carry forward unchanged: this is
-						// an infra retry of the same attempt, not a review decision.
-						// Mutating nodes from this coroutine is safe: workflow
-						// coroutines are cooperatively scheduled and deterministic,
-						// so there is no concurrent access to race against — only
-						// the ordering relative to other coroutines' yield points,
-						// which is exactly what requeueCh.Send below coordinates.
-						nodes[parkedNodeID] = &nodeTracker{
-							status:              "pending",
-							execID:              newExecID,
-							iteration:           newIteration,
-							reviewPass:          parkedReviewPass,
-							forceReady:          parkedForceReady,
-							sessionID:           sessionID,
-							sessionArtifactPath: sessionArtifactPath,
-						}
-						// A stale pauseInterrupted[parkedExecID] entry here (from a
-						// pause stamped during the park) is inert, not misleading: no
-						// completion for the old execID is ever sent on this success
-						// path, and execIDs are fresh UUIDs that are never reused, so
-						// it could never be matched by a future lookup. Deleted anyway
-						// so pauseInterrupted does not accumulate a dead entry per
-						// paused-and-parked node over a long-running workflow.
-						delete(pauseInterrupted, parkedExecID)
-						requeueCh.Send(gCtx, struct{}{})
-					})
+					tracker.parkedUntil = completion.resumeAt
+					tracker.sessionID = completion.sessionID
+					tracker.sessionArtifactPath = completion.sessionArtifactPath
+					// status stays "running": a parked node is indistinguishable
+					// from a running one for every lifecycle operation.
+					spawnParkWorker(deferredCtx, completion.nodeID)
 					return
 				}
 

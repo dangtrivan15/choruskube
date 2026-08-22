@@ -19,6 +19,10 @@ type DAGExecutorTestSuite struct {
 	suite.Suite
 	testsuite.WorkflowTestSuite
 	env *testsuite.TestWorkflowEnvironment
+	// parkIter2Created records whether parkFixture's iteration-2 CreateNodeExecution
+	// matcher fired. Set by park tests to assert whether the deferred worker actually
+	// resumed the parked node.
+	parkIter2Created bool
 }
 
 func (s *DAGExecutorTestSuite) SetupTest() {
@@ -1220,6 +1224,72 @@ func (s *DAGExecutorTestSuite) TestResumeBeforeHeartbeatTimeout() {
 
 	s.True(s.env.IsWorkflowCompleted())
 	s.NoError(s.env.GetWorkflowError())
+}
+
+// parkFixture wires the standard single-AI-node graph whose first iteration parks
+// on a quota hit 30 minutes out. It records whether iteration 2 was created in
+// s.parkIter2Created, which is the assertion every park test turns on.
+func (s *DAGExecutorTestSuite) parkFixture(runID, nodeA, execA, execA2 uuid.UUID) {
+	s.parkIter2Created = false
+
+	snapshot := `{
+		"nodes": [
+			{"templateNodeId": "` + nodeA.String() + `", "label": "A", "executorType": "ai", "timeoutSeconds": 1800, "isEntrypoint": true}
+		],
+		"edges": []
+	}`
+
+	s.env.OnActivity("UpdateWorkflowRunStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("GetGraphRuntime", mock.Anything, runID).Return(snapshot, nil)
+	for _, n := range []string{"WriteExecutionLog", "InitRunLog", "AppendRunLog", "SetTraversedEdges", "DeleteAgentJob"} {
+		s.env.OnActivity(n, mock.Anything, mock.Anything).Return(nil).Maybe()
+	}
+	// UpdateNodeExecutionStatus is deliberately NOT registered here. testify matches
+	// expectations in registration order and .Maybe() never exhausts, so a catch-all
+	// added by this fixture would shadow every specific mock a test registers later --
+	// which is exactly what Task 4 needs (an invalidate that fails). Each test
+	// registers its own: specific matchers first, then a catch-all if it wants one.
+	// This mirrors the file's existing pattern at TestHumanGateSignal_AttachmentRefs.
+	s.env.OnActivity("FetchPodLogs", mock.Anything, mock.Anything).Return("", nil).Maybe()
+	s.env.OnActivity("LoadPredecessorInputs", mock.Anything, mock.Anything).Return(map[string]string{}, nil).Maybe()
+	s.env.OnActivity("LoadRequiredInputArtifacts", mock.Anything, mock.Anything).Return(activity.LoadRequiredInputArtifactsResult{}, nil).Maybe()
+	s.env.OnActivity("LoadReviewHistoryJSON", mock.Anything, mock.Anything).Return("[]", nil).Maybe()
+
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.Iteration == 1
+	})).Return(execA, nil).Once()
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.Iteration == 2
+	})).Return(execA2, nil).Maybe().Run(func(mock.Arguments) { s.parkIter2Created = true })
+
+	resumeAt := s.env.Now().Add(30 * time.Minute)
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.NodeExecutionID == execA
+	})).Return(activity.CallbackResult{
+		Status:              "rate_limited",
+		ResumeAt:            resumeAt,
+		SessionID:           "sess-1",
+		SessionArtifactPath: "runs/r/e/session/sess-1.jsonl",
+	}, nil).Once()
+}
+
+// TestParkedNodeIsFrozenByPause asserts that pausing a run stops its deferred
+// quota-park worker. Before the deferred scope existed, the worker slept straight
+// through the pause and wrote to the database at the reset instant on a run that
+// was never resumed — DB mutation on a paused run.
+func (s *DAGExecutorTestSuite) TestParkedNodeIsFrozenByPause() {
+	nodeA, execA, execA2, runID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	s.parkFixture(runID, nodeA, execA, execA2)
+
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	// Pause well before the 30-minute reset, and never resume.
+	s.env.RegisterDelayedCallback(func() { s.env.SignalWorkflow(SignalPause, nil) }, 5*time.Minute)
+
+	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{RunID: runID, GraphVersion: 1})
+
+	s.False(s.parkIter2Created,
+		"a paused run must not create the resumed iteration: the deferred worker slept through the pause")
 }
 
 // TestRateLimitedNodeSleepsThenRequeues verifies that a rate-limited outcome
