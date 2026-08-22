@@ -1402,6 +1402,50 @@ func (s *DAGExecutorTestSuite) TestCancelDuringParkClearsTheSession() {
 	s.False(s.parkIter2Created, "a cancelled run must not create the resumed iteration")
 }
 
+// TestCancelWhilePausedTerminates asserts that a cancel arriving while the run is
+// already paused ends the workflow instead of wedging it. The pause gate's cancel
+// branch has to leave the main loop the same way the top-of-loop cancel drain does;
+// falling through re-enters 4e, where a parked node is uniquely unrecoverable — its
+// worker was cancelled by the pause-stamp block, cancelCh was already drained by the
+// pause selector, and unlike an ordinary paused node it has no pending activity whose
+// heartbeat timeout would eventually wake the selector. Nothing else can.
+//
+// ClearParkedSession is the witness that Step 5 actually ran: it is only reachable
+// from the cancel cleanup, so observing it proves the loop was left rather than
+// re-entered.
+func (s *DAGExecutorTestSuite) TestCancelWhilePausedTerminates() {
+	nodeA, execA, execA2, runID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	s.parkFixture(runID, nodeA, execA, execA2)
+
+	skipped := false
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.MatchedBy(func(p activity.UpdateNodeExecStatusParams) bool {
+		return p.NodeExecutionID == execA && p.Status == "skipped"
+	})).Return(nil).Maybe().Run(func(mock.Arguments) { skipped = true })
+	// Catch-all LAST, after the specific matcher above.
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	cleared := ""
+	s.env.OnActivity("ClearParkedSession", mock.Anything, mock.Anything).Return(nil).Maybe().
+		Run(func(args mock.Arguments) {
+			cleared = args.Get(1).(activity.ClearParkedSessionParams).ObjectPath
+		})
+
+	// Pause first, then cancel — both well before the fixture's 30-minute reset, so
+	// the node is still parked when the cancel lands on the pause gate.
+	s.env.RegisterDelayedCallback(func() { s.env.SignalWorkflow(SignalPause, nil) }, 5*time.Minute)
+	s.env.RegisterDelayedCallback(func() { s.env.SignalWorkflow(SignalCancel, nil) }, 10*time.Minute)
+
+	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{RunID: runID, GraphVersion: 1})
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError(),
+		"cancel while paused must terminate the workflow, not leave it blocked in 4e forever")
+	s.True(skipped, "Step 5 must still mark the parked node skipped")
+	s.Equal("runs/r/e/session/sess-1.jsonl", cleared,
+		"Step 5 must clear the parked transcript — proof the loop was left, not re-entered")
+	s.False(s.parkIter2Created, "a cancelled run must not create the resumed iteration")
+}
+
 // TestFailedParkIsNotRebuiltOnResume asserts that a park whose bookkeeping failed
 // is not resurrected by a later resume. The node failed; parkedUntil must be cleared
 // with it, or resume rebuilds a worker for a node that is already done.

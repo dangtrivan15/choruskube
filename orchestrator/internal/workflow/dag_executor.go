@@ -446,6 +446,15 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 
 			if cancelled {
 				logger.Info("Workflow cancelled while paused")
+				// Leave the loop for Step 5, the same exit the top-of-loop cancel
+				// drain takes. Falling through re-enters 4e with the deferred scope
+				// already cancelled: a parked tracker still reads "running", so
+				// runningCount keeps 4e blocking on a completion whose only sender
+				// was just cancelled, and cancelCh was already drained here. Unlike
+				// an ordinary paused node, a parked one has no pending activity
+				// whose heartbeat timeout would eventually wake the selector, so
+				// nothing else can.
+				break
 			} else {
 				workflow.ExecuteActivity(dbCtx, activities.UpdateWorkflowRunStatus,
 					activity.UpdateRunStatusParams{RunID: params.RunID, Status: "running"},
