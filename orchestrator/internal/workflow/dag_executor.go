@@ -3,6 +3,7 @@ package workflow
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -189,9 +190,11 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 
 	// One cancellable scope for every piece of deferred work attached to this run.
 	// Cancelling a context aborts every Sleep, Timer and activity derived from it,
-	// so pause and cancel reach deferred work structurally rather than each feature
-	// having to remember them. Re-created on resume — a cancelled context stays
-	// cancelled.
+	// so a deferred feature reaches pause/cancel by deriving its wait from this
+	// scope, not by remembering the signals itself. Every place `paused` or
+	// `cancelled` is set to true calls deferredCancel() (CancelFunc is idempotent,
+	// so more than one call on the same episode is harmless). Re-created on
+	// resume — a cancelled context stays cancelled.
 	//
 	// dbCtx is deliberately NOT derived from this scope: a worker past its Sleep
 	// must finish its bookkeeping rather than be torn in half.
@@ -341,6 +344,16 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 		}
 		if cancelled {
 			logger.Info("Workflow cancelled")
+			// Kill every deferred worker with the run. This drain can observe a
+			// cancel that arrived while a sibling node's own completion or requeue
+			// woke the 4e selector for an unrelated reason, bypassing that
+			// selector's own cancelCh branch entirely — so this call sequence
+			// (issuing a StartTimer's cancellation) does not depend on which of
+			// the four cancel sites happened to see the signal first, only on the
+			// run actually becoming cancelled. Without it, a park whose reset
+			// lands during Step 5's cleanup could write "invalidated" and create a
+			// fresh "pending" iteration for a node Step 5 just marked "skipped".
+			deferredCancel()
 			break
 		}
 
@@ -411,6 +424,11 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 				ch.Receive(ctx, nil)
 				cancelled = true
 				paused = false
+				// Already cancelled by the pause-stamp block above (entering "if
+				// paused" always runs it first) -- CancelFunc is idempotent, so
+				// this is redundant today. Kept explicit so this branch keeps
+				// killing deferred work on its own if that ordering ever changes.
+				deferredCancel()
 			})
 			pauseSelector.Select(ctx)
 
@@ -429,8 +447,32 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 				// spawnParkWorker is a no-op for any tracker that isn't parked and
 				// guards against double-spawning via parkWorkers, so this is safe to
 				// run unconditionally, whether or not anything was actually parked.
+				//
+				// The set of nodes spawnParkWorker gets called for does not depend
+				// on order, but the *command sequence* it produces does: each
+				// spawned worker's workflow.Go appends to the dispatcher's
+				// coroutine slice, which runs in insertion order, and each
+				// coroutine's first action is a StartTimer command recorded into
+				// workflow history in that same order. Ranging `nodes` directly
+				// would let Go's randomized map iteration pick that order, so a
+				// replay after a worker restart, cache eviction, or rolling deploy
+				// could reissue the StartTimers in a different sequence than
+				// history recorded and fail as non-deterministic — permanently
+				// stuck, not just a flaky test. This is not a rare shape either:
+				// an org-wide quota hit parks every concurrently-running AI node
+				// at once (see TestRateLimitedNodeParkDoesNotBlockConcurrentSibling
+				// for concurrent siblings). Collect and sort the IDs first so the
+				// spawn order — and thus the command sequence — is fixed
+				// regardless of map iteration.
 				deferredCtx, deferredCancel = workflow.WithCancel(ctx)
+				nodeIDs := make([]uuid.UUID, 0, len(nodes))
 				for nodeID := range nodes {
+					nodeIDs = append(nodeIDs, nodeID)
+				}
+				sort.Slice(nodeIDs, func(i, j int) bool {
+					return nodeIDs[i].String() < nodeIDs[j].String()
+				})
+				for _, nodeID := range nodeIDs {
 					spawnParkWorker(deferredCtx, nodeID)
 				}
 			}
@@ -668,6 +710,13 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 				ch.Receive(ctx, nil)
 				retryTimerCancel()
 				cancelled = true
+				// This retry window is only entered when runningCount == 0, and a
+				// parked node's tracker still counts as "running" -- so nothing can
+				// be parked here today. Kept explicit anyway: the run is
+				// cancelled, so deferred work dies with it regardless of which of
+				// the four cancel sites happens to observe the signal, not just
+				// the ones currently reachable with a live park.
+				deferredCancel()
 			})
 
 			retrySelector.AddFuture(retryTimeout, func(f workflow.Future) {
@@ -1437,6 +1486,14 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 			selector.AddReceive(cancelCh, func(ch workflow.ReceiveChannel, more bool) {
 				ch.Receive(ctx, nil)
 				cancelled = true
+				// A parked node's tracker still reads "running", so it is exactly
+				// the kind of node runningCount is counting when this selector is
+				// live -- this is the site most likely to observe a cancel while a
+				// park is genuinely in flight. Kill every deferred worker with the
+				// run: an abandoned park must not write "invalidated"/create a
+				// fresh "pending" iteration for a node Step 5 below is about to
+				// mark "skipped" on an already-cancelled run.
+				deferredCancel()
 			})
 
 			selector.Select(ctx)

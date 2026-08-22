@@ -1854,6 +1854,97 @@ func (s *DAGExecutorTestSuite) TestRateLimitedNodeParkedDuringPauseStillFailsExp
 	s.env.AssertExpectations(s.T())
 }
 
+// TestRateLimitedNodesBothResumeAfterPause parks two independent AI nodes at once,
+// pauses and resumes before either resets, and asserts both are re-queued once their
+// reset arrives. No existing test parked two nodes simultaneously before this one,
+// which is exactly why the resume respawn loop's spawn-order dependency (see the
+// sort.Slice comment at the deferredCtx re-derivation in the resume path) went
+// unnoticed: with a single park there is nothing for map iteration order to
+// reorder. This test also finally exercises `delete(parkWorkers, parkedNodeID)`:
+// without it, A's own worker finishing would leave a stale `true` entry under A's ID,
+// and if A ever parked a second time in the same run, spawnParkWorker's
+// `parkWorkers[nodeID]` guard would wrongly treat a worker as already live and never
+// spawn one -- though this specific test only parks each node once, so it does not by
+// itself turn that stale-entry scenario into a visible failure (see the fix report for
+// exactly what this test does and does not prove about that line).
+func (s *DAGExecutorTestSuite) TestRateLimitedNodesBothResumeAfterPause() {
+	nodeA := uuid.New()
+	nodeB := uuid.New()
+	execA, execA2 := uuid.New(), uuid.New()
+	execB, execB2 := uuid.New(), uuid.New()
+	runID := uuid.New()
+
+	snapshot := `{
+		"nodes": [
+			{"templateNodeId": "` + nodeA.String() + `", "label": "A", "executorType": "ai", "timeoutSeconds": 1800, "isEntrypoint": true},
+			{"templateNodeId": "` + nodeB.String() + `", "label": "B", "executorType": "ai", "timeoutSeconds": 1800, "isEntrypoint": true}
+		],
+		"edges": []
+	}`
+
+	s.env.OnActivity("UpdateWorkflowRunStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("GetGraphRuntime", mock.Anything, runID).Return(snapshot, nil)
+	for _, n := range []string{"WriteExecutionLog", "InitRunLog", "AppendRunLog", "SetTraversedEdges", "DeleteAgentJob"} {
+		s.env.OnActivity(n, mock.Anything, mock.Anything).Return(nil).Maybe()
+	}
+	s.env.OnActivity("FetchPodLogs", mock.Anything, mock.Anything).Return("", nil).Maybe()
+	s.env.OnActivity("LoadPredecessorInputs", mock.Anything, mock.Anything).Return(map[string]string{}, nil).Maybe()
+	s.env.OnActivity("LoadRequiredInputArtifacts", mock.Anything, mock.Anything).Return(activity.LoadRequiredInputArtifactsResult{}, nil).Maybe()
+	s.env.OnActivity("LoadReviewHistoryJSON", mock.Anything, mock.Anything).Return("[]", nil).Maybe()
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == nodeA && p.Iteration == 1
+	})).Return(execA, nil).Once()
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == nodeA && p.Iteration == 2
+	})).Return(execA2, nil).Once()
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == nodeB && p.Iteration == 1
+	})).Return(execB, nil).Once()
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == nodeB && p.Iteration == 2
+	})).Return(execB2, nil).Once()
+
+	// Both nodes park with the same reset instant so both workers are still asleep,
+	// side by side on the shared scope, when pause cancels it.
+	resumeAt := s.env.Now().Add(30 * time.Minute)
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.NodeExecutionID == execA
+	})).Return(activity.CallbackResult{Status: "rate_limited", ResumeAt: resumeAt}, nil).Once()
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.NodeExecutionID == execB
+	})).Return(activity.CallbackResult{Status: "rate_limited", ResumeAt: resumeAt}, nil).Once()
+
+	// Both iteration-2 executions must actually run: proof each node was really
+	// re-queued, not just that CreateNodeExecution(iteration=2) was called.
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.NodeExecutionID == execA2
+	})).Return(activity.CallbackResult{Status: "completed", Result: "done"}, nil).Once()
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.NodeExecutionID == execB2
+	})).Return(activity.CallbackResult{Status: "completed", Result: "done"}, nil).Once()
+
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execA2
+	})).Return("no_decision", nil).Once()
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execB2
+	})).Return("no_decision", nil).Once()
+
+	// Pause and resume well before the 30-minute reset, so both parks are still live
+	// -- and both re-spawned together by the same resume loop iteration -- long
+	// before either one would have resolved on its own.
+	s.env.RegisterDelayedCallback(func() { s.env.SignalWorkflow(SignalPause, nil) }, 50*time.Millisecond)
+	s.env.RegisterDelayedCallback(func() { s.env.SignalWorkflow(SignalResume, nil) }, 100*time.Millisecond)
+
+	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{RunID: runID, GraphVersion: 1})
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+	s.env.AssertExpectations(s.T())
+}
+
 // TestGraphWithLoopBackEdge_Rejected verifies the loop-back path through back-edges.
 // Same graph as TestGraphWithLoopBackEdge.
 // Signals A (approved), C (rejected) → B loops back, then C (approved) → D completes.
