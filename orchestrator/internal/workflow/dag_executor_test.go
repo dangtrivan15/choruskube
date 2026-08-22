@@ -1281,6 +1281,18 @@ func (s *DAGExecutorTestSuite) TestParkedNodeIsFrozenByPause() {
 	nodeA, execA, execA2, runID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	s.parkFixture(runID, nodeA, execA, execA2)
 
+	// The branch's headline property: a parked node is indistinguishable from a
+	// running one for every lifecycle operation, so pause stamps it "paused" like
+	// any other running node. Worth an executable guard because the parked node's
+	// DeleteAgentJob really is a no-op (the pod is already gone), which invites an
+	// `if !tracker.parkedUntil.IsZero() { continue }` shortcut in the stamping loop
+	// that would also skip the stamp and leave the node reading "running" on a
+	// paused run.
+	parkedStampedPaused := false
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.MatchedBy(func(p activity.UpdateNodeExecStatusParams) bool {
+		return p.NodeExecutionID == execA && p.Status == "paused"
+	})).Return(nil).Maybe().Run(func(mock.Arguments) { parkedStampedPaused = true })
+	// Catch-all LAST, after the specific matcher above.
 	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	// Pause well before the 30-minute reset, and never resume.
@@ -1290,6 +1302,114 @@ func (s *DAGExecutorTestSuite) TestParkedNodeIsFrozenByPause() {
 
 	s.False(s.parkIter2Created,
 		"a paused run must not create the resumed iteration: the deferred worker slept through the pause")
+	s.True(parkedStampedPaused,
+		"pause must stamp the parked execution \"paused\" like any other running node")
+}
+
+// TestPauseDuringParkCommitStillCreatesTheIteration covers the design's most subtle
+// invariant: a deferred worker that is already past its Sleep finishes its bookkeeping
+// even if a pause lands mid-flight. Two properties hold it up — dbCtx is not derived
+// from the deferred scope, so pause's deferredCancel() never reaches the worker's
+// activities, and Future.Get bottoms out in channelImpl.Receive, which never consults
+// ctx.Done() (go.temporal.io/sdk@v1.41.0). Deriving dbCtx from deferredCtx, or swapping
+// in a cancellation-aware await, would strand the node "invalidated" with no successor:
+// the invalidate already landed, so nothing would ever run this node again.
+//
+// The design recorded this as untested for want of interleaving control. Mocking the
+// commit's CreateNodeExecution with .After(d) supplies exactly that, in virtual time:
+// the reset lands at 30m, the create is stalled until 40m, and the pause is signalled
+// at 35m — squarely inside the invalidate/create window.
+//
+// This test does not use parkFixture: the fixture registers its own iteration-2
+// CreateNodeExecution matcher with .Maybe(), which never exhausts, so a later .After
+// variant of the same matcher could never win.
+func (s *DAGExecutorTestSuite) TestPauseDuringParkCommitStillCreatesTheIteration() {
+	nodeA, execA, execA2, runID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+
+	snapshot := `{
+		"nodes": [
+			{"templateNodeId": "` + nodeA.String() + `", "label": "A", "executorType": "ai", "timeoutSeconds": 1800, "isEntrypoint": true}
+		],
+		"edges": []
+	}`
+
+	s.env.OnActivity("UpdateWorkflowRunStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("GetGraphRuntime", mock.Anything, runID).Return(snapshot, nil)
+	for _, n := range []string{"WriteExecutionLog", "InitRunLog", "AppendRunLog", "SetTraversedEdges", "DeleteAgentJob"} {
+		s.env.OnActivity(n, mock.Anything, mock.Anything).Return(nil).Maybe()
+	}
+	s.env.OnActivity("FetchPodLogs", mock.Anything, mock.Anything).Return("", nil).Maybe()
+	s.env.OnActivity("LoadPredecessorInputs", mock.Anything, mock.Anything).Return(map[string]string{}, nil).Maybe()
+	s.env.OnActivity("LoadRequiredInputArtifacts", mock.Anything, mock.Anything).Return(activity.LoadRequiredInputArtifactsResult{}, nil).Maybe()
+	s.env.OnActivity("LoadReviewHistoryJSON", mock.Anything, mock.Anything).Return("[]", nil).Maybe()
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.Anything).Return("no_decision", nil).Maybe()
+
+	// A worker torn in half leaves the node "invalidated" with no successor and
+	// fails it. Registered as a hard failure rather than left to an absent-call
+	// assertion, so the failure is deterministic (see
+	// TestCancelAbortsAbandonedParkBeforeSleepCompletes for why an unmocked
+	// activity does not discriminate here). Specific matcher first, catch-all last.
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.MatchedBy(func(p activity.UpdateNodeExecStatusParams) bool {
+		return p.NodeExecutionID == execA && p.Status == "failed"
+	})).Return(nil).Maybe().Run(func(mock.Arguments) {
+		s.Fail("a pause landing mid-commit must not fail the node: the worker is past its Sleep and must finish its bookkeeping")
+	})
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.Iteration == 1
+	})).Return(execA, nil).Once()
+
+	var mu sync.Mutex
+	var iter2CreatedAt, iter2RanAt time.Time
+	// The commit's create, stalled from the 30m reset until 40m. The pause at 35m
+	// lands inside this window, after the invalidate has already been written.
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.Iteration == 2
+	})).After(10*time.Minute).Return(execA2, nil).Once().Run(func(mock.Arguments) {
+		mu.Lock()
+		iter2CreatedAt = s.env.Now()
+		mu.Unlock()
+	})
+
+	resumeAt := s.env.Now().Add(30 * time.Minute)
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.NodeExecutionID == execA
+	})).Return(activity.CallbackResult{
+		Status:              "rate_limited",
+		ResumeAt:            resumeAt,
+		SessionID:           "sess-1",
+		SessionArtifactPath: "runs/r/e/session/sess-1.jsonl",
+	}, nil).Once()
+
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.NodeExecutionID == execA2
+	})).Return(activity.CallbackResult{Status: "completed", Result: "done"}, nil).Maybe().
+		Run(func(mock.Arguments) {
+			mu.Lock()
+			iter2RanAt = s.env.Now()
+			mu.Unlock()
+		})
+
+	start := s.env.Now()
+	s.env.RegisterDelayedCallback(func() { s.env.SignalWorkflow(SignalPause, nil) }, 35*time.Minute)
+	s.env.RegisterDelayedCallback(func() { s.env.SignalWorkflow(SignalResume, nil) }, 50*time.Minute)
+
+	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{RunID: runID, GraphVersion: 1})
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+
+	mu.Lock()
+	defer mu.Unlock()
+	s.False(iter2CreatedAt.IsZero(), "the successor iteration must still be created")
+	s.Less(iter2CreatedAt.Sub(start), 50*time.Minute,
+		"the commit must run to completion while the run is still paused (~40m), not wait for the resume at 50m")
+	// iter2CreatedAt only proves the activity was dispatched; this proves the worker
+	// got the result back and installed the successor tracker.
+	s.False(iter2RanAt.IsZero(), "the created iteration must actually be installed and run")
+	s.GreaterOrEqual(iter2RanAt.Sub(start), 50*time.Minute,
+		"the created iteration must not be dispatched until the run resumes")
 }
 
 // TestResumeRebuildsTheParkWorker asserts that resuming a paused run rebuilds the
