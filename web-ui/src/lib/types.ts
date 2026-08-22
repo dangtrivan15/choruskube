@@ -468,9 +468,28 @@ export interface MilestoneRef {
 }
 
 /**
- * Matches the backend `MilestoneResponse` record. `epicCount` is a read-time aggregate computed
- * from `EpicRepository` (never persisted) — see `DefaultMilestoneService`'s batched `list()`
- * computation for the multi-Milestone case.
+ * Task-count rollup bucketed by board lane, over every descendant Task of every Story of every
+ * Epic tagged with a Milestone — matches the backend `MilestoneResponse.Progress` record.
+ * `doneTasks + inProgressTasks + notStartedTasks === totalTasks` always holds.
+ */
+export interface MilestoneProgress {
+  totalTasks: number;
+  doneTasks: number;
+  inProgressTasks: number;
+  notStartedTasks: number;
+}
+
+/**
+ * Matches the backend `MilestoneResponse` record. `epicCount`, `progress`, `atRisk` and
+ * `atRiskItemCount` are all read-time aggregates computed from a batched Epic → Story → Task walk
+ * (never persisted) — see `DefaultMilestoneService`'s batched `list()` computation for the
+ * multi-Milestone case.
+ *
+ * `atRisk` is `true` iff this Milestone's own `targetDate` is strictly before today AND at least
+ * one of its Epics is incomplete; a Milestone with no Epics or no `targetDate` is never at risk.
+ * `atRiskItemCount` separately counts every individually at-risk Epic/Story under it (its own
+ * `targetDate` overdue AND not done), regardless of the Milestone-level `atRisk` verdict — drill
+ * down via `GET /milestones/{id}/at-risk-items` (`useMilestoneAtRiskItems`).
  */
 export interface MilestoneResponse {
   id: string;
@@ -479,14 +498,33 @@ export interface MilestoneResponse {
   softwareProjectId: string;
   targetDate: string | null;
   epicCount: number;
+  progress: MilestoneProgress;
+  atRisk: boolean;
+  atRiskItemCount: number;
   createdAt: string;
   updatedAt: string;
 }
 
 /**
- * POST /milestones body — mirrors the backend `MilestoneRequest` record. `targetDate` is
- * reserved (Caveat 1 of that feature) — not yet surfaced in the create UI.
+ * One at-risk Epic or Story under a Milestone — its own `targetDate` strictly before today AND
+ * its effective status not `done`. Matches the backend `AtRiskItem` record; `status` is the
+ * item's `RollupCalculator#effectiveStatus` name at read time. Served by
+ * `GET /milestones/{id}/at-risk-items` — see `MilestoneResponse.atRiskItemCount`.
  */
+export interface AtRiskItem {
+  id: string;
+  tier: "EPIC" | "STORY";
+  title: string;
+  targetDate: string | null;
+  status: string;
+}
+
+/** Matches the backend `MilestoneAtRiskItemsResponse` record — GET /milestones/{id}/at-risk-items. */
+export interface MilestoneAtRiskItemsResponse {
+  items: AtRiskItem[];
+}
+
+/** POST /milestones body — mirrors the backend `MilestoneRequest` record. */
 export interface MilestoneRequest {
   name: string;
   description: string | null;

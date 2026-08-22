@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { screen } from "@testing-library/react";
+import { screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "@/__tests__/test-utils";
 import CreateMilestoneDialog from "@/components/roadmap/CreateMilestoneDialog";
@@ -92,6 +92,36 @@ describe("CreateMilestoneDialog", () => {
 
     const [payload] = mockMutate.mock.calls[0];
     expect(payload.description).toBeNull();
+  });
+
+  it("entering a target date includes it in the submitted request", async () => {
+    renderWithProviders(<CreateMilestoneDialog open={true} onOpenChange={() => {}} />);
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    await user.type(screen.getByTestId("create-milestone-name"), "Q3 Launch");
+    await user.click(screen.getByTestId("create-milestone-software-project-select"));
+    await user.click(screen.getByText("backend-api"));
+    fireEvent.change(screen.getByTestId("create-milestone-target-date"), {
+      target: { value: "2026-09-30" },
+    });
+
+    await user.click(screen.getByTestId("create-milestone-submit"));
+
+    expect(mockMutate).toHaveBeenCalledTimes(1);
+    const [payload] = mockMutate.mock.calls[0];
+    expect(payload.targetDate).toBe("2026-09-30");
+  });
+
+  it("omits an unset target date as null", async () => {
+    renderWithProviders(<CreateMilestoneDialog open={true} onOpenChange={() => {}} />);
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    await user.type(screen.getByTestId("create-milestone-name"), "Q3 Launch");
+    await user.click(screen.getByTestId("create-milestone-software-project-select"));
+    await user.click(screen.getByText("backend-api"));
+
+    await user.click(screen.getByTestId("create-milestone-submit"));
+
+    const [payload] = mockMutate.mock.calls[0];
+    expect(payload.targetDate).toBeNull();
   });
 
   it("resets the form and mutation state when the dialog is dismissed via Escape", async () => {
