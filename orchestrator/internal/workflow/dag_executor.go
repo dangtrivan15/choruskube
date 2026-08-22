@@ -386,7 +386,36 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 		// and delete their K8s jobs. This complements the api-server's pauseRun() cleanup;
 		// both sides are idempotent (api-server returns 204 even on 404).
 		if paused {
-			for nodeID, tracker := range nodes {
+			// Every node this loop includes emits the same pair of commands
+			// (UpdateNodeExecutionStatus, then DeleteAgentJob), so the command
+			// *type* sequence is order-invariant and a reordered replay would not
+			// trip the checker here directly — unlike Step 5's cleanup loop below.
+			//
+			// The exposure is narrower and one step removed. pauseInterrupted is
+			// recorded only when the stamp succeeds, and on replay position i's
+			// result comes from history event i. So if two nodes were stamped and
+			// one stamp failed, a reordered replay attributes that failure to the
+			// other node: pauseInterrupted diverges from what the original episode
+			// held, and the next heartbeat-timeout completion takes the wasPaused
+			// recovery branch for a node that should have failed — a branch that
+			// *does* emit a different command sequence, producing the hard error
+			// there instead of here.
+			//
+			// Latent rather than observed, but this scope changed what flows
+			// through the loop: parked nodes now arrive here "running" with a park
+			// attached. Sort for the same reason as the three sibling loops in this
+			// function — remove the dependence on Go's randomized map iteration
+			// outright, rather than resting on an argument about what the replay
+			// checker happens to compare.
+			pauseNodeIDs := make([]uuid.UUID, 0, len(nodes))
+			for nodeID := range nodes {
+				pauseNodeIDs = append(pauseNodeIDs, nodeID)
+			}
+			sort.Slice(pauseNodeIDs, func(i, j int) bool {
+				return pauseNodeIDs[i].String() < pauseNodeIDs[j].String()
+			})
+			for _, nodeID := range pauseNodeIDs {
+				tracker := nodes[nodeID]
 				if tracker.status == "running" {
 					snapshotNode, ok := GetNodeByID(snap, nodeID)
 					if !ok || snapshotNode.ExecutorType == "human" || snapshotNode.ExecutorType == "live_chat" {
@@ -478,11 +507,28 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 				// would let Go's randomized map iteration pick that order, so a
 				// replay after a worker restart, cache eviction, or rolling deploy
 				// could reissue the StartTimers in a different sequence than
-				// history recorded and fail as non-deterministic — permanently
-				// stuck, not just a flaky test. This is not a rare shape either:
-				// an org-wide quota hit parks every concurrently-running AI node
-				// at once (see TestRateLimitedNodeParkDoesNotBlockConcurrentSibling
-				// for concurrent siblings). Collect and sort the IDs first so the
+				// history recorded.
+				//
+				// That does NOT surface as a non-determinism error, which is the
+				// whole problem. The replay checker (isCommandMatchEvent in
+				// go.temporal.io/sdk@v1.41.0) matches START_TIMER on TimerId alone
+				// — a value from GenerateSequenceID, so purely positional — and
+				// never compares the duration. A reordered spawn therefore matches
+				// history happily and each coroutine silently adopts another
+				// park's timer: node A wakes on B's reset. Its Claude quota is not
+				// actually back, so the resumed pod hits the limit again and parks
+				// a second time, and the run drifts on wrong schedules with no
+				// error anywhere. A loud failure would be the better outcome here;
+				// this sort is what prevents the quiet one.
+				//
+				// Contrast Step 5's cleanup loop below, which reorders
+				// SCHEDULE_ACTIVITY_TASK commands: those match on activity type
+				// name, so a reordering there does fail loudly.
+				//
+				// This is not a rare shape either: an org-wide quota hit parks
+				// every concurrently-running AI node at once (see
+				// TestRateLimitedNodeParkDoesNotBlockConcurrentSibling for
+				// concurrent siblings). Collect and sort the IDs first so the
 				// spawn order — and thus the command sequence — is fixed
 				// regardless of map iteration.
 				deferredCtx, deferredCancel = workflow.WithCancel(ctx)
@@ -1537,8 +1583,9 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 		// A parked node emits three commands here (UpdateNodeExecutionStatus,
 		// ClearParkedSession, DeleteAgentJob) where a structurally identical
 		// non-parked node emits two (UpdateNodeExecutionStatus alone, or plus
-		// DeleteAgentJob) — the same command-order hazard as the resume respawn
-		// above (see its comment at deferredCtx, deferredCancel = ...): with two
+		// DeleteAgentJob) — the same order-dependence as the resume respawn above
+		// (see its comment at deferredCtx, deferredCancel = ...), but failing
+		// loudly rather than silently, because these are activity commands: with two
 		// or more concurrently-active nodes of different shapes at cancel time,
 		// Go's randomized map iteration would let a replay try to emit
 		// UpdateNodeExecutionStatus at a position where history recorded
