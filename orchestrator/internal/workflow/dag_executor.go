@@ -1510,6 +1510,17 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 					},
 				).Get(ctx, nil)
 
+				// The deferred worker will never run, so nothing else will consume
+				// this object.
+				if !tracker.parkedUntil.IsZero() && tracker.sessionArtifactPath != "" {
+					if clearErr := workflow.ExecuteActivity(dbCtx, activities.ClearParkedSession,
+						activity.ClearParkedSessionParams{ObjectPath: tracker.sessionArtifactPath},
+					).Get(ctx, nil); clearErr != nil {
+						logger.Warn("ClearParkedSession on cancel failed (non-fatal)",
+							"execID", tracker.execID, "err", clearErr)
+					}
+				}
+
 				// Delete K8s Job for running AI nodes
 				if tracker.status == "running" {
 					if snapshotNode, ok := GetNodeByID(snap, nodeID); ok && snapshotNode.ExecutorType != "human" {

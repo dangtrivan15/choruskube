@@ -1374,6 +1374,132 @@ func (s *DAGExecutorTestSuite) TestResumeAfterResetFiresImmediately() {
 		"the resumed park must fire at resume (~45m), not re-wait out another full reset window (~75m)")
 }
 
+// TestCancelDuringParkClearsTheSession asserts that cancelling a run with a parked
+// node marks the node skipped and clears the parked transcript, which the worker
+// would otherwise have consumed.
+func (s *DAGExecutorTestSuite) TestCancelDuringParkClearsTheSession() {
+	nodeA, execA, execA2, runID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	s.parkFixture(runID, nodeA, execA, execA2)
+
+	skipped, cleared := false, ""
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.MatchedBy(func(p activity.UpdateNodeExecStatusParams) bool {
+		return p.NodeExecutionID == execA && p.Status == "skipped"
+	})).Return(nil).Maybe().Run(func(mock.Arguments) { skipped = true })
+	s.env.OnActivity("ClearParkedSession", mock.Anything, mock.Anything).Return(nil).Maybe().
+		Run(func(args mock.Arguments) {
+			cleared = args.Get(1).(activity.ClearParkedSessionParams).ObjectPath
+		})
+	// Catch-all LAST, after the specific matcher above.
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	s.env.RegisterDelayedCallback(func() { s.env.SignalWorkflow(SignalCancel, nil) }, 5*time.Minute)
+
+	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{RunID: runID, GraphVersion: 1})
+
+	s.True(skipped, "a cancelled run must mark its parked node skipped")
+	s.Equal("runs/r/e/session/sess-1.jsonl", cleared,
+		"a cancelled run must clear the parked transcript nothing will consume")
+	s.False(s.parkIter2Created, "a cancelled run must not create the resumed iteration")
+}
+
+// TestCancelAbortsAbandonedParkBeforeSleepCompletes proves the race
+// deferredCancel() closes on cancel: without it, an abandoned park worker's
+// Sleep can complete while Step 5's own cleanup activity is still in flight,
+// letting the worker write "invalidated" and create a resumed iteration for a
+// node Step 5 already marked "skipped" on an already-cancelled run.
+//
+// The fixture parks with a 30-minute reset; cancel fires at 5 minutes, leaving
+// 25 minutes on the park. The mocked "skipped" write for the parked execution
+// is stalled 26 (virtual) minutes via .After(), so the main coroutine is still
+// blocked inside Step 5's Get() when the 30-minute mark passes — giving the
+// abandoned worker's Sleep a chance to fire before the workflow returns, if
+// nothing aborted it. Confirmed by temporarily deleting the fix's four
+// deferredCancel() call sites: TimerID logging showed the park's own ~30-minute
+// Sleep timer (TimerID 8) firing at the 30-minute mark, the abandoned worker
+// then attempting the "invalidated" write.
+//
+// CreateNodeExecution(iteration=2) and the "invalidated" UpdateNodeExecutionStatus
+// write are registered but flagged via s.Fail() in Run() rather than left
+// unmocked. An unmocked call was tried first, on the assumption that
+// TestWorkflowEnvironment's fallback to the real (nil-receiver) activity — which
+// panics — would fail the test, mirroring TestTwoNodeGraphOnlyBPaused's
+// SetTraversedEdges comment. It does panic, but the panic is caught inside the
+// activity task machinery, retried per dbCtx's RetryPolicy, and once retries are
+// exhausted the abandoned coroutine's completionCh.Send blocks forever with
+// nothing listening — none of which fails the *test*: verified by temporarily
+// deleting the four deferredCancel() calls and observing this test still PASS.
+// s.Fail() inside Run() (the pattern this suite already uses at
+// TestRateLimitedNodeSleepsThenRequeues's "must never be marked failed" mock)
+// fails deterministically the instant the call happens, regardless of what the
+// workflow does afterward.
+func (s *DAGExecutorTestSuite) TestCancelAbortsAbandonedParkBeforeSleepCompletes() {
+	nodeA, execA, runID := uuid.New(), uuid.New(), uuid.New()
+
+	snapshot := `{
+		"nodes": [
+			{"templateNodeId": "` + nodeA.String() + `", "label": "A", "executorType": "ai", "timeoutSeconds": 1800, "isEntrypoint": true}
+		],
+		"edges": []
+	}`
+
+	s.env.OnActivity("UpdateWorkflowRunStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("GetGraphRuntime", mock.Anything, runID).Return(snapshot, nil)
+	for _, n := range []string{"WriteExecutionLog", "InitRunLog", "AppendRunLog", "SetTraversedEdges", "DeleteAgentJob"} {
+		s.env.OnActivity(n, mock.Anything, mock.Anything).Return(nil).Maybe()
+	}
+	s.env.OnActivity("FetchPodLogs", mock.Anything, mock.Anything).Return("", nil).Maybe()
+	s.env.OnActivity("LoadPredecessorInputs", mock.Anything, mock.Anything).Return(map[string]string{}, nil).Maybe()
+	s.env.OnActivity("LoadRequiredInputArtifacts", mock.Anything, mock.Anything).Return(activity.LoadRequiredInputArtifactsResult{}, nil).Maybe()
+	s.env.OnActivity("LoadReviewHistoryJSON", mock.Anything, mock.Anything).Return("[]", nil).Maybe()
+	s.env.OnActivity("ClearParkedSession", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.Iteration == 1
+	})).Return(execA, nil).Once()
+
+	resumeAt := s.env.Now().Add(30 * time.Minute)
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.NodeExecutionID == execA
+	})).Return(activity.CallbackResult{
+		Status:              "rate_limited",
+		ResumeAt:            resumeAt,
+		SessionID:           "sess-1",
+		SessionArtifactPath: "runs/r/e/session/sess-1.jsonl",
+	}, nil).Once()
+
+	// Specific matcher first (fixture convention): the parked node's Step 5
+	// "skipped" write, stalled past the 30-minute reset.
+	skipped := false
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.MatchedBy(func(p activity.UpdateNodeExecStatusParams) bool {
+		return p.NodeExecutionID == execA && p.Status == "skipped"
+	})).After(26 * time.Minute).Return(nil).Once().Run(func(mock.Arguments) { skipped = true })
+
+	// The parked node's "invalidated" write and its resumed iteration must never
+	// happen once the run is cancelled. Registered (not left unmocked) so the
+	// failure is deterministic — see the doc comment above for why leaving them
+	// unmocked does not discriminate.
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.MatchedBy(func(p activity.UpdateNodeExecStatusParams) bool {
+		return p.NodeExecutionID == execA && p.Status == "invalidated"
+	})).Return(nil).Maybe().Run(func(mock.Arguments) {
+		s.Fail("a cancelled run's abandoned park must never invalidate the parked execution")
+	})
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.Iteration == 2
+	})).Return(uuid.New(), nil).Maybe().Run(func(mock.Arguments) {
+		s.Fail("a cancelled run's abandoned park must never create a resumed iteration")
+	})
+	// Catch-all LAST, after the specific matchers above.
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	s.env.RegisterDelayedCallback(func() { s.env.SignalWorkflow(SignalCancel, nil) }, 5*time.Minute)
+
+	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{RunID: runID, GraphVersion: 1})
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+	s.True(skipped, "cancel cleanup must still mark the parked node skipped")
+}
+
 // TestRateLimitedNodeSleepsThenRequeues verifies that a rate-limited outcome
 // invalidates the execution, waits for the reset, and re-queues iteration 2
 // carrying the session reference — without the node ever entering the failure path.

@@ -568,6 +568,30 @@ func (a *Activities) DeleteAgentJob(ctx context.Context, params DeleteAgentJobPa
 	return a.client.CleanupWorkload(ctx, params.NodeExecutionID)
 }
 
+// --- Activity: ClearParkedSession ---
+
+type ClearParkedSessionParams struct {
+	ObjectPath string
+}
+
+// ClearParkedSession empties a parked Claude session transcript that nothing will
+// consume — the run was cancelled before its deferred worker could resume it. The
+// transcript can contain credentials the agent discovered, so the bytes must not
+// outlive the run.
+//
+// It overwrites with zero bytes rather than deleting because objectstore.ObjectStore
+// exposes only PutObject and GetObject; an object-storage lifecycle rule remains the
+// proper reaper.
+func (a *Activities) ClearParkedSession(ctx context.Context, params ClearParkedSessionParams) error {
+	if params.ObjectPath == "" {
+		return nil
+	}
+	if err := a.objectStoreClient.PutObject(ctx, params.ObjectPath, []byte{}); err != nil {
+		return fmt.Errorf("clear parked session %s: %w", params.ObjectPath, err)
+	}
+	return nil
+}
+
 // --- Activity: FetchPodLogs ---
 
 type FetchPodLogsParams struct {
