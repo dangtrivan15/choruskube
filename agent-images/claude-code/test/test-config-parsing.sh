@@ -579,14 +579,55 @@ assert_budget_rejected "whitespace-only max_retries" \
   "must be a positive integer"
 
 # --- Test 24: MAX_RETRIES bounds every attempt loop, and they share one counter ---
-# The main retry, artifact-enforcement, decision-verification, escalation-artifact-enforcement,
-# and PR-verification loops deliberately share $ATTEMPT so the budget caps total attempts across
-# all phases, not per phase (Caveat 4: PR verification only gets whatever budget the earlier
-# phases didn't already spend). A per-node max_retries is only meaningful if that stays true.
+# The main retry, artifact-enforcement, decision-verification, PR-verification and
+# escalation-artifact-enforcement loops deliberately share $ATTEMPT so the budget caps total
+# attempts across all phases, not per phase (Caveat 4: each phase only gets whatever budget the
+# earlier ones didn't already spend, and the escalation gate — which runs last, see Test 25 —
+# may get none). A per-node max_retries is only meaningful if that stays true.
 ATTEMPT_LOOPS=$(grep -cF '[ $ATTEMPT -lt $MAX_RETRIES ]' "$ENTRYPOINT")
 [ "$ATTEMPT_LOOPS" -eq 5 ] \
   && ok "all five attempt loops are bounded by the shared \$ATTEMPT/\$MAX_RETRIES pair" \
   || fail "all five attempt loops are bounded by the shared \$ATTEMPT/\$MAX_RETRIES pair (found $ATTEMPT_LOOPS)"
+
+# --- Test 25: the escalation gate runs after every phase that can resume the session ---
+# The gate reads the decision the agent submitted, but each verification phase can resume
+# Claude, and a resumed Claude can call report-result. A gate placed before any of them
+# reads a decision that isn't final yet: an agent that escalates while answering the
+# PR-verification retry prompt sails past a gate that already ran, and the completion is
+# then rejected server-side for a missing escalation.md. The gate must therefore sit after
+# the last session-resuming phase (PR verification) and still before the upload, which is
+# the point after which no repair can reach object storage.
+ESC_LINE=$(grep -nF -- '# --- Escalation artifact enforcement ---' "$ENTRYPOINT" | cut -d: -f1)
+PR_LINE=$(grep -nF -- 'PR_CHECK_OUTPUT=$(check-prs 2>&1)' "$ENTRYPOINT" | head -1 | cut -d: -f1)
+UPLOAD_LINE=$(grep -nF -- '# --- Step 5: Push output artifacts via presigned URLs ---' "$ENTRYPOINT" | cut -d: -f1)
+[ -n "$ESC_LINE" ] && [ -n "$PR_LINE" ] && [ -n "$UPLOAD_LINE" ] \
+  && ok "escalation gate, PR verification and the upload are all locatable" \
+  || fail "escalation gate, PR verification and the upload are all locatable (esc=$ESC_LINE pr=$PR_LINE upload=$UPLOAD_LINE)"
+[ "$ESC_LINE" -gt "$PR_LINE" ] \
+  && ok "escalation gate runs after PR verification, the last phase that can resume the session" \
+  || fail "escalation gate runs after PR verification (esc at $ESC_LINE, PR verification at $PR_LINE)"
+[ "$ESC_LINE" -lt "$UPLOAD_LINE" ] \
+  && ok "escalation gate still runs before the artifact upload" \
+  || fail "escalation gate still runs before the artifact upload (esc at $ESC_LINE, upload at $UPLOAD_LINE)"
+
+# --- Test 26: the escalation repair prompt offers withdrawal as well as escalation.md ---
+# By the time the gate runs, the blocker that prompted the escalation may already be
+# resolved — that is exactly how a stale decision arises. Telling the agent only to write
+# escalation.md forces it to document an escalation it no longer means; it needs the second
+# exit too.
+grep -qF -- 'report-result --withdraw' "$ENTRYPOINT" \
+  && ok "entrypoint.sh tells the agent how to withdraw a decision" \
+  || fail "entrypoint.sh tells the agent how to withdraw a decision"
+
+# --- Test 27: the last verification phase preserves an earlier phase's diagnosis ---
+# Whichever phase runs last owns the risk of clobbering ERROR_MESSAGE: every phase sets it
+# on failure, and the persisted message should name the more fundamental problem rather than
+# only the last thing checked. PR verification carried this append-don't-overwrite rule while
+# it was last; the escalation gate inherited the position, so it has to inherit the rule.
+ESC_BLOCK=$(awk '/# --- Escalation artifact enforcement ---/,/^fi$/' "$ENTRYPOINT")
+echo "$ESC_BLOCK" | grep -qF 'additionally' \
+  && ok "the escalation gate appends to an earlier phase's ERROR_MESSAGE instead of overwriting it" \
+  || fail "the escalation gate appends to an earlier phase's ERROR_MESSAGE instead of overwriting it"
 
 # --- Test 19: needs_pr field parsing (mirrors Test 10's need_decision coverage) ---
 # A regression here (e.g. a typo turning .needs_pr into .need_pr) would silently disable

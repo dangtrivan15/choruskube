@@ -644,6 +644,47 @@ public class InternalRunService {
     }
 
     /**
+     * Retracts a decision the agent already submitted, returning the decision that was withdrawn
+     * (or {@code null} if none was outstanding).
+     *
+     * <p>Exists because a decision is written the moment {@code report-result} is called, but the
+     * node keeps running afterwards: the entrypoint's verification phases can resume the session,
+     * and a resumed agent can resolve the very blocker it escalated over. Without a way to take
+     * the decision back, that agent finishes on the happy path carrying an {@code escalate} it no
+     * longer means, and {@link #enforceOutputSpec} rejects the completion for a missing
+     * escalation.md it was never going to write.
+     *
+     * <p>The withdrawal is <em>recorded</em>, not erased. An escalation is a request for a human;
+     * an agent silently taking one back would remove the only evidence it ever wanted one. The
+     * audit entry goes to the node's execution log at {@code warn}, which the run view already
+     * renders, so a reviewer can still see that the agent asked and then stood down.
+     */
+    public String withdrawDecision(UUID runId, UUID nodeExecId) {
+        NodeExecution exec = execRepo.findById(nodeExecId)
+                .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
+        if (!runId.equals(exec.getWorkflowRunId())) {
+            throw new NotFoundException("Node execution not found in run " + runId + ": " + nodeExecId);
+        }
+
+        String previous = exec.getDecision();
+        if (previous == null) {
+            return null;
+        }
+
+        exec.setDecision(null);
+        execRepo.save(exec);
+
+        ExecutionLog log = new ExecutionLog();
+        log.setNodeExecutionId(nodeExecId);
+        log.setLevel(LogLevel.warn);
+        log.setMessage("Decision '" + previous + "' withdrawn by the agent");
+        logRepo.save(log);
+        eventPublisher.publishNodeLogsUpdated(runId, nodeExecId);
+
+        return previous;
+    }
+
+    /**
      * Returns the valid decision strings (edge conditions) for the given node execution, by
      * walking the run's graph snapshot for outbound conditional edges from the execution's template
      * node.

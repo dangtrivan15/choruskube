@@ -139,6 +139,16 @@ public class InternalRunController {
         return new DecisionResponse(service.getDecision(runId, nodeExecId));
     }
 
+    /**
+     * Retracts a decision this node execution already submitted. Idempotent: withdrawing when
+     * nothing is outstanding is a 200 with no decision, so a resumed agent can call it without
+     * first checking whether it ever submitted one.
+     */
+    @DeleteMapping("/{runId}/node-executions/{nodeExecId}/decision")
+    public DecisionResponse withdrawDecision(@PathVariable UUID runId, @PathVariable UUID nodeExecId) {
+        return new DecisionResponse(service.withdrawDecision(runId, nodeExecId));
+    }
+
     @GetMapping("/{runId}/node-executions/{nodeExecId}/valid-decisions")
     public ValidDecisionsResponse getValidDecisions(@PathVariable UUID runId, @PathVariable UUID nodeExecId) {
         return new ValidDecisionsResponse(service.getValidDecisions(runId, nodeExecId));
