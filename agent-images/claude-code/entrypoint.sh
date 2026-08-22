@@ -549,7 +549,21 @@ Pick \`category\` from exactly these five:
 - \`blocked_external\` — you are blocked on something outside this run's reach.
 
 If the Supervisor routes work back to you, their guidance arrives at
-\`/workspace/in/${SUPERVISOR_LABEL}/human_guidance.md\`. Read it first and honour it."
+\`/workspace/in/${SUPERVISOR_LABEL}/human_guidance.md\`. Read it first and honour it.
+
+**If you later resolve the blocker yourself, retract the escalation before you finish:**
+
+\`\`\`
+report-result --withdraw
+\`\`\`
+
+This matters when something later in the node — including a prompt from this harness after
+you escalated — unblocks you. The decision was written the moment you submitted it and does
+not expire on its own, so a node that finishes carrying a stale \`escalate\` is rejected for
+a missing escalation.md it no longer needs. Withdrawing is recorded, not erased: the
+Supervisor can still see that you asked and then stood down. Withdraw only when you are
+genuinely unblocked — if the judgement call is still not yours to make, escalate properly
+and write the document."
   export SYSTEM_PROMPT
   echo "Composed system prompt with Supervisor escalation contract (label=$SUPERVISOR_LABEL)"
 fi
@@ -988,40 +1002,6 @@ ${PROMPT}"
     fi
   fi
 
-  # --- Escalation artifact enforcement ---
-  # Gated on SUPERVISOR_LABEL, not NEED_DECISION: NEED_DECISION is purely edge-based
-  # (HasConditionalEdges) and knows nothing about the implicit escalate decision, so a node
-  # with zero conditional edges (need_decision=false) still gets told about escalate in its
-  # system prompt whenever a Supervisor is configured, and can still submit it. Fetches
-  # $DECISION itself when the decision-verification block above never ran (need_decision was
-  # false) rather than assuming it is already known; reuses it as-is when that block did run.
-  # Runs before the upload so the session is still resumable. The server rejects an escalate
-  # decision with no escalation.md, so repairing here is the difference between a fixed run
-  # and a failed node. Shares $ATTEMPT with the other retry phases.
-  if [ -n "$SUPERVISOR_LABEL" ] && [ -n "$API_SERVER_URL" ] && [ -n "$CLAUDE_RESULT" ]; then
-    if [ -z "${DECISION:-}" ]; then
-      DECISION=$(check-decision 2>/dev/null || echo "")
-      if [ "$DECISION" = "(none)" ]; then DECISION=""; fi
-    fi
-
-    if [ "$DECISION" = "escalate" ]; then
-      while [ -z "$QUOTA_RESET_AT" ] && [ $ATTEMPT -lt $MAX_RETRIES ] && [ ! -f "$WORKSPACE_OUT/escalation.md" ] && [ -n "$CLAUDE_SESSION_ID" ]; do
-        ATTEMPT=$((ATTEMPT + 1))
-        echo "=== Escalation retry $ATTEMPT/$MAX_RETRIES — escalation.md missing ==="
-        ESCALATION_RETRY_PROMPT="You submitted the decision 'escalate' but did not write /workspace/out/escalation.md. Write it now, using the front matter and section structure from your system prompt, before finishing."
-        CLAUDE_OUTPUT=$(run_claude "$ESCALATION_RETRY_PROMPT" "--resume $CLAUDE_SESSION_ID")
-        parse_claude_output "$CLAUDE_OUTPUT"
-        refresh_quota_reset_at
-      done
-
-      if [ -z "$QUOTA_RESET_AT" ] && [ ! -f "$WORKSPACE_OUT/escalation.md" ]; then
-        echo "ERROR: decision 'escalate' submitted but escalation.md was not produced after $ATTEMPT attempts"
-        RESULT_STATUS="failed"
-        ERROR_MESSAGE="Decision 'escalate' requires /workspace/out/escalation.md, which was not produced after $ATTEMPT attempts"
-      fi
-    fi
-  fi
-
   # PR verification: only for nodes that must register a pull request for every
   # repo they pushed to this run (Decision 3/§3.3). Unlike DECISION above,
   # check-prs has no single-value sentinel to string-match against — it prints a
@@ -1029,8 +1009,10 @@ ${PROMPT}"
   # "could not reach origin for <repo>" / "could not reach $API_SERVER_URL" message
   # if it fails loudly per Caveat 3), so branch on exit status instead: 0 = nothing
   # missing, non-zero = something missing or check-prs itself failed. This is a
-  # fifth phase drawing on the same shared $ATTEMPT budget as the four phases
-  # above (Caveat 4) — it may start with little or no budget left.
+  # fourth phase drawing on the same shared $ATTEMPT budget as the three phases
+  # above (Caveat 4) — it may start with little or no budget left. It is the last
+  # phase that can resume the session, which is why the escalation gate sits below
+  # it rather than above: see that block's header.
   #
   # Capture check-prs's stderr along with its stdout (2>&1): check-prs's loud
   # failure diagnostics (unreachable origin/API server, HTTP failure) are written
@@ -1078,6 +1060,68 @@ ${PROMPT}"
       echo "PR verification passed"
     fi
   fi
+
+  # --- Escalation artifact enforcement ---
+  # Gated on SUPERVISOR_LABEL, not NEED_DECISION: NEED_DECISION is purely edge-based
+  # (HasConditionalEdges) and knows nothing about the implicit escalate decision, so a node
+  # with zero conditional edges (need_decision=false) still gets told about escalate in its
+  # system prompt whenever a Supervisor is configured, and can still submit it.
+  #
+  # Deliberately the LAST verification phase, below PR verification rather than above it.
+  # Every phase above can resume the Claude session, and a resumed agent can call
+  # report-result — so the decision is only settled once no phase can mint another one.
+  # Placed any earlier this gate reads a decision that is not final: an agent that escalates
+  # while answering the PR-verification retry prompt walks straight past a gate that already
+  # ran, and the server then rejects the completed status for a missing escalation.md. That
+  # is also why $DECISION is re-read here rather than reused from the decision-verification
+  # block above — that block's value can be stale by now. Still above the upload, which is
+  # the last point at which a repair can reach object storage. Shares $ATTEMPT with the
+  # other retry phases and so may start with little or none of it left.
+  #
+  # Offers two exits, because by this point an escalation can be stale rather than merely
+  # undocumented: the blocker may have been resolved by the agent itself in a later phase.
+  # Writing escalation.md and withdrawing the decision both leave the node consistent.
+  if [ -n "$SUPERVISOR_LABEL" ] && [ -n "$API_SERVER_URL" ] && [ -n "$CLAUDE_RESULT" ]; then
+    DECISION=$(check-decision 2>/dev/null || echo "")
+    if [ "$DECISION" = "(none)" ]; then DECISION=""; fi
+
+    if [ "$DECISION" = "escalate" ]; then
+      while [ -z "$QUOTA_RESET_AT" ] && [ $ATTEMPT -lt $MAX_RETRIES ] && [ ! -f "$WORKSPACE_OUT/escalation.md" ] && [ -n "$CLAUDE_SESSION_ID" ]; do
+        ATTEMPT=$((ATTEMPT + 1))
+        echo "=== Escalation retry $ATTEMPT/$MAX_RETRIES — escalation.md missing ==="
+        ESCALATION_RETRY_PROMPT="You submitted the decision 'escalate' but did not write /workspace/out/escalation.md. Do one of two things before finishing. If you still need the Supervisor, write escalation.md now, using the front matter and section structure from your system prompt. If you resolved the blocker yourself after escalating, that escalation is stale — retract it by running: report-result --withdraw"
+        CLAUDE_OUTPUT=$(run_claude "$ESCALATION_RETRY_PROMPT" "--resume $CLAUDE_SESSION_ID")
+        parse_claude_output "$CLAUDE_OUTPUT"
+        refresh_quota_reset_at
+
+        # Withdrawal resolves this gate without producing a file, so re-read the decision
+        # rather than looping on escalation.md alone — otherwise the agent takes the exit
+        # it was just offered and the loop spends the rest of the budget ignoring it.
+        DECISION=$(check-decision 2>/dev/null || echo "")
+        if [ "$DECISION" = "(none)" ]; then DECISION=""; fi
+        if [ "$DECISION" != "escalate" ]; then
+          echo "Escalation withdrawn by the agent; nothing left to enforce"
+          break
+        fi
+      done
+
+      if [ -z "$QUOTA_RESET_AT" ] && [ "$DECISION" = "escalate" ] && [ ! -f "$WORKSPACE_OUT/escalation.md" ]; then
+        ESCALATION_FAILURE_MESSAGE="Decision 'escalate' requires /workspace/out/escalation.md, which was not produced after $ATTEMPT attempts"
+        echo "ERROR: $ESCALATION_FAILURE_MESSAGE"
+        # This phase runs last, so it inherits PR verification's append-don't-overwrite rule:
+        # every phase sets ERROR_MESSAGE on failure, and the persisted message should name the
+        # more fundamental problem (an exhausted budget upstream is usually why this phase had
+        # none left) rather than only the last thing checked.
+        if [ "$RESULT_STATUS" = "failed" ]; then
+          ERROR_MESSAGE="${ERROR_MESSAGE}; additionally, ${ESCALATION_FAILURE_MESSAGE}"
+        else
+          RESULT_STATUS="failed"
+          ERROR_MESSAGE="$ESCALATION_FAILURE_MESSAGE"
+        fi
+      fi
+    fi
+  fi
+
 fi
 
 # --- Failure safety net: preserve in-progress work ---

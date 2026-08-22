@@ -51,6 +51,52 @@ make_pushed_or_local_repo() {
     )
 }
 
+# A clone of $1 whose default branch has one commit pushed to origin, plus a run
+# branch that is also pushed. $3 sets the run branch's relationship to the default
+# branch: "ahead" (one commit the default branch doesn't have), "parity" (tip
+# identical), or "behind" (the default branch advanced after the run branch was cut).
+#
+# This is the shape the platform actually produces and make_pushed_or_local_repo is
+# not: a node works on a run branch, never on the default branch, and the failure
+# safety net pushes that run branch even when the working tree is clean — which is
+# exactly how a parity or behind branch reaches origin.
+make_run_branch_repo() {
+    local origin_dir="$1" work_dir="$2" relation="$3"
+    git clone -q "$origin_dir" "$work_dir" 2>/dev/null
+    (
+        cd "$work_dir"
+        git config user.email test@test.com
+        git config user.name test
+        # symbolic-ref, not rev-parse: the clone of an empty bare repo has an
+        # unborn HEAD, which rev-parse cannot resolve.
+        local default_branch
+        default_branch=$(git symbolic-ref --short HEAD)
+        echo base >base.txt
+        git add base.txt
+        git commit -q -m base
+        git push -q origin "$default_branch"
+
+        git checkout -q -b run-branch
+        case "$relation" in
+            ahead)
+                echo work >work.txt
+                git add work.txt
+                git commit -q -m work
+                ;;
+            parity) ;;
+            behind)
+                git checkout -q "$default_branch"
+                echo more >more.txt
+                git add more.txt
+                git commit -q -m more
+                git push -q origin "$default_branch"
+                git checkout -q run-branch
+                ;;
+        esac
+        git push -q origin run-branch
+    )
+}
+
 # Stub `curl` on PATH standing in for the ChorusKube API server's PR-list endpoint.
 # Controlled per-invocation via CURL_STUB_EXIT (nonzero => simulate a transport
 # failure, mirroring curl's own exit codes for DNS/connect/timeout failures),
@@ -136,8 +182,7 @@ chmod +x "$FAKE_BIN/curl"
 ORIGIN3="$TESTDIR/origin3.git"
 WORK3="$TESTDIR/work3"
 make_origin "$ORIGIN3"
-make_pushed_or_local_repo "$ORIGIN3" "$WORK3"
-(cd "$WORK3" && git push -q origin HEAD)
+make_run_branch_repo "$ORIGIN3" "$WORK3" ahead
 REPOS3=$(printf '[{"id":"repo-3","name":"svc3","local_path":"%s"}]' "$WORK3")
 COPY=$(make_check_prs_copy "$REPOS3")
 CURL_STUB_BODY='[{"gitRepoId":"repo-3","prUrl":"https://github.com/org/svc3/pull/1"}]' \
@@ -148,8 +193,7 @@ CURL_STUB_BODY='[{"gitRepoId":"repo-3","prUrl":"https://github.com/org/svc3/pull
 ORIGIN4="$TESTDIR/origin4.git"
 WORK4="$TESTDIR/work4"
 make_origin "$ORIGIN4"
-make_pushed_or_local_repo "$ORIGIN4" "$WORK4"
-(cd "$WORK4" && git push -q origin HEAD)
+make_run_branch_repo "$ORIGIN4" "$WORK4" ahead
 REPOS4=$(printf '[{"id":"repo-4","name":"svc4","local_path":"%s"}]' "$WORK4")
 COPY=$(make_check_prs_copy "$REPOS4")
 CURL_STUB_BODY='[]' run_check_prs "$COPY"
@@ -161,8 +205,8 @@ echo "$OUT" | grep -qF "svc4: no PR registered" \
 # reported, and the registered one doesn't false-positive ---
 ORIGIN5A="$TESTDIR/origin5a.git"; WORK5A="$TESTDIR/work5a"
 ORIGIN5B="$TESTDIR/origin5b.git"; WORK5B="$TESTDIR/work5b"
-make_origin "$ORIGIN5A"; make_pushed_or_local_repo "$ORIGIN5A" "$WORK5A"; (cd "$WORK5A" && git push -q origin HEAD)
-make_origin "$ORIGIN5B"; make_pushed_or_local_repo "$ORIGIN5B" "$WORK5B"; (cd "$WORK5B" && git push -q origin HEAD)
+make_origin "$ORIGIN5A"; make_run_branch_repo "$ORIGIN5A" "$WORK5A" ahead
+make_origin "$ORIGIN5B"; make_run_branch_repo "$ORIGIN5B" "$WORK5B" ahead
 REPOS5=$(printf '[{"id":"repo-5a","name":"svc5a","local_path":"%s"},{"id":"repo-5b","name":"svc5b","local_path":"%s"}]' "$WORK5A" "$WORK5B")
 COPY=$(make_check_prs_copy "$REPOS5")
 CURL_STUB_BODY='[{"gitRepoId":"repo-5a","prUrl":"https://github.com/org/svc5a/pull/1"}]' run_check_prs "$COPY"
@@ -176,7 +220,7 @@ echo "$OUT" | grep -qF "svc5a: no PR registered" \
 # doesn't die silently under set -euo pipefail (Decision/Caveat 3 — the exact bug
 # iteration 1 of this PR's own review fixed) ---
 ORIGIN6="$TESTDIR/origin6.git"; WORK6="$TESTDIR/work6"
-make_origin "$ORIGIN6"; make_pushed_or_local_repo "$ORIGIN6" "$WORK6"; (cd "$WORK6" && git push -q origin HEAD)
+make_origin "$ORIGIN6"; make_run_branch_repo "$ORIGIN6" "$WORK6" ahead
 REPOS6=$(printf '[{"id":"repo-6","name":"svc6","local_path":"%s"}]' "$WORK6")
 COPY=$(make_check_prs_copy "$REPOS6")
 CURL_STUB_EXIT=7 run_check_prs "$COPY"
@@ -186,7 +230,7 @@ echo "$OUT" | grep -qF "could not reach" \
 
 # --- Test 7: API server reachable but returns a non-200 (e.g. 500) — exits 1 loudly ---
 ORIGIN7="$TESTDIR/origin7.git"; WORK7="$TESTDIR/work7"
-make_origin "$ORIGIN7"; make_pushed_or_local_repo "$ORIGIN7" "$WORK7"; (cd "$WORK7" && git push -q origin HEAD)
+make_origin "$ORIGIN7"; make_run_branch_repo "$ORIGIN7" "$WORK7" ahead
 REPOS7=$(printf '[{"id":"repo-7","name":"svc7","local_path":"%s"}]' "$WORK7")
 COPY=$(make_check_prs_copy "$REPOS7")
 CURL_STUB_HTTP_CODE=500 CURL_STUB_BODY='{"error":"boom"}' run_check_prs "$COPY"
@@ -224,6 +268,52 @@ set -e
 [ "$RC" -eq 1 ] && ok "missing API_SERVER_URL: exits 1" || fail "missing API_SERVER_URL: exits 1 (got $RC)"
 echo "$OUT" | grep -qF "API_SERVER_URL not set" \
     && ok "missing API_SERVER_URL: clear diagnostic" || fail "missing API_SERVER_URL: clear diagnostic (got: $OUT)"
+
+# --- Test 10: run branch pushed at parity with the default branch — exits 0.
+# No pull request can be opened for a branch that adds no commits, so demanding one
+# would gate on something impossible. The failure safety net pushes the run branch
+# whenever a node fails with a clean tree, which is how this branch exists at all. ---
+ORIGIN10="$TESTDIR/origin10.git"; WORK10="$TESTDIR/work10"
+make_origin "$ORIGIN10"; make_run_branch_repo "$ORIGIN10" "$WORK10" parity
+REPOS10=$(printf '[{"id":"repo-10","name":"svc10","local_path":"%s"}]' "$WORK10")
+COPY=$(make_check_prs_copy "$REPOS10")
+CURL_STUB_BODY='[]' run_check_prs "$COPY"
+[ "$RC" -eq 0 ] && ok "run branch at parity with default: exits 0" || fail "run branch at parity with default: exits 0 (got $RC: $OUT)"
+echo "$OUT" | grep -qF "svc10: no PR registered" \
+    && fail "run branch at parity with default: must not demand a PR" || ok "run branch at parity with default: does not demand a PR"
+
+# --- Test 11: run branch pushed but behind the default branch — exits 0, same
+# reasoning as Test 10. Distinct from parity because the two tips differ, so a
+# SHA-equality check would miss this one. ---
+ORIGIN11="$TESTDIR/origin11.git"; WORK11="$TESTDIR/work11"
+make_origin "$ORIGIN11"; make_run_branch_repo "$ORIGIN11" "$WORK11" behind
+REPOS11=$(printf '[{"id":"repo-11","name":"svc11","local_path":"%s"}]' "$WORK11")
+COPY=$(make_check_prs_copy "$REPOS11")
+CURL_STUB_BODY='[]' run_check_prs "$COPY"
+[ "$RC" -eq 0 ] && ok "run branch behind default: exits 0" || fail "run branch behind default: exits 0 (got $RC: $OUT)"
+echo "$OUT" | grep -qF "svc11: no PR registered" \
+    && fail "run branch behind default: must not demand a PR" || ok "run branch behind default: does not demand a PR"
+
+# --- Test 12: run branch pushed with a commit the default branch lacks — still
+# gated. The whole point of the gate; Tests 10 and 11 must not have widened the
+# escape hatch far enough to swallow real work. ---
+ORIGIN12="$TESTDIR/origin12.git"; WORK12="$TESTDIR/work12"
+make_origin "$ORIGIN12"; make_run_branch_repo "$ORIGIN12" "$WORK12" ahead
+REPOS12=$(printf '[{"id":"repo-12","name":"svc12","local_path":"%s"}]' "$WORK12")
+COPY=$(make_check_prs_copy "$REPOS12")
+CURL_STUB_BODY='[]' run_check_prs "$COPY"
+[ "$RC" -eq 1 ] && ok "run branch ahead of default, no PR: exits 1" || fail "run branch ahead of default, no PR: exits 1 (got $RC: $OUT)"
+echo "$OUT" | grep -qF "svc12: no PR registered" \
+    && ok "run branch ahead of default, no PR: names the repo" || fail "run branch ahead of default, no PR: names the repo (got: $OUT)"
+
+# --- Test 13: run branch ahead of the default branch and its PR is registered —
+# exits 0, so the ahead path still passes when the contract is met. ---
+ORIGIN13="$TESTDIR/origin13.git"; WORK13="$TESTDIR/work13"
+make_origin "$ORIGIN13"; make_run_branch_repo "$ORIGIN13" "$WORK13" ahead
+REPOS13=$(printf '[{"id":"repo-13","name":"svc13","local_path":"%s"}]' "$WORK13")
+COPY=$(make_check_prs_copy "$REPOS13")
+CURL_STUB_BODY='[{"gitRepoId":"repo-13","prUrl":"https://example.invalid/pull/1"}]' run_check_prs "$COPY"
+[ "$RC" -eq 0 ] && ok "run branch ahead of default + PR registered: exits 0" || fail "run branch ahead of default + PR registered: exits 0 (got $RC: $OUT)"
 
 # --- Summary ---
 echo ""

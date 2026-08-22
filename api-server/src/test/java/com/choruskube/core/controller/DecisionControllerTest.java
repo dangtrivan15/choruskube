@@ -88,4 +88,22 @@ public class DecisionControllerTest extends BaseTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.decision").doesNotExist());
     }
+
+    @Test
+    void withdrawDecision_returnsTheWithdrawnDecision() throws Exception {
+        when(service.withdrawDecision(RUN_ID, NODE_EXEC_ID)).thenReturn("escalate");
+
+        mockMvc.perform(delete("/internal/runs/" + RUN_ID + "/node-executions/" + NODE_EXEC_ID + "/decision"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.decision").value("escalate"));
+    }
+
+    @Test
+    void withdrawDecision_withNothingSubmitted_returns200AndNoDecision() throws Exception {
+        when(service.withdrawDecision(RUN_ID, NODE_EXEC_ID)).thenReturn(null);
+
+        mockMvc.perform(delete("/internal/runs/" + RUN_ID + "/node-executions/" + NODE_EXEC_ID + "/decision"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.decision").doesNotExist());
+    }
 }

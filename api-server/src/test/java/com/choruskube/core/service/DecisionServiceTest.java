@@ -4,8 +4,11 @@ import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 import com.choruskube.core.exception.BadRequestException;
+import com.choruskube.core.exception.NotFoundException;
+import com.choruskube.core.model.ExecutionLog;
 import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.WorkflowRun;
+import com.choruskube.core.model.enums.LogLevel;
 import com.choruskube.core.repository.ExecutionLogRepository;
 import com.choruskube.core.repository.NodeExecutionRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
@@ -15,6 +18,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -168,5 +172,58 @@ class DecisionServiceTest {
         String result = service.getDecision(runId, nodeExecId);
 
         assertThat(result).isNull();
+    }
+
+    @Test
+    void withdrawDecision_clearsTheStoredDecisionAndReturnsIt() {
+        NodeExecution exec = stubExec();
+        exec.setDecision("escalate");
+
+        String withdrawn = service.withdrawDecision(runId, nodeExecId);
+
+        assertThat(withdrawn).isEqualTo("escalate");
+        assertThat(exec.getDecision()).isNull();
+        verify(execRepo).save(exec);
+    }
+
+    @Test
+    void withdrawDecision_recordsAnAuditEntryNamingTheWithdrawnDecision() {
+        NodeExecution exec = stubExec();
+        exec.setDecision("escalate");
+
+        service.withdrawDecision(runId, nodeExecId);
+
+        ArgumentCaptor<ExecutionLog> captor = ArgumentCaptor.forClass(ExecutionLog.class);
+        verify(logRepo).save(captor.capture());
+        assertThat(captor.getValue().getNodeExecutionId()).isEqualTo(nodeExecId);
+        assertThat(captor.getValue().getMessage()).contains("escalate");
+        assertThat(captor.getValue().getLevel()).isEqualTo(LogLevel.warn);
+    }
+
+    @Test
+    void withdrawDecision_withNothingSubmitted_isANoOp() {
+        NodeExecution exec = stubExec();
+
+        String withdrawn = service.withdrawDecision(runId, nodeExecId);
+
+        assertThat(withdrawn).isNull();
+        assertThat(exec.getDecision()).isNull();
+        verify(execRepo, never()).save(any());
+        verify(logRepo, never()).save(any());
+    }
+
+    @Test
+    void withdrawDecision_execBelongsToDifferentRun_throwsNotFoundAndSavesNothing() {
+        NodeExecution foreign = new NodeExecution();
+        foreign.setWorkflowRunId(UUID.randomUUID());
+        foreign.setTemplateNodeId(templateNodeId);
+        foreign.setDecision("escalate");
+        when(execRepo.findById(nodeExecId)).thenReturn(Optional.of(foreign));
+
+        assertThatThrownBy(() -> service.withdrawDecision(runId, nodeExecId)).isInstanceOf(NotFoundException.class);
+
+        assertThat(foreign.getDecision()).isEqualTo("escalate");
+        verify(execRepo, never()).save(any());
+        verify(logRepo, never()).save(any());
     }
 }

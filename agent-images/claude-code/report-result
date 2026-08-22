@@ -1,14 +1,24 @@
 #!/bin/bash
-# report-result — submit a routing decision to the ChorusKube API server.
+# report-result — submit, or retract, a routing decision to the ChorusKube API server.
+#
 # Usage: report-result <decision>
+#        report-result --withdraw
+#
+# The decision is written the moment this runs, but the node keeps going afterwards:
+# the entrypoint's verification phases can resume the agent's session, and a resumed
+# agent can resolve the very blocker it escalated over. `--withdraw` is how it takes
+# the decision back, so it doesn't finish carrying one it no longer means. Retracting
+# when nothing is outstanding is a success, not an error — the agent shouldn't have to
+# remember whether it ever submitted.
 #
 # Environment (set by entrypoint.sh):
-#   REPORT_RESULT_URL — PUT endpoint for this node execution's decision
+#   REPORT_RESULT_URL — endpoint for this node execution's decision
 #   JOB_SECRET        — Bearer token for authentication
 set -euo pipefail
 
 if [ -z "${1:-}" ]; then
     echo "Usage: report-result <decision>" >&2
+    echo "       report-result --withdraw" >&2
     echo "Example: report-result approved" >&2
     exit 1
 fi
@@ -18,11 +28,18 @@ if [ -z "${REPORT_RESULT_URL:-}" ]; then
     exit 1
 fi
 
-RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT \
-    "$REPORT_RESULT_URL" \
-    -H "Content-Type: application/json" \
-    -H "Authorization: Bearer $JOB_SECRET" \
-    -d "{\"decision\": \"$1\"}")
+if [ "$1" = "--withdraw" ]; then
+    RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE \
+        "$REPORT_RESULT_URL" \
+        -H "Authorization: Bearer $JOB_SECRET")
+else
+    RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT \
+        "$REPORT_RESULT_URL" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $JOB_SECRET" \
+        -d "{\"decision\": \"$1\"}")
+fi
+
 HTTP_CODE=$(echo "$RESPONSE" | tail -1)
 BODY=$(echo "$RESPONSE" | sed '$d')
 
@@ -30,4 +47,16 @@ if [ "$HTTP_CODE" != "200" ]; then
     echo "ERROR: $BODY" >&2
     exit 1
 fi
+
+if [ "$1" = "--withdraw" ]; then
+    # `.decision` is absent when nothing was outstanding — a no-op, reported as one.
+    WITHDRAWN=$(echo "$BODY" | jq -r '.decision // empty' 2>/dev/null || true)
+    if [ -n "$WITHDRAWN" ]; then
+        echo "Decision '$WITHDRAWN' withdrawn"
+    else
+        echo "No decision was outstanding; nothing to withdraw"
+    fi
+    exit 0
+fi
+
 echo "Decision '$1' submitted successfully"

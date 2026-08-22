@@ -7,7 +7,10 @@
 # Reads /workspace/config.json's repos[] (id, name, local_path). For each
 # repo, determines whether its current branch was pushed to origin this run
 # (via `git ls-remote`, not the local upstream-tracking ref — see the header
-# comment in entrypoint.sh's PR-verification block for why). For every repo
+# comment in entrypoint.sh's PR-verification block for why) AND carries
+# commits the repo's default branch does not (see branch_adds_commits below:
+# a branch at or behind the default branch's tip can have no pull request, so
+# it is not gated). For every repo
 # that was pushed but has no pull request registered with the ChorusKube API
 # for this run (checked via this node execution's own scoped read of the
 # whole run's PR set — see RunPullRequestService#getPullRequestsForNodeExecution
@@ -29,8 +32,8 @@
 #   if ! check-prs; then echo "PR(s) missing"; fi
 #
 # Exit codes:
-#   0  Every repo this node pushed to has a registered PR (including zero
-#      repos pushed)
+#   0  Every repo this node pushed commits to has a registered PR (including
+#      zero such repos)
 #   1  One or more pushed repos are missing a registered PR, a required
 #      environment variable is unset, the API call failed, or a repo's
 #      remote could not be reached (see "could not reach origin" below)
@@ -62,6 +65,72 @@ if [ ! -f "$CONFIG_FILE" ]; then
     exit 1
 fi
 
+# Whether $2 — a branch that exists on origin in the clone at $1 — carries commits
+# the repo's default branch does not. $3 is the repo name, for diagnostics.
+#
+# A branch existing on origin is not the same as this run having pushed work to it.
+# The failure safety net (entrypoint.sh's preserve_repo_work) pushes the run branch
+# whenever a node fails, including when the working tree is clean, which leaves a
+# branch sitting at — or behind — the default branch's tip. No pull request can be
+# opened for such a branch: a PR needs commits to propose, and there are none. Gating
+# on it demands something impossible and leaves the node with no lawful way to
+# finish, so measure what the branch actually adds instead of whether it exists.
+#
+# Deliberately fails safe: every step that cannot be resolved (no discoverable
+# default branch, unfetchable refs, a count git will not produce) is treated as
+# "carries work", which keeps the gate on rather than silently waiving it. The clone
+# is shallow (entrypoint.sh Step 3 clones --depth 1, then deepens to 200 for the
+# default branch and the run branch), so a branch that diverged beyond that window
+# counts high rather than low — the same safe direction.
+#
+# Diagnostics go to stderr: stdout is this script's "<repo>: no PR registered"
+# contract, which callers parse.
+branch_adds_commits() {
+    local repo_dir="$1" branch="$2" repo_name="$3"
+
+    local default_ref default_branch
+    default_ref=$(git -C "$repo_dir" ls-remote --symref origin HEAD 2>/dev/null \
+        | awk '$1 == "ref:" { print $2; exit }')
+    default_branch="${default_ref#refs/heads/}"
+
+    if [ -z "$default_branch" ]; then
+        echo "WARNING: could not determine the default branch for $repo_name; treating $branch as carrying work" >&2
+        return 0
+    fi
+
+    # A node working on the default branch itself has nothing to propose: its commits
+    # are already on the branch a PR would target.
+    if [ "$default_branch" = "$branch" ]; then
+        echo "$repo_name: on the default branch ($default_branch) — no pull request is possible" >&2
+        return 1
+    fi
+
+    set +e
+    git -C "$repo_dir" fetch --quiet origin "$default_branch" "$branch" >/dev/null 2>&1
+    local fetch_exit=$?
+    set -e
+    if [ "$fetch_exit" -ne 0 ]; then
+        echo "WARNING: could not fetch $default_branch or $branch for $repo_name; treating $branch as carrying work" >&2
+        return 0
+    fi
+
+    local ahead
+    ahead=$(git -C "$repo_dir" rev-list --count \
+        "refs/remotes/origin/$default_branch..refs/remotes/origin/$branch" 2>/dev/null || true)
+    case "$ahead" in
+        '' | *[!0-9]*)
+            echo "WARNING: could not count $branch's commits over $default_branch for $repo_name; treating it as carrying work" >&2
+            return 0
+            ;;
+    esac
+
+    if [ "$ahead" -eq 0 ]; then
+        echo "$repo_name: $branch adds no commits over $default_branch — no pull request is possible" >&2
+        return 1
+    fi
+    return 0
+}
+
 # --- Step 1: determine which repos this node pushed commits to (Decision 5) ---
 # tab-separated (id, name) of repos whose current branch exists on origin.
 PUSHED_FILE=$(mktemp)
@@ -86,7 +155,9 @@ if [ "$REPOS_LEN" -gt 0 ]; then
         set -e
 
         if [ "$LS_REMOTE_EXIT" -eq 0 ]; then
-            printf '%s\t%s\n' "$REPO_ID" "$REPO_NAME" >>"$PUSHED_FILE"
+            if branch_adds_commits "$REPO_DIR" "$BRANCH" "$REPO_NAME"; then
+                printf '%s\t%s\n' "$REPO_ID" "$REPO_NAME" >>"$PUSHED_FILE"
+            fi
         elif [ "$LS_REMOTE_EXIT" -eq 2 ]; then
             continue
         else
