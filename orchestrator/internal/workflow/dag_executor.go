@@ -3,6 +3,7 @@ package workflow
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -80,6 +81,12 @@ type nodeTracker struct {
 	// tracker except the one created by the rate-limited re-queue path.
 	sessionID           string
 	sessionArtifactPath string
+	// parkedUntil is set while this node is waiting out a deferred condition —
+	// today, a Claude quota reset. The tracker is the source of truth and the
+	// worker that waits is a disposable executor re-derived from it, so pause can
+	// discard the worker and resume can rebuild it without losing the park. Zero
+	// means not parked.
+	parkedUntil time.Time
 }
 
 func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
@@ -181,6 +188,162 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 	// through the same edge-evaluation/decision-reading logic real completions get.
 	requeueCh := workflow.NewChannel(ctx)
 
+	// One cancellable scope for every piece of deferred work attached to this run.
+	// Cancelling a context aborts every Sleep, Timer and activity derived from it,
+	// so a deferred feature reaches pause/cancel by deriving its wait from this
+	// scope, not by remembering the signals itself. Every place `paused` or
+	// `cancelled` is set to true calls deferredCancel() (CancelFunc is idempotent,
+	// so more than one call on the same episode is harmless). Re-created on
+	// resume — a cancelled context stays cancelled.
+	//
+	// dbCtx is deliberately NOT derived from this scope: a worker past its Sleep
+	// must finish its bookkeeping rather than be torn in half.
+	deferredCtx, deferredCancel := workflow.WithCancel(ctx)
+	// nodeID -> a worker is live for that tracker's parkedUntil. Cleared wholesale
+	// when the scope is cancelled, and consulted before re-spawning on resume, so a
+	// tracker never ends up with two workers racing to re-queue it.
+	parkWorkers := make(map[uuid.UUID]bool)
+
+	// spawnParkWorker starts the waiter for an already-parked tracker on the shared
+	// deferred scope. Safe to call again after a resume: the tracker carries the
+	// park, so a rebuilt worker resumes the same wait.
+	spawnParkWorker := func(scope workflow.Context, nodeID uuid.UUID) {
+		tracker := nodes[nodeID]
+		if tracker == nil || tracker.parkedUntil.IsZero() || parkWorkers[nodeID] {
+			return
+		}
+		parkWorkers[nodeID] = true
+
+		parkedExecID := tracker.execID
+		parkedIteration := tracker.iteration
+		parkedReviewPass := tracker.reviewPass
+		parkedForceReady := tracker.forceReady
+		parkedUntil := tracker.parkedUntil
+		sessionID := tracker.sessionID
+		sessionArtifactPath := tracker.sessionArtifactPath
+		snapshotNode, _ := GetNodeByID(snap, nodeID)
+		parkedLabel := snapshotNode.Label
+		parkedNodeID := nodeID
+
+		workflow.Go(scope, func(gCtx workflow.Context) {
+			wait := parkedUntil.Sub(workflow.Now(gCtx))
+			if wait > 0 {
+				if err := workflow.Sleep(gCtx, wait); err != nil {
+					// Cancelled by pause or cancel. Write nothing: the park stays on
+					// the tracker, so resume rebuilds this worker and the wait picks
+					// up where it left off.
+					return
+				}
+			}
+			// Past the Sleep the sequence runs to completion on dbCtx, which this
+			// scope cannot cancel. See the plan's global constraint.
+
+			if invErr := workflow.ExecuteActivity(dbCtx, activities.UpdateNodeExecutionStatus,
+				activity.UpdateNodeExecStatusParams{
+					RunID:           params.RunID,
+					NodeExecutionID: parkedExecID,
+					Status:          "invalidated",
+				}).Get(gCtx, nil); invErr != nil {
+				// The park itself succeeded; only this bookkeeping write
+				// failed. completion.err is nil on the rate-limited path
+				// (see the future-await goroutine above), so simply
+				// returning here would fall through to the SUCCESS
+				// finalization below with an empty result, not to any
+				// failure path. Send a synthetic errored completion
+				// instead — this both fails the node explicitly through
+				// the existing, already-tested failure path and wakes
+				// the main loop (completionCh.Send does both jobs here).
+				logger.Warn("Could not invalidate the parked execution; failing the node",
+					"execID", parkedExecID, "err", invErr)
+				// A concurrent manual pause may have stamped this same
+				// execID into pauseInterrupted while it was parked (its
+				// tracker still read "running" — see the comment above
+				// this branch). Left in place, the pre-existing
+				// wasPaused recovery below would intercept this
+				// synthetic completion first, re-queue silently with no
+				// sessionID/sessionArtifactPath, and bypass the explicit
+				// failure this branch exists to guarantee. This
+				// execution is failing because its own bookkeeping
+				// write failed, not because a human paused it, so that
+				// recovery is the wrong handler for it — sever the
+				// misroute at its source.
+				delete(pauseInterrupted, parkedExecID)
+				// The node is failing. Drop the park with it, so a later
+				// resume does not rebuild a worker for a finished node.
+				if t := nodes[parkedNodeID]; t != nil {
+					t.parkedUntil = time.Time{}
+				}
+				delete(parkWorkers, parkedNodeID)
+				completionCh.Send(gCtx, nodeCompletion{
+					nodeID: parkedNodeID,
+					err:    fmt.Errorf("invalidate parked execution after quota reset: %w", invErr),
+				})
+				return
+			}
+
+			newIteration := parkedIteration + 1
+			var newExecID uuid.UUID
+			if createErr := workflow.ExecuteActivity(dbCtx, activities.CreateNodeExecution,
+				activity.CreateNodeExecParams{
+					WorkflowRunID:  params.RunID,
+					TemplateNodeID: parkedNodeID,
+					GraphVersion:   params.GraphVersion,
+					Iteration:      newIteration,
+					Label:          parkedLabel,
+				}).Get(gCtx, &newExecID); createErr != nil {
+				logger.Error("Could not create the resumed execution; failing the node",
+					"nodeID", parkedNodeID, "err", createErr)
+				// Same misroute risk as the invalidate-failure branch above:
+				// a concurrent pause may have stamped parkedExecID into
+				// pauseInterrupted while this node was parked. Clear it so
+				// this synthetic completion reaches the normal failure path,
+				// not the session-blind wasPaused recovery.
+				delete(pauseInterrupted, parkedExecID)
+				// The node is failing. Drop the park with it, so a later
+				// resume does not rebuild a worker for a finished node.
+				if t := nodes[parkedNodeID]; t != nil {
+					t.parkedUntil = time.Time{}
+				}
+				delete(parkWorkers, parkedNodeID)
+				completionCh.Send(gCtx, nodeCompletion{
+					nodeID: parkedNodeID,
+					err:    fmt.Errorf("create resumed execution after quota reset: %w", createErr),
+				})
+				return
+			}
+
+			// reviewPass and forceReady carry forward unchanged: this is
+			// an infra retry of the same attempt, not a review decision.
+			// Mutating nodes from this coroutine is safe: workflow
+			// coroutines are cooperatively scheduled and deterministic,
+			// so there is no concurrent access to race against — only
+			// the ordering relative to other coroutines' yield points,
+			// which is exactly what requeueCh.Send below coordinates.
+			nodes[parkedNodeID] = &nodeTracker{
+				status:              "pending",
+				execID:              newExecID,
+				iteration:           newIteration,
+				reviewPass:          parkedReviewPass,
+				forceReady:          parkedForceReady,
+				sessionID:           sessionID,
+				sessionArtifactPath: sessionArtifactPath,
+			}
+			// A stale pauseInterrupted[parkedExecID] entry here (from a
+			// pause stamped during the park) is inert, not misleading: no
+			// completion for the old execID is ever sent on this success
+			// path, and execIDs are fresh UUIDs that are never reused, so
+			// it could never be matched by a future lookup. Deleted anyway
+			// so pauseInterrupted does not accumulate a dead entry per
+			// paused-and-parked node over a long-running workflow.
+			delete(pauseInterrupted, parkedExecID)
+			// The new tracker replaces the old one, so clear parkedUntil on the
+			// tracker that is actually installed, not on the captured old one.
+			nodes[parkedNodeID].parkedUntil = time.Time{}
+			delete(parkWorkers, parkedNodeID)
+			requeueCh.Send(gCtx, struct{}{})
+		})
+	}
+
 	// Step 4: Main execution loop
 	for {
 		// 4a: Check for cancel signal (non-blocking drain)
@@ -193,6 +356,16 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 		}
 		if cancelled {
 			logger.Info("Workflow cancelled")
+			// Kill every deferred worker with the run. This drain can observe a
+			// cancel that arrived while a sibling node's own completion or requeue
+			// woke the 4e selector for an unrelated reason, bypassing that
+			// selector's own cancelCh branch entirely — so this call sequence
+			// (issuing a StartTimer's cancellation) does not depend on which of
+			// the four cancel sites happened to see the signal first, only on the
+			// run actually becoming cancelled. Without it, a park whose reset
+			// lands during Step 5's cleanup could write "invalidated" and create a
+			// fresh "pending" iteration for a node Step 5 just marked "skipped".
+			deferredCancel()
 			break
 		}
 
@@ -213,7 +386,36 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 		// and delete their K8s jobs. This complements the api-server's pauseRun() cleanup;
 		// both sides are idempotent (api-server returns 204 even on 404).
 		if paused {
-			for nodeID, tracker := range nodes {
+			// Every node this loop includes emits the same pair of commands
+			// (UpdateNodeExecutionStatus, then DeleteAgentJob), so the command
+			// *type* sequence is order-invariant and a reordered replay would not
+			// trip the checker here directly — unlike Step 5's cleanup loop below.
+			//
+			// The exposure is narrower and one step removed. pauseInterrupted is
+			// recorded only when the stamp succeeds, and on replay position i's
+			// result comes from history event i. So if two nodes were stamped and
+			// one stamp failed, a reordered replay attributes that failure to the
+			// other node: pauseInterrupted diverges from what the original episode
+			// held, and the next heartbeat-timeout completion takes the wasPaused
+			// recovery branch for a node that should have failed — a branch that
+			// *does* emit a different command sequence, producing the hard error
+			// there instead of here.
+			//
+			// Latent rather than observed, but this scope changed what flows
+			// through the loop: parked nodes now arrive here "running" with a park
+			// attached. Sort for the same reason as the three sibling loops in this
+			// function — remove the dependence on Go's randomized map iteration
+			// outright, rather than resting on an argument about what the replay
+			// checker happens to compare.
+			pauseNodeIDs := make([]uuid.UUID, 0, len(nodes))
+			for nodeID := range nodes {
+				pauseNodeIDs = append(pauseNodeIDs, nodeID)
+			}
+			sort.Slice(pauseNodeIDs, func(i, j int) bool {
+				return pauseNodeIDs[i].String() < pauseNodeIDs[j].String()
+			})
+			for _, nodeID := range pauseNodeIDs {
+				tracker := nodes[nodeID]
 				if tracker.status == "running" {
 					snapshotNode, ok := GetNodeByID(snap, nodeID)
 					if !ok || snapshotNode.ExecutorType == "human" || snapshotNode.ExecutorType == "live_chat" {
@@ -244,6 +446,11 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 					}
 				}
 			}
+
+			// Stop every deferred worker. A parked tracker keeps its parkedUntil, so
+			// resume rebuilds the worker; this only discards the executor.
+			deferredCancel()
+			parkWorkers = make(map[uuid.UUID]bool)
 		}
 
 		// Block if paused — listen for both resume and cancel
@@ -258,16 +465,83 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 				ch.Receive(ctx, nil)
 				cancelled = true
 				paused = false
+				// Already cancelled by the pause-stamp block above (entering "if
+				// paused" always runs it first) -- CancelFunc is idempotent, so
+				// this is redundant today. Kept explicit so this branch keeps
+				// killing deferred work on its own if that ordering ever changes.
+				deferredCancel()
 			})
 			pauseSelector.Select(ctx)
 
 			if cancelled {
 				logger.Info("Workflow cancelled while paused")
+				// Leave the loop for Step 5, the same exit the top-of-loop cancel
+				// drain takes. Falling through re-enters 4e with the deferred scope
+				// already cancelled: a parked tracker still reads "running", so
+				// runningCount keeps 4e blocking on a completion whose only sender
+				// was just cancelled, and cancelCh was already drained here. Unlike
+				// an ordinary paused node, a parked one has no pending activity
+				// whose heartbeat timeout would eventually wake the selector, so
+				// nothing else can.
+				break
 			} else {
 				workflow.ExecuteActivity(dbCtx, activities.UpdateWorkflowRunStatus,
 					activity.UpdateRunStatusParams{RunID: params.RunID, Status: "running"},
 				).Get(ctx, nil)
 				logger.Info("Workflow resumed")
+
+				// A cancelled context stays cancelled (see the comment where
+				// deferredCtx is created), so pause's deferredCancel() permanently
+				// disabled every waiter it stopped. Re-derive the scope from ctx and
+				// re-spawn a worker for every tracker still carrying a park.
+				// spawnParkWorker is a no-op for any tracker that isn't parked and
+				// guards against double-spawning via parkWorkers, so this is safe to
+				// run unconditionally, whether or not anything was actually parked.
+				//
+				// The set of nodes spawnParkWorker gets called for does not depend
+				// on order, but the *command sequence* it produces does: each
+				// spawned worker's workflow.Go appends to the dispatcher's
+				// coroutine slice, which runs in insertion order, and each
+				// coroutine's first action is a StartTimer command recorded into
+				// workflow history in that same order. Ranging `nodes` directly
+				// would let Go's randomized map iteration pick that order, so a
+				// replay after a worker restart, cache eviction, or rolling deploy
+				// could reissue the StartTimers in a different sequence than
+				// history recorded.
+				//
+				// That does NOT surface as a non-determinism error, which is the
+				// whole problem. The replay checker (isCommandMatchEvent in
+				// go.temporal.io/sdk@v1.41.0) matches START_TIMER on TimerId alone
+				// — a value from GenerateSequenceID, so purely positional — and
+				// never compares the duration. A reordered spawn therefore matches
+				// history happily and each coroutine silently adopts another
+				// park's timer: node A wakes on B's reset. Its Claude quota is not
+				// actually back, so the resumed pod hits the limit again and parks
+				// a second time, and the run drifts on wrong schedules with no
+				// error anywhere. A loud failure would be the better outcome here;
+				// this sort is what prevents the quiet one.
+				//
+				// Contrast Step 5's cleanup loop below, which reorders
+				// SCHEDULE_ACTIVITY_TASK commands: those match on activity type
+				// name, so a reordering there does fail loudly.
+				//
+				// This is not a rare shape either: an org-wide quota hit parks
+				// every concurrently-running AI node at once (see
+				// TestRateLimitedNodeParkDoesNotBlockConcurrentSibling for
+				// concurrent siblings). Collect and sort the IDs first so the
+				// spawn order — and thus the command sequence — is fixed
+				// regardless of map iteration.
+				deferredCtx, deferredCancel = workflow.WithCancel(ctx)
+				nodeIDs := make([]uuid.UUID, 0, len(nodes))
+				for nodeID := range nodes {
+					nodeIDs = append(nodeIDs, nodeID)
+				}
+				sort.Slice(nodeIDs, func(i, j int) bool {
+					return nodeIDs[i].String() < nodeIDs[j].String()
+				})
+				for _, nodeID := range nodeIDs {
+					spawnParkWorker(deferredCtx, nodeID)
+				}
 			}
 		}
 
@@ -297,6 +571,17 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 					failedNodeIDs = append(failedNodeIDs, nodeID)
 				}
 			}
+			// Every entry below emits the same activity type (WriteExecutionLog),
+			// so an unsorted order would only mispair which log message lands on
+			// which failed node, not mismatch command types the way Step 5's
+			// per-node cleanup can. Sorted anyway, for the same reason as the
+			// resume respawn and Step 5's cleanup loop: fixing the order removes
+			// any dependence on Go's randomized map iteration outright, rather
+			// than relying on an argument about what the replay checker happens
+			// to compare.
+			sort.Slice(failedNodeIDs, func(i, j int) bool {
+				return failedNodeIDs[i].String() < failedNodeIDs[j].String()
+			})
 
 			if len(failedNodeIDs) == 0 || cancelled {
 				break // all completed or cancelled
@@ -503,6 +788,13 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 				ch.Receive(ctx, nil)
 				retryTimerCancel()
 				cancelled = true
+				// This retry window is only entered when runningCount == 0, and a
+				// parked node's tracker still counts as "running" -- so nothing can
+				// be parked here today. Kept explicit anyway: the run is
+				// cancelled, so deferred work dies with it regardless of which of
+				// the four cancel sites happens to observe the signal, not just
+				// the ones currently reachable with a live park.
+				deferredCancel()
 			})
 
 			retrySelector.AddFuture(retryTimeout, func(f workflow.Future) {
@@ -884,112 +1176,12 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 				// done while parked; requeueCh.Send below is what wakes the main
 				// loop back up once the coroutine has something for it to see.
 				if completion.rateLimited {
-					parkedNodeID := completion.nodeID
-					parkedExecID := tracker.execID
-					parkedIteration := tracker.iteration
-					parkedReviewPass := tracker.reviewPass
-					parkedForceReady := tracker.forceReady
-					parkedLabel := snapshotNode.Label
-					resumeAt := completion.resumeAt
-					sessionID := completion.sessionID
-					sessionArtifactPath := completion.sessionArtifactPath
-
-					workflow.Go(ctx, func(gCtx workflow.Context) {
-						wait := resumeAt.Sub(workflow.Now(gCtx))
-						if wait > 0 {
-							if err := workflow.Sleep(gCtx, wait); err != nil {
-								logger.Error("Sleep interrupted while parked on quota", "err", err)
-							}
-						}
-
-						if invErr := workflow.ExecuteActivity(dbCtx, activities.UpdateNodeExecutionStatus,
-							activity.UpdateNodeExecStatusParams{
-								RunID:           params.RunID,
-								NodeExecutionID: parkedExecID,
-								Status:          "invalidated",
-							}).Get(gCtx, nil); invErr != nil {
-							// The park itself succeeded; only this bookkeeping write
-							// failed. completion.err is nil on the rate-limited path
-							// (see the future-await goroutine above), so simply
-							// returning here would fall through to the SUCCESS
-							// finalization below with an empty result, not to any
-							// failure path. Send a synthetic errored completion
-							// instead — this both fails the node explicitly through
-							// the existing, already-tested failure path and wakes
-							// the main loop (completionCh.Send does both jobs here).
-							logger.Warn("Could not invalidate the parked execution; failing the node",
-								"execID", parkedExecID, "err", invErr)
-							// A concurrent manual pause may have stamped this same
-							// execID into pauseInterrupted while it was parked (its
-							// tracker still read "running" — see the comment above
-							// this branch). Left in place, the pre-existing
-							// wasPaused recovery below would intercept this
-							// synthetic completion first, re-queue silently with no
-							// sessionID/sessionArtifactPath, and bypass the explicit
-							// failure this branch exists to guarantee. This
-							// execution is failing because its own bookkeeping
-							// write failed, not because a human paused it, so that
-							// recovery is the wrong handler for it — sever the
-							// misroute at its source.
-							delete(pauseInterrupted, parkedExecID)
-							completionCh.Send(gCtx, nodeCompletion{
-								nodeID: parkedNodeID,
-								err:    fmt.Errorf("invalidate parked execution after quota reset: %w", invErr),
-							})
-							return
-						}
-
-						newIteration := parkedIteration + 1
-						var newExecID uuid.UUID
-						if createErr := workflow.ExecuteActivity(dbCtx, activities.CreateNodeExecution,
-							activity.CreateNodeExecParams{
-								WorkflowRunID:  params.RunID,
-								TemplateNodeID: parkedNodeID,
-								GraphVersion:   params.GraphVersion,
-								Iteration:      newIteration,
-								Label:          parkedLabel,
-							}).Get(gCtx, &newExecID); createErr != nil {
-							logger.Error("Could not create the resumed execution; failing the node",
-								"nodeID", parkedNodeID, "err", createErr)
-							// Same misroute risk as the invalidate-failure branch above:
-							// a concurrent pause may have stamped parkedExecID into
-							// pauseInterrupted while this node was parked. Clear it so
-							// this synthetic completion reaches the normal failure path,
-							// not the session-blind wasPaused recovery.
-							delete(pauseInterrupted, parkedExecID)
-							completionCh.Send(gCtx, nodeCompletion{
-								nodeID: parkedNodeID,
-								err:    fmt.Errorf("create resumed execution after quota reset: %w", createErr),
-							})
-							return
-						}
-
-						// reviewPass and forceReady carry forward unchanged: this is
-						// an infra retry of the same attempt, not a review decision.
-						// Mutating nodes from this coroutine is safe: workflow
-						// coroutines are cooperatively scheduled and deterministic,
-						// so there is no concurrent access to race against — only
-						// the ordering relative to other coroutines' yield points,
-						// which is exactly what requeueCh.Send below coordinates.
-						nodes[parkedNodeID] = &nodeTracker{
-							status:              "pending",
-							execID:              newExecID,
-							iteration:           newIteration,
-							reviewPass:          parkedReviewPass,
-							forceReady:          parkedForceReady,
-							sessionID:           sessionID,
-							sessionArtifactPath: sessionArtifactPath,
-						}
-						// A stale pauseInterrupted[parkedExecID] entry here (from a
-						// pause stamped during the park) is inert, not misleading: no
-						// completion for the old execID is ever sent on this success
-						// path, and execIDs are fresh UUIDs that are never reused, so
-						// it could never be matched by a future lookup. Deleted anyway
-						// so pauseInterrupted does not accumulate a dead entry per
-						// paused-and-parked node over a long-running workflow.
-						delete(pauseInterrupted, parkedExecID)
-						requeueCh.Send(gCtx, struct{}{})
-					})
+					tracker.parkedUntil = completion.resumeAt
+					tracker.sessionID = completion.sessionID
+					tracker.sessionArtifactPath = completion.sessionArtifactPath
+					// status stays "running": a parked node is indistinguishable
+					// from a running one for every lifecycle operation.
+					spawnParkWorker(deferredCtx, completion.nodeID)
 					return
 				}
 
@@ -1372,6 +1564,14 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 			selector.AddReceive(cancelCh, func(ch workflow.ReceiveChannel, more bool) {
 				ch.Receive(ctx, nil)
 				cancelled = true
+				// A parked node's tracker still reads "running", so it is exactly
+				// the kind of node runningCount is counting when this selector is
+				// live -- this is the site most likely to observe a cancel while a
+				// park is genuinely in flight. Kill every deferred worker with the
+				// run: an abandoned park must not write "invalidated"/create a
+				// fresh "pending" iteration for a node Step 5 below is about to
+				// mark "skipped" on an already-cancelled run.
+				deferredCancel()
 			})
 
 			selector.Select(ctx)
@@ -1380,13 +1580,44 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 
 	// Step 5: Cancel cleanup — mark active nodes as skipped, delete K8s Jobs
 	if cancelled {
-		for nodeID, tracker := range nodes {
+		// A parked node emits three commands here (UpdateNodeExecutionStatus,
+		// ClearParkedSession, DeleteAgentJob) where a structurally identical
+		// non-parked node emits two (UpdateNodeExecutionStatus alone, or plus
+		// DeleteAgentJob) — the same order-dependence as the resume respawn above
+		// (see its comment at deferredCtx, deferredCancel = ...), but failing
+		// loudly rather than silently, because these are activity commands: with two
+		// or more concurrently-active nodes of different shapes at cancel time,
+		// Go's randomized map iteration would let a replay try to emit
+		// UpdateNodeExecutionStatus at a position where history recorded
+		// ClearParkedSession, a hard NonDeterministicWorkflowError. Collect and
+		// sort the IDs first so the cleanup order — and thus the command
+		// sequence — is fixed regardless of map iteration.
+		cleanupNodeIDs := make([]uuid.UUID, 0, len(nodes))
+		for nodeID := range nodes {
+			cleanupNodeIDs = append(cleanupNodeIDs, nodeID)
+		}
+		sort.Slice(cleanupNodeIDs, func(i, j int) bool {
+			return cleanupNodeIDs[i].String() < cleanupNodeIDs[j].String()
+		})
+		for _, nodeID := range cleanupNodeIDs {
+			tracker := nodes[nodeID]
 			if tracker.status == "pending" || tracker.status == "running" || tracker.status == "awaiting_human" {
 				workflow.ExecuteActivity(dbCtx, activities.UpdateNodeExecutionStatus,
 					activity.UpdateNodeExecStatusParams{
 						RunID: params.RunID, NodeExecutionID: tracker.execID, Status: "skipped",
 					},
 				).Get(ctx, nil)
+
+				// The deferred worker will never run, so nothing else will consume
+				// this object.
+				if !tracker.parkedUntil.IsZero() && tracker.sessionArtifactPath != "" {
+					if clearErr := workflow.ExecuteActivity(dbCtx, activities.ClearParkedSession,
+						activity.ClearParkedSessionParams{ObjectPath: tracker.sessionArtifactPath},
+					).Get(ctx, nil); clearErr != nil {
+						logger.Warn("ClearParkedSession on cancel failed (non-fatal)",
+							"execID", tracker.execID, "err", clearErr)
+					}
+				}
 
 				// Delete K8s Job for running AI nodes
 				if tracker.status == "running" {
