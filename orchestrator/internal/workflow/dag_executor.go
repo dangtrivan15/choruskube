@@ -268,6 +268,12 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 				// recovery is the wrong handler for it — sever the
 				// misroute at its source.
 				delete(pauseInterrupted, parkedExecID)
+				// The node is failing. Drop the park with it, so a later
+				// resume does not rebuild a worker for a finished node.
+				if t := nodes[parkedNodeID]; t != nil {
+					t.parkedUntil = time.Time{}
+				}
+				delete(parkWorkers, parkedNodeID)
 				completionCh.Send(gCtx, nodeCompletion{
 					nodeID: parkedNodeID,
 					err:    fmt.Errorf("invalidate parked execution after quota reset: %w", invErr),
@@ -293,6 +299,12 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 				// this synthetic completion reaches the normal failure path,
 				// not the session-blind wasPaused recovery.
 				delete(pauseInterrupted, parkedExecID)
+				// The node is failing. Drop the park with it, so a later
+				// resume does not rebuild a worker for a finished node.
+				if t := nodes[parkedNodeID]; t != nil {
+					t.parkedUntil = time.Time{}
+				}
+				delete(parkWorkers, parkedNodeID)
 				completionCh.Send(gCtx, nodeCompletion{
 					nodeID: parkedNodeID,
 					err:    fmt.Errorf("create resumed execution after quota reset: %w", createErr),

@@ -1402,6 +1402,216 @@ func (s *DAGExecutorTestSuite) TestCancelDuringParkClearsTheSession() {
 	s.False(s.parkIter2Created, "a cancelled run must not create the resumed iteration")
 }
 
+// TestFailedParkIsNotRebuiltOnResume asserts that a park whose bookkeeping failed
+// is not resurrected by a later resume. The node failed; parkedUntil must be cleared
+// with it, or resume rebuilds a worker for a node that is already done.
+//
+// This does NOT use parkFixture's single-node graph with pause/resume signalled at
+// 40m/50m, even though that is what the brief specifies verbatim: run empirically
+// (before the fix, i.e. the RED run) that version reports PASS for the wrong reason.
+// With only node A in the graph, A's bookkeeping failure at ~30m leaves no ready and
+// no running node, so the main loop's 4c termination check enters the 7-day
+// awaiting_retry wait -- a *different* select statement that only listens for
+// retry/human-decision/cancel signals, never pause or resume (grep pauseCh: it is
+// drained only at the top of the outer `for` loop and inside the 4e selector, neither
+// of which awaiting_retry re-enters before its own retryTimeout). The pause and
+// resume signals sent at 40m/50m land in their channels unconsumed -- confirmed by
+// the RED run's own log line "Workflow has unhandled signals SignalNames [pause
+// resume]" -- and the workflow runs out the 7-day retry window and completes on its
+// own before either signal is ever read. That happens identically whether or not
+// parkedUntil was cleared, so parkIter2Created reads false in both the broken and
+// the fixed code: a pass that means "the signals were never processed," not "the fix
+// works."
+//
+// To actually exercise the resume path, the run needs a second, independent node (B)
+// that is still `running` when pause/resume are signalled, so runningCount stays > 0
+// and the main loop keeps cycling through the ordinary pauseCh/resumeCh handling
+// (never entering awaiting_retry) instead of parking in the 7-day wait. B's own
+// ExecuteAINodeFromSnapshot future does not resolve until well after resume, so it is
+// still `running` at 40m/50m; A parks and its bookkeeping fails long before that, at
+// ~30m. Resume's rebuild loop (`for _, nodeID := range nodeIDs { spawnParkWorker(...) }`)
+// then reaches A's tracker while B is still keeping the run alive. On the broken code
+// A's tracker still carries the original (now-past) parkedUntil, so spawnParkWorker
+// spawns a fresh worker for the already-failed node; the invalidate write's specific
+// `.Times(3)` expectation is already exhausted by the original failure, so this
+// second attempt falls through to the broad catch-all (success) and creates
+// iteration 2 -- observable proof of the resurrection the fix prevents.
+func (s *DAGExecutorTestSuite) TestFailedParkIsNotRebuiltOnResume() {
+	nodeA, nodeB := uuid.New(), uuid.New()
+	execA, execA2 := uuid.New(), uuid.New()
+	execB := uuid.New()
+	runID := uuid.New()
+
+	snapshot := `{
+		"nodes": [
+			{"templateNodeId": "` + nodeA.String() + `", "label": "A", "executorType": "ai", "timeoutSeconds": 1800, "isEntrypoint": true},
+			{"templateNodeId": "` + nodeB.String() + `", "label": "B", "executorType": "ai", "timeoutSeconds": 1800, "isEntrypoint": true}
+		],
+		"edges": []
+	}`
+
+	s.env.OnActivity("UpdateWorkflowRunStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("GetGraphRuntime", mock.Anything, runID).Return(snapshot, nil)
+	for _, n := range []string{"WriteExecutionLog", "InitRunLog", "AppendRunLog", "SetTraversedEdges", "DeleteAgentJob"} {
+		s.env.OnActivity(n, mock.Anything, mock.Anything).Return(nil).Maybe()
+	}
+	s.env.OnActivity("FetchPodLogs", mock.Anything, mock.Anything).Return("", nil).Maybe()
+	s.env.OnActivity("LoadPredecessorInputs", mock.Anything, mock.Anything).Return(map[string]string{}, nil).Maybe()
+	s.env.OnActivity("LoadRequiredInputArtifacts", mock.Anything, mock.Anything).Return(activity.LoadRequiredInputArtifactsResult{}, nil).Maybe()
+	s.env.OnActivity("LoadReviewHistoryJSON", mock.Anything, mock.Anything).Return("[]", nil).Maybe()
+
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == nodeA && p.Iteration == 1
+	})).Return(execA, nil).Once()
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == nodeB && p.Iteration == 1
+	})).Return(execB, nil).Once()
+	iter2Created := false
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == nodeA && p.Iteration == 2
+	})).Return(execA2, nil).Maybe().Run(func(mock.Arguments) { iter2Created = true })
+
+	resumeAt := s.env.Now().Add(30 * time.Minute)
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.NodeExecutionID == execA
+	})).Return(activity.CallbackResult{
+		Status:   "rate_limited",
+		ResumeAt: resumeAt,
+	}, nil).Once()
+	// B stays "running" through both the park's failure (~30m) and the pause/resume
+	// cycle (40m/50m), so the main loop never has zero ready-and-running nodes and
+	// therefore never falls into the 7-day awaiting_retry wait that swallows pause
+	// and resume unread (see the doc comment above).
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.NodeExecutionID == execB
+	})).After(70*time.Minute).Return(activity.CallbackResult{Status: "completed", Result: "done"}, nil).Once()
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execB
+	})).Return("no_decision", nil).Once()
+
+	// The invalidate write fails permanently for the park's own three (dbCtx
+	// RetryPolicy) attempts, so the worker fails the node. Bounded to exactly those
+	// three so that a second, buggy respawn's invalidate attempt is NOT covered by
+	// this expectation and instead falls through to the catch-all below (success) --
+	// which is what makes iteration 2 observable proof of the resurrection.
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.MatchedBy(func(p activity.UpdateNodeExecStatusParams) bool {
+		return p.NodeExecutionID == execA && p.Status == "invalidated"
+	})).Return(fmt.Errorf("database unreachable")).Times(3)
+
+	failed := false
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.MatchedBy(func(p activity.UpdateNodeExecStatusParams) bool {
+		return p.NodeExecutionID == execA && p.Status == "failed"
+	})).Return(nil).Maybe().Run(func(mock.Arguments) { failed = true })
+	// Catch-all LAST, after both specific matchers above.
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	// Resume arrives after the park would have expired and failed (~30m), while B is
+	// still running.
+	s.env.RegisterDelayedCallback(func() { s.env.SignalWorkflow(SignalPause, nil) }, 40*time.Minute)
+	s.env.RegisterDelayedCallback(func() { s.env.SignalWorkflow(SignalResume, nil) }, 50*time.Minute)
+
+	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{RunID: runID, GraphVersion: 1})
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+	s.True(failed, "a park whose bookkeeping fails must fail the node")
+	s.False(iter2Created, "a resume must not rebuild a worker for a node that already failed")
+}
+
+// TestFailedParkCreateFailureIsNotRebuiltOnResume is
+// TestFailedParkIsNotRebuiltOnResume's sibling for the *other* bookkeeping-failure
+// site: the fix duplicates the same parkedUntil-clearing lines on both the
+// invalidate-failure and the create-failure branches, and the brief's own test only
+// exercises the invalidate one. Without this test, a mutation that dropped the fix
+// from the create-failure branch alone would pass every other test in this file.
+//
+// Here the invalidate write succeeds (falls to the broad catch-all) and the
+// subsequent CreateNodeExecution(iteration=2) is what fails permanently for the
+// park's own three attempts, via the same exhausted-Times(3)-then-catch-all
+// waterfall used above: a buggy resume's second spawnParkWorker would invalidate
+// execA again (still succeeds), then retry the iteration-2 create, whose specific
+// failing expectation is by then exhausted and falls through to a second, succeeding
+// registration for the same matcher -- observable via iter2Created exactly as above.
+func (s *DAGExecutorTestSuite) TestFailedParkCreateFailureIsNotRebuiltOnResume() {
+	nodeA, nodeB := uuid.New(), uuid.New()
+	execA, execA2 := uuid.New(), uuid.New()
+	execB := uuid.New()
+	runID := uuid.New()
+
+	snapshot := `{
+		"nodes": [
+			{"templateNodeId": "` + nodeA.String() + `", "label": "A", "executorType": "ai", "timeoutSeconds": 1800, "isEntrypoint": true},
+			{"templateNodeId": "` + nodeB.String() + `", "label": "B", "executorType": "ai", "timeoutSeconds": 1800, "isEntrypoint": true}
+		],
+		"edges": []
+	}`
+
+	s.env.OnActivity("UpdateWorkflowRunStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("GetGraphRuntime", mock.Anything, runID).Return(snapshot, nil)
+	for _, n := range []string{"WriteExecutionLog", "InitRunLog", "AppendRunLog", "SetTraversedEdges", "DeleteAgentJob"} {
+		s.env.OnActivity(n, mock.Anything, mock.Anything).Return(nil).Maybe()
+	}
+	s.env.OnActivity("FetchPodLogs", mock.Anything, mock.Anything).Return("", nil).Maybe()
+	s.env.OnActivity("LoadPredecessorInputs", mock.Anything, mock.Anything).Return(map[string]string{}, nil).Maybe()
+	s.env.OnActivity("LoadRequiredInputArtifacts", mock.Anything, mock.Anything).Return(activity.LoadRequiredInputArtifactsResult{}, nil).Maybe()
+	s.env.OnActivity("LoadReviewHistoryJSON", mock.Anything, mock.Anything).Return("[]", nil).Maybe()
+
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == nodeA && p.Iteration == 1
+	})).Return(execA, nil).Once()
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == nodeB && p.Iteration == 1
+	})).Return(execB, nil).Once()
+	// The park's own three (dbCtx RetryPolicy) attempts at creating iteration 2 fail
+	// permanently. Bounded to exactly those three so a second, buggy respawn's create
+	// attempt is NOT covered by this expectation and instead falls through to the
+	// registration below (success) -- the observable proof of resurrection.
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == nodeA && p.Iteration == 2
+	})).Return(uuid.Nil, fmt.Errorf("database unreachable")).Times(3)
+	iter2Created := false
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == nodeA && p.Iteration == 2
+	})).Return(execA2, nil).Maybe().Run(func(mock.Arguments) { iter2Created = true })
+
+	resumeAt := s.env.Now().Add(30 * time.Minute)
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.NodeExecutionID == execA
+	})).Return(activity.CallbackResult{
+		Status:   "rate_limited",
+		ResumeAt: resumeAt,
+	}, nil).Once()
+	// B stays "running" through both the park's failure (~30m) and the pause/resume
+	// cycle (40m/50m) -- see TestFailedParkIsNotRebuiltOnResume's doc comment for why
+	// this is required: without it the run falls into the 7-day awaiting_retry wait,
+	// which never reads pause or resume, and the test would pass for the wrong reason.
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.NodeExecutionID == execB
+	})).After(70*time.Minute).Return(activity.CallbackResult{Status: "completed", Result: "done"}, nil).Once()
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execB
+	})).Return("no_decision", nil).Once()
+
+	failed := false
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.MatchedBy(func(p activity.UpdateNodeExecStatusParams) bool {
+		return p.NodeExecutionID == execA && p.Status == "failed"
+	})).Return(nil).Maybe().Run(func(mock.Arguments) { failed = true })
+	// Catch-all LAST, after the specific matcher above. Also answers the invalidate
+	// write for execA (both the original and, on the buggy path, the resurrected
+	// worker's) with success, since this test is about the create step failing.
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	s.env.RegisterDelayedCallback(func() { s.env.SignalWorkflow(SignalPause, nil) }, 40*time.Minute)
+	s.env.RegisterDelayedCallback(func() { s.env.SignalWorkflow(SignalResume, nil) }, 50*time.Minute)
+
+	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{RunID: runID, GraphVersion: 1})
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+	s.True(failed, "a park whose bookkeeping fails must fail the node")
+	s.False(iter2Created, "a resume must not rebuild a worker for a node that already failed")
+}
+
 // TestCancelAbortsAbandonedParkBeforeSleepCompletes proves the race
 // deferredCancel() closes on cancel: without it, an abandoned park worker's
 // Sleep can complete while Step 5's own cleanup activity is still in flight,
