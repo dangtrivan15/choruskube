@@ -1446,6 +1446,17 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 		activity.UpdateRunStatusParams{RunID: params.RunID, Status: finalStatus},
 	).Get(ctx, nil)
 
+	// Best-effort, fail-safe: once the run has genuinely completed (never on failed/cancelled),
+	// ask the API server to delete each repo's run branch if it is not ahead of that repo's
+	// default branch. Any failure here must never change finalStatus or fail the workflow — the
+	// same tolerate-and-log shape as DeleteAgentJob above.
+	if finalStatus == "completed" {
+		if cleanErr := workflow.ExecuteActivity(dbCtx, activities.DeleteStaleBranches,
+			activity.DeleteStaleBranchesParams{RunID: params.RunID}).Get(ctx, nil); cleanErr != nil {
+			logger.Warn("stale branch cleanup failed", "runID", params.RunID, "error", cleanErr)
+		}
+	}
+
 	logger.Info("DAG executor finished", "runID", params.RunID, "status", finalStatus)
 	return nil
 }
