@@ -1167,14 +1167,25 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 					// no later pass revisits. What was rejected above was the "completed" status
 					// specifically (enforceOutputSpec runs for no other), so this write does not
 					// meet the same gate; if it fails anyway the log below still records why.
-					workflow.ExecuteActivity(dbCtx, activities.UpdateNodeExecutionStatus,
-						activity.UpdateNodeExecStatusParams{
-							RunID:           params.RunID,
-							NodeExecutionID: tracker.execID,
-							Status:          "failed",
-							ErrorMessage:    &errMsg,
-						},
-					).Get(ctx, nil)
+					//
+					// Version-gated because this branch adds a command to a path that
+					// already-open runs have executed: replaying their history against an
+					// unguarded call raises a non-determinism error at the next workflow task
+					// and wedges the very runs the write exists to rescue. Executions recorded
+					// before this marker keep the old command sequence and stay replayable;
+					// they remain reachable through the manual correction this shipped with.
+					if workflow.GetVersion(
+						ctx, "persist-failed-on-rejected-completion", workflow.DefaultVersion, 1,
+					) >= 1 {
+						workflow.ExecuteActivity(dbCtx, activities.UpdateNodeExecutionStatus,
+							activity.UpdateNodeExecStatusParams{
+								RunID:           params.RunID,
+								NodeExecutionID: tracker.execID,
+								Status:          "failed",
+								ErrorMessage:    &errMsg,
+							},
+						).Get(ctx, nil)
+					}
 					workflow.ExecuteActivity(dbCtx, activities.WriteExecutionLog,
 						activity.WriteExecutionLogParams{
 							RunID: params.RunID, NodeExecutionID: tracker.execID, Level: "error",
