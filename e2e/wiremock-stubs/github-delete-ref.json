@@ -1,0 +1,17 @@
+{
+  "mappings": [
+    {
+      "priority": 5,
+      "request": {
+        "method": "DELETE",
+        "urlPathPattern": "/repos/[^/]+/[^/]+/git/refs/heads/.+",
+        "headers": {
+          "Authorization": { "contains": "Bearer " }
+        }
+      },
+      "response": {
+        "status": 204
+      }
+    }
+  ]
+}
