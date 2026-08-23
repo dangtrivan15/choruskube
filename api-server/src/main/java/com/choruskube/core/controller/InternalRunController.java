@@ -3,6 +3,7 @@ package com.choruskube.core.controller;
 import com.choruskube.core.credential.GitHubCredentialResolver;
 import com.choruskube.core.dto.*;
 import com.choruskube.core.service.ArtifactResolutionService;
+import com.choruskube.core.service.BranchCleanupService;
 import com.choruskube.core.service.InternalRunService;
 import com.choruskube.core.service.RunPullRequestService;
 import jakarta.validation.Valid;
@@ -10,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -20,16 +22,19 @@ public class InternalRunController {
     private final GitHubCredentialResolver gitHubCredentialResolver;
     private final RunPullRequestService runPullRequestService;
     private final ArtifactResolutionService artifactResolutionService;
+    private final BranchCleanupService branchCleanupService;
 
     public InternalRunController(
             InternalRunService service,
             GitHubCredentialResolver gitHubCredentialResolver,
             RunPullRequestService runPullRequestService,
-            ArtifactResolutionService artifactResolutionService) {
+            ArtifactResolutionService artifactResolutionService,
+            BranchCleanupService branchCleanupService) {
         this.service = service;
         this.gitHubCredentialResolver = gitHubCredentialResolver;
         this.runPullRequestService = runPullRequestService;
         this.artifactResolutionService = artifactResolutionService;
+        this.branchCleanupService = branchCleanupService;
     }
 
     @PostMapping("/{runId}/node-executions")
@@ -294,5 +299,18 @@ public class InternalRunController {
     public List<RunPullRequestResponse> getPullRequestsForNodeExecution(
             @PathVariable UUID runId, @PathVariable UUID nodeExecId) {
         return runPullRequestService.getPullRequestsForNodeExecution(runId, nodeExecId);
+    }
+
+    /**
+     * Best-effort deletion of the run's per-repo run branch, once the run has reached {@code
+     * completed} (called by the orchestrator's Step 6 completion seam — see {@code
+     * DAGExecutorWorkflow}). Run-level, not node-execution-scoped, so {@code InternalAuthFilter}'s
+     * agent {@code JOB_SECRET} matching — which only authorizes paths carrying a caller's own {@code
+     * node-executions/{execId}} segment — never matches this path; only the orchestrator's {@code
+     * ORCHESTRATOR_SECRET} does.
+     */
+    @PostMapping("/{runId}/cleanup-branches")
+    public ResponseEntity<BranchCleanupResponse> cleanupBranches(@PathVariable UUID runId) {
+        return ResponseEntity.ok(branchCleanupService.cleanupBranches(runId));
     }
 }
