@@ -143,41 +143,17 @@ services:
   # agent-images/claude-code-e2e/Dockerfile. Real deployments clone real GitHub, so
   # this service and that insteadOf are strictly test-only.
   git-server:
-    image: alpine:3.20
+    # `git`/`git-daemon` are installed at BUILD time (see e2e/git-server/Dockerfile),
+    # not fetched over the network every time the stack comes up — that was the
+    # original design here and it hung in practice: an `apk add` blocked on its
+    # download socket leaves the container "unhealthy" indefinitely, and nothing
+    # else in the stack depends on git-server, so `docker compose up` still reports
+    # success while a run that needs to clone silently times out ~90s later. The
+    # runtime entrypoint (seed-and-serve.sh) now does no network I/O at all.
+    image: choruskube-e2e-git-server:local
+    build:
+      context: ./e2e/git-server
     dns_search: .
-    # Script is inlined (not a bind-mounted file) because the api-server launches agent
-    # containers via DooD against the host daemon, which does not see this repo's paths —
-    # the same reason WireMock stubs are pushed over its admin API rather than mounted.
-    # `git daemon` lives in Alpine's separate git-daemon package, hence the apk step.
-    entrypoint:
-      - sh
-      - -ec
-      - |
-        apk add --no-cache git git-daemon >/dev/null
-        BASE=/srv/git
-        REPOS="e2e-test/mock-repo e2e-test/mock-frontend e2e-test/dind-repo"
-        git config --global user.email "e2e@choruskube.local"
-        git config --global user.name "ChorusKube E2E"
-        git config --global init.defaultBranch main
-        mkdir -p "$$BASE"
-        SEED=$$(mktemp -d); cd "$$SEED"
-        git init -q -b main .
-        printf '# ChorusKube E2E mock repository\n' > README.md
-        git add README.md
-        git commit -q -m "Initial commit (e2e git-server seed)"
-        for r in $$REPOS; do
-          d="$$BASE/$$r.git"
-          git init -q --bare -b main "$$d"
-          git config -f "$$d/config" receive.denyCurrentBranch ignore
-          git push -q "$$d" main
-          git -C "$$d" symbolic-ref HEAD refs/heads/main
-          : > "$$d/git-daemon-export-ok"
-          echo "git-server: seeded $$r.git"
-        done
-        echo "git-server: serving $$BASE (receive-pack enabled) on :9418"
-        exec git daemon --verbose --reuseaddr --listen=0.0.0.0 --port=9418 \
-          --base-path="$$BASE" --export-all \
-          --enable=upload-pack --enable=receive-pack "$$BASE"
     networks:
       - choruskube-e2e
     healthcheck:
@@ -185,6 +161,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 15
+      start_period: 10s
 
   # --- Application Services ---
 
@@ -272,6 +249,8 @@ services:
       object-storage-setup:
         condition: service_completed_successfully
       wiremock:
+        condition: service_healthy
+      git-server:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q UP"]
