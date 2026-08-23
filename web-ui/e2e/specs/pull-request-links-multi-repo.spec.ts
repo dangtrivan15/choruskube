@@ -27,13 +27,20 @@ test.describe("PullRequestLinks — multi-repo run", () => {
     page,
     api,
   }) => {
-    // This test's own internal wait budgets already sum to 180s (120s for the
-    // clone/push-driven waitForNodeStatus + 60s for waitForRunStatus), before
-    // counting the UI navigation/approval steps between and after them. A bare
-    // test.slow() triples playwright.config.ts's 60s default to exactly 180s —
-    // no margin, which is what timed out this test. Set an explicit budget
-    // with real headroom instead.
-    test.setTimeout(240_000);
+    // This test's own internal wait budgets sum well past playwright.config.ts's
+    // 60s default (even tripled by test.slow() to 180s), so set an explicit
+    // budget with real headroom instead. The first wait below
+    // (waitForNodeStatus for "final_approval") has to cover verify_and_gate's
+    // own node-definition timeout (E2eTestDataSeeder's mockSuccess = 300s) plus
+    // scheduling/container-startup overhead in front of that clock, since the
+    // scenario clones + pushes two REAL repos (mock-repo, mock-frontend) over
+    // the network before the gate node can reach awaiting_human — a single
+    // same-process mock-success node's ~120s budget was not enough headroom and
+    // is what previously timed out this test (it errored waiting on
+    // waitForNodeStatus itself, not on this overall test timeout). Give the
+    // node-wait real margin above its 300s ceiling, and this test a further
+    // margin above that plus the post-approval waitForRunStatus below.
+    test.setTimeout(520_000);
 
     const reposPage = await api.listGitRepos();
     const seeded = seededRepos(reposPage.content);
@@ -72,16 +79,18 @@ test.describe("PullRequestLinks — multi-repo run", () => {
         name: runName,
       });
 
-      // The scenario clones + pushes two real repos before the gate node
-      // reaches awaiting_human — allow more headroom than a same-process
-      // mock-success node.
-      await api.waitForNodeStatus(run.id, "final_approval", ["awaiting_human"], 120_000);
+      // The scenario clones + pushes two real repos over the network before the
+      // gate node reaches awaiting_human — allow headroom above
+      // verify_and_gate's own node-definition timeout (300s, see mockSuccess in
+      // E2eTestDataSeeder) rather than a same-process mock-success node's
+      // budget; 120s previously was not enough and timed out here directly.
+      await api.waitForNodeStatus(run.id, "final_approval", ["awaiting_human"], 360_000);
 
       await runMonitorPage.goto(run.id);
       await runMonitorPage.selectNode("final_approval");
       await runMonitorPage.approveGate("Approved — verifying PR links render correctly.");
 
-      const finished = await api.waitForRunStatus(run.id, ["completed"], 60_000);
+      const finished = await api.waitForRunStatus(run.id, ["completed"], 90_000);
       expect(finished.status).toBe("completed");
 
       // Backend assertion: exactly one registered PR, and it's for the changed
