@@ -27,20 +27,17 @@ test.describe("PullRequestLinks — multi-repo run", () => {
     page,
     api,
   }) => {
-    // This test's own internal wait budgets sum well past playwright.config.ts's
-    // 60s default (even tripled by test.slow() to 180s), so set an explicit
-    // budget with real headroom instead. The first wait below
-    // (waitForNodeStatus for "final_approval") has to cover verify_and_gate's
-    // own node-definition timeout (E2eTestDataSeeder's mockSuccess = 300s) plus
-    // scheduling/container-startup overhead in front of that clock, since the
-    // scenario clones + pushes two REAL repos (mock-repo, mock-frontend) over
-    // the network before the gate node can reach awaiting_human — a single
-    // same-process mock-success node's ~120s budget was not enough headroom and
-    // is what previously timed out this test (it errored waiting on
-    // waitForNodeStatus itself, not on this overall test timeout). Give the
-    // node-wait real margin above its 300s ceiling, and this test a further
-    // margin above that plus the post-approval waitForRunStatus below.
-    test.setTimeout(520_000);
+    // The internal waits below sum past playwright.config.ts's 60s default, so set
+    // an explicit budget. verify_and_gate clones + pushes two repos to the in-stack
+    // hermetic git-server (docker-compose.e2e.yaml) — not github.com — so it settles
+    // in seconds; the budget only needs headroom for container startup and, under
+    // parallel workers, contention on the shared stack. (Earlier revisions timed this
+    // out at ever-larger budgets not because the node was slow but because the clone
+    // could never complete: the stack had no clonable/pushable remote for the seeded
+    // e2e-test/* repos until the git-server was added, so verify_and_gate hung
+    // indefinitely and the run never reached this gate. Raising the budget then only
+    // moved the failure later.)
+    test.setTimeout(180_000);
 
     const reposPage = await api.listGitRepos();
     const seeded = seededRepos(reposPage.content);
@@ -79,12 +76,10 @@ test.describe("PullRequestLinks — multi-repo run", () => {
         name: runName,
       });
 
-      // The scenario clones + pushes two real repos over the network before the
-      // gate node reaches awaiting_human — allow headroom above
-      // verify_and_gate's own node-definition timeout (300s, see mockSuccess in
-      // E2eTestDataSeeder) rather than a same-process mock-success node's
-      // budget; 120s previously was not enough and timed out here directly.
-      await api.waitForNodeStatus(run.id, "final_approval", ["awaiting_human"], 360_000);
+      // verify_and_gate clones + pushes both repos to the in-stack git-server and
+      // runs check-prs before this gate opens; that takes seconds, so 90s is ample
+      // headroom over container startup even under parallel-worker contention.
+      await api.waitForNodeStatus(run.id, "final_approval", ["awaiting_human"], 90_000);
 
       await runMonitorPage.goto(run.id);
       await runMonitorPage.selectNode("final_approval");
