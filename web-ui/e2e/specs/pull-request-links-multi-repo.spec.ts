@@ -27,6 +27,14 @@ test.describe("PullRequestLinks — multi-repo run", () => {
     page,
     api,
   }) => {
+    // This test's own internal wait budgets already sum to 180s (120s for the
+    // clone/push-driven waitForNodeStatus + 60s for waitForRunStatus), before
+    // counting the UI navigation/approval steps between and after them. A bare
+    // test.slow() triples playwright.config.ts's 60s default to exactly 180s —
+    // no margin, which is what timed out this test. Set an explicit budget
+    // with real headroom instead.
+    test.setTimeout(240_000);
+
     const reposPage = await api.listGitRepos();
     const seeded = seededRepos(reposPage.content);
     // Select the two repos by name, NOT by list position. `GET /git-repos` sorts
