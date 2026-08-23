@@ -29,14 +29,24 @@ test.describe("PullRequestLinks — multi-repo run", () => {
   }) => {
     const reposPage = await api.listGitRepos();
     const seeded = seededRepos(reposPage.content);
-    expect(
-      seeded.length,
-      "E2eTestDataSeeder must seed at least 2 git_repo rows for this spec",
-    ).toBeGreaterThanOrEqual(2);
-    // Order matters: mock-agent.sh's check_prs_gate scenario always treats the
-    // FIRST repo in config.json's repos[] as the one left unchanged (pushed at
-    // parity) — and repos[] preserves the RepoGroup's member order.
-    const [unchangedRepo, changedRepo] = seeded;
+    // Select the two repos by name, NOT by list position. `GET /git-repos` sorts
+    // by URL ascending, and E2eTestDataSeeder seeds a THIRD repo
+    // (`e2e-test/dind-repo`, docker-enabled) whose URL sorts ahead of both
+    // `mock-*` rows — so `seeded[0]` is dind-repo, not mock-repo. Two things then
+    // have to agree: mock-agent.sh's check_prs_gate scenario always leaves the
+    // FIRST member of the run's config.json `repos[]` (which preserves the
+    // RepoGroup member order) unchanged at parity with no PR and changes every
+    // other member; and the `github-compare` WireMock stub keys its "ahead"
+    // (kept-on-cleanup) response off the `mock-frontend` path. So mock-repo must
+    // be the unchanged member and mock-frontend the changed one — pin them by
+    // name rather than trusting a sort order a third repo already perturbs.
+    const unchangedRepo = seeded.find((r) => r.url.endsWith("/mock-repo"));
+    const changedRepo = seeded.find((r) => r.url.endsWith("/mock-frontend"));
+    if (!unchangedRepo || !changedRepo) {
+      throw new Error(
+        "E2eTestDataSeeder must seed both e2e-test/mock-repo and e2e-test/mock-frontend for this spec",
+      );
+    }
 
     const groupName = uniqueName("e2e-check-prs-gate");
     const group = await api.createRepoGroup({
