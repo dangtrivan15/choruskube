@@ -201,4 +201,33 @@ public class InternalAuthFilterTest extends BaseTest {
         mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/github-token"))
                 .andExpect(status().isUnauthorized());
     }
+
+    // ── stale run-branch cleanup (Part 2): orchestrator-only, by construction ────────
+    //
+    // /internal/runs/{runId}/cleanup-branches carries no node-executions/{execId} segment, so
+    // NODE_EXEC_PATH_PATTERN never matches it and an agent's JOB_SECRET can never authorize it —
+    // only the orchestrator's shared secret can. Mirrors agentToken_deniesOtherEndpoint above,
+    // which proves the same thing for /graph-runtime.
+
+    @Test
+    void orchestratorToken_canAccessCleanupBranchesEndpoint() throws Exception {
+        mockMvc.perform(post("/internal/runs/" + run.getId() + "/cleanup-branches")
+                        .header("Authorization", "Bearer " + ORCHESTRATOR_SECRET))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.results").isArray());
+    }
+
+    @Test
+    void agentToken_deniesCleanupBranchesEndpoint() throws Exception {
+        mockMvc.perform(post("/internal/runs/" + run.getId() + "/cleanup-branches")
+                        .header("Authorization", "Bearer test-agent-job-secret"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void noAuth_deniesCleanupBranchesEndpoint() throws Exception {
+        mockMvc.perform(post("/internal/runs/" + run.getId() + "/cleanup-branches"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error").value("Missing or invalid Authorization header"));
+    }
 }

@@ -2623,3 +2623,219 @@ func (s *DAGExecutorTestSuite) TestCompletedStatusRejected_PersistsFailedStatus(
 	s.True(s.env.IsWorkflowCompleted())
 	s.NoError(s.env.GetWorkflowError())
 }
+
+// --- Stale run-branch cleanup (Part 2): scheduled only when the run reaches "completed" ---
+
+// TestCleanupActivityScheduledOnCompletion verifies Step 6 schedules DeleteStaleBranches for
+// the run once the workflow reaches finalStatus "completed".
+func (s *DAGExecutorTestSuite) TestCleanupActivityScheduledOnCompletion() {
+	nodeA := uuid.New()
+	execA := uuid.New()
+	runID := uuid.New()
+
+	snapshot := `{
+		"nodes": [
+			{"templateNodeId": "` + nodeA.String() + `", "label": "A", "executorType": "ai", "timeoutSeconds": 1800, "isEntrypoint": true}
+		],
+		"edges": []
+	}`
+
+	s.env.OnActivity("UpdateWorkflowRunStatus", mock.Anything, mock.Anything).Return(nil)
+	s.env.OnActivity("GetGraphRuntime", mock.Anything, runID).Return(snapshot, nil)
+	s.env.OnActivity("WriteExecutionLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("InitRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("AppendRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == nodeA
+	})).Return(execA, nil).Once()
+
+	s.env.OnActivity("LoadPredecessorInputs", mock.Anything, mock.Anything).Return(map[string]string{}, nil).Maybe()
+	s.env.OnActivity("LoadRequiredInputArtifacts", mock.Anything, mock.Anything).
+		Return(activity.LoadRequiredInputArtifactsResult{}, nil).Maybe()
+	s.env.OnActivity("LoadReviewHistoryJSON", mock.Anything, mock.Anything).Return("[]", nil).Maybe()
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.Anything).Return("no_decision", nil).Maybe()
+
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.Anything).
+		Return(activity.CallbackResult{}, nil)
+
+	// .Once() (not .Maybe()): the test fails if Step 6 never schedules the cleanup activity
+	// for this run once it reaches "completed".
+	s.env.OnActivity("DeleteStaleBranches", mock.Anything, mock.MatchedBy(func(p activity.DeleteStaleBranchesParams) bool {
+		return p.RunID == runID
+	})).Return(nil).Once()
+
+	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
+		RunID: runID, GraphVersion: 1,
+	})
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+}
+
+// TestCleanupActivityErrorDoesNotFailWorkflow verifies a DeleteStaleBranches failure is
+// tolerated: Step 6's UpdateWorkflowRunStatus call still records "completed", and the
+// workflow itself still completes without error — the cleanup is best-effort, never a
+// condition of the run's own success.
+func (s *DAGExecutorTestSuite) TestCleanupActivityErrorDoesNotFailWorkflow() {
+	nodeA := uuid.New()
+	execA := uuid.New()
+	runID := uuid.New()
+
+	snapshot := `{
+		"nodes": [
+			{"templateNodeId": "` + nodeA.String() + `", "label": "A", "executorType": "ai", "timeoutSeconds": 1800, "isEntrypoint": true}
+		],
+		"edges": []
+	}`
+
+	s.env.OnActivity("UpdateWorkflowRunStatus", mock.Anything,
+		mock.MatchedBy(func(p activity.UpdateRunStatusParams) bool {
+			return p.RunID == runID && p.Status == "completed"
+		})).Return(nil).Once()
+	s.env.OnActivity("UpdateWorkflowRunStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("GetGraphRuntime", mock.Anything, runID).Return(snapshot, nil)
+	s.env.OnActivity("WriteExecutionLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("InitRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("AppendRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == nodeA
+	})).Return(execA, nil).Once()
+
+	s.env.OnActivity("LoadPredecessorInputs", mock.Anything, mock.Anything).Return(map[string]string{}, nil).Maybe()
+	s.env.OnActivity("LoadRequiredInputArtifacts", mock.Anything, mock.Anything).
+		Return(activity.LoadRequiredInputArtifactsResult{}, nil).Maybe()
+	s.env.OnActivity("LoadReviewHistoryJSON", mock.Anything, mock.Anything).Return("[]", nil).Maybe()
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.Anything).Return("no_decision", nil).Maybe()
+
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.Anything).
+		Return(activity.CallbackResult{}, nil)
+
+	// No .Once(): dbCtx's RetryPolicy (MaximumAttempts: 3) retries an erroring activity, so this
+	// stub must stay eligible across every attempt rather than being spent after the first.
+	s.env.OnActivity("DeleteStaleBranches", mock.Anything, mock.Anything).
+		Return(fmt.Errorf("api error 500: internal error"))
+
+	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
+		RunID: runID, GraphVersion: 1,
+	})
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+}
+
+// TestCleanupActivityNotScheduledOnFailure verifies Step 6 never schedules DeleteStaleBranches
+// when the run ends "failed" — same graph shape as TestTimeoutCallsDeleteAgentJob, with the
+// added assertion that cleanup is not scheduled.
+func (s *DAGExecutorTestSuite) TestCleanupActivityNotScheduledOnFailure() {
+	nodeA := uuid.New()
+	execA := uuid.New()
+	runID := uuid.New()
+
+	snapshot := `{
+		"nodes": [
+			{"templateNodeId": "` + nodeA.String() + `", "label": "A", "executorType": "ai", "timeoutSeconds": 1800, "isEntrypoint": true}
+		],
+		"edges": []
+	}`
+
+	s.env.OnActivity("UpdateWorkflowRunStatus", mock.Anything, mock.Anything).Return(nil)
+	s.env.OnActivity("GetGraphRuntime", mock.Anything, runID).Return(snapshot, nil)
+	s.env.OnActivity("WriteExecutionLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("InitRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("AppendRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("FetchPodLogs", mock.Anything, mock.Anything).Return("", nil).Maybe()
+	s.env.OnActivity("DeleteAgentJob", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == nodeA
+	})).Return(execA, nil).Once()
+
+	s.env.OnActivity("LoadPredecessorInputs", mock.Anything, mock.Anything).Return(map[string]string{}, nil).Maybe()
+	s.env.OnActivity("LoadRequiredInputArtifacts", mock.Anything, mock.Anything).
+		Return(activity.LoadRequiredInputArtifactsResult{}, nil).Maybe()
+	s.env.OnActivity("LoadReviewHistoryJSON", mock.Anything, mock.Anything).Return("[]", nil).Maybe()
+
+	// AI node A fails permanently (simulates a timeout/error), driving finalStatus to "failed".
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
+		return p.TemplateNodeID == nodeA
+	})).Return(activity.CallbackResult{}, fmt.Errorf("activity timeout"))
+
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.MatchedBy(func(p activity.UpdateNodeExecStatusParams) bool {
+		return p.NodeExecutionID == execA && p.Status == "failed"
+	})).Return(nil).Once()
+
+	var cleanupCalled bool
+	s.env.OnActivity("DeleteStaleBranches", mock.Anything, mock.Anything).
+		Run(func(mock.Arguments) { cleanupCalled = true }).
+		Return(nil).
+		Maybe()
+
+	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
+		RunID: runID, GraphVersion: 1,
+	})
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.False(cleanupCalled, "DeleteStaleBranches must not be scheduled when the run ends failed")
+}
+
+// TestCleanupActivityNotScheduledOnCancel verifies Step 6 never schedules DeleteStaleBranches
+// when the run ends "cancelled" — same graph/cancel shape as
+// TestCancelStep5ToleratesDeleteAgentJob404, with the added assertion that cleanup is not
+// scheduled.
+func (s *DAGExecutorTestSuite) TestCleanupActivityNotScheduledOnCancel() {
+	nodeA := uuid.New()
+	execA := uuid.New()
+	runID := uuid.New()
+
+	snapshot := `{
+		"nodes": [
+			{"templateNodeId": "` + nodeA.String() + `", "label": "A", "executorType": "ai", "timeoutSeconds": 1800, "isEntrypoint": true}
+		],
+		"edges": []
+	}`
+
+	s.env.OnActivity("UpdateWorkflowRunStatus", mock.Anything, mock.Anything).Return(nil)
+	s.env.OnActivity("GetGraphRuntime", mock.Anything, runID).Return(snapshot, nil)
+	s.env.OnActivity("WriteExecutionLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("InitRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("AppendRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == nodeA
+	})).Return(execA, nil).Once()
+
+	s.env.OnActivity("LoadPredecessorInputs", mock.Anything, mock.Anything).Return(map[string]string{}, nil).Maybe()
+	s.env.OnActivity("LoadRequiredInputArtifacts", mock.Anything, mock.Anything).
+		Return(activity.LoadRequiredInputArtifactsResult{}, nil).Maybe()
+	s.env.OnActivity("LoadReviewHistoryJSON", mock.Anything, mock.Anything).Return("[]", nil).Maybe()
+
+	// Fire the cancel from the node activity's own invocation (see
+	// TestCancelStep5ToleratesDeleteAgentJob404's comment for why: triggering the cancel from
+	// dispatch removes a race against a fixed virtual-time delay).
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.Anything).
+		Run(func(mock.Arguments) {
+			s.env.SignalWorkflow("cancel", nil)
+		}).
+		After(time.Second).Return(activity.CallbackResult{}, nil)
+
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("DeleteAgentJob", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	var cleanupCalled bool
+	s.env.OnActivity("DeleteStaleBranches", mock.Anything, mock.Anything).
+		Run(func(mock.Arguments) { cleanupCalled = true }).
+		Return(nil).
+		Maybe()
+
+	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
+		RunID: runID, GraphVersion: 1,
+	})
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+	s.False(cleanupCalled, "DeleteStaleBranches must not be scheduled when the run ends cancelled")
+}
