@@ -1160,6 +1160,21 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 				).Get(ctx, nil); err != nil {
 					tracker.status = "failed"
 					errMsg := fmt.Sprintf("failed to update node status to completed: %v", err)
+					// The tracker is not the copy of this fact anyone else can see. Both the web
+					// UI's Retry button and RunService.retryNode gate on node_execution.status
+					// being "failed", so a tracker-only failure parks the run in awaiting_retry
+					// with the row still reading "running" — a state no operator can act on and
+					// no later pass revisits. What was rejected above was the "completed" status
+					// specifically (enforceOutputSpec runs for no other), so this write does not
+					// meet the same gate; if it fails anyway the log below still records why.
+					workflow.ExecuteActivity(dbCtx, activities.UpdateNodeExecutionStatus,
+						activity.UpdateNodeExecStatusParams{
+							RunID:           params.RunID,
+							NodeExecutionID: tracker.execID,
+							Status:          "failed",
+							ErrorMessage:    &errMsg,
+						},
+					).Get(ctx, nil)
 					workflow.ExecuteActivity(dbCtx, activities.WriteExecutionLog,
 						activity.WriteExecutionLogParams{
 							RunID: params.RunID, NodeExecutionID: tracker.execID, Level: "error",

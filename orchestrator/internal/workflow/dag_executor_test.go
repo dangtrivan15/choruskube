@@ -2563,3 +2563,63 @@ func (s *DAGExecutorTestSuite) TestForceReadyCarriesForwardThroughLateHumanDecis
 	s.True(s.env.IsWorkflowCompleted())
 	s.NoError(s.env.GetWorkflowError())
 }
+
+// TestCompletedStatusRejected_PersistsFailedStatus verifies that when the api-server
+// rejects a node's "completed" status update, the resulting failure is written to the
+// DB and not only to the workflow's in-memory tracker.
+//
+// The tracker and the node_execution row are two copies of one fact, and every
+// consumer outside the workflow — the web UI's Retry button, RunService.retryNode —
+// reads the row. A branch that marks the tracker failed without persisting it parks
+// the run in awaiting_retry while the row still reads "running", which no operator
+// can then act on: the button is gated on status=failed and the retry endpoint
+// rejects anything else.
+func (s *DAGExecutorTestSuite) TestCompletedStatusRejected_PersistsFailedStatus() {
+	nodeA := uuid.New()
+	execA := uuid.New()
+	runID := uuid.New()
+
+	snapshot := `{
+		"nodes": [
+			{"templateNodeId": "` + nodeA.String() + `", "label": "A", "executorType": "ai", "timeoutSeconds": 1800, "isEntrypoint": true}
+		],
+		"edges": []
+	}`
+
+	s.env.OnActivity("UpdateWorkflowRunStatus", mock.Anything, mock.Anything).Return(nil)
+	s.env.OnActivity("GetGraphRuntime", mock.Anything, runID).Return(snapshot, nil)
+	s.env.OnActivity("WriteExecutionLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("InitRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("AppendRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("LoadPredecessorInputs", mock.Anything, mock.Anything).Return(map[string]string{}, nil).Maybe()
+	s.env.OnActivity("LoadRequiredInputArtifacts", mock.Anything, mock.Anything).
+		Return(activity.LoadRequiredInputArtifactsResult{}, nil).Maybe()
+	s.env.OnActivity("LoadReviewHistoryJSON", mock.Anything, mock.Anything).Return("[]", nil).Maybe()
+	s.env.OnActivity("FetchPodLogs", mock.Anything, mock.Anything).Return("", nil).Maybe()
+	s.env.OnActivity("DeleteAgentJob", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.Anything).Return(execA, nil).Once()
+	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.Anything).
+		Return(activity.CallbackResult{}, nil)
+
+	// The api-server rejects the completion — e.g. a stale `escalate` decision with no
+	// escalation.md, which enforceOutputSpec answers with a 400 before it saves the row.
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything,
+		mock.MatchedBy(func(p activity.UpdateNodeExecStatusParams) bool {
+			return p.Status == "completed"
+		})).Return(fmt.Errorf("api error 400: decision 'escalate' without producing escalation.md"))
+
+	// The failure this produces must reach the row the UI and the retry API read.
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything,
+		mock.MatchedBy(func(p activity.UpdateNodeExecStatusParams) bool {
+			return p.NodeExecutionID == execA && p.Status == "failed" && p.ErrorMessage != nil
+		})).Return(nil).Once()
+
+	// Any other status write (running, awaiting_human, …) is incidental to this test.
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{RunID: runID, GraphVersion: 1})
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+}
