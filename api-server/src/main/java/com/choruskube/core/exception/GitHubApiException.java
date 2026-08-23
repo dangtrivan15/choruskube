@@ -43,6 +43,21 @@ public class GitHubApiException extends RuntimeException implements GitHubRateLi
         this.rateLimitHints = rateLimitHints == null ? GitHubRateLimitHints.NONE : rateLimitHints;
     }
 
+    /**
+     * For a call that operates on a branch ref rather than a pull request — {@code compareCommits}
+     * and {@code deleteRef} — where there is no PR number to report. {@code getPrNumber()} answers
+     * {@code -1} for these, which is safe: it is unread outside {@code RunPullRequestService}'s and
+     * {@code PullRequestStateService}'s PR-specific call sites, neither of which this exception
+     * reaches.
+     */
+    public GitHubApiException(int status, String ownerRepo, GitHubRateLimitHints rateLimitHints) {
+        super("GitHub returned " + status + " for " + ownerRepo);
+        this.status = status;
+        this.ownerRepo = ownerRepo;
+        this.prNumber = -1;
+        this.rateLimitHints = rateLimitHints == null ? GitHubRateLimitHints.NONE : rateLimitHints;
+    }
+
     @Override
     public GitHubRateLimitHints getRateLimitHints() {
         return rateLimitHints;

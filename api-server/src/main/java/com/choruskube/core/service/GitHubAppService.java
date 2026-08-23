@@ -117,6 +117,81 @@ public class GitHubAppService {
     }
 
     /**
+     * How many commits {@code head} is ahead of {@code base} — GitHub's {@code compare}
+     * {@code ahead_by} field. {@code base}/{@code head} are branch (or ref) names, not SHAs;
+     * {@code ownerRepo} is the {@code owner/repo} slug (see {@link #fetchPullRequest} for how to
+     * derive it). Used by {@code BranchCleanupService} to decide whether a run branch is safe to
+     * delete: {@code ahead_by == 0} means the branch carries nothing the default branch lacks.
+     *
+     * @throws GitHubApiException if GitHub returns a non-2xx status — notably 404 when either ref
+     *     is not found, which the caller distinguishes from any other failure via {@link
+     *     GitHubApiException#getStatus()}, the same convention {@code PullRequestStateService}
+     *     already relies on
+     * @throws RuntimeException if the response body cannot be parsed, or if the call never produced
+     *     a status at all (timeout, DNS failure, reset connection)
+     */
+    public int compareCommits(String token, String ownerRepo, String base, String head) {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(githubApiUrl + "/repos/" + ownerRepo + "/compare/" + base + "..." + head))
+                .header("Authorization", "Bearer " + token)
+                .header("Accept", "application/vnd.github+json")
+                .timeout(Duration.ofSeconds(10))
+                .GET()
+                .build();
+        try {
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() / 100 != 2) {
+                throw new GitHubApiException(response.statusCode(), ownerRepo, rateLimitHints(response.headers()));
+            }
+            try {
+                JsonNode body = objectMapper.readTree(response.body());
+                return body.get("ahead_by").asInt();
+            } catch (Exception e) {
+                // Same reasoning as parsePullRequest: the exception's own message can quote the
+                // response body that failed to parse, so it is deliberately not interpolated here.
+                throw new RuntimeException("Failed to parse GitHub compare payload for " + ownerRepo, e);
+            }
+        } catch (IOException | InterruptedException e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            throw new RuntimeException(
+                    "Failed to compare " + base + "..." + head + " for " + ownerRepo + ": " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Deletes a ref — {@code caller passes "heads/" + branch}. Returns {@code true} both when the
+     * delete succeeded (2xx) and when the ref was already gone (404/422): both leave the ref absent,
+     * which is all {@code BranchCleanupService} cares about.
+     *
+     * @throws GitHubApiException on any other non-2xx status, carrying the real status code
+     * @throws RuntimeException if the call never produced a status at all
+     */
+    public boolean deleteRef(String token, String ownerRepo, String ref) {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(githubApiUrl + "/repos/" + ownerRepo + "/git/refs/" + ref))
+                .header("Authorization", "Bearer " + token)
+                .header("Accept", "application/vnd.github+json")
+                .timeout(Duration.ofSeconds(10))
+                .DELETE()
+                .build();
+        try {
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            int status = response.statusCode();
+            if (status / 100 == 2 || status == 404 || status == 422) {
+                return true;
+            }
+            throw new GitHubApiException(status, ownerRepo, rateLimitHints(response.headers()));
+        } catch (IOException | InterruptedException e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            throw new RuntimeException("Failed to delete ref " + ref + " for " + ownerRepo + ": " + e.getMessage(), e);
+        }
+    }
+
+    /**
      * The three rate-limit headers, parsed. The only thing kept from a failed response.
      *
      * <p>Every parse is total: a missing, blank or malformed value becomes null rather than an
