@@ -28,15 +28,16 @@ test.describe("PullRequestLinks — multi-repo run", () => {
     api,
   }) => {
     // The internal waits below sum past playwright.config.ts's 60s default, so set
-    // an explicit budget. verify_and_gate clones + pushes two repos to the in-stack
-    // hermetic git-server (docker-compose.e2e.yaml) — not github.com — so it settles
-    // in seconds; the budget only needs headroom for container startup and, under
-    // parallel workers, contention on the shared stack. (Earlier revisions timed this
-    // out at ever-larger budgets not because the node was slow but because the clone
-    // could never complete: the stack had no clonable/pushable remote for the seeded
-    // e2e-test/* repos until the git-server was added, so verify_and_gate hung
-    // indefinitely and the run never reached this gate. Raising the budget then only
-    // moved the failure later.)
+    // an explicit budget. verify_and_gate clones + pushes two repos to bare fixtures
+    // baked into the claude-code:e2e agent image and reached over a local file://
+    // redirect (agent-images/claude-code-e2e/Dockerfile) — not github.com, and not a
+    // separate stack service — so it settles in seconds; the budget only needs
+    // headroom for container startup and, under parallel workers, contention on the
+    // shared stack. (Earlier revisions timed this out at ever-larger budgets not
+    // because the node was slow but because the clone could never complete: the
+    // stack had no clonable/pushable remote at all for the seeded e2e-test/* repos,
+    // so verify_and_gate hung indefinitely and the run never reached this gate.
+    // Raising the budget then only moved the failure later.)
     test.setTimeout(180_000);
 
     const reposPage = await api.listGitRepos();
@@ -76,9 +77,10 @@ test.describe("PullRequestLinks — multi-repo run", () => {
         name: runName,
       });
 
-      // verify_and_gate clones + pushes both repos to the in-stack git-server and
-      // runs check-prs before this gate opens; that takes seconds, so 90s is ample
-      // headroom over container startup even under parallel-worker contention.
+      // verify_and_gate clones + pushes both repos to the local file:// git fixtures
+      // baked into the agent image and runs check-prs before this gate opens; that
+      // takes seconds, so 90s is ample headroom over container startup even under
+      // parallel-worker contention.
       await api.waitForNodeStatus(run.id, "final_approval", ["awaiting_human"], 90_000);
 
       await runMonitorPage.goto(run.id);

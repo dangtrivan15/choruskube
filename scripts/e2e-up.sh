@@ -69,10 +69,8 @@ if [ "$DO_IMAGES" = "1" ]; then
   docker build --build-arg BASE_AGENT_IMAGE=claude-code:latest \
     -f "${REPO_ROOT}/agent-images/claude-code-e2e/Dockerfile" \
     -t claude-code:e2e "${REPO_ROOT}/agent-images/claude-code"
-  # Same story for the hermetic git remote: test-only, no published :buildcache, cheap
-  # to build locally. Built unconditionally (not just under the CACHE_REGISTRY branch
-  # below) so it exists before a CACHE_REGISTRY `compose up` (no --build) runs.
-  docker build -t choruskube-e2e-git-server:local "${REPO_ROOT}/e2e/git-server"
+  # The hermetic git remote for e2e-test/* repos is baked into claude-code:e2e
+  # itself (see that Dockerfile) — no separate image to build here.
 
   if [ -n "$CACHE_REGISTRY" ]; then
     # Pre-build the app images with the registry layer cache, tagged as the compose

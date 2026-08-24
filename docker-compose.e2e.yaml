@@ -117,7 +117,16 @@ services:
       "
 
   # WireMock intercepts external API calls (GitHub, Anthropic) — stubs are
-  # pushed in via the admin API after the container is healthy.
+  # pushed in via the admin API after the container is healthy. It stubs the
+  # GitHub REST API only, not git-over-https clone/push: the seeded e2e-test/*
+  # repos that need to be genuinely cloned/pushed (e.g. the check-prs gate) are
+  # instead served from bare repos baked into the claude-code:e2e agent image at
+  # build time and reached via a system git insteadOf redirect to a local
+  # file:// path — see agent-images/claude-code-e2e/Dockerfile. That keeps the
+  # remote reachable only from inside the one container that needs it (which is
+  # all any of these tests require) with no extra stack service and no network
+  # I/O at all. Real deployments clone real GitHub, so that redirect is
+  # strictly test-only.
   wiremock:
     image: wiremock/wiremock:3.13.0
     dns_search: .
@@ -133,35 +142,6 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-
-  # Hermetic git remote for the seeded e2e-test/* repos. WireMock stubs the GitHub
-  # REST API only; git-over-https clone/push has no stub and the stack has no egress
-  # to github.com. This daemon serves E2eTestDataSeeder's repos with receive-pack
-  # enabled so agent pods can genuinely clone AND push them (the check-prs gate reads
-  # pushed branches back). The agent image rewrites https://github.com/e2e-test/* to
-  # git://git-server/e2e-test/* via a system git insteadOf — see
-  # agent-images/claude-code-e2e/Dockerfile. Real deployments clone real GitHub, so
-  # this service and that insteadOf are strictly test-only.
-  git-server:
-    # `git`/`git-daemon` are installed at BUILD time (see e2e/git-server/Dockerfile),
-    # not fetched over the network every time the stack comes up — that was the
-    # original design here and it hung in practice: an `apk add` blocked on its
-    # download socket leaves the container "unhealthy" indefinitely, and nothing
-    # else in the stack depends on git-server, so `docker compose up` still reports
-    # success while a run that needs to clone silently times out ~90s later. The
-    # runtime entrypoint (seed-and-serve.sh) now does no network I/O at all.
-    image: choruskube-e2e-git-server:local
-    build:
-      context: ./e2e/git-server
-    dns_search: .
-    networks:
-      - choruskube-e2e
-    healthcheck:
-      test: ["CMD-SHELL", "git ls-remote git://localhost/e2e-test/mock-repo >/dev/null 2>&1 || exit 1"]
-      interval: 5s
-      timeout: 3s
-      retries: 15
-      start_period: 10s
 
   # --- Application Services ---
 
@@ -249,8 +229,6 @@ services:
       object-storage-setup:
         condition: service_completed_successfully
       wiremock:
-        condition: service_healthy
-      git-server:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q UP"]
