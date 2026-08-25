@@ -864,4 +864,28 @@ public class InternalRunControllerTest extends BaseTest {
                 .andExpect(jsonPath("$[0].gitRepoId").value(gitRepo.getId().toString()))
                 .andExpect(jsonPath("$[0].workflowRunId").value(run.getId().toString()));
     }
+
+    // ── stale run-branch cleanup (Part 2) ─────────────────────────────────────────
+    //
+    // Auth-scoping for this run-level, orchestrator-only endpoint (ORCHESTRATOR_SECRET vs. an
+    // agent JOB_SECRET vs. no auth at all) is covered in InternalAuthFilterTest, which already
+    // configures internal.auth.mode=enforce with a real orchestrator-secret-hash — this class's
+    // fixtures run with no configured hash (auth filter passes everything through), so it is the
+    // right place to prove the endpoint's own functional shape instead.
+
+    @Test
+    void cleanupBranches_returns200WithASummaryPerRepo() throws Exception {
+        // No real GitHub credential is configured in this test environment, so
+        // BranchCleanupService's per-repo GitHub call fails — but that failure is caught and
+        // reported as a per-repo outcome, never surfaced as an HTTP error: the endpoint is
+        // best-effort and must always answer 200 with one result per repo in the run.
+        mockMvc.perform(post("/internal/runs/" + run.getId() + "/cleanup-branches"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.results").isArray())
+                .andExpect(jsonPath("$.results.length()").value(1))
+                .andExpect(
+                        jsonPath("$.results[0].gitRepoId").value(gitRepo.getId().toString()))
+                .andExpect(jsonPath("$.results[0].branch").value("choruskube-run-" + run.getId()))
+                .andExpect(jsonPath("$.results[0].outcome").value("SKIPPED_ERROR"));
+    }
 }

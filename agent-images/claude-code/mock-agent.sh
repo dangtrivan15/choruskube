@@ -18,10 +18,17 @@
 #   live_chat        Simulate a live chat session: submit transcript + decision
 #   multi_repo_pr    Register PRs for all repos in a multi-repo run
 #   check_prs_gate   Drives the real check-prs/register-pr CLI contract end to end
-#                    (Decision 3/§3.3 PR completion gate): for every repo in this
-#                    run's config.json repos[], pushes a marker commit to origin,
-#                    registers a PR for it via register-pr, then runs check-prs for
-#                    real and asserts it reports nothing missing — same contract
+#                    (Decision 3/§3.3 PR completion gate): the FIRST repo in this
+#                    run's config.json repos[] is left unchanged but pushed at parity
+#                    (`git push origin HEAD` with no commits added — entrypoint.sh's
+#                    Step 3 already checked the run branch out at the default
+#                    branch's tip, so this publishes it to origin with nothing new),
+#                    exercising check-prs's branch_adds_commits `ahead == 0` exemption
+#                    path rather than the branch-absent-on-origin skip path (both exit
+#                    0, but for different reasons — see Part 2's E2E coverage note).
+#                    Every OTHER repo pushes a marker commit to origin and registers a
+#                    PR for it via register-pr, same as before. Finally runs check-prs
+#                    for real and asserts it reports nothing missing — same contract
 #                    entrypoint.sh's PR-verification block exercises against a real
 #                    agent when a node has needs_pr: true. No-op (exit 0) if no
 #                    repos are configured for this node.
@@ -381,15 +388,25 @@ case "$SCENARIO" in
   check_prs_gate)
     # Exercises the check-prs/register-pr CLI contract end to end (Decision 3/§3.3
     # PR completion gate), the same way multi_repo_pr exercises register-pr's
-    # contract: real CLI calls against the live API, not faked output. For every
-    # repo in this run's config.json repos[] (already cloned onto its working
-    # branch by entrypoint.sh's Step 3, before this scenario ever runs), pushes a
-    # marker commit to origin (`git push origin HEAD`, no `-u` — matching the real
-    # Implement/Code Review prompts' own push convention, see Decision 5) so
-    # check-prs's `git ls-remote` detects the repo as pushed, then registers a PR
-    # for it via the real register-pr CLI (same fabricated-PR-URL convention as
-    # multi_repo_pr, since there is no real `gh pr create` call here). Finally runs
-    # the real check-prs CLI and asserts it reports nothing missing — proving
+    # contract: real CLI calls against the live API, not faked output. The FIRST
+    # repo in this run's config.json repos[] is left UNCHANGED but pushed at
+    # parity with the default branch (`git push origin HEAD` with no commits
+    # added — entrypoint.sh's Step 3 already checked the run branch out at the
+    # default branch's tip, so this publishes it to origin with nothing new): no
+    # marker file, no register-pr call. This drives check-prs through
+    # branch_adds_commits's `ahead == 0` exemption path (branch found on origin
+    # via `ls-remote`, GitHub compare shows zero-ahead → exempt), distinct from
+    # the branch-absent-on-origin skip path (`ls-remote` exits 2 → continue) that
+    # a repo which was never pushed at all would take — both exit 0, but for
+    # different reasons (Part 2's E2E coverage gap this scenario closes). Every
+    # OTHER repo (already cloned onto its working branch by entrypoint.sh's Step
+    # 3, before this scenario ever runs) pushes a marker commit to origin (`git
+    # push origin HEAD`, no `-u` — matching the real Implement/Code Review
+    # prompts' own push convention, see Decision 5) so check-prs's `git
+    # ls-remote` detects the repo as pushed, then registers a PR for it via the
+    # real register-pr CLI (same fabricated-PR-URL convention as multi_repo_pr,
+    # since there is no real `gh pr create` call here). Finally runs the real
+    # check-prs CLI and asserts it reports nothing missing — proving
     # entrypoint.sh's PR-verification block has something real to gate on when a
     # node has needs_pr: true, without a live Claude call.
     echo "Mock agent: check_prs_gate scenario"
@@ -401,11 +418,22 @@ case "$SCENARIO" in
       exit 0
     fi
 
+    repo_index=0
     while IFS= read -r repo; do
       repo_id=$(echo "$repo" | jq -r '.id')
       repo_name=$(echo "$repo" | jq -r '.name')
       repo_url=$(echo "$repo" | jq -r '.url')
       repo_dir=$(echo "$repo" | jq -r '.local_path')
+
+      if [ "$repo_index" -eq 0 ]; then
+        echo "[check_prs_gate] $repo_name: left unchanged, pushing the run branch at parity with the default branch"
+        (
+          cd "$repo_dir"
+          git push origin HEAD
+        ) || { echo "ERROR: check_prs_gate: git push failed for $repo_name" >&2; exit 1; }
+        repo_index=$((repo_index + 1))
+        continue
+      fi
 
       echo "[check_prs_gate] $repo_name: committing + pushing a marker change"
       (
@@ -425,16 +453,17 @@ case "$SCENARIO" in
         --pr-number "$pr_number" \
         --title "chore: check_prs_gate marker (${repo_name})" \
         --repo-name "$repo_name"
+      repo_index=$((repo_index + 1))
     done < <(echo "$REPOS_JSON" | jq -c '.[]')
 
     echo "[check_prs_gate] running check-prs..."
     if check-prs; then
-      echo "check-prs passed: every pushed repo has a registered PR"
-      write_artifact "result.txt" "check_prs_gate: check-prs passed after pushing + registering all repos"
+      echo "check-prs passed: the parity repo is exempt and every repo carrying commits has a registered PR"
+      write_artifact "result.txt" "check_prs_gate: check-prs passed with one repo at parity (exempt) and the rest pushed + registered"
       echo "Mock agent: check_prs_gate completed"
       exit 0
     else
-      echo "ERROR: check_prs_gate: check-prs reported missing PR(s) after registering every pushed repo" >&2
+      echo "ERROR: check_prs_gate: check-prs reported missing PR(s) after registering every repo carrying commits" >&2
       exit 1
     fi
     ;;

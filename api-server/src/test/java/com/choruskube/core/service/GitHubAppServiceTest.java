@@ -248,8 +248,109 @@ class GitHubAppServiceTest {
                 + "\n-----END PRIVATE KEY-----\n";
     }
 
+    // -----------------------------------------------------------------------------------
+    // compareCommits / deleteRef — the branch-ref primitives BranchCleanupService uses
+    // -----------------------------------------------------------------------------------
+
+    @Test
+    void compareCommits_ok_parsesAheadByAndHitsTheRightRequest() throws Exception {
+        try (Stub github = Stub.serving(200, "{\"ahead_by\":3,\"status\":\"ahead\"}")) {
+            int ahead = github.service().compareCommits("t0ken", "org/backend-api", "main", "choruskube-run-abc");
+
+            assertThat(ahead).isEqualTo(3);
+            assertThat(github.captured().method).isEqualTo("GET");
+            assertThat(github.captured().path).isEqualTo("/repos/org/backend-api/compare/main...choruskube-run-abc");
+            assertThat(github.captured().authorization).isEqualTo("Bearer t0ken");
+        }
+    }
+
+    @Test
+    void compareCommits_zeroAheadBy_parsesAsZero() throws Exception {
+        try (Stub github = Stub.serving(200, "{\"ahead_by\":0,\"status\":\"identical\"}")) {
+            assertThat(github.service().compareCommits("t0ken", "org/backend-api", "main", "stale-branch"))
+                    .isZero();
+        }
+    }
+
+    /**
+     * A 404 (branch or base not found) has to arrive with the real status intact — it's what lets
+     * {@code BranchCleanupService} tell "gone" apart from any other failure via {@link
+     * GitHubApiException#getStatus()}, the same convention {@code PullRequestStateService} already
+     * relies on.
+     */
+    @Test
+    void compareCommits_404_throwsWithTheRealStatus() throws Exception {
+        try (Stub github = Stub.serving(404, "{\"message\":\"Not Found\"}")) {
+            GitHubAppService service = github.service();
+
+            assertThatThrownBy(() -> service.compareCommits("t0ken", "org/backend-api", "main", "gone-branch"))
+                    .isInstanceOf(GitHubApiException.class)
+                    .satisfies(thrown -> assertThat(((GitHubApiException) thrown).getStatus())
+                            .isEqualTo(404));
+        }
+    }
+
+    @Test
+    void compareCommits_serverError_throwsWithTheRealStatus() throws Exception {
+        try (Stub github = Stub.serving(500, "unavailable")) {
+            GitHubAppService service = github.service();
+
+            assertThatThrownBy(() -> service.compareCommits("t0ken", "org/backend-api", "main", "branch"))
+                    .isInstanceOf(GitHubApiException.class)
+                    .satisfies(thrown -> assertThat(((GitHubApiException) thrown).getStatus())
+                            .isEqualTo(500));
+        }
+    }
+
+    @Test
+    void deleteRef_noContent_returnsTrueAndHitsTheRightRequest() throws Exception {
+        try (Stub github = Stub.serving(204, "")) {
+            boolean deleted = github.service().deleteRef("t0ken", "org/backend-api", "heads/choruskube-run-abc");
+
+            assertThat(deleted).isTrue();
+            assertThat(github.captured().method).isEqualTo("DELETE");
+            assertThat(github.captured().path).isEqualTo("/repos/org/backend-api/git/refs/heads/choruskube-run-abc");
+            assertThat(github.captured().authorization).isEqualTo("Bearer t0ken");
+        }
+    }
+
+    @Test
+    void deleteRef_404_returnsTrueBecauseItIsAlreadyGone() throws Exception {
+        try (Stub github = Stub.serving(404, "{\"message\":\"Not Found\"}")) {
+            assertThat(github.service().deleteRef("t0ken", "org/backend-api", "heads/already-gone"))
+                    .isTrue();
+        }
+    }
+
+    @Test
+    void deleteRef_unprocessable_returnsTrueBecauseItIsAlreadyGone() throws Exception {
+        try (Stub github = Stub.serving(422, "{\"message\":\"Reference does not exist\"}")) {
+            assertThat(github.service().deleteRef("t0ken", "org/backend-api", "heads/already-gone"))
+                    .isTrue();
+        }
+    }
+
+    @Test
+    void deleteRef_serverError_throwsWithTheRealStatus() throws Exception {
+        try (Stub github = Stub.serving(500, "unavailable")) {
+            GitHubAppService service = github.service();
+
+            assertThatThrownBy(() -> service.deleteRef("t0ken", "org/backend-api", "heads/branch"))
+                    .isInstanceOf(GitHubApiException.class)
+                    .satisfies(thrown -> assertThat(((GitHubApiException) thrown).getStatus())
+                            .isEqualTo(500));
+        }
+    }
+
+    /** What one request to the stub actually looked like — set exactly once, before the response. */
+    private static final class CapturedRequest {
+        volatile String method;
+        volatile String path;
+        volatile String authorization;
+    }
+
     /** A GitHub that answers with one canned response, on a port the OS picks. */
-    private record Stub(HttpServer server) implements AutoCloseable {
+    private record Stub(HttpServer server, CapturedRequest captured) implements AutoCloseable {
 
         static Stub serving(int status, String body) throws IOException {
             return serving(status, body, Map.of());
@@ -257,8 +358,12 @@ class GitHubAppServiceTest {
 
         static Stub serving(int status, String body, Map<String, String> headers) throws IOException {
             HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+            CapturedRequest captured = new CapturedRequest();
             byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
             server.createContext("/", exchange -> {
+                captured.method = exchange.getRequestMethod();
+                captured.path = exchange.getRequestURI().toString();
+                captured.authorization = exchange.getRequestHeaders().getFirst("Authorization");
                 headers.forEach((name, value) -> exchange.getResponseHeaders().add(name, value));
                 exchange.sendResponseHeaders(status, bytes.length);
                 try (OutputStream out = exchange.getResponseBody()) {
@@ -266,7 +371,7 @@ class GitHubAppServiceTest {
                 }
             });
             server.start();
-            return new Stub(server);
+            return new Stub(server, captured);
         }
 
         GitHubAppService service() {

@@ -245,6 +245,17 @@ func (c *Client) GetGraphRuntime(ctx context.Context, runID uuid.UUID) (string, 
 	return string(resp), nil
 }
 
+// CleanupBranches asks the API server to best-effort delete this run's per-repo run branch for
+// every repo whose branch is not ahead of its default branch. Called once a run reaches
+// "completed"; failures are the caller's to log and ignore, never to fail the run over.
+func (c *Client) CleanupBranches(ctx context.Context, runID uuid.UUID) error {
+	_, err := c.doJSON(ctx, http.MethodPost, fmt.Sprintf("/internal/runs/%s/cleanup-branches", runID), nil)
+	if err != nil {
+		return fmt.Errorf("cleanup branches: %w", err)
+	}
+	return nil
+}
+
 // --- Execution Log ---
 
 func (c *Client) WriteExecutionLog(ctx context.Context, runID, nodeExecID uuid.UUID, level, message string) error {

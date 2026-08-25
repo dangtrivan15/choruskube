@@ -786,6 +786,48 @@ func TestUpdateWorkflowRunStatus(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestDeleteStaleBranches verifies the activity delegates to the apiclient, which issues a POST
+// to /internal/runs/{runID}/cleanup-branches.
+func TestDeleteStaleBranches(t *testing.T) {
+	runID := uuid.New()
+	var receivedMethod, receivedPath string
+
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedMethod = r.Method
+		receivedPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]interface{}{"results": []interface{}{}})
+	}))
+	defer apiServer.Close()
+
+	client := apiclient.NewClient(apiServer.URL)
+	acts := NewActivities(client, nil, nil, nil)
+
+	err := acts.DeleteStaleBranches(context.Background(), DeleteStaleBranchesParams{RunID: runID})
+	require.NoError(t, err)
+	assert.Equal(t, http.MethodPost, receivedMethod)
+	assert.Equal(t, fmt.Sprintf("/internal/runs/%s/cleanup-branches", runID), receivedPath)
+}
+
+// TestDeleteStaleBranches_NonOKSurfacesAsError verifies a non-2xx response from the API server
+// surfaces as an error the activity returns — the workflow layer (DAGExecutorWorkflow's Step 6)
+// is what logs and ignores it; the activity itself must not swallow it.
+func TestDeleteStaleBranches_NonOKSurfacesAsError(t *testing.T) {
+	runID := uuid.New()
+
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("internal error"))
+	}))
+	defer apiServer.Close()
+
+	client := apiclient.NewClient(apiServer.URL)
+	acts := NewActivities(client, nil, nil, nil)
+
+	err := acts.DeleteStaleBranches(context.Background(), DeleteStaleBranchesParams{RunID: runID})
+	require.Error(t, err)
+}
+
 func TestSetNodeDecision(t *testing.T) {
 	var receivedBody map[string]string
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

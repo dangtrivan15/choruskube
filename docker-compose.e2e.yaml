@@ -117,7 +117,16 @@ services:
       "
 
   # WireMock intercepts external API calls (GitHub, Anthropic) — stubs are
-  # pushed in via the admin API after the container is healthy.
+  # pushed in via the admin API after the container is healthy. It stubs the
+  # GitHub REST API only, not git-over-https clone/push: the seeded e2e-test/*
+  # repos that need to be genuinely cloned/pushed (e.g. the check-prs gate) are
+  # instead served from bare repos baked into the claude-code:e2e agent image at
+  # build time and reached via a system git insteadOf redirect to a local
+  # file:// path — see agent-images/claude-code-e2e/Dockerfile. That keeps the
+  # remote reachable only from inside the one container that needs it (which is
+  # all any of these tests require) with no extra stack service and no network
+  # I/O at all. Real deployments clone real GitHub, so that redirect is
+  # strictly test-only.
   wiremock:
     image: wiremock/wiremock:3.13.0
     dns_search: .

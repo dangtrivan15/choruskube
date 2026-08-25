@@ -73,11 +73,18 @@ public class E2eTestDataSeeder implements ApplicationRunner {
     // can assert the DAG renders it (pending, pinned outside the laid-out flow) from the graph
     // snapshot alone, before any NodeExecution for it has ever been created.
     private static final String GRAPH_ID_SUPERVISOR = "e2e-supervisor-node";
+    // check_prs_gate: a multi-repo template whose entrypoint runs mock-agent.sh's
+    // "check_prs_gate" scenario (Part 2's E2E coverage note) — one repo is left unchanged but
+    // pushed at parity with its default branch (branch_adds_commits's `ahead == 0` exemption),
+    // the other gets a marker commit + a registered PR — then a human gate stands in for Final
+    // Approval, so pull-request-links-multi-repo.spec.ts can drive an approved multi-repo run
+    // end to end and assert the UI shows a PR link only for the changed repo.
+    private static final String GRAPH_ID_CHECK_PRS_GATE = "e2e-check-prs-gate";
 
-    // Bumped to 4 so the new supervisor_node template gets seeded — run() early-returns when a
+    // Bumped to 5 so the new check_prs_gate template gets seeded — run() early-returns when a
     // template at the current VERSION already exists, so an edit without a bump is a no-op
     // against any environment whose database survived the previous boot.
-    private static final int VERSION = 4;
+    private static final int VERSION = 5;
 
     private static final String E2E_REPO_URL = "https://github.com/e2e-test/mock-repo";
     private static final String E2E_SECONDARY_REPO_URL = "https://github.com/e2e-test/mock-frontend";
@@ -175,7 +182,9 @@ public class E2eTestDataSeeder implements ApplicationRunner {
 
         seedSupervisorTemplate(mockSuccess, mockGate);
 
-        log.info("E2eTestDataSeeder: seeded 3 git repos, 1 repo group, 11 node definitions, and 13 E2E templates");
+        seedCheckPrsGateTemplate(mockSuccess, mockGate);
+
+        log.info("E2eTestDataSeeder: seeded 3 git repos, 1 repo group, 11 node definitions, and 14 E2E templates");
     }
 
     private void seedDemoRepoGroup() {
@@ -574,6 +583,55 @@ public class E2eTestDataSeeder implements ApplicationRunner {
 
         createNode(t, mockSuccess, "start", true, cmd("success --artifact start-done"));
         createNode(t, mockGate, "supervisor", false, "{\"routing_hub\": true}");
+    }
+
+    // --- Check-PRs Gate: verify_and_gate --(approved)--> run_complete
+    //                                     --(rejected)--> verify_and_gate (back-edge)
+    //
+    // Entrypoint runs mock-agent.sh's "check_prs_gate" scenario (needs_branch: true so every
+    // repo in the run gets the ephemeral choruskube-run-{runId} branch checked out — same
+    // config_overrides shape as e2e-multi-repo-pipeline's implement_repo_1/2 — and needs_pr:
+    // true so this node's completion genuinely exercises entrypoint.sh's PR-verification
+    // block, not just the scenario's own internal check-prs call). The scenario leaves the
+    // FIRST repo of this run's software project unchanged but pushed at parity with its
+    // default branch (no PR possible, no PR registered) and pushes a marker commit + registers
+    // a PR for every OTHER repo — see mock-agent.sh's check_prs_gate scenario doc comment.
+    // Input is a software_project_id so the caller supplies a multi-repo RepoGroup (a plain
+    // single-repo GitRepo would give the scenario nothing to differentiate between).
+
+    private void seedCheckPrsGateTemplate(NodeDefinition mockSuccess, NodeDefinition mockGate) {
+        String inputSchema =
+                "[{\"name\":\"software_project_id\",\"label\":\"Software Project\",\"type\":\"software_project_id\",\"required\":true}]";
+
+        GraphTemplate t = new GraphTemplate();
+        t.setGraphId(GRAPH_ID_CHECK_PRS_GATE);
+        t.setVersion(VERSION);
+        t.setName("e2e-check-prs-gate");
+        t.setDescription(
+                "E2E test: multi-repo check-prs gate — one repo exempt at parity, one repo pushed + registered, then a human Final-Approval-style gate");
+        t.setInputSchema(inputSchema);
+        t.setSystem(false);
+        t = templateRepo.save(t);
+
+        TemplateNode verifyAndGate = createNode(
+                t,
+                mockSuccess,
+                "verify_and_gate",
+                true,
+                "{\"command\": \"" + mockScriptPath
+                        + " check_prs_gate\", \"needs_branch\": \"true\", \"needs_pr\": \"true\"}");
+        TemplateNode gate = createNode(
+                t,
+                mockGate,
+                "final_approval",
+                false,
+                "{}",
+                "[{\"template_node_label\":\"verify_and_gate\",\"artifacts\":[{\"name\":\"result.txt\",\"description\":\"check_prs_gate scenario result\"}]}]");
+        TemplateNode runComplete = createNode(t, mockSuccess, "run_complete", false, cmd("success --artifact done"));
+
+        createEdge(t, verifyAndGate, gate, null);
+        createEdge(t, gate, runComplete, "approved");
+        createEdge(t, gate, verifyAndGate, "rejected");
     }
 
     // --- Helpers ---

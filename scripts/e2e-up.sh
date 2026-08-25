@@ -69,6 +69,8 @@ if [ "$DO_IMAGES" = "1" ]; then
   docker build --build-arg BASE_AGENT_IMAGE=claude-code:latest \
     -f "${REPO_ROOT}/agent-images/claude-code-e2e/Dockerfile" \
     -t claude-code:e2e "${REPO_ROOT}/agent-images/claude-code"
+  # The hermetic git remote for e2e-test/* repos is baked into claude-code:e2e
+  # itself (see that Dockerfile) — no separate image to build here.
 
   if [ -n "$CACHE_REGISTRY" ]; then
     # Pre-build the app images with the registry layer cache, tagged as the compose

@@ -617,3 +617,15 @@ type SetTraversedEdgesParams struct {
 func (a *Activities) SetTraversedEdges(ctx context.Context, params SetTraversedEdgesParams) error {
 	return a.client.SetTraversedEdges(ctx, params.RunID, params.NodeExecutionID, params.EdgeIDs)
 }
+
+// --- Activity: DeleteStaleBranches ---
+
+// DeleteStaleBranchesParams identifies the run whose per-repo run branches should be best-effort
+// deleted once it has reached "completed" (see DAGExecutorWorkflow's Step 6).
+type DeleteStaleBranchesParams struct {
+	RunID uuid.UUID
+}
+
+func (a *Activities) DeleteStaleBranches(ctx context.Context, params DeleteStaleBranchesParams) error {
+	return a.client.CleanupBranches(ctx, params.RunID)
+}
