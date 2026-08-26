@@ -13,7 +13,7 @@ import type {
   QuotaExceededResponse,
   StagingRefsResponse,
   AttachmentRefsResponse,
-  CandidateEpicProposal,
+  RoadmapCandidatesDocument,
 } from "@/lib/types";
 
 export function useRuns(status?: string, name?: string, pagination?: PaginationParams) {
@@ -167,7 +167,7 @@ export function useSignalNode(runId: string) {
   return useMutation({
     mutationFn: async ({ nodeExecId, decision, feedback, files, editedCandidates }: {
       nodeExecId: string; decision: string; feedback: string; files?: File[];
-      editedCandidates?: CandidateEpicProposal[];
+      editedCandidates?: RoadmapCandidatesDocument;
     }) => {
       let attachmentRefs: string | undefined;
       if (files && files.length > 0) {

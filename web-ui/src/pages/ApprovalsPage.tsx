@@ -34,7 +34,7 @@ import EscalationGatePanel from "@/components/runs/EscalationGatePanel";
 import PageHeader from "@/components/layout/PageHeader";
 import PageShell from "@/components/layout/PageShell";
 import { isEscalationGate } from "@/lib/decisions";
-import type { PendingGateResponse, SortParam, PaginationParams, CandidateEpicProposal } from "@/lib/types";
+import type { PendingGateResponse, SortParam, PaginationParams, RoadmapCandidatesDocument } from "@/lib/types";
 
 const SORT_OPTIONS = [
   { label: "Waiting (oldest first)", field: "startedAt", direction: "asc" as const },
@@ -105,8 +105,8 @@ function GateCard({ gate }: { gate: PendingGateResponse }) {
   const [outputExpanded, setOutputExpanded] = useState(false);
   const [expandedPredIdx, setExpandedPredIdx] = useState<number | null>(null);
   const [attachmentFiles, setAttachmentFiles] = useState<File[]>([]);
-  const [editedCandidates, setEditedCandidates] = useState<CandidateEpicProposal[]>(
-    gate.candidateBreakdown ?? []
+  const [editedCandidates, setEditedCandidates] = useState<RoadmapCandidatesDocument>(
+    gate.candidateBreakdown ?? { milestones: [], epics: [], dependencies: [] }
   );
   const signalMutation = useSignalFromDashboard();
   const isLiveChat = gate.status === "live_chat";

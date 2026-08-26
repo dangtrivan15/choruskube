@@ -21,9 +21,10 @@ export interface RoadmapGraphNodeData {
    */
   readiness?: Readiness | null;
   /**
-   * Prioritization level (Epic/Story). Typed loosely and optional: a Task has
-   * none, and a stale/older payload may omit it — `PriorityBadge` renders
-   * nothing for an unknown value rather than crashing.
+   * Prioritization level (Epic/Story/Task — Decision 4 of the roadmap
+   * dependencies/priorities/milestones feature gave Task its own `priority`
+   * too). Typed loosely and optional: a stale/older payload may omit it —
+   * `PriorityBadge` renders nothing for an unknown value rather than crashing.
    */
   priority?: string | null;
   /** Direct child count (Stories under an Epic, Tasks under a Story). Undefined/0 for a leaf Task. */

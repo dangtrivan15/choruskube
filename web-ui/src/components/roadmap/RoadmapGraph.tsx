@@ -101,7 +101,10 @@ interface InternalNode {
   status: string;
   /** Epics can't participate in a dependency edge, so this is always null for them. */
   readiness: Readiness | null;
-  /** Prioritization level (Epic/Story only). `null` for a Task, which has none. */
+  /**
+   * Prioritization level (Epic/Story/Task — Decision 4 of the roadmap
+   * dependencies/priorities/milestones feature gave Task its own `priority` too).
+   */
   priority: string | null;
 }
 
@@ -136,7 +139,7 @@ function buildInternalNodes(snapshot: RoadmapGraphSnapshot): InternalNode[] {
       label: task.title,
       status: task.status,
       readiness: task.readiness,
-      priority: null,
+      priority: task.priority,
     });
   }
   return nodes;

@@ -18,7 +18,7 @@ import RoadmapCandidateBreakdown from "./RoadmapCandidateBreakdown";
 import EscalationGatePanel from "./EscalationGatePanel";
 import TriggerBanner from "./TriggerBanner";
 import { parseGateTrigger, isEscalationGate } from "@/lib/decisions";
-import type { ResolvedArtifactGroup, CandidateEpicProposal, EscalationContext } from "@/lib/types";
+import type { ResolvedArtifactGroup, RoadmapCandidatesDocument, EscalationContext } from "@/lib/types";
 
 interface PredecessorOutput {
   nodeLabel: string;
@@ -40,8 +40,9 @@ interface HumanGatePanelProps {
    * this gate, if any. `null`/`undefined` means no breakdown is available — the
    * panel renders exactly what it renders today. When present, the reviewer's
    * (possibly edited) copy is included as `editedCandidates` on the signal call.
+   * A document (Decision 5) — no longer a bare Epic array.
    */
-  candidateBreakdown?: CandidateEpicProposal[] | null;
+  candidateBreakdown?: RoadmapCandidatesDocument | null;
   /** The triggering reviewer's decision string, e.g. `need_human_decision:review_conflict`. */
   triggerDecision?: string | null;
   /**
@@ -77,8 +78,8 @@ export default function HumanGatePanel({
   const [outputExpanded, setOutputExpanded] = useState(true);
   const [expandedPredIdx, setExpandedPredIdx] = useState<number | null>(null);
   const [attachmentFiles, setAttachmentFiles] = useState<File[]>([]);
-  const [editedCandidates, setEditedCandidates] = useState<CandidateEpicProposal[]>(
-    candidateBreakdown ?? []
+  const [editedCandidates, setEditedCandidates] = useState<RoadmapCandidatesDocument>(
+    candidateBreakdown ?? { milestones: [], epics: [], dependencies: [] }
   );
   const signalMutation = useSignalNode(runId);
   const { canOperate } = usePermission();

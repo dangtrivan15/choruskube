@@ -189,6 +189,7 @@ function makeSnapshot(overrides: Partial<RoadmapGraphSnapshot> = {}): RoadmapGra
         totalRunCount: 0,
         createdAt: "2026-04-01T00:00:00Z",
         updatedAt: "2026-04-01T00:00:00Z",
+        priority: "high",
       },
       {
         id: "task-2",
@@ -205,6 +206,7 @@ function makeSnapshot(overrides: Partial<RoadmapGraphSnapshot> = {}): RoadmapGra
         totalRunCount: 0,
         createdAt: "2026-04-01T00:00:00Z",
         updatedAt: "2026-04-01T00:00:00Z",
+        priority: "medium",
       },
     ],
     dependencies: [],
@@ -256,6 +258,7 @@ describe("RoadmapGraph", () => {
           totalRunCount: 0,
           createdAt: "2026-04-01T00:00:00Z",
           updatedAt: "2026-04-01T00:00:00Z",
+          priority: "medium",
         },
       ],
     });
@@ -535,6 +538,22 @@ describe("RoadmapGraph", () => {
     expect(onNodeSelect).toHaveBeenLastCalledWith(null);
   });
 
+  it("maps a Task's priority through to its graph node (buildInternalNodes), not the legacy hardcoded null", async () => {
+    // Regression coverage for H4: buildInternalNodes() used to hardcode
+    // `priority: null` for every Task-type internal node regardless of the
+    // fixture's `TaskResponse.priority`. A render-only assertion would still
+    // pass with that bug (PriorityBadge just renders nothing for `null`), so
+    // this asserts the actual mapped value on the node's data via the badge's
+    // rendered label, which only appears when a real priority reaches it.
+    renderWithProviders(<RoadmapGraph snapshot={makeSnapshot()} onNodeSelect={vi.fn()} />);
+    await waitForGraphReady();
+
+    const taskNode = screen.getByTestId("mock-node-task-1");
+    expect(taskNode.querySelector('[data-testid="roadmap-graph-node-priority"]')).toHaveTextContent(
+      "High",
+    );
+  });
+
   it("auto-collapses a Story branch above the Task-count threshold on first render", async () => {
     const manyTasks: TaskResponse[] = Array.from({ length: 10 }, (_, i) => ({
       id: `task-big-${i}`,
@@ -551,6 +570,7 @@ describe("RoadmapGraph", () => {
       totalRunCount: 0,
       createdAt: "2026-04-01T00:00:00Z",
       updatedAt: "2026-04-01T00:00:00Z",
+      priority: "medium",
     }));
     const snapshot = makeSnapshot({ tasks: manyTasks });
 

@@ -4,6 +4,7 @@ import type { TaskResponse } from "@/lib/types";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import RunStatusBadge from "@/components/runs/RunStatusBadge";
+import PriorityBadge from "@/components/roadmap/PriorityBadge";
 import { roadmapLevelMeta } from "@/lib/roadmapLevel";
 import { cn } from "@/lib/utils";
 
@@ -72,8 +73,9 @@ export default function TaskBoardCard({ task }: Props) {
             {task.title}
           </Link>
         </span>
-        <span data-testid="task-board-card-status" className="flex items-center gap-1.5">
+        <span data-testid="task-board-card-status" className="flex flex-wrap items-center gap-1.5">
           {statusBadge(task.status)}
+          <PriorityBadge priority={task.priority} size="compact" data-testid="task-board-card-priority-badge" />
           {task.latestRunStatus && (
             <span data-testid="task-board-card-run-status">
               <RunStatusBadge status={task.latestRunStatus} />

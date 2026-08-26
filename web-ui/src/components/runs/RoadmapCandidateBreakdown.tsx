@@ -4,7 +4,24 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import type { CandidateEpicProposal, CandidateStoryProposal, CandidateTaskProposal } from "@/lib/types";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import PriorityBadge from "@/components/roadmap/PriorityBadge";
+import PrioritySelect from "@/components/roadmap/PrioritySelect";
+import type {
+  CandidateDependency,
+  CandidateEpicProposal,
+  CandidateMilestone,
+  CandidateStoryProposal,
+  CandidateTaskProposal,
+  Priority,
+  RoadmapCandidatesDocument,
+} from "@/lib/types";
 
 // Mirrors the server-side cap (max 8 Epics per breakdown, max 8 Stories per
 // Epic, max 8 Tasks per Story). These are soft UI limits only — the server is
@@ -18,9 +35,15 @@ const MAX_EPICS = 8;
 const MAX_STORIES_PER_EPIC = 8;
 const MAX_TASKS_PER_STORY = 8;
 
+/** Sentinel value for the "No milestone" option — Base UI `Select` items need a non-empty
+ * string value, so an unset/absent milestone reference is represented as this string and
+ * translated back to `null` in `onChange`. Never collides with a real candidate `key`, since
+ * the analyzer/reviewer never author a key equal to this literal. */
+const MILESTONE_NONE_VALUE = "__none__";
+
 interface RoadmapCandidateBreakdownProps {
-  value: CandidateEpicProposal[];
-  onChange: (next: CandidateEpicProposal[]) => void;
+  value: RoadmapCandidatesDocument;
+  onChange: (next: RoadmapCandidatesDocument) => void;
 }
 
 function emptyTask(): CandidateTaskProposal {
@@ -31,68 +54,151 @@ function emptyStory(): CandidateStoryProposal {
   return { title: "", description: "", tasks: [] };
 }
 
+/**
+ * Normalizes a candidate item's free-text `priority` (`"High"`/`"Medium"`/`"Low"`, possibly
+ * blank/unrecognized) down to the lowercase `Priority` union `PrioritySelect`/`PriorityBadge`
+ * expect — mirroring the server's own case-insensitive parse-with-medium-default
+ * (`DefaultRoadmapCandidateMaterializer.parsePriority`), so the editor shows the same value
+ * that will be persisted on approve.
+ */
+function normalizePriority(value: string | null | undefined): Priority {
+  const lower = value?.trim().toLowerCase();
+  if (lower === "high" || lower === "medium" || lower === "low") return lower;
+  return "medium";
+}
+
+/**
+ * Epic-level "which Milestone does this Epic belong to" picker, scoped to the candidate
+ * document's own `milestones` list (Decision 2: candidate items reference each other by
+ * artifact-local `key`, not a persisted id — there is nothing to fetch). Only milestones that
+ * carry a `key` are selectable, since an unkeyed milestone has nothing an Epic could reference.
+ */
+function CandidateMilestoneAssignmentSelect({
+  milestones,
+  value,
+  onChange,
+  testId,
+}: {
+  milestones: CandidateMilestone[];
+  value: string | null | undefined;
+  onChange: (key: string | null) => void;
+  testId: string;
+}) {
+  const selectable = milestones.filter((m): m is CandidateMilestone & { key: string } => !!m.key);
+  const selected = selectable.find((m) => m.key === value);
+
+  return (
+    <Select
+      value={value ?? MILESTONE_NONE_VALUE}
+      onValueChange={(v) => onChange(v && v !== MILESTONE_NONE_VALUE ? v : null)}
+    >
+      <SelectTrigger data-testid={testId} aria-label="Milestone" size="sm" className="w-auto">
+        <SelectValue placeholder="No milestone">{selected ? selected.name : "No milestone"}</SelectValue>
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value={MILESTONE_NONE_VALUE} data-testid={`${testId}-none`}>
+          No milestone
+        </SelectItem>
+        {selectable.map((m) => (
+          <SelectItem key={m.key} value={m.key} data-testid={`${testId}-${m.key}`}>
+            {m.name}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
 export default function RoadmapCandidateBreakdown({ value, onChange }: RoadmapCandidateBreakdownProps) {
+  const { milestones, epics, dependencies } = value;
+
   function updateEpic(epicIdx: number, patch: Partial<CandidateEpicProposal>) {
-    onChange(value.map((epic, i) => (i === epicIdx ? { ...epic, ...patch } : epic)));
+    onChange({ ...value, epics: epics.map((epic, i) => (i === epicIdx ? { ...epic, ...patch } : epic)) });
   }
 
   function removeEpic(epicIdx: number) {
-    onChange(value.filter((_, i) => i !== epicIdx));
+    onChange({ ...value, epics: epics.filter((_, i) => i !== epicIdx) });
   }
 
   function addStory(epicIdx: number) {
-    const epic = value[epicIdx];
+    const epic = epics[epicIdx];
     if (epic.stories.length >= MAX_STORIES_PER_EPIC) return;
     updateEpic(epicIdx, { stories: [...epic.stories, emptyStory()] });
   }
 
   function removeStory(epicIdx: number, storyIdx: number) {
-    const epic = value[epicIdx];
+    const epic = epics[epicIdx];
     updateEpic(epicIdx, { stories: epic.stories.filter((_, i) => i !== storyIdx) });
   }
 
   function updateStory(epicIdx: number, storyIdx: number, patch: Partial<CandidateStoryProposal>) {
-    const epic = value[epicIdx];
+    const epic = epics[epicIdx];
     updateEpic(epicIdx, {
       stories: epic.stories.map((story, i) => (i === storyIdx ? { ...story, ...patch } : story)),
     });
   }
 
   function addTask(epicIdx: number, storyIdx: number) {
-    const story = value[epicIdx].stories[storyIdx];
+    const story = epics[epicIdx].stories[storyIdx];
     if (story.tasks.length >= MAX_TASKS_PER_STORY) return;
     updateStory(epicIdx, storyIdx, { tasks: [...story.tasks, emptyTask()] });
   }
 
   function removeTask(epicIdx: number, storyIdx: number, taskIdx: number) {
-    const story = value[epicIdx].stories[storyIdx];
+    const story = epics[epicIdx].stories[storyIdx];
     updateStory(epicIdx, storyIdx, { tasks: story.tasks.filter((_, i) => i !== taskIdx) });
   }
 
   function updateTask(epicIdx: number, storyIdx: number, taskIdx: number, patch: Partial<CandidateTaskProposal>) {
-    const story = value[epicIdx].stories[storyIdx];
+    const story = epics[epicIdx].stories[storyIdx];
     updateStory(epicIdx, storyIdx, {
       tasks: story.tasks.map((task, i) => (i === taskIdx ? { ...task, ...patch } : task)),
     });
   }
 
-  if (value.length === 0) return null;
+  if (epics.length === 0) return null;
 
   return (
     <div data-testid="roadmap-candidate-breakdown" className="space-y-3">
       <h4 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-        Proposed Roadmap Breakdown ({value.length})
+        Proposed Roadmap Breakdown ({epics.length})
       </h4>
-      {value.length > MAX_EPICS && (
+      {epics.length > MAX_EPICS && (
         <p
           data-testid="candidate-epic-cap-warning"
           className="rounded-md border border-destructive/50 bg-destructive/10 p-2 text-xs text-destructive"
         >
-          {value.length} Epics proposed, but only {MAX_EPICS} are allowed per breakdown. Remove{" "}
-          {value.length - MAX_EPICS} before approving, or the submission will be rejected.
+          {epics.length} Epics proposed, but only {MAX_EPICS} are allowed per breakdown. Remove{" "}
+          {epics.length - MAX_EPICS} before approving, or the submission will be rejected.
         </p>
       )}
-      {value.map((epic, epicIdx) => (
+
+      {milestones.length > 0 && (
+        <div data-testid="candidate-milestones" className="space-y-2">
+          <h5 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Milestones ({milestones.length})
+          </h5>
+          <div className="space-y-1.5">
+            {milestones.map((milestone, i) => (
+              <div
+                key={milestone.key ?? i}
+                data-testid={`candidate-milestone-${i}`}
+                className="rounded-md bg-muted/50 p-2 text-xs"
+              >
+                <span className="font-medium">{milestone.name}</span>
+                {milestone.targetDate && (
+                  <span className="ml-2 text-muted-foreground">Target: {milestone.targetDate}</span>
+                )}
+                {milestone.description && (
+                  <p className="mt-1 text-muted-foreground">{milestone.description}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {epics.map((epic, epicIdx) => (
         <Card key={epicIdx} data-testid={`candidate-epic-${epicIdx}`}>
           <CardHeader className="flex-row items-start justify-between gap-2">
             <div className="flex-1 space-y-2">
@@ -151,17 +257,44 @@ export default function RoadmapCandidateBreakdown({ value, onChange }: RoadmapCa
               />
             </div>
 
-            {(epic.repos && epic.repos.length > 0) || epic.priority ? (
+            <div className="flex flex-wrap items-center gap-4">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Priority
+                </span>
+                <PriorityBadge
+                  priority={normalizePriority(epic.priority)}
+                  size="compact"
+                  data-testid={`candidate-epic-priority-badge-${epicIdx}`}
+                />
+                <PrioritySelect
+                  value={normalizePriority(epic.priority)}
+                  size="sm"
+                  onChange={(p) => updateEpic(epicIdx, { priority: p })}
+                  testId={`candidate-epic-priority-select-${epicIdx}`}
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Milestone
+                </span>
+                <CandidateMilestoneAssignmentSelect
+                  milestones={milestones}
+                  value={epic.milestone}
+                  onChange={(key) => updateEpic(epicIdx, { milestone: key })}
+                  testId={`candidate-epic-milestone-select-${epicIdx}`}
+                />
+              </div>
+            </div>
+
+            {epic.repos && epic.repos.length > 0 && (
               <div
                 data-testid={`candidate-epic-context-${epicIdx}`}
                 className="space-y-1 rounded-md bg-muted/50 p-2 text-xs text-muted-foreground"
               >
-                {epic.repos && epic.repos.length > 0 && (
-                  <p>Likely touches: {epic.repos.join(", ")}</p>
-                )}
-                {epic.priority && <p>Priority: {epic.priority}</p>}
+                <p>Likely touches: {epic.repos.join(", ")}</p>
               </div>
-            ) : null}
+            )}
 
             <Separator />
 
@@ -228,6 +361,23 @@ export default function RoadmapCandidateBreakdown({ value, onChange }: RoadmapCa
                       data-testid={`candidate-story-description-${epicIdx}-${storyIdx}`}
                       value={story.description}
                       onChange={(e) => updateStory(epicIdx, storyIdx, { description: e.target.value })}
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      Priority
+                    </span>
+                    <PriorityBadge
+                      priority={normalizePriority(story.priority)}
+                      size="compact"
+                      data-testid={`candidate-story-priority-badge-${epicIdx}-${storyIdx}`}
+                    />
+                    <PrioritySelect
+                      value={normalizePriority(story.priority)}
+                      size="sm"
+                      onChange={(p) => updateStory(epicIdx, storyIdx, { priority: p })}
+                      testId={`candidate-story-priority-select-${epicIdx}-${storyIdx}`}
                     />
                   </div>
 
@@ -299,6 +449,22 @@ export default function RoadmapCandidateBreakdown({ value, onChange }: RoadmapCa
                             }
                           />
                         </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                            Priority
+                          </span>
+                          <PriorityBadge
+                            priority={normalizePriority(task.priority)}
+                            size="compact"
+                            data-testid={`candidate-task-priority-badge-${epicIdx}-${storyIdx}-${taskIdx}`}
+                          />
+                          <PrioritySelect
+                            value={normalizePriority(task.priority)}
+                            size="sm"
+                            onChange={(p) => updateTask(epicIdx, storyIdx, taskIdx, { priority: p })}
+                            testId={`candidate-task-priority-select-${epicIdx}-${storyIdx}-${taskIdx}`}
+                          />
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -308,6 +474,28 @@ export default function RoadmapCandidateBreakdown({ value, onChange }: RoadmapCa
           </CardContent>
         </Card>
       ))}
+
+      {dependencies.length > 0 && (
+        <div data-testid="candidate-dependencies" className="space-y-2">
+          <h5 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Dependencies ({dependencies.length})
+          </h5>
+          {/* Read-only per Caveat 1 — adding/removing edges happens post-materialization in the
+              roadmap graph UI, not in this pre-approval editor. */}
+          <ul className="space-y-1">
+            {dependencies.map((dependency: CandidateDependency, i) => (
+              <li
+                key={i}
+                data-testid={`candidate-dependency-${i}`}
+                className="rounded-md bg-muted/50 p-2 text-xs text-muted-foreground"
+              >
+                <span className="font-medium text-foreground">{dependency.blocking}</span> blocks{" "}
+                <span className="font-medium text-foreground">{dependency.blocked}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
