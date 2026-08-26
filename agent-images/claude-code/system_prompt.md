@@ -75,22 +75,34 @@ The following helper scripts are available on the PATH:
 - `list-decisions` — Print the valid routing decisions for this node execution
   (one per line). Useful as a runtime fallback or for verification — the same
   list is appended to your system prompt at agent startup.
-- `create-proposal --title TITLE --description DESC [--motivation MOT] [--priority LEVEL]` —
+- `create-proposal --title TITLE --description DESC [--motivation MOT] [--priority LEVEL] [--milestone-id UUID]` —
   Create an Epic (the top level of the Epic -> Story -> Task roadmap hierarchy) for the
   current run's software project. `--priority` is one of `low`/`medium`/`high` (defaults
-  to `medium`). An Epic alone is not startable — chain create-story
+  to `medium`). `--milestone-id` assigns the Epic to an existing Milestone (see
+  `create-milestone`). An Epic alone is not startable — chain create-story
   and create-task below to produce a startable Task.
 - `list-proposals` — List all Epics for the current run's software project.
-- `update-proposal --proposal-id UUID [--title T] [--description D] [--motivation M]` —
+- `update-proposal --proposal-id UUID [--title T] [--description D] [--motivation M] [--milestone-id UUID]` —
   Update an existing Epic that has no descendant Task past backlog status. PATCH
   semantics: only fields you pass change; pass `--motivation ""` to clear motivation.
+  `--milestone-id` assigns the Epic to an existing Milestone; there is no flag to clear
+  a Milestone assignment through this tool.
 - `create-story --epic-id UUID --title TITLE --description DESC [--priority LEVEL]` —
   Create a Story under an Epic (the second level of the hierarchy). `--priority` is one of
   `low`/`medium`/`high` (defaults to `medium`).
-- `create-task --epic-id UUID --story-id UUID --title TITLE --description DESC` —
+- `create-task --epic-id UUID --story-id UUID --title TITLE --description DESC [--priority LEVEL]` —
   Create a Task under a Story — the leaf of the hierarchy, and the only level that can
   later be started as a workflow run. A feature you propose is not startable until you
-  create both its Story and its Task.
+  create both its Story and its Task. `--priority` is one of `low`/`medium`/`high`
+  (defaults to `medium`).
+- `create-dependency --blocking-type TYPE --blocking-id UUID --blocked-type TYPE --blocked-id UUID` —
+  Declare that one Epic/Story/Task ("blocking") must complete before another
+  ("blocked") is ready. Both items must already exist in this run's software project;
+  a cyclic edge or a cross-project reference is rejected.
+- `create-milestone --name NAME [--description DESC] [--target-date DATE]` —
+  Create a Milestone (a named release grouping with an optional target date) for the
+  current run's software project. Assign an Epic to it with `create-proposal
+  --milestone-id` or `update-proposal --milestone-id`.
 - `get-roadmap-graph [--epic-id UUID]` — Fetch an Epic's full Story/Task tree in one call,
   including each item's dependency-derived readiness (READY/BLOCKED) and each Task's
   recent run history. `--epic-id` is optional for a Task-triggered run — when omitted,

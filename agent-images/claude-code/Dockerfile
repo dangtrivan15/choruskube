@@ -77,6 +77,8 @@ COPY check-prs /usr/local/bin/check-prs
 COPY update-proposal /usr/local/bin/update-proposal
 COPY create-story /usr/local/bin/create-story
 COPY create-task /usr/local/bin/create-task
+COPY create-dependency /usr/local/bin/create-dependency
+COPY create-milestone /usr/local/bin/create-milestone
 COPY get-roadmap-graph /usr/local/bin/get-roadmap-graph
 COPY update-task-status /usr/local/bin/update-task-status
 COPY run-all-tests /usr/local/bin/run-all-tests
@@ -98,6 +100,8 @@ RUN chmod +x /usr/local/bin/report-result \
     /usr/local/bin/update-proposal \
     /usr/local/bin/create-story \
     /usr/local/bin/create-task \
+    /usr/local/bin/create-dependency \
+    /usr/local/bin/create-milestone \
     /usr/local/bin/get-roadmap-graph \
     /usr/local/bin/update-task-status \
     /usr/local/bin/run-all-tests \

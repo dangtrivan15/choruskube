@@ -1,0 +1,109 @@
+#!/bin/bash
+# create-dependency — create a "blocking" dependency edge between two roadmap
+# items via the ChorusKube API server.
+#
+# Usage: create-dependency --blocking-type TYPE --blocking-id UUID --blocked-type TYPE --blocked-id UUID
+#
+# Declares that the "blocking" item must complete before the "blocked" item is
+# considered ready (Decision 6 of the roadmap dependencies/priorities/
+# milestones feature) — the imperative-agent counterpart to the declarative
+# roadmap_candidates.json artifact's "dependencies" list. Both items must
+# already exist and belong to the current run's software project; the server
+# rejects a cross-project reference (404/403) and a cyclic edge (409).
+#
+# Options:
+#   --blocking-type TYPE    Type of the blocking item: epic | story | task (required)
+#   --blocking-id UUID      UUID of the blocking item (required)
+#   --blocked-type TYPE     Type of the blocked item: epic | story | task (required)
+#   --blocked-id UUID       UUID of the blocked item (required)
+#   -h, --help               Show this help message
+#
+# Environment:
+#   API_SERVER_URL      — Base URL of the ChorusKube API server
+#   RUN_ID              — Workflow run UUID
+#   NODE_EXECUTION_ID   — Node execution UUID
+#   JOB_SECRET          — Bearer token for authentication
+#
+# Examples:
+#   create-dependency --blocking-type task --blocking-id <uuid> \
+#                     --blocked-type task --blocked-id <uuid>
+#
+# Exit codes:
+#   0  Dependency edge created successfully (JSON response printed to stdout)
+#   1  Missing arguments, environment, or API error
+set -euo pipefail
+
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+    sed -n '2,/^set -euo pipefail$/{ /^set -euo pipefail$/d; s/^# \?//; p }' "$0"
+    exit 0
+fi
+
+if [ -z "${API_SERVER_URL:-}" ]; then
+    echo "ERROR: API_SERVER_URL not set. This script must be run inside an agent pod." >&2
+    exit 1
+fi
+
+if [ -z "${RUN_ID:-}" ] || [ -z "${NODE_EXECUTION_ID:-}" ]; then
+    echo "ERROR: RUN_ID and NODE_EXECUTION_ID must be set." >&2
+    exit 1
+fi
+
+BLOCKING_TYPE=""
+BLOCKING_ID=""
+BLOCKED_TYPE=""
+BLOCKED_ID=""
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --blocking-type)
+            BLOCKING_TYPE="$2"
+            shift 2
+            ;;
+        --blocking-id)
+            BLOCKING_ID="$2"
+            shift 2
+            ;;
+        --blocked-type)
+            BLOCKED_TYPE="$2"
+            shift 2
+            ;;
+        --blocked-id)
+            BLOCKED_ID="$2"
+            shift 2
+            ;;
+        *)
+            echo "ERROR: Unknown argument: $1" >&2
+            echo "Usage: create-dependency --blocking-type TYPE --blocking-id UUID --blocked-type TYPE --blocked-id UUID" >&2
+            exit 1
+            ;;
+    esac
+done
+
+if [ -z "$BLOCKING_TYPE" ] || [ -z "$BLOCKING_ID" ] || [ -z "$BLOCKED_TYPE" ] || [ -z "$BLOCKED_ID" ]; then
+    echo "ERROR: --blocking-type, --blocking-id, --blocked-type and --blocked-id are required." >&2
+    echo "Usage: create-dependency --blocking-type TYPE --blocking-id UUID --blocked-type TYPE --blocked-id UUID" >&2
+    exit 1
+fi
+
+BODY=$(jq -n \
+    --arg blockingItemType "$BLOCKING_TYPE" \
+    --arg blockingItemId "$BLOCKING_ID" \
+    --arg blockedItemType "$BLOCKED_TYPE" \
+    --arg blockedItemId "$BLOCKED_ID" \
+    '{blockingItemType: $blockingItemType, blockingItemId: $blockingItemId,
+      blockedItemType: $blockedItemType, blockedItemId: $blockedItemId}')
+
+RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer ${JOB_SECRET:-}" \
+    -d "$BODY" \
+    "$API_SERVER_URL/internal/runs/$RUN_ID/node-executions/$NODE_EXECUTION_ID/dependencies")
+HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+BODY_RESPONSE=$(echo "$RESPONSE" | sed '$d')
+
+if [ "$HTTP_CODE" != "201" ]; then
+    echo "ERROR: Failed to create dependency (HTTP $HTTP_CODE): $BODY_RESPONSE" >&2
+    exit 1
+fi
+
+echo "$BODY_RESPONSE"

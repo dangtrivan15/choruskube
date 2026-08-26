@@ -48,7 +48,21 @@
 #                          candidate-breakdown gate (Decision 1): writes both
 #                          roadmap_analysis.md and roadmap_candidates.json, matching the
 #                          two-artifact contract BaseRoadmapProvisionerSeeder's real
-#                          "Roadmap Analyzer" node declares.
+#                          "Roadmap Analyzer" node declares. roadmap_candidates.json is
+#                          the document shape { milestones[], epics[], dependencies[] }
+#                          (Decision 5) — one Milestone, one keyed Epic/Story/Task each
+#                          carrying a priority, and one dependency edge — so this
+#                          exercises the new fields directly rather than the resolver's
+#                          legacy-bare-array back-compat path.
+#   roadmap_imperative_links  Imperative counterpart to roadmap_candidates (Decision 6):
+#                          drives create-proposal/create-story/create-task (the latter
+#                          with --priority) to build an Epic/Story/two Tasks, then
+#                          create-dependency to link the two Tasks, then
+#                          create-milestone plus update-proposal --milestone-id to
+#                          assign the Epic to it — the same write surface the
+#                          declarative roadmap_candidates.json artifact expresses, but
+#                          called live against the real API server, no JSON artifact
+#                          or human gate involved.
 #   single_repo_claude_md  Verify SYSTEM_PROMPT is exported (tests the export fix)
 #   dind_isolation   Verify DinD isolation: DOCKER_HOST set, no ChorusKube services visible
 #   dind_network_connectivity  Verify API server is reachable from DinD agent
@@ -555,40 +569,144 @@ case "$SCENARIO" in
     # (Decision 1). Writes the same two artifacts BaseRoadmapProvisionerSeeder's real
     # "Roadmap Analyzer" node declares in its outputSpec — roadmap_analysis.md (free-text,
     # unused by materialization) and roadmap_candidates.json (structured, read by
-    # RoadmapCandidatesArtifactResolver via the ARTIFACT_FILENAME contract). The JSON must
-    # satisfy the same Bean Validation constraints as CandidateEpicProposal/
-    # CandidateStoryProposal/CandidateTaskProposal (non-blank titles, <=255 chars, <=8 items
-    # per list) or the resolver degrades to null and materialization is skipped.
+    # RoadmapCandidatesArtifactResolver via the ARTIFACT_FILENAME contract). The JSON is the
+    # document shape { milestones[], epics[], dependencies[] } (Decision 5) and must satisfy
+    # the same Bean Validation constraints as RoadmapCandidatesDocument/CandidateMilestone/
+    # CandidateEpicProposal/CandidateStoryProposal/CandidateTaskProposal/CandidateDependency
+    # (non-blank titles/names, <=255 chars, <=8 items per Epic/Story/Task list, <=32 per
+    # milestones/dependencies list) or the resolver degrades to null and materialization is
+    # skipped. Two Tasks (not one) so the dependency edge below has two distinct keys to
+    # reference — a self-edge would be rejected as a trivial cycle.
     echo "Mock agent: roadmap_candidates scenario"
     write_artifact "roadmap_analysis.md" \
-      "Mock roadmap analysis: one candidate Epic proposed for E2E coverage of the structured candidate-breakdown gate (Decision 1)."
+      "Mock roadmap analysis: one candidate Epic proposed for E2E coverage of the structured candidate-breakdown gate (Decision 1), with a Milestone, per-level priorities, and a dependency edge (Decision 4/2/5)."
 
     mkdir -p /workspace/out
     cat > /workspace/out/roadmap_candidates.json <<'JSON'
-[
-  {
-    "title": "Mock Roadmap Candidate Epic",
-    "description": "A mock Epic proposed by the roadmap_candidates mock-agent scenario.",
-    "motivation": "Exercises the structured candidate-breakdown gate end-to-end in E2E.",
-    "repos": ["e2e-test/mock-repo"],
-    "priority": "medium",
-    "stories": [
-      {
-        "title": "Mock Candidate Story",
-        "description": "A mock Story under the candidate Epic.",
-        "tasks": [
-          {
-            "title": "Mock Candidate Task",
-            "description": "A mock Task under the candidate Story."
-          }
-        ]
-      }
-    ]
-  }
-]
+{
+  "milestones": [
+    {
+      "key": "mock-milestone",
+      "name": "Mock Roadmap Milestone",
+      "description": "A mock Milestone proposed by the roadmap_candidates mock-agent scenario.",
+      "targetDate": "2027-01-01"
+    }
+  ],
+  "epics": [
+    {
+      "key": "mock-epic",
+      "title": "Mock Roadmap Candidate Epic",
+      "description": "A mock Epic proposed by the roadmap_candidates mock-agent scenario.",
+      "motivation": "Exercises the structured candidate-breakdown gate end-to-end in E2E.",
+      "repos": ["e2e-test/mock-repo"],
+      "priority": "High",
+      "milestone": "mock-milestone",
+      "stories": [
+        {
+          "key": "mock-story",
+          "title": "Mock Candidate Story",
+          "description": "A mock Story under the candidate Epic.",
+          "priority": "Medium",
+          "tasks": [
+            {
+              "key": "mock-task-a",
+              "title": "Mock Candidate Task A (blocking)",
+              "description": "First mock Task under the candidate Story; blocks Task B.",
+              "priority": "High"
+            },
+            {
+              "key": "mock-task-b",
+              "title": "Mock Candidate Task B (blocked)",
+              "description": "Second mock Task under the candidate Story; blocked by Task A.",
+              "priority": "Low"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "blocking": "mock-task-a",
+      "blocked": "mock-task-b"
+    }
+  ]
+}
 JSON
     echo "Artifact written to /workspace/out/roadmap_candidates.json"
     echo "Mock agent: roadmap_candidates completed"
+    exit 0
+    ;;
+
+  roadmap_imperative_links)
+    # Imperative counterpart to roadmap_candidates above (Decision 6): drives the real
+    # create-proposal/create-story/create-task/create-dependency/create-milestone/
+    # update-proposal CLI contract against the API server instead of writing a JSON
+    # artifact for a human gate to approve — mirroring how roadmap_status_update above
+    # exercises get-roadmap-graph/update-task-status live rather than through a fixture.
+    # Each create-* call's JSON response is captured and picked apart with jq for the
+    # next call, the same id-chaining idiom check_prs_gate/multi_repo_pr use to thread
+    # repo/PR ids through register-pr.
+    #
+    # Two Tasks (not one) so create-dependency has two distinct ids to link — a
+    # self-edge would be rejected as a trivial cycle, same reasoning as the two-Task
+    # shape in roadmap_candidates' JSON above. The Epic is created first with
+    # --priority high and only assigned to the Milestone at the end via
+    # update-proposal --milestone-id, since create-milestone (unlike the declarative
+    # artifact's milestone-by-key resolution) returns a real id only once the
+    # Milestone itself has been created.
+    echo "Mock agent: roadmap_imperative_links scenario"
+
+    EPIC=$(create-proposal \
+      --title "Mock Imperative Links Epic" \
+      --description "Epic created by the roadmap_imperative_links mock-agent scenario." \
+      --priority high)
+    EPIC_ID=$(echo "$EPIC" | jq -r '.id')
+    echo "Created Epic $EPIC_ID"
+
+    STORY=$(create-story \
+      --epic-id "$EPIC_ID" \
+      --title "Mock Imperative Links Story" \
+      --description "Story created by the roadmap_imperative_links mock-agent scenario." \
+      --priority medium)
+    STORY_ID=$(echo "$STORY" | jq -r '.id')
+    echo "Created Story $STORY_ID"
+
+    TASK_A=$(create-task \
+      --epic-id "$EPIC_ID" --story-id "$STORY_ID" \
+      --title "Mock Imperative Links Task A (blocking)" \
+      --description "First Task; blocks Task B below." \
+      --priority high)
+    TASK_A_ID=$(echo "$TASK_A" | jq -r '.id')
+    echo "Created Task A $TASK_A_ID (priority high)"
+
+    TASK_B=$(create-task \
+      --epic-id "$EPIC_ID" --story-id "$STORY_ID" \
+      --title "Mock Imperative Links Task B (blocked)" \
+      --description "Second Task; blocked by Task A above." \
+      --priority low)
+    TASK_B_ID=$(echo "$TASK_B" | jq -r '.id')
+    echo "Created Task B $TASK_B_ID (priority low)"
+
+    DEPENDENCY=$(create-dependency \
+      --blocking-type task --blocking-id "$TASK_A_ID" \
+      --blocked-type task --blocked-id "$TASK_B_ID")
+    DEPENDENCY_ID=$(echo "$DEPENDENCY" | jq -r '.id')
+    echo "Created dependency $DEPENDENCY_ID ($TASK_A_ID blocks $TASK_B_ID)"
+
+    MILESTONE=$(create-milestone \
+      --name "Mock Imperative Links Milestone" \
+      --description "Milestone created by the roadmap_imperative_links mock-agent scenario." \
+      --target-date "2027-01-01")
+    MILESTONE_ID=$(echo "$MILESTONE" | jq -r '.id')
+    echo "Created Milestone $MILESTONE_ID"
+
+    update-proposal --proposal-id "$EPIC_ID" --milestone-id "$MILESTONE_ID" > /dev/null
+    echo "Assigned Epic $EPIC_ID to Milestone $MILESTONE_ID"
+
+    write_artifact "result.txt" \
+      "roadmap_imperative_links: epic=$EPIC_ID story=$STORY_ID task_a=$TASK_A_ID(blocking) task_b=$TASK_B_ID(blocked) dependency=$DEPENDENCY_ID milestone=$MILESTONE_ID"
+    echo "Mock agent: roadmap_imperative_links completed"
     exit 0
     ;;
 
@@ -736,13 +854,13 @@ JSON
   "")
     echo "ERROR: No scenario specified" >&2
     echo "Usage: mock-agent.sh <scenario> [options]" >&2
-    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, live_chat, multi_repo_pr, check_prs_gate, roadmap_status_update, roadmap_status_update_env_default, roadmap_status_update_missing_task_id, roadmap_candidates, single_repo_claude_md, dind_isolation, dind_network_connectivity, many_artifacts, rate_limited" >&2
+    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, live_chat, multi_repo_pr, check_prs_gate, roadmap_status_update, roadmap_status_update_env_default, roadmap_status_update_missing_task_id, roadmap_candidates, roadmap_imperative_links, single_repo_claude_md, dind_isolation, dind_network_connectivity, many_artifacts, rate_limited" >&2
     exit 1
     ;;
 
   *)
     echo "ERROR: Unknown scenario '$SCENARIO'" >&2
-    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, live_chat, multi_repo_pr, check_prs_gate, roadmap_status_update, roadmap_status_update_env_default, roadmap_status_update_missing_task_id, roadmap_candidates, single_repo_claude_md, dind_isolation, dind_network_connectivity, many_artifacts, rate_limited" >&2
+    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, live_chat, multi_repo_pr, check_prs_gate, roadmap_status_update, roadmap_status_update_env_default, roadmap_status_update_missing_task_id, roadmap_candidates, roadmap_imperative_links, single_repo_claude_md, dind_isolation, dind_network_connectivity, many_artifacts, rate_limited" >&2
     exit 1
     ;;
 esac

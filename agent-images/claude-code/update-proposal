@@ -1,12 +1,12 @@
 #!/bin/bash
 # update-proposal — update an existing roadmap Epic via the ChorusKube API server.
 #
-# Usage: update-proposal --proposal-id UUID [--title TITLE] [--description DESC] [--motivation MOT]
+# Usage: update-proposal --proposal-id UUID [--title TITLE] [--description DESC] [--motivation MOT] [--milestone-id UUID]
 #
-# Updates the title, description, and/or motivation of an Epic that has no
-# descendant Task past backlog status. PATCH semantics: only fields you pass
-# are changed; omitting a flag leaves the field unchanged. Pass --motivation ""
-# to clear the motivation field.
+# Updates the title, description, motivation, and/or milestone assignment of
+# an Epic that has no descendant Task past backlog status. PATCH semantics:
+# only fields you pass are changed; omitting a flag leaves the field
+# unchanged. Pass --motivation "" to clear the motivation field.
 #
 # This script keeps its original name, flag names, and internal-endpoint path
 # for backward compatibility with deployed agent images (rolling-upgrade
@@ -19,6 +19,8 @@
 #   --title TITLE         New title (optional, max 255 chars)
 #   --description DESC    New description (optional)
 #   --motivation MOT      New motivation (optional; "" to clear)
+#   --milestone-id UUID   Milestone to assign this Epic to (optional). Must
+#                         already exist — see create-milestone.
 #   -h, --help            Show this help message
 #
 # Environment:
@@ -30,6 +32,7 @@
 # Examples:
 #   update-proposal --proposal-id <uuid> --title "Refined title"
 #   update-proposal --proposal-id <uuid> --description "..." --motivation ""
+#   update-proposal --proposal-id <uuid> --milestone-id <uuid>
 #
 # Exit codes:
 #   0  Epic updated successfully (JSON response printed to stdout)
@@ -55,9 +58,11 @@ PROPOSAL_ID=""
 TITLE=""
 DESCRIPTION=""
 MOTIVATION=""
+MILESTONE_ID=""
 HAS_TITLE=false
 HAS_DESCRIPTION=false
 HAS_MOTIVATION=false
+HAS_MILESTONE_ID=false
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -80,9 +85,14 @@ while [ $# -gt 0 ]; do
             HAS_MOTIVATION=true
             shift 2
             ;;
+        --milestone-id)
+            MILESTONE_ID="$2"
+            HAS_MILESTONE_ID=true
+            shift 2
+            ;;
         *)
             echo "ERROR: Unknown argument: $1" >&2
-            echo "Usage: update-proposal --proposal-id UUID [--title TITLE] [--description DESC] [--motivation MOT]" >&2
+            echo "Usage: update-proposal --proposal-id UUID [--title TITLE] [--description DESC] [--motivation MOT] [--milestone-id UUID]" >&2
             exit 1
             ;;
     esac
@@ -90,17 +100,19 @@ done
 
 if [ -z "$PROPOSAL_ID" ]; then
     echo "ERROR: --proposal-id is required." >&2
-    echo "Usage: update-proposal --proposal-id UUID [--title TITLE] [--description DESC] [--motivation MOT]" >&2
+    echo "Usage: update-proposal --proposal-id UUID [--title TITLE] [--description DESC] [--motivation MOT] [--milestone-id UUID]" >&2
     exit 1
 fi
 
-if [ "$HAS_TITLE" = false ] && [ "$HAS_DESCRIPTION" = false ] && [ "$HAS_MOTIVATION" = false ]; then
-    echo "ERROR: At least one of --title, --description, or --motivation must be provided." >&2
+if [ "$HAS_TITLE" = false ] && [ "$HAS_DESCRIPTION" = false ] && [ "$HAS_MOTIVATION" = false ] && [ "$HAS_MILESTONE_ID" = false ]; then
+    echo "ERROR: At least one of --title, --description, --motivation, or --milestone-id must be provided." >&2
     exit 1
 fi
 
 # Build JSON body using jq for proper escaping.
 # Only include keys for flags that were explicitly passed (PATCH semantics).
+# --milestone-id has no "clear" form here (null means "leave unchanged" on
+# this endpoint, not "unassign") — see InternalUpdateEpicRequest's javadoc.
 BODY="{}"
 if [ "$HAS_TITLE" = true ]; then
     BODY=$(echo "$BODY" | jq --arg v "$TITLE" '. + {title: $v}')
@@ -110,6 +122,9 @@ if [ "$HAS_DESCRIPTION" = true ]; then
 fi
 if [ "$HAS_MOTIVATION" = true ]; then
     BODY=$(echo "$BODY" | jq --arg v "$MOTIVATION" '. + {motivation: $v}')
+fi
+if [ "$HAS_MILESTONE_ID" = true ]; then
+    BODY=$(echo "$BODY" | jq --arg v "$MILESTONE_ID" '. + {milestoneId: $v}')
 fi
 
 RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH \
