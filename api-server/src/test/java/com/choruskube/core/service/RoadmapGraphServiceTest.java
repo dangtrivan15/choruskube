@@ -128,6 +128,22 @@ public class RoadmapGraphServiceTest extends BaseTest {
     }
 
     @Test
+    void getGraph_tasksCarryPriority() {
+        EpicResponse epic = makeEpic("https://github.com/test/graph-task-priority.git");
+        StoryResponse story = makeStory(epic.id(), "Story");
+        TaskResponse explicit = taskService.create(
+                story.id(),
+                new TaskRequest("High priority task", "desc", com.choruskube.core.model.enums.Priority.high));
+        TaskResponse defaulted = makeTask(story.id(), "Defaulted priority task");
+
+        RoadmapGraphSnapshot snapshot = graphService.getGraph(epic.id());
+
+        var byId = snapshot.tasks().stream().collect(java.util.stream.Collectors.toMap(TaskResponse::id, t -> t));
+        assertThat(byId.get(explicit.id()).priority()).isEqualTo("high");
+        assertThat(byId.get(defaulted.id()).priority()).isEqualTo("medium");
+    }
+
+    @Test
     void getGraph_intraEpicDependency_appearsInDependenciesNotExternalBlockers() {
         EpicResponse epic = makeEpic("https://github.com/test/graph-intra-dep.git");
         StoryResponse story = makeStory(epic.id(), "Story");

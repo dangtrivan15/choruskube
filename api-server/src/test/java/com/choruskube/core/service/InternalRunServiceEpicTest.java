@@ -82,6 +82,12 @@ class InternalRunServiceEpicTest {
     @Mock
     private RoadmapGraphService roadmapGraphService;
 
+    @Mock
+    private WorkItemDependencyService workItemDependencyService;
+
+    @Mock
+    private MilestoneService milestoneService;
+
     private final ObjectMapper objectMapper = new ObjectMapper();
     private InternalRunService service;
 
@@ -116,7 +122,9 @@ class InternalRunServiceEpicTest {
                 roadmapGraphService,
                 new DecisionOptionsResolver(),
                 null,
-                null);
+                null,
+                workItemDependencyService,
+                milestoneService);
     }
 
     @Test
@@ -331,7 +339,8 @@ class InternalRunServiceEpicTest {
                 List.of(),
                 0L,
                 null,
-                null);
+                null,
+                "medium");
         when(taskService.create(eq(storyId), any(), eq(runId), eq(PROJECT_ID))).thenReturn(expected);
 
         TaskResponse result = service.createTask(runId, epicId, storyId, req);
@@ -559,7 +568,8 @@ class InternalRunServiceEpicTest {
                 List.of(),
                 0L,
                 null,
-                null);
+                null,
+                "medium");
         when(taskService.updateStatusInternal(
                         taskId,
                         com.choruskube.core.model.enums.WorkItemStatus.done,
@@ -572,6 +582,157 @@ class InternalRunServiceEpicTest {
         TaskResponse result = service.updateTaskStatus(runId, nodeExecId, taskId, req);
 
         assertThat(result).isSameAs(expected);
+    }
+
+    // ── createEpic: milestoneId threading ──────────────────────────────
+
+    @Test
+    void createEpic_withMilestoneId_assignsMilestoneViaUpdateInternal() {
+        UUID runId = UUID.randomUUID();
+        UUID epicId = UUID.randomUUID();
+        UUID milestoneId = UUID.randomUUID();
+        WorkflowRun run = createRun(
+                runId, TEMPLATE_ID, "{\"software_project_id\":\"" + PROJECT_ID + "\",\"feature_request\":\"x\"}");
+        when(runRepo.findById(runId)).thenReturn(Optional.of(run));
+        when(softwareProjectRepo.existsById(PROJECT_ID)).thenReturn(true);
+
+        EpicResponse created = epicResponseFor(PROJECT_ID);
+        EpicResponse withMilestone = epicResponseFor(PROJECT_ID);
+        when(epicService.create(any(), eq(runId))).thenReturn(created);
+        when(epicService.updateInternal(
+                        eq(created.id()),
+                        eq(PROJECT_ID),
+                        eq(runId),
+                        eq(new InternalUpdateEpicRequest(null, null, null, milestoneId))))
+                .thenReturn(withMilestone);
+
+        var req = new InternalCreateEpicRequest("title", "desc", "motivation", null, milestoneId);
+        EpicResponse result = service.createEpic(runId, req);
+
+        assertThat(result).isSameAs(withMilestone);
+        verify(epicService)
+                .updateInternal(
+                        eq(created.id()),
+                        eq(PROJECT_ID),
+                        eq(runId),
+                        eq(new InternalUpdateEpicRequest(null, null, null, milestoneId)));
+    }
+
+    @Test
+    void createEpic_withoutMilestoneId_neverCallsUpdateInternal() {
+        UUID runId = UUID.randomUUID();
+        WorkflowRun run = createRun(
+                runId, TEMPLATE_ID, "{\"software_project_id\":\"" + PROJECT_ID + "\",\"feature_request\":\"x\"}");
+        when(runRepo.findById(runId)).thenReturn(Optional.of(run));
+        when(softwareProjectRepo.existsById(PROJECT_ID)).thenReturn(true);
+        when(epicService.create(any(), eq(runId))).thenReturn(epicResponseFor(PROJECT_ID));
+
+        var req = new InternalCreateEpicRequest("title", "desc", "motivation");
+        service.createEpic(runId, req);
+
+        verify(epicService, never()).updateInternal(any(), any(), any(), any());
+    }
+
+    // ── createDependency ────────────────────────────────────────────────
+
+    @Test
+    void createDependency_bothItemsInProject_delegatesToWorkItemDependencyService() {
+        UUID runId = UUID.randomUUID();
+        UUID blockingEpicId = UUID.randomUUID();
+        UUID blockedEpicId = UUID.randomUUID();
+        WorkflowRun run = createRun(
+                runId, TEMPLATE_ID, "{\"software_project_id\":\"" + PROJECT_ID + "\",\"feature_request\":\"x\"}");
+        when(runRepo.findById(runId)).thenReturn(Optional.of(run));
+        when(softwareProjectRepo.existsById(PROJECT_ID)).thenReturn(true);
+        when(epicRepo.findById(blockingEpicId)).thenReturn(Optional.of(epicInProject(blockingEpicId, PROJECT_ID)));
+        when(epicRepo.findById(blockedEpicId)).thenReturn(Optional.of(epicInProject(blockedEpicId, PROJECT_ID)));
+
+        var req = new com.choruskube.core.dto.InternalCreateDependencyRequest(
+                "epic", blockingEpicId, "epic", blockedEpicId);
+        var expected = new com.choruskube.core.dto.DependencyEdgeResponse(
+                UUID.randomUUID(), "epic", blockingEpicId, "epic", blockedEpicId, java.time.Instant.now());
+        when(workItemDependencyService.create(eq(new com.choruskube.core.dto.CreateDependencyRequest(
+                        "epic", blockingEpicId, "epic", blockedEpicId))))
+                .thenReturn(expected);
+
+        var result = service.createDependency(runId, req);
+
+        assertThat(result).isSameAs(expected);
+    }
+
+    @Test
+    void createDependency_blockedItemInDifferentProject_throwsForbidden() {
+        UUID runId = UUID.randomUUID();
+        UUID blockingEpicId = UUID.randomUUID();
+        UUID blockedEpicId = UUID.randomUUID();
+        WorkflowRun run = createRun(
+                runId, TEMPLATE_ID, "{\"software_project_id\":\"" + PROJECT_ID + "\",\"feature_request\":\"x\"}");
+        when(runRepo.findById(runId)).thenReturn(Optional.of(run));
+        when(softwareProjectRepo.existsById(PROJECT_ID)).thenReturn(true);
+        when(epicRepo.findById(blockingEpicId)).thenReturn(Optional.of(epicInProject(blockingEpicId, PROJECT_ID)));
+        when(epicRepo.findById(blockedEpicId)).thenReturn(Optional.of(epicInProject(blockedEpicId, PROJECT_ID_2)));
+
+        var req = new com.choruskube.core.dto.InternalCreateDependencyRequest(
+                "epic", blockingEpicId, "epic", blockedEpicId);
+
+        assertThatThrownBy(() -> service.createDependency(runId, req))
+                .isInstanceOf(com.choruskube.core.exception.ForbiddenException.class);
+        verifyNoInteractions(workItemDependencyService);
+    }
+
+    @Test
+    void createDependency_unknownItem_throwsNotFound() {
+        UUID runId = UUID.randomUUID();
+        UUID blockingEpicId = UUID.randomUUID();
+        UUID blockedEpicId = UUID.randomUUID();
+        WorkflowRun run = createRun(
+                runId, TEMPLATE_ID, "{\"software_project_id\":\"" + PROJECT_ID + "\",\"feature_request\":\"x\"}");
+        when(runRepo.findById(runId)).thenReturn(Optional.of(run));
+        when(softwareProjectRepo.existsById(PROJECT_ID)).thenReturn(true);
+        when(epicRepo.findById(blockingEpicId)).thenReturn(Optional.empty());
+
+        var req = new com.choruskube.core.dto.InternalCreateDependencyRequest(
+                "epic", blockingEpicId, "epic", blockedEpicId);
+
+        assertThatThrownBy(() -> service.createDependency(runId, req)).isInstanceOf(NotFoundException.class);
+    }
+
+    // ── createMilestone ─────────────────────────────────────────────────
+
+    @Test
+    void createMilestone_delegatesToMilestoneServiceFindOrCreate() {
+        UUID runId = UUID.randomUUID();
+        WorkflowRun run = createRun(
+                runId, TEMPLATE_ID, "{\"software_project_id\":\"" + PROJECT_ID + "\",\"feature_request\":\"x\"}");
+        when(runRepo.findById(runId)).thenReturn(Optional.of(run));
+        when(softwareProjectRepo.existsById(PROJECT_ID)).thenReturn(true);
+
+        var req = new com.choruskube.core.dto.InternalCreateMilestoneRequest("Q3 Launch", "release", null);
+        var expected = new com.choruskube.core.dto.MilestoneResponse(
+                UUID.randomUUID(),
+                "Q3 Launch",
+                "release",
+                PROJECT_ID,
+                null,
+                0,
+                new com.choruskube.core.dto.MilestoneResponse.Progress(0, 0, 0, 0),
+                false,
+                0,
+                java.time.Instant.now(),
+                java.time.Instant.now());
+        when(milestoneService.findOrCreate(PROJECT_ID, "Q3 Launch", "release", null))
+                .thenReturn(expected);
+
+        var result = service.createMilestone(runId, req);
+
+        assertThat(result).isSameAs(expected);
+    }
+
+    private Epic epicInProject(UUID epicId, UUID projectId) {
+        Epic epic = new Epic();
+        epic.setId(epicId);
+        epic.setSoftwareProjectId(projectId);
+        return epic;
     }
 
     @Test

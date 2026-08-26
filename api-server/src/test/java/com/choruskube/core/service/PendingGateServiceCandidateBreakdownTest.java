@@ -2,10 +2,10 @@ package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.*;
 
-import com.choruskube.core.dto.CandidateEpicProposal;
 import com.choruskube.core.dto.PendingGateResponse;
 import com.choruskube.core.dto.ResolvedArtifactEntry;
 import com.choruskube.core.dto.ResolvedArtifactGroup;
+import com.choruskube.core.dto.RoadmapCandidatesDocument;
 import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.NodeExecutionStatus;
@@ -120,12 +120,12 @@ class PendingGateServiceCandidateBreakdownTest {
         List<PendingGateResponse> result = service.getPendingGates();
 
         assertThat(result).hasSize(1);
-        List<CandidateEpicProposal> breakdown = result.get(0).candidateBreakdown();
+        RoadmapCandidatesDocument breakdown = result.get(0).candidateBreakdown();
         assertThat(breakdown).isNotNull();
-        assertThat(breakdown).hasSize(1);
-        assertThat(breakdown.get(0).title()).isEqualTo("Bulk Import");
-        assertThat(breakdown.get(0).stories()).hasSize(1);
-        assertThat(breakdown.get(0).stories().get(0).tasks()).hasSize(1);
+        assertThat(breakdown.epics()).hasSize(1);
+        assertThat(breakdown.epics().get(0).title()).isEqualTo("Bulk Import");
+        assertThat(breakdown.epics().get(0).stories()).hasSize(1);
+        assertThat(breakdown.epics().get(0).stories().get(0).tasks()).hasSize(1);
     }
 
     @Test

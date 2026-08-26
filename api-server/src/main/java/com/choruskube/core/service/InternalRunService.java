@@ -2,6 +2,7 @@ package com.choruskube.core.service;
 
 import com.choruskube.core.dto.*;
 import com.choruskube.core.exception.BadRequestException;
+import com.choruskube.core.exception.ForbiddenException;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.*;
 import com.choruskube.core.model.enums.*;
@@ -53,6 +54,8 @@ public class InternalRunService {
     private final DecisionOptionsResolver decisionOptionsResolver;
     private final WorkItemDependencyRepository dependencyRepo;
     private final ArtifactService artifactService;
+    private final WorkItemDependencyService workItemDependencyService;
+    private final MilestoneService milestoneService;
 
     @Value("${artifact.enforcement.mode:warn}")
     private String artifactEnforcementMode;
@@ -82,7 +85,9 @@ public class InternalRunService {
             RoadmapGraphService roadmapGraphService,
             DecisionOptionsResolver decisionOptionsResolver,
             WorkItemDependencyRepository dependencyRepo,
-            ArtifactService artifactService) {
+            ArtifactService artifactService,
+            WorkItemDependencyService workItemDependencyService,
+            MilestoneService milestoneService) {
         this.runRepo = runRepo;
         this.execRepo = execRepo;
         this.logRepo = logRepo;
@@ -108,6 +113,8 @@ public class InternalRunService {
         this.decisionOptionsResolver = decisionOptionsResolver;
         this.dependencyRepo = dependencyRepo;
         this.artifactService = artifactService;
+        this.workItemDependencyService = workItemDependencyService;
+        this.milestoneService = milestoneService;
     }
 
     public NodeExecutionResponse createNodeExecution(UUID runId, InternalCreateNodeExecutionRequest req) {
@@ -735,7 +742,19 @@ public class InternalRunService {
         UUID softwareProjectId = resolveSoftwareProjectIdFromRun(run);
         EpicRequest epicRequest =
                 new EpicRequest(req.title(), req.description(), req.motivation(), softwareProjectId, req.priority());
-        return epicService.create(epicRequest, runId);
+        EpicResponse epic = epicService.create(epicRequest, runId);
+        if (req.milestoneId() != null) {
+            // Reuses updateInternal's already-internal-safe (assertSameOrg + direct project-match,
+            // no checkOrgAccess) milestone-assignment branch rather than EpicService#assignMilestone,
+            // which reads a request-scoped tenant context that does not exist on this JOB_SECRET
+            // path (Decision 4/6) — see updateInternal's own javadoc.
+            epic = epicService.updateInternal(
+                    epic.id(),
+                    softwareProjectId,
+                    runId,
+                    new InternalUpdateEpicRequest(null, null, null, req.milestoneId()));
+        }
+        return epic;
     }
 
     /**
@@ -812,7 +831,8 @@ public class InternalRunService {
             throw new NotFoundException("Story " + storyId + " does not belong to epic " + epicId);
         }
         UUID softwareProjectId = resolveSoftwareProjectIdFromRun(run);
-        return taskService.create(storyId, new TaskRequest(req.title(), req.description()), runId, softwareProjectId);
+        return taskService.create(
+                storyId, new TaskRequest(req.title(), req.description(), req.priority()), runId, softwareProjectId);
     }
 
     /**
@@ -894,6 +914,102 @@ public class InternalRunService {
         UUID softwareProjectId = resolveSoftwareProjectIdFromRun(run);
         return taskService.updateStatusInternal(
                 taskId, request.status(), runId, softwareProjectId, request.runId(), request.note());
+    }
+
+    /**
+     * Public wrapper around {@link #resolveSoftwareProjectIdFromRun} for collaborators that need
+     * the run's resolved software project but aren't themselves an {@code InternalRunService}
+     * method — namely {@code DefaultRoadmapCandidateMaterializer}, which needs it to call {@code
+     * MilestoneService.findOrCreate} directly (Decision 4/6): unlike Epic/Story/Task creation,
+     * Milestone find-or-create has no other project-membership logic to reuse from this class, so
+     * the materializer only needs the resolved id itself, not a full create/update delegate.
+     */
+    @Transactional(readOnly = true)
+    public UUID resolveSoftwareProjectId(UUID runId) {
+        WorkflowRun run =
+                runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
+        return resolveSoftwareProjectIdFromRun(run);
+    }
+
+    /**
+     * Creates a "blocking" dependency edge between two items already resolved to real database ids
+     * on behalf of an agent pod (Decision 6) — the imperative-agent counterpart to {@code
+     * RoadmapCandidateMaterializer}'s direct {@code WorkItemDependencyService.create} call for
+     * candidate-key edges. Unlike the materializer's batch (where both endpoints are guaranteed to
+     * be items just created in this same run's project), an imperative agent supplies arbitrary
+     * ids, so both endpoints are asserted to belong to the run's own resolved software project
+     * before delegating — otherwise a valid JOB_SECRET for one run could wire up a dependency edge
+     * between two items in a completely different project.
+     */
+    @Transactional
+    public DependencyEdgeResponse createDependency(UUID runId, InternalCreateDependencyRequest req) {
+        WorkflowRun run =
+                runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
+        UUID softwareProjectId = resolveSoftwareProjectIdFromRun(run);
+
+        BlockableItemType blockingType = parseBlockableItemType(req.blockingItemType());
+        BlockableItemType blockedType = parseBlockableItemType(req.blockedItemType());
+        assertItemInProject(blockingType, req.blockingItemId(), softwareProjectId);
+        assertItemInProject(blockedType, req.blockedItemId(), softwareProjectId);
+
+        return workItemDependencyService.create(new CreateDependencyRequest(
+                req.blockingItemType(), req.blockingItemId(), req.blockedItemType(), req.blockedItemId()));
+    }
+
+    /**
+     * Creates (or reuses an existing same-named) Milestone under the run's resolved software
+     * project on behalf of an agent pod (Decision 6) — delegates to {@link
+     * MilestoneService#findOrCreate}, the same method {@code RoadmapCandidateMaterializer} uses,
+     * so both write surfaces share one Milestone dedup rule. No cross-item ownership check is
+     * needed (unlike {@link #createDependency}): a Milestone is scoped directly under {@code
+     * softwareProjectId}, never referencing an existing item by id.
+     */
+    @Transactional
+    public MilestoneResponse createMilestone(UUID runId, InternalCreateMilestoneRequest req) {
+        WorkflowRun run =
+                runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
+        UUID softwareProjectId = resolveSoftwareProjectIdFromRun(run);
+        return milestoneService.findOrCreate(softwareProjectId, req.name(), req.description(), req.targetDate());
+    }
+
+    private BlockableItemType parseBlockableItemType(String raw) {
+        try {
+            return BlockableItemType.valueOf(raw);
+        } catch (IllegalArgumentException | NullPointerException e) {
+            throw new BadRequestException("Invalid item type: " + raw + " (must be 'epic', 'story' or 'task')");
+        }
+    }
+
+    /**
+     * Asserts that the given item resolves to {@code softwareProjectId}, throwing {@link
+     * NotFoundException} if it doesn't exist at all or {@link ForbiddenException} if it belongs to
+     * a different project — shared by both endpoints of {@link #createDependency}. A Story has no
+     * {@code software_project_id} column of its own (see {@code Story}), so its project is read off
+     * its parent Epic, one hop up.
+     */
+    private void assertItemInProject(BlockableItemType type, UUID itemId, UUID softwareProjectId) {
+        UUID itemProjectId =
+                switch (type) {
+                    case epic ->
+                        epicRepo.findById(itemId)
+                                .map(Epic::getSoftwareProjectId)
+                                .orElseThrow(() -> new NotFoundException("Epic not found: " + itemId));
+                    case story -> {
+                        Story story = storyRepo
+                                .findById(itemId)
+                                .orElseThrow(() -> new NotFoundException("Story not found: " + itemId));
+                        yield epicRepo.findById(story.getEpicId())
+                                .map(Epic::getSoftwareProjectId)
+                                .orElseThrow(() -> new NotFoundException("Epic not found for story " + itemId));
+                    }
+                    case task ->
+                        taskRepo.findById(itemId)
+                                .map(Task::getSoftwareProjectId)
+                                .orElseThrow(() -> new NotFoundException("Task not found: " + itemId));
+                };
+        if (!itemProjectId.equals(softwareProjectId)) {
+            throw new ForbiddenException(type.name() + " " + itemId + " does not belong to the run's software project");
+        }
     }
 
     /**

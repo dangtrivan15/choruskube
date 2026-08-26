@@ -48,12 +48,14 @@ class BaseRoadmapProvisionerSeederTest extends BaseTest {
         var template = templateRepo.findByName("Roadmap Provisioner");
         assertThat(template).isPresent();
         assertThat(template.get().getGraphId()).isEqualTo("roadmap-provisioner");
-        // v14 (per-node-type model/effort config): roadmap_analyzer gets a static
-        // Opus/xhigh configuration — no shape change from v13's terminal-decision human
-        // gate + deterministic materialization (itself replacing the v12 3-node
-        // analyzer → gate → feature-creator shape).
+        // v15 (roadmap dependencies/priorities/milestones): the roadmap_candidates.json
+        // schema documented in the prompt gains milestones/dependencies/per-level priority
+        // (Decision 4/5) — no template shape change from v14's per-node-type model/effort
+        // config, itself unchanged in shape from v13's terminal-decision human gate +
+        // deterministic materialization (replacing the v12 3-node analyzer → gate →
+        // feature-creator shape).
         assertThat(template.get().getVersion()).isEqualTo(BaseRoadmapProvisionerSeeder.VERSION);
-        assertThat(BaseRoadmapProvisionerSeeder.VERSION).isEqualTo(14);
+        assertThat(BaseRoadmapProvisionerSeeder.VERSION).isEqualTo(15);
     }
 
     @Test
@@ -227,22 +229,42 @@ class BaseRoadmapProvisionerSeederTest extends BaseTest {
     }
 
     @Test
-    void analyzerPromptDescribesPriorityAsSeedingTheEpic() {
+    void analyzerPromptDescribesPriorityAtEveryLevel() {
         var nd = nodeDefRepo.findAll().stream()
                 .filter(n -> "Roadmap Analyzer".equals(n.getName()))
                 .findFirst()
                 .orElseThrow();
         String prompt = nd.getPromptTemplate();
 
-        // The candidate "priority" is now persisted as the materialized Epic's initial (human-
-        // editable) priority — the prompt must say so, and must no longer claim both repos and
-        // priority are reviewer-context-only fields that aren't created as roadmap fields.
-        assertThat(prompt).contains("seeds the materialized Epic's");
-        assertThat(prompt).doesNotContain("\"repos\" and \"priority\" are reviewer context only");
-        // repos alone stays reviewer-context-only.
+        // Decision 4: priority is now declarable at Epic, Story, AND Task level (no longer
+        // Epic-only) — the prompt must say so, and must no longer claim Story candidates carry
+        // no priority signal / default silently to Medium with no way to override.
+        assertThat(prompt).contains("optional at Epic, Story, AND Task");
+        assertThat(prompt).doesNotContain("every materialized Story starts at Medium");
+        assertThat(prompt).doesNotContain("Story candidates carry no");
+        // repos alone stays reviewer-context-only — never a roadmap field.
         assertThat(prompt).contains("\"repos\" is reviewer context only");
-        // Story candidates carry no priority signal — the prompt notes they default to Medium.
-        assertThat(prompt).contains("Story candidates carry no");
+        assertThat(prompt).doesNotContain("\"repos\" and \"priority\" are reviewer context only");
+    }
+
+    @Test
+    void analyzerPromptDescribesMilestonesAndDependencies() {
+        var nd = nodeDefRepo.findAll().stream()
+                .filter(n -> "Roadmap Analyzer".equals(n.getName()))
+                .findFirst()
+                .orElseThrow();
+        String prompt = nd.getPromptTemplate();
+
+        // Decision 2/4/5: the document shape, milestone references, and dependency edges must
+        // all be documented, using the exact field names the DTOs/resolver/materializer expect.
+        assertThat(prompt).contains("\"milestones\"");
+        assertThat(prompt).contains("\"dependencies\"");
+        assertThat(prompt).contains("\"blocking\"");
+        assertThat(prompt).contains("\"blocked\"");
+        assertThat(prompt).contains("\"key\"");
+        assertThat(prompt).contains("\"milestone\": \"milestone-1\"");
+        assertThat(prompt).contains("unique");
+        assertThat(prompt).contains("cycle");
     }
 
     @Test

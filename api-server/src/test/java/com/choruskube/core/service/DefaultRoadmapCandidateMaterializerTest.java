@@ -4,16 +4,22 @@ import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+import com.choruskube.core.dto.CandidateDependency;
 import com.choruskube.core.dto.CandidateEpicProposal;
+import com.choruskube.core.dto.CandidateMilestone;
 import com.choruskube.core.dto.CandidateStoryProposal;
 import com.choruskube.core.dto.CandidateTaskProposal;
+import com.choruskube.core.dto.CreateDependencyRequest;
 import com.choruskube.core.dto.EpicResponse;
 import com.choruskube.core.dto.InternalCreateEpicRequest;
 import com.choruskube.core.dto.InternalCreateStoryRequest;
 import com.choruskube.core.dto.InternalCreateTaskRequest;
 import com.choruskube.core.dto.MaterializationSummary;
+import com.choruskube.core.dto.MilestoneResponse;
+import com.choruskube.core.dto.RoadmapCandidatesDocument;
 import com.choruskube.core.dto.StoryResponse;
 import com.choruskube.core.dto.TaskResponse;
+import com.choruskube.core.exception.DependencyCycleException;
 import com.choruskube.core.model.enums.Priority;
 import java.time.Instant;
 import java.util.List;
@@ -23,22 +29,29 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 /**
- * {@link DefaultRoadmapCandidateMaterializer}: creates each candidate Epic/Story/Task through
- * {@link InternalRunService}'s existing agent-facing write path (Decision 3), best-effort per
- * top-level candidate (Caveat 3). A candidate Epic's free-text {@code priority} is parsed
- * case-insensitively onto {@link Priority} (defaulting to {@link Priority#medium}); {@code repos}
- * is still dropped (Caveat 6), and candidate Stories carry no priority signal at all.
+ * {@link DefaultRoadmapCandidateMaterializer}: creates each candidate Milestone/Epic/Story/Task
+ * through {@link InternalRunService}/{@link MilestoneService}'s existing agent-facing write paths
+ * (Decision 3/4), then each candidate dependency edge directly through {@link
+ * WorkItemDependencyService} (Decision 3), best-effort per top-level candidate/edge (Caveat 3). A
+ * candidate item's free-text {@code priority} is parsed case-insensitively onto {@link Priority}
+ * (defaulting to {@link Priority#medium}); Epic {@code repos} is still dropped (Caveat 6).
  */
 class DefaultRoadmapCandidateMaterializerTest {
 
     private InternalRunService internalRunService;
+    private MilestoneService milestoneService;
+    private WorkItemDependencyService workItemDependencyService;
     private DefaultRoadmapCandidateMaterializer materializer;
     private final UUID runId = UUID.randomUUID();
+    private final UUID softwareProjectId = UUID.randomUUID();
 
     @BeforeEach
     void setUp() {
         internalRunService = Mockito.mock(InternalRunService.class);
-        materializer = new DefaultRoadmapCandidateMaterializer(internalRunService);
+        milestoneService = Mockito.mock(MilestoneService.class);
+        workItemDependencyService = Mockito.mock(WorkItemDependencyService.class);
+        materializer = new DefaultRoadmapCandidateMaterializer(
+                internalRunService, milestoneService, workItemDependencyService);
     }
 
     private static EpicResponse epicResponse(UUID id) {
@@ -66,7 +79,42 @@ class DefaultRoadmapCandidateMaterializerTest {
                 List.of(),
                 0L,
                 Instant.now(),
+                Instant.now(),
+                "medium");
+    }
+
+    private static MilestoneResponse milestoneResponse(UUID id, String name) {
+        return new MilestoneResponse(
+                id,
+                name,
+                "d",
+                UUID.randomUUID(),
+                null,
+                0,
+                new MilestoneResponse.Progress(0, 0, 0, 0),
+                false,
+                0,
+                Instant.now(),
                 Instant.now());
+    }
+
+    private static RoadmapCandidatesDocument document(
+            List<CandidateMilestone> milestones, List<CandidateEpicProposal> epics, List<CandidateDependency> deps) {
+        return new RoadmapCandidatesDocument(milestones, epics, deps);
+    }
+
+    private static CandidateEpicProposal epic(
+            String title, String priority, List<CandidateStoryProposal> stories, String key, String milestoneKey) {
+        return new CandidateEpicProposal(title, "d", "m", null, priority, stories, key, milestoneKey);
+    }
+
+    private static CandidateStoryProposal story(
+            String title, List<CandidateTaskProposal> tasks, String key, String priority) {
+        return new CandidateStoryProposal(title, "s-desc", tasks, key, priority);
+    }
+
+    private static CandidateTaskProposal task(String title, String key, String priority) {
+        return new CandidateTaskProposal(title, "t-desc", key, priority);
     }
 
     @Test
@@ -78,46 +126,183 @@ class DefaultRoadmapCandidateMaterializerTest {
         when(internalRunService.createTask(eq(runId), eq(epicId), eq(storyId), any()))
                 .thenReturn(taskResponse(storyId));
 
-        CandidateEpicProposal candidate = new CandidateEpicProposal(
+        CandidateEpicProposal candidate = epic(
                 "Bulk Import",
-                "desc",
-                "why",
-                List.of("repo-a", "repo-b"),
                 "High",
-                List.of(new CandidateStoryProposal(
-                        "Story 1", "s-desc", List.of(new CandidateTaskProposal("Task 1", "t-desc")))));
+                List.of(story("Story 1", List.of(task("Task 1", null, null)), null, null)),
+                null,
+                null);
 
-        MaterializationSummary summary = materializer.materialize(runId, List.of(candidate));
+        MaterializationSummary summary = materializer.materialize(runId, document(null, List.of(candidate), null));
 
         assertThat(summary.createdEpicIds()).containsExactly(epicId);
         assertThat(summary.errors()).isEmpty();
+        assertThat(summary.createdMilestoneIds()).isEmpty();
+        assertThat(summary.createdDependencyCount()).isZero();
 
-        // Candidate priority "High" materializes onto Priority.high; Story carries no priority
-        // signal, so the 2-arg (null-priority) InternalCreateStoryRequest is what's forwarded.
         verify(internalRunService)
-                .createEpic(eq(runId), eq(new InternalCreateEpicRequest("Bulk Import", "desc", "why", Priority.high)));
+                .createEpic(eq(runId), eq(new InternalCreateEpicRequest("Bulk Import", "d", "m", Priority.high, null)));
         verify(internalRunService)
-                .createStory(eq(runId), eq(epicId), eq(new InternalCreateStoryRequest("Story 1", "s-desc")));
+                .createStory(
+                        eq(runId),
+                        eq(epicId),
+                        eq(new InternalCreateStoryRequest("Story 1", "s-desc", Priority.medium)));
         verify(internalRunService)
-                .createTask(eq(runId), eq(epicId), eq(storyId), eq(new InternalCreateTaskRequest("Task 1", "t-desc")));
+                .createTask(
+                        eq(runId),
+                        eq(epicId),
+                        eq(storyId),
+                        eq(new InternalCreateTaskRequest("Task 1", "t-desc", Priority.medium)));
+    }
+
+    @Test
+    void storyAndTaskPriority_areParsedAndForwarded() {
+        UUID epicId = UUID.randomUUID();
+        UUID storyId = UUID.randomUUID();
+        when(internalRunService.createEpic(eq(runId), any())).thenReturn(epicResponse(epicId));
+        when(internalRunService.createStory(eq(runId), eq(epicId), any())).thenReturn(storyResponse(storyId, epicId));
+        when(internalRunService.createTask(eq(runId), eq(epicId), eq(storyId), any()))
+                .thenReturn(taskResponse(storyId));
+
+        CandidateEpicProposal candidate = epic(
+                "Bulk Import",
+                null,
+                List.of(story("Story 1", List.of(task("Task 1", null, "Low")), null, "High")),
+                null,
+                null);
+
+        materializer.materialize(runId, document(null, List.of(candidate), null));
+
+        verify(internalRunService)
+                .createStory(
+                        eq(runId), eq(epicId), eq(new InternalCreateStoryRequest("Story 1", "s-desc", Priority.high)));
+        verify(internalRunService)
+                .createTask(
+                        eq(runId),
+                        eq(epicId),
+                        eq(storyId),
+                        eq(new InternalCreateTaskRequest("Task 1", "t-desc", Priority.low)));
+    }
+
+    @Test
+    void milestone_createdAndEpicMilestoneIdSet() {
+        UUID epicId = UUID.randomUUID();
+        UUID milestoneId = UUID.randomUUID();
+        when(internalRunService.resolveSoftwareProjectId(runId)).thenReturn(softwareProjectId);
+        when(milestoneService.findOrCreate(softwareProjectId, "Q3 Launch", "release", null))
+                .thenReturn(milestoneResponse(milestoneId, "Q3 Launch"));
+        when(internalRunService.createEpic(eq(runId), any())).thenReturn(epicResponse(epicId));
+
+        CandidateMilestone milestone = new CandidateMilestone("m1", "Q3 Launch", "release", null);
+        CandidateEpicProposal candidate = epic("Bulk Import", null, List.of(), null, "m1");
+
+        MaterializationSummary summary =
+                materializer.materialize(runId, document(List.of(milestone), List.of(candidate), null));
+
+        assertThat(summary.createdMilestoneIds()).containsExactly(milestoneId);
+        verify(internalRunService)
+                .createEpic(
+                        eq(runId),
+                        eq(new InternalCreateEpicRequest("Bulk Import", "d", "m", Priority.medium, milestoneId)));
+    }
+
+    @Test
+    void milestone_dedupedByFindOrCreate_reusedAcrossEpics() {
+        UUID milestoneId = UUID.randomUUID();
+        when(internalRunService.resolveSoftwareProjectId(runId)).thenReturn(softwareProjectId);
+        when(milestoneService.findOrCreate(eq(softwareProjectId), eq("Q3 Launch"), any(), any()))
+                .thenReturn(milestoneResponse(milestoneId, "Q3 Launch"));
+        when(internalRunService.createEpic(eq(runId), any())).thenReturn(epicResponse(UUID.randomUUID()));
+
+        CandidateMilestone milestone = new CandidateMilestone("m1", "Q3 Launch", null, null);
+        CandidateEpicProposal candidateA = epic("Epic A", null, List.of(), "a", "m1");
+        CandidateEpicProposal candidateB = epic("Epic B", null, List.of(), "b", "m1");
+
+        MaterializationSummary summary =
+                materializer.materialize(runId, document(List.of(milestone), List.of(candidateA, candidateB), null));
+
+        // findOrCreate is the dedup point (a Mockito stub, not a real DB), so this only verifies
+        // the materializer calls findOrCreate once per candidate Milestone declaration, not once
+        // per referencing Epic — the real dedup-by-name guarantee lives in
+        // DefaultMilestoneServiceTest / the find-or-create service itself.
+        verify(milestoneService, times(1)).findOrCreate(eq(softwareProjectId), eq("Q3 Launch"), any(), any());
+        assertThat(summary.createdMilestoneIds()).containsExactly(milestoneId);
+    }
+
+    @Test
+    void dependencyEdge_created_countedInSummary() {
+        UUID epicAId = UUID.randomUUID();
+        UUID epicBId = UUID.randomUUID();
+        when(internalRunService.createEpic(eq(runId), any()))
+                .thenReturn(epicResponse(epicAId))
+                .thenReturn(epicResponse(epicBId));
+
+        CandidateEpicProposal candidateA = epic("Epic A", null, List.of(), "a", null);
+        CandidateEpicProposal candidateB = epic("Epic B", null, List.of(), "b", null);
+        CandidateDependency dep = new CandidateDependency("a", "b");
+
+        MaterializationSummary summary =
+                materializer.materialize(runId, document(null, List.of(candidateA, candidateB), List.of(dep)));
+
+        assertThat(summary.createdDependencyCount()).isEqualTo(1);
+        assertThat(summary.errors()).isEmpty();
+        verify(workItemDependencyService).create(eq(new CreateDependencyRequest("epic", epicAId, "epic", epicBId)));
+    }
+
+    @Test
+    void dependencyEdge_cyclic_recordedInErrors_doesNotAbortBatch() {
+        UUID epicAId = UUID.randomUUID();
+        UUID epicBId = UUID.randomUUID();
+        when(internalRunService.createEpic(eq(runId), any()))
+                .thenReturn(epicResponse(epicAId))
+                .thenReturn(epicResponse(epicBId));
+        when(workItemDependencyService.create(any())).thenThrow(new DependencyCycleException(epicAId, epicBId));
+
+        CandidateEpicProposal candidateA = epic("Epic A", null, List.of(), "a", null);
+        CandidateEpicProposal candidateB = epic("Epic B", null, List.of(), "b", null);
+        CandidateDependency dep = new CandidateDependency("a", "b");
+
+        MaterializationSummary summary =
+                materializer.materialize(runId, document(null, List.of(candidateA, candidateB), List.of(dep)));
+
+        // The batch is not aborted: both Epics are still recorded as created.
+        assertThat(summary.createdEpicIds()).containsExactlyInAnyOrder(epicAId, epicBId);
+        assertThat(summary.createdDependencyCount()).isZero();
+        assertThat(summary.errors()).hasSize(1);
+    }
+
+    @Test
+    void dependencyEdge_unresolvedKey_skippedAndRecorded() {
+        UUID epicAId = UUID.randomUUID();
+        when(internalRunService.createEpic(eq(runId), any())).thenReturn(epicResponse(epicAId));
+
+        CandidateEpicProposal candidateA = epic("Epic A", null, List.of(), "a", null);
+        CandidateDependency dep = new CandidateDependency("a", "does-not-exist");
+
+        MaterializationSummary summary =
+                materializer.materialize(runId, document(null, List.of(candidateA), List.of(dep)));
+
+        assertThat(summary.createdDependencyCount()).isZero();
+        assertThat(summary.errors()).hasSize(1);
+        verifyNoInteractions(workItemDependencyService);
     }
 
     @Test
     void oneFailingCandidate_doesNotBlockTheRest() {
         UUID goodEpicId = UUID.randomUUID();
-        CandidateEpicProposal failing = new CandidateEpicProposal("Bad", "d", "m", null, null, List.of());
-        CandidateEpicProposal good = new CandidateEpicProposal("Good", "d", "m", null, null, List.of());
+        CandidateEpicProposal failing = epic("Bad", null, List.of(), null, null);
+        CandidateEpicProposal good = epic("Good", null, List.of(), null, null);
 
         // Both candidates have a null priority string, which parses to the Priority.medium default,
-        // so the materializer forwards the 4-arg request carrying Priority.medium.
+        // so the materializer forwards the 5-arg request carrying Priority.medium.
         when(internalRunService.createEpic(
-                        eq(runId), eq(new InternalCreateEpicRequest("Bad", "d", "m", Priority.medium))))
+                        eq(runId), eq(new InternalCreateEpicRequest("Bad", "d", "m", Priority.medium, null))))
                 .thenThrow(new RuntimeException("boom"));
         when(internalRunService.createEpic(
-                        eq(runId), eq(new InternalCreateEpicRequest("Good", "d", "m", Priority.medium))))
+                        eq(runId), eq(new InternalCreateEpicRequest("Good", "d", "m", Priority.medium, null))))
                 .thenReturn(epicResponse(goodEpicId));
 
-        MaterializationSummary summary = materializer.materialize(runId, List.of(failing, good));
+        MaterializationSummary summary = materializer.materialize(runId, document(null, List.of(failing, good), null));
 
         assertThat(summary.createdEpicIds()).containsExactly(goodEpicId);
         assertThat(summary.errors()).hasSize(1);
@@ -128,20 +313,23 @@ class DefaultRoadmapCandidateMaterializerTest {
     void storyFailsAfterEpicCreated_epicStillRecordedAsCreated_storyFailureReportedSeparately() {
         UUID epicId = UUID.randomUUID();
         UUID goodStoryId = UUID.randomUUID();
-        CandidateStoryProposal badStory = new CandidateStoryProposal("Bad Story", "d", List.of());
-        CandidateStoryProposal goodStory = new CandidateStoryProposal("Good Story", "d", List.of());
-        CandidateEpicProposal candidate =
-                new CandidateEpicProposal("Bulk Import", "d", "m", null, null, List.of(badStory, goodStory));
+        CandidateStoryProposal badStory = story("Bad Story", List.of(), null, null);
+        CandidateStoryProposal goodStory = story("Good Story", List.of(), null, null);
+        CandidateEpicProposal candidate = epic("Bulk Import", null, List.of(badStory, goodStory), null, null);
 
         when(internalRunService.createEpic(eq(runId), any())).thenReturn(epicResponse(epicId));
         when(internalRunService.createStory(
-                        eq(runId), eq(epicId), eq(new InternalCreateStoryRequest("Bad Story", "d"))))
+                        eq(runId),
+                        eq(epicId),
+                        eq(new InternalCreateStoryRequest("Bad Story", "s-desc", Priority.medium))))
                 .thenThrow(new RuntimeException("story boom"));
         when(internalRunService.createStory(
-                        eq(runId), eq(epicId), eq(new InternalCreateStoryRequest("Good Story", "d"))))
+                        eq(runId),
+                        eq(epicId),
+                        eq(new InternalCreateStoryRequest("Good Story", "s-desc", Priority.medium))))
                 .thenReturn(storyResponse(goodStoryId, epicId));
 
-        MaterializationSummary summary = materializer.materialize(runId, List.of(candidate));
+        MaterializationSummary summary = materializer.materialize(runId, document(null, List.of(candidate), null));
 
         // The Epic row was actually committed by createEpic() before the Story failure, so it must
         // be recorded as created — otherwise the summary would tell the reviewer this candidate was
@@ -153,25 +341,32 @@ class DefaultRoadmapCandidateMaterializerTest {
                 .contains("Bulk Import")
                 .contains("story boom");
         verify(internalRunService)
-                .createStory(eq(runId), eq(epicId), eq(new InternalCreateStoryRequest("Good Story", "d")));
+                .createStory(
+                        eq(runId),
+                        eq(epicId),
+                        eq(new InternalCreateStoryRequest("Good Story", "s-desc", Priority.medium)));
     }
 
     @Test
-    void emptyCandidateList_producesEmptySummary() {
-        MaterializationSummary summary = materializer.materialize(runId, List.of());
+    void emptyDocument_producesEmptySummary() {
+        MaterializationSummary summary = materializer.materialize(runId, document(List.of(), List.of(), List.of()));
 
         assertThat(summary.createdEpicIds()).isEmpty();
+        assertThat(summary.createdMilestoneIds()).isEmpty();
+        assertThat(summary.createdDependencyCount()).isZero();
         assertThat(summary.errors()).isEmpty();
-        verifyNoInteractions(internalRunService);
+        verifyNoInteractions(internalRunService, milestoneService, workItemDependencyService);
     }
 
     @Test
-    void nullCandidateList_producesEmptySummary() {
+    void nullDocument_producesEmptySummary() {
         MaterializationSummary summary = materializer.materialize(runId, null);
 
         assertThat(summary.createdEpicIds()).isEmpty();
+        assertThat(summary.createdMilestoneIds()).isEmpty();
+        assertThat(summary.createdDependencyCount()).isZero();
         assertThat(summary.errors()).isEmpty();
-        verifyNoInteractions(internalRunService);
+        verifyNoInteractions(internalRunService, milestoneService, workItemDependencyService);
     }
 
     @Test
@@ -208,11 +403,11 @@ class DefaultRoadmapCandidateMaterializerTest {
         UUID epicId = UUID.randomUUID();
         when(internalRunService.createEpic(eq(runId), any())).thenReturn(epicResponse(epicId));
 
-        CandidateEpicProposal candidate =
-                new CandidateEpicProposal("Epic", "d", "m", null, candidatePriority, List.of());
+        CandidateEpicProposal candidate = epic("Epic", candidatePriority, List.of(), null, null);
 
-        materializer.materialize(runId, List.of(candidate));
+        materializer.materialize(runId, document(null, List.of(candidate), null));
 
-        verify(internalRunService).createEpic(eq(runId), eq(new InternalCreateEpicRequest("Epic", "d", "m", expected)));
+        verify(internalRunService)
+                .createEpic(eq(runId), eq(new InternalCreateEpicRequest("Epic", "d", "m", expected, null)));
     }
 }

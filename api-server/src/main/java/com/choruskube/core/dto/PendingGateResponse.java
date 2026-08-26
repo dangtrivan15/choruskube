@@ -18,11 +18,12 @@ public record PendingGateResponse(
         List<ResolvedArtifactGroup> requiredArtifacts,
         List<String> decisionOptions,
         /**
-         * The analyzer's structured candidate Epic/Story/Task breakdown (Decision 1), parsed from
-         * {@code roadmap_candidates.json}, or {@code null} if this gate's template doesn't produce
-         * one, or the artifact is missing/malformed (falls back to the raw-artifact display).
+         * The analyzer's structured candidate Milestone/Epic/Story/Task/dependency breakdown
+         * (Decision 1/5), parsed from {@code roadmap_candidates.json}, or {@code null} if this
+         * gate's template doesn't produce one, or the artifact is missing/malformed (falls back to
+         * the raw-artifact display).
          */
-        List<CandidateEpicProposal> candidateBreakdown,
+        RoadmapCandidatesDocument candidateBreakdown,
         /**
          * Why this run was escalated to the Supervisor, or {@code null} for an ordinary gate — the
          * Supervisor has no inbound edges, so {@code predecessorOutputs} carries no context for it;

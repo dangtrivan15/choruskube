@@ -614,6 +614,184 @@ public class InternalRunControllerTest extends BaseTest {
                 .andExpect(status().isNotFound());
     }
 
+    // ── new: dependencies / milestones (Decision 6 — imperative agent write surface) ──
+
+    @Test
+    void createMilestone_returns201() throws Exception {
+        NodeExecution exec = new NodeExecution();
+        exec.setWorkflowRunId(run.getId());
+        exec.setTemplateNodeId(templateNode.getId());
+        exec.setGraphVersion(1);
+        exec = execRepo.save(exec);
+
+        Map<String, Object> body = Map.of("name", "Q3 Launch", "description", "release", "targetDate", "2026-09-01");
+
+        mockMvc.perform(post("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/milestones")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.name").value("Q3 Launch"))
+                .andExpect(jsonPath("$.softwareProjectId").value(gitRepo.getId().toString()));
+    }
+
+    @Test
+    void createEpic_withMilestoneId_assignsMilestone() throws Exception {
+        NodeExecution exec = new NodeExecution();
+        exec.setWorkflowRunId(run.getId());
+        exec.setTemplateNodeId(templateNode.getId());
+        exec.setGraphVersion(1);
+        exec = execRepo.save(exec);
+
+        String createMilestoneResponse = mockMvc.perform(
+                        post("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/milestones")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(Map.of("name", "Q3 Launch"))))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        String milestoneId =
+                objectMapper.readTree(createMilestoneResponse).get("id").asText();
+
+        Map<String, Object> body =
+                Map.of("title", "Epic with milestone", "description", "desc", "milestoneId", milestoneId);
+
+        mockMvc.perform(post("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId()
+                                + "/feature-proposals")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.milestone.id").value(milestoneId))
+                .andExpect(jsonPath("$.milestone.name").value("Q3 Launch"));
+    }
+
+    @Test
+    void createDependency_returns201() throws Exception {
+        NodeExecution exec = new NodeExecution();
+        exec.setWorkflowRunId(run.getId());
+        exec.setTemplateNodeId(templateNode.getId());
+        exec.setGraphVersion(1);
+        exec = execRepo.save(exec);
+
+        String epicAResponse = mockMvc.perform(post("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId()
+                                + "/feature-proposals")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("title", "Epic A", "description", "d"))))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        String epicAId = objectMapper.readTree(epicAResponse).get("id").asText();
+
+        String epicBResponse = mockMvc.perform(post("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId()
+                                + "/feature-proposals")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("title", "Epic B", "description", "d"))))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        String epicBId = objectMapper.readTree(epicBResponse).get("id").asText();
+
+        Map<String, Object> body = Map.of(
+                "blockingItemType",
+                "epic",
+                "blockingItemId",
+                epicAId,
+                "blockedItemType",
+                "epic",
+                "blockedItemId",
+                epicBId);
+
+        mockMvc.perform(post("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/dependencies")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.blockingItemId").value(epicAId))
+                .andExpect(jsonPath("$.blockedItemId").value(epicBId));
+    }
+
+    @Test
+    void createDependency_crossProjectReference_returns403() throws Exception {
+        NodeExecution exec = new NodeExecution();
+        exec.setWorkflowRunId(run.getId());
+        exec.setTemplateNodeId(templateNode.getId());
+        exec.setGraphVersion(1);
+        exec = execRepo.save(exec);
+
+        String epicInRunProjectResponse = mockMvc.perform(post("/internal/runs/" + run.getId() + "/node-executions/"
+                                + exec.getId() + "/feature-proposals")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                Map.of("title", "In-project epic", "description", "d"))))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        String epicInRunProjectId =
+                objectMapper.readTree(epicInRunProjectResponse).get("id").asText();
+
+        // A GitRepo — and therefore SoftwareProject — outside this run's own target project.
+        GitRepo foreignRepo = new GitRepo();
+        foreignRepo.setUrl("https://github.com/test/foreign-dependency-repo");
+        foreignRepo.setName(RepoNameUtil.deriveOwnerRepoName("https://github.com/test/foreign-dependency-repo"));
+        foreignRepo.setTestCommand("npm test");
+        foreignRepo.setAgentImage("test:latest");
+        foreignRepo.setSecrets("[]");
+        foreignRepo = gitRepoRepo.save(foreignRepo);
+        EpicResponse foreignEpic =
+                epicService.create(new EpicRequest("Foreign epic", "desc", null, foreignRepo.getId()));
+
+        Map<String, Object> body = Map.of(
+                "blockingItemType",
+                "epic",
+                "blockingItemId",
+                foreignEpic.id().toString(),
+                "blockedItemType",
+                "epic",
+                "blockedItemId",
+                epicInRunProjectId);
+
+        mockMvc.perform(post("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/dependencies")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void createDependency_unknownItem_returns404() throws Exception {
+        NodeExecution exec = new NodeExecution();
+        exec.setWorkflowRunId(run.getId());
+        exec.setTemplateNodeId(templateNode.getId());
+        exec.setGraphVersion(1);
+        exec = execRepo.save(exec);
+
+        String epicResponse = mockMvc.perform(post("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId()
+                                + "/feature-proposals")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("title", "Epic", "description", "d"))))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        String epicId = objectMapper.readTree(epicResponse).get("id").asText();
+
+        Map<String, Object> body = Map.of(
+                "blockingItemType",
+                "epic",
+                "blockingItemId",
+                epicId,
+                "blockedItemType",
+                "epic",
+                "blockedItemId",
+                UUID.randomUUID().toString());
+
+        mockMvc.perform(post("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/dependencies")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isNotFound());
+    }
+
     // ── new no-Epic-ID route: resolves the Epic from the run's own triggering Task ──
 
     @Test

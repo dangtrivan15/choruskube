@@ -72,6 +72,8 @@ class AutoDecisionTest {
                 null,
                 new DecisionOptionsResolver(),
                 null,
+                null,
+                null,
                 null);
     }
 

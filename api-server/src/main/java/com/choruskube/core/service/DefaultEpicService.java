@@ -270,7 +270,13 @@ public class DefaultEpicService implements EpicService {
         if (!epic.getSoftwareProjectId().equals(runSoftwareProjectId)) {
             throw new ForbiddenException("Epic " + epicId + " does not belong to the run's software project");
         }
-        if (hasStartedDescendantTasks(epicId)) {
+        // The "no edit once started" guard covers only the core descriptive fields below —
+        // milestoneId is handled after it and is deliberately exempt, mirroring
+        // assignMilestone's own exemption from this guard (Decision 4 of the "Group Epics under a
+        // named Milestone / Release" feature): a Milestone assignment must succeed even after
+        // descendant Tasks have started.
+        boolean touchesCoreFields = req.title() != null || req.description() != null || req.motivation() != null;
+        if (touchesCoreFields && hasStartedDescendantTasks(epicId)) {
             throw new ConflictException("Can only update an Epic while all of its Tasks are still in backlog");
         }
 
@@ -290,6 +296,20 @@ public class DefaultEpicService implements EpicService {
         if (req.motivation() != null) {
             // Empty/blank motivation clears the field; any non-blank value is stored as-is.
             epic.setMotivation(req.motivation().isBlank() ? null : req.motivation());
+        }
+        // milestoneId PATCH semantics differ from the fields above: null means "leave unchanged"
+        // here (there is no way to distinguish "not supplied" from "explicitly clear" for a
+        // nullable field on this internal PATCH-shaped request) — clearing a Milestone assignment
+        // remains the standalone PATCH /{id}/milestone route's job (see InternalUpdateEpicRequest).
+        if (req.milestoneId() != null) {
+            Milestone milestone = milestoneRepo
+                    .findById(req.milestoneId())
+                    .orElseThrow(() -> new NotFoundException("Milestone not found: " + req.milestoneId()));
+            if (!milestone.getSoftwareProjectId().equals(epic.getSoftwareProjectId())) {
+                throw new BadRequestException(
+                        "Milestone " + req.milestoneId() + " does not belong to the same project as Epic " + epicId);
+            }
+            epic.setMilestoneId(req.milestoneId());
         }
 
         epic = repo.save(epic);

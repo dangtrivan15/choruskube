@@ -539,13 +539,15 @@ public class RunService {
                 // breakdown (e.g. rejecting every candidate while still approving the gate for some
                 // other reason) and must NOT fall back to the original analyzer artifact — only a
                 // genuinely absent field (no edits submitted at all) does that.
-                List<CandidateEpicProposal> source = request.editedCandidates() != null
+                RoadmapCandidatesDocument source = request.editedCandidates() != null
                         ? request.editedCandidates()
                         : roadmapCandidatesArtifactResolver.resolve(runId, exec.getTemplateNodeId());
                 String materializeNote;
                 if (source != null) {
                     MaterializationSummary summary = roadmapCandidateMaterializer.materialize(runId, source);
                     materializeNote = "Materialized " + summary.materializedCount() + " Epics ("
+                            + summary.createdMilestoneIds().size() + " Milestones, "
+                            + summary.createdDependencyCount() + " dependency edges, "
                             + summary.skippedCount() + " skipped)";
                 } else {
                     // The artifact resolver degrades to null (never throws) when the candidate
@@ -871,7 +873,7 @@ public class RunService {
                     // requiredArtifacts already computed above — so the Run Detail page's gate
                     // surface (HumanGatePanel via DetailPanel) can render the same editable
                     // breakdown the Approvals dashboard does, instead of silently having none.
-                    List<CandidateEpicProposal> candidateBreakdown = requiredArtifacts != null
+                    RoadmapCandidatesDocument candidateBreakdown = requiredArtifacts != null
                             ? roadmapCandidatesArtifactResolver.resolve(run.getId(), requiredArtifacts)
                             : null;
                     // Mirrors PendingGateService's resolution of the same context — the Supervisor

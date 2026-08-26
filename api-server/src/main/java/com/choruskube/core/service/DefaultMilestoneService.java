@@ -33,7 +33,9 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -108,6 +110,35 @@ public class DefaultMilestoneService implements MilestoneService {
         applicationEventPublisher.publishEvent(MappableCreated.of("milestone", milestone.getId()));
         auditSink.record(
                 AuditSink.MILESTONE_CREATED, "milestone", milestone.getId(), detailJson(null, snapshot(milestone)));
+        return toResponse(milestone);
+    }
+
+    @Override
+    @Transactional
+    public MilestoneResponse findOrCreate(
+            UUID softwareProjectId, String name, String description, LocalDate targetDate) {
+        // Agent/internal entry (RoadmapCandidateMaterializer): no request-scoped TenantContext,
+        // so — same as InternalRunService's create-family — this reads via a ScopeProvider-scoped
+        // Specification rather than checkOrgAccess (§3.3 of the roadmap dependencies/priorities/
+        // milestones spec), and is unaudited on the create branch below, mirroring
+        // EpicService#create(EpicRequest, UUID)'s identical tradeoff.
+        Specification<Milestone> spec = scopeProvider
+                .scope(Milestone.class)
+                .and((root, query, cb) -> cb.equal(root.get("softwareProjectId"), softwareProjectId))
+                .and((root, query, cb) -> cb.equal(cb.lower(root.get("name")), name.toLowerCase(Locale.ROOT)));
+        Optional<Milestone> existing = repo.findOne(spec);
+        if (existing.isPresent()) {
+            return toResponse(existing.get());
+        }
+
+        Milestone milestone = new Milestone();
+        milestone.setSoftwareProjectId(softwareProjectId);
+        milestone.setName(name);
+        milestone.setDescription(description);
+        milestone.setTargetDate(targetDate);
+        milestone = repo.save(milestone);
+
+        applicationEventPublisher.publishEvent(MappableCreated.of("milestone", milestone.getId()));
         return toResponse(milestone);
     }
 

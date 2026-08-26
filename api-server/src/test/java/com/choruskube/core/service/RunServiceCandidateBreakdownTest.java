@@ -5,6 +5,7 @@ import static org.mockito.Mockito.*;
 
 import com.choruskube.core.dto.CandidateEpicProposal;
 import com.choruskube.core.dto.ResolvedArtifactGroup;
+import com.choruskube.core.dto.RoadmapCandidatesDocument;
 import com.choruskube.core.dto.RunResponse;
 import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.WorkflowRun;
@@ -142,8 +143,12 @@ class RunServiceCandidateBreakdownTest {
         return exec;
     }
 
-    private static List<CandidateEpicProposal> sampleCandidates() {
-        return List.of(new CandidateEpicProposal("Bulk Import", "desc", "why", List.of("repo-a"), "High", List.of()));
+    private static RoadmapCandidatesDocument sampleCandidates() {
+        return new RoadmapCandidatesDocument(
+                null,
+                List.of(new CandidateEpicProposal(
+                        "Bulk Import", "desc", "why", List.of("repo-a"), "High", List.of(), null, null)),
+                null);
     }
 
     @Test
@@ -153,7 +158,7 @@ class RunServiceCandidateBreakdownTest {
         List<ResolvedArtifactGroup> requiredArtifacts = List.of();
         when(artifactResolutionService.resolveRequiredArtifacts(templateNodeId, runId))
                 .thenReturn(requiredArtifacts);
-        List<CandidateEpicProposal> candidates = sampleCandidates();
+        RoadmapCandidatesDocument candidates = sampleCandidates();
         when(roadmapCandidatesArtifactResolver.resolve(runId, requiredArtifacts))
                 .thenReturn(candidates);
 

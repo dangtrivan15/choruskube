@@ -1,11 +1,11 @@
 package com.choruskube.core.service;
 
-import com.choruskube.core.dto.CandidateEpicProposal;
 import com.choruskube.core.dto.EscalationContext;
 import com.choruskube.core.dto.PendingGateCountResponse;
 import com.choruskube.core.dto.PendingGateResponse;
 import com.choruskube.core.dto.PredecessorOutput;
 import com.choruskube.core.dto.ResolvedArtifactGroup;
+import com.choruskube.core.dto.RoadmapCandidatesDocument;
 import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.NodeExecutionStatus;
@@ -194,7 +194,7 @@ public class PendingGateService {
         List<ResolvedArtifactGroup> requiredArtifacts =
                 artifactResolutionService.resolveRequiredArtifacts(exec.getTemplateNodeId(), exec.getWorkflowRunId());
 
-        List<CandidateEpicProposal> candidateBreakdown =
+        RoadmapCandidatesDocument candidateBreakdown =
                 candidatesArtifactResolver.resolve(run.getId(), requiredArtifacts);
 
         return new PendingGateResponse(

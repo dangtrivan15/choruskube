@@ -65,7 +65,9 @@ class InternalRunServiceOutputValidationTest {
                 null,
                 new DecisionOptionsResolver(),
                 null,
-                artifactService);
+                artifactService,
+                null,
+                null);
     }
 
     private NodeExecution stubExec(UUID id) {

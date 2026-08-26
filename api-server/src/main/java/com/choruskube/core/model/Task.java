@@ -1,5 +1,6 @@
 package com.choruskube.core.model;
 
+import com.choruskube.core.model.enums.Priority;
 import com.choruskube.core.model.enums.WorkItemStatus;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -37,6 +38,11 @@ public class Task extends BaseEntity {
     @JdbcTypeCode(SqlTypes.NAMED_ENUM)
     @Column(nullable = false, columnDefinition = "work_item_status")
     private WorkItemStatus status = WorkItemStatus.backlog;
+
+    @Enumerated(EnumType.STRING)
+    @JdbcTypeCode(SqlTypes.NAMED_ENUM)
+    @Column(nullable = false, columnDefinition = "work_item_priority")
+    private Priority priority = Priority.medium;
 
     public UUID getId() {
         return id;
@@ -84,5 +90,13 @@ public class Task extends BaseEntity {
 
     public void setStatus(WorkItemStatus status) {
         this.status = status;
+    }
+
+    public Priority getPriority() {
+        return priority;
+    }
+
+    public void setPriority(Priority priority) {
+        this.priority = priority;
     }
 }

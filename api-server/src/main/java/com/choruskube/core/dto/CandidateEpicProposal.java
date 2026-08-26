@@ -24,6 +24,12 @@ import java.util.List;
  * validation reaches each {@link CandidateStoryProposal}'s own {@code tasks @Size(max = 8)} —
  * without it, only this Story-count cap would be enforced when {@code SignalRequest.editedCandidates}
  * is validated (its own {@code @Valid} only cascades one level, into each {@code CandidateEpicProposal}).
+ *
+ * <p>{@code key} is an optional author-assigned, artifact-local identifier (Decision 2) — unique
+ * within the artifact — that {@link CandidateDependency} and other items may reference; it is never
+ * persisted. {@code milestone} is an optional reference to a {@link CandidateMilestone#key()}
+ * (Decision 4/Caveat 3): the materialized Epic's {@code milestoneId} is set to whichever Milestone
+ * that key resolved (or reused) to.
  */
 public record CandidateEpicProposal(
         @NotBlank @Size(max = 255) String title,
@@ -31,4 +37,6 @@ public record CandidateEpicProposal(
         String motivation,
         List<String> repos,
         String priority,
-        @Valid @Size(max = 8) List<CandidateStoryProposal> stories) {}
+        @Valid @Size(max = 8) List<CandidateStoryProposal> stories,
+        String key,
+        String milestone) {}
