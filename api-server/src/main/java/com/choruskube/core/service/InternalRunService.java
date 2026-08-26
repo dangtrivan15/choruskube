@@ -952,8 +952,13 @@ public class InternalRunService {
         assertItemInProject(blockingType, req.blockingItemId(), softwareProjectId);
         assertItemInProject(blockedType, req.blockedItemId(), softwareProjectId);
 
-        return workItemDependencyService.create(new CreateDependencyRequest(
-                req.blockingItemType(), req.blockingItemId(), req.blockedItemType(), req.blockedItemId()));
+        // createForRun, not create: this path has no request-scoped TenantContext (JOB_SECRET, not
+        // a JWT), so it must not route through create()'s checkOrgAccess — see createForRun's
+        // Javadoc for why that throws 403 under a Keycloak-enabled deployment.
+        return workItemDependencyService.createForRun(
+                new CreateDependencyRequest(
+                        req.blockingItemType(), req.blockingItemId(), req.blockedItemType(), req.blockedItemId()),
+                runId);
     }
 
     /**

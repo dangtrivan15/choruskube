@@ -315,6 +315,30 @@ class DefaultRoadmapCandidateMaterializerTest {
     }
 
     @Test
+    void nullEpicCandidate_recordedInErrors_doesNotAbortBatch() {
+        // Regression test: SignalRequest.editedCandidates carries `@Valid` on the epics list, but
+        // Bean Validation's cascade skips (does not reject) a `null` element inside a collection —
+        // so a document like {"epics":[null,{...}]} reaches the materializer un-guarded. A null
+        // candidate must be caught and recorded like any other per-candidate failure (Decision 3),
+        // not thrown as an uncaught NPE that aborts the whole batch.
+        UUID goodEpicId = UUID.randomUUID();
+        CandidateEpicProposal good = epic("Good", null, List.of(), null, null);
+        when(internalRunService.createEpic(
+                        eq(runId), eq(new InternalCreateEpicRequest("Good", "d", "m", Priority.medium, null))))
+                .thenReturn(epicResponse(goodEpicId));
+
+        List<CandidateEpicProposal> epicsWithNull = new java.util.ArrayList<>();
+        epicsWithNull.add(null);
+        epicsWithNull.add(good);
+
+        MaterializationSummary summary = materializer.materialize(runId, document(null, epicsWithNull, null));
+
+        assertThat(summary.createdEpicIds()).containsExactly(goodEpicId);
+        assertThat(summary.errors()).hasSize(1);
+        assertThat(summary.errors().get(0)).contains("<null>");
+    }
+
+    @Test
     void storyFailsAfterEpicCreated_epicStillRecordedAsCreated_storyFailureReportedSeparately() {
         UUID epicId = UUID.randomUUID();
         UUID goodStoryId = UUID.randomUUID();

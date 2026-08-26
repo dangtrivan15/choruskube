@@ -47,6 +47,35 @@ public class DefaultWorkItemDependencyService implements WorkItemDependencyServi
     @Override
     @Transactional
     public DependencyEdgeResponse create(CreateDependencyRequest request) {
+        // Caller-vs-resource guard, checked independently for each endpoint against the caller's
+        // own request-scoped org: a caller in one org must not be able to link two items that both
+        // belong to a different org. Deliberately NOT assertSameOrg — that compares the two named
+        // resources only to each other and ignores the caller's own org context entirely (see its
+        // Javadoc), which would let a caller outside both orgs create the edge.
+        return createInternal(request, (blockingType, blockingId, blockedType, blockedId) -> {
+            authService.checkOrgAccess(blockingType.name(), blockingId);
+            authService.checkOrgAccess(blockedType.name(), blockedId);
+        });
+    }
+
+    @Override
+    @Transactional
+    public DependencyEdgeResponse createForRun(CreateDependencyRequest request, UUID runId) {
+        // Agent/internal entry: no request-scoped TenantContext, so this guards each endpoint
+        // against the originating run's own org instead (see interface Javadoc).
+        return createInternal(request, (blockingType, blockingId, blockedType, blockedId) -> {
+            authService.assertSameOrg(blockingType.name(), blockingId, "workflow_run", runId);
+            authService.assertSameOrg(blockedType.name(), blockedId, "workflow_run", runId);
+        });
+    }
+
+    /**
+     * Shared validation + insert for both {@link #create} and {@link #createForRun} — identical
+     * except for which org guard applies, supplied by the caller as {@code orgGuard}. Authorization
+     * runs before the cycle check below: it must gate the request regardless of what the cycle
+     * check would find, not the other way around.
+     */
+    private DependencyEdgeResponse createInternal(CreateDependencyRequest request, OrgGuard orgGuard) {
         BlockableItemType blockingType = parseType(request.blockingItemType());
         BlockableItemType blockedType = parseType(request.blockedItemType());
         UUID blockingId = request.blockingItemId();
@@ -68,15 +97,7 @@ public class DefaultWorkItemDependencyService implements WorkItemDependencyServi
         assertItemExists(blockingType, blockingId);
         assertItemExists(blockedType, blockedId);
 
-        // Caller-vs-resource guard, checked independently for each endpoint against the caller's
-        // own request-scoped org: a caller in one org must not be able to link two items that both
-        // belong to a different org. Deliberately NOT assertSameOrg — that compares the two named
-        // resources only to each other and ignores the caller's own org context entirely (see its
-        // Javadoc), which would let a caller outside both orgs create the edge. Runs before the
-        // cycle check below: authorization must gate the request regardless of what the cycle
-        // check would find, not the other way around.
-        authService.checkOrgAccess(blockingType.name(), blockingId);
-        authService.checkOrgAccess(blockedType.name(), blockedId);
+        orgGuard.check(blockingType, blockingId, blockedType, blockedId);
 
         // Cycle guard (Decision 5): reject before insert if this edge would close a loop with
         // existing edges anywhere in the graph — a cycle isn't necessarily confined to one Epic
@@ -166,5 +187,11 @@ public class DefaultWorkItemDependencyService implements WorkItemDependencyServi
                 edge.getBlockedItemType().name(),
                 edge.getBlockedItemId(),
                 edge.getCreatedAt());
+    }
+
+    /** The one step that differs between {@link #create} and {@link #createForRun}. */
+    @FunctionalInterface
+    private interface OrgGuard {
+        void check(BlockableItemType blockingType, UUID blockingId, BlockableItemType blockedType, UUID blockedId);
     }
 }

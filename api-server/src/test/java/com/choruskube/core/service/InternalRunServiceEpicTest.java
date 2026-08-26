@@ -651,8 +651,13 @@ class InternalRunServiceEpicTest {
                 "epic", blockingEpicId, "epic", blockedEpicId);
         var expected = new com.choruskube.core.dto.DependencyEdgeResponse(
                 UUID.randomUUID(), "epic", blockingEpicId, "epic", blockedEpicId, java.time.Instant.now());
-        when(workItemDependencyService.create(eq(new com.choruskube.core.dto.CreateDependencyRequest(
-                        "epic", blockingEpicId, "epic", blockedEpicId))))
+        // createForRun, not create: this JOB_SECRET/agent path has no request-scoped TenantContext,
+        // so it must go through the run-scoped overload (assertSameOrg) rather than the one that
+        // reads the caller's TenantContext (checkOrgAccess) — see WorkItemDependencyService#createForRun.
+        when(workItemDependencyService.createForRun(
+                        eq(new com.choruskube.core.dto.CreateDependencyRequest(
+                                "epic", blockingEpicId, "epic", blockedEpicId)),
+                        eq(runId)))
                 .thenReturn(expected);
 
         var result = service.createDependency(runId, req);

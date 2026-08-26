@@ -14,6 +14,16 @@ public interface WorkItemDependencyService {
 
     DependencyEdgeResponse create(CreateDependencyRequest request);
 
+    /**
+     * Agent/internal entry (mirrors {@link EpicService#create(com.choruskube.core.dto.EpicRequest,
+     * UUID)}): no request-scoped TenantContext, so unlike {@link #create(CreateDependencyRequest)}
+     * this guards both endpoints against the originating run's own org via {@code assertSameOrg}
+     * rather than {@code checkOrgAccess} — the latter reads the caller's TenantContext, which is
+     * never populated on the JOB_SECRET path and throws {@code UnresolvableTenantException} (403)
+     * under a Keycloak-enabled deployment.
+     */
+    DependencyEdgeResponse createForRun(CreateDependencyRequest request, UUID runId);
+
     void delete(UUID id);
 
     /**

@@ -162,8 +162,8 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
             Map<String, UUID> milestoneIdByKey,
             Map<String, ItemRef> itemByKey) {
         EpicResponse epic;
-        UUID milestoneId = candidate.milestone() != null ? milestoneIdByKey.get(candidate.milestone()) : null;
         try {
+            UUID milestoneId = candidate.milestone() != null ? milestoneIdByKey.get(candidate.milestone()) : null;
             epic = internalRunService.createEpic(
                     runId,
                     new InternalCreateEpicRequest(

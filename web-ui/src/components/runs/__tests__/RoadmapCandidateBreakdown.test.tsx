@@ -243,6 +243,21 @@ describe("RoadmapCandidateBreakdown", () => {
       expect(screen.queryByTestId("candidate-milestones")).not.toBeInTheDocument();
     });
 
+    it("still renders the milestones section when there are no epics", () => {
+      // Regression test: the component used to bail out with `return null` whenever
+      // `epics` was empty, even when a milestones-only or dependencies-only document was
+      // submitted — hiding those proposed items from the reviewer entirely.
+      const onChange = vi.fn();
+      const value = makeDocument({
+        epics: [],
+        milestones: [{ key: "m1", name: "Q3 Launch", description: null, targetDate: null }],
+      });
+      renderWithProviders(<RoadmapCandidateBreakdown value={value} onChange={onChange} />);
+
+      expect(screen.getByTestId("candidate-milestones")).toBeInTheDocument();
+      expect(screen.getByText("Q3 Launch")).toBeInTheDocument();
+    });
+
     it("assigns an Epic to a Milestone via the milestone select, updating the emitted document", async () => {
       const user = userEvent.setup({ pointerEventsCheck: 0 });
       const onChange = vi.fn();

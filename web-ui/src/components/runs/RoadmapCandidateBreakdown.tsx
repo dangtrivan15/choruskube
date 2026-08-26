@@ -156,7 +156,7 @@ export default function RoadmapCandidateBreakdown({ value, onChange }: RoadmapCa
     });
   }
 
-  if (epics.length === 0) return null;
+  if (epics.length === 0 && milestones.length === 0 && dependencies.length === 0) return null;
 
   return (
     <div data-testid="roadmap-candidate-breakdown" className="space-y-3">
