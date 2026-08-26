@@ -54,10 +54,29 @@ public interface MilestoneService {
      * materialization run against the same-named Milestone never silently overwrites a human's
      * edits to it.
      *
+     * <p>Request-scoped path only: {@code RoadmapCandidateMaterializer} runs from a human's gate
+     * approval, which carries a real JWT (and therefore a populated {@code TenantContext}) — see
+     * {@link #findOrCreateInternal} for the agent/{@code JOB_SECRET} counterpart, which has none.
+     *
      * <p>Implemented as a {@code ScopeProvider}-scoped {@code Specification} run through the
      * pre-existing {@code JpaSpecificationExecutor<Milestone>.findOne}, mirroring {@link
      * #list}'s own established pattern — {@code MilestoneRepository} gains no new derived finder
-     * (its javadoc forbids one; see the repository for why).
+     * for this path (its javadoc forbids one; see the repository for why).
      */
     MilestoneResponse findOrCreate(UUID softwareProjectId, String name, String description, LocalDate targetDate);
+
+    /**
+     * Agent/internal counterpart to {@link #findOrCreate} — the imperative {@code create-milestone}
+     * CLI's write path (Decision 6), called from {@code InternalRunService#createMilestone} on the
+     * {@code JOB_SECRET} path, which has no request-scoped {@code TenantContext}. Mirrors {@code
+     * WorkItemDependencyService#createForRun}'s split from {@code #create}: same dedup/create
+     * logic as {@link #findOrCreate}, but the org guard is {@code AuthorizationService#assertSameOrg}
+     * against the calling {@code runId} instead of a {@code ScopeProvider}-scoped lookup — in this
+     * repo's Keycloak-enabled overlay, {@code ScopeProvider} resolves to {@code
+     * OwnershipScopeProvider}, whose {@code Specification} reads {@code TenantContext} lazily and
+     * throws {@code UnresolvableTenantException} the moment it is evaluated on a thread where that
+     * context was never populated — turning every agent-created Milestone into a 403.
+     */
+    MilestoneResponse findOrCreateInternal(
+            UUID softwareProjectId, String name, String description, LocalDate targetDate, UUID runId);
 }

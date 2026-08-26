@@ -705,7 +705,7 @@ class InternalRunServiceEpicTest {
     // ── createMilestone ─────────────────────────────────────────────────
 
     @Test
-    void createMilestone_delegatesToMilestoneServiceFindOrCreate() {
+    void createMilestone_delegatesToMilestoneServiceFindOrCreateInternal() {
         UUID runId = UUID.randomUUID();
         WorkflowRun run = createRun(
                 runId, TEMPLATE_ID, "{\"software_project_id\":\"" + PROJECT_ID + "\",\"feature_request\":\"x\"}");
@@ -725,7 +725,11 @@ class InternalRunServiceEpicTest {
                 0,
                 java.time.Instant.now(),
                 java.time.Instant.now());
-        when(milestoneService.findOrCreate(PROJECT_ID, "Q3 Launch", "release", null))
+        // findOrCreateInternal, not findOrCreate: this path has no request-scoped TenantContext
+        // (JOB_SECRET, not a JWT), so it must not route through findOrCreate's ScopeProvider-scoped
+        // lookup — see findOrCreateInternal's Javadoc for why that throws under a Keycloak-enabled
+        // deployment.
+        when(milestoneService.findOrCreateInternal(PROJECT_ID, "Q3 Launch", "release", null, runId))
                 .thenReturn(expected);
 
         var result = service.createMilestone(runId, req);

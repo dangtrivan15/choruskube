@@ -964,17 +964,21 @@ public class InternalRunService {
     /**
      * Creates (or reuses an existing same-named) Milestone under the run's resolved software
      * project on behalf of an agent pod (Decision 6) — delegates to {@link
-     * MilestoneService#findOrCreate}, the same method {@code RoadmapCandidateMaterializer} uses,
-     * so both write surfaces share one Milestone dedup rule. No cross-item ownership check is
-     * needed (unlike {@link #createDependency}): a Milestone is scoped directly under {@code
-     * softwareProjectId}, never referencing an existing item by id.
+     * MilestoneService#findOrCreateInternal}, the {@code JOB_SECRET}-path counterpart of {@link
+     * MilestoneService#findOrCreate} ({@code RoadmapCandidateMaterializer}'s method), so both write
+     * surfaces share one Milestone dedup rule while each uses the org guard its own auth context
+     * actually supports — see {@code findOrCreateInternal}'s Javadoc for why calling {@code
+     * findOrCreate} here would 403 under a Keycloak-enabled deployment. No cross-item ownership
+     * check is needed beyond that guard (unlike {@link #createDependency}): a Milestone is scoped
+     * directly under {@code softwareProjectId}, never referencing an existing item by id.
      */
     @Transactional
     public MilestoneResponse createMilestone(UUID runId, InternalCreateMilestoneRequest req) {
         WorkflowRun run =
                 runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
         UUID softwareProjectId = resolveSoftwareProjectIdFromRun(run);
-        return milestoneService.findOrCreate(softwareProjectId, req.name(), req.description(), req.targetDate());
+        return milestoneService.findOrCreateInternal(
+                softwareProjectId, req.name(), req.description(), req.targetDate(), runId);
     }
 
     private BlockableItemType parseBlockableItemType(String raw) {

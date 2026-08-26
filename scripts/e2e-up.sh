@@ -104,6 +104,18 @@ if [ "$DO_STACK" = "1" ]; then
     exit 1
   fi
 
+  # orchestrator's own compose healthcheck (docker-compose.e2e.yaml) isn't awaited by
+  # `compose up -d` itself — only the *dependencies* it declares via `depends_on: condition:
+  # service_healthy` block its start, not its own readiness. Nothing upstream of :e2eSmoke
+  # otherwise waits for it, so a slow image build (e.g. cold layer cache) can leave the
+  # container still dialing Temporal when :e2eSmoke's single unretried curl hits it.
+  echo "--- Waiting for orchestrator health ---"
+  if ! wait_for_health http://localhost:29090/healthz 60 2 healthy; then
+    echo "ERROR: orchestrator did not become healthy within ~120s" >&2
+    echo "       Inspect: docker compose -f docker-compose.e2e.yaml logs orchestrator" >&2
+    exit 1
+  fi
+
   echo "--- Loading WireMock stubs ---"
   WM=http://localhost:28085   # see Step note on port mapping
   for f in "${REPO_ROOT}"/e2e/wiremock-stubs/*.json; do
