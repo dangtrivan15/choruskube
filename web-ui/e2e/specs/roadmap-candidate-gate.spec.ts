@@ -80,6 +80,14 @@ test.describe("Roadmap Provisioner candidate gate", () => {
     const epics = await api.listEpics();
     const created = epics.content.find((e) => e.title === editedTitle);
     expect(created).toBeTruthy();
+
+    // Clean up. The mock "roadmap_candidates" analyzer scenario proposes this Epic
+    // with priority "High" (Decision 4), so a leftover row here would permanently
+    // join the org-wide "high" tier — breaking roadmap.spec.ts's priority
+    // filter/sort test, which relies on being the tier's sole occupant org-wide.
+    if (created) {
+      await api.deleteEpic(created.id);
+    }
   });
 
   test("run page sidebar shows Approve for the edge-less terminal-decision gate and approving materializes the breakdown", async ({
@@ -123,6 +131,15 @@ test.describe("Roadmap Provisioner candidate gate", () => {
 
     const afterApprove = await api.listEpicsForProject(workerRepo.gitRepo.id);
     expect(afterApprove.length).toBeGreaterThan(beforeApprove.length);
+
+    // Clean up the materialized Epic(s), same reasoning as the edit-and-approve test
+    // above: the mock analyzer scenario proposes priority "High" (Decision 4), and a
+    // leftover row here would permanently join the org-wide "high" tier that
+    // roadmap.spec.ts's priority filter/sort test assumes it has to itself.
+    const beforeIds = new Set(beforeApprove.map((e) => e.id));
+    for (const epic of afterApprove.filter((e) => !beforeIds.has(e.id))) {
+      await api.deleteEpic(epic.id);
+    }
   });
 
   test("reject loop still works, with no roadmap items created", async ({
