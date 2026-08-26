@@ -227,6 +227,11 @@ class DefaultRoadmapCandidateMaterializerTest {
         // DefaultMilestoneServiceTest / the find-or-create service itself.
         verify(milestoneService, times(1)).findOrCreate(eq(softwareProjectId), eq("Q3 Launch"), any(), any());
         assertThat(summary.createdMilestoneIds()).containsExactly(milestoneId);
+        // Epic-side reuse: BOTH referencing Epics are created carrying the shared milestoneId, not
+        // just the single findOrCreate call above — otherwise a regression that dropped the
+        // milestone on the second Epic would still pass the count/times assertions.
+        verify(internalRunService, times(2))
+                .createEpic(eq(runId), argThat(req -> req != null && milestoneId.equals(req.milestoneId())));
     }
 
     @Test

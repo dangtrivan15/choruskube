@@ -275,4 +275,20 @@ class RoadmapCandidatesArtifactResolverTest {
         assertThat(result.epics()).hasSize(1);
         assertThat(result.epics().get(0).priority()).isEmpty();
     }
+
+    @Test
+    void selfReferentialEdge_isDropped() {
+        stubArtifactContent("""
+                {"epics":[{"key":"a","title":"Epic A","description":"d","motivation":"m","stories":[]}],
+                 "dependencies":[{"blocking":"a","blocked":"a"}]}
+                """);
+
+        RoadmapCandidatesDocument result = resolver.resolve(runId, templateNodeId);
+
+        // Both keys resolve, but a self-referential edge (blocking == blocked) is dropped by the
+        // dedicated self-reference guard rather than materialized into an item that blocks itself.
+        assertThat(result).isNotNull();
+        assertThat(result.epics()).hasSize(1);
+        assertThat(result.dependencies()).isEmpty();
+    }
 }
