@@ -81,15 +81,21 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             them. Implementation details belong in Part 2; design rationale belongs in
             Part 1.
 
-            Alongside the cross-repo spec, emit a per-repo document for each repo the change
-            touches, split on three axes:
-              - privacy — generalise other repos' names out of any PUBLIC repo's document;
-                a public document must not disclose that a non-public repo exists;
-              - layer — core vs. overlay vs. infrastructure;
-              - relevance — carry only what someone editing THAT repo needs.
-            When a split omits a section, resolve or delete every reference into the omitted
-            section. A reference to something the reader cannot open is worse than no
-            reference.
+            Write the spec so that a later per-repo split is a filter, not a rewrite. The
+            Implement node performs the actual split when it writes into each repo, so it
+            must be able to tell from the spec alone:
+              - privacy — which content may appear in a PUBLIC repo. A public repo's slice
+                must never name a non-public repo or disclose that one exists; mark any
+                content that must be generalised before it lands there.
+              - layer — which repo each statement belongs to. Keep §3 Architecture
+                organised by seam, with every bullet labelled by the repo it concerns, so a
+                slice is a filter over bullets.
+              - relevance — what someone editing only that repo needs, versus what is
+                context for the change as a whole.
+            Do not emit separate per-repo files. The cross-repo spec stays the single
+            artifact; the split happens downstream. Whoever later omits a section resolves
+            or deletes every reference into it — a reference to something the reader cannot
+            open is worse than no reference.
 
             ═══════════════════════════════════════════════════════════════════════
             Part 1: Specification (for human reviewers)
