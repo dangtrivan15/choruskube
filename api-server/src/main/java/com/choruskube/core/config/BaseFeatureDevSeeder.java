@@ -35,7 +35,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
     // and executor changes here never retroactively mutate prior versions. To ship a
     // change, edit the constants in this file (prompt, executor, schema), increment
     // CURRENT_VERSION, and the next boot creates the new snapshot.
-    static final int CURRENT_VERSION = 37;
+    static final int CURRENT_VERSION = 38;
 
     private static final String TEMPLATE_NAME = "Feature Development";
 
@@ -80,6 +80,16 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             The two parts have different audiences, structures, and rules. Do not mix
             them. Implementation details belong in Part 2; design rationale belongs in
             Part 1.
+
+            Alongside the cross-repo spec, emit a per-repo document for each repo the change
+            touches, split on three axes:
+              - privacy — generalise other repos' names out of any PUBLIC repo's document;
+                a public document must not disclose that a non-public repo exists;
+              - layer — core vs. overlay vs. infrastructure;
+              - relevance — carry only what someone editing THAT repo needs.
+            When a split omits a section, resolve or delete every reference into the omitted
+            section. A reference to something the reader cannot open is worse than no
+            reference.
 
             ═══════════════════════════════════════════════════════════════════════
             Part 1: Specification (for human reviewers)
@@ -451,6 +461,11 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             You are implementing a feature based on an approved spec and plan. The
             feature may span multiple repositories.
 
+            Before writing docs or comments in a repo, read that repo's CLAUDE.md.
+            Its conventions override these instructions. Follow the instructions below
+            only where that repo states no rule. When a run touches several repos,
+            each repo's rules apply to its own files.
+
             The drafting node produced a single document with two parts:
 
             - Part 1 (Specification, sections §1–§8) — context, decisions,
@@ -534,6 +549,33 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
 
             If the plan is unimplementable as written and Part 1 does not settle the correct
             reading, escalate (`category: uncertainty`) rather than implement a guess.
+
+            ## Routing the spec into durable docs
+
+            When a decision earns a durable home, route the spec's content by whether it
+            accumulates:
+              - §2 Decisions      -> docs/decisions/  (accumulates; entries are immutable)
+              - §3 Architecture,
+                §4 Flow Diagrams  -> merge into ARCHITECTURE.md (rewritten in place, so it
+                                     does NOT accumulate); this is present-tense state, not
+                                     a record of this change
+              - §7 Caveats tagged "Future work" -> open a GitHub issue or a roadmap item;
+                                     do not create a new docs/ surface for them
+              - §1, §5, §6, §8 and Part 2 -> discard; they are execution scaffolding
+            Graduate a decision only when something in this repo cites it. Do not bulk-copy
+            the spec.
+
+            These docs are derived from the spec. A run owns exactly one decisions file —
+            docs/decisions/YYYY-MM-DD---NN-<slug>.md — holding every decision that run
+            graduates. On a re-run, edit that same file; never create a second one. The spec
+            may have changed since an earlier iteration wrote it and may now conflict with
+            what is there — amend or rewrite as you judge fit. ARCHITECTURE.md is an existing
+            living document; merge into it rather than adding a parallel file.
+
+            Before graduating a decision, check docs/decisions/README.md for an entry this
+            run's decision reverses or replaces. If one exists, do not edit it. Add your
+            entry as normal, note in it which entry it supersedes, and add
+            `superseded by <new-entry>` to the old entry's index row.
 
             ## Opening and updating pull requests
 
@@ -691,6 +733,11 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             submit the appropriate decision. The bouncing review pattern (reject
             → re-implement → re-review) is gone: when you find something fixable,
             you fix it here, in this invocation, on the working git branch.
+
+            Before writing docs or comments in a repo, read that repo's CLAUDE.md.
+            Its conventions override these instructions. Follow the instructions below
+            only where that repo states no rule. When a run touches several repos,
+            each repo's rules apply to its own files.
 
             ## Iteration awareness
 

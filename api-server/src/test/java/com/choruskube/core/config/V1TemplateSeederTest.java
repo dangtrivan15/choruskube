@@ -812,12 +812,14 @@ class V1TemplateSeederTest extends BaseTest {
     }
 
     @Test
-    void currentVersionIsBumpedForSupervisorNode() {
-        // v37: the graph becomes happy-path-only — every need_human_decision:* edge is
-        // removed and exception routing moves to the edgeless Supervisor node. Verifies only
-        // that the seeder actually bumped its version constant when it shipped this change.
-        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(37);
-        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 37))
+    void currentVersionIsBumpedForDocAndCommentConventions() {
+        // v38: IMPLEMENT_PROMPT and CODE_REVIEW_PROMPT defer to each repo's CLAUDE.md,
+        // and IMPLEMENT_PROMPT routes spec content into docs/decisions/ and
+        // ARCHITECTURE.md; SPEC_AND_PLAN_PROMPT now requires a per-repo, privacy-split
+        // output alongside the cross-repo spec. Verifies only that the seeder actually
+        // bumped its version constant when it shipped this change.
+        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(38);
+        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 38))
                 .isPresent();
     }
 
