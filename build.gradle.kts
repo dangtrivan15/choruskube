@@ -346,6 +346,16 @@ tasks.register("test") {
     }
 }
 
+val checkCommentRefs = tasks.register<Exec>("checkCommentRefs") {
+    group = "verification"
+    description = "Fails when code cites a run-scoped spec identifier (Decision N, Caveat N, §N)"
+    commandLine("./scripts/check-comment-refs.sh")
+}
+
+tasks.named("test") {
+    dependsOn(checkCommentRefs)
+}
+
 tasks.register("coverageCheck") {
     description = "Enforce test coverage thresholds across all components"
     group = "verification"
