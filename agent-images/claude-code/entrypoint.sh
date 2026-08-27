@@ -65,11 +65,11 @@ export API_SERVER_URL=$(jq -r '.api_server_url // empty' "$CONFIG_FILE")
 NEED_DECISION=$(jq -r '.need_decision // false' "$CONFIG_FILE")
 NEED_PR=$(jq -r '.needs_pr // false' "$CONFIG_FILE")
 
-# Triggering Task's identity (Decision 1/2/3) — present only for runs started from
+# Triggering Task's identity — present only for runs started from
 # a Task. Story/Epic may independently be empty if that level no longer resolves
-# (Caveat 1) even though TASK_ID is set. update-task-status/get-roadmap-graph
+# even though TASK_ID is set. update-task-status/get-roadmap-graph
 # default their --task-id/--epic-id flags from these when the caller omits them
-# (Decision 4).
+#.
 export TASK_ID=$(jq -r '.task_context.task_id // empty' "$CONFIG_FILE")
 export TASK_TITLE=$(jq -r '.task_context.task_title // empty' "$CONFIG_FILE")
 export STORY_ID=$(jq -r '.task_context.story_id // empty' "$CONFIG_FILE")
@@ -77,8 +77,8 @@ export STORY_TITLE=$(jq -r '.task_context.story_title // empty' "$CONFIG_FILE")
 export EPIC_ID=$(jq -r '.task_context.epic_id // empty' "$CONFIG_FILE")
 export EPIC_TITLE=$(jq -r '.task_context.epic_title // empty' "$CONFIG_FILE")
 
-# The Task's own direct, not-yet-done incoming blocking edges (Decision 1/4) —
-# informational only, does not gate the run (Decision 2). "// []" defaults to an
+# The Task's own direct, not-yet-done incoming blocking edges —
+# informational only, does not gate the run. "// []" defaults to an
 # empty array both when task_context itself is absent and when an older
 # config.json (written before this field existed) has task_context but no
 # open_blockers key, so this never crashes on a mismatched agent/API-server pairing.
@@ -311,7 +311,7 @@ elif [ -n "$REPO_URL" ]; then
   echo "Repo ready at /workspace/repo/"
 fi
 
-# Narrate the triggering Task's identity into the system prompt (Decision 7) —
+# Narrate the triggering Task's identity into the system prompt —
 # exporting TASK_ID/STORY_ID/EPIC_ID above makes the roadmap CLI tools work, but
 # an env var the model never learns about is operationally invisible. Tell it
 # plainly, in addition to (not instead of) the environment variables.
@@ -327,7 +327,7 @@ You can call \`get-roadmap-graph\` without passing --epic-id — it defaults to 
 run's Epic automatically. Do not mark this Task done: it closes by itself once this
 run's pull requests are merged."
 
-  # Narrate open blockers (Decision 2/3/10) — readiness now gates Task start, so
+  # Narrate open blockers — readiness now gates Task start, so
   # open_blockers is empty at launch for every run. This block can therefore only
   # fire for an edge added mid-run: a change of circumstances, not routine context.
   BLOCKER_COUNT=$(echo "$OPEN_BLOCKERS_JSON" | jq 'length')
@@ -569,8 +569,8 @@ and write the document."
 fi
 
 # Compose a PR-requirement note into the system prompt (AI nodes only) when this
-# node must register a pull request for every repo it pushes to before finishing
-# (Decision 3/§3.3). Informational only — the actual gate runs after the Claude
+# node must register a pull request for every repo it pushes to before finishing.
+# Informational only — the actual gate runs after the Claude
 # session ends (see "PR verification" below); this just tells the agent about
 # the constraint up front instead of only on retry.
 if [ "$NEED_PR" = "true" ] && [ "$EXECUTOR_TYPE" != "script" ]; then
@@ -1003,21 +1003,21 @@ ${PROMPT}"
   fi
 
   # PR verification: only for nodes that must register a pull request for every
-  # repo they pushed to this run (Decision 3/§3.3). Unlike DECISION above,
+  # repo they pushed to this run. Unlike DECISION above,
   # check-prs has no single-value sentinel to string-match against — it prints a
   # variable-length list of "<repo>: no PR registered" lines (or a distinct
   # "could not reach origin for <repo>" / "could not reach $API_SERVER_URL" message
-  # if it fails loudly per Caveat 3), so branch on exit status instead: 0 = nothing
+  # if it fails loudly), so branch on exit status instead: 0 = nothing
   # missing, non-zero = something missing or check-prs itself failed. This is a
   # fourth phase drawing on the same shared $ATTEMPT budget as the three phases
-  # above (Caveat 4) — it may start with little or no budget left. It is the last
+  # above — it may start with little or no budget left. It is the last
   # phase that can resume the session, which is why the escalation gate sits below
   # it rather than above: see that block's header.
   #
   # Capture check-prs's stderr along with its stdout (2>&1): check-prs's loud
   # failure diagnostics (unreachable origin/API server, HTTP failure) are written
   # to stderr — without 2>&1 here, those diagnostics would never reach the retry
-  # prompt or the final ERROR_MESSAGE below, silently defeating Caveat 3's "fail
+  # prompt or the final ERROR_MESSAGE below, silently defeating the "fail
   # loudly" intent at the one place a human or the resumed agent actually sees it.
   if [ "$NEED_PR" = "true" ] && [ -n "$API_SERVER_URL" ] && [ -n "$CLAUDE_RESULT" ]; then
     set +e

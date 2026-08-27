@@ -20,7 +20,7 @@ import java.util.function.Function;
  * 1/2/3/5). A stateless utility — mirrors {@link RollupCalculator}'s package-private,
  * static-methods shape rather than being a Spring bean, since it has no repository/collaborator
  * dependencies of its own: every entry point takes an already-loaded, caller-bounded edge set plus
- * a status lookup, so the caller decides how far the graph is read (Decision 2 — e.g. one Epic's
+ * a status lookup, so the caller decides how far the graph is read (e.g. one Epic's
  * rows) and this class only walks whatever it's handed.
  *
  * <p>Used by {@link DefaultRoadmapGraphService} (per-node {@link Readiness} across an Epic), by
@@ -28,14 +28,14 @@ import java.util.function.Function;
  * DefaultWorkItemDependencyService} (rejecting cycle-forming edges at creation time), and by
  * {@link DefaultBlockingChainService} (the full pruned blocking-chain tree for one Story/Task) —
  * the single shared component all these call sites now delegate to, so they cannot independently
- * drift on what "blocked" means (Decision 3).
+ * drift on what "blocked" means.
  */
 final class TransitiveReadinessResolver {
 
     private TransitiveReadinessResolver() {}
 
     /**
-     * Per-item readiness (Decision 1/2): an item is {@link Readiness#BLOCKED} if ANY item
+     * Per-item readiness: an item is {@link Readiness#BLOCKED} if ANY item
      * reachable by walking backward along blocking edges from it — not just its direct blocker —
      * is not yet {@code "done"} per {@code statusOf}. The walk continues past an already-{@code
      * done} intermediate blocker to check further upstream (this is the core regression this
@@ -58,7 +58,7 @@ final class TransitiveReadinessResolver {
     }
 
     /**
-     * The actionable root-cause blocker(s) of {@code itemId} (Decision 4): not-{@code done}
+     * The actionable root-cause blocker(s) of {@code itemId}: not-{@code done}
      * ancestors of {@code itemId} (walking the full chain per {@link #computeReadiness}, not just
      * direct blockers) that are themselves {@link Readiness#READY} — i.e. have no not-{@code done}
      * blocker of their own — so an intermediate link that is itself still blocked is never
@@ -186,7 +186,7 @@ final class TransitiveReadinessResolver {
     }
 
     /**
-     * The pruned blocking-chain tree rooted at {@code itemId} (Decisions 2, 4, 5): each returned
+     * The pruned blocking-chain tree rooted at {@code itemId}: each returned
      * {@link BlockingChainNode} is a direct blocker of its parent (the root, for the top-level
      * list), carrying its own upstream blockers recursively. A branch is pruned entirely once every
      * node on it is {@code "done"} — but a {@code done} node is still INCLUDED if something further
@@ -197,11 +197,11 @@ final class TransitiveReadinessResolver {
      * <p>Bounded by {@code maxNodes} (total nodes admitted into the returned tree, across all
      * branches) and {@code maxDepth} (hops from the root); once either is hit, that branch stops
      * expanding and the walk is reported {@code truncated} via {@link ChainWalkResult#truncated()}
-     * (Decision 5) — the caller ({@code DefaultBlockingChainService}) applies its own, separate
+     * — the caller ({@code DefaultBlockingChainService}) applies its own, separate
      * node/depth cap while resolving items from the database layer-by-layer, so by the time {@code
      * edges} reaches here it is normally already within bounds; this method's own cap is a second,
      * independent guard against the tree itself fanning out past the cap through duplicate branches
-     * to a shared ancestor (Caveat 2 — a shared ancestor is not deduplicated, so it can appear, and
+     * to a shared ancestor (a shared ancestor is not deduplicated, so it can appear, and
      * count against the cap, more than once).
      *
      * <p>Cyclic data (pre-existing bad rows — {@code work_item_dependency} has no DB-level FK, see
@@ -308,7 +308,7 @@ final class TransitiveReadinessResolver {
      * done} blockers alike, per {@link #computeReadiness}'s contract — is not {@code done}. {@code
      * path} tracks the current recursion path (not a global visited set): a blocker already on
      * that path is cyclic data and is treated as permanently BLOCKED without recursing into it
-     * again (Decision 5's traversal guard, the second line of defense behind creation-time
+     * again (the traversal guard, the second line of defense behind creation-time
      * rejection), which is also what keeps this method from looping forever on pre-existing or
      * cross-boundary cyclic data.
      */

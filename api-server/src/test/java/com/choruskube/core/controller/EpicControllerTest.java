@@ -229,7 +229,7 @@ public class EpicControllerTest extends BaseTest {
     @Test
     void listEpics_blockedReadinessValue_returnsEmptyPage_notUnfilteredFallback() throws Exception {
         // BLOCKED is a syntactically valid Readiness enum value, so it doesn't hit the 400 path
-        // above — it must instead be treated as "no candidates match" (Caveat 4), not silently
+        // above — it must instead be treated as "no candidates match", not silently
         // fall back to the unfiltered page. Seed an Epic that would appear in both the unfiltered
         // list and the READY-filtered list, to prove ?readiness=BLOCKED excludes it too.
         GitRepo repo = createGitRepo("https://github.com/test/ready-filter-blocked-value.git");

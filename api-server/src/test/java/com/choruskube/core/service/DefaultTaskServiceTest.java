@@ -229,7 +229,7 @@ public class DefaultTaskServiceTest extends BaseTest {
 
     @Test
     void start_blockedTask_throwsConflictNamingTheBlocker() {
-        // Readiness is enforced, not merely displayed (spec Decision 10): starting a blocked Task
+        // Readiness is enforced, not merely displayed: starting a blocked Task
         // would clone a base branch missing its blocker's work. Supersedes the earlier
         // characterization that blocking was informational only. The escape hatch is editing the
         // dependency, not bypassing this check.
@@ -343,7 +343,7 @@ public class DefaultTaskServiceTest extends BaseTest {
         assertThatThrownBy(() -> service.complete(task.id())).isInstanceOf(ConflictException.class);
     }
 
-    // ── "done" means merged (Decision 8): the closure guard ──────────────────────
+    // ── "done" means merged: the closure guard ──────────────────────
 
     @Test
     void complete_withUnmergedPullRequest_throwsConflict() {
@@ -512,7 +512,7 @@ public class DefaultTaskServiceTest extends BaseTest {
         assertThat(page.getContent()).extracting(TaskResponse::readiness).containsOnlyNulls();
     }
 
-    // ── updateStatus / updateStatusInternal (Decision 4) ─────────────────────────
+    // ── updateStatus / updateStatusInternal ─────────────────────────
 
     @Test
     void updateStatus_backlogToInProgress_delegatesToStartAndCreatesRun() {
@@ -647,7 +647,7 @@ public class DefaultTaskServiceTest extends BaseTest {
                 .isInstanceOf(ForbiddenException.class);
     }
 
-    // ── readiness (Decision 1/2/3) — the flat list endpoint now populates the field the Roadmap
+    // ── readiness — the flat list endpoint now populates the field the Roadmap
     // Graph View has always computed, via the same shared EpicReadinessAssembler ──────────────
 
     @Test
@@ -659,7 +659,8 @@ public class DefaultTaskServiceTest extends BaseTest {
         List<TaskResponse> result = service.list(story.id());
 
         assertThat(result).extracting(TaskResponse::readiness).containsExactly(Readiness.READY);
-        assertThat(task.readiness()).isNull(); // create() itself still returns null (Decision 1 scopes list only)
+        assertThat(task.readiness())
+                .isNull(); // create() itself still returns null (real readiness is scoped to list() only)
     }
 
     @Test
@@ -678,7 +679,7 @@ public class DefaultTaskServiceTest extends BaseTest {
 
     @Test
     void list_taskBlockedBySiblingStorysTask_underSameEpic_isBlocked() {
-        // Decision 3: a Task list request is scoped to its OWNING EPIC's full Story/Task set, not
+        // a Task list request is scoped to its OWNING EPIC's full Story/Task set, not
         // just the requested Story's own Tasks — a Task can be blocked by a Task under a
         // completely different sibling Story in the same Epic.
         GitRepo r = makeRepo("https://github.com/test/task-readiness-cross-story.git");
@@ -711,7 +712,7 @@ public class DefaultTaskServiceTest extends BaseTest {
 
     @Test
     void get_doesNotPopulateReadiness() {
-        // Decision 1: only the flat list endpoints (and the Roadmap Graph View) compute
+        // only the flat list endpoints (and the Roadmap Graph View) compute
         // readiness — single-item reads are unaffected and keep returning null.
         GitRepo r = makeRepo("https://github.com/test/task-readiness-get-null.git");
         StoryResponse story = makeStory(r.getId());

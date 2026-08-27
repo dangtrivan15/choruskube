@@ -32,7 +32,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Covers Decision 4 of the "Group Epics under a named Milestone / Release" feature: {@code
+ * Covers the "Group Epics under a named Milestone / Release" feature: {@code
  * EpicService#assignMilestone} — assign/clear, the same-project guard, exemption from the "no
  * edit once started" guard {@code update()} enforces, and the response/event contract.
  */
@@ -159,7 +159,7 @@ public class EpicMilestoneAssignmentTest extends BaseTest {
     @Test
     void update_toDifferentProject_clearsMilestone() {
         // A full-PUT edit that re-points the Epic to a different project must un-tag its
-        // Milestone: a Milestone is scoped to one software_project (Decision 3), so the old tag
+        // Milestone: a Milestone is scoped to one software_project, so the old tag
         // can no longer apply. Guards the invariant on the project-change path update() owns —
         // otherwise the Epic would carry a cross-project Milestone reference.
         GitRepo repoA = makeRepo("https://github.com/test/update-clear-a.git");

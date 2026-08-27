@@ -40,7 +40,7 @@ interface HumanGatePanelProps {
    * this gate, if any. `null`/`undefined` means no breakdown is available — the
    * panel renders exactly what it renders today. When present, the reviewer's
    * (possibly edited) copy is included as `editedCandidates` on the signal call.
-   * A document (Decision 5) — no longer a bare Epic array.
+   * A document — no longer a bare Epic array.
    */
   candidateBreakdown?: RoadmapCandidatesDocument | null;
   /** The triggering reviewer's decision string, e.g. `need_human_decision:review_conflict`. */

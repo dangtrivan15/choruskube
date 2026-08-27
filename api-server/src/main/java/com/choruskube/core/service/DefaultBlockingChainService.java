@@ -23,11 +23,11 @@ import org.springframework.transaction.annotation.Transactional;
 public class DefaultBlockingChainService implements BlockingChainService {
 
     /** Total nodes admitted into the returned tree before the walk is reported truncated
-     * (Caveat 4 — no telemetry yet on real chain sizes; a human should sanity-check this default
+     * (no telemetry yet on real chain sizes; a human should sanity-check this default
      * once real usage is observed). */
     private static final int MAX_CHAIN_NODES = 200;
 
-    /** Hops from the root before the walk is reported truncated (Caveat 4 — same caveat as
+    /** Hops from the root before the walk is reported truncated (same caveat as
      * {@link #MAX_CHAIN_NODES}: an unvalidated-in-production default). */
     private static final int MAX_CHAIN_DEPTH = 25;
 
@@ -46,7 +46,7 @@ public class DefaultBlockingChainService implements BlockingChainService {
     @Transactional(readOnly = true)
     public BlockingChainResponse getChain(BlockableItemType itemType, UUID itemId) {
         // Root resolution goes through storyService/taskService (never a repository directly) so
-        // org-scoping (checkOrgAccess) is never bypassed (§3.2) — a missing/foreign root item must
+        // org-scoping (checkOrgAccess) is never bypassed  — a missing/foreign root item must
         // 404/403 exactly like every other org-scoped read in this codebase, so both exceptions are
         // allowed to propagate uncaught here.
         Map<UUID, String> titleById = new HashMap<>();

@@ -16,7 +16,7 @@ interface MilestoneSelectProps {
   /** The currently assigned Milestone id, or `null` for unassigned. */
   value: string | null;
   onChange: (milestoneId: string | null) => void;
-  /** Scopes the option list to Milestones belonging to this software project (Decision 3: a
+  /** Scopes the option list to Milestones belonging to this software project (a
    * Milestone and its Epics must share a project). */
   softwareProjectId: string | undefined;
   size?: "sm" | "default";
@@ -27,7 +27,7 @@ interface MilestoneSelectProps {
 /**
  * Project-scoped Milestone picker, including a "None" option to clear the assignment — the
  * Milestone equivalent of `PrioritySelect`/`SoftwareProjectSelect`. Used on the create/edit-Epic
- * dialogs and the inline Epic detail page selector (Decision 4).
+ * dialogs and the inline Epic detail page selector.
  */
 export default function MilestoneSelect({
   value,

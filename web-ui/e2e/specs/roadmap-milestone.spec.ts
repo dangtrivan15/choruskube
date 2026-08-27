@@ -2,7 +2,7 @@ import { test, expect } from "../fixtures";
 import { uniqueName } from "../helpers/api-client";
 
 /**
- * E2E coverage for "Group Epics under a named Milestone / Release" (§6 of that feature's spec):
+ * E2E coverage for "Group Epics under a named Milestone / Release" (of that feature's spec):
  * create a Milestone, tag Epics with it, see the badge/filter on the Roadmap list, rename it
  * (badge text updates), and delete it (Epics remain, now untagged).
  */
@@ -65,8 +65,8 @@ test.describe("Roadmap Milestones", () => {
     await roadmapPage.goto();
     await expect(roadmapPage.epicItemMilestoneBadge(taggedEpic.title)).toHaveText(renamedName);
 
-    // 6. Deleting the Milestone un-tags the Epic — the Epic itself remains (Decision 2:
-    // ON DELETE SET NULL, not a cascade delete).
+    // 6. Deleting the Milestone un-tags the Epic — the Epic itself remains
+    // (ON DELETE SET NULL, not a cascade delete).
     await milestonesPage.goto();
     await milestonesPage.deleteMilestone(renamedName);
     await expect(milestonesPage.item(renamedName)).toHaveCount(0);

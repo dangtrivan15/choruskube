@@ -137,7 +137,7 @@ public class GraphSnapshotBuilderTest extends BaseTest {
     void buildSnapshotIncludesDecisionOptionsForPlainEdgeGate() throws Exception {
         // "Approve Spec & Plan" (feature-development) has three outgoing edges — approved,
         // rereview, redraft — and no terminal_decisions config: a plain edge-driven gate. v35
-        // (Decision 2 in the accompanying spec) gave Final Approval a terminal_decisions entry
+        // gave Final Approval a terminal_decisions entry
         // alongside its remaining edge, so it's no longer a plain edge-driven gate — that mixed
         // edge+terminal_decisions shape is instead covered below by "Roadmap Human Gate" (a
         // different node/template with the same general shape: one real edge plus a

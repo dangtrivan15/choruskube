@@ -497,7 +497,7 @@ export class TestApiClient {
 
   /**
    * Assign or clear (via `null`) an Epic's Milestone via PATCH /epics/{id}/milestone
-   * (mirrors useAssignEpicMilestone, Decision 4 of the "Group Epics under a named
+   * (mirrors useAssignEpicMilestone, part of the "Group Epics under a named
    * Milestone / Release" feature).
    */
   async assignEpicToMilestone(epicId: string, milestoneId: string | null): Promise<Epic> {
@@ -698,9 +698,9 @@ export class TestApiClient {
     return this.delete(`/api/v1/organizations/${orgId}/ai-credential`);
   }
 
-  // ── Autopilot (spec §10) ─────────────────────────────────────────
+  // ── Autopilot (spec) ─────────────────────────────────────────
   //
-  // The Autopilot is a SINGLETON, org-wide, with no per-caller scope filter (Decision 7) — every
+  // The Autopilot is a SINGLETON, org-wide, with no per-caller scope filter — every
   // method below mutates or reads state shared by every Playwright worker. Only
   // e2e/specs/autopilot.spec.ts is expected to call these; see that file's top-of-file comment for
   // the parallel-safety reasoning (serialised tests, generous-but-bounded maxParallel headroom,

@@ -50,14 +50,14 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.Assert;
 
 /**
- * The Autopilot: a standing controller that starts READY Tasks unattended (Decision 1). No
+ * The Autopilot: a standing controller that starts READY Tasks unattended. No
  * terminal state — an empty ready frontier means idle, not finished.
  *
  * <p>Lives in this package because {@link EpicReadinessAssembler} and both of its methods are
  * package-private, and the Autopilot has to compute readiness exactly the way the board does.
  *
  * <p><strong>Which row this is acting on is never decided here.</strong> It comes from {@link
- * AutopilotResolver} — one Autopilot per installation in core (Decision 7), one per organisation
+ * AutopilotResolver} — one Autopilot per installation in core, one per organisation
  * downstream. Nothing in this class enumerates or orders {@code autopilot} rows itself, which is
  * what stops "the singleton" quietly meaning "somebody else's" once there is more than one.
  *
@@ -73,7 +73,7 @@ public class AutopilotService implements AutopilotSafetyValve {
 
     private static final Logger log = LoggerFactory.getLogger(AutopilotService.class);
 
-    /** Decision 5: three consecutive failures mean the platform is broken, not the work. */
+    /** three consecutive failures mean the platform is broken, not the work. */
     private static final int FAILURE_LIMIT = 3;
 
     /** {@code nextUp} is a preview panel, not a queue dump. */
@@ -223,10 +223,10 @@ public class AutopilotService implements AutopilotSafetyValve {
      */
     private static RunClass classify(WorkflowRunStatus status) {
         return switch (status) {
-            // A live agent pod. The only thing max_parallel counts (Decision 2).
+            // A live agent pod. The only thing max_parallel counts.
             case pending, running -> new RunClass(true, Settle.NOT_FINISHED, Bucket.NONE);
             // Parked on a human. Costs nothing to hold, so it frees its slot — that is the
-            // whole point of Decision 2, since otherwise stepping away stalls the Autopilot.
+            // whole point, since otherwise stepping away stalls the Autopilot.
             case awaiting_human, live_chat, paused -> new RunClass(false, Settle.NOT_FINISHED, Bucket.AWAITING_YOU);
             // Failed and held for seven days. A failure for the breaker, and it stays on the
             // needs-attention list afterwards, because the Autopilot never retries it.
@@ -538,10 +538,7 @@ public class AutopilotService implements AutopilotSafetyValve {
         } else if (successes > 0) {
             autopilotRepo.resetFailures(autopilotId, now);
         }
-        return applyBreaker(
-                        autopilotId,
-                        "its runs failed instead of completing. Nothing is retried automatically (Decision 5)",
-                        now)
+        return applyBreaker(autopilotId, "its runs failed instead of completing. Nothing is retried automatically", now)
                 ? Settled.BREAKER_TRIPPED
                 : Settled.PROCEED;
     }
@@ -714,7 +711,7 @@ public class AutopilotService implements AutopilotSafetyValve {
 
     /**
      * Every startable Task in a candidate Epic ({@link EpicReadinessAssembler#isStartable} —
-     * backlog and READY), ordered per Decision 6. That predicate is shared with the Epic list's
+     * backlog and READY), ordered. That predicate is shared with the Epic list's
      * {@code readyItemCount}, so the board's "N ready" badge names exactly this frontier.
      *
      * <p>{@link TaskOrderingStrategy} deliberately leaves epic affinity out, because it depends on
@@ -784,7 +781,7 @@ public class AutopilotService implements AutopilotSafetyValve {
 
     /**
      * Moves Tasks whose Epic already has a run in flight ahead of the rest, preserving the
-     * comparator's relative order within each group (Decision 6). "In flight" is the same set
+     * comparator's relative order within each group. "In flight" is the same set
      * {@code max_parallel} counts, so the term means one thing throughout.
      */
     private static List<Task> applyEpicAffinity(
@@ -830,9 +827,9 @@ public class AutopilotService implements AutopilotSafetyValve {
     }
 
     /**
-     * The empty-container case from Decision 4, made visible. An Epic or Story with no Tasks is
-     * never satisfied, so anything it blocks stays blocked forever — and under Decision 4's
-     * alternative the failure mode is silence: the Autopilot simply never picks that work up.
+     * The empty-container case, made visible. An Epic or Story with no Tasks is
+     * never satisfied, so anything it blocks stays blocked forever — and under the alternative
+     * the failure mode is silence: the Autopilot simply never picks that work up.
      *
      * <p>Only reported when the empty container is actually blocking something that is BLOCKED
      * right now, so a half-planned Epic nobody depends on does not fill the panel.
@@ -1063,7 +1060,7 @@ public class AutopilotService implements AutopilotSafetyValve {
     }
 
     /**
-     * Why the Autopilot is not starting work (spec §10). An unattended dispatcher that stops for a
+     * Why the Autopilot is not starting work (spec). An unattended dispatcher that stops for a
      * structural reason has to be distinguishable from one that is broken, and a guess is worth
      * much less than being told.
      */

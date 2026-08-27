@@ -19,7 +19,7 @@ public record PendingGateResponse(
         List<String> decisionOptions,
         /**
          * The analyzer's structured candidate Milestone/Epic/Story/Task/dependency breakdown
-         * (Decision 1/5), parsed from {@code roadmap_candidates.json}, or {@code null} if this
+         *, parsed from {@code roadmap_candidates.json}, or {@code null} if this
          * gate's template doesn't produce one, or the artifact is missing/malformed (falls back to
          * the raw-artifact display).
          */

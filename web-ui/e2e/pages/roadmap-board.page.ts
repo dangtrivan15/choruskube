@@ -19,7 +19,7 @@ export class RoadmapBoardPage {
   readonly viewControls: RoadmapViewControls;
   readonly listViewLink: Locator;
   readonly timelineViewLink: Locator;
-  /** The Graph action — a disabled `<button>` until an Epic is focused (Decision 3). */
+  /** The Graph action — a disabled `<button>` until an Epic is focused. */
   readonly graphAction: Locator;
 
   constructor(page: Page) {

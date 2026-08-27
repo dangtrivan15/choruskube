@@ -16,7 +16,7 @@ interface ReadinessBadgeProps {
 }
 
 /**
- * Shared "Blocked" dependency-readiness indicator (Decision 4) — the single
+ * Shared "Blocked" dependency-readiness indicator — the single
  * implementation behind all four call sites that render it (the Roadmap
  * Graph detail panel, the Epic board card's Story rows, and the Epic/Story
  * detail pages' Story/Task rows), so a future visual or copy change happens

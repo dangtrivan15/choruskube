@@ -179,7 +179,7 @@ export interface RoadmapDependencyEdgeInput {
 }
 
 /**
- * One external ("ghost") node attached to the tree (Decision 1/4 in the
+ * One external ("ghost") node attached to the tree (the
  * cross-Epic-blockers spec) — a stub standing in for a Story/Task that lives
  * in a *different* Epic. Deduplicated by external item identity upstream
  * (RoadmapGraph), so there is exactly one of these per unique external item
@@ -211,7 +211,7 @@ export interface RoadmapExternalEdgeInput {
 export interface RoadmapTreeInput {
   nodes: RoadmapTreeNode[];
   dependencyEdges: RoadmapDependencyEdgeInput[];
-  /** Cross-Epic external nodes/edges (Decision 1/4). Omit or pass `[]` when there are none. */
+  /** Cross-Epic external nodes/edges. Omit or pass `[]` when there are none. */
   externalNodes?: RoadmapExternalNodeInput[];
   externalEdges?: RoadmapExternalEdgeInput[];
 }
@@ -234,8 +234,8 @@ export function roadmapDependencyEdgeId(dependencyId: string): string {
 
 /**
  * Stable id for an external ("ghost") node standing in for a Story/Task in
- * another Epic (Decision 1). Keyed by the external item's own id — one node
- * per unique external item (Decision 4's dedup), not one per blocker entry.
+ * another Epic. Keyed by the external item's own id — one node
+ * per unique external item (deduplicated), not one per blocker entry.
  */
 export function roadmapExternalNodeId(itemId: string): string {
   return `external:${itemId}`;
@@ -247,7 +247,7 @@ export function roadmapExternalNodeId(itemId: string): string {
  * within-Epic dependency row, `ExternalBlockerRef` has no id of its own, so
  * the caller (RoadmapGraph) combines the external item id with the specific
  * in-Epic item id (`internalItemId`) it connects to, since the same external
- * item can touch more than one in-Epic node (Decision 4).
+ * item can touch more than one in-Epic node.
  */
 export function roadmapCrossEpicEdgeId(blockerId: string): string {
   return `cross-epic:${blockerId}`;

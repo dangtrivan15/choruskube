@@ -551,7 +551,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             whenever Code Review ran and registered anything before Test
             failed and routed back to you; Code Review is reachable as your
             own predecessor on this path, and it may have opened a fallback PR
-            for a repo you never touched — see Decision 5/§3.5 in the spec).
+            for a repo you never touched).
             `artifact get` each one that's present. Where both list the same
             repo, the `code_review` entry wins (it reflects more recent
             state); where only one lists a repo, include it anyway. For any
@@ -847,8 +847,8 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                   <url> --pr-number <number> --title <title> --repo-name
                   <name>` (`id` from config.json's `repos[]`).
                 - **One-directional only:** do NOT `gh pr edit` the earlier,
-                  already-open sibling PRs to add a link back to this new one
-                  — see the spec's Caveat 5. Their Companion PRs sections
+                  already-open sibling PRs to add a link back to this new one.
+                  Their Companion PRs sections
                   stay exactly as Implement (or an earlier Code Review pass)
                   left them.
 
@@ -1042,7 +1042,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
 
         // Terminal node (v35): its `approved` decision is declared via
         // terminal_decisions in seedTemplate() instead of routing to a
-        // now-retired Push & Create PR node — see Decision 2 in the spec.
+        // now-retired Push & Create PR node.
         defs.put("Final Approval", createNodeDef("Final Approval", ExecutorType.human, null, 86400));
 
         return defs;
@@ -1149,7 +1149,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
         TemplateNode tnSupervisor =
                 createNode(template, nodeDefs.get("Supervisor"), "supervisor", false, "{\"routing_hub\": true}");
         // Terminal node (v35): `approved` has no outgoing edge — it's a
-        // terminal_decisions entry (Decision 2) that ends the run instead of
+        // terminal_decisions entry that ends the run instead of
         // routing to the now-retired Push & Create PR node.
         TemplateNode tnFinalApproval = createNode(
                 template,

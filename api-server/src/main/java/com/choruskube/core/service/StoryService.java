@@ -12,10 +12,10 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
 /**
- * CRUD plus rollup status/progress aggregation for Stories (Decision 2). Defined as an
- * interface, with {@link DefaultStoryService} as its sole implementation (Decision 8).
+ * CRUD plus rollup status/progress aggregation for Stories. Defined as an
+ * interface, with {@link DefaultStoryService} as its sole implementation.
  *
- * <p>Per Decision 5, a Story is never treated as top-level for ownership purposes — it always
+ * <p>A Story is never treated as top-level for ownership purposes — it always
  * inherits its organization from its immediate parent Epic, regardless of caller.
  */
 public interface StoryService {
@@ -38,7 +38,7 @@ public interface StoryService {
      * com.choruskube.core.service.TaskService#list(WorkItemStatus, Pageable)}'s shape:
      * {@code scopeProvider}-scoped, optionally filtered by board {@code stage}, page-returning.
      * Uses the same shared single-item mapper as {@link #get}/{@link #create} — {@code readiness}
-     * stays {@code null} here (Decision 1 scopes real readiness to the per-Epic {@link #list(UUID)}
+     * stays {@code null} here (real readiness is scoped to the per-Epic {@link #list(UUID)}
      * and the Roadmap Graph View only). A non-null {@code priority} narrows the result to Stories
      * with that priority (a plain persisted-column predicate).
      */

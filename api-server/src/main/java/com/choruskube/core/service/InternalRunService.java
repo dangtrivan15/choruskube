@@ -417,12 +417,12 @@ public class InternalRunService {
 
     /**
      * Resolves the triggering Task's identity directly off {@code run.getTaskId()} and the
-     * {@code task.story_id -> story.epic_id} FK chain (Decision 1), for broadcast into every
-     * node execution's {@code config.json} (Decision 3). Reads repositories directly rather than
+     * {@code task.story_id -> story.epic_id} FK chain, for broadcast into every
+     * node execution's {@code config.json}. Reads repositories directly rather than
      * {@code TaskService}/{@code EpicService} because this internal path has no request-scoped
      * tenant context for {@code checkOrgAccess} to consult, mirroring {@code RunService
      * .buildTaskSummary}'s identical choice. Absent when the run wasn't started from a Task;
-     * Story/Epic are independently nullable if either no longer resolves (Caveat 1).
+     * Story/Epic are independently nullable if either no longer resolves.
      */
     private @Nullable GraphRuntimeSnapshotResponse.TaskContext buildTaskContext(WorkflowRun run) {
         if (run.getTaskId() == null) {
@@ -448,14 +448,14 @@ public class InternalRunService {
     /**
      * The Task's actionable, root-cause open blocker(s) — not-yet-{@code done} items reachable by
      * walking the full blocking chain (not just the direct blocker) that are themselves unblocked,
-     * i.e. worth acting on next (multi-step blocking chain feature, Decisions 3/4). Delegates to
+     * i.e. worth acting on next (multi-step blocking chain feature). Delegates to
      * {@link TransitiveReadinessResolver#rootCauseBlockersOf}, the same shared resolver {@link
      * DefaultRoadmapGraphService} uses, so the two call sites can no longer independently drift on
      * what "blocked" means. The transitive walk is bounded to the Task's own Epic's Story/Task set
      * when {@code epicId} is known (mirrors {@link DefaultRoadmapGraphService#assemble}'s
-     * candidate-set bounding, Decision 2) — a direct blocker outside that Epic is still reported
+     * candidate-set bounding) — a direct blocker outside that Epic is still reported
      * (single-hop, as before), but its own upstream chain is not walked past. {@code epicId} is
-     * null only when the Task's Story/Epic no longer resolves (Caveat 1 on {@link
+     * null only when the Task's Story/Epic no longer resolves (see {@link
      * #buildTaskContext}), in which case the walk covers just the Task's own direct edges.
      *
      * <p>Rows whose blocking item no longer resolves are silently skipped: {@code
@@ -732,7 +732,7 @@ public class InternalRunService {
      * <p>These internal endpoints exist because agent pods authenticate with JOB_SECRET (scoped
      * per-execution) and use /internal/ routes, whereas the public /api/v1/ endpoints use
      * different auth. Removing these would break deployed agent images that depend on the
-     * create-proposal and list-proposals CLI scripts (Decision 6 — the scripts keep their names
+     * create-proposal and list-proposals CLI scripts (the scripts keep their names
      * and endpoint paths, now operating on Epics instead of the retired flat proposal).
      */
     @Transactional
@@ -747,7 +747,7 @@ public class InternalRunService {
             // Reuses updateInternal's already-internal-safe (assertSameOrg + direct project-match,
             // no checkOrgAccess) milestone-assignment branch rather than EpicService#assignMilestone,
             // which reads a request-scoped tenant context that does not exist on this JOB_SECRET
-            // path (Decision 4/6) — see updateInternal's own javadoc.
+            // path — see updateInternal's own javadoc.
             epic = epicService.updateInternal(
                     epic.id(),
                     softwareProjectId,
@@ -786,7 +786,7 @@ public class InternalRunService {
 
     /**
      * Creates a Story under an Epic on behalf of an agent pod. New nested path added alongside
-     * the preserved Epic-level trio (Decision 6/3.6) — a rolling-upgrade agent pod on an older
+     * the preserved Epic-level trio — a rolling-upgrade agent pod on an older
      * image never calls this, since it doesn't know the path exists.
      *
      * <p>The Epic's ownership is validated against the run's resolved {@code software_project_id}
@@ -808,7 +808,7 @@ public class InternalRunService {
      *
      * <p>{@code epicId} comes from the URL's nested {@code .../{epicId}/stories/{storyId}/tasks}
      * segment purely to mirror {@link #createStory}'s shape; the Task itself is parented on
-     * {@code storyId} alone (Decision 5). Validated against the Story's actual parent so a caller
+     * {@code storyId} alone. Validated against the Story's actual parent so a caller
      * can't create a Task under a {@code storyId} that doesn't belong to the {@code epicId} the
      * URL claims — a mismatch here almost certainly means the caller has a stale/wrong Epic id.
      * Also validated against the run's resolved {@code software_project_id}, same rationale as
@@ -836,7 +836,7 @@ public class InternalRunService {
     }
 
     /**
-     * Reads an Epic's full Roadmap Graph View (Decision 1, Decision 3) on behalf of an agent pod.
+     * Reads an Epic's full Roadmap Graph View on behalf of an agent pod.
      * See {@link #createEpic} for why these internal endpoints exist; scoped the same way as
      * {@link #createStory}/{@link #createTask} via the run's resolved software project.
      */
@@ -856,7 +856,7 @@ public class InternalRunService {
 
     /**
      * Reads the Roadmap Graph View for the Epic that owns the calling run's own triggering Task
-     * (Decision 1, Decision 2) — lets an agent fetch its dependency context with no Epic ID at
+     * — lets an agent fetch its dependency context with no Epic ID at
      * all, resolving {@code run.task_id -> Task.story_id -> Story.epic_id} at request time rather
      * than relying on a client-side default computed once at pod start. {@code nodeExecId} is the
      * authenticated identifier on this route — {@code InternalAuthFilter} matches the caller's
@@ -867,7 +867,7 @@ public class InternalRunService {
      * unresolved link (a 404 is the correct signal for this endpoint) instead of returning a
      * nullable summary DTO for narration — do not merge the two methods. Delegates to the same
      * {@link #getGraph(UUID, UUID, UUID)} authorization-checked path once {@code epicId} is
-     * resolved (Decision 3), so this method adds no new org-aware code of its own.
+     * resolved, so this method adds no new org-aware code of its own.
      */
     @Transactional(readOnly = true)
     public RoadmapGraphSnapshot getGraphForTriggeringTask(UUID runId, UUID nodeExecId) {
@@ -894,7 +894,7 @@ public class InternalRunService {
     }
 
     /**
-     * Updates a Task's status (Decision 4) on behalf of an agent pod reporting a run's outcome.
+     * Updates a Task's status on behalf of an agent pod reporting a run's outcome.
      * See {@link #createEpic} for why these internal endpoints exist; scoped the same way as
      * {@link #createStory}/{@link #createTask} via the run's resolved software project. {@code
      * request.runId()}, if supplied, is the run being reported ON (verified against the Task's
@@ -920,7 +920,7 @@ public class InternalRunService {
      * Public wrapper around {@link #resolveSoftwareProjectIdFromRun} for collaborators that need
      * the run's resolved software project but aren't themselves an {@code InternalRunService}
      * method — namely {@code DefaultRoadmapCandidateMaterializer}, which needs it to call {@code
-     * MilestoneService.findOrCreate} directly (Decision 4/6): unlike Epic/Story/Task creation,
+     * MilestoneService.findOrCreate} directly: unlike Epic/Story/Task creation,
      * Milestone find-or-create has no other project-membership logic to reuse from this class, so
      * the materializer only needs the resolved id itself, not a full create/update delegate.
      */
@@ -933,7 +933,7 @@ public class InternalRunService {
 
     /**
      * Creates a "blocking" dependency edge between two items already resolved to real database ids
-     * on behalf of an agent pod (Decision 6) — the imperative-agent counterpart to {@code
+     * on behalf of an agent pod — the imperative-agent counterpart to {@code
      * RoadmapCandidateMaterializer}'s direct {@code WorkItemDependencyService.create} call for
      * candidate-key edges. Unlike the materializer's batch (where both endpoints are guaranteed to
      * be items just created in this same run's project), an imperative agent supplies arbitrary
@@ -963,7 +963,7 @@ public class InternalRunService {
 
     /**
      * Creates (or reuses an existing same-named) Milestone under the run's resolved software
-     * project on behalf of an agent pod (Decision 6) — delegates to {@link
+     * project on behalf of an agent pod — delegates to {@link
      * MilestoneService#findOrCreateInternal}, the {@code JOB_SECRET}-path counterpart of {@link
      * MilestoneService#findOrCreate} ({@code RoadmapCandidateMaterializer}'s method), so both write
      * surfaces share one Milestone dedup rule while each uses the org guard its own auth context

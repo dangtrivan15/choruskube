@@ -27,9 +27,9 @@ import java.util.stream.Collectors;
 import org.springframework.stereotype.Component;
 
 /**
- * Epic-bounded dependency-readiness assembly (Decision 2), shared by {@link
+ * Epic-bounded dependency-readiness assembly, shared by {@link
  * DefaultRoadmapGraphService} (the graph endpoint) and {@link DefaultStoryService}/{@link
- * DefaultTaskService} (the flat list endpoints, Decision 1) so all three read paths compute
+ * DefaultTaskService} (the flat list endpoints) so all three read paths compute
  * "is this item blocked" identically instead of independently drifting. Positioned below all
  * three call sites — it depends only on repositories and {@link AuthorizationService}, never on
  * {@link EpicService}/{@link StoryService}/{@link TaskService} — so none of those services calling
@@ -39,7 +39,7 @@ import org.springframework.stereotype.Component;
  * DefaultRoadmapGraphService#assemble}: loading the dependency edges touching a candidate Story/
  * Task set, resolving the status of any cross-Epic external blocker (org-checked the same way
  * that class always has), and delegating the actual transitive walk to {@link
- * TransitiveReadinessResolver}. No behavior changed by extracting it (Decision 2's own framing).
+ * TransitiveReadinessResolver}. No behavior changed by extracting it.
  */
 @Component
 class EpicReadinessAssembler {
@@ -106,7 +106,7 @@ class EpicReadinessAssembler {
     }
 
     /**
-     * An Epic's full Story/Task set, pre-loaded once (Decision 3) so callers of {@link #assemble}
+     * An Epic's full Story/Task set, pre-loaded once so callers of {@link #assemble}
      * don't each re-query it — shared between {@link DefaultStoryService#list} and {@link
      * DefaultTaskService#list} (sync point from the implementation plan) so both list endpoints
      * agree on exactly one "load this Epic's candidates" behavior.
@@ -175,7 +175,7 @@ class EpicReadinessAssembler {
 
     /**
      * Loads dependency edges touching {@code candidateIds}, resolves any cross-Epic external
-     * blocker's status (one hop only — Decision 2), and computes per-item {@link Readiness} via
+     * blocker's status (one hop only —), and computes per-item {@link Readiness} via
      * {@link TransitiveReadinessResolver}.
      *
      * @param statusById status for every id in {@code candidateIds}; mutated copies are made
@@ -220,7 +220,7 @@ class EpicReadinessAssembler {
                         row.getBlockedItemId());
                 externalBlockers.add(resolution.ref());
                 // Feeds the transitive walk below: a direct blocker's own status still gates
-                // readiness even when it lives outside this Epic (Decision 2), so its status must
+                // readiness even when it lives outside this Epic, so its status must
                 // be resolvable by id like every in-Epic item's.
                 effectiveStatusById.put(row.getBlockingItemId(), resolution.status());
             } else {
@@ -243,7 +243,7 @@ class EpicReadinessAssembler {
         // Readiness: BLOCKED iff any item reachable by walking the blocking chain backward from
         // this node is not yet done — not just its direct blocker (multi-step blocking chain
         // feature). The walk is bounded to `rows` (this Epic's own candidate set, loaded above),
-        // so an external blocker's own upstream chain is not followed further (Decision 2) — only
+        // so an external blocker's own upstream chain is not followed further — only
         // its already-resolved status (added to effectiveStatusById above) gates readiness at
         // that hop.
         Map<UUID, Readiness> readinessById =

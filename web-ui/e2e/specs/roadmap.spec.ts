@@ -187,7 +187,7 @@ test.describe("Roadmap drill-down", () => {
       blockedItemId: blockedTask.id,
     });
     // Readiness is computed per-item from its own direct/transitive dependency
-    // edges (Part 1 §3.1 — "this feature does not change the algorithm"), not
+    // edges (Part 1 — "this feature does not change the algorithm"), not
     // rolled up from a Story's child Tasks. A Task-to-Task edge alone leaves
     // the parent Story itself un-blocked, so a second, independent edge blocks
     // a Story directly — exactly how a user would flag "this Story can't
@@ -228,7 +228,7 @@ test.describe("Roadmap drill-down", () => {
     // equivalent pattern — completeTask only needs a terminal run, not a real
     // "Feature Development" template run) and confirm the Task row's badge
     // clears on the already-open Story detail page without a manual reload —
-    // exercises the realtime push-driven update flow (Part 1 §4).
+    // exercises the realtime push-driven update flow (Part 1).
     const started = await api.startTask(blockingTask.id);
     expect(started.latestRunId).not.toBeNull();
     await api.waitForRunStatus(started.latestRunId!, ["running"], 15_000);

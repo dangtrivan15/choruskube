@@ -29,7 +29,7 @@ import org.springframework.stereotype.Service;
 
 /**
  * Refreshes registered pull requests' merge state from GitHub, then closes any Task whose most
- * recent run's pull requests have all merged (Decisions 8 and 9). Merging the last PR is what
+ * recent run's pull requests have all merged. Merging the last PR is what
  * closes a Task — the agent is no longer asked to do it.
  *
  * <p>Idempotent by construction: a merged row leaves the unmerged scan permanently, and closure

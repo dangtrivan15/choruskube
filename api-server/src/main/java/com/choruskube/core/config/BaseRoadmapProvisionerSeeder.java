@@ -259,7 +259,7 @@ public class BaseRoadmapProvisionerSeeder implements ApplicationRunner {
         //   [Analyzer] → [Human Gate]
         //   (x=50)       (x=350)
         //   Both at y=150 for a single-row layout. There is no third "Feature
-        //   Creator" node in v13 (Decision 2/3): "approved" is a terminal
+        //   Creator" node in v13: "approved" is a terminal
         //   decision on the Human Gate — the API server materializes the
         //   reviewed candidate breakdown itself, in the same request that
         //   handles the decision signal, instead of handing off to a second
@@ -285,7 +285,7 @@ public class BaseRoadmapProvisionerSeeder implements ApplicationRunner {
         // Human Gate → Analyzer (rejected — loops back with review history)
         createEdge(template, tnHumanGate, tnAnalyzer, "rejected");
         // Human Gate "approved" has no outgoing edge — it's a terminal_decisions
-        // entry (Decision 2) instead, so the run completes right here.
+        // entry instead, so the run completes right here.
 
         log.info(
                 "BaseRoadmapProvisionerSeeder: seeded template graphId='{}' v{}: 2 node definitions, 2 template nodes, 2 edges",

@@ -8,7 +8,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 /**
- * Single-tenant default: every Epic is a candidate (Decision 7 — one Autopilot, no scope filter).
+ * Single-tenant default: every Epic is a candidate (one Autopilot, no scope filter).
  *
  * <p>{@code findAll()} rather than a {@code ScopeProvider} specification on purpose: the tick runs
  * on a timer thread, and {@code ScopeProvider} reads a request-scoped tenant context that would

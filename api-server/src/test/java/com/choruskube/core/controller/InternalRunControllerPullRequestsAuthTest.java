@@ -24,7 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Auth-scoped coverage for {@code GET /internal/runs/{runId}/node-executions/{nodeExecId}/pull-requests}
- * (Decision 3/3.3 in the spec — the node-execution-scoped PR-read mirror an agent's {@code
+ * (the spec — the node-execution-scoped PR-read mirror an agent's {@code
  * JOB_SECRET} can actually reach, since {@link InternalAuthFilter} only authorizes a path
  * carrying its own {@code node-executions/{nodeExecId}} segment).
  *

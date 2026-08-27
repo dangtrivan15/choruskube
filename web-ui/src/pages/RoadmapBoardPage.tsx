@@ -46,7 +46,7 @@ export default function RoadmapBoardPage() {
 
   const rawFocus = parseFocusParams(searchParams);
   // An `epic` id that doesn't match any loaded Epic (deleted, garbage, or an id from a different
-  // org — §6's Negative/security case) is treated as "nothing focused", all the way out to the
+  // org —'s Negative/security case) is treated as "nothing focused", all the way out to the
   // switcher — not just "no card highlighted". A `story` id is left for EpicBoardCard to resolve
   // once its own (lazily-fetched) Stories are in: Board never loads every card's Stories up front,
   // so it has nothing to validate a `story` id against without that pass otherwise-eager fetch.
@@ -67,7 +67,7 @@ export default function RoadmapBoardPage() {
 
   const handleFocusEpic = useCallback(
     (epicId: string) => {
-      // history replace, not push (§3.4) — ordinary card browsing shouldn't balloon the
+      // history replace, not push  — ordinary card browsing shouldn't balloon the
       // back-button history the way a `push` on every click would.
       setSearchParams(focusToSearchParamsInit({ epicId }), { replace: true });
     },

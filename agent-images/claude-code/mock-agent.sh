@@ -18,7 +18,7 @@
 #   live_chat        Simulate a live chat session: submit transcript + decision
 #   multi_repo_pr    Register PRs for all repos in a multi-repo run
 #   check_prs_gate   Drives the real check-prs/register-pr CLI contract end to end
-#                    (Decision 3/§3.3 PR completion gate): the FIRST repo in this
+#                    (PR completion gate): the FIRST repo in this
 #                    run's config.json repos[] is left unchanged but pushed at parity
 #                    (`git push origin HEAD` with no commits added — entrypoint.sh's
 #                    Step 3 already checked the run branch out at the default
@@ -33,7 +33,7 @@
 #                    agent when a node has needs_pr: true. No-op (exit 0) if no
 #                    repos are configured for this node.
 #   roadmap_status_update  Fetch an Epic's Roadmap Graph View, then report a Task's outcome
-#                          via update-task-status (Decision 1/3/4) — same contract a real
+#                          via update-task-status — same contract a real
 #                          agent uses; requires --epic-id and --task-id
 #   roadmap_status_update_env_default  Same contract as roadmap_status_update, but calls
 #                          get-roadmap-graph/update-task-status with NO --epic-id/--task-id
@@ -45,16 +45,16 @@
 #                          update-task-status call exits 1 with a clear message instead of
 #                          sending a malformed/empty id
 #   roadmap_candidates     Analyzer stand-in for the Roadmap Provisioner's structured
-#                          candidate-breakdown gate (Decision 1): writes both
+#                          candidate-breakdown gate: writes both
 #                          roadmap_analysis.md and roadmap_candidates.json, matching the
 #                          two-artifact contract BaseRoadmapProvisionerSeeder's real
 #                          "Roadmap Analyzer" node declares. roadmap_candidates.json is
 #                          the document shape { milestones[], epics[], dependencies[] }
-#                          (Decision 5) — one Milestone, one keyed Epic/Story/Task each
+#                          — one Milestone, one keyed Epic/Story/Task each
 #                          carrying a priority, and one dependency edge — so this
 #                          exercises the new fields directly rather than the resolver's
 #                          legacy-bare-array back-compat path.
-#   roadmap_imperative_links  Imperative counterpart to roadmap_candidates (Decision 6):
+#   roadmap_imperative_links  Imperative counterpart to roadmap_candidates:
 #                          drives create-proposal/create-story/create-task (the latter
 #                          with --priority) to build an Epic/Story/two Tasks, then
 #                          create-dependency to link the two Tasks, then
@@ -400,8 +400,8 @@ case "$SCENARIO" in
     ;;
 
   check_prs_gate)
-    # Exercises the check-prs/register-pr CLI contract end to end (Decision 3/§3.3
-    # PR completion gate), the same way multi_repo_pr exercises register-pr's
+    # Exercises the check-prs/register-pr CLI contract end to end (PR completion
+    # gate), the same way multi_repo_pr exercises register-pr's
     # contract: real CLI calls against the live API, not faked output. The FIRST
     # repo in this run's config.json repos[] is left UNCHANGED but pushed at
     # parity with the default branch (`git push origin HEAD` with no commits
@@ -416,7 +416,7 @@ case "$SCENARIO" in
     # OTHER repo (already cloned onto its working branch by entrypoint.sh's Step
     # 3, before this scenario ever runs) pushes a marker commit to origin (`git
     # push origin HEAD`, no `-u` — matching the real Implement/Code Review
-    # prompts' own push convention, see Decision 5) so check-prs's `git
+    # prompts' own push convention) so check-prs's `git
     # ls-remote` detects the repo as pushed, then registers a PR for it via the
     # real register-pr CLI (same fabricated-PR-URL convention as multi_repo_pr,
     # since there is no real `gh pr create` call here). Finally runs the real
@@ -483,8 +483,8 @@ case "$SCENARIO" in
     ;;
 
   roadmap_status_update)
-    # Exercises the get-roadmap-graph / update-task-status CLI contract (Roadmap Graph View,
-    # Decision 1/3/4) the same way multi_repo_pr exercises register-pr's contract: calls the
+    # Exercises the get-roadmap-graph / update-task-status CLI contract (Roadmap Graph View)
+    # the same way multi_repo_pr exercises register-pr's contract: calls the
     # real API server so E2E drives the same protocol a real agent would, without a live
     # Claude call. The Task is expected to already be in_progress (this run's own
     # Task-start is what created it), matching the internal status endpoint's whitelist.
@@ -508,13 +508,13 @@ case "$SCENARIO" in
     ;;
 
   roadmap_status_update_env_default)
-    # Exercises Decision 4's environment-default path: get-roadmap-graph and
+    # Exercises the environment-default path: get-roadmap-graph and
     # update-task-status are called with NO --epic-id/--task-id flags at all,
     # relying purely on $TASK_ID/$EPIC_ID as ordinary inherited environment.
     # mock-agent.sh runs as entrypoint.sh's $COMMAND (script executor), after
     # entrypoint.sh's unconditional config-parsing/export block already ran, so
     # it inherits TASK_ID/EPIC_ID for free exactly like RUN_ID/API_SERVER_URL
-    # today — no independent config.json parsing needed here (Caveat 4).
+    # today — no independent config.json parsing needed here.
     echo "Mock agent: roadmap_status_update_env_default scenario"
     if [ -z "${TASK_ID:-}" ]; then
       echo "ERROR: roadmap_status_update_env_default requires \$TASK_ID to be set (start this run from a Task)" >&2
@@ -535,7 +535,7 @@ case "$SCENARIO" in
     ;;
 
   roadmap_status_update_missing_task_id)
-    # Negative path backing §6's Behavioral claim: $TASK_ID unset (manual run)
+    # Negative path backing's Behavioral claim: $TASK_ID unset (manual run)
     # plus a bare update-task-status call must exit non-zero with a clear
     # message, not send a malformed/empty id. Unsets $TASK_ID even if
     # entrypoint.sh happened to export one, so this scenario always simulates
@@ -566,11 +566,11 @@ case "$SCENARIO" in
 
   roadmap_candidates)
     # Analyzer stand-in for the Roadmap Provisioner's structured candidate-breakdown gate
-    # (Decision 1). Writes the same two artifacts BaseRoadmapProvisionerSeeder's real
+    #. Writes the same two artifacts BaseRoadmapProvisionerSeeder's real
     # "Roadmap Analyzer" node declares in its outputSpec — roadmap_analysis.md (free-text,
     # unused by materialization) and roadmap_candidates.json (structured, read by
     # RoadmapCandidatesArtifactResolver via the ARTIFACT_FILENAME contract). The JSON is the
-    # document shape { milestones[], epics[], dependencies[] } (Decision 5) and must satisfy
+    # document shape { milestones[], epics[], dependencies[] } and must satisfy
     # the same Bean Validation constraints as RoadmapCandidatesDocument/CandidateMilestone/
     # CandidateEpicProposal/CandidateStoryProposal/CandidateTaskProposal/CandidateDependency
     # (non-blank titles/names, <=255 chars, <=8 items per Epic/Story/Task list, <=32 per
@@ -579,7 +579,7 @@ case "$SCENARIO" in
     # reference — a self-edge would be rejected as a trivial cycle.
     echo "Mock agent: roadmap_candidates scenario"
     write_artifact "roadmap_analysis.md" \
-      "Mock roadmap analysis: one candidate Epic proposed for E2E coverage of the structured candidate-breakdown gate (Decision 1), with a Milestone, per-level priorities, and a dependency edge (Decision 4/2/5)."
+      "Mock roadmap analysis: one candidate Epic proposed for E2E coverage of the structured candidate-breakdown gate, with a Milestone, per-level priorities, and a dependency edge."
 
     mkdir -p /workspace/out
     cat > /workspace/out/roadmap_candidates.json <<'JSON'
@@ -639,7 +639,7 @@ JSON
     ;;
 
   roadmap_imperative_links)
-    # Imperative counterpart to roadmap_candidates above (Decision 6): drives the real
+    # Imperative counterpart to roadmap_candidates above: drives the real
     # create-proposal/create-story/create-task/create-dependency/create-milestone/
     # update-proposal CLI contract against the API server instead of writing a JSON
     # artifact for a human gate to approve — mirroring how roadmap_status_update above

@@ -24,7 +24,7 @@ interface Props {
 /**
  * Edit a backlog Epic. The {@code SoftwareProject} can be re-pointed (e.g.
  * to a different repo or repo group), but Tasks already created under this
- * Epic keep the project they were created with (Decision 4) — editing only
+ * Epic keep the project they were created with — editing only
  * affects Tasks created after the change.
  */
 export default function EditEpicDialog({ epic, open, onOpenChange }: Props) {
@@ -39,7 +39,7 @@ export default function EditEpicDialog({ epic, open, onOpenChange }: Props) {
 
   function handleSoftwareProjectChange(id: string) {
     setSoftwareProjectId(id);
-    // A Milestone must belong to the same project as the Epic (Decision 3) — clear a stale
+    // A Milestone must belong to the same project as the Epic — clear a stale
     // selection from the previous project rather than silently retain a now cross-project
     // Milestone tag when the Epic is re-pointed. Mirrors CreateEpicDialog; the backend's PUT
     // additionally un-tags on a project change, so this keeps the picker and the saved state in
@@ -71,7 +71,7 @@ export default function EditEpicDialog({ epic, open, onOpenChange }: Props) {
       },
       {
         onSuccess: () => {
-          // Milestone assignment doesn't ride the full PUT (Decision 4: EpicUpdateRequest
+          // Milestone assignment doesn't ride the full PUT (EpicUpdateRequest
           // carries no milestoneId) — apply it as a second mutation only when it actually
           // changed, mirroring CreateEpicDialog's post-create chain.
           const currentMilestoneId = epic.milestone?.id ?? null;

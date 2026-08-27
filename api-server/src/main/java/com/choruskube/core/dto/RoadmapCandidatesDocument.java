@@ -5,7 +5,7 @@ import jakarta.validation.constraints.Size;
 import java.util.List;
 
 /**
- * The Roadmap Provisioner candidate artifact as a document (Decision 5), replacing the former bare
+ * The Roadmap Provisioner candidate artifact as a document, replacing the former bare
  * top-level array of {@link CandidateEpicProposal}. Shared shape between the analyzer's {@code
  * roadmap_candidates.json} artifact ({@code RoadmapCandidatesArtifactResolver}) and the reviewer's
  * (possibly edited) submission ({@code SignalRequest.editedCandidates}) — both conform to this

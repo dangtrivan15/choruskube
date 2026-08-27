@@ -5,9 +5,9 @@ import jakarta.validation.constraints.Size;
 import java.time.LocalDate;
 
 /**
- * A single candidate Milestone proposed by the Roadmap Provisioner analyzer (Decision 4), or as
+ * A single candidate Milestone proposed by the Roadmap Provisioner analyzer, or as
  * edited by a reviewer before approval. {@code key} is an optional author-assigned, artifact-local
- * identifier (Decision 2) that {@link CandidateEpicProposal#milestone()} references — it is never
+ * identifier that {@link CandidateEpicProposal#milestone()} references — it is never
  * persisted itself; {@code RoadmapCandidateMaterializer} resolves it to the milestone actually
  * created (or reused, via find-or-create by name) and maps {@code key -> milestoneId}.
  */

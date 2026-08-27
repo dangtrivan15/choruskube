@@ -69,7 +69,7 @@ function normalizePriority(value: string | null | undefined): Priority {
 
 /**
  * Epic-level "which Milestone does this Epic belong to" picker, scoped to the candidate
- * document's own `milestones` list (Decision 2: candidate items reference each other by
+ * document's own `milestones` list (candidate items reference each other by
  * artifact-local `key`, not a persisted id — there is nothing to fetch). Only milestones that
  * carry a `key` are selectable, since an unkeyed milestone has nothing an Epic could reference.
  */
@@ -480,7 +480,7 @@ export default function RoadmapCandidateBreakdown({ value, onChange }: RoadmapCa
           <h5 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Dependencies ({dependencies.length})
           </h5>
-          {/* Read-only per Caveat 1 — adding/removing edges happens post-materialization in the
+          {/* Read-only  — adding/removing edges happens post-materialization in the
               roadmap graph UI, not in this pre-approval editor. */}
           <ul className="space-y-1">
             {dependencies.map((dependency: CandidateDependency, i) => (

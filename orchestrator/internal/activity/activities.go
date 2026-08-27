@@ -192,10 +192,10 @@ type ExecuteAINodeFromSnapshotParams struct {
 	// any value it is given.
 	MaxTurns   string `json:"max_turns,omitempty"`
 	MaxRetries string `json:"max_retries,omitempty"`
-	// Triggering Task's identity (Decision 1/2/3), broadcast into config.json's task_context
+	// Triggering Task's identity, broadcast into config.json's task_context
 	// for every node execution in a task-triggered run. TaskID == "" means the run wasn't
 	// started from a Task; StoryID/EpicID may independently be "" if that level no longer
-	// resolves (Caveat 1) even though TaskID is set.
+	// resolves even though TaskID is set.
 	TaskID     string
 	TaskTitle  string
 	StoryID    string
@@ -203,7 +203,7 @@ type ExecuteAINodeFromSnapshotParams struct {
 	EpicID     string
 	EpicTitle  string
 	// OpenBlockers lists the triggering Task's own direct, not-yet-done incoming blocking
-	// edges (Decision 1/4), threaded into config.json's task_context.open_blockers. Empty
+	// edges, threaded into config.json's task_context.open_blockers. Empty
 	// (nil or zero-length) omits the key entirely, matching how task_context itself is
 	// omitted when TaskID == "".
 	OpenBlockers []OpenBlockerParam

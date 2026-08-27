@@ -2,7 +2,7 @@ import { type Page, type Locator, expect } from "@playwright/test";
 
 /**
  * Page object for the Milestone management surface (`/roadmap/milestones`) — list, create,
- * rename, and delete Milestones (Decision 1 of the "Group Epics under a named Milestone /
+ * rename, and delete Milestones (the "Group Epics under a named Milestone /
  * Release" feature).
  */
 export class MilestonesPage {

@@ -53,7 +53,7 @@ import org.springframework.test.web.servlet.MvcResult;
  * <p>Sister tests {@code EpicControllerTest}/{@code StoryControllerTest}/{@code TaskControllerTest}
  * cover controller-level status codes and shape; this class covers the cross-cutting behaviors
  * that only manifest when the Epic/Story/Task/workflow_run rows round-trip through the database
- * together, including a Task restart producing two run-history rows (Decision 1).
+ * together, including a Task restart producing two run-history rows.
  */
 @AutoConfigureMockMvc
 public class Phase2WorkHierarchyIntegrationTest extends BaseTest {
@@ -165,7 +165,7 @@ public class Phase2WorkHierarchyIntegrationTest extends BaseTest {
 
         Task persistedTask = taskRepo.findById(taskId).orElseThrow();
         assertThat(persistedTask.getSoftwareProjectId())
-                .as("Task denormalizes software_project_id from the ancestor Epic (Decision 4)")
+                .as("Task denormalizes software_project_id from the ancestor Epic")
                 .isEqualTo(repo.getId());
         assertThat(persistedTask.getStatus()).isEqualTo(WorkItemStatus.backlog);
 
@@ -241,7 +241,7 @@ public class Phase2WorkHierarchyIntegrationTest extends BaseTest {
         runRepo.save(firstRun);
 
         // Restart: same task, terminal most-recent run — a new run row is created, the prior one
-        // is left untouched, and both remain queryable (Decision 1).
+        // is left untouched, and both remain queryable.
         mockMvc.perform(post("/api/v1/tasks/" + taskId + "/start")).andExpect(status().isOk());
 
         MvcResult secondHistory = mockMvc.perform(get("/api/v1/tasks/" + taskId + "/runs"))

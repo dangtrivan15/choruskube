@@ -61,7 +61,7 @@ public class E2eTestDataSeeder implements ApplicationRunner {
     // roadmap_candidate_gate: mirrors BaseRoadmapProvisionerSeeder's v13 production shape
     // (analyzer -> human gate with terminal_decisions + materialize) using a script node
     // in place of the real AI analyzer, so roadmap-candidate-gate.spec.ts can exercise the
-    // structured candidate-breakdown gate (Decisions 1-5) without a live Claude call.
+    // structured candidate-breakdown gate without a live Claude call.
     private static final String GRAPH_ID_ROADMAP_CANDIDATE_GATE = "e2e-roadmap-candidate-gate";
     // many_artifacts: single-node template whose entrypoint writes 40 small output files
     // via mock-agent.sh's "many_artifacts" scenario, for artifact-viewer-layout.spec.ts's
@@ -82,7 +82,7 @@ public class E2eTestDataSeeder implements ApplicationRunner {
     private static final String GRAPH_ID_CHECK_PRS_GATE = "e2e-check-prs-gate";
     // roadmap_imperative_links: single-node template whose entrypoint runs mock-agent.sh's
     // "roadmap_imperative_links" scenario — the imperative-agent counterpart to
-    // GRAPH_ID_ROADMAP_CANDIDATE_GATE above (Decision 6): create-task --priority,
+    // GRAPH_ID_ROADMAP_CANDIDATE_GATE above: create-task --priority,
     // create-dependency, and create-milestone (plus update-proposal --milestone-id) called
     // live against the API server, giving the "E2E (imperative)" case in the roadmap
     // dependencies/priorities/milestones feature's testing strategy a template to start a
@@ -523,15 +523,15 @@ public class E2eTestDataSeeder implements ApplicationRunner {
     }
 
     // --- Roadmap Candidate Gate: draft_candidates -> review_candidates
-    //       --(approved)--> [terminal_decisions, no downstream node — Decision 2]
+    //       --(approved)--> [terminal_decisions, no downstream node]
     //       --(rejected)--> draft_candidates (back-edge)
     //
     // Mirrors BaseRoadmapProvisionerSeeder's real "roadmap_analyzer" / "roadmap_human_gate"
     // v13 shape: the analyzer node uploads roadmap_analysis.md + the structured
-    // roadmap_candidates.json (Decision 1) that the human gate declares as required input
+    // roadmap_candidates.json that the human gate declares as required input
     // artifacts; the gate's config_overrides carry the same "terminal_decisions": ["approved"]
     // and "materialize": "roadmap_candidates" pair RunService.signalHumanDecision keys off of
-    // (Decisions 2/3), so approving here drives the SAME deterministic materialization path a
+    // , so approving here drives the SAME deterministic materialization path a
     // real Roadmap Provisioner run does — just with a script-node analyzer stand-in
     // (mock-agent.sh's "roadmap_candidates" scenario) instead of a live Claude call.
 
@@ -554,12 +554,12 @@ public class E2eTestDataSeeder implements ApplicationRunner {
         createEdge(t, analyzer, gate, null);
         createEdge(t, gate, analyzer, "rejected");
         // Human Gate "approved" has no outgoing edge — it's a terminal_decisions entry
-        // (Decision 2) instead, so the run completes right here, same as production v13.
+        // instead, so the run completes right here, same as production v13.
     }
 
     // --- Roadmap Imperative Links: single node driving the imperative agent write surface ---
     //
-    // Imperative-agent counterpart to seedRoadmapCandidateGate above (Decision 6): a single
+    // Imperative-agent counterpart to seedRoadmapCandidateGate above: a single
     // script-executor node runs mock-agent.sh's "roadmap_imperative_links" scenario, which
     // calls create-proposal, create-story, create-task (--priority), create-dependency,
     // create-milestone, and update-proposal (--milestone-id) directly against the API server
@@ -580,7 +580,7 @@ public class E2eTestDataSeeder implements ApplicationRunner {
     // Single-node, no edges: the entrypoint runs mock-agent.sh's "many_artifacts" scenario
     // (writes 40 small distinct files to /workspace/out), giving artifact-viewer-layout.spec.ts
     // a node execution with a realistic-to-large artifact count to drive the file-switcher
-    // pill row's bounded/scrollable layout (Decision 1) via ArtifactBrowser's list.
+    // pill row's bounded/scrollable layout via ArtifactBrowser's list.
 
     private void seedManyArtifacts(NodeDefinition mockSuccess) {
         GraphTemplate t = createTemplate(

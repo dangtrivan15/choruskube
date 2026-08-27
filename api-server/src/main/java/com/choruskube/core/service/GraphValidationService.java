@@ -87,8 +87,8 @@ public class GraphValidationService {
         }
 
         // Rule 3: Terminal node check. A node counts as terminal if it has no outgoing
-        // edges, OR if it declares a non-empty config_overrides.terminal_decisions
-        // (Decision 2): that decision ends the run right there with no edge to follow,
+        // edges, OR if it declares a non-empty config_overrides.terminal_decisions:
+        // that decision ends the run right there with no edge to follow,
         // so the node doesn't need a zero-outgoing-edge shape to legitimately terminate
         // a run — e.g. the Roadmap Provisioner's human gate, whose only other edge is a
         // "rejected" back-edge to the analyzer.
@@ -145,7 +145,7 @@ public class GraphValidationService {
 
     /**
      * Whether a node's config_overrides declares a non-empty {@code terminal_decisions} array
-     * (Decision 2). Degrades to {@code false} on missing/malformed config_overrides — Rule 4
+     *. Degrades to {@code false} on missing/malformed config_overrides — Rule 4
      * ({@link #validateConfigOverrides}) is the one responsible for surfacing malformed JSON as
      * a validation error, not this check.
      */

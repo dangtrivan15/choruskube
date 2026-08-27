@@ -55,7 +55,7 @@ type RoadmapFlowEdge =
   | Edge<RoadmapEpicDependencyEdgeData, "roadmap-epic-dependency">
   | Edge<RoadmapCrossEpicEdgeData, "roadmap-cross-epic-dependency">;
 
-/** One unique external item (Decision 4's dedup key: `itemType:itemId`). */
+/** One unique external item (dedup key: `itemType:itemId`). */
 interface ExternalNodeInfo {
   id: string;
   title: string;
@@ -68,7 +68,7 @@ function blockerKey(blocker: ExternalBlockerRef): string {
   return `${blocker.itemId}:${blocker.internalItemId}`;
 }
 
-/** One external node per unique `(itemType, itemId)` — Decision 4. */
+/** One external node per unique `(itemType, itemId)`. */
 function dedupeExternalNodes(blockers: ExternalBlockerRef[]): ExternalNodeInfo[] {
   const byKey = new Map<string, ExternalNodeInfo>();
   for (const blocker of blockers) {
@@ -102,7 +102,7 @@ interface InternalNode {
   /** Epics can't participate in a dependency edge, so this is always null for them. */
   readiness: Readiness | null;
   /**
-   * Prioritization level (Epic/Story/Task — Decision 4 of the roadmap
+   * Prioritization level (Epic/Story/Task — the roadmap
    * dependencies/priorities/milestones feature gave Task its own `priority` too).
    */
   priority: string | null;
@@ -415,7 +415,7 @@ export default function RoadmapGraph({ snapshot, onNodeSelect }: RoadmapGraphPro
       }
     }
 
-    // Cross-Epic edges (Decision 1). Layout always attaches the external node
+    // Cross-Epic edges. Layout always attaches the external node
     // as a leaf below its in-Epic anchor (internalItemId__source-bottom ->
     // externalNodeId__target-top, see computeRoadmapTreeLayout) — the ELK
     // route below is always in that order regardless of `direction`. The

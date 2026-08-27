@@ -96,7 +96,7 @@ test.describe("Story Board", () => {
     await storyBoardPage.expectCardInColumn(uniqueTitle, "in_progress");
 
     // No cleanup needed: stage moves don't block deletion the way a started descendant Task
-    // does (Decision 2 — stage moves bypass that guard entirely), but this spec leaves the
+    // does (stage moves bypass that guard entirely), but this spec leaves the
     // fixture Epic/Story behind anyway, mirroring roadmap-board.spec.ts/task-board.spec.ts's
     // own no-cleanup convention. The `uniqueTitle` suffix keeps this fixture from colliding
     // with other runs of this spec.

@@ -10,7 +10,7 @@ import org.springframework.stereotype.Component;
 
 /**
  * Refreshes registered pull requests' merge state and closes Tasks whose work has landed
- * (Decisions 8 and 9). Merging the last pull request on a Task's most recent run is the single
+ *. Merging the last pull request on a Task's most recent run is the single
  * act that closes it.
  *
  * <p>Unlike the other reconcilers in this package, this one makes outbound HTTP calls, so it is

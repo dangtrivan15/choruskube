@@ -38,7 +38,7 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Sole implementation of {@link StoryService} (Decision 8). */
+/** Sole implementation of {@link StoryService}. */
 @Service
 public class DefaultStoryService implements StoryService {
 
@@ -54,8 +54,8 @@ public class DefaultStoryService implements StoryService {
     private final ObjectMapper objectMapper;
     private final ApplicationEventPublisher applicationEventPublisher;
     private final WorkItemDependencyService workItemDependencyService;
-    // Populates `readiness` on list() responses (Decision 1) via the same Epic-bounded assembly
-    // the Roadmap Graph View uses (Decision 2/3), so the two can never disagree.
+    // Populates `readiness` on list() responses via the same Epic-bounded assembly
+    // the Roadmap Graph View uses, so the two can never disagree.
     private final EpicReadinessAssembler readinessAssembler;
     private final ScopeProvider scopeProvider;
 
@@ -91,7 +91,7 @@ public class DefaultStoryService implements StoryService {
         // Caller-vs-resource guard: the parent Epic must belong to the caller's org.
         authService.checkOrgAccess("epic", epic.getId());
         Story story = persistStory(epicId, request);
-        // Decision 5: Story is never top-level — org is always inherited from its parent Epic.
+        // Story is never top-level — org is always inherited from its parent Epic.
         applicationEventPublisher.publishEvent(MappableCreated.withParent("story", story.getId(), "epic", epicId));
         auditSink.record(AuditSink.STORY_CREATED, "story", story.getId(), detailJson(null, snapshot(story)));
         eventPublisher.publishRoadmapItemChanged("story", story.getId(), "backlog");
@@ -162,7 +162,7 @@ public class DefaultStoryService implements StoryService {
 
     /**
      * Shared body for {@link #list} and {@link #listInternal}: loads this Epic's full Story/Task
-     * set once (Decision 3 — the readiness walk must be bounded to the whole Epic, not just this
+     * set once (the readiness walk must be bounded to the whole Epic, not just this
      * Story's own Tasks, or a blocker in a sibling Story would be missed) and populates real
      * {@code readiness} instead of the {@code null} every other read path still returns (Decision
      * 1 — only the flat list endpoints and the Roadmap Graph View compute it).
@@ -303,8 +303,8 @@ public class DefaultStoryService implements StoryService {
         return tasks.stream().anyMatch(t -> t.getStatus() != WorkItemStatus.backlog);
     }
 
-    /** Single-item read paths (create/update/get) — readiness stays {@code null} here (Decision 1
-     * scopes real readiness to the flat list endpoints and the Roadmap Graph View only). */
+    /** Single-item read paths (create/update/get) — readiness stays {@code null} here (real
+     * readiness is scoped to the flat list endpoints and the Roadmap Graph View only). */
     private StoryResponse toResponse(Story s) {
         List<Task> tasks = taskRepo.findByStoryIdOrderByCreatedAtDesc(s.getId());
         return toResponse(s, tasks, null, null);

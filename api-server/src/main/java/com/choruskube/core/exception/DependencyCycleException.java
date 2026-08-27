@@ -4,7 +4,7 @@ import java.util.UUID;
 
 /**
  * Thrown when creating a dependency edge would close a cycle in the blocking graph (multi-step
- * blocking chain feature, Decision 5). Extends {@link ConflictException} — already mapped to HTTP
+ * blocking chain feature). Extends {@link ConflictException} — already mapped to HTTP
  * 409 by {@code GlobalExceptionHandler}'s generic {@code ConflictException} handler, the same base
  * class {@link ActiveRunsConflictException} uses for its own 409 case — so no new {@code
  * GlobalExceptionHandler} wiring is needed; the message names the blocking/blocked item pair so

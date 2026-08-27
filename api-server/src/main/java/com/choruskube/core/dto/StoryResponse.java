@@ -7,7 +7,7 @@ import java.time.LocalDate;
 import java.util.UUID;
 
 /**
- * {@code readiness} is populated by the Roadmap Graph View and by {@code list()} (Decision 1/2) —
+ * {@code readiness} is populated by the Roadmap Graph View and by {@code list()} —
  * it is computed at read time from {@code work_item_dependency} edges. Single-item reads
  * (create/get/update) leave it {@code null}, since they have no reason to join dependency edges
  * just to return the one item just written.

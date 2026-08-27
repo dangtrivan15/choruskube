@@ -854,7 +854,7 @@ describe("ApprovalsPage", () => {
       const user = userEvent.setup();
       await user.type(
         screen.getByPlaceholderText("Provide feedback for the AI agent..."),
-        "Tighten §3"
+        "Tighten"
       );
       await user.click(screen.getByTestId("gate-card-rereview-button"));
 

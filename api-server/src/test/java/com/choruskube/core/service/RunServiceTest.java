@@ -396,7 +396,7 @@ class RunServiceTest {
     }
 
     // -----------------------------------------------------------------------
-    // buildTaskSummary — via getRun(). Reads run.getTaskId() directly (Decision 1) — no
+    // buildTaskSummary — via getRun(). Reads run.getTaskId() directly — no
     // reverse "find by run id" lookup, only a forward lookup of the Task itself by id.
     // -----------------------------------------------------------------------
 

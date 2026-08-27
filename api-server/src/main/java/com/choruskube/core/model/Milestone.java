@@ -11,8 +11,8 @@ import java.util.UUID;
 
 /**
  * A named release/grouping label (e.g. "Q3 Launch") scoped to a single {@code software_project}
- * (Decision 3 of the "Group Epics under a named Milestone / Release" feature). Epics reference a
- * Milestone via a nullable {@code milestone_id} FK with {@code ON DELETE SET NULL} (Decision 2),
+ * (the "Group Epics under a named Milestone / Release" feature). Epics reference a
+ * Milestone via a nullable {@code milestone_id} FK with {@code ON DELETE SET NULL},
  * so deleting a Milestone un-tags its Epics rather than deleting them.
  *
  * <p>{@code targetDate} drives the rollup progress bar and at-risk verdict on {@code

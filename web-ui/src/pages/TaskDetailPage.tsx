@@ -39,7 +39,7 @@ function statusBadge(status: string) {
 
 /**
  * Task detail — the leaf of the hierarchy. Shows the Task itself, its full
- * run history (Decision 1), and Start/Restart/Complete actions gated on the
+ * run history, and Start/Restart/Complete actions gated on the
  * same rules the flat Roadmap used to apply to a proposal.
  */
 export default function TaskDetailPage() {
@@ -51,7 +51,7 @@ export default function TaskDetailPage() {
   // Called unconditionally (before the isLoading/!task early return below) so hook order
   // stays stable across renders — `useStory` is itself `enabled: !!id`, so passing
   // `task?.storyId` (undefined while `task` hasn't loaded) is a safe no-op query rather than
-  // a conditional hook call. Resolves the parent Story client-side (Decision 1) since the
+  // a conditional hook call. Resolves the parent Story client-side since the
   // Task route/DTO carry `storyId` but not the `epicId` the Story route also needs.
   const { data: parentStory } = useStory(task?.storyId);
   const { data: runsPage, isLoading: runsLoading } = useTaskRuns(id);
@@ -109,7 +109,7 @@ export default function TaskDetailPage() {
   const sp = task.softwareProject;
   const Icon = sp.type === "repo_group" ? Layers : GitBranch;
   // Degrades to the roadmap root while the parent Story is resolving (or if it errored) —
-  // Caveat 1: normally already in the React Query cache from the drill-down path, so this
+  // normally already in the React Query cache from the drill-down path, so this
   // window is sub-second and the fallback is always a safe, valid destination.
   const backTo = parentStory
     ? `/roadmap/epics/${parentStory.epicId}/stories/${parentStory.id}`

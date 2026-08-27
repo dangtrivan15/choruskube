@@ -1681,7 +1681,7 @@ func TestExecuteAINodeFromSnapshot_EffortOmittedWhenEmpty(t *testing.T) {
 // config_overrides keys (model_first_iteration/model_subsequent_iteration/
 // effort_first_iteration/effort_subsequent_iteration) down to a single
 // concrete Model/Effort pair BEFORE calling this activity — this activity
-// itself is unchanged (Decision 2/§3.2) and only ever sees that resolved
+// itself is unchanged and only ever sees that resolved
 // pair via ExecuteAINodeFromSnapshotParams.Model/.Effort, never the raw
 // iteration-suffixed keys. This test simulates both bands the DAG executor
 // can hand it (a first-iteration resolution and a subsequent-iteration one)

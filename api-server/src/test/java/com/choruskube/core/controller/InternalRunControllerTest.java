@@ -206,7 +206,7 @@ public class InternalRunControllerTest extends BaseTest {
                 .andExpect(status().isCreated());
     }
 
-    // ── existing feature-proposals path — now produces an Epic (Decision 6: path unchanged) ──
+    // ── existing feature-proposals path — now produces an Epic (path unchanged) ──
 
     @Test
     void createFeatureProposal_returns201_andProducesAnEpic() throws Exception {
@@ -461,7 +461,7 @@ public class InternalRunControllerTest extends BaseTest {
                 .andExpect(jsonPath("$[0].repos[0].url").value("https://github.com/test/repo"));
     }
 
-    // ── new nested Story/Task creation paths (Decision 6/3.6) ─────────────────────
+    // ── new nested Story/Task creation paths ─────────────────────
 
     @Test
     void createStory_returns201() throws Exception {
@@ -620,7 +620,7 @@ public class InternalRunControllerTest extends BaseTest {
                 .andExpect(status().isNotFound());
     }
 
-    // ── new: dependencies / milestones (Decision 6 — imperative agent write surface) ──
+    // ── new: dependencies / milestones (imperative agent write surface) ──
 
     @Test
     void createMilestone_returns201() throws Exception {
@@ -921,7 +921,7 @@ public class InternalRunControllerTest extends BaseTest {
         run.setTaskId(UUID.fromString(taskId));
         run = runRepo.save(run);
 
-        // A cross-Epic blocker of the triggering task (Decision 3), so this also proves the
+        // A cross-Epic blocker of the triggering task, so this also proves the
         // internal/agent-facing graph mirror (`get-roadmap-graph`) carries the same additive
         // `direction`/`internalItemId` shape as the public path, through the HTTP layer.
         String createForeignEpicResponse = mockMvc.perform(post("/internal/runs/" + run.getId() + "/node-executions/"
@@ -1086,7 +1086,7 @@ public class InternalRunControllerTest extends BaseTest {
         return execRepo.save(exec);
     }
 
-    // ── node-execution-scoped pull-requests mirror (Decision 3/3.3) ──────────────
+    // ── node-execution-scoped pull-requests mirror ──────────────
 
     @Test
     void getPullRequestsForNodeExecution_returnsSamePullRequestsAsRunScopedRead() throws Exception {

@@ -29,7 +29,7 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Sole implementation of {@link RoadmapTimelineService} (Decision 8). */
+/** Sole implementation of {@link RoadmapTimelineService}. */
 @Service
 public class DefaultRoadmapTimelineService implements RoadmapTimelineService {
 
@@ -99,7 +99,7 @@ public class DefaultRoadmapTimelineService implements RoadmapTimelineService {
 
     private TimelineEpicSummary toEpicSummary(
             Epic epic, Map<UUID, List<Story>> storiesByEpicId, Map<UUID, MilestoneRef> milestoneRefsById) {
-        // Per-Epic readiness pass (accepted N+1-per-Epic tradeoff, Decision 1 of the blocked/
+        // Per-Epic readiness pass (accepted N+1-per-Epic tradeoff, part of the blocked/
         // stalled feature) — mirrors DefaultRoadmapGraphService#assemble's own single-Epic call,
         // just run once per scoped Epic in this loop instead of once for a single requested Epic.
         // A request-scoped read, so cross-Epic blockers are authorized against the caller's own

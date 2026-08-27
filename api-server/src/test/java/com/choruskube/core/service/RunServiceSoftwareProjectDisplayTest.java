@@ -32,7 +32,7 @@ import org.springframework.data.jpa.domain.Specification;
 /**
  * Unit tests for RunService covering the softwareProject projection in both the listing
  * (listRuns → RunSummary) and detail (getRun → RunResponse) paths, now sourced from the Task
- * a run's forward {@code task_id} FK points at (Decision 1) rather than a reverse
+ * a run's forward {@code task_id} FK points at rather than a reverse
  * feature-proposal lookup.
  */
 @ExtendWith(MockitoExtension.class)

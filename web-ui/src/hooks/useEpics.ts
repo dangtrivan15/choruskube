@@ -52,7 +52,7 @@ export function useEpics(
   // `boardEpicsQueryKey`) still binds to the same cache entry it did before.
   if (priority) params.push(`priority=${encodeURIComponent(priority)}`);
   // Same pass-through treatment as `priority` — backs RoadmapPage's Milestone filter
-  // (`EpicController#list`'s `milestoneId` query param, Decision 4).
+  // (`EpicController#list`'s `milestoneId` query param).
   if (milestoneId) params.push(`milestoneId=${encodeURIComponent(milestoneId)}`);
   const queryString = params.length > 0 ? `?${params.join("&")}` : "";
 

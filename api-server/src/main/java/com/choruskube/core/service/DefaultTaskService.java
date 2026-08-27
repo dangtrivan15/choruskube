@@ -57,14 +57,14 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Sole implementation of {@link TaskService} (Decision 8). */
+/** Sole implementation of {@link TaskService}. */
 @Service
 public class DefaultTaskService implements TaskService {
 
     private static final Set<WorkflowRunStatus> TERMINAL_STATUSES =
             Set.of(WorkflowRunStatus.completed, WorkflowRunStatus.failed, WorkflowRunStatus.cancelled);
 
-    /** Whitelist for {@link #updateStatus} (Decision 4) — the public/request-scoped path. */
+    /** Whitelist for {@link #updateStatus} — the public/request-scoped path. */
     private static final Set<Map.Entry<WorkItemStatus, WorkItemStatus>> PUBLIC_TRANSITIONS = Set.of(
             Map.entry(WorkItemStatus.backlog, WorkItemStatus.in_progress),
             Map.entry(WorkItemStatus.in_progress, WorkItemStatus.done),
@@ -93,8 +93,8 @@ public class DefaultTaskService implements TaskService {
     private final ObjectMapper objectMapper;
     private final ApplicationEventPublisher applicationEventPublisher;
     private final WorkItemDependencyService workItemDependencyService;
-    // Populates `readiness` on list() responses (Decision 1) via the same Epic-bounded assembly
-    // the Roadmap Graph View uses (Decision 2/3), so the two can never disagree.
+    // Populates `readiness` on list() responses via the same Epic-bounded assembly
+    // the Roadmap Graph View uses, so the two can never disagree.
     private final EpicReadinessAssembler readinessAssembler;
     private final ScopeProvider scopeProvider;
     private final RunPullRequestRepository prRepo;
@@ -147,7 +147,7 @@ public class DefaultTaskService implements TaskService {
         authService.checkOrgAccess("story", story.getId());
         Epic epic = findEpicOrThrow(story.getEpicId());
         Task task = persistTask(storyId, request, epic.getSoftwareProjectId());
-        // Decision 5: Task is never top-level — org is always inherited from its parent Story.
+        // Task is never top-level — org is always inherited from its parent Story.
         applicationEventPublisher.publishEvent(MappableCreated.withParent("task", task.getId(), "story", storyId));
         auditSink.record(AuditSink.TASK_CREATED, "task", task.getId(), detailJson(null, snapshot(task)));
         eventPublisher.publishRoadmapItemChanged(
@@ -178,7 +178,7 @@ public class DefaultTaskService implements TaskService {
         task.setStoryId(storyId);
         task.setTitle(request.title());
         task.setDescription(request.description());
-        // Denormalized once at creation from the ancestor Epic (Decision 4) — immutable afterwards.
+        // Denormalized once at creation from the ancestor Epic — immutable afterwards.
         task.setSoftwareProjectId(softwareProjectId);
         // Create-time priority: absent (null) defaults to medium, mirroring the DB column default
         // and Epic/Story's own create-time priority handling.
@@ -208,7 +208,7 @@ public class DefaultTaskService implements TaskService {
 
     /**
      * Shared body for {@link #list} and {@link #listInternal}: a Task's true blocker can sit in a
-     * sibling Story under the same Epic (Decision 3), so this loads the OWNING EPIC's full
+     * sibling Story under the same Epic, so this loads the OWNING EPIC's full
      * Story/Task set — not just this Story's own Tasks — the same "load this Epic's candidates"
      * helper {@link DefaultStoryService#list} uses, so the two list endpoints can never disagree
      * on what an Epic's candidate set is. Only this Story's own Tasks are returned.
@@ -435,7 +435,7 @@ public class DefaultTaskService implements TaskService {
     }
 
     /**
-     * "done" means merged (Decision 8). A Task cannot close while a pull request from its most
+     * "done" means merged. A Task cannot close while a pull request from its most
      * recent run is still unmerged — a dependant started on a lying {@code done} would clone a
      * base branch without this Task's code.
      *
@@ -556,7 +556,7 @@ public class DefaultTaskService implements TaskService {
     }
 
     /**
-     * New {@code in_progress -> backlog} "reopen" transition (Decision 4) — lets a Task be
+     * New {@code in_progress -> backlog} "reopen" transition — lets a Task be
      * retried after a failed/aborted run, gated the same way {@link #completeCore} gates
      * completion: the most recent run must be terminal.
      */
@@ -646,9 +646,9 @@ public class DefaultTaskService implements TaskService {
     }
 
     /** Single-item read paths (create/update/get/start/...) — readiness stays {@code null} here
-     * (Decision 1 scopes real readiness to the flat list endpoints and the Roadmap Graph View
-     * only); {@code recentRuns}/{@code totalRunCount} stay empty/zero here too (Decision 3 —
-     * unrelated to this feature, only the Roadmap Graph View embeds run history). */
+     * (real readiness is scoped to the flat list endpoints and the Roadmap Graph View
+     * only); {@code recentRuns}/{@code totalRunCount} stay empty/zero here too
+     * (unrelated to this feature, only the Roadmap Graph View embeds run history). */
     private TaskResponse toResponse(Task t) {
         return toResponse(t, null);
     }
@@ -676,7 +676,7 @@ public class DefaultTaskService implements TaskService {
                 latestRunId,
                 latestRunStatus,
                 readiness,
-                List.of(), // recentRuns: only embedded by RoadmapGraphService (Decision 3)
+                List.of(), // recentRuns: only embedded by RoadmapGraphService
                 0L, // totalRunCount: ditto
                 t.getCreatedAt(),
                 t.getUpdatedAt(),

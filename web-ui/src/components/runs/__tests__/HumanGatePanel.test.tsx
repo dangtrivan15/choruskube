@@ -325,13 +325,13 @@ describe("HumanGatePanel", () => {
       renderWithProviders(<HumanGatePanel {...approveSpecProps} />);
 
       const textarea = screen.getByPlaceholderText("Provide feedback for the AI agent...");
-      await user.type(textarea, "Tighten §3 architecture");
+      await user.type(textarea, "Tighten architecture");
       await user.click(screen.getByText("Re-review"));
 
       expect(mockMutate).toHaveBeenCalledWith(
         expect.objectContaining({
           decision: "rereview",
-          feedback: "Tighten §3 architecture",
+          feedback: "Tighten architecture",
           files: expect.arrayContaining([
             expect.objectContaining({ name: "human_guidance.md" }),
           ]),
@@ -345,7 +345,7 @@ describe("HumanGatePanel", () => {
       renderWithProviders(<HumanGatePanel {...approveSpecProps} />);
       // redraft requires feedback (same policy as rejected/rereview)
       const textarea = screen.getByPlaceholderText("Provide feedback for the AI agent...");
-      await user.type(textarea, "Full re-author needed — drop §2 entirely");
+      await user.type(textarea, "Full re-author needed — drop entirely");
       await user.click(screen.getByText("Redraft"));
       expect(mockMutate).toHaveBeenCalledWith(
         expect.objectContaining({

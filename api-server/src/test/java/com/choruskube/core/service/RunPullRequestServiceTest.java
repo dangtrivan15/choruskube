@@ -242,7 +242,7 @@ class RunPullRequestServiceTest {
         assertThat(responses.get(0).repoUrl()).isEmpty();
     }
 
-    // ── getPullRequestsForNodeExecution (Decision 3/3.3 — cross-run leak guard) ──────────────
+    // ── getPullRequestsForNodeExecution (cross-run leak guard) ──────────────
 
     @Test
     void getPullRequestsForNodeExecution_withOwnRun_returnsRunsPullRequests() {

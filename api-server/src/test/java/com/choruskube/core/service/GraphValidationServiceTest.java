@@ -96,7 +96,7 @@ class GraphValidationServiceTest {
 
     @Test
     void cycleWithTerminalDecisionsIsValid() {
-        // Mirrors the Roadmap Provisioner v13 shape (Decision 2): analyzer -> gate,
+        // Mirrors the Roadmap Provisioner v13 shape: analyzer -> gate,
         // gate --rejected--> analyzer (back-edge), gate has no outgoing "approved" edge —
         // instead config_overrides.terminal_decisions declares "approved" ends the run
         // right there. Without Rule 3 recognizing terminal_decisions, this graph has zero

@@ -5,7 +5,7 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * One Epic lane on the Roadmap Timeline View, carrying its own Stories (Decision 1/2 of that
+ * One Epic lane on the Roadmap Timeline View, carrying its own Stories (that
  * feature — activity source is the existing {@code createdAt}/{@code updatedAt} audit columns,
  * not a new history table). {@code stage} is {@code epic.getStage().name()}, mirroring {@link
  * TimelineStorySummary#stage()}. {@code stories} is ordered ascending by {@code createdAt} —

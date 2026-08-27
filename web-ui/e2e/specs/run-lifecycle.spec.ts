@@ -125,7 +125,7 @@ test.describe("Run Lifecycle", () => {
       // Build a real Epic -> Story -> Task chain (same fixture-building pieces
       // already proven by roadmap.spec.ts / roadmap-graph.spec.ts), then start
       // the run from the Task rather than a manual/template run — this proves
-      // task_context (Decision 1/2/3) actually reaches the run detail page end
+      // task_context actually reaches the run detail page end
       // to end, not just the RunMetaPanel unit tests.
       const uniqueTitle = uniqueName("E2E Breadcrumb");
       const epic = await api.createEpic({

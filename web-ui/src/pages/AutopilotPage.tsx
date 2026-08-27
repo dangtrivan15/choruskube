@@ -61,7 +61,7 @@ function TaskRefList({ testId, refs, emptyLabel }: TaskRefListProps) {
 }
 
 /**
- * The Autopilot control surface (spec §10): an engage/disengage toggle, the `maxParallel`
+ * The Autopilot control surface (spec): an engage/disengage toggle, the `maxParallel`
  * knob, a manual tick, and the live status panel. "Why idle" is the trust-critical field —
  * an unattended dispatcher that has stopped for a structural reason (no ready Tasks, at
  * capacity, disengaged) must read differently from one that has silently died.

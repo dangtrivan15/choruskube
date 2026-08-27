@@ -12,7 +12,7 @@ const nodeTypes = {
   "timeline-story": RoadmapTimelineStoryNode,
 };
 
-/** Zoom level / animation duration (ms) used when panning to a newly-focused node (§3.3, Caveat 4). */
+/** Zoom level / animation duration (ms) used when panning to a newly-focused node. */
 const FOCUS_PAN_ZOOM = 1;
 const FOCUS_PAN_DURATION_MS = 400;
 
@@ -44,7 +44,7 @@ export default function RoadmapTimeline({
   // State, not a ref: `@xyflow/react`'s `onInit` fires asynchronously (internally deferred via
   // `setTimeout`, after `viewportInitialized` flips), strictly after this component's own mount
   // effects have already run once. A ref write from that callback wouldn't trigger a re-render, so
-  // the pan-to-focus effect below — whose whole job is restoring focus *on arrival* (§3.3), i.e.
+  // the pan-to-focus effect below — whose whole job is restoring focus *on arrival*, i.e.
   // exactly the first-render case — would see a still-null instance and silently never pan. State
   // makes the instance becoming ready itself trigger the re-render this effect depends on.
   const [flowInstance, setFlowInstance] = useState<ReactFlowInstance<TimelineFlowNode> | null>(null);
@@ -78,9 +78,9 @@ export default function RoadmapTimeline({
     [onFocusChange],
   );
 
-  // Pan/center on whatever just became focused (§3.3) — the Story marker if one is focused,
+  // Pan/center on whatever just became focused  — the Story marker if one is focused,
   // otherwise the Epic lane. A no-op if the focused id isn't present in the current layout (a
-  // deleted or otherwise-missing Epic/Story — §6's Negative/security case), or if the instance
+  // deleted or otherwise-missing Epic/Story —'s Negative/security case), or if the instance
   // isn't ready yet (re-runs once `flowInstance` itself changes from null to set).
   useEffect(() => {
     const focusedId = focusedStoryId ?? focusedEpicId;

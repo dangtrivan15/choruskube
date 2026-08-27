@@ -581,7 +581,7 @@ assert_budget_rejected "whitespace-only max_retries" \
 # --- Test 24: MAX_RETRIES bounds every attempt loop, and they share one counter ---
 # The main retry, artifact-enforcement, decision-verification, PR-verification and
 # escalation-artifact-enforcement loops deliberately share $ATTEMPT so the budget caps total
-# attempts across all phases, not per phase (Caveat 4: each phase only gets whatever budget the
+# attempts across all phases, not per phase (each phase only gets whatever budget the
 # earlier ones didn't already spend, and the escalation gate — which runs last, see Test 25 —
 # may get none). A per-node max_retries is only meaningful if that stays true.
 ATTEMPT_LOOPS=$(grep -cF '[ $ATTEMPT -lt $MAX_RETRIES ]' "$ENTRYPOINT")
@@ -662,7 +662,7 @@ grep -q "jq -r '\.needs_pr // false'" "$ENTRYPOINT" \
 
 # --- Test 20: entrypoint.sh's PR-verification block branches on check-prs's exit
 # status (not stdout text, unlike DECISION's "(none)" string-equality idiom), and
-# captures check-prs's stderr diagnostics too so a loud failure (Caveat 3) actually
+# captures check-prs's stderr diagnostics too so a loud failure actually
 # reaches the retry prompt / final error message instead of being silently dropped ---
 grep -q "PR verification" "$ENTRYPOINT" \
   && ok "entrypoint narrates a PR verification block" || fail "entrypoint narrates a PR verification block"

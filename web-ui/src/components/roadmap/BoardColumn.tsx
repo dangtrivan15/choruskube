@@ -9,7 +9,7 @@ interface Props {
   epics: EpicResponse[];
   /** Whether the "Ready to start" filter is active — changes the empty-column copy. */
   readyOnly?: boolean;
-  /** The currently-focused Epic/Story (§3.1), forwarded to each card so it can highlight/expand itself. */
+  /** The currently-focused Epic/Story, forwarded to each card so it can highlight/expand itself. */
   focusedEpicId?: string;
   focusedStoryId?: string;
   onFocusEpic?: (epicId: string) => void;

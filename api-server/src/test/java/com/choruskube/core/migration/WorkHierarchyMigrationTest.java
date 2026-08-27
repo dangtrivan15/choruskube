@@ -23,7 +23,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
  * {@code feature_proposal} rows directly (with and without a linked run), then applies V2 and
  * asserts the resulting Epic/Story/Task/workflow_run rows — id preservation, exactly one
  * Story/Task per migrated Epic, and {@code workflow_run.task_id} set correctly when a run was
- * linked (Decision 3).
+ * linked.
  */
 class WorkHierarchyMigrationTest {
 
@@ -64,7 +64,7 @@ class WorkHierarchyMigrationTest {
         migrateToVersion("2");
 
         try (Connection conn = connect()) {
-            // Epic id preserved from feature_proposal id (Decision 3).
+            // Epic id preserved from feature_proposal id.
             assertThat(countWhere(conn, "epic", "id", proposalId)).isEqualTo(1);
 
             // Exactly one Story under that Epic.

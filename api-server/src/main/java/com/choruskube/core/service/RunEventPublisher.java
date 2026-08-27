@@ -39,7 +39,7 @@ public class RunEventPublisher {
 
     /**
      * Publishes a roadmap-item change for an Epic, Story, or Task. {@code itemType} is one of
-     * "epic"/"story"/"task" (Decision 7) and doubles as the resource-type key the feed is scoped
+     * "epic"/"story"/"task" and doubles as the resource-type key the feed is scoped
      * by; the payload's own {@code itemType} field is {@code itemType + "_changed"}.
      */
     public void publishRoadmapItemChanged(String itemType, UUID itemId, String status) {

@@ -78,7 +78,7 @@ function AtRiskDrillDownRow({ milestoneId }: { milestoneId: string }) {
 
 /**
  * Milestone management surface (list/create/edit/delete) — the org-wide equivalent of
- * `RepoGroupsTab` for Milestones (Decision 1). Unlike `RepoGroupsTab`, this is a standalone
+ * `RepoGroupsTab` for Milestones. Unlike `RepoGroupsTab`, this is a standalone
  * routed page (`/roadmap/milestones`), reached from `RoadmapPage`'s toolbar, not a sidebar
  * entry — mirroring how Board/Timeline are in-page links rather than their own nav item.
  */

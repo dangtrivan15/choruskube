@@ -162,7 +162,7 @@ class RepoGroupControllerTest extends BaseTest {
         entityManager.flush();
 
         // Seed an Epic -> Story -> Task chain targeting this group, with the Task left non-done
-        // (Task carries software_project_id directly per Decision 4).
+        // (Task carries software_project_id directly).
         var epic = epicService.create(
                 new EpicRequest("Active epic", "Holds the group from delete", null, group.getId()), null);
         var story = storyService.create(epic.id(), new StoryRequest("Story", "Desc"));

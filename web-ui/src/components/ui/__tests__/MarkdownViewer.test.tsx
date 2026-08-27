@@ -197,7 +197,7 @@ describe("MarkdownViewer", () => {
     const [callId, callSource] = mermaidRenderMock.mock.calls[0] as [string, string];
     expect(typeof callId).toBe("string");
     // Every sequenceDiagram participant alias is quoted unconditionally before
-    // render (Decision 2) — a no-op for a non-colliding alias like "A" other
+    // render — a no-op for a non-colliding alias like "A" other
     // than the added quotes themselves. "B" is never declared via a
     // `participant` line, but Mermaid implicitly creates it as a participant
     // the first time it's used as a message target, so it's collected and
@@ -376,7 +376,7 @@ describe("MarkdownViewer", () => {
     // the declaration and the message-arrow reference. "API" is never
     // declared via a `participant` line, but Mermaid implicitly creates it
     // as a participant the first time it's used as a message target, so it's
-    // collected and quoted too (Decision 2 is unconditional).
+    // collected and quoted too (this quoting is unconditional).
     expect(callSource).toContain('participant "Actor" as Any user/agent');
     expect(callSource).toContain('"Actor"->>"API": hello');
 
@@ -504,7 +504,7 @@ describe("MarkdownViewer", () => {
 
   it("strips HTML comment syntax inside fenced code blocks in rendered view (pre-processor limitation)", () => {
     // stripHtmlComments operates on the raw string before react-markdown parses it,
-    // so HTML comment syntax inside fenced code blocks is also stripped (Caveat 5).
+    // so HTML comment syntax inside fenced code blocks is also stripped.
     const content = "```\n<!-- comment inside code -->\nsome code\n```";
     renderWithProviders(<MarkdownViewer content={content} />);
     // "some code" is still present.

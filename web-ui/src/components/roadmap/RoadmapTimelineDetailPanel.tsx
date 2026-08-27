@@ -11,7 +11,7 @@ import type { TimelineEpicSummary, TimelineStorySummary } from "@/lib/types";
 interface Props {
   epic: TimelineEpicSummary;
   /** Present only when the focused item is a Story nested under `epic`; absent when the focused
-   * item is the Epic lane itself (Decision 4 — the panel is keyed off the same URL focus that
+   * item is the Epic lane itself (the panel is keyed off the same URL focus that
    * drives everything else, and focus can point at either granularity). */
   story?: TimelineStorySummary;
   onClose(): void;
@@ -40,11 +40,11 @@ function EpicStoryRollup({ epic }: { epic: TimelineEpicSummary }) {
 
 /**
  * Roadmap Timeline View's read-only detail panel — opened when a Story marker or Epic lane is
- * clicked (Decision 4: driven by the same URL focus the pan-to-center behavior already uses).
- * Deliberately a new, small component rather than reusing `RoadmapGraphDetailPanel` (Decision 2):
+ * clicked (driven by the same URL focus the pan-to-center behavior already uses).
+ * Deliberately a new, small component rather than reusing `RoadmapGraphDetailPanel`:
  * the Timeline's data model is Epic/Story-only (never Task), read-oriented (no dependency editing),
  * and every field but the blockers is already on screen — only the blocking chain, for a BLOCKED
- * Story, needs a fetch (Decision 1, Decision 3).
+ * Story, needs a fetch.
  */
 export default function RoadmapTimelineDetailPanel({ epic, story, onClose }: Props) {
   const item = story ?? epic;

@@ -58,7 +58,7 @@ type nodeTracker struct {
 	// reviewPass counts genuine review-decision passes for a self-looping review
 	// node, distinct from `iteration` (which also advances on operator retries and
 	// pause/heartbeat-timeout recovery — see SignalRetryNode and the pause-recovery
-	// path below). It advances ONLY at the back-edge self-loop site (§4g, when the
+	// path below). It advances ONLY at the back-edge self-loop site (g, when the
 	// target node was previously "completed"); every other nodeTracker construction
 	// site carries the prior tracker's reviewPass forward unchanged. Model/effort
 	// resolution for the new iteration-aware config_overrides keys reads reviewPass,
@@ -698,7 +698,7 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 				needsPR := extractConfigField(snapshotNode.ConfigOverrides, "needs_pr")
 				effort := extractConfigField(snapshotNode.ConfigOverrides, "effort")
 
-				// Resolve iteration-aware model/effort overrides (Decision 2 in the
+				// Resolve iteration-aware model/effort overrides (the
 				// accompanying spec). Pick the key matching tracker.reviewPass's branch —
 				// NOT tracker.iteration, which also advances on operator/pause-recovery
 				// retries unrelated to a review decision (see nodeTracker.reviewPass) —
@@ -1575,10 +1575,10 @@ func extractConfigField(overrides map[string]interface{}, key string) string {
 
 // taskContextFields flattens a snapshot's TaskContext (nil-safe) into the plain
 // strings ExecuteAINodeFromSnapshotParams expects, so every node execution's
-// config.json carries the same triggering-Task identity (Decision 3). Absent
+// config.json carries the same triggering-Task identity. Absent
 // entirely (all empty strings) when the run wasn't started from a Task;
 // Story/Epic are independently empty if that level no longer resolves
-// (Caveat 1) even though TaskID is set.
+// even though TaskID is set.
 func taskContextFields(snap *state.GraphRuntimeSnapshot) (taskID, taskTitle, storyID, storyTitle, epicID, epicTitle string) {
 	if snap.TaskContext == nil {
 		return "", "", "", "", "", ""

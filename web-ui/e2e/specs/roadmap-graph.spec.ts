@@ -330,7 +330,7 @@ test.describe("Roadmap Graph View", () => {
 
       // Distinct from the pre-existing sidebar-link test above, which
       // asserts the Epic *detail* route (no "/graph" suffix) — the canvas
-      // external node targets the graph view instead (Decision 5).
+      // external node targets the graph view instead.
       await roadmapGraphPage.externalNodeByLabel(blockingTask.title).click();
       await expect(page).toHaveURL(`/roadmap/epics/${secondEpic.id}/graph`);
     } finally {

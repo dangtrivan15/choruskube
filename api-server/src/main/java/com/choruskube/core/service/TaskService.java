@@ -11,10 +11,10 @@ import org.springframework.data.domain.Pageable;
 
 /**
  * CRUD plus run lifecycle (start/complete/history) for Tasks — the only startable leaf of the
- * work hierarchy (Decision 1, Decision 2). Defined as an interface, with
- * {@link DefaultTaskService} as its sole implementation (Decision 8).
+ * work hierarchy. Defined as an interface, with
+ * {@link DefaultTaskService} as its sole implementation.
  *
- * <p>Per Decision 5, a Task is never treated as top-level for ownership purposes — it always
+ * <p>A Task is never treated as top-level for ownership purposes — it always
  * inherits its organization from its immediate parent Story, regardless of caller.
  */
 public interface TaskService {
@@ -38,7 +38,7 @@ public interface TaskService {
      * {@link EpicService#updateStage}). Mirrors {@link EpicService#list(String, Pageable)}'s
      * shape: {@code scopeProvider}-scoped, optionally filtered, page-returning. Uses the same
      * shared single-item mapper as {@link #get}/{@link #create} — {@code readiness} stays {@code
-     * null} here (Decision 1 scopes real readiness to the per-Story {@link #list(UUID)} and the
+     * null} here (real readiness is scoped to the per-Story {@link #list(UUID)} and the
      * Roadmap Graph View only).
      */
     Page<TaskResponse> list(WorkItemStatus status, Pageable pageable);
@@ -85,7 +85,7 @@ public interface TaskService {
     TaskResponse complete(UUID id);
 
     /**
-     * Closes a Task whose most recent run's pull requests have all merged (Decision 9). Called
+     * Closes a Task whose most recent run's pull requests have all merged. Called
      * ONLY by the pull-request state reconciler, which runs on a scheduler with no request
      * context and finds Tasks by a cross-org query — the same shape as {@code GitRepoReconciler}.
      *
@@ -98,7 +98,7 @@ public interface TaskService {
     TaskResponse closeForMergedPullRequests(UUID id);
 
     /**
-     * Validated-transition status write (Decision 4) covering both success and failure outcomes
+     * Validated-transition status write covering both success and failure outcomes
      * for a request-scoped (checkOrgAccess-gated) caller: {@code backlog→in_progress} (delegates
      * to {@link #start}), {@code in_progress→done} (delegates to {@link #complete}, after
      * optionally verifying {@code runId} matches the Task's most recent linked run), and the new
@@ -110,8 +110,8 @@ public interface TaskService {
     TaskResponse updateStatus(UUID id, WorkItemStatus target, UUID runId, String note);
 
     /**
-     * Internal/agent mirror of {@link #updateStatus} for the {@code /internal/**} JOB_SECRET path
-     * (Decision 1, Decision 5): validated via {@code assertSameOrg}/project-match against
+     * Internal/agent mirror of {@link #updateStatus} for the {@code /internal/**} JOB_SECRET path:
+     * validated via {@code assertSameOrg}/project-match against
      * {@code callingRunId}/{@code runSoftwareProjectId} instead of {@code checkOrgAccess}. Scoped
      * to just {@code in_progress→done} and {@code in_progress→backlog} — an agent reports the
      * outcome of a run it is already inside; it does not self-initiate a Task via this endpoint
@@ -128,12 +128,12 @@ public interface TaskService {
             UUID outcomeRunId,
             String note);
 
-    /** Full run history for this Task, newest first (Decision 1). */
+    /** Full run history for this Task, newest first. */
     Page<RunSummary> listRuns(UUID id, Pageable pageable);
 
     /**
      * Internal/agent mirror of {@link #listRuns}, used to embed capped run history in the
-     * Roadmap Graph View internal response (Decision 3). Skips {@code checkOrgAccess} — the
+     * Roadmap Graph View internal response. Skips {@code checkOrgAccess} — the
      * caller (RoadmapGraphService's internal path) has already validated ownership of the whole
      * Epic/Story/Task tree via {@code assertSameOrg}/project-match before reaching this method, so
      * a second, request-scoped check here would be both redundant and unsafe (no tenant context

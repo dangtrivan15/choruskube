@@ -83,7 +83,7 @@ public class RunService {
     private final NodeExecutionClaimService nodeExecutionClaimService;
     private final EscalationContextResolver escalationContextResolver;
 
-    /** Config key on a gate's {@code config_overrides} that opts it into materialization (Decision 3). */
+    /** Config key on a gate's {@code config_overrides} that opts it into materialization. */
     static final String MATERIALIZE_CONFIG_KEY = "materialize";
 
     static final String MATERIALIZE_ROADMAP_CANDIDATES = "roadmap_candidates";
@@ -277,7 +277,7 @@ public class RunService {
                 .collect(Collectors.toMap(GraphTemplate::getId, GraphTemplate::getName));
 
         // Batch-fetch task info for the page (avoids N+1). task_id is a direct FK on WorkflowRun
-        // (Decision 1), so no reverse lookup is needed — just batch-load the referenced Task rows.
+        // , so no reverse lookup is needed — just batch-load the referenced Task rows.
         Set<UUID> taskIds = page.stream()
                 .map(WorkflowRun::getTaskId)
                 .filter(Objects::nonNull)
@@ -528,7 +528,7 @@ public class RunService {
                 }
             }
 
-            // Deterministic materialization (Decision 3): on approval of a gate configured for it,
+            // Deterministic materialization: on approval of a gate configured for it,
             // turn the reviewed (possibly reviewer-edited) Roadmap Provisioner candidate breakdown
             // directly into Epic/Story/Task rows — through the same write path a human uses — in
             // the same request that handles the decision signal, rather than via a second AI
@@ -586,7 +586,7 @@ public class RunService {
 
     /**
      * Validates a decision against the union of a node's outgoing edge conditions and its
-     * configured {@code terminal_decisions} (Decision 2), via {@link DecisionOptionsResolver}.
+     * configured {@code terminal_decisions}, via {@link DecisionOptionsResolver}.
      * Returns the canonical (case-matched) decision string.
      */
     private String validateDecisionAgainstEdges(JsonNode snapshot, UUID templateNodeId, String decision) {
@@ -807,11 +807,11 @@ public class RunService {
     }
 
     /**
-     * Builds the run's Task summary directly from {@code run.getTaskId()} (Decision 1) — no
+     * Builds the run's Task summary directly from {@code run.getTaskId()} — no
      * reverse lookup, since {@code task_id} is a forward FK on {@code workflow_run} itself. Also
      * walks {@code task.story_id -> story.epic_id} to surface the parent Story/Epic identity;
      * either level is independently nullable rather than failing the whole summary if a Story or
-     * Epic no longer resolves (Caveat 1).
+     * Epic no longer resolves.
      */
     private @Nullable RunTaskSummary buildTaskSummary(WorkflowRun run) {
         if (run.getTaskId() == null) {

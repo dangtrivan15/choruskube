@@ -20,7 +20,7 @@ interface Props {
   onOpenChange: (open: boolean) => void;
 }
 
-/** Create a Story under an Epic. Stories inherit the Epic's software project (Decision 4). */
+/** Create a Story under an Epic. Stories inherit the Epic's software project. */
 export default function CreateStoryDialog({ epicId, open, onOpenChange }: Props) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");

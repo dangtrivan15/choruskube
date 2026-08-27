@@ -18,7 +18,7 @@ import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Sole implementation of {@link WorkItemDependencyService} (Decision 8). */
+/** Sole implementation of {@link WorkItemDependencyService}. */
 @Service
 public class DefaultWorkItemDependencyService implements WorkItemDependencyService {
 
@@ -99,11 +99,11 @@ public class DefaultWorkItemDependencyService implements WorkItemDependencyServi
 
         orgGuard.check(blockingType, blockingId, blockedType, blockedId);
 
-        // Cycle guard (Decision 5): reject before insert if this edge would close a loop with
+        // Cycle guard: reject before insert if this edge would close a loop with
         // existing edges anywhere in the graph — a cycle isn't necessarily confined to one Epic
         // (dependencies can cross Epics), so the reachability check reads every existing edge
         // rather than a pre-scoped subset. The traversal-time guard in TransitiveReadinessResolver
-        // itself remains the second line of defense (Caveat 4: this read-then-write check has no
+        // itself remains the second line of defense (this read-then-write check has no
         // locking, so two concurrent creates could still jointly close a cycle).
         //
         // The cycle check needs containment as well as declared edges: an Epic blocking another

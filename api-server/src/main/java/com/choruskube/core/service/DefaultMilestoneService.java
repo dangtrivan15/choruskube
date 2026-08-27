@@ -49,7 +49,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Sole implementation of {@link MilestoneService} for the "Group Epics under a named Milestone /
- * Release" feature (Decisions 1–5).
+ * Release" feature.
  */
 @Service
 public class DefaultMilestoneService implements MilestoneService {
@@ -202,7 +202,7 @@ public class DefaultMilestoneService implements MilestoneService {
     @Override
     @Transactional(readOnly = true)
     public Page<MilestoneResponse> list(UUID softwareProjectId, Pageable pageable) {
-        // Always routed through ScopeProvider (§3.4): a derived findBySoftwareProjectId… finder
+        // Always routed through ScopeProvider: a derived findBySoftwareProjectId… finder
         // would skip tenant scoping entirely and leak another org's Milestones when a caller
         // supplies a foreign softwareProjectId, so the optional project filter is `.and`-ed onto
         // the scoped Specification rather than backing the list with its own finder.
@@ -247,7 +247,7 @@ public class DefaultMilestoneService implements MilestoneService {
         authService.checkOrgAccess("milestone", id);
         auditSink.record(AuditSink.MILESTONE_DELETED, "milestone", id, detailJson(snapshot(milestone), null));
         // No application-level un-tagging of Epics: epic.milestone_id is ON DELETE SET NULL
-        // (Decision 2), so the DB itself nulls every referencing Epic's milestone_id when this
+        // , so the DB itself nulls every referencing Epic's milestone_id when this
         // row is removed.
         repo.delete(milestone);
     }
@@ -297,7 +297,7 @@ public class DefaultMilestoneService implements MilestoneService {
 
     /**
      * Rejects a create/rename when another Milestone in the same project already uses {@code
-     * name} (case-insensitive, Decision 3). {@code currentName} is the Milestone's own current
+     * name} (case-insensitive). {@code currentName} is the Milestone's own current
      * name on an update call (renaming to the same name, in a different case, is not a
      * collision); {@code null} on create.
      */

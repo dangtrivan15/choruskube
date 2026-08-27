@@ -223,7 +223,7 @@ func (s *DAGExecutorTestSuite) TestScriptNodeRetry_RefreshesSnapshot() {
 }
 
 // TestModelEffortResolution_RetryNodeSignal_PreservesReviewPassAcrossRetry
-// covers Decision 2 / Part 2 step 7(e) (first half) of the accompanying spec:
+// covers Part 2 step 7(e) (first half) of the accompanying spec:
 // an operator-triggered retry of a failed node's first review pass (via
 // SignalRetryNode) advances the DB-facing `iteration` counter (so the new
 // node_execution row gets a fresh, unique value) but must NOT advance
@@ -294,7 +294,7 @@ func (s *DAGExecutorTestSuite) TestModelEffortResolution_RetryNodeSignal_Preserv
 }
 
 // TestModelEffortResolution_PauseHeartbeatTimeoutRecovery_PreservesReviewPass
-// covers Decision 2 / Part 2 step 7(e) (second half): a heartbeat timeout that
+// covers Part 2 step 7(e) (second half): a heartbeat timeout that
 // fires after a deliberate pause is treated as an infra-retry re-queue (see
 // dag_executor.go's pauseInterrupted handling), not a failure. The re-queued
 // execution's `iteration` advances (fresh DB row, same as any retry) but

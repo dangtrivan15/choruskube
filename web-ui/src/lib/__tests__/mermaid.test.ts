@@ -191,7 +191,7 @@ describe("quoteSequenceParticipantAliases", () => {
     // mermaid.parse() that Mermaid still implicitly creates it as a
     // participant in that position (a bare, undeclared token in `Note over`
     // parses successfully), so it must be collected and quoted like any
-    // other alias (Decision 2 is unconditional).
+    // other alias (this is unconditional).
     const src = [
       "sequenceDiagram",
       "  participant actor as Reviewer",
@@ -287,7 +287,7 @@ describe("quoteSequenceParticipantAliases", () => {
     ].join("\n");
     // Both `actor` and `API` are collected — `API` is never declared but is
     // used as a message-arrow endpoint, which implicitly creates it as a
-    // participant too, so Decision 2's unconditional quoting covers it.
+    // participant too, so the unconditional quoting covers it.
     const expected = [
       "sequenceDiagram",
       '  "actor"->>"API": Approve',

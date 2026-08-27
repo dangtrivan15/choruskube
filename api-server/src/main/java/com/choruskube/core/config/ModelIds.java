@@ -10,7 +10,7 @@ package com.choruskube.core.config;
  * <p>These are the current, non-dated model ID strings (verified against the live model
  * catalog at implementation time, not guessed) — Claude's current-generation model IDs are
  * bare aliases with no {@code -YYYYMMDD} suffix; only superseded/legacy model IDs carry a
- * dated suffix. See Caveat 1 in the accompanying spec: a human should confirm the org's
+ * dated suffix. A human should confirm the org's
  * Anthropic entitlement covers these exact IDs before rollout, and re-check this file against
  * the current model catalog if it has been a while since these were last verified.
  */

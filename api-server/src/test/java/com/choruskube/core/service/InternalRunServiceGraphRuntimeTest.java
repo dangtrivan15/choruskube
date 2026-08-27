@@ -85,7 +85,7 @@ class InternalRunServiceGraphRuntimeTest {
             }
             """;
 
-    // Per-node-type model/effort config (Decision 2 in the accompanying spec): the four
+    // Per-node-type model/effort config: the four
     // new iteration-aware config_overrides keys must survive the raw-JSON-snapshot →
     // RuntimeNode.configOverrides() projection byte-for-byte, since dag_executor.go reads
     // them from exactly this DTO field via snapshotNode.ConfigOverrides.
@@ -315,7 +315,7 @@ class InternalRunServiceGraphRuntimeTest {
 
     // -----------------------------------------------------------------------
     // taskContext — resolved live off run.getTaskId() -> task.storyId -> story.epicId
-    // (Decision 1), broadcast into the snapshot for every node to consume (Decision 3).
+    // , broadcast into the snapshot for every node to consume.
     // -----------------------------------------------------------------------
 
     @Test
@@ -405,7 +405,7 @@ class InternalRunServiceGraphRuntimeTest {
     // -----------------------------------------------------------------------
     // openBlockers — the Task's actionable, root-cause open blocker(s), resolved by walking the
     // full blocking chain via TransitiveReadinessResolver#rootCauseBlockersOf, not just the direct
-    // blocker (multi-step blocking chain feature, Decisions 3/4). The tests in this section use
+    // blocker (multi-step blocking chain feature). The tests in this section use
     // stubMinimalTask, which deliberately leaves the Task's Epic unresolved, so resolveOpenBlockers
     // falls back to its no-epic-context path (a plain findByBlockingItemIdInOrBlockedItemIdIn on
     // just the Task's own id) — the epic-bounded chain walk itself is covered separately below by
@@ -500,7 +500,7 @@ class InternalRunServiceGraphRuntimeTest {
 
         // The blocking Story belongs to a different Epic than the started Task — resolveOpenBlockers
         // queries work_item_dependency directly by the Task's id, with no Epic pre-fetch, so this
-        // is naturally included (Decision 4).
+        // is naturally included.
         Story blockingStory = new Story();
         blockingStory.setId(blockingStoryId);
         blockingStory.setTitle("Cross-epic prerequisite Story");
@@ -553,10 +553,10 @@ class InternalRunServiceGraphRuntimeTest {
     void getGraphRuntimeSnapshot_threeNodeChain_openBlockersReturnsOnlyTheRootNotTheMiddle() throws Exception {
         // Root blocks Middle, Middle blocks Tail (the run's own Task). Middle is done, Root is
         // not — resolveOpenBlockers must walk past the done Middle to report Root, not Middle
-        // (multi-step blocking chain feature, Decisions 3/4), mirroring
+        // (multi-step blocking chain feature), mirroring
         // RoadmapGraphServiceTest#getGraph_threeNodeChain_middleDoneRootUndone_tailStillBlocked.
         // Unlike stubMinimalTask's tests above, this fixtures a real Story/Epic so the walk is
-        // bounded to (and covers) that Epic's own candidate set (Decision 2).
+        // bounded to (and covers) that Epic's own candidate set.
         UUID runId = UUID.randomUUID();
         UUID epicId = UUID.randomUUID();
         UUID storyId = UUID.randomUUID();

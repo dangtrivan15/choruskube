@@ -16,8 +16,8 @@ export type RoadmapExternalNodeType = Node<RoadmapExternalNodeData, "roadmap-ext
 
 /**
  * A lightweight "external" stub node standing in for a Story/Task that lives
- * in a *different* Epic (Decision 1 in the cross-Epic-blockers spec). It is a
- * doorway, not a destination (Decision 5): it shows just enough to identify
+ * in a *different* Epic (the cross-Epic-blockers spec). It is a
+ * doorway, not a destination: it shows just enough to identify
  * the blocker (its title, its owning Epic) and links straight to that other
  * Epic's own **graph** route — deliberately `/roadmap/epics/{epicId}/graph`,
  * not `/roadmap/epics/{epicId}` (the Epic *detail* page, which is what the

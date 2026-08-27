@@ -91,7 +91,7 @@ public class TaskController {
     }
 
     /**
-     * Validated-transition status write (Decision 4) — generalizes {@link #start}/{@link
+     * Validated-transition status write — generalizes {@link #start}/{@link
      * #complete} to also cover reporting a failed/aborted outcome ({@code in_progress->backlog},
      * for retry). {@code start}/{@code complete} remain as-is for backward compatibility.
      */

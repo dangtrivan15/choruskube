@@ -22,7 +22,7 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Hard-fail semantics: {@code require...} methods throw if the named wrapper ConfigMap is absent
  * or missing the {@code template.yaml} data key. Silent fallback to a hardcoded default would mask
- * operator mistakes — see spec Decision 5 (hard-cut migration).
+ * operator mistakes —  (hard-cut migration).
  */
 public class TemplateRegistry {
     private static final Logger log = LoggerFactory.getLogger(TemplateRegistry.class);

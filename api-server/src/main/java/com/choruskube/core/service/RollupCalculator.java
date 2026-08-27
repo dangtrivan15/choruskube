@@ -6,7 +6,7 @@ import com.choruskube.core.model.enums.WorkItemStatus;
 import java.util.List;
 
 /**
- * Computes the descendant-Task rollup for an Epic or Story (Decision 2): the counts an Epic or
+ * Computes the descendant-Task rollup for an Epic or Story: the counts an Epic or
  * Story reports as its progress, and — separately — the satisfaction status the dependency
  * machinery reasons with.
  *

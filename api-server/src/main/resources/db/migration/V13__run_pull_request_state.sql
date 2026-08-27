@@ -1,4 +1,4 @@
--- PR state for the "done means merged" invariant (Decision 8).
+-- PR state for the "done means merged" invariant.
 --
 -- All three columns are nullable and default NULL: every pre-existing row is
 -- "never checked", which the reconciler picks up on its next tick. `merged_at

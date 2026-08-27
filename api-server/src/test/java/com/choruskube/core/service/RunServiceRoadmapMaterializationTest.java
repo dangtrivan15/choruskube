@@ -27,7 +27,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
- * Covers Decision 3's deterministic-materialization contract on {@code RunService.signalHumanDecision}:
+ * Covers the deterministic-materialization contract on {@code RunService.signalHumanDecision}:
  * on an "approved" decision for a gate configured with {@code materialize: "roadmap_candidates"},
  * the reviewed breakdown is materialized via {@link RoadmapCandidateMaterializer}; otherwise
  * (rejected, or a gate without the marker) nothing is materialized at all.
