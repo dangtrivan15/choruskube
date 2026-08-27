@@ -255,7 +255,8 @@ public class PullRequestStateService {
      * <p><strong>Transient is the closed list, and persistent is the default.</strong> That
      * direction is the rule itself: a false stop costs an operator one click, a false continue costs
      * an Autopilot dispatching against a graph it can no longer read. Enumerating the persistent
-     * statuses instead put every status nobody had thought of on the unsafe side.
+     * statuses instead put every status nobody had thought of on the unsafe side — a 3xx among
+     * them, since this client does not follow redirects and would never resolve one.
      *
      * <p><strong>A rate limit is transient whatever status carries it.</strong> GitHub answers a
      * secondary rate limit with 403 — the same status as a credential that genuinely lacks access —

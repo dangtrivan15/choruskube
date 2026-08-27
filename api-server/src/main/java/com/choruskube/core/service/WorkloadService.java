@@ -26,6 +26,10 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * Service layer for workload execution operations.
  *
+ * <p>Creating the workload and writing its {@code job_secret_hash} are one transaction on
+ * purpose: split across a create call and a separate DB update, the pod is live before its hash
+ * is persisted, so its own callbacks 401 at {@code InternalAuthFilter} and the Job orphans.
+ *
  * <p>Infrastructure details (image, secrets, docker config, identity) are resolved
  * from the stored graph snapshot rather than being passed by the caller.
  */
