@@ -22,7 +22,7 @@ ALLOWLIST='api-server/src/main/java/com/choruskube/core/config/BaseFeatureDevSee
 hits=$(grep -rnE "$PATTERN" \
          --include='*.java' --include='*.go' --include='*.ts' --include='*.tsx' \
          --include='*.sql' --include='*.sh' . 2>/dev/null \
-       | grep -vE 'node_modules|/build/|/\.worktrees/|/\.gradle/|/dist/|/bin/' \
+       | grep -vE 'node_modules|/build/|/\.worktrees/|/\.gradle/|/dist/|/bin/|/\.staging/' \
        | { [ -n "$ALLOWLIST" ] && grep -vF "$ALLOWLIST" || cat; } || true)
 
 if [ -n "$hits" ]; then
