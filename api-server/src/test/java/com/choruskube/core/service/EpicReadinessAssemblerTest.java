@@ -32,7 +32,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Direct coverage of {@link EpicReadinessAssembler} in isolation (extracted from {@code
- * DefaultRoadmapGraphService} —), independent of the graph/list endpoints that call
+ * DefaultRoadmapGraphService}), independent of the graph/list endpoints that call
  * it. {@link RoadmapGraphServiceTest} already exercises this transitively through the graph
  * endpoint; this class is the one place that pins the collaborator's own contract (readiness,
  * dependency edges, external blockers) so callers can't silently drift.

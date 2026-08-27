@@ -535,7 +535,7 @@ case "$SCENARIO" in
     ;;
 
   roadmap_status_update_missing_task_id)
-    # Negative path backing's Behavioral claim: $TASK_ID unset (manual run)
+    # Negative path backing the Behavioral claim: $TASK_ID unset (manual run)
     # plus a bare update-task-status call must exit non-zero with a clear
     # message, not send a malformed/empty id. Unsets $TASK_ID even if
     # entrypoint.sh happened to export one, so this scenario always simulates
@@ -565,8 +565,8 @@ case "$SCENARIO" in
     ;;
 
   roadmap_candidates)
-    # Analyzer stand-in for the Roadmap Provisioner's structured candidate-breakdown gate
-    #. Writes the same two artifacts BaseRoadmapProvisionerSeeder's real
+    # Analyzer stand-in for the Roadmap Provisioner's structured candidate-breakdown gate.
+    # Writes the same two artifacts BaseRoadmapProvisionerSeeder's real
     # "Roadmap Analyzer" node declares in its outputSpec — roadmap_analysis.md (free-text,
     # unused by materialization) and roadmap_candidates.json (structured, read by
     # RoadmapCandidatesArtifactResolver via the ARTIFACT_FILENAME contract). The JSON is the

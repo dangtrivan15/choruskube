@@ -698,7 +698,7 @@ export class TestApiClient {
     return this.delete(`/api/v1/organizations/${orgId}/ai-credential`);
   }
 
-  // ── Autopilot (spec) ─────────────────────────────────────────
+  // ── Autopilot ────────────────────────────────────────────────
   //
   // The Autopilot is a SINGLETON, org-wide, with no per-caller scope filter — every
   // method below mutates or reads state shared by every Playwright worker. Only

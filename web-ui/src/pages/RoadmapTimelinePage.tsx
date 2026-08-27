@@ -24,7 +24,7 @@ export default function RoadmapTimelinePage() {
 
   const rawFocus = parseFocusParams(searchParams);
   // A URL-carried id that doesn't resolve against the freshly-fetched data (deleted, garbage, or
-  // simply an id from a different org —'s Negative/security case) is treated as "nothing
+  // simply an id from a different org — the Negative/security case) is treated as "nothing
   // focused" rather than partially rendered or thrown on, all the way out to the switcher: an
   // unresolved epic must not leave Graph looking enabled for an Epic that isn't really there.
   const focusedEpic = data?.epics.find((e) => e.id === rawFocus.epicId);
@@ -33,7 +33,7 @@ export default function RoadmapTimelinePage() {
   const focusedStoryId = focusedStory?.id;
 
   function handleFocusChange(epicId: string, storyId?: string) {
-    // history replace, not push  — ordinary lane/marker browsing shouldn't balloon the
+    // history replace, not push — ordinary lane/marker browsing shouldn't balloon the
     // back-button history the way a `push` on every click would.
     setSearchParams(focusToSearchParamsInit({ epicId, storyId }), { replace: true });
   }

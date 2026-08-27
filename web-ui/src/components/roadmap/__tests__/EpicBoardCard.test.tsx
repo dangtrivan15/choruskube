@@ -143,7 +143,7 @@ describe("EpicBoardCard", () => {
     expect(mockApi.get).toHaveBeenCalledTimes(1);
   });
 
-  // --- Focus wiring (//) ---
+  // --- Focus wiring ---
 
   it("isFocused applies the highlight styling", () => {
     renderWithProviders(<EpicBoardCard epic={makeEpic()} isFocused />);

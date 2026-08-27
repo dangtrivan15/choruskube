@@ -117,8 +117,8 @@ export function useDeleteMilestone() {
 }
 
 /**
- * Assign or clear (via {@code null}) an Epic's Milestone via {@code PATCH /epics/{id}/milestone}
- *. Invalidates both {@code ["epics"]} (the Epic's own `milestone` field changed) and
+ * Assign or clear (via {@code null}) an Epic's Milestone via {@code PATCH /epics/{id}/milestone}.
+ * Invalidates both {@code ["epics"]} (the Epic's own `milestone` field changed) and
  * {@code ["milestones"]} (a Milestone's `epicCount` rollup changed) on success.
  */
 export function useAssignEpicMilestone() {

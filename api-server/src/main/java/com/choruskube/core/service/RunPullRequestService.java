@@ -65,7 +65,7 @@ public class RunPullRequestService {
         // Re-registering the same (runId, prUrl) refreshes mutable metadata in place rather
         // than inserting a duplicate row. Agents may call register-pr more than once per run
         // (Code Review refreshing a PR Implement already opened, a Test-failure retry, a fallback
-        // PR's cross-link step, etc. — / in this workflow's spec), and the run
+        // PR's cross-link step, etc.), and the run
         // detail page would otherwise render the same PR twice.
         RunPullRequest pr = prRepo.findByWorkflowRunIdAndPrUrl(runId, req.prUrl())
                 .orElseGet(() -> {

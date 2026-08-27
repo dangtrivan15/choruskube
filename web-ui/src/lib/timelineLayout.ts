@@ -24,7 +24,7 @@ export interface TimelineEpicLaneNodeData {
   stage: string;
   /** Prioritization level — display-only on the lane header (compact PriorityBadge). */
   priority: string;
-  /** Whether this lane's Epic is the currently-focused item (/) — drives highlight styling. */
+  /** Whether this lane's Epic is the currently-focused item — drives highlight styling. */
   isFocused: boolean;
   /** OR-aggregated across this Epic's Stories (plus its own `stalled`, for `stalled`) — see `deriveEpicRisk`. */
   blocked: boolean;
@@ -45,7 +45,7 @@ export interface TimelineStoryNodeData {
   /** Prioritization level — display-only on the Story marker (compact PriorityBadge). */
   priority: string;
   createdAt: string;
-  /** Whether this Story is the currently-focused item (/) — drives highlight styling. */
+  /** Whether this Story is the currently-focused item — drives highlight styling. */
   isFocused: boolean;
   /** This Story's own risk signal (§ blocked/stalled work) — see `deriveStoryRisk`. */
   blocked: boolean;
@@ -96,7 +96,7 @@ function buildTimeScale(epics: TimelineEpicSummary[]): (timeMs: number) => numbe
  * entire response, not just the Stories in that one lane — so two Epics' lanes stay visually
  * comparable against the same axis.
  *
- * `focus`  sets `isFocused: true` on the lane/Story node(s) matching `focus.epicId`/
+ * `focus` sets `isFocused: true` on the lane/Story node(s) matching `focus.epicId`/
  * `focus.storyId`, and `false` on every other node — defaults to `{}` (nothing focused) so
  * existing callers that don't care about focus don't need to pass anything.
  *

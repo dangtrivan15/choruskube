@@ -276,8 +276,8 @@ public class RunService {
         Map<UUID, String> templateNames = graphTemplateRepo.findAllById(templateIds).stream()
                 .collect(Collectors.toMap(GraphTemplate::getId, GraphTemplate::getName));
 
-        // Batch-fetch task info for the page (avoids N+1). task_id is a direct FK on WorkflowRun
-        // , so no reverse lookup is needed — just batch-load the referenced Task rows.
+        // Batch-fetch task info for the page (avoids N+1). task_id is a direct FK on WorkflowRun,
+        // so no reverse lookup is needed — just batch-load the referenced Task rows.
         Set<UUID> taskIds = page.stream()
                 .map(WorkflowRun::getTaskId)
                 .filter(Objects::nonNull)
@@ -609,8 +609,8 @@ public class RunService {
     }
 
     /**
-     * Whether this node is configured to materialize its approved candidate breakdown (Decision
-     * 3) — i.e. its {@code config_overrides.materialize} equals {@code "roadmap_candidates"}.
+     * Whether this node is configured to materialize its approved candidate breakdown —
+     * i.e. its {@code config_overrides.materialize} equals {@code "roadmap_candidates"}.
      */
     private boolean isMaterializeNode(JsonNode snapshot, UUID templateNodeId) {
         JsonNode nodeConfigOverrides =

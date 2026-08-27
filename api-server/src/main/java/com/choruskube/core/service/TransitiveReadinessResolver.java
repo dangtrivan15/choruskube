@@ -16,8 +16,7 @@ import java.util.UUID;
 import java.util.function.Function;
 
 /**
- * Shared transitive blocking-chain computation (multi-step blocking chain feature, Decisions
- * 1/2/3/5). A stateless utility — mirrors {@link RollupCalculator}'s package-private,
+ * Shared transitive blocking-chain computation (multi-step blocking chain feature). A stateless utility — mirrors {@link RollupCalculator}'s package-private,
  * static-methods shape rather than being a Spring bean, since it has no repository/collaborator
  * dependencies of its own: every entry point takes an already-loaded, caller-bounded edge set plus
  * a status lookup, so the caller decides how far the graph is read (e.g. one Epic's

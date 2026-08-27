@@ -679,7 +679,7 @@ public class DefaultTaskServiceTest extends BaseTest {
 
     @Test
     void list_taskBlockedBySiblingStorysTask_underSameEpic_isBlocked() {
-        // a Task list request is scoped to its OWNING EPIC's full Story/Task set, not
+        // A Task list request is scoped to its OWNING EPIC's full Story/Task set, not
         // just the requested Story's own Tasks — a Task can be blocked by a Task under a
         // completely different sibling Story in the same Epic.
         GitRepo r = makeRepo("https://github.com/test/task-readiness-cross-story.git");
@@ -712,7 +712,7 @@ public class DefaultTaskServiceTest extends BaseTest {
 
     @Test
     void get_doesNotPopulateReadiness() {
-        // only the flat list endpoints (and the Roadmap Graph View) compute
+        // Only the flat list endpoints (and the Roadmap Graph View) compute
         // readiness — single-item reads are unaffected and keep returning null.
         GitRepo r = makeRepo("https://github.com/test/task-readiness-get-null.git");
         StoryResponse story = makeStory(r.getId());

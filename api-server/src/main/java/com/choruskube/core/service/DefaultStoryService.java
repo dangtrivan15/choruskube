@@ -164,8 +164,8 @@ public class DefaultStoryService implements StoryService {
      * Shared body for {@link #list} and {@link #listInternal}: loads this Epic's full Story/Task
      * set once (the readiness walk must be bounded to the whole Epic, not just this
      * Story's own Tasks, or a blocker in a sibling Story would be missed) and populates real
-     * {@code readiness} instead of the {@code null} every other read path still returns (Decision
-     * 1 — only the flat list endpoints and the Roadmap Graph View compute it).
+     * {@code readiness} instead of the {@code null} every other read path still returns
+     * (only the flat list endpoints and the Roadmap Graph View compute it).
      */
     private List<StoryResponse> listWithReadiness(UUID epicId, ReadinessAuthMode mode, UUID contextId) {
         EpicReadinessAssembler.EpicCandidates candidates = readinessAssembler.loadEpicCandidates(epicId);

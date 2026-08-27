@@ -144,8 +144,8 @@ public class GraphValidationService {
     }
 
     /**
-     * Whether a node's config_overrides declares a non-empty {@code terminal_decisions} array
-     *. Degrades to {@code false} on missing/malformed config_overrides — Rule 4
+     * Whether a node's config_overrides declares a non-empty {@code terminal_decisions} array.
+     * Degrades to {@code false} on missing/malformed config_overrides — Rule 4
      * ({@link #validateConfigOverrides}) is the one responsible for surfacing malformed JSON as
      * a validation error, not this check.
      */

@@ -46,7 +46,7 @@ public class DefaultBlockingChainService implements BlockingChainService {
     @Transactional(readOnly = true)
     public BlockingChainResponse getChain(BlockableItemType itemType, UUID itemId) {
         // Root resolution goes through storyService/taskService (never a repository directly) so
-        // org-scoping (checkOrgAccess) is never bypassed  — a missing/foreign root item must
+        // org-scoping (checkOrgAccess) is never bypassed — a missing/foreign root item must
         // 404/403 exactly like every other org-scoped read in this codebase, so both exceptions are
         // allowed to propagate uncaught here.
         Map<UUID, String> titleById = new HashMap<>();

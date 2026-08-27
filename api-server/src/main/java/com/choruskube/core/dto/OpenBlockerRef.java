@@ -3,8 +3,8 @@ package com.choruskube.core.dto;
 import java.util.UUID;
 
 /**
- * A reference to one of a Task's own direct, not-yet-{@code done} incoming blocking edges
- *, surfaced to the agent alongside {@link GraphRuntimeSnapshotResponse.TaskContext}
+ * A reference to one of a Task's own direct, not-yet-{@code done} incoming blocking edges,
+ * surfaced to the agent alongside {@link GraphRuntimeSnapshotResponse.TaskContext}
  * so a run knows about unresolved prerequisites up front. Unlike {@link
  * ExternalBlockerRef}, this is not Epic-scoped — {@code itemType}/{@code itemId} identify the
  * blocking Story/Task regardless of which Epic it belongs to.

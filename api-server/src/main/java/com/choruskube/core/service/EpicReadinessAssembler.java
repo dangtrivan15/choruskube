@@ -175,7 +175,7 @@ class EpicReadinessAssembler {
 
     /**
      * Loads dependency edges touching {@code candidateIds}, resolves any cross-Epic external
-     * blocker's status (one hop only —), and computes per-item {@link Readiness} via
+     * blocker's status (one hop only), and computes per-item {@link Readiness} via
      * {@link TransitiveReadinessResolver}.
      *
      * @param statusById status for every id in {@code candidateIds}; mutated copies are made

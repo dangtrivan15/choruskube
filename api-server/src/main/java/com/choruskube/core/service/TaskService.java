@@ -44,8 +44,8 @@ public interface TaskService {
     Page<TaskResponse> list(WorkItemStatus status, Pageable pageable);
 
     /**
-     * Agent/internal mirror of {@link #list} for the Roadmap Graph View internal route (Decision
-     * 1): validated the same way as {@link #create(UUID, TaskRequest, UUID, UUID)} —
+     * Agent/internal mirror of {@link #list} for the Roadmap Graph View internal route: validated
+     * the same way as {@link #create(UUID, TaskRequest, UUID, UUID)} —
      * {@code assertSameOrg} plus a direct project match — instead of {@link #list}'s
      * {@code checkOrgAccess}, which reads a request-scoped tenant context that does not exist on
      * the {@code /internal/**} JOB_SECRET path.

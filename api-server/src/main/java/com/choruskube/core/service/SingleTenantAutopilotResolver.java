@@ -10,8 +10,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 /**
- * Single-tenant default: one installation, one Autopilot, and every caller means that one
- *.
+ * Single-tenant default: one installation, one Autopilot, and every caller means that one.
  *
  * <p>Gated the way every other OSS seam here is, so a downstream implementation replaces this bean
  * rather than colliding with it — see {@code NoOpScopeProvider}, {@link AllEpicsCandidateSource},

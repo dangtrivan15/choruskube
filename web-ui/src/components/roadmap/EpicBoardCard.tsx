@@ -15,7 +15,7 @@ const levelMeta = roadmapLevelMeta("epic");
 
 interface Props {
   epic: EpicResponse;
-  /** Whether this card is the currently-focused Epic (/) — drives highlight styling. */
+  /** Whether this card is the currently-focused Epic — drives highlight styling. */
   isFocused?: boolean;
   /** Called on card click (excluding the expand chevron, which already stops propagation). */
   onFocus?: (epicId: string) => void;

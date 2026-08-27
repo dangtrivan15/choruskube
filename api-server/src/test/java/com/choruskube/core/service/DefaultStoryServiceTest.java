@@ -173,7 +173,7 @@ public class DefaultStoryServiceTest extends BaseTest {
 
     @Test
     void list_storyBlockedBySiblingStorysUnfinishedTask_isBlocked() {
-        // the readiness walk is bounded to the whole Epic, not the requested Story
+        // The readiness walk is bounded to the whole Epic, not the requested Story
         // alone — a Story in the same Epic can be blocked by a Task under a completely different
         // sibling Story.
         EpicResponse epic = makeEpic("https://github.com/test/story-readiness-cross-story.git");
@@ -189,7 +189,7 @@ public class DefaultStoryServiceTest extends BaseTest {
 
     @Test
     void get_doesNotPopulateReadiness() {
-        // only the flat list endpoints (and the Roadmap Graph View) compute
+        // Only the flat list endpoints (and the Roadmap Graph View) compute
         // readiness — single-item reads are unaffected and keep returning null.
         EpicResponse epic = makeEpic("https://github.com/test/story-readiness-get-null.git");
         StoryResponse blocking = service.create(epic.id(), new StoryRequest("Blocking", "D"));

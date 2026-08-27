@@ -650,7 +650,7 @@ class V1TemplateSeederTest extends BaseTest {
                 .contains("{input.draft_spec_and_plan.result}")
                 .as("PR body must surface Manual Operations under a clearly-labelled heading")
                 .contains("## ⚠️ Manual Operations Required")
-                .as("PR body must surface Caveats from")
+                .as("PR body must surface Caveats")
                 .contains("## Caveats & Known Limitations")
                 .as("PR body must conditionally surface any unresolved 'Needs human decision' caveats")
                 .contains("## ❓ Open Decisions for Reviewer");
@@ -695,7 +695,7 @@ class V1TemplateSeederTest extends BaseTest {
                 .as("an empty companion section must be omitted, not narrated — a 'none'"
                         + " note discloses that companions were withheld")
                 .contains("Do NOT write \"none\"")
-                .as(" must be scoped and generalized for a public repo, not copied verbatim")
+                .as("Manual Operations must be scoped and generalized for a public repo, not copied verbatim")
                 .contains("include ONLY the operations that apply");
     }
 

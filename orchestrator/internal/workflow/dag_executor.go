@@ -58,7 +58,7 @@ type nodeTracker struct {
 	// reviewPass counts genuine review-decision passes for a self-looping review
 	// node, distinct from `iteration` (which also advances on operator retries and
 	// pause/heartbeat-timeout recovery — see SignalRetryNode and the pause-recovery
-	// path below). It advances ONLY at the back-edge self-loop site (g, when the
+	// path below). It advances ONLY at the back-edge self-loop site (when the
 	// target node was previously "completed"); every other nodeTracker construction
 	// site carries the prior tracker's reviewPass forward unchanged. Model/effort
 	// resolution for the new iteration-aware config_overrides keys reads reviewPass,

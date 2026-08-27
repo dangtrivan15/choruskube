@@ -13,7 +13,7 @@ import RoadmapTimelineItemPreview from "@/components/roadmap/RoadmapTimelineItem
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 
 /**
- * Highlight styling applied to a lane/marker whose `data.isFocused` is true  — the same
+ * Highlight styling applied to a lane/marker whose `data.isFocused` is true — the same
  * ring treatment `EpicBoardCard` uses for its own focused-Epic highlight, so a focused item reads
  * consistently across Board and Timeline.
  */
@@ -30,7 +30,7 @@ function isActivationKey(event: KeyboardEvent<HTMLDivElement>): boolean {
  * actual time-plotted markers. Clickable — the actual event handling lives on the parent
  * `<ReactFlow>`'s `onNodeClick` (RoadmapTimeline), this component only needs to look interactive
  * and stay clickable (no `pointer-events: none`). Also keyboard-activatable (Enter/Space) via
- * `useTimelineFocusActivate` — the same wrapper-level focus call a click makes  — and shows
+ * `useTimelineFocusActivate` — the same wrapper-level focus call a click makes — and shows
  * a hover preview: a non-interactive `Tooltip` rendering
  * `RoadmapTimelineItemPreview`, matching the `TruncatedText` idiom already used elsewhere.
  */

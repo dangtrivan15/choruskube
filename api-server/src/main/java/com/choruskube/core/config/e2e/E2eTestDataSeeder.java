@@ -530,8 +530,8 @@ public class E2eTestDataSeeder implements ApplicationRunner {
     // v13 shape: the analyzer node uploads roadmap_analysis.md + the structured
     // roadmap_candidates.json that the human gate declares as required input
     // artifacts; the gate's config_overrides carry the same "terminal_decisions": ["approved"]
-    // and "materialize": "roadmap_candidates" pair RunService.signalHumanDecision keys off of
-    // , so approving here drives the SAME deterministic materialization path a
+    // and "materialize": "roadmap_candidates" pair RunService.signalHumanDecision keys off of,
+    // so approving here drives the SAME deterministic materialization path a
     // real Roadmap Provisioner run does — just with a script-node analyzer stand-in
     // (mock-agent.sh's "roadmap_candidates" scenario) instead of a live Claude call.
 

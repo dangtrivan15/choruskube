@@ -73,7 +73,7 @@ public class AutopilotService implements AutopilotSafetyValve {
 
     private static final Logger log = LoggerFactory.getLogger(AutopilotService.class);
 
-    /** three consecutive failures mean the platform is broken, not the work. */
+    /** Three consecutive failures mean the platform is broken, not the work. */
     private static final int FAILURE_LIMIT = 3;
 
     /** {@code nextUp} is a preview panel, not a queue dump. */
@@ -1060,7 +1060,7 @@ public class AutopilotService implements AutopilotSafetyValve {
     }
 
     /**
-     * Why the Autopilot is not starting work (spec). An unattended dispatcher that stops for a
+     * Why the Autopilot is not starting work. An unattended dispatcher that stops for a
      * structural reason has to be distinguishable from one that is broken, and a guess is worth
      * much less than being told.
      */

@@ -121,8 +121,8 @@ describe("quoteSequenceParticipantAliases", () => {
     ].join("\n");
     // `API` is never declared via a `participant`/`actor` line, but Mermaid
     // implicitly creates it as a participant the first time it's used as a
-    // message target — so the collection pass picks it up too, and Decision
-    // 2 (quote every alias unconditionally) means it gets quoted like `actor`.
+    // message target — so the collection pass picks it up too, and the
+    // unconditional-quoting rule means it gets quoted like `actor`.
     const expected = [
       "sequenceDiagram",
       '  participant "actor" as Reviewer',

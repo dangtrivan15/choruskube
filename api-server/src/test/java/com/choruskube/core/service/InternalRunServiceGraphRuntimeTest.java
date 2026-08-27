@@ -314,8 +314,8 @@ class InternalRunServiceGraphRuntimeTest {
     }
 
     // -----------------------------------------------------------------------
-    // taskContext — resolved live off run.getTaskId() -> task.storyId -> story.epicId
-    // , broadcast into the snapshot for every node to consume.
+    // taskContext — resolved live off run.getTaskId() -> task.storyId -> story.epicId,
+    // broadcast into the snapshot for every node to consume.
     // -----------------------------------------------------------------------
 
     @Test

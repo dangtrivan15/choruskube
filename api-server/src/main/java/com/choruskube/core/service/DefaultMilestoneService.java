@@ -246,8 +246,8 @@ public class DefaultMilestoneService implements MilestoneService {
         Milestone milestone = findOrThrow(id);
         authService.checkOrgAccess("milestone", id);
         auditSink.record(AuditSink.MILESTONE_DELETED, "milestone", id, detailJson(snapshot(milestone), null));
-        // No application-level un-tagging of Epics: epic.milestone_id is ON DELETE SET NULL
-        // , so the DB itself nulls every referencing Epic's milestone_id when this
+        // No application-level un-tagging of Epics: epic.milestone_id is ON DELETE SET NULL,
+        // so the DB itself nulls every referencing Epic's milestone_id when this
         // row is removed.
         repo.delete(milestone);
     }

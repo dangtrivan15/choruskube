@@ -480,7 +480,7 @@ export default function RoadmapCandidateBreakdown({ value, onChange }: RoadmapCa
           <h5 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Dependencies ({dependencies.length})
           </h5>
-          {/* Read-only  — adding/removing edges happens post-materialization in the
+          {/* Read-only — adding/removing edges happens post-materialization in the
               roadmap graph UI, not in this pre-approval editor. */}
           <ul className="space-y-1">
             {dependencies.map((dependency: CandidateDependency, i) => (

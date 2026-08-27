@@ -78,9 +78,9 @@ export default function RoadmapTimeline({
     [onFocusChange],
   );
 
-  // Pan/center on whatever just became focused  — the Story marker if one is focused,
+  // Pan/center on whatever just became focused — the Story marker if one is focused,
   // otherwise the Epic lane. A no-op if the focused id isn't present in the current layout (a
-  // deleted or otherwise-missing Epic/Story —'s Negative/security case), or if the instance
+  // deleted or otherwise-missing Epic/Story — the Negative/security case), or if the instance
   // isn't ready yet (re-runs once `flowInstance` itself changes from null to set).
   useEffect(() => {
     const focusedId = focusedStoryId ?? focusedEpicId;

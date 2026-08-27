@@ -54,7 +54,7 @@ import org.springframework.stereotype.Service;
  * materialized item's initial {@link Priority}, which the reviewer can re-prioritize afterwards.
  * Anything null/blank/unrecognized falls back to {@link Priority#medium}. {@link
  * CandidateEpicProposal#repos()} still has no corresponding field on the Epic and is intentionally
- * dropped (: a materialized Epic's {@code repos} is always derived from its software
+ * dropped (a materialized Epic's {@code repos} is always derived from its software
  * project).
  */
 @Service

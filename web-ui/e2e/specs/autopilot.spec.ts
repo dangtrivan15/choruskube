@@ -1,7 +1,7 @@
 import { test, expect } from "../fixtures";
 import { uniqueName, TestApiClient, type Task } from "../helpers/api-client";
 
-// The Autopilot (spec) is a SINGLETON with no per-org/per-worker scope filter:
+// The Autopilot is a SINGLETON with no per-org/per-worker scope filter:
 // its candidate source is every Epic on the board, and `POST /tick` is the only thing that
 // advances it in this stack — `AUTOPILOT_ENABLED=false` on the api-server in
 // docker-compose.e2e.yaml keeps AutopilotReconciler's 30s scheduler off, precisely so that
@@ -131,8 +131,8 @@ test.describe("Autopilot", () => {
     await api.engageAutopilot();
 
     // Offer exactly ONE free slot at a time so a tick can start at most one Task globally, then
-    // tick until one of ours claims it. The Autopilot's candidate source spans the whole board
-    //, so in principle that one slot could go to another worker's Task instead of
+    // tick until one of ours claims it. The Autopilot's candidate source spans the whole board,
+    // so in principle that one slot could go to another worker's Task instead of
     // ours — this file's tests are the only Autopilot-attributed traffic in the suite (serialised
     // onto one worker, see the top-of-file comment), so in practice this converges on the first
     // or second attempt; the bounded retry absorbs the rest.

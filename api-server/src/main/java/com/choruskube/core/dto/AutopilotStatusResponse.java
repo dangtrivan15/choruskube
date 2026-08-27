@@ -4,7 +4,7 @@ import java.time.Instant;
 import java.util.List;
 
 /**
- * Configuration plus live status for the Autopilot singleton (spec). Returned by every
+ * Configuration plus live status for the Autopilot singleton. Returned by every
  * endpoint on {@code /api/v1/autopilot} and published as the STOMP payload on every change, so a
  * subscriber renders the panel from the event alone rather than refetching into a race with the
  * transaction that produced it.

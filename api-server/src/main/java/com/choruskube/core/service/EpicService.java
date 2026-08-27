@@ -34,8 +34,8 @@ public interface EpicService {
      * readiness == null} preserves the pre-feature behavior exactly (no filter, DB-level
      * pagination); {@code readiness == Readiness.READY} switches to an in-memory-paginated path
      * since {@code readyItemCount} is not a stored column. Every returned {@link
-     * EpicResponse} carries {@code readyItemCount} regardless of whether the filter is active
-     *. A non-null {@code priority} additionally narrows the result to Epics with that
+     * EpicResponse} carries {@code readyItemCount} regardless of whether the filter is active.
+     * A non-null {@code priority} additionally narrows the result to Epics with that
      * priority (a plain persisted-column predicate, applied in both the DB and readiness paths). A
      * non-null {@code milestoneId} additionally narrows the result to Epics tagged with that
      * Milestone (of the Milestone spec) — also a plain persisted-column predicate.

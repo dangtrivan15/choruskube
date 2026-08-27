@@ -30,8 +30,8 @@ import org.mockito.Mockito;
 
 /**
  * {@link DefaultRoadmapCandidateMaterializer}: creates each candidate Milestone/Epic/Story/Task
- * through {@link InternalRunService}/{@link MilestoneService}'s existing agent-facing write paths
- *, then each candidate dependency edge directly through {@link
+ * through {@link InternalRunService}/{@link MilestoneService}'s existing agent-facing write paths,
+ * then each candidate dependency edge directly through {@link
  * WorkItemDependencyService}, best-effort per top-level candidate/edge. A
  * candidate item's free-text {@code priority} is parsed case-insensitively onto {@link Priority}
  * (defaulting to {@link Priority#medium}); Epic {@code repos} is still dropped.

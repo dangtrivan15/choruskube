@@ -122,8 +122,8 @@ public class Phase3GatingTest extends BaseTest {
      * migration) to {@code DefaultEpicService.java} — the concrete implementation that now owns
      * this response-building code path (Epic is the entity carrying the
      * initiative-level software-project/repo relationship), not {@code DefaultStoryService.java}
-     * or {@code DefaultTaskService.java}, and not the {@code EpicService.java} interface file
-     *, which has no method bodies for this static analysis to inspect.
+     * or {@code DefaultTaskService.java}, and not the {@code EpicService.java} interface file,
+     * which has no method bodies for this static analysis to inspect.
      */
     @Test
     void default_epic_service_does_not_emit_git_repo_list() throws IOException {

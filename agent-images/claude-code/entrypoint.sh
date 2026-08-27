@@ -68,8 +68,7 @@ NEED_PR=$(jq -r '.needs_pr // false' "$CONFIG_FILE")
 # Triggering Task's identity — present only for runs started from
 # a Task. Story/Epic may independently be empty if that level no longer resolves
 # even though TASK_ID is set. update-task-status/get-roadmap-graph
-# default their --task-id/--epic-id flags from these when the caller omits them
-#.
+# default their --task-id/--epic-id flags from these when the caller omits them.
 export TASK_ID=$(jq -r '.task_context.task_id // empty' "$CONFIG_FILE")
 export TASK_TITLE=$(jq -r '.task_context.task_title // empty' "$CONFIG_FILE")
 export STORY_ID=$(jq -r '.task_context.story_id // empty' "$CONFIG_FILE")

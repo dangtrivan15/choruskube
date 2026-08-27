@@ -22,7 +22,7 @@ export class RoadmapTimelinePage {
   readonly graphAction: Locator;
   readonly boardViewLink: Locator;
 
-  /** Item-detail hover/click feature (, Task 6). */
+  /** Item-detail hover/click feature. */
   readonly itemPreview: Locator;
   readonly detailPanel: Locator;
   readonly detailClose: Locator;

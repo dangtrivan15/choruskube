@@ -22,7 +22,7 @@ export interface RoadmapFocus {
 /**
  * Reads `epic`/`story` out of a URL's search params. Absent or empty values are simply omitted
  * from the result — this never throws, even for a malformed/garbage query string, since
- * `URLSearchParams.get` just returns `null` for anything it can't find ('s Negative/security
+ * `URLSearchParams.get` just returns `null` for anything it can't find (the Negative/security
  * case: an unknown id is handled by the caller treating a present-but-stale id as "not found",
  * not by this function rejecting it).
  */

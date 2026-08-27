@@ -47,8 +47,8 @@ import org.springframework.stereotype.Service;
  * resolve, or that would close a within-artifact cycle, or a {@link CandidateEpicProposal#milestone()}
  * reference that doesn't resolve to a declared {@link CandidateMilestone#key()}, is instead DROPPED
  * — the rest of the document still resolves — mirroring {@code
- * DefaultRoadmapCandidateMaterializer}'s own best-effort stance on the same categories of problem
- *, so a reviewer sees the same kind of "some pieces were skipped" outcome whether it
+ * DefaultRoadmapCandidateMaterializer}'s own best-effort stance on the same categories of problem,
+ * so a reviewer sees the same kind of "some pieces were skipped" outcome whether it
  * surfaces at gate-display time or at materialization time.
  */
 @Service
