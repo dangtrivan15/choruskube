@@ -11,8 +11,7 @@ import org.springframework.data.domain.Pageable;
 
 /**
  * CRUD plus run lifecycle (start/complete/history) for Tasks — the only startable leaf of the
- * work hierarchy. Defined as an interface, with
- * {@link DefaultTaskService} as its sole implementation.
+ * work hierarchy.
  *
  * <p>A Task is never treated as top-level for ownership purposes — it always
  * inherits its organization from its immediate parent Story, regardless of caller.

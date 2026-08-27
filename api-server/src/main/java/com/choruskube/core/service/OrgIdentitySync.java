@@ -130,8 +130,6 @@ public interface OrgIdentitySync {
         }
     }
 
-    // ---- Org lookups ----
-
     Optional<UUID> findOrgByAlias(String alias);
 
     long countOrgMembers(UUID orgId);
@@ -148,13 +146,9 @@ public interface OrgIdentitySync {
 
     boolean isOrgMember(UUID orgId, String email);
 
-    // ---- User lookups ----
-
     Optional<UUID> findUserByEmail(String email);
 
     List<IdentityOrgRef> listUserOrganizations(UUID userId);
-
-    // ---- Mutations ----
 
     UUID createOrganization(String alias, String name, String description);
 

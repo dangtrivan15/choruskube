@@ -26,11 +26,6 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * Service layer for workload execution operations.
  *
- * <p>This service wraps the {@link WorkloadExecutor} with database operations,
- * providing atomic create-workload transactions that eliminate the race condition
- * in the previous design (where the orchestrator created a workload then made a
- * separate HTTP call to update the DB with the JobSecretHash).
- *
  * <p>Infrastructure details (image, secrets, docker config, identity) are resolved
  * from the stored graph snapshot rather than being passed by the caller.
  */
@@ -70,9 +65,6 @@ public class WorkloadService {
     /**
      * Creates a workload (launches an agent container) and atomically updates the
      * node execution with pod_name, job_secret_hash, and status=running.
-     *
-     * <p>Infrastructure details are resolved from the stored graph snapshot using
-     * {@link #resolveExecutionParams(UUID, UUID, CreateWorkloadRequest)}.
      */
     @Transactional
     public CreateWorkloadResponse createWorkload(UUID runId, UUID nodeExecId, CreateWorkloadRequest req) {
@@ -100,13 +92,11 @@ public class WorkloadService {
         return new CreateWorkloadResponse(result.executionHandle(), result.jobSecretHash());
     }
 
-    /** Cleans up all resources associated with a completed execution. */
     public void cleanupWorkload(UUID executionId) {
         executor.cleanup(executionId);
         log.info("Cleaned up workload for execution {}", executionId);
     }
 
-    /** Returns recent log output from the agent container. */
     public WorkloadLogsResponse getWorkloadLogs(UUID executionId, int tailLines) {
         if (tailLines <= 0) {
             tailLines = 50;
@@ -115,29 +105,19 @@ public class WorkloadService {
         return new WorkloadLogsResponse(logs);
     }
 
-    /** Stops a running execution. */
     public void terminateWorkload(UUID executionId) {
         executor.terminate(executionId);
         log.info("Terminated workload for execution {}", executionId);
     }
 
-    /** Returns info about all running/completed executions. */
     public List<ExecutionInfo> listWorkloads() {
         return executor.listExecutions();
     }
 
-    /** Checks executor backend connectivity. */
     public void healthCheck() {
         executor.healthCheck();
     }
 
-    /**
-     * Resolves all infrastructure parameters from the graph snapshot.
-     *
-     * <p>Resolution priority for image: node override → run input agent_image → system default.
-     * Docker config comes from the snapshot (typically derived from GitRepo). Identity uses
-     * system defaults.
-     */
     private ExecutionParams resolveExecutionParams(
             UUID nodeExecId, WorkflowRun run, UUID templateNodeId, CreateWorkloadRequest req) {
         UUID runId = run.getId();
@@ -156,7 +136,6 @@ public class WorkloadService {
             throw new RuntimeException("Failed to parse snapshot JSON", e);
         }
 
-        // Find the node in the snapshot
         JsonNode targetNode = null;
         for (JsonNode node : snapshot.path("nodes")) {
             if (templateNodeId.toString().equals(node.path("template_node_id").asText())) {
@@ -182,7 +161,6 @@ public class WorkloadService {
 
         boolean enableDocker = snapshot.path("enable_docker").asBoolean(false);
 
-        // Resolve secrets → CredentialSpec list
         List<CredentialSpec> nodeCredentials = List.of();
         if (targetNode.has("secrets") && targetNode.get("secrets").isArray()) {
             List<CredentialSpec> creds = new ArrayList<>();
@@ -196,7 +174,6 @@ public class WorkloadService {
             nodeCredentials = creds;
         }
 
-        // Resolve identity from executor defaults
         IdentitySpec identity = new IdentitySpec(defaultServiceAccount, 1000, false);
 
         return new ExecutionParams(

@@ -87,24 +87,17 @@ public class LiveChatService {
         this.applicationEventPublisher = applicationEventPublisher;
     }
 
-    /**
-     * Start a live chat session for an awaiting_human gate node.
-     * Finds the nearest completed AI predecessor as the source for session resume,
-     * then spawns a chat pod via the workload executor.
-     */
     @Transactional
     public LiveChatSessionResponse startLiveChat(UUID runId, UUID nodeExecId) {
         NodeExecution gateExec = execRepo.findById(nodeExecId)
                 .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
 
-        // Verify the node execution belongs to the requested run before starting a chat session.
         NodeExecutionUtil.requireInRun(gateExec, runId);
 
         if (gateExec.getStatus() != NodeExecutionStatus.awaiting_human) {
             throw new BadRequestException("Node must be in awaiting_human status to start live chat");
         }
 
-        // Check for existing active/pending session
         Optional<LiveChatSession> existing = sessionRepo.findByNodeExecutionIdAndStatusIn(
                 nodeExecId, List.of(LiveChatStatus.pending, LiveChatStatus.active));
         if (existing.isPresent()) {
@@ -115,7 +108,6 @@ public class LiveChatService {
                 runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
         authService.checkOrgAccess("workflow_run", runId);
 
-        // Build graph snapshot to resolve repo and image
         String repoUrl = null;
         String image = defaultAgentImage;
         JsonNode snapshot = null;
@@ -123,11 +115,9 @@ public class LiveChatService {
             String snapshotJson = snapshotBuilder.buildSnapshotForRun(run);
             snapshot = objectMapper.readTree(snapshotJson);
 
-            // Extract repo URL from snapshot inputs
             JsonNode inputs = snapshot.path("inputs");
             repoUrl = inputs.path("repo_url").asText(null);
 
-            // Resolve image: run input agent_image → system default
             if (inputs.has("agent_image")
                     && !inputs.path("agent_image").asText("").isBlank()) {
                 image = inputs.path("agent_image").asText();
@@ -142,15 +132,12 @@ public class LiveChatService {
             workingBranch = "choruskube-run-" + runId;
         }
 
-        // Build github_token_url for git credential support
         String githubTokenUrl =
                 apiServerUrl + "/internal/runs/" + runId + "/node-executions/" + nodeExecId + "/github-token";
 
-        // Build run_log_path so the AI has context from prior nodes
         String orgSlug = storagePrefixResolver.storagePrefixForRun(runId);
         String runLogPath = orgSlug + "/runs/" + runId + "/run_log.md";
 
-        // Find nearest completed AI predecessor
         UUID sourceExecId = findSourceAINodeExecution(run, gateExec, snapshot);
 
         LiveChatSession session = new LiveChatSession();
@@ -162,7 +149,6 @@ public class LiveChatService {
         applicationEventPublisher.publishEvent(MappableCreated.withParent(
                 "live_chat_session", session.getId(), "workflow_run", session.getWorkflowRunId()));
 
-        // Build config.json for the chat pod with workspace fields
         Map<String, Object> configJson = new LinkedHashMap<>();
         configJson.put("mode", "live_chat");
         configJson.put("session_id", session.getId().toString());
@@ -192,11 +178,9 @@ public class LiveChatService {
                 List.of(),
                 IdentitySpec.empty()));
 
-        // Update session with pod name
         session.setChatPodName(result.executionHandle());
         sessionRepo.save(session);
 
-        // Update gate node: status to live_chat, store JOB_SECRET hash for pod auth
         gateExec.setStatus(NodeExecutionStatus.live_chat);
         gateExec.setJobSecretHash(result.jobSecretHash());
         execRepo.save(gateExec);
@@ -233,13 +217,11 @@ public class LiveChatService {
      */
     public LiveChatSessionResponse getSessionWithFallback(UUID nodeExecId) {
         checkOrgAccessForNodeExec(nodeExecId);
-        // Prefer active/pending session
         Optional<LiveChatSession> active = sessionRepo.findByNodeExecutionIdAndStatusIn(
                 nodeExecId, List.of(LiveChatStatus.pending, LiveChatStatus.active));
         if (active.isPresent()) {
             return toResponse(active.get());
         }
-        // Fall back to most recent session (any status)
         List<LiveChatSession> all = sessionRepo.findByNodeExecutionIdOrderByCreatedAtDesc(nodeExecId);
         if (all.isEmpty()) {
             throw new NotFoundException("No live chat sessions for node: " + nodeExecId);
@@ -247,10 +229,6 @@ public class LiveChatService {
         return toResponse(all.get(0));
     }
 
-    /**
-     * Get the latest live chat session for a node execution, regardless of status.
-     * Returns the most recently created session, or throws NotFoundException if none exist.
-     */
     public LiveChatSessionResponse getLatestSession(UUID nodeExecId) {
         checkOrgAccessForNodeExec(nodeExecId);
         List<LiveChatSession> sessions = sessionRepo.findByNodeExecutionIdOrderByCreatedAtDesc(nodeExecId);
@@ -260,9 +238,6 @@ public class LiveChatService {
         return toResponse(sessions.get(0));
     }
 
-    /**
-     * Get a live chat session by ID.
-     */
     public LiveChatSessionResponse getSession(UUID sessionId) {
         LiveChatSession session = sessionRepo
                 .findById(sessionId)
@@ -273,9 +248,6 @@ public class LiveChatService {
         return toResponse(session);
     }
 
-    /**
-     * List all sessions for a run.
-     */
     public List<LiveChatSessionResponse> listSessionsByRun(UUID runId) {
         WorkflowRun run =
                 runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
@@ -285,9 +257,6 @@ public class LiveChatService {
                 .toList();
     }
 
-    /**
-     * Send a user message in a live chat session. Persists the message and broadcasts via STOMP.
-     */
     @Transactional
     public LiveChatMessageResponse sendUserMessage(UUID nodeExecId, String content) {
         checkOrgAccessForNodeExec(nodeExecId);
@@ -301,7 +270,6 @@ public class LiveChatService {
         message.setContent(content);
         message = messageRepo.save(message);
 
-        // Broadcast the message via STOMP so the pod can receive it
         eventPublisher.publishLiveChatMessage(session.getWorkflowRunId(), session.getId(), "user", content);
 
         log.debug("User message saved for session {}: {} chars", session.getId(), content.length());
@@ -314,7 +282,6 @@ public class LiveChatService {
      */
     @Transactional
     public LiveChatMessageResponse saveMessage(UUID sessionId, String role, String content) {
-        // Verify session exists
         sessionRepo
                 .findById(sessionId)
                 .orElseThrow(() -> new NotFoundException("Live chat session not found: " + sessionId));
@@ -325,15 +292,11 @@ public class LiveChatService {
         message.setContent(content);
         message = messageRepo.save(message);
 
-        // Broadcast via STOMP
         eventPublisher.publishLiveChatMessage(null, sessionId, role, content);
 
         return toMessageResponse(message);
     }
 
-    /**
-     * Get all messages for a session.
-     */
     public List<LiveChatMessageResponse> getMessages(UUID sessionId) {
         LiveChatSession session = sessionRepo
                 .findById(sessionId)
@@ -346,11 +309,6 @@ public class LiveChatService {
                 .toList();
     }
 
-    /**
-     * Get messages for a session created at or after a given timestamp (for polling).
-     * Uses >= to avoid missing same-millisecond messages; the caller should track
-     * the last seen message ID to deduplicate if needed.
-     */
     public List<LiveChatMessageResponse> getMessagesSince(UUID sessionId, Instant since) {
         return messageRepo.findBySessionIdAndCreatedAtGreaterThanOrderByCreatedAtAsc(sessionId, since).stream()
                 .map(this::toMessageResponse)
@@ -385,7 +343,6 @@ public class LiveChatService {
 
         session = sessionRepo.save(session);
 
-        // Broadcast status change
         eventPublisher.publishLiveChatStatusChanged(
                 session.getWorkflowRunId(),
                 session.getNodeExecutionId(),
@@ -401,21 +358,18 @@ public class LiveChatService {
      */
     @Transactional
     public LiveChatSessionResponse completeLiveChat(UUID runId, UUID nodeExecId, CompleteLiveChatRequest req) {
-        // Validates the run exists; the org is no longer needed here (feeds are published org-free,
-        // re-scoped downstream via ownership).
+        // Validates the run exists.
         runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
         authService.checkOrgAccess("workflow_run", runId);
         LiveChatSession session = sessionRepo
                 .findByNodeExecutionIdAndStatusIn(nodeExecId, List.of(LiveChatStatus.pending, LiveChatStatus.active))
                 .orElseThrow(() -> new NotFoundException("No active live chat session for node: " + nodeExecId));
 
-        // Verify the live chat session belongs to the requested run before terminating its pod.
         if (!runId.equals(session.getWorkflowRunId())) {
             throw new NotFoundException(
                     "Live chat session for node " + nodeExecId + " does not belong to run " + runId);
         }
 
-        // Build transcript from stored messages, falling back to the request transcript
         String transcript = buildTranscriptFromMessages(session.getId());
         if (transcript == null || transcript.isBlank()) {
             // Fallback to transcript sent from the browser (for backward compatibility)
@@ -438,11 +392,9 @@ public class LiveChatService {
             log.warn("Failed to terminate chat pod for session {}: {}", session.getId(), e.getMessage());
         }
 
-        // Set the transcript as the gate node's result and return to awaiting_human
         NodeExecution gateExec = execRepo.findById(nodeExecId)
                 .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
 
-        // Verify the node execution belongs to the requested run before overwriting its result.
         NodeExecutionUtil.requireInRun(gateExec, runId);
 
         gateExec.setStatus(NodeExecutionStatus.awaiting_human);
@@ -467,7 +419,6 @@ public class LiveChatService {
         // Note: run-level status is not modified here — the orchestrator owns run-level
         // status transitions. The node returning to awaiting_human is sufficient.
 
-        // Broadcast status change
         eventPublisher.publishNodeStatusChanged(runId, nodeExecId, "awaiting_human");
         eventPublisher.publishLiveChatStatusChanged(runId, nodeExecId, session.getId(), "completed");
 
@@ -475,9 +426,6 @@ public class LiveChatService {
         return toResponse(session);
     }
 
-    /**
-     * Build a markdown transcript from stored messages for a session.
-     */
     private String buildTranscriptFromMessages(UUID sessionId) {
         List<LiveChatMessage> messages = messageRepo.findBySessionIdOrderByCreatedAtAsc(sessionId);
         if (messages.isEmpty()) {
@@ -488,11 +436,6 @@ public class LiveChatService {
                 .collect(Collectors.joining("\n\n"));
     }
 
-    /**
-     * Find the nearest completed AI node execution that is a direct predecessor of the gate node.
-     * Reuses a pre-built snapshot if available to avoid redundant snapshot building.
-     * Returns null if no AI predecessor is found.
-     */
     private UUID findSourceAINodeExecution(WorkflowRun run, NodeExecution gateExec, JsonNode prebuiltSnapshot) {
         try {
             var snapshot = prebuiltSnapshot != null
@@ -504,7 +447,6 @@ public class LiveChatService {
 
             UUID gateNodeId = gateExec.getTemplateNodeId();
 
-            // Find direct predecessor node IDs
             List<String> predecessorNodeIds = new java.util.ArrayList<>();
             for (var edge : edges) {
                 if (edge.get("target_node_id").asText().equals(gateNodeId.toString())) {
@@ -512,7 +454,6 @@ public class LiveChatService {
                 }
             }
 
-            // Filter to AI nodes
             List<String> aiPredecessorNodeIds = new java.util.ArrayList<>();
             for (String predId : predecessorNodeIds) {
                 for (var node : nodes) {
@@ -525,7 +466,6 @@ public class LiveChatService {
 
             if (aiPredecessorNodeIds.isEmpty()) return null;
 
-            // Find the most recent completed execution for any AI predecessor
             List<NodeExecution> allExecs = execRepo.findByWorkflowRunId(run.getId());
             return allExecs.stream()
                     .filter(e ->

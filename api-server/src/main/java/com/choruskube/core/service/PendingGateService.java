@@ -79,8 +79,6 @@ public class PendingGateService {
         Map<UUID, WorkflowRun> runsById =
                 runRepo.findAllById(runIds).stream().collect(Collectors.toMap(WorkflowRun::getId, r -> r));
 
-        // Single batch query for all executions across all related runs,
-        // then group by runId — avoids issuing one query per run.
         Map<UUID, List<NodeExecution>> execsByRun = execRepo.findByWorkflowRunIdIn(runIds).stream()
                 .collect(Collectors.groupingBy(NodeExecution::getWorkflowRunId));
 
@@ -102,8 +100,6 @@ public class PendingGateService {
         Map<UUID, WorkflowRun> runsById =
                 runRepo.findAllById(runIds).stream().collect(Collectors.toMap(WorkflowRun::getId, r -> r));
 
-        // Single batch query for all executions across all related runs,
-        // then group by runId — avoids issuing one query per run.
         Map<UUID, List<NodeExecution>> execsByRun = execRepo.findByWorkflowRunIdIn(runIds).stream()
                 .collect(Collectors.groupingBy(NodeExecution::getWorkflowRunId));
 
@@ -121,7 +117,6 @@ public class PendingGateService {
         return new PendingGateCountResponse((int) count);
     }
 
-    /** Filters node executions to the gate statuses (awaiting_human, live_chat). */
     private static Specification<NodeExecution> gateStatusSpec() {
         return (root, query, cb) -> root.get("status").in(GATE_STATUSES);
     }
@@ -136,7 +131,6 @@ public class PendingGateService {
 
         String runName = run.getName() != null ? run.getName() : "";
 
-        // Build graph snapshot on-demand to get node label, timeout, and predecessor info
         String nodeLabel = "Unknown";
         Integer timeoutSeconds = null;
         List<PredecessorOutput> predecessorOutputs = List.of();
@@ -149,7 +143,6 @@ public class PendingGateService {
                 JsonNode nodesArr = snapshot.get("nodes");
                 JsonNode edgesArr = snapshot.get("edges");
 
-                // Build nodeId → snapshot node map
                 Map<UUID, JsonNode> nodeMap = new HashMap<>();
                 if (nodesArr != null) {
                     for (JsonNode n : nodesArr) {
@@ -158,7 +151,6 @@ public class PendingGateService {
                     }
                 }
 
-                // Get label and timeout for this node
                 JsonNode thisNode = nodeMap.get(exec.getTemplateNodeId());
                 if (thisNode != null) {
                     nodeLabel = thisNode.has("label") ? thisNode.get("label").asText() : "Unknown";
@@ -168,7 +160,6 @@ public class PendingGateService {
                     }
                 }
 
-                // Find predecessor node IDs via edges
                 predecessorOutputs = findPredecessorOutputs(
                         exec.getTemplateNodeId(), edgesArr, nodeMap, execsByRun.getOrDefault(run.getId(), List.of()));
 
@@ -232,13 +223,11 @@ public class PendingGateService {
 
         return predecessorNodeIds.stream()
                 .map(predNodeId -> {
-                    // Get label from snapshot
                     JsonNode predNode = nodeMap.get(predNodeId);
                     final String predLabel = (predNode != null && predNode.has("label"))
                             ? predNode.get("label").asText()
                             : "";
 
-                    // Find the latest completed execution for this predecessor
                     return allExecs.stream()
                             .filter(e -> e.getTemplateNodeId().equals(predNodeId)
                                     && e.getStatus() == NodeExecutionStatus.completed)

@@ -270,14 +270,11 @@ public class RunService {
         }
         Page<WorkflowRun> page = runRepo.findAll(spec, pageable);
 
-        // Batch-fetch all referenced template names in a single query to avoid N+1
         Set<UUID> templateIds =
                 page.stream().map(WorkflowRun::getGraphTemplateId).collect(Collectors.toSet());
         Map<UUID, String> templateNames = graphTemplateRepo.findAllById(templateIds).stream()
                 .collect(Collectors.toMap(GraphTemplate::getId, GraphTemplate::getName));
 
-        // Batch-fetch task info for the page (avoids N+1). task_id is a direct FK on WorkflowRun,
-        // so no reverse lookup is needed — just batch-load the referenced Task rows.
         Set<UUID> taskIds = page.stream()
                 .map(WorkflowRun::getTaskId)
                 .filter(Objects::nonNull)
@@ -286,7 +283,6 @@ public class RunService {
                 ? Map.of()
                 : taskRepo.findAllById(taskIds).stream().collect(Collectors.toMap(Task::getId, t -> t));
 
-        // Resolve the project ID for each run: task wins; fall back to inputs.
         Map<UUID, UUID> projectIdByRunId = new HashMap<>();
         for (WorkflowRun run : page.getContent()) {
             Task task = run.getTaskId() != null ? taskById.get(run.getTaskId()) : null;
@@ -299,7 +295,6 @@ public class RunService {
         Map<UUID, SoftwareProject> projectById = softwareProjectRepo.findAllById(projectIdByRunId.values()).stream()
                 .collect(Collectors.toMap(SoftwareProject::getId, p -> p));
 
-        // Build the per-run SoftwareProjectRef map
         Map<UUID, SoftwareProjectRef> softwareProjectByRunId = new HashMap<>();
         projectIdByRunId.forEach((runId, projId) -> {
             SoftwareProject sp = projectById.get(projId);
@@ -407,7 +402,6 @@ public class RunService {
         WorkflowRun run = findRunOrThrow(runId);
         authService.checkOrgAccess("workflow_run", runId);
 
-        // Allow retry only when workflow is waiting for it
         if (run.getStatus() != WorkflowRunStatus.awaiting_retry) {
             throw new ValidationException(
                     List.of("Cannot retry node: run status is " + run.getStatus() + ", expected awaiting_retry"));
@@ -416,7 +410,6 @@ public class RunService {
         NodeExecution exec = execRepo.findById(nodeExecId)
                 .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
 
-        // Verify the node execution belongs to the requested run before retrying it.
         NodeExecutionUtil.requireInRun(exec, runId);
 
         if (exec.getStatus() != NodeExecutionStatus.failed) {
@@ -430,7 +423,6 @@ public class RunService {
         // leave two agents racing on the same working branch.
         cleanupWorkloadQuietly(nodeExecId);
 
-        // Signal the Temporal workflow with the template node ID
         WorkflowStub stub = workflowClient.newUntypedWorkflowStub(run.getExternalRunId());
         Map<String, String> payload =
                 Map.of("templateNodeId", exec.getTemplateNodeId().toString());
@@ -482,7 +474,6 @@ public class RunService {
         NodeExecution exec = execRepo.findById(nodeExecId)
                 .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
 
-        // Verify the node execution belongs to the requested run before claiming it.
         NodeExecutionUtil.requireInRun(exec, runId);
 
         // Atomically claim the node before doing anything else. Two concurrent/duplicate
@@ -508,7 +499,6 @@ public class RunService {
         try {
             JsonNode snapshot = readSnapshot(run);
 
-            // Validate decision against the union of edge conditions and terminal_decisions
             String validatedDecision =
                     validateDecisionAgainstEdges(snapshot, exec.getTemplateNodeId(), request.decision());
 
@@ -608,10 +598,6 @@ public class RunService {
         }
     }
 
-    /**
-     * Whether this node is configured to materialize its approved candidate breakdown —
-     * i.e. its {@code config_overrides.materialize} equals {@code "roadmap_candidates"}.
-     */
     private boolean isMaterializeNode(JsonNode snapshot, UUID templateNodeId) {
         JsonNode nodeConfigOverrides =
                 decisionOptionsResolver.findNodeConfigOverrides(snapshot.get("nodes"), templateNodeId);
@@ -633,9 +619,6 @@ public class RunService {
                 .toList();
     }
 
-    /**
-     * Returns pull requests for a run, enforcing org access check.
-     */
     public List<RunPullRequestResponse> getPullRequests(UUID runId) {
         WorkflowRun run =
                 runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
@@ -646,7 +629,6 @@ public class RunService {
     /**
      * Returns review history for a run, sourced from node_execution records
      * that have a loop_group set (i.e., nodes that participated in review loops).
-     * Enforces org access check.
      */
     public List<ReviewHistoryResponse> getReviewHistory(UUID runId, String loopGroup) {
         WorkflowRun run =
@@ -706,9 +688,6 @@ public class RunService {
         return merged;
     }
 
-    /**
-     * Converts a JsonNode to a plain Java Object suitable for Map<String, Object>.
-     */
     Object jsonNodeToObject(JsonNode node) {
         if (node == null || node.isNull()) return null;
         if (node.isBoolean()) return node.booleanValue();
@@ -716,7 +695,6 @@ public class RunService {
         if (node.isLong()) return node.longValue();
         if (node.isDouble() || node.isFloat()) return node.doubleValue();
         if (node.isTextual()) return node.textValue();
-        // For arrays and objects, use treeToValue
         try {
             return objectMapper.treeToValue(node, Object.class);
         } catch (Exception e) {
@@ -744,7 +722,6 @@ public class RunService {
                 if (required && !userProvided && (explicitlyBlank || !hasDefault)) {
                     errors.add("missing required input: " + name);
                 }
-                // Validate git_repo type: must be valid UUID referencing existing entity
                 if ("git_repo".equals(type) && userProvided) {
                     try {
                         UUID repoId = UUID.fromString(userValue.toString());
@@ -797,7 +774,6 @@ public class RunService {
         // Resolve org slug for object storage path isolation
         params.put("OrgSlug", storagePrefixResolver.storagePrefixForRun(run.getId()));
 
-        // Propagate run-level input attachments to the orchestrator workflow
         String inputRefs = run.getInputArtifactRefs();
         if (inputRefs != null && !inputRefs.isBlank() && !inputRefs.equals("{}")) {
             params.put("RunInputArtifactRefs", inputRefs);
@@ -845,7 +821,6 @@ public class RunService {
         String templateName = template != null ? template.getName() : "Unknown";
         String promptText = extractPromptText(template, run.getInputs());
 
-        // Build snapshot on-demand from template tables
         JsonNode snapshotJson = null;
         try {
             String snapshot = snapshotBuilder.buildSnapshotForRun(run);
@@ -974,20 +949,11 @@ public class RunService {
         }
     }
 
-    /**
-     * Converts a {@link SoftwareProject} entity to its DTO reference, discriminating
-     * between {@link RepoGroup} ("repo_group") and other implementations ("git_repo").
-     * Mirrors {@code DefaultEpicService.toProjectRef()}.
-     */
     private SoftwareProjectRef toSoftwareProjectRef(SoftwareProject sp) {
         String type = (sp instanceof RepoGroup) ? "repo_group" : "git_repo";
         return new SoftwareProjectRef(sp.getId(), type, sp.getName());
     }
 
-    /**
-     * Parses {@code inputs.software_project_id} from the run's JSONB inputs string.
-     * Returns {@code null} when the field is absent, non-textual, or not a valid UUID.
-     */
     private @Nullable UUID extractSoftwareProjectIdFromInputs(@Nullable String inputsJson) {
         if (inputsJson == null || inputsJson.isBlank() || "{}".equals(inputsJson)) return null;
         try {

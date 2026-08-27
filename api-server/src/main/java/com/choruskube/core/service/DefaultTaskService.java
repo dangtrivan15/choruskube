@@ -57,7 +57,6 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Sole implementation of {@link TaskService}. */
 @Service
 public class DefaultTaskService implements TaskService {
 
@@ -376,11 +375,6 @@ public class DefaultTaskService implements TaskService {
         return response;
     }
 
-    /**
-     * Rejects a Task whose readiness resolves to BLOCKED, naming the blockers actually worth
-     * acting on. Root causes only — an intermediate blocker that is itself blocked is never
-     * reported, so the message points at work that can start now.
-     */
     private void requireReady(Task task) {
         requireReady(task, ReadinessAuthMode.PUBLIC, null);
     }

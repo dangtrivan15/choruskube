@@ -44,7 +44,6 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Sole implementation of {@link EpicService}. */
 @Service
 public class DefaultEpicService implements EpicService {
 
@@ -114,7 +113,6 @@ public class DefaultEpicService implements EpicService {
     public EpicResponse create(EpicRequest request, UUID runId) {
         // Agent/internal entry: no request-scoped TenantContext, so this path is unaudited.
         SoftwareProject project = loadSoftwareProject(request.softwareProjectId());
-        // Cross-org guard: the target project and the originating run must belong to the same org.
         authService.assertSameOrg("software_project", project.getId(), "workflow_run", runId);
         Epic epic = persistEpic(request, project);
         applicationEventPublisher.publishEvent(
@@ -265,7 +263,6 @@ public class DefaultEpicService implements EpicService {
     public EpicResponse updateInternal(
             UUID epicId, UUID runSoftwareProjectId, UUID runId, InternalUpdateEpicRequest req) {
         Epic epic = findOrThrow(epicId);
-        // Cross-org guard: the Epic and the run must belong to the same org.
         authService.assertSameOrg("epic", epic.getId(), "workflow_run", runId);
         if (!epic.getSoftwareProjectId().equals(runSoftwareProjectId)) {
             throw new ForbiddenException("Epic " + epicId + " does not belong to the run's software project");
@@ -363,8 +360,6 @@ public class DefaultEpicService implements EpicService {
         epic = repo.save(epic);
 
         EpicResponse response = toResponse(epic);
-        // Audited like every other roadmap mutation (create/update/delete/stage): priority is a
-        // planning attribute moved in isolation, so its change belongs in the audit trail too.
         auditSink.record(AuditSink.EPIC_PRIORITY_UPDATED, "epic", id, detailJson(beforeSnapshot, snapshot(epic)));
         eventPublisher.publishRoadmapItemChanged(
                 "epic", epic.getId(), epic.getStage().name());
@@ -384,8 +379,6 @@ public class DefaultEpicService implements EpicService {
         epic = repo.save(epic);
 
         EpicResponse response = toResponse(epic);
-        // Audited like every other roadmap mutation (create/update/delete/stage/priority): target
-        // date is a planning attribute moved in isolation, so its change belongs in the audit trail.
         auditSink.record(AuditSink.EPIC_TARGET_DATE_UPDATED, "epic", id, detailJson(beforeSnapshot, snapshot(epic)));
         eventPublisher.publishRoadmapItemChanged(
                 "epic", epic.getId(), epic.getStage().name());
@@ -414,9 +407,6 @@ public class DefaultEpicService implements EpicService {
         epic = repo.save(epic);
 
         EpicResponse response = toResponse(epic);
-        // Audited like every other roadmap mutation (create/update/delete/stage/priority/target
-        // date): a Milestone assignment is a planning attribute moved in isolation, so its change
-        // belongs in the audit trail too.
         auditSink.record(AuditSink.EPIC_MILESTONE_UPDATED, "epic", id, detailJson(beforeSnapshot, snapshot(epic)));
         eventPublisher.publishRoadmapItemChanged(
                 "epic", epic.getId(), epic.getStage().name());
@@ -424,8 +414,7 @@ public class DefaultEpicService implements EpicService {
     }
 
     /**
-     * True if any Task under any Story of this Epic has left {@code backlog}. Mirrors the
-     * old proposal rule ("can only edit/delete while in backlog") one level down the hierarchy.
+     * True if any Task under any Story of this Epic has left {@code backlog}.
      */
     private boolean hasStartedDescendantTasks(UUID epicId) {
         List<Story> stories = storyRepo.findByEpicIdOrderByCreatedAtDesc(epicId);

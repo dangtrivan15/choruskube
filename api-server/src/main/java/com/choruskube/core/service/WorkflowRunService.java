@@ -24,10 +24,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * Lifecycle cascade primitives for {@code workflow_run}. Split off from {@code RunService}
- * (runtime concerns — start / signal / result) because (a) the run-deletion cascade
- * delegates to this service via a small, focused surface, and (b) the soft-delete +
- * reconciler machinery fits the per-service-owns-its-external-state pattern.
+ * Lifecycle cascade primitives for {@code workflow_run}.
  *
  * <p>External side effects handled here:
  * <ul>
@@ -67,10 +64,6 @@ public class WorkflowRunService {
         this.workflowTerminationExecutor = workflowTerminationExecutor;
     }
 
-    // -----------------------------------------------------------------------
-    // Cascade: soft-delete + afterCommit + reconciler
-    // -----------------------------------------------------------------------
-
     @Transactional(propagation = Propagation.MANDATORY)
     public void deleteAllByIds(Collection<UUID> ids) {
         if (ids.isEmpty()) {
@@ -106,14 +99,9 @@ public class WorkflowRunService {
      * hook and {@link #reconcileTombstonedBatch(int)}. Idempotent on both legs: Temporal
      * terminate swallows {@link WorkflowNotFoundException}; DB hard-delete is predicate-scoped.
      *
-     * <p>If Temporal terminate throws a non-not-found exception, the DB hard-delete is still
-     * attempted — for an FK-free hard-delete this is fine, and the tombstone persisting past
-     * the Temporal failure is captured by the NEXT reconciler tick's terminate retry.
-     * Actually: the DB hard-delete is wrapped in REQUIRES_NEW and swallows nothing, so any
+     * <p>The DB hard-delete is wrapped in REQUIRES_NEW and swallows nothing, so any
      * Temporal exception propagates to the caller; the reconciler's per-item try/catch
      * swallows there. The afterCommit hook's {@link #safeCleanup} wrapper does the same.
-     *
-     * <p>Package-private so the reconciler-scoped public entry point can use it.
      */
     void cleanupAndHardDelete(UUID runId, String externalRunId) {
         tryTerminateWorkflow(runId, externalRunId);
@@ -141,16 +129,12 @@ public class WorkflowRunService {
             // Temporal unreachable, auth error, etc. Swallow; reconciler retries next tick.
             log.warn("Temporal terminate for workflow {} (run {}) failed: {}", externalRunId, runId, e.getMessage());
             // Re-throw so the caller can skip the DB hard-delete for this round — keeping
-            // Temporal and DB in lockstep per the plan's "no DB row removed while external
+            // Temporal and DB in lockstep per the "no DB row removed while external
             // resource still exists" invariant.
             throw e;
         }
     }
 
-    /**
-     * Reconciler driver entry point: fetch up to {@code batchSize} tombstoned runs and clean
-     * each. Exposed on the service so the reconciler class stays thin and logging lives here.
-     */
     public int reconcileTombstonedBatch(int batchSize) {
         List<TombstonedWorkflowRunRef> batch = repo.findTombstonedBatch(batchSize);
         int cleaned = 0;

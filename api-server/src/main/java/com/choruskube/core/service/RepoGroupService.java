@@ -46,8 +46,6 @@ public class RepoGroupService {
 
     @Transactional
     public RepoGroup create(String name, String agentImage, String description, List<UUID> memberRepoIds) {
-        // Request path: every member repo must belong to the caller's org. Resolved from ownership by
-        // the active strategy (no-op under always-allow); throws ForbiddenException (403) on mismatch.
         assertMembersInCallerOrg(memberRepoIds);
         uniquenessChecker.assertNameAvailable(name);
         RepoGroup group = createInternal(name, agentImage, description, memberRepoIds);
@@ -68,7 +66,6 @@ public class RepoGroupService {
 
     @Transactional
     public void replaceMembers(UUID groupId, List<UUID> memberRepoIds) {
-        // Request path: every new member repo must belong to the caller's org (same guard as create).
         assertMembersInCallerOrg(memberRepoIds);
         RepoGroup group =
                 groups.findById(groupId).orElseThrow(() -> new BadRequestException("RepoGroup not found: " + groupId));

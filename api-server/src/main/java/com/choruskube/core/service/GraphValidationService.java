@@ -62,7 +62,6 @@ public class GraphValidationService {
             }
         }
 
-        // Rule 1: Exactly one entrypoint
         List<TemplateNode> entrypoints =
                 nodes.stream().filter(TemplateNode::isEntrypoint).toList();
         if (entrypoints.isEmpty()) {
@@ -75,7 +74,6 @@ public class GraphValidationService {
             errors.add("Multiple entrypoint nodes defined (" + names + "); exactly one is allowed");
         }
 
-        // Rule 2: All nodes reachable from entrypoint (backward reachability)
         if (entrypoints.size() == 1) {
             Set<UUID> reachable = findReachableFrom(entrypoints.get(0).getId(), outgoing);
             for (UUID nodeId : nodeIds) {
@@ -112,7 +110,6 @@ public class GraphValidationService {
             }
         }
 
-        // Rule 4: Validate config_overrides for each node
         for (TemplateNode node : nodes) {
             validateConfigOverrides(node, errors);
         }
@@ -163,10 +160,6 @@ public class GraphValidationService {
         }
     }
 
-    /**
-     * Validates config_overrides JSON on a template node.
-     * Currently checks: timeout_seconds must be 0 or between 60 and 86400.
-     */
     private void validateConfigOverrides(TemplateNode node, List<String> errors) {
         String overridesStr = node.getConfigOverrides();
         if (overridesStr == null || overridesStr.isBlank() || "{}".equals(overridesStr.trim())) {

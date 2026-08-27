@@ -10,10 +10,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
 /**
- * CRUD plus assigned-Epic-count aggregation for Milestones (release/grouping labels, part
- * of the "Group Epics under a named Milestone / Release" feature). Defined as an interface, with
- * {@link DefaultMilestoneService} as its sole implementation, mirroring {@link EpicService}'s own
- * interface/impl split (the roadmap-hierarchy feature).
+ * CRUD plus assigned-Epic-count aggregation for Milestones.
  */
 public interface MilestoneService {
 

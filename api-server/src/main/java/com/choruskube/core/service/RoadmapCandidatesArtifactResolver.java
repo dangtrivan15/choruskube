@@ -119,7 +119,7 @@ public class RoadmapCandidatesArtifactResolver {
 
     /**
      * Parses the artifact content into a {@link RoadmapCandidatesDocument}. A root JSON array is
-     * the legacy pre-Decision-5 shape (a bare array of candidate Epics) and is wrapped as {@code {
+     * the legacy shape (a bare array of candidate Epics) and is wrapped as {@code {
      * epics: [...] }} for back-compat — an artifact written before this feature shipped still
      * resolves.
      */

@@ -5,9 +5,7 @@ import com.choruskube.core.dto.RoadmapTimelineResponse;
 /**
  * Assembles the Roadmap Timeline View: every scoped Epic laid out as a lane, with its Stories
  * nested underneath, ready for a client-side time-scale layout (that feature —
- * the layout math itself lives in the web-ui, not here). Defined as an interface, with {@link
- * DefaultRoadmapTimelineService} as its sole implementation, mirroring {@link
- * RoadmapGraphService}'s shape.
+ * the layout math itself lives in the web-ui, not here).
  */
 public interface RoadmapTimelineService {
 

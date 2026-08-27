@@ -38,7 +38,6 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Sole implementation of {@link StoryService}. */
 @Service
 public class DefaultStoryService implements StoryService {
 
@@ -88,7 +87,6 @@ public class DefaultStoryService implements StoryService {
     @Transactional
     public StoryResponse create(UUID epicId, StoryRequest request) {
         Epic epic = findEpicOrThrow(epicId);
-        // Caller-vs-resource guard: the parent Epic must belong to the caller's org.
         authService.checkOrgAccess("epic", epic.getId());
         Story story = persistStory(epicId, request);
         // Story is never top-level — org is always inherited from its parent Epic.
@@ -102,7 +100,6 @@ public class DefaultStoryService implements StoryService {
     @Transactional
     public StoryResponse create(UUID epicId, StoryRequest request, UUID runId, UUID runSoftwareProjectId) {
         Epic epic = findEpicOrThrow(epicId);
-        // Cross-org guard: the parent Epic and the originating run must belong to the same org.
         authService.assertSameOrg("epic", epic.getId(), "workflow_run", runId);
         // Cross-project guard: same org isn't enough on its own, since an org can span multiple
         // SoftwareProjects (mirrors DefaultEpicService#updateInternal's equivalent check).
@@ -269,8 +266,6 @@ public class DefaultStoryService implements StoryService {
         story = repo.save(story);
 
         StoryResponse response = toResponse(story);
-        // Audited like every other roadmap mutation (create/update/delete/stage): priority is a
-        // planning attribute moved in isolation, so its change belongs in the audit trail too.
         auditSink.record(AuditSink.STORY_PRIORITY_UPDATED, "story", id, detailJson(beforeSnapshot, snapshot(story)));
         eventPublisher.publishRoadmapItemChanged(
                 "story", story.getId(), story.getStage().name());
@@ -290,8 +285,6 @@ public class DefaultStoryService implements StoryService {
         story = repo.save(story);
 
         StoryResponse response = toResponse(story);
-        // Audited like every other roadmap mutation (create/update/delete/stage/priority): target
-        // date is a planning attribute moved in isolation, so its change belongs in the audit trail.
         auditSink.record(AuditSink.STORY_TARGET_DATE_UPDATED, "story", id, detailJson(beforeSnapshot, snapshot(story)));
         eventPublisher.publishRoadmapItemChanged(
                 "story", story.getId(), story.getStage().name());

@@ -162,11 +162,6 @@ public class ArtifactService {
         return extractOutputPrefix(exec.getArtifactRefs());
     }
 
-    /**
-     * Parses the {@code output} key out of an {@code artifactRefs} JSON blob, shared by {@link
-     * #resolveOutputPrefix} (execId-keyed) and {@link #listArtifactNamesInternal} (given
-     * directly).
-     */
     private String extractOutputPrefix(String artifactRefs) {
         if (artifactRefs == null || artifactRefs.isBlank() || "{}".equals(artifactRefs)) {
             return null;
@@ -179,7 +174,6 @@ public class ArtifactService {
                 return null;
             }
             String prefix = output.asText();
-            // Ensure prefix ends with /
             if (!prefix.endsWith("/")) {
                 prefix = prefix + "/";
             }

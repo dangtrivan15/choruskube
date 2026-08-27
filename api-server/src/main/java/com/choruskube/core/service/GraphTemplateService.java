@@ -34,8 +34,6 @@ public class GraphTemplateService {
 
     /**
      * Workflow run statuses that are considered "active" and block template deletion.
-     * Only running, paused, pending, and awaiting_human runs prevent deletion;
-     * completed, failed, and cancelled runs do not.
      */
     private static final Set<WorkflowRunStatus> ACTIVE_RUN_STATUSES = Set.of(
             WorkflowRunStatus.running,
@@ -111,8 +109,6 @@ public class GraphTemplateService {
             spec = spec.and((root, query, cb) -> cb.like(cb.lower(root.get("name")), pattern));
         }
         if (latestOnly) {
-            // Use a correlated subquery specification to filter at the DB level,
-            // so pagination and sorting are handled entirely by the database.
             spec = spec.and(isLatestVersion());
         }
         Page<GraphTemplate> page = repo.findAll(spec, pageable);

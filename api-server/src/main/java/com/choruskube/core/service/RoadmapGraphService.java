@@ -5,8 +5,7 @@ import java.util.UUID;
 
 /**
  * Assembles the Roadmap Graph View: an Epic's full Story/Task tree plus its "blocking" dependency
- * edges (Part 2) — both intra-Epic edges and edges to items outside the Epic. Defined as an
- * interface, with {@link DefaultRoadmapGraphService} as its sole implementation.
+ * edges — both intra-Epic edges and edges to items outside the Epic.
  */
 public interface RoadmapGraphService {
 

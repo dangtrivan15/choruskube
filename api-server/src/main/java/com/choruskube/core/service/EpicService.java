@@ -14,10 +14,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
 /**
- * CRUD plus rollup status/progress aggregation for Epics. Defined as an interface,
- * with {@link DefaultEpicService} as its sole implementation, so a future alternative
- * implementation (e.g. one delegating to an external PM tool) can be wired in later without
- * touching {@code EpicController} or {@code InternalRunService}.
+ * CRUD plus rollup status/progress aggregation for Epics.
  */
 public interface EpicService {
 
@@ -48,10 +45,6 @@ public interface EpicService {
 
     void delete(UUID id);
 
-    /**
-     * Lists Epics targeting the given software project. Used by the internal API so an agent
-     * running against a project sees every Epic that targets that project.
-     */
     List<EpicResponse> listBySoftwareProjectId(UUID softwareProjectId);
 
     /** Updates an Epic on behalf of an agent pod (PATCH semantics). */

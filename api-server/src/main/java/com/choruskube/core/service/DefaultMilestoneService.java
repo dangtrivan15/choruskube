@@ -47,10 +47,6 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/**
- * Sole implementation of {@link MilestoneService} for the "Group Epics under a named Milestone /
- * Release" feature.
- */
 @Service
 public class DefaultMilestoneService implements MilestoneService {
 
@@ -95,8 +91,6 @@ public class DefaultMilestoneService implements MilestoneService {
     @Transactional
     public MilestoneResponse create(MilestoneRequest request) {
         SoftwareProject project = loadSoftwareProject(request.softwareProjectId());
-        // Caller-vs-resource guard: the target project must belong to the caller's org. No-op
-        // under always-allow; throws ForbiddenException (403) on mismatch under auth.
         authService.checkOrgAccess("software_project", project.getId());
         assertNameAvailable(project.getId(), request.name(), null);
 
@@ -346,11 +340,6 @@ public class DefaultMilestoneService implements MilestoneService {
                 m.getUpdatedAt());
     }
 
-    /**
-     * Per-Milestone aggregate bundle: how many Epics are tagged with it, its Task-count {@link
-     * MilestoneResponse.Progress} rollup, and its at-risk verdict/count — everything {@link
-     * #buildResponse} needs beyond the Milestone row itself.
-     */
     private record MilestoneAggregate(
             long epicCount, MilestoneResponse.Progress progress, boolean atRisk, long atRiskItemCount) {}
 

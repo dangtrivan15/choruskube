@@ -12,8 +12,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
 /**
- * CRUD plus rollup status/progress aggregation for Stories. Defined as an
- * interface, with {@link DefaultStoryService} as its sole implementation.
+ * CRUD plus rollup status/progress aggregation for Stories.
  *
  * <p>A Story is never treated as top-level for ownership purposes — it always
  * inherits its organization from its immediate parent Epic, regardless of caller.

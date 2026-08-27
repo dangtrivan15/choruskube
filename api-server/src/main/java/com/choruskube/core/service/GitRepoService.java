@@ -115,7 +115,6 @@ public class GitRepoService {
         GitRepo existing = findOrThrow(id);
         authService.checkOrgAccess("git_repo", id);
 
-        // Capture before state for audit
         Map<String, Object> beforeSnapshot = repoSnapshot(existing);
 
         boolean enableDockerChanged =
@@ -169,10 +168,6 @@ public class GitRepoService {
         });
     }
 
-    /**
-     * Shared cleanup primitive for a single tombstoned row. Repos no longer own K8s
-     * namespaces, so this just does the DB hard-delete.
-     */
     void cleanupAndHardDelete(UUID id) {
         Integer rowsDeleted = transactionTemplate.execute(status -> repo.hardDeleteTombstoneById(id));
         if (rowsDeleted != null && rowsDeleted > 0) {
@@ -180,10 +175,6 @@ public class GitRepoService {
         }
     }
 
-    /**
-     * Reconciler driver entry point: fetch up to {@code batchSize} tombstoned rows and clean
-     * each.
-     */
     public int reconcileTombstonedBatch(int batchSize) {
         List<TombstonedGitRepoRef> batch = repo.findTombstonedBatch(batchSize);
         int cleaned = 0;

@@ -30,16 +30,7 @@ import org.springframework.stereotype.Component;
  * Epic-bounded dependency-readiness assembly, shared by {@link
  * DefaultRoadmapGraphService} (the graph endpoint) and {@link DefaultStoryService}/{@link
  * DefaultTaskService} (the flat list endpoints) so all three read paths compute
- * "is this item blocked" identically instead of independently drifting. Positioned below all
- * three call sites — it depends only on repositories and {@link AuthorizationService}, never on
- * {@link EpicService}/{@link StoryService}/{@link TaskService} — so none of those services calling
- * it creates a circular Spring bean dependency.
- *
- * <p>This is a straight extraction of logic that previously lived entirely inside {@code
- * DefaultRoadmapGraphService#assemble}: loading the dependency edges touching a candidate Story/
- * Task set, resolving the status of any cross-Epic external blocker (org-checked the same way
- * that class always has), and delegating the actual transitive walk to {@link
- * TransitiveReadinessResolver}. No behavior changed by extracting it.
+ * "is this item blocked" identically instead of independently drifting.
  */
 @Component
 class EpicReadinessAssembler {
@@ -108,7 +99,7 @@ class EpicReadinessAssembler {
     /**
      * An Epic's full Story/Task set, pre-loaded once so callers of {@link #assemble}
      * don't each re-query it — shared between {@link DefaultStoryService#list} and {@link
-     * DefaultTaskService#list} (sync point from the implementation plan) so both list endpoints
+     * DefaultTaskService#list} so both list endpoints
      * agree on exactly one "load this Epic's candidates" behavior.
      */
     record EpicCandidates(
@@ -163,12 +154,10 @@ class EpicReadinessAssembler {
         return new EpicCandidates(stories, tasksByStoryId, candidateIds, statusById, parentOf);
     }
 
-    /** @see RollupCalculator#effectiveStatus */
     private String epicStatus(UUID epicId, List<Task> allTasks) {
         return RollupCalculator.effectiveStatus(findEpic(epicId).getStage(), allTasks);
     }
 
-    /** @see RollupCalculator#effectiveStatus */
     private String storyStatus(Story story, List<Task> tasks) {
         return RollupCalculator.effectiveStatus(story.getStage(), tasks);
     }

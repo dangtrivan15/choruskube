@@ -13,10 +13,6 @@ import org.springframework.stereotype.Service;
  * PendingGateService} (the Approvals dashboard's pending-gate listing) and {@link RunService} (the
  * Run Detail page's per-node-execution response) so the two gate surfaces can never drift on how
  * this is built.
- *
- * <p>Extracted rather than having one service depend on the other — {@code PendingGateService} is
- * a gate-<em>listing</em> service with a different job (pagination, scope filtering) than resolving
- * a single run's node executions, so neither is a natural home for logic the other also needs.
  */
 @Service
 public class EscalationContextResolver {

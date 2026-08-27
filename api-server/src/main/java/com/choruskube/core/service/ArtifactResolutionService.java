@@ -51,10 +51,6 @@ public class ArtifactResolutionService {
     /**
      * Resolves required input artifacts for a human-gate template node in a run.
      *
-     * <p>The Supervisor (a routing-hub node) declares no {@code required_input_artifacts} of its
-     * own — it is template-agnostic — so it is resolved separately via {@link
-     * #resolveEscalatingExecution}.
-     *
      * @return List of resolved artifact groups; {@code List.of()} for the Supervisor when nothing
      *     has escalated yet; or {@code null} if no declarations exist (legacy mode).
      */
@@ -93,14 +89,12 @@ public class ArtifactResolutionService {
                 log.warn("TemplateNode {} has null graphTemplateId; skipping artifact resolution", templateNodeId);
                 return null;
             }
-            // Load all template nodes in the same template for label lookup
             List<TemplateNode> allTemplateNodes = templateNodeRepo.findByGraphTemplateId(graphTemplateId);
             Map<String, UUID> labelToTemplateNodeId = new HashMap<>();
             for (TemplateNode tn : allTemplateNodes) {
                 labelToTemplateNodeId.put(tn.getLabel(), tn.getId());
             }
 
-            // Load all completed executions in the run
             List<NodeExecution> completedExecs =
                     nodeExecutionRepo.findByWorkflowRunIdAndStatus(runId, NodeExecutionStatus.completed);
 
@@ -135,7 +129,6 @@ public class ArtifactResolutionService {
                 UUID sourceTemplateNodeId = labelToTemplateNodeId.get(nodeLabel);
                 UUID resolvedExecId = null;
                 if (sourceTemplateNodeId != null) {
-                    // Find the latest-iteration completed execution for this template node in the run
                     resolvedExecId = completedExecs.stream()
                             .filter(e -> e.getTemplateNodeId().equals(sourceTemplateNodeId))
                             .max(Comparator.comparingInt(NodeExecution::getIteration))

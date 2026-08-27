@@ -118,7 +118,6 @@ public class RunPullRequestService {
             return List.of();
         }
 
-        // Batch-load all referenced git repos to avoid N+1 queries
         Set<UUID> repoIds =
                 pullRequests.stream().map(RunPullRequest::getGitRepoId).collect(Collectors.toSet());
         Map<UUID, String> repoUrlMap =
