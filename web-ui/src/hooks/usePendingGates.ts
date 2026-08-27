@@ -8,7 +8,7 @@ import type {
   PageResponse,
   PaginationParams,
   AttachmentRefsResponse,
-  CandidateEpicProposal,
+  RoadmapCandidatesDocument,
 } from "@/lib/types";
 
 export function usePendingGates(pagination?: PaginationParams) {
@@ -46,7 +46,7 @@ export function useSignalFromDashboard() {
       decision: string;
       feedback: string;
       files?: File[];
-      editedCandidates?: CandidateEpicProposal[];
+      editedCandidates?: RoadmapCandidatesDocument;
     }) => {
       let attachmentRefs: string | undefined;
       if (files && files.length > 0) {

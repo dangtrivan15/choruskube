@@ -7,6 +7,7 @@ import com.choruskube.core.dto.CandidateEpicProposal;
 import com.choruskube.core.dto.CandidateStoryProposal;
 import com.choruskube.core.dto.CandidateTaskProposal;
 import com.choruskube.core.dto.MaterializationSummary;
+import com.choruskube.core.dto.RoadmapCandidatesDocument;
 import com.choruskube.core.dto.SignalRequest;
 import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.WorkflowRun;
@@ -160,24 +161,33 @@ class RunServiceRoadmapMaterializationTest {
     private static final String MATERIALIZE_GATE_CONFIG =
             "{\"terminal_decisions\":[\"approved\"],\"materialize\":\"roadmap_candidates\"}";
 
-    private static List<CandidateEpicProposal> sampleCandidates() {
-        return List.of(new CandidateEpicProposal(
-                "Bulk Import",
-                "desc",
-                "why",
-                List.of("repo-a"),
-                "High",
-                List.of(new CandidateStoryProposal(
-                        "Story 1", "s-desc", List.of(new CandidateTaskProposal("Task 1", "t-desc"))))));
+    private static RoadmapCandidatesDocument sampleCandidates() {
+        return new RoadmapCandidatesDocument(
+                null,
+                List.of(new CandidateEpicProposal(
+                        "Bulk Import",
+                        "desc",
+                        "why",
+                        List.of("repo-a"),
+                        "High",
+                        List.of(new CandidateStoryProposal(
+                                "Story 1",
+                                "s-desc",
+                                List.of(new CandidateTaskProposal("Task 1", "t-desc", null, null)),
+                                null,
+                                null)),
+                        null,
+                        null)),
+                null);
     }
 
     @Test
     void approvedDecisionOnMaterializeNode_materializesEditedCandidates() {
         stubExec();
         stubRun(MATERIALIZE_GATE_CONFIG);
-        List<CandidateEpicProposal> edited = sampleCandidates();
+        RoadmapCandidatesDocument edited = sampleCandidates();
         when(roadmapCandidateMaterializer.materialize(eq(runId), eq(edited)))
-                .thenReturn(new MaterializationSummary(List.of(UUID.randomUUID()), List.of()));
+                .thenReturn(new MaterializationSummary(List.of(UUID.randomUUID()), List.of(), 0, List.of()));
 
         service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, edited));
 
@@ -189,10 +199,10 @@ class RunServiceRoadmapMaterializationTest {
     void approvedDecisionWithNoEditedCandidates_materializesAnalyzerArtifact() {
         stubExec();
         stubRun(MATERIALIZE_GATE_CONFIG);
-        List<CandidateEpicProposal> fromArtifact = sampleCandidates();
+        RoadmapCandidatesDocument fromArtifact = sampleCandidates();
         when(roadmapCandidatesArtifactResolver.resolve(runId, templateNodeId)).thenReturn(fromArtifact);
         when(roadmapCandidateMaterializer.materialize(runId, fromArtifact))
-                .thenReturn(new MaterializationSummary(List.of(UUID.randomUUID()), List.of()));
+                .thenReturn(new MaterializationSummary(List.of(UUID.randomUUID()), List.of(), 0, List.of()));
 
         service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, null));
 
@@ -204,16 +214,19 @@ class RunServiceRoadmapMaterializationTest {
     void oneMalformedCandidateAmongSeveral_restStillMaterialize() {
         stubExec();
         stubRun(MATERIALIZE_GATE_CONFIG);
-        CandidateEpicProposal good = sampleCandidates().get(0);
-        CandidateEpicProposal malformed = new CandidateEpicProposal(null, null, null, null, null, null);
-        List<CandidateEpicProposal> edited = List.of(good, malformed);
+        CandidateEpicProposal good = sampleCandidates().epics().get(0);
+        CandidateEpicProposal malformed = new CandidateEpicProposal(null, null, null, null, null, null, null, null);
+        RoadmapCandidatesDocument edited = new RoadmapCandidatesDocument(null, List.of(good, malformed), null);
 
         // The materializer itself owns per-candidate best-effort behavior (see
         // DefaultRoadmapCandidateMaterializer) — RunService just needs to pass the full
-        // list through and surface whatever summary comes back, unconditionally.
+        // document through and surface whatever summary comes back, unconditionally.
         when(roadmapCandidateMaterializer.materialize(runId, edited))
                 .thenReturn(new MaterializationSummary(
-                        List.of(UUID.randomUUID()), List.of("Failed to materialize candidate Epic 'null': boom")));
+                        List.of(UUID.randomUUID()),
+                        List.of(),
+                        0,
+                        List.of("Failed to materialize candidate Epic 'null': boom")));
 
         service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, edited));
 
@@ -221,17 +234,18 @@ class RunServiceRoadmapMaterializationTest {
     }
 
     @Test
-    void approvedDecisionWithCandidatesEditedToEmpty_materializesEmptyListInsteadOfFallingBackToArtifact() {
+    void approvedDecisionWithCandidatesEditedToEmpty_materializesEmptyDocumentInsteadOfFallingBackToArtifact() {
         stubExec();
         stubRun(MATERIALIZE_GATE_CONFIG);
-        // The reviewer explicitly cleared every candidate (an empty, non-null list) rather than
+        // The reviewer explicitly cleared every candidate (an empty, non-null document) rather than
         // submitting no edits at all — this must NOT fall back to the original analyzer artifact.
-        when(roadmapCandidateMaterializer.materialize(runId, List.of()))
-                .thenReturn(new MaterializationSummary(List.of(), List.of()));
+        RoadmapCandidatesDocument empty = new RoadmapCandidatesDocument(List.of(), List.of(), List.of());
+        when(roadmapCandidateMaterializer.materialize(runId, empty))
+                .thenReturn(new MaterializationSummary(List.of(), List.of(), 0, List.of()));
 
-        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, List.of()));
+        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, empty));
 
-        verify(roadmapCandidateMaterializer).materialize(runId, List.of());
+        verify(roadmapCandidateMaterializer).materialize(runId, empty);
         verifyNoInteractions(roadmapCandidatesArtifactResolver);
     }
 

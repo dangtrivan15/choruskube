@@ -158,6 +158,52 @@ public class DefaultMilestoneServiceTest extends BaseTest {
         assertThat(other.softwareProjectId()).isEqualTo(r2.getId());
     }
 
+    // ── findOrCreate(): agent/internal dedup-by-name entry (RoadmapCandidateMaterializer) ──
+
+    @Test
+    void findOrCreate_createsNewWhenNoneExists() {
+        GitRepo r = makeRepo("https://github.com/test/milestone-foc-new.git");
+
+        MilestoneResponse created = service.findOrCreate(r.getId(), "FOC New", "Desc", LocalDate.parse("2026-10-01"));
+
+        assertThat(created.name()).isEqualTo("FOC New");
+        assertThat(created.softwareProjectId()).isEqualTo(r.getId());
+        assertThat(created.description()).isEqualTo("Desc");
+        assertThat(created.targetDate()).isEqualTo(LocalDate.parse("2026-10-01"));
+    }
+
+    @Test
+    void findOrCreate_reusesExistingSameNameCaseInsensitive() {
+        GitRepo r = makeRepo("https://github.com/test/milestone-foc-reuse.git");
+        MilestoneResponse first = service.create(new MilestoneRequest("Q4 Launch", "orig", r.getId(), null));
+
+        MilestoneResponse reused =
+                service.findOrCreate(r.getId(), "q4 launch", "ignored on reuse", LocalDate.parse("2027-01-01"));
+
+        // Same row reused (case-insensitive name match), not a second Milestone — and the reuse
+        // branch leaves the existing description/targetDate untouched (it does not overwrite with
+        // the find-or-create args).
+        assertThat(reused.id()).isEqualTo(first.id());
+        assertThat(reused.description()).isEqualTo("orig");
+        assertThat(reused.targetDate()).isNull();
+        assertThat(service.list(r.getId(), PageRequest.of(0, 20)).getTotalElements())
+                .isEqualTo(1);
+    }
+
+    @Test
+    void findOrCreate_sameNameDifferentProject_createsSeparate() {
+        GitRepo r1 = makeRepo("https://github.com/test/milestone-foc-proj-a.git");
+        GitRepo r2 = makeRepo("https://github.com/test/milestone-foc-proj-b.git");
+        MilestoneResponse inA = service.create(new MilestoneRequest("Shared Name", null, r1.getId(), null));
+
+        MilestoneResponse inB = service.findOrCreate(r2.getId(), "Shared Name", null, null);
+
+        // Milestone lookup is project-scoped, so a same-named Milestone in another project is NOT
+        // reused — a fresh row is created under r2.
+        assertThat(inB.id()).isNotEqualTo(inA.id());
+        assertThat(inB.softwareProjectId()).isEqualTo(r2.getId());
+    }
+
     @Test
     void create_publishesMappableCreatedExactlyOnce() {
         GitRepo r = makeRepo("https://github.com/test/milestone-event.git");

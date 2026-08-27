@@ -15,6 +15,10 @@ import java.util.UUID;
  * {@code recentRuns} is capped (see {@code RECENT_RUNS_LIMIT}); {@code totalRunCount} reflects the
  * true count even when the embedded list is truncated — page through
  * {@code GET /api/v1/tasks/{id}/runs} for the rest.
+ *
+ * <p>{@code priority} (Decision 4 of the roadmap dependencies/priorities/milestones feature)
+ * mirrors {@code EpicResponse}/{@code StoryResponse}'s own string-valued {@code priority} field —
+ * never null; a Task with no explicit priority reads back {@code "medium"}.
  */
 public record TaskResponse(
         UUID id,
@@ -30,4 +34,5 @@ public record TaskResponse(
         List<RunSummary> recentRuns,
         long totalRunCount,
         Instant createdAt,
-        Instant updatedAt) {}
+        Instant updatedAt,
+        String priority) {}

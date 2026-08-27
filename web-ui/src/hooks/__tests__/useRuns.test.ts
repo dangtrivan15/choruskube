@@ -455,16 +455,20 @@ describe("useRuns hooks", () => {
 
       const { result } = renderHook(() => useSignalNode("run-1"), { wrapper });
 
-      const editedCandidates = [
-        {
-          title: "Epic A",
-          description: "desc",
-          motivation: "why",
-          repos: null,
-          priority: null,
-          stories: [],
-        },
-      ];
+      const editedCandidates = {
+        milestones: [],
+        epics: [
+          {
+            title: "Epic A",
+            description: "desc",
+            motivation: "why",
+            repos: null,
+            priority: null,
+            stories: [],
+          },
+        ],
+        dependencies: [],
+      };
       result.current.mutate({
         nodeExecId: "exec-1",
         decision: "approved",

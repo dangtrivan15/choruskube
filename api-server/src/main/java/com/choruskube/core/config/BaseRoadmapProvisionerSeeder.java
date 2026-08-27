@@ -26,7 +26,7 @@ public class BaseRoadmapProvisionerSeeder implements ApplicationRunner {
     private static final Logger log = LoggerFactory.getLogger(BaseRoadmapProvisionerSeeder.class);
 
     static final String GRAPH_ID = GraphIds.ROADMAP_PROVISIONER;
-    static final int VERSION = 14;
+    static final int VERSION = 15;
 
     private static final String TEMPLATE_NAME = "Roadmap Provisioner";
 
@@ -99,41 +99,87 @@ public class BaseRoadmapProvisionerSeeder implements ApplicationRunner {
             proposed features, each with the five sections above.
 
             IN ADDITION, save a structured candidate breakdown as
-            /workspace/out/roadmap_candidates.json — a JSON array of candidate Epics,
-            each with a variable number of Stories, each with a variable number of
-            Tasks, reflecting an ACTUAL decomposition of that feature (not a
-            mechanical 1:1 wrapper — a small feature might be one Story with one
-            Task; a larger one might be three Stories with two or three Tasks each).
-            This is what a human reviewer will see and edit before approving — it is
-            the authoritative structured form of your analysis, not a duplicate of
-            the markdown.
+            /workspace/out/roadmap_candidates.json — a JSON OBJECT describing
+            candidate Milestones, candidate Epics (each with a variable number of
+            Stories, each with a variable number of Tasks), and dependency edges
+            between any of those items. The Epic/Story/Task decomposition should
+            reflect an ACTUAL decomposition of that feature (not a mechanical 1:1
+            wrapper — a small feature might be one Story with one Task; a larger
+            one might be three Stories with two or three Tasks each). This is what
+            a human reviewer will see and edit before approving — it is the
+            authoritative structured form of your analysis, not a duplicate of the
+            markdown.
 
-            Each element of the array must match this shape exactly:
+            The object must match this shape exactly:
               {
-                "title": "Concise, user-facing Epic title",
-                "description": "The user story AND acceptance criteria, in markdown",
-                "motivation": "Why this matters — user impact and business value only",
-                "repos": ["repo-name", ...],
-                "priority": "High" | "Medium" | "Low",
-                "stories": [
+                "milestones": [
                   {
-                    "title": "Story title",
-                    "description": "Story description",
-                    "tasks": [
-                      {"title": "Task title", "description": "Task description"}
+                    "key": "milestone-1",
+                    "name": "Concise Milestone/release name",
+                    "description": "What this Milestone groups and why",
+                    "targetDate": "YYYY-MM-DD"
+                  }
+                ],
+                "epics": [
+                  {
+                    "key": "epic-1",
+                    "title": "Concise, user-facing Epic title",
+                    "description": "The user story AND acceptance criteria, in markdown",
+                    "motivation": "Why this matters — user impact and business value only",
+                    "repos": ["repo-name", ...],
+                    "priority": "High" | "Medium" | "Low",
+                    "milestone": "milestone-1",
+                    "stories": [
+                      {
+                        "key": "epic-1-story-1",
+                        "title": "Story title",
+                        "description": "Story description",
+                        "priority": "High" | "Medium" | "Low",
+                        "tasks": [
+                          {
+                            "key": "epic-1-story-1-task-1",
+                            "title": "Task title",
+                            "description": "Task description",
+                            "priority": "High" | "Medium" | "Low"
+                          }
+                        ]
+                      }
                     ]
                   }
+                ],
+                "dependencies": [
+                  {"blocking": "epic-1-story-1-task-1", "blocked": "epic-2-story-1-task-1"}
                 ]
               }
 
             Rules for roadmap_candidates.json:
-            - One array element per proposed feature (same features as the markdown).
+            - One "epics" element per proposed feature (same features as the markdown).
             - "repos" is reviewer context only (which repos this feature likely
               touches) — it is not created as a roadmap field, so keep it brief.
-            - "priority" (High / Medium / Low) seeds the materialized Epic's
-              initial priority, which the reviewer can re-prioritize afterwards;
-              set it to reflect genuine user impact. Story candidates carry no
-              priority signal today — every materialized Story starts at Medium.
+            - "priority" (High / Medium / Low) is optional at Epic, Story, AND Task
+              level — it seeds that item's initial priority, which the reviewer can
+              re-prioritize afterwards; set it to reflect genuine user impact. A
+              missing or blank priority defaults to Medium.
+            - "milestones" is optional. Only propose one when several Epics
+              genuinely belong to the same release/grouping — do not invent a
+              Milestone per Epic. Each needs a "key" (see below) if any Epic
+              references it via "milestone"; "targetDate" is optional.
+            - "key" is optional on every Milestone/Epic/Story/Task. Set one only
+              when you need to reference that item — as an Epic's "milestone", or
+              as an endpoint of a "dependencies" edge. A "key" must be a short,
+              stable, unique slug within this document (e.g. "epic-1-story-1") —
+              two items must never share the same key, and a key you assign is
+              never reused for a different item.
+            - Epic "milestone" (optional) must be the "key" of one of the objects
+              in "milestones".
+            - "dependencies" is optional: a flat list of {"blocking": key,
+              "blocked": key} edges, where the "blocking" item blocks the
+              "blocked" item from starting. Each key must be the "key" of an
+              Epic, Story, or Task declared above (never a Milestone). Edges may
+              cross Epics. Do not declare a cycle (e.g. A blocks B and B blocks
+              A, directly or transitively) — only add an edge when you are
+              confident one item's work genuinely must complete before the
+              other's can start.
             - At most 8 Stories per Epic, and at most 8 Tasks per Story. If a feature
               needs more, it's a sign it should be split into two candidate Epics
               instead of one deeply nested one.
@@ -142,7 +188,8 @@ public class BaseRoadmapProvisionerSeeder implements ApplicationRunner {
             - Do NOT add implementation details, technology choices, or architectural
               suggestions to any description or motivation — same rule as the
               markdown analysis.
-            - The file must be valid JSON (a top-level array) and nothing else.""";
+            - The file must be valid JSON (a top-level object with "epics" as
+              described above) and nothing else.""";
 
     private final GraphTemplateRepository templateRepo;
     private final NodeDefinitionRepository nodeDefRepo;

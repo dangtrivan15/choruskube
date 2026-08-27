@@ -22,6 +22,7 @@ import com.choruskube.core.model.Story;
 import com.choruskube.core.model.Task;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.BlockableItemType;
+import com.choruskube.core.model.enums.Priority;
 import com.choruskube.core.model.enums.Readiness;
 import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
@@ -179,6 +180,9 @@ public class DefaultTaskService implements TaskService {
         task.setDescription(request.description());
         // Denormalized once at creation from the ancestor Epic (Decision 4) — immutable afterwards.
         task.setSoftwareProjectId(softwareProjectId);
+        // Create-time priority: absent (null) defaults to medium, mirroring the DB column default
+        // and Epic/Story's own create-time priority handling.
+        task.setPriority(request.priority() != null ? request.priority() : Priority.medium);
         return repo.save(task);
     }
 
@@ -675,7 +679,8 @@ public class DefaultTaskService implements TaskService {
                 List.of(), // recentRuns: only embedded by RoadmapGraphService (Decision 3)
                 0L, // totalRunCount: ditto
                 t.getCreatedAt(),
-                t.getUpdatedAt());
+                t.getUpdatedAt(),
+                t.getPriority().name());
     }
 
     private SoftwareProjectRef toProjectRef(SoftwareProject project) {

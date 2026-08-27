@@ -20,6 +20,7 @@ function makeTask(overrides: Partial<TaskResponse> = {}): TaskResponse {
     totalRunCount: 0,
     createdAt: "2026-04-01T00:00:00Z",
     updatedAt: "2026-04-01T00:00:00Z",
+    priority: "medium",
     ...overrides,
   };
 }
@@ -53,5 +54,15 @@ describe("TaskBoardCard", () => {
   it("title links to the task detail page", () => {
     renderWithProviders(<TaskBoardCard task={makeTask({ id: "task-42" })} />);
     expect(screen.getByTestId("task-board-card-title")).toHaveAttribute("href", "/tasks/task-42");
+  });
+
+  it("renders the Task's priority badge", () => {
+    renderWithProviders(<TaskBoardCard task={makeTask({ priority: "high" })} />);
+    expect(screen.getByTestId("task-board-card-priority-badge")).toHaveTextContent("High");
+  });
+
+  it("renders the Medium priority badge for a Task with no explicit priority override", () => {
+    renderWithProviders(<TaskBoardCard task={makeTask({ priority: "medium" })} />);
+    expect(screen.getByTestId("task-board-card-priority-badge")).toHaveTextContent("Medium");
   });
 });

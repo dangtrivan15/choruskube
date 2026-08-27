@@ -184,6 +184,69 @@ public class WorkItemDependencyServiceTest extends BaseTest {
     }
 
     @Test
+    void createForRun_usesAssertSameOrgNotCheckOrgAccess() {
+        TaskResponse blocking = makeTask("https://github.com/test/dep-run-a.git");
+        TaskResponse blocked = makeTask("https://github.com/test/dep-run-b.git");
+        UUID runId = UUID.randomUUID();
+
+        DependencyEdgeResponse edge =
+                service.createForRun(new CreateDependencyRequest("task", blocking.id(), "task", blocked.id()), runId);
+
+        assertThat(dependencyRepo.findById(edge.id())).isPresent();
+        verify(authService).assertSameOrg("task", blocking.id(), "workflow_run", runId);
+        verify(authService).assertSameOrg("task", blocked.id(), "workflow_run", runId);
+        // Regression guard: this agent/internal path has no request-scoped TenantContext, so it
+        // must never call checkOrgAccess on either endpoint — that reads TenantContext and throws
+        // UnresolvableTenantException (403) under a Keycloak-enabled deployment, even though
+        // InternalRunService already validated both endpoints against the run's own project
+        // before delegating here. Scoped to these two ids (rather than any()/any()) because
+        // makeTask()'s own Epic/Story/Task creation legitimately calls checkOrgAccess with
+        // unrelated "epic"/"story" ids as part of fixture setup above.
+        verify(authService, never()).checkOrgAccess(eq("task"), eq(blocking.id()));
+        verify(authService, never()).checkOrgAccess(eq("task"), eq(blocked.id()));
+    }
+
+    @Test
+    void createForRun_whenAssertSameOrgFailsForBlockingItem_doesNotPersistOrPublish() {
+        TaskResponse blocking = makeTask("https://github.com/test/dep-run-fail-a.git");
+        TaskResponse blocked = makeTask("https://github.com/test/dep-run-fail-b.git");
+        UUID runId = UUID.randomUUID();
+        doThrow(new ForbiddenException("org mismatch"))
+                .when(authService)
+                .assertSameOrg(eq("task"), eq(blocking.id()), eq("workflow_run"), eq(runId));
+
+        assertThatThrownBy(() -> service.createForRun(
+                        new CreateDependencyRequest("task", blocking.id(), "task", blocked.id()), runId))
+                .isInstanceOf(ForbiddenException.class);
+
+        assertThat(dependencyRepo.findByBlockingItemTypeAndBlockingItemIdAndBlockedItemTypeAndBlockedItemId(
+                        BlockableItemType.task, blocking.id(), BlockableItemType.task, blocked.id()))
+                .isEmpty();
+        verify(runEventPublisher, never()).publishDependencyChanged(any(), eq("created"));
+    }
+
+    @Test
+    void createForRun_whenAssertSameOrgFailsForBlockedItem_doesNotPersistOrPublish() {
+        TaskResponse blocking = makeTask("https://github.com/test/dep-run-fail-c.git");
+        TaskResponse blocked = makeTask("https://github.com/test/dep-run-fail-d.git");
+        UUID runId = UUID.randomUUID();
+        // Mirror of the above, but for the second assertSameOrg call — proves createForRun
+        // doesn't short-circuit after the blocking item's check and skip the blocked item's.
+        doThrow(new ForbiddenException("org mismatch"))
+                .when(authService)
+                .assertSameOrg(eq("task"), eq(blocked.id()), eq("workflow_run"), eq(runId));
+
+        assertThatThrownBy(() -> service.createForRun(
+                        new CreateDependencyRequest("task", blocking.id(), "task", blocked.id()), runId))
+                .isInstanceOf(ForbiddenException.class);
+
+        assertThat(dependencyRepo.findByBlockingItemTypeAndBlockingItemIdAndBlockedItemTypeAndBlockedItemId(
+                        BlockableItemType.task, blocking.id(), BlockableItemType.task, blocked.id()))
+                .isEmpty();
+        verify(runEventPublisher, never()).publishDependencyChanged(any(), eq("created"));
+    }
+
+    @Test
     void delete_whenBlockingItemFailsOrgCheck_doesNotDeleteOrPublish() {
         TaskResponse blocking = makeTask("https://github.com/test/dep-delete-org-check-blocking.git");
         TaskResponse blocked = makeTask("https://github.com/test/dep-delete-org-check-blocked.git");

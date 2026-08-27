@@ -53,6 +53,8 @@ class TransitivePredecessorTest {
                 null,
                 new DecisionOptionsResolver(),
                 null,
+                null,
+                null,
                 null);
     }
 

@@ -80,11 +80,20 @@ public class E2eTestDataSeeder implements ApplicationRunner {
     // Approval, so pull-request-links-multi-repo.spec.ts can drive an approved multi-repo run
     // end to end and assert the UI shows a PR link only for the changed repo.
     private static final String GRAPH_ID_CHECK_PRS_GATE = "e2e-check-prs-gate";
+    // roadmap_imperative_links: single-node template whose entrypoint runs mock-agent.sh's
+    // "roadmap_imperative_links" scenario — the imperative-agent counterpart to
+    // GRAPH_ID_ROADMAP_CANDIDATE_GATE above (Decision 6): create-task --priority,
+    // create-dependency, and create-milestone (plus update-proposal --milestone-id) called
+    // live against the API server, giving the "E2E (imperative)" case in the roadmap
+    // dependencies/priorities/milestones feature's testing strategy a template to start a
+    // run against — no template exercised that write surface before this one.
+    private static final String GRAPH_ID_ROADMAP_IMPERATIVE_LINKS = "e2e-roadmap-imperative-links";
 
-    // Bumped to 5 so the new check_prs_gate template gets seeded — run() early-returns when a
-    // template at the current VERSION already exists, so an edit without a bump is a no-op
-    // against any environment whose database survived the previous boot.
-    private static final int VERSION = 5;
+    // Bumped to 6 so the new roadmap_imperative_links template gets seeded — run()
+    // early-returns when a template at the current VERSION already exists, so an edit
+    // without a bump is a no-op against any environment whose database survived the
+    // previous boot.
+    private static final int VERSION = 6;
 
     private static final String E2E_REPO_URL = "https://github.com/e2e-test/mock-repo";
     private static final String E2E_SECONDARY_REPO_URL = "https://github.com/e2e-test/mock-frontend";
@@ -184,7 +193,9 @@ public class E2eTestDataSeeder implements ApplicationRunner {
 
         seedCheckPrsGateTemplate(mockSuccess, mockGate);
 
-        log.info("E2eTestDataSeeder: seeded 3 git repos, 1 repo group, 11 node definitions, and 14 E2E templates");
+        seedRoadmapImperativeLinks(mockSuccess);
+
+        log.info("E2eTestDataSeeder: seeded 3 git repos, 1 repo group, 11 node definitions, and 15 E2E templates");
     }
 
     private void seedDemoRepoGroup() {
@@ -544,6 +555,24 @@ public class E2eTestDataSeeder implements ApplicationRunner {
         createEdge(t, gate, analyzer, "rejected");
         // Human Gate "approved" has no outgoing edge — it's a terminal_decisions entry
         // (Decision 2) instead, so the run completes right here, same as production v13.
+    }
+
+    // --- Roadmap Imperative Links: single node driving the imperative agent write surface ---
+    //
+    // Imperative-agent counterpart to seedRoadmapCandidateGate above (Decision 6): a single
+    // script-executor node runs mock-agent.sh's "roadmap_imperative_links" scenario, which
+    // calls create-proposal, create-story, create-task (--priority), create-dependency,
+    // create-milestone, and update-proposal (--milestone-id) directly against the API server
+    // — no roadmap_candidates.json artifact and no human gate, since nothing here is proposed
+    // for review. No edges: the single node is both entrypoint and terminal.
+
+    private void seedRoadmapImperativeLinks(NodeDefinition mockSuccess) {
+        GraphTemplate t = createTemplate(
+                GRAPH_ID_ROADMAP_IMPERATIVE_LINKS,
+                "e2e-roadmap-imperative-links",
+                "E2E test: imperative agent write surface — create-task --priority, create-dependency, create-milestone, update-proposal --milestone-id");
+
+        createNode(t, mockSuccess, "create_links", true, cmd("roadmap_imperative_links"));
     }
 
     // --- Many Artifacts: single node producing many output files (artifact viewer layout) ---

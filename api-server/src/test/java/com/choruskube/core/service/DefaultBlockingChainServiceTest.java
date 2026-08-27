@@ -65,7 +65,8 @@ class DefaultBlockingChainServiceTest {
                 List.of(),
                 0,
                 Instant.now(),
-                Instant.now());
+                Instant.now(),
+                "medium");
     }
 
     private static WorkItemDependency edge(UUID blockingId, UUID blockedId) {

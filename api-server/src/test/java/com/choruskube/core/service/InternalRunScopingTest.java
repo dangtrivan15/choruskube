@@ -145,6 +145,8 @@ class InternalRunScopingTest {
                 roadmapGraphService,
                 null, // decisionOptionsResolver
                 null, // dependencyRepo
-                null); // artifactService
+                null, // artifactService
+                null, // workItemDependencyService
+                null); // milestoneService
     }
 }

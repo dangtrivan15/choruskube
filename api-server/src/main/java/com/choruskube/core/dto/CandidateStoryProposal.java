@@ -11,8 +11,15 @@ import java.util.List;
  * (via {@code @Valid}) into each {@link CandidateTaskProposal} — this only takes effect when a
  * {@link CandidateEpicProposal} validates its own {@code stories} list with {@code @Valid} too, so
  * the cascade reaches two levels deep from {@code SignalRequest.editedCandidates}.
+ *
+ * <p>{@code key} is an optional author-assigned, artifact-local identifier (Decision 2), same
+ * convention as {@link CandidateEpicProposal#key()}. {@code priority} (free-text {@code High}/
+ * {@code Medium}/{@code Low}, Decision 4) is parsed onto the materialized Story's initial {@code
+ * Priority}, defaulting to {@code medium} when blank/unrecognized — same as Epic priority.
  */
 public record CandidateStoryProposal(
         @NotBlank @Size(max = 255) String title,
         String description,
-        @Valid @Size(max = 8) List<CandidateTaskProposal> tasks) {}
+        @Valid @Size(max = 8) List<CandidateTaskProposal> tasks,
+        String key,
+        String priority) {}

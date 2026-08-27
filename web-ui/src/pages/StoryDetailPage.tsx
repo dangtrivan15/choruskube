@@ -195,6 +195,7 @@ export default function StoryDetailPage() {
                 </TruncatedText>
                 <div className="mt-1 flex flex-wrap items-center gap-2">
                   {statusBadge(task.status)}
+                  <PriorityBadge priority={task.priority} data-testid="task-item-priority-badge" />
                   <ReadinessBadge readiness={task.readiness} data-testid="task-item-readiness-badge" />
                 </div>
               </div>

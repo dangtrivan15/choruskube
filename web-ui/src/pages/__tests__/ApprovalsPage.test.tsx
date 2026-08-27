@@ -599,22 +599,26 @@ describe("ApprovalsPage", () => {
   });
 
   describe("roadmap candidate breakdown", () => {
-    const candidateBreakdown = [
-      {
-        title: "Add dark mode",
-        description: "Support a dark theme",
-        motivation: "Users asked for it",
-        repos: ["repo-a"],
-        priority: "High",
-        stories: [
-          {
-            title: "Theme toggle",
-            description: "Add a toggle",
-            tasks: [{ title: "Build toggle", description: "New component" }],
-          },
-        ],
-      },
-    ];
+    const candidateBreakdown = {
+      milestones: [],
+      epics: [
+        {
+          title: "Add dark mode",
+          description: "Support a dark theme",
+          motivation: "Users asked for it",
+          repos: ["repo-a"],
+          priority: "High",
+          stories: [
+            {
+              title: "Theme toggle",
+              description: "Add a toggle",
+              tasks: [{ title: "Build toggle", description: "New component" }],
+            },
+          ],
+        },
+      ],
+      dependencies: [],
+    };
 
     function renderWithBreakdownGate(breakdown: unknown) {
       mockUsePendingGates.mockReturnValue({
@@ -677,9 +681,9 @@ describe("ApprovalsPage", () => {
           runId: "run-1",
           nodeExecId: "exec-1",
           decision: "approved",
-          editedCandidates: [
-            expect.objectContaining({ title: "Add dark and light mode" }),
-          ],
+          editedCandidates: expect.objectContaining({
+            epics: [expect.objectContaining({ title: "Add dark and light mode" })],
+          }),
         }),
         expect.objectContaining({ onSuccess: expect.any(Function) })
       );

@@ -387,22 +387,26 @@ describe("HumanGatePanel", () => {
   });
 
   describe("roadmap candidate breakdown", () => {
-    const candidateBreakdown = [
-      {
-        title: "Add dark mode",
-        description: "Support a dark theme across the app",
-        motivation: "Users have asked for this repeatedly",
-        repos: ["repo-a", "repo-b"],
-        priority: "High",
-        stories: [
-          {
-            title: "Theme toggle",
-            description: "Add a toggle in settings",
-            tasks: [{ title: "Build toggle component", description: "New UI component" }],
-          },
-        ],
-      },
-    ];
+    const candidateBreakdown = {
+      milestones: [],
+      epics: [
+        {
+          title: "Add dark mode",
+          description: "Support a dark theme across the app",
+          motivation: "Users have asked for this repeatedly",
+          repos: ["repo-a", "repo-b"],
+          priority: "High",
+          stories: [
+            {
+              title: "Theme toggle",
+              description: "Add a toggle in settings",
+              tasks: [{ title: "Build toggle component", description: "New UI component" }],
+            },
+          ],
+        },
+      ],
+      dependencies: [],
+    };
 
     it("renders the breakdown editor when candidateBreakdown is present", () => {
       renderWithProviders(
@@ -445,9 +449,9 @@ describe("HumanGatePanel", () => {
         expect.objectContaining({
           nodeExecId: "exec-1",
           decision: "approved",
-          editedCandidates: [
-            expect.objectContaining({ title: "Add dark and light mode" }),
-          ],
+          editedCandidates: expect.objectContaining({
+            epics: [expect.objectContaining({ title: "Add dark and light mode" })],
+          }),
         }),
         expect.objectContaining({ onSuccess: expect.any(Function) })
       );

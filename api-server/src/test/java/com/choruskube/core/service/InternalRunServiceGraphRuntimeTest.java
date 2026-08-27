@@ -168,6 +168,8 @@ class InternalRunServiceGraphRuntimeTest {
                 null,
                 new DecisionOptionsResolver(),
                 dependencyRepo,
+                null,
+                null,
                 null);
     }
 

@@ -182,6 +182,7 @@ public class DefaultRoadmapGraphService implements RoadmapGraphService {
                 recentRuns,
                 page.getTotalElements(),
                 t.getCreatedAt(),
-                t.getUpdatedAt());
+                t.getUpdatedAt(),
+                t.getPriority().name());
     }
 }

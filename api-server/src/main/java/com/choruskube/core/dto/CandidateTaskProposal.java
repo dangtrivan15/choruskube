@@ -6,6 +6,11 @@ import jakarta.validation.constraints.Size;
 /**
  * A single candidate Task within a {@link CandidateStoryProposal}, as proposed by the Roadmap
  * Provisioner analyzer (or edited by a reviewer) before materialization (Decision 1/5).
+ *
+ * <p>{@code key} is an optional author-assigned, artifact-local identifier (Decision 2), same
+ * convention as {@link CandidateEpicProposal#key()}. {@code priority} (free-text {@code High}/
+ * {@code Medium}/{@code Low}, Decision 4) is parsed onto the materialized Task's initial {@code
+ * Priority}, defaulting to {@code medium} when blank/unrecognized — same as Epic/Story priority.
  */
 public record CandidateTaskProposal(
-        @NotBlank @Size(max = 255) String title, String description) {}
+        @NotBlank @Size(max = 255) String title, String description, String key, String priority) {}

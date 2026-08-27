@@ -33,7 +33,9 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -108,6 +110,92 @@ public class DefaultMilestoneService implements MilestoneService {
         applicationEventPublisher.publishEvent(MappableCreated.of("milestone", milestone.getId()));
         auditSink.record(
                 AuditSink.MILESTONE_CREATED, "milestone", milestone.getId(), detailJson(null, snapshot(milestone)));
+        return toResponse(milestone);
+    }
+
+    @Override
+    @Transactional
+    public MilestoneResponse findOrCreate(
+            UUID softwareProjectId, String name, String description, LocalDate targetDate) {
+        // Request-scoped entry (RoadmapCandidateMaterializer, driven by a human's JWT-carrying gate
+        // approval): a real TenantContext exists, so the dedup lookup is scoped through it exactly
+        // like #list — see #findOrCreateInternal for the JOB_SECRET path, which has no such context
+        // and must not call scopeProvider.scope() at all (it throws there; see that method's Javadoc).
+        Specification<Milestone> spec = scopeProvider
+                .scope(Milestone.class)
+                .and((root, query, cb) -> cb.equal(root.get("softwareProjectId"), softwareProjectId))
+                .and((root, query, cb) -> cb.equal(cb.lower(root.get("name")), name.toLowerCase(Locale.ROOT)));
+        Optional<Milestone> existing = repo.findOne(spec);
+        // No parent: OwnershipMappingListener resolves org straight off TenantContext, which is
+        // exactly what's available (and correct) on this request-scoped path.
+        return findOrCreate(softwareProjectId, name, description, targetDate, existing, null);
+    }
+
+    @Override
+    @Transactional
+    public MilestoneResponse findOrCreateInternal(
+            UUID softwareProjectId, String name, String description, LocalDate targetDate, UUID runId) {
+        // Agent/internal entry: no request-scoped TenantContext, so — same as
+        // WorkItemDependencyService#createForRun's split from #create — the org guard is
+        // assertSameOrg against the calling run rather than a ScopeProvider-scoped lookup (which
+        // would throw UnresolvableTenantException the moment it's evaluated on this path; see
+        // this method's interface Javadoc). The project itself was already loaded once by
+        // InternalRunService#resolveSoftwareProjectIdFromRun before this call, but that resolution
+        // doesn't verify the project's *org* — only that it exists — so the check still belongs
+        // here, mirroring EpicService#create(EpicRequest, UUID)'s identical two-step shape.
+        SoftwareProject project = loadSoftwareProject(softwareProjectId);
+        authService.assertSameOrg("software_project", project.getId(), "workflow_run", runId);
+        // Safe to bypass ScopeProvider here specifically because the line above already proved
+        // softwareProjectId belongs to the calling run's own org — see MilestoneRepository's
+        // Javadoc on this finder for why an unguarded derived finder is normally forbidden.
+        Optional<Milestone> existing = repo.findFirstBySoftwareProjectIdAndNameIgnoreCase(softwareProjectId, name);
+        // A parent this time: OwnershipMappingListener would otherwise fall back to TenantContext
+        // (same throw findOrCreateInternal exists to avoid) — supplying software_project as the
+        // parent makes it resolve org via OwnershipResolver instead, exactly like
+        // EpicService#create(EpicRequest, UUID)'s MappableCreated.withParent call.
+        return findOrCreate(
+                softwareProjectId,
+                name,
+                description,
+                targetDate,
+                existing,
+                new MappableCreated.ParentRef("software_project", project.getId()));
+    }
+
+    /**
+     * Shared dedup/create logic behind {@link #findOrCreate} and {@link #findOrCreateInternal} —
+     * identical except for how {@code existing} was looked up (the org-guard differs by caller) and
+     * what {@code creationParent} the created-branch's {@link MappableCreated} event carries, which
+     * determines how {@code OwnershipMappingListener} resolves the new row's org — see each
+     * caller's own comment. Unaudited on the create branch, mirroring {@code
+     * EpicService#create(EpicRequest, UUID)}'s identical agent-path tradeoff.
+     */
+    private MilestoneResponse findOrCreate(
+            UUID softwareProjectId,
+            String name,
+            String description,
+            LocalDate targetDate,
+            Optional<Milestone> existing,
+            MappableCreated.ParentRef creationParent) {
+        if (existing.isPresent()) {
+            return toResponse(existing.get());
+        }
+
+        Milestone milestone = new Milestone();
+        milestone.setSoftwareProjectId(softwareProjectId);
+        milestone.setName(name);
+        milestone.setDescription(description);
+        milestone.setTargetDate(targetDate);
+        milestone = repo.save(milestone);
+
+        applicationEventPublisher.publishEvent(
+                creationParent == null
+                        ? MappableCreated.of("milestone", milestone.getId())
+                        : MappableCreated.withParent(
+                                "milestone",
+                                milestone.getId(),
+                                creationParent.parentType(),
+                                creationParent.parentId()));
         return toResponse(milestone);
     }
 

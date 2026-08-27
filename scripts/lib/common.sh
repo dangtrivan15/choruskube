@@ -23,12 +23,14 @@ compose()     { docker compose -f "$REPO_ROOT/docker-compose.yaml"     "$@"; }
 compose_e2e() { docker compose -f "$REPO_ROOT/docker-compose.e2e.yaml" "$@"; }
 
 # --- Health / auth probes -----------------------------------------------------
-# Poll an actuator health URL until it reports UP. Args: <url> [attempts] [delay]
-# Returns 0 once UP, non-zero if it never came up within attempts*delay seconds.
+# Poll a health URL until its body matches a marker string. Args: <url> [attempts] [delay] [match]
+# <match> defaults to "UP" (Spring actuator's convention); pass e.g. "healthy" for the
+# orchestrator's /healthz, which is plain Go JSON, not an actuator response.
+# Returns 0 once matched, non-zero if it never matched within attempts*delay seconds.
 wait_for_health() {
-  local url="$1" attempts="${2:-60}" delay="${3:-2}"
+  local url="$1" attempts="${2:-60}" delay="${3:-2}" match="${4:-UP}"
   for _ in $(seq 1 "$attempts"); do
-    if curl -sf "$url" 2>/dev/null | grep -q UP; then return 0; fi
+    if curl -sf "$url" 2>/dev/null | grep -q "$match"; then return 0; fi
     sleep "$delay"
   done
   return 1

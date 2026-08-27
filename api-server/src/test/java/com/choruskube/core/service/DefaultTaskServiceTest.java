@@ -104,6 +104,29 @@ public class DefaultTaskServiceTest extends BaseTest {
         assertThat(task.softwareProject()).isNotNull();
         assertThat(task.softwareProject().id()).isEqualTo(r.getId());
         assertThat(task.status()).isEqualTo("backlog");
+        assertThat(task.priority()).isEqualTo("medium");
+    }
+
+    @Test
+    void create_withoutPriority_defaultsToMedium() {
+        GitRepo r = makeRepo("https://github.com/test/task-priority-default.git");
+        StoryResponse story = makeStory(r.getId());
+
+        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
+
+        assertThat(task.priority()).isEqualTo("medium");
+    }
+
+    @Test
+    void create_withExplicitPriority_persistsAndReadsBack() {
+        GitRepo r = makeRepo("https://github.com/test/task-priority-explicit.git");
+        StoryResponse story = makeStory(r.getId());
+
+        TaskResponse task =
+                service.create(story.id(), new TaskRequest("T", "D", com.choruskube.core.model.enums.Priority.high));
+
+        assertThat(task.priority()).isEqualTo("high");
+        assertThat(service.get(task.id()).priority()).isEqualTo("high");
     }
 
     @Test

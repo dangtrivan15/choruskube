@@ -101,6 +101,7 @@ function makeTask(overrides: Partial<TaskResponse> = {}): TaskResponse {
     totalRunCount: 0,
     createdAt: "2026-04-01T00:00:00Z",
     updatedAt: "2026-04-01T00:00:00Z",
+    priority: "medium",
     ...overrides,
   };
 }
@@ -197,6 +198,13 @@ describe("StoryDetailPage", () => {
     const item = screen.getByTestId("task-item");
     expect(item).toHaveTextContent("Implement toggle switch");
     expect(item).toHaveAttribute("href", "/tasks/task-1");
+  });
+
+  it("shows the Task's priority badge in the task list", () => {
+    mockUseStory.mockReturnValue({ data: makeStory(), isLoading: false });
+    mockUseTasks.mockReturnValue({ data: [makeTask({ priority: "high" })], isLoading: false });
+    renderWithProviders(<StoryDetailPage />);
+    expect(screen.getByTestId("task-item-priority-badge")).toHaveTextContent("High");
   });
 
   it("shows a Blocked badge on a Task row whose readiness is BLOCKED", () => {

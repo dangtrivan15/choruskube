@@ -186,16 +186,20 @@ describe("DetailPanel", () => {
     // Regression coverage: HumanGatePanel accepts a candidateBreakdown prop (the Roadmap
     // Provisioner editable breakdown), but DetailPanel previously never forwarded it from
     // the node execution — this asserts the wiring end-to-end via the real breakdown editor.
-    const candidateBreakdown = [
-      {
-        title: "Add dark mode",
-        description: "Support a dark theme across the app",
-        motivation: "Users have asked for this repeatedly",
-        repos: ["repo-a"],
-        priority: "High",
-        stories: [],
-      },
-    ];
+    const candidateBreakdown = {
+      milestones: [],
+      epics: [
+        {
+          title: "Add dark mode",
+          description: "Support a dark theme across the app",
+          motivation: "Users have asked for this repeatedly",
+          repos: ["repo-a"],
+          priority: "High",
+          stories: [],
+        },
+      ],
+      dependencies: [],
+    };
     const run = makeRun({
       nodeExecutions: [
         {
@@ -274,9 +278,13 @@ describe("DetailPanel", () => {
           reviewerType: null,
           traversedEdgeIds: null,
           requiredArtifacts: null,
-          candidateBreakdown: [
-            { title: "Epic A", description: "d", motivation: "m", repos: ["repo-a"], priority: "High", stories: [] },
-          ],
+          candidateBreakdown: {
+            milestones: [],
+            epics: [
+              { title: "Epic A", description: "d", motivation: "m", repos: ["repo-a"], priority: "High", stories: [] },
+            ],
+            dependencies: [],
+          },
         },
         {
           id: "exec-2",
@@ -296,9 +304,13 @@ describe("DetailPanel", () => {
           reviewerType: null,
           traversedEdgeIds: null,
           requiredArtifacts: null,
-          candidateBreakdown: [
-            { title: "Epic B", description: "d", motivation: "m", repos: ["repo-a"], priority: "High", stories: [] },
-          ],
+          candidateBreakdown: {
+            milestones: [],
+            epics: [
+              { title: "Epic B", description: "d", motivation: "m", repos: ["repo-a"], priority: "High", stories: [] },
+            ],
+            dependencies: [],
+          },
         },
       ],
     });

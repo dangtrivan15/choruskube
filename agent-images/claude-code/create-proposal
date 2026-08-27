@@ -1,7 +1,7 @@
 #!/bin/bash
 # create-proposal — create a roadmap Epic via the ChorusKube API server.
 #
-# Usage: create-proposal --title TITLE --description DESC [--motivation MOT] [--priority LEVEL]
+# Usage: create-proposal --title TITLE --description DESC [--motivation MOT] [--priority LEVEL] [--milestone-id UUID]
 #
 # Creates a new Epic targeting the workflow run's software project. The target
 # is resolved server-side from the run's software_project_id input; agents
@@ -20,6 +20,8 @@
 #   --motivation MOT      Motivation / rationale (optional)
 #   --priority LEVEL      Initial priority: low | medium | high (optional,
 #                         defaults to medium server-side)
+#   --milestone-id UUID   Milestone to assign this Epic to (optional). Must
+#                         already exist — see create-milestone.
 #   -h, --help            Show this help message
 #
 # Environment:
@@ -32,6 +34,8 @@
 #   create-proposal --title "Add dark mode" --description "Users want dark mode"
 #   create-proposal --title "Add push notifications" --description "..." \
 #                   --motivation "Increase engagement" --priority high
+#   create-proposal --title "Add dark mode" --description "..." \
+#                   --milestone-id <uuid>
 #
 # Exit codes:
 #   0  Epic created successfully (JSON response printed to stdout)
@@ -57,6 +61,7 @@ TITLE=""
 DESCRIPTION=""
 MOTIVATION=""
 PRIORITY=""
+MILESTONE_ID=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -76,9 +81,13 @@ while [ $# -gt 0 ]; do
             PRIORITY="$2"
             shift 2
             ;;
+        --milestone-id)
+            MILESTONE_ID="$2"
+            shift 2
+            ;;
         *)
             echo "ERROR: Unknown argument: $1" >&2
-            echo "Usage: create-proposal --title TITLE --description DESC [--motivation MOT] [--priority LEVEL]" >&2
+            echo "Usage: create-proposal --title TITLE --description DESC [--motivation MOT] [--priority LEVEL] [--milestone-id UUID]" >&2
             exit 1
             ;;
     esac
@@ -86,22 +95,26 @@ done
 
 if [ -z "$TITLE" ] || [ -z "$DESCRIPTION" ]; then
     echo "ERROR: --title and --description are required." >&2
-    echo "Usage: create-proposal --title TITLE --description DESC [--motivation MOT] [--priority LEVEL]" >&2
+    echo "Usage: create-proposal --title TITLE --description DESC [--motivation MOT] [--priority LEVEL] [--milestone-id UUID]" >&2
     exit 1
 fi
 
 # Build JSON body using jq for proper escaping. The server resolves the Epic's
 # software project from the run's inputs — there's no per-Epic override.
 # --priority is sent through unvalidated; the server rejects an unknown level
-# with 400, surfaced by the generic non-2xx handling below.
+# with 400, surfaced by the generic non-2xx handling below. --milestone-id must
+# already reference an existing Milestone (see create-milestone) — the server
+# rejects an unknown id the same way.
 BODY=$(jq -n \
     --arg title "$TITLE" \
     --arg description "$DESCRIPTION" \
     --arg motivation "$MOTIVATION" \
     --arg priority "$PRIORITY" \
+    --arg milestoneId "$MILESTONE_ID" \
     '{title: $title, description: $description}
         + (if $motivation != "" then {motivation: $motivation} else {} end)
-        + (if $priority != "" then {priority: $priority} else {} end)')
+        + (if $priority != "" then {priority: $priority} else {} end)
+        + (if $milestoneId != "" then {milestoneId: $milestoneId} else {} end)')
 
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
     -H "Content-Type: application/json" \

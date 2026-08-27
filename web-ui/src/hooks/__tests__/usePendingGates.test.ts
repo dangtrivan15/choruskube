@@ -235,16 +235,20 @@ describe("usePendingGates hooks", () => {
 
       const { result } = renderHook(() => useSignalFromDashboard(), { wrapper });
 
-      const editedCandidates = [
-        {
-          title: "Epic A",
-          description: "desc",
-          motivation: "why",
-          repos: null,
-          priority: null,
-          stories: [],
-        },
-      ];
+      const editedCandidates = {
+        milestones: [],
+        epics: [
+          {
+            title: "Epic A",
+            description: "desc",
+            motivation: "why",
+            repos: null,
+            priority: null,
+            stories: [],
+          },
+        ],
+        dependencies: [],
+      };
       result.current.mutate({
         runId: "run-1",
         nodeExecId: "exec-1",

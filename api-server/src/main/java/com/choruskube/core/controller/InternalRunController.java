@@ -227,6 +227,35 @@ public class InternalRunController {
     }
 
     /**
+     * New: create a "blocking" dependency edge between two items on behalf of an agent pod
+     * (Decision 6) — the imperative counterpart to the declarative artifact's {@code dependencies}
+     * list. Both endpoints are cross-checked against the run's own software project before the
+     * edge is created (see {@link InternalRunService#createDependency}).
+     */
+    @PostMapping("/{runId}/node-executions/{nodeExecId}/dependencies")
+    @ResponseStatus(HttpStatus.CREATED)
+    public DependencyEdgeResponse createDependency(
+            @PathVariable UUID runId,
+            @PathVariable UUID nodeExecId,
+            @Valid @RequestBody InternalCreateDependencyRequest request) {
+        return service.createDependency(runId, request);
+    }
+
+    /**
+     * New: create (or reuse an existing same-named) Milestone under the run's software project on
+     * behalf of an agent pod (Decision 6) — the imperative counterpart to the declarative
+     * artifact's {@code milestones} list.
+     */
+    @PostMapping("/{runId}/node-executions/{nodeExecId}/milestones")
+    @ResponseStatus(HttpStatus.CREATED)
+    public MilestoneResponse createMilestone(
+            @PathVariable UUID runId,
+            @PathVariable UUID nodeExecId,
+            @Valid @RequestBody InternalCreateMilestoneRequest request) {
+        return service.createMilestone(runId, request);
+    }
+
+    /**
      * Agent-facing mirror of {@code GET /api/v1/epics/{epicId}/graph} (Roadmap Graph View,
      * Decision 1) — same response shape (readiness, capped run history), scoped by the calling
      * run's project rather than a JWT-derived org (Decision 5).
