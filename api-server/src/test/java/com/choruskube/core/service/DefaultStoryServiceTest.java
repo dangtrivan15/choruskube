@@ -506,7 +506,7 @@ public class DefaultStoryServiceTest extends BaseTest {
     @Test
     void updateStage_withStartedDescendantTask_succeeds() {
         // Proves the "no edit once started" guard used by the full update() edit path does NOT
-        // apply to stage moves (the plan: mirrors DefaultEpicService#updateStage).
+        // apply to stage moves, mirroring DefaultEpicService#updateStage.
         EpicResponse epic = makeEpic("https://github.com/test/story-stage-started-task.git");
         StoryResponse story = service.create(epic.id(), new StoryRequest("S", "D"));
         TaskResponse task = taskService.create(story.id(), new TaskRequest("T", "D"));

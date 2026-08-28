@@ -179,9 +179,8 @@ export interface RoadmapDependencyEdgeInput {
 }
 
 /**
- * One external ("ghost") node attached to the tree (the
- * cross-Epic-blockers spec) — a stub standing in for a Story/Task that lives
- * in a *different* Epic. Deduplicated by external item identity upstream
+ * One external ("ghost") node attached to the tree — a stub standing in for a
+ * Story/Task that lives in a *different* Epic. Deduplicated by external item identity upstream
  * (RoadmapGraph), so there is exactly one of these per unique external item
  * regardless of how many in-Epic nodes it connects to.
  */

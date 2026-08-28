@@ -5,10 +5,9 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * One Epic lane on the Roadmap Timeline View, carrying its own Stories (part of the roadmap
- * dependencies/priorities/milestones feature — activity source is the existing {@code createdAt}/
- * {@code updatedAt} audit columns,
- * not a new history table). {@code stage} is {@code epic.getStage().name()}, mirroring {@link
+ * One Epic lane on the Roadmap Timeline View, carrying its own Stories. Activity comes from the
+ * existing {@code createdAt}/{@code updatedAt} audit columns, not a new history table.
+ * {@code stage} is {@code epic.getStage().name()}, mirroring {@link
  * TimelineStorySummary#stage()}. {@code stories} is ordered ascending by {@code createdAt} —
  * populated by {@code DefaultRoadmapTimelineService}, an empty Epic gets an empty list rather
  * than being omitted.

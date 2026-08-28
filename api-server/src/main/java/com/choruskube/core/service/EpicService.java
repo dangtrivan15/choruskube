@@ -35,7 +35,7 @@ public interface EpicService {
      * A non-null {@code priority} additionally narrows the result to Epics with that
      * priority (a plain persisted-column predicate, applied in both the DB and readiness paths). A
      * non-null {@code milestoneId} additionally narrows the result to Epics tagged with that
-     * Milestone (of the Milestone spec) — also a plain persisted-column predicate.
+     * Milestone — also a plain persisted-column predicate.
      */
     Page<EpicResponse> list(String title, Readiness readiness, Priority priority, UUID milestoneId, Pageable pageable);
 

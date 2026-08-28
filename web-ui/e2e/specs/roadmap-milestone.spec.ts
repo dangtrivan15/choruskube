@@ -2,7 +2,7 @@ import { test, expect } from "../fixtures";
 import { uniqueName } from "../helpers/api-client";
 
 /**
- * E2E coverage for "Group Epics under a named Milestone / Release" (of that feature's spec):
+ * E2E coverage for grouping Epics under a named Milestone / Release:
  * create a Milestone, tag Epics with it, see the badge/filter on the Roadmap list, rename it
  * (badge text updates), and delete it (Epics remain, now untagged).
  */

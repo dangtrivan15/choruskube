@@ -18,8 +18,8 @@ public interface MilestoneService {
 
     /**
      * Lists Milestones, optionally narrowed to a single software project. Scoped via {@code
-     * ScopeProvider} exactly as {@link EpicService#list} is (of the Milestone spec) — never a
-     * derived {@code findBySoftwareProjectId…} finder, which would bypass tenant scoping. Every
+     * ScopeProvider} exactly as {@link EpicService#list} is — never a derived
+     * {@code findBySoftwareProjectId…} finder, which would bypass tenant scoping. Every
      * returned {@link MilestoneResponse#epicCount()} is computed as one batch for the whole page,
      * not a per-Milestone query.
      */

@@ -30,7 +30,7 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * Regression test for {@code DefaultEpicService#toResponses} batch-populating {@code milestone} —
  * not just the single-Epic {@code toResponse} path — and for the {@code milestoneId} list filter
- * added to {@code GET /api/v1/epics} (of the Milestone spec).
+ * added to {@code GET /api/v1/epics}.
  */
 @AutoConfigureMockMvc
 @Transactional

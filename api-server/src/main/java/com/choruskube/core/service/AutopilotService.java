@@ -782,8 +782,8 @@ public class AutopilotService implements AutopilotSafetyValve {
 
     /**
      * The empty-container case, made visible. An Epic or Story with no Tasks is
-     * never satisfied, so anything it blocks stays blocked forever — and under the alternative
-     * the failure mode is silence: the Autopilot simply never picks that work up.
+     * never satisfied, so anything it blocks stays blocked forever — and without this report the
+     * failure mode is silence: the Autopilot simply never picks that work up.
      *
      * <p>Only reported when the empty container is actually blocking something that is BLOCKED
      * right now, so a half-planned Epic nobody depends on does not fill the panel.

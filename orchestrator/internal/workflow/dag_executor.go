@@ -698,8 +698,8 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 				needsPR := extractConfigField(snapshotNode.ConfigOverrides, "needs_pr")
 				effort := extractConfigField(snapshotNode.ConfigOverrides, "effort")
 
-				// Resolve iteration-aware model/effort overrides (the
-				// accompanying spec). Pick the key matching tracker.reviewPass's branch —
+				// Resolve iteration-aware model/effort overrides. Pick the key
+				// matching tracker.reviewPass's branch —
 				// NOT tracker.iteration, which also advances on operator/pause-recovery
 				// retries unrelated to a review decision (see nodeTracker.reviewPass) —
 				// and use it only when non-empty; otherwise fall back to the static

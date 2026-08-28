@@ -4,8 +4,7 @@
  * edge, to a third kind for cross-Epic dependencies, to a fourth
  * for Epic-tier dependencies (an edge whose blocking/blocked endpoint is the
  * Epic itself — see `RoadmapEpicDependencyEdge`) — so each new edge language
- * stays discoverable without trial and error (of the cross-Epic-blockers
- * spec).
+ * stays discoverable without trial and error.
  */
 export default function RoadmapGraphLegend() {
   return (
