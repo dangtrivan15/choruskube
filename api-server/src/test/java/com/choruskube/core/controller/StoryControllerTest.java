@@ -125,7 +125,7 @@ public class StoryControllerTest extends BaseTest {
 
     @Test
     void listStories_blockedByUnfinishedDependency_readinessIsBlocked() throws Exception {
-        // Decision 1: the flat list endpoint now populates the same `readiness` field the
+        // The flat list endpoint now populates the same `readiness` field the
         // Roadmap Graph View has always computed, instead of leaving it null.
         EpicResponse epic = makeEpic("https://github.com/test/story-list-readiness.git");
         StoryResponse blocking = makeStory(epic.id(), "Blocking");

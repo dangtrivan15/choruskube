@@ -12,10 +12,9 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
 /**
- * CRUD plus rollup status/progress aggregation for Stories (Decision 2). Defined as an
- * interface, with {@link DefaultStoryService} as its sole implementation (Decision 8).
+ * CRUD plus rollup status/progress aggregation for Stories.
  *
- * <p>Per Decision 5, a Story is never treated as top-level for ownership purposes — it always
+ * <p>A Story is never treated as top-level for ownership purposes — it always
  * inherits its organization from its immediate parent Epic, regardless of caller.
  */
 public interface StoryService {
@@ -38,15 +37,15 @@ public interface StoryService {
      * com.choruskube.core.service.TaskService#list(WorkItemStatus, Pageable)}'s shape:
      * {@code scopeProvider}-scoped, optionally filtered by board {@code stage}, page-returning.
      * Uses the same shared single-item mapper as {@link #get}/{@link #create} — {@code readiness}
-     * stays {@code null} here (Decision 1 scopes real readiness to the per-Epic {@link #list(UUID)}
+     * stays {@code null} here (real readiness is scoped to the per-Epic {@link #list(UUID)}
      * and the Roadmap Graph View only). A non-null {@code priority} narrows the result to Stories
      * with that priority (a plain persisted-column predicate).
      */
     Page<StoryResponse> list(WorkItemStatus stage, Priority priority, Pageable pageable);
 
     /**
-     * Agent/internal mirror of {@link #list} for the Roadmap Graph View internal route (Decision
-     * 1): validated the same way as {@link #create(UUID, StoryRequest, UUID, UUID)} —
+     * Agent/internal mirror of {@link #list} for the Roadmap Graph View internal route: validated
+     * the same way as {@link #create(UUID, StoryRequest, UUID, UUID)} —
      * {@code assertSameOrg} plus a direct project match — instead of {@link #list}'s
      * {@code checkOrgAccess}, which reads a request-scoped tenant context that does not exist on
      * the {@code /internal/**} JOB_SECRET path.

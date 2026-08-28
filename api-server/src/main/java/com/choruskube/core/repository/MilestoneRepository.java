@@ -9,8 +9,8 @@ import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 /**
  * The tenant-facing Milestone list is never backed by a derived {@code
  * findBySoftwareProjectId…} finder on this repository — that would bypass {@code ScopeProvider}
- * and leak another org's Milestones when a caller supplies a foreign {@code softwareProjectId}
- * (§3.4 of the Milestone spec). {@code DefaultMilestoneService#list} instead builds {@code
+ * and leak another org's Milestones when a caller supplies a foreign {@code softwareProjectId}.
+ * {@code DefaultMilestoneService#list} instead builds {@code
  * scopeProvider.scope(Milestone.class)} as a {@link org.springframework.data.jpa.domain.Specification}
  * — optionally {@code .and}-ing the {@code softwareProjectId} equality — and runs it through
  * {@link JpaSpecificationExecutor#findAll}, exactly as {@code DefaultEpicService.list} does.
@@ -21,7 +21,7 @@ public interface MilestoneRepository extends JpaRepository<Milestone, UUID>, Jpa
 
     /**
      * Derived finder used ONLY by {@code DefaultMilestoneService#findOrCreateInternal} (the
-     * agent/{@code JOB_SECRET} path, Decision 6 of the roadmap dependencies/priorities/milestones
+     * agent/{@code JOB_SECRET} path, part of the roadmap dependencies/priorities/milestones
      * feature) — this is a narrow, deliberate exception to the class-level rule above, not a
      * violation of it. That rule protects a caller-supplied {@code softwareProjectId} with no other
      * verification; here, the caller (`InternalRunService#createMilestone`) has already asserted the

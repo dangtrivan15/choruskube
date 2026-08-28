@@ -138,7 +138,7 @@ class TransitiveReadinessResolverTest {
     @Test
     void computeReadiness_twoNodeCycle_resolvesBlockedWithoutHanging() {
         // A blocks B, B blocks A — cyclic data that creation-time prevention should normally
-        // reject, fed directly into the resolver to prove the traversal guard (Decision 5) is a
+        // reject, fed directly into the resolver to prove the traversal guard is a
         // real second line of defense.
         List<WorkItemDependency> edges = List.of(edge(A, B), edge(B, A));
         Map<UUID, String> statuses = Map.of(A, "done", B, "done");

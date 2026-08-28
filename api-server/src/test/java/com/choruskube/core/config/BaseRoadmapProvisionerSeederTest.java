@@ -50,7 +50,7 @@ class BaseRoadmapProvisionerSeederTest extends BaseTest {
         assertThat(template.get().getGraphId()).isEqualTo("roadmap-provisioner");
         // v15 (roadmap dependencies/priorities/milestones): the roadmap_candidates.json
         // schema documented in the prompt gains milestones/dependencies/per-level priority
-        // (Decision 4/5) — no template shape change from v14's per-node-type model/effort
+        // — no template shape change from v14's per-node-type model/effort
         // config, itself unchanged in shape from v13's terminal-decision human gate +
         // deterministic materialization (replacing the v12 3-node analyzer → gate →
         // feature-creator shape).
@@ -60,8 +60,8 @@ class BaseRoadmapProvisionerSeederTest extends BaseTest {
 
     @Test
     void analyzerCarriesStaticOpusModelAndXhighEffort() {
-        // Decision 2 (research node, always Opus/xhigh, unaffected by iteration —
-        // Roadmap Analyzer has no self-loop review-decision counter to key off of).
+        // Research node: always Opus/xhigh, unaffected by iteration — Roadmap Analyzer
+        // has no self-loop review-decision counter to key off of.
         var nd = nodeDefRepo.findAll().stream()
                 .filter(n -> "Roadmap Analyzer".equals(n.getName()))
                 .findFirst()
@@ -123,7 +123,7 @@ class BaseRoadmapProvisionerSeederTest extends BaseTest {
                         .filter(nd -> "Roadmap Human Gate".equals(nd.getName()))
                         .count())
                 .isEqualTo(1);
-        // v13 removes the "Roadmap Feature Creator" node entirely (Decision 2/3) — its
+        // v13 removes the "Roadmap Feature Creator" node entirely — its
         // job (materializing approved candidates) is now a deterministic API server step.
         assertThat(nodeDefRepo.findAll().stream()
                         .filter(nd -> "Roadmap Feature Creator".equals(nd.getName()))
@@ -160,7 +160,7 @@ class BaseRoadmapProvisionerSeederTest extends BaseTest {
                         .count())
                 .isEqualTo(1);
         // No "approved" edge at all — v13 makes "approved" a terminal_decisions entry
-        // instead (Decision 2), not an edge to a third node.
+        // instead, not an edge to a third node.
         assertThat(edges.stream()
                         .filter(e -> "approved".equals(e.getCondition()))
                         .count())
@@ -171,8 +171,8 @@ class BaseRoadmapProvisionerSeederTest extends BaseTest {
     void seededTemplatePassesGraphValidation() {
         // RunService.startRun() runs every graph through GraphValidationService before
         // allowing a run to start — a template that seeds successfully but fails this
-        // check can never actually be run. Rule 3 (terminal node check) predates Decision
-        // 2's terminal_decisions capability and originally only recognized a literal
+        // check can never actually be run. Rule 3 (terminal node check) predates the
+        // terminal_decisions capability and originally only recognized a literal
         // zero-outgoing-edge node as terminal, which this template's gate (approved has no
         // edge, only terminal_decisions; rejected loops back to the analyzer) never has —
         // exercising the real seeded template here, not just its DB rows in isolation,
@@ -224,7 +224,7 @@ class BaseRoadmapProvisionerSeederTest extends BaseTest {
         assertThat(prompt).contains("roadmap_candidates.json");
         assertThat(prompt).contains("\"stories\"");
         assertThat(prompt).contains("\"tasks\"");
-        // No fixed 1:1 language (Decision 5) — a variable-depth breakdown instead.
+        // No fixed 1:1 language — a variable-depth breakdown instead.
         assertThat(prompt).doesNotContain("one Story, containing one Task");
     }
 
@@ -236,7 +236,7 @@ class BaseRoadmapProvisionerSeederTest extends BaseTest {
                 .orElseThrow();
         String prompt = nd.getPromptTemplate();
 
-        // Decision 4: priority is now declarable at Epic, Story, AND Task level (no longer
+        // Priority is now declarable at Epic, Story, AND Task level (no longer
         // Epic-only) — the prompt must say so, and must no longer claim Story candidates carry
         // no priority signal / default silently to Medium with no way to override.
         assertThat(prompt).contains("optional at Epic, Story, AND Task");
@@ -255,7 +255,7 @@ class BaseRoadmapProvisionerSeederTest extends BaseTest {
                 .orElseThrow();
         String prompt = nd.getPromptTemplate();
 
-        // Decision 2/4/5: the document shape, milestone references, and dependency edges must
+        // The document shape, milestone references, and dependency edges must
         // all be documented, using the exact field names the DTOs/resolver/materializer expect.
         assertThat(prompt).contains("\"milestones\"");
         assertThat(prompt).contains("\"dependencies\"");
@@ -302,7 +302,7 @@ class BaseRoadmapProvisionerSeederTest extends BaseTest {
     @Test
     void reseedDoesNotTouchPreExistingOlderVersionRow() throws Exception {
         // Simulate a real deployment that already has the old v12 3-node shape seeded
-        // (immutable seed data — never dropped, never mutated in place, per Decision 6).
+        // (immutable seed data — never dropped, never mutated in place).
         // Uses a distinct `name` (rather than the real "Roadmap Provisioner") so this
         // fixture row doesn't break `GraphTemplateRepository.findByName`'s single-result
         // assumption for every other test in this class/suite — only graphId+version

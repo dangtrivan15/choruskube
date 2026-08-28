@@ -24,7 +24,7 @@ interface TargetDateFieldProps {
 
 /**
  * Shared target-date control — set/clear an Epic or Story's optional due date.
- * Uses a native `<input type="date">` for entry (Decision 4): a date-only value
+ * Uses a native `<input type="date">` for entry: a date-only value
  * maps 1:1 to the native control with no conversion, and there is no existing
  * date-picker component/dependency to reuse. Display parses with `parseISO`
  * (never `new Date("YYYY-MM-DD")`, which parses as UTC and can drift the shown

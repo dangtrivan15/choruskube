@@ -9,7 +9,7 @@ interface Props {
 /**
  * "Kind" eyebrow chip — level icon + label ("Epic"/"Story"/"Task") in the
  * level's accent color. The single rendering of `roadmapLevel.ts`'s per-level
- * identity (Decision 2), reused on all three detail pages and their board
+ * identity, reused on all three detail pages and their board
  * cards so Epic/Story/Task read as distinct and consistent everywhere they
  * appear. Chip form factor matches the existing `epic-software-project-chip`
  * styling (EpicDetailPage.tsx).

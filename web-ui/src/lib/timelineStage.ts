@@ -7,7 +7,7 @@ import { statusColorTokens } from "@/lib/statusColors";
  *
  * Extracted out of `RoadmapTimelineNode` (where it was module-private) so the timeline node, the
  * hover preview, and the detail panel all render a stage badge identically instead of each
- * re-deriving the mapping over `statusColorTokens` (item-detail hover/click feature, Decision 2).
+ * re-deriving the mapping over `statusColorTokens` (item-detail hover/click feature).
  */
 export const STAGE_TOKEN_MAP: Record<string, string> = {
   backlog: "pending",

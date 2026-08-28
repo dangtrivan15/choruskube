@@ -3,8 +3,7 @@
 #
 # Usage: create-milestone --name NAME [--description DESC] [--target-date DATE]
 #
-# Creates a new Milestone under the current run's software project (Decision 6
-# of the roadmap dependencies/priorities/milestones feature) — the
+# Creates a new Milestone under the current run's software project — the
 # imperative-agent counterpart to the declarative roadmap_candidates.json
 # artifact's "milestones" list. Assign an Epic to the returned Milestone via
 # create-proposal --milestone-id or update-proposal --milestone-id.

@@ -38,7 +38,6 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Sole implementation of {@link StoryService} (Decision 8). */
 @Service
 public class DefaultStoryService implements StoryService {
 
@@ -54,8 +53,8 @@ public class DefaultStoryService implements StoryService {
     private final ObjectMapper objectMapper;
     private final ApplicationEventPublisher applicationEventPublisher;
     private final WorkItemDependencyService workItemDependencyService;
-    // Populates `readiness` on list() responses (Decision 1) via the same Epic-bounded assembly
-    // the Roadmap Graph View uses (Decision 2/3), so the two can never disagree.
+    // Populates `readiness` on list() responses via the same Epic-bounded assembly
+    // the Roadmap Graph View uses, so the two can never disagree.
     private final EpicReadinessAssembler readinessAssembler;
     private final ScopeProvider scopeProvider;
 
@@ -88,10 +87,9 @@ public class DefaultStoryService implements StoryService {
     @Transactional
     public StoryResponse create(UUID epicId, StoryRequest request) {
         Epic epic = findEpicOrThrow(epicId);
-        // Caller-vs-resource guard: the parent Epic must belong to the caller's org.
         authService.checkOrgAccess("epic", epic.getId());
         Story story = persistStory(epicId, request);
-        // Decision 5: Story is never top-level — org is always inherited from its parent Epic.
+        // Story is never top-level — org is always inherited from its parent Epic.
         applicationEventPublisher.publishEvent(MappableCreated.withParent("story", story.getId(), "epic", epicId));
         auditSink.record(AuditSink.STORY_CREATED, "story", story.getId(), detailJson(null, snapshot(story)));
         eventPublisher.publishRoadmapItemChanged("story", story.getId(), "backlog");
@@ -102,7 +100,6 @@ public class DefaultStoryService implements StoryService {
     @Transactional
     public StoryResponse create(UUID epicId, StoryRequest request, UUID runId, UUID runSoftwareProjectId) {
         Epic epic = findEpicOrThrow(epicId);
-        // Cross-org guard: the parent Epic and the originating run must belong to the same org.
         authService.assertSameOrg("epic", epic.getId(), "workflow_run", runId);
         // Cross-project guard: same org isn't enough on its own, since an org can span multiple
         // SoftwareProjects (mirrors DefaultEpicService#updateInternal's equivalent check).
@@ -162,10 +159,10 @@ public class DefaultStoryService implements StoryService {
 
     /**
      * Shared body for {@link #list} and {@link #listInternal}: loads this Epic's full Story/Task
-     * set once (Decision 3 — the readiness walk must be bounded to the whole Epic, not just this
+     * set once (the readiness walk must be bounded to the whole Epic, not just this
      * Story's own Tasks, or a blocker in a sibling Story would be missed) and populates real
-     * {@code readiness} instead of the {@code null} every other read path still returns (Decision
-     * 1 — only the flat list endpoints and the Roadmap Graph View compute it).
+     * {@code readiness} instead of the {@code null} every other read path still returns
+     * (only the flat list endpoints and the Roadmap Graph View compute it).
      */
     private List<StoryResponse> listWithReadiness(UUID epicId, ReadinessAuthMode mode, UUID contextId) {
         EpicReadinessAssembler.EpicCandidates candidates = readinessAssembler.loadEpicCandidates(epicId);
@@ -269,8 +266,6 @@ public class DefaultStoryService implements StoryService {
         story = repo.save(story);
 
         StoryResponse response = toResponse(story);
-        // Audited like every other roadmap mutation (create/update/delete/stage): priority is a
-        // planning attribute moved in isolation, so its change belongs in the audit trail too.
         auditSink.record(AuditSink.STORY_PRIORITY_UPDATED, "story", id, detailJson(beforeSnapshot, snapshot(story)));
         eventPublisher.publishRoadmapItemChanged(
                 "story", story.getId(), story.getStage().name());
@@ -290,8 +285,6 @@ public class DefaultStoryService implements StoryService {
         story = repo.save(story);
 
         StoryResponse response = toResponse(story);
-        // Audited like every other roadmap mutation (create/update/delete/stage/priority): target
-        // date is a planning attribute moved in isolation, so its change belongs in the audit trail.
         auditSink.record(AuditSink.STORY_TARGET_DATE_UPDATED, "story", id, detailJson(beforeSnapshot, snapshot(story)));
         eventPublisher.publishRoadmapItemChanged(
                 "story", story.getId(), story.getStage().name());
@@ -303,8 +296,8 @@ public class DefaultStoryService implements StoryService {
         return tasks.stream().anyMatch(t -> t.getStatus() != WorkItemStatus.backlog);
     }
 
-    /** Single-item read paths (create/update/get) — readiness stays {@code null} here (Decision 1
-     * scopes real readiness to the flat list endpoints and the Roadmap Graph View only). */
+    /** Single-item read paths (create/update/get) — readiness stays {@code null} here (real
+     * readiness is scoped to the flat list endpoints and the Roadmap Graph View only). */
     private StoryResponse toResponse(Story s) {
         List<Task> tasks = taskRepo.findByStoryIdOrderByCreatedAtDesc(s.getId());
         return toResponse(s, tasks, null, null);

@@ -24,7 +24,7 @@ export default function RoadmapTimelinePage() {
 
   const rawFocus = parseFocusParams(searchParams);
   // A URL-carried id that doesn't resolve against the freshly-fetched data (deleted, garbage, or
-  // simply an id from a different org — §6's Negative/security case) is treated as "nothing
+  // simply an id from a different org — the Negative/security case) is treated as "nothing
   // focused" rather than partially rendered or thrown on, all the way out to the switcher: an
   // unresolved epic must not leave Graph looking enabled for an Epic that isn't really there.
   const focusedEpic = data?.epics.find((e) => e.id === rawFocus.epicId);
@@ -33,12 +33,12 @@ export default function RoadmapTimelinePage() {
   const focusedStoryId = focusedStory?.id;
 
   function handleFocusChange(epicId: string, storyId?: string) {
-    // history replace, not push (§3.4) — ordinary lane/marker browsing shouldn't balloon the
+    // history replace, not push — ordinary lane/marker browsing shouldn't balloon the
     // back-button history the way a `push` on every click would.
     setSearchParams(focusToSearchParamsInit({ epicId, storyId }), { replace: true });
   }
 
-  // Closing the panel clears focus entirely (Decision 4) — the panel's open/close state is
+  // Closing the panel clears focus entirely — the panel's open/close state is
   // literally driven by whether something is focused, so there is no separate "close" concept.
   function handleClosePanel() {
     setSearchParams({}, { replace: true });
@@ -90,8 +90,8 @@ export default function RoadmapTimelinePage() {
           )}
         </div>
 
-        {/* Desktop: inline side panel, mirroring RoadmapGraphPage (item-detail hover/click,
-            Decision 4 — the panel's visibility is driven purely by whether an Epic is focused). */}
+        {/* Desktop: inline side panel, mirroring RoadmapGraphPage (item-detail hover/click —
+            the panel's visibility is driven purely by whether an Epic is focused). */}
         {!isMobile && focusedEpic && (
           <div className="w-[360px] shrink-0 overflow-y-auto overflow-x-hidden border-l">
             <RoadmapTimelineDetailPanel epic={focusedEpic} story={focusedStory} onClose={handleClosePanel} />

@@ -23,7 +23,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Behavioral test for Decision 2 of the "Group Epics under a named Milestone / Release" feature:
+ * Behavioral test for the "Group Epics under a named Milestone / Release" feature:
  * {@code epic.milestone_id} is {@code ON DELETE SET NULL}, so deleting a Milestone un-tags its
  * Epics rather than deleting them.
  */

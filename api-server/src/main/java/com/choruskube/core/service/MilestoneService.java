@@ -10,10 +10,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
 /**
- * CRUD plus assigned-Epic-count aggregation for Milestones (release/grouping labels, Decision 1
- * of the "Group Epics under a named Milestone / Release" feature). Defined as an interface, with
- * {@link DefaultMilestoneService} as its sole implementation, mirroring {@link EpicService}'s own
- * interface/impl split (Decision 8 of the roadmap-hierarchy feature).
+ * CRUD plus assigned-Epic-count aggregation for Milestones.
  */
 public interface MilestoneService {
 
@@ -21,8 +18,8 @@ public interface MilestoneService {
 
     /**
      * Lists Milestones, optionally narrowed to a single software project. Scoped via {@code
-     * ScopeProvider} exactly as {@link EpicService#list} is (§3.4 of the Milestone spec) — never a
-     * derived {@code findBySoftwareProjectId…} finder, which would bypass tenant scoping. Every
+     * ScopeProvider} exactly as {@link EpicService#list} is — never a derived
+     * {@code findBySoftwareProjectId…} finder, which would bypass tenant scoping. Every
      * returned {@link MilestoneResponse#epicCount()} is computed as one batch for the whole page,
      * not a per-Milestone query.
      */
@@ -43,7 +40,7 @@ public interface MilestoneService {
     MilestoneAtRiskItemsResponse getAtRiskItems(UUID id);
 
     /**
-     * Find-or-create by name within a software project (Decision 4 of the roadmap dependencies/
+     * Find-or-create by name within a software project (the roadmap dependencies/
      * priorities/milestones feature) — used by {@code RoadmapCandidateMaterializer} so a candidate
      * Milestone whose name collides with one already tagged in the project reuses that row instead
      * of failing materialization the way {@link #create} would (it rejects duplicate names with
@@ -67,7 +64,7 @@ public interface MilestoneService {
 
     /**
      * Agent/internal counterpart to {@link #findOrCreate} — the imperative {@code create-milestone}
-     * CLI's write path (Decision 6), called from {@code InternalRunService#createMilestone} on the
+     * CLI's write path, called from {@code InternalRunService#createMilestone} on the
      * {@code JOB_SECRET} path, which has no request-scoped {@code TenantContext}. Mirrors {@code
      * WorkItemDependencyService#createForRun}'s split from {@code #create}: same dedup/create
      * logic as {@link #findOrCreate}, but the org guard is {@code AuthorizationService#assertSameOrg}

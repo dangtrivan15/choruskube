@@ -142,7 +142,7 @@ class DefaultBlockingChainServiceTest {
 
     @Test
     void getChain_itemRootBlocksRatherThanIsBlockedBy_neverAppearsInChain() {
-        // findByBlockingItemIdInOrBlockedItemIdIn is bidirectional by design (Decision 4 / §3.1):
+        // findByBlockingItemIdInOrBlockedItemIdIn is bidirectional by design:
         // it also returns rows where `root` is the *blockingItemId* — i.e. items root itself
         // blocks, not items blocking root. Those rows must be discarded rather than followed, or
         // the walk would present something root blocks as though it were a blocker of root.

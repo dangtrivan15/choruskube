@@ -28,7 +28,7 @@ import org.springframework.stereotype.Service;
 
 /**
  * Shared resolution of the Roadmap Provisioner analyzer's structured {@code roadmap_candidates.json}
- * artifact (Decision 1) into a {@link RoadmapCandidatesDocument} (Decision 5) — used both by {@link
+ * artifact into a {@link RoadmapCandidatesDocument} — used both by {@link
  * PendingGateService} (to populate {@code PendingGateResponse.candidateBreakdown} for display) and
  * by {@link RunService} (to resolve the materialization source when the reviewer submitted no
  * edits). Centralized here so the artifact-lookup and degrade-on-failure rules can't drift between
@@ -38,7 +38,7 @@ import org.springframework.stereotype.Service;
  * resolved required artifacts, its content is missing/malformed, it fails the same Bean Validation
  * constraints ({@code @NotBlank} title, {@code @Size(max = 8)} at every nesting level) that {@code
  * SignalRequest.editedCandidates} enforces on the reviewer-edited path, or it declares a duplicate
- * {@code key} anywhere in the document (Decision 2) — an ambiguous key makes every reference into
+ * {@code key} anywhere in the document — an ambiguous key makes every reference into
  * it unsafe to resolve, so unlike a single bad edge (below) this degrades the whole artifact rather
  * than picking an arbitrary winner. Without these checks an AI-authored artifact would materialize
  * straight into Epic/Story/Task rows with none of the guardrails a human-submitted edit is held to.
@@ -47,8 +47,8 @@ import org.springframework.stereotype.Service;
  * resolve, or that would close a within-artifact cycle, or a {@link CandidateEpicProposal#milestone()}
  * reference that doesn't resolve to a declared {@link CandidateMilestone#key()}, is instead DROPPED
  * — the rest of the document still resolves — mirroring {@code
- * DefaultRoadmapCandidateMaterializer}'s own best-effort stance on the same categories of problem
- * (Decision 3), so a reviewer sees the same kind of "some pieces were skipped" outcome whether it
+ * DefaultRoadmapCandidateMaterializer}'s own best-effort stance on the same categories of problem,
+ * so a reviewer sees the same kind of "some pieces were skipped" outcome whether it
  * surfaces at gate-display time or at materialization time.
  */
 @Service
@@ -119,7 +119,7 @@ public class RoadmapCandidatesArtifactResolver {
 
     /**
      * Parses the artifact content into a {@link RoadmapCandidatesDocument}. A root JSON array is
-     * the legacy pre-Decision-5 shape (a bare array of candidate Epics) and is wrapped as {@code {
+     * the legacy shape (a bare array of candidate Epics) and is wrapped as {@code {
      * epics: [...] }} for back-compat — an artifact written before this feature shipped still
      * resolves.
      */
@@ -134,7 +134,7 @@ public class RoadmapCandidatesArtifactResolver {
     }
 
     /**
-     * Post-Bean-Validation pass (Decision 2/3/5): rejects (degrades to {@code null}) the whole
+     * Post-Bean-Validation pass: rejects (degrades to {@code null}) the whole
      * document on a duplicate {@code key}; otherwise drops individual unresolved/cyclic references
      * and returns the rest of the document intact.
      */

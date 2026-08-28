@@ -394,8 +394,8 @@ public class RunControllerTest extends BaseTest {
 
     // -----------------------------------------------------------------------
     // GET /api/v1/runs/{id} — graphSnapshot.nodes[].decision_options parity
-    // with GET /api/v1/pending-gates' content[].decisionOptions (Decision 1:
-    // both endpoints must resolve the same node's decision options via the
+    // with GET /api/v1/pending-gates' content[].decisionOptions
+    // (both endpoints must resolve the same node's decision options via the
     // shared DecisionOptionsResolver, so the run-page sidebar and the
     // Approvals page can never silently disagree on which decisions a gate
     // accepts).

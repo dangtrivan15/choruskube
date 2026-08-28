@@ -32,14 +32,14 @@ public record GraphRuntimeSnapshotResponse(
 
     /**
      * The triggering Task's identity, resolved live off {@code workflow_run.task_id} and the
-     * {@code task.story_id -> story.epic_id} FK chain (Decision 1). Absent when the run wasn't
+     * {@code task.story_id -> story.epic_id} FK chain. Absent when the run wasn't
      * started from a Task. Story/Epic fields are independently nullable since either level may
      * no longer resolve (renamed/deleted mid-run) without failing the whole snapshot.
      *
      * <p>{@code openBlockers} lists the Task's own direct, not-yet-{@code done} incoming blocking
-     * edges (Decision 1/Decision 4) — never {@code null}, defaults to an empty list at every
+     * edges — never {@code null}, defaults to an empty list at every
      * construction site so the orchestrator's Go structs and the agent's {@code config.json}
-     * parsing always see an array (Decision 3).
+     * parsing always see an array.
      */
     public record TaskContext(
             UUID taskId,

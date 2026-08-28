@@ -1,11 +1,10 @@
 /**
  * Small legend labeling the roadmap graph canvas's four edge styles — grew
  * from the original quiet hierarchy edge and within-Epic blocking dependency
- * edge, to a third kind for cross-Epic dependencies (Decision 1), to a fourth
+ * edge, to a third kind for cross-Epic dependencies, to a fourth
  * for Epic-tier dependencies (an edge whose blocking/blocked endpoint is the
  * Epic itself — see `RoadmapEpicDependencyEdge`) — so each new edge language
- * stays discoverable without trial and error (§3.4 of the cross-Epic-blockers
- * spec).
+ * stays discoverable without trial and error.
  */
 export default function RoadmapGraphLegend() {
   return (

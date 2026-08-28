@@ -4,9 +4,9 @@ import { RoadmapTimelinePage } from "../pages/roadmap-timeline.page";
 import { RoadmapGraphPage } from "../pages/roadmap-graph.page";
 import { uniqueName } from "../helpers/api-client";
 
-// Covers §6's E2E scenario for the shared Roadmap header (RoadmapViewControls): focus set in one
+// Covers the E2E scenario for the shared Roadmap header (RoadmapViewControls): focus set in one
 // view survives a switch to another (Graph -> Board, Board -> Timeline), the Graph action stays
-// disabled until something is actually focused (Decision 3), and changing the ticket type keeps
+// disabled until something is actually focused, and changing the ticket type keeps
 // the current view where the new type has one and falls back to Board where it doesn't.
 // RoadmapTimelinePage has no dedicated fixture yet (see roadmap-timeline.spec.ts) — constructed
 // directly from `page`, matching that file's convention.

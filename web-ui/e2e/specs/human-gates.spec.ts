@@ -257,7 +257,7 @@ test.describe("Human Gates", () => {
     await expect(card.getByTestId("gate-card-redraft-button")).toBeVisible();
     await expect(card.getByTestId("gate-card-reject-button")).toHaveCount(0);
 
-    await approvalsPage.rereviewGate("approve_spec_and_plan", "Tighten §3");
+    await approvalsPage.rereviewGate("approve_spec_and_plan", "Tighten");
     await approvalsPage.page.waitForTimeout(2000);
   });
 });

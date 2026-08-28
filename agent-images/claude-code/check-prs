@@ -131,7 +131,7 @@ branch_adds_commits() {
     return 0
 }
 
-# --- Step 1: determine which repos this node pushed commits to (Decision 5) ---
+# --- Step 1: determine which repos this node pushed commits to ---
 # tab-separated (id, name) of repos whose current branch exists on origin.
 PUSHED_FILE=$(mktemp)
 trap 'rm -f "$PUSHED_FILE"' EXIT
@@ -178,9 +178,8 @@ fi
 # transport-failure exit code (e.g. 6/7/28 for DNS/connect/timeout failures) kill
 # this script immediately, with no diagnostic at all (curl -s suppresses curl's own
 # stderr message, and the HTTP_CODE check below — which would otherwise produce
-# one — is never reached). That would silently defeat Caveat 3's "fail loudly on
-# an unreachable dependency" requirement for this second network call, the same
-# way it's already honored for the ls-remote call above.
+# one — is never reached). An unreachable dependency has to fail loudly here, and
+# dying with no diagnostic at all is the one outcome this call may not have.
 set +e
 RESPONSE=$(curl -s -w "\n%{http_code}" \
     -H "Authorization: Bearer $JOB_SECRET" \

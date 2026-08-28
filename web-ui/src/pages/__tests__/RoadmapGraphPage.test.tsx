@@ -225,7 +225,7 @@ describe("RoadmapGraphPage", () => {
     await user.click(screen.getByTestId("mock-select-task-1"));
 
     // task-1's parent is story-1 (see makeTask's default storyId) — the header must carry
-    // story-1, never task-1, since Board/Timeline have no Task-granularity focus (Decision 4).
+    // story-1, never task-1, since Board/Timeline have no Task-granularity focus.
     expect(screen.getByTestId("roadmap-view-board")).toHaveAttribute(
       "href",
       "/roadmap/board?epic=epic-1&story=story-1",

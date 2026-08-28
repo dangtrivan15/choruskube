@@ -91,7 +91,7 @@ func FindReadyNodes(
 
 // RoutingHubKey marks the single out-of-graph human node (the Supervisor) a template may
 // declare. It carries no edges: any AI node reaches it with the `escalate` decision, and it
-// leaves via `route:<label>`. See the Supervisor design spec, §3.1.
+// leaves via `route:<label>`. See the Supervisor design spec.
 const RoutingHubKey = "routing_hub"
 
 // EscalateDecision is the implicit decision any AI node may submit to page the Supervisor.

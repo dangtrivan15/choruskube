@@ -8,7 +8,7 @@ import java.util.UUID;
 /**
  * @param readyItemCount How much of this Epic's work could be started right now: descendant
  *     Tasks that are still in {@code backlog} AND {@code Readiness.READY} (roadmap "ready to
- *     start" filter, Decision 2 of that feature) — computed at read time from the same {@code
+ *     start" filter) — computed at read time from the same {@code
  *     EpicReadinessAssembler} walk the Story/Task list endpoints use, never persisted. Tasks
  *     only: Stories and the Epic itself are containers, so this is directly comparable with
  *     {@code progress.totalTasks} rather than counting a different tier. A finished Epic reports
@@ -16,7 +16,7 @@ import java.util.UUID;
  *     EpicReadinessAssembler#isStartable}, shared with the Autopilot's ready frontier — what this
  *     advertises is exactly what the Autopilot would pick up.
  * @param milestone The Epic's assigned Milestone (release grouping), or {@code null} if unassigned
- *     (Decision 2/4 of the "Group Epics under a named Milestone / Release" feature). Populated on
+ *     (the "Group Epics under a named Milestone / Release" feature). Populated on
  *     both the single-Epic {@code toResponse} path and the batched multi-Epic {@code toResponses}
  *     path — see {@code DefaultEpicService}.
  */
@@ -37,7 +37,7 @@ public record EpicResponse(
         MilestoneRef milestone) {
 
     /**
-     * Rollup completion figures derived from descendant Tasks (Decision 2) — never stored. These
+     * Rollup completion figures derived from descendant Tasks — never stored. These
      * counts are the whole of what an Epic reports about completion: there is no synthesized
      * status field, because an Epic has no {@code done} lane to be in and a rollup that claimed
      * one would contradict {@link #stage}. Render "{@code doneTasks} of {@code totalTasks} tasks

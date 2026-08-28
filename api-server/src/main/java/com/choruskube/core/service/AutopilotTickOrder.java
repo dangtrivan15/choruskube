@@ -8,11 +8,7 @@ import java.util.UUID;
  *
  * <p>Separate from {@link AutopilotResolver#findAllEngaged()} because the two answer different
  * questions. Which Autopilots are engaged is a fact about the data; which of them goes first is a
- * scheduling policy. They used to share one answer, and the accident that produced was a fixed
- * order: a resolver has to sort by <em>something</em> for its own query to be well defined, and
- * whatever it sorted by silently became the tick order, forever, on every tick. The last
- * Autopilot in that order is last every single time, and every replica walks the identical list
- * and contends for the identical lease in lockstep.
+ * scheduling policy.
  *
  * <p>Ordering here rather than in each resolver so that fairness is decided once, in code that can
  * be tested with more than one Autopilot in play — which core, being single-tenant, otherwise

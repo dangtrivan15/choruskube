@@ -35,7 +35,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
     // and executor changes here never retroactively mutate prior versions. To ship a
     // change, edit the constants in this file (prompt, executor, schema), increment
     // CURRENT_VERSION, and the next boot creates the new snapshot.
-    static final int CURRENT_VERSION = 37;
+    static final int CURRENT_VERSION = 38;
 
     private static final String TEMPLATE_NAME = "Feature Development";
 
@@ -80,6 +80,22 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             The two parts have different audiences, structures, and rules. Do not mix
             them. Implementation details belong in Part 2; design rationale belongs in
             Part 1.
+
+            Write the spec so that a later per-repo split is a filter, not a rewrite. The
+            Implement node performs the actual split when it writes into each repo, so it
+            must be able to tell from the spec alone:
+              - privacy — which content may appear in a PUBLIC repo. A public repo's slice
+                must never name a non-public repo or disclose that one exists; mark any
+                content that must be generalised before it lands there.
+              - layer — which repo each statement belongs to. Keep §3 Architecture
+                organised by seam, with every bullet labelled by the repo it concerns, so a
+                slice is a filter over bullets.
+              - relevance — what someone editing only that repo needs, versus what is
+                context for the change as a whole.
+            Do not emit separate per-repo files. The cross-repo spec stays the single
+            artifact; the split happens downstream. Whoever later omits a section resolves
+            or deletes every reference into it — a reference to something the reader cannot
+            open is worse than no reference.
 
             ═══════════════════════════════════════════════════════════════════════
             Part 1: Specification (for human reviewers)
@@ -451,6 +467,11 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             You are implementing a feature based on an approved spec and plan. The
             feature may span multiple repositories.
 
+            Before writing docs or comments in a repo, read that repo's CLAUDE.md.
+            Its conventions override these instructions. Follow the instructions below
+            only where that repo states no rule. When a run touches several repos,
+            each repo's rules apply to its own files.
+
             The drafting node produced a single document with two parts:
 
             - Part 1 (Specification, sections §1–§8) — context, decisions,
@@ -535,6 +556,38 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             If the plan is unimplementable as written and Part 1 does not settle the correct
             reading, escalate (`category: uncertainty`) rather than implement a guess.
 
+            ## Routing the spec into durable docs
+
+            When a decision earns a durable home, route the spec's content by whether it
+            accumulates:
+              - §2 Decisions      -> docs/decisions/  (accumulates; entries are immutable)
+              - §3 Architecture,
+                §4 Flow Diagrams  -> merge into ARCHITECTURE.md (rewritten in place, so it
+                                     does NOT accumulate); this is present-tense state, not
+                                     a record of this change
+              - §7 Caveats tagged "Future work" -> open a GitHub issue or a roadmap item;
+                                     do not create a new docs/ surface for them
+              - §1, §5, §6, §8 and Part 2 -> discard; they are execution scaffolding
+            Graduate a decision only when something in this repo cites it. Do not bulk-copy
+            the spec.
+
+            Graduation is selective, so a decision you graduate can reference one you left
+            behind. Resolve or delete every such reference as you write the entry: state what
+            the other decision settled, or drop the clause. A reference to something the
+            reader cannot open is worse than no reference.
+
+            These docs are derived from the spec. A run owns exactly one decisions file —
+            docs/decisions/YYYY-MM-DD---NN-<slug>.md — holding every decision that run
+            graduates. On a re-run, edit that same file; never create a second one. The spec
+            may have changed since an earlier iteration wrote it and may now conflict with
+            what is there — amend or rewrite as you judge fit. ARCHITECTURE.md is an existing
+            living document; merge into it rather than adding a parallel file.
+
+            Before graduating a decision, check docs/decisions/README.md for an entry this
+            run's decision reverses or replaces. If one exists, do not edit it. Add your
+            entry as normal, note in it which entry it supersedes, and add
+            `superseded by <new-entry>` to the old entry's index row.
+
             ## Opening and updating pull requests
 
             Once every repo's implementation is done, open or refresh a pull
@@ -551,7 +604,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             whenever Code Review ran and registered anything before Test
             failed and routed back to you; Code Review is reachable as your
             own predecessor on this path, and it may have opened a fallback PR
-            for a repo you never touched — see Decision 5/§3.5 in the spec).
+            for a repo you never touched).
             `artifact get` each one that's present. Where both list the same
             repo, the `code_review` entry wins (it reflects more recent
             state); where only one lists a repo, include it anyway. For any
@@ -691,6 +744,11 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             submit the appropriate decision. The bouncing review pattern (reject
             → re-implement → re-review) is gone: when you find something fixable,
             you fix it here, in this invocation, on the working git branch.
+
+            Before writing docs or comments in a repo, read that repo's CLAUDE.md.
+            Its conventions override these instructions. Follow the instructions below
+            only where that repo states no rule. When a run touches several repos,
+            each repo's rules apply to its own files.
 
             ## Iteration awareness
 
@@ -847,8 +905,8 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                   <url> --pr-number <number> --title <title> --repo-name
                   <name>` (`id` from config.json's `repos[]`).
                 - **One-directional only:** do NOT `gh pr edit` the earlier,
-                  already-open sibling PRs to add a link back to this new one
-                  — see the spec's Caveat 5. Their Companion PRs sections
+                  already-open sibling PRs to add a link back to this new one.
+                  Their Companion PRs sections
                   stay exactly as Implement (or an earlier Code Review pass)
                   left them.
 
@@ -1042,7 +1100,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
 
         // Terminal node (v35): its `approved` decision is declared via
         // terminal_decisions in seedTemplate() instead of routing to a
-        // now-retired Push & Create PR node — see Decision 2 in the spec.
+        // now-retired Push & Create PR node.
         defs.put("Final Approval", createNodeDef("Final Approval", ExecutorType.human, null, 86400));
 
         return defs;
@@ -1149,7 +1207,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
         TemplateNode tnSupervisor =
                 createNode(template, nodeDefs.get("Supervisor"), "supervisor", false, "{\"routing_hub\": true}");
         // Terminal node (v35): `approved` has no outgoing edge — it's a
-        // terminal_decisions entry (Decision 2) that ends the run instead of
+        // terminal_decisions entry that ends the run instead of
         // routing to the now-retired Push & Create PR node.
         TemplateNode tnFinalApproval = createNode(
                 template,

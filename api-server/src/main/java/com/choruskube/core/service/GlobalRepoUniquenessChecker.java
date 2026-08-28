@@ -13,9 +13,7 @@ import org.springframework.stereotype.Component;
  * auth.enabled} is absent or {@code false} (the default).
  *
  * <p>Uniqueness is GLOBAL — the correct single-tenant semantic, since there is exactly one tenant:
- * a repo URL or a software-project name may exist at most once across the whole deployment. The
- * exception types and messages are identical to the prior org-scoped checks in
- * {@code GitRepoService} / {@code RepoGroupService}, so the API contract is unchanged.
+ * a repo URL or a software-project name may exist at most once across the whole deployment.
  */
 @Component
 @ConditionalOnProperty(name = "auth.enabled", havingValue = "false", matchIfMissing = true)

@@ -32,7 +32,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Direct coverage of {@link EpicReadinessAssembler} in isolation (extracted from {@code
- * DefaultRoadmapGraphService} — Decision 2), independent of the graph/list endpoints that call
+ * DefaultRoadmapGraphService}), independent of the graph/list endpoints that call
  * it. {@link RoadmapGraphServiceTest} already exercises this transitively through the graph
  * endpoint; this class is the one place that pins the collaborator's own contract (readiness,
  * dependency edges, external blockers) so callers can't silently drift.
@@ -152,7 +152,7 @@ public class EpicReadinessAssemblerTest extends BaseTest {
     void assemble_externalBlocker_gatesReadinessAtOneHopOnly() {
         // The blocked item's direct blocker lives in a different Epic and is itself blocked by
         // something further upstream in that OTHER Epic — the walk here is bounded to the
-        // requested Epic's own candidate set (Decision 2), so only the external blocker's own
+        // requested Epic's own candidate set, so only the external blocker's own
         // (done) status gates readiness; its further upstream chain is not followed.
         EpicResponse epicA = makeEpic("https://github.com/test/assembler-external-a.git");
         StoryResponse storyA = makeStory(epicA.id(), "Story A");

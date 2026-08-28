@@ -62,7 +62,6 @@ public class GraphValidationService {
             }
         }
 
-        // Rule 1: Exactly one entrypoint
         List<TemplateNode> entrypoints =
                 nodes.stream().filter(TemplateNode::isEntrypoint).toList();
         if (entrypoints.isEmpty()) {
@@ -75,7 +74,6 @@ public class GraphValidationService {
             errors.add("Multiple entrypoint nodes defined (" + names + "); exactly one is allowed");
         }
 
-        // Rule 2: All nodes reachable from entrypoint (backward reachability)
         if (entrypoints.size() == 1) {
             Set<UUID> reachable = findReachableFrom(entrypoints.get(0).getId(), outgoing);
             for (UUID nodeId : nodeIds) {
@@ -87,8 +85,8 @@ public class GraphValidationService {
         }
 
         // Rule 3: Terminal node check. A node counts as terminal if it has no outgoing
-        // edges, OR if it declares a non-empty config_overrides.terminal_decisions
-        // (Decision 2): that decision ends the run right there with no edge to follow,
+        // edges, OR if it declares a non-empty config_overrides.terminal_decisions:
+        // that decision ends the run right there with no edge to follow,
         // so the node doesn't need a zero-outgoing-edge shape to legitimately terminate
         // a run — e.g. the Roadmap Provisioner's human gate, whose only other edge is a
         // "rejected" back-edge to the analyzer.
@@ -112,7 +110,6 @@ public class GraphValidationService {
             }
         }
 
-        // Rule 4: Validate config_overrides for each node
         for (TemplateNode node : nodes) {
             validateConfigOverrides(node, errors);
         }
@@ -144,8 +141,8 @@ public class GraphValidationService {
     }
 
     /**
-     * Whether a node's config_overrides declares a non-empty {@code terminal_decisions} array
-     * (Decision 2). Degrades to {@code false} on missing/malformed config_overrides — Rule 4
+     * Whether a node's config_overrides declares a non-empty {@code terminal_decisions} array.
+     * Degrades to {@code false} on missing/malformed config_overrides — Rule 4
      * ({@link #validateConfigOverrides}) is the one responsible for surfacing malformed JSON as
      * a validation error, not this check.
      */
@@ -163,10 +160,6 @@ public class GraphValidationService {
         }
     }
 
-    /**
-     * Validates config_overrides JSON on a template node.
-     * Currently checks: timeout_seconds must be 0 or between 60 and 86400.
-     */
     private void validateConfigOverrides(TemplateNode node, List<String> errors) {
         String overridesStr = node.getConfigOverrides();
         if (overridesStr == null || overridesStr.isBlank() || "{}".equals(overridesStr.trim())) {

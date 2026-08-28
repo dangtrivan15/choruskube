@@ -4,7 +4,7 @@ import jakarta.validation.constraints.NotBlank;
 import java.time.LocalDate;
 
 /**
- * Internal (agent-facing) request body for creating a Milestone (Decision 6) — the
+ * Internal (agent-facing) request body for creating a Milestone — the
  * imperative-agent counterpart to {@code CandidateMilestone}. Scoped directly under the calling
  * run's resolved {@code software_project_id}; there is no cross-item ownership check to perform
  * (unlike {@link InternalCreateDependencyRequest}), since a Milestone is created fresh rather than

@@ -14,11 +14,11 @@ function isStory(item: TimelineEpicLaneNodeData | TimelineStoryNodeData): item i
 }
 
 /**
- * Client-only hover preview (item-detail hover/click feature, Decision 3) — rendered as `Tooltip`
- * content on a timeline node (Decision 5). Builds entirely from data already attached to the node
+ * Client-only hover preview (item-detail hover/click feature) — rendered as `Tooltip`
+ * content on a timeline node. Builds entirely from data already attached to the node
  * (title, stage, parent Epic, blocked/stalled) with no hook and no network request: blockers are
  * the one field that needs a fetch, and they're deliberately left off the hover preview, appearing
- * only in the click-opened `RoadmapTimelineDetailPanel` (Decision 1, Decision 3).
+ * only in the click-opened `RoadmapTimelineDetailPanel`.
  *
  * An Epic lane's `blocked` is an OR-aggregate across its Stories (see `deriveEpicRisk`), not the
  * Epic's own readiness — Epics don't participate in the dependency graph (`TimelineEpicSummary`

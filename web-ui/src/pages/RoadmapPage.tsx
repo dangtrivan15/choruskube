@@ -42,7 +42,7 @@ interface MilestoneFilterProps {
 
 /**
  * Roadmap toolbar "milestone" filter — an All + one chip per Milestone in the org, styled
- * consistently with `PriorityFilter` (Decision 4/3.5 of the "Group Epics under a named
+ * consistently with `PriorityFilter` (the "Group Epics under a named
  * Milestone / Release" feature). Unlike `PriorityFilter`'s fixed three-value enum, the option
  * set is dynamic (`useMilestones()`, unscoped — the Roadmap Epic list spans every software
  * project), so this stays inline here rather than a reusable component with a bounded value

@@ -106,7 +106,7 @@ class V1TemplateSeederTest extends BaseTest {
                         .filter(nd -> "Spec Review".equals(nd.getName()))
                         .count())
                 .isEqualTo(1);
-        // v35 retires the dedicated Push & Create PR node (Decision 1) — Implement and
+        // v35 retires the dedicated Push & Create PR node — Implement and
         // Code Review now own PR creation/refresh themselves.
         assertThat(nodeDefRepo.findAll().stream()
                         .filter(nd -> "Push & Create PR".equals(nd.getName()))
@@ -117,7 +117,7 @@ class V1TemplateSeederTest extends BaseTest {
 
     @Test
     void implementAndCodeReviewCarryNeedsPrConfigOverride() {
-        // v35 (Decision 1): PR creation/refresh moves into Implement and Code Review, gated
+        // v35: PR creation/refresh moves into Implement and Code Review, gated
         // by needs_pr the same way needs_branch already gates branch provisioning.
         var template = templateRepo
                 .findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION)
@@ -440,7 +440,7 @@ class V1TemplateSeederTest extends BaseTest {
         var outgoing = edges.stream()
                 .filter(e -> e.getSourceNodeId().equals(finalApproval.getId()))
                 .toList();
-        // v35 (Decision 1/2): rereview → code_review is the ONLY real outgoing edge.
+        // v35: rereview → code_review is the ONLY real outgoing edge.
         // `approved` no longer routes to a Push & Create PR node — it's declared as a
         // terminal_decisions entry on this node's config_overrides instead, ending the run.
         assertThat(outgoing).hasSize(1);
@@ -628,10 +628,10 @@ class V1TemplateSeederTest extends BaseTest {
 
     @Test
     void implementPromptSurfacesManualOperationsAndCaveats() {
-        // v35 (Decision 1): PR creation moved from the retired Push & Create PR node
+        // v35: PR creation moved from the retired Push & Create PR node
         // into Implement itself, so Implement's own "Opening and updating pull
         // requests" section must carry the same PR-body content rules that node used
-        // to own — copy §8 Manual Operations into PR bodies, list §7 Caveats, and
+        // to own — copy Manual Operations into PR bodies, list Caveats, and
         // flag any unresolved "Needs human decision" caveats.
         var template = templateRepo
                 .findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION)
@@ -650,7 +650,7 @@ class V1TemplateSeederTest extends BaseTest {
                 .contains("{input.draft_spec_and_plan.result}")
                 .as("PR body must surface Manual Operations under a clearly-labelled heading")
                 .contains("## ⚠️ Manual Operations Required")
-                .as("PR body must surface Caveats from §7")
+                .as("PR body must surface Caveats")
                 .contains("## Caveats & Known Limitations")
                 .as("PR body must conditionally surface any unresolved 'Needs human decision' caveats")
                 .contains("## ❓ Open Decisions for Reviewer");
@@ -695,13 +695,13 @@ class V1TemplateSeederTest extends BaseTest {
                 .as("an empty companion section must be omitted, not narrated — a 'none'"
                         + " note discloses that companions were withheld")
                 .contains("Do NOT write \"none\"")
-                .as("§8 must be scoped and generalized for a public repo, not copied verbatim")
+                .as("Manual Operations must be scoped and generalized for a public repo, not copied verbatim")
                 .contains("include ONLY the operations that apply");
     }
 
     @Test
     void codeReviewPromptKeepsPullRequestsCurrentAndOnlyLinksOneDirectionally() {
-        // v35 (Decision 1/Caveat 5): Code Review refreshes PRs Implement (or an earlier
+        // v35: Code Review refreshes PRs Implement (or an earlier
         // Code Review pass) already opened, and opens a fallback PR itself for a repo
         // nobody has touched yet — but must NOT edit an already-open sibling PR to add
         // a backlink to a new one it just opened.
@@ -812,20 +812,24 @@ class V1TemplateSeederTest extends BaseTest {
     }
 
     @Test
-    void currentVersionIsBumpedForSupervisorNode() {
-        // v37: the graph becomes happy-path-only — every need_human_decision:* edge is
-        // removed and exception routing moves to the edgeless Supervisor node. Verifies only
-        // that the seeder actually bumped its version constant when it shipped this change.
-        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(37);
-        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 37))
+    void currentVersionIsBumpedForDocAndCommentConventions() {
+        // v38: IMPLEMENT_PROMPT and CODE_REVIEW_PROMPT defer to each repo's CLAUDE.md for
+        // doc and comment conventions; IMPLEMENT_PROMPT routes spec content into
+        // docs/decisions/ and ARCHITECTURE.md and carries the reference-repair rule that
+        // previously lived only in the drafting prompt — graduating some decisions and not
+        // others is what leaves a graduated entry citing one the reader cannot open;
+        // SPEC_AND_PLAN_PROMPT requires a spec a per-repo split can filter rather than
+        // rewrite. Verifies only that the seeder actually bumped its version constant when
+        // it shipped this change.
+        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(38);
+        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 38))
                 .isPresent();
     }
 
     @Test
     void draftSpecAndPlanAndImplementCarryStaticModelAndExpectedEffort() {
-        // Draft Spec & Plan: static Opus model, xhigh effort (research node — Decision 2
-        // Context/§1). Implement: static Sonnet model, downshifted to "high" effort
-        // (Decision 4) from the pre-v36 "xhigh".
+        // Draft Spec & Plan: static Opus model, xhigh effort (research node). Implement:
+        // static Sonnet model, downshifted to "high" effort from the pre-v36 "xhigh".
         var template = templateRepo
                 .findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION)
                 .orElseThrow();
@@ -853,7 +857,7 @@ class V1TemplateSeederTest extends BaseTest {
 
     @Test
     void specReviewAndCodeReviewCarryIterationAwareModelEffortKeys() {
-        // Decision 2: spec_review/code_review no longer carry a static flat `effort` —
+        // spec_review/code_review no longer carry a static flat `effort` —
         // both iteration bands are declared via the four new config_overrides keys, read
         // by the orchestrator's dag_executor.go keyed on tracker.reviewPass.
         var template = templateRepo
@@ -879,7 +883,7 @@ class V1TemplateSeederTest extends BaseTest {
                     .contains("\"effort_subsequent_iteration\": \"high\"");
         }
         // Neither node declares a static flat `effort` key anymore — the iteration-aware
-        // keys fully replace it (Decision 2's "remove any static effort key" instruction).
+        // keys fully replace it (the "remove any static effort key" instruction).
         assertThat(specReview.getConfigOverrides()).doesNotContain("\"effort\":");
         assertThat(codeReview.getConfigOverrides()).doesNotContain("\"effort\":");
     }

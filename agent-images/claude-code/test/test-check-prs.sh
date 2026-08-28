@@ -1,7 +1,7 @@
 #!/bin/bash
 # Unit tests for check-prs (no live container needed).
 #
-# check-prs (Decision 3/§3.3 — PR completion gate) has real branching that nothing
+# check-prs (PR completion gate) has real branching that nothing
 # else in this repo's test suite exercises directly: test-config-parsing.sh's Test 20
 # only greps entrypoint.sh's *call site* of check-prs (structural, not check-prs's own
 # logic), and mock-agent.sh's check_prs_gate scenario only exercises the happy path
@@ -217,7 +217,7 @@ echo "$OUT" | grep -qF "svc5a: no PR registered" \
     && fail "multi-repo partial registration: false-positives the registered repo" || ok "multi-repo partial registration: does not false-positive the registered repo"
 
 # --- Test 6: curl transport failure (e.g. DNS/connect/timeout) — exits 1 loudly,
-# doesn't die silently under set -euo pipefail (Decision/Caveat 3 — the exact bug
+# doesn't die silently under set -euo pipefail (the exact bug
 # iteration 1 of this PR's own review fixed) ---
 ORIGIN6="$TESTDIR/origin6.git"; WORK6="$TESTDIR/work6"
 make_origin "$ORIGIN6"; make_run_branch_repo "$ORIGIN6" "$WORK6" ahead

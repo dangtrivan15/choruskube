@@ -1,7 +1,7 @@
 import { test, expect } from "../fixtures";
 import { uniqueName, TestApiClient, type Task } from "../helpers/api-client";
 
-// The Autopilot (spec §10) is a SINGLETON with no per-org/per-worker scope filter (Decision 7):
+// The Autopilot is a SINGLETON with no per-org/per-worker scope filter:
 // its candidate source is every Epic on the board, and `POST /tick` is the only thing that
 // advances it in this stack — `AUTOPILOT_ENABLED=false` on the api-server in
 // docker-compose.e2e.yaml keeps AutopilotReconciler's 30s scheduler off, precisely so that
@@ -15,7 +15,7 @@ import { uniqueName, TestApiClient, type Task } from "../helpers/api-client";
 // Backlog column before acting on it — if a tick from this file lands in that window, it can
 // silently start that Task first, and the resulting failure looks exactly like infrastructure
 // flakiness in an unrelated file. There is no way to close this from inside one spec file alone
-// (Decision 7 has no scope to filter by), so the mitigations here are damage limitation, not
+// (there is no scope to filter by), so the mitigations here are damage limitation, not
 // elimination:
 //   - `test.describe.configure({ mode: "serial" })` keeps this file's own 3 tests on one worker
 //     — Playwright's `fullyParallel: true` would otherwise schedule them onto different workers,
@@ -125,14 +125,14 @@ test.describe("Autopilot", () => {
     });
     // taskA and taskB are independent — no dependency edge between them — so both are READY
     // from creation. Which one the Autopilot picks first is intentionally left unconstrained
-    // (Decision 6's tie-break is `created_at` then Task id, and this test doesn't need to know
+    // (the tie-break is `created_at` then Task id, and this test doesn't need to know
     // the answer): whichever starts is "started", the other is "pending", and the causal claim
     // this test proves — pausing started's run lets pending start — holds either way.
     await api.engageAutopilot();
 
     // Offer exactly ONE free slot at a time so a tick can start at most one Task globally, then
-    // tick until one of ours claims it. The Autopilot's candidate source spans the whole board
-    // (Decision 7), so in principle that one slot could go to another worker's Task instead of
+    // tick until one of ours claims it. The Autopilot's candidate source spans the whole board,
+    // so in principle that one slot could go to another worker's Task instead of
     // ours — this file's tests are the only Autopilot-attributed traffic in the suite (serialised
     // onto one worker, see the top-of-file comment), so in practice this converges on the first
     // or second attempt; the bounded retry absorbs the rest.

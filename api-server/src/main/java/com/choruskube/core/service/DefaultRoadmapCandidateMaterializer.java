@@ -28,7 +28,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /**
- * Default {@link RoadmapCandidateMaterializer}. Order of operations (Decision 3/4/5):
+ * Default {@link RoadmapCandidateMaterializer}. Order of operations:
  *
  * <ol>
  *   <li>Milestones: find-or-create by name via {@link MilestoneService#findOrCreate}, mapping
@@ -36,7 +36,7 @@ import org.springframework.stereotype.Service;
  *   <li>Epics, then their Stories, then their Tasks, via {@link InternalRunService}'s existing
  *       agent-facing write path — the materializer's only injected dependency for item creation
  *       itself, wrapping each top-level candidate in its own try/catch so one failure doesn't stop
- *       the rest of the batch (Caveat 3). Each item's {@code key} (if any) is recorded in a {@code
+ *       the rest of the batch. Each item's {@code key} (if any) is recorded in a {@code
  *       key -> (BlockableItemType, id)} map as it's created;
  *   <li>Dependency edges: each {@link CandidateDependency} resolves its {@code blocking}/{@code
  *       blocked} keys against that same map and calls {@link WorkItemDependencyService#create}
@@ -50,11 +50,11 @@ import org.springframework.stereotype.Service;
  * <p>{@code title}/{@code description}/{@code motivation} are forwarded to {@code
  * InternalCreateEpicRequest} as-is, and each item's free-text {@code priority} — a
  * {@code "High"}/{@code "Medium"}/{@code "Low"} triage signal, now available at Epic/Story/Task
- * level (Decision 4) — is parsed (case-insensitively, via {@link #parsePriority}) onto the
+ * level — is parsed (case-insensitively, via {@link #parsePriority}) onto the
  * materialized item's initial {@link Priority}, which the reviewer can re-prioritize afterwards.
  * Anything null/blank/unrecognized falls back to {@link Priority#medium}. {@link
  * CandidateEpicProposal#repos()} still has no corresponding field on the Epic and is intentionally
- * dropped (see Caveat 6: a materialized Epic's {@code repos} is always derived from its software
+ * dropped (a materialized Epic's {@code repos} is always derived from its software
  * project).
  */
 @Service
@@ -105,7 +105,7 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
     }
 
     /**
-     * Best-effort per Milestone (Decision 3, extended to Milestones): resolving the run's software
+     * Best-effort per Milestone (same best-effort semantics as Epics/Stories/Tasks): resolving the run's software
      * project or an individual find-or-create call can fail without aborting the rest of the
      * batch — Epics/Stories/Tasks are still worth materializing even if every Milestone failed.
      */
@@ -148,7 +148,7 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
      * Creates the Epic, then best-effort creates each of its Stories/Tasks. The Epic id is recorded
      * in {@code createdEpicIds} as soon as the Epic itself is created — separately from whether its
      * nested Stories/Tasks all succeed — because each {@code create*} call is its own committed
-     * transaction (Caveat 3). If a nested Story/Task failed and the Epic id were only recorded after
+     * transaction. If a nested Story/Task failed and the Epic id were only recorded after
      * the whole tree succeeded, a partial failure would leave an already-persisted Epic (and
      * possibly some of its Stories) completely absent from the summary: the reviewer would be told
      * that candidate was "skipped" while an orphaned Epic silently exists in the database with no
@@ -230,7 +230,7 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
 
     /**
      * Resolves each {@link CandidateDependency}'s keys against the just-materialized item map and
-     * creates the edge directly through {@link WorkItemDependencyService#create} (Decision 3) — a
+     * creates the edge directly through {@link WorkItemDependencyService#create} — a
      * key that doesn't resolve (unknown, or its item's own creation failed above) or an edge {@code
      * WorkItemDependencyService} itself rejects (cycle, duplicate, self-reference) is skipped and
      * recorded in {@code errors}; the batch continues either way.

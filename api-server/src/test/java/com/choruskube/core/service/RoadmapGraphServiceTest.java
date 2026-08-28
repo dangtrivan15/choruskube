@@ -214,7 +214,7 @@ public class RoadmapGraphServiceTest extends BaseTest {
     @Test
     void getGraph_blockerInDifferentEpic_externalBlockerHasDirectionBlockingAndInternalItemId() {
         // Same fixture as getGraph_blockerInDifferentEpic_appearsInExternalBlockersNotDependencies
-        // above, extended to assert the new direction/internalItemId fields (Decision 3): the
+        // above, extended to assert the new direction/internalItemId fields: the
         // external item BLOCKS the in-Epic item, so direction is BLOCKING and internalItemId
         // points back at the in-Epic (blocked) Task.
         EpicResponse epicA = makeEpic("https://github.com/test/graph-direction-blocking-a.git");
@@ -238,7 +238,7 @@ public class RoadmapGraphServiceTest extends BaseTest {
     @Test
     void getGraph_blockedInDifferentEpic_externalBlockerHasDirectionBlockedAndInternalItemId() {
         // Same fixture as getGraph_blockedInDifferentEpic_appearsInExternalBlockersNotDependencies
-        // above, extended to assert the new direction/internalItemId fields (Decision 3): the
+        // above, extended to assert the new direction/internalItemId fields: the
         // in-Epic item BLOCKS the external item, so from the external item's perspective direction
         // is BLOCKED and internalItemId points back at the in-Epic (blocking) Task.
         EpicResponse epicA = makeEpic("https://github.com/test/graph-direction-blocked-a.git");
@@ -261,7 +261,7 @@ public class RoadmapGraphServiceTest extends BaseTest {
 
     @Test
     void getGraph_externalBlockerTouchingMultipleInternalItems_eachRefHasDistinctInternalItemId() {
-        // The same external Task blocks two different in-Epic Tasks — Decision 4's dedup
+        // The same external Task blocks two different in-Epic Tasks — the dedup
         // responsibility lives client-side, so the service must still emit one ExternalBlockerRef
         // per edge here, each carrying the specific in-Epic item it touches.
         EpicResponse epicA = makeEpic("https://github.com/test/graph-multi-internal-a.git");
@@ -393,7 +393,7 @@ public class RoadmapGraphServiceTest extends BaseTest {
                 .isInstanceOf(com.choruskube.core.exception.NotFoundException.class);
     }
 
-    // ── readiness (Decision 2) ────────────────────────────────────────────────
+    // ── readiness ────────────────────────────────────────────────
 
     @Test
     void getGraph_taskWithNoDependencyEdges_isReady() {
@@ -531,7 +531,7 @@ public class RoadmapGraphServiceTest extends BaseTest {
 
     @Test
     void getGraph_crossEpicBlocker_notWalkedPastExternalBlocker() {
-        // An item's direct blocker is itself blocked by an item in a DIFFERENT Epic (Decision 2):
+        // An item's direct blocker is itself blocked by an item in a DIFFERENT Epic:
         // the walk is bounded to the requesting Epic, so it stops at the external blocker's own
         // status and does not follow that blocker's further upstream chain — the item renders
         // READY once the external blocker itself is done, even though something further upstream
@@ -557,7 +557,7 @@ public class RoadmapGraphServiceTest extends BaseTest {
         assertThat(readinessOf(snapshot, blockedInA.id())).isEqualTo(Readiness.READY);
     }
 
-    // ── recentRuns / totalRunCount (Decision 3) ───────────────────────────────
+    // ── recentRuns / totalRunCount ───────────────────────────────
 
     @Test
     void getGraph_taskWithMoreThanFiveRuns_cappedRecentRunsWithCorrectTotalCount() {
@@ -591,7 +591,7 @@ public class RoadmapGraphServiceTest extends BaseTest {
         assertThat(taskResponse.totalRunCount()).isZero();
     }
 
-    // ── internal path (agent-facing mirror, Decision 1/Decision 5) ────────────
+    // ── internal path (agent-facing mirror) ────────────
 
     @Test
     void getGraphInternal_sameRunSoftwareProject_returnsSameShapeAsPublicPath() {

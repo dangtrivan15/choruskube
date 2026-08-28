@@ -10,7 +10,7 @@ import type { RoadmapDetailItem } from "@/components/roadmap/RoadmapGraphDetailP
 export type RoadmapView = "graph" | "list" | "board" | "timeline";
 
 /**
- * The shared "what's focused" vocabulary every Roadmap view and the switcher agree on (§3.1): an
+ * The shared "what's focused" vocabulary every Roadmap view and the switcher agree on: an
  * Epic id, optionally paired with a Story id nested under it. Both keys are optional so this type
  * can represent "nothing focused" (`{}`) as well as an Epic-only or Epic+Story focus.
  */
@@ -22,7 +22,7 @@ export interface RoadmapFocus {
 /**
  * Reads `epic`/`story` out of a URL's search params. Absent or empty values are simply omitted
  * from the result — this never throws, even for a malformed/garbage query string, since
- * `URLSearchParams.get` just returns `null` for anything it can't find (§6's Negative/security
+ * `URLSearchParams.get` just returns `null` for anything it can't find (the Negative/security
  * case: an unknown id is handled by the caller treating a present-but-stale id as "not found",
  * not by this function rejecting it).
  */
@@ -61,8 +61,8 @@ const EPIC_LEVEL_PATHS: Record<Exclude<RoadmapView, "graph">, string> = {
 
 /**
  * Computes the destination URL for switching to `view` at the *Epic* level while carrying `focus`
- * along (§3.2). Returns `null` for `"graph"` when there's no focused Epic — Graph is strictly
- * per-Epic, so there is nowhere to send an unfocused Graph click (Decision 3); callers use a
+ * along. Returns `null` for `"graph"` when there's no focused Epic — Graph is strictly
+ * per-Epic, so there is nowhere to send an unfocused Graph click; callers use a
  * `null` result to render a disabled control instead of a link.
  *
  * Story- and Task-level destinations are deliberately not handled here: they drop the focus rather
@@ -82,7 +82,7 @@ export function buildFocusedUrl(view: RoadmapView, focus: RoadmapFocus): string 
 
 /**
  * Clamps a Roadmap Graph detail-panel selection down to the Epic/Story granularity Board and
- * Timeline understand (Decision 4): a Task selection maps to its parent Story's id, a Story
+ * Timeline understand: a Task selection maps to its parent Story's id, a Story
  * selection to its own id, and an Epic selection contributes nothing extra (Graph already supplies
  * its own Epic id from the route, so there is nothing further to clamp). `null`/`undefined` —
  * `RoadmapGraphPage`'s default state on initial load and after a pane-click deselect — is not an

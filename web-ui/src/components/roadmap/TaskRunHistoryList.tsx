@@ -11,7 +11,7 @@ interface Props {
 }
 
 /**
- * Renders a Task's full run history (Decision 1 — every run a Task ever
+ * Renders a Task's full run history (every run a Task ever
  * launched stays queryable via `task_id`, newest first), not just the
  * latest one.
  */

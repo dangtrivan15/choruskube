@@ -208,7 +208,7 @@ public class AutopilotServiceIntegrationTest extends BaseTest {
 
     @Test
     void tick_parkedRunFreesItsSlot_soTheNextTaskStarts() {
-        // Decision 2, and the whole point of the feature: a run waiting on a human dispatches no
+        // The whole point of the feature: a run waiting on a human dispatches no
         // workload, so holding its slot would idle the Autopilot for as long as the user is away.
         StoryResponse story = makeStory(makeRepo("autopilot-parked").getId());
         taskService.create(story.id(), new TaskRequest("First", "D"));

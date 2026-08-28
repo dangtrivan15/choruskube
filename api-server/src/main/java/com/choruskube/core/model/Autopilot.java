@@ -9,8 +9,8 @@ import java.util.UUID;
 import org.hibernate.annotations.DynamicUpdate;
 
 /**
- * The Autopilot: a standing controller that starts READY Tasks unattended (Decision 1). One row
- * per installation (Decision 7); absence of the row means "never configured" rather than
+ * The Autopilot: a standing controller that starts READY Tasks unattended. One row
+ * per installation; absence of the row means "never configured" rather than
  * "disengaged", which the service turns into a synthetic status on read.
  *
  * <p>Deliberately not a {@code BaseEntity}: this is control-plane configuration, not org-owned

@@ -5,8 +5,7 @@ import { createContext, useContext } from "react";
  * `onFocusChange(epicId, storyId?)` — but the leaf node renderers (`RoadmapTimelineNode`) receive
  * only `data` from `@xyflow/react`, not arbitrary props. This context is how the keyboard
  * (Enter/Space) activation path added on the leaf nodes reaches the exact same focus call a
- * pointer click already makes, without duplicating focus logic down in the leaf (§3.1,
- * Implementation Plan Task 4).
+ * pointer click already makes, without duplicating focus logic down in the leaf.
  *
  * Lives in its own module (rather than inline in `RoadmapTimeline.tsx`) so the wrapper and the
  * leaf node file — which already import from each other (`RoadmapTimeline` imports the node

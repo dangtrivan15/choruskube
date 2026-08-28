@@ -29,7 +29,7 @@ import org.springframework.stereotype.Service;
 
 /**
  * Refreshes registered pull requests' merge state from GitHub, then closes any Task whose most
- * recent run's pull requests have all merged (Decisions 8 and 9). Merging the last PR is what
+ * recent run's pull requests have all merged. Merging the last PR is what
  * closes a Task — the agent is no longer asked to do it.
  *
  * <p>Idempotent by construction: a merged row leaves the unmerged scan permanently, and closure
@@ -44,11 +44,6 @@ import org.springframework.stereotype.Service;
  * Autopilot keeps dispatching every Task the fault does not touch, and the stuck ones are reported
  * rather than hidden. Only a fault that makes the whole scope unreadable — a credential that is
  * refused or absent — stops the Autopilot outright.
- *
- * <p>That asymmetry is safe because a failed read is fail-closed: {@link #refreshOne} throws before
- * it touches the entity, so an unread pull request keeps its state and its Task stays open. The
- * Autopilot can therefore be made to start <em>less</em> than it might have, never something it
- * should not have.
  */
 @Service
 public class PullRequestStateService {
@@ -85,9 +80,6 @@ public class PullRequestStateService {
         this.credentialResolver = credentialResolver;
         this.taskService = taskService;
         this.autopilotSafetyValve = autopilotSafetyValve;
-        // A base below the tick interval buys nothing — the row simply becomes due again before
-        // anything looks at it — but a base of zero is a defect, not a tuning choice: it is the
-        // pre-V17 behaviour, and it reintroduces the starvation this exists to remove.
         if (backoffBase.isZero() || backoffBase.isNegative()) {
             throw new IllegalArgumentException(
                     "pull-request-state.backoff-base must be positive; a zero delay is what starved the scan");
@@ -101,10 +93,7 @@ public class PullRequestStateService {
 
     /**
      * One tick: refresh a batch of unmerged PRs, then try to close the Tasks behind any that just
-     * merged. A row that fails is deferred by {@link #backOff} rather than left where it was: it
-     * keeps its state, but yields its place in the scan for a delay that doubles with each
-     * consecutive failure. A single transient failure therefore still costs about one interval,
-     * while a row nothing can fix stops crowding healthy rows out of the batch.
+     * merged.
      *
      * <p>A failure classified {@link FaultResponse#QUARANTINE} is flagged on its own row and goes no
      * further; the Autopilot is told about it through the status panel, not stopped by it.
@@ -221,13 +210,6 @@ public class PullRequestStateService {
     }
 
     /**
-     * Stops the Autopilot that owns one repository, and never more than that.
-     *
-     * <p>Contained rather than allowed to propagate: the scopes in a batch are independent, so a
-     * resolution that fails for one must not take the stop away from the next. The reconciler's own
-     * catch is a batch-wide boundary and would.
-     */
-    /**
      * Flags one pull request as permanently unreadable, and stops there.
      *
      * <p>Idempotent on the timestamp: the reason is refreshed on every pass so a fault that
@@ -273,15 +255,8 @@ public class PullRequestStateService {
      * <p><strong>Transient is the closed list, and persistent is the default.</strong> That
      * direction is the rule itself: a false stop costs an operator one click, a false continue costs
      * an Autopilot dispatching against a graph it can no longer read. Enumerating the persistent
-     * statuses instead put every status nobody had thought of on the unsafe side — 410 Gone and 451
-     * are as permanent as 404 and used to retry every two minutes forever, and a 3xx counted as
-     * transient too, since this client does not follow redirects and would never have resolved one.
-     *
-     * <p>Statuses are therefore classified by what can come right on its own: 429 and 5xx, which a
-     * two-minute retry loop recovers from without a human, and which would make the Autopilot
-     * useless if they stopped it. Everything else needs somebody. Exceptions carrying no status at
-     * all — a timeout, a reset connection — stay transient by nature: there was no response to
-     * classify, and the next tick is the right answer.
+     * statuses instead put every status nobody had thought of on the unsafe side — a 3xx among
+     * them, since this client does not follow redirects and would never resolve one.
      *
      * <p><strong>A rate limit is transient whatever status carries it.</strong> GitHub answers a
      * secondary rate limit with 403 — the same status as a credential that genuinely lacks access —
@@ -301,8 +276,6 @@ public class PullRequestStateService {
      * whatever the implementation threw. Not having a credential is still persistent by default —
      * that part is unchanged — but "GitHub told us to wait" is not the same thing as "there is no
      * credential", and only the chain can tell them apart.
-     *
-     * @return the reason to record on the Autopilot, or null when the failure is transient
      */
     private static Fault classifyFault(Exception e) {
         // Unchanged, and deliberately ahead of everything else: a rate limit arrives as a 403 and
@@ -337,10 +310,7 @@ public class PullRequestStateService {
                             api.getMessage() + " — the repository or pull request is gone, or not visible to the "
                                     + "GitHub credential");
                 // Unknown, and therefore confined. 301, 410, 422 and 451 all reach here, and
-                // none of them is evidence about any repository but this one. The old code
-                // stopped the Autopilot for all of them because a stop was the only response it
-                // had; with quarantine available, confining an unrecognised status is both the
-                // conservative answer and the honest one.
+                // none of them is evidence about any repository but this one.
                 default ->
                     Fault.quarantine(
                             api.getMessage() + " — GitHub will keep answering that until somebody changes something");

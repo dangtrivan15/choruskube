@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Test;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 /**
- * Schema-level test for {@code V11__milestone.sql} (Decisions 1–3 of the "Group Epics under a
+ * Schema-level test for {@code V11__milestone.sql} (the "Group Epics under a
  * named Milestone / Release" feature; renumbered from the spec's nominal {@code V10} because
  * {@code V10__epic_story_target_date.sql} already occupies that slot in this repo — see the
  * migration directory listing at implementation time): the {@code milestone} table, its per-project

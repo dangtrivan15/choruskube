@@ -24,13 +24,10 @@ public class RunEventPublisher {
         RunEvent event = new RunEvent("run_status_changed", runId, null, status);
         messagingTemplate.convertAndSend("/topic/runs/" + runId, event);
 
-        // Notify the pending-gates dashboard when a run is cancelled or fails
         if ("cancelled".equals(status) || "failed".equals(status)) {
             feedPublisher.pendingGatesChanged(runId, event);
         }
 
-        // Notify the roadmap dashboard when a run reaches a terminal status,
-        // so linked Tasks reflect the latest workflow run state
         if ("completed".equals(status) || "failed".equals(status) || "cancelled".equals(status)) {
             RoadmapItemEvent bridgeEvent = new RoadmapItemEvent("run_status_changed", null, status);
             feedPublisher.roadmapItemChanged("workflow_run", runId, bridgeEvent);
@@ -39,7 +36,7 @@ public class RunEventPublisher {
 
     /**
      * Publishes a roadmap-item change for an Epic, Story, or Task. {@code itemType} is one of
-     * "epic"/"story"/"task" (Decision 7) and doubles as the resource-type key the feed is scoped
+     * "epic"/"story"/"task" and doubles as the resource-type key the feed is scoped
      * by; the payload's own {@code itemType} field is {@code itemType + "_changed"}.
      */
     public void publishRoadmapItemChanged(String itemType, UUID itemId, String status) {
@@ -80,7 +77,6 @@ public class RunEventPublisher {
         RunEvent event = new RunEvent("node_status_changed", runId, nodeExecutionId, status);
         messagingTemplate.convertAndSend("/topic/runs/" + runId, event);
 
-        // Notify the pending-gates dashboard on relevant status changes
         if ("awaiting_human".equals(status)
                 || "live_chat".equals(status)
                 || "completed".equals(status)

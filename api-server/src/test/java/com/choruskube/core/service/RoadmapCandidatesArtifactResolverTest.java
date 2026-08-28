@@ -18,9 +18,9 @@ import org.mockito.Mockito;
  * Covers {@link RoadmapCandidatesArtifactResolver}: the Bean Validation guardrail that an
  * AI-authored {@code roadmap_candidates.json} artifact must satisfy the identical {@code
  * @NotBlank}/{@code @Size} constraint tree that {@code SignalRequest.editedCandidates} enforces on
- * the reviewer-edited path (not just be well-formed JSON), plus the document-shape parsing
- * (Decision 5), legacy bare-array back-compat, and the key/reference/cycle validation added on top
- * of Bean Validation (Decision 2/3).
+ * the reviewer-edited path (not just be well-formed JSON), plus the document-shape parsing,
+ * legacy bare-array back-compat, and the key/reference/cycle validation added on top
+ * of Bean Validation.
  */
 class RoadmapCandidatesArtifactResolverTest {
 

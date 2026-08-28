@@ -31,7 +31,6 @@ public class DocsService {
         }
         List<DocsIndexEntry> parsed =
                 objectMapper.readValue(indexResource.getInputStream(), new TypeReference<List<DocsIndexEntry>>() {});
-        // Validate that every slug has a corresponding .md file
         for (DocsIndexEntry entry : parsed) {
             ClassPathResource mdResource = new ClassPathResource("docs/" + entry.slug() + ".md");
             if (!mdResource.exists()) {

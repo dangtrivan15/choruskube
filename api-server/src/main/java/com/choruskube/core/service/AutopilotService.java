@@ -50,14 +50,11 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.Assert;
 
 /**
- * The Autopilot: a standing controller that starts READY Tasks unattended (Decision 1). No
+ * The Autopilot: a standing controller that starts READY Tasks unattended. No
  * terminal state — an empty ready frontier means idle, not finished.
  *
- * <p>Lives in this package because {@link EpicReadinessAssembler} and both of its methods are
- * package-private, and the Autopilot has to compute readiness exactly the way the board does.
- *
  * <p><strong>Which row this is acting on is never decided here.</strong> It comes from {@link
- * AutopilotResolver} — one Autopilot per installation in core (Decision 7), one per organisation
+ * AutopilotResolver} — one Autopilot per installation in core, one per organisation
  * downstream. Nothing in this class enumerates or orders {@code autopilot} rows itself, which is
  * what stops "the singleton" quietly meaning "somebody else's" once there is more than one.
  *
@@ -73,7 +70,7 @@ public class AutopilotService implements AutopilotSafetyValve {
 
     private static final Logger log = LoggerFactory.getLogger(AutopilotService.class);
 
-    /** Decision 5: three consecutive failures mean the platform is broken, not the work. */
+    /** Three consecutive failures mean the platform is broken, not the work. */
     private static final int FAILURE_LIMIT = 3;
 
     /** {@code nextUp} is a preview panel, not a queue dump. */
@@ -187,16 +184,10 @@ public class AutopilotService implements AutopilotSafetyValve {
                 instanceId == null || instanceId.isBlank() ? UUID.randomUUID().toString() : instanceId;
         this.writes = new TransactionTemplate(transactionManager);
         this.reads = new TransactionTemplate(transactionManager);
-        // Read-only puts Hibernate in MANUAL flush mode, so the sweeping and reporting phases
-        // cannot write this row even by accident — a structural echo of the repository having no
-        // save method. Both templates are PROPAGATION_REQUIRED, which is why tick() asserts that
-        // nothing has already opened a transaction around them.
         this.reads.setReadOnly(true);
     }
 
-    // ---------------------------------------------------------------------------------------
     // Run classification — the single place a WorkflowRunStatus means anything to the Autopilot
-    // ---------------------------------------------------------------------------------------
 
     /** Whether a finished run counts toward, or clears, the failure breaker. */
     private enum Settle {
@@ -223,18 +214,16 @@ public class AutopilotService implements AutopilotSafetyValve {
      */
     private static RunClass classify(WorkflowRunStatus status) {
         return switch (status) {
-            // A live agent pod. The only thing max_parallel counts (Decision 2).
+            // A live agent pod. The only thing max_parallel counts.
             case pending, running -> new RunClass(true, Settle.NOT_FINISHED, Bucket.NONE);
             // Parked on a human. Costs nothing to hold, so it frees its slot — that is the
-            // whole point of Decision 2, since otherwise stepping away stalls the Autopilot.
+            // whole point, since otherwise stepping away stalls the Autopilot.
             case awaiting_human, live_chat, paused -> new RunClass(false, Settle.NOT_FINISHED, Bucket.AWAITING_YOU);
             // Failed and held for seven days. A failure for the breaker, and it stays on the
             // needs-attention list afterwards, because the Autopilot never retries it.
             case awaiting_retry -> new RunClass(false, Settle.FAILURE, Bucket.NEEDS_ATTENTION);
             case completed -> new RunClass(false, Settle.SUCCESS, Bucket.NONE);
             case failed -> new RunClass(false, Settle.FAILURE, Bucket.NONE);
-            // A human cancelling is not the Autopilot failing — and must not leave stale
-            // failure credit behind either, so it settles with no effect on the counter.
             case cancelled -> new RunClass(false, Settle.NEUTRAL, Bucket.NONE);
         };
     }
@@ -259,10 +248,6 @@ public class AutopilotService implements AutopilotSafetyValve {
                 .filter(s -> predicate.test(classify(s)))
                 .collect(Collectors.toUnmodifiableSet());
     }
-
-    // ---------------------------------------------------------------------------------------
-    // The tick
-    // ---------------------------------------------------------------------------------------
 
     /** What phase 1 leaves for the rest of the pass to do. */
     private enum Settled {
@@ -293,9 +278,6 @@ public class AutopilotService implements AutopilotSafetyValve {
      * <p><strong>Each pass is isolated from the next.</strong> The catch is inside the loop because
      * a pass belongs to one organisation downstream, and one organisation's broken start — or
      * vanished row, or failing database call — must not cost every other organisation its tick.
-     * That is the whole reason row selection moved behind {@link AutopilotResolver}: a loop that
-     * abandoned on the first exception would reintroduce, as an outage instead of a leak, exactly
-     * the "only the first one ever runs" defect the seam exists to remove.
      *
      * <p>The failure is re-thrown once the loop is done rather than swallowed. {@code
      * AutopilotReconciler} is the failure boundary — it owns the schedule and the logging — and a
@@ -336,13 +318,9 @@ public class AutopilotService implements AutopilotSafetyValve {
         for (UUID autopilotId : orderedForThisTick(autopilotResolver.findAllEngaged())) {
             try {
                 // The whole pass, lease included, and never tickOne() directly — a pass reached
-                // outside the binder is a pass with no scope bound. Asserted by
-                // AutopilotServiceTest#tick_reachesThePassOnlyThroughTheScopeBinder, because core's
-                // binder is a pass-through and cannot show the difference behaviourally.
+                // outside the binder is a pass with no scope bound.
                 scopeBinder.runInScopeOf(autopilotId, () -> tickOne(autopilotId));
             } catch (RuntimeException e) {
-                // Named here and only summarised, because the re-throw below carries the stack to
-                // the reconciler. Which Autopilot it was is the part that would otherwise be lost.
                 log.warn("Autopilot pass failed on {}: {}", autopilotId, e.getMessage());
                 if (failure == null) {
                     failure = e;
@@ -420,25 +398,11 @@ public class AutopilotService implements AutopilotSafetyValve {
      *   phase 4  REPORT   read-only tx re-read the row and the runs, publish
      * </pre>
      *
-     * <p>The single transaction this replaces spanned every {@code startForAutopilot} call,
-     * Temporal round trips included, and was the common cause of four separate defects: a human's
-     * Disengage reverted by a write-back minutes older than it, an emergency stop queued behind a
-     * whole pass, a tick unable to observe the runs it had just started, and a panel reporting a
-     * stale {@code engaged}. Each was patched in turn and each patch opened the next. None of them
-     * is reachable from here: nothing is read then written back, and no phase outlives a statement
-     * or two.
-     *
      * <p>The four phases are protected as one unit by the <strong>tick lease</strong>, not by the
      * transaction-scoped advisory lock this used to take. That lock could not survive the split:
      * being transaction-scoped it was released the moment phase 1 committed, leaving phases 2 to 4
      * open to a second instance that would count the same free slots and start the same work,
      * violating {@code max_parallel}. See {@link AutopilotRepository#acquireTickLease}.
-     *
-     * <p>An Autopilot that a human disengaged between {@link AutopilotResolver#findAllEngaged()}
-     * and the lease claims a pass and does nothing with it — phase 1 re-reads {@code engaged}
-     * under the lease and settles as {@code DISENGAGED} without stamping. An absent or disengaged
-     * Autopilot is simply not in the loop, so an idle installation still writes nothing on every
-     * scheduler interval.
      */
     private void runPass(UUID autopilotId, Instant now) {
         List<String> notes = new ArrayList<>();
@@ -476,8 +440,6 @@ public class AutopilotService implements AutopilotSafetyValve {
         if (autopilotRepo.renewTickLease(autopilotId, instanceId, leaseTtlSeconds()) > 0) {
             return true;
         }
-        // Says what was observed and not why. The renewal returning 0 does not distinguish an
-        // expiry from a takeover, and a log that guesses is one somebody later debugs against.
         log.warn("Autopilot pass abandoned: this instance no longer holds the tick lease on {}", autopilotId);
         return false;
     }
@@ -538,10 +500,7 @@ public class AutopilotService implements AutopilotSafetyValve {
         } else if (successes > 0) {
             autopilotRepo.resetFailures(autopilotId, now);
         }
-        return applyBreaker(
-                        autopilotId,
-                        "its runs failed instead of completing. Nothing is retried automatically (Decision 5)",
-                        now)
+        return applyBreaker(autopilotId, "its runs failed instead of completing. Nothing is retried automatically", now)
                 ? Settled.BREAKER_TRIPPED
                 : Settled.PROCEED;
     }
@@ -550,11 +509,7 @@ public class AutopilotService implements AutopilotSafetyValve {
      * Phase 2, in a read-only transaction that ends before anything is started.
      *
      * <p>Read-only because it writes nothing and must be unable to: Hibernate switches to MANUAL
-     * flush, so a readiness sweep cannot dirty a row on its way past. Transactional at all because
-     * a full sweep is one query plus roughly two per candidate Epic plus one per in-flight Task,
-     * and running them outside a transaction borrows and returns a pooled connection for every one
-     * of them, thirty seconds apart, forever. It commits before phase 3 begins, so it extends over
-     * no container start — which is the only property that mattered about keeping it short.
+     * flush, so a readiness sweep cannot dirty a row on its way past.
      */
     private Plan plan(UUID autopilotId) {
         return reads.execute(status -> {
@@ -697,10 +652,6 @@ public class AutopilotService implements AutopilotSafetyValve {
         return autopilotRepo.findEngagedById(autopilotId).orElse(false);
     }
 
-    // ---------------------------------------------------------------------------------------
-    // The frontier
-    // ---------------------------------------------------------------------------------------
-
     /**
      * The ordered ready frontier plus the structural facts the why-idle report needs. Counts are
      * carried out of the pass because recomputing them would mean a second readiness sweep.
@@ -714,7 +665,7 @@ public class AutopilotService implements AutopilotSafetyValve {
 
     /**
      * Every startable Task in a candidate Epic ({@link EpicReadinessAssembler#isStartable} —
-     * backlog and READY), ordered per Decision 6. That predicate is shared with the Epic list's
+     * backlog and READY), ordered. That predicate is shared with the Epic list's
      * {@code readyItemCount}, so the board's "N ready" badge names exactly this frontier.
      *
      * <p>{@link TaskOrderingStrategy} deliberately leaves epic affinity out, because it depends on
@@ -784,7 +735,7 @@ public class AutopilotService implements AutopilotSafetyValve {
 
     /**
      * Moves Tasks whose Epic already has a run in flight ahead of the rest, preserving the
-     * comparator's relative order within each group (Decision 6). "In flight" is the same set
+     * comparator's relative order within each group. "In flight" is the same set
      * {@code max_parallel} counts, so the term means one thing throughout.
      */
     private static List<Task> applyEpicAffinity(
@@ -830,9 +781,9 @@ public class AutopilotService implements AutopilotSafetyValve {
     }
 
     /**
-     * The empty-container case from Decision 4, made visible. An Epic or Story with no Tasks is
-     * never satisfied, so anything it blocks stays blocked forever — and under Decision 4's
-     * alternative the failure mode is silence: the Autopilot simply never picks that work up.
+     * The empty-container case, made visible. An Epic or Story with no Tasks is
+     * never satisfied, so anything it blocks stays blocked forever — and without this report the
+     * failure mode is silence: the Autopilot simply never picks that work up.
      *
      * <p>Only reported when the empty container is actually blocking something that is BLOCKED
      * right now, so a half-planned Epic nobody depends on does not fill the panel.
@@ -853,10 +804,6 @@ public class AutopilotService implements AutopilotSafetyValve {
         }
         return List.copyOf(reasons);
     }
-
-    // ---------------------------------------------------------------------------------------
-    // Status: read and mutate
-    // ---------------------------------------------------------------------------------------
 
     /** Never inserts. No row means never configured, and a read must not change that. */
     @Transactional(readOnly = true)
@@ -979,9 +926,7 @@ public class AutopilotService implements AutopilotSafetyValve {
      * convention version of this unsafe.
      *
      * <p>Every caller is {@code @Transactional} and the publish is synchronous, so the event lands
-     * in the same transaction as the insert and rolls back with it. Both halves of that are
-     * asserted rather than trusted — see {@code
-     * AutopilotServiceTest#everyPublicMethodExceptTickJoinsItsCallersTransaction}.
+     * in the same transaction as the insert and rolls back with it.
      *
      * <p>Published on the insert only. {@code created} is false for every later {@code engage()} or
      * {@code update()}, so one row produces one event however many times it is mutated.
@@ -994,7 +939,6 @@ public class AutopilotService implements AutopilotSafetyValve {
         return resolved.id();
     }
 
-    /** Reads the row back after a statement changed it, and broadcasts what it now says. */
     private AutopilotStatusResponse publishCurrent(UUID autopilotId) {
         Autopilot autopilot = autopilotRepo
                 .findById(autopilotId)
@@ -1063,7 +1007,7 @@ public class AutopilotService implements AutopilotSafetyValve {
     }
 
     /**
-     * Why the Autopilot is not starting work (spec §10). An unattended dispatcher that stops for a
+     * Why the Autopilot is not starting work. An unattended dispatcher that stops for a
      * structural reason has to be distinguishable from one that is broken, and a guess is worth
      * much less than being told.
      */

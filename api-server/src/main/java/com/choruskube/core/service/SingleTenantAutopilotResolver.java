@@ -10,8 +10,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 /**
- * Single-tenant default: one installation, one Autopilot, and every caller means that one
- * (Decision 7).
+ * Single-tenant default: one installation, one Autopilot, and every caller means that one.
  *
  * <p>Gated the way every other OSS seam here is, so a downstream implementation replaces this bean
  * rather than colliding with it — see {@code NoOpScopeProvider}, {@link AllEpicsCandidateSource},
@@ -69,7 +68,7 @@ public class SingleTenantAutopilotResolver implements AutopilotResolver {
     }
 
     /**
-     * The singleton (Decision 7). Ordered rather than "whichever row came back first" so that if a
+     * The singleton. Ordered rather than "whichever row came back first" so that if a
      * concurrent first-write ever does produce a second row, every replica still agrees on which
      * one is the Autopilot instead of alternating between them.
      *

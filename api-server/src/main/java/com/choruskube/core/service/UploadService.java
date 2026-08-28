@@ -149,7 +149,6 @@ public class UploadService {
         int lastSep = Math.max(original.lastIndexOf('/'), original.lastIndexOf('\\'));
         String name = lastSep >= 0 ? original.substring(lastSep + 1) : original;
         if (name.isEmpty()) name = "file";
-        // Replace characters outside the safe ASCII set with underscores
         return name.replaceAll("[^a-zA-Z0-9._-]", "_");
     }
 }

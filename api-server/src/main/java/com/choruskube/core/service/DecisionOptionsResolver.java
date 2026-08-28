@@ -9,8 +9,8 @@ import org.springframework.stereotype.Component;
 
 /**
  * Shared resolver for "what decisions are legal for this node" — the union of a node's outgoing
- * edge conditions, its configured {@code terminal_decisions} (Decision 2), and the implicit
- * Supervisor vocabulary (Decision 1: dynamic routing, not edge topology): every AI node gains
+ * edge conditions, its configured {@code terminal_decisions}, and the implicit
+ * Supervisor vocabulary (dynamic routing, not edge topology): every AI node gains
  * {@link #ESCALATE_DECISION} when the template declares a Supervisor (a human node with {@code
  * config_overrides.routing_hub: true} and no edges of its own), and the Supervisor itself gains a
  * {@code route:<label>} decision for every other node in the template. Every call site that
@@ -107,8 +107,7 @@ public class DecisionOptionsResolver {
     /**
      * Finds a node's {@code config_overrides} JsonNode within a snapshot's {@code nodes} array, by
      * {@code template_node_id}. Returns {@code null} if the node or its config overrides can't be
-     * found. Kept public because callers outside decision resolution read other config keys
-     * through it — {@code RunService.isMaterializeNode} reads {@code materialize}.
+     * found.
      */
     public JsonNode findNodeConfigOverrides(JsonNode nodesArr, UUID nodeId) {
         return configOverridesOf(findNode(nodesArr, nodeId));

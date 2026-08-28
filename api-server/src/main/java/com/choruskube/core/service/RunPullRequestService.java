@@ -65,7 +65,7 @@ public class RunPullRequestService {
         // Re-registering the same (runId, prUrl) refreshes mutable metadata in place rather
         // than inserting a duplicate row. Agents may call register-pr more than once per run
         // (Code Review refreshing a PR Implement already opened, a Test-failure retry, a fallback
-        // PR's cross-link step, etc. — see Decision 1/§3.2 in this workflow's spec), and the run
+        // PR's cross-link step, etc.), and the run
         // detail page would otherwise render the same PR twice.
         RunPullRequest pr = prRepo.findByWorkflowRunIdAndPrUrl(runId, req.prUrl())
                 .orElseGet(() -> {
@@ -90,7 +90,7 @@ public class RunPullRequestService {
 
     /**
      * Node-execution-scoped read used by {@code InternalRunController#getPullRequestsForNodeExecution}
-     * (Decision 3/3.3 — PR completion gate; {@code check-prs} calls this via the {@code
+     * (PR completion gate; {@code check-prs} calls this via the {@code
      * /internal/runs/{runId}/node-executions/{nodeExecId}/pull-requests} endpoint). {@code
      * InternalAuthFilter} only checks that the caller's {@code JOB_SECRET} hash matches {@code
      * nodeExecId}'s own stored hash — it never cross-checks the {@code runId} segment in the same
@@ -118,7 +118,6 @@ public class RunPullRequestService {
             return List.of();
         }
 
-        // Batch-load all referenced git repos to avoid N+1 queries
         Set<UUID> repoIds =
                 pullRequests.stream().map(RunPullRequest::getGitRepoId).collect(Collectors.toSet());
         Map<UUID, String> repoUrlMap =

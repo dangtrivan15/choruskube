@@ -78,13 +78,12 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-# When --epic-id is passed explicitly, hit the existing Epic-ID route
-# unchanged. Otherwise, call the new no-Epic-ID route (Decision 1, Decision
-# 2): the server resolves the Epic from this run's own triggering Task at
-# request time, so there's no client-side default to fall back on here at
-# all — a manually-started run, or a task-triggered run whose Task's
-# Story/Epic link is broken, simply gets a 404 from the server instead of a
-# client-side hard failure.
+# When --epic-id is passed explicitly, hit the Epic-ID route unchanged.
+# Otherwise, call the no-Epic-ID route: the server resolves the Epic from
+# this run's own triggering Task at request time, so there's no client-side
+# default to fall back on here at all — a manually-started run, or a
+# task-triggered run whose Task's Story/Epic link is broken, simply gets a
+# 404 from the server instead of a client-side hard failure.
 if [ -n "$EPIC_ID_ARG" ]; then
     GRAPH_URL="$API_SERVER_URL/internal/runs/$RUN_ID/node-executions/$NODE_EXECUTION_ID/feature-proposals/$EPIC_ID_ARG/graph"
 else

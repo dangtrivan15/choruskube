@@ -218,7 +218,7 @@ class AutopilotServiceTest {
 
     @Test
     void tick_parkedRunDoesNotOccupyASlot_soWorkStillStarts() {
-        // Decision 2: a run parked on a human dispatches no workload, so holding its slot would
+        // A run parked on a human dispatches no workload, so holding its slot would
         // idle the Autopilot for exactly as long as the user is away — the original problem.
         StoryFixture s = story(epic("E"));
         Task ready = task(s, "Ready", WorkItemStatus.backlog, Readiness.READY);
@@ -1127,7 +1127,7 @@ class AutopilotServiceTest {
 
     @Test
     void tick_prefersATaskInAnEpicThatAlreadyHasAnInFlightRun() {
-        // Epic affinity (Decision 6), applied as a stable partition of the comparator's output
+        // Epic affinity, applied as a stable partition of the comparator's output
         // because it depends on what is in flight, which the comparator cannot know.
         EpicFixture high = epic("High", Priority.high);
         EpicFixture low = epic("Low", Priority.low);
@@ -1211,7 +1211,7 @@ class AutopilotServiceTest {
 
     @Test
     void getStatus_whyIdle_namesAnEmptyEpicThatIsBlockingWork() {
-        // Decision 4: an empty container is never satisfied, so anything it blocks stays blocked
+        // An empty container is never satisfied, so anything it blocks stays blocked
         // forever. The alternative to saying so is silence — the Autopilot simply never picks the
         // work up, and nothing explains why.
         EpicFixture billing = epic("Billing");

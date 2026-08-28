@@ -80,7 +80,7 @@ function statusBadge(status: string) {
 /**
  * One direction-labeled group of external-blocker badges (see
  * `ExternalBlockersSection`). Unlike the roadmap canvas's external node —
- * which dedups by identity (Decision 4) and can end up representing edges of
+ * which dedups by identity and can end up representing edges of
  * both directions at once, forcing direction-neutral wording (see the
  * `RoadmapExternalNode` tooltip fix) — each `ExternalBlockerRef` here is a
  * single, un-deduped edge (`RoadmapGraph.tsx` passes `snapshot.externalBlockers`
@@ -328,7 +328,7 @@ export default function RoadmapGraphDetailPanel({
               </span>
             )}
           </h3>
-          {/* Embedded on the graph response itself (Decision 3) — no follow-up
+          {/* Embedded on the graph response itself — no follow-up
               request needed just to show recent runs. */}
           <TaskRunHistoryList runs={item.recentRuns} isLoading={false} />
           <Link

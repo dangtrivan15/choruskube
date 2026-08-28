@@ -18,7 +18,7 @@ interface Props {
   onOpenChange: (open: boolean) => void;
 }
 
-/** Create a Task under a Story. A Task is the only startable unit of work (§1). */
+/** Create a Task under a Story. A Task is the only startable unit of work. */
 export default function CreateTaskDialog({ storyId, open, onOpenChange }: Props) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");

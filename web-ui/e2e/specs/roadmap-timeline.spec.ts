@@ -206,7 +206,7 @@ test.describe("Roadmap Timeline View", () => {
 
         await timelinePage.hoverToRevealPreview(marker, [story.title, epic.title]);
 
-        // The hover preview never opens the pinned panel — it's a client-only glance (Decision 3).
+        // The hover preview never opens the pinned panel — it's a client-only glance.
         await expect(timelinePage.detailPanel).toHaveCount(0);
       } finally {
         await api.deleteEpic(epic.id);

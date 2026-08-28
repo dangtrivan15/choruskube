@@ -165,7 +165,6 @@ public class InternalRunService {
         if ("running".equals(status) && exec.getStartedAt() == null) exec.setStartedAt(now);
         if ("completed".equals(status) || "failed".equals(status)) exec.setCompletedAt(now);
 
-        // Auto-set no_decision for nodes without conditional edges
         if ("completed".equals(status) && exec.getDecision() == null) {
             if (!hasConditionalEdges(runId, exec.getTemplateNodeId())) {
                 exec.setDecision("no_decision");
@@ -178,7 +177,7 @@ public class InternalRunService {
 
         exec = execRepo.save(exec);
 
-        // Validates the run exists; org no longer needed (feeds published org-free, re-scoped downstream).
+        // Validates the run exists.
         runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
         eventPublisher.publishNodeStatusChanged(runId, nodeExecId, status);
         return toNodeExecResponse(exec);
@@ -312,7 +311,6 @@ public class InternalRunService {
     }
 
     /**
-     * Writes review metadata to the node_execution record.
      * Decision is NOT set here — it's set by submitDecision (conditional nodes)
      * or auto-set to "no_decision" by updateNodeExecutionStatus (unconditional nodes).
      */
@@ -333,9 +331,6 @@ public class InternalRunService {
         return runService.getReviewHistoryInternal(runId, loopGroup);
     }
 
-    /**
-     * Builds the graph snapshot on-demand from versioned template tables + workflow_run.inputs.
-     */
     public JsonNode getGraphSnapshot(UUID runId) {
         WorkflowRun run =
                 runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
@@ -417,12 +412,12 @@ public class InternalRunService {
 
     /**
      * Resolves the triggering Task's identity directly off {@code run.getTaskId()} and the
-     * {@code task.story_id -> story.epic_id} FK chain (Decision 1), for broadcast into every
-     * node execution's {@code config.json} (Decision 3). Reads repositories directly rather than
+     * {@code task.story_id -> story.epic_id} FK chain, for broadcast into every
+     * node execution's {@code config.json}. Reads repositories directly rather than
      * {@code TaskService}/{@code EpicService} because this internal path has no request-scoped
      * tenant context for {@code checkOrgAccess} to consult, mirroring {@code RunService
      * .buildTaskSummary}'s identical choice. Absent when the run wasn't started from a Task;
-     * Story/Epic are independently nullable if either no longer resolves (Caveat 1).
+     * Story/Epic are independently nullable if either no longer resolves.
      */
     private @Nullable GraphRuntimeSnapshotResponse.TaskContext buildTaskContext(WorkflowRun run) {
         if (run.getTaskId() == null) {
@@ -448,14 +443,14 @@ public class InternalRunService {
     /**
      * The Task's actionable, root-cause open blocker(s) — not-yet-{@code done} items reachable by
      * walking the full blocking chain (not just the direct blocker) that are themselves unblocked,
-     * i.e. worth acting on next (multi-step blocking chain feature, Decisions 3/4). Delegates to
+     * i.e. worth acting on next (multi-step blocking chain feature). Delegates to
      * {@link TransitiveReadinessResolver#rootCauseBlockersOf}, the same shared resolver {@link
      * DefaultRoadmapGraphService} uses, so the two call sites can no longer independently drift on
      * what "blocked" means. The transitive walk is bounded to the Task's own Epic's Story/Task set
      * when {@code epicId} is known (mirrors {@link DefaultRoadmapGraphService#assemble}'s
-     * candidate-set bounding, Decision 2) — a direct blocker outside that Epic is still reported
+     * candidate-set bounding) — a direct blocker outside that Epic is still reported
      * (single-hop, as before), but its own upstream chain is not walked past. {@code epicId} is
-     * null only when the Task's Story/Epic no longer resolves (Caveat 1 on {@link
+     * null only when the Task's Story/Epic no longer resolves (see {@link
      * #buildTaskContext}), in which case the walk covers just the Task's own direct edges.
      *
      * <p>Rows whose blocking item no longer resolves are silently skipped: {@code
@@ -517,8 +512,7 @@ public class InternalRunService {
             }
             titleById.put(id, blockingStory.getTitle());
             // Stage-aware, like every other reader of "is this blocker cleared?": a Story a human
-            // moved to `rolled_out` is cleared even if its Tasks say otherwise. Reading the bare
-            // Task rollup here (as this did) made an agent see a shipped blocker as still open.
+            // moved to `rolled_out` is cleared even if its Tasks say otherwise.
             statusById.put(
                     id,
                     RollupCalculator.effectiveStatus(
@@ -572,7 +566,6 @@ public class InternalRunService {
             var snapshot = objectMapper.readTree(snapshotBuilder.buildSnapshotForRun(run));
             var edges = snapshot.get("edges");
 
-            // Transitive BFS — find all ancestors
             Set<UUID> predecessorNodeIds = new HashSet<>();
             Queue<UUID> queue = new LinkedList<>();
             queue.add(targetNodeId);
@@ -592,7 +585,6 @@ public class InternalRunService {
                 }
             }
 
-            // Build nodeId → label map from snapshot nodes
             Map<UUID, String> nodeLabels = new HashMap<>();
             var nodesArr = snapshot.get("nodes");
             if (nodesArr != null) {
@@ -622,7 +614,6 @@ public class InternalRunService {
     }
 
     public String submitDecision(UUID runId, UUID nodeExecId, String decision) {
-        // Load exec first so it can be passed to buildValidDecisionsWithSnapshot
         NodeExecution exec = execRepo.findById(nodeExecId)
                 .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
 
@@ -691,13 +682,6 @@ public class InternalRunService {
         return previous;
     }
 
-    /**
-     * Returns the valid decision strings (edge conditions) for the given node execution, by
-     * walking the run's graph snapshot for outbound conditional edges from the execution's template
-     * node.
-     *
-     * @throws NotFoundException if the execution or run does not exist
-     */
     public List<String> getValidDecisions(UUID runId, UUID nodeExecId) {
         NodeExecution exec = execRepo.findById(nodeExecId)
                 .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
@@ -732,8 +716,7 @@ public class InternalRunService {
      * <p>These internal endpoints exist because agent pods authenticate with JOB_SECRET (scoped
      * per-execution) and use /internal/ routes, whereas the public /api/v1/ endpoints use
      * different auth. Removing these would break deployed agent images that depend on the
-     * create-proposal and list-proposals CLI scripts (Decision 6 — the scripts keep their names
-     * and endpoint paths, now operating on Epics instead of the retired flat proposal).
+     * create-proposal and list-proposals CLI scripts.
      */
     @Transactional
     public EpicResponse createEpic(UUID runId, InternalCreateEpicRequest req) {
@@ -747,7 +730,7 @@ public class InternalRunService {
             // Reuses updateInternal's already-internal-safe (assertSameOrg + direct project-match,
             // no checkOrgAccess) milestone-assignment branch rather than EpicService#assignMilestone,
             // which reads a request-scoped tenant context that does not exist on this JOB_SECRET
-            // path (Decision 4/6) — see updateInternal's own javadoc.
+            // path — see updateInternal's own javadoc.
             epic = epicService.updateInternal(
                     epic.id(),
                     softwareProjectId,
@@ -761,8 +744,6 @@ public class InternalRunService {
      * Updates an Epic on behalf of an agent pod. The Epic's ownership is validated against the
      * run's resolved {@code software_project_id} and {@code organization_id} before delegating to
      * {@link EpicService#updateInternal}.
-     *
-     * <p>See {@link #createEpic} for why these internal endpoints exist.
      */
     @Transactional
     public EpicResponse updateEpic(UUID runId, UUID epicId, InternalUpdateEpicRequest req) {
@@ -774,7 +755,6 @@ public class InternalRunService {
 
     /**
      * Lists Epics targeting the run's resolved software project.
-     * See {@link #createEpic} for why these internal endpoints exist.
      */
     @Transactional(readOnly = true)
     public List<EpicResponse> listEpics(UUID runId) {
@@ -785,9 +765,7 @@ public class InternalRunService {
     }
 
     /**
-     * Creates a Story under an Epic on behalf of an agent pod. New nested path added alongside
-     * the preserved Epic-level trio (Decision 6/3.6) — a rolling-upgrade agent pod on an older
-     * image never calls this, since it doesn't know the path exists.
+     * Creates a Story under an Epic on behalf of an agent pod.
      *
      * <p>The Epic's ownership is validated against the run's resolved {@code software_project_id}
      * (see {@link #createEpic}) before delegating to {@link StoryService#create(UUID, StoryRequest,
@@ -808,7 +786,7 @@ public class InternalRunService {
      *
      * <p>{@code epicId} comes from the URL's nested {@code .../{epicId}/stories/{storyId}/tasks}
      * segment purely to mirror {@link #createStory}'s shape; the Task itself is parented on
-     * {@code storyId} alone (Decision 5). Validated against the Story's actual parent so a caller
+     * {@code storyId} alone. Validated against the Story's actual parent so a caller
      * can't create a Task under a {@code storyId} that doesn't belong to the {@code epicId} the
      * URL claims — a mismatch here almost certainly means the caller has a stale/wrong Epic id.
      * Also validated against the run's resolved {@code software_project_id}, same rationale as
@@ -836,7 +814,7 @@ public class InternalRunService {
     }
 
     /**
-     * Reads an Epic's full Roadmap Graph View (Decision 1, Decision 3) on behalf of an agent pod.
+     * Reads an Epic's full Roadmap Graph View on behalf of an agent pod.
      * See {@link #createEpic} for why these internal endpoints exist; scoped the same way as
      * {@link #createStory}/{@link #createTask} via the run's resolved software project.
      */
@@ -845,7 +823,6 @@ public class InternalRunService {
         NodeExecution exec = execRepo.findById(nodeExecId)
                 .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
 
-        // Verify the node execution belongs to the requested run before reading the roadmap graph.
         NodeExecutionUtil.requireInRun(exec, runId);
 
         WorkflowRun run =
@@ -856,7 +833,7 @@ public class InternalRunService {
 
     /**
      * Reads the Roadmap Graph View for the Epic that owns the calling run's own triggering Task
-     * (Decision 1, Decision 2) — lets an agent fetch its dependency context with no Epic ID at
+     * — lets an agent fetch its dependency context with no Epic ID at
      * all, resolving {@code run.task_id -> Task.story_id -> Story.epic_id} at request time rather
      * than relying on a client-side default computed once at pod start. {@code nodeExecId} is the
      * authenticated identifier on this route — {@code InternalAuthFilter} matches the caller's
@@ -867,14 +844,13 @@ public class InternalRunService {
      * unresolved link (a 404 is the correct signal for this endpoint) instead of returning a
      * nullable summary DTO for narration — do not merge the two methods. Delegates to the same
      * {@link #getGraph(UUID, UUID, UUID)} authorization-checked path once {@code epicId} is
-     * resolved (Decision 3), so this method adds no new org-aware code of its own.
+     * resolved, so this method adds no new org-aware code of its own.
      */
     @Transactional(readOnly = true)
     public RoadmapGraphSnapshot getGraphForTriggeringTask(UUID runId, UUID nodeExecId) {
         NodeExecution exec = execRepo.findById(nodeExecId)
                 .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
 
-        // Verify the node execution belongs to the requested run before reading the roadmap graph.
         NodeExecutionUtil.requireInRun(exec, runId);
 
         WorkflowRun run =
@@ -894,7 +870,7 @@ public class InternalRunService {
     }
 
     /**
-     * Updates a Task's status (Decision 4) on behalf of an agent pod reporting a run's outcome.
+     * Updates a Task's status on behalf of an agent pod reporting a run's outcome.
      * See {@link #createEpic} for why these internal endpoints exist; scoped the same way as
      * {@link #createStory}/{@link #createTask} via the run's resolved software project. {@code
      * request.runId()}, if supplied, is the run being reported ON (verified against the Task's
@@ -906,7 +882,6 @@ public class InternalRunService {
         NodeExecution exec = execRepo.findById(nodeExecId)
                 .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
 
-        // Verify the node execution belongs to the requested run before updating the task's status.
         NodeExecutionUtil.requireInRun(exec, runId);
 
         WorkflowRun run =
@@ -916,14 +891,6 @@ public class InternalRunService {
                 taskId, request.status(), runId, softwareProjectId, request.runId(), request.note());
     }
 
-    /**
-     * Public wrapper around {@link #resolveSoftwareProjectIdFromRun} for collaborators that need
-     * the run's resolved software project but aren't themselves an {@code InternalRunService}
-     * method — namely {@code DefaultRoadmapCandidateMaterializer}, which needs it to call {@code
-     * MilestoneService.findOrCreate} directly (Decision 4/6): unlike Epic/Story/Task creation,
-     * Milestone find-or-create has no other project-membership logic to reuse from this class, so
-     * the materializer only needs the resolved id itself, not a full create/update delegate.
-     */
     @Transactional(readOnly = true)
     public UUID resolveSoftwareProjectId(UUID runId) {
         WorkflowRun run =
@@ -933,7 +900,7 @@ public class InternalRunService {
 
     /**
      * Creates a "blocking" dependency edge between two items already resolved to real database ids
-     * on behalf of an agent pod (Decision 6) — the imperative-agent counterpart to {@code
+     * on behalf of an agent pod — the imperative-agent counterpart to {@code
      * RoadmapCandidateMaterializer}'s direct {@code WorkItemDependencyService.create} call for
      * candidate-key edges. Unlike the materializer's batch (where both endpoints are guaranteed to
      * be items just created in this same run's project), an imperative agent supplies arbitrary
@@ -963,7 +930,7 @@ public class InternalRunService {
 
     /**
      * Creates (or reuses an existing same-named) Milestone under the run's resolved software
-     * project on behalf of an agent pod (Decision 6) — delegates to {@link
+     * project on behalf of an agent pod — delegates to {@link
      * MilestoneService#findOrCreateInternal}, the {@code JOB_SECRET}-path counterpart of {@link
      * MilestoneService#findOrCreate} ({@code RoadmapCandidateMaterializer}'s method), so both write
      * surfaces share one Milestone dedup rule while each uses the org guard its own auth context
@@ -1021,16 +988,6 @@ public class InternalRunService {
         }
     }
 
-    /**
-     * Resolves a single {@code software_project_id} from a run's inputs. Resolution order:
-     * <ol>
-     *   <li>direct {@code software_project_id} field on inputs;</li>
-     *   <li>schema-driven discovery over fields typed {@code software_project_id};</li>
-     *   <li>legacy {@code git_repo_id} field (post-V45, git_repo.id IS the software_project.id);</li>
-     *   <li>schema-driven discovery over fields typed {@code git_repo} (legacy templates).</li>
-     * </ol>
-     * Throws {@link NotFoundException} if nothing resolves.
-     */
     @Transactional(readOnly = true)
     UUID resolveSoftwareProjectIdFromRun(WorkflowRun run) {
         JsonNode inputs;
@@ -1104,10 +1061,6 @@ public class InternalRunService {
         return null;
     }
 
-    /**
-     * Checks whether a node has any outgoing edge with a non-null condition.
-     * Reuses the same snapshot/edge logic as submitDecision.
-     */
     private boolean hasConditionalEdges(UUID runId, UUID templateNodeId) {
         try {
             WorkflowRun run =
@@ -1168,7 +1121,7 @@ public class InternalRunService {
         List<UUID> ids = req.edgeIds() == null ? List.of() : req.edgeIds();
         exec.setTraversedEdgeIds(ids.toArray(new UUID[0]));
         execRepo.save(exec);
-        // Validates the run exists; org no longer needed (feeds published org-free, re-scoped downstream).
+        // Validates the run exists.
         runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
         eventPublisher.publishNodeStatusChanged(
                 runId, nodeExecId, exec.getStatus().name());

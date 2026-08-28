@@ -336,9 +336,9 @@ public class DefaultEpicServiceTest extends BaseTest {
         assertThat(fetched.progress().startedTasks()).isZero();
     }
 
-    // ── readyItemCount rollup ("ready to start" roadmap filter, Decision 2) ───────
+    // ── readyItemCount rollup ("ready to start" roadmap filter) ───────
     //
-    // readyItemCount is populated only on the list page (Decision 2/Part 2 Task 4) — not on
+    // readyItemCount is populated only on the list page — not on
     // single-Epic reads like get()/create() (see toResponse's comment in
     // DefaultEpicService for why) — so these tests read it back via list(), not get().
 
@@ -385,7 +385,7 @@ public class DefaultEpicServiceTest extends BaseTest {
     @Test
     void readyItemCount_externalBlockerResolvingDone_makesDependentReady() {
         // Mirrors the one-hop external-blocker semantics EpicReadinessAssembler already applies to
-        // the Story/Task list endpoints (Decision 2): a Story's readiness is gated by a blocker in
+        // the Story/Task list endpoints: a Story's readiness is gated by a blocker in
         // a *different* Epic just like an in-Epic blocker, so readyItemCount must react to that
         // external blocker's own status changing, not just to changes within this Epic.
         GitRepo r = makeRepo("https://github.com/test/ready-external.git");

@@ -160,6 +160,16 @@ The entrypoint passes every clone to Claude Code as a working directory (`--add-
 - **Sign off every commit** (DCO): `git commit -s`. Commits without a `Signed-off-by` line are not accepted — see [CONTRIBUTING.md](CONTRIBUTING.md#sign-your-commits-dco)
 - Licensed under [AGPL-3.0](LICENSE)
 
+## Code Comments
+
+A comment states the constraint that fires if you edit **this line**. Target ≤3 lines. Apply in order:
+
+1. **Consequence.** Acting without this knowledge — does the world change wrongly (outage, data loss, silent corruption, unrepeatable state), or does it just cost time / fail loudly? The second goes **entirely**: no relocation, no pointer.
+2. **Redundancy.** If the sentence still reads correctly with the clause deleted, delete it.
+3. **No run-scoped references.** Never cite a run's spec by ordinal — `Decision N`, `§N.N`, `Caveat N`, "the plan". Those identifiers are scoped to one run; the next agent resolves them against its own spec and gets a different answer. State the constraint instead. Durable references — a repo-relative file path, a type name, an issue URL — are fine.
+
+Enforced by `scripts/check-comment-refs.sh`, which runs as part of the root `./gradlew test`.
+
 ## Documentation Conventions
 
 - Keep `CLAUDE.md` concise — it is loaded into every agent's context window

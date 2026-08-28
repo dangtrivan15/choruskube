@@ -31,8 +31,8 @@ export interface RoadmapLevelInfo {
 }
 
 /**
- * Per-level icon, "kind" label, and accent color classes (Decisions 2 and 3
- * of the spec). Drawn from the existing `--color-chart-*` palette tokens
+ * Per-level icon, "kind" label, and accent color classes. Drawn from the
+ * existing `--color-chart-*` palette tokens
  * (registered in index.css for both themes) rather than new dedicated
  * tokens, so the accent lives entirely here with no stylesheet change. Three
  * distinct chart hues keep Epic/Story/Task mutually distinguishable; the

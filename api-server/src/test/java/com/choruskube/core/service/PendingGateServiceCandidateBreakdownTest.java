@@ -23,7 +23,7 @@ import org.mockito.Mockito;
 import org.springframework.data.jpa.domain.Specification;
 
 /**
- * Covers Decision 1's degrade-gracefully contract for {@code PendingGateResponse.candidateBreakdown}:
+ * Covers the degrade-gracefully contract for {@code PendingGateResponse.candidateBreakdown}:
  * a well-formed {@code roadmap_candidates.json} populates it; a malformed one, or one that simply
  * isn't among the node's resolved required artifacts, degrades to {@code null} without ever
  * throwing — the rest of the gate response must still succeed either way.

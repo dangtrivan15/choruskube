@@ -10,7 +10,7 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Orders the Autopilot's READY frontier (Decision 6), in this exact order:
+ * Orders the Autopilot's READY frontier, in this exact order:
  *
  * <ol>
  *   <li>Epic priority, descending
@@ -36,7 +36,7 @@ import java.util.UUID;
  * than left to sort stability.
  *
  * <p>Deliberately a static factory rather than an injectable strategy bean — there is exactly one
- * ordering today. The seam Decision 6 leaves open for critical-path ordering is this class's
+ * ordering today. The seam left open for critical-path ordering is this class's
  * signature, which a future implementation can vary without touching its callers.
  */
 public final class TaskOrderingStrategy {

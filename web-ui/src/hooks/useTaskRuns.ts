@@ -3,7 +3,7 @@ import { api } from "@/lib/api";
 import type { PageResponse, PaginationParams, RunSummary } from "@/lib/types";
 
 /**
- * Full run history for a Task (Decision 1 — every run a Task ever launched
+ * Full run history for a Task (every run a Task ever launched
  * remains queryable via `task_id`, not just the latest one). Backed by
  * GET /api/v1/tasks/{id}/runs.
  */

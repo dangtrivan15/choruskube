@@ -16,7 +16,7 @@ import type {
  * A large-enough single page to act as "every Milestone" for the callers that need a flat list —
  * the project-scoped `MilestoneSelect` dropdown and the `MilestonesPage` management surface.
  * Mirrors `useGitRepos`/`useRepoGroups`'s "fetch one big page, no UI pagination" treatment for a
- * collection that's small per software project (Caveat 4 of the "Group Epics under a named
+ * collection that's small per software project (the "Group Epics under a named
  * Milestone / Release" feature: no user-defined ordering, so a plain large page needs no
  * additional client-side sort beyond what the server already applies).
  */
@@ -87,7 +87,7 @@ export function useUpdateMilestone() {
       queryClient.invalidateQueries({ queryKey: ["milestones"] });
       // A rename changes the MilestoneRef.name embedded on every tagged Epic's cached
       // EpicResponse — refetch so the Roadmap list/detail badge picks it up immediately
-      // (Caveat 5: this covers the mutating client's own session; other sessions catch up
+      // (this covers the mutating client's own session; other sessions catch up
       // on their next short-interval Epic-list refetch).
       queryClient.invalidateQueries({ queryKey: ["epics"] });
       addEntry(showMutationToast("Milestone updated", "success"));
@@ -105,7 +105,7 @@ export function useDeleteMilestone() {
     mutationFn: (id: string) => api.delete(`/milestones/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["milestones"] });
-      // Deleting a Milestone un-tags its Epics server-side (ON DELETE SET NULL, Decision 2) —
+      // Deleting a Milestone un-tags its Epics server-side (ON DELETE SET NULL) —
       // refetch so those Epics' cached `milestone` field clears to null.
       queryClient.invalidateQueries({ queryKey: ["epics"] });
       addEntry(showMutationToast("Milestone deleted", "success"));
@@ -117,8 +117,8 @@ export function useDeleteMilestone() {
 }
 
 /**
- * Assign or clear (via {@code null}) an Epic's Milestone via {@code PATCH /epics/{id}/milestone}
- * (Decision 4). Invalidates both {@code ["epics"]} (the Epic's own `milestone` field changed) and
+ * Assign or clear (via {@code null}) an Epic's Milestone via {@code PATCH /epics/{id}/milestone}.
+ * Invalidates both {@code ["epics"]} (the Epic's own `milestone` field changed) and
  * {@code ["milestones"]} (a Milestone's `epicCount` rollup changed) on success.
  */
 export function useAssignEpicMilestone() {

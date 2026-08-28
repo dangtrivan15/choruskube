@@ -5,8 +5,7 @@ import java.util.UUID;
 
 /**
  * Assembles the Roadmap Graph View: an Epic's full Story/Task tree plus its "blocking" dependency
- * edges (Part 2) — both intra-Epic edges and edges to items outside the Epic. Defined as an
- * interface, with {@link DefaultRoadmapGraphService} as its sole implementation (Decision 8).
+ * edges — both intra-Epic edges and edges to items outside the Epic.
  */
 public interface RoadmapGraphService {
 
@@ -15,7 +14,7 @@ public interface RoadmapGraphService {
 
     /**
      * Agent/internal mirror of {@link #getGraph(UUID)} for the {@code /internal/**} JOB_SECRET
-     * path (Decision 1, Decision 5): validated via {@code assertSameOrg}/project-match against
+     * path: validated via {@code assertSameOrg}/project-match against
      * {@code runId}/{@code runSoftwareProjectId} instead of the request-scoped
      * {@code checkOrgAccess} chain {@link #getGraph(UUID)} uses internally — there is no tenant
      * context on this path.

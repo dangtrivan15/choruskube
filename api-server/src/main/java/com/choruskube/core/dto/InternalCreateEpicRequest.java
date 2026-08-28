@@ -13,7 +13,7 @@ import java.util.UUID;
  * <p>{@code priority} is optional (nullable): an absent value defaults to {@code Priority.medium}
  * in the service layer, same as any hand-created Epic.
  *
- * <p>{@code milestoneId} is optional (nullable, Decision 4/6): an absent value leaves the Epic
+ * <p>{@code milestoneId} is optional (nullable): an absent value leaves the Epic
  * unassigned to any Milestone, same as any hand-created Epic. When present it must resolve to a
  * Milestone in the run's own software project — enforced by {@code
  * InternalRunService.createEpic}/{@code EpicService.updateInternal}, not here.

@@ -13,10 +13,10 @@ export type RoadmapCrossEpicEdgeType = Edge<RoadmapCrossEpicEdgeData, "roadmap-c
 const CORNER_RADIUS = 12;
 
 /**
- * Cross-Epic blocking-dependency edge (Decision 1) — connects an in-Epic
+ * Cross-Epic blocking-dependency edge — connects an in-Epic
  * node to a `RoadmapExternalNode` stub standing in for a Story/Task in
  * another Epic. Modeled directly on `RoadmapDependencyEdge` (the within-Epic
- * blocking edge) but deliberately styled distinctly per Decision 2: a
+ * blocking edge) but deliberately styled distinctly: a
  * different, tighter dash pattern (dotted rather than dashed) plus
  * `--status-accent` instead of `--status-warning` for stroke and marker
  * color, so the two "this is a blocking edge" languages never get confused

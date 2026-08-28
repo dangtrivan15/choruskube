@@ -14,10 +14,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
 /**
- * CRUD plus rollup status/progress aggregation for Epics (Decision 2). Defined as an interface,
- * with {@link DefaultEpicService} as its sole implementation, so a future alternative
- * implementation (e.g. one delegating to an external PM tool) can be wired in later without
- * touching {@code EpicController} or {@code InternalRunService} (Decision 8).
+ * CRUD plus rollup status/progress aggregation for Epics.
  */
 public interface EpicService {
 
@@ -28,17 +25,17 @@ public interface EpicService {
 
     /**
      * Lists Epics, optionally filtered to those with at least one startable descendant Task — one
-     * still in {@code backlog} and {@code READY} (roadmap "ready to start" filter, Decision 1/3 of
-     * that feature). An Epic whose Tasks are all done or already under way is therefore excluded,
+     * still in {@code backlog} and {@code READY} (roadmap "ready to start" filter). An Epic whose
+     * Tasks are all done or already under way is therefore excluded,
      * as is one holding only empty Stories. {@code
      * readiness == null} preserves the pre-feature behavior exactly (no filter, DB-level
      * pagination); {@code readiness == Readiness.READY} switches to an in-memory-paginated path
-     * (Decision 3) since {@code readyItemCount} is not a stored column. Every returned {@link
-     * EpicResponse} carries {@code readyItemCount} regardless of whether the filter is active
-     * (Decision 2). A non-null {@code priority} additionally narrows the result to Epics with that
+     * since {@code readyItemCount} is not a stored column. Every returned {@link
+     * EpicResponse} carries {@code readyItemCount} regardless of whether the filter is active.
+     * A non-null {@code priority} additionally narrows the result to Epics with that
      * priority (a plain persisted-column predicate, applied in both the DB and readiness paths). A
      * non-null {@code milestoneId} additionally narrows the result to Epics tagged with that
-     * Milestone (§3.3 of the Milestone spec) — also a plain persisted-column predicate.
+     * Milestone — also a plain persisted-column predicate.
      */
     Page<EpicResponse> list(String title, Readiness readiness, Priority priority, UUID milestoneId, Pageable pageable);
 
@@ -48,17 +45,13 @@ public interface EpicService {
 
     void delete(UUID id);
 
-    /**
-     * Lists Epics targeting the given software project. Used by the internal API so an agent
-     * running against a project sees every Epic that targets that project.
-     */
     List<EpicResponse> listBySoftwareProjectId(UUID softwareProjectId);
 
     /** Updates an Epic on behalf of an agent pod (PATCH semantics). */
     EpicResponse updateInternal(UUID epicId, UUID runSoftwareProjectId, UUID runId, InternalUpdateEpicRequest req);
 
     /**
-     * Reads an Epic on behalf of an agent pod (Roadmap Graph View internal mirror, Decision 1).
+     * Reads an Epic on behalf of an agent pod (Roadmap Graph View internal mirror).
      * Validated the same way as {@link #updateInternal}: {@code assertSameOrg} plus a direct
      * {@code runSoftwareProjectId} match against the Epic's own project — NOT {@link #get}'s
      * {@code checkOrgAccess}, which reads a request-scoped tenant context that does not exist on
@@ -86,7 +79,7 @@ public interface EpicService {
     EpicResponse updateTargetDate(UUID id, LocalDate targetDate);
 
     /**
-     * Sets or clears (via {@code null}) an Epic's Milestone assignment (Decision 4 of the "Group
+     * Sets or clears (via {@code null}) an Epic's Milestone assignment (the "Group
      * Epics under a named Milestone / Release" feature). Exempt from the "no edit once started"
      * guard that {@link #update} enforces — mirrors {@link #updatePriority}/{@link
      * #updateTargetDate} exactly. Rejects (via {@code BadRequestException}) a non-null {@code

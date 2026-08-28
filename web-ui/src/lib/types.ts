@@ -133,7 +133,7 @@ export interface NodeExecutionResponse {
    * node, if any (mirrors `PendingGateResponse.candidateBreakdown` — only populated
    * while the node is `awaiting_human`/`live_chat`). Lets the Run Detail page's gate
    * surface (`HumanGatePanel` via `DetailPanel`) render the same editable breakdown
-   * the Approvals dashboard does. A document (Decision 5 of the roadmap
+   * the Approvals dashboard does. A document (the roadmap
    * dependencies/priorities/milestones feature) — no longer a bare Epic array.
    */
   candidateBreakdown: RoadmapCandidatesDocument | null;
@@ -232,10 +232,10 @@ export interface PendingGatePredecessorOutput {
 /**
  * A candidate Task within a `CandidateStoryProposal` — matches the backend
  * CandidateTaskProposal record. `title`/`description` are reviewer-editable.
- * `key` is an optional author-assigned, artifact-local identifier (Decision 2 of
+ * `key` is an optional author-assigned, artifact-local identifier (part of
  * the roadmap dependencies/priorities/milestones feature) that a
  * `CandidateDependency` may reference; it is never persisted. `priority`
- * (free-text `High`/`Medium`/`Low`, Decision 4) is reviewer-editable via a
+ * (free-text `High`/`Medium`/`Low`) is reviewer-editable via a
  * `PriorityBadge`/select pair, defaulting to Medium when blank/unrecognized —
  * same as Epic/Story priority.
  */
@@ -250,7 +250,7 @@ export interface CandidateTaskProposal {
  * A candidate Story within a `CandidateEpicProposal` — matches the backend
  * CandidateStoryProposal record. `title`/`description` are reviewer-editable;
  * `tasks` is capped at 8 entries server-side (mirrored as a soft UI limit).
- * `key`/`priority` mirror `CandidateTaskProposal`'s (Decision 2/4).
+ * `key`/`priority` mirror `CandidateTaskProposal`'s.
  */
 export interface CandidateStoryProposal {
   title: string;
@@ -269,11 +269,11 @@ export interface CandidateStoryProposal {
  * persisted destination for it). `stories` is capped at 8 entries server-side
  * (mirrored as a soft UI limit).
  *
- * `key` is an optional author-assigned, artifact-local identifier (Decision 2)
+ * `key` is an optional author-assigned, artifact-local identifier
  * that a `CandidateDependency` may reference; it is never persisted. `priority`
- * (free-text `High`/`Medium`/`Low`, Decision 4) IS persisted and is
+ * (free-text `High`/`Medium`/`Low`) IS persisted and is
  * reviewer-editable, unlike `repos`. `milestone` is an optional reference to a
- * `CandidateMilestone.key` (Decision 4/Caveat 3) — also reviewer-editable via a
+ * `CandidateMilestone.key` — also reviewer-editable via a
  * select — resolving to the Milestone the materialized Epic is assigned to.
  */
 export interface CandidateEpicProposal {
@@ -288,7 +288,7 @@ export interface CandidateEpicProposal {
 }
 
 /**
- * A candidate Milestone proposed by the Roadmap Provisioner analyzer (Decision 4
+ * A candidate Milestone proposed by the Roadmap Provisioner analyzer (part
  * of the roadmap dependencies/priorities/milestones feature), or as edited by a
  * reviewer before approval — matches the backend `CandidateMilestone` record.
  * `key` is an optional author-assigned, artifact-local identifier that
@@ -304,10 +304,10 @@ export interface CandidateMilestone {
 }
 
 /**
- * A single candidate dependency edge (Decision 2): `blocking` blocks `blocked`.
+ * A single candidate dependency edge: `blocking` blocks `blocked`.
  * Both values are candidate-local `key`s (never UUIDs — candidate items have no
  * database id until materialization) — matches the backend `CandidateDependency`
- * record. Read-only in the gate editor (Caveat 1) — edge editing happens
+ * record. Read-only in the gate editor — edge editing happens
  * post-materialization in the roadmap graph UI.
  */
 export interface CandidateDependency {
@@ -316,7 +316,7 @@ export interface CandidateDependency {
 }
 
 /**
- * The Roadmap Provisioner candidate artifact as a document (Decision 5),
+ * The Roadmap Provisioner candidate artifact as a document,
  * replacing the former bare top-level array of `CandidateEpicProposal` —
  * matches the backend `RoadmapCandidatesDocument` record. Shared shape between
  * the gate editor's `candidateBreakdown` (from `PendingGateResponse`/
@@ -368,7 +368,7 @@ export interface PendingGateResponse {
    * from the `roadmap_candidates.json` artifact. `null` means no breakdown is
    * available (missing/malformed artifact, or a gate from a template that doesn't
    * produce one) — callers should fall back to the existing markdown/artifact
-   * rendering in that case. A document (Decision 5) — no longer a bare Epic array.
+   * rendering in that case. A document — no longer a bare Epic array.
    */
   candidateBreakdown: RoadmapCandidatesDocument | null;
   /**
@@ -405,7 +405,7 @@ export interface SoftwareProjectRef {
 }
 
 /**
- * Rollup completion figure derived from descendant Tasks (Decision 2) — never
+ * Rollup completion figure derived from descendant Tasks — never
  * stored, recomputed on every read. Carried on both EpicResponse and StoryResponse.
  */
 export interface WorkItemProgress {
@@ -468,7 +468,7 @@ export interface EpicResponse {
   readyItemCount: number;
   /**
    * The Epic's assigned Milestone (release grouping), or `null` if unassigned
-   * (Decision 2/4 of the "Group Epics under a named Milestone / Release" feature). Set/cleared via
+   * (the "Group Epics under a named Milestone / Release" feature). Set/cleared via
    * `PATCH /epics/{id}/milestone` (`EpicMilestoneUpdateRequest`).
    */
   milestone: MilestoneRef | null;
@@ -524,7 +524,7 @@ export interface EpicTargetDateUpdateRequest {
 /**
  * Lightweight Milestone reference embedded in an `EpicResponse`/`TimelineEpicSummary` — mirrors
  * the backend `MilestoneRef` record. An Epic's `milestone` field is `null` when unassigned
- * (Decision 2 of the "Group Epics under a named Milestone / Release" feature).
+ * (the "Group Epics under a named Milestone / Release" feature).
  */
 export interface MilestoneRef {
   id: string;
@@ -711,23 +711,23 @@ export interface TaskResponse {
   latestRunId: string | null;
   latestRunStatus: string | null;
   readiness: Readiness | null;
-  /** Most recent runs, newest first, capped (Decision 3) — see `totalRunCount` for the true count. */
+  /** Most recent runs, newest first, capped — see `totalRunCount` for the true count. */
   recentRuns: RunSummary[];
   totalRunCount: number;
   createdAt: string;
   updatedAt: string;
   /**
-   * Prioritization level (Decision 4 of the roadmap dependencies/priorities/milestones
+   * Prioritization level (the roadmap dependencies/priorities/milestones
    * feature) — mirrors `EpicResponse.priority`/`StoryResponse.priority`. Never null; a
    * Task with no explicit priority reads back `"medium"`. Unlike Epic/Story there is no
-   * `PATCH /tasks/{id}/priority` yet (Caveat 2) — set only at create time.
+   * `PATCH /tasks/{id}/priority` yet — set only at create time.
    */
   priority: Priority;
 }
 
 /**
  * Create-only (POST) request body for a Task. `priority` is optional; an absent value
- * defaults to `"medium"` server-side (Decision 4), mirroring `EpicRequest`/`StoryRequest`.
+ * defaults to `"medium"` server-side, mirroring `EpicRequest`/`StoryRequest`.
  */
 export interface TaskRequest {
   title: string;
@@ -922,7 +922,7 @@ export interface BlockingChainResponse {
  *   `"dependency_changed"` for a blocking-dependency edge create/delete (Roadmap
  *   Graph View) — in that case `itemId` is the `work_item_dependency` row's own
  *   id, not either endpoint's id. `"milestone_changed"` is reserved for a future
- *   Milestone-typed realtime event (Caveat 5 of the "Group Epics under a named
+ *   Milestone-typed realtime event (the "Group Epics under a named
  *   Milestone / Release" feature) — nothing publishes it today; Milestone
  *   rename/delete propagates only via client-side query invalidation plus the
  *   existing Epic-list refetch, and assigning an Epic already emits

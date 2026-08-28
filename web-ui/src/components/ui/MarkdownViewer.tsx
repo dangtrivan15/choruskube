@@ -47,7 +47,7 @@ interface MarkdownViewerProps {
 /** Strips HTML comments (`<!-- ... -->`) from a markdown string.
  *  Applied to the rendered view only — the raw-view toggle still shows the original.
  *  NOTE: because this is a string-level pre-processor, it also strips HTML comment
- *  syntax that appears inside fenced code blocks. See Caveat 5 in the spec. */
+ *  syntax that appears inside fenced code blocks. */
 function stripHtmlComments(content: string): string {
   return content.replace(/<!--[\s\S]*?-->/g, "");
 }

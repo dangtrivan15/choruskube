@@ -6,9 +6,7 @@ import com.choruskube.core.model.enums.BlockableItemType;
 import java.util.UUID;
 
 /**
- * Validates and manages "blocking" dependency edges between Stories/Tasks (Roadmap Graph View,
- * Part 2). Defined as an interface, with {@link DefaultWorkItemDependencyService} as its sole
- * implementation (Decision 8).
+ * Validates and manages "blocking" dependency edges between Stories/Tasks.
  */
 public interface WorkItemDependencyService {
 

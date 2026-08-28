@@ -41,7 +41,6 @@ public final class AnalyticsResultMapper {
         return Instant.now().minus(30, ChronoUnit.DAYS);
     }
 
-    /** Maps the single overview-stats row into the overview response. */
     public static AnalyticsOverviewResponse toOverview(Object[] row) {
         if (row == null || row.length == 0) {
             return new AnalyticsOverviewResponse(0, 0, 0, 0.0, null, null, null);
@@ -66,7 +65,6 @@ public final class AnalyticsResultMapper {
                 p95Duration > 0 ? round(p95Duration) : null);
     }
 
-    /** Maps the daily run-trend rows into the run-trend response. */
     public static RunTrendResponse toRunTrend(List<Object[]> rows) {
         List<RunTrendPoint> points = rows.stream()
                 .map(r -> new RunTrendPoint(
@@ -79,7 +77,6 @@ public final class AnalyticsResultMapper {
         return new RunTrendResponse(points);
     }
 
-    /** Maps the per-template rows into the template-analytics response. */
     public static TemplateAnalyticsResponse toTemplateAnalytics(List<Object[]> rows) {
         List<TemplateAnalytics> templates = rows.stream()
                 .map(r -> {
@@ -94,7 +91,6 @@ public final class AnalyticsResultMapper {
         return new TemplateAnalyticsResponse(templates);
     }
 
-    /** Maps the per-node rows into the node-analytics response. */
     public static NodeAnalyticsResponse toNodeAnalytics(List<Object[]> rows) {
         List<NodeAnalytics> nodes = rows.stream()
                 .map(r -> {
@@ -110,7 +106,6 @@ public final class AnalyticsResultMapper {
         return new NodeAnalyticsResponse(nodes);
     }
 
-    /** Maps the bottleneck rows into the bottleneck response. */
     public static BottleneckResponse toBottlenecks(List<Object[]> rows) {
         List<BottleneckNode> bottlenecks = rows.stream()
                 .map(r -> new BottleneckNode(
@@ -124,7 +119,6 @@ public final class AnalyticsResultMapper {
         return new BottleneckResponse(bottlenecks);
     }
 
-    /** Maps the roadmap (Task) status-count rows into the status-counts response. */
     public static RoadmapStatusCountsResponse toRoadmapStatusCounts(List<Object[]> rows) {
         long total = 0;
         List<RoadmapStatusCount> statuses = new ArrayList<>();
@@ -137,7 +131,6 @@ public final class AnalyticsResultMapper {
         return new RoadmapStatusCountsResponse(total, statuses);
     }
 
-    /** Maps the roadmap (Task) throughput rows into the throughput response. */
     public static RoadmapThroughputResponse toRoadmapThroughput(List<Object[]> rows) {
         List<RoadmapThroughputPoint> points = rows.stream()
                 .map(r -> new RoadmapThroughputPoint(

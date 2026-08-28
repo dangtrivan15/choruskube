@@ -70,7 +70,7 @@ export class RoadmapGraphPage {
     this.externalBlockers = page.getByTestId("roadmap-external-blockers");
     this.externalBlockerBadges = page.getByTestId("roadmap-external-blocker-badge");
 
-    // Canvas equivalents of the sidebar's external-blocker list (Decision 1):
+    // Canvas equivalents of the sidebar's external-blocker list:
     // a real React Flow node/edge pair, not just a text mention. Mirrors the
     // `data-id^="dep:"` pattern already used for the within-Epic dependency
     // edge — see roadmapCrossEpicEdgeId's "cross-epic:" prefix in

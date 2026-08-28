@@ -19,7 +19,7 @@ interface MilestoneBadgeProps {
 }
 
 /**
- * Release-grouping chip for an Epic's assigned Milestone (Decision 1/2 of the "Group Epics under
+ * Release-grouping chip for an Epic's assigned Milestone (the "Group Epics under
  * a named Milestone / Release" feature) — reused everywhere a Milestone reference appears
  * (Roadmap list rows, Epic detail page). See `milestoneMeta.ts` for the per-Milestone accent.
  */

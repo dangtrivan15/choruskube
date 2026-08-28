@@ -30,11 +30,11 @@ import org.mockito.Mockito;
 
 /**
  * {@link DefaultRoadmapCandidateMaterializer}: creates each candidate Milestone/Epic/Story/Task
- * through {@link InternalRunService}/{@link MilestoneService}'s existing agent-facing write paths
- * (Decision 3/4), then each candidate dependency edge directly through {@link
- * WorkItemDependencyService} (Decision 3), best-effort per top-level candidate/edge (Caveat 3). A
+ * through {@link InternalRunService}/{@link MilestoneService}'s existing agent-facing write paths,
+ * then each candidate dependency edge directly through {@link
+ * WorkItemDependencyService}, best-effort per top-level candidate/edge. A
  * candidate item's free-text {@code priority} is parsed case-insensitively onto {@link Priority}
- * (defaulting to {@link Priority#medium}); Epic {@code repos} is still dropped (Caveat 6).
+ * (defaulting to {@link Priority#medium}); Epic {@code repos} is still dropped.
  */
 class DefaultRoadmapCandidateMaterializerTest {
 
@@ -319,7 +319,7 @@ class DefaultRoadmapCandidateMaterializerTest {
         // Regression test: SignalRequest.editedCandidates carries `@Valid` on the epics list, but
         // Bean Validation's cascade skips (does not reject) a `null` element inside a collection —
         // so a document like {"epics":[null,{...}]} reaches the materializer un-guarded. A null
-        // candidate must be caught and recorded like any other per-candidate failure (Decision 3),
+        // candidate must be caught and recorded like any other per-candidate failure,
         // not thrown as an uncaught NPE that aborts the whole batch.
         UUID goodEpicId = UUID.randomUUID();
         CandidateEpicProposal good = epic("Good", null, List.of(), null, null);

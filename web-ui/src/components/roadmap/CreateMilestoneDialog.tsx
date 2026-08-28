@@ -20,7 +20,7 @@ interface Props {
 }
 
 /**
- * Create-Milestone dialog (Decision 1/3 of the "Group Epics under a named Milestone / Release"
+ * Create-Milestone dialog (the "Group Epics under a named Milestone / Release"
  * feature, plus the rollup progress / at-risk feature) — a release label scoped to a single
  * software project, named uniquely within it, with an optional target date that later drives the
  * at-risk verdict server-side.

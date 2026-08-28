@@ -44,7 +44,6 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Sole implementation of {@link EpicService} (Decision 8). */
 @Service
 public class DefaultEpicService implements EpicService {
 
@@ -114,7 +113,6 @@ public class DefaultEpicService implements EpicService {
     public EpicResponse create(EpicRequest request, UUID runId) {
         // Agent/internal entry: no request-scoped TenantContext, so this path is unaudited.
         SoftwareProject project = loadSoftwareProject(request.softwareProjectId());
-        // Cross-org guard: the target project and the originating run must belong to the same org.
         authService.assertSameOrg("software_project", project.getId(), "workflow_run", runId);
         Epic epic = persistEpic(request, project);
         applicationEventPublisher.publishEvent(
@@ -151,19 +149,19 @@ public class DefaultEpicService implements EpicService {
         }
         if (readiness == null) {
             // Pre-feature path, unchanged: SQL-level pagination. readyItemCount is still populated
-            // on every returned EpicResponse (Decision 2), but pagination itself stays DB-side.
+            // on every returned EpicResponse, but pagination itself stays DB-side.
             Page<Epic> page = repo.findAll(spec, pageable);
             List<EpicResponse> content = toResponses(page.getContent());
             return new PageImpl<>(content, pageable, page.getTotalElements());
         }
         // Readiness filter active: readyItemCount is not a stored column, so filtering requires
         // loading every Epic matching the non-readiness filters, computing readiness for all of
-        // them, filtering, then paginating the result in memory (Decision 3).
+        // them, filtering, then paginating the result in memory.
         List<Epic> matching = repo.findAll(spec, pageable.getSort());
         List<EpicResponse> responses = toResponses(matching);
         List<EpicResponse> filtered = readiness == Readiness.READY
                 ? responses.stream().filter(r -> r.readyItemCount() > 0).toList()
-                // Only READY is a meaningful filter value today (Caveat 4) — any other non-null
+                // Only READY is a meaningful filter value today — any other non-null
                 // Readiness (i.e. BLOCKED) yields no candidates rather than silently falling back
                 // to the unfiltered page.
                 : List.of();
@@ -201,7 +199,7 @@ public class DefaultEpicService implements EpicService {
         epic.setDescription(request.description());
         epic.setMotivation(request.motivation());
         epic.setSoftwareProjectId(newProject.getId());
-        // A Milestone is scoped to exactly one software_project (Decision 3 of the "Group Epics
+        // A Milestone is scoped to exactly one software_project (the "Group Epics
         // under a named Milestone / Release" feature), so re-pointing the Epic to a different
         // project would leave it tagged with a Milestone that no longer shares its project — the
         // same invariant assignMilestone rejects, but here on the project-change path update()
@@ -265,14 +263,13 @@ public class DefaultEpicService implements EpicService {
     public EpicResponse updateInternal(
             UUID epicId, UUID runSoftwareProjectId, UUID runId, InternalUpdateEpicRequest req) {
         Epic epic = findOrThrow(epicId);
-        // Cross-org guard: the Epic and the run must belong to the same org.
         authService.assertSameOrg("epic", epic.getId(), "workflow_run", runId);
         if (!epic.getSoftwareProjectId().equals(runSoftwareProjectId)) {
             throw new ForbiddenException("Epic " + epicId + " does not belong to the run's software project");
         }
         // The "no edit once started" guard covers only the core descriptive fields below —
         // milestoneId is handled after it and is deliberately exempt, mirroring
-        // assignMilestone's own exemption from this guard (Decision 4 of the "Group Epics under a
+        // assignMilestone's own exemption from this guard (the "Group Epics under a
         // named Milestone / Release" feature): a Milestone assignment must succeed even after
         // descendant Tasks have started.
         boolean touchesCoreFields = req.title() != null || req.description() != null || req.motivation() != null;
@@ -363,8 +360,6 @@ public class DefaultEpicService implements EpicService {
         epic = repo.save(epic);
 
         EpicResponse response = toResponse(epic);
-        // Audited like every other roadmap mutation (create/update/delete/stage): priority is a
-        // planning attribute moved in isolation, so its change belongs in the audit trail too.
         auditSink.record(AuditSink.EPIC_PRIORITY_UPDATED, "epic", id, detailJson(beforeSnapshot, snapshot(epic)));
         eventPublisher.publishRoadmapItemChanged(
                 "epic", epic.getId(), epic.getStage().name());
@@ -384,8 +379,6 @@ public class DefaultEpicService implements EpicService {
         epic = repo.save(epic);
 
         EpicResponse response = toResponse(epic);
-        // Audited like every other roadmap mutation (create/update/delete/stage/priority): target
-        // date is a planning attribute moved in isolation, so its change belongs in the audit trail.
         auditSink.record(AuditSink.EPIC_TARGET_DATE_UPDATED, "epic", id, detailJson(beforeSnapshot, snapshot(epic)));
         eventPublisher.publishRoadmapItemChanged(
                 "epic", epic.getId(), epic.getStage().name());
@@ -399,7 +392,7 @@ public class DefaultEpicService implements EpicService {
         authService.checkOrgAccess("epic", id);
         // Deliberately no hasStartedDescendantTasks(id) guard here: like updateStage/
         // updatePriority/updateTargetDate, a Milestone assignment must succeed even after
-        // descendant Tasks have started (Decision 4).
+        // descendant Tasks have started.
         Map<String, Object> beforeSnapshot = snapshot(epic);
         if (milestoneId != null) {
             Milestone milestone = milestoneRepo
@@ -414,9 +407,6 @@ public class DefaultEpicService implements EpicService {
         epic = repo.save(epic);
 
         EpicResponse response = toResponse(epic);
-        // Audited like every other roadmap mutation (create/update/delete/stage/priority/target
-        // date): a Milestone assignment is a planning attribute moved in isolation, so its change
-        // belongs in the audit trail too.
         auditSink.record(AuditSink.EPIC_MILESTONE_UPDATED, "epic", id, detailJson(beforeSnapshot, snapshot(epic)));
         eventPublisher.publishRoadmapItemChanged(
                 "epic", epic.getId(), epic.getStage().name());
@@ -424,8 +414,7 @@ public class DefaultEpicService implements EpicService {
     }
 
     /**
-     * True if any Task under any Story of this Epic has left {@code backlog}. Mirrors the
-     * old proposal rule ("can only edit/delete while in backlog") one level down the hierarchy.
+     * True if any Task under any Story of this Epic has left {@code backlog}.
      */
     private boolean hasStartedDescendantTasks(UUID epicId) {
         List<Story> stories = storyRepo.findByEpicIdOrderByCreatedAtDesc(epicId);
@@ -483,11 +472,11 @@ public class DefaultEpicService implements EpicService {
     }
 
     /**
-     * Per-Epic "ready to start" rollup (Decision 2): for each Epic, reuses the same
+     * Per-Epic "ready to start" rollup: for each Epic, reuses the same
      * per-Epic {@link EpicReadinessAssembler#loadEpicCandidates}/{@link
      * EpicReadinessAssembler#assemble} pair the Story/Task list endpoints already use — not the
      * batched {@link #computeRollups} pattern — so this count stays exactly consistent with the
-     * per-item {@code readiness} the Story/Task lists render (Decision 1). Called with {@code
+     * per-item {@code readiness} the Story/Task lists render. Called with {@code
      * internal=false, runId=null} since every caller of {@link #list}/{@link #toResponses} is on
      * the public (request-scoped) path, never the internal run-scoped one.
      *
@@ -641,7 +630,7 @@ public class DefaultEpicService implements EpicService {
         // (checkOrgAccess) — computing it here would authorize with the wrong mechanism on the
         // internal path and double the external-blocker resolution work (and its authorization
         // calls) for callers like DefaultRoadmapGraphService that already do their own. Only the
-        // list page (Decision 2) populates it — no UI reachable through this single-Epic path
+        // list page populates it — no UI reachable through this single-Epic path
         // renders readyItemCount today.
         MilestoneRef milestone = e.getMilestoneId() != null
                 ? milestoneRepo

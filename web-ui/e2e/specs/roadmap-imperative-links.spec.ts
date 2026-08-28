@@ -1,6 +1,6 @@
 import { test, expect } from "../fixtures";
 
-// Exercises the imperative agent write surface (Decision 6 of the roadmap
+// Exercises the imperative agent write surface (the roadmap
 // dependencies/priorities/milestones feature): an agent that creates roadmap
 // items live — no roadmap_candidates.json artifact, no human gate — via
 // create-proposal, create-story, create-task (--priority), create-dependency,
@@ -57,7 +57,7 @@ test.describe("Roadmap imperative links (create-task --priority, create-dependen
       await expect(taskANode).toBeVisible();
       await expect(taskBNode).toBeVisible();
 
-      // Task-level priority (Decision 4) reaching the graph node badge is exactly
+      // Task-level priority reaching the graph node badge is exactly
       // the bug H4 fixes — buildInternalNodes() used to hardcode `priority: null`
       // for every Task node regardless of TaskResponse.priority.
       await expect(taskANode.getByTestId("roadmap-graph-node-priority")).toHaveText(/High/);

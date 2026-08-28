@@ -29,7 +29,6 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Sole implementation of {@link RoadmapTimelineService} (Decision 8). */
 @Service
 public class DefaultRoadmapTimelineService implements RoadmapTimelineService {
 
@@ -76,12 +75,9 @@ public class DefaultRoadmapTimelineService implements RoadmapTimelineService {
         }
 
         Set<UUID> epicIds = epics.stream().map(Epic::getId).collect(Collectors.toSet());
-        // Batch query (mirrors DefaultEpicService#computeRollups) — avoids N+1 over the Epic page.
         List<Story> stories = storyRepo.findByEpicIdIn(epicIds);
         Map<UUID, List<Story>> storiesByEpicId = stories.stream().collect(Collectors.groupingBy(Story::getEpicId));
 
-        // Batch-load Milestones referenced by any Epic on this page (mirrors DefaultEpicService's
-        // own batch-load in #toResponses) — avoids an N+1 lookup per Epic lane.
         Set<UUID> milestoneIds = epics.stream()
                 .map(Epic::getMilestoneId)
                 .filter(Objects::nonNull)
@@ -99,7 +95,7 @@ public class DefaultRoadmapTimelineService implements RoadmapTimelineService {
 
     private TimelineEpicSummary toEpicSummary(
             Epic epic, Map<UUID, List<Story>> storiesByEpicId, Map<UUID, MilestoneRef> milestoneRefsById) {
-        // Per-Epic readiness pass (accepted N+1-per-Epic tradeoff, Decision 1 of the blocked/
+        // Per-Epic readiness pass (accepted N+1-per-Epic tradeoff, part of the blocked/
         // stalled feature) — mirrors DefaultRoadmapGraphService#assemble's own single-Epic call,
         // just run once per scoped Epic in this loop instead of once for a single requested Epic.
         // A request-scoped read, so cross-Epic blockers are authorized against the caller's own

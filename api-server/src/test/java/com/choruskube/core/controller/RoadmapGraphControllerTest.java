@@ -81,7 +81,7 @@ public class RoadmapGraphControllerTest extends BaseTest {
         TaskResponse blocked = taskService.create(story.id(), new TaskRequest("Blocked", "D"));
         dependencyService.create(new CreateDependencyRequest("task", blocking.id(), "task", blocked.id()));
 
-        // A cross-Epic blocker of `blocked` (Decision 3), so the response shape assertion below
+        // A cross-Epic blocker of `blocked`, so the response shape assertion below
         // also covers the additive `direction`/`internalItemId` fields on `externalBlockers`, not
         // just the within-Epic `dependencies` shape.
         EpicResponse foreignEpic = makeEpic("https://github.com/test/graph-ctrl-shape-foreign.git");

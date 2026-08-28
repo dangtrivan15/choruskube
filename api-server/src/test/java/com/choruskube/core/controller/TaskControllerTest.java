@@ -137,7 +137,7 @@ public class TaskControllerTest extends BaseTest {
 
     @Test
     void listTasks_blockedByUnfinishedDependency_readinessIsBlocked() throws Exception {
-        // Decision 1: the flat list endpoint now populates the same `readiness` field the
+        // The flat list endpoint now populates the same `readiness` field the
         // Roadmap Graph View has always computed, instead of leaving it null.
         StoryResponse story = makeStory("https://github.com/test/task-list-readiness.git");
         TaskResponse blocking = taskService.create(story.id(), new TaskRequest("Blocking", "D"));

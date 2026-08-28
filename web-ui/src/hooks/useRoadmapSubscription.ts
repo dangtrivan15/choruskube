@@ -15,7 +15,7 @@ export function useRoadmapSubscription() {
     queryClient.invalidateQueries({ queryKey: ["stories"] });
     queryClient.invalidateQueries({ queryKey: ["tasks"] });
     // Epic-changed events carry an assignment change; a Milestone's epicCount rollup can shift
-    // on the same event (Decision 4/Caveat 5 of the "Group Epics under a named Milestone /
+    // on the same event (the "Group Epics under a named Milestone /
     // Release" feature). No milestone-typed event exists yet ("milestone_changed" is reserved,
     // unused), so this invalidation rides every roadmap-items event rather than filtering on
     // itemType.

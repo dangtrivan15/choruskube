@@ -6,8 +6,6 @@ package com.choruskube.core.service;
  * {@code PublicMetricsCacheTest} mocks this interface to avoid spying on
  * a JPA proxy. There is exactly one production implementation
  * ({@link MetricsAggregatorImpl}) and one consumer ({@link PublicMetricsService}).
- *
- * <p>One indirection purely for test isolation.
  */
 public interface MetricsAggregator {
 

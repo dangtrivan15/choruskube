@@ -6,7 +6,7 @@ import jakarta.validation.constraints.Size;
 
 /**
  * {@code priority} is optional (nullable): an absent value defaults to {@code Priority.medium} in
- * the service layer, same as Epic/Story priority (Decision 4 of the roadmap dependencies/
+ * the service layer, same as Epic/Story priority (the roadmap dependencies/
  * priorities/milestones feature).
  */
 public record TaskRequest(

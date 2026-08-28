@@ -82,7 +82,7 @@ test.describe("Roadmap Provisioner candidate gate", () => {
     expect(created).toBeTruthy();
 
     // Clean up. The mock "roadmap_candidates" analyzer scenario proposes this Epic
-    // with priority "High" (Decision 4), so a leftover row here would permanently
+    // with priority "High", so a leftover row here would permanently
     // join the org-wide "high" tier — breaking roadmap.spec.ts's priority
     // filter/sort test, which relies on being the tier's sole occupant org-wide.
     if (created) {
@@ -133,7 +133,7 @@ test.describe("Roadmap Provisioner candidate gate", () => {
     expect(afterApprove.length).toBeGreaterThan(beforeApprove.length);
 
     // Clean up the materialized Epic(s), same reasoning as the edit-and-approve test
-    // above: the mock analyzer scenario proposes priority "High" (Decision 4), and a
+    // above: the mock analyzer scenario proposes priority "High", and a
     // leftover row here would permanently join the org-wide "high" tier that
     // roadmap.spec.ts's priority filter/sort test assumes it has to itself.
     const beforeIds = new Set(beforeApprove.map((e) => e.id));

@@ -18,11 +18,11 @@ export class RoadmapTimelinePage {
 
   /** Shared Roadmap header control — ticket type, view types, and the Graph action. */
   readonly viewControls: RoadmapViewControls;
-  /** The Graph action — a disabled `<button>` until an Epic is focused (Decision 3). */
+  /** The Graph action — a disabled `<button>` until an Epic is focused. */
   readonly graphAction: Locator;
   readonly boardViewLink: Locator;
 
-  /** Item-detail hover/click feature (§5, Task 6). */
+  /** Item-detail hover/click feature. */
   readonly itemPreview: Locator;
   readonly detailPanel: Locator;
   readonly detailClose: Locator;

@@ -96,7 +96,6 @@ public class GraphSnapshotBuilder {
 
     @Transactional(readOnly = true)
     public String buildSnapshot(UUID graphTemplateId, List<TemplateEdge> edges, Map<String, Object> inputs) {
-        // Resolve git repo(s) from run inputs — supports both single and multi-repo
         ResolvedRepos resolved = resolveGitRepos(graphTemplateId, inputs);
         List<GitRepo> repos = resolved.repos();
         SoftwareProject project = resolved.project();
@@ -234,7 +233,6 @@ public class GraphSnapshotBuilder {
             snapshot.set("inputs", objectMapper.valueToTree(enrichedInputs));
         }
 
-        // Add repos array to snapshot (multi-repo metadata for orchestrator/agent)
         if (!repos.isEmpty()) {
             ArrayNode reposArray = objectMapper.createArrayNode();
             for (GitRepo r : repos) {
@@ -268,7 +266,6 @@ public class GraphSnapshotBuilder {
     private ResolvedRepos resolveGitRepos(UUID graphTemplateId, Map<String, Object> inputs) {
         if (inputs == null) return new ResolvedRepos(List.of(), null);
 
-        // Try schema-driven discovery for software_project_id fields
         GraphTemplate template = graphTemplateRepo.findById(graphTemplateId).orElse(null);
         if (template != null && template.getInputSchema() != null) {
             try {

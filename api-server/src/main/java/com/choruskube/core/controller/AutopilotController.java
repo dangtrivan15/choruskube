@@ -13,7 +13,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Configure-and-observe surface for the Autopilot singleton (spec §10). Reads are org-read;
+ * Configure-and-observe surface for the Autopilot singleton. Reads are org-read;
  * every mutation — including the manual tick, which is e2e-facing but still changes state — is
  * org-operate.
  */

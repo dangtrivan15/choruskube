@@ -55,8 +55,8 @@ export default function RoadmapGraphPage() {
     () => (selectedId && snapshot ? findDetailItem(selectedId, snapshot) : null),
     [selectedId, snapshot],
   );
-  // Outgoing focus for the view switcher (§3.2): this Epic (from the route), plus whatever's
-  // selected in the detail panel clamped down to its Story (Decision 4) — `selected` is passed
+  // Outgoing focus for the view switcher: this Epic (from the route), plus whatever's
+  // selected in the detail panel clamped down to its Story — `selected` is passed
   // straight through since `clampFocusToStory` already tolerates `null` (nothing selected).
   const outgoingFocus = useMemo(() => clampFocusToStory(selected), [selected]);
 

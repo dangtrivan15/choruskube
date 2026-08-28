@@ -27,7 +27,7 @@ interface Props {
  * or a user-created repo group) — auto-groups are filtered out by
  * {@link SoftwareProjectSelect}. Multi-repo Epics are not expressed as a
  * list of repo ids; if the user wants two repos, they create (or pick) a
- * RepoGroup that bundles them (Decision 4).
+ * RepoGroup that bundles them.
  */
 export default function CreateEpicDialog({ open, onOpenChange }: Props) {
   const [title, setTitle] = useState("");
@@ -38,7 +38,7 @@ export default function CreateEpicDialog({ open, onOpenChange }: Props) {
   // is omitted, made explicit here so the picker always shows a concrete value.
   const [priority, setPriority] = useState<Priority>("medium");
   // "" = no Milestone chosen. Unlike priority, this can't ride the create POST — EpicRequest
-  // carries no milestoneId field (Decision 4: assignment is a dedicated PATCH) — so a chosen
+  // carries no milestoneId field (assignment is a dedicated PATCH) — so a chosen
   // Milestone is applied as a second mutation right after the Epic is created.
   const [milestoneId, setMilestoneId] = useState<string | null>(null);
 
@@ -47,7 +47,7 @@ export default function CreateEpicDialog({ open, onOpenChange }: Props) {
 
   function handleSoftwareProjectChange(id: string) {
     setSoftwareProjectId(id);
-    // A Milestone must belong to the same project as the Epic (Decision 3) — clear a
+    // A Milestone must belong to the same project as the Epic — clear a
     // stale selection from a previously-chosen project rather than let it silently PATCH
     // a mismatched milestoneId after create.
     setMilestoneId(null);

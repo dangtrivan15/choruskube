@@ -5,9 +5,9 @@ import jakarta.validation.constraints.NotBlank;
 
 /**
  * {@code editedCandidates} carries the reviewer's (possibly edited) Roadmap Provisioner candidate
- * breakdown (Decision 4) — transient, never persisted as its own row; consumed by
+ * breakdown — transient, never persisted as its own row; consumed by
  * {@code RoadmapCandidateMaterializer} on an "approved" decision and discarded otherwise.
- * {@code @Valid} cascades into {@link RoadmapCandidatesDocument} (Decision 5), which in turn
+ * {@code @Valid} cascades into {@link RoadmapCandidatesDocument}, which in turn
  * cascades into every {@link CandidateMilestone}/{@link CandidateEpicProposal}/{@link
  * CandidateDependency}.
  */

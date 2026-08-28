@@ -15,13 +15,13 @@ export interface RoadmapGraphNodeData {
   /** Task `status` ("backlog"/"in_progress"/"done") or container `stage` ("backlog"/"in_progress"/"rolled_out"). */
   status: string;
   /**
-   * Dependency-readiness (Decision 2). `null`/undefined (Epics, which can't
+   * Dependency-readiness. `null`/undefined (Epics, which can't
    * participate in a dependency edge, or a not-yet-computed value) renders no
    * indicator — only an explicit "BLOCKED" does.
    */
   readiness?: Readiness | null;
   /**
-   * Prioritization level (Epic/Story/Task — Decision 4 of the roadmap
+   * Prioritization level (Epic/Story/Task — the roadmap
    * dependencies/priorities/milestones feature gave Task its own `priority`
    * too). Typed loosely and optional: a stale/older payload may omit it —
    * `PriorityBadge` renders nothing for an unknown value rather than crashing.

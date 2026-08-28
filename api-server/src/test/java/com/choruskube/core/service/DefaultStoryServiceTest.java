@@ -143,7 +143,7 @@ public class DefaultStoryServiceTest extends BaseTest {
         assertThat(result).extracting(StoryResponse::id).containsExactly(newer.id(), older.id());
     }
 
-    // ── readiness (Decision 1/2) — the flat list endpoint now populates the field the Roadmap
+    // ── readiness — the flat list endpoint now populates the field the Roadmap
     // Graph View has always computed, via the same shared EpicReadinessAssembler ──────────────
 
     @Test
@@ -154,7 +154,8 @@ public class DefaultStoryServiceTest extends BaseTest {
         List<StoryResponse> result = service.list(epic.id());
 
         assertThat(result).extracting(StoryResponse::readiness).containsExactly(Readiness.READY);
-        assertThat(story.readiness()).isNull(); // create() itself still returns null (Decision 1 scopes list only)
+        assertThat(story.readiness())
+                .isNull(); // create() itself still returns null (real readiness is scoped to list() only)
     }
 
     @Test
@@ -172,7 +173,7 @@ public class DefaultStoryServiceTest extends BaseTest {
 
     @Test
     void list_storyBlockedBySiblingStorysUnfinishedTask_isBlocked() {
-        // Decision 3: the readiness walk is bounded to the whole Epic, not the requested Story
+        // The readiness walk is bounded to the whole Epic, not the requested Story
         // alone — a Story in the same Epic can be blocked by a Task under a completely different
         // sibling Story.
         EpicResponse epic = makeEpic("https://github.com/test/story-readiness-cross-story.git");
@@ -188,7 +189,7 @@ public class DefaultStoryServiceTest extends BaseTest {
 
     @Test
     void get_doesNotPopulateReadiness() {
-        // Decision 1: only the flat list endpoints (and the Roadmap Graph View) compute
+        // Only the flat list endpoints (and the Roadmap Graph View) compute
         // readiness — single-item reads are unaffected and keep returning null.
         EpicResponse epic = makeEpic("https://github.com/test/story-readiness-get-null.git");
         StoryResponse blocking = service.create(epic.id(), new StoryRequest("Blocking", "D"));
@@ -267,7 +268,7 @@ public class DefaultStoryServiceTest extends BaseTest {
 
     @Test
     void get_doesNotPopulateReadyTaskCount() {
-        // Same scoping as readiness (Decision 1): single-item reads don't join dependency edges.
+        // Same scoping as readiness: single-item reads don't join dependency edges.
         EpicResponse epic = makeEpic("https://github.com/test/story-ready-count-get-null.git");
         StoryResponse story = service.create(epic.id(), new StoryRequest("S", "D"));
         taskService.create(story.id(), new TaskRequest("T", "D"));
@@ -505,7 +506,7 @@ public class DefaultStoryServiceTest extends BaseTest {
     @Test
     void updateStage_withStartedDescendantTask_succeeds() {
         // Proves the "no edit once started" guard used by the full update() edit path does NOT
-        // apply to stage moves (Decision 2 of the plan: mirrors DefaultEpicService#updateStage).
+        // apply to stage moves, mirroring DefaultEpicService#updateStage.
         EpicResponse epic = makeEpic("https://github.com/test/story-stage-started-task.git");
         StoryResponse story = service.create(epic.id(), new StoryRequest("S", "D"));
         TaskResponse task = taskService.create(story.id(), new TaskRequest("T", "D"));

@@ -173,7 +173,7 @@ public class InternalRunController {
      * from the run context so agents don't need to know it.
      *
      * The create/list/update paths below are kept byte-for-byte unchanged from the retired
-     * flat-proposal model (Decision 6) — only their delegate calls now operate on Epics — because
+     * flat-proposal model — only their delegate calls now operate on Epics — because
      * the agent-images/claude-code/create-proposal, list-proposals, and update-proposal CLI
      * scripts depend on these exact paths. Removing or renaming them would break deployed agent
      * images still running an older image during a rolling upgrade. The nested Story/Task-create
@@ -203,7 +203,7 @@ public class InternalRunController {
         return service.updateEpic(runId, proposalId, request);
     }
 
-    /** New: create a Story under an Epic (Decision 6/3.6). */
+    /** New: create a Story under an Epic. */
     @PostMapping("/{runId}/node-executions/{nodeExecId}/feature-proposals/{epicId}/stories")
     @ResponseStatus(HttpStatus.CREATED)
     public StoryResponse createStory(
@@ -214,7 +214,7 @@ public class InternalRunController {
         return service.createStory(runId, epicId, request);
     }
 
-    /** New: create a Task under a Story (Decision 6/3.6). */
+    /** New: create a Task under a Story. */
     @PostMapping("/{runId}/node-executions/{nodeExecId}/feature-proposals/{epicId}/stories/{storyId}/tasks")
     @ResponseStatus(HttpStatus.CREATED)
     public TaskResponse createTask(
@@ -228,7 +228,7 @@ public class InternalRunController {
 
     /**
      * New: create a "blocking" dependency edge between two items on behalf of an agent pod
-     * (Decision 6) — the imperative counterpart to the declarative artifact's {@code dependencies}
+     * — the imperative counterpart to the declarative artifact's {@code dependencies}
      * list. Both endpoints are cross-checked against the run's own software project before the
      * edge is created (see {@link InternalRunService#createDependency}).
      */
@@ -243,7 +243,7 @@ public class InternalRunController {
 
     /**
      * New: create (or reuse an existing same-named) Milestone under the run's software project on
-     * behalf of an agent pod (Decision 6) — the imperative counterpart to the declarative
+     * behalf of an agent pod — the imperative counterpart to the declarative
      * artifact's {@code milestones} list.
      */
     @PostMapping("/{runId}/node-executions/{nodeExecId}/milestones")
@@ -256,9 +256,9 @@ public class InternalRunController {
     }
 
     /**
-     * Agent-facing mirror of {@code GET /api/v1/epics/{epicId}/graph} (Roadmap Graph View,
-     * Decision 1) — same response shape (readiness, capped run history), scoped by the calling
-     * run's project rather than a JWT-derived org (Decision 5).
+     * Agent-facing mirror of {@code GET /api/v1/epics/{epicId}/graph} (Roadmap Graph View)
+     * — same response shape (readiness, capped run history), scoped by the calling
+     * run's project rather than a JWT-derived org.
      */
     @GetMapping("/{runId}/node-executions/{nodeExecId}/feature-proposals/{epicId}/graph")
     public RoadmapGraphSnapshot getGraph(
@@ -267,7 +267,7 @@ public class InternalRunController {
     }
 
     /**
-     * Agent-facing "resolve it for me" sibling of {@link #getGraph} (Decision 1, Decision 2) — no
+     * Agent-facing "resolve it for me" sibling of {@link #getGraph} — no
      * Epic ID in the path; the Epic is derived server-side from the calling run's own triggering
      * Task ({@code run.task_id -> Task -> Story -> Epic}), so a plain {@code get-roadmap-graph}
      * with no flags works even when the client-side {@code $EPIC_ID} default never resolved.
@@ -278,9 +278,9 @@ public class InternalRunController {
     }
 
     /**
-     * Agent-facing mirror of {@code PATCH /api/v1/tasks/{id}/status} (Decision 1, Decision 4) —
+     * Agent-facing mirror of {@code PATCH /api/v1/tasks/{id}/status} —
      * lets an agent report a Task's outcome (success or failure) from inside its own run, scoped
-     * by the calling run's project rather than a JWT-derived org (Decision 5).
+     * by the calling run's project rather than a JWT-derived org.
      */
     @PatchMapping("/{runId}/node-executions/{nodeExecId}/tasks/{taskId}/status")
     public TaskResponse updateTaskStatus(
@@ -306,7 +306,7 @@ public class InternalRunController {
     }
 
     /**
-     * Node-execution-scoped mirror of {@link #getPullRequests} (Decision 3/3.3 — PR completion
+     * Node-execution-scoped mirror of {@link #getPullRequests} (PR completion
      * gate) — {@code InternalAuthFilter} only authorizes an agent's {@code JOB_SECRET} for paths
      * containing its own {@code node-executions/{nodeExecId}} segment, so the run-scoped read
      * above is unreachable from inside an agent pod.

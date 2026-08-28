@@ -5,8 +5,7 @@
 # Usage: create-dependency --blocking-type TYPE --blocking-id UUID --blocked-type TYPE --blocked-id UUID
 #
 # Declares that the "blocking" item must complete before the "blocked" item is
-# considered ready (Decision 6 of the roadmap dependencies/priorities/
-# milestones feature) — the imperative-agent counterpart to the declarative
+# considered ready — the imperative-agent counterpart to the declarative
 # roadmap_candidates.json artifact's "dependencies" list. Both items must
 # already exist and belong to the current run's software project; the server
 # rejects a cross-project reference (404/403) and a cyclic edge (409).

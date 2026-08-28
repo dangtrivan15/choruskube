@@ -8,7 +8,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * Fires the Autopilot's tick on a timer (Decision 1). Every side effect of a pass — settling
+ * Fires the Autopilot's tick on a timer. Every side effect of a pass — settling
  * runs, starting Tasks, publishing status — lives in {@link AutopilotService#tick()}; this class
  * only owns the schedule and the failure boundary.
  *

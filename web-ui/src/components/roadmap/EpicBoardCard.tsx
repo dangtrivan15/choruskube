@@ -15,7 +15,7 @@ const levelMeta = roadmapLevelMeta("epic");
 
 interface Props {
   epic: EpicResponse;
-  /** Whether this card is the currently-focused Epic (§3.1/§3.3) — drives highlight styling. */
+  /** Whether this card is the currently-focused Epic — drives highlight styling. */
   isFocused?: boolean;
   /** Called on card click (excluding the expand chevron, which already stops propagation). */
   onFocus?: (epicId: string) => void;
@@ -24,8 +24,8 @@ interface Props {
    * card arrives already focused on one of its Stories (a `story` focus param). Only read as the
    * `expanded`/`hasLoadedStories` state hooks' *lazy initial value*; changing it after mount does
    * not re-expand/re-collapse an already-mounted card (React `useState` ignores a changed initial
-   * argument on re-render) — the same "click-only, never auto-cleared" semantics Decision 4 gives
-   * focus generally.
+   * argument on re-render) — the same "click-only, never auto-cleared" semantics focus has
+   * generally.
    */
   initiallyExpanded?: boolean;
   /** The Story (if any) to highlight once the Story list is visible. */

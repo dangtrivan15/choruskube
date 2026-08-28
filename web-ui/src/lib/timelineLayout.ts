@@ -13,7 +13,7 @@ export const TIMELINE_AXIS_WIDTH = 2400;
 
 /**
  * Deterministic secondary X offset (px) applied per colliding Story sharing the exact same
- * `createdAt` timestamp within one Epic's lane (Decision, §3.3) — without this, two Stories
+ * `createdAt` timestamp within one Epic's lane — without this, two Stories
  * created in the same instant would render exactly on top of each other on the linear time scale.
  */
 export const TIMELINE_COLLISION_OFFSET = 28;
@@ -24,7 +24,7 @@ export interface TimelineEpicLaneNodeData {
   stage: string;
   /** Prioritization level — display-only on the lane header (compact PriorityBadge). */
   priority: string;
-  /** Whether this lane's Epic is the currently-focused item (§3.1/§3.3) — drives highlight styling. */
+  /** Whether this lane's Epic is the currently-focused item — drives highlight styling. */
   isFocused: boolean;
   /** OR-aggregated across this Epic's Stories (plus its own `stalled`, for `stalled`) — see `deriveEpicRisk`. */
   blocked: boolean;
@@ -37,17 +37,17 @@ export type TimelineEpicLaneNodeType = Node<TimelineEpicLaneNodeData, "timeline-
 export interface TimelineStoryNodeData {
   storyId: string;
   epicId: string;
-  /** The owning Epic's title (§ item-detail hover/click) — carried on the Story node so the hover
-   * preview can name the parent Epic without a separate lookup back into the full timeline data. */
+  /** The owning Epic's title — carried on the Story node so the hover preview can name the parent
+   * Epic without a separate lookup back into the full timeline data. */
   epicTitle: string;
   title: string;
   stage: string;
   /** Prioritization level — display-only on the Story marker (compact PriorityBadge). */
   priority: string;
   createdAt: string;
-  /** Whether this Story is the currently-focused item (§3.1/§3.3) — drives highlight styling. */
+  /** Whether this Story is the currently-focused item — drives highlight styling. */
   isFocused: boolean;
-  /** This Story's own risk signal (§ blocked/stalled work) — see `deriveStoryRisk`. */
+  /** This Story's own risk signal — see `deriveStoryRisk`. */
   blocked: boolean;
   stalled: boolean;
   [key: string]: unknown;
@@ -96,7 +96,7 @@ function buildTimeScale(epics: TimelineEpicSummary[]): (timeMs: number) => numbe
  * entire response, not just the Stories in that one lane — so two Epics' lanes stay visually
  * comparable against the same axis.
  *
- * `focus` (§3.1) sets `isFocused: true` on the lane/Story node(s) matching `focus.epicId`/
+ * `focus` sets `isFocused: true` on the lane/Story node(s) matching `focus.epicId`/
  * `focus.storyId`, and `false` on every other node — defaults to `{}` (nothing focused) so
  * existing callers that don't care about focus don't need to pass anything.
  *
@@ -165,7 +165,7 @@ export function computeRoadmapTimelineLayout(
     }
   });
 
-  // No dependency/hierarchy edges in this view (Decision 4 — a time-scale lane layout, not a
+  // No dependency/hierarchy edges in this view (a time-scale lane layout, not a
   // graph); every Epic/Story's position on its own lane already conveys the relationship.
   return { nodes, edges: [] };
 }

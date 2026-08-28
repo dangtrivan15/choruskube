@@ -103,9 +103,9 @@ func (s *DAGExecutorTestSuite) TestLinearTwoNodeGraph() {
 	s.NoError(s.env.GetWorkflowError())
 }
 
-// TestLinearTwoNodeGraph_TaskContextPropagatesToAllNodes verifies Decision 3: a
-// snapshot's taskContext (Task -> Story -> Epic identity, and its openBlockers,
-// Decision 1/4) must reach EVERY node execution's config.json, not just the
+// TestLinearTwoNodeGraph_TaskContextPropagatesToAllNodes verifies that a
+// snapshot's taskContext (Task -> Story -> Epic identity, and its openBlockers)
+// must reach EVERY node execution's config.json, not just the
 // entrypoint — A -> B, both AI nodes.
 func (s *DAGExecutorTestSuite) TestLinearTwoNodeGraph_TaskContextPropagatesToAllNodes() {
 	nodeA := uuid.New()
@@ -1997,7 +1997,7 @@ func (s *DAGExecutorTestSuite) TestSelfLoopingAIReviewerIteratesThenAdvances() {
 }
 
 // TestModelEffortResolution_SelfLoopingReviewNode_FirstThenSubsequentIteration
-// covers Decision 2 / Part 2 step 7(a)+(b) of the accompanying spec: a review
+// covers Part 2 step 7(a)+(b) of the accompanying spec: a review
 // node's iteration-aware config_overrides keys resolve to the first-iteration
 // model/effort on its first pass (tracker.reviewPass == 1) and to the
 // subsequent-iteration model/effort once the back-edge self-loop advances
@@ -2090,7 +2090,7 @@ func (s *DAGExecutorTestSuite) TestModelEffortResolution_SelfLoopingReviewNode_F
 }
 
 // TestModelEffortResolution_NodeWithoutIterationAwareKeys_FallsBackToStatic
-// covers Decision 2 / Part 2 step 7(c): a node whose config_overrides carry no
+// covers Part 2 step 7(c): a node whose config_overrides carry no
 // iteration-aware keys at all (e.g. Implement, Draft Spec & Plan) is unaffected
 // by the new resolution branch and still resolves via the pre-existing static
 // model / flat effort path.
@@ -2133,7 +2133,7 @@ func (s *DAGExecutorTestSuite) TestModelEffortResolution_NodeWithoutIterationAwa
 }
 
 // TestModelEffortResolution_PartialIterationKeys_FallsBackToStaticNotEmpty
-// covers Decision 2 / Part 2 step 7(d): a review node whose config_overrides
+// covers Part 2 step 7(d): a review node whose config_overrides
 // set only model_first_iteration/effort_first_iteration — omitting the
 // _subsequent_iteration counterparts — must fall back to the static
 // model/flat effort value on reviewPass > 1, not silently resolve to an empty
@@ -2203,7 +2203,7 @@ func (s *DAGExecutorTestSuite) TestModelEffortResolution_PartialIterationKeys_Fa
 // taskContextFields/openBlockerFields (dag_executor.go) is exercised at THIS layer —
 // the DAG-executor's own flattening step — not only via ExecuteAINodeFromSnapshot's
 // activity-layer coverage in activities_test.go. A snapshot with TaskContext == nil is
-// the ad-hoc-run case (Decision 1 of "Preserve current behavior for Tasks with no
+// the ad-hoc-run case ("Preserve current behavior for Tasks with no
 // dependency context"): a run that was never started from a roadmap Task.
 func (s *DAGExecutorTestSuite) TestTaskContextFields_NilTaskContext() {
 	snap := &state.GraphRuntimeSnapshot{TaskContext: nil}
