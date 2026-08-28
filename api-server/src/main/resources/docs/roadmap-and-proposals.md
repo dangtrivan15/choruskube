@@ -74,8 +74,8 @@ move a parent forward is to start and complete the Tasks underneath it.
 Only items still in `backlog` status can be edited or deleted — once any descendant Task has
 left `backlog`, the Epic, Story, or Task above it is read-only to preserve the audit history of
 work in progress. There is currently no way to abandon or archive an Epic, Story, or Task once
-work has started short of letting every Task under it reach a terminal state — see the project's
-open caveat on this (Caveat 6 in the work-hierarchy design) if you need to cancel in-flight work.
+work has started short of letting every Task under it reach a terminal state. Cancelling
+in-flight work is a known gap with no supported workaround today.
 
 ## Best Practices
 

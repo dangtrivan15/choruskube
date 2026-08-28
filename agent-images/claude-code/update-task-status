@@ -101,9 +101,9 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-# Default --task-id to the triggering Task (Decision 4): $TASK_ID is exported
-# by entrypoint.sh from config.json's task_context for task-triggered runs, and
-# is unset for a manually-started run — in which case --task-id must be passed
+# Default --task-id to the triggering Task: $TASK_ID is exported by
+# entrypoint.sh from config.json's task_context for task-triggered runs, and is
+# unset for a manually-started run — in which case --task-id must be passed
 # explicitly or this fails clearly below rather than sending an empty id.
 EFFECTIVE_TASK_ID="${TASK_ID_ARG:-${TASK_ID:-}}"
 
