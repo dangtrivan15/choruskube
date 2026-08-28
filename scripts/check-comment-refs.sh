@@ -24,11 +24,14 @@ SECTION='§ ?[0-9]+'
 # citation. Every other file's mentions are ordinary comments.
 ALLOWLIST='api-server/src/main/java/com/choruskube/core/config/BaseFeatureDevSeeder.java'
 
-# `git ls-files` rather than `grep -r`: it enumerates every versioned file plus
-# the not-yet-added ones, so the walk reaches the extensionless `#!/bin/bash`
-# scripts, the `.md` docs and the `.yaml` config an extension list never opens —
-# and it prunes `node_modules`, `build/` and the composed `.staging` tree
-# through .gitignore instead of descending them and filtering afterwards.
+# `git ls-files` rather than `grep -r`: it enumerates every versioned file, so the
+# walk reaches the extensionless `#!/bin/bash` scripts, the `.md` docs and the
+# `.yaml` config an extension list never opens — and it prunes `node_modules`,
+# `build/` and the composed `.staging` tree through .gitignore instead of
+# descending them and filtering afterwards.
+#
+# `--others` keeps the not-yet-added files in scope, so a decision entry written
+# but not yet committed is checked at the moment it is easiest to fix.
 #
 # `done < <(cmd)` never surfaces `cmd`'s exit status to this shell: a failing `git
 # ls-files` would leave `files` empty and the scan below would report a clean tree
@@ -47,6 +50,11 @@ while IFS= read -r -d '' file; do
     # A per-run planning archive *is* the spec, so its ordinals address itself.
     docs/plans/*|docs/progress/*) continue ;;
   esac
+  # A tracked path can be deleted in the working tree — staged for removal, or
+  # swept by a build — and grep would exit 2 on it, tripping the fail-closed
+  # check below over a file nobody can cite from. An unreadable file still
+  # exists, so genuine permission errors are unaffected.
+  [ -e "$file" ] || continue
   files+=("$file")
 done < "$list_file"
 
@@ -60,16 +68,26 @@ scan() {
   local pattern=$1
   shift
   [ "$#" -gt 0 ] || return 0
-  local out status=0
-  out=$(grep -HInE "$pattern" -- "$@") || status=$?
-  if [ "$status" -gt 1 ]; then
+  local out status=0 err
+  err=$(mktemp)
+  out=$(grep -HInE "$pattern" -- "$@" 2>"$err") || status=$?
+  # A path enumerated a moment ago can be gone before grep opens it: a CI build
+  # writes and sweeps untracked files while this runs. A file that no longer
+  # exists cannot be cited from, so it is not a read this guard depends on.
+  # Anything else grep could not read — permission denied, I/O error — is, and
+  # still disarms the guard. An empty stderr with a hard exit counts as unknown.
+  if [ "$status" -gt 1 ] && { [ ! -s "$err" ] || grep -qvE ': No such file or directory$' "$err"; }; then
     {
+      echo
+      cat "$err"
       echo
       echo "check-comment-refs: grep exited $status — the scan did not finish, so its"
       echo "silence proves nothing. Fix the read error above and re-run."
     } >&2
+    rm -f "$err"
     exit "$status"
   fi
+  rm -f "$err"
   [ -z "$out" ] || hits="${hits}${out}"$'\n'
   return 0
 }
