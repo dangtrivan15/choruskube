@@ -1,4 +1,4 @@
--- The Autopilot: a standing controller, one per installation.
+-- The Autopilot: a standing controller, one per installation (Decision 7).
 --
 -- Deliberately NOT seeded. No row means "never configured": the read path
 -- returns a synthetic disengaged status and the row is INSERTed on first
