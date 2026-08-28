@@ -210,14 +210,35 @@ test.describe("Autopilot", () => {
     const heldTitle = uniqueName("Autopilot Held Task");
     const task = await api.createTask(story.id, { title: heldTitle, description: "desc" });
 
-    const before = await api.getAutopilot();
-    await api.updateAutopilot(before.inFlight + 10);
     await api.engageAutopilot();
-    await api.tickAutopilot();
 
-    const started = (await api.listTasks(story.id)).find((t) => t.id === task.id);
-    expect(started?.status).toBe("in_progress");
-    const runId = started!.latestRunId!;
+    // ONE free slot at a time, never a ceiling. A tick starts READY backlog Tasks from the WHOLE
+    // board, so surplus headroom here sweeps up Tasks other specs are mid-assertion on and breaks
+    // their teardown with a 409 on Epic delete — the exact hazard described at the top of this
+    // file. Same bounded-retry shape as the slot test above: whichever tick lands our Task wins,
+    // and the loop absorbs a slot that went to another worker first.
+    let started: Task | undefined;
+    for (let attempt = 0; attempt < 10 && !started; attempt++) {
+      const status = await api.getAutopilot();
+      await api.updateAutopilot(status.inFlight + 1);
+      await api.tickAutopilot();
+      started = (await api.listTasks(story.id)).find(
+        (t) => t.id === task.id && t.status === "in_progress",
+      );
+    }
+    if (!started) {
+      throw new Error(
+        "Autopilot never started the Task after 10 ticks — see the cross-worker slot " +
+          "contention note in this file's top-of-file comment.",
+      );
+    }
+
+    // Zero headroom from here on: nothing below this line needs a start, and the 30s reconciler
+    // is off in this stack, so no further Task can leave backlog on this test's account.
+    const afterStart = await api.getAutopilot();
+    await api.updateAutopilot(Math.max(1, afterStart.inFlight));
+
+    const runId = started.latestRunId!;
     expect(runId).toBeTruthy();
 
     // The attribution half: this run has an autopilot_id, so the header badges it. A run a
@@ -230,11 +251,13 @@ test.describe("Autopilot", () => {
     // it is. That is what strands it: the ready frontier only sweeps `backlog`.
     await api.cancelRun(runId);
     await api.waitForRunStatus(runId, ["cancelled"], 30_000);
-    await api.tickAutopilot();
 
     const afterCancel = (await api.listTasks(story.id)).find((t) => t.id === task.id);
     expect(afterCancel?.status).toBe("in_progress");
 
+    // No tick needed: GET /autopilot runs the same frontier sweep (AutopilotService#snapshot),
+    // so the held list is computed on read. Ticking here would only widen this test's reach over
+    // the shared board for no assertion.
     await autopilotPage.goto();
     await expect(autopilotPage.heldTasks).toContainText(heldTitle);
     // Links to the Task, not to the cancelled run: that run is over, and Restart lives on the Task.
