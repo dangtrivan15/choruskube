@@ -54,6 +54,10 @@ public class InternalArtifactController {
                     .body(Map.of("error", "Invalid method: " + method + ". Only GET and PUT are allowed."));
         }
 
+        // InternalAuthFilter has already loaded this NodeExecution to validate JOB_SECRET.
+        // Reusing it would mean passing it through a request attribute, i.e. editing that
+        // filter — which CLAUDE.md gates behind explicit approval. Presign calls are
+        // infrequent, so the second lookup stays.
         NodeExecution agentExec = execRepo.findById(nodeExecId).orElse(null);
         if (agentExec == null) {
             return ResponseEntity.status(403).body(Map.of("error", "Node execution not found"));
@@ -75,6 +79,8 @@ public class InternalArtifactController {
 
         String orgSlug = storagePrefixResolver.storagePrefixForRun(agentRun.getId());
 
+        // The `..` test is not redundant with the prefix test: `<org>/runs/<id>/../../other/x`
+        // satisfies startsWith and still escapes the scope.
         String allowedPrefix = orgSlug + "/runs/" + runId + "/";
         if (!path.startsWith(allowedPrefix) || path.contains("..")) {
             return ResponseEntity.status(403).body(Map.of("error", "Access denied: path outside allowed scope"));
