@@ -168,7 +168,7 @@ A comment states the constraint that fires if you edit **this line**. Target ≤
 2. **Redundancy.** If the sentence still reads correctly with the clause deleted, delete it.
 3. **No run-scoped references.** Never cite a run's spec by ordinal — `Decision N`, `§N.N`, `Caveat N`, "the plan". Those identifiers are scoped to one run; the next agent resolves them against its own spec and gets a different answer. State the constraint instead. Durable references — a repo-relative file path, a type name, an issue URL — are fine.
 
-Enforced by `scripts/check-comment-refs.sh`, which runs as part of `./gradlew test`.
+Enforced by `scripts/check-comment-refs.sh`, which runs as part of the root `./gradlew test`.
 
 ## Documentation Conventions
 

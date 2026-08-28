@@ -14,9 +14,9 @@ cd "$(dirname "$0")/.."
 # on its trailing file descriptor digit.
 NAMED='(^|[^A-Za-z-])[Dd]ecisions? +#?[0-9]+|(^|[^A-Za-z-])[Cc]aveats? +#?[0-9]+'
 
-# A bare section sign is checked in code only. In a comment it can only point
-# outside the file, at a run's spec; in a document it almost always points at
-# that document's own numbered headings, which is a durable reference.
+# A bare section sign is checked everywhere, code and prose alike. It usually cites
+# a run's spec, not a document's own headings; the rare document that does is named
+# in ALLOWLIST rather than carved out by extension.
 SECTION='§ ?[0-9]+'
 
 # BaseFeatureDevSeeder's prompt strings tell the design agent how to STRUCTURE a
@@ -29,8 +29,15 @@ ALLOWLIST='api-server/src/main/java/com/choruskube/core/config/BaseFeatureDevSee
 # scripts, the `.md` docs and the `.yaml` config an extension list never opens —
 # and it prunes `node_modules`, `build/` and the composed `.staging` tree
 # through .gitignore instead of descending them and filtering afterwards.
-code=()
-prose=()
+#
+# `done < <(cmd)` never surfaces `cmd`'s exit status to this shell: a failing `git
+# ls-files` would leave `files` empty and the scan below would report a clean tree
+# it never read. A real file makes the listing an ordinary command `set -e` can catch.
+list_file=$(mktemp)
+trap 'rm -f "$list_file"' EXIT
+git ls-files -z --cached --others --exclude-standard > "$list_file"
+
+files=()
 while IFS= read -r -d '' file; do
   case "$file" in
     # Applied migrations are checksum-frozen: Flyway CRC32s the raw file lines,
@@ -40,11 +47,8 @@ while IFS= read -r -d '' file; do
     # A per-run planning archive *is* the spec, so its ordinals address itself.
     docs/plans/*|docs/progress/*) continue ;;
   esac
-  case "$file" in
-    *.md) prose+=("$file") ;;
-    *) code+=("$file") ;;
-  esac
-done < <(git ls-files -z --cached --others --exclude-standard)
+  files+=("$file")
+done < "$list_file"
 
 hits=''
 
@@ -70,8 +74,7 @@ scan() {
   return 0
 }
 
-scan "$NAMED|$SECTION" ${code[@]+"${code[@]}"}
-scan "$NAMED" ${prose[@]+"${prose[@]}"}
+scan "$NAMED|$SECTION" ${files[@]+"${files[@]}"}
 
 hits=${hits%$'\n'}
 if [ -n "$hits" ] && [ -n "$ALLOWLIST" ]; then

@@ -31,6 +31,14 @@ import java.util.UUID;
  * thread before any pass begins, outside every phase boundary, and {@code tick()} asserts that no
  * transaction is active. Reading state to decide an order is fine; holding one while the passes run
  * is the defect the four-phase structure exists to remove.
+ *
+ * <p>The core default, {@link ShufflingTickOrder}, is registered {@code @ConditionalOnMissingBean}
+ * rather than gated on {@code auth.enabled} like {@link AutopilotResolver} and {@link
+ * AutopilotCandidateSource}. That difference is deliberate and load-bearing: those seams have no
+ * safe default — falling back to "every Epic in the installation" would be a cross-scope leak — so
+ * their core beans are absent downstream and the context refuses to start without a replacement.
+ * Ordering does have a safe default. Shuffling is correct for everybody; an implementation replaces
+ * it only to want something better.
  */
 public interface AutopilotTickOrder {
 
