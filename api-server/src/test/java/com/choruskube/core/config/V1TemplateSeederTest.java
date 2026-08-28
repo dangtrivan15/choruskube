@@ -812,14 +812,14 @@ class V1TemplateSeederTest extends BaseTest {
     }
 
     @Test
-    void currentVersionIsBumpedForDocAndCommentConventions() {
-        // v38: IMPLEMENT_PROMPT and CODE_REVIEW_PROMPT defer to each repo's CLAUDE.md,
-        // and IMPLEMENT_PROMPT routes spec content into docs/decisions/ and
-        // ARCHITECTURE.md; SPEC_AND_PLAN_PROMPT now requires a per-repo, privacy-split
-        // output alongside the cross-repo spec. Verifies only that the seeder actually
-        // bumped its version constant when it shipped this change.
-        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(38);
-        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 38))
+    void currentVersionIsBumpedForSelectiveGraduationRepair() {
+        // v39: IMPLEMENT_PROMPT's routing block now carries the reference-repair rule that
+        // previously lived only in the drafting prompt — graduating some decisions and not
+        // others is what leaves a graduated entry citing one the reader cannot open.
+        // Verifies only that the seeder actually bumped its version constant when it
+        // shipped this change.
+        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(39);
+        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 39))
                 .isPresent();
     }
 

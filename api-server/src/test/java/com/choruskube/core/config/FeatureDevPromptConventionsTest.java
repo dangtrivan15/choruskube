@@ -47,6 +47,13 @@ class FeatureDevPromptConventionsTest {
     }
 
     @Test
+    void implementPromptRepairsReferencesLeftDanglingByGraduation() throws Exception {
+        assertThat(promptField("IMPLEMENT_PROMPT"))
+                .as("graduating some decisions and not others is what strands a reference")
+                .contains("Resolve or delete every such reference");
+    }
+
+    @Test
     void specPromptRequiresPerRepoSplit() throws Exception {
         assertThat(promptField("SPEC_AND_PLAN_PROMPT")).contains("per-repo").contains("privacy");
     }

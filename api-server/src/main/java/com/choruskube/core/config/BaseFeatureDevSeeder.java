@@ -35,7 +35,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
     // and executor changes here never retroactively mutate prior versions. To ship a
     // change, edit the constants in this file (prompt, executor, schema), increment
     // CURRENT_VERSION, and the next boot creates the new snapshot.
-    static final int CURRENT_VERSION = 38;
+    static final int CURRENT_VERSION = 39;
 
     private static final String TEMPLATE_NAME = "Feature Development";
 
@@ -570,6 +570,11 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
               - §1, §5, §6, §8 and Part 2 -> discard; they are execution scaffolding
             Graduate a decision only when something in this repo cites it. Do not bulk-copy
             the spec.
+
+            Graduation is selective, so a decision you graduate can reference one you left
+            behind. Resolve or delete every such reference as you write the entry: state what
+            the other decision settled, or drop the clause. A reference to something the
+            reader cannot open is worse than no reference.
 
             These docs are derived from the spec. A run owns exactly one decisions file —
             docs/decisions/YYYY-MM-DD---NN-<slug>.md — holding every decision that run
