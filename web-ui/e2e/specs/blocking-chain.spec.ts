@@ -1,5 +1,26 @@
 import { test, expect } from "../fixtures";
-import { uniqueName } from "../helpers/api-client";
+import { uniqueName, type TestApiClient } from "../helpers/api-client";
+
+/**
+ * Deletes the Epic, tolerating the one failure a concurrent Autopilot tick can produce.
+ *
+ * Every test in this file deliberately leaves an unblocked Task sitting in `backlog` — that Task
+ * is the head of the chain under test, so it cannot be blocked or done. A tick from
+ * `autopilot.spec.ts` starts READY backlog Tasks from the WHOLE board, not just its own worker's,
+ * and a started descendant makes the Epic undeletable. The delete is cleanup, not an assertion,
+ * so losing that race must not fail a test that already proved what it came to prove.
+ *
+ * Scoped to exactly that message: any other cleanup failure still surfaces. `uniqueName()` keeps
+ * the leftover rows from colliding with a later run.
+ */
+async function deleteEpicToleratingAutopilotStart(api: TestApiClient, epicId: string): Promise<void> {
+  await api.deleteEpic(epicId).catch((error: unknown) => {
+    const undeletable =
+      error instanceof Error &&
+      error.message.includes("Can only delete an Epic while all of its Tasks are still in backlog");
+    if (!undeletable) throw error;
+  });
+}
 
 test.describe("Blocking Chain", () => {
   test("opening a blocked Task's detail panel shows a multi-hop chain", async ({
@@ -41,7 +62,7 @@ test.describe("Blocking Chain", () => {
       await expect(roadmapGraphPage.blockingChainSection).toContainText(taskB.title);
       await expect(roadmapGraphPage.blockingChainSection).toContainText(taskC.title);
     } finally {
-      await api.deleteEpic(epic.id);
+      await deleteEpicToleratingAutopilotStart(api, epic.id);
     }
   });
 
@@ -70,7 +91,7 @@ test.describe("Blocking Chain", () => {
       await expect(roadmapGraphPage.blockingChainNodes).toHaveCount(1);
       await expect(roadmapGraphPage.blockingChainSection).toContainText(blockingTask.title);
     } finally {
-      await api.deleteEpic(epic.id);
+      await deleteEpicToleratingAutopilotStart(api, epic.id);
     }
   });
 
@@ -89,7 +110,7 @@ test.describe("Blocking Chain", () => {
 
       await expect(roadmapGraphPage.blockingChainSection).not.toBeVisible();
     } finally {
-      await api.deleteEpic(epic.id);
+      await deleteEpicToleratingAutopilotStart(api, epic.id);
     }
   });
 });
