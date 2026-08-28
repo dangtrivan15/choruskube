@@ -35,7 +35,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
     // and executor changes here never retroactively mutate prior versions. To ship a
     // change, edit the constants in this file (prompt, executor, schema), increment
     // CURRENT_VERSION, and the next boot creates the new snapshot.
-    static final int CURRENT_VERSION = 39;
+    static final int CURRENT_VERSION = 38;
 
     private static final String TEMPLATE_NAME = "Feature Development";
 
