@@ -35,7 +35,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
     // and executor changes here never retroactively mutate prior versions. To ship a
     // change, edit the constants in this file (prompt, executor, schema), increment
     // CURRENT_VERSION, and the next boot creates the new snapshot.
-    static final int CURRENT_VERSION = 38;
+    static final int CURRENT_VERSION = 39;
 
     private static final String TEMPLATE_NAME = "Feature Development";
 
@@ -583,10 +583,16 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             what is there — amend or rewrite as you judge fit. ARCHITECTURE.md is an existing
             living document; merge into it rather than adding a parallel file.
 
-            Before graduating a decision, check docs/decisions/README.md for an entry this
-            run's decision reverses or replaces. If one exists, do not edit it. Add your
-            entry as normal, note in it which entry it supersedes, and add
-            `superseded by <new-entry>` to the old entry's index row.
+            Every entry you graduate gets its own row in docs/decisions/README.md's index,
+            newest last: the filename linked, its date, one line on the question it settles,
+            and status `current`. An entry missing from that index is invisible to the next
+            run's supersession check below, so it cannot be marked stale later — the
+            directory then accumulates decisions no reader can tell are still true.
+
+            Before graduating a decision, check that same index for an entry this run's
+            decision reverses or replaces. If one exists, do not edit it. Add your entry as
+            normal, name in it which entry it supersedes, and change the old entry's status
+            to `superseded by <your entry>`.
 
             ## Opening and updating pull requests
 

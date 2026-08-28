@@ -65,8 +65,28 @@ class FeatureDevPromptConventionsTest {
      * actually takes rather than one of them.
      */
     @Test
+    void implementPromptRequiresAnIndexRowPerGraduatedEntry() throws Exception {
+        // Marking a superseded entry is not enough on its own: a run that supersedes
+        // nothing must still register, or the index stays empty and the supersession
+        // check below it has nothing to read.
+        assertThat(promptField("IMPLEMENT_PROMPT"))
+                .contains("docs/decisions/README.md")
+                .contains("its own row")
+                .contains("newest last");
+    }
+
+    @Test
+    void implementPromptKeepsGraduatedEntriesImmutable() throws Exception {
+        assertThat(promptField("IMPLEMENT_PROMPT"))
+                .as("a reversal adds an entry and marks the old one; it never edits it")
+                .contains("do not edit it")
+                .contains("superseded by");
+    }
+
+    @Test
     void noPromptCitesAPastRunsSpec() throws Exception {
-        for (String name : new String[] {"SPEC_AND_PLAN_PROMPT", "IMPLEMENT_PROMPT", "CODE_REVIEW_PROMPT"}) {
+        for (String name :
+                new String[] {"SPEC_AND_PLAN_PROMPT", "SPEC_REVIEW_PROMPT", "IMPLEMENT_PROMPT", "CODE_REVIEW_PROMPT"}) {
             assertThat(promptField(name))
                     .as("%s must not cite a past run's spec", name)
                     .doesNotContain("in the spec)")
