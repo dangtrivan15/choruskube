@@ -26,7 +26,6 @@ public record NodeExecutionResponse(
         /**
          * Why this run was escalated to the Supervisor, or {@code null} for an ordinary gate, or
          * for a gate execution that isn't the Supervisor's, or when it is the Supervisor but
-         * nothing has escalated yet. Mirrors {@code PendingGateResponse.escalation} — see {@link
-         * EscalationContext}.
+         * nothing has escalated yet.
          */
         EscalationContext escalation) {}

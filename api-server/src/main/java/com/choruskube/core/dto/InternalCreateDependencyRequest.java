@@ -9,8 +9,7 @@ import java.util.UUID;
  * items already resolved to real database ids — the imperative-agent counterpart to
  * {@code CandidateDependency}, which references pre-materialization candidate keys instead.
  * {@code InternalRunService.createDependency} validates both endpoints belong to the calling run's
- * software project before delegating to the same {@code WorkItemDependencyService.create} the
- * Roadmap Candidate Materializer uses.
+ * software project.
  */
 public record InternalCreateDependencyRequest(
         @NotBlank String blockingItemType,

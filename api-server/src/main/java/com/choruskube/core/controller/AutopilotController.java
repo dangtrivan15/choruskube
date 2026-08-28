@@ -13,9 +13,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Configure-and-observe surface for the Autopilot singleton. Reads are org-read;
- * every mutation — including the manual tick, which is e2e-facing but still changes state — is
- * org-operate.
+ * Reads are org-read; every mutation — including the manual tick — is org-operate.
  */
 @RestController
 @RequestMapping("/api/v1/autopilot")
@@ -51,11 +49,6 @@ public class AutopilotController {
         return service.disengage();
     }
 
-    /**
-     * Runs one tick synchronously, then re-reads status. That is a second readiness sweep on top
-     * of the one the tick itself just did — accepted, because this endpoint is manual and
-     * e2e-facing, not part of the scheduled path {@link AutopilotService#tick()} already covers.
-     */
     @PreAuthorize("@orgSecurity.canOperate()")
     @PostMapping("/tick")
     public AutopilotStatusResponse tickNow() {

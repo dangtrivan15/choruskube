@@ -11,10 +11,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Public, anonymous landing-page metrics endpoint. See
- * {@link com.choruskube.core.dto.LandingMetricsResponse} for the wire shape.
- *
- * <p>Path namespace {@code /api/public/**} is allow-listed in {@code SecurityConfig}.
+ * Path namespace {@code /api/public/**} is allow-listed in {@code SecurityConfig}.
  */
 @RestController
 @RequestMapping("/api/public/v1")

@@ -25,9 +25,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * CRUD surface for Milestones (release/grouping labels, part of the "Group Epics under a
- * named Milestone / Release" feature). Authorization ladder mirrors {@code EpicController}: reads
- * are org-read, create is org-operate, rename/delete are org-admin.
+ * Authorization ladder mirrors {@code EpicController}: reads are org-read, create is
+ * org-operate, rename/delete are org-admin.
  */
 @RestController
 @RequestMapping("/api/v1/milestones")

@@ -47,10 +47,6 @@ public class TaskController {
         return service.list(storyId);
     }
 
-    /**
-     * Global, cross-Story Task listing for the Kanban board view (Backlog/In Progress/Done
-     * columns map directly onto {@code status}; no separate board-move endpoint exists here).
-     */
     @PreAuthorize("@orgSecurity.canRead()")
     @GetMapping("/api/v1/tasks")
     public Page<TaskResponse> list(
@@ -90,11 +86,6 @@ public class TaskController {
         return service.complete(id);
     }
 
-    /**
-     * Validated-transition status write — generalizes {@link #start}/{@link
-     * #complete} to also cover reporting a failed/aborted outcome ({@code in_progress->backlog},
-     * for retry). {@code start}/{@code complete} remain as-is for backward compatibility.
-     */
     @PreAuthorize("@orgSecurity.canOperate()")
     @PatchMapping("/api/v1/tasks/{id}/status")
     public TaskResponse updateStatus(@PathVariable UUID id, @Valid @RequestBody TaskStatusUpdateRequest request) {

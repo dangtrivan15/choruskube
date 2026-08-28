@@ -13,9 +13,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 /**
- * Internal endpoints for chat pod ↔ API server communication.
- *
- * <p>Paths follow the {@code /internal/runs/{runId}/node-executions/{nodeExecId}/...}
+ * Paths follow the {@code /internal/runs/{runId}/node-executions/{nodeExecId}/...}
  * convention so that {@link com.choruskube.core.config.InternalAuthFilter} can extract
  * the nodeExecId and validate the chat pod's JOB_SECRET against the gate node's
  * {@code job_secret_hash}.
@@ -30,7 +28,6 @@ public class InternalLiveChatController {
         this.liveChatService = liveChatService;
     }
 
-    /** Update session status/transcript from chat pod. */
     @PutMapping("/session")
     public ResponseEntity<LiveChatSessionResponse> updateSession(
             @PathVariable UUID runId,
@@ -42,13 +39,11 @@ public class InternalLiveChatController {
         return ResponseEntity.ok(updated);
     }
 
-    /** Get session details (for chat pod startup). */
     @GetMapping("/session")
     public ResponseEntity<LiveChatSessionResponse> getSession(@PathVariable UUID runId, @PathVariable UUID nodeExecId) {
         return ResponseEntity.ok(liveChatService.getActiveSession(nodeExecId));
     }
 
-    /** Relay a chat message from the pod. Persists the message and broadcasts via STOMP. */
     @PostMapping("/messages")
     public ResponseEntity<LiveChatMessageResponse> relayMessage(
             @PathVariable UUID runId, @PathVariable UUID nodeExecId, @RequestBody LiveChatMessageEvent message) {
@@ -57,7 +52,6 @@ public class InternalLiveChatController {
         return ResponseEntity.status(HttpStatus.CREATED).body(saved);
     }
 
-    /** Get messages for a session. Supports polling via optional 'since' query param. */
     @GetMapping("/messages")
     public List<LiveChatMessageResponse> getMessages(
             @PathVariable UUID runId, @PathVariable UUID nodeExecId, @RequestParam(required = false) Instant since) {

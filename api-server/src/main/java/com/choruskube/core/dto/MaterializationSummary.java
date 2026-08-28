@@ -4,7 +4,6 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Result of {@link com.choruskube.core.service.RoadmapCandidateMaterializer#materialize}.
  * Best-effort per candidate Epic: a failure materializing one candidate is
  * recorded in {@code errors} rather than aborting the rest of the batch. Dependency-edge creation
  * is likewise best-effort per edge: a cyclic or unresolvable edge is skipped and
@@ -15,7 +14,6 @@ import java.util.UUID;
 public record MaterializationSummary(
         List<UUID> createdEpicIds, List<UUID> createdMilestoneIds, int createdDependencyCount, List<String> errors) {
 
-    /** Count of top-level candidate Epics successfully materialized (unrelated to Milestones/edges). */
     public int materializedCount() {
         return createdEpicIds.size();
     }

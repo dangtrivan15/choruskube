@@ -123,10 +123,6 @@ public class InternalRunController {
         return service.getCompletedPredecessors(runId, nodeExecId);
     }
 
-    /**
-     * Files the orchestrator should list in config.json so the agent finds them under
-     * {@code /workspace/in/} instead of hunting object storage for them.
-     */
     @GetMapping("/{runId}/node-executions/{nodeExecId}/input-artifacts")
     public InputArtifactManifest getInputArtifacts(@PathVariable UUID runId, @PathVariable UUID nodeExecId) {
         return artifactResolutionService.resolveInputArtifactManifest(runId, nodeExecId);
@@ -135,7 +131,6 @@ public class InternalRunController {
     @PutMapping("/{runId}/node-executions/{nodeExecId}/decision")
     public DecisionResponse submitDecision(
             @PathVariable UUID runId, @PathVariable UUID nodeExecId, @RequestBody SubmitDecisionRequest request) {
-        // Invalid decisions surface as BadRequestException → 400 via GlobalExceptionHandler.
         return new DecisionResponse(service.submitDecision(runId, nodeExecId, request.decision()));
     }
 
@@ -145,9 +140,8 @@ public class InternalRunController {
     }
 
     /**
-     * Retracts a decision this node execution already submitted. Idempotent: withdrawing when
-     * nothing is outstanding is a 200 with no decision, so a resumed agent can call it without
-     * first checking whether it ever submitted one.
+     * Idempotent: withdrawing when nothing is outstanding is a 200 with no decision, so a resumed
+     * agent can call it without first checking whether it ever submitted one.
      */
     @DeleteMapping("/{runId}/node-executions/{nodeExecId}/decision")
     public DecisionResponse withdrawDecision(@PathVariable UUID runId, @PathVariable UUID nodeExecId) {
@@ -166,19 +160,10 @@ public class InternalRunController {
     }
 
     /**
-     * Internal endpoints for Epic/Story/Task management from agent pods.
-     * Agent pods use JOB_SECRET auth and the /internal/ route prefix, which is
-     * different from the public /api/v1/epics|stories|tasks endpoints that use
-     * user-facing auth. These endpoints also auto-resolve the software project
-     * from the run context so agents don't need to know it.
-     *
-     * The create/list/update paths below are kept byte-for-byte unchanged from the retired
-     * flat-proposal model — only their delegate calls now operate on Epics — because
-     * the agent-images/claude-code/create-proposal, list-proposals, and update-proposal CLI
+     * The create/list/update paths below are kept unchanged because the
+     * agent-images/claude-code/create-proposal, list-proposals, and update-proposal CLI
      * scripts depend on these exact paths. Removing or renaming them would break deployed agent
-     * images still running an older image during a rolling upgrade. The nested Story/Task-create
-     * paths are genuinely new, added under the same preserved segment so a rolling-upgrade agent
-     * pod on the old image never sees them.
+     * images still running an older image during a rolling upgrade.
      */
     @PostMapping("/{runId}/node-executions/{nodeExecId}/feature-proposals")
     @ResponseStatus(HttpStatus.CREATED)
@@ -203,7 +188,6 @@ public class InternalRunController {
         return service.updateEpic(runId, proposalId, request);
     }
 
-    /** New: create a Story under an Epic. */
     @PostMapping("/{runId}/node-executions/{nodeExecId}/feature-proposals/{epicId}/stories")
     @ResponseStatus(HttpStatus.CREATED)
     public StoryResponse createStory(
@@ -214,7 +198,6 @@ public class InternalRunController {
         return service.createStory(runId, epicId, request);
     }
 
-    /** New: create a Task under a Story. */
     @PostMapping("/{runId}/node-executions/{nodeExecId}/feature-proposals/{epicId}/stories/{storyId}/tasks")
     @ResponseStatus(HttpStatus.CREATED)
     public TaskResponse createTask(
@@ -227,10 +210,9 @@ public class InternalRunController {
     }
 
     /**
-     * New: create a "blocking" dependency edge between two items on behalf of an agent pod
-     * — the imperative counterpart to the declarative artifact's {@code dependencies}
-     * list. Both endpoints are cross-checked against the run's own software project before the
-     * edge is created (see {@link InternalRunService#createDependency}).
+     * Creates a "blocking" dependency edge between two items on behalf of an agent pod. Both
+     * endpoints are cross-checked against the run's own software project before the edge is
+     * created (see {@link InternalRunService#createDependency}).
      */
     @PostMapping("/{runId}/node-executions/{nodeExecId}/dependencies")
     @ResponseStatus(HttpStatus.CREATED)
@@ -242,9 +224,7 @@ public class InternalRunController {
     }
 
     /**
-     * New: create (or reuse an existing same-named) Milestone under the run's software project on
-     * behalf of an agent pod — the imperative counterpart to the declarative
-     * artifact's {@code milestones} list.
+     * Creates, or reuses an existing same-named, Milestone under the run's software project.
      */
     @PostMapping("/{runId}/node-executions/{nodeExecId}/milestones")
     @ResponseStatus(HttpStatus.CREATED)
@@ -256,8 +236,7 @@ public class InternalRunController {
     }
 
     /**
-     * Agent-facing mirror of {@code GET /api/v1/epics/{epicId}/graph} (Roadmap Graph View)
-     * — same response shape (readiness, capped run history), scoped by the calling
+     * Agent-facing mirror of {@code GET /api/v1/epics/{epicId}/graph}, scoped by the calling
      * run's project rather than a JWT-derived org.
      */
     @GetMapping("/{runId}/node-executions/{nodeExecId}/feature-proposals/{epicId}/graph")
@@ -267,10 +246,8 @@ public class InternalRunController {
     }
 
     /**
-     * Agent-facing "resolve it for me" sibling of {@link #getGraph} — no
-     * Epic ID in the path; the Epic is derived server-side from the calling run's own triggering
-     * Task ({@code run.task_id -> Task -> Story -> Epic}), so a plain {@code get-roadmap-graph}
-     * with no flags works even when the client-side {@code $EPIC_ID} default never resolved.
+     * No Epic ID in the path; the Epic is derived server-side from the calling run's own
+     * triggering Task ({@code run.task_id -> Task -> Story -> Epic}).
      */
     @GetMapping("/{runId}/node-executions/{nodeExecId}/graph")
     public RoadmapGraphSnapshot getGraphForCurrentTask(@PathVariable UUID runId, @PathVariable UUID nodeExecId) {
@@ -278,9 +255,8 @@ public class InternalRunController {
     }
 
     /**
-     * Agent-facing mirror of {@code PATCH /api/v1/tasks/{id}/status} —
-     * lets an agent report a Task's outcome (success or failure) from inside its own run, scoped
-     * by the calling run's project rather than a JWT-derived org.
+     * Agent-facing mirror of {@code PATCH /api/v1/tasks/{id}/status}, scoped by the calling run's
+     * project rather than a JWT-derived org.
      */
     @PatchMapping("/{runId}/node-executions/{nodeExecId}/tasks/{taskId}/status")
     public TaskResponse updateTaskStatus(
@@ -320,9 +296,7 @@ public class InternalRunController {
      * path's {@code runId} segment to that execution's actual {@code workflow_run_id} — so without
      * this check, a valid JOB_SECRET for one run's node execution could read a different run's PR
      * list (repo URLs, PR URLs/numbers, titles) by substituting an arbitrary {@code runId} while
-     * keeping its own {@code nodeExecId}. See {@link
-     * com.choruskube.core.service.RunPullRequestService#getPullRequestsForNodeExecution} for the
-     * check itself.
+     * keeping its own {@code nodeExecId}.
      */
     @GetMapping("/{runId}/node-executions/{nodeExecId}/pull-requests")
     public List<RunPullRequestResponse> getPullRequestsForNodeExecution(

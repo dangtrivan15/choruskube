@@ -28,8 +28,6 @@ public class GraphTemplateController {
         this.edgeService = edgeService;
     }
 
-    // --- Graph Templates ---
-
     @PreAuthorize("@orgSecurity.canRead()")
     @GetMapping
     public Page<GraphTemplateResponse> listTemplates(
@@ -45,8 +43,6 @@ public class GraphTemplateController {
         return templateService.get(id);
     }
 
-    // --- Template Nodes ---
-
     @PreAuthorize("@orgSecurity.canRead()")
     @GetMapping("/{id}/nodes")
     public List<TemplateNodeResponse> listNodes(@PathVariable UUID id) {
@@ -58,8 +54,6 @@ public class GraphTemplateController {
     public TemplateNodeResponse getNode(@PathVariable UUID id, @PathVariable UUID nodeId) {
         return nodeService.get(id, nodeId);
     }
-
-    // --- Template Edges ---
 
     @PreAuthorize("@orgSecurity.canRead()")
     @GetMapping("/{id}/edges")

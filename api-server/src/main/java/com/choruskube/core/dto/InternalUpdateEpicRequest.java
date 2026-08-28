@@ -4,9 +4,8 @@ import jakarta.validation.constraints.Size;
 import java.util.UUID;
 
 /**
- * Internal (agent-facing) request body for updating an Epic. All fields are optional; absent
- * (null) fields are left unchanged (PATCH semantics). A non-null {@code motivation} of
- * blank/empty string clears the motivation to null.
+ * All fields are optional; absent (null) fields are left unchanged (PATCH semantics). A non-null
+ * {@code motivation} of blank/empty string clears the motivation to null.
  *
  * <p>{@code milestoneId} follows the same PATCH semantics: {@code null} means "leave the Epic's
  * current Milestone assignment unchanged" (unlike the standalone {@code PATCH /{id}/milestone}
@@ -18,7 +17,6 @@ import java.util.UUID;
 public record InternalUpdateEpicRequest(
         @Size(max = 255) String title, String description, String motivation, UUID milestoneId) {
 
-    /** Convenience overload for callers that don't touch the Milestone assignment. */
     public InternalUpdateEpicRequest(String title, String description, String motivation) {
         this(title, description, motivation, null);
     }

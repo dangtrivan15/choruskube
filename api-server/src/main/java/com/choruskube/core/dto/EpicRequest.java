@@ -22,7 +22,6 @@ public record EpicRequest(
         @NotNull UUID softwareProjectId,
         Priority priority) {
 
-    /** Convenience overload for callers that don't set a priority (defaults to medium downstream). */
     public EpicRequest(String title, String description, String motivation, UUID softwareProjectId) {
         this(title, description, motivation, softwareProjectId, null);
     }

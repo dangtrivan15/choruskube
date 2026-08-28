@@ -50,10 +50,6 @@ public class StoryController {
         return service.list(epicId);
     }
 
-    /**
-     * Global, cross-Epic Story listing for the Kanban board view (Backlog/In Progress/Rolled Out
-     * columns map onto {@code stage}, mirroring the Epic board's stage-move endpoint shape).
-     */
     @PreAuthorize("@orgSecurity.canRead()")
     @GetMapping("/api/v1/stories")
     public Page<StoryResponse> list(

@@ -8,12 +8,8 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * Periodically sends one anonymous telemetry report. Opt-out via {@code CHORUSKUBE_TELEMETRY=off}
- * (relaxed-bound to property {@code choruskube.telemetry}; default {@code on}). When off, the tick
- * does not build a payload or POST. Any error is swallowed so telemetry never disrupts the app.
- *
- * <p>The initial delay keeps it from firing during boot; the default cadence is weekly. See
- * PRIVACY.md.
+ * Opt-out via {@code CHORUSKUBE_TELEMETRY=off} (relaxed-bound to property
+ * {@code choruskube.telemetry}; default {@code on}). See PRIVACY.md.
  */
 @Component
 public class TelemetryReconciler {

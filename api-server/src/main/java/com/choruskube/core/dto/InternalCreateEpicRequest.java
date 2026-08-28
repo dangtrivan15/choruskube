@@ -6,9 +6,8 @@ import jakarta.validation.constraints.Size;
 import java.util.UUID;
 
 /**
- * Internal (agent-facing) request body for creating an Epic. The Epic's target is resolved
- * from the run's {@code software_project_id} input; agents do not pick a target directly — the
- * run's project IS the Epic's project.
+ * The Epic's target is resolved from the run's {@code software_project_id} input; agents do not
+ * pick a target directly — the run's project IS the Epic's project.
  *
  * <p>{@code priority} is optional (nullable): an absent value defaults to {@code Priority.medium}
  * in the service layer, same as any hand-created Epic.
@@ -25,12 +24,10 @@ public record InternalCreateEpicRequest(
         Priority priority,
         UUID milestoneId) {
 
-    /** Convenience overload for callers that don't set a priority/milestone. */
     public InternalCreateEpicRequest(String title, String description, String motivation) {
         this(title, description, motivation, null, null);
     }
 
-    /** Convenience overload for callers that set a priority but no milestone. */
     public InternalCreateEpicRequest(String title, String description, String motivation, Priority priority) {
         this(title, description, motivation, priority, null);
     }

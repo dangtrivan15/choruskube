@@ -6,9 +6,8 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Projected graph snapshot containing only workflow-execution fields.
- * Infrastructure fields (image, secrets, namespace, docker config) are
- * excluded — the API server resolves those internally during workload creation.
+ * Infrastructure fields (image, secrets, namespace, docker config) are excluded — the API server
+ * resolves those internally during workload creation.
  */
 public record GraphRuntimeSnapshotResponse(
         List<RuntimeNode> nodes,
@@ -17,12 +16,10 @@ public record GraphRuntimeSnapshotResponse(
         List<RuntimeRepo> repos,
         @Nullable TaskContext taskContext) {
 
-    /** Backwards-compatible constructor for callers that don't pass repos or taskContext. */
     public GraphRuntimeSnapshotResponse(List<RuntimeNode> nodes, List<RuntimeEdge> edges, Map<String, Object> inputs) {
         this(nodes, edges, inputs, List.of(), null);
     }
 
-    /** Backwards-compatible constructor for callers that don't pass taskContext. */
     public GraphRuntimeSnapshotResponse(
             List<RuntimeNode> nodes, List<RuntimeEdge> edges, Map<String, Object> inputs, List<RuntimeRepo> repos) {
         this(nodes, edges, inputs, repos, null);

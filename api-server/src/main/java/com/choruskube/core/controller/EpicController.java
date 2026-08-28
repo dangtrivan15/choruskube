@@ -50,11 +50,6 @@ public class EpicController {
     @GetMapping
     public Page<EpicResponse> list(
             @RequestParam(required = false) String title,
-            // "Ready to start" roadmap filter: only READY is a meaningful value
-            // today, but the param accepts the full Readiness enum for forward
-            // compatibility. An unparseable value 400s via Spring's own enum conversion; a
-            // syntactically valid but unsupported value (e.g. BLOCKED) is accepted here and
-            // handled as "no candidates match" in DefaultEpicService, not silently ignored.
             @RequestParam(required = false) Readiness readiness,
             @RequestParam(required = false) Priority priority,
             @RequestParam(required = false) UUID milestoneId,
