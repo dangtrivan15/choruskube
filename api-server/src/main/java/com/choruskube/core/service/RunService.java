@@ -314,6 +314,7 @@ public class RunService {
                     run.getStartedAt(),
                     run.getCompletedAt(),
                     run.getCreatedAt(),
+                    run.getAutopilotId(),
                     softwareProjectByRunId.get(run.getId()));
         });
     }
@@ -929,6 +930,7 @@ public class RunService {
                 run.getInputArtifactRefs(),
                 promptText,
                 taskSummary,
+                run.getAutopilotId(),
                 softwareProjectRef);
     }
 

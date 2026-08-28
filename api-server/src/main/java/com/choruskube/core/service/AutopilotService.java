@@ -15,6 +15,7 @@ import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.Readiness;
 import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
+import com.choruskube.core.model.enums.WorkflowRunStatusGroups;
 import com.choruskube.core.repository.AutopilotRepository;
 import com.choruskube.core.repository.EpicRepository;
 import com.choruskube.core.repository.RunPullRequestRepository;
@@ -75,6 +76,9 @@ public class AutopilotService implements AutopilotSafetyValve {
 
     /** {@code nextUp} is a preview panel, not a queue dump. */
     private static final int NEXT_UP_LIMIT = 10;
+
+    /** How many held Tasks the why-idle line names before it summarises the rest. */
+    private static final int HELD_TASKS_NAMED = 3;
 
     /**
      * The shortest configurable tick lease.
@@ -657,10 +661,14 @@ public class AutopilotService implements AutopilotSafetyValve {
      * carried out of the pass because recomputing them would mean a second readiness sweep.
      */
     private record Frontier(
-            List<Task> readyTasks, int backlogTaskCount, int totalTaskCount, List<String> emptyContainerReasons) {
+            List<Task> readyTasks,
+            int backlogTaskCount,
+            int totalTaskCount,
+            List<String> emptyContainerReasons,
+            List<AutopilotTaskRef> heldTasks) {
 
         /** What a disengaged Autopilot reports: it will start nothing, so it has no frontier. */
-        static final Frontier EMPTY = new Frontier(List.of(), 0, 0, List.of());
+        static final Frontier EMPTY = new Frontier(List.of(), 0, 0, List.of(), List.of());
     }
 
     /**
@@ -679,6 +687,7 @@ public class AutopilotService implements AutopilotSafetyValve {
         List<WorkItemDependency> edges = new ArrayList<>();
         Map<UUID, String> emptyContainerLabels = new LinkedHashMap<>();
         List<Task> ready = new ArrayList<>();
+        List<Task> inProgress = new ArrayList<>();
         int backlogCount = 0;
         int totalCount = 0;
 
@@ -708,6 +717,9 @@ public class AutopilotService implements AutopilotSafetyValve {
                 }
                 for (Task task : tasks) {
                     totalCount++;
+                    if (task.getStatus() == WorkItemStatus.in_progress) {
+                        inProgress.add(task);
+                    }
                     // The backlog test appears twice on purpose: here it drives backlogCount (the
                     // denominator the why-idle report quotes), while isStartable is the authority
                     // on what actually joins the frontier.
@@ -730,7 +742,46 @@ public class AutopilotService implements AutopilotSafetyValve {
                 applyEpicAffinity(ready, storiesById, affinityEpicIds),
                 backlogCount,
                 totalCount,
-                emptyContainerReasons(emptyContainerLabels, edges, readinessById));
+                emptyContainerReasons(emptyContainerLabels, edges, readinessById),
+                heldTasks(inProgress));
+    }
+
+    /**
+     * Tasks the Autopilot can see but can never start: {@code in_progress}, with their most recent
+     * run finished. The frontier only ever considers {@code backlog} Tasks, so one of these stays
+     * put however long the Autopilot runs — and via the containment cascade it blocks every Task
+     * beneath it, which is why they are reported rather than silently skipped.
+     *
+     * <p>The finished-run test is {@code WorkflowRunStatusGroups.TERMINAL}, the same set {@code
+     * DefaultTaskService}'s re-open guard uses, so a Task named here is exactly a Task that
+     * re-opening would accept rather than reject.
+     *
+     * <p>A Task with no run at all is left out: neither re-open nor start accepts one, so naming it
+     * would offer an action that cannot be taken.
+     */
+    private List<AutopilotTaskRef> heldTasks(List<Task> inProgress) {
+        if (inProgress.isEmpty()) {
+            return List.of();
+        }
+        Map<UUID, WorkflowRun> latestByTask = new HashMap<>();
+        for (WorkflowRun run : runRepo.findByTaskIdInOrderByCreatedAtDesc(
+                inProgress.stream().map(Task::getId).toList())) {
+            // Newest first is the query's contract, so the first row seen for a Task is its latest.
+            latestByTask.putIfAbsent(run.getTaskId(), run);
+        }
+        List<AutopilotTaskRef> held = new ArrayList<>();
+        for (Task task : inProgress) {
+            WorkflowRun latest = latestByTask.get(task.getId());
+            if (latest == null || !WorkflowRunStatusGroups.TERMINAL.contains(latest.getStatus())) {
+                continue;
+            }
+            held.add(new AutopilotTaskRef(
+                    task.getId(),
+                    task.getTitle(),
+                    latest.getId(),
+                    latest.getStatus().name()));
+        }
+        return List.copyOf(held);
     }
 
     /**
@@ -1001,6 +1052,7 @@ public class AutopilotService implements AutopilotSafetyValve {
                 whyIdle(autopilot, live, frontier, nextUp, inFlight, slots, notes),
                 refsFor(live, Bucket.AWAITING_YOU, titles),
                 refsFor(live, Bucket.NEEDS_ATTENTION, titles),
+                frontier.heldTasks(),
                 autopilot.getConsecutiveFailures(),
                 autopilot.getDisengagedReason(),
                 autopilot.getLastTickAt());
@@ -1028,6 +1080,9 @@ public class AutopilotService implements AutopilotSafetyValve {
         if (slots == 0) {
             reasons.add("At capacity — " + inFlight + " of " + autopilot.getMaxParallel() + " slot(s) in use");
         }
+        if (!frontier.heldTasks().isEmpty()) {
+            reasons.add(heldTasksReason(frontier.heldTasks()));
+        }
         reasons.addAll(frontier.emptyContainerReasons());
         if (nextUp.isEmpty() && slots > 0) {
             if (frontier.totalTaskCount() == 0) {
@@ -1039,6 +1094,20 @@ public class AutopilotService implements AutopilotSafetyValve {
             }
         }
         return List.copyOf(reasons);
+    }
+
+    /**
+     * Held Tasks are named rather than counted. The Autopilot will never move one itself, so this
+     * line is the only thing that turns "nothing is running" into something a human can act on.
+     */
+    private static String heldTasksReason(List<AutopilotTaskRef> held) {
+        String named = held.stream()
+                .limit(HELD_TASKS_NAMED)
+                .map(ref -> "'" + ref.title() + "'")
+                .collect(Collectors.joining(", "));
+        String rest = held.size() > HELD_TASKS_NAMED ? " and " + (held.size() - HELD_TASKS_NAMED) + " more" : "";
+        return held.size() + " Task(s) left in progress by a finished run — re-open to let the Autopilot continue: "
+                + named + rest;
     }
 
     /**
@@ -1157,6 +1226,7 @@ public class AutopilotService implements AutopilotSafetyValve {
                 unconfigured.getMaxParallel(),
                 List.of(),
                 List.of("Autopilot has never been configured"),
+                List.of(),
                 List.of(),
                 List.of(),
                 unconfigured.getConsecutiveFailures(),

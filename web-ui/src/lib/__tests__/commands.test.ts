@@ -50,6 +50,7 @@ describe("buildRunCommands", () => {
     startedAt: null,
     completedAt: null,
     createdAt: "2025-01-01T00:00:00Z",
+    autopilotId: null,
     softwareProject: null,
   });
 

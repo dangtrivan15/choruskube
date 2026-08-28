@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { usePauseRun, useResumeRun, useCancelRun, useRenameRun } from "@/hooks/useRuns";
 import { statusBadgeClass } from "@/lib/statusColors";
 import Authorized from "@/components/Authorized";
+import AutopilotRunBadge from "./AutopilotRunBadge";
 import type { RunResponse } from "@/lib/types";
 
 interface RunHeaderProps {
@@ -92,6 +93,7 @@ export default function RunHeader({ run }: RunHeaderProps) {
             {run.name ? run.templateName + " \u00B7 " : ""}{shortId(run.id)}
           </p>
         </div>
+        <AutopilotRunBadge autopilotId={run.autopilotId} />
         <Badge data-testid="run-header-status" className={statusBadgeClass(run.status)}>
           {run.status.replace(/_/g, " ")}
         </Badge>

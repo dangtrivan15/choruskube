@@ -16,6 +16,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import SortableTableHead from "@/components/ui/SortableTableHead";
 import Pagination from "@/components/ui/Pagination";
 import RunStatusBadge from "./RunStatusBadge";
+import AutopilotRunBadge from "./AutopilotRunBadge";
 import ErrorAlert from "@/components/ui/ErrorAlert";
 import type { SortParam, PaginationParams } from "@/lib/types";
 
@@ -98,7 +99,10 @@ export default function RunListTable({ status }: RunListTableProps) {
                     <span className="truncate text-sm font-medium">
                       {run.name ?? run.templateName}
                     </span>
-                    <RunStatusBadge status={run.status} />
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <AutopilotRunBadge autopilotId={run.autopilotId} />
+                      <RunStatusBadge status={run.status} />
+                    </div>
                   </div>
                   <p className="mt-1 truncate text-xs text-muted-foreground">
                     {run.name ? run.templateName : `run-${run.id.slice(0, 8)}`}
@@ -181,7 +185,10 @@ export default function RunListTable({ status }: RunListTableProps) {
                     : <span className="text-muted-foreground">—</span>}
                 </TableCell>
                 <TableCell>
-                  <RunStatusBadge status={run.status} />
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <AutopilotRunBadge autopilotId={run.autopilotId} />
+                    <RunStatusBadge status={run.status} />
+                  </div>
                 </TableCell>
                 <TableCell className="text-sm text-muted-foreground">
                   {run.startedAt

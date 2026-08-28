@@ -1,6 +1,7 @@
 package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 
 import com.choruskube.core.BaseTest;
 import com.choruskube.core.CommittedFixtureCleaner;
@@ -225,6 +226,42 @@ public class AutopilotServiceIntegrationTest extends BaseTest {
                 .as("only the second, pending run occupies a slot")
                 .isEqualTo(1);
         assertThat(status.awaitingYou()).extracting(AutopilotTaskRef::status).containsExactly("awaiting_human");
+    }
+
+    @Test
+    void tick_taskLeftInProgressByACancelledRun_isReportedAsHeld() {
+        StoryResponse story = makeStory(makeRepo("autopilot-held").getId());
+        TaskResponse task = taskService.create(story.id(), new TaskRequest("Stranded", "D"));
+        UUID autopilotId = engage();
+
+        autopilotService.tick();
+        park(runsFor(autopilotId).getFirst(), WorkflowRunStatus.cancelled);
+        autopilotService.tick();
+
+        assertThat(taskService.get(task.id()).status())
+                .as("cancelling a run moves nothing, and the ready frontier only sweeps backlog Tasks")
+                .isEqualTo("in_progress");
+
+        AutopilotStatusResponse status = autopilotService.getStatus();
+        assertThat(status.heldTasks())
+                .extracting(AutopilotTaskRef::taskId, AutopilotTaskRef::status)
+                .containsExactly(tuple(task.id(), "cancelled"));
+        assertThat(status.whyIdle())
+                .as("naming the Task is the only thing that turns a silent stall into an action")
+                .anySatisfy(reason -> assertThat(reason).contains("'Stranded'"));
+    }
+
+    @Test
+    void tick_taskWithARunStillInFlight_isNotReportedAsHeld() {
+        StoryResponse story = makeStory(makeRepo("autopilot-not-held").getId());
+        taskService.create(story.id(), new TaskRequest("Working", "D"));
+        engage();
+
+        autopilotService.tick();
+
+        assertThat(autopilotService.getStatus().heldTasks())
+                .as("in_progress with a live run is the Autopilot working, not a Task stuck")
+                .isEmpty();
     }
 
     @Test

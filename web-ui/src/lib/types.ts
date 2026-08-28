@@ -22,6 +22,8 @@ export interface RunSummary {
   startedAt: string | null;
   completedAt: string | null;
   createdAt: string;
+  /** Set when the Autopilot started this run, null when a person did. */
+  autopilotId: string | null;
   softwareProject: SoftwareProjectRef | null;
 }
 
@@ -65,6 +67,8 @@ export interface RunResponse {
   pullRequests: RunPullRequestResponse[];
   promptText: string | null;
   task: RunTaskSummary | null;
+  /** Set when the Autopilot started this run, null when a person did. */
+  autopilotId: string | null;
   softwareProject: SoftwareProjectRef | null;
 }
 
@@ -1397,6 +1401,11 @@ export interface AutopilotStatus {
   whyIdle: string[];
   awaitingYou: AutopilotTaskRef[];
   needsAttention: AutopilotTaskRef[];
+  /**
+   * Tasks left `in_progress` by a finished run. The Autopilot only ever starts `backlog` Tasks,
+   * so one of these stays put until a human acts on it — and blocks everything beneath it.
+   */
+  heldTasks: AutopilotTaskRef[];
   consecutiveFailures: number;
   disengagedReason: string | null;
   lastTickAt: string | null;

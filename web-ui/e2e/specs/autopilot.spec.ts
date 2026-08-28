@@ -192,6 +192,66 @@ test.describe("Autopilot", () => {
     // No cleanup — same started-descendant-Task convention as the previous test.
   });
 
+  test("a Task stranded by a cancelled run is reported as held, and its run is badged", async ({
+    api,
+    workerRepo,
+    autopilotPage,
+    runMonitorPage,
+  }) => {
+    const epic = await api.createEpic({
+      title: uniqueName("Autopilot Held Epic"),
+      description: "desc",
+      softwareProjectId: workerRepo.gitRepo.id,
+    });
+    const story = await api.createStory(epic.id, {
+      title: uniqueName("Autopilot Held Story"),
+      description: "desc",
+    });
+    const heldTitle = uniqueName("Autopilot Held Task");
+    const task = await api.createTask(story.id, { title: heldTitle, description: "desc" });
+
+    const before = await api.getAutopilot();
+    await api.updateAutopilot(before.inFlight + 10);
+    await api.engageAutopilot();
+    await api.tickAutopilot();
+
+    const started = (await api.listTasks(story.id)).find((t) => t.id === task.id);
+    expect(started?.status).toBe("in_progress");
+    const runId = started!.latestRunId!;
+    expect(runId).toBeTruthy();
+
+    // The attribution half: this run has an autopilot_id, so the header badges it. A run a
+    // person started carries no badge — covered by RunHeader's unit test, since producing a
+    // manually started run here would mean a second Task and a second slot.
+    await runMonitorPage.goto(runId);
+    await expect(runMonitorPage.autopilotBadge).toBeVisible();
+
+    // Cancelling is the operator's recovery gesture, and it deliberately leaves the Task where
+    // it is. That is what strands it: the ready frontier only sweeps `backlog`.
+    await api.cancelRun(runId);
+    await api.waitForRunStatus(runId, ["cancelled"], 30_000);
+    await api.tickAutopilot();
+
+    const afterCancel = (await api.listTasks(story.id)).find((t) => t.id === task.id);
+    expect(afterCancel?.status).toBe("in_progress");
+
+    await autopilotPage.goto();
+    await expect(autopilotPage.heldTasks).toContainText(heldTitle);
+    // Links to the Task, not to the cancelled run: that run is over, and Restart lives on the Task.
+    await expect(autopilotPage.heldTasks.getByRole("link", { name: heldTitle })).toHaveAttribute(
+      "href",
+      `/tasks/${task.id}`,
+    );
+    // Asserted on the phrase rather than on this Task's title: the why-idle line names only the
+    // first few held Tasks, and a previous run of this spec may have left its own behind.
+    await expect(autopilotPage.whyIdle).toContainText("left in progress by a finished run");
+
+    // Best-effort: clears the hold so repeated runs of this spec do not accumulate held Tasks on
+    // the shared board. Tolerated failure — the assertions above are already done, and the Epic
+    // itself cannot be deleted either way (started descendant Task).
+    await api.completeTask(task.id).catch(() => {});
+  });
+
   test("POST /tasks/{id}/start returns 409 for a blocked Task", async ({ api, workerRepo }) => {
     const epic = await api.createEpic({
       title: uniqueName("Autopilot 409 Epic"),

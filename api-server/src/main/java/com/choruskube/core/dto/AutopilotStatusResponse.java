@@ -21,6 +21,11 @@ import java.util.List;
  *     {@code paused}
  * @param needsAttention runs in {@code awaiting_retry}: failed, held for seven days, and never
  *     retried by the Autopilot
+ * @param heldTasks Tasks left {@code in_progress} by a run that has finished. Nothing moves them:
+ *     the ready frontier only considers {@code backlog} Tasks, so until a human re-opens one it is
+ *     invisible to the Autopilot and blocks everything downstream of it. {@code runId}/{@code
+ *     status} name the finished run, since which one it was decides whether re-opening or
+ *     completing is the right answer.
  */
 public record AutopilotStatusResponse(
         boolean engaged,
@@ -31,6 +36,7 @@ public record AutopilotStatusResponse(
         List<String> whyIdle,
         List<AutopilotTaskRef> awaitingYou,
         List<AutopilotTaskRef> needsAttention,
+        List<AutopilotTaskRef> heldTasks,
         int consecutiveFailures,
         String disengagedReason,
         Instant lastTickAt) {}

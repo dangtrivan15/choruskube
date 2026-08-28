@@ -22,6 +22,13 @@ public interface WorkflowRunRepository extends JpaRepository<WorkflowRun, UUID>,
     Page<WorkflowRun> findByTaskIdOrderByCreatedAtDesc(UUID taskId, Pageable pageable);
 
     /**
+     * Every run of several Tasks, newest first, so the Autopilot can find each one's most recent
+     * run in a single query rather than one per Task. Ordering is the contract: callers take the
+     * first row per {@code taskId} and rely on it being the latest.
+     */
+    List<WorkflowRun> findByTaskIdInOrderByCreatedAtDesc(Collection<UUID> taskIds);
+
+    /**
      * The Autopilot's live view of its own runs — slot accounting, epic affinity, and the
      * "awaiting you" / "needs attention" lists all read from this one result. Returns entities
      * rather than a count because the tick needs the runs themselves for the last three; the

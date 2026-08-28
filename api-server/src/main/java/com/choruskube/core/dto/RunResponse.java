@@ -6,6 +6,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
+/** @param autopilotId set when the Autopilot started this run, null when a person did */
 public record RunResponse(
         UUID id,
         UUID graphTemplateId,
@@ -23,4 +24,5 @@ public record RunResponse(
         String inputArtifactRefs,
         @Nullable String promptText,
         @Nullable RunTaskSummary task,
+        @Nullable UUID autopilotId,
         @Nullable SoftwareProjectRef softwareProject) {}

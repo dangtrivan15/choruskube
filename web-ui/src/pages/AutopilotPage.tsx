@@ -26,11 +26,16 @@ interface TaskRefListProps {
   testId: string;
   refs: AutopilotTaskRef[];
   emptyLabel: string;
+  /**
+   * Held Tasks link to the Task, not to the run they name: that run is already finished, and the
+   * Restart control that clears the hold lives on the Task.
+   */
+  linkTo?: "run" | "task";
 }
 
 /** Shared renderer for the three `AutopilotTaskRef` lists (nextUp / awaitingYou / needsAttention).
  *  Links to the run when one exists (a task already started), else to the Task itself. */
-function TaskRefList({ testId, refs, emptyLabel }: TaskRefListProps) {
+function TaskRefList({ testId, refs, emptyLabel, linkTo = "run" }: TaskRefListProps) {
   if (refs.length === 0) {
     return (
       <p data-testid={testId} className="text-sm text-muted-foreground">
@@ -46,7 +51,7 @@ function TaskRefList({ testId, refs, emptyLabel }: TaskRefListProps) {
           className="flex items-center justify-between gap-2 rounded-md border border-border px-2.5 py-1.5 text-sm"
         >
           <Link
-            to={ref.runId ? `/runs/${ref.runId}` : `/tasks/${ref.taskId}`}
+            to={linkTo === "task" || !ref.runId ? `/tasks/${ref.taskId}` : `/runs/${ref.runId}`}
             className="truncate font-medium hover:underline"
           >
             {ref.title}
@@ -235,6 +240,16 @@ export default function AutopilotPage() {
               testId="autopilot-awaiting-you"
               refs={status.awaitingYou}
               emptyLabel="Nothing parked on a human right now."
+            />
+          </section>
+
+          <section className="flex flex-col gap-1.5">
+            <h2 className="text-xs font-semibold uppercase text-muted-foreground">Held — waiting on you</h2>
+            <TaskRefList
+              testId="autopilot-held-tasks"
+              refs={status.heldTasks}
+              emptyLabel="No Tasks left in progress by a finished run."
+              linkTo="task"
             />
           </section>
 
