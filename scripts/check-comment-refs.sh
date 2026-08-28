@@ -50,11 +50,19 @@ while IFS= read -r -d '' file; do
     # A per-run planning archive *is* the spec, so its ordinals address itself.
     docs/plans/*|docs/progress/*) continue ;;
   esac
+  # Regular files only, and the test is `-f` rather than `-e` for two reasons.
+  #
   # A tracked path can be deleted in the working tree — staged for removal, or
   # swept by a build — and grep would exit 2 on it, tripping the fail-closed
-  # check below over a file nobody can cite from. An unreadable file still
-  # exists, so genuine permission errors are unaffected.
-  [ -e "$file" ] || continue
+  # check below over a file nobody can cite from.
+  #
+  # `--others` also emits a bare directory entry for a tree git will not descend,
+  # notably a nested checkout: CI clones the sibling repo into `_choruskube/`, and
+  # `grep: _choruskube/: Is a directory` is likewise exit 2. That sibling carries
+  # its own copy of this guard, so skipping it here loses nothing.
+  #
+  # An unreadable file is still a regular file, so permission errors are unaffected.
+  [ -f "$file" ] || continue
   files+=("$file")
 done < "$list_file"
 
@@ -70,7 +78,9 @@ scan() {
   [ "$#" -gt 0 ] || return 0
   local out status=0 err
   err=$(mktemp)
-  out=$(grep -HInE "$pattern" -- "$@" 2>"$err") || status=$?
+  # `-d skip` is a second line of defence behind the `-f` filter above: a path can
+  # still become a directory between enumeration and here.
+  out=$(grep -HInE -d skip "$pattern" -- "$@" 2>"$err") || status=$?
   # A path enumerated a moment ago can be gone before grep opens it: a CI build
   # writes and sweeps untracked files while this runs. A file that no longer
   # exists cannot be cited from, so it is not a read this guard depends on.
