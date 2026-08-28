@@ -201,23 +201,27 @@ test.describe("Run Lifecycle", () => {
     });
 
     test("cancel button terminates a running workflow", async ({ runMonitorPage, api }) => {
-      const template = await api.getTemplateByName("e2e-linear-pipeline");
+      // A gated template rather than the linear pipeline: this run parks at the human
+      // gate and stays non-terminal, so there is reliably something left to cancel.
+      // Against the pipeline the mock agent finishes in seconds, and under a slower
+      // stack the run reaches `completed` before the click lands — at which point
+      // `RunService.cancelRun` correctly refuses a terminal run and the status assertion
+      // below sees "completed" instead.
+      const template = await api.getTemplateByName("e2e-human-gate");
 
       const run = await api.startRun({
         graphTemplateId: template.id,
-        name: "e2e-cancel-test",
+        name: uniqueName("e2e-cancel-test"),
       });
 
       await runMonitorPage.goto(run.id);
 
-      // Wait for the run to be in a non-terminal state
-      // The cancel button should be visible
-      const cancelVisible = await runMonitorPage.cancelButton.isVisible().catch(() => false);
-      if (cancelVisible) {
-        await runMonitorPage.cancelRun();
-        // Wait for status to update
-        await runMonitorPage.waitForStatus(/cancel/i);
-      }
+      // `expect().toBeVisible()` rather than `isVisible()`: the latter reads once, so a
+      // slow first paint skipped the cancel entirely and the test passed having asserted
+      // nothing.
+      await expect(runMonitorPage.cancelButton).toBeVisible();
+      await runMonitorPage.cancelRun();
+      await runMonitorPage.waitForStatus(/cancel/i);
     });
   });
 });
