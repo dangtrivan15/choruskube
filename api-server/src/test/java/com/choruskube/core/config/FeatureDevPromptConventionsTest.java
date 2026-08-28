@@ -58,12 +58,21 @@ class FeatureDevPromptConventionsTest {
         assertThat(promptField("SPEC_AND_PLAN_PROMPT")).contains("per-repo").contains("privacy");
     }
 
+    /**
+     * BaseFeatureDevSeeder is exempt from scripts/check-comment-refs.sh as a whole file, because
+     * its prompt strings define the spec format the ordinals belong to. This test is the only
+     * thing standing in for the guard inside that exemption, so it checks the shapes a citation
+     * actually takes rather than one of them.
+     */
     @Test
     void noPromptCitesAPastRunsSpec() throws Exception {
         for (String name : new String[] {"SPEC_AND_PLAN_PROMPT", "IMPLEMENT_PROMPT", "CODE_REVIEW_PROMPT"}) {
             assertThat(promptField(name))
                     .as("%s must not cite a past run's spec", name)
-                    .doesNotContain("in the spec)");
+                    .doesNotContain("in the spec)")
+                    .doesNotContain("see the spec")
+                    .doesNotContain("the spec's Caveat")
+                    .doesNotContain("see Decision");
         }
     }
 }
