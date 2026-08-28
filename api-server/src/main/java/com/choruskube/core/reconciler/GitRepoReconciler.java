@@ -8,11 +8,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * Backstop cleanup for tombstoned {@code git_repo} rows. Scans rows where {@code deleted_at IS
- * NOT NULL}, calls {@link GitRepoService#reconcileTombstonedBatch(int)} to hard-delete the row.
- * Repos no longer own K8s namespaces — namespace provisioning is at the org level.
- *
- * <p>Runs concurrently-safe with the afterCommit cleanup in {@code GitRepoService.delete}:
+ * Runs concurrently-safe with the afterCommit cleanup in {@code GitRepoService.delete}:
  * both paths share {@code GitRepoService.cleanupAndHardDelete(UUID)}, which is idempotent
  * (DB DELETE uses a WHERE clause scoped to tombstoned rows). Whichever commits the DELETE
  * first wins; the loser's query affects zero rows.

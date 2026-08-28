@@ -8,11 +8,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * Fires the Autopilot's tick on a timer. Every side effect of a pass — settling
- * runs, starting Tasks, publishing status — lives in {@link AutopilotService#tick()}; this class
- * only owns the schedule and the failure boundary.
- *
- * <p>Gated by {@code choruskube.autopilot.enabled} and switched off in the test profile — every
+ * Gated by {@code choruskube.autopilot.enabled} and switched off in the test profile — every
  * {@code @SpringBootTest} boots the full context, scheduling included, and an engaged Autopilot
  * would start real workflow runs during the unit suite.
  */

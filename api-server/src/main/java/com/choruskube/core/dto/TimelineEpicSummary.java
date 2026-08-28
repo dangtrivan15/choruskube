@@ -5,18 +5,13 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * One Epic lane on the Roadmap Timeline View, carrying its own Stories. Activity comes from the
- * existing {@code createdAt}/{@code updatedAt} audit columns, not a new history table.
- * {@code stage} is {@code epic.getStage().name()}, mirroring {@link
- * TimelineStorySummary#stage()}. {@code stories} is ordered ascending by {@code createdAt} —
- * populated by {@code DefaultRoadmapTimelineService}, an empty Epic gets an empty list rather
- * than being omitted.
+ * One Epic lane on the Roadmap Timeline View, carrying its own Stories. {@code stories} is
+ * ordered ascending by {@code createdAt} — an empty Epic gets an empty list rather than being
+ * omitted.
  *
  * <p>{@code stalled} is the same 14-day in-progress-staleness signal as {@link
  * TimelineStorySummary#stalled()}, computed from this Epic's own {@code stage}/{@code updatedAt}
- * — it does NOT aggregate its Stories' {@code stalled} flags (that aggregation, if wanted, is a
- * UI-layer concern). There is no Epic-level {@code readiness} field: readiness is a dependency-
- * graph concept and Epics do not participate in the Story/Task dependency graph.
+ * — it does NOT aggregate its Stories' {@code stalled} flags.
  *
  * <p>{@code milestone} is the Epic's assigned Milestone reference, or {@code null} if unassigned —
  * populated by {@code DefaultRoadmapTimelineService}, mirroring {@code EpicResponse#milestone}.

@@ -3,9 +3,7 @@ package com.choruskube.core.dto;
 import java.time.Instant;
 
 /**
- * Public, anonymous response for {@code GET /api/public/v1/landing-metrics}.
- *
- * <p>{@code successRate} is nullable: when the 90-day window contains no terminal runs
+ * {@code successRate} is nullable: when the 90-day window contains no terminal runs
  * we return {@code null} (rendered as {@code '—'} on the frontend) rather than {@code 0.0},
  * which would imply the platform fails 100% of the time.
  *

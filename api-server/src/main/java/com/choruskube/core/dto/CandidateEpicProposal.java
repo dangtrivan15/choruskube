@@ -6,17 +6,12 @@ import jakarta.validation.constraints.Size;
 import java.util.List;
 
 /**
- * A single candidate Epic proposed by the Roadmap Provisioner analyzer, or as edited
- * by a reviewer before approval. Shared shape between the analyzer's
- * {@code roadmap_candidates.json} artifact and {@code SignalRequest.editedCandidates} — both must
- * conform to this record.
+ * Shared shape between the analyzer's {@code roadmap_candidates.json} artifact and
+ * {@code SignalRequest.editedCandidates} — both must conform to this record.
  *
  * <p>{@code repos} is a reviewer-context-only field: shown in the gate's breakdown editor as
- * decomposition rationale, but never persisted — {@code InternalCreateEpicRequest} (the DTO {@code
- * RoadmapCandidateMaterializer} actually writes through) has no {@code repos} field, and a
- * materialized Epic's {@code repos} is always derived from its software project, same as any
- * hand-created Epic. {@code priority} (free-text {@code High}/{@code Medium}/{@code
- * Low}), by contrast, IS persisted: {@code RoadmapCandidateMaterializer} parses it onto the
+ * decomposition rationale, but never persisted. {@code priority} (free-text {@code High}/{@code
+ * Medium}/{@code Low}) IS persisted: {@code RoadmapCandidateMaterializer} parses it onto the
  * materialized Epic's initial (human-editable) {@code Priority}, defaulting to {@code medium} when
  * blank/unrecognized.
  *

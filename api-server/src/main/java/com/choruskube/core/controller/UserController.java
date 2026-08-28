@@ -8,7 +8,6 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/** Serves {@code /api/v1/me}. Delegates payload assembly to the active {@link UserInfoProvider}. */
 @RestController
 @RequestMapping("/api/v1/me")
 public class UserController {

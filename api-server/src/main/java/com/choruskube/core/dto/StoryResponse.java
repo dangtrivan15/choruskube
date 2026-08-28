@@ -13,9 +13,7 @@ import java.util.UUID;
  * just to return the one item just written.
  *
  * <p>{@code stage} is the persisted Story board column, mirroring {@code EpicResponse#stage}
- * exactly. It is the only statement this DTO makes about where the Story sits; completion is
- * reported as the {@code progress} counts, never as a synthesized status (see {@code
- * RollupCalculator}).
+ * exactly.
  *
  * <p>{@code readyTaskCount} is how many of this Story's Tasks can be started right now — still
  * {@code backlog} and unblocked, per {@code EpicReadinessAssembler#isStartable}. It is the Story

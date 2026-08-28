@@ -15,10 +15,7 @@ import java.util.UUID;
  *     0 even though nothing blocks it. The predicate is {@code
  *     EpicReadinessAssembler#isStartable}, shared with the Autopilot's ready frontier — what this
  *     advertises is exactly what the Autopilot would pick up.
- * @param milestone The Epic's assigned Milestone (release grouping), or {@code null} if unassigned
- *     (the "Group Epics under a named Milestone / Release" feature). Populated on
- *     both the single-Epic {@code toResponse} path and the batched multi-Epic {@code toResponses}
- *     path — see {@code DefaultEpicService}.
+ * @param milestone The Epic's assigned Milestone (release grouping), or {@code null} if unassigned.
  */
 public record EpicResponse(
         UUID id,
@@ -37,11 +34,7 @@ public record EpicResponse(
         MilestoneRef milestone) {
 
     /**
-     * Rollup completion figures derived from descendant Tasks — never stored. These
-     * counts are the whole of what an Epic reports about completion: there is no synthesized
-     * status field, because an Epic has no {@code done} lane to be in and a rollup that claimed
-     * one would contradict {@link #stage}. Render "{@code doneTasks} of {@code totalTasks} tasks
-     * done" and let {@code stage} say where the item sits.
+     * Rollup completion figures derived from descendant Tasks — never stored.
      *
      * @param startedTasks descendant Tasks that have left {@code backlog} — the "has any work
      *     begun?" question, which {@code doneTasks} cannot answer and which the delete guard needs.

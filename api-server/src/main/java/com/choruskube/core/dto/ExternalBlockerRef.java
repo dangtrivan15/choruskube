@@ -8,8 +8,7 @@ import java.util.UUID;
  * touching this Epic's tree — e.g. a Task in another Epic that blocks one of this Epic's Tasks.
  * Carries enough context (title, owning Epic id/title) for the UI to render "blocked by a Task in
  * another Epic" without a follow-up lookup, plus which in-Epic item ({@code internalItemId}) the
- * connection touches and in which direction ({@code direction}) — needed to render the edge as a
- * real graph edge with a source and a target, not just a sidebar mention.
+ * connection touches and in which direction ({@code direction}).
  */
 public record ExternalBlockerRef(
         String itemType,

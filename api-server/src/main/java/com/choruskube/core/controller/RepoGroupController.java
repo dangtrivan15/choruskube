@@ -124,11 +124,7 @@ public class RepoGroupController {
         service.delete(id);
     }
 
-    /**
-     * Loads a RepoGroup by id, throws 404 if missing, and rejects with 403 (ForbiddenException)
-     * if the group's organization does not match the active tenant. Used by every {id}-bearing
-     * endpoint so the org-scope check is enforced uniformly.
-     */
+    /** Used by every {id}-bearing endpoint so the org-scope check is enforced uniformly. */
     private RepoGroup findInActiveOrg(UUID id) {
         RepoGroup group = groups.findById(id).orElseThrow(() -> new NotFoundException("RepoGroup not found: " + id));
         authService.checkOrgAccess("repo_group", id);

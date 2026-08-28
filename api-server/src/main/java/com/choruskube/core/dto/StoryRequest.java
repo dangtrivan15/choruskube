@@ -15,7 +15,6 @@ import jakarta.validation.constraints.Size;
 public record StoryRequest(
         @NotBlank @Size(max = 255) String title, @NotBlank String description, Priority priority) {
 
-    /** Convenience overload for callers that don't set a priority (defaults to medium downstream). */
     public StoryRequest(String title, String description) {
         this(title, description, null);
     }

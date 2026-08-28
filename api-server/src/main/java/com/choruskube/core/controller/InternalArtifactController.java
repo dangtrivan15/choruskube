@@ -54,10 +54,10 @@ public class InternalArtifactController {
                     .body(Map.of("error", "Invalid method: " + method + ". Only GET and PUT are allowed."));
         }
 
-        // Resolve agent's org: nodeExecId → nodeExecution → workflowRun → organizationId
-        // Note: InternalAuthFilter already loads NodeExecution for JOB_SECRET validation,
-        // but we cannot pass it via request attribute without modifying the filter (restricted
-        // per CLAUDE.md). The duplicate lookup is acceptable — presign requests are infrequent.
+        // InternalAuthFilter has already loaded this NodeExecution to validate JOB_SECRET.
+        // Reusing it would mean passing it through a request attribute, i.e. editing that
+        // filter — which CLAUDE.md gates behind explicit approval. Presign calls are
+        // infrequent, so the second lookup stays.
         NodeExecution agentExec = execRepo.findById(nodeExecId).orElse(null);
         if (agentExec == null) {
             return ResponseEntity.status(403).body(Map.of("error", "Node execution not found"));
@@ -67,7 +67,6 @@ public class InternalArtifactController {
             return ResponseEntity.status(403).body(Map.of("error", "Run not found"));
         }
 
-        // Resolve target run's org
         WorkflowRun targetRun = runRepo.findById(runId).orElse(null);
         if (targetRun == null) {
             return ResponseEntity.status(403).body(Map.of("error", "Target run not found"));
@@ -80,8 +79,8 @@ public class InternalArtifactController {
 
         String orgSlug = storagePrefixResolver.storagePrefixForRun(agentRun.getId());
 
-        // Scope guard: path must start with {orgSlug}/runs/{runId}/ and must not
-        // contain traversal sequences.
+        // The `..` test is not redundant with the prefix test: `<org>/runs/<id>/../../other/x`
+        // satisfies startsWith and still escapes the scope.
         String allowedPrefix = orgSlug + "/runs/" + runId + "/";
         if (!path.startsWith(allowedPrefix) || path.contains("..")) {
             return ResponseEntity.status(403).body(Map.of("error", "Access denied: path outside allowed scope"));

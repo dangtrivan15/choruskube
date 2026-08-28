@@ -8,12 +8,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * Backstop cleanup for tombstoned {@code workflow_run} rows. Scans rows where
- * {@code deleted_at IS NOT NULL}, calls
- * {@link WorkflowRunService#reconcileTombstonedBatch(int)} to terminate each run's Temporal
- * workflow and hard-delete the row.
- *
- * <p>Runs concurrently-safe with the afterCommit cleanup in
+ * Runs concurrently-safe with the afterCommit cleanup in
  * {@code WorkflowRunService.deleteAllByIds}: both paths share
  * {@code WorkflowRunService.cleanupAndHardDelete}, which is idempotent (Temporal terminate
  * swallows {@code WorkflowNotFoundException}; DB DELETE uses a WHERE clause scoped to

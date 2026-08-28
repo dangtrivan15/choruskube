@@ -16,7 +16,6 @@ import org.springframework.web.bind.annotation.*;
 public class ArtifactController {
 
     private static final Map<String, MediaType> MEDIA_TYPES = Map.ofEntries(
-            // Images
             Map.entry(".png", MediaType.IMAGE_PNG),
             Map.entry(".jpg", MediaType.IMAGE_JPEG),
             Map.entry(".jpeg", MediaType.IMAGE_JPEG),
@@ -25,7 +24,6 @@ public class ArtifactController {
             Map.entry(".bmp", MediaType.valueOf("image/bmp")),
             Map.entry(".ico", MediaType.valueOf("image/x-icon")),
             Map.entry(".svg", MediaType.valueOf("image/svg+xml")),
-            // Text / structured text
             Map.entry(".md", MediaType.valueOf("text/markdown;charset=UTF-8")),
             Map.entry(".txt", MediaType.valueOf("text/plain;charset=UTF-8")),
             Map.entry(".log", MediaType.valueOf("text/plain;charset=UTF-8")),
