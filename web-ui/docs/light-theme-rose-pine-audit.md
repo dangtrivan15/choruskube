@@ -57,17 +57,17 @@ Accent tokens — faithful:
 | `--status-accent` | `#907aa9` | iris | ✓ |
 | `--status-neutral` | `#797593` | subtle | ✓ |
 
-Neutral tokens — deviations (custom, not canonical):
+Neutral tokens — restored to canonical Dawn:
 
 | Token | Current value | Canonical Dawn role/value | Verdict |
 |---|---|---|---|
-| `--background`, `--popover`, `--sidebar` | `#fafaf7` | base `#faf4ed` | ✗ |
-| `--foreground`, `--card-foreground`, `--popover-foreground`, `--secondary-foreground`, `--accent-foreground`, `--sidebar-foreground`, `--sidebar-accent-foreground` | `#3e3859` | text `#575279` | ✗ |
-| `--card` | `rgba(255, 255, 255, 0.55)` (line 14) | surface `#fffaf3` | ✗ |
-| `--secondary`, `--muted`, `--accent` | `#f1eef5` | overlay `#f2e9e1` | ✗ |
-| `--sidebar-accent` | `#e6dfee` | overlay `#f2e9e1` | ✗ |
-| `--border`, `--sidebar-border` | `rgba(62,56,89,0.08)` (lines 27, 42) | none — canonical Dawn uses solid highlight roles, not ink-alpha | ✗ |
-| `--input` | `rgba(62,56,89,0.12)` (line 28) | none — same as above | ✗ |
+| `--background`, `--sidebar` | `#faf4ed` / `#fffaf3` | base `#faf4ed` / surface `#fffaf3` | ✓ |
+| `--popover` | `#fffaf3` | surface `#fffaf3` | ✓ |
+| `--foreground`, `--card-foreground`, `--popover-foreground`, `--secondary-foreground`, `--accent-foreground`, `--sidebar-foreground`, `--sidebar-accent-foreground` | `#575279` | text `#575279` | ✓ |
+| `--card` | `rgba(255, 255, 255, 0.55)` (line 14) | surface `#fffaf3` (kept translucent over the warm gradient by design — the glass/gradient treatment is intentionally preserved, only its underlying ink was corrected) | ✓ |
+| `--secondary`, `--muted`, `--accent`, `--sidebar-accent` | `#f2e9e1` | overlay `#f2e9e1` | ✓ |
+| `--border`, `--sidebar-border` | `rgba(87,82,121,0.08)` | text-ink (`#575279`) at 8% — canonical Dawn has no solid highlight-role equivalent for hairline borders, so this stays ink-alpha | ✓ |
+| `--input` | `rgba(87,82,121,0.12)` | text-ink (`#575279`) at 12% — same as above | ✓ |
 
 Not a deviation, but not-yet-audited against canonical Dawn: canonical Dawn does not
 define a distinct highlight-role token in this codebase's variable set, so
@@ -85,33 +85,28 @@ additions layered on top:
 |---|---|---|
 | Glass surface tokens | `index.css:50–56` | `--surface-glass`, `--surface-glass-strong`, `--surface-glass-border` — translucent overlay tokens with no canonical counterpart |
 | Radius scale | `index.css:145–151` | `--radius-sm` … `--radius-4xl`, derived from `--radius` |
-| Body gradient | `index.css:169–177` | Light-mode `html:not(.dark) body` background: three radial gradients (iris/foam/gold tinted) plus a linear gradient with custom stops `#f5ebef`/`#eae3f0` (canonical `base` `#faf4ed` is only the first stop) |
+| Body gradient | `index.css:169–177` | Light-mode `html:not(.dark) body` background: three radial gradients (iris/foam/gold tinted) plus a linear gradient warmed to Dawn-neutral stops (`#f2e9e1`/`#e9e0d6`, canonical `base` `#faf4ed` is the first stop) |
 | Dot-grid texture | `index.css:179–190` | Fixed, masked dot-grid overlay via `body::before` |
 | Custom scrollbars | `index.css:192–225` | Thin, ink-alpha-tinted scrollbar styling replacing browser default chrome |
 | `.bg-card` blur/shadow | `index.css:227–239` | Global `backdrop-filter: blur(12px)` + white-alpha border + drop shadow applied to any `.bg-card` element |
 
-Several of the comments beside these blocks (`index.css:169`, `192–194`, `227–230`) cite
-another product surface by name as the pattern they were matched to. That naming is
-comment hygiene to clean up when the theme is next edited, not part of this catalog —
-tracked as a caveat in this change's PR description.
-
 ## Tier 2 — component-level deviations
 
-| File | Line(s) | Issue | Should route through |
-|---|---|---|---|
-| `web-ui/src/components/git-repos/CreateGitRepoDialog.tsx` | 82 | `border-blue-300 bg-blue-50 text-blue-800` (+ dark variants) info banner | `--status-info` (pine) |
-| `web-ui/src/components/integrations/PlatformManagedCredentialPanel.tsx` | 19 | `bg-green-500` status dot | `--status-success` (foam) |
-| `web-ui/src/components/layout/ActivityFeedButton.tsx` | 24 | `text-white` badge text | a `*-foreground` token (it sits on `bg-destructive`, so `--destructive-foreground` if one is added, or `--primary-foreground`-style pattern) |
-| `web-ui/src/components/ui/dialog.tsx` | 33 | `bg-black/10` overlay scrim | a token-based scrim color |
-| `web-ui/src/components/layout/MobileDrawer.tsx` | 15 | `bg-black/40` overlay scrim | a token-based scrim color |
-| `web-ui/src/components/layout/CommandPalette.tsx` | 154 | `bg-black/10` overlay scrim | a token-based scrim color |
-| `web-ui/src/components/ui/MarkdownViewer.tsx` | 12 | mermaid diagrams pinned to `theme: "default"` | the app's semantic tokens; currently ignores both the light palette and dark mode |
-| `web-ui/src/components/ui/toaster.tsx` | 11 | sonner `richColors` | the app's semantic tokens instead of sonner's built-in palette |
-| `web-ui/src/components/analytics/RunTrendChart.tsx` | 47–48, 58–59 | `hsl(var(--card))`, `hsl(var(--border))`, `hsl(var(--foreground))` | **broken, not just off-palette** — these tokens hold hex/rgba values, not `H S% L%` triples, so wrapping them in `hsl(...)` produces invalid CSS |
-| `web-ui/src/components/analytics/BottleneckChart.tsx` | 56–57 | same `hsl(var(...))` pattern | same fix — reference the token directly, no `hsl()` wrapper |
-| `web-ui/src/components/analytics/RoadmapThroughputChart.tsx` | 40–41 | same `hsl(var(...))` pattern | same fix — reference the token directly, no `hsl()` wrapper |
-| `web-ui/index.html` | 16 | `<meta name="theme-color" content="#3e3859">` hardcoded to the custom ink, not a token, and not theme-aware | derive from the active theme, or at minimum from a canonical-Dawn-consistent value |
-| `web-ui/src/components/Logo.tsx` | 29–39 | hardcoded hex fills (`#907aa9` iris, `#56949f` foam, `#faf4ed` base) | **on-palette, hardcoded, frozen brand mark** — these already equal canonical Dawn hues; flagged for completeness, not because they render wrong |
+| File | Line(s) | Issue | Should route through | Status |
+|---|---|---|---|---|
+| `web-ui/src/components/git-repos/CreateGitRepoDialog.tsx` | 82 | `border-blue-300 bg-blue-50 text-blue-800` (+ dark variants) info banner | `--status-info` (pine) | ✓ fixed |
+| `web-ui/src/components/integrations/PlatformManagedCredentialPanel.tsx` | 19 | `bg-green-500` status dot | `--status-success` (foam) | ✓ fixed |
+| `web-ui/src/components/layout/ActivityFeedButton.tsx` | 24 | `text-white` badge text | a `*-foreground` token (it sits on `bg-destructive`, so `--destructive-foreground` if one is added, or `--primary-foreground`-style pattern) | not in scope — see repo's Caveats & Known Limitations |
+| `web-ui/src/components/ui/dialog.tsx` | 33 | `bg-black/10` overlay scrim | a token-based scrim color | accepted as-is — theme-agnostic backdrop, see repo's Caveats & Known Limitations |
+| `web-ui/src/components/layout/MobileDrawer.tsx` | 15 | `bg-black/40` overlay scrim | a token-based scrim color | accepted as-is — theme-agnostic backdrop, see repo's Caveats & Known Limitations |
+| `web-ui/src/components/layout/CommandPalette.tsx` | 154 | `bg-black/10` overlay scrim | a token-based scrim color | accepted as-is — theme-agnostic backdrop, see repo's Caveats & Known Limitations |
+| `web-ui/src/components/ui/MarkdownViewer.tsx` | 12 | mermaid diagrams pinned to `theme: "default"` | the app's semantic tokens; currently ignores both the light palette and dark mode | future work — see repo's Caveats & Known Limitations |
+| `web-ui/src/components/ui/toaster.tsx` | 11 | sonner `richColors` | the app's semantic tokens instead of sonner's built-in palette | future work — see repo's Caveats & Known Limitations |
+| `web-ui/src/components/analytics/RunTrendChart.tsx` | 47–48, 58–59 | `hsl(var(--card))`, `hsl(var(--border))`, `hsl(var(--foreground))` | **broken, not just off-palette** — these tokens hold hex/rgba values, not `H S% L%` triples, so wrapping them in `hsl(...)` produces invalid CSS | ✓ fixed |
+| `web-ui/src/components/analytics/BottleneckChart.tsx` | 56–57 | same `hsl(var(...))` pattern | same fix — reference the token directly, no `hsl()` wrapper | ✓ fixed |
+| `web-ui/src/components/analytics/RoadmapThroughputChart.tsx` | 40–41 | same `hsl(var(...))` pattern | same fix — reference the token directly, no `hsl()` wrapper | ✓ fixed |
+| `web-ui/index.html` | 16 | `<meta name="theme-color" content="#3e3859">` hardcoded to the custom ink, not a token, and not theme-aware | derive from the active theme, or at minimum from a canonical-Dawn-consistent value | ✓ fixed — now `#575279` |
+| `web-ui/src/components/Logo.tsx` | 29–39 | hardcoded hex fills (`#907aa9` iris, `#56949f` foam, `#faf4ed` base) | **on-palette, hardcoded, frozen brand mark** — these already equal canonical Dawn hues; flagged for completeness, not because they render wrong | not a deviation — no change needed |
 
 ### Explicitly clean
 
@@ -121,7 +116,11 @@ above — no deviation found in any of them.
 
 ## Known limitation
 
-Canonical Dawn's `subtle` (`#797593`) on `base` (`#faf4ed`) is a ~4:1 contrast ratio —
-borderline for WCAG AA normal text — while the app's current, darker custom ink
-comfortably passes. This catalog only records current values; the restoration task must
-verify WCAG AA per text role before adopting canonical neutrals.
+Canonical Dawn's `subtle` (`#797593`, held by `--muted-foreground`) on `base` (`#faf4ed`,
+now `--background`) is measured at ≈4.03:1 — under the 4.5:1 WCAG AA threshold for
+normal-size text, and `--muted-foreground` is used at `text-sm`/`text-xs` across ~86
+files, so it does not qualify for the 3:1 large-text exception. The shortfall pre-dates
+restoration (`--muted-foreground` was already canonical Dawn and unchanged by it); fixing
+it would mean darkening `--muted-foreground` off its canonical Dawn value, which is out
+of scope here. Tracked as deferred, not fixed by this catalog or its consuming
+restoration.

@@ -37,8 +37,8 @@ export default function RoadmapThroughputChart({ points }: RoadmapThroughputChar
           <YAxis allowDecimals={false} tick={{ fontSize: 12 }} className="text-muted-foreground" />
           <Tooltip
             contentStyle={{
-              backgroundColor: "hsl(var(--card))",
-              border: "1px solid hsl(var(--border))",
+              backgroundColor: "var(--card)",
+              border: "1px solid var(--border)",
               borderRadius: "0.5rem",
               fontSize: "0.875rem",
             }}

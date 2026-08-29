@@ -58,25 +58,24 @@ describe("light theme accent tokens match canonical Rose Pine Dawn", () => {
   });
 });
 
-describe("known neutral deviations from canonical Rose Pine Dawn (not yet restored)", () => {
+describe("light theme neutral tokens match canonical Rose Pine Dawn", () => {
   const block = readRootBlock();
 
-  // These intentionally do NOT assert the canonical value — they pin the
-  // *current* custom value so this test mirrors the catalog's Tier-1 table
-  // truthfully instead of pretending a restore already happened. When the
-  // restoration task changes one of these, update this test and the catalog
-  // in the same change.
+  // These neutrals were restored from a house-drifted set of cool-lilac
+  // values to canonical Dawn — see docs/light-theme-rose-pine-audit.md's
+  // Tier-1 table (kept in sync with this file) and
+  // docs/decisions/2026-08-29---01-original-rose-pine-dawn-light-theme.md.
   it.each([
-    ["background", "#fafaf7"],
-    ["popover", "#fafaf7"],
-    ["sidebar", "#fafaf7"],
-    ["foreground", "#3e3859"],
-    ["card-foreground", "#3e3859"],
-    ["secondary", "#f1eef5"],
-    ["muted", "#f1eef5"],
-    ["accent", "#f1eef5"],
-    ["sidebar-accent", "#e6dfee"],
-  ])("--%s still holds its current custom value %s", (token, current) => {
-    expect(tokenValue(block, token)).toBe(current);
+    ["background", "#faf4ed"], // base
+    ["popover", "#fffaf3"], // surface
+    ["sidebar", "#fffaf3"], // surface
+    ["foreground", "#575279"], // text
+    ["card-foreground", "#575279"], // text
+    ["secondary", "#f2e9e1"], // overlay
+    ["muted", "#f2e9e1"], // overlay
+    ["accent", "#f2e9e1"], // overlay
+    ["sidebar-accent", "#f2e9e1"], // overlay
+  ])("--%s equals canonical Dawn %s", (token, canonical) => {
+    expect(tokenValue(block, token)).toBe(canonical);
   });
 });
