@@ -50,6 +50,7 @@ function makeRun(overrides: Partial<RunResponse> = {}): RunResponse {
     pullRequests: [],
     promptText: null,
     task: null,
+    autopilotId: null,
     softwareProject: null,
     ...overrides,
   };
@@ -141,6 +142,18 @@ describe("RunHeader", () => {
   });
 
   // --- Status badge ---
+
+  it("marks a run the Autopilot started", () => {
+    renderWithProviders(<RunHeader run={makeRun({ autopilotId: "ap-1" })} />);
+
+    expect(screen.getByTestId("autopilot-run-badge")).toBeInTheDocument();
+  });
+
+  it("leaves a run a person started unmarked", () => {
+    renderWithProviders(<RunHeader run={makeRun({ autopilotId: null })} />);
+
+    expect(screen.queryByTestId("autopilot-run-badge")).not.toBeInTheDocument();
+  });
 
   it("renders the status badge with formatted text", () => {
     renderWithProviders(

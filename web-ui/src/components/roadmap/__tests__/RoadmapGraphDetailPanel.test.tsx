@@ -201,6 +201,7 @@ describe("RoadmapGraphDetailPanel", () => {
           startedAt: "2026-04-01T00:00:00Z",
           completedAt: "2026-04-01T01:00:00Z",
           createdAt: "2026-04-01T00:00:00Z",
+          autopilotId: null,
           softwareProject: null,
         },
       ],

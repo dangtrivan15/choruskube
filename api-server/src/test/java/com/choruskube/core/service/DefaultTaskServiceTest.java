@@ -40,6 +40,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentMatchers;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -309,6 +310,26 @@ public class DefaultTaskServiceTest extends BaseTest {
         assertThat(history.getContent()).hasSize(2);
         assertThat(history.getContent().get(0).id()).isEqualTo(afterRestart.latestRunId());
         assertThat(history.getContent().get(1).id()).isEqualTo(afterFirstStart.latestRunId());
+    }
+
+    @Test
+    void aSecondUnfinishedRunForOneTask_isRefusedByTheDatabase() {
+        GitRepo r = makeRepo("https://github.com/test/task-one-live-run.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
+        WorkflowRun live =
+                runRepo.findById(service.start(task.id()).latestRunId()).orElseThrow();
+
+        // Written straight through the repository, deliberately going around startCore's row lock
+        // and its most-recent-run guard: this asserts the SCHEMA refuses a second unfinished run,
+        // so a future caller that starts one without taking that lock fails instead of quietly
+        // giving one Task two agents on the same repository.
+        WorkflowRun second = new WorkflowRun();
+        second.setGraphTemplateId(live.getGraphTemplateId());
+        second.setStatus(WorkflowRunStatus.running);
+        second.setTaskId(task.id());
+
+        assertThatThrownBy(() -> runRepo.saveAndFlush(second)).isInstanceOf(DataIntegrityViolationException.class);
     }
 
     @Test

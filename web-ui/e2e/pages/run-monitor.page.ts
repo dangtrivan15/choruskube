@@ -12,6 +12,8 @@ export class RunMonitorPage {
   readonly pauseButton: Locator;
   readonly resumeButton: Locator;
   readonly cancelButton: Locator;
+  /** Present only when the Autopilot started this run, absent when a person did. */
+  readonly autopilotBadge: Locator;
 
   // DAG
   readonly dagContainer: Locator;
@@ -54,6 +56,7 @@ export class RunMonitorPage {
 
     this.runTitle = page.getByTestId("run-header-title");
     this.runStatus = page.getByTestId("run-header-status");
+    this.autopilotBadge = page.getByTestId("autopilot-run-badge");
     this.pauseButton = page.getByTestId("run-pause-button");
     this.resumeButton = page.getByTestId("run-resume-button");
     this.cancelButton = page.getByTestId("run-cancel-button");

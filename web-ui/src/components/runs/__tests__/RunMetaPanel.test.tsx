@@ -21,6 +21,7 @@ function makeRun(overrides: Partial<RunResponse> = {}): RunResponse {
     pullRequests: [],
     promptText: null,
     task: null,
+    autopilotId: null,
     softwareProject: null,
     ...overrides,
   };

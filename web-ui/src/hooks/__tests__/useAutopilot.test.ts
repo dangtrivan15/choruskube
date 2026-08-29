@@ -42,6 +42,7 @@ function makeStatus(overrides: Partial<AutopilotStatus> = {}): AutopilotStatus {
     whyIdle: [],
     awaitingYou: [],
     needsAttention: [],
+    heldTasks: [],
     consecutiveFailures: 0,
     disengagedReason: null,
     lastTickAt: null,

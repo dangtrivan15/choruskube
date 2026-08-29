@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "@/__tests__/test-utils";
 import AutopilotPage from "@/pages/AutopilotPage";
@@ -48,6 +48,7 @@ function makeStatus(overrides: Partial<AutopilotStatus> = {}): AutopilotStatus {
     whyIdle: [],
     awaitingYou: [],
     needsAttention: [],
+    heldTasks: [],
     consecutiveFailures: 0,
     disengagedReason: null,
     lastTickAt: null,
@@ -156,6 +157,40 @@ describe("AutopilotPage", () => {
     const needsAttention = screen.getByTestId("autopilot-needs-attention");
     expect(needsAttention).toHaveTextContent("Failed task");
     expect(needsAttention).toHaveTextContent("awaiting_retry");
+  });
+
+  it("names held Tasks and links them to the Task rather than the finished run", () => {
+    mockUseAutopilot.mockReturnValue({
+      data: makeStatus({
+        heldTasks: [
+          taskRef({ taskId: "t-9", title: "Settle the palette", runId: "run-9", status: "cancelled" }),
+        ],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderWithProviders(<AutopilotPage />);
+
+    const held = screen.getByTestId("autopilot-held-tasks");
+    expect(held).toHaveTextContent("Settle the palette");
+    expect(held).toHaveTextContent("cancelled");
+    // Deliberately the Task and not run-9: that run is over, and Restart lives on the Task.
+    expect(within(held).getByRole("link")).toHaveAttribute("href", "/tasks/t-9");
+  });
+
+  it("says so when nothing is held", () => {
+    mockUseAutopilot.mockReturnValue({
+      data: makeStatus({ heldTasks: [] }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderWithProviders(<AutopilotPage />);
+
+    expect(screen.getByTestId("autopilot-held-tasks")).toHaveTextContent(
+      "No Tasks left in progress by a finished run."
+    );
   });
 
   it("shows the disengaged banner with the reason when present", () => {

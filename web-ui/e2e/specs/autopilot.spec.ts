@@ -192,6 +192,89 @@ test.describe("Autopilot", () => {
     // No cleanup — same started-descendant-Task convention as the previous test.
   });
 
+  test("a Task stranded by a cancelled run is reported as held, and its run is badged", async ({
+    api,
+    workerRepo,
+    autopilotPage,
+    runMonitorPage,
+  }) => {
+    const epic = await api.createEpic({
+      title: uniqueName("Autopilot Held Epic"),
+      description: "desc",
+      softwareProjectId: workerRepo.gitRepo.id,
+    });
+    const story = await api.createStory(epic.id, {
+      title: uniqueName("Autopilot Held Story"),
+      description: "desc",
+    });
+    const heldTitle = uniqueName("Autopilot Held Task");
+    const task = await api.createTask(story.id, { title: heldTitle, description: "desc" });
+
+    await api.engageAutopilot();
+
+    // ONE free slot at a time, never a ceiling. A tick starts READY backlog Tasks from the WHOLE
+    // board, so surplus headroom here sweeps up Tasks other specs are mid-assertion on and breaks
+    // their teardown with a 409 on Epic delete — the exact hazard described at the top of this
+    // file. Same bounded-retry shape as the slot test above: whichever tick lands our Task wins,
+    // and the loop absorbs a slot that went to another worker first.
+    let started: Task | undefined;
+    for (let attempt = 0; attempt < 10 && !started; attempt++) {
+      const status = await api.getAutopilot();
+      await api.updateAutopilot(status.inFlight + 1);
+      await api.tickAutopilot();
+      started = (await api.listTasks(story.id)).find(
+        (t) => t.id === task.id && t.status === "in_progress",
+      );
+    }
+    if (!started) {
+      throw new Error(
+        "Autopilot never started the Task after 10 ticks — see the cross-worker slot " +
+          "contention note in this file's top-of-file comment.",
+      );
+    }
+
+    // Zero headroom from here on: nothing below this line needs a start, and the 30s reconciler
+    // is off in this stack, so no further Task can leave backlog on this test's account.
+    const afterStart = await api.getAutopilot();
+    await api.updateAutopilot(Math.max(1, afterStart.inFlight));
+
+    const runId = started.latestRunId!;
+    expect(runId).toBeTruthy();
+
+    // The attribution half: this run has an autopilot_id, so the header badges it. A run a
+    // person started carries no badge — covered by RunHeader's unit test, since producing a
+    // manually started run here would mean a second Task and a second slot.
+    await runMonitorPage.goto(runId);
+    await expect(runMonitorPage.autopilotBadge).toBeVisible();
+
+    // Cancelling is the operator's recovery gesture, and it deliberately leaves the Task where
+    // it is. That is what strands it: the ready frontier only sweeps `backlog`.
+    await api.cancelRun(runId);
+    await api.waitForRunStatus(runId, ["cancelled"], 30_000);
+
+    const afterCancel = (await api.listTasks(story.id)).find((t) => t.id === task.id);
+    expect(afterCancel?.status).toBe("in_progress");
+
+    // No tick needed: GET /autopilot runs the same frontier sweep (AutopilotService#snapshot),
+    // so the held list is computed on read. Ticking here would only widen this test's reach over
+    // the shared board for no assertion.
+    await autopilotPage.goto();
+    await expect(autopilotPage.heldTasks).toContainText(heldTitle);
+    // Links to the Task, not to the cancelled run: that run is over, and Restart lives on the Task.
+    await expect(autopilotPage.heldTasks.getByRole("link", { name: heldTitle })).toHaveAttribute(
+      "href",
+      `/tasks/${task.id}`,
+    );
+    // Asserted on the phrase rather than on this Task's title: the why-idle line names only the
+    // first few held Tasks, and a previous run of this spec may have left its own behind.
+    await expect(autopilotPage.whyIdle).toContainText("left in progress by a finished run");
+
+    // Best-effort: clears the hold so repeated runs of this spec do not accumulate held Tasks on
+    // the shared board. Tolerated failure — the assertions above are already done, and the Epic
+    // itself cannot be deleted either way (started descendant Task).
+    await api.completeTask(task.id).catch(() => {});
+  });
+
   test("POST /tasks/{id}/start returns 409 for a blocked Task", async ({ api, workerRepo }) => {
     const epic = await api.createEpic({
       title: uniqueName("Autopilot 409 Epic"),

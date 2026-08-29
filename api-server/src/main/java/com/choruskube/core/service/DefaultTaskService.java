@@ -26,6 +26,7 @@ import com.choruskube.core.model.enums.Priority;
 import com.choruskube.core.model.enums.Readiness;
 import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
+import com.choruskube.core.model.enums.WorkflowRunStatusGroups;
 import com.choruskube.core.observability.AuditDetail;
 import com.choruskube.core.observability.AuditSink;
 import com.choruskube.core.repository.EpicRepository;
@@ -60,8 +61,11 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class DefaultTaskService implements TaskService {
 
-    private static final Set<WorkflowRunStatus> TERMINAL_STATUSES =
-            Set.of(WorkflowRunStatus.completed, WorkflowRunStatus.failed, WorkflowRunStatus.cancelled);
+    /**
+     * Shared with the Autopilot's held-Task sweep rather than restated, so "this run is finished"
+     * cannot come to mean one thing where a start is granted and another where one is offered.
+     */
+    private static final Set<WorkflowRunStatus> TERMINAL_STATUSES = WorkflowRunStatusGroups.TERMINAL;
 
     /** Whitelist for {@link #updateStatus} — the public/request-scoped path. */
     private static final Set<Map.Entry<WorkItemStatus, WorkItemStatus>> PUBLIC_TRANSITIONS = Set.of(
@@ -631,6 +635,7 @@ public class DefaultTaskService implements TaskService {
                 run.getStartedAt(),
                 run.getCompletedAt(),
                 run.getCreatedAt(),
+                run.getAutopilotId(),
                 projectRef));
     }
 

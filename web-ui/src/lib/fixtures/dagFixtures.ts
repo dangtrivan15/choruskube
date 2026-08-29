@@ -95,6 +95,7 @@ function snapshotRun(
     pullRequests: [],
     promptText: null,
     task: null,
+    autopilotId: null,
     softwareProject: null,
   };
 }
