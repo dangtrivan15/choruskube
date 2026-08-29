@@ -79,7 +79,7 @@ export default function CreateGitRepoDialog({ open, onOpenChange }: Props) {
           {showCredentialBanner && (
             <div
               role="alert"
-              className="rounded-md border border-blue-300 bg-blue-50 p-3 text-sm text-blue-800 dark:border-blue-700 dark:bg-blue-950 dark:text-blue-200"
+              className="rounded-md border border-status-info/20 bg-status-info/10 p-3 text-sm text-status-info"
             >
               No GitHub credential is configured. Repositories may not be accessible. Configure
               one in Org Settings → Integrations.

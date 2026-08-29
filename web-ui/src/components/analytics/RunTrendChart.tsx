@@ -44,8 +44,8 @@ export default function RunTrendChart({ points }: RunTrendChartProps) {
           <YAxis allowDecimals={false} tick={{ fontSize: 12 }} className="text-muted-foreground" />
           <Tooltip
             contentStyle={{
-              backgroundColor: "hsl(var(--card))",
-              border: "1px solid hsl(var(--border))",
+              backgroundColor: "var(--card)",
+              border: "1px solid var(--border)",
               borderRadius: "0.5rem",
               fontSize: "0.875rem",
             }}
@@ -55,8 +55,8 @@ export default function RunTrendChart({ points }: RunTrendChartProps) {
             type="monotone"
             dataKey="total"
             name="Total"
-            stroke="hsl(var(--foreground))"
-            fill="hsl(var(--foreground))"
+            stroke="var(--foreground)"
+            fill="var(--foreground)"
             fillOpacity={0.05}
             strokeWidth={2}
           />

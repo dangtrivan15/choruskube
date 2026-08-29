@@ -53,8 +53,8 @@ export default function BottleneckChart({ bottlenecks }: BottleneckChartProps) {
           />
           <Tooltip
             contentStyle={{
-              backgroundColor: "hsl(var(--card))",
-              border: "1px solid hsl(var(--border))",
+              backgroundColor: "var(--card)",
+              border: "1px solid var(--border)",
               borderRadius: "0.5rem",
               fontSize: "0.875rem",
             }}
