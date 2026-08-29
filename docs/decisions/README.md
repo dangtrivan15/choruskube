@@ -29,6 +29,7 @@ Every entry gets a row, newest last.
 
 | Entry | Date | Decides | Status |
 |---|---|---|---|
+| [2026-08-29---01-original-rose-pine-dawn-light-theme.md](2026-08-29---01-original-rose-pine-dawn-light-theme.md) | 2026-08-29 | Which light look is the canonical "original Rose Pine" and how the core app's current light theme deviates from it | current |
 
 - **Entry** — the filename, linked.
 - **Date** — the date in the filename.
