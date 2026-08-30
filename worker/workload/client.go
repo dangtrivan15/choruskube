@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -24,10 +25,13 @@ type Client struct {
 }
 
 // NewClient returns a Client that authenticates every request to the API server at baseURL
-// with a Bearer token built from secret. hc defaults to http.DefaultClient when nil.
+// with a Bearer token built from secret. hc defaults to a 30-second-timeout client when nil —
+// CreateWorkload runs under a 30-minute activity timeout with MaximumAttempts: 1, so an
+// unbounded default client would let one hung POST stall a node for the full 30 minutes
+// with no retry, instead of failing fast enough for Temporal to retry it.
 func NewClient(baseURL, secret string, hc *http.Client) *Client {
 	if hc == nil {
-		hc = http.DefaultClient
+		hc = &http.Client{Timeout: 30 * time.Second}
 	}
 	return &Client{baseURL: strings.TrimRight(baseURL, "/"), secret: secret, hc: hc}
 }

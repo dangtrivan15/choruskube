@@ -27,13 +27,13 @@ import (
 type Activities struct {
 	client   *workload.Client
 	resolver *templateResolver
-	// CallbackURL is the endpoint agent pods POST their results to. Left empty until the
-	// caller sets it, since New's signature is fixed by callers that construct it before any
-	// deployment config is available.
+	// CallbackURL is the endpoint agent pods POST their results to. Left empty, the agent
+	// pod launches with no way to report back, and the activity hangs until StartToClose
+	// instead of failing — ExecuteAINodeFromSnapshot rejects an empty value up front instead.
 	CallbackURL string
-	// APIServerURL is embedded in agent config for endpoints the agent calls directly (its
-	// GitHub token exchange). Left empty until the caller sets it, for the same reason as
-	// CallbackURL.
+	// APIServerURL is embedded in agent config, including as the base of github_token_url.
+	// Left empty, github_token_url becomes a relative path the agent cannot call —
+	// ExecuteAINodeFromSnapshot rejects an empty value up front instead.
 	APIServerURL string
 }
 
@@ -49,7 +49,6 @@ type ExecuteAINodeFromSnapshotParams struct {
 	NodeExecutionID uuid.UUID
 	RunID           uuid.UUID
 	TemplateNodeID  uuid.UUID
-	Label           string
 	ExecutorType    string // "ai" or "script"
 	PromptTemplate  string
 	InputArtifacts  map[string]string
@@ -58,7 +57,6 @@ type ExecuteAINodeFromSnapshotParams struct {
 	// iteration that does not exist on iteration 1.
 	RequiredInputArtifacts []string
 	Variables              map[string]string
-	LoopGroup              string // from config_overrides, empty if not a review node
 	Iteration              int
 	RepoURL                string
 	WorkingBranch          string
@@ -123,6 +121,10 @@ type CallbackResult struct {
 }
 
 func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params ExecuteAINodeFromSnapshotParams) (CallbackResult, error) {
+	if a.CallbackURL == "" || a.APIServerURL == "" {
+		return CallbackResult{}, fmt.Errorf("activities: CallbackURL and APIServerURL must both be set before executing")
+	}
+
 	// Resolve prompt template
 	vars := params.Variables
 	if vars == nil {

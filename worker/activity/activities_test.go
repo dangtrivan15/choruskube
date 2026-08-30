@@ -51,6 +51,76 @@ func requirePending(t *testing.T, err error) {
 	}
 }
 
+// TestExecuteAINodeFromSnapshot_CallbackAndAPIServerURLsInConfigJson verifies that
+// CallbackURL and APIServerURL reach config.json, and that github_token_url is built as an
+// absolute URL — a relative one would be uncallable from inside the agent pod.
+func TestExecuteAINodeFromSnapshot_CallbackAndAPIServerURLsInConfigJson(t *testing.T) {
+	var receivedConfigJSON map[string]interface{}
+	acts := newTestActivities(t, &receivedConfigJSON)
+
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+		NodeExecutionID: uuid.New(),
+		RunID:           uuid.New(),
+		TemplateNodeID:  uuid.New(),
+		ExecutorType:    "ai",
+		PromptTemplate:  "irrelevant",
+	})
+	requirePending(t, err)
+
+	if receivedConfigJSON["callback_url"] != acts.CallbackURL {
+		t.Fatalf("callback_url = %v, want %v", receivedConfigJSON["callback_url"], acts.CallbackURL)
+	}
+	if receivedConfigJSON["api_server_url"] != acts.APIServerURL {
+		t.Fatalf("api_server_url = %v, want %v", receivedConfigJSON["api_server_url"], acts.APIServerURL)
+	}
+	githubTokenURL, ok := receivedConfigJSON["github_token_url"].(string)
+	if !ok {
+		t.Fatal("github_token_url should be a string in config.json")
+	}
+	if !strings.HasPrefix(githubTokenURL, "http://") && !strings.HasPrefix(githubTokenURL, "https://") {
+		t.Fatalf("github_token_url must be absolute, got %q", githubTokenURL)
+	}
+}
+
+// TestExecuteAINodeFromSnapshot_FailsFastWhenCallbackURLEmpty guards against a config.json
+// that silently ships with an empty callback_url: the agent pod would launch and then have no
+// way to report back, hanging the activity until StartToClose instead of failing immediately.
+func TestExecuteAINodeFromSnapshot_FailsFastWhenCallbackURLEmpty(t *testing.T) {
+	acts := New(workload.NewClient("http://unused.invalid", "secret", nil))
+	acts.APIServerURL = "http://api.invalid"
+	// CallbackURL intentionally left empty.
+
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+		NodeExecutionID: uuid.New(),
+		RunID:           uuid.New(),
+		TemplateNodeID:  uuid.New(),
+		ExecutorType:    "ai",
+		PromptTemplate:  "irrelevant",
+	})
+	if err == nil || errors.Is(err, activity.ErrResultPending) {
+		t.Fatalf("want an immediate config error, got %v", err)
+	}
+}
+
+// TestExecuteAINodeFromSnapshot_FailsFastWhenAPIServerURLEmpty is the APIServerURL half of
+// TestExecuteAINodeFromSnapshot_FailsFastWhenCallbackURLEmpty.
+func TestExecuteAINodeFromSnapshot_FailsFastWhenAPIServerURLEmpty(t *testing.T) {
+	acts := New(workload.NewClient("http://unused.invalid", "secret", nil))
+	acts.CallbackURL = "http://callback.invalid"
+	// APIServerURL intentionally left empty.
+
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+		NodeExecutionID: uuid.New(),
+		RunID:           uuid.New(),
+		TemplateNodeID:  uuid.New(),
+		ExecutorType:    "ai",
+		PromptTemplate:  "irrelevant",
+	})
+	if err == nil || errors.Is(err, activity.ErrResultPending) {
+		t.Fatalf("want an immediate config error, got %v", err)
+	}
+}
+
 func TestExecuteAINodeFromSnapshot_OutputPathKeyedByExecutionID(t *testing.T) {
 	execID := uuid.New()
 	runID := uuid.New()
@@ -63,7 +133,6 @@ func TestExecuteAINodeFromSnapshot_OutputPathKeyedByExecutionID(t *testing.T) {
 		NodeExecutionID: execID,
 		RunID:           runID,
 		TemplateNodeID:  templateNodeID,
-		Label:           "spec_review",
 		ExecutorType:    "ai",
 		PromptTemplate:  "irrelevant",
 		Iteration:       2,
@@ -87,7 +156,6 @@ func TestExecuteAINodeFromSnapshot_ScriptNode_ConfigJson(t *testing.T) {
 		NodeExecutionID: uuid.New(),
 		RunID:           uuid.New(),
 		TemplateNodeID:  uuid.New(),
-		Label:           "test",
 		ExecutorType:    "script",
 		Command:         "cd /workspace/repo && npm test",
 		RepoURL:         "https://github.com/test/repo",
@@ -132,7 +200,6 @@ func TestExecuteAINodeFromSnapshot_NoSystemPromptInConfigJson(t *testing.T) {
 		NodeExecutionID: uuid.New(),
 		RunID:           runID,
 		TemplateNodeID:  uuid.New(),
-		Label:           "implement",
 		ExecutorType:    "ai",
 		PromptTemplate:  "Do the thing",
 		Variables:       map[string]string{"run.id": runID.String()},
@@ -166,7 +233,6 @@ func TestExecuteAINodeFromSnapshot_TaskContextInConfigJson(t *testing.T) {
 		NodeExecutionID: uuid.New(),
 		RunID:           runID,
 		TemplateNodeID:  uuid.New(),
-		Label:           "implement",
 		ExecutorType:    "ai",
 		PromptTemplate:  "Do the thing",
 		Variables:       map[string]string{"run.id": runID.String()},
@@ -211,7 +277,6 @@ func TestExecuteAINodeFromSnapshot_NoTaskContextWhenTaskIDEmpty(t *testing.T) {
 		NodeExecutionID: uuid.New(),
 		RunID:           runID,
 		TemplateNodeID:  uuid.New(),
-		Label:           "implement",
 		ExecutorType:    "ai",
 		PromptTemplate:  "Do the thing",
 		Variables:       map[string]string{"run.id": runID.String()},
@@ -237,7 +302,6 @@ func TestExecuteAINodeFromSnapshot_TaskContextIncludesOpenBlockers(t *testing.T)
 		NodeExecutionID: uuid.New(),
 		RunID:           runID,
 		TemplateNodeID:  uuid.New(),
-		Label:           "implement",
 		ExecutorType:    "ai",
 		PromptTemplate:  "Do the thing",
 		Variables:       map[string]string{"run.id": runID.String()},
@@ -282,7 +346,6 @@ func TestExecuteAINodeFromSnapshot_NoOpenBlockersKeyWhenEmpty(t *testing.T) {
 		NodeExecutionID: uuid.New(),
 		RunID:           runID,
 		TemplateNodeID:  uuid.New(),
-		Label:           "implement",
 		ExecutorType:    "ai",
 		PromptTemplate:  "Do the thing",
 		Variables:       map[string]string{"run.id": runID.String()},
@@ -310,7 +373,6 @@ func TestExecuteAINodeFromSnapshot_IterationInConfigJson(t *testing.T) {
 		NodeExecutionID: uuid.New(),
 		RunID:           uuid.New(),
 		TemplateNodeID:  uuid.New(),
-		Label:           "retry-node",
 		ExecutorType:    "script",
 		Command:         "echo hello",
 		PromptTemplate:  "",
@@ -339,7 +401,6 @@ func TestExecuteAINodeFromSnapshot_IterationZeroOmitted(t *testing.T) {
 		NodeExecutionID: uuid.New(),
 		RunID:           uuid.New(),
 		TemplateNodeID:  uuid.New(),
-		Label:           "first-run",
 		ExecutorType:    "ai",
 		PromptTemplate:  "Do something",
 		Variables:       map[string]string{"run.id": "test123"},
@@ -362,7 +423,6 @@ func TestExecuteAINodeFromSnapshot_PredecessorArtifactAnnotation(t *testing.T) {
 		NodeExecutionID: uuid.New(),
 		RunID:           uuid.New(),
 		TemplateNodeID:  uuid.New(),
-		Label:           "implement",
 		ExecutorType:    "ai",
 		PromptTemplate:  "Do the thing",
 		Variables: map[string]string{
@@ -402,7 +462,6 @@ func TestExecuteAINodeFromSnapshot_OnlyResultEntries_NoAnnotation(t *testing.T) 
 		NodeExecutionID: uuid.New(),
 		RunID:           uuid.New(),
 		TemplateNodeID:  uuid.New(),
-		Label:           "implement",
 		ExecutorType:    "ai",
 		PromptTemplate:  "Do the thing",
 		Variables: map[string]string{
@@ -498,7 +557,6 @@ func TestExecuteAINodeFromSnapshot_PredecessorArtifactAnnotation_MaterialisedFil
 				NodeExecutionID: uuid.New(),
 				RunID:           uuid.New(),
 				TemplateNodeID:  uuid.New(),
-				Label:           "implement",
 				ExecutorType:    "ai",
 				PromptTemplate:  "Do the thing",
 				Variables:       tt.variables,
@@ -543,7 +601,6 @@ func TestExecuteAINodeFromSnapshot_RunInputAnnotation(t *testing.T) {
 		NodeExecutionID: uuid.New(),
 		RunID:           uuid.New(),
 		TemplateNodeID:  uuid.New(),
-		Label:           "implement",
 		ExecutorType:    "ai",
 		PromptTemplate:  "Do the thing",
 		InputArtifacts: map[string]string{
@@ -598,7 +655,6 @@ func TestExecuteAINodeFromSnapshot_NoRunInputs_NoAnnotation(t *testing.T) {
 		NodeExecutionID: uuid.New(),
 		RunID:           uuid.New(),
 		TemplateNodeID:  uuid.New(),
-		Label:           "implement",
 		ExecutorType:    "ai",
 		PromptTemplate:  "Do the thing",
 		InputArtifacts:  map[string]string{}, // empty — nothing to announce
@@ -628,7 +684,6 @@ func TestExecuteAINodeFromSnapshot_OutputSpec_Present(t *testing.T) {
 		NodeExecutionID: uuid.New(),
 		RunID:           uuid.New(),
 		TemplateNodeID:  uuid.New(),
-		Label:           "generate-report",
 		ExecutorType:    "ai",
 		PromptTemplate:  "Generate a report",
 		Variables:       map[string]string{"run.id": "abc123"},
@@ -654,7 +709,6 @@ func TestExecuteAINodeFromSnapshot_OutputSpec_Empty(t *testing.T) {
 		NodeExecutionID: uuid.New(),
 		RunID:           uuid.New(),
 		TemplateNodeID:  uuid.New(),
-		Label:           "simple-node",
 		ExecutorType:    "ai",
 		PromptTemplate:  "Do something",
 		Variables:       map[string]string{"run.id": "abc123"},
@@ -680,7 +734,6 @@ func TestExecuteAINodeFromSnapshot_OutputSpec_EmptyObject(t *testing.T) {
 		NodeExecutionID: uuid.New(),
 		RunID:           uuid.New(),
 		TemplateNodeID:  uuid.New(),
-		Label:           "simple-node",
 		ExecutorType:    "ai",
 		PromptTemplate:  "Do something",
 		Variables:       map[string]string{"run.id": "abc123"},
@@ -719,7 +772,6 @@ func TestConfigJSON_SupervisorEmittedOnlyWhenDeclared(t *testing.T) {
 				NodeExecutionID: uuid.New(),
 				RunID:           uuid.New(),
 				TemplateNodeID:  uuid.New(),
-				Label:           "implement",
 				ExecutorType:    "ai",
 				PromptTemplate:  "Do the thing",
 				Variables:       map[string]string{"run.id": "abc123"},
@@ -758,7 +810,6 @@ func TestExecuteAINodeFromSnapshot_ModelInConfigJson(t *testing.T) {
 		NodeExecutionID: uuid.New(),
 		RunID:           uuid.New(),
 		TemplateNodeID:  uuid.New(),
-		Label:           "push_pr",
 		ExecutorType:    "ai",
 		PromptTemplate:  "irrelevant",
 		Model:           "claude-haiku-4-5-20251001",
@@ -780,7 +831,6 @@ func TestExecuteAINodeFromSnapshot_ModelOmittedWhenEmpty(t *testing.T) {
 		NodeExecutionID: uuid.New(),
 		RunID:           uuid.New(),
 		TemplateNodeID:  uuid.New(),
-		Label:           "spec_review",
 		ExecutorType:    "ai",
 		PromptTemplate:  "irrelevant",
 		// Model intentionally not set
@@ -803,7 +853,6 @@ func TestExecuteAINodeFromSnapshot_EffortInConfigJson(t *testing.T) {
 		NodeExecutionID: uuid.New(),
 		RunID:           uuid.New(),
 		TemplateNodeID:  uuid.New(),
-		Label:           "code_review",
 		ExecutorType:    "ai",
 		PromptTemplate:  "irrelevant",
 		Effort:          "xhigh",
@@ -825,7 +874,6 @@ func TestExecuteAINodeFromSnapshot_EffortOmittedWhenEmpty(t *testing.T) {
 		NodeExecutionID: uuid.New(),
 		RunID:           uuid.New(),
 		TemplateNodeID:  uuid.New(),
-		Label:           "spec_review",
 		ExecutorType:    "ai",
 		PromptTemplate:  "irrelevant",
 		// Effort intentionally not set
@@ -838,25 +886,18 @@ func TestExecuteAINodeFromSnapshot_EffortOmittedWhenEmpty(t *testing.T) {
 }
 
 // TestExecuteAINodeFromSnapshot_ResolvedModelEffortReachConfigJSONUnchanged_BothIterationBands
-// covers the spec's Integration testing bullet for the per-node-type model/effort feature:
-// dag_executor.go resolves the four new iteration-aware config_overrides keys
-// (model_first_iteration/model_subsequent_iteration/effort_first_iteration/
-// effort_subsequent_iteration) down to a single concrete Model/Effort pair BEFORE calling this
-// activity — this activity itself is unchanged and only ever sees that resolved pair via
-// ExecuteAINodeFromSnapshotParams.Model/.Effort, never the raw iteration-suffixed keys. This
-// test simulates both bands the DAG executor can hand it (a first-iteration resolution and a
-// subsequent-iteration one) and confirms each reaches config.json verbatim as plain
-// "model"/"effort" keys, proving the pass-through stays generic across both.
+// verifies that Model and Effort reach config.json unchanged as plain "model"/"effort" keys
+// for two independently chosen values, and that no iteration-suffixed key name (e.g.
+// model_first_iteration) is ever introduced — a caller resolves iteration-aware overrides
+// down to one concrete pair before calling this activity, which must stay agnostic to that.
 func TestExecuteAINodeFromSnapshot_ResolvedModelEffortReachConfigJSONUnchanged_BothIterationBands(t *testing.T) {
-	// Band 1: as dag_executor.go resolves it on tracker.reviewPass == 1 (from
-	// model_first_iteration/effort_first_iteration).
+	// First band: an arbitrary Model/Effort pair, as if resolved for an early iteration.
 	var firstIterationConfigJSON map[string]interface{}
 	firstActs := newTestActivities(t, &firstIterationConfigJSON)
 	_, err := firstActs.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
 		RunID:           uuid.New(),
 		TemplateNodeID:  uuid.New(),
-		Label:           "code_review",
 		ExecutorType:    "ai",
 		PromptTemplate:  "irrelevant",
 		Model:           "opus-x",
@@ -874,15 +915,13 @@ func TestExecuteAINodeFromSnapshot_ResolvedModelEffortReachConfigJSONUnchanged_B
 		t.Fatal("config.json must never carry the raw iteration-suffixed key")
 	}
 
-	// Band 2: as dag_executor.go resolves it on tracker.reviewPass > 1 (from
-	// model_subsequent_iteration/effort_subsequent_iteration).
+	// Second band: a different Model/Effort pair, as if resolved for a later iteration.
 	var subsequentIterationConfigJSON map[string]interface{}
 	subsequentActs := newTestActivities(t, &subsequentIterationConfigJSON)
 	_, err = subsequentActs.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
 		RunID:           uuid.New(),
 		TemplateNodeID:  uuid.New(),
-		Label:           "code_review",
 		ExecutorType:    "ai",
 		PromptTemplate:  "irrelevant",
 		Model:           "sonnet-y",
@@ -912,7 +951,6 @@ func TestExecuteAINodeFromSnapshot_TurnBudgetInConfigJson(t *testing.T) {
 		NodeExecutionID: uuid.New(),
 		RunID:           uuid.New(),
 		TemplateNodeID:  uuid.New(),
-		Label:           "implement",
 		ExecutorType:    "ai",
 		PromptTemplate:  "irrelevant",
 		MaxTurns:        "250",
@@ -940,7 +978,6 @@ func TestExecuteAINodeFromSnapshot_TurnBudgetOmittedWhenEmpty(t *testing.T) {
 		NodeExecutionID: uuid.New(),
 		RunID:           uuid.New(),
 		TemplateNodeID:  uuid.New(),
-		Label:           "spec_review",
 		ExecutorType:    "ai",
 		PromptTemplate:  "irrelevant",
 		MaxTurns:        "150",
@@ -960,7 +997,6 @@ func TestExecuteAINodeFromSnapshot_TurnBudgetOmittedWhenEmpty(t *testing.T) {
 		NodeExecutionID: uuid.New(),
 		RunID:           uuid.New(),
 		TemplateNodeID:  uuid.New(),
-		Label:           "spec_review",
 		ExecutorType:    "ai",
 		PromptTemplate:  "irrelevant",
 		// Neither MaxTurns nor MaxRetries set
@@ -987,7 +1023,6 @@ func TestExecuteAINodeFromSnapshot_SessionInConfigJson(t *testing.T) {
 		NodeExecutionID:     uuid.New(),
 		RunID:               uuid.New(),
 		TemplateNodeID:      uuid.New(),
-		Label:               "implement",
 		ExecutorType:        "ai",
 		PromptTemplate:      "irrelevant",
 		SessionID:           "sess-1",
@@ -1015,7 +1050,6 @@ func TestExecuteAINodeFromSnapshot_SessionOmittedWhenEmpty(t *testing.T) {
 		NodeExecutionID: uuid.New(),
 		RunID:           uuid.New(),
 		TemplateNodeID:  uuid.New(),
-		Label:           "implement",
 		ExecutorType:    "ai",
 		PromptTemplate:  "irrelevant",
 		// SessionID intentionally not set
@@ -1041,7 +1075,6 @@ func TestExecuteAINodeFromSnapshot_NeedsPRInConfigJson(t *testing.T) {
 		NodeExecutionID: uuid.New(),
 		RunID:           uuid.New(),
 		TemplateNodeID:  uuid.New(),
-		Label:           "implement",
 		ExecutorType:    "ai",
 		PromptTemplate:  "irrelevant",
 		NeedsPR:         true,
@@ -1063,7 +1096,6 @@ func TestExecuteAINodeFromSnapshot_NeedsPROmittedWhenFalse(t *testing.T) {
 		NodeExecutionID: uuid.New(),
 		RunID:           uuid.New(),
 		TemplateNodeID:  uuid.New(),
-		Label:           "spec_review",
 		ExecutorType:    "ai",
 		PromptTemplate:  "irrelevant",
 		// NeedsPR intentionally not set
@@ -1122,10 +1154,15 @@ func TestDeleteAgentJob_DelegatesToAPIServer(t *testing.T) {
 	}
 }
 
-// TestParamsHasNoRunLogPath pins the deletion of the deprecated RunLogPath field: the
-// activity body reads it zero times, so a reintroduction would be pure replay ballast.
-func TestParamsHasNoRunLogPath(t *testing.T) {
-	if _, ok := reflect.TypeOf(ExecuteAINodeFromSnapshotParams{}).FieldByName("RunLogPath"); ok {
-		t.Fatal("RunLogPath was reintroduced: it is replay ballast the activity never reads")
+// TestParamsHasNoDeadFields pins the deletion of three fields the orchestrator's struct
+// carries but this activity's body never reads (RunLogPath, Label, LoopGroup) — each is read
+// only by activities that stay behind in the orchestrator, so here they would be pure replay
+// ballast that a future port could silently reintroduce.
+func TestParamsHasNoDeadFields(t *testing.T) {
+	typ := reflect.TypeOf(ExecuteAINodeFromSnapshotParams{})
+	for _, name := range []string{"RunLogPath", "Label", "LoopGroup"} {
+		if _, ok := typ.FieldByName(name); ok {
+			t.Fatalf("%s was reintroduced: it is replay ballast this activity never reads", name)
+		}
 	}
 }
