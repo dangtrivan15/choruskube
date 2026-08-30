@@ -25,6 +25,12 @@ func main() {
 	}
 	cfg.Provider = worker.NewTokenFleetProvider(cfg.APIServerURL, os.Getenv("FLEET_TOKEN"), nil)
 
+	// Fail on a missing required setting here, before Run ever reaches the network: a bad
+	// config would otherwise surface first as an opaque registration HTTP error.
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("invalid worker config: %v", err)
+	}
+
 	if err := worker.Run(ctx, cfg); err != nil {
 		log.Fatalf("worker exited: %v", err)
 	}

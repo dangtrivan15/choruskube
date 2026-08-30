@@ -58,40 +58,99 @@ func (tc *tokenCache) set(key, token string) {
 	tc.tokens[key] = token
 }
 
+// keys snapshots every Fleet key currently cached, so renewOnce can detect one dropping out
+// of a later renewal response.
+func (tc *tokenCache) keys() map[string]struct{} {
+	tc.mu.RLock()
+	defer tc.mu.RUnlock()
+	out := make(map[string]struct{}, len(tc.tokens))
+	for k := range tc.tokens {
+		out[k] = struct{}{}
+	}
+	return out
+}
+
+// credential returns the Temporal API-key callback for one Fleet, reading whatever tokens
+// currently holds under key. Extracted from Run so the cache-to-Temporal binding is testable
+// without a real Temporal connection.
+func credential(tokens *tokenCache, key string) func(context.Context) (string, error) {
+	return func(context.Context) (string, error) {
+		tok := tokens.get(key)
+		if tok == "" {
+			return "", fmt.Errorf("no cached token for fleet %s", key)
+		}
+		return tok, nil
+	}
+}
+
 // defaultRenewalInterval applies when no served Fleet reports a positive ExpiresInSeconds.
 // A FleetProvider that omits expiry still gets renewal attempts, just on a conservative,
 // fixed cadence instead of one derived from a lifetime it never supplied.
 const defaultRenewalInterval = 30 * time.Minute
 
-// renewalInterval is roughly half the shortest token lifetime among fleets, so every token
-// is refreshed with a full renewal period of slack before it can lapse.
+// renewalMinInterval floors the computed cadence: a lifetime of 1-2s would otherwise divide
+// down to 0, and time.NewTicker panics on a non-positive duration.
+const renewalMinInterval = 30 * time.Second
+
+// renewalMaxInterval caps the computed cadence: half a lifetime large enough to overflow
+// int64 nanoseconds on conversion to time.Duration would wrap negative — the same panic.
+const renewalMaxInterval = 24 * time.Hour
+
+// renewalInterval is roughly half the shortest token lifetime among fleets, clamped to
+// [renewalMinInterval, renewalMaxInterval] so no value of ExpiresInSeconds — including 1, or
+// one large enough to overflow — can hand renewLoop a non-positive ticker duration.
 func renewalInterval(fleets []Fleet) time.Duration {
-	var min int64
+	var minSeconds int64
 	for _, f := range fleets {
 		if f.ExpiresInSeconds <= 0 {
 			continue
 		}
-		if min == 0 || f.ExpiresInSeconds < min {
-			min = f.ExpiresInSeconds
+		if minSeconds == 0 || f.ExpiresInSeconds < minSeconds {
+			minSeconds = f.ExpiresInSeconds
 		}
 	}
-	if min == 0 {
+	if minSeconds == 0 {
 		return defaultRenewalInterval
 	}
-	return time.Duration(min/2) * time.Second
+
+	// Clamping in seconds, before any multiplication by time.Second, is what keeps a huge
+	// minSeconds from ever reaching an overflowing nanosecond multiplication.
+	halfSeconds := minSeconds / 2
+	switch {
+	case halfSeconds <= int64(renewalMinInterval/time.Second):
+		return renewalMinInterval
+	case halfSeconds > int64(renewalMaxInterval/time.Second):
+		return renewalMaxInterval
+	default:
+		return time.Duration(halfSeconds) * time.Second
+	}
 }
 
-// renewOnce re-invokes provider.Fleets and updates the cached token for each Fleet it
-// returns that this process already has an entry for. A Fleet the provider stops returning,
-// or a new one it starts returning, does not change this process' Worker roster — that was
-// fixed when Run started — so renewOnce only ever refreshes existing entries.
+// renewOnce re-invokes provider.Fleets and swaps in each returned Fleet's token, skipping
+// any that comes back empty so a blank renewal cannot replace a still-valid credential. A
+// key new to this process is added, not rejected; one previously cached that the provider
+// stops returning is logged rather than silently left to age toward expiry.
 func renewOnce(ctx context.Context, provider FleetProvider, tokens *tokenCache) error {
 	fleets, err := provider.Fleets(ctx)
 	if err != nil {
 		return err
 	}
+
+	before := tokens.keys()
+	seen := make(map[string]struct{}, len(fleets))
 	for _, f := range fleets {
-		tokens.set(fleetKey(f), f.Token)
+		key := fleetKey(f)
+		seen[key] = struct{}{}
+		if f.Token == "" {
+			log.Printf("fleet token renewal returned an empty token for %s; keeping the previous one", key)
+			continue
+		}
+		tokens.set(key, f.Token)
+	}
+	for key := range before {
+		if _, ok := seen[key]; !ok {
+			log.Printf("fleet %s was absent from this renewal response; its cached token is not being refreshed", key)
+		}
 	}
 	return nil
 }
@@ -148,17 +207,10 @@ func Run(ctx context.Context, cfg Config) error {
 
 	for _, f := range fleets {
 		key := fleetKey(f)
-		cred := client.NewAPIKeyDynamicCredentials(func(context.Context) (string, error) {
-			tok := tokens.get(key)
-			if tok == "" {
-				return "", fmt.Errorf("no cached token for fleet %s", key)
-			}
-			return tok, nil
-		})
 		c, err := client.Dial(client.Options{
 			HostPort:    resolveAddress(f, cfg),
 			Namespace:   f.Namespace,
-			Credentials: cred,
+			Credentials: client.NewAPIKeyDynamicCredentials(credential(tokens, key)),
 		})
 		if err != nil {
 			return fmt.Errorf("dial temporal for fleet %s: %w", f.TaskQueue, err)
