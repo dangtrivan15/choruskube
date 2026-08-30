@@ -40,7 +40,11 @@ type Config struct {
 	APIServerURL    string
 	// InternalSecret authenticates this Worker to the API server's internal endpoints.
 	InternalSecret string
-	Provider       FleetProvider
+	// CallbackURL is passed through to activity.Activities.CallbackURL. Required because
+	// ExecuteAINodeFromSnapshot rejects an empty value rather than launching a pod that
+	// cannot report back.
+	CallbackURL string
+	Provider    FleetProvider
 }
 
 // Validate reports the first missing required field. Run calls it; callers building a
@@ -51,6 +55,8 @@ func (c Config) Validate() error {
 		return errors.New("TemporalAddress is required")
 	case c.APIServerURL == "":
 		return errors.New("APIServerURL is required")
+	case c.CallbackURL == "":
+		return errors.New("CallbackURL is required")
 	case c.Provider == nil:
 		return errors.New("Provider is required")
 	}

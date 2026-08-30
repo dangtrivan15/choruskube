@@ -4,7 +4,7 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -o worker .
+RUN CGO_ENABLED=0 go build -o worker ./cmd/worker
 
 # Stage 2: Production
 FROM alpine:3.21
