@@ -16,6 +16,15 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+/**
+ * Exercises the {@code /placement-check} endpoint's JSON contract (field names {@code allowed}/
+ * {@code reason}, exact wire shape a later Go activity decodes) with a real {@link
+ * NodePlacementChecker} bound in the Spring context. The absent-implementation default is
+ * deliberately NOT tested here: an {@code @MockitoBean} of this type makes {@code
+ * Optional<NodePlacementChecker>} non-empty for every test in this class, so it cannot exercise
+ * {@code Optional.empty()} — see {@link InternalRunControllerPlacementNoCheckerTest} for that
+ * case instead.
+ */
 @AutoConfigureMockMvc
 @TestPropertySource(
         properties = {
@@ -39,14 +48,6 @@ class InternalRunControllerPlacementTest extends BaseTest {
 
     @MockitoBean
     private WorkflowClient workflowClient;
-
-    @Test
-    void placementCheck_noChecker_allows() throws Exception {
-        mockMvc.perform(post("/internal/runs/{r}/node-executions/{n}/placement-check", runId, execId)
-                        .header("Authorization", "Bearer " + orchestratorSecret))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.allowed").value(true));
-    }
 
     @Test
     void placementCheck_checkerDenies_returnsReason() throws Exception {
