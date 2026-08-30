@@ -65,6 +65,9 @@ abstract class TaskTimingService :
         ":orchestrator:goModDownload" to "orchestrator  init   (go mod download)",
         ":orchestrator:compileTests" to "orchestrator  build  (test binaries)",
         ":orchestrator:test" to "orchestrator  test   (go test)",
+        ":worker:goModDownload" to "worker        init   (go mod download)",
+        ":worker:compileTests" to "worker        build  (test binaries)",
+        ":worker:test" to "worker        test   (go test)",
         ":web-ui:npmInstall" to "web-ui        init   (npm ci)",
         ":web-ui:typecheck" to "web-ui        build  (tsc -b)",
         ":web-ui:test" to "web-ui        test   (vitest)",
@@ -241,7 +244,7 @@ val agentScriptTest = tasks.register<Exec>("agentScriptTest") {
 // after Keycloak/Temporal/object storage have spun up. mustRunAfter (not dependsOn) keeps
 // the e2e tasks individually invokable — the constraint simply disappears when the unit
 // tasks are not in the graph.
-val unitStage = listOf(":api-server:test", ":orchestrator:test", ":web-ui:test", agentScriptTest)
+val unitStage = listOf(":api-server:test", ":orchestrator:test", ":worker:test", ":web-ui:test", agentScriptTest)
 
 val e2eDown = tasks.register<Exec>("e2eDown") {
     description = "Tear down the e2e stack and wipe its volumes"
@@ -359,5 +362,5 @@ tasks.named("test") {
 tasks.register("coverageCheck") {
     description = "Enforce test coverage thresholds across all components"
     group = "verification"
-    dependsOn(":api-server:coverageCheck", ":orchestrator:coverageCheck", ":web-ui:coverageCheck")
+    dependsOn(":api-server:coverageCheck", ":orchestrator:coverageCheck", ":worker:coverageCheck", ":web-ui:coverageCheck")
 }

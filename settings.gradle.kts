@@ -4,6 +4,7 @@ rootProject.name = "choruskube"
 // root is the single entrypoint for the full regression (see build.gradle.kts).
 include("api-server")
 include("orchestrator")
+include("worker")
 include("web-ui")
 
 // api-server/settings.gradle.kts is deliberately kept alongside this file. Gradle ignores
