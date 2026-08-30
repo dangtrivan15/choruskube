@@ -93,6 +93,7 @@ class RunServiceCleanupTest {
                 workloadService,
                 new AuthorizationService(new AlwaysAllowAuthorizationStrategy(), false),
                 Optional.empty(),
+                Optional.empty(),
                 null,
                 auditService,
                 null, // storagePrefixResolver — not invoked by cancel/pause/retry

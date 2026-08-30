@@ -63,6 +63,7 @@ public class RunService {
     private final WorkloadService workloadService;
     private final AuthorizationService authService;
     private final Optional<QuotaChecker> quotaService;
+    private final Optional<RunPlacementResolver> placementResolver;
     private final UsageSink usageSink;
     private final AuditSink auditSink;
     private final StoragePrefixResolver storagePrefixResolver;
@@ -107,6 +108,7 @@ public class RunService {
             WorkloadService workloadService,
             AuthorizationService authService,
             Optional<QuotaChecker> quotaService,
+            Optional<RunPlacementResolver> placementResolver,
             UsageSink usageSink,
             AuditSink auditSink,
             StoragePrefixResolver storagePrefixResolver,
@@ -141,6 +143,7 @@ public class RunService {
         this.workloadService = workloadService;
         this.authService = authService;
         this.quotaService = quotaService;
+        this.placementResolver = placementResolver;
         this.usageSink = usageSink;
         this.auditSink = auditSink;
         this.storagePrefixResolver = storagePrefixResolver;
@@ -779,6 +782,14 @@ public class RunService {
         if (inputRefs != null && !inputRefs.isBlank() && !inputRefs.equals("{}")) {
             params.put("RunInputArtifactRefs", inputRefs);
         }
+
+        // Absent resolver, or a blank answer, means the workflow's own queue — the Go side
+        // treats a missing key and an empty value identically, so do not emit a key that
+        // looks set but is not.
+        placementResolver
+                .map(r -> r.taskQueueFor(run.getId()))
+                .filter(q -> !q.isBlank())
+                .ifPresent(q -> params.put("WorkerTaskQueue", q));
 
         return params;
     }

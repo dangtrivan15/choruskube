@@ -33,6 +33,7 @@ class RunServiceInputValidationTest {
                 null,
                 new AuthorizationService(new AlwaysAllowAuthorizationStrategy(), false),
                 Optional.empty(),
+                Optional.empty(),
                 null,
                 null,
                 null,
