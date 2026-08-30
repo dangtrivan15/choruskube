@@ -17,13 +17,21 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
+	// Checked here, not in Config: the credential is provider-specific, and
+	// NewTokenFleetProvider accepts an empty token without complaint — surfacing only as an
+	// opaque registration HTTP error otherwise.
+	fleetToken := os.Getenv("FLEET_TOKEN")
+	if fleetToken == "" {
+		log.Fatal("FLEET_TOKEN is required")
+	}
+
 	cfg := worker.Config{
 		TemporalAddress: os.Getenv("TEMPORAL_ADDRESS"),
 		APIServerURL:    os.Getenv("API_SERVER_URL"),
 		InternalSecret:  os.Getenv("ORCHESTRATOR_SECRET"),
 		CallbackURL:     os.Getenv("CALLBACK_URL"),
 	}
-	cfg.Provider = worker.NewTokenFleetProvider(cfg.APIServerURL, os.Getenv("FLEET_TOKEN"), nil)
+	cfg.Provider = worker.NewTokenFleetProvider(cfg.APIServerURL, fleetToken, nil)
 
 	// Fail on a missing required setting here, before Run ever reaches the network: a bad
 	// config would otherwise surface first as an opaque registration HTTP error.
