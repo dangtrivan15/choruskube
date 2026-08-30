@@ -201,6 +201,30 @@ func (c *Client) GetNodeExecutionsByRun(ctx context.Context, runID uuid.UUID) ([
 	return execs, nil
 }
 
+// PlacementDecision is the api-server's answer to whether a node execution may be
+// dispatched to the run's task queue. Allowed:false at 200 (never a 4xx) is a real
+// decision, not an outage, so callers must not conflate it with a transport failure.
+type PlacementDecision struct {
+	Allowed bool   `json:"allowed"`
+	Reason  string `json:"reason"`
+}
+
+// CheckNodePlacement asks the api-server whether nodeExecID may run on the queue its
+// run was dispatched to. A non-2xx response returns an error, same as every other
+// call through doJSON — this method never manufactures a decision on its own.
+func (c *Client) CheckNodePlacement(ctx context.Context, runID, nodeExecID uuid.UUID) (PlacementDecision, error) {
+	path := fmt.Sprintf("/internal/runs/%s/node-executions/%s/placement-check", runID, nodeExecID)
+	resp, err := c.doJSON(ctx, http.MethodPost, path, nil)
+	if err != nil {
+		return PlacementDecision{}, fmt.Errorf("check node placement: %w", err)
+	}
+	var result PlacementDecision
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return PlacementDecision{}, fmt.Errorf("unmarshal placement decision: %w", err)
+	}
+	return result, nil
+}
+
 // --- Workflow Run ---
 
 // GetWorkflowRunStatus returns the current status string for a workflow run.

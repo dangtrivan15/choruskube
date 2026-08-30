@@ -623,6 +623,27 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 				// AI or script node — execute via K8s Job
 				tracker.status = "running"
 
+				// Checked here, right after CreateNodeExecution set tracker.execID: a
+				// denial needs an existing node execution row to attach its reason to,
+				// so an operator has something to read when the step never starts.
+				var placement activity.CheckNodePlacementResult
+				if err := workflow.ExecuteActivity(dbCtx, activities.CheckNodePlacement,
+					activity.CheckNodePlacementParams{RunID: params.RunID, NodeExecutionID: tracker.execID},
+				).Get(ctx, &placement); err != nil {
+					return err
+				}
+				if !placement.Allowed {
+					workflow.ExecuteActivity(dbCtx, activities.UpdateNodeExecutionStatus,
+						activity.UpdateNodeExecStatusParams{
+							RunID:           params.RunID,
+							NodeExecutionID: tracker.execID,
+							Status:          "failed",
+							ErrorMessage:    &placement.Reason,
+						},
+					).Get(ctx, nil)
+					return fmt.Errorf("node placement denied: %s", placement.Reason)
+				}
+
 				vars := buildPromptVariables(snap, nodes, params.RunID, node.TemplateNodeID, tracker.iteration)
 
 				// Load predecessor inputs — API returns transitive predecessors with labels

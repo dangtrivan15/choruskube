@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
@@ -19,12 +20,23 @@ type DAGExecutorTestSuite struct {
 	suite.Suite
 	testsuite.WorkflowTestSuite
 	env *testsuite.TestWorkflowEnvironment
+	// placementDecision backs the single shared CheckNodePlacement stub below (default:
+	// allowed); a test overrides the field directly rather than adding a second On()
+	// call, because testify matches overlapping On() calls by registration order, not
+	// specificity, so a later, more specific one for the same method never fires.
+	placementDecision activity.CheckNodePlacementResult
 }
 
 func (s *DAGExecutorTestSuite) SetupTest() {
 	s.env = s.NewTestWorkflowEnvironment()
 	var a *activity.Activities
 	s.env.RegisterActivity(a)
+
+	s.placementDecision = activity.CheckNodePlacementResult{Allowed: true}
+	s.env.OnActivity("CheckNodePlacement", mock.Anything, mock.Anything).
+		Return(func(_ context.Context, _ activity.CheckNodePlacementParams) (activity.CheckNodePlacementResult, error) {
+			return s.placementDecision, nil
+		}).Maybe()
 }
 
 func (s *DAGExecutorTestSuite) AfterTest(suiteName, testName string) {
