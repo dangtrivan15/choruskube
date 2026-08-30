@@ -20,9 +20,13 @@ const TaskQueue = "choruskube"
 // DAGExecutorParams contains everything needed to execute a workflow run.
 // Phase 2: SingleNode is kept for backwards compatibility but ignored when nil.
 type DAGExecutorParams struct {
-	RunID                uuid.UUID
-	GraphVersion         int
-	OrgSlug              string            // Org slug for object storage path isolation; empty = legacy paths
+	RunID        uuid.UUID
+	GraphVersion int
+	OrgSlug      string // Org slug for object storage path isolation; empty = legacy paths
+	// WorkerTaskQueue is where this run's agent-step activities are dispatched. Empty
+	// means the workflow's own queue, which is what a run started before this field
+	// existed recomputes on replay — so no version gate is needed here.
+	WorkerTaskQueue      string
 	RunInputArtifactRefs string            // NEW: JSON string from workflow_run.input_artifact_refs; "" or "{}" = no run-level inputs
 	SingleNode           *SingleNodeParams // Deprecated: Phase 1 only
 }
@@ -780,6 +784,7 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 					ActivityID:          tracker.execID.String(),
 					StartToCloseTimeout: timeoutDuration,
 					HeartbeatTimeout:    heartbeatDuration, // Agent heartbeats every 60s; scaled to node timeout
+					TaskQueue:           params.WorkerTaskQueue,
 					RetryPolicy: &temporal.RetryPolicy{
 						MaximumAttempts: 1, // No retries for timeout failures — wastes resources
 					},
