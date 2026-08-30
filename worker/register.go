@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -27,7 +28,7 @@ type TokenFleetProvider struct {
 
 func NewTokenFleetProvider(apiServerURL, fleetToken string, hc *http.Client) *TokenFleetProvider {
 	if hc == nil {
-		hc = http.DefaultClient
+		hc = &http.Client{Timeout: 30 * time.Second}
 	}
 	return &TokenFleetProvider{
 		baseURL:    strings.TrimRight(apiServerURL, "/"),
@@ -47,6 +48,13 @@ type registerResponse struct {
 }
 
 func (p *TokenFleetProvider) Fleets(ctx context.Context) ([]Fleet, error) {
+	// Ensure the registration call has a deadline. If ctx lacks one, add 30 seconds.
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+	}
+
 	hostname, err := os.Hostname()
 	if err != nil {
 		return nil, fmt.Errorf("read hostname: %w", err)
@@ -61,7 +69,7 @@ func (p *TokenFleetProvider) Fleets(ctx context.Context) ([]Fleet, error) {
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+"/worker/register", bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+p.token)
 	req.Header.Set("Content-Type", "application/json")
@@ -81,10 +89,11 @@ func (p *TokenFleetProvider) Fleets(ctx context.Context) ([]Fleet, error) {
 		return nil, fmt.Errorf("decode registration: %w", err)
 	}
 	return []Fleet{{
-		Namespace: rr.TemporalNamespace,
-		TaskQueue: rr.TaskQueue,
-		Token:     rr.Token,
-		WorkerID:  rr.WorkerID,
-		Endpoint:  rr.Endpoint,
+		Namespace:        rr.TemporalNamespace,
+		TaskQueue:        rr.TaskQueue,
+		Token:            rr.Token,
+		WorkerID:         rr.WorkerID,
+		Endpoint:         rr.Endpoint,
+		ExpiresInSeconds: rr.ExpiresInSeconds,
 	}}, nil
 }

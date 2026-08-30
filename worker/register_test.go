@@ -28,7 +28,7 @@ func TestTokenFleetProviderReturnsOneFleet(t *testing.T) {
 		t.Fatalf("want 1 fleet, got %d", len(fleets))
 	}
 	f := fleets[0]
-	if f.Namespace != "ns" || f.TaskQueue != "q" || f.Token != "jwt" || f.WorkerID != "w-1" || f.Endpoint != "gw:7233" {
+	if f.Namespace != "ns" || f.TaskQueue != "q" || f.Token != "jwt" || f.WorkerID != "w-1" || f.Endpoint != "gw:7233" || f.ExpiresInSeconds != 3600 {
 		t.Fatalf("unexpected fleet: %+v", f)
 	}
 	if gotAuth != "Bearer ckf_secret" {
@@ -50,7 +50,11 @@ func TestTokenFleetProviderReusesOneInstanceIDPerProcess(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		seen = append(seen, body["instanceId"].(string))
+		id, ok := body["instanceId"].(string)
+		if !ok {
+			t.Fatalf("instanceId must be a string, got %T", body["instanceId"])
+		}
+		seen = append(seen, id)
 		_, _ = w.Write([]byte(`{"workerId":"w-1","temporalNamespace":"ns","taskQueue":"q","token":"jwt"}`))
 	}))
 	defer srv.Close()

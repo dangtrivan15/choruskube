@@ -23,6 +23,9 @@ type Fleet struct {
 	// deployment that fronts Temporal with a proxy sets it here rather than teaching
 	// every Worker where Temporal itself lives.
 	Endpoint string
+	// ExpiresInSeconds is the lifetime of Token in seconds. Renewal logic uses it to
+	// refresh before Token lapses.
+	ExpiresInSeconds int64
 }
 
 // FleetProvider supplies the Fleets this process serves. It is called once at
