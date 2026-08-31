@@ -284,3 +284,27 @@ func TestCredentialErrorsOnEmptyCachedToken(t *testing.T) {
 		t.Fatal("want an error for an uncached key, got nil")
 	}
 }
+
+// TestRenewOnceIsQuietForAFleetThatNeverHadAToken guards the inverse of the case above. A
+// single-Fleet deployment's Temporal has no authorizer, so every renewal legitimately returns a
+// blank token; warning about it on each tick would report a healthy Worker as failing renewal
+// forever.
+func TestRenewOnceIsQuietForAFleetThatNeverHadAToken(t *testing.T) {
+	f := Fleet{Namespace: "ns", TaskQueue: "q"}
+	tokens := newTokenCache([]Fleet{f})
+
+	var buf bytes.Buffer
+	orig := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(orig)
+
+	if _, err := renewOnce(context.Background(), fixedProvider{fleets: []Fleet{f}}, tokens); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(buf.String(), "empty token") {
+		t.Fatalf("credential-free fleet must not be logged as a failed renewal: %q", buf.String())
+	}
+	if got := tokens.get(fleetKey(f)); got != "" {
+		t.Fatalf("token = %q, want it to stay empty", got)
+	}
+}

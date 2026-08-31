@@ -1,5 +1,5 @@
 // Command worker is the default entrypoint for a ChorusKube Worker process: it reads its
-// configuration from the environment, registers with its Fleet, and serves agent-step
+// configuration from the environment, resolves which Fleet it serves, and runs agent-step
 // activities until terminated.
 package main
 
@@ -17,14 +17,6 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	// Checked here, not in Config: the credential is provider-specific, and
-	// NewTokenFleetProvider accepts an empty token without complaint — surfacing only as an
-	// opaque registration HTTP error otherwise.
-	fleetToken := os.Getenv("FLEET_TOKEN")
-	if fleetToken == "" {
-		log.Fatal("FLEET_TOKEN is required")
-	}
-
 	cfg := worker.Config{
 		TemporalAddress: os.Getenv("TEMPORAL_ADDRESS"),
 		APIServerURL:    os.Getenv("API_SERVER_URL"),
@@ -33,7 +25,20 @@ func main() {
 		// Opt-in, so a deployment against a TLS Temporal cannot lose TLS by omission.
 		TemporalTLSDisabled: os.Getenv("TEMPORAL_TLS_DISABLED") == "true",
 	}
-	cfg.Provider = worker.NewTokenFleetProvider(cfg.APIServerURL, fleetToken, nil)
+
+	// Resolved here, not in Config: which Fleet this process serves is the one setting with two
+	// legitimate answers, and Config.Validate can only see that a Provider was supplied.
+	provider, err := worker.FleetSource{
+		APIServerURL: cfg.APIServerURL,
+		FleetToken:   os.Getenv("FLEET_TOKEN"),
+		Namespace:    os.Getenv("TEMPORAL_NAMESPACE"),
+		TaskQueue:    os.Getenv("TEMPORAL_TASK_QUEUE"),
+	}.Provider(nil)
+	if err != nil {
+		log.Fatalf("%v: set FLEET_TOKEN to register with the API server, "+
+			"or TEMPORAL_NAMESPACE and TEMPORAL_TASK_QUEUE to serve one Fleet without registering", err)
+	}
+	cfg.Provider = provider
 
 	// Fail on a missing required setting here, before Run ever reaches the network: a bad
 	// config would otherwise surface first as an opaque registration HTTP error.
