@@ -109,6 +109,22 @@ const renewalMinInterval = 30 * time.Second
 // int64 nanoseconds on conversion to time.Duration would wrap negative — the same panic.
 const renewalMaxInterval = 24 * time.Hour
 
+// rosterRefreshInterval bounds how long a Fleet created after this process started waits before
+// anything polls its queue. Token lifetime governs the renewal cadence and is measured in hours,
+// which is far too slow for that: a run placed on a brand-new Fleet is not claimed until the next
+// tick, and it hangs rather than failing, so the wait is invisible until the activity times out.
+// provider.Fleets returns the roster and the tokens in one call, so refreshing more often costs
+// one extra request per interval and renews tokens early, which is harmless.
+const rosterRefreshInterval = 60 * time.Second
+
+// loopInterval is the cadence renewLoop actually runs at: whichever of the two bounds is shorter.
+func loopInterval(fleets []Fleet) time.Duration {
+	if r := renewalInterval(fleets); r < rosterRefreshInterval {
+		return r
+	}
+	return rosterRefreshInterval
+}
+
 // renewalInterval is roughly half the shortest token lifetime among fleets, clamped to
 // [renewalMinInterval, renewalMaxInterval] so no value of ExpiresInSeconds — including 1, or
 // one large enough to overflow — can hand renewLoop a non-positive ticker duration.
@@ -300,7 +316,7 @@ func Run(ctx context.Context, cfg Config) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		renewLoop(ctx, cfg.Provider, tokens, renewalInterval(fleets), sup)
+		renewLoop(ctx, cfg.Provider, tokens, loopInterval(fleets), sup)
 	}()
 
 	<-ctx.Done()
