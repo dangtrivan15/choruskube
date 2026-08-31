@@ -86,6 +86,31 @@ type nodeTracker struct {
 	sessionArtifactPath string
 }
 
+// failNodeAndRun stamps the node and its run terminal with one reason. Returning an error
+// from DAGExecutorWorkflow skips the run-status write at the end of it, and nothing else
+// closes the run — the reconciler only terminates workloads for runs already terminal, and
+// no component reads workflow status back from Temporal — so without this the run sits at
+// "running" forever and the reason reaches no page an operator looks at.
+func failNodeAndRun(ctx, dbCtx workflow.Context, runID, execID uuid.UUID, reason string) {
+	var activities *activity.Activities
+	workflow.ExecuteActivity(dbCtx, activities.UpdateNodeExecutionStatus,
+		activity.UpdateNodeExecStatusParams{
+			RunID:           runID,
+			NodeExecutionID: execID,
+			Status:          "failed",
+			ErrorMessage:    &reason,
+		},
+	).Get(ctx, nil)
+	workflow.ExecuteActivity(dbCtx, activities.WriteExecutionLog,
+		activity.WriteExecutionLogParams{
+			RunID: runID, NodeExecutionID: execID, Level: "error", Message: reason,
+		},
+	).Get(ctx, nil)
+	workflow.ExecuteActivity(dbCtx, activities.UpdateWorkflowRunStatus,
+		activity.UpdateRunStatusParams{RunID: runID, Status: "failed"},
+	).Get(ctx, nil)
+}
+
 func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 	logger := workflow.GetLogger(ctx)
 	logger.Info("Starting DAG executor", "runID", params.RunID)
@@ -96,6 +121,14 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 		RetryPolicy:         &temporal.RetryPolicy{MaximumAttempts: 3},
 	}
 	dbCtx := workflow.WithActivityOptions(ctx, dbOpts)
+
+	// Workload activities are dispatched wherever this run's agent steps run; every other
+	// activity reads or writes app data and stays on this workflow's own queue. Leave the
+	// queue empty and Temporal uses the workflow's own — which is what a run started before
+	// WorkerTaskQueue existed recomputes on replay, so this needs no version gate.
+	workloadOpts := dbOpts
+	workloadOpts.TaskQueue = params.WorkerTaskQueue
+	workloadCtx := workflow.WithActivityOptions(ctx, workloadOpts)
 
 	var activities *activity.Activities
 
@@ -238,7 +271,7 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 						pauseInterrupted[tracker.execID] = struct{}{}
 					}
 					// Delete the K8s job (idempotent; job may already be gone if api-server beat us).
-					if cleanErr := workflow.ExecuteActivity(dbCtx, activities.DeleteAgentJob,
+					if cleanErr := workflow.ExecuteActivity(workloadCtx, activities.DeleteAgentJob,
 						activity.DeleteAgentJobParams{NodeExecutionID: tracker.execID},
 					).Get(ctx, nil); cleanErr != nil {
 						logger.Warn("DeleteAgentJob on pause failed (non-fatal)",
@@ -626,22 +659,25 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 				// Checked here, right after CreateNodeExecution set tracker.execID: a
 				// denial needs an existing node execution row to attach its reason to,
 				// so an operator has something to read when the step never starts.
-				var placement activity.CheckNodePlacementResult
-				if err := workflow.ExecuteActivity(dbCtx, activities.CheckNodePlacement,
-					activity.CheckNodePlacementParams{RunID: params.RunID, NodeExecutionID: tracker.execID},
-				).Get(ctx, &placement); err != nil {
-					return err
-				}
-				if !placement.Allowed {
-					workflow.ExecuteActivity(dbCtx, activities.UpdateNodeExecutionStatus,
-						activity.UpdateNodeExecStatusParams{
-							RunID:           params.RunID,
-							NodeExecutionID: tracker.execID,
-							Status:          "failed",
-							ErrorMessage:    &placement.Reason,
-						},
-					).Get(ctx, nil)
-					return fmt.Errorf("node placement denied: %s", placement.Reason)
+				//
+				// Version-gated because this adds commands to a path already-open runs
+				// have executed: replaying their history against an unguarded call raises
+				// a non-determinism error, and the default panic policy blocks that
+				// workflow task and retries it forever — the run neither completes nor
+				// fails. Runs recorded before this marker keep the old command sequence.
+				if workflow.GetVersion(ctx, "check-node-placement", workflow.DefaultVersion, 1) >= 1 {
+					var placement activity.CheckNodePlacementResult
+					if err := workflow.ExecuteActivity(dbCtx, activities.CheckNodePlacement,
+						activity.CheckNodePlacementParams{RunID: params.RunID, NodeExecutionID: tracker.execID},
+					).Get(ctx, &placement); err != nil {
+						reason := fmt.Sprintf("Placement check failed: %v", err)
+						failNodeAndRun(ctx, dbCtx, params.RunID, tracker.execID, reason)
+						return err
+					}
+					if !placement.Allowed {
+						failNodeAndRun(ctx, dbCtx, params.RunID, tracker.execID, placement.Reason)
+						return fmt.Errorf("node placement denied: %s", placement.Reason)
+					}
 				}
 
 				vars := buildPromptVariables(snap, nodes, params.RunID, node.TemplateNodeID, tracker.iteration)
@@ -1084,7 +1120,7 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 					// Fetch pod logs for AI/script nodes (best-effort)
 					if snapshotNode.ExecutorType != "human" {
 						var podLogs string
-						if err := workflow.ExecuteActivity(dbCtx, activities.FetchPodLogs,
+						if err := workflow.ExecuteActivity(workloadCtx, activities.FetchPodLogs,
 							activity.FetchPodLogsParams{
 								NodeExecutionID: tracker.execID,
 								TailLines:       50,
@@ -1122,7 +1158,7 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 					// timeout. cleanup() is idempotent — a 404 from the api-server (when the
 					// api-server already deleted the job) is treated as success.
 					if snapshotNode.ExecutorType != "human" {
-						if cleanErr := workflow.ExecuteActivity(dbCtx, activities.DeleteAgentJob,
+						if cleanErr := workflow.ExecuteActivity(workloadCtx, activities.DeleteAgentJob,
 							activity.DeleteAgentJobParams{NodeExecutionID: tracker.execID},
 						).Get(ctx, nil); cleanErr != nil {
 							// Non-fatal: log and continue; the reconciler is the safety net.
@@ -1443,7 +1479,7 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 				// Delete K8s Job for running AI nodes
 				if tracker.status == "running" {
 					if snapshotNode, ok := GetNodeByID(snap, nodeID); ok && snapshotNode.ExecutorType != "human" {
-						if cleanErr := workflow.ExecuteActivity(dbCtx, activities.DeleteAgentJob,
+						if cleanErr := workflow.ExecuteActivity(workloadCtx, activities.DeleteAgentJob,
 							activity.DeleteAgentJobParams{NodeExecutionID: tracker.execID},
 						).Get(ctx, nil); cleanErr != nil {
 							logger.Warn("DeleteAgentJob on cancel failed (non-fatal)",

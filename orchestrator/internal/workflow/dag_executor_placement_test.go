@@ -1,6 +1,8 @@
 package workflow
 
 import (
+	"errors"
+
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
 
@@ -24,7 +26,14 @@ func (s *DAGExecutorTestSuite) TestDeniedPlacementFailsTheNodeAndSkipsDispatch()
 
 	s.placementDecision = activity.CheckNodePlacementResult{Allowed: false, Reason: "fleet offline"}
 
-	s.env.OnActivity("UpdateWorkflowRunStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
+	// A workflow that returns an error skips the terminal run-status write at the end of
+	// DAGExecutorWorkflow, and nothing else closes the run — so without an explicit write
+	// here the run sits at "running" forever with one failed node.
+	var runStatuses []string
+	s.env.OnActivity("UpdateWorkflowRunStatus", mock.Anything, mock.MatchedBy(func(p activity.UpdateRunStatusParams) bool {
+		runStatuses = append(runStatuses, p.Status)
+		return true
+	})).Return(nil).Maybe()
 	s.env.OnActivity("GetGraphRuntime", mock.Anything, runID).Return(snapshot, nil)
 	s.env.OnActivity("WriteExecutionLog", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.env.OnActivity("InitRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
@@ -52,4 +61,54 @@ func (s *DAGExecutorTestSuite) TestDeniedPlacementFailsTheNodeAndSkipsDispatch()
 	err := s.env.GetWorkflowError()
 	s.Error(err)
 	s.Contains(err.Error(), "fleet offline")
+	s.Contains(runStatuses, "failed")
+}
+
+// TestPlacementCheckTransportFailureFailsTheRun covers the other way the gate ends a run:
+// the check itself never answered. That leaves the same "running forever" hole a denial
+// does, so it gets the same terminal write.
+func (s *DAGExecutorTestSuite) TestPlacementCheckTransportFailureFailsTheRun() {
+	nodeA := uuid.New()
+	execA := uuid.New()
+	runID := uuid.New()
+
+	snapshot := `{
+		"nodes": [
+			{"templateNodeId": "` + nodeA.String() + `", "label": "A", "executorType": "ai", "timeoutSeconds": 1800, "isEntrypoint": true}
+		],
+		"edges": []
+	}`
+
+	s.placementError = errors.New("api server unreachable")
+
+	var runStatuses []string
+	s.env.OnActivity("UpdateWorkflowRunStatus", mock.Anything, mock.MatchedBy(func(p activity.UpdateRunStatusParams) bool {
+		runStatuses = append(runStatuses, p.Status)
+		return true
+	})).Return(nil).Maybe()
+	s.env.OnActivity("GetGraphRuntime", mock.Anything, runID).Return(snapshot, nil)
+	s.env.OnActivity("WriteExecutionLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("InitRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("AppendRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == nodeA
+	})).Return(execA, nil).Once()
+
+	var nodeFailureReason string
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.MatchedBy(func(p activity.UpdateNodeExecStatusParams) bool {
+		if p.NodeExecutionID == execA && p.Status == "failed" && p.ErrorMessage != nil {
+			nodeFailureReason = *p.ErrorMessage
+		}
+		return true
+	})).Return(nil).Maybe()
+
+	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
+		RunID: runID, GraphVersion: 1,
+	})
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.Error(s.env.GetWorkflowError())
+	s.Contains(runStatuses, "failed")
+	s.Contains(nodeFailureReason, "Placement check failed")
 }

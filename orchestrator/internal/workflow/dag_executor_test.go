@@ -25,6 +25,9 @@ type DAGExecutorTestSuite struct {
 	// call, because testify matches overlapping On() calls by registration order, not
 	// specificity, so a later, more specific one for the same method never fires.
 	placementDecision activity.CheckNodePlacementResult
+	// placementError makes the shared stub fail transport-wise instead of answering, the
+	// other way the gate can end a run.
+	placementError error
 }
 
 func (s *DAGExecutorTestSuite) SetupTest() {
@@ -33,9 +36,10 @@ func (s *DAGExecutorTestSuite) SetupTest() {
 	s.env.RegisterActivity(a)
 
 	s.placementDecision = activity.CheckNodePlacementResult{Allowed: true}
+	s.placementError = nil
 	s.env.OnActivity("CheckNodePlacement", mock.Anything, mock.Anything).
 		Return(func(_ context.Context, _ activity.CheckNodePlacementParams) (activity.CheckNodePlacementResult, error) {
-			return s.placementDecision, nil
+			return s.placementDecision, s.placementError
 		}).Maybe()
 }
 
