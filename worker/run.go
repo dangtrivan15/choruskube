@@ -143,10 +143,10 @@ func renewalInterval(fleets []Fleet) time.Duration {
 // any that comes back empty so a blank renewal cannot replace a still-valid credential. A
 // key new to this process is added, not rejected; one previously cached that the provider
 // stops returning is logged rather than silently left to age toward expiry.
-func renewOnce(ctx context.Context, provider FleetProvider, tokens *tokenCache) error {
+func renewOnce(ctx context.Context, provider FleetProvider, tokens *tokenCache) ([]Fleet, error) {
 	fleets, err := provider.Fleets(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	before := tokens.keys()
@@ -165,14 +165,69 @@ func renewOnce(ctx context.Context, provider FleetProvider, tokens *tokenCache) 
 			log.Printf("fleet %s was absent from this renewal response; its cached token is not being refreshed", key)
 		}
 	}
+	return fleets, nil
+}
+
+// fleetSupervisor owns the Temporal Workers this process is running, one per Fleet, keyed by
+// fleetKey. It exists because the roster is not fixed at startup: an organization created after
+// this process booted gets a Fleet, runs in that org are dispatched to that Fleet's task queue,
+// and with nobody polling it those runs sit unclaimed until the activity times out. Serving is
+// therefore driven by every renewal, not only by the initial list.
+type fleetSupervisor struct {
+	mu     sync.Mutex
+	cfg    Config
+	acts   *activity.Activities
+	tokens *tokenCache
+	served map[string]func()
+}
+
+// serve starts a Worker for f unless one is already running for it. Idempotent by fleetKey, so
+// the renewal loop can call it for every Fleet on every tick.
+func (s *fleetSupervisor) serve(f Fleet) error {
+	key := fleetKey(f)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.served[key]; ok {
+		return nil
+	}
+	c, err := client.Dial(clientOptions(f, s.cfg, s.tokens, key))
+	if err != nil {
+		return fmt.Errorf("dial temporal for fleet %s: %w", f.TaskQueue, err)
+	}
+	// Activities only. This process never holds workflow code — DAG semantics are
+	// replay-deterministic and stay on the side that deploys them — so polling for
+	// workflow tasks would claim work it cannot execute.
+	w := tworker.New(c, f.TaskQueue, tworker.Options{DisableWorkflowWorker: true})
+	w.RegisterActivity(s.acts)
+	if err := w.Start(); err != nil {
+		c.Close()
+		return fmt.Errorf("start worker for fleet %s: %w", f.TaskQueue, err)
+	}
+	log.Printf("serving fleet: namespace=%s taskQueue=%s", f.Namespace, f.TaskQueue)
+	s.served[key] = func() { w.Stop(); c.Close() }
 	return nil
+}
+
+func (s *fleetSupervisor) stopAll() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, stop := range s.served {
+		stop()
+	}
+	s.served = map[string]func(){}
+}
+
+func (s *fleetSupervisor) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.served)
 }
 
 // renewLoop calls renewOnce on a ticker until ctx is cancelled. A failed renewal is logged
 // and retried on the next tick rather than tearing the Worker down: the token already cached
 // is still valid for the remaining half of its life, so a transient failure here costs
 // nothing until it has happened enough times to exhaust that slack.
-func renewLoop(ctx context.Context, provider FleetProvider, tokens *tokenCache, interval time.Duration) {
+func renewLoop(ctx context.Context, provider FleetProvider, tokens *tokenCache, interval time.Duration, sup *fleetSupervisor) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -180,8 +235,21 @@ func renewLoop(ctx context.Context, provider FleetProvider, tokens *tokenCache, 
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := renewOnce(ctx, provider, tokens); err != nil {
+			fleets, err := renewOnce(ctx, provider, tokens)
+			if err != nil {
 				log.Printf("fleet token renewal failed, will retry next interval: %v", err)
+				continue
+			}
+			// A Fleet can appear between ticks — a new organization is provisioned one, and
+			// its runs dispatch to a queue nobody polls until we start serving it. Failing to
+			// start one Fleet must not stop the others, so this logs and moves on.
+			if sup == nil {
+				continue
+			}
+			for _, f := range fleets {
+				if err := sup.serve(f); err != nil {
+					log.Printf("could not start serving fleet %s: %v", f.TaskQueue, err)
+				}
 			}
 		}
 	}
@@ -211,30 +279,17 @@ func Run(ctx context.Context, cfg Config) error {
 
 	tokens := newTokenCache(fleets)
 
-	var stops []func()
-	defer func() {
-		for _, stop := range stops {
-			stop()
-		}
-	}()
+	sup := &fleetSupervisor{cfg: cfg, acts: acts, tokens: tokens, served: map[string]func(){}}
+	defer sup.stopAll()
 
+	// A Fleet that cannot be served at startup is fatal, because it means the configured
+	// deployment is wrong (bad address, bad credential) rather than merely incomplete. The
+	// renewal loop treats the same failure as retryable, since by then the process is already
+	// serving work and one unreachable Fleet must not take the others down.
 	for _, f := range fleets {
-		key := fleetKey(f)
-		c, err := client.Dial(clientOptions(f, cfg, tokens, key))
-		if err != nil {
-			return fmt.Errorf("dial temporal for fleet %s: %w", f.TaskQueue, err)
+		if err := sup.serve(f); err != nil {
+			return err
 		}
-		// Activities only. This process never holds workflow code — DAG semantics are
-		// replay-deterministic and stay on the side that deploys them — so polling for
-		// workflow tasks would claim work it cannot execute.
-		w := tworker.New(c, f.TaskQueue, tworker.Options{DisableWorkflowWorker: true})
-		w.RegisterActivity(acts)
-		if err := w.Start(); err != nil {
-			c.Close()
-			return fmt.Errorf("start worker for fleet %s: %w", f.TaskQueue, err)
-		}
-		log.Printf("serving fleet: namespace=%s taskQueue=%s", f.Namespace, f.TaskQueue)
-		stops = append(stops, func() { w.Stop(); c.Close() })
 	}
 
 	// Renew before tokens expire. Without this the Worker keeps polling with a lapsed
@@ -245,7 +300,7 @@ func Run(ctx context.Context, cfg Config) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		renewLoop(ctx, cfg.Provider, tokens, renewalInterval(fleets))
+		renewLoop(ctx, cfg.Provider, tokens, renewalInterval(fleets), sup)
 	}()
 
 	<-ctx.Done()

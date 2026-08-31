@@ -158,7 +158,7 @@ func TestRenewOnceUpdatesCachedTokenForKnownFleet(t *testing.T) {
 	tokens := newTokenCache([]Fleet{f})
 
 	renewed := Fleet{Namespace: "ns", TaskQueue: "q", Token: "new"}
-	err := renewOnce(context.Background(), fixedProvider{fleets: []Fleet{renewed}}, tokens)
+	_, err := renewOnce(context.Background(), fixedProvider{fleets: []Fleet{renewed}}, tokens)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestRenewOnceSurfacesProviderError(t *testing.T) {
 	boom := errors.New("boom")
 	tokens := newTokenCache([]Fleet{{Namespace: "ns", TaskQueue: "q", Token: "old"}})
 
-	err := renewOnce(context.Background(), errProvider{boom}, tokens)
+	_, err := renewOnce(context.Background(), errProvider{boom}, tokens)
 	if !errors.Is(err, boom) {
 		t.Fatalf("want boom, got %v", err)
 	}
@@ -190,7 +190,7 @@ func TestRenewOnceSkipsEmptyToken(t *testing.T) {
 	tokens := newTokenCache([]Fleet{f})
 
 	blank := Fleet{Namespace: "ns", TaskQueue: "q", Token: ""}
-	if err := renewOnce(context.Background(), fixedProvider{fleets: []Fleet{blank}}, tokens); err != nil {
+	if _, err := renewOnce(context.Background(), fixedProvider{fleets: []Fleet{blank}}, tokens); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got := tokens.get(fleetKey(f)); got != "old" {
@@ -205,7 +205,7 @@ func TestRenewOnceAddsANewlySeenFleetKey(t *testing.T) {
 	tokens := newTokenCache([]Fleet{{Namespace: "ns", TaskQueue: "q", Token: "old"}})
 
 	other := Fleet{Namespace: "other-ns", TaskQueue: "other-q", Token: "other-tok"}
-	if err := renewOnce(context.Background(), fixedProvider{fleets: []Fleet{other}}, tokens); err != nil {
+	if _, err := renewOnce(context.Background(), fixedProvider{fleets: []Fleet{other}}, tokens); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got := tokens.get(fleetKey(other)); got != "other-tok" {
@@ -230,7 +230,7 @@ func TestRenewOnceLogsWhenAServedFleetGoesMissing(t *testing.T) {
 	defer log.SetOutput(orig)
 
 	other := Fleet{Namespace: "other-ns", TaskQueue: "other-q", Token: "other-tok"}
-	if err := renewOnce(context.Background(), fixedProvider{fleets: []Fleet{other}}, tokens); err != nil {
+	if _, err := renewOnce(context.Background(), fixedProvider{fleets: []Fleet{other}}, tokens); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -260,7 +260,7 @@ func TestCredentialReadsCurrentCacheValueAcrossARenewal(t *testing.T) {
 	}
 
 	renewed := Fleet{Namespace: "ns", TaskQueue: "q", Token: "second"}
-	if err := renewOnce(context.Background(), fixedProvider{fleets: []Fleet{renewed}}, tokens); err != nil {
+	if _, err := renewOnce(context.Background(), fixedProvider{fleets: []Fleet{renewed}}, tokens); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
