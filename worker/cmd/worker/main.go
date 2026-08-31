@@ -28,11 +28,15 @@ func main() {
 
 	// Resolved here, not in Config: which Fleet this process serves is the one setting with two
 	// legitimate answers, and Config.Validate can only see that a Provider was supplied.
+	// LookupEnv, not Getenv: an exported-but-empty FLEET_TOKEN means "I meant to register and my
+	// credential did not arrive", which must fail rather than fall through to the static path.
+	fleetToken, fleetTokenSet := os.LookupEnv("FLEET_TOKEN")
 	provider, err := worker.FleetSource{
-		APIServerURL: cfg.APIServerURL,
-		FleetToken:   os.Getenv("FLEET_TOKEN"),
-		Namespace:    os.Getenv("TEMPORAL_NAMESPACE"),
-		TaskQueue:    os.Getenv("TEMPORAL_TASK_QUEUE"),
+		APIServerURL:  cfg.APIServerURL,
+		FleetToken:    fleetToken,
+		FleetTokenSet: fleetTokenSet,
+		Namespace:     os.Getenv("TEMPORAL_NAMESPACE"),
+		TaskQueue:     os.Getenv("TEMPORAL_TASK_QUEUE"),
 	}.Provider(nil)
 	if err != nil {
 		log.Fatalf("%v: set FLEET_TOKEN to register with the API server, "+

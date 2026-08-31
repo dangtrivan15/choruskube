@@ -24,7 +24,7 @@ func TestStaticFleetProviderServesExactlyOneFleet(t *testing.T) {
 }
 
 func TestFleetSourceSelectsRegistrationWhenATokenIsPresent(t *testing.T) {
-	provider, err := FleetSource{APIServerURL: "http://api:8080", FleetToken: "ckf_x"}.Provider(nil)
+	provider, err := FleetSource{APIServerURL: "http://api:8080", FleetToken: "ckf_x", FleetTokenSet: true}.Provider(nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -48,9 +48,9 @@ func TestFleetSourceSelectsStaticWhenNamespaceAndQueueAreSupplied(t *testing.T) 
 func TestFleetSourceRegistrationWinsOverStaticCoordinates(t *testing.T) {
 	provider, err := FleetSource{
 		APIServerURL: "http://api:8080",
-		FleetToken:   "ckf_x",
-		Namespace:    "ns",
-		TaskQueue:    "q",
+		FleetToken:   "ckf_x", FleetTokenSet: true,
+		Namespace: "ns",
+		TaskQueue: "q",
 	}.Provider(nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
