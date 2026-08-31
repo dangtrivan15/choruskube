@@ -23,6 +23,19 @@ func resolveAddress(f Fleet, cfg Config) string {
 	return cfg.TemporalAddress
 }
 
+// clientOptions builds the Temporal dial options for one Fleet. It exists as its own
+// function so the TLS decision is observable in a test: the SDK auto-enables TLS whenever
+// API-key credentials are present, so TLSDisabled is the only thing standing between a
+// plaintext Temporal and a connection that fails its handshake.
+func clientOptions(f Fleet, cfg Config, tokens *tokenCache, key string) client.Options {
+	return client.Options{
+		HostPort:          resolveAddress(f, cfg),
+		Namespace:         f.Namespace,
+		Credentials:       client.NewAPIKeyDynamicCredentials(credential(tokens, key)),
+		ConnectionOptions: client.ConnectionOptions{TLSDisabled: cfg.TemporalTLSDisabled},
+	}
+}
+
 // fleetKey identifies a Fleet across successive FleetProvider.Fleets calls, so a renewed
 // token can be matched back to the Worker it belongs to. Namespace+TaskQueue is what makes
 // a Fleet addressable in the first place, so the pair is already a stable identity.
@@ -207,11 +220,7 @@ func Run(ctx context.Context, cfg Config) error {
 
 	for _, f := range fleets {
 		key := fleetKey(f)
-		c, err := client.Dial(client.Options{
-			HostPort:    resolveAddress(f, cfg),
-			Namespace:   f.Namespace,
-			Credentials: client.NewAPIKeyDynamicCredentials(credential(tokens, key)),
-		})
+		c, err := client.Dial(clientOptions(f, cfg, tokens, key))
 		if err != nil {
 			return fmt.Errorf("dial temporal for fleet %s: %w", f.TaskQueue, err)
 		}

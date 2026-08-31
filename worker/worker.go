@@ -44,7 +44,14 @@ type Config struct {
 	// ExecuteAINodeFromSnapshot rejects an empty value rather than launching a pod that
 	// cannot report back.
 	CallbackURL string
-	Provider    FleetProvider
+	// TemporalTLSDisabled turns off TLS on the Temporal connection. It defaults to false
+	// because a Fleet credential is a bearer token: the SDK auto-enables TLS whenever API-key
+	// credentials are set, and silently downgrading that would put the token on the wire in
+	// clear. Set it only for a Temporal that genuinely serves plaintext gRPC, such as a local
+	// stack or an in-cluster frontend with no TLS listener; a deployment that needs it and
+	// omits it fails to connect rather than leaking.
+	TemporalTLSDisabled bool
+	Provider            FleetProvider
 }
 
 // Validate reports the first missing required field. Run calls it; callers building a

@@ -30,6 +30,8 @@ func main() {
 		APIServerURL:    os.Getenv("API_SERVER_URL"),
 		InternalSecret:  os.Getenv("ORCHESTRATOR_SECRET"),
 		CallbackURL:     os.Getenv("CALLBACK_URL"),
+		// Opt-in, so a deployment against a TLS Temporal cannot lose TLS by omission.
+		TemporalTLSDisabled: os.Getenv("TEMPORAL_TLS_DISABLED") == "true",
 	}
 	cfg.Provider = worker.NewTokenFleetProvider(cfg.APIServerURL, fleetToken, nil)
 
