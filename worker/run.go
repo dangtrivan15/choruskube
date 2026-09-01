@@ -23,17 +23,24 @@ func resolveAddress(f Fleet, cfg Config) string {
 	return cfg.TemporalAddress
 }
 
-// clientOptions builds the Temporal dial options for one Fleet. It exists as its own
-// function so the TLS decision is observable in a test: the SDK auto-enables TLS whenever
-// API-key credentials are present, so TLSDisabled is the only thing standing between a
-// plaintext Temporal and a connection that fails its handshake.
+// clientOptions builds the Temporal dial options for one Fleet. It exists as its own function
+// so the TLS decision is observable in a test: the SDK auto-enables TLS whenever API-key
+// credentials are present, so what stands between a plaintext Temporal and a connection that
+// fails its handshake is either omitting the credentials or setting TLSDisabled.
 func clientOptions(f Fleet, cfg Config, tokens *tokenCache, key string) client.Options {
-	return client.Options{
+	opts := client.Options{
 		HostPort:          resolveAddress(f, cfg),
 		Namespace:         f.Namespace,
-		Credentials:       client.NewAPIKeyDynamicCredentials(credential(tokens, key)),
 		ConnectionOptions: client.ConnectionOptions{TLSDisabled: cfg.TemporalTLSDisabled},
 	}
+	// A Fleet whose Temporal has no authorizer issues no token, and the SDK reads credentials
+	// being set at all -- never their contents -- as "this is Temporal Cloud, dial TLS". Setting
+	// an empty one would make every such deployment fail its handshake against a plaintext
+	// frontend, which is not a state TLSDisabled should have to be set to escape.
+	if f.Token != "" {
+		opts.Credentials = client.NewAPIKeyDynamicCredentials(credential(tokens, key))
+	}
+	return opts
 }
 
 // fleetKey identifies a Fleet across successive FleetProvider.Fleets calls, so a renewed
@@ -155,10 +162,11 @@ func renewalInterval(fleets []Fleet) time.Duration {
 	}
 }
 
-// renewOnce re-invokes provider.Fleets and swaps in each returned Fleet's token, skipping
-// any that comes back empty so a blank renewal cannot replace a still-valid credential. A
-// key new to this process is added, not rejected; one previously cached that the provider
-// stops returning is logged rather than silently left to age toward expiry.
+// renewOnce re-invokes provider.Fleets and swaps in each returned Fleet's token, skipping one
+// that comes back empty over a still-valid cached one so a blank renewal cannot revoke a
+// credential the Worker is still using. A key new to this process is added, not rejected; one
+// previously cached that the provider stops returning is logged rather than silently left to
+// age toward expiry.
 func renewOnce(ctx context.Context, provider FleetProvider, tokens *tokenCache) ([]Fleet, error) {
 	fleets, err := provider.Fleets(ctx)
 	if err != nil {
@@ -170,10 +178,12 @@ func renewOnce(ctx context.Context, provider FleetProvider, tokens *tokenCache) 
 	for _, f := range fleets {
 		key := fleetKey(f)
 		seen[key] = struct{}{}
-		if f.Token == "" {
+		if f.Token == "" && tokens.get(key) != "" {
 			log.Printf("fleet token renewal returned an empty token for %s; keeping the previous one", key)
 			continue
 		}
+		// A Fleet that never had a token is the credential-free case, not a lost credential:
+		// warning about it on every tick would report a healthy single-Fleet deployment as broken.
 		tokens.set(key, f.Token)
 	}
 	for key := range before {
