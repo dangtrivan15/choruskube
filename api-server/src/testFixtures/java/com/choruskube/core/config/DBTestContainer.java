@@ -23,9 +23,10 @@ public final class DBTestContainer {
                 .withPassword(PASSWORD)
                 // Spring's TestContext cache (default 32 contexts) plus tests that use
                 // @MockitoBean (which forces a unique merged config per class) easily
-                // creates 30+ live HikariPools concurrently. Default postgres
-                // max_connections=100 isn't enough headroom; bump to 300.
-                .withCommand("postgres", "-c", "max_connections=300");
+                // creates 30+ live HikariPools concurrently, and every new such test class
+                // pushes that count up by one. 300 was once enough headroom; it no longer
+                // is, so bump to 500.
+                .withCommand("postgres", "-c", "max_connections=500");
         container.start();
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             if (container != null && container.isRunning()) {

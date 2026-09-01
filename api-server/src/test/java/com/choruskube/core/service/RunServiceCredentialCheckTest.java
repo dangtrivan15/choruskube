@@ -128,6 +128,7 @@ class RunServiceCredentialCheckTest {
                 null,
                 new AuthorizationService(new AlwaysAllowAuthorizationStrategy(), false),
                 Optional.of(quotaService),
+                Optional.empty(),
                 usageEventService,
                 null, // auditSink
                 storagePrefixResolver,

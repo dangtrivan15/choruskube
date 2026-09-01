@@ -105,6 +105,7 @@ class RunServiceSoftwareProjectDisplayTest {
                 null, // workloadService
                 new AuthorizationService(new AlwaysAllowAuthorizationStrategy(), false),
                 Optional.empty(), // quotaService
+                Optional.empty(), // placementResolver
                 null, // usageSink
                 null, // auditSink
                 null, // storagePrefixResolver — not invoked by getRun

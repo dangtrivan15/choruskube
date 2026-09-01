@@ -93,6 +93,7 @@ class RunServiceNodeExecutionScopingTest {
                 workloadService,
                 new AuthorizationService(new AlwaysAllowAuthorizationStrategy(), false),
                 Optional.empty(), // quotaService
+                Optional.empty(), // placementResolver
                 null, // usageSink
                 auditService, // auditSink
                 null, // storagePrefixResolver

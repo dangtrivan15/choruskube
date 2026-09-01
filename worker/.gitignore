@@ -1,0 +1,9 @@
+# The built binary at the module root only — a leading slash keeps this from also matching
+# worker/cmd/worker/, the package directory holding main.go.
+/worker
+build/
+
+# Gradle / Eclipse Buildship
+.gradle/
+.settings/
+.project

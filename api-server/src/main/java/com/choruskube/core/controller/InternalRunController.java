@@ -5,10 +5,12 @@ import com.choruskube.core.dto.*;
 import com.choruskube.core.service.ArtifactResolutionService;
 import com.choruskube.core.service.BranchCleanupService;
 import com.choruskube.core.service.InternalRunService;
+import com.choruskube.core.service.NodePlacementChecker;
 import com.choruskube.core.service.RunPullRequestService;
 import jakarta.validation.Valid;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -23,18 +25,21 @@ public class InternalRunController {
     private final RunPullRequestService runPullRequestService;
     private final ArtifactResolutionService artifactResolutionService;
     private final BranchCleanupService branchCleanupService;
+    private final Optional<NodePlacementChecker> placementChecker;
 
     public InternalRunController(
             InternalRunService service,
             GitHubCredentialResolver gitHubCredentialResolver,
             RunPullRequestService runPullRequestService,
             ArtifactResolutionService artifactResolutionService,
-            BranchCleanupService branchCleanupService) {
+            BranchCleanupService branchCleanupService,
+            Optional<NodePlacementChecker> placementChecker) {
         this.service = service;
         this.gitHubCredentialResolver = gitHubCredentialResolver;
         this.runPullRequestService = runPullRequestService;
         this.artifactResolutionService = artifactResolutionService;
         this.branchCleanupService = branchCleanupService;
+        this.placementChecker = placementChecker;
     }
 
     @PostMapping("/{runId}/node-executions")
@@ -315,5 +320,17 @@ public class InternalRunController {
     @PostMapping("/{runId}/cleanup-branches")
     public ResponseEntity<BranchCleanupResponse> cleanupBranches(@PathVariable UUID runId) {
         return ResponseEntity.ok(branchCleanupService.cleanupBranches(runId));
+    }
+
+    /**
+     * Always 200: a denial is a decision ({@code allowed: false}), not an error, so the caller can
+     * tell "may not run here" apart from a transport failure and react to each differently.
+     */
+    @PostMapping("/{runId}/node-executions/{nodeExecId}/placement-check")
+    public NodePlacementChecker.PlacementDecision placementCheck(
+            @PathVariable UUID runId, @PathVariable UUID nodeExecId) {
+        return placementChecker
+                .map(c -> c.check(runId, nodeExecId))
+                .orElseGet(() -> new NodePlacementChecker.PlacementDecision(true, ""));
     }
 }
