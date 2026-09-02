@@ -3,6 +3,7 @@ package com.choruskube.core.service;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+import com.choruskube.core.config.WorkflowClientRegistry;
 import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.NodeExecutionStatus;
@@ -12,6 +13,7 @@ import com.choruskube.core.repository.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowStub;
+import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -71,6 +73,9 @@ class RunServiceCleanupTest {
     @Mock
     private WorkflowStub workflowStub;
 
+    @Mock
+    private WorkflowServiceStubs workflowServiceStubs;
+
     private RunService service;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final UUID runId = UUID.randomUUID();
@@ -94,7 +99,9 @@ class RunServiceCleanupTest {
                 new AuthorizationService(new AlwaysAllowAuthorizationStrategy(), false),
                 Optional.empty(), // quotaService
                 null, // placements
-                null, // workflowClients
+                // None of these runs carry a namespace, so clientFor(null) resolves to the
+                // mocked workflowClient below via WorkflowClientRegistry's default-namespace fallback.
+                new WorkflowClientRegistry(workflowServiceStubs, workflowClient, "choruskube"),
                 null,
                 auditService,
                 null, // storagePrefixResolver — not invoked by cancel/pause/retry
@@ -183,7 +190,7 @@ class RunServiceCleanupTest {
 
     @Test
     void retryNode_callsCleanupNotTerminate() throws Exception {
-        WorkflowRun run = stubRun(WorkflowRunStatus.awaiting_retry);
+        stubRun(WorkflowRunStatus.awaiting_retry);
 
         NodeExecution exec = makeExec(NodeExecutionStatus.failed);
         UUID templateNodeId = UUID.randomUUID();

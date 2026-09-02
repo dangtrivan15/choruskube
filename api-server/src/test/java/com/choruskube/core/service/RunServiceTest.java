@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 import com.choruskube.core.config.SingleTenant;
+import com.choruskube.core.config.WorkflowClientRegistry;
 import com.choruskube.core.dto.RunResponse;
 import com.choruskube.core.dto.RunTaskSummary;
 import com.choruskube.core.dto.SignalRequest;
@@ -101,6 +102,9 @@ class RunServiceTest {
     @Mock
     private NodeExecutionClaimService nodeExecutionClaimService;
 
+    @Mock
+    private WorkflowClientRegistry workflowClients;
+
     private RunService service;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final UUID runId = UUID.randomUUID();
@@ -112,6 +116,7 @@ class RunServiceTest {
         // storagePrefixResolver default: return system slug (matches single-tenant behaviour).
         // lenient() prevents UnnecessaryStubbingException for tests that don't invoke buildWorkflowParams.
         lenient().when(storagePrefixResolver.storagePrefixForRun(any())).thenReturn(SingleTenant.SLUG);
+        lenient().when(workflowClients.clientFor(any())).thenReturn(workflowClient);
 
         service = new RunService(
                 runRepo,
@@ -130,7 +135,7 @@ class RunServiceTest {
                 new AuthorizationService(new AlwaysAllowAuthorizationStrategy(), false),
                 Optional.empty(), // quotaService
                 null, // placements
-                null, // workflowClients
+                workflowClients,
                 null,
                 null,
                 storagePrefixResolver,

@@ -8,6 +8,7 @@ import com.choruskube.core.config.SingleTenant;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.scope.NoOpScopeProvider;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -52,7 +53,7 @@ class RunServicePlacementTest {
                 null, // gitRepoRepo
                 null, // workloadService
                 new AuthorizationService(new AlwaysAllowAuthorizationStrategy(), false),
-                java.util.Optional.empty(), // quotaService
+                Optional.empty(), // quotaService
                 null, // placements
                 null, // workflowClients
                 null, // usageSink
@@ -97,12 +98,16 @@ class RunServicePlacementTest {
                 .containsEntry("WorkerTaskQueue", "fleet-acme");
     }
 
-    /** The namespace is not a workflow input — it selects the client and is stored on the run. */
+    /**
+     * The namespace is not a workflow input — it selects the client and is stored on the run.
+     * Pinning the exact key set (not just the absence of one guessed key name) is what actually
+     * catches a namespace leaking in under some other key.
+     */
     @Test
     void buildWorkflowParams_doesNotLeakTheNamespaceIntoWorkflowInput() {
         RunService service = newService();
 
         assertThat(service.buildWorkflowParams(run, new RunPlacement("tenant-ns", "fleet-acme")))
-                .doesNotContainKey("WorkerNamespace");
+                .containsOnlyKeys("RunID", "GraphVersion", "OrgSlug", "WorkerTaskQueue");
     }
 }

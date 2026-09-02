@@ -437,7 +437,8 @@ public class RunService {
         // leave two agents racing on the same working branch.
         cleanupWorkloadQuietly(nodeExecId);
 
-        WorkflowStub stub = workflowClient.newUntypedWorkflowStub(run.getExternalRunId());
+        WorkflowStub stub =
+                workflowClients.clientFor(run.getTemporalNamespace()).newUntypedWorkflowStub(run.getExternalRunId());
         Map<String, String> payload =
                 Map.of("templateNodeId", exec.getTemplateNodeId().toString());
         stub.signal("retry-node", payload);
@@ -458,7 +459,9 @@ public class RunService {
      */
     private boolean signalWorkflow(WorkflowRun run, String signalName) {
         try {
-            WorkflowStub stub = workflowClient.newUntypedWorkflowStub(run.getExternalRunId());
+            WorkflowStub stub = workflowClients
+                    .clientFor(run.getTemporalNamespace())
+                    .newUntypedWorkflowStub(run.getExternalRunId());
             stub.signal(signalName);
             return true;
         } catch (WorkflowNotFoundException e) {
@@ -564,7 +567,9 @@ public class RunService {
                         : materializeNote;
             }
 
-            WorkflowStub stub = workflowClient.newUntypedWorkflowStub(run.getExternalRunId());
+            WorkflowStub stub = workflowClients
+                    .clientFor(run.getTemporalNamespace())
+                    .newUntypedWorkflowStub(run.getExternalRunId());
             HumanDecisionPayload payload = new HumanDecisionPayload(
                     nodeExecId.toString(),
                     validatedDecision,
