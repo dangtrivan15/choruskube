@@ -51,10 +51,9 @@ func New(c completions, lookup PlacementLookup, defaultNamespace string) *Comple
 	}
 }
 
-// namespaceFor resolves the run's namespace from its workflow id, caching the answer for the
-// life of the process. Every failure path returns the configured namespace rather than an
-// error: a completion that never reaches Temporal hangs the run until its activity times out,
-// which is strictly worse than addressing the namespace every single-namespace run lives in.
+// namespaceFor resolves and caches the run's namespace from its workflow id. Every failure
+// path returns the configured namespace rather than an error: a completion that never reaches
+// Temporal hangs the run until its activity times out, worse than a wrong-but-live namespace.
 func (c *Completer) namespaceFor(ctx context.Context, workflowID string) string {
 	runID, err := uuid.Parse(strings.TrimPrefix(workflowID, workflowIDPrefix))
 	if err != nil {

@@ -115,6 +115,21 @@ func TestLookupFailureFallsBackToTheConfiguredNamespace(t *testing.T) {
 	}
 }
 
+// A run predating the temporal_namespace column reports an empty namespace with no error
+// (the api-server's documented behavior for that case), which must fall back the same as an
+// outright lookup failure rather than address Temporal with an empty namespace string.
+func TestEmptyNamespaceFallsBackToTheConfiguredNamespace(t *testing.T) {
+	fake := &fakeCompletions{}
+	lookup := &fakeLookup{namespace: ""}
+	c := New(fake, lookup, "choruskube")
+
+	_ = c.RecordHeartbeat(context.Background(), uuid.New(), "choruskube-run-"+uuid.New().String())
+
+	if fake.namespace != "choruskube" {
+		t.Fatalf("namespace = %q, want the configured fallback", fake.namespace)
+	}
+}
+
 func TestUnparseableWorkflowIDFallsBackToTheConfiguredNamespace(t *testing.T) {
 	fake := &fakeCompletions{}
 	c := New(fake, &fakeLookup{namespace: "tenant-ns"}, "choruskube")
