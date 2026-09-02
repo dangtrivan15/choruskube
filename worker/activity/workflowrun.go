@@ -25,8 +25,8 @@ func runIDFromWorkflowID(workflowID string) (uuid.UUID, error) {
 }
 
 // activityInfo is temporalactivity.GetInfo behind a seam: GetInfo panics outside a real activity
-// context, and the SDK's test harness cannot pin a chosen workflow id. Never reassigned outside
-// _test.go.
+// context, and the SDK's test harness cannot pin a chosen workflow id. Reassigned only from
+// _test.go, and never from a test calling t.Parallel -- the swap is process-wide.
 var activityInfo = temporalactivity.GetInfo
 
 func runIDOf(ctx context.Context) (uuid.UUID, error) {

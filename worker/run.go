@@ -330,7 +330,7 @@ func Run(ctx context.Context, cfg Config) error {
 	// Blank here is different from blank on a renewal: there is no cached credential to keep, so
 	// every workload call would carry an empty bearer and be refused one node at a time.
 	if reg.InternalToken == "" {
-		return errors.New("no API server credential resolved: registration minted none and none is configured")
+		return errors.New("no API server credential resolved: registration minted none and WORKER_INTERNAL_TOKEN is unset")
 	}
 
 	credentials := newCredentialCache(reg.InternalToken)

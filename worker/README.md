@@ -77,8 +77,13 @@ whenever credentials are present, whatever they contain. A Worker with no creden
 static path, or a registration that returned an empty token — presents none at all and dials
 plaintext without it.
 
-The Worker's calls to the api-server are scoped to the runs it is serving — each names its run
-in the path — so no Worker carries a credential that reaches another tenant's data.
+Every call a Worker makes to the api-server names its run in the path, so the server is in a
+position to decide per run whether the presenting credential may act on it. That decision is the
+server's; the path shape only gives it something to decide on. What a credential actually reaches
+depends on which one it is — and on this deployment every Worker registers with the same
+`WORKER_REGISTRATION_TOKEN` and then presents it, so it is one shared value, not a per-Worker one.
+A server that mints a credential per registration returns it in the registration response and the
+Worker presents that instead.
 
 ## Build and test
 

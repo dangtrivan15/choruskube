@@ -32,6 +32,11 @@ type Client struct {
 // unbounded default client would let one hung POST stall a node for the full 30 minutes
 // with no retry, instead of failing fast enough for Temporal to retry it.
 func NewClient(baseURL string, credential func() string, hc *http.Client) *Client {
+	// Left nil, the first request panics inside an activity, where Temporal reports it as a node
+	// failure and retries it. Failing here fails the process at the wiring mistake instead.
+	if credential == nil {
+		panic("workload.NewClient: credential must not be nil")
+	}
 	if hc == nil {
 		hc = &http.Client{Timeout: 30 * time.Second}
 	}

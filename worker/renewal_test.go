@@ -171,7 +171,9 @@ func TestRenewOnceSurfacesProviderError(t *testing.T) {
 	boom := errors.New("boom")
 	tokens := newTokenCache([]Fleet{{Namespace: "ns", TaskQueue: "q", Token: "old"}})
 
-	_, err := renewOnce(context.Background(), errProvider{boom}, tokens, newCredentialCache("held"))
+	creds := newCredentialCache("held")
+
+	_, err := renewOnce(context.Background(), errProvider{boom}, tokens, creds)
 	if !errors.Is(err, boom) {
 		t.Fatalf("want boom, got %v", err)
 	}
@@ -179,6 +181,10 @@ func TestRenewOnceSurfacesProviderError(t *testing.T) {
 	// remaining half of its life, so clobbering it here would make things worse, not better.
 	if got := tokens.get(fleetKey(Fleet{Namespace: "ns", TaskQueue: "q"})); got != "old" {
 		t.Fatalf("token after failed renewOnce = %q, want old preserved", got)
+	}
+	// The same property for the API server credential, which has no expiry slack to fall back on.
+	if got := creds.get(); got != "held" {
+		t.Fatalf("credential after failed renewOnce = %q, want held preserved", got)
 	}
 }
 

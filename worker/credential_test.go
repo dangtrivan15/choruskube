@@ -2,7 +2,9 @@ package worker
 
 import (
 	"context"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -36,4 +38,38 @@ func TestCredentialCacheSwapsUnderConcurrentReads(t *testing.T) {
 	if c.get() != "second" {
 		t.Fatalf("a blank renewal erased the cached credential: %q", c.get())
 	}
+
+	t.Run("under concurrent readers", func(t *testing.T) {
+		// One writer and many readers is the exact contention shape production has: the renewal
+		// goroutine swaps the credential while every in-flight workload request reads it. Run with
+		// -race; without it this subtest proves nothing about the mutex being there.
+		c := newCredentialCache("first")
+
+		const iterations = 500
+		var wg sync.WaitGroup
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < iterations; i++ {
+				c.set("second")
+				runtime.Gosched()
+			}
+		}()
+
+		for r := 0; r < 8; r++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for i := 0; i < iterations; i++ {
+					if got := c.get(); got != "first" && got != "second" {
+						t.Errorf("read a value that was never set: %q", got)
+					}
+					runtime.Gosched()
+				}
+			}()
+		}
+
+		wg.Wait()
+	})
 }

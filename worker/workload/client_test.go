@@ -138,3 +138,14 @@ func TestEveryRequestReadsTheCredentialAfresh(t *testing.T) {
 		t.Fatalf("authorization headers = %v", seen)
 	}
 }
+
+// A nil credential used to be unrepresentable: this constructor took a string. It now takes a
+// function, and the next caller to be written is in another module.
+func TestNewClientRejectsANilCredential(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("want a panic at construction, not one inside the first request")
+		}
+	}()
+	NewClient("http://api", nil, nil)
+}
