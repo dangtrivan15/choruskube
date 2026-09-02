@@ -8,11 +8,11 @@ import (
 
 type errProvider struct{ err error }
 
-func (p errProvider) Fleets(context.Context) ([]Fleet, error) { return nil, p.err }
+func (p errProvider) Fleets(context.Context) (Registration, error) { return Registration{}, p.err }
 
-type fixedProvider struct{ fleets []Fleet }
+type fixedProvider struct{ reg Registration }
 
-func (p fixedProvider) Fleets(context.Context) ([]Fleet, error) { return p.fleets, nil }
+func (p fixedProvider) Fleets(context.Context) (Registration, error) { return p.reg, nil }
 
 func TestResolveAddressPrefersFleetEndpoint(t *testing.T) {
 	cfg := Config{TemporalAddress: "temporal:7233"}

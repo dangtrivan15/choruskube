@@ -168,10 +168,11 @@ func renewalInterval(fleets []Fleet) time.Duration {
 // previously cached that the provider stops returning is logged rather than silently left to
 // age toward expiry.
 func renewOnce(ctx context.Context, provider FleetProvider, tokens *tokenCache) ([]Fleet, error) {
-	fleets, err := provider.Fleets(ctx)
+	reg, err := provider.Fleets(ctx)
 	if err != nil {
 		return nil, err
 	}
+	fleets := reg.Fleets
 
 	before := tokens.keys()
 	seen := make(map[string]struct{}, len(fleets))
@@ -288,10 +289,11 @@ func Run(ctx context.Context, cfg Config) error {
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
-	fleets, err := cfg.Provider.Fleets(ctx)
+	reg, err := cfg.Provider.Fleets(ctx)
 	if err != nil {
 		return fmt.Errorf("resolve fleets: %w", err)
 	}
+	fleets := reg.Fleets
 	if len(fleets) == 0 {
 		return errors.New("no fleets to serve")
 	}

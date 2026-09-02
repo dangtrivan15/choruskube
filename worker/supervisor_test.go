@@ -43,7 +43,7 @@ func TestRenewOnceReturnsTheRosterSoNewFleetsCanBeServed(t *testing.T) {
 	arrived := Fleet{Namespace: "ns", TaskQueue: "q-new", Token: "new"}
 	tokens := newTokenCache([]Fleet{existing})
 
-	fleets, err := renewOnce(context.Background(), fixedProvider{fleets: []Fleet{existing, arrived}}, tokens)
+	fleets, err := renewOnce(context.Background(), fixedProvider{reg: Registration{Fleets: []Fleet{existing, arrived}}}, tokens)
 	if err != nil {
 		t.Fatalf("renewOnce = %v", err)
 	}

@@ -20,14 +20,14 @@ func TestTokenFleetProviderReturnsOneFleet(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	fleets, err := NewTokenFleetProvider(srv.URL, "ckf_secret", srv.Client()).Fleets(context.Background())
+	reg, err := NewTokenFleetProvider(srv.URL, "ckf_secret", srv.Client()).Fleets(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(fleets) != 1 {
-		t.Fatalf("want 1 fleet, got %d", len(fleets))
+	if len(reg.Fleets) != 1 {
+		t.Fatalf("want 1 fleet, got %d", len(reg.Fleets))
 	}
-	f := fleets[0]
+	f := reg.Fleets[0]
 	if f.Namespace != "ns" || f.TaskQueue != "q" || f.Token != "jwt" || f.WorkerID != "w-1" || f.Endpoint != "gw:7233" || f.ExpiresInSeconds != 3600 {
 		t.Fatalf("unexpected fleet: %+v", f)
 	}
@@ -79,5 +79,39 @@ func TestTokenFleetProviderRejectsNon2xx(t *testing.T) {
 	_, err := NewTokenFleetProvider(srv.URL, "bad", srv.Client()).Fleets(context.Background())
 	if err == nil {
 		t.Fatal("want an error for 403, got nil")
+	}
+}
+
+func TestTokenFleetProviderReturnsTheMintedInternalToken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"workerId":"w-1","temporalNamespace":"ns","taskQueue":"q","token":"jwt","expiresInSeconds":3600,"endpoint":"","internalToken":"ckw_minted"}`))
+	}))
+	defer srv.Close()
+
+	reg, err := NewTokenFleetProvider(srv.URL, "ckf_secret", srv.Client()).Fleets(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if reg.InternalToken != "ckw_minted" {
+		t.Fatalf("InternalToken = %q, want the minted one", reg.InternalToken)
+	}
+}
+
+// A server that mints nothing leaves the Worker on the credential it registered with. Falling
+// back to anything else -- or to nothing -- would leave it unable to make application calls.
+func TestTokenFleetProviderFallsBackToTheFleetToken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"workerId":"w-1","temporalNamespace":"ns","taskQueue":"q","token":"","expiresInSeconds":0,"endpoint":"","internalToken":""}`))
+	}))
+	defer srv.Close()
+
+	reg, err := NewTokenFleetProvider(srv.URL, "ckf_secret", srv.Client()).Fleets(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if reg.InternalToken != "ckf_secret" {
+		t.Fatalf("InternalToken = %q, want the fleet token", reg.InternalToken)
 	}
 }
