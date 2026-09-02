@@ -1,9 +1,6 @@
 package com.choruskube.core.service;
 
 import com.choruskube.core.exception.ForbiddenException;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.UUID;
 
 /**
@@ -30,7 +27,7 @@ public class SingleFleetWorkerAuthorizer implements WorkerAuthorizer {
      */
     public SingleFleetWorkerAuthorizer(String registrationToken) {
         this.expectedTokenDigest =
-                (registrationToken == null || registrationToken.isBlank()) ? null : sha256(registrationToken);
+                (registrationToken == null || registrationToken.isBlank()) ? null : TokenDigest.of(registrationToken);
     }
 
     @Override
@@ -39,18 +36,8 @@ public class SingleFleetWorkerAuthorizer implements WorkerAuthorizer {
         if (expected == null) {
             throw new ForbiddenException("Worker registration is not configured on this server");
         }
-        // Compare fixed-width digests, not the tokens: MessageDigest.isEqual is only time-constant
-        // over equal-length inputs, and raw tokens differ in length.
-        if (!MessageDigest.isEqual(expected, sha256(credential == null ? "" : credential))) {
+        if (!TokenDigest.matches(expected, credential)) {
             throw new ForbiddenException("Unknown or revoked worker credential");
-        }
-    }
-
-    private static byte[] sha256(String input) {
-        try {
-            return MessageDigest.getInstance("SHA-256").digest(input.getBytes(StandardCharsets.UTF_8));
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 not available", e);
         }
     }
 }

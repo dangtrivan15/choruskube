@@ -14,6 +14,9 @@ import java.util.UUID;
  * @param endpoint the Temporal frontend address to dial. Blank means the Worker falls back to its
  *     own configured address — the in-cluster case, where every Worker already points at the same
  *     Temporal service by convention.
+ * @param internalToken the credential this Worker presents on {@code /worker/**} application
+ *     routes. Blank means the server minted none and the Worker must keep the credential it
+ *     already holds — for a Worker that registered with a Fleet token, that token.
  */
 public record WorkerRegisterResponse(
         UUID workerId,
@@ -21,4 +24,5 @@ public record WorkerRegisterResponse(
         String taskQueue,
         String token,
         long expiresInSeconds,
-        String endpoint) {}
+        String endpoint,
+        String internalToken) {}
