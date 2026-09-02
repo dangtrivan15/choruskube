@@ -1,4 +1,4 @@
-// Package workload calls the API server's internal workload endpoints — creating an agent
+// Package workload calls the API server's Worker workload routes — creating an agent
 // container, deleting it, and reading its logs. It is the only application surface a Worker
 // touches; every other endpoint (execution logs, review history, decisions, ...) stays behind
 // the orchestrator's own client.
@@ -17,23 +17,25 @@ import (
 	"github.com/google/uuid"
 )
 
-// Client calls the API server's internal workload endpoints.
+// Client calls the API server's Worker workload endpoints.
 type Client struct {
 	baseURL string
-	secret  string
-	hc      *http.Client
+	// credential is read per request, not captured once: the renewal loop replaces the process's
+	// credential while requests are in flight, and a captured value would outlive it.
+	credential func() string
+	hc         *http.Client
 }
 
 // NewClient returns a Client that authenticates every request to the API server at baseURL
-// with a Bearer token built from secret. hc defaults to a 30-second-timeout client when nil —
+// with a Bearer token from credential. hc defaults to a 30-second-timeout client when nil —
 // CreateWorkload runs under a 30-minute activity timeout with MaximumAttempts: 1, so an
 // unbounded default client would let one hung POST stall a node for the full 30 minutes
 // with no retry, instead of failing fast enough for Temporal to retry it.
-func NewClient(baseURL, secret string, hc *http.Client) *Client {
+func NewClient(baseURL string, credential func() string, hc *http.Client) *Client {
 	if hc == nil {
 		hc = &http.Client{Timeout: 30 * time.Second}
 	}
-	return &Client{baseURL: strings.TrimRight(baseURL, "/"), secret: secret, hc: hc}
+	return &Client{baseURL: strings.TrimRight(baseURL, "/"), credential: credential, hc: hc}
 }
 
 // APIError represents an HTTP error response from the API server.
@@ -48,7 +50,7 @@ func (e *APIError) Error() string {
 }
 
 func (c *Client) do(req *http.Request) ([]byte, error) {
-	req.Header.Set("Authorization", "Bearer "+c.secret)
+	req.Header.Set("Authorization", "Bearer "+c.credential())
 	resp, err := c.hc.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("api request failed: %w", err)
@@ -83,6 +85,12 @@ func (c *Client) doJSON(ctx context.Context, method, path string, reqBody interf
 	return c.do(req)
 }
 
+// workloadPath addresses one node execution within the run that owns it. The run id is part of
+// the path, not a body field, because the server authorizes the credential against it.
+func workloadPath(runID, nodeExecID uuid.UUID) string {
+	return fmt.Sprintf("/worker/runs/%s/node-executions/%s/workload", runID, nodeExecID)
+}
+
 type createWorkloadRequest struct {
 	TemplateNodeID uuid.UUID              `json:"templateNodeId"`
 	ConfigJSON     map[string]interface{} `json:"configJson"`
@@ -110,7 +118,7 @@ func (c *Client) CreateWorkload(ctx context.Context, params CreateWorkloadParams
 		TemplateNodeID: params.TemplateNodeID,
 		ConfigJSON:     params.ConfigJSON,
 	}
-	path := fmt.Sprintf("/internal/workloads/%s/%s", params.RunID, params.NodeExecID)
+	path := workloadPath(params.RunID, params.NodeExecID)
 	resp, err := c.doJSON(ctx, http.MethodPost, path, body)
 	if err != nil {
 		return nil, fmt.Errorf("create workload: %w", err)
@@ -123,8 +131,8 @@ func (c *Client) CreateWorkload(ctx context.Context, params CreateWorkloadParams
 }
 
 // CleanupWorkload removes all resources associated with a completed execution.
-func (c *Client) CleanupWorkload(ctx context.Context, executionID uuid.UUID) error {
-	_, err := c.doJSON(ctx, http.MethodDelete, fmt.Sprintf("/internal/workloads/%s", executionID), nil)
+func (c *Client) CleanupWorkload(ctx context.Context, runID, nodeExecID uuid.UUID) error {
+	_, err := c.doJSON(ctx, http.MethodDelete, workloadPath(runID, nodeExecID), nil)
 	if err != nil {
 		return fmt.Errorf("cleanup workload: %w", err)
 	}
@@ -132,8 +140,8 @@ func (c *Client) CleanupWorkload(ctx context.Context, executionID uuid.UUID) err
 }
 
 // GetWorkloadLogs returns recent log output from the agent container.
-func (c *Client) GetWorkloadLogs(ctx context.Context, executionID uuid.UUID, tailLines int) (string, error) {
-	path := fmt.Sprintf("/internal/workloads/%s/logs?tailLines=%d", executionID, tailLines)
+func (c *Client) GetWorkloadLogs(ctx context.Context, runID, nodeExecID uuid.UUID, tailLines int) (string, error) {
+	path := workloadPath(runID, nodeExecID) + fmt.Sprintf("/logs?tailLines=%d", tailLines)
 	resp, err := c.doJSON(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return "", fmt.Errorf("get workload logs: %w", err)
