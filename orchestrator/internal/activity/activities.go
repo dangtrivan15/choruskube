@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"go.temporal.io/sdk/activity"
+	temporalactivity "go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/temporal"
 
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/apiclient"
@@ -37,6 +38,56 @@ func NewActivities(client *apiclient.Client, resolver *prompt.Resolver, cfg *con
 	return &Activities{client: client, resolver: resolver, config: cfg, objectStoreClient: objectStoreClient}
 }
 
+// --- Run authority guard ---
+//
+// A run's workflow can execute in a namespace whose Worker is operated by the tenant that
+// owns the run. Temporal has no finer-grained permission than namespace-wide write access, so
+// that Worker can answer a workflow task with a scheduled activity call carrying any RunID it
+// chooses. guardRun confines such a call to the run that actually scheduled it.
+
+const workflowIDPrefix = "choruskube-run-"
+
+func runIDFromWorkflowID(workflowID string) (uuid.UUID, error) {
+	if !strings.HasPrefix(workflowID, workflowIDPrefix) {
+		return uuid.Nil, fmt.Errorf("workflow id %q is not a run's", workflowID)
+	}
+	id, err := uuid.Parse(strings.TrimPrefix(workflowID, workflowIDPrefix))
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("workflow id %q carries no run id: %w", workflowID, err)
+	}
+	return id, nil
+}
+
+// requireRunMatches rejects params naming a run other than the one whose workflow scheduled this
+// activity. The workflow id is assigned by the api-server and fixed in history, so a worker
+// answering a workflow task cannot forge it -- which is what keeps a namespace-wide write claim
+// from reaching another tenant's run.
+func requireRunMatches(workflowID string, claimed uuid.UUID) error {
+	actual, err := runIDFromWorkflowID(workflowID)
+	if err != nil {
+		return err
+	}
+	if actual != claimed {
+		return fmt.Errorf("activity claims run %s but was scheduled by run %s", claimed, actual)
+	}
+	return nil
+}
+
+// activityInfo is temporalactivity.GetInfo behind a seam: activity.GetInfo panics outside a
+// real Temporal activity context, and the SDK's test harness cannot pin a chosen workflow id,
+// so tests substitute this var instead of a live worker. Never reassigned outside _test.go.
+var activityInfo = temporalactivity.GetInfo
+
+// RunIDFromContext returns the run whose workflow scheduled this activity.
+func RunIDFromContext(ctx context.Context) (uuid.UUID, error) {
+	return runIDFromWorkflowID(activityInfo(ctx).WorkflowExecution.ID)
+}
+
+// guardRun is called first by every activity taking a RunID on its params.
+func guardRun(ctx context.Context, claimed uuid.UUID) error {
+	return requireRunMatches(activityInfo(ctx).WorkflowExecution.ID, claimed)
+}
+
 // --- Activity: CreateNodeExecution ---
 
 type CreateNodeExecParams struct {
@@ -48,6 +99,9 @@ type CreateNodeExecParams struct {
 }
 
 func (a *Activities) CreateNodeExecution(ctx context.Context, params CreateNodeExecParams) (uuid.UUID, error) {
+	if err := guardRun(ctx, params.WorkflowRunID); err != nil {
+		return uuid.Nil, err
+	}
 	exec, err := a.client.CreateNodeExecution(ctx, params.WorkflowRunID, state.CreateNodeExecutionParams{
 		WorkflowRunID:  params.WorkflowRunID,
 		TemplateNodeID: params.TemplateNodeID,
@@ -99,6 +153,9 @@ type CallbackResult struct {
 }
 
 func (a *Activities) ExecuteAINode(ctx context.Context, params ExecuteAINodeParams) error {
+	if err := guardRun(ctx, params.RunID); err != nil {
+		return err
+	}
 	// Resolve prompt template
 	vars := params.Variables
 	if vars == nil {
@@ -149,6 +206,9 @@ type UpdateRunStatusParams struct {
 }
 
 func (a *Activities) UpdateWorkflowRunStatus(ctx context.Context, params UpdateRunStatusParams) error {
+	if err := guardRun(ctx, params.RunID); err != nil {
+		return err
+	}
 	return a.client.UpdateWorkflowRunStatus(ctx, params.RunID, params.Status)
 }
 
@@ -224,6 +284,9 @@ type OpenBlockerParam struct {
 }
 
 func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params ExecuteAINodeFromSnapshotParams) (CallbackResult, error) {
+	if err := guardRun(ctx, params.RunID); err != nil {
+		return CallbackResult{}, err
+	}
 	// Resolve prompt template
 	vars := params.Variables
 	if vars == nil {
@@ -418,6 +481,9 @@ type WriteReviewHistoryParams struct {
 }
 
 func (a *Activities) WriteReviewHistory(ctx context.Context, params WriteReviewHistoryParams) error {
+	if err := guardRun(ctx, params.WorkflowRunID); err != nil {
+		return err
+	}
 	return a.client.CreateReviewHistory(ctx, params.WorkflowRunID, state.CreateReviewHistoryParams{
 		WorkflowRunID:   params.WorkflowRunID,
 		LoopGroup:       params.LoopGroup,
@@ -436,6 +502,9 @@ type LoadPredecessorInputsParams struct {
 }
 
 func (a *Activities) LoadPredecessorInputs(ctx context.Context, params LoadPredecessorInputsParams) (map[string]string, error) {
+	if err := guardRun(ctx, params.RunID); err != nil {
+		return nil, err
+	}
 	if params.NodeExecutionID == uuid.Nil {
 		return map[string]string{}, nil
 	}
@@ -492,6 +561,9 @@ func (a *Activities) LoadRequiredInputArtifacts(
 	ctx context.Context,
 	params LoadRequiredInputArtifactsParams,
 ) (LoadRequiredInputArtifactsResult, error) {
+	if err := guardRun(ctx, params.RunID); err != nil {
+		return LoadRequiredInputArtifactsResult{}, err
+	}
 	if params.NodeExecutionID == uuid.Nil {
 		return LoadRequiredInputArtifactsResult{}, nil
 	}
@@ -511,6 +583,9 @@ type LoadReviewHistoryJSONParams struct {
 }
 
 func (a *Activities) LoadReviewHistoryJSON(ctx context.Context, params LoadReviewHistoryJSONParams) (string, error) {
+	if err := guardRun(ctx, params.RunID); err != nil {
+		return "", err
+	}
 	reviews, err := a.client.GetReviewHistory(ctx, params.RunID, params.LoopGroup)
 	if err != nil {
 		return "[]", fmt.Errorf("load review history: %w", err)
@@ -535,6 +610,9 @@ type WriteExecutionLogParams struct {
 }
 
 func (a *Activities) WriteExecutionLog(ctx context.Context, params WriteExecutionLogParams) error {
+	if err := guardRun(ctx, params.RunID); err != nil {
+		return err
+	}
 	return a.client.WriteExecutionLog(ctx, params.RunID, params.NodeExecutionID, params.Level, params.Message)
 }
 
@@ -550,6 +628,9 @@ type UpdateNodeExecStatusParams struct {
 }
 
 func (a *Activities) UpdateNodeExecutionStatus(ctx context.Context, params UpdateNodeExecStatusParams) error {
+	if err := guardRun(ctx, params.RunID); err != nil {
+		return err
+	}
 	return a.client.UpdateNodeExecution(ctx, params.RunID, params.NodeExecutionID, state.UpdateNodeExecutionParams{
 		Status:       params.Status,
 		Result:       params.Result,
@@ -591,6 +672,9 @@ type GetNodeDecisionParams struct {
 }
 
 func (a *Activities) GetNodeDecision(ctx context.Context, params GetNodeDecisionParams) (string, error) {
+	if err := guardRun(ctx, params.RunID); err != nil {
+		return "", err
+	}
 	return a.client.GetNodeDecision(ctx, params.RunID, params.NodeExecutionID)
 }
 
@@ -603,6 +687,9 @@ type SetNodeDecisionParams struct {
 }
 
 func (a *Activities) SetNodeDecision(ctx context.Context, params SetNodeDecisionParams) error {
+	if err := guardRun(ctx, params.RunID); err != nil {
+		return err
+	}
 	return a.client.SetNodeDecision(ctx, params.RunID, params.NodeExecutionID, params.Decision)
 }
 
@@ -615,6 +702,9 @@ type SetTraversedEdgesParams struct {
 }
 
 func (a *Activities) SetTraversedEdges(ctx context.Context, params SetTraversedEdgesParams) error {
+	if err := guardRun(ctx, params.RunID); err != nil {
+		return err
+	}
 	return a.client.SetTraversedEdges(ctx, params.RunID, params.NodeExecutionID, params.EdgeIDs)
 }
 
@@ -627,5 +717,8 @@ type DeleteStaleBranchesParams struct {
 }
 
 func (a *Activities) DeleteStaleBranches(ctx context.Context, params DeleteStaleBranchesParams) error {
+	if err := guardRun(ctx, params.RunID); err != nil {
+		return err
+	}
 	return a.client.CleanupBranches(ctx, params.RunID)
 }

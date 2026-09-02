@@ -42,7 +42,7 @@ func TestCreateNodeExecution(t *testing.T) {
 	client := apiclient.NewClient(apiServer.URL)
 	activities := NewActivities(client, prompt.NewResolver(), testConfig(), nil)
 
-	result, err := activities.CreateNodeExecution(context.Background(), CreateNodeExecParams{
+	result, err := activities.CreateNodeExecution(withWorkflowRunID(t, runID), CreateNodeExecParams{
 		WorkflowRunID:  runID,
 		TemplateNodeID: templateNodeID,
 		GraphVersion:   1,
@@ -64,7 +64,7 @@ func TestCreateNodeExecution_429_ReturnsNonRetryableError(t *testing.T) {
 	client := apiclient.NewClient(apiServer.URL)
 	activities := NewActivities(client, prompt.NewResolver(), testConfig(), nil)
 
-	_, err := activities.CreateNodeExecution(context.Background(), CreateNodeExecParams{
+	_, err := activities.CreateNodeExecution(withWorkflowRunID(t, runID), CreateNodeExecParams{
 		WorkflowRunID:  runID,
 		TemplateNodeID: templateNodeID,
 		GraphVersion:   1,
@@ -92,7 +92,7 @@ func TestCreateNodeExecution_500_ReturnsRetryableError(t *testing.T) {
 	client := apiclient.NewClient(apiServer.URL)
 	activities := NewActivities(client, prompt.NewResolver(), testConfig(), nil)
 
-	_, err := activities.CreateNodeExecution(context.Background(), CreateNodeExecParams{
+	_, err := activities.CreateNodeExecution(withWorkflowRunID(t, runID), CreateNodeExecParams{
 		WorkflowRunID:  runID,
 		TemplateNodeID: templateNodeID,
 		GraphVersion:   1,
@@ -139,7 +139,7 @@ func TestExecuteAINode_DelegatesToAPIServer(t *testing.T) {
 	client := apiclient.NewClient(apiServer.URL)
 	activities := NewActivities(client, prompt.NewResolver(), testConfig(), nil)
 
-	err := activities.ExecuteAINode(context.Background(), ExecuteAINodeParams{
+	err := activities.ExecuteAINode(withWorkflowRunID(t, runID), ExecuteAINodeParams{
 		NodeExecutionID: execID,
 		RunID:           runID,
 		TemplateNodeID:  templateNodeID,
@@ -185,7 +185,7 @@ func TestExecuteAINode_OutputPathKeyedByExecutionID(t *testing.T) {
 	client := apiclient.NewClient(apiServer.URL)
 	activities := NewActivities(client, prompt.NewResolver(), testConfig(), nil)
 
-	err := activities.ExecuteAINode(context.Background(), ExecuteAINodeParams{
+	err := activities.ExecuteAINode(withWorkflowRunID(t, runID), ExecuteAINodeParams{
 		NodeExecutionID: execID,
 		RunID:           runID,
 		TemplateNodeID:  templateNodeID,
@@ -235,7 +235,7 @@ func TestExecuteAINodeFromSnapshot_OutputPathKeyedByExecutionID(t *testing.T) {
 	}
 	acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
 
-	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+	_, err := acts.ExecuteAINodeFromSnapshot(withWorkflowRunID(t, runID), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: execID,
 		RunID:           runID,
 		TemplateNodeID:  templateNodeID,
@@ -299,7 +299,7 @@ func TestExecuteAINodeFromSnapshot_ScriptNode_ConfigJson(t *testing.T) {
 		Iteration:       1,
 	}
 
-	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+	_, err := acts.ExecuteAINodeFromSnapshot(withWorkflowRunID(t, params.RunID), params)
 	assert.ErrorIs(t, err, activity.ErrResultPending)
 
 	// Verify config.json fields
@@ -359,7 +359,7 @@ func TestExecuteAINodeFromSnapshot_NoSystemPromptInConfigJson(t *testing.T) {
 		RunLogPath:      "runs/" + runID.String() + "/run_log.md",
 	}
 
-	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+	_, err := acts.ExecuteAINodeFromSnapshot(withWorkflowRunID(t, params.RunID), params)
 	assert.ErrorIs(t, err, activity.ErrResultPending)
 
 	// System prompt is now built by the entrypoint from the image-local template,
@@ -422,7 +422,7 @@ func TestExecuteAINodeFromSnapshot_TaskContextInConfigJson(t *testing.T) {
 		EpicTitle:       "Roadmap-aware agents",
 	}
 
-	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+	_, err := acts.ExecuteAINodeFromSnapshot(withWorkflowRunID(t, params.RunID), params)
 	assert.ErrorIs(t, err, activity.ErrResultPending)
 
 	taskContext, ok := receivedConfigJSON["task_context"].(map[string]interface{})
@@ -480,7 +480,7 @@ func TestExecuteAINodeFromSnapshot_NoTaskContextWhenTaskIDEmpty(t *testing.T) {
 		RunLogPath:      "runs/" + runID.String() + "/run_log.md",
 	}
 
-	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+	_, err := acts.ExecuteAINodeFromSnapshot(withWorkflowRunID(t, params.RunID), params)
 	assert.ErrorIs(t, err, activity.ErrResultPending)
 
 	_, hasTaskContext := receivedConfigJSON["task_context"]
@@ -538,7 +538,7 @@ func TestExecuteAINodeFromSnapshot_TaskContextIncludesOpenBlockers(t *testing.T)
 		},
 	}
 
-	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+	_, err := acts.ExecuteAINodeFromSnapshot(withWorkflowRunID(t, params.RunID), params)
 	assert.ErrorIs(t, err, activity.ErrResultPending)
 
 	taskContext, ok := receivedConfigJSON["task_context"].(map[string]interface{})
@@ -603,7 +603,7 @@ func TestExecuteAINodeFromSnapshot_NoOpenBlockersKeyWhenEmpty(t *testing.T) {
 		TaskTitle:       "No blockers here",
 	}
 
-	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+	_, err := acts.ExecuteAINodeFromSnapshot(withWorkflowRunID(t, params.RunID), params)
 	assert.ErrorIs(t, err, activity.ErrResultPending)
 
 	taskContext, ok := receivedConfigJSON["task_context"].(map[string]interface{})
@@ -655,7 +655,7 @@ func TestExecuteAINodeFromSnapshot_IterationInConfigJson(t *testing.T) {
 		Iteration:       3,
 	}
 
-	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+	_, err := acts.ExecuteAINodeFromSnapshot(withWorkflowRunID(t, params.RunID), params)
 	assert.ErrorIs(t, err, activity.ErrResultPending)
 
 	assert.Equal(t, float64(3), receivedConfigJSON["iteration"])
@@ -707,7 +707,7 @@ func TestExecuteAINodeFromSnapshot_IterationZeroOmitted(t *testing.T) {
 		Iteration:       0,
 	}
 
-	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+	_, err := acts.ExecuteAINodeFromSnapshot(withWorkflowRunID(t, params.RunID), params)
 	assert.ErrorIs(t, err, activity.ErrResultPending)
 
 	_, exists := receivedConfigJSON["iteration"]
@@ -746,8 +746,9 @@ func TestWriteExecutionLog(t *testing.T) {
 	client := apiclient.NewClient(apiServer.URL)
 	acts := NewActivities(client, nil, nil, nil)
 
-	err := acts.WriteExecutionLog(context.Background(), WriteExecutionLogParams{
-		RunID: uuid.New(), NodeExecutionID: uuid.New(), Level: "info", Message: "test log",
+	runID := uuid.New()
+	err := acts.WriteExecutionLog(withWorkflowRunID(t, runID), WriteExecutionLogParams{
+		RunID: runID, NodeExecutionID: uuid.New(), Level: "info", Message: "test log",
 	})
 	require.NoError(t, err)
 }
@@ -764,8 +765,9 @@ func TestUpdateNodeExecutionStatus(t *testing.T) {
 	acts := NewActivities(client, nil, nil, nil)
 
 	errMsg := "heartbeat timeout"
-	err := acts.UpdateNodeExecutionStatus(context.Background(), UpdateNodeExecStatusParams{
-		RunID: uuid.New(), NodeExecutionID: uuid.New(), Status: "failed", ErrorMessage: &errMsg,
+	runID := uuid.New()
+	err := acts.UpdateNodeExecutionStatus(withWorkflowRunID(t, runID), UpdateNodeExecStatusParams{
+		RunID: runID, NodeExecutionID: uuid.New(), Status: "failed", ErrorMessage: &errMsg,
 	})
 	require.NoError(t, err)
 }
@@ -780,8 +782,9 @@ func TestUpdateWorkflowRunStatus(t *testing.T) {
 	client := apiclient.NewClient(apiServer.URL)
 	acts := NewActivities(client, nil, nil, nil)
 
-	err := acts.UpdateWorkflowRunStatus(context.Background(), UpdateRunStatusParams{
-		RunID: uuid.New(), Status: "awaiting_retry",
+	runID := uuid.New()
+	err := acts.UpdateWorkflowRunStatus(withWorkflowRunID(t, runID), UpdateRunStatusParams{
+		RunID: runID, Status: "awaiting_retry",
 	})
 	require.NoError(t, err)
 }
@@ -803,7 +806,7 @@ func TestDeleteStaleBranches(t *testing.T) {
 	client := apiclient.NewClient(apiServer.URL)
 	acts := NewActivities(client, nil, nil, nil)
 
-	err := acts.DeleteStaleBranches(context.Background(), DeleteStaleBranchesParams{RunID: runID})
+	err := acts.DeleteStaleBranches(withWorkflowRunID(t, runID), DeleteStaleBranchesParams{RunID: runID})
 	require.NoError(t, err)
 	assert.Equal(t, http.MethodPost, receivedMethod)
 	assert.Equal(t, fmt.Sprintf("/internal/runs/%s/cleanup-branches", runID), receivedPath)
@@ -824,7 +827,7 @@ func TestDeleteStaleBranches_NonOKSurfacesAsError(t *testing.T) {
 	client := apiclient.NewClient(apiServer.URL)
 	acts := NewActivities(client, nil, nil, nil)
 
-	err := acts.DeleteStaleBranches(context.Background(), DeleteStaleBranchesParams{RunID: runID})
+	err := acts.DeleteStaleBranches(withWorkflowRunID(t, runID), DeleteStaleBranchesParams{RunID: runID})
 	require.Error(t, err)
 }
 
@@ -842,8 +845,9 @@ func TestSetNodeDecision(t *testing.T) {
 	client := apiclient.NewClient(apiServer.URL)
 	acts := NewActivities(client, nil, nil, nil)
 
-	err := acts.SetNodeDecision(context.Background(), SetNodeDecisionParams{
-		RunID: uuid.New(), NodeExecutionID: uuid.New(), Decision: "approved",
+	runID := uuid.New()
+	err := acts.SetNodeDecision(withWorkflowRunID(t, runID), SetNodeDecisionParams{
+		RunID: runID, NodeExecutionID: uuid.New(), Decision: "approved",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "approved", receivedBody["decision"])
@@ -867,8 +871,9 @@ func TestUpdateNodeExecutionStatus_WithArtifactRefs(t *testing.T) {
 
 	refs := `{"report.pdf":"orgs/myorg/runs/abc/out/report.pdf"}`
 	result := "done"
-	err := acts.UpdateNodeExecutionStatus(context.Background(), UpdateNodeExecStatusParams{
-		RunID:           uuid.New(),
+	runID := uuid.New()
+	err := acts.UpdateNodeExecutionStatus(withWorkflowRunID(t, runID), UpdateNodeExecStatusParams{
+		RunID:           runID,
 		NodeExecutionID: uuid.New(),
 		Status:          "completed",
 		Result:          &result,
@@ -927,7 +932,7 @@ func TestExecuteAINodeFromSnapshot_PredecessorArtifactAnnotation(t *testing.T) {
 		Iteration: 1,
 	}
 
-	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+	_, err := acts.ExecuteAINodeFromSnapshot(withWorkflowRunID(t, params.RunID), params)
 	assert.ErrorIs(t, err, activity.ErrResultPending)
 
 	prompt, ok := receivedConfigJSON["prompt"].(string)
@@ -985,7 +990,7 @@ func TestExecuteAINodeFromSnapshot_OnlyResultEntries_NoAnnotation(t *testing.T) 
 		Iteration: 1,
 	}
 
-	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+	_, err := acts.ExecuteAINodeFromSnapshot(withWorkflowRunID(t, params.RunID), params)
 	assert.ErrorIs(t, err, activity.ErrResultPending)
 
 	prompt, ok := receivedConfigJSON["prompt"].(string)
@@ -1090,9 +1095,10 @@ func TestExecuteAINodeFromSnapshot_PredecessorArtifactAnnotation_MaterialisedFil
 			}
 			acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
 
-			_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+			runID := uuid.New()
+			_, err := acts.ExecuteAINodeFromSnapshot(withWorkflowRunID(t, runID), ExecuteAINodeFromSnapshotParams{
 				NodeExecutionID: uuid.New(),
-				RunID:           uuid.New(),
+				RunID:           runID,
 				TemplateNodeID:  uuid.New(),
 				Label:           "implement",
 				ExecutorType:    "ai",
@@ -1175,7 +1181,7 @@ func TestExecuteAINodeFromSnapshot_RunInputAnnotation(t *testing.T) {
 		Iteration: 1,
 	}
 
-	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+	_, err := acts.ExecuteAINodeFromSnapshot(withWorkflowRunID(t, params.RunID), params)
 	assert.ErrorIs(t, err, activity.ErrResultPending)
 
 	prompt, ok := receivedConfigJSON["prompt"].(string)
@@ -1243,7 +1249,7 @@ func TestExecuteAINodeFromSnapshot_NoRunInputs_NoAnnotation(t *testing.T) {
 		Iteration:       1,
 	}
 
-	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+	_, err := acts.ExecuteAINodeFromSnapshot(withWorkflowRunID(t, params.RunID), params)
 	assert.ErrorIs(t, err, activity.ErrResultPending)
 
 	prompt, ok := receivedConfigJSON["prompt"].(string)
@@ -1297,7 +1303,7 @@ func TestExecuteAINodeFromSnapshot_OutputSpec_Present(t *testing.T) {
 		OutputSpec:      outputSpec,
 	}
 
-	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+	_, err := acts.ExecuteAINodeFromSnapshot(withWorkflowRunID(t, params.RunID), params)
 	assert.ErrorIs(t, err, activity.ErrResultPending)
 
 	assert.Equal(t, outputSpec, receivedConfigJSON["output_spec"], "output_spec should be forwarded to config.json")
@@ -1348,7 +1354,7 @@ func TestExecuteAINodeFromSnapshot_OutputSpec_Empty(t *testing.T) {
 		OutputSpec:      "", // empty — should not appear in config.json
 	}
 
-	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+	_, err := acts.ExecuteAINodeFromSnapshot(withWorkflowRunID(t, params.RunID), params)
 	assert.ErrorIs(t, err, activity.ErrResultPending)
 
 	_, exists := receivedConfigJSON["output_spec"]
@@ -1400,7 +1406,7 @@ func TestExecuteAINodeFromSnapshot_OutputSpec_EmptyObject(t *testing.T) {
 		OutputSpec:      "{}", // empty object — should not appear in config.json
 	}
 
-	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+	_, err := acts.ExecuteAINodeFromSnapshot(withWorkflowRunID(t, params.RunID), params)
 	assert.ErrorIs(t, err, activity.ErrResultPending)
 
 	_, exists := receivedConfigJSON["output_spec"]
@@ -1473,7 +1479,7 @@ func TestConfigJSON_SupervisorEmittedOnlyWhenDeclared(t *testing.T) {
 				SupervisorLabel: tt.supervisorLabel,
 			}
 
-			_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+			_, err := acts.ExecuteAINodeFromSnapshot(withWorkflowRunID(t, params.RunID), params)
 			assert.ErrorIs(t, err, activity.ErrResultPending)
 
 			supervisor, exists := receivedConfigJSON["supervisor"]
@@ -1521,9 +1527,10 @@ func TestExecuteAINodeFromSnapshot_ModelInConfigJson(t *testing.T) {
 	}
 	acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
 
-	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+	runID := uuid.New()
+	_, err := acts.ExecuteAINodeFromSnapshot(withWorkflowRunID(t, runID), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
+		RunID:           runID,
 		TemplateNodeID:  uuid.New(),
 		Label:           "push_pr",
 		ExecutorType:    "ai",
@@ -1567,9 +1574,10 @@ func TestExecuteAINodeFromSnapshot_ModelOmittedWhenEmpty(t *testing.T) {
 	}
 	acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
 
-	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+	runID := uuid.New()
+	_, err := acts.ExecuteAINodeFromSnapshot(withWorkflowRunID(t, runID), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
+		RunID:           runID,
 		TemplateNodeID:  uuid.New(),
 		Label:           "spec_review",
 		ExecutorType:    "ai",
@@ -1614,9 +1622,10 @@ func TestExecuteAINodeFromSnapshot_EffortInConfigJson(t *testing.T) {
 	}
 	acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
 
-	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+	runID := uuid.New()
+	_, err := acts.ExecuteAINodeFromSnapshot(withWorkflowRunID(t, runID), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
+		RunID:           runID,
 		TemplateNodeID:  uuid.New(),
 		Label:           "code_review",
 		ExecutorType:    "ai",
@@ -1660,9 +1669,10 @@ func TestExecuteAINodeFromSnapshot_EffortOmittedWhenEmpty(t *testing.T) {
 	}
 	acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
 
-	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+	runID := uuid.New()
+	_, err := acts.ExecuteAINodeFromSnapshot(withWorkflowRunID(t, runID), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
+		RunID:           runID,
 		TemplateNodeID:  uuid.New(),
 		Label:           "spec_review",
 		ExecutorType:    "ai",
@@ -1720,9 +1730,10 @@ func TestExecuteAINodeFromSnapshot_ResolvedModelEffortReachConfigJSONUnchanged_B
 	// model_first_iteration/effort_first_iteration).
 	var firstIterationConfigJSON map[string]interface{}
 	firstActs := newServerAndActs(&firstIterationConfigJSON)
-	_, err := firstActs.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+	runID := uuid.New()
+	_, err := firstActs.ExecuteAINodeFromSnapshot(withWorkflowRunID(t, runID), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
+		RunID:           runID,
 		TemplateNodeID:  uuid.New(),
 		Label:           "code_review",
 		ExecutorType:    "ai",
@@ -1745,9 +1756,10 @@ func TestExecuteAINodeFromSnapshot_ResolvedModelEffortReachConfigJSONUnchanged_B
 	// model_subsequent_iteration/effort_subsequent_iteration).
 	var subsequentIterationConfigJSON map[string]interface{}
 	subsequentActs := newServerAndActs(&subsequentIterationConfigJSON)
-	_, err = subsequentActs.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+	runID2 := uuid.New()
+	_, err = subsequentActs.ExecuteAINodeFromSnapshot(withWorkflowRunID(t, runID2), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
+		RunID:           runID2,
 		TemplateNodeID:  uuid.New(),
 		Label:           "code_review",
 		ExecutorType:    "ai",
@@ -1799,9 +1811,10 @@ func TestExecuteAINodeFromSnapshot_TurnBudgetInConfigJson(t *testing.T) {
 	}
 	acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
 
-	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+	runID := uuid.New()
+	_, err := acts.ExecuteAINodeFromSnapshot(withWorkflowRunID(t, runID), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
+		RunID:           runID,
 		TemplateNodeID:  uuid.New(),
 		Label:           "implement",
 		ExecutorType:    "ai",
@@ -1850,9 +1863,10 @@ func TestExecuteAINodeFromSnapshot_TurnBudgetOmittedWhenEmpty(t *testing.T) {
 	}
 	acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
 
-	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+	runID := uuid.New()
+	_, err := acts.ExecuteAINodeFromSnapshot(withWorkflowRunID(t, runID), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
+		RunID:           runID,
 		TemplateNodeID:  uuid.New(),
 		Label:           "spec_review",
 		ExecutorType:    "ai",
@@ -1868,9 +1882,10 @@ func TestExecuteAINodeFromSnapshot_TurnBudgetOmittedWhenEmpty(t *testing.T) {
 	assert.False(t, hasMaxRetries, "config.json must omit max_retries when not set on the snapshot")
 
 	receivedConfigJSON = nil
-	_, err = acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+	runID2 := uuid.New()
+	_, err = acts.ExecuteAINodeFromSnapshot(withWorkflowRunID(t, runID2), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
+		RunID:           runID2,
 		TemplateNodeID:  uuid.New(),
 		Label:           "spec_review",
 		ExecutorType:    "ai",
@@ -1918,9 +1933,10 @@ func TestExecuteAINodeFromSnapshot_SessionInConfigJson(t *testing.T) {
 	}
 	acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
 
-	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+	runID := uuid.New()
+	_, err := acts.ExecuteAINodeFromSnapshot(withWorkflowRunID(t, runID), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID:     uuid.New(),
-		RunID:               uuid.New(),
+		RunID:               runID,
 		TemplateNodeID:      uuid.New(),
 		Label:               "implement",
 		ExecutorType:        "ai",
@@ -1969,9 +1985,10 @@ func TestExecuteAINodeFromSnapshot_SessionOmittedWhenEmpty(t *testing.T) {
 	}
 	acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
 
-	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+	runID := uuid.New()
+	_, err := acts.ExecuteAINodeFromSnapshot(withWorkflowRunID(t, runID), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
+		RunID:           runID,
 		TemplateNodeID:  uuid.New(),
 		Label:           "implement",
 		ExecutorType:    "ai",
@@ -2018,9 +2035,10 @@ func TestExecuteAINodeFromSnapshot_NeedsPRInConfigJson(t *testing.T) {
 	}
 	acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
 
-	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+	runID := uuid.New()
+	_, err := acts.ExecuteAINodeFromSnapshot(withWorkflowRunID(t, runID), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
+		RunID:           runID,
 		TemplateNodeID:  uuid.New(),
 		Label:           "implement",
 		ExecutorType:    "ai",
@@ -2064,9 +2082,10 @@ func TestExecuteAINodeFromSnapshot_NeedsPROmittedWhenFalse(t *testing.T) {
 	}
 	acts := NewActivities(client, prompt.NewResolver(), cfg, nil)
 
-	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+	runID := uuid.New()
+	_, err := acts.ExecuteAINodeFromSnapshot(withWorkflowRunID(t, runID), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
+		RunID:           runID,
 		TemplateNodeID:  uuid.New(),
 		Label:           "spec_review",
 		ExecutorType:    "ai",
@@ -2124,7 +2143,7 @@ func TestLoadReviewHistoryJSON_PreservesFeedbackText(t *testing.T) {
 	client := apiclient.NewClient(apiServer.URL)
 	acts := NewActivities(client, nil, nil, nil)
 
-	jsonStr, err := acts.LoadReviewHistoryJSON(context.Background(), LoadReviewHistoryJSONParams{
+	jsonStr, err := acts.LoadReviewHistoryJSON(withWorkflowRunID(t, runID), LoadReviewHistoryJSONParams{
 		RunID:     runID,
 		LoopGroup: "proposal-review",
 	})

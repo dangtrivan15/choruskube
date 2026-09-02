@@ -21,6 +21,9 @@ type CheckNodePlacementResult struct {
 // retry policy is what decides how an unreachable check is treated, and answering
 // "allowed" here would make an outage indistinguishable from an approval.
 func (a *Activities) CheckNodePlacement(ctx context.Context, params CheckNodePlacementParams) (CheckNodePlacementResult, error) {
+	if err := guardRun(ctx, params.RunID); err != nil {
+		return CheckNodePlacementResult{}, err
+	}
 	d, err := a.client.CheckNodePlacement(ctx, params.RunID, params.NodeExecutionID)
 	if err != nil {
 		return CheckNodePlacementResult{}, err

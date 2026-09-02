@@ -105,7 +105,7 @@ func TestInitRunLog(t *testing.T) {
 	acts := &Activities{objectStoreClient: store}
 	runID := uuid.New()
 
-	err := acts.InitRunLog(context.Background(), InitRunLogParams{RunID: runID})
+	err := acts.InitRunLog(withWorkflowRunID(t, runID), InitRunLogParams{RunID: runID})
 	require.NoError(t, err)
 
 	key := "runs/" + runID.String() + "/run_log.md"
@@ -118,7 +118,7 @@ func TestInitRunLog_WithOrgSlug(t *testing.T) {
 	acts := &Activities{objectStoreClient: store}
 	runID := uuid.New()
 
-	err := acts.InitRunLog(context.Background(), InitRunLogParams{RunID: runID, OrgSlug: "acme"})
+	err := acts.InitRunLog(withWorkflowRunID(t, runID), InitRunLogParams{RunID: runID, OrgSlug: "acme"})
 	require.NoError(t, err)
 
 	key := "acme/runs/" + runID.String() + "/run_log.md"
@@ -131,7 +131,7 @@ func TestInitRunLog_EmptyOrgSlug(t *testing.T) {
 	acts := &Activities{objectStoreClient: store}
 	runID := uuid.New()
 
-	err := acts.InitRunLog(context.Background(), InitRunLogParams{RunID: runID, OrgSlug: ""})
+	err := acts.InitRunLog(withWorkflowRunID(t, runID), InitRunLogParams{RunID: runID, OrgSlug: ""})
 	require.NoError(t, err)
 
 	key := "runs/" + runID.String() + "/run_log.md"
@@ -144,9 +144,9 @@ func TestAppendRunLog_FirstEntry(t *testing.T) {
 	acts := &Activities{objectStoreClient: store}
 	runID := uuid.New()
 
-	acts.InitRunLog(context.Background(), InitRunLogParams{RunID: runID})
+	acts.InitRunLog(withWorkflowRunID(t, runID), InitRunLogParams{RunID: runID})
 
-	err := acts.AppendRunLog(context.Background(), AppendRunLogParams{
+	err := acts.AppendRunLog(withWorkflowRunID(t, runID), AppendRunLogParams{
 		RunID:     runID,
 		NodeLabel: "feature_request",
 		Status:    "completed",
@@ -167,9 +167,9 @@ func TestAppendRunLog_WithOrgSlug(t *testing.T) {
 	acts := &Activities{objectStoreClient: store}
 	runID := uuid.New()
 
-	acts.InitRunLog(context.Background(), InitRunLogParams{RunID: runID, OrgSlug: "acme"})
+	acts.InitRunLog(withWorkflowRunID(t, runID), InitRunLogParams{RunID: runID, OrgSlug: "acme"})
 
-	err := acts.AppendRunLog(context.Background(), AppendRunLogParams{
+	err := acts.AppendRunLog(withWorkflowRunID(t, runID), AppendRunLogParams{
 		RunID:     runID,
 		OrgSlug:   "acme",
 		NodeLabel: "feature_request",
@@ -191,11 +191,11 @@ func TestAppendRunLog_MultipleEntries(t *testing.T) {
 	acts := &Activities{objectStoreClient: store}
 	runID := uuid.New()
 
-	acts.InitRunLog(context.Background(), InitRunLogParams{RunID: runID})
-	acts.AppendRunLog(context.Background(), AppendRunLogParams{
+	acts.InitRunLog(withWorkflowRunID(t, runID), InitRunLogParams{RunID: runID})
+	acts.AppendRunLog(withWorkflowRunID(t, runID), AppendRunLogParams{
 		RunID: runID, NodeLabel: "A", Status: "completed", Iteration: 1, Result: "ok", RoutedTo: "B",
 	})
-	acts.AppendRunLog(context.Background(), AppendRunLogParams{
+	acts.AppendRunLog(withWorkflowRunID(t, runID), AppendRunLogParams{
 		RunID: runID, NodeLabel: "B", Status: "completed", Iteration: 1, Result: "done",
 	})
 
