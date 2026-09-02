@@ -11,7 +11,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"go.temporal.io/sdk/activity"
+	temporalactivity "go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/workflow"
 
 	"github.com/dangtrivan15/choruskube/worker/workload"
 )
@@ -21,7 +22,7 @@ import (
 func newTestActivities(t *testing.T, captured *map[string]interface{}) *Activities {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/internal/workloads/") {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/workload") {
 			var req map[string]interface{}
 			_ = json.NewDecoder(r.Body).Decode(&req)
 			if cj, ok := req["configJson"].(map[string]interface{}); ok {
@@ -38,16 +39,30 @@ func newTestActivities(t *testing.T, captured *map[string]interface{}) *Activiti
 	}))
 	t.Cleanup(srv.Close)
 
-	acts := New(workload.NewClient(srv.URL, "test-secret", srv.Client()))
+	acts := New(workload.NewClient(srv.URL, func() string { return "test-secret" }, srv.Client()))
 	acts.CallbackURL = "http://callback:9090/api/v1/callback"
 	acts.APIServerURL = srv.URL
 	return acts
 }
 
+// stubbedRun pins the activity context to a fresh run and returns its id, so a test can pass the
+// same id in the activity's parameters. Without it every activity call reaches the SDK's real
+// GetInfo, which panics outside a running activity.
+func stubbedRun(t *testing.T) uuid.UUID {
+	t.Helper()
+	id := uuid.New()
+	original := activityInfo
+	activityInfo = func(context.Context) temporalactivity.Info {
+		return temporalactivity.Info{WorkflowExecution: workflow.Execution{ID: "choruskube-run-" + id.String()}}
+	}
+	t.Cleanup(func() { activityInfo = original })
+	return id
+}
+
 func requirePending(t *testing.T, err error) {
 	t.Helper()
-	if !errors.Is(err, activity.ErrResultPending) {
-		t.Fatalf("want activity.ErrResultPending, got %v", err)
+	if !errors.Is(err, temporalactivity.ErrResultPending) {
+		t.Fatalf("want temporalactivity.ErrResultPending, got %v", err)
 	}
 }
 
@@ -60,7 +75,7 @@ func TestExecuteAINodeFromSnapshot_CallbackAndAPIServerURLsInConfigJson(t *testi
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
+		RunID:           stubbedRun(t),
 		TemplateNodeID:  uuid.New(),
 		ExecutorType:    "ai",
 		PromptTemplate:  "irrelevant",
@@ -86,7 +101,7 @@ func TestExecuteAINodeFromSnapshot_CallbackAndAPIServerURLsInConfigJson(t *testi
 // that silently ships with an empty callback_url: the agent pod would launch and then have no
 // way to report back, hanging the activity until StartToClose instead of failing immediately.
 func TestExecuteAINodeFromSnapshot_FailsFastWhenCallbackURLEmpty(t *testing.T) {
-	acts := New(workload.NewClient("http://unused.invalid", "secret", nil))
+	acts := New(workload.NewClient("http://unused.invalid", func() string { return "secret" }, nil))
 	acts.APIServerURL = "http://api.invalid"
 	// CallbackURL intentionally left empty.
 
@@ -97,7 +112,7 @@ func TestExecuteAINodeFromSnapshot_FailsFastWhenCallbackURLEmpty(t *testing.T) {
 		ExecutorType:    "ai",
 		PromptTemplate:  "irrelevant",
 	})
-	if err == nil || errors.Is(err, activity.ErrResultPending) {
+	if err == nil || errors.Is(err, temporalactivity.ErrResultPending) {
 		t.Fatalf("want an immediate config error, got %v", err)
 	}
 }
@@ -105,7 +120,7 @@ func TestExecuteAINodeFromSnapshot_FailsFastWhenCallbackURLEmpty(t *testing.T) {
 // TestExecuteAINodeFromSnapshot_FailsFastWhenAPIServerURLEmpty is the APIServerURL half of
 // TestExecuteAINodeFromSnapshot_FailsFastWhenCallbackURLEmpty.
 func TestExecuteAINodeFromSnapshot_FailsFastWhenAPIServerURLEmpty(t *testing.T) {
-	acts := New(workload.NewClient("http://unused.invalid", "secret", nil))
+	acts := New(workload.NewClient("http://unused.invalid", func() string { return "secret" }, nil))
 	acts.CallbackURL = "http://callback.invalid"
 	// APIServerURL intentionally left empty.
 
@@ -116,14 +131,40 @@ func TestExecuteAINodeFromSnapshot_FailsFastWhenAPIServerURLEmpty(t *testing.T) 
 		ExecutorType:    "ai",
 		PromptTemplate:  "irrelevant",
 	})
-	if err == nil || errors.Is(err, activity.ErrResultPending) {
+	if err == nil || errors.Is(err, temporalactivity.ErrResultPending) {
 		t.Fatalf("want an immediate config error, got %v", err)
+	}
+}
+
+// The workflow id is fixed in history and the parameters are not, so a pair that disagrees means
+// something built this activity wrongly. Launching anyway would address a run this Worker's
+// credential cannot act on, surfacing as a node failure with no stated cause.
+func TestExecuteAINodeFromSnapshot_RejectsParamsNamingAnotherRun(t *testing.T) {
+	var receivedConfigJSON map[string]interface{}
+	acts := newTestActivities(t, &receivedConfigJSON)
+	workflowRun := stubbedRun(t)
+
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+		NodeExecutionID: uuid.New(),
+		RunID:           uuid.New(),
+		TemplateNodeID:  uuid.New(),
+		ExecutorType:    "ai",
+		PromptTemplate:  "irrelevant",
+	})
+	if err == nil || errors.Is(err, temporalactivity.ErrResultPending) {
+		t.Fatalf("want a mismatch error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), workflowRun.String()) {
+		t.Fatalf("error must name the workflow's run %s, got %v", workflowRun, err)
+	}
+	if receivedConfigJSON != nil {
+		t.Fatal("a mismatched pair must not reach the API server")
 	}
 }
 
 func TestExecuteAINodeFromSnapshot_OutputPathKeyedByExecutionID(t *testing.T) {
 	execID := uuid.New()
-	runID := uuid.New()
+	runID := stubbedRun(t)
 	templateNodeID := uuid.New()
 
 	var receivedConfigJSON map[string]interface{}
@@ -154,7 +195,7 @@ func TestExecuteAINodeFromSnapshot_ScriptNode_ConfigJson(t *testing.T) {
 
 	params := ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
+		RunID:           stubbedRun(t),
 		TemplateNodeID:  uuid.New(),
 		ExecutorType:    "script",
 		Command:         "cd /workspace/repo && npm test",
@@ -191,7 +232,7 @@ func TestExecuteAINodeFromSnapshot_ScriptNode_ConfigJson(t *testing.T) {
 }
 
 func TestExecuteAINodeFromSnapshot_NoSystemPromptInConfigJson(t *testing.T) {
-	runID := uuid.New()
+	runID := stubbedRun(t)
 
 	var receivedConfigJSON map[string]interface{}
 	acts := newTestActivities(t, &receivedConfigJSON)
@@ -221,7 +262,7 @@ func TestExecuteAINodeFromSnapshot_NoSystemPromptInConfigJson(t *testing.T) {
 }
 
 func TestExecuteAINodeFromSnapshot_TaskContextInConfigJson(t *testing.T) {
-	runID := uuid.New()
+	runID := stubbedRun(t)
 	taskID := uuid.New()
 	storyID := uuid.New()
 	epicID := uuid.New()
@@ -267,7 +308,7 @@ func TestExecuteAINodeFromSnapshot_TaskContextInConfigJson(t *testing.T) {
 }
 
 func TestExecuteAINodeFromSnapshot_NoTaskContextWhenTaskIDEmpty(t *testing.T) {
-	runID := uuid.New()
+	runID := stubbedRun(t)
 
 	var receivedConfigJSON map[string]interface{}
 	acts := newTestActivities(t, &receivedConfigJSON)
@@ -291,7 +332,7 @@ func TestExecuteAINodeFromSnapshot_NoTaskContextWhenTaskIDEmpty(t *testing.T) {
 }
 
 func TestExecuteAINodeFromSnapshot_TaskContextIncludesOpenBlockers(t *testing.T) {
-	runID := uuid.New()
+	runID := stubbedRun(t)
 	taskID := uuid.New()
 	blockerID := uuid.New()
 
@@ -334,7 +375,7 @@ func TestExecuteAINodeFromSnapshot_TaskContextIncludesOpenBlockers(t *testing.T)
 }
 
 func TestExecuteAINodeFromSnapshot_NoOpenBlockersKeyWhenEmpty(t *testing.T) {
-	runID := uuid.New()
+	runID := stubbedRun(t)
 	taskID := uuid.New()
 
 	var receivedConfigJSON map[string]interface{}
@@ -371,7 +412,7 @@ func TestExecuteAINodeFromSnapshot_IterationInConfigJson(t *testing.T) {
 
 	params := ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
+		RunID:           stubbedRun(t),
 		TemplateNodeID:  uuid.New(),
 		ExecutorType:    "script",
 		Command:         "echo hello",
@@ -399,7 +440,7 @@ func TestExecuteAINodeFromSnapshot_IterationZeroOmitted(t *testing.T) {
 
 	params := ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
+		RunID:           stubbedRun(t),
 		TemplateNodeID:  uuid.New(),
 		ExecutorType:    "ai",
 		PromptTemplate:  "Do something",
@@ -421,7 +462,7 @@ func TestExecuteAINodeFromSnapshot_PredecessorArtifactAnnotation(t *testing.T) {
 
 	params := ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
+		RunID:           stubbedRun(t),
 		TemplateNodeID:  uuid.New(),
 		ExecutorType:    "ai",
 		PromptTemplate:  "Do the thing",
@@ -460,7 +501,7 @@ func TestExecuteAINodeFromSnapshot_OnlyResultEntries_NoAnnotation(t *testing.T) 
 
 	params := ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
+		RunID:           stubbedRun(t),
 		TemplateNodeID:  uuid.New(),
 		ExecutorType:    "ai",
 		PromptTemplate:  "Do the thing",
@@ -555,7 +596,7 @@ func TestExecuteAINodeFromSnapshot_PredecessorArtifactAnnotation_MaterialisedFil
 
 			_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 				NodeExecutionID: uuid.New(),
-				RunID:           uuid.New(),
+				RunID:           stubbedRun(t),
 				TemplateNodeID:  uuid.New(),
 				ExecutorType:    "ai",
 				PromptTemplate:  "Do the thing",
@@ -599,7 +640,7 @@ func TestExecuteAINodeFromSnapshot_RunInputAnnotation(t *testing.T) {
 
 	params := ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
+		RunID:           stubbedRun(t),
 		TemplateNodeID:  uuid.New(),
 		ExecutorType:    "ai",
 		PromptTemplate:  "Do the thing",
@@ -653,7 +694,7 @@ func TestExecuteAINodeFromSnapshot_NoRunInputs_NoAnnotation(t *testing.T) {
 
 	params := ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
+		RunID:           stubbedRun(t),
 		TemplateNodeID:  uuid.New(),
 		ExecutorType:    "ai",
 		PromptTemplate:  "Do the thing",
@@ -682,7 +723,7 @@ func TestExecuteAINodeFromSnapshot_OutputSpec_Present(t *testing.T) {
 	outputSpec := `{"files":[{"name":"report.pdf","required":true}]}`
 	params := ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
+		RunID:           stubbedRun(t),
 		TemplateNodeID:  uuid.New(),
 		ExecutorType:    "ai",
 		PromptTemplate:  "Generate a report",
@@ -707,7 +748,7 @@ func TestExecuteAINodeFromSnapshot_OutputSpec_Empty(t *testing.T) {
 
 	params := ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
+		RunID:           stubbedRun(t),
 		TemplateNodeID:  uuid.New(),
 		ExecutorType:    "ai",
 		PromptTemplate:  "Do something",
@@ -732,7 +773,7 @@ func TestExecuteAINodeFromSnapshot_OutputSpec_EmptyObject(t *testing.T) {
 
 	params := ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
+		RunID:           stubbedRun(t),
 		TemplateNodeID:  uuid.New(),
 		ExecutorType:    "ai",
 		PromptTemplate:  "Do something",
@@ -770,7 +811,7 @@ func TestConfigJSON_SupervisorEmittedOnlyWhenDeclared(t *testing.T) {
 
 			params := ExecuteAINodeFromSnapshotParams{
 				NodeExecutionID: uuid.New(),
-				RunID:           uuid.New(),
+				RunID:           stubbedRun(t),
 				TemplateNodeID:  uuid.New(),
 				ExecutorType:    "ai",
 				PromptTemplate:  "Do the thing",
@@ -808,7 +849,7 @@ func TestExecuteAINodeFromSnapshot_ModelInConfigJson(t *testing.T) {
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
+		RunID:           stubbedRun(t),
 		TemplateNodeID:  uuid.New(),
 		ExecutorType:    "ai",
 		PromptTemplate:  "irrelevant",
@@ -829,7 +870,7 @@ func TestExecuteAINodeFromSnapshot_ModelOmittedWhenEmpty(t *testing.T) {
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
+		RunID:           stubbedRun(t),
 		TemplateNodeID:  uuid.New(),
 		ExecutorType:    "ai",
 		PromptTemplate:  "irrelevant",
@@ -851,7 +892,7 @@ func TestExecuteAINodeFromSnapshot_EffortInConfigJson(t *testing.T) {
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
+		RunID:           stubbedRun(t),
 		TemplateNodeID:  uuid.New(),
 		ExecutorType:    "ai",
 		PromptTemplate:  "irrelevant",
@@ -872,7 +913,7 @@ func TestExecuteAINodeFromSnapshot_EffortOmittedWhenEmpty(t *testing.T) {
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
+		RunID:           stubbedRun(t),
 		TemplateNodeID:  uuid.New(),
 		ExecutorType:    "ai",
 		PromptTemplate:  "irrelevant",
@@ -896,7 +937,7 @@ func TestExecuteAINodeFromSnapshot_ResolvedModelEffortReachConfigJSONUnchanged_B
 	firstActs := newTestActivities(t, &firstIterationConfigJSON)
 	_, err := firstActs.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
+		RunID:           stubbedRun(t),
 		TemplateNodeID:  uuid.New(),
 		ExecutorType:    "ai",
 		PromptTemplate:  "irrelevant",
@@ -920,7 +961,7 @@ func TestExecuteAINodeFromSnapshot_ResolvedModelEffortReachConfigJSONUnchanged_B
 	subsequentActs := newTestActivities(t, &subsequentIterationConfigJSON)
 	_, err = subsequentActs.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
+		RunID:           stubbedRun(t),
 		TemplateNodeID:  uuid.New(),
 		ExecutorType:    "ai",
 		PromptTemplate:  "irrelevant",
@@ -949,7 +990,7 @@ func TestExecuteAINodeFromSnapshot_TurnBudgetInConfigJson(t *testing.T) {
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
+		RunID:           stubbedRun(t),
 		TemplateNodeID:  uuid.New(),
 		ExecutorType:    "ai",
 		PromptTemplate:  "irrelevant",
@@ -976,7 +1017,7 @@ func TestExecuteAINodeFromSnapshot_TurnBudgetOmittedWhenEmpty(t *testing.T) {
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
+		RunID:           stubbedRun(t),
 		TemplateNodeID:  uuid.New(),
 		ExecutorType:    "ai",
 		PromptTemplate:  "irrelevant",
@@ -995,7 +1036,7 @@ func TestExecuteAINodeFromSnapshot_TurnBudgetOmittedWhenEmpty(t *testing.T) {
 	receivedConfigJSON = nil
 	_, err = acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
+		RunID:           stubbedRun(t),
 		TemplateNodeID:  uuid.New(),
 		ExecutorType:    "ai",
 		PromptTemplate:  "irrelevant",
@@ -1021,7 +1062,7 @@ func TestExecuteAINodeFromSnapshot_SessionInConfigJson(t *testing.T) {
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID:     uuid.New(),
-		RunID:               uuid.New(),
+		RunID:               stubbedRun(t),
 		TemplateNodeID:      uuid.New(),
 		ExecutorType:        "ai",
 		PromptTemplate:      "irrelevant",
@@ -1048,7 +1089,7 @@ func TestExecuteAINodeFromSnapshot_SessionOmittedWhenEmpty(t *testing.T) {
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
+		RunID:           stubbedRun(t),
 		TemplateNodeID:  uuid.New(),
 		ExecutorType:    "ai",
 		PromptTemplate:  "irrelevant",
@@ -1073,7 +1114,7 @@ func TestExecuteAINodeFromSnapshot_NeedsPRInConfigJson(t *testing.T) {
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
+		RunID:           stubbedRun(t),
 		TemplateNodeID:  uuid.New(),
 		ExecutorType:    "ai",
 		PromptTemplate:  "irrelevant",
@@ -1094,7 +1135,7 @@ func TestExecuteAINodeFromSnapshot_NeedsPROmittedWhenFalse(t *testing.T) {
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
+		RunID:           stubbedRun(t),
 		TemplateNodeID:  uuid.New(),
 		ExecutorType:    "ai",
 		PromptTemplate:  "irrelevant",
@@ -1109,15 +1150,18 @@ func TestExecuteAINodeFromSnapshot_NeedsPROmittedWhenFalse(t *testing.T) {
 
 func TestFetchPodLogs_DelegatesToAPIServer(t *testing.T) {
 	execID := uuid.New()
+	runID := stubbedRun(t)
+	var gotPath string
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"logs": "(no pod found)",
 		})
 	}))
 	defer srv.Close()
 
-	acts := New(workload.NewClient(srv.URL, "test-secret", srv.Client()))
+	acts := New(workload.NewClient(srv.URL, func() string { return "test-secret" }, srv.Client()))
 
 	logs, err := acts.FetchPodLogs(context.Background(), FetchPodLogsParams{
 		NodeExecutionID: execID,
@@ -1129,10 +1173,15 @@ func TestFetchPodLogs_DelegatesToAPIServer(t *testing.T) {
 	if logs != "(no pod found)" {
 		t.Fatalf("logs = %q, want %q", logs, "(no pod found)")
 	}
+	// The run comes from the workflow, not the parameters, which carry no run id at all.
+	if want := "/worker/runs/" + runID.String() + "/node-executions/" + execID.String() + "/workload/logs"; gotPath != want {
+		t.Fatalf("path = %q, want %q", gotPath, want)
+	}
 }
 
 func TestDeleteAgentJob_DelegatesToAPIServer(t *testing.T) {
 	execID := uuid.New()
+	runID := stubbedRun(t)
 	var gotMethod, gotPath string
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1141,7 +1190,7 @@ func TestDeleteAgentJob_DelegatesToAPIServer(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	acts := New(workload.NewClient(srv.URL, "test-secret", srv.Client()))
+	acts := New(workload.NewClient(srv.URL, func() string { return "test-secret" }, srv.Client()))
 
 	if err := acts.DeleteAgentJob(context.Background(), DeleteAgentJobParams{NodeExecutionID: execID}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1149,8 +1198,9 @@ func TestDeleteAgentJob_DelegatesToAPIServer(t *testing.T) {
 	if gotMethod != http.MethodDelete {
 		t.Fatalf("method = %q, want DELETE", gotMethod)
 	}
-	if gotPath != "/internal/workloads/"+execID.String() {
-		t.Fatalf("path = %q", gotPath)
+	// The run comes from the workflow, not the parameters, which carry no run id at all.
+	if want := "/worker/runs/" + runID.String() + "/node-executions/" + execID.String() + "/workload"; gotPath != want {
+		t.Fatalf("path = %q, want %q", gotPath, want)
 	}
 }
 
