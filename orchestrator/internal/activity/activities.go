@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"go.temporal.io/sdk/activity"
 	temporalactivity "go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/temporal"
 
@@ -22,7 +21,7 @@ import (
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/state"
 )
 
-// NOTE: This package uses activity.ErrResultPending from the Temporal SDK
+// NOTE: This package uses temporalactivity.ErrResultPending from the Temporal SDK
 // (go.temporal.io/sdk/activity) to signal async activity completion.
 // Do NOT define a custom ErrResultPending — the SDK's sentinel is intercepted
 // at the framework level to keep the activity "open" in Temporal.
@@ -195,7 +194,7 @@ func (a *Activities) ExecuteAINode(ctx context.Context, params ExecuteAINodePara
 	a.client.WriteExecutionLog(ctx, params.RunID, params.NodeExecutionID, "info",
 		fmt.Sprintf("Agent launched: %s", result.ExecutionHandle))
 
-	return activity.ErrResultPending
+	return temporalactivity.ErrResultPending
 }
 
 // --- Activity: UpdateWorkflowRunStatus ---
@@ -215,6 +214,9 @@ func (a *Activities) UpdateWorkflowRunStatus(ctx context.Context, params UpdateR
 // --- Activity: GetGraphRuntime ---
 
 func (a *Activities) GetGraphRuntime(ctx context.Context, runID uuid.UUID) (string, error) {
+	if err := guardRun(ctx, runID); err != nil {
+		return "", err
+	}
 	return a.client.GetGraphRuntime(ctx, runID)
 }
 
@@ -466,7 +468,7 @@ func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params Execu
 	a.client.WriteExecutionLog(ctx, params.RunID, params.NodeExecutionID, "info",
 		fmt.Sprintf("Prompt resolved (%d chars)", len(resolvedPrompt)))
 
-	return CallbackResult{}, activity.ErrResultPending
+	return CallbackResult{}, temporalactivity.ErrResultPending
 }
 
 // --- Activity: WriteReviewHistory ---
@@ -526,7 +528,7 @@ func (a *Activities) LoadPredecessorInputs(ctx context.Context, params LoadPrede
 
 		var refs map[string]string
 		if err := json.Unmarshal([]byte(pred.ArtifactRefs), &refs); err != nil {
-			activity.GetLogger(ctx).Warn("skipping artifact_refs for predecessor: unmarshal failed",
+			temporalactivity.GetLogger(ctx).Warn("skipping artifact_refs for predecessor: unmarshal failed",
 				"label", label, "error", err)
 			continue
 		}
@@ -642,21 +644,29 @@ func (a *Activities) UpdateNodeExecutionStatus(ctx context.Context, params Updat
 // --- Activity: DeleteAgentJob ---
 
 type DeleteAgentJobParams struct {
+	RunID           uuid.UUID
 	NodeExecutionID uuid.UUID
 }
 
 func (a *Activities) DeleteAgentJob(ctx context.Context, params DeleteAgentJobParams) error {
+	if err := guardRun(ctx, params.RunID); err != nil {
+		return err
+	}
 	return a.client.CleanupWorkload(ctx, params.NodeExecutionID)
 }
 
 // --- Activity: FetchPodLogs ---
 
 type FetchPodLogsParams struct {
+	RunID           uuid.UUID
 	NodeExecutionID uuid.UUID
 	TailLines       int
 }
 
 func (a *Activities) FetchPodLogs(ctx context.Context, params FetchPodLogsParams) (string, error) {
+	if err := guardRun(ctx, params.RunID); err != nil {
+		return "", err
+	}
 	tailLines := params.TailLines
 	if tailLines <= 0 {
 		tailLines = 50

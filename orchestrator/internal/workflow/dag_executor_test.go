@@ -823,7 +823,9 @@ func (s *DAGExecutorTestSuite) TestTimeoutCallsDeleteAgentJob() {
 	s.env.OnActivity("WriteExecutionLog", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.env.OnActivity("InitRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.env.OnActivity("AppendRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
-	s.env.OnActivity("FetchPodLogs", mock.Anything, mock.Anything).Return("", nil).Maybe()
+	s.env.OnActivity("FetchPodLogs", mock.Anything, mock.MatchedBy(func(p activity.FetchPodLogsParams) bool {
+		return p.RunID == runID
+	})).Return("", nil).Maybe()
 
 	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
 		return p.TemplateNodeID == nodeA
@@ -845,7 +847,7 @@ func (s *DAGExecutorTestSuite) TestTimeoutCallsDeleteAgentJob() {
 
 	// DeleteAgentJob must be called after node timeout
 	s.env.OnActivity("DeleteAgentJob", mock.Anything, mock.MatchedBy(func(p activity.DeleteAgentJobParams) bool {
-		return p.NodeExecutionID == execA
+		return p.RunID == runID && p.NodeExecutionID == execA
 	})).Return(nil).Once()
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
@@ -921,7 +923,7 @@ func (s *DAGExecutorTestSuite) TestPauseDeletesRunningJobs() {
 	// (dag_executor.go lines 182–196). .Once() (not .Maybe()) enforces this so
 	// the test fails if the call is never made.
 	s.env.OnActivity("DeleteAgentJob", mock.Anything, mock.MatchedBy(func(p activity.DeleteAgentJobParams) bool {
-		return p.NodeExecutionID == execA
+		return p.RunID == runID && p.NodeExecutionID == execA
 	})).Return(nil).Once()
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
@@ -1006,7 +1008,7 @@ func (s *DAGExecutorTestSuite) TestPauseStampsNodeAsPaused() {
 
 	// DeleteAgentJob must be called for execA from the pause cleanup loop
 	s.env.OnActivity("DeleteAgentJob", mock.Anything, mock.MatchedBy(func(p activity.DeleteAgentJobParams) bool {
-		return p.NodeExecutionID == execA
+		return p.RunID == runID && p.NodeExecutionID == execA
 	})).Return(nil).Once()
 
 	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
@@ -1125,7 +1127,7 @@ func (s *DAGExecutorTestSuite) TestTwoNodeGraphOnlyBPaused() {
 	})).Return(nil).Once()
 
 	s.env.OnActivity("DeleteAgentJob", mock.Anything, mock.MatchedBy(func(p activity.DeleteAgentJobParams) bool {
-		return p.NodeExecutionID == execB1
+		return p.RunID == runID && p.NodeExecutionID == execB1
 	})).Return(nil).Once()
 
 	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {

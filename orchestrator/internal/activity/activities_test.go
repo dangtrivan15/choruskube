@@ -1,7 +1,6 @@
 package activity
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -716,6 +715,7 @@ func TestExecuteAINodeFromSnapshot_IterationZeroOmitted(t *testing.T) {
 
 func TestFetchPodLogs_DelegatesToAPIServer(t *testing.T) {
 	execID := uuid.New()
+	runID := uuid.New()
 
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -727,7 +727,8 @@ func TestFetchPodLogs_DelegatesToAPIServer(t *testing.T) {
 	client := apiclient.NewClient(apiServer.URL)
 	acts := NewActivities(client, nil, nil, nil)
 
-	logs, err := acts.FetchPodLogs(context.Background(), FetchPodLogsParams{
+	logs, err := acts.FetchPodLogs(withWorkflowRunID(t, runID), FetchPodLogsParams{
+		RunID:           runID,
 		NodeExecutionID: execID,
 		TailLines:       50,
 	})

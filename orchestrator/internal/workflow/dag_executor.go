@@ -272,7 +272,7 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 					}
 					// Delete the K8s job (idempotent; job may already be gone if api-server beat us).
 					if cleanErr := workflow.ExecuteActivity(workloadCtx, activities.DeleteAgentJob,
-						activity.DeleteAgentJobParams{NodeExecutionID: tracker.execID},
+						activity.DeleteAgentJobParams{RunID: params.RunID, NodeExecutionID: tracker.execID},
 					).Get(ctx, nil); cleanErr != nil {
 						logger.Warn("DeleteAgentJob on pause failed (non-fatal)",
 							"nodeID", nodeID,
@@ -1122,6 +1122,7 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 						var podLogs string
 						if err := workflow.ExecuteActivity(workloadCtx, activities.FetchPodLogs,
 							activity.FetchPodLogsParams{
+								RunID:           params.RunID,
 								NodeExecutionID: tracker.execID,
 								TailLines:       50,
 							},
@@ -1159,7 +1160,7 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 					// api-server already deleted the job) is treated as success.
 					if snapshotNode.ExecutorType != "human" {
 						if cleanErr := workflow.ExecuteActivity(workloadCtx, activities.DeleteAgentJob,
-							activity.DeleteAgentJobParams{NodeExecutionID: tracker.execID},
+							activity.DeleteAgentJobParams{RunID: params.RunID, NodeExecutionID: tracker.execID},
 						).Get(ctx, nil); cleanErr != nil {
 							// Non-fatal: log and continue; the reconciler is the safety net.
 							logger.Warn("DeleteAgentJob failed after node timeout",
@@ -1480,7 +1481,7 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 				if tracker.status == "running" {
 					if snapshotNode, ok := GetNodeByID(snap, nodeID); ok && snapshotNode.ExecutorType != "human" {
 						if cleanErr := workflow.ExecuteActivity(workloadCtx, activities.DeleteAgentJob,
-							activity.DeleteAgentJobParams{NodeExecutionID: tracker.execID},
+							activity.DeleteAgentJobParams{RunID: params.RunID, NodeExecutionID: tracker.execID},
 						).Get(ctx, nil); cleanErr != nil {
 							logger.Warn("DeleteAgentJob on cancel failed (non-fatal)",
 								"nodeID", nodeID, "execID", tracker.execID, "err", cleanErr)
