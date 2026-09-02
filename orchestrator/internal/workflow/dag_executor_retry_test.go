@@ -18,7 +18,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateTimeout_RetryViaApproval() {
 	nodeA := uuid.New()
 	execA := uuid.New()  // first execution (will time out)
 	execA2 := uuid.New() // retry execution
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -79,7 +79,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateTimeout_RetryViaApproval() {
 func (s *DAGExecutorTestSuite) TestCancelStep5ToleratesDeleteAgentJob404() {
 	nodeA := uuid.New()
 	execA := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -146,7 +146,7 @@ func (s *DAGExecutorTestSuite) TestScriptNodeRetry_RefreshesSnapshot() {
 	nodeA := uuid.New()
 	execA := uuid.New()  // first execution (will fail)
 	execA2 := uuid.New() // retry execution
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	oldCommand := "npm run test"
 	newCommand := "npm install && npm run test"
@@ -236,7 +236,7 @@ func (s *DAGExecutorTestSuite) TestModelEffortResolution_RetryNodeSignal_Preserv
 	execA1 := uuid.New() // first execution (will fail)
 	execA2 := uuid.New() // retry execution
 
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -306,7 +306,7 @@ func (s *DAGExecutorTestSuite) TestModelEffortResolution_PauseHeartbeatTimeoutRe
 	nodeA := uuid.New()
 	execA := uuid.New()
 	execA2 := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [

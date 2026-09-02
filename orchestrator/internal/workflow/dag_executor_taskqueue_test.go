@@ -16,7 +16,7 @@ import (
 func (s *DAGExecutorTestSuite) TestAIActivityUsesWorkerTaskQueueFromInput() {
 	nodeA := uuid.New()
 	execA := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -72,7 +72,7 @@ func (s *DAGExecutorTestSuite) TestAIActivityUsesWorkerTaskQueueFromInput() {
 func (s *DAGExecutorTestSuite) TestAIActivityFallsBackWhenNoWorkerTaskQueue() {
 	nodeA := uuid.New()
 	execA := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
