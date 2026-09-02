@@ -180,6 +180,38 @@ func TestGetJobSecretHash(t *testing.T) {
 	assert.Equal(t, "abc123", hash)
 }
 
+func TestGetRunNamespace(t *testing.T) {
+	runID := uuid.New()
+
+	_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodGet, r.Method)
+		assert.Contains(t, r.URL.Path, "/internal/runs/"+runID.String()+"/placement")
+
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(RunNamespace{Namespace: "tenant-ns"})
+	})
+
+	result, err := client.GetRunNamespace(context.Background(), runID)
+	require.NoError(t, err)
+	assert.Equal(t, "tenant-ns", result.Namespace)
+}
+
+func TestListNamespaces(t *testing.T) {
+	_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodGet, r.Method)
+		assert.Equal(t, "/internal/placements", r.URL.Path)
+
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(struct {
+			Namespaces []string `json:"namespaces"`
+		}{Namespaces: []string{"choruskube", "tenant-ns"}})
+	})
+
+	result, err := client.ListNamespaces(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"choruskube", "tenant-ns"}, result)
+}
+
 func TestAuthenticatedClient_SendsBearerToken(t *testing.T) {
 	runID := uuid.New()
 	snapshot := `{"nodes":[],"edges":[]}`
@@ -283,6 +315,40 @@ func TestCreateWorkload_SlimBody(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "agent-xyz", resp.ExecutionHandle)
 	assert.Equal(t, "hash456", resp.JobSecretHash)
+}
+
+// TestCleanupWorkload_UsesRunScopedPath and TestGetWorkloadLogs_UsesRunScopedPath pin the
+// request URL to the run-scoped shape: the api-server rejects a NodeExecutionID that does not
+// belong to RunID (see api-server's WorkloadService), so the run id must actually reach it.
+
+func TestCleanupWorkload_UsesRunScopedPath(t *testing.T) {
+	runID := uuid.New()
+	execID := uuid.New()
+
+	_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodDelete, r.Method)
+		assert.Equal(t, fmt.Sprintf("/internal/workloads/%s/%s", runID, execID), r.URL.Path)
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	err := client.CleanupWorkload(context.Background(), runID, execID)
+	require.NoError(t, err)
+}
+
+func TestGetWorkloadLogs_UsesRunScopedPath(t *testing.T) {
+	runID := uuid.New()
+	execID := uuid.New()
+
+	_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodGet, r.Method)
+		assert.Equal(t, fmt.Sprintf("/internal/workloads/%s/%s/logs", runID, execID), r.URL.Path)
+		assert.Equal(t, "100", r.URL.Query().Get("tailLines"))
+		json.NewEncoder(w).Encode(map[string]string{"logs": "line1\nline2"})
+	})
+
+	logs, err := client.GetWorkloadLogs(context.Background(), runID, execID, 100)
+	require.NoError(t, err)
+	assert.Equal(t, "line1\nline2", logs)
 }
 
 // TestGetReviewHistory_IncludesFeedbackFields is the regression test for the bug where

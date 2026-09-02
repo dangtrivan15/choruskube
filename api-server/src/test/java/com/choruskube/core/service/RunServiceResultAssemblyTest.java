@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
+import com.choruskube.core.config.WorkflowClientRegistry;
 import com.choruskube.core.dto.SignalRequest;
 import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.WorkflowRun;
@@ -70,6 +71,9 @@ class RunServiceResultAssemblyTest {
     @Mock
     private NodeExecutionClaimService nodeExecutionClaimService;
 
+    @Mock
+    private WorkflowClientRegistry workflowClients;
+
     private RunService service;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final UUID runId = UUID.randomUUID();
@@ -78,12 +82,12 @@ class RunServiceResultAssemblyTest {
 
     @BeforeEach
     void setUp() {
+        lenient().when(workflowClients.clientFor(any())).thenReturn(workflowClient);
         service = new RunService(
                 runRepo,
                 execRepo,
                 edgeRepo,
                 snapshotBuilder,
-                workflowClient,
                 graphTemplateRepo,
                 templateNodeRepo,
                 validationService,
@@ -93,8 +97,9 @@ class RunServiceResultAssemblyTest {
                 gitRepoRepo,
                 null,
                 new AuthorizationService(new AlwaysAllowAuthorizationStrategy(), false),
-                Optional.empty(),
-                Optional.empty(),
+                Optional.empty(), // quotaService
+                null, // placements
+                workflowClients,
                 null,
                 null,
                 null,

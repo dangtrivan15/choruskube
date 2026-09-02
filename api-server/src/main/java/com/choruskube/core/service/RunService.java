@@ -1,5 +1,6 @@
 package com.choruskube.core.service;
 
+import com.choruskube.core.config.WorkflowClientRegistry;
 import com.choruskube.core.credential.CredentialPreflightChecker;
 import com.choruskube.core.dto.*;
 import com.choruskube.core.event.MappableCreated;
@@ -19,7 +20,6 @@ import com.choruskube.core.util.NodeExecutionUtil;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowNotFoundException;
 import io.temporal.client.WorkflowOptions;
 import io.temporal.client.WorkflowStub;
@@ -52,7 +52,6 @@ public class RunService {
     private final NodeExecutionRepository execRepo;
     private final TemplateEdgeRepository edgeRepo;
     private final GraphSnapshotBuilder snapshotBuilder;
-    private final WorkflowClient workflowClient;
     private final GraphTemplateRepository graphTemplateRepo;
     private final TemplateNodeRepository templateNodeRepo;
     private final GraphValidationService validationService;
@@ -63,7 +62,8 @@ public class RunService {
     private final WorkloadService workloadService;
     private final AuthorizationService authService;
     private final Optional<QuotaChecker> quotaService;
-    private final Optional<RunPlacementResolver> placementResolver;
+    private final RunPlacementService placements;
+    private final WorkflowClientRegistry workflowClients;
     private final UsageSink usageSink;
     private final AuditSink auditSink;
     private final StoragePrefixResolver storagePrefixResolver;
@@ -97,7 +97,6 @@ public class RunService {
             NodeExecutionRepository execRepo,
             TemplateEdgeRepository edgeRepo,
             GraphSnapshotBuilder snapshotBuilder,
-            WorkflowClient workflowClient,
             GraphTemplateRepository graphTemplateRepo,
             TemplateNodeRepository templateNodeRepo,
             GraphValidationService validationService,
@@ -108,7 +107,8 @@ public class RunService {
             WorkloadService workloadService,
             AuthorizationService authService,
             Optional<QuotaChecker> quotaService,
-            Optional<RunPlacementResolver> placementResolver,
+            RunPlacementService placements,
+            WorkflowClientRegistry workflowClients,
             UsageSink usageSink,
             AuditSink auditSink,
             StoragePrefixResolver storagePrefixResolver,
@@ -132,7 +132,6 @@ public class RunService {
         this.execRepo = execRepo;
         this.edgeRepo = edgeRepo;
         this.snapshotBuilder = snapshotBuilder;
-        this.workflowClient = workflowClient;
         this.graphTemplateRepo = graphTemplateRepo;
         this.templateNodeRepo = templateNodeRepo;
         this.validationService = validationService;
@@ -143,7 +142,8 @@ public class RunService {
         this.workloadService = workloadService;
         this.authService = authService;
         this.quotaService = quotaService;
-        this.placementResolver = placementResolver;
+        this.placements = placements;
+        this.workflowClients = workflowClients;
         this.usageSink = usageSink;
         this.auditSink = auditSink;
         this.storagePrefixResolver = storagePrefixResolver;
@@ -223,8 +223,13 @@ public class RunService {
             }
         }
 
+        RunPlacement placement = placements.placeFor(run.getId());
+
         String workflowId = "choruskube-run-" + run.getId();
         run.setExternalRunId(workflowId);
+        // Saved with the workflow id, not derived later: the pair is the workflow's address, and
+        // deleting an organization cascades away the rows a later lookup would read.
+        run.setTemporalNamespace(placement.namespace());
         run = runRepo.save(run);
 
         WorkflowOptions options = WorkflowOptions.newBuilder()
@@ -233,8 +238,9 @@ public class RunService {
                 .build();
 
         final WorkflowRun committedRun = run;
-        final Map<String, Object> finalWorkflowParams = buildWorkflowParams(run);
-        final WorkflowStub finalWorkflow = workflowClient.newUntypedWorkflowStub("DAGExecutorWorkflow", options);
+        final Map<String, Object> finalWorkflowParams = buildWorkflowParams(run, placement);
+        final WorkflowStub finalWorkflow =
+                workflowClients.clientFor(placement.namespace()).newUntypedWorkflowStub("DAGExecutorWorkflow", options);
 
         Runnable sideEffects = () -> {
             finalWorkflow.start(finalWorkflowParams);
@@ -427,7 +433,8 @@ public class RunService {
         // leave two agents racing on the same working branch.
         cleanupWorkloadQuietly(nodeExecId);
 
-        WorkflowStub stub = workflowClient.newUntypedWorkflowStub(run.getExternalRunId());
+        WorkflowStub stub =
+                workflowClients.clientFor(run.getTemporalNamespace()).newUntypedWorkflowStub(run.getExternalRunId());
         Map<String, String> payload =
                 Map.of("templateNodeId", exec.getTemplateNodeId().toString());
         stub.signal("retry-node", payload);
@@ -448,7 +455,9 @@ public class RunService {
      */
     private boolean signalWorkflow(WorkflowRun run, String signalName) {
         try {
-            WorkflowStub stub = workflowClient.newUntypedWorkflowStub(run.getExternalRunId());
+            WorkflowStub stub = workflowClients
+                    .clientFor(run.getTemporalNamespace())
+                    .newUntypedWorkflowStub(run.getExternalRunId());
             stub.signal(signalName);
             return true;
         } catch (WorkflowNotFoundException e) {
@@ -554,7 +563,9 @@ public class RunService {
                         : materializeNote;
             }
 
-            WorkflowStub stub = workflowClient.newUntypedWorkflowStub(run.getExternalRunId());
+            WorkflowStub stub = workflowClients
+                    .clientFor(run.getTemporalNamespace())
+                    .newUntypedWorkflowStub(run.getExternalRunId());
             HumanDecisionPayload payload = new HumanDecisionPayload(
                     nodeExecId.toString(),
                     validatedDecision,
@@ -770,7 +781,7 @@ public class RunService {
         return runRepo.findById(id).orElseThrow(() -> new NotFoundException("Workflow run not found: " + id));
     }
 
-    Map<String, Object> buildWorkflowParams(WorkflowRun run) {
+    Map<String, Object> buildWorkflowParams(WorkflowRun run, RunPlacement placement) {
         Map<String, Object> params = new HashMap<>();
         params.put("RunID", run.getId().toString());
         params.put("GraphVersion", run.getGraphVersion());
@@ -783,13 +794,7 @@ public class RunService {
             params.put("RunInputArtifactRefs", inputRefs);
         }
 
-        // Absent resolver, or a blank answer, means the workflow's own queue — the Go side
-        // treats a missing key and an empty value identically, so do not emit a key that
-        // looks set but is not.
-        placementResolver
-                .map(r -> r.taskQueueFor(run.getId()))
-                .filter(q -> !q.isBlank())
-                .ifPresent(q -> params.put("WorkerTaskQueue", q));
+        params.put("WorkerTaskQueue", placement.taskQueue());
 
         return params;
     }

@@ -457,18 +457,23 @@ func (c *Client) CreateWorkload(ctx context.Context, params CreateWorkloadParams
 	return &result, nil
 }
 
-// CleanupWorkload removes all resources associated with a completed execution.
-func (c *Client) CleanupWorkload(ctx context.Context, executionID uuid.UUID) error {
-	_, err := c.doJSON(ctx, http.MethodDelete, fmt.Sprintf("/internal/workloads/%s", executionID), nil)
+// CleanupWorkload removes all resources associated with a completed execution. Run-scoped:
+// the api-server 404s unless executionID belongs to runID, so a caller cannot pair a run it
+// controls with a guessed executionID to delete another run's agent job.
+func (c *Client) CleanupWorkload(ctx context.Context, runID, executionID uuid.UUID) error {
+	path := fmt.Sprintf("/internal/workloads/%s/%s", runID, executionID)
+	_, err := c.doJSON(ctx, http.MethodDelete, path, nil)
 	if err != nil {
 		return fmt.Errorf("cleanup workload: %w", err)
 	}
 	return nil
 }
 
-// GetWorkloadLogs returns recent log output from the agent container.
-func (c *Client) GetWorkloadLogs(ctx context.Context, executionID uuid.UUID, tailLines int) (string, error) {
-	path := fmt.Sprintf("/internal/workloads/%s/logs?tailLines=%d", executionID, tailLines)
+// GetWorkloadLogs returns recent log output from the agent container. Run-scoped: same 404
+// check as CleanupWorkload, so pod logs cannot be read across runs by pairing an authorized
+// runID with a guessed executionID.
+func (c *Client) GetWorkloadLogs(ctx context.Context, runID, executionID uuid.UUID, tailLines int) (string, error) {
+	path := fmt.Sprintf("/internal/workloads/%s/%s/logs?tailLines=%d", runID, executionID, tailLines)
 	resp, err := c.doJSON(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return "", fmt.Errorf("get workload logs: %w", err)
@@ -592,4 +597,42 @@ func (c *Client) SetTraversedEdges(ctx context.Context, runID, nodeExecID uuid.U
 		return fmt.Errorf("set traversed edges: %w", err)
 	}
 	return nil
+}
+
+// --- Placement ---
+
+// RunNamespace is where a run's workflow lives. Served by an orchestrator-tier
+// endpoint: it is deliberately not on a node-executions path, which an agent's
+// own secret could reach.
+type RunNamespace struct {
+	Namespace string `json:"namespace"`
+}
+
+// GetRunNamespace returns the namespace a run's workflow was started in. The answer
+// is fixed for the life of the run, so callers may cache it indefinitely.
+func (c *Client) GetRunNamespace(ctx context.Context, runID uuid.UUID) (RunNamespace, error) {
+	resp, err := c.doJSON(ctx, http.MethodGet, fmt.Sprintf("/internal/runs/%s/placement", runID), nil)
+	if err != nil {
+		return RunNamespace{}, fmt.Errorf("get run namespace: %w", err)
+	}
+	var result RunNamespace
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return RunNamespace{}, fmt.Errorf("unmarshal run namespace: %w", err)
+	}
+	return result, nil
+}
+
+// ListNamespaces returns every Temporal namespace this deployment may place a run in.
+func (c *Client) ListNamespaces(ctx context.Context) ([]string, error) {
+	resp, err := c.doJSON(ctx, http.MethodGet, "/internal/placements", nil)
+	if err != nil {
+		return nil, fmt.Errorf("list namespaces: %w", err)
+	}
+	var result struct {
+		Namespaces []string `json:"namespaces"`
+	}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("unmarshal namespaces: %w", err)
+	}
+	return result.Namespaces, nil
 }

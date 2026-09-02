@@ -15,7 +15,7 @@ import (
 func (s *DAGExecutorTestSuite) TestDeniedPlacementFailsTheNodeAndSkipsDispatch() {
 	nodeA := uuid.New()
 	execA := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -70,7 +70,7 @@ func (s *DAGExecutorTestSuite) TestDeniedPlacementFailsTheNodeAndSkipsDispatch()
 func (s *DAGExecutorTestSuite) TestPlacementCheckTransportFailureFailsTheRun() {
 	nodeA := uuid.New()
 	execA := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [

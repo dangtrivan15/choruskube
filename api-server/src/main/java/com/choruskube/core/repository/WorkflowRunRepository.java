@@ -209,7 +209,8 @@ public interface WorkflowRunRepository extends JpaRepository<WorkflowRun, UUID>,
      * {@code @SQLRestriction("deleted_at IS NULL")}.
      */
     @Query(
-            value = "SELECT id AS id, external_run_id AS externalRunId FROM workflow_run "
+            value = "SELECT id AS id, external_run_id AS externalRunId, "
+                    + "temporal_namespace AS temporalNamespace FROM workflow_run "
                     + "WHERE deleted_at IS NOT NULL LIMIT :batchSize",
             nativeQuery = true)
     List<TombstonedWorkflowRunRef> findTombstonedBatch(@Param("batchSize") int batchSize);

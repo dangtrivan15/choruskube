@@ -2,6 +2,7 @@ package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doThrow;
@@ -10,6 +11,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.choruskube.core.BaseTest;
+import com.choruskube.core.config.WorkflowClientRegistry;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.WorkflowRunRepository;
@@ -34,6 +36,9 @@ class WorkflowRunSoftDeleteTest extends BaseTest {
 
     @MockitoBean
     private WorkflowClient workflowClient;
+
+    @MockitoBean
+    private WorkflowClientRegistry workflowClientRegistry;
 
     @Autowired
     private WorkflowRunService workflowRunService;
@@ -96,6 +101,7 @@ class WorkflowRunSoftDeleteTest extends BaseTest {
 
         // Mock the Temporal stub so afterCommit terminate calls don't blow up post-commit.
         WorkflowStub stub = mock(WorkflowStub.class);
+        when(workflowClientRegistry.clientFor(any())).thenReturn(workflowClient);
         when(workflowClient.newUntypedWorkflowStub(anyString())).thenReturn(stub);
 
         new TransactionTemplate(txManager)
@@ -117,6 +123,7 @@ class WorkflowRunSoftDeleteTest extends BaseTest {
         UUID runId = seedRun(externalId);
         tombstoneRun(runId);
         WorkflowStub stub = mock(WorkflowStub.class);
+        when(workflowClientRegistry.clientFor(any())).thenReturn(workflowClient);
         when(workflowClient.newUntypedWorkflowStub(externalId)).thenReturn(stub);
 
         int cleaned = workflowRunService.reconcileTombstonedBatch(100);
@@ -134,6 +141,7 @@ class WorkflowRunSoftDeleteTest extends BaseTest {
         UUID runId = seedRun(externalId);
         tombstoneRun(runId);
         WorkflowStub stub = mock(WorkflowStub.class);
+        when(workflowClientRegistry.clientFor(any())).thenReturn(workflowClient);
         when(workflowClient.newUntypedWorkflowStub(externalId)).thenReturn(stub);
         WorkflowExecution execution =
                 WorkflowExecution.newBuilder().setWorkflowId(externalId).build();
@@ -147,19 +155,66 @@ class WorkflowRunSoftDeleteTest extends BaseTest {
         assertThat(remaining).isZero();
     }
 
+    /**
+     * Exercises {@code findTombstonedBatch}'s native-SQL projection, not
+     * {@code cleanupAndHardDelete} directly — if that query stops selecting
+     * {@code temporal_namespace}, this run's namespace silently reverts to null and the
+     * terminate call lands on the default client instead of {@code tenantClient}, so this row
+     * is never actually hard-deleted (the exception is swallowed per-item, not surfaced).
+     */
+    @Test
+    void reconcileTombstonedBatch_terminatesInTheRunsRecordedNamespace() {
+        String externalId = "wf-" + UUID.randomUUID();
+        UUID runId = seedRun(externalId, "tenant-ns");
+        tombstoneRun(runId);
+        WorkflowStub stub = mock(WorkflowStub.class);
+        WorkflowClient tenantClient = mock(WorkflowClient.class);
+        when(tenantClient.newUntypedWorkflowStub(externalId)).thenReturn(stub);
+        when(workflowClientRegistry.clientFor("tenant-ns")).thenReturn(tenantClient);
+
+        int cleaned = workflowRunService.reconcileTombstonedBatch(100);
+        assertThat(cleaned).isGreaterThanOrEqualTo(1);
+
+        verify(tenantClient).newUntypedWorkflowStub(externalId);
+        verify(stub).terminate(anyString());
+
+        Long remaining = jdbc.queryForObject("SELECT COUNT(*) FROM workflow_run WHERE id = ?", Long.class, runId);
+        assertThat(remaining).isZero();
+    }
+
     @Test
     void cleanupAndHardDelete_isIdempotent() {
         String externalId = "wf-" + UUID.randomUUID();
         UUID runId = seedRun(externalId);
         tombstoneRun(runId);
         WorkflowStub stub = mock(WorkflowStub.class);
+        when(workflowClientRegistry.clientFor(any())).thenReturn(workflowClient);
         when(workflowClient.newUntypedWorkflowStub(externalId)).thenReturn(stub);
 
-        workflowRunService.cleanupAndHardDelete(runId, externalId);
-        workflowRunService.cleanupAndHardDelete(runId, externalId); // second call: row already gone
+        workflowRunService.cleanupAndHardDelete(runId, externalId, null);
+        workflowRunService.cleanupAndHardDelete(runId, externalId, null); // second call: row already gone
 
         Long remaining = jdbc.queryForObject("SELECT COUNT(*) FROM workflow_run WHERE id = ?", Long.class, runId);
         assertThat(remaining).isZero();
+    }
+
+    /**
+     * The namespace is snapshotted from the live row alongside external_run_id, before the
+     * organization cascade can remove anything a later lookup would read. Re-resolving here
+     * would leave the reconciler retrying a run it can never address.
+     */
+    @Test
+    void cleanupAndHardDelete_terminatesInTheRunsRecordedNamespace() {
+        WorkflowStub stub = mock(WorkflowStub.class);
+        WorkflowClient tenantClient = mock(WorkflowClient.class);
+        when(tenantClient.newUntypedWorkflowStub(anyString())).thenReturn(stub);
+        when(workflowClientRegistry.clientFor("tenant-ns")).thenReturn(tenantClient);
+
+        UUID runId = UUID.randomUUID();
+        workflowRunService.cleanupAndHardDelete(runId, "choruskube-run-" + runId, "tenant-ns");
+
+        verify(tenantClient).newUntypedWorkflowStub("choruskube-run-" + runId);
+        verify(stub).terminate(anyString());
     }
 
     // -----------------------------------------------------------------------
@@ -167,6 +222,10 @@ class WorkflowRunSoftDeleteTest extends BaseTest {
     // -----------------------------------------------------------------------
 
     private UUID seedRun(String externalRunId) {
+        return seedRun(externalRunId, null);
+    }
+
+    private UUID seedRun(String externalRunId, String temporalNamespace) {
         // Need a graph_template row to satisfy workflow_run.graph_template_id FK.
         UUID templateId = (UUID) jdbc.queryForObject("""
                 INSERT INTO graph_template (graph_id, version, name, input_schema, system)
@@ -179,6 +238,7 @@ class WorkflowRunSoftDeleteTest extends BaseTest {
         run.setGraphTemplateId(templateId);
         run.setStatus(WorkflowRunStatus.pending);
         run.setExternalRunId(externalRunId);
+        run.setTemporalNamespace(temporalNamespace);
         return runRepo.save(run).getId();
     }
 

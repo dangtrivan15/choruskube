@@ -21,6 +21,9 @@ type InitRunLogParams struct {
 // InitRunLog creates the initial run log file in object storage with a header.
 // Called once at workflow start, before any node executes.
 func (a *Activities) InitRunLog(ctx context.Context, params InitRunLogParams) error {
+	if err := guardRun(ctx, params.RunID); err != nil {
+		return err
+	}
 	baseKey := fmt.Sprintf("runs/%s/run_log.md", params.RunID)
 	key := objectstore.PrefixPath(params.OrgSlug, baseKey)
 	header := fmt.Sprintf("# Run Log — %s\n", params.RunID)
@@ -47,6 +50,9 @@ type AppendRunLogParams struct {
 // completions sequentially — no concurrent appends occur.
 // Temporal retries produce the same append (deterministic from params).
 func (a *Activities) AppendRunLog(ctx context.Context, params AppendRunLogParams) error {
+	if err := guardRun(ctx, params.RunID); err != nil {
+		return err
+	}
 	baseKey := fmt.Sprintf("runs/%s/run_log.md", params.RunID)
 	key := objectstore.PrefixPath(params.OrgSlug, baseKey)
 

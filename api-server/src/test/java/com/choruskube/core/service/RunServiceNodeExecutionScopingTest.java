@@ -12,7 +12,6 @@ import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.observability.AuditSink;
 import com.choruskube.core.repository.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.temporal.client.WorkflowClient;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -39,9 +38,6 @@ class RunServiceNodeExecutionScopingTest {
 
     @Mock
     private GraphSnapshotBuilder snapshotBuilder;
-
-    @Mock
-    private WorkflowClient workflowClient;
 
     @Mock
     private GraphTemplateRepository graphTemplateRepo;
@@ -82,7 +78,6 @@ class RunServiceNodeExecutionScopingTest {
                 execRepo,
                 edgeRepo,
                 snapshotBuilder,
-                workflowClient,
                 graphTemplateRepo,
                 templateNodeRepo,
                 validationService,
@@ -93,7 +88,8 @@ class RunServiceNodeExecutionScopingTest {
                 workloadService,
                 new AuthorizationService(new AlwaysAllowAuthorizationStrategy(), false),
                 Optional.empty(), // quotaService
-                Optional.empty(), // placementResolver
+                null, // placements
+                null, // workflowClients
                 null, // usageSink
                 auditService, // auditSink
                 null, // storagePrefixResolver

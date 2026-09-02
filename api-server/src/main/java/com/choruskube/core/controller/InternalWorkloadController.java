@@ -33,10 +33,30 @@ public class InternalWorkloadController {
         workloadService.cleanupWorkload(executionId);
     }
 
+    // Run-scoped: rejects executionId unless it belongs to runId, closing the path where a
+    // caller pairs a run it controls with a guessed executionId to delete another run's job.
+    // The unscoped DELETE above stays; other callers of it are unchanged here.
+    @DeleteMapping("/{runId}/{executionId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void cleanupWorkload(@PathVariable UUID runId, @PathVariable UUID executionId) {
+        workloadService.cleanupWorkload(runId, executionId);
+    }
+
     @GetMapping("/{executionId}/logs")
     public WorkloadLogsResponse getWorkloadLogs(
             @PathVariable UUID executionId, @RequestParam(defaultValue = "50") int tailLines) {
         return workloadService.getWorkloadLogs(executionId, tailLines);
+    }
+
+    // Run-scoped: same check as the DELETE above, applied to log reads — otherwise a caller
+    // could pair a run it controls with a guessed executionId to read another run's pod logs.
+    // The unscoped GET above stays for the same reason.
+    @GetMapping("/{runId}/{executionId}/logs")
+    public WorkloadLogsResponse getWorkloadLogs(
+            @PathVariable UUID runId,
+            @PathVariable UUID executionId,
+            @RequestParam(defaultValue = "50") int tailLines) {
+        return workloadService.getWorkloadLogs(runId, executionId, tailLines);
     }
 
     @PostMapping("/{executionId}/terminate")

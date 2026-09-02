@@ -11,7 +11,6 @@ import com.choruskube.core.model.enums.NodeExecutionStatus;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.temporal.client.WorkflowClient;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -47,9 +46,6 @@ class RunServiceEscalationContextTest {
 
     @Mock
     private GraphSnapshotBuilder snapshotBuilder;
-
-    @Mock
-    private WorkflowClient workflowClient;
 
     @Mock
     private GraphTemplateRepository graphTemplateRepo;
@@ -91,7 +87,6 @@ class RunServiceEscalationContextTest {
                 execRepo,
                 edgeRepo,
                 snapshotBuilder,
-                workflowClient,
                 graphTemplateRepo,
                 templateNodeRepo,
                 validationService,
@@ -101,8 +96,9 @@ class RunServiceEscalationContextTest {
                 gitRepoRepo,
                 null,
                 new AuthorizationService(new AlwaysAllowAuthorizationStrategy(), false),
-                Optional.empty(),
-                Optional.empty(),
+                Optional.empty(), // quotaService
+                null, // placements
+                null, // workflowClients
                 null,
                 null,
                 null,

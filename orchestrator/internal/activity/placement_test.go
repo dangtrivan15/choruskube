@@ -1,7 +1,6 @@
 package activity
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -23,8 +22,9 @@ func TestCheckNodePlacementReturnsDecision(t *testing.T) {
 	client := apiclient.NewClient(srv.URL)
 	activities := NewActivities(client, prompt.NewResolver(), testConfig(), nil)
 
-	result, err := activities.CheckNodePlacement(context.Background(), CheckNodePlacementParams{
-		RunID:           uuid.New(),
+	runID := uuid.New()
+	result, err := activities.CheckNodePlacement(withWorkflowRunID(t, runID), CheckNodePlacementParams{
+		RunID:           runID,
 		NodeExecutionID: uuid.New(),
 	})
 	require.NoError(t, err)
@@ -45,8 +45,9 @@ func TestCheckNodePlacementFailsOpenIsNotTheActivitysJob(t *testing.T) {
 	client := apiclient.NewClient(srv.URL)
 	activities := NewActivities(client, prompt.NewResolver(), testConfig(), nil)
 
-	result, err := activities.CheckNodePlacement(context.Background(), CheckNodePlacementParams{
-		RunID:           uuid.New(),
+	runID := uuid.New()
+	result, err := activities.CheckNodePlacement(withWorkflowRunID(t, runID), CheckNodePlacementParams{
+		RunID:           runID,
 		NodeExecutionID: uuid.New(),
 	})
 	require.Error(t, err)

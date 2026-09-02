@@ -26,14 +26,14 @@ class RunServiceInputValidationTest {
                 null,
                 null,
                 null,
-                null,
                 new ObjectMapper(),
                 null,
                 null,
                 null,
                 new AuthorizationService(new AlwaysAllowAuthorizationStrategy(), false),
-                Optional.empty(),
-                Optional.empty(),
+                Optional.empty(), // quotaService
+                null, // placements
+                null, // workflowClients
                 null,
                 null,
                 null,

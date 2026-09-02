@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 import com.choruskube.core.config.SingleTenant;
+import com.choruskube.core.config.WorkflowClientRegistry;
 import com.choruskube.core.dto.RunResponse;
 import com.choruskube.core.dto.RunTaskSummary;
 import com.choruskube.core.dto.SignalRequest;
@@ -101,6 +102,9 @@ class RunServiceTest {
     @Mock
     private NodeExecutionClaimService nodeExecutionClaimService;
 
+    @Mock
+    private WorkflowClientRegistry workflowClients;
+
     private RunService service;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final UUID runId = UUID.randomUUID();
@@ -112,13 +116,13 @@ class RunServiceTest {
         // storagePrefixResolver default: return system slug (matches single-tenant behaviour).
         // lenient() prevents UnnecessaryStubbingException for tests that don't invoke buildWorkflowParams.
         lenient().when(storagePrefixResolver.storagePrefixForRun(any())).thenReturn(SingleTenant.SLUG);
+        lenient().when(workflowClients.clientFor(any())).thenReturn(workflowClient);
 
         service = new RunService(
                 runRepo,
                 execRepo,
                 edgeRepo,
                 snapshotBuilder,
-                workflowClient,
                 graphTemplateRepo,
                 templateNodeRepo,
                 validationService,
@@ -128,8 +132,9 @@ class RunServiceTest {
                 gitRepoRepo,
                 null,
                 new AuthorizationService(new AlwaysAllowAuthorizationStrategy(), false),
-                Optional.empty(),
-                Optional.empty(),
+                Optional.empty(), // quotaService
+                null, // placements
+                workflowClients,
                 null,
                 null,
                 storagePrefixResolver,
@@ -291,7 +296,7 @@ class RunServiceTest {
         run.setGraphVersion(1);
         run.setInputArtifactRefs("{\"file.pdf\":\"org/staging/uuid/file.pdf\"}");
 
-        Map<String, Object> params = service.buildWorkflowParams(run);
+        Map<String, Object> params = service.buildWorkflowParams(run, new RunPlacement("choruskube", "choruskube"));
 
         assertThat(params).containsKey("RunInputArtifactRefs");
         assertThat(params.get("RunInputArtifactRefs")).isEqualTo("{\"file.pdf\":\"org/staging/uuid/file.pdf\"}");
@@ -304,7 +309,7 @@ class RunServiceTest {
         run.setGraphVersion(1);
         run.setInputArtifactRefs("{}");
 
-        Map<String, Object> params = service.buildWorkflowParams(run);
+        Map<String, Object> params = service.buildWorkflowParams(run, new RunPlacement("choruskube", "choruskube"));
 
         assertThat(params).doesNotContainKey("RunInputArtifactRefs");
     }
@@ -316,7 +321,7 @@ class RunServiceTest {
         run.setGraphVersion(1);
         run.setInputArtifactRefs(null);
 
-        Map<String, Object> params = service.buildWorkflowParams(run);
+        Map<String, Object> params = service.buildWorkflowParams(run, new RunPlacement("choruskube", "choruskube"));
 
         assertThat(params).doesNotContainKey("RunInputArtifactRefs");
     }
@@ -331,7 +336,7 @@ class RunServiceTest {
         run.setGraphVersion(1);
         run.setInputArtifactRefs("{}");
 
-        Map<String, Object> params = service.buildWorkflowParams(run);
+        Map<String, Object> params = service.buildWorkflowParams(run, new RunPlacement("choruskube", "choruskube"));
 
         assertThat(params).containsEntry("OrgSlug", "acme");
         assertThat(params).doesNotContainKey("RunInputArtifactRefs");

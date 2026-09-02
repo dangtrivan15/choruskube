@@ -10,6 +10,7 @@ import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.NodeExecutionStatus;
 import com.choruskube.core.repository.NodeExecutionRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
+import com.choruskube.core.util.NodeExecutionUtil;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
@@ -101,12 +102,36 @@ public class WorkloadService {
         log.info("Cleaned up workload for execution {}", executionId);
     }
 
+    /**
+     * Run-scoped cleanup: verifies executionId belongs to runId before deleting anything, so a
+     * caller that only holds runId cannot reach another run's execution by guessing its id.
+     */
+    @Transactional(readOnly = true)
+    public void cleanupWorkload(UUID runId, UUID executionId) {
+        NodeExecution exec = execRepo.findById(executionId)
+                .orElseThrow(() -> new NotFoundException("Node execution not found: " + executionId));
+        NodeExecutionUtil.requireInRun(exec, runId);
+        cleanupWorkload(executionId);
+    }
+
     public WorkloadLogsResponse getWorkloadLogs(UUID executionId, int tailLines) {
         if (tailLines <= 0) {
             tailLines = 50;
         }
         String logs = executor.getLogs(executionId, tailLines);
         return new WorkloadLogsResponse(logs);
+    }
+
+    /**
+     * Run-scoped log read: verifies executionId belongs to runId first, so pod logs cannot be
+     * read across runs by pairing an authorized runId with a guessed executionId.
+     */
+    @Transactional(readOnly = true)
+    public WorkloadLogsResponse getWorkloadLogs(UUID runId, UUID executionId, int tailLines) {
+        NodeExecution exec = execRepo.findById(executionId)
+                .orElseThrow(() -> new NotFoundException("Node execution not found: " + executionId));
+        NodeExecutionUtil.requireInRun(exec, runId);
+        return getWorkloadLogs(executionId, tailLines);
     }
 
     public void terminateWorkload(UUID executionId) {

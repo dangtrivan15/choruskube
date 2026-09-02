@@ -32,4 +32,10 @@ public class TemporalConfig {
                         .setNamespace(temporalNamespace)
                         .build());
     }
+
+    @Bean
+    public WorkflowClientRegistry workflowClientRegistry(
+            WorkflowServiceStubs serviceStubs, WorkflowClient workflowClient) {
+        return new WorkflowClientRegistry(serviceStubs, workflowClient, temporalNamespace);
+    }
 }

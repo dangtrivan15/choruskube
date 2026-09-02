@@ -18,7 +18,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateTimeout_RetryViaApproval() {
 	nodeA := uuid.New()
 	execA := uuid.New()  // first execution (will time out)
 	execA2 := uuid.New() // retry execution
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -79,7 +79,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateTimeout_RetryViaApproval() {
 func (s *DAGExecutorTestSuite) TestCancelStep5ToleratesDeleteAgentJob404() {
 	nodeA := uuid.New()
 	execA := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -122,10 +122,12 @@ func (s *DAGExecutorTestSuite) TestCancelStep5ToleratesDeleteAgentJob404() {
 
 	// DeleteAgentJob returns an error (simulates api-server already deleted it — 404).
 	// .Once() (not .Maybe()) enforces the call is actually made by Step 5's cancel
-	// cleanup path — the test fails if DeleteAgentJob is never dispatched.
+	// cleanup path — the test fails if DeleteAgentJob is never dispatched. The RunID
+	// match pins the params Step 5 actually sends, not just that some call happened.
 	// The workflow must still complete successfully despite the 404 error.
-	s.env.OnActivity("DeleteAgentJob", mock.Anything, mock.Anything).
-		Return(fmt.Errorf("resource not found: 404")).Once()
+	s.env.OnActivity("DeleteAgentJob", mock.Anything, mock.MatchedBy(func(p activity.DeleteAgentJobParams) bool {
+		return p.RunID == runID && p.NodeExecutionID == execA
+	})).Return(fmt.Errorf("resource not found: 404")).Once()
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
 		RunID: runID, GraphVersion: 1,
@@ -144,7 +146,7 @@ func (s *DAGExecutorTestSuite) TestScriptNodeRetry_RefreshesSnapshot() {
 	nodeA := uuid.New()
 	execA := uuid.New()  // first execution (will fail)
 	execA2 := uuid.New() // retry execution
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	oldCommand := "npm run test"
 	newCommand := "npm install && npm run test"
@@ -234,7 +236,7 @@ func (s *DAGExecutorTestSuite) TestModelEffortResolution_RetryNodeSignal_Preserv
 	execA1 := uuid.New() // first execution (will fail)
 	execA2 := uuid.New() // retry execution
 
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -304,7 +306,7 @@ func (s *DAGExecutorTestSuite) TestModelEffortResolution_PauseHeartbeatTimeoutRe
 	nodeA := uuid.New()
 	execA := uuid.New()
 	execA2 := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [

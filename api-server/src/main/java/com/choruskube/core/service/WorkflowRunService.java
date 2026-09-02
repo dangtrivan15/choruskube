@@ -1,8 +1,8 @@
 package com.choruskube.core.service;
 
+import com.choruskube.core.config.WorkflowClientRegistry;
 import com.choruskube.core.repository.TombstonedWorkflowRunRef;
 import com.choruskube.core.repository.WorkflowRunRepository;
-import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowNotFoundException;
 import io.temporal.client.WorkflowStub;
 import java.time.Instant;
@@ -28,10 +28,10 @@ import org.springframework.transaction.support.TransactionTemplate;
  *
  * <p>External side effects handled here:
  * <ul>
- *   <li><b>Temporal workflow termination</b> — {@link #cleanupAndHardDelete(UUID, String)}
- *       calls {@code workflowClient.newUntypedWorkflowStub(externalRunId).terminate(...)}
- *       before the DB hard-delete. Idempotent: {@link WorkflowNotFoundException} is
- *       swallowed (matches {@code RunService}'s existing signal-call pattern).</li>
+ *   <li><b>Temporal workflow termination</b> — {@link #cleanupAndHardDelete(UUID, String, String)}
+ *       calls {@code workflowClients.clientFor(temporalNamespace).newUntypedWorkflowStub(externalRunId)
+ *       .terminate(...)} before the DB hard-delete. Idempotent: {@link WorkflowNotFoundException}
+ *       is swallowed (matches {@code RunService}'s existing signal-call pattern).</li>
  *   <li><b>Object storage artifact cleanup</b> — <b>deliberately NOT handled here</b>. A
  *       follow-up object storage reconciler is needed; orphan risk is unbounded bucket
  *       bloat, an acknowledged debt.</li>
@@ -48,17 +48,17 @@ public class WorkflowRunService {
     private static final String TERMINATE_REASON = "org-delete cascade";
 
     private final WorkflowRunRepository repo;
-    private final WorkflowClient workflowClient;
+    private final WorkflowClientRegistry workflowClients;
     private final TransactionTemplate requiresNewTx;
     private final Executor workflowTerminationExecutor;
 
     public WorkflowRunService(
             WorkflowRunRepository repo,
-            WorkflowClient workflowClient,
+            WorkflowClientRegistry workflowClients,
             PlatformTransactionManager txManager,
             @Qualifier("workflowTerminationExecutor") Executor workflowTerminationExecutor) {
         this.repo = repo;
-        this.workflowClient = workflowClient;
+        this.workflowClients = workflowClients;
         this.requiresNewTx = new TransactionTemplate(txManager);
         this.requiresNewTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         this.workflowTerminationExecutor = workflowTerminationExecutor;
@@ -71,7 +71,7 @@ public class WorkflowRunService {
         }
         // findAllById honors @SQLRestriction → we only snapshot LIVE rows.
         List<SnapshotRef> toCleanup = repo.findAllById(ids).stream()
-                .map(r -> new SnapshotRef(r.getId(), r.getExternalRunId()))
+                .map(r -> new SnapshotRef(r.getId(), r.getExternalRunId(), r.getTemporalNamespace()))
                 .toList();
 
         int updated = repo.softDeleteAllByIds(ids, Instant.now());
@@ -88,7 +88,8 @@ public class WorkflowRunService {
             public void afterCommit() {
                 for (SnapshotRef ref : toCleanup) {
                     CompletableFuture.runAsync(
-                            () -> safeCleanup(ref.id(), ref.externalRunId()), workflowTerminationExecutor);
+                            () -> safeCleanup(ref.id(), ref.externalRunId(), ref.temporalNamespace()),
+                            workflowTerminationExecutor);
                 }
             }
         });
@@ -103,8 +104,8 @@ public class WorkflowRunService {
      * Temporal exception propagates to the caller; the reconciler's per-item try/catch
      * swallows there. The afterCommit hook's {@link #safeCleanup} wrapper does the same.
      */
-    void cleanupAndHardDelete(UUID runId, String externalRunId) {
-        tryTerminateWorkflow(runId, externalRunId);
+    void cleanupAndHardDelete(UUID runId, String externalRunId, String temporalNamespace) {
+        tryTerminateWorkflow(runId, externalRunId, temporalNamespace);
         // REQUIRES_NEW — isolates the DELETE from any outer TX (notably the test harness).
         // In production both call sites (afterCommit, reconciler) run without an outer TX.
         Integer rowsDeleted = requiresNewTx.execute(status -> repo.hardDeleteTombstoneById(runId));
@@ -113,14 +114,14 @@ public class WorkflowRunService {
         }
     }
 
-    private void tryTerminateWorkflow(UUID runId, String externalRunId) {
+    private void tryTerminateWorkflow(UUID runId, String externalRunId, String temporalNamespace) {
         if (externalRunId == null || externalRunId.isBlank()) {
             // Run was tombstoned before a Temporal workflow was started (e.g., run-creation
             // failure path). Nothing to terminate.
             return;
         }
         try {
-            WorkflowStub stub = workflowClient.newUntypedWorkflowStub(externalRunId);
+            WorkflowStub stub = workflowClients.clientFor(temporalNamespace).newUntypedWorkflowStub(externalRunId);
             stub.terminate(TERMINATE_REASON);
         } catch (WorkflowNotFoundException e) {
             // Workflow already completed or never reached Temporal. Idempotent — swallow.
@@ -140,7 +141,7 @@ public class WorkflowRunService {
         int cleaned = 0;
         for (TombstonedWorkflowRunRef ref : batch) {
             try {
-                cleanupAndHardDelete(ref.getId(), ref.getExternalRunId());
+                cleanupAndHardDelete(ref.getId(), ref.getExternalRunId(), ref.getTemporalNamespace());
                 cleaned++;
             } catch (Exception e) {
                 log.warn(
@@ -156,14 +157,14 @@ public class WorkflowRunService {
      * afterCommit wrapper that swallows all exceptions so a single run's cleanup failure
      * never takes down the whole cascade. The reconciler retries.
      */
-    private void safeCleanup(UUID runId, String externalRunId) {
+    private void safeCleanup(UUID runId, String externalRunId, String temporalNamespace) {
         try {
-            cleanupAndHardDelete(runId, externalRunId);
+            cleanupAndHardDelete(runId, externalRunId, temporalNamespace);
         } catch (Exception e) {
             log.warn(
                     "afterCommit cleanup for workflow_run {} failed; reconciler will retry: {}", runId, e.getMessage());
         }
     }
 
-    private record SnapshotRef(UUID id, String externalRunId) {}
+    private record SnapshotRef(UUID id, String externalRunId, String temporalNamespace) {}
 }

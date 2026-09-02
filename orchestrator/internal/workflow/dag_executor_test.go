@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
+	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/testsuite"
 
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/activity"
@@ -51,6 +52,19 @@ func TestDAGExecutorSuite(t *testing.T) {
 	suite.Run(t, new(DAGExecutorTestSuite))
 }
 
+// Must match the unexported prefix guardRun parses in internal/activity/activities.go, or
+// every guarded activity these tests run for real is rejected like the SDK's default test id.
+const dagTestWorkflowIDPrefix = "choruskube-run-"
+
+// dagRunID points the environment's workflow id at the same run before returning it, so
+// activities these tests run for real (not stubbed via OnActivity) pass guardRun instead of
+// failing on the SDK's literal default test workflow id.
+func (s *DAGExecutorTestSuite) dagRunID() uuid.UUID {
+	runID := uuid.New()
+	s.env.SetStartWorkflowOptions(client.StartWorkflowOptions{ID: dagTestWorkflowIDPrefix + runID.String()})
+	return runID
+}
+
 // TestLinearTwoNodeGraph verifies: A → B (unconditional), both AI nodes.
 // In the test suite, ExecuteAINodeFromSnapshot returns nil (synchronous completion).
 // The result is empty string, but unconditional edges fire regardless of result.
@@ -59,7 +73,7 @@ func (s *DAGExecutorTestSuite) TestLinearTwoNodeGraph() {
 	nodeB := uuid.New()
 	execA := uuid.New()
 	execB := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -128,7 +142,7 @@ func (s *DAGExecutorTestSuite) TestLinearTwoNodeGraph_TaskContextPropagatesToAll
 	nodeB := uuid.New()
 	execA := uuid.New()
 	execB := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 	taskID := uuid.New()
 	storyID := uuid.New()
 	epicID := uuid.New()
@@ -220,7 +234,7 @@ func (s *DAGExecutorTestSuite) TestFanOutGraph() {
 	execA := uuid.New()
 	execB := uuid.New()
 	execC := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -290,7 +304,7 @@ func (s *DAGExecutorTestSuite) TestFanOutGraph() {
 func (s *DAGExecutorTestSuite) TestHumanGateWithSignal() {
 	nodeA := uuid.New()
 	execA := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -352,7 +366,7 @@ func (s *DAGExecutorTestSuite) TestGraphWithLoopBackEdge() {
 	execB := uuid.New()
 	execC := uuid.New()
 	execD := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -446,7 +460,7 @@ func (s *DAGExecutorTestSuite) TestGraphWithLoopBackEdge() {
 func (s *DAGExecutorTestSuite) TestHumanGateSignal_AttachmentRefs() {
 	nodeA := uuid.New()
 	execA := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -507,7 +521,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateSignal_AttachmentRefs() {
 func (s *DAGExecutorTestSuite) TestHumanGateSignal_EmptyAttachmentRefs() {
 	nodeA := uuid.New()
 	execA := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -572,7 +586,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateTerminalDecisionCompletesRun() {
 	nodeA := uuid.New()
 	nodeB := uuid.New()
 	execA := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -634,7 +648,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateTerminalDecisionCompletesRun() {
 func (s *DAGExecutorTestSuite) TestRunInputArtifactRefs_PassedToAINode() {
 	nodeA := uuid.New()
 	execA := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -690,7 +704,7 @@ func (s *DAGExecutorTestSuite) TestRunInputArtifactRefs_PassedToAINode() {
 func (s *DAGExecutorTestSuite) TestRunInputArtifactRefs_EmptyOrAbsent_NoInputArtifacts() {
 	nodeA := uuid.New()
 	execA := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -750,7 +764,7 @@ func (s *DAGExecutorTestSuite) TestNeedsPR_ExtractedFromConfigOverrides() {
 	nodeB := uuid.New()
 	execA := uuid.New()
 	execB := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -809,7 +823,7 @@ func (s *DAGExecutorTestSuite) TestNeedsPR_ExtractedFromConfigOverrides() {
 func (s *DAGExecutorTestSuite) TestTimeoutCallsDeleteAgentJob() {
 	nodeA := uuid.New()
 	execA := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -823,7 +837,9 @@ func (s *DAGExecutorTestSuite) TestTimeoutCallsDeleteAgentJob() {
 	s.env.OnActivity("WriteExecutionLog", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.env.OnActivity("InitRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.env.OnActivity("AppendRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
-	s.env.OnActivity("FetchPodLogs", mock.Anything, mock.Anything).Return("", nil).Maybe()
+	s.env.OnActivity("FetchPodLogs", mock.Anything, mock.MatchedBy(func(p activity.FetchPodLogsParams) bool {
+		return p.RunID == runID
+	})).Return("", nil).Once()
 
 	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
 		return p.TemplateNodeID == nodeA
@@ -845,7 +861,7 @@ func (s *DAGExecutorTestSuite) TestTimeoutCallsDeleteAgentJob() {
 
 	// DeleteAgentJob must be called after node timeout
 	s.env.OnActivity("DeleteAgentJob", mock.Anything, mock.MatchedBy(func(p activity.DeleteAgentJobParams) bool {
-		return p.NodeExecutionID == execA
+		return p.RunID == runID && p.NodeExecutionID == execA
 	})).Return(nil).Once()
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
@@ -867,7 +883,7 @@ func (s *DAGExecutorTestSuite) TestTimeoutCallsDeleteAgentJob() {
 func (s *DAGExecutorTestSuite) TestPauseDeletesRunningJobs() {
 	nodeA := uuid.New()
 	execA := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -921,7 +937,7 @@ func (s *DAGExecutorTestSuite) TestPauseDeletesRunningJobs() {
 	// (dag_executor.go lines 182–196). .Once() (not .Maybe()) enforces this so
 	// the test fails if the call is never made.
 	s.env.OnActivity("DeleteAgentJob", mock.Anything, mock.MatchedBy(func(p activity.DeleteAgentJobParams) bool {
-		return p.NodeExecutionID == execA
+		return p.RunID == runID && p.NodeExecutionID == execA
 	})).Return(nil).Once()
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
@@ -947,7 +963,7 @@ func (s *DAGExecutorTestSuite) TestPauseStampsNodeAsPaused() {
 	nodeA := uuid.New()
 	execA := uuid.New()
 	execA2 := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -1006,7 +1022,7 @@ func (s *DAGExecutorTestSuite) TestPauseStampsNodeAsPaused() {
 
 	// DeleteAgentJob must be called for execA from the pause cleanup loop
 	s.env.OnActivity("DeleteAgentJob", mock.Anything, mock.MatchedBy(func(p activity.DeleteAgentJobParams) bool {
-		return p.NodeExecutionID == execA
+		return p.RunID == runID && p.NodeExecutionID == execA
 	})).Return(nil).Once()
 
 	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
@@ -1042,7 +1058,7 @@ func (s *DAGExecutorTestSuite) TestTwoNodeGraphOnlyBPaused() {
 	execA := uuid.New()
 	execB1 := uuid.New()
 	execB2 := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -1125,7 +1141,7 @@ func (s *DAGExecutorTestSuite) TestTwoNodeGraphOnlyBPaused() {
 	})).Return(nil).Once()
 
 	s.env.OnActivity("DeleteAgentJob", mock.Anything, mock.MatchedBy(func(p activity.DeleteAgentJobParams) bool {
-		return p.NodeExecutionID == execB1
+		return p.RunID == runID && p.NodeExecutionID == execB1
 	})).Return(nil).Once()
 
 	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
@@ -1159,7 +1175,7 @@ func (s *DAGExecutorTestSuite) TestResumeBeforeHeartbeatTimeout() {
 	nodeA := uuid.New()
 	execA := uuid.New()
 	execA2 := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -1245,7 +1261,7 @@ func (s *DAGExecutorTestSuite) TestRateLimitedNodeSleepsThenRequeues() {
 	nodeA := uuid.New()
 	execA := uuid.New()
 	execA2 := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	// model_first_iteration/model_subsequent_iteration let this test prove reviewPass
 	// carries forward across the park (see nodeTracker.reviewPass): a rate-limited
@@ -1344,7 +1360,7 @@ func (s *DAGExecutorTestSuite) TestRateLimitedNodeSleepsThenRequeues() {
 func (s *DAGExecutorTestSuite) TestRateLimitedNodeInvalidateFailureMarksNodeFailed() {
 	nodeA := uuid.New()
 	execA := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -1433,7 +1449,7 @@ func (s *DAGExecutorTestSuite) TestRateLimitedNodeParkDoesNotBlockConcurrentSibl
 	execB := uuid.New()
 	execB2 := uuid.New()
 	execC := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -1579,7 +1595,7 @@ func (s *DAGExecutorTestSuite) TestRateLimitedNodeCarriesForceReadyThroughRequeu
 	execFinalApproval2 := uuid.New()
 	execSupervisor := uuid.New()
 
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -1717,7 +1733,7 @@ func (s *DAGExecutorTestSuite) TestRateLimitedNodeCarriesForceReadyThroughRequeu
 func (s *DAGExecutorTestSuite) TestRateLimitedNodeParkedDuringPauseStillFailsExplicitly() {
 	nodeA := uuid.New()
 	execA := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -1815,7 +1831,7 @@ func (s *DAGExecutorTestSuite) TestGraphWithLoopBackEdge_Rejected() {
 	execC1 := uuid.New()
 	execC2 := uuid.New()
 	execD := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -1938,7 +1954,7 @@ func (s *DAGExecutorTestSuite) TestSelfLoopingAIReviewerIteratesThenAdvances() {
 	execReview1 := uuid.New()
 	execReview2 := uuid.New()
 	execGate := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -2026,7 +2042,7 @@ func (s *DAGExecutorTestSuite) TestModelEffortResolution_SelfLoopingReviewNode_F
 	execReview1 := uuid.New()
 	execReview2 := uuid.New()
 	execGate := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -2113,7 +2129,7 @@ func (s *DAGExecutorTestSuite) TestModelEffortResolution_SelfLoopingReviewNode_F
 func (s *DAGExecutorTestSuite) TestModelEffortResolution_NodeWithoutIterationAwareKeys_FallsBackToStatic() {
 	nodeA := uuid.New()
 	execA := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -2160,7 +2176,7 @@ func (s *DAGExecutorTestSuite) TestModelEffortResolution_PartialIterationKeys_Fa
 	review := uuid.New()
 	execReview1 := uuid.New()
 	execReview2 := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -2292,7 +2308,7 @@ func (s *DAGExecutorTestSuite) TestSupervisorRoutesPastAnUnrunPredecessor() {
 	execFinalApproval := uuid.New()
 	execSupervisor := uuid.New()
 
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -2447,7 +2463,7 @@ func (s *DAGExecutorTestSuite) TestForceReadyCarriesForwardThroughLateHumanDecis
 	execFinalApproval2 := uuid.New()
 	execSupervisor := uuid.New()
 
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -2593,7 +2609,7 @@ func (s *DAGExecutorTestSuite) TestForceReadyCarriesForwardThroughLateHumanDecis
 func (s *DAGExecutorTestSuite) TestCompletedStatusRejected_PersistsFailedStatus() {
 	nodeA := uuid.New()
 	execA := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -2647,7 +2663,7 @@ func (s *DAGExecutorTestSuite) TestCompletedStatusRejected_PersistsFailedStatus(
 func (s *DAGExecutorTestSuite) TestCleanupActivityScheduledOnCompletion() {
 	nodeA := uuid.New()
 	execA := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -2697,7 +2713,7 @@ func (s *DAGExecutorTestSuite) TestCleanupActivityScheduledOnCompletion() {
 func (s *DAGExecutorTestSuite) TestCleanupActivityErrorDoesNotFailWorkflow() {
 	nodeA := uuid.New()
 	execA := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -2749,7 +2765,7 @@ func (s *DAGExecutorTestSuite) TestCleanupActivityErrorDoesNotFailWorkflow() {
 func (s *DAGExecutorTestSuite) TestCleanupActivityNotScheduledOnFailure() {
 	nodeA := uuid.New()
 	execA := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [
@@ -2805,7 +2821,7 @@ func (s *DAGExecutorTestSuite) TestCleanupActivityNotScheduledOnFailure() {
 func (s *DAGExecutorTestSuite) TestCleanupActivityNotScheduledOnCancel() {
 	nodeA := uuid.New()
 	execA := uuid.New()
-	runID := uuid.New()
+	runID := s.dagRunID()
 
 	snapshot := `{
 		"nodes": [

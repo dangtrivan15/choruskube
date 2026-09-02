@@ -3,6 +3,7 @@ package com.choruskube.core.service;
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
+import com.choruskube.core.config.WorkflowClientRegistry;
 import com.choruskube.core.dto.SignalRequest;
 import com.choruskube.core.exception.BadRequestException;
 import com.choruskube.core.model.NodeExecution;
@@ -65,6 +66,9 @@ class HumanDecisionValidationTest {
     @Mock
     private NodeExecutionClaimService nodeExecutionClaimService;
 
+    @Mock
+    private WorkflowClientRegistry workflowClients;
+
     private RunService service;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final UUID runId = UUID.randomUUID();
@@ -73,12 +77,12 @@ class HumanDecisionValidationTest {
 
     @BeforeEach
     void setUp() {
+        lenient().when(workflowClients.clientFor(any())).thenReturn(workflowClient);
         service = new RunService(
                 runRepo,
                 execRepo,
                 edgeRepo,
                 snapshotBuilder,
-                workflowClient,
                 graphTemplateRepo,
                 templateNodeRepo,
                 validationService,
@@ -88,8 +92,9 @@ class HumanDecisionValidationTest {
                 gitRepoRepo,
                 null,
                 new AuthorizationService(new AlwaysAllowAuthorizationStrategy(), false),
-                Optional.empty(),
-                Optional.empty(),
+                Optional.empty(), // quotaService
+                null, // placements
+                workflowClients,
                 null,
                 null,
                 null,
