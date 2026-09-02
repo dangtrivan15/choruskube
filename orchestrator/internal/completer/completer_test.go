@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/uuid"
@@ -11,8 +12,10 @@ import (
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/apiclient"
 )
 
-// fakeCompletions records what would have reached Temporal.
+// fakeCompletions records what would have reached Temporal. Guarded by mu: callbacks can
+// legitimately race through namespaceFor concurrently, so every field access must too.
 type fakeCompletions struct {
+	mu         sync.Mutex
 	namespace  string
 	workflowID string
 	activityID string
@@ -20,25 +23,31 @@ type fakeCompletions struct {
 }
 
 func (f *fakeCompletions) CompleteActivityByID(ctx context.Context, namespace, workflowID, runID, activityID string, result interface{}, err error) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.namespace, f.workflowID, f.activityID = namespace, workflowID, activityID
 	f.calls++
 	return nil
 }
 
 func (f *fakeCompletions) RecordActivityHeartbeatByID(ctx context.Context, namespace, workflowID, runID, activityID string, details ...interface{}) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.namespace, f.workflowID, f.activityID = namespace, workflowID, activityID
 	f.calls++
 	return nil
 }
 
+// fakeLookup's namespace and err are set once at construction and never mutated, so only
+// calls needs its own synchronization against namespaceFor's concurrent callers.
 type fakeLookup struct {
 	namespace string
-	calls     int
+	calls     atomic.Int64
 	err       error
 }
 
 func (f *fakeLookup) GetRunNamespace(ctx context.Context, runID uuid.UUID) (apiclient.RunNamespace, error) {
-	f.calls++
+	f.calls.Add(1)
 	return apiclient.RunNamespace{Namespace: f.namespace}, f.err
 }
 
@@ -96,8 +105,8 @@ func TestNamespaceIsCachedPerRun(t *testing.T) {
 	_ = c.RecordHeartbeat(context.Background(), uuid.New(), workflowID)
 	_ = c.RecordHeartbeat(context.Background(), uuid.New(), workflowID)
 
-	if lookup.calls != 1 {
-		t.Fatalf("lookup calls = %d, want 1", lookup.calls)
+	if got := lookup.calls.Load(); got != 1 {
+		t.Fatalf("lookup calls = %d, want 1", got)
 	}
 }
 
