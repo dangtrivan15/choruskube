@@ -98,9 +98,10 @@ func TestTokenFleetProviderReturnsTheMintedInternalToken(t *testing.T) {
 	}
 }
 
-// A server that mints nothing leaves the Worker on the credential it registered with. Falling
-// back to anything else -- or to nothing -- would leave it unable to make application calls.
-func TestTokenFleetProviderFallsBackToTheFleetToken(t *testing.T) {
+// Before any mint, a blank is the only signal a server that mints nothing ever sends, so the
+// Worker stays on the credential it registered with. Falling back to anything else -- or to
+// nothing -- would leave it unable to make application calls.
+func TestTokenFleetProviderFallsBackToTheFleetTokenBeforeAnyMint(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"workerId":"w-1","temporalNamespace":"ns","taskQueue":"q","token":"","expiresInSeconds":0,"endpoint":"","internalToken":""}`))
@@ -113,5 +114,41 @@ func TestTokenFleetProviderFallsBackToTheFleetToken(t *testing.T) {
 	}
 	if reg.InternalToken != "ckf_secret" {
 		t.Fatalf("InternalToken = %q, want the fleet token", reg.InternalToken)
+	}
+}
+
+// Once a server has minted, a blank means the live credential is still fresh and must reach the
+// caller as a blank: substituting the Fleet token would overwrite a working credential with one
+// whose hash lives in another table, refusing every workload call until the next mint.
+func TestTokenFleetProviderPropagatesABlankAfterAMint(t *testing.T) {
+	bodies := []string{
+		`{"workerId":"w-1","temporalNamespace":"ns","taskQueue":"q","token":"jwt","internalToken":"ckw_A"}`,
+		`{"workerId":"w-1","temporalNamespace":"ns","taskQueue":"q","token":"jwt","internalToken":""}`,
+	}
+	var call int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if call < len(bodies) {
+			_, _ = w.Write([]byte(bodies[call]))
+		}
+		call++
+	}))
+	defer srv.Close()
+
+	p := NewTokenFleetProvider(srv.URL, "ckf_secret", srv.Client())
+	first, err := p.Fleets(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error on the first registration: %v", err)
+	}
+	if first.InternalToken != "ckw_A" {
+		t.Fatalf("first InternalToken = %q, want the minted one", first.InternalToken)
+	}
+
+	second, err := p.Fleets(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error on the second registration: %v", err)
+	}
+	if second.InternalToken != "" {
+		t.Fatalf("second InternalToken = %q, want a blank so the cache keeps ckw_A", second.InternalToken)
 	}
 }

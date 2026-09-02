@@ -27,10 +27,10 @@ type Client struct {
 }
 
 // NewClient returns a Client that authenticates every request to the API server at baseURL
-// with a Bearer token from credential. hc defaults to a 30-second-timeout client when nil —
-// CreateWorkload runs under a 30-minute activity timeout with MaximumAttempts: 1, so an
-// unbounded default client would let one hung POST stall a node for the full 30 minutes
-// with no retry, instead of failing fast enough for Temporal to retry it.
+// with a Bearer token from credential. It panics when credential is nil. hc defaults to a
+// 30-second-timeout client when nil — CreateWorkload runs under a 30-minute activity timeout
+// with MaximumAttempts: 1, so an unbounded default client would let one hung POST stall a node
+// for the full 30 minutes with no retry, instead of failing fast enough for Temporal to retry it.
 func NewClient(baseURL string, credential func() string, hc *http.Client) *Client {
 	// Left nil, the first request panics inside an activity, where Temporal reports it as a node
 	// failure and retries it. Failing here fails the process at the wiring mistake instead.

@@ -46,15 +46,21 @@ deployment that has more than one Fleet.
 ### Configure the Fleet directly
 
 Set `TEMPORAL_NAMESPACE`, `TEMPORAL_TASK_QUEUE` and `WORKER_INTERNAL_TOKEN`. The Worker serves
-that one Fleet and never calls `/worker/register`, so the api-server needs no registration
-token and the Worker holds no Temporal credential. It connects to Temporal without one, which
-suits a Temporal that runs no authorizer — the local stack, or a self-hosted cluster where the
-frontend is not exposed.
+that one Fleet and never calls `/worker/register`, so it holds no Temporal credential. It
+connects to Temporal without one, which suits a Temporal that runs no authorizer — the local
+stack, or a self-hosted cluster where the frontend is not exposed.
 
 `WORKER_INTERNAL_TOKEN` is the exception, and it is required: this path registers with nobody,
 so nothing can hand the Worker a credential for the api-server's `/worker/**` routes. Without
 it the process refuses to start, rather than presenting an empty bearer and failing one node
 at a time.
+
+Set it to the same value as the api-server's `WORKER_REGISTRATION_TOKEN`. Skipping registration
+does not skip authorization: this server checks every `/worker/**` call against that one
+configured secret, whether the presenter registered or not. A `WORKER_INTERNAL_TOKEN` that
+differs satisfies the startup guard — which only asks that it is set — and then fails every node
+with a 403, which is the failure the guard exists to prevent. Leaving the server's side unset
+admits no Worker on either path.
 
 Use this path when the answer is already known and constant, and a round-trip to ask for it
 would only return what you configured.
@@ -68,7 +74,7 @@ would only return what you configured.
 | `CALLBACK_URL` | yes | Where a launched agent container reports its result. |
 | `FLEET_TOKEN` | one of | Selects registration. Must match the server's `WORKER_REGISTRATION_TOKEN`. |
 | `TEMPORAL_NAMESPACE`, `TEMPORAL_TASK_QUEUE` | one of | Select the static single Fleet. |
-| `WORKER_INTERNAL_TOKEN` | static path | Authenticates this Worker on the api-server's `/worker/**` routes. Ignored when registering. |
+| `WORKER_INTERNAL_TOKEN` | static path | Authenticates this Worker on the api-server's `/worker/**` routes. Must equal the server's `WORKER_REGISTRATION_TOKEN`. Ignored when registering. |
 | `TEMPORAL_TLS_DISABLED` | no | Set `true` for a Temporal that serves plaintext gRPC. |
 
 `TEMPORAL_TLS_DISABLED` is opt-in so a deployment against a TLS Temporal cannot lose TLS by
@@ -77,13 +83,14 @@ whenever credentials are present, whatever they contain. A Worker with no creden
 static path, or a registration that returned an empty token — presents none at all and dials
 plaintext without it.
 
-Every call a Worker makes to the api-server names its run in the path, so the server is in a
-position to decide per run whether the presenting credential may act on it. That decision is the
-server's; the path shape only gives it something to decide on. What a credential actually reaches
-depends on which one it is — and on this deployment every Worker registers with the same
-`WORKER_REGISTRATION_TOKEN` and then presents it, so it is one shared value, not a per-Worker one.
-A server that mints a credential per registration returns it in the registration response and the
-Worker presents that instead.
+Every workload call a Worker makes to the api-server names its run in the path — registration is
+the exception, and it precedes any run — so the server is in a position to decide per run whether
+the presenting credential may act on it. That decision is the server's; the path shape only gives
+it something to decide on. What a credential actually reaches depends on which one it is — and on
+this deployment every Worker presents the same `WORKER_REGISTRATION_TOKEN`, whether registration
+handed it back or the operator configured it directly, so it is one shared value, not a per-Worker
+one. A server that mints a credential per registration returns it in the registration response and
+the Worker presents that instead.
 
 ## Build and test
 

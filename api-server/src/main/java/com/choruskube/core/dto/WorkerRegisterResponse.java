@@ -15,8 +15,8 @@ import java.util.UUID;
  *     own configured address — the in-cluster case, where every Worker already points at the same
  *     Temporal service by convention.
  * @param internalToken the credential this Worker presents on {@code /worker/**} application
- *     routes. Blank means the server minted none and the Worker must keep the credential it
- *     already holds — for a Worker that registered with a Fleet token, that token.
+ *     routes. Blank means the Worker keeps the credential it already holds — a minted one still
+ *     fresh enough not to be reissued, or, before any mint, the Fleet token it registered with.
  */
 public record WorkerRegisterResponse(
         UUID workerId,

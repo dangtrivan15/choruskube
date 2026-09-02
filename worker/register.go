@@ -24,6 +24,10 @@ type TokenFleetProvider struct {
 	// instanceID identifies this process for the life of the process. The server keys the
 	// worker row on it, so a value regenerated per call would leave a row per renewal.
 	instanceID string
+	// minted records whether any registration has yet returned a credential, which is the only
+	// thing that tells a server minting nothing from one saying "yours is still fresh". Written
+	// by Run's startup call and thereafter only by the single renewal goroutine, so it needs no lock.
+	minted bool
 }
 
 func NewTokenFleetProvider(apiServerURL, fleetToken string, hc *http.Client) *TokenFleetProvider {
@@ -90,10 +94,12 @@ func (p *TokenFleetProvider) Fleets(ctx context.Context) (Registration, error) {
 		return Registration{}, fmt.Errorf("decode registration: %w", err)
 	}
 	internalToken := rr.InternalToken
-	if internalToken == "" {
-		// The server minted none, so this Worker keeps the credential it authenticated with.
-		// A deployment whose server does mint gets a short-lived one instead, and this line is
-		// what lets one binary serve both without a mode flag.
+	if rr.InternalToken != "" {
+		p.minted = true
+	} else if !p.minted {
+		// Only before the first mint does a blank mean "this server mints nothing, keep the token
+		// you authenticated with". After one it means the live credential is still fresh, and
+		// substituting the Fleet token there would 403 every workload call until the next mint.
 		internalToken = p.token
 	}
 	return Registration{
