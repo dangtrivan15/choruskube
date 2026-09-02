@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/google/uuid"
 	"go.temporal.io/sdk/client"
@@ -17,6 +16,7 @@ import (
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/activity"
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/apiclient"
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/callback"
+	"github.com/dangtrivan15/choruskube/orchestrator/internal/completer"
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/config"
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/objectstore"
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/prompt"
@@ -83,14 +83,11 @@ func main() {
 	log.Println("Temporal worker started")
 
 	// --- Activity Completer (wraps Temporal client for async completion) ---
-	completer := &temporalActivityCompleter{
-		client:    temporalClient,
-		namespace: cfg.Temporal.Namespace,
-	}
+	activityCompleter := completer.New(temporalClient, cfg.Temporal.Namespace)
 
 	// --- Callback & Heartbeat HTTP Server ---
-	callbackHandler := callback.NewHandler(apiClient, completer)
-	heartbeatHandler := callback.NewHeartbeatHandler(apiClient, completer)
+	callbackHandler := callback.NewHandler(apiClient, activityCompleter)
+	heartbeatHandler := callback.NewHeartbeatHandler(apiClient, activityCompleter)
 	mux := http.NewServeMux()
 	mux.Handle("/api/v1/callback", callbackHandler)
 	mux.Handle("/api/v1/heartbeat", heartbeatHandler)
@@ -131,40 +128,6 @@ func main() {
 }
 
 // --- Adapters ---
-
-// temporalActivityCompleter implements callback.ActivityCompleter using the Temporal client
-type temporalActivityCompleter struct {
-	client    client.Client
-	namespace string
-}
-
-func (c *temporalActivityCompleter) CompleteActivity(ctx context.Context, nodeExecID uuid.UUID, workflowID string, result, artifactRefs, errorMessage string) error {
-	return c.client.CompleteActivityByID(ctx, c.namespace, workflowID, "", nodeExecID.String(),
-		activity.CallbackResult{
-			Status:       "completed",
-			Result:       result,
-			ArtifactRefs: artifactRefs,
-			ErrorMessage: errorMessage,
-		}, nil)
-}
-
-func (c *temporalActivityCompleter) FailActivity(ctx context.Context, nodeExecID uuid.UUID, workflowID string, reason error) error {
-	return c.client.CompleteActivityByID(ctx, c.namespace, workflowID, "", nodeExecID.String(), nil, reason)
-}
-
-func (c *temporalActivityCompleter) CompleteActivityRateLimited(ctx context.Context, nodeExecID uuid.UUID, workflowID string, resumeAt time.Time, sessionID, sessionArtifactPath string) error {
-	return c.client.CompleteActivityByID(ctx, c.namespace, workflowID, "", nodeExecID.String(),
-		activity.CallbackResult{
-			Status:              "rate_limited",
-			ResumeAt:            resumeAt,
-			SessionID:           sessionID,
-			SessionArtifactPath: sessionArtifactPath,
-		}, nil)
-}
-
-func (c *temporalActivityCompleter) RecordHeartbeat(ctx context.Context, nodeExecID uuid.UUID, workflowID string) error {
-	return c.client.RecordActivityHeartbeatByID(ctx, c.namespace, workflowID, "", nodeExecID.String())
-}
 
 // reconcilerAPIAdapter adapts *apiclient.Client to the reconciler.APIClient interface.
 type reconcilerAPIAdapter struct {
