@@ -51,6 +51,9 @@ public class WorkflowRun {
     @Column(name = "external_run_id")
     private String externalRunId;
 
+    @Column(name = "temporal_namespace")
+    private String temporalNamespace;
+
     @Column(name = "graph_version", nullable = false)
     private int graphVersion = 1;
 
@@ -136,6 +139,14 @@ public class WorkflowRun {
 
     public void setExternalRunId(String externalRunId) {
         this.externalRunId = externalRunId;
+    }
+
+    public String getTemporalNamespace() {
+        return temporalNamespace;
+    }
+
+    public void setTemporalNamespace(String temporalNamespace) {
+        this.temporalNamespace = temporalNamespace;
     }
 
     public int getGraphVersion() {

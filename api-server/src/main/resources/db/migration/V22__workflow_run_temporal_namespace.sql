@@ -1,0 +1,11 @@
+-- V22__workflow_run_temporal_namespace.sql
+--
+-- Which Temporal namespace this run's workflow lives in. Stored beside external_run_id because
+-- the pair is the workflow's address: signalling, terminating and completing an activity all
+-- need both, and re-deriving the namespace later reads state that a cascade may already have
+-- removed.
+--
+-- Nullable, and NULL means the deployment's configured namespace. Every row predating this
+-- column ran there by construction, so that is a fact about history rather than a default
+-- standing in for an unknown.
+ALTER TABLE public.workflow_run ADD COLUMN temporal_namespace text;
