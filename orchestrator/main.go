@@ -11,17 +11,16 @@ import (
 
 	"github.com/google/uuid"
 	"go.temporal.io/sdk/client"
-	"go.temporal.io/sdk/worker"
 
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/activity"
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/apiclient"
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/callback"
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/completer"
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/config"
+	"github.com/dangtrivan15/choruskube/orchestrator/internal/namespaces"
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/objectstore"
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/prompt"
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/reconciler"
-	"github.com/dangtrivan15/choruskube/orchestrator/internal/workflow"
 )
 
 func main() {
@@ -70,17 +69,18 @@ func main() {
 	resolver := prompt.NewResolver()
 	activities := activity.NewActivities(apiClient, resolver, cfg, objectStoreClient)
 
-	// --- Temporal Worker ---
-	w := worker.New(temporalClient, workflow.TaskQueue, worker.Options{})
-	w.RegisterWorkflow(workflow.DAGExecutorWorkflow)
-	w.RegisterActivity(activities)
+	// --- Temporal workflow workers, one per namespace ---
+	sup := namespaces.NewSupervisor(cfg.Temporal.Address, activities)
+	defer sup.StopAll()
 
-	go func() {
-		if err := w.Run(worker.InterruptCh()); err != nil {
-			log.Fatalf("Temporal worker failed: %v", err)
-		}
-	}()
-	log.Println("Temporal worker started")
+	// The configured namespace is served before the roster is ever fetched. Making it
+	// contingent on an api-server round trip would let a slow or unreachable api-server stop
+	// this process serving the namespace every deployment always has.
+	if err := sup.Serve(cfg.Temporal.Namespace); err != nil {
+		log.Fatalf("Failed to serve the configured namespace: %v", err)
+	}
+	go namespaces.Run(ctx, sup, apiClient, namespaces.RefreshInterval)
+	log.Println("Temporal workflow workers started")
 
 	// --- Activity Completer (wraps Temporal client for async completion) ---
 	activityCompleter := completer.New(temporalClient, apiClient, cfg.Temporal.Namespace)
@@ -124,7 +124,6 @@ func main() {
 
 	log.Println("Shutting down")
 	server.Shutdown(context.Background())
-	w.Stop()
 }
 
 // --- Adapters ---
