@@ -180,6 +180,38 @@ func TestGetJobSecretHash(t *testing.T) {
 	assert.Equal(t, "abc123", hash)
 }
 
+func TestGetRunNamespace(t *testing.T) {
+	runID := uuid.New()
+
+	_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodGet, r.Method)
+		assert.Contains(t, r.URL.Path, "/internal/runs/"+runID.String()+"/placement")
+
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(RunNamespace{Namespace: "tenant-ns"})
+	})
+
+	result, err := client.GetRunNamespace(context.Background(), runID)
+	require.NoError(t, err)
+	assert.Equal(t, "tenant-ns", result.Namespace)
+}
+
+func TestListNamespaces(t *testing.T) {
+	_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodGet, r.Method)
+		assert.Equal(t, "/internal/placements", r.URL.Path)
+
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(struct {
+			Namespaces []string `json:"namespaces"`
+		}{Namespaces: []string{"choruskube", "tenant-ns"}})
+	})
+
+	result, err := client.ListNamespaces(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"choruskube", "tenant-ns"}, result)
+}
+
 func TestAuthenticatedClient_SendsBearerToken(t *testing.T) {
 	runID := uuid.New()
 	snapshot := `{"nodes":[],"edges":[]}`

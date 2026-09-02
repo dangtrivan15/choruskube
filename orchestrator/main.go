@@ -83,7 +83,7 @@ func main() {
 	log.Println("Temporal worker started")
 
 	// --- Activity Completer (wraps Temporal client for async completion) ---
-	activityCompleter := completer.New(temporalClient, cfg.Temporal.Namespace)
+	activityCompleter := completer.New(temporalClient, apiClient, cfg.Temporal.Namespace)
 
 	// --- Callback & Heartbeat HTTP Server ---
 	callbackHandler := callback.NewHandler(apiClient, activityCompleter)

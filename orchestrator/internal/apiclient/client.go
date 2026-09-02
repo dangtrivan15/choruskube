@@ -593,3 +593,41 @@ func (c *Client) SetTraversedEdges(ctx context.Context, runID, nodeExecID uuid.U
 	}
 	return nil
 }
+
+// --- Placement ---
+
+// RunNamespace is where a run's workflow lives. Served by an orchestrator-tier
+// endpoint: it is deliberately not on a node-executions path, which an agent's
+// own secret could reach.
+type RunNamespace struct {
+	Namespace string `json:"namespace"`
+}
+
+// GetRunNamespace returns the namespace a run's workflow was started in. The answer
+// is fixed for the life of the run, so callers may cache it indefinitely.
+func (c *Client) GetRunNamespace(ctx context.Context, runID uuid.UUID) (RunNamespace, error) {
+	resp, err := c.doJSON(ctx, http.MethodGet, fmt.Sprintf("/internal/runs/%s/placement", runID), nil)
+	if err != nil {
+		return RunNamespace{}, fmt.Errorf("get run namespace: %w", err)
+	}
+	var result RunNamespace
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return RunNamespace{}, fmt.Errorf("unmarshal run namespace: %w", err)
+	}
+	return result, nil
+}
+
+// ListNamespaces returns every Temporal namespace this deployment may place a run in.
+func (c *Client) ListNamespaces(ctx context.Context) ([]string, error) {
+	resp, err := c.doJSON(ctx, http.MethodGet, "/internal/placements", nil)
+	if err != nil {
+		return nil, fmt.Errorf("list namespaces: %w", err)
+	}
+	var result struct {
+		Namespaces []string `json:"namespaces"`
+	}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("unmarshal namespaces: %w", err)
+	}
+	return result.Namespaces, nil
+}
