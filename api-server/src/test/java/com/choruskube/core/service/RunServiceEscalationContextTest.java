@@ -101,8 +101,9 @@ class RunServiceEscalationContextTest {
                 gitRepoRepo,
                 null,
                 new AuthorizationService(new AlwaysAllowAuthorizationStrategy(), false),
-                Optional.empty(),
-                Optional.empty(),
+                Optional.empty(), // quotaService
+                null, // placements
+                null, // workflowClients
                 null,
                 null,
                 null,

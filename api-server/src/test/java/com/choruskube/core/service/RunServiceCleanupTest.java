@@ -92,8 +92,9 @@ class RunServiceCleanupTest {
                 gitRepoRepo,
                 workloadService,
                 new AuthorizationService(new AlwaysAllowAuthorizationStrategy(), false),
-                Optional.empty(),
-                Optional.empty(),
+                Optional.empty(), // quotaService
+                null, // placements
+                null, // workflowClients
                 null,
                 auditService,
                 null, // storagePrefixResolver — not invoked by cancel/pause/retry

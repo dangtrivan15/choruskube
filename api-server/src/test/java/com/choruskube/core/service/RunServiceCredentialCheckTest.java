@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 import com.choruskube.core.config.SingleTenant;
+import com.choruskube.core.config.WorkflowClientRegistry;
 import com.choruskube.core.credential.CredentialPreflightChecker;
 import com.choruskube.core.dto.CreateRunRequest;
 import com.choruskube.core.dto.ValidationResponse;
@@ -78,6 +79,12 @@ class RunServiceCredentialCheckTest {
     private QuotaChecker quotaService;
 
     @Mock
+    private RunPlacementService placements;
+
+    @Mock
+    private WorkflowClientRegistry workflowClients;
+
+    @Mock
     private UsageSink usageEventService;
 
     @Mock
@@ -128,7 +135,8 @@ class RunServiceCredentialCheckTest {
                 null,
                 new AuthorizationService(new AlwaysAllowAuthorizationStrategy(), false),
                 Optional.of(quotaService),
-                Optional.empty(),
+                placements,
+                workflowClients,
                 usageEventService,
                 null, // auditSink
                 storagePrefixResolver,
@@ -179,6 +187,8 @@ class RunServiceCredentialCheckTest {
     }
 
     private void stubPostCredentialPath() {
+        lenient().when(placements.placeFor(any())).thenReturn(new RunPlacement("choruskube", "choruskube"));
+        lenient().when(workflowClients.clientFor(any())).thenReturn(workflowClient);
         lenient()
                 .when(workflowClient.newUntypedWorkflowStub(anyString(), any()))
                 .thenReturn(workflowStub);

@@ -3,14 +3,11 @@ package com.choruskube.core.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 import com.choruskube.core.config.SingleTenant;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.scope.NoOpScopeProvider;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -19,10 +16,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
- * Unit tests for the optional {@link RunPlacementResolver} seam in {@link RunService}:
- * - no resolver bound -> {@code buildWorkflowParams} omits {@code WorkerTaskQueue}
- * - resolver present -> its non-blank answer is carried under the {@code WorkerTaskQueue} key
- * - resolver's blank answer is treated the same as no resolver: omitted, not emitted empty
+ * The queue half of a placement travels to the Go side as a workflow parameter; the namespace
+ * half selects the client and is persisted on the run. This covers the parameter half.
  */
 @ExtendWith(MockitoExtension.class)
 class RunServicePlacementTest {
@@ -41,7 +36,7 @@ class RunServicePlacementTest {
         run.setGraphVersion(1);
     }
 
-    private RunService newService(Optional<RunPlacementResolver> placementResolver) {
+    private RunService newService() {
         return new RunService(
                 null, // runRepo
                 null, // execRepo
@@ -57,8 +52,9 @@ class RunServicePlacementTest {
                 null, // gitRepoRepo
                 null, // workloadService
                 new AuthorizationService(new AlwaysAllowAuthorizationStrategy(), false),
-                Optional.empty(), // quotaService
-                placementResolver,
+                java.util.Optional.empty(), // quotaService
+                null, // placements
+                null, // workflowClients
                 null, // usageSink
                 null, // auditSink
                 storagePrefixResolver,
@@ -80,29 +76,33 @@ class RunServicePlacementTest {
                 null); // escalationContextResolver
     }
 
+    /**
+     * Always emitted, never conditionally. The value equals the workflow's own queue in a
+     * single-namespace deployment, so the key being present costs nothing and removes the
+     * blank-means-default convention that used to hide a misconfigured placement.
+     */
     @Test
-    void buildWorkflowParams_noResolver_omitsWorkerTaskQueue() {
-        RunService service = newService(Optional.empty());
-        assertThat(service.buildWorkflowParams(run)).doesNotContainKey("WorkerTaskQueue");
+    void buildWorkflowParams_carriesThePlacementsQueue() {
+        RunService service = newService();
+
+        assertThat(service.buildWorkflowParams(run, new RunPlacement("choruskube", "choruskube")))
+                .containsEntry("WorkerTaskQueue", "choruskube");
     }
 
     @Test
-    void buildWorkflowParams_resolverPresent_usesItsQueue() {
-        RunPlacementResolver resolver = mock(RunPlacementResolver.class);
-        when(resolver.taskQueueFor(run.getId())).thenReturn("fleet-acme");
+    void buildWorkflowParams_carriesACustomerQueue() {
+        RunService service = newService();
 
-        RunService service = newService(Optional.of(resolver));
-
-        assertThat(service.buildWorkflowParams(run)).containsEntry("WorkerTaskQueue", "fleet-acme");
+        assertThat(service.buildWorkflowParams(run, new RunPlacement("tenant-ns", "fleet-acme")))
+                .containsEntry("WorkerTaskQueue", "fleet-acme");
     }
 
+    /** The namespace is not a workflow input — it selects the client and is stored on the run. */
     @Test
-    void buildWorkflowParams_resolverReturnsBlank_omitsWorkerTaskQueue() {
-        RunPlacementResolver resolver = mock(RunPlacementResolver.class);
-        when(resolver.taskQueueFor(run.getId())).thenReturn("  ");
+    void buildWorkflowParams_doesNotLeakTheNamespaceIntoWorkflowInput() {
+        RunService service = newService();
 
-        RunService service = newService(Optional.of(resolver));
-
-        assertThat(service.buildWorkflowParams(run)).doesNotContainKey("WorkerTaskQueue");
+        assertThat(service.buildWorkflowParams(run, new RunPlacement("tenant-ns", "fleet-acme")))
+                .doesNotContainKey("WorkerNamespace");
     }
 }

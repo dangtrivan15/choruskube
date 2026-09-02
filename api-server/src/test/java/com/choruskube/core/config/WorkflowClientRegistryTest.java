@@ -2,9 +2,11 @@ package com.choruskube.core.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import io.temporal.client.WorkflowClient;
 import io.temporal.serviceclient.WorkflowServiceStubs;
+import io.temporal.serviceclient.WorkflowServiceStubsOptions;
 import org.junit.jupiter.api.Test;
 
 class WorkflowClientRegistryTest {
@@ -49,8 +51,13 @@ class WorkflowClientRegistryTest {
 
     @Test
     void clientFor_anotherNamespace_isCachedNotRebuilt() {
-        WorkflowClientRegistry registry =
-                new WorkflowClientRegistry(mock(WorkflowServiceStubs.class), mock(WorkflowClient.class), DEFAULT_NS);
+        WorkflowServiceStubs stubs = mock(WorkflowServiceStubs.class);
+        // WorkflowClient.newInstance reads stubs.getOptions().getMetricsScope(); plain build()
+        // leaves that field null (only validateAndBuildWithDefaults() fills it), and an un-stubbed
+        // mock's getOptions() is null outright, so either one NPEs before this test can assert.
+        when(stubs.getOptions())
+                .thenReturn(WorkflowServiceStubsOptions.newBuilder().validateAndBuildWithDefaults());
+        WorkflowClientRegistry registry = new WorkflowClientRegistry(stubs, mock(WorkflowClient.class), DEFAULT_NS);
 
         WorkflowClient first = registry.clientFor("tenant-ns");
 
@@ -60,8 +67,10 @@ class WorkflowClientRegistryTest {
     @Test
     void clientFor_anotherNamespace_isNotTheDefaultClient() {
         WorkflowClient defaultClient = mock(WorkflowClient.class);
-        WorkflowClientRegistry registry =
-                new WorkflowClientRegistry(mock(WorkflowServiceStubs.class), defaultClient, DEFAULT_NS);
+        WorkflowServiceStubs stubs = mock(WorkflowServiceStubs.class);
+        when(stubs.getOptions())
+                .thenReturn(WorkflowServiceStubsOptions.newBuilder().validateAndBuildWithDefaults());
+        WorkflowClientRegistry registry = new WorkflowClientRegistry(stubs, defaultClient, DEFAULT_NS);
 
         assertThat(registry.clientFor("tenant-ns")).isNotSameAs(defaultClient);
     }
