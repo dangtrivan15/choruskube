@@ -76,6 +76,11 @@ public class WorkloadService {
         NodeExecution exec = execRepo.findById(nodeExecId)
                 .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
 
+        // Both ids arrive from the caller. Without this, a caller entitled to runId can pair it
+        // with any execution id at all and have this method overwrite that execution's pod name,
+        // job secret and status -- node executions carry no authorization of their own.
+        NodeExecutionUtil.requireInRun(exec, runId);
+
         WorkflowRun run =
                 runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
 

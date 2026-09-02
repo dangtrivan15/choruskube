@@ -249,6 +249,33 @@ class WorkloadServiceTest {
     }
 
     @Test
+    void createWorkloadRejectsANodeExecutionFromAnotherRun() {
+        UUID runId = UUID.randomUUID();
+        UUID otherRunId = UUID.randomUUID();
+        UUID nodeExecId = UUID.randomUUID();
+
+        NodeExecution exec = new NodeExecution();
+        exec.setId(nodeExecId);
+        exec.setWorkflowRunId(otherRunId);
+        when(execRepo.findById(nodeExecId)).thenReturn(Optional.of(exec));
+
+        // Lenient: the guard must reject before this is ever read. Stubbed (rather than left
+        // absent) so a missing guard fails on a downstream NPE, not a coincidental NotFoundException
+        // from an unstubbed run lookup, which would let this test pass for the wrong reason.
+        WorkflowRun run = new WorkflowRun();
+        run.setId(runId);
+        lenient().when(runRepo.findById(runId)).thenReturn(Optional.of(run));
+
+        assertThrows(
+                NotFoundException.class,
+                () -> service.createWorkload(runId, nodeExecId, new CreateWorkloadRequest(null, null)));
+
+        // The executor must never be reached: a rejected pairing that still launched a container
+        // would leave a pod belonging to neither run.
+        verifyNoInteractions(executor);
+    }
+
+    @Test
     void cleanupWorkload_delegatesToExecutor() {
         UUID executionId = UUID.randomUUID();
 
