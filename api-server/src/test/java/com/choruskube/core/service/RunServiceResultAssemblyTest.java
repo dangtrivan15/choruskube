@@ -88,7 +88,6 @@ class RunServiceResultAssemblyTest {
                 execRepo,
                 edgeRepo,
                 snapshotBuilder,
-                workflowClient,
                 graphTemplateRepo,
                 templateNodeRepo,
                 validationService,

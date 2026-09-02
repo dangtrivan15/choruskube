@@ -98,7 +98,6 @@ class RunServiceRoadmapMaterializationTest {
                 execRepo,
                 edgeRepo,
                 snapshotBuilder,
-                workflowClient,
                 graphTemplateRepo,
                 templateNodeRepo,
                 validationService,

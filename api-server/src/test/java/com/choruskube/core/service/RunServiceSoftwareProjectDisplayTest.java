@@ -94,7 +94,6 @@ class RunServiceSoftwareProjectDisplayTest {
                 execRepo,
                 edgeRepo,
                 snapshotBuilder,
-                null, // workflowClient — not needed for listing/detail tests
                 graphTemplateRepo,
                 templateNodeRepo,
                 validationService,

@@ -26,7 +26,6 @@ class RunServiceInputValidationTest {
                 null,
                 null,
                 null,
-                null,
                 new ObjectMapper(),
                 null,
                 null,

@@ -83,7 +83,6 @@ class HumanDecisionValidationTest {
                 execRepo,
                 edgeRepo,
                 snapshotBuilder,
-                workflowClient,
                 graphTemplateRepo,
                 templateNodeRepo,
                 validationService,

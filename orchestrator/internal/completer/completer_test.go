@@ -51,44 +51,33 @@ func (f *fakeLookup) GetRunNamespace(ctx context.Context, runID uuid.UUID) (apic
 	return apiclient.RunNamespace{Namespace: f.namespace}, f.err
 }
 
-func TestCompleteActivityAddressesTheConfiguredNamespace(t *testing.T) {
+func TestCompleteActivityUsesTheRunsNamespace(t *testing.T) {
 	fake := &fakeCompletions{}
-	c := New(fake, &fakeLookup{namespace: "choruskube"}, "choruskube")
+	lookup := &fakeLookup{namespace: "tenant-ns"}
+	runID := uuid.New()
+	c := New(fake, lookup, "choruskube")
 	execID := uuid.New()
 
-	if err := c.CompleteActivity(context.Background(), execID, "choruskube-run-x", "ok", "{}", ""); err != nil {
+	if err := c.CompleteActivity(context.Background(), execID, "choruskube-run-"+runID.String(), "ok", "{}", ""); err != nil {
 		t.Fatalf("CompleteActivity = %v", err)
 	}
 
-	if fake.namespace != "choruskube" {
-		t.Fatalf("namespace = %q, want %q", fake.namespace, "choruskube")
+	if fake.namespace != "tenant-ns" {
+		t.Fatalf("namespace = %q, want the run's namespace", fake.namespace)
 	}
 	if fake.activityID != execID.String() {
 		t.Fatalf("activityID = %q, want the node execution id", fake.activityID)
 	}
 }
 
-func TestRecordHeartbeatAddressesTheConfiguredNamespace(t *testing.T) {
-	fake := &fakeCompletions{}
-	c := New(fake, &fakeLookup{namespace: "choruskube"}, "choruskube")
-
-	if err := c.RecordHeartbeat(context.Background(), uuid.New(), "choruskube-run-x"); err != nil {
-		t.Fatalf("RecordHeartbeat = %v", err)
-	}
-
-	if fake.namespace != "choruskube" {
-		t.Fatalf("namespace = %q, want %q", fake.namespace, "choruskube")
-	}
-}
-
-func TestCompleteActivityUsesTheRunsNamespace(t *testing.T) {
+func TestRecordHeartbeatUsesTheRunsNamespace(t *testing.T) {
 	fake := &fakeCompletions{}
 	lookup := &fakeLookup{namespace: "tenant-ns"}
 	runID := uuid.New()
 	c := New(fake, lookup, "choruskube")
 
-	if err := c.CompleteActivity(context.Background(), uuid.New(), "choruskube-run-"+runID.String(), "ok", "{}", ""); err != nil {
-		t.Fatalf("CompleteActivity = %v", err)
+	if err := c.RecordHeartbeat(context.Background(), uuid.New(), "choruskube-run-"+runID.String()); err != nil {
+		t.Fatalf("RecordHeartbeat = %v", err)
 	}
 
 	if fake.namespace != "tenant-ns" {

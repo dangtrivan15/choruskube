@@ -43,7 +43,6 @@ class RunServicePlacementTest {
                 null, // execRepo
                 null, // edgeRepo
                 null, // snapshotBuilder
-                null, // workflowClient
                 null, // graphTemplateRepo
                 null, // templateNodeRepo
                 null, // validationService

@@ -20,7 +20,6 @@ import com.choruskube.core.util.NodeExecutionUtil;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowNotFoundException;
 import io.temporal.client.WorkflowOptions;
 import io.temporal.client.WorkflowStub;
@@ -53,7 +52,6 @@ public class RunService {
     private final NodeExecutionRepository execRepo;
     private final TemplateEdgeRepository edgeRepo;
     private final GraphSnapshotBuilder snapshotBuilder;
-    private final WorkflowClient workflowClient;
     private final GraphTemplateRepository graphTemplateRepo;
     private final TemplateNodeRepository templateNodeRepo;
     private final GraphValidationService validationService;
@@ -99,7 +97,6 @@ public class RunService {
             NodeExecutionRepository execRepo,
             TemplateEdgeRepository edgeRepo,
             GraphSnapshotBuilder snapshotBuilder,
-            WorkflowClient workflowClient,
             GraphTemplateRepository graphTemplateRepo,
             TemplateNodeRepository templateNodeRepo,
             GraphValidationService validationService,
@@ -135,7 +132,6 @@ public class RunService {
         this.execRepo = execRepo;
         this.edgeRepo = edgeRepo;
         this.snapshotBuilder = snapshotBuilder;
-        this.workflowClient = workflowClient;
         this.graphTemplateRepo = graphTemplateRepo;
         this.templateNodeRepo = templateNodeRepo;
         this.validationService = validationService;

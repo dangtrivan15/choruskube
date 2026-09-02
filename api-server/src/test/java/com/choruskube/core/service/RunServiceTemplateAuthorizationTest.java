@@ -10,7 +10,6 @@ import com.choruskube.core.model.GraphTemplate;
 import com.choruskube.core.observability.AuditSink;
 import com.choruskube.core.repository.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.temporal.client.WorkflowClient;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -35,9 +34,6 @@ class RunServiceTemplateAuthorizationTest {
 
     @Mock
     private GraphSnapshotBuilder snapshotBuilder;
-
-    @Mock
-    private WorkflowClient workflowClient;
 
     @Mock
     private GraphTemplateRepository graphTemplateRepo;
@@ -76,7 +72,6 @@ class RunServiceTemplateAuthorizationTest {
                 execRepo,
                 edgeRepo,
                 snapshotBuilder,
-                workflowClient,
                 graphTemplateRepo,
                 templateNodeRepo,
                 validationService,

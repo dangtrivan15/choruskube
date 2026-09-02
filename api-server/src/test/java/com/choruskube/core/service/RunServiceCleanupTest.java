@@ -87,7 +87,6 @@ class RunServiceCleanupTest {
                 execRepo,
                 edgeRepo,
                 snapshotBuilder,
-                workflowClient,
                 graphTemplateRepo,
                 templateNodeRepo,
                 validationService,
