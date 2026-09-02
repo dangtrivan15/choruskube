@@ -155,6 +155,33 @@ class WorkflowRunSoftDeleteTest extends BaseTest {
         assertThat(remaining).isZero();
     }
 
+    /**
+     * Exercises {@code findTombstonedBatch}'s native-SQL projection, not
+     * {@code cleanupAndHardDelete} directly — if that query stops selecting
+     * {@code temporal_namespace}, this run's namespace silently reverts to null and the
+     * terminate call lands on the default client instead of {@code tenantClient}, so this row
+     * is never actually hard-deleted (the exception is swallowed per-item, not surfaced).
+     */
+    @Test
+    void reconcileTombstonedBatch_terminatesInTheRunsRecordedNamespace() {
+        String externalId = "wf-" + UUID.randomUUID();
+        UUID runId = seedRun(externalId, "tenant-ns");
+        tombstoneRun(runId);
+        WorkflowStub stub = mock(WorkflowStub.class);
+        WorkflowClient tenantClient = mock(WorkflowClient.class);
+        when(tenantClient.newUntypedWorkflowStub(externalId)).thenReturn(stub);
+        when(workflowClientRegistry.clientFor("tenant-ns")).thenReturn(tenantClient);
+
+        int cleaned = workflowRunService.reconcileTombstonedBatch(100);
+        assertThat(cleaned).isGreaterThanOrEqualTo(1);
+
+        verify(tenantClient).newUntypedWorkflowStub(externalId);
+        verify(stub).terminate(anyString());
+
+        Long remaining = jdbc.queryForObject("SELECT COUNT(*) FROM workflow_run WHERE id = ?", Long.class, runId);
+        assertThat(remaining).isZero();
+    }
+
     @Test
     void cleanupAndHardDelete_isIdempotent() {
         String externalId = "wf-" + UUID.randomUUID();
@@ -195,6 +222,10 @@ class WorkflowRunSoftDeleteTest extends BaseTest {
     // -----------------------------------------------------------------------
 
     private UUID seedRun(String externalRunId) {
+        return seedRun(externalRunId, null);
+    }
+
+    private UUID seedRun(String externalRunId, String temporalNamespace) {
         // Need a graph_template row to satisfy workflow_run.graph_template_id FK.
         UUID templateId = (UUID) jdbc.queryForObject("""
                 INSERT INTO graph_template (graph_id, version, name, input_schema, system)
@@ -207,6 +238,7 @@ class WorkflowRunSoftDeleteTest extends BaseTest {
         run.setGraphTemplateId(templateId);
         run.setStatus(WorkflowRunStatus.pending);
         run.setExternalRunId(externalRunId);
+        run.setTemporalNamespace(temporalNamespace);
         return runRepo.save(run).getId();
     }
 
