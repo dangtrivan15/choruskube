@@ -279,6 +279,34 @@ public class InternalWorkloadControllerTest extends BaseTest {
                 .andExpect(status().isNoContent());
     }
 
+    // --- CleanupWorkload (run-scoped) ---
+
+    @Test
+    void cleanupWorkload_runScoped_delegatesAndReturns204() throws Exception {
+        mockMvc.perform(delete("/internal/workloads/{runId}/{executionId}", run.getId(), nodeExec.getId())
+                        .header("Authorization", "Bearer " + ORCHESTRATOR_SECRET))
+                .andExpect(status().isNoContent());
+
+        verify(workloadExecutor).cleanup(nodeExec.getId());
+    }
+
+    // Pairs a run the caller "controls" with a NodeExecution from a different run — the shape
+    // a hijacked workflow task would try, claiming its own run while naming a guessed
+    // NodeExecutionID. Must 404 before touching the executor, not delete anything.
+    @Test
+    void cleanupWorkload_runScoped_mismatchedRun_returns404() throws Exception {
+        WorkflowRun otherRun = new WorkflowRun();
+        otherRun.setGraphTemplateId(run.getGraphTemplateId());
+        otherRun.setInputs(run.getInputs());
+        otherRun = runRepo.save(otherRun);
+
+        mockMvc.perform(delete("/internal/workloads/{runId}/{executionId}", otherRun.getId(), nodeExec.getId())
+                        .header("Authorization", "Bearer " + ORCHESTRATOR_SECRET))
+                .andExpect(status().isNotFound());
+
+        verify(workloadExecutor, never()).cleanup(any());
+    }
+
     // --- GetWorkloadLogs ---
 
     @Test
@@ -305,6 +333,40 @@ public class InternalWorkloadControllerTest extends BaseTest {
                 .andExpect(jsonPath("$.logs").value("default"));
 
         verify(workloadExecutor).getLogs(nodeExec.getId(), 50);
+    }
+
+    // --- GetWorkloadLogs (run-scoped) ---
+
+    @Test
+    void getWorkloadLogs_runScoped_returnsLogsJson() throws Exception {
+        when(workloadExecutor.getLogs(nodeExec.getId(), 100)).thenReturn("line1\nline2\nline3");
+
+        MvcResult result = mockMvc.perform(
+                        get("/internal/workloads/{runId}/{executionId}/logs", run.getId(), nodeExec.getId())
+                                .param("tailLines", "100")
+                                .header("Authorization", "Bearer " + ORCHESTRATOR_SECRET))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        JsonNode response = objectMapper.readTree(result.getResponse().getContentAsString());
+        assertThat(response.get("logs").asText()).isEqualTo("line1\nline2\nline3");
+    }
+
+    // Same pairing as cleanupWorkload_runScoped_mismatchedRun_returns404, for the read path:
+    // exfiltrating another run's pod logs by pairing an authorized run with a guessed
+    // NodeExecutionID must 404 before the executor is ever asked for logs.
+    @Test
+    void getWorkloadLogs_runScoped_mismatchedRun_returns404() throws Exception {
+        WorkflowRun otherRun = new WorkflowRun();
+        otherRun.setGraphTemplateId(run.getGraphTemplateId());
+        otherRun.setInputs(run.getInputs());
+        otherRun = runRepo.save(otherRun);
+
+        mockMvc.perform(get("/internal/workloads/{runId}/{executionId}/logs", otherRun.getId(), nodeExec.getId())
+                        .header("Authorization", "Bearer " + ORCHESTRATOR_SECRET))
+                .andExpect(status().isNotFound());
+
+        verify(workloadExecutor, never()).getLogs(any(), anyInt());
     }
 
     // --- TerminateWorkload ---

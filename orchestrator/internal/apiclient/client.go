@@ -457,18 +457,23 @@ func (c *Client) CreateWorkload(ctx context.Context, params CreateWorkloadParams
 	return &result, nil
 }
 
-// CleanupWorkload removes all resources associated with a completed execution.
-func (c *Client) CleanupWorkload(ctx context.Context, executionID uuid.UUID) error {
-	_, err := c.doJSON(ctx, http.MethodDelete, fmt.Sprintf("/internal/workloads/%s", executionID), nil)
+// CleanupWorkload removes all resources associated with a completed execution. Run-scoped:
+// the api-server 404s unless executionID belongs to runID, so a caller cannot pair a run it
+// controls with a guessed executionID to delete another run's agent job.
+func (c *Client) CleanupWorkload(ctx context.Context, runID, executionID uuid.UUID) error {
+	path := fmt.Sprintf("/internal/workloads/%s/%s", runID, executionID)
+	_, err := c.doJSON(ctx, http.MethodDelete, path, nil)
 	if err != nil {
 		return fmt.Errorf("cleanup workload: %w", err)
 	}
 	return nil
 }
 
-// GetWorkloadLogs returns recent log output from the agent container.
-func (c *Client) GetWorkloadLogs(ctx context.Context, executionID uuid.UUID, tailLines int) (string, error) {
-	path := fmt.Sprintf("/internal/workloads/%s/logs?tailLines=%d", executionID, tailLines)
+// GetWorkloadLogs returns recent log output from the agent container. Run-scoped: same 404
+// check as CleanupWorkload, so pod logs cannot be read across runs by pairing an authorized
+// runID with a guessed executionID.
+func (c *Client) GetWorkloadLogs(ctx context.Context, runID, executionID uuid.UUID, tailLines int) (string, error) {
+	path := fmt.Sprintf("/internal/workloads/%s/%s/logs?tailLines=%d", runID, executionID, tailLines)
 	resp, err := c.doJSON(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return "", fmt.Errorf("get workload logs: %w", err)

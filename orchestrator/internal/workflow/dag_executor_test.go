@@ -825,7 +825,7 @@ func (s *DAGExecutorTestSuite) TestTimeoutCallsDeleteAgentJob() {
 	s.env.OnActivity("AppendRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.env.OnActivity("FetchPodLogs", mock.Anything, mock.MatchedBy(func(p activity.FetchPodLogsParams) bool {
 		return p.RunID == runID
-	})).Return("", nil).Maybe()
+	})).Return("", nil).Once()
 
 	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
 		return p.TemplateNodeID == nodeA

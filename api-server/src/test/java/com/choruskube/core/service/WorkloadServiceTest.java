@@ -268,6 +268,74 @@ class WorkloadServiceTest {
     }
 
     @Test
+    void cleanupWorkload_runScoped_delegatesWhenExecutionBelongsToRun() {
+        UUID runId = UUID.randomUUID();
+        UUID executionId = UUID.randomUUID();
+        var exec = new NodeExecution();
+        exec.setId(executionId);
+        exec.setWorkflowRunId(runId);
+        when(execRepo.findById(executionId)).thenReturn(Optional.of(exec));
+
+        service.cleanupWorkload(runId, executionId);
+
+        verify(executor).cleanup(executionId);
+    }
+
+    @Test
+    void cleanupWorkload_runScoped_rejectsWhenExecutionBelongsToDifferentRun() {
+        UUID runId = UUID.randomUUID();
+        UUID executionId = UUID.randomUUID();
+        var exec = new NodeExecution();
+        exec.setId(executionId);
+        exec.setWorkflowRunId(UUID.randomUUID()); // a different run
+        when(execRepo.findById(executionId)).thenReturn(Optional.of(exec));
+
+        assertThrows(NotFoundException.class, () -> service.cleanupWorkload(runId, executionId));
+
+        verify(executor, never()).cleanup(any());
+    }
+
+    @Test
+    void cleanupWorkload_runScoped_rejectsWhenExecutionMissing() {
+        UUID runId = UUID.randomUUID();
+        UUID executionId = UUID.randomUUID();
+        when(execRepo.findById(executionId)).thenReturn(Optional.empty());
+
+        assertThrows(NotFoundException.class, () -> service.cleanupWorkload(runId, executionId));
+
+        verify(executor, never()).cleanup(any());
+    }
+
+    @Test
+    void getWorkloadLogs_runScoped_delegatesWhenExecutionBelongsToRun() {
+        UUID runId = UUID.randomUUID();
+        UUID executionId = UUID.randomUUID();
+        var exec = new NodeExecution();
+        exec.setId(executionId);
+        exec.setWorkflowRunId(runId);
+        when(execRepo.findById(executionId)).thenReturn(Optional.of(exec));
+        when(executor.getLogs(executionId, 100)).thenReturn("log output");
+
+        var response = service.getWorkloadLogs(runId, executionId, 100);
+
+        assertEquals("log output", response.logs());
+    }
+
+    @Test
+    void getWorkloadLogs_runScoped_rejectsWhenExecutionBelongsToDifferentRun() {
+        UUID runId = UUID.randomUUID();
+        UUID executionId = UUID.randomUUID();
+        var exec = new NodeExecution();
+        exec.setId(executionId);
+        exec.setWorkflowRunId(UUID.randomUUID()); // a different run
+        when(execRepo.findById(executionId)).thenReturn(Optional.of(exec));
+
+        assertThrows(NotFoundException.class, () -> service.getWorkloadLogs(runId, executionId, 100));
+
+        verify(executor, never()).getLogs(any(), anyInt());
+    }
+
+    @Test
     void getWorkloadLogs_defaultsTailLines() {
         UUID executionId = UUID.randomUUID();
         when(executor.getLogs(executionId, 50)).thenReturn("log output");

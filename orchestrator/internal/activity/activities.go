@@ -77,11 +77,6 @@ func requireRunMatches(workflowID string, claimed uuid.UUID) error {
 // so tests substitute this var instead of a live worker. Never reassigned outside _test.go.
 var activityInfo = temporalactivity.GetInfo
 
-// RunIDFromContext returns the run whose workflow scheduled this activity.
-func RunIDFromContext(ctx context.Context) (uuid.UUID, error) {
-	return runIDFromWorkflowID(activityInfo(ctx).WorkflowExecution.ID)
-}
-
 // guardRun is called first by every activity taking a RunID on its params.
 func guardRun(ctx context.Context, claimed uuid.UUID) error {
 	return requireRunMatches(activityInfo(ctx).WorkflowExecution.ID, claimed)
@@ -648,11 +643,14 @@ type DeleteAgentJobParams struct {
 	NodeExecutionID uuid.UUID
 }
 
+// guardRun binds only the claim that this run scheduled the call, not which execution it
+// names -- the api-server itself now rejects a NodeExecutionID that does not belong to
+// RunID (WorkloadService), closing the pairing a forged claim would otherwise still reach.
 func (a *Activities) DeleteAgentJob(ctx context.Context, params DeleteAgentJobParams) error {
 	if err := guardRun(ctx, params.RunID); err != nil {
 		return err
 	}
-	return a.client.CleanupWorkload(ctx, params.NodeExecutionID)
+	return a.client.CleanupWorkload(ctx, params.RunID, params.NodeExecutionID)
 }
 
 // --- Activity: FetchPodLogs ---
@@ -663,6 +661,8 @@ type FetchPodLogsParams struct {
 	TailLines       int
 }
 
+// Same reasoning as DeleteAgentJob's guard comment above: the api-server now rejects a
+// NodeExecutionID that does not belong to RunID before returning any logs.
 func (a *Activities) FetchPodLogs(ctx context.Context, params FetchPodLogsParams) (string, error) {
 	if err := guardRun(ctx, params.RunID); err != nil {
 		return "", err
@@ -671,7 +671,7 @@ func (a *Activities) FetchPodLogs(ctx context.Context, params FetchPodLogsParams
 	if tailLines <= 0 {
 		tailLines = 50
 	}
-	return a.client.GetWorkloadLogs(ctx, params.NodeExecutionID, tailLines)
+	return a.client.GetWorkloadLogs(ctx, params.RunID, params.NodeExecutionID, tailLines)
 }
 
 // --- Activity: GetNodeDecision ---
