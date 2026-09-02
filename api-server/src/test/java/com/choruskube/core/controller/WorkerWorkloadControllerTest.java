@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.choruskube.core.config.WorkerAuthFilter;
@@ -61,9 +62,11 @@ class WorkerWorkloadControllerTest {
                         .requestAttr(WorkerAuthFilter.FLEET_TOKEN_ATTRIBUTE, "ckw_abc")
                         .contentType("application/json")
                         .content("{\"templateNodeId\":null,\"configJson\":{}}"))
-                .andExpect(status().isCreated());
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.executionHandle").value("agent-1"));
 
         verify(authorizer).requireMayActOn("ckw_abc", runId);
+        verify(workloadService).createWorkload(eq(runId), eq(nodeExecId), any());
     }
 
     @Test
@@ -100,6 +103,20 @@ class WorkerWorkloadControllerTest {
     @Test
     void aMissingCredentialAttributeIsRejectedWithoutConsultingTheAuthorizer() throws Exception {
         mvc.perform(delete(path(""))).andExpect(status().isUnauthorized());
+
+        verify(authorizer, never()).requireMayActOn(any(), any());
+        verify(workloadService, never()).cleanupWorkload(any(), any());
+    }
+
+    /**
+     * WorkerAuthFilter only rejects a header of exactly "Bearer " (no token); "Bearer " plus
+     * whitespace passes the filter and sets a non-null, blank attribute, so credentialOf's own
+     * isBlank() check is what has to catch it here.
+     */
+    @Test
+    void aBlankCredentialAttributeIsRejectedWithoutConsultingTheAuthorizer() throws Exception {
+        mvc.perform(delete(path("")).requestAttr(WorkerAuthFilter.FLEET_TOKEN_ATTRIBUTE, "   "))
+                .andExpect(status().isUnauthorized());
 
         verify(authorizer, never()).requireMayActOn(any(), any());
         verify(workloadService, never()).cleanupWorkload(any(), any());
