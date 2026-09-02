@@ -53,8 +53,6 @@ type FleetProvider interface {
 type Config struct {
 	TemporalAddress string
 	APIServerURL    string
-	// InternalSecret authenticates this Worker to the API server's internal endpoints.
-	InternalSecret string
 	// CallbackURL is passed through to activity.Activities.CallbackURL. Required because
 	// ExecuteAINodeFromSnapshot rejects an empty value rather than launching a pod that
 	// cannot report back.
