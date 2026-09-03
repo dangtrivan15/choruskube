@@ -28,17 +28,25 @@ type TokenFleetProvider struct {
 	// thing that tells a server minting nothing from one saying "yours is still fresh". Written
 	// by Run's startup call and thereafter only by the single renewal goroutine, so it needs no lock.
 	minted bool
+	// capabilities is what this Worker reports about its own infrastructure at every
+	// registration call, including renewals -- never nil, so the wire body carries "{}" rather
+	// than "null" for a Worker that reports none.
+	capabilities map[string]string
 }
 
-func NewTokenFleetProvider(apiServerURL, fleetToken string, hc *http.Client) *TokenFleetProvider {
+func NewTokenFleetProvider(apiServerURL, fleetToken string, capabilities map[string]string, hc *http.Client) *TokenFleetProvider {
 	if hc == nil {
 		hc = &http.Client{Timeout: 30 * time.Second}
 	}
+	if capabilities == nil {
+		capabilities = map[string]string{}
+	}
 	return &TokenFleetProvider{
-		baseURL:    strings.TrimRight(apiServerURL, "/"),
-		token:      fleetToken,
-		hc:         hc,
-		instanceID: uuid.NewString(),
+		baseURL:      strings.TrimRight(apiServerURL, "/"),
+		token:        fleetToken,
+		hc:           hc,
+		instanceID:   uuid.NewString(),
+		capabilities: capabilities,
 	}
 }
 
@@ -67,7 +75,7 @@ func (p *TokenFleetProvider) Fleets(ctx context.Context) (Registration, error) {
 	body, err := json.Marshal(map[string]any{
 		"hostname":     hostname,
 		"instanceId":   p.instanceID,
-		"capabilities": map[string]string{},
+		"capabilities": p.capabilities,
 	})
 	if err != nil {
 		return Registration{}, fmt.Errorf("encode registration: %w", err)

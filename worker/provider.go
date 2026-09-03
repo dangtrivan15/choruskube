@@ -61,6 +61,10 @@ type FleetSource struct {
 	// routes. The registration path ignores it: that one is handed a credential, or falls back to
 	// the Fleet token it registered with.
 	InternalToken string
+	// Capabilities is what this Worker reports about its own infrastructure. Empty is the
+	// honest default: a server that requires none accepts it, and one that requires some
+	// refuses at registration rather than failing later as work it cannot execute.
+	Capabilities map[string]string
 }
 
 // Provider returns the FleetProvider this source selects, or ErrNoFleetConfigured if it selects
@@ -71,7 +75,7 @@ func (s FleetSource) Provider(hc *http.Client) (FleetProvider, error) {
 		if s.FleetToken == "" {
 			return nil, ErrBlankFleetToken
 		}
-		return NewTokenFleetProvider(s.APIServerURL, s.FleetToken, hc), nil
+		return NewTokenFleetProvider(s.APIServerURL, s.FleetToken, s.Capabilities, hc), nil
 	case s.Namespace != "" && s.TaskQueue != "":
 		return NewStaticFleetProvider(s.Namespace, s.TaskQueue, s.InternalToken), nil
 	default:
