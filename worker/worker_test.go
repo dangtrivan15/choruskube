@@ -7,7 +7,7 @@ import (
 
 type stubProvider struct{}
 
-func (stubProvider) Fleets(context.Context) ([]Fleet, error) { return nil, nil }
+func (stubProvider) Fleets(context.Context) (Registration, error) { return Registration{}, nil }
 
 func TestConfigValidate(t *testing.T) {
 	cases := []struct {

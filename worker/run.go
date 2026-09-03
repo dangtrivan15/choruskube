@@ -78,6 +78,34 @@ func (tc *tokenCache) set(key, token string) {
 	tc.tokens[key] = token
 }
 
+// credentialCache holds the credential this process presents to the API server. The renewal
+// goroutine writes it and every workload request reads it, so mu is what makes that safe.
+type credentialCache struct {
+	mu    sync.RWMutex
+	value string
+}
+
+func newCredentialCache(initial string) *credentialCache {
+	return &credentialCache{value: initial}
+}
+
+func (c *credentialCache) get() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.value
+}
+
+// set ignores a blank renewal. A server that minted nothing this tick is saying "keep what you
+// have"; taking it literally would revoke a credential still in use.
+func (c *credentialCache) set(v string) {
+	if v == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.value = v
+}
+
 // keys snapshots every Fleet key currently cached, so renewOnce can detect one dropping out
 // of a later renewal response.
 func (tc *tokenCache) keys() map[string]struct{} {
@@ -166,12 +194,15 @@ func renewalInterval(fleets []Fleet) time.Duration {
 // that comes back empty over a still-valid cached one so a blank renewal cannot revoke a
 // credential the Worker is still using. A key new to this process is added, not rejected; one
 // previously cached that the provider stops returning is logged rather than silently left to
-// age toward expiry.
-func renewOnce(ctx context.Context, provider FleetProvider, tokens *tokenCache) ([]Fleet, error) {
-	fleets, err := provider.Fleets(ctx)
+// age toward expiry. It refreshes the API server credential on the same tick, because a
+// registration response carries both and only this loop ever sees a newer one.
+func renewOnce(ctx context.Context, provider FleetProvider, tokens *tokenCache, creds *credentialCache) (Registration, error) {
+	reg, err := provider.Fleets(ctx)
 	if err != nil {
-		return nil, err
+		return Registration{}, err
 	}
+	creds.set(reg.InternalToken)
+	fleets := reg.Fleets
 
 	before := tokens.keys()
 	seen := make(map[string]struct{}, len(fleets))
@@ -191,7 +222,7 @@ func renewOnce(ctx context.Context, provider FleetProvider, tokens *tokenCache) 
 			log.Printf("fleet %s was absent from this renewal response; its cached token is not being refreshed", key)
 		}
 	}
-	return fleets, nil
+	return reg, nil
 }
 
 // fleetSupervisor owns the Temporal Workers this process is running, one per Fleet, keyed by
@@ -253,7 +284,7 @@ func (s *fleetSupervisor) count() int {
 // and retried on the next tick rather than tearing the Worker down: the token already cached
 // is still valid for the remaining half of its life, so a transient failure here costs
 // nothing until it has happened enough times to exhaust that slack.
-func renewLoop(ctx context.Context, provider FleetProvider, tokens *tokenCache, interval time.Duration, sup *fleetSupervisor) {
+func renewLoop(ctx context.Context, provider FleetProvider, tokens *tokenCache, creds *credentialCache, interval time.Duration, sup *fleetSupervisor) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -261,7 +292,7 @@ func renewLoop(ctx context.Context, provider FleetProvider, tokens *tokenCache, 
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			fleets, err := renewOnce(ctx, provider, tokens)
+			reg, err := renewOnce(ctx, provider, tokens, creds)
 			if err != nil {
 				log.Printf("fleet token renewal failed, will retry next interval: %v", err)
 				continue
@@ -272,7 +303,7 @@ func renewLoop(ctx context.Context, provider FleetProvider, tokens *tokenCache, 
 			if sup == nil {
 				continue
 			}
-			for _, f := range fleets {
+			for _, f := range reg.Fleets {
 				if err := sup.serve(f); err != nil {
 					log.Printf("could not start serving fleet %s: %v", f.TaskQueue, err)
 				}
@@ -288,15 +319,22 @@ func Run(ctx context.Context, cfg Config) error {
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
-	fleets, err := cfg.Provider.Fleets(ctx)
+	reg, err := cfg.Provider.Fleets(ctx)
 	if err != nil {
 		return fmt.Errorf("resolve fleets: %w", err)
 	}
+	fleets := reg.Fleets
 	if len(fleets) == 0 {
 		return errors.New("no fleets to serve")
 	}
+	// Blank here is different from blank on a renewal: there is no cached credential to keep, so
+	// every workload call would carry an empty bearer and be refused one node at a time.
+	if reg.InternalToken == "" {
+		return errors.New("no API server credential resolved: registration minted none and WORKER_INTERNAL_TOKEN is unset")
+	}
 
-	acts := activity.New(workload.NewClient(cfg.APIServerURL, cfg.InternalSecret, nil))
+	credentials := newCredentialCache(reg.InternalToken)
+	acts := activity.New(workload.NewClient(cfg.APIServerURL, credentials.get, nil))
 	// Both are required: ExecuteAINodeFromSnapshot rejects an empty value rather than
 	// launching a pod that cannot report back. Passing nil for the HTTP client selects the
 	// package's 30s-timeout default; http.DefaultClient has no timeout and must not be used.
@@ -326,7 +364,7 @@ func Run(ctx context.Context, cfg Config) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		renewLoop(ctx, cfg.Provider, tokens, loopInterval(fleets), sup)
+		renewLoop(ctx, cfg.Provider, tokens, credentials, loopInterval(fleets), sup)
 	}()
 
 	<-ctx.Done()

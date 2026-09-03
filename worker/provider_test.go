@@ -7,19 +7,20 @@ import (
 )
 
 func TestStaticFleetProviderServesExactlyOneFleet(t *testing.T) {
-	fleets, err := NewStaticFleetProvider("ns", "q").Fleets(context.Background())
+	reg, err := NewStaticFleetProvider("ns", "q", "internal").Fleets(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(fleets) != 1 {
-		t.Fatalf("want exactly one fleet, got %d", len(fleets))
+	if len(reg.Fleets) != 1 {
+		t.Fatalf("want exactly one fleet, got %d", len(reg.Fleets))
 	}
-	if fleets[0].Namespace != "ns" || fleets[0].TaskQueue != "q" {
-		t.Fatalf("fleet not threaded: %+v", fleets[0])
+	if reg.Fleets[0].Namespace != "ns" || reg.Fleets[0].TaskQueue != "q" {
+		t.Fatalf("fleet not threaded: %+v", reg.Fleets[0])
 	}
-	// No token, so Run omits credentials and the dial stays plaintext -- see clientOptions.
-	if fleets[0].Token != "" {
-		t.Fatalf("static provider must carry no token, got %q", fleets[0].Token)
+	// No Temporal token, so Run omits credentials and the dial stays plaintext -- see
+	// clientOptions. The API server credential is a different field and must not land here.
+	if reg.Fleets[0].Token != "" {
+		t.Fatalf("static provider must carry no token, got %q", reg.Fleets[0].Token)
 	}
 }
 
@@ -73,5 +74,20 @@ func TestFleetSourceRejectsAHalfConfiguredStaticFleet(t *testing.T) {
 		if provider != nil {
 			t.Fatalf("source %+v: want no provider alongside the error, got %T", s, provider)
 		}
+	}
+}
+
+// The static path registers with nobody, so no server can mint it a credential. Without a
+// configured one it would present an empty bearer on every application call.
+func TestStaticFleetProviderCarriesItsConfiguredInternalToken(t *testing.T) {
+	reg, err := NewStaticFleetProvider("ns", "q", "configured").Fleets(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(reg.Fleets) != 1 || reg.Fleets[0].Namespace != "ns" || reg.Fleets[0].TaskQueue != "q" {
+		t.Fatalf("unexpected fleets: %+v", reg.Fleets)
+	}
+	if reg.InternalToken != "configured" {
+		t.Fatalf("InternalToken = %q, want the configured one", reg.InternalToken)
 	}
 }

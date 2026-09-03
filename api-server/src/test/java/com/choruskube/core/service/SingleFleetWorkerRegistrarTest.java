@@ -98,4 +98,17 @@ class SingleFleetWorkerRegistrarTest {
     void register_nullToken_isForbiddenRatherThanNullPointer() {
         assertThatThrownBy(() -> registrar.register(null, request("host-1"))).isInstanceOf(ForbiddenException.class);
     }
+
+    /**
+     * A server that keeps no Worker records has nothing to store a minted credential against, so
+     * it mints none. Blank means "keep the credential you already have", which for a Worker that
+     * registered with a Fleet token is that token.
+     */
+    @Test
+    void singleFleetRegistrationMintsNoInternalCredential() {
+        WorkerRegisterResponse response = new SingleFleetWorkerRegistrar("ns", "queue", "tok")
+                .register("tok", new WorkerRegisterRequest("host", UUID.randomUUID(), Map.of()));
+
+        assertThat(response.internalToken()).isEmpty();
+    }
 }

@@ -32,6 +32,10 @@ Set `FLEET_TOKEN`. The Worker POSTs to `/worker/register` at startup and is told
 namespace, queue, and Temporal credential; it re-registers periodically, which is also how a
 credential is renewed and how a Fleet added after the process started gets picked up.
 
+Registration also settles the credential the Worker presents on the api-server's own
+`/worker/**` routes, so nothing separate has to be configured for it. A server that mints one
+returns it; this one does not, and the Worker keeps the `FLEET_TOKEN` it authenticated with.
+
 The api-server compares the token against `WORKER_REGISTRATION_TOKEN`, so the two must match.
 Leaving the server's side unset admits no Worker at all — registration fails closed rather
 than leaving the endpoint anonymous on a server whose operator never set it.
@@ -41,10 +45,22 @@ deployment that has more than one Fleet.
 
 ### Configure the Fleet directly
 
-Set `TEMPORAL_NAMESPACE` and `TEMPORAL_TASK_QUEUE`. The Worker serves that one Fleet and never
-calls `/worker/register`, so the api-server needs no registration token and the Worker holds
-no credential. It connects to Temporal without one, which suits a Temporal that runs no
-authorizer — the local stack, or a self-hosted cluster where the frontend is not exposed.
+Set `TEMPORAL_NAMESPACE`, `TEMPORAL_TASK_QUEUE` and `WORKER_INTERNAL_TOKEN`. The Worker serves
+that one Fleet and never calls `/worker/register`, so it holds no Temporal credential. It
+connects to Temporal without one, which suits a Temporal that runs no authorizer — the local
+stack, or a self-hosted cluster where the frontend is not exposed.
+
+`WORKER_INTERNAL_TOKEN` is the exception, and it is required: this path registers with nobody,
+so nothing can hand the Worker a credential for the api-server's `/worker/**` routes. Without
+it the process refuses to start, rather than presenting an empty bearer and failing one node
+at a time.
+
+Set it to the same value as the api-server's `WORKER_REGISTRATION_TOKEN`. Skipping registration
+does not skip authorization: this server checks every `/worker/**` call against that one
+configured secret, whether the presenter registered or not. A `WORKER_INTERNAL_TOKEN` that
+differs satisfies the startup guard — which only asks that it is set — and then fails every node
+with a 403, which is the failure the guard exists to prevent. Leaving the server's side unset
+admits no Worker on either path.
 
 Use this path when the answer is already known and constant, and a round-trip to ask for it
 would only return what you configured.
@@ -56,9 +72,9 @@ would only return what you configured.
 | `TEMPORAL_ADDRESS` | yes | Temporal frontend to dial. A registered Fleet may override it. |
 | `API_SERVER_URL` | yes | api-server base URL, for registration and the workload executor. |
 | `CALLBACK_URL` | yes | Where a launched agent container reports its result. |
-| `ORCHESTRATOR_SECRET` | yes | Authenticates this Worker to the api-server's internal endpoints. |
 | `FLEET_TOKEN` | one of | Selects registration. Must match the server's `WORKER_REGISTRATION_TOKEN`. |
 | `TEMPORAL_NAMESPACE`, `TEMPORAL_TASK_QUEUE` | one of | Select the static single Fleet. |
+| `WORKER_INTERNAL_TOKEN` | static path | Authenticates this Worker on the api-server's `/worker/**` routes. Must equal the server's `WORKER_REGISTRATION_TOKEN`. Ignored when registering. |
 | `TEMPORAL_TLS_DISABLED` | no | Set `true` for a Temporal that serves plaintext gRPC. |
 
 `TEMPORAL_TLS_DISABLED` is opt-in so a deployment against a TLS Temporal cannot lose TLS by
@@ -66,6 +82,15 @@ omission. It is only needed when a Fleet carries a credential: the Temporal SDK 
 whenever credentials are present, whatever they contain. A Worker with no credential — the
 static path, or a registration that returned an empty token — presents none at all and dials
 plaintext without it.
+
+Every workload call a Worker makes to the api-server names its run in the path — registration is
+the exception, and it precedes any run — so the server is in a position to decide per run whether
+the presenting credential may act on it. That decision is the server's; the path shape only gives
+it something to decide on. What a credential actually reaches depends on which one it is — and on
+this deployment every Worker presents the same `WORKER_REGISTRATION_TOKEN`, whether registration
+handed it back or the operator configured it directly, so it is one shared value, not a per-Worker
+one. A server that mints a credential per registration returns it in the registration response and
+the Worker presents that instead.
 
 ## Build and test
 

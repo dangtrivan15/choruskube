@@ -3,9 +3,6 @@ package com.choruskube.core.service;
 import com.choruskube.core.dto.WorkerRegisterRequest;
 import com.choruskube.core.dto.WorkerRegisterResponse;
 import com.choruskube.core.exception.ForbiddenException;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 
 /**
  * The default {@link WorkerRegistrar}: this server has exactly one Fleet, and it is the Temporal
@@ -41,16 +38,17 @@ public class SingleFleetWorkerRegistrar implements WorkerRegistrar {
         this.temporalNamespace = temporalNamespace;
         this.taskQueue = taskQueue;
         this.expectedTokenDigest =
-                (registrationToken == null || registrationToken.isBlank()) ? null : sha256(registrationToken);
+                (registrationToken == null || registrationToken.isBlank()) ? null : TokenDigest.of(registrationToken);
     }
 
     @Override
     public WorkerRegisterResponse register(String fleetToken, WorkerRegisterRequest request) {
         requireConfiguredToken(fleetToken);
-        // Blank token: an OSS Temporal runs without an authorizer, and the Worker must send no
-        // credential at all rather than an empty one -- the SDK enables TLS on their mere presence.
+        // Blank Temporal token: an OSS Temporal runs without an authorizer, and the Worker must send
+        // no credential at all rather than an empty one -- the SDK enables TLS on their mere presence.
         // Blank endpoint: the Worker already knows where Temporal is; there is only one.
-        return new WorkerRegisterResponse(request.instanceId(), temporalNamespace, taskQueue, "", 0L, "");
+        // Blank internal token: no Worker record is kept here, so there is nothing to mint against.
+        return new WorkerRegisterResponse(request.instanceId(), temporalNamespace, taskQueue, "", 0L, "", "");
     }
 
     private void requireConfiguredToken(String presented) {
@@ -58,18 +56,8 @@ public class SingleFleetWorkerRegistrar implements WorkerRegistrar {
         if (expected == null) {
             throw new ForbiddenException("Worker registration is not configured on this server");
         }
-        // Compare fixed-width digests, not the tokens: MessageDigest.isEqual is only time-constant
-        // over equal-length inputs, and raw tokens differ in length.
-        if (!MessageDigest.isEqual(expected, sha256(presented == null ? "" : presented))) {
+        if (!TokenDigest.matches(expected, presented)) {
             throw new ForbiddenException("Unknown or revoked fleet token");
-        }
-    }
-
-    private static byte[] sha256(String input) {
-        try {
-            return MessageDigest.getInstance("SHA-256").digest(input.getBytes(StandardCharsets.UTF_8));
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 not available", e);
         }
     }
 }

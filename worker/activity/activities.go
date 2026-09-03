@@ -13,12 +13,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"go.temporal.io/sdk/activity"
+	temporalactivity "go.temporal.io/sdk/activity"
 
 	"github.com/dangtrivan15/choruskube/worker/workload"
 )
 
-// NOTE: This package uses activity.ErrResultPending from the Temporal SDK
+// NOTE: This package uses temporalactivity.ErrResultPending from the Temporal SDK
 // (go.temporal.io/sdk/activity) to signal async activity completion.
 // Do NOT define a custom ErrResultPending — the SDK's sentinel is intercepted
 // at the framework level to keep the activity "open" in Temporal.
@@ -123,6 +123,16 @@ type CallbackResult struct {
 func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params ExecuteAINodeFromSnapshotParams) (CallbackResult, error) {
 	if a.CallbackURL == "" || a.APIServerURL == "" {
 		return CallbackResult{}, fmt.Errorf("activities: CallbackURL and APIServerURL must both be set before executing")
+	}
+	runID, err := runIDOf(ctx)
+	if err != nil {
+		return CallbackResult{}, err
+	}
+	// The parameters and the workflow that scheduled them must name the same run. They cannot
+	// disagree unless something built this activity wrongly, and continuing would send a pair the
+	// server refuses -- as a node failure with no explanation rather than this one.
+	if runID != params.RunID {
+		return CallbackResult{}, fmt.Errorf("activity params name run %s but its workflow is run %s", params.RunID, runID)
 	}
 
 	// Resolve prompt template
@@ -299,7 +309,7 @@ func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params Execu
 		return CallbackResult{}, fmt.Errorf("create workload: %w", err)
 	}
 
-	return CallbackResult{}, activity.ErrResultPending
+	return CallbackResult{}, temporalactivity.ErrResultPending
 }
 
 // --- Activity: DeleteAgentJob ---
@@ -309,7 +319,11 @@ type DeleteAgentJobParams struct {
 }
 
 func (a *Activities) DeleteAgentJob(ctx context.Context, params DeleteAgentJobParams) error {
-	return a.client.CleanupWorkload(ctx, params.NodeExecutionID)
+	runID, err := runIDOf(ctx)
+	if err != nil {
+		return err
+	}
+	return a.client.CleanupWorkload(ctx, runID, params.NodeExecutionID)
 }
 
 // --- Activity: FetchPodLogs ---
@@ -320,11 +334,15 @@ type FetchPodLogsParams struct {
 }
 
 func (a *Activities) FetchPodLogs(ctx context.Context, params FetchPodLogsParams) (string, error) {
+	runID, err := runIDOf(ctx)
+	if err != nil {
+		return "", err
+	}
 	tailLines := params.TailLines
 	if tailLines <= 0 {
 		tailLines = 50
 	}
-	return a.client.GetWorkloadLogs(ctx, params.NodeExecutionID, tailLines)
+	return a.client.GetWorkloadLogs(ctx, runID, params.NodeExecutionID, tailLines)
 }
 
 // prefixPath namespaces an object storage key by org slug, so each organization's runs live

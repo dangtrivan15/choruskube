@@ -28,18 +28,31 @@ type Fleet struct {
 	ExpiresInSeconds int64
 }
 
-// FleetProvider supplies the Fleets this process serves. It is called once at
-// startup; a provider that talks to a service should apply its own timeout.
+// Registration is everything one call to a FleetProvider learns: which Fleets this process
+// serves, and the credential it presents on the API server's application routes.
+//
+// InternalToken is a process fact, not a per-Fleet one -- one process makes one client's worth of
+// application calls however many Fleets it serves -- so it lives here rather than on Fleet, where
+// two disagreeing entries would have no resolution rule.
+type Registration struct {
+	Fleets []Fleet
+	// InternalToken authenticates this process to the API server's /worker/** routes. Each
+	// provider resolves its own: a registering provider takes the server's minted credential and
+	// falls back to the token it registered with, a static one takes a configured value. Empty is
+	// fatal at startup -- see Run -- because there is no cached credential to fall back on.
+	InternalToken string
+}
+
+// FleetProvider supplies this process's registration. It is called at startup and on every
+// renewal tick; a provider that talks to a service should apply its own timeout.
 type FleetProvider interface {
-	Fleets(ctx context.Context) ([]Fleet, error)
+	Fleets(ctx context.Context) (Registration, error)
 }
 
 // Config is everything Run needs.
 type Config struct {
 	TemporalAddress string
 	APIServerURL    string
-	// InternalSecret authenticates this Worker to the API server's internal endpoints.
-	InternalSecret string
 	// CallbackURL is passed through to activity.Activities.CallbackURL. Required because
 	// ExecuteAINodeFromSnapshot rejects an empty value rather than launching a pod that
 	// cannot report back.

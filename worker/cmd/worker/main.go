@@ -20,7 +20,6 @@ func main() {
 	cfg := worker.Config{
 		TemporalAddress: os.Getenv("TEMPORAL_ADDRESS"),
 		APIServerURL:    os.Getenv("API_SERVER_URL"),
-		InternalSecret:  os.Getenv("ORCHESTRATOR_SECRET"),
 		CallbackURL:     os.Getenv("CALLBACK_URL"),
 		// Opt-in, so a deployment against a TLS Temporal cannot lose TLS by omission.
 		TemporalTLSDisabled: os.Getenv("TEMPORAL_TLS_DISABLED") == "true",
@@ -37,10 +36,14 @@ func main() {
 		FleetTokenSet: fleetTokenSet,
 		Namespace:     os.Getenv("TEMPORAL_NAMESPACE"),
 		TaskQueue:     os.Getenv("TEMPORAL_TASK_QUEUE"),
+		// Only the static path needs this: the registration path is handed a credential, or
+		// falls back to the Fleet token it registered with.
+		InternalToken: os.Getenv("WORKER_INTERNAL_TOKEN"),
 	}.Provider(nil)
 	if err != nil {
 		log.Fatalf("%v: set FLEET_TOKEN to register with the API server, "+
-			"or TEMPORAL_NAMESPACE and TEMPORAL_TASK_QUEUE to serve one Fleet without registering", err)
+			"or TEMPORAL_NAMESPACE, TEMPORAL_TASK_QUEUE and WORKER_INTERNAL_TOKEN to serve one "+
+			"Fleet without registering", err)
 	}
 	cfg.Provider = provider
 

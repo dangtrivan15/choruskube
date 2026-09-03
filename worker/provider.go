@@ -13,18 +13,23 @@ import (
 // serve would only ever return what the operator already configured. Nothing is registered,
 // so nothing can be revoked either — stopping this Worker means stopping the process.
 type StaticFleetProvider struct {
-	fleet Fleet
+	fleet         Fleet
+	internalToken string
 }
 
-// NewStaticFleetProvider builds a provider for one namespace and task queue. No token is
+// NewStaticFleetProvider builds a provider for one namespace and task queue. No Temporal token is
 // carried: a Temporal that hands out no credential is the case this exists for, and Run omits
-// credentials entirely rather than presenting an empty one.
-func NewStaticFleetProvider(namespace, taskQueue string) *StaticFleetProvider {
-	return &StaticFleetProvider{fleet: Fleet{Namespace: namespace, TaskQueue: taskQueue}}
+// credentials entirely rather than presenting an empty one. internalToken is separate and required
+// -- this provider registers with nobody, so nothing can mint it one.
+func NewStaticFleetProvider(namespace, taskQueue, internalToken string) *StaticFleetProvider {
+	return &StaticFleetProvider{
+		fleet:         Fleet{Namespace: namespace, TaskQueue: taskQueue},
+		internalToken: internalToken,
+	}
 }
 
-func (p *StaticFleetProvider) Fleets(context.Context) ([]Fleet, error) {
-	return []Fleet{p.fleet}, nil
+func (p *StaticFleetProvider) Fleets(context.Context) (Registration, error) {
+	return Registration{Fleets: []Fleet{p.fleet}, InternalToken: p.internalToken}, nil
 }
 
 // ErrNoFleetConfigured reports a FleetSource that names neither way of learning a Fleet.
@@ -52,6 +57,10 @@ type FleetSource struct {
 	// Namespace and TaskQueue select StaticFleetProvider, serving one Fleet without registering.
 	Namespace string
 	TaskQueue string
+	// InternalToken is the credential the static path presents on the API server's application
+	// routes. The registration path ignores it: that one is handed a credential, or falls back to
+	// the Fleet token it registered with.
+	InternalToken string
 }
 
 // Provider returns the FleetProvider this source selects, or ErrNoFleetConfigured if it selects
@@ -64,7 +73,7 @@ func (s FleetSource) Provider(hc *http.Client) (FleetProvider, error) {
 		}
 		return NewTokenFleetProvider(s.APIServerURL, s.FleetToken, hc), nil
 	case s.Namespace != "" && s.TaskQueue != "":
-		return NewStaticFleetProvider(s.Namespace, s.TaskQueue), nil
+		return NewStaticFleetProvider(s.Namespace, s.TaskQueue, s.InternalToken), nil
 	default:
 		return nil, ErrNoFleetConfigured
 	}

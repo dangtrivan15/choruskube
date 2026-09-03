@@ -249,6 +249,55 @@ class WorkloadServiceTest {
     }
 
     @Test
+    void createWorkloadRejectsANodeExecutionFromAnotherRun() {
+        UUID runId = UUID.randomUUID();
+        UUID otherRunId = UUID.randomUUID();
+        UUID nodeExecId = UUID.randomUUID();
+        UUID templateNodeId = UUID.randomUUID();
+
+        NodeExecution exec = new NodeExecution();
+        exec.setId(nodeExecId);
+        exec.setWorkflowRunId(otherRunId);
+        exec.setTemplateNodeId(templateNodeId);
+        when(execRepo.findById(nodeExecId)).thenReturn(Optional.of(exec));
+
+        WorkflowRun run = new WorkflowRun();
+        run.setId(runId);
+
+        String snapshotJson = """
+                {
+                  "nodes": [{
+                    "template_node_id": "%s",
+                    "label": "Test Node",
+                    "executor_type": "ai",
+                    "image": "test-image:latest",
+                    "secrets": [],
+                    "is_entrypoint": true
+                  }],
+                  "edges": [],
+                  "inputs": {}
+                }
+                """.formatted(templateNodeId);
+
+        // Lenient and a full valid happy path (not left empty): the guard must reject before
+        // any of this is read. Stubbing a complete success path -- rather than an empty one --
+        // means a missing guard makes the call SUCCEED, so assertThrows below fails on "no
+        // exception thrown" specifically, not on some unrelated collaborator's exception type.
+        lenient().when(runRepo.findById(runId)).thenReturn(Optional.of(run));
+        lenient().when(snapshotBuilder.buildSnapshotForRun(run)).thenReturn(snapshotJson);
+        lenient().when(executor.execute(any())).thenReturn(new ExecutionResult("agent-abc12345", "hash123"));
+        lenient().when(execRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        assertThrows(
+                NotFoundException.class,
+                () -> service.createWorkload(runId, nodeExecId, new CreateWorkloadRequest(null, null)));
+
+        // The executor must never be reached: a rejected pairing that still launched a container
+        // would leave a pod belonging to neither run.
+        verifyNoInteractions(executor);
+    }
+
+    @Test
     void cleanupWorkload_delegatesToExecutor() {
         UUID executionId = UUID.randomUUID();
 

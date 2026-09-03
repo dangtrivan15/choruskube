@@ -20,14 +20,14 @@ func TestTokenFleetProviderReturnsOneFleet(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	fleets, err := NewTokenFleetProvider(srv.URL, "ckf_secret", srv.Client()).Fleets(context.Background())
+	reg, err := NewTokenFleetProvider(srv.URL, "ckf_secret", srv.Client()).Fleets(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(fleets) != 1 {
-		t.Fatalf("want 1 fleet, got %d", len(fleets))
+	if len(reg.Fleets) != 1 {
+		t.Fatalf("want 1 fleet, got %d", len(reg.Fleets))
 	}
-	f := fleets[0]
+	f := reg.Fleets[0]
 	if f.Namespace != "ns" || f.TaskQueue != "q" || f.Token != "jwt" || f.WorkerID != "w-1" || f.Endpoint != "gw:7233" || f.ExpiresInSeconds != 3600 {
 		t.Fatalf("unexpected fleet: %+v", f)
 	}
@@ -79,5 +79,99 @@ func TestTokenFleetProviderRejectsNon2xx(t *testing.T) {
 	_, err := NewTokenFleetProvider(srv.URL, "bad", srv.Client()).Fleets(context.Background())
 	if err == nil {
 		t.Fatal("want an error for 403, got nil")
+	}
+}
+
+func TestTokenFleetProviderReturnsTheMintedInternalToken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"workerId":"w-1","temporalNamespace":"ns","taskQueue":"q","token":"jwt","expiresInSeconds":3600,"endpoint":"","internalToken":"ckw_minted"}`))
+	}))
+	defer srv.Close()
+
+	reg, err := NewTokenFleetProvider(srv.URL, "ckf_secret", srv.Client()).Fleets(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if reg.InternalToken != "ckw_minted" {
+		t.Fatalf("InternalToken = %q, want the minted one", reg.InternalToken)
+	}
+}
+
+// Before any mint, a blank is the only signal a server that mints nothing ever sends, so the
+// Worker stays on the credential it registered with. Falling back to anything else -- or to
+// nothing -- would leave it unable to make application calls.
+func TestTokenFleetProviderFallsBackToTheFleetTokenBeforeAnyMint(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"workerId":"w-1","temporalNamespace":"ns","taskQueue":"q","token":"","expiresInSeconds":0,"endpoint":"","internalToken":""}`))
+	}))
+	defer srv.Close()
+
+	reg, err := NewTokenFleetProvider(srv.URL, "ckf_secret", srv.Client()).Fleets(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if reg.InternalToken != "ckf_secret" {
+		t.Fatalf("InternalToken = %q, want the fleet token", reg.InternalToken)
+	}
+}
+
+// Once a server has minted, a blank means the live credential is still fresh and must reach the
+// caller as a blank: substituting the Fleet token would overwrite a working credential with one
+// whose hash lives in another table, refusing every workload call until the next mint.
+func TestTokenFleetProviderPropagatesABlankAfterAMint(t *testing.T) {
+	bodies := []string{
+		`{"workerId":"w-1","temporalNamespace":"ns","taskQueue":"q","token":"jwt","internalToken":"ckw_A"}`,
+		`{"workerId":"w-1","temporalNamespace":"ns","taskQueue":"q","token":"jwt","internalToken":""}`,
+	}
+	var call int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if call < len(bodies) {
+			_, _ = w.Write([]byte(bodies[call]))
+		}
+		call++
+	}))
+	defer srv.Close()
+
+	p := NewTokenFleetProvider(srv.URL, "ckf_secret", srv.Client())
+	first, err := p.Fleets(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error on the first registration: %v", err)
+	}
+	if first.InternalToken != "ckw_A" {
+		t.Fatalf("first InternalToken = %q, want the minted one", first.InternalToken)
+	}
+
+	second, err := p.Fleets(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error on the second registration: %v", err)
+	}
+	if second.InternalToken != "" {
+		t.Fatalf("second InternalToken = %q, want a blank so the cache keeps ckw_A", second.InternalToken)
+	}
+}
+
+// A server that mints nothing sends a blank on every registration, not only the first. The
+// fallback is gated on whether any mint has happened, so a second blank must substitute the Fleet
+// token again -- reading it as "your live credential is still fresh" would leave a Worker that
+// never had one holding nothing at all.
+func TestTokenFleetProviderFallsBackOnEveryBlankFromAServerThatNeverMints(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"workerId":"w-1","temporalNamespace":"ns","taskQueue":"q","token":"","expiresInSeconds":0,"endpoint":"","internalToken":""}`))
+	}))
+	defer srv.Close()
+
+	p := NewTokenFleetProvider(srv.URL, "ckf_secret", srv.Client())
+	for call := 1; call <= 2; call++ {
+		reg, err := p.Fleets(context.Background())
+		if err != nil {
+			t.Fatalf("call %d: unexpected error: %v", call, err)
+		}
+		if reg.InternalToken != "ckf_secret" {
+			t.Fatalf("call %d: InternalToken = %q, want the fleet token", call, reg.InternalToken)
+		}
 	}
 }

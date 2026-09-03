@@ -43,15 +43,15 @@ func TestRenewOnceReturnsTheRosterSoNewFleetsCanBeServed(t *testing.T) {
 	arrived := Fleet{Namespace: "ns", TaskQueue: "q-new", Token: "new"}
 	tokens := newTokenCache([]Fleet{existing})
 
-	fleets, err := renewOnce(context.Background(), fixedProvider{fleets: []Fleet{existing, arrived}}, tokens)
+	reg, err := renewOnce(context.Background(), fixedProvider{reg: Registration{Fleets: []Fleet{existing, arrived}}}, tokens, newCredentialCache("held"))
 	if err != nil {
 		t.Fatalf("renewOnce = %v", err)
 	}
-	if len(fleets) != 2 {
-		t.Fatalf("renewOnce returned %d fleets, want 2 — the loop cannot serve what it cannot see", len(fleets))
+	if len(reg.Fleets) != 2 {
+		t.Fatalf("renewOnce returned %d fleets, want 2 — the loop cannot serve what it cannot see", len(reg.Fleets))
 	}
 	var found bool
-	for _, f := range fleets {
+	for _, f := range reg.Fleets {
 		if fleetKey(f) == fleetKey(arrived) {
 			found = true
 		}
