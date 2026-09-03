@@ -20,7 +20,7 @@ func TestTokenFleetProviderReturnsOneFleet(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	reg, err := NewTokenFleetProvider(srv.URL, "ckf_secret", srv.Client()).Fleets(context.Background())
+	reg, err := NewTokenFleetProvider(srv.URL, "ckf_secret", nil, srv.Client()).Fleets(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestTokenFleetProviderReusesOneInstanceIDPerProcess(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := NewTokenFleetProvider(srv.URL, "ckf_secret", srv.Client())
+	p := NewTokenFleetProvider(srv.URL, "ckf_secret", nil, srv.Client())
 	_, _ = p.Fleets(context.Background())
 	_, _ = p.Fleets(context.Background())
 
@@ -76,7 +76,7 @@ func TestTokenFleetProviderRejectsNon2xx(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := NewTokenFleetProvider(srv.URL, "bad", srv.Client()).Fleets(context.Background())
+	_, err := NewTokenFleetProvider(srv.URL, "bad", nil, srv.Client()).Fleets(context.Background())
 	if err == nil {
 		t.Fatal("want an error for 403, got nil")
 	}
@@ -89,7 +89,7 @@ func TestTokenFleetProviderReturnsTheMintedInternalToken(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	reg, err := NewTokenFleetProvider(srv.URL, "ckf_secret", srv.Client()).Fleets(context.Background())
+	reg, err := NewTokenFleetProvider(srv.URL, "ckf_secret", nil, srv.Client()).Fleets(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestTokenFleetProviderFallsBackToTheFleetTokenBeforeAnyMint(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	reg, err := NewTokenFleetProvider(srv.URL, "ckf_secret", srv.Client()).Fleets(context.Background())
+	reg, err := NewTokenFleetProvider(srv.URL, "ckf_secret", nil, srv.Client()).Fleets(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestTokenFleetProviderPropagatesABlankAfterAMint(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := NewTokenFleetProvider(srv.URL, "ckf_secret", srv.Client())
+	p := NewTokenFleetProvider(srv.URL, "ckf_secret", nil, srv.Client())
 	first, err := p.Fleets(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error on the first registration: %v", err)
@@ -164,7 +164,7 @@ func TestTokenFleetProviderFallsBackOnEveryBlankFromAServerThatNeverMints(t *tes
 	}))
 	defer srv.Close()
 
-	p := NewTokenFleetProvider(srv.URL, "ckf_secret", srv.Client())
+	p := NewTokenFleetProvider(srv.URL, "ckf_secret", nil, srv.Client())
 	for call := 1; call <= 2; call++ {
 		reg, err := p.Fleets(context.Background())
 		if err != nil {
@@ -173,5 +173,24 @@ func TestTokenFleetProviderFallsBackOnEveryBlankFromAServerThatNeverMints(t *tes
 		if reg.InternalToken != "ckf_secret" {
 			t.Fatalf("call %d: InternalToken = %q, want the fleet token", call, reg.InternalToken)
 		}
+	}
+}
+
+func TestTokenFleetProviderSendsConfiguredCapabilities(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"workerId":"w-1","temporalNamespace":"ns","taskQueue":"q","token":"","expiresInSeconds":0,"endpoint":"","internalToken":""}`))
+	}))
+	defer srv.Close()
+
+	caps := map[string]string{"docker": "true"}
+	if _, err := NewTokenFleetProvider(srv.URL, "ckf_secret", caps, srv.Client()).Fleets(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	sent, ok := gotBody["capabilities"].(map[string]any)
+	if !ok || sent["docker"] != "true" {
+		t.Fatalf("capabilities sent = %v, want docker=true", gotBody["capabilities"])
 	}
 }

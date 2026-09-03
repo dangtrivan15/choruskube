@@ -25,6 +25,11 @@ func main() {
 		TemporalTLSDisabled: os.Getenv("TEMPORAL_TLS_DISABLED") == "true",
 	}
 
+	capabilities, err := worker.ParseCapabilitiesEnv(os.Getenv("WORKER_CAPABILITIES"))
+	if err != nil {
+		log.Fatalf("invalid WORKER_CAPABILITIES: %v", err)
+	}
+
 	// Resolved here, not in Config: which Fleet this process serves is the one setting with two
 	// legitimate answers, and Config.Validate can only see that a Provider was supplied.
 	// LookupEnv, not Getenv: an exported-but-empty FLEET_TOKEN means "I meant to register and my
@@ -39,6 +44,7 @@ func main() {
 		// Only the static path needs this: the registration path is handed a credential, or
 		// falls back to the Fleet token it registered with.
 		InternalToken: os.Getenv("WORKER_INTERNAL_TOKEN"),
+		Capabilities:  capabilities,
 	}.Provider(nil)
 	if err != nil {
 		log.Fatalf("%v: set FLEET_TOKEN to register with the API server, "+

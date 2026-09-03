@@ -76,6 +76,7 @@ would only return what you configured.
 | `TEMPORAL_NAMESPACE`, `TEMPORAL_TASK_QUEUE` | one of | Select the static single Fleet. |
 | `WORKER_INTERNAL_TOKEN` | static path | Authenticates this Worker on the api-server's `/worker/**` routes. Must equal the server's `WORKER_REGISTRATION_TOKEN`. Ignored when registering. |
 | `TEMPORAL_TLS_DISABLED` | no | Set `true` for a Temporal that serves plaintext gRPC. |
+| `WORKER_CAPABILITIES` | no | `key=value,key=value` pairs this Worker reports about its own infrastructure at registration. Default empty. A server that records required capabilities on a Fleet refuses a Worker that does not report them. |
 
 `TEMPORAL_TLS_DISABLED` is opt-in so a deployment against a TLS Temporal cannot lose TLS by
 omission. It is only needed when a Fleet carries a credential: the Temporal SDK turns TLS on
