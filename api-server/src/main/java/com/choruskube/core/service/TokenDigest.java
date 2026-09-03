@@ -13,6 +13,7 @@ final class TokenDigest {
 
     private TokenDigest() {}
 
+    /** The SHA-256 of {@code token}: the fixed-width form {@link #matches} needs on both sides. */
     static byte[] of(String token) {
         try {
             return MessageDigest.getInstance("SHA-256").digest(token.getBytes(StandardCharsets.UTF_8));

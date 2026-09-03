@@ -2,17 +2,35 @@ package worker
 
 import (
 	"context"
+	"net"
 	"runtime"
 	"strings"
 	"sync"
 	"testing"
 )
 
+// closedPort reserves a port and immediately releases it, so a dial there is refused rather than
+// answered. Tests that must never reach Temporal need that guarantee: a plausible-looking address
+// connects on any machine running the local stack, and a Run that gets past its guard then blocks
+// on <-ctx.Done() instead of returning the error the test names.
+func closedPort(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve a port: %v", err)
+	}
+	addr := l.Addr().String()
+	if err := l.Close(); err != nil {
+		t.Fatalf("release the reserved port: %v", err)
+	}
+	return addr
+}
+
 // An empty credential would go on the wire as "Bearer " and be refused per request, surfacing as
 // every node failing for no stated reason. Refusing to start names the cause once.
 func TestRunRefusesToStartWithoutACredential(t *testing.T) {
 	cfg := Config{
-		TemporalAddress: "localhost:7233",
+		TemporalAddress: closedPort(t),
 		APIServerURL:    "http://api",
 		CallbackURL:     "http://cb",
 		Provider:        fixedProvider{reg: Registration{Fleets: []Fleet{{Namespace: "ns", TaskQueue: "q"}}}},

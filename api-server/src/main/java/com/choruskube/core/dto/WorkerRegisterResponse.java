@@ -4,7 +4,8 @@ import java.util.UUID;
 
 /**
  * Everything a Worker needs to start polling. Dispatch comes from Temporal, not from the API
- * server, so this response is the only API-server call a Worker ever makes.
+ * server, so a Worker never polls this one for work; the only other calls it makes here are the
+ * workload routes, against runs Temporal has already handed it.
  *
  * @param token the Temporal credential for {@code temporalNamespace}. Blank means the Worker
  *     presents no credential at all — a Temporal with no authorizer, which is the single-Fleet
