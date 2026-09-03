@@ -77,21 +77,19 @@ jobs:
 
       - name: Export registry env
         run: |
-          echo "::add-mask::$REGISTRY_MIRROR"
-          echo "REGISTRY_MIRROR=$REGISTRY_MIRROR" >> "$GITHUB_ENV"
           echo "::add-mask::$PUBLIC_REGISTRY"
           echo "PUBLIC_REGISTRY=$PUBLIC_REGISTRY" >> "$GITHUB_ENV"
+          echo "::add-mask::$BUILDER_ENDPOINT"
+          echo "BUILDER_ENDPOINT=$BUILDER_ENDPOINT" >> "$GITHUB_ENV"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
-          buildkitd-config-inline: |
-            [registry."docker.io"]
-              mirrors = ["${{ env.REGISTRY_MIRROR }}"]
-            [registry."${{ env.REGISTRY_MIRROR }}"]
-              http = true
-            [registry."${{ env.PUBLIC_REGISTRY }}"]
-              http = true
+          # Shared, long-lived builder supplied to the runner as masked env, so this
+          # public-bound workflow carries no address. Registry routing now lives with the
+          # builder, so no buildkitd config is passed from here.
+          driver: remote
+          endpoint: ${{ env.BUILDER_ENDPOINT }}
 
       # Write the registry auth to config.json so buildkit uses it for the push
       # below, avoiding a separate `docker login` step.
@@ -112,8 +110,6 @@ jobs:
           tags: |
             ${{ env.PUBLIC_REGISTRY }}/orchestrator:latest
             ${{ env.PUBLIC_REGISTRY }}/orchestrator:${{ github.sha }}
-          cache-from: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/orchestrator:buildcache
-          cache-to: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/orchestrator:buildcache,mode=max
 
   build-api-server:
     needs: detect-changes
@@ -127,21 +123,19 @@ jobs:
 
       - name: Export registry env
         run: |
-          echo "::add-mask::$REGISTRY_MIRROR"
-          echo "REGISTRY_MIRROR=$REGISTRY_MIRROR" >> "$GITHUB_ENV"
           echo "::add-mask::$PUBLIC_REGISTRY"
           echo "PUBLIC_REGISTRY=$PUBLIC_REGISTRY" >> "$GITHUB_ENV"
+          echo "::add-mask::$BUILDER_ENDPOINT"
+          echo "BUILDER_ENDPOINT=$BUILDER_ENDPOINT" >> "$GITHUB_ENV"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
-          buildkitd-config-inline: |
-            [registry."docker.io"]
-              mirrors = ["${{ env.REGISTRY_MIRROR }}"]
-            [registry."${{ env.REGISTRY_MIRROR }}"]
-              http = true
-            [registry."${{ env.PUBLIC_REGISTRY }}"]
-              http = true
+          # Shared, long-lived builder supplied to the runner as masked env, so this
+          # public-bound workflow carries no address. Registry routing now lives with the
+          # builder, so no buildkitd config is passed from here.
+          driver: remote
+          endpoint: ${{ env.BUILDER_ENDPOINT }}
 
       - name: Authenticate to the public registry (core)
         run: |
@@ -160,8 +154,6 @@ jobs:
           tags: |
             ${{ env.PUBLIC_REGISTRY }}/api-server:latest
             ${{ env.PUBLIC_REGISTRY }}/api-server:${{ github.sha }}
-          cache-from: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/api-server:buildcache
-          cache-to: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/api-server:buildcache,mode=max
 
   build-web-ui:
     needs: detect-changes
@@ -175,21 +167,19 @@ jobs:
 
       - name: Export registry env
         run: |
-          echo "::add-mask::$REGISTRY_MIRROR"
-          echo "REGISTRY_MIRROR=$REGISTRY_MIRROR" >> "$GITHUB_ENV"
           echo "::add-mask::$PUBLIC_REGISTRY"
           echo "PUBLIC_REGISTRY=$PUBLIC_REGISTRY" >> "$GITHUB_ENV"
+          echo "::add-mask::$BUILDER_ENDPOINT"
+          echo "BUILDER_ENDPOINT=$BUILDER_ENDPOINT" >> "$GITHUB_ENV"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
-          buildkitd-config-inline: |
-            [registry."docker.io"]
-              mirrors = ["${{ env.REGISTRY_MIRROR }}"]
-            [registry."${{ env.REGISTRY_MIRROR }}"]
-              http = true
-            [registry."${{ env.PUBLIC_REGISTRY }}"]
-              http = true
+          # Shared, long-lived builder supplied to the runner as masked env, so this
+          # public-bound workflow carries no address. Registry routing now lives with the
+          # builder, so no buildkitd config is passed from here.
+          driver: remote
+          endpoint: ${{ env.BUILDER_ENDPOINT }}
 
       - name: Authenticate to the public registry (core)
         run: |
@@ -208,8 +198,6 @@ jobs:
           tags: |
             ${{ env.PUBLIC_REGISTRY }}/web-ui:latest
             ${{ env.PUBLIC_REGISTRY }}/web-ui:${{ github.sha }}
-          cache-from: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/web-ui:buildcache
-          cache-to: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/web-ui:buildcache,mode=max
 
   build-claude-code:
     needs: detect-changes
@@ -223,21 +211,19 @@ jobs:
 
       - name: Export registry env
         run: |
-          echo "::add-mask::$REGISTRY_MIRROR"
-          echo "REGISTRY_MIRROR=$REGISTRY_MIRROR" >> "$GITHUB_ENV"
           echo "::add-mask::$PUBLIC_REGISTRY"
           echo "PUBLIC_REGISTRY=$PUBLIC_REGISTRY" >> "$GITHUB_ENV"
+          echo "::add-mask::$BUILDER_ENDPOINT"
+          echo "BUILDER_ENDPOINT=$BUILDER_ENDPOINT" >> "$GITHUB_ENV"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
-          buildkitd-config-inline: |
-            [registry."docker.io"]
-              mirrors = ["${{ env.REGISTRY_MIRROR }}"]
-            [registry."${{ env.REGISTRY_MIRROR }}"]
-              http = true
-            [registry."${{ env.PUBLIC_REGISTRY }}"]
-              http = true
+          # Shared, long-lived builder supplied to the runner as masked env, so this
+          # public-bound workflow carries no address. Registry routing now lives with the
+          # builder, so no buildkitd config is passed from here.
+          driver: remote
+          endpoint: ${{ env.BUILDER_ENDPOINT }}
 
       - name: Authenticate to the public registry (core)
         run: |
@@ -256,8 +242,6 @@ jobs:
           tags: |
             ${{ env.PUBLIC_REGISTRY }}/claude-code:latest
             ${{ env.PUBLIC_REGISTRY }}/claude-code:${{ github.sha }}
-          cache-from: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/claude-code:buildcache
-          cache-to: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/claude-code:buildcache,mode=max
 
   build-choruskube-dev:
     needs: [detect-changes, build-claude-code]
@@ -276,21 +260,19 @@ jobs:
 
       - name: Export registry env
         run: |
-          echo "::add-mask::$REGISTRY_MIRROR"
-          echo "REGISTRY_MIRROR=$REGISTRY_MIRROR" >> "$GITHUB_ENV"
           echo "::add-mask::$PUBLIC_REGISTRY"
           echo "PUBLIC_REGISTRY=$PUBLIC_REGISTRY" >> "$GITHUB_ENV"
+          echo "::add-mask::$BUILDER_ENDPOINT"
+          echo "BUILDER_ENDPOINT=$BUILDER_ENDPOINT" >> "$GITHUB_ENV"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
-          buildkitd-config-inline: |
-            [registry."docker.io"]
-              mirrors = ["${{ env.REGISTRY_MIRROR }}"]
-            [registry."${{ env.REGISTRY_MIRROR }}"]
-              http = true
-            [registry."${{ env.PUBLIC_REGISTRY }}"]
-              http = true
+          # Shared, long-lived builder supplied to the runner as masked env, so this
+          # public-bound workflow carries no address. Registry routing now lives with the
+          # builder, so no buildkitd config is passed from here.
+          driver: remote
+          endpoint: ${{ env.BUILDER_ENDPOINT }}
 
       - name: Authenticate to the public registry (core)
         run: |
@@ -318,5 +300,3 @@ jobs:
           tags: |
             ${{ env.PUBLIC_REGISTRY }}/choruskube-dev:latest
             ${{ env.PUBLIC_REGISTRY }}/choruskube-dev:${{ github.sha }}
-          cache-from: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/choruskube-dev:buildcache
-          cache-to: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/choruskube-dev:buildcache,mode=max

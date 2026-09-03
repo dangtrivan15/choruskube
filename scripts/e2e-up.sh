@@ -23,11 +23,18 @@ case "${1:-}" in
   *)        echo "usage: $(basename "$0") [--images|--stack]" >&2; exit 2 ;;
 esac
 
-# Optional build-layer cache. When BUILD_CACHE_REGISTRY is set (a CI runner supplies
-# it), each image imports its layer cache from ${BUILD_CACHE_REGISTRY}/<name>:buildcache
-# so unchanged build steps (dependency downloads, compiles) are reused across runs.
-# Import only — the cache is produced by the image-publishing pipeline; e2e never writes
-# it. Unset (local dev, forks) => plain `docker build` + `compose up --build`, unchanged.
+# Build acceleration, two independent mechanisms that used to be one condition.
+#
+# BUILDER_ENDPOINT (a CI runner supplies it) points at a shared, long-lived builder whose
+# cache survives between jobs. BUILD_CACHE_REGISTRY imports a per-image layer cache from a
+# registry, which is what you want when the builder is NOT shared — the dogfood pod, which
+# also writes the cache back via BUILD_CACHE_PUSH.
+#
+# ⚠️ They are deliberately not the same test. Gating buildx on BUILD_CACHE_REGISTRY alone
+# means a run with only BUILDER_ENDPOINT set falls through to plain `docker build`, silently
+# bypassing the shared builder while still going green.
+#
+# Neither set (local dev, forks) => plain `docker build` + `compose up --build`, unchanged.
 CACHE_REGISTRY="${BUILD_CACHE_REGISTRY:-}"
 
 # build_image <cache-name> <local-tag> <context> <dockerfile>
@@ -35,28 +42,38 @@ CACHE_REGISTRY="${BUILD_CACHE_REGISTRY:-}"
 # the resulting image is loaded as.
 build_image() {
   local cache_name="$1" tag="$2" context="$3" dockerfile="$4"
-  if [ -n "$CACHE_REGISTRY" ]; then
-    local from_args=(--cache-from "type=registry,ref=${CACHE_REGISTRY}/${cache_name}:buildcache")
-    local args=("${from_args[@]}")
-    # BUILD_CACHE_PUSH=1 (dogfood pod): also write the cache back so the next run is warm.
-    # Requires a docker-container builder (the agent entrypoint creates 'choruskube-builder').
-    if [ "${BUILD_CACHE_PUSH:-0}" = "1" ]; then
-      args+=(--cache-to "type=registry,ref=${CACHE_REGISTRY}/${cache_name}:buildcache,mode=max")
-    fi
-    # Cache export is a warm-next-run optimization, not correctness — if the registry
-    # rejects/mishandles the push (e.g. a builder that doesn't honor the in-cluster
-    # registry's plain-HTTP config), don't let that fail the whole e2e run. Retry once
-    # with cache-from only so the build still succeeds, just without writing cache back.
-    if ! docker buildx build "${args[@]}" --load -t "$tag" -f "$dockerfile" "$context"; then
-      if [ "${BUILD_CACHE_PUSH:-0}" = "1" ]; then
-        echo "WARNING: buildx build with cache export failed for ${cache_name}; retrying without --cache-to" >&2
-        docker buildx build "${from_args[@]}" --load -t "$tag" -f "$dockerfile" "$context"
-      else
-        return 1
-      fi
-    fi
-  else
+
+  # No acceleration available.
+  if [ -z "${BUILDER_ENDPOINT:-}" ] && [ -z "$CACHE_REGISTRY" ]; then
     docker build -t "$tag" -f "$dockerfile" "$context"
+    return
+  fi
+
+  # Shared builder, no registry cache. Importing one here would download and unpack layers
+  # the builder already holds locally — the exact cost the shared builder exists to remove.
+  if [ -z "$CACHE_REGISTRY" ]; then
+    docker buildx build --load -t "$tag" -f "$dockerfile" "$context"
+    return
+  fi
+
+  local from_args=(--cache-from "type=registry,ref=${CACHE_REGISTRY}/${cache_name}:buildcache")
+  local args=("${from_args[@]}")
+  # BUILD_CACHE_PUSH=1 (dogfood pod): also write the cache back so the next run is warm.
+  # Requires a docker-container builder (the agent entrypoint creates 'choruskube-builder').
+  if [ "${BUILD_CACHE_PUSH:-0}" = "1" ]; then
+    args+=(--cache-to "type=registry,ref=${CACHE_REGISTRY}/${cache_name}:buildcache,mode=max")
+  fi
+  # Cache export is a warm-next-run optimization, not correctness — if the registry
+  # rejects/mishandles the push (e.g. a builder that doesn't honor the in-cluster
+  # registry's plain-HTTP config), don't let that fail the whole e2e run. Retry once
+  # with cache-from only so the build still succeeds, just without writing cache back.
+  if ! docker buildx build "${args[@]}" --load -t "$tag" -f "$dockerfile" "$context"; then
+    if [ "${BUILD_CACHE_PUSH:-0}" = "1" ]; then
+      echo "WARNING: buildx build with cache export failed for ${cache_name}; retrying without --cache-to" >&2
+      docker buildx build "${from_args[@]}" --load -t "$tag" -f "$dockerfile" "$context"
+    else
+      return 1
+    fi
   fi
 }
 

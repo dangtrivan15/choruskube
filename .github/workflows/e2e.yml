@@ -178,46 +178,29 @@ jobs:
           npm ci
           npx playwright install --with-deps chromium
 
-      # Registry-backed image layer cache. BUILD_CACHE_REGISTRY is injected onto the
-      # runner (it is not derived from any other variable); when present, e2e imports
-      # each image's :buildcache — an anonymous, import-only pull, so no credentials are
-      # needed. When absent (e.g. a fork), every step below no-ops and e2e builds images
-      # from scratch exactly as before.
-      - name: Export build-cache env
+      # The shared builder's address, injected onto the runner as masked env so this
+      # public-bound workflow carries none of its own. It reaches e2e-up.sh through the
+      # Gradle daemon's environment — the same route BUILD_CACHE_REGISTRY used to take,
+      # since an Exec task inherits it.
+      #
+      # ⚠️ BUILD_CACHE_REGISTRY is no longer injected onto this runner at all, and the
+      # injection is what mattered — not an export. A pod-spec env var reaches every `run:`
+      # step's shell regardless of $GITHUB_ENV, and e2e-up.sh runs as a Gradle Exec task that
+      # inherits it, so dropping only the export left it still taking the registry-cache path
+      # while the build stayed green. The shared builder already holds these layers; importing
+      # them would download and unpack something already local. The registry cache path in
+      # e2e-up.sh remains for callers that have no shared builder and set the variable
+      # themselves.
+      - name: Export builder env
         run: |
-          if [ -n "${BUILD_CACHE_REGISTRY:-}" ]; then
-            echo "::add-mask::$BUILD_CACHE_REGISTRY"
-            echo "BUILD_CACHE_REGISTRY=$BUILD_CACHE_REGISTRY" >> "$GITHUB_ENV"
-          fi
-          # The runner supplies the docker.io pull-through mirror host as REGISTRY_MIRROR —
-          # the same name the agent image and the image-build workflow already use, so one
-          # variable means "pull-through mirror host" everywhere.
-          if [ -n "${REGISTRY_MIRROR:-}" ]; then
-            echo "::add-mask::$REGISTRY_MIRROR"
-            echo "REGISTRY_MIRROR=$REGISTRY_MIRROR" >> "$GITHUB_ENV"
-          fi
-          # Generate the container-builder config. The docker.io pull-through mirror block
-          # is emitted ONLY when REGISTRY_MIRROR is set — an empty mirror host would
-          # yield `mirrors = [""]` and break base-image pulls. BUILD_CACHE_REGISTRY trust is
-          # always emitted (the builder below is only created when it is present).
-          if [ -n "${BUILD_CACHE_REGISTRY:-}" ]; then
-            {
-              if [ -n "${REGISTRY_MIRROR:-}" ]; then
-                echo '[registry."docker.io"]'
-                echo "  mirrors = [\"${REGISTRY_MIRROR}\"]"
-                echo "[registry.\"${REGISTRY_MIRROR}\"]"
-                echo '  http = true'
-              fi
-              echo "[registry.\"${BUILD_CACHE_REGISTRY}\"]"
-              echo '  http = true'
-            } > /tmp/buildkitd.toml
-          fi
+          echo "::add-mask::$BUILDER_ENDPOINT"
+          echo "BUILDER_ENDPOINT=$BUILDER_ENDPOINT" >> "$GITHUB_ENV"
 
       - name: Set up Docker Buildx
-        if: env.BUILD_CACHE_REGISTRY != ''
         uses: docker/setup-buildx-action@v3
         with:
-          buildkitd-config: /tmp/buildkitd.toml
+          driver: remote
+          endpoint: ${{ env.BUILDER_ENDPOINT }}
 
       # `./gradlew test -Pe2e`: the three unit suites in parallel, then the e2e chain —
       # :e2eImages → :e2eStackUp → :e2eSmoke → :e2eSeed → :e2ePlaywright. The `-Pe2e` is
@@ -234,8 +217,8 @@ jobs:
       #
       # Both accelerators arrive through the environment rather than through Gradle
       # plumbing, because an Exec task inherits the daemon's environment:
-      # BUILD_CACHE_REGISTRY reaches e2e-up.sh and switches it between cached and plain
-      # image builds, and E2E_WORKERS reaches :e2ePlaywright, which forwards it to
+      # BUILDER_ENDPOINT reaches e2e-up.sh and switches it onto the shared builder
+      # instead of a plain local build, and E2E_WORKERS reaches :e2ePlaywright, forwarded to
       # `npx playwright test` as --workers (the -Pworkers property does the same for a
       # direct invocation). A run that sets neither stays serial.
       #
