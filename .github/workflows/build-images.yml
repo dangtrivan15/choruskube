@@ -1,7 +1,7 @@
 name: Build Images
 run-name: Build Images (${{ github.event_name }})
 
-# Builds and publishes the OSS images — api-server, web-ui, orchestrator, agent
+# Builds and publishes the OSS images — api-server, web-ui, orchestrator, worker, agent
 # (claude-code), and the dev image (choruskube-dev) — on push to main (lazily, per
 # changed path) or on demand.
 #
@@ -27,6 +27,7 @@ on:
       - 'api-server/**'
       - 'web-ui/**'
       - 'orchestrator/**'
+      - 'worker/**'
       - 'agent-images/**'
       - '.github/workflows/build-images.yml'
 
