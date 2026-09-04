@@ -11,9 +11,12 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 	temporalactivity "go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/workflow"
 
+	"github.com/dangtrivan15/choruskube/worker/callback"
+	"github.com/dangtrivan15/choruskube/worker/executor"
 	"github.com/dangtrivan15/choruskube/worker/workload"
 )
 
@@ -64,6 +67,361 @@ func requirePending(t *testing.T, err error) {
 	if !errors.Is(err, temporalactivity.ErrResultPending) {
 		t.Fatalf("want temporalactivity.ErrResultPending, got %v", err)
 	}
+}
+
+// mockExecutor implements executor.Executor with func fields, so a test wires up only the
+// method it exercises; every other call panics via a nil func value, which fails the test
+// loudly instead of masking an unexpected call with a quiet zero value.
+type mockExecutor struct {
+	executeFn func(ctx context.Context, params executor.ExecutionParams) (executor.ExecutionResult, error)
+}
+
+func (m *mockExecutor) Execute(ctx context.Context, params executor.ExecutionParams) (executor.ExecutionResult, error) {
+	return m.executeFn(ctx, params)
+}
+func (m *mockExecutor) Cleanup(ctx context.Context, executionID uuid.UUID) error   { return nil }
+func (m *mockExecutor) Terminate(ctx context.Context, executionID uuid.UUID) error { return nil }
+func (m *mockExecutor) GetLogs(ctx context.Context, executionID uuid.UUID, tailLines int) (string, error) {
+	return "", nil
+}
+func (m *mockExecutor) ResolveJobSecretHash(ctx context.Context, executionID uuid.UUID) (string, error) {
+	return "", nil
+}
+func (m *mockExecutor) HealthCheck(ctx context.Context) error { return nil }
+
+var _ executor.Executor = (*mockExecutor)(nil)
+
+// mockWorkloadClient implements workloadClient with func fields, mirroring mockExecutor: a test
+// stubs only the method(s) it exercises, and an un-stubbed one it does call fails loudly (nil
+// func panic) instead of silently returning a zero value.
+type mockWorkloadClient struct {
+	createFn   func(ctx context.Context, p workload.CreateWorkloadParams) (*workload.CreateWorkloadResponse, error)
+	prepareFn  func(ctx context.Context, p workload.PrepareParams) (*workload.PrepareResponse, error)
+	completeFn func(ctx context.Context, p workload.CompleteParams) error
+}
+
+func (m *mockWorkloadClient) CreateWorkload(ctx context.Context, p workload.CreateWorkloadParams) (*workload.CreateWorkloadResponse, error) {
+	return m.createFn(ctx, p)
+}
+func (m *mockWorkloadClient) CleanupWorkload(ctx context.Context, runID, nodeExecID uuid.UUID) error {
+	return nil
+}
+func (m *mockWorkloadClient) GetWorkloadLogs(ctx context.Context, runID, nodeExecID uuid.UUID, tailLines int) (string, error) {
+	return "", nil
+}
+func (m *mockWorkloadClient) PrepareWorkload(ctx context.Context, p workload.PrepareParams) (*workload.PrepareResponse, error) {
+	return m.prepareFn(ctx, p)
+}
+func (m *mockWorkloadClient) CompleteWorkload(ctx context.Context, p workload.CompleteParams) error {
+	return m.completeFn(ctx, p)
+}
+
+var _ workloadClient = (*mockWorkloadClient)(nil)
+
+// TestExecuteAINodeFromSnapshot_CallsExecutor pins the restructured local-execution flow:
+// prepare (resolve credentials) -> generate a job secret -> executor.Execute -> cache the
+// returned hash -> complete (report the result). This is the path NewWithExecutor's Activities
+// take instead of the legacy CreateWorkload delegation.
+func TestExecuteAINodeFromSnapshot_CallsExecutor(t *testing.T) {
+	nodeExecID := uuid.New()
+	nodeID := uuid.New()
+	runID := stubbedRun(t)
+
+	prepareResp := &workload.PrepareResponse{
+		Image:            "ghcr.io/test/agent:latest",
+		EnableDocker:     false,
+		ClaudeOAuthToken: "tok_test",
+		GitHubTokenURL:   "http://api-server.invalid/internal/runs/x/node-executions/y/github-token",
+		Namespace:        "org-ns",
+		ServiceAccount:   "choruskube-agent",
+	}
+
+	var executedParams executor.ExecutionParams
+	mockExec := &mockExecutor{
+		executeFn: func(ctx context.Context, params executor.ExecutionParams) (executor.ExecutionResult, error) {
+			executedParams = params
+			return executor.ExecutionResult{PodName: "agent-abc", JobSecretHash: "hash123"}, nil
+		},
+	}
+
+	var preparedParams workload.PrepareParams
+	var completedParams workload.CompleteParams
+	mockClient := &mockWorkloadClient{
+		prepareFn: func(ctx context.Context, p workload.PrepareParams) (*workload.PrepareResponse, error) {
+			preparedParams = p
+			return prepareResp, nil
+		},
+		completeFn: func(ctx context.Context, p workload.CompleteParams) error {
+			completedParams = p
+			return nil
+		},
+	}
+
+	hashCache := callback.NewHashCache()
+	acts := NewWithExecutor(mockClient, mockExec, hashCache)
+	acts.CallbackURL = "http://worker:9090/api/v1/callback"
+	acts.APIServerURL = "http://api-server.invalid"
+
+	params := ExecuteAINodeFromSnapshotParams{
+		NodeExecutionID: nodeExecID,
+		RunID:           runID,
+		TemplateNodeID:  nodeID,
+		ExecutorType:    "ai",
+		PromptTemplate:  "irrelevant",
+	}
+
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
+	// Returns temporalactivity.ErrResultPending — the activity waits for the callback.
+	assert.ErrorIs(t, err, temporalactivity.ErrResultPending)
+
+	// prepare was called for this run/execution, carrying the same config.json the legacy
+	// path would otherwise have sent straight to CreateWorkload.
+	assert.Equal(t, runID, preparedParams.RunID)
+	assert.Equal(t, nodeExecID, preparedParams.NodeExecID)
+	assert.Equal(t, nodeExecID.String(), preparedParams.ConfigJSON["node_execution_id"])
+	assert.Equal(t, acts.CallbackURL, preparedParams.ConfigJSON["callback_url"])
+
+	// executor was called with prepare's resolved image/credentials/identity, plus a freshly
+	// generated job secret and this Worker's own callback URL.
+	assert.Equal(t, "ghcr.io/test/agent:latest", executedParams.Image)
+	assert.NotEmpty(t, executedParams.JobSecret)
+	assert.Equal(t, "http://worker:9090/api/v1/callback", executedParams.CallbackURL)
+	assert.Equal(t, "tok_test", executedParams.Credentials.ClaudeOAuthToken)
+	assert.Equal(t, "org-ns", executedParams.Identity.Namespace)
+	assert.Equal(t, "choruskube-agent", executedParams.Identity.ServiceAccount)
+	assert.Nil(t, executedParams.Credentials.Registry)
+
+	// complete reported exactly what the executor returned.
+	assert.Equal(t, runID, completedParams.RunID)
+	assert.Equal(t, nodeExecID, completedParams.NodeExecID)
+	assert.Equal(t, "agent-abc", completedParams.PodName)
+	assert.Equal(t, "hash123", completedParams.JobSecretHash)
+
+	// the hash was cached under the node execution id, for the callback handler to verify
+	// the agent's own completion POST against.
+	cached, ok := hashCache.Get(nodeExecID)
+	assert.True(t, ok)
+	assert.Equal(t, "hash123", cached)
+
+	// the activity's own Temporal addressing was cached under the same id, for the Worker's
+	// completer to complete-by-id once the agent calls back.
+	pending, ok := acts.Pending().Get(nodeExecID)
+	assert.True(t, ok)
+	assert.Equal(t, "choruskube-run-"+runID.String(), pending.WorkflowID)
+}
+
+// TestExecuteAINodeFromSnapshot_CallsExecutor_CachesFullPendingCompletion pins every field
+// PendingCompletion carries, not just WorkflowID: the Worker's completer addresses both the
+// right Temporal activity and the right per-Fleet connection from Namespace and TaskQueue alone,
+// so a gap in either silently misroutes every completion for this execution.
+func TestExecuteAINodeFromSnapshot_CallsExecutor_CachesFullPendingCompletion(t *testing.T) {
+	nodeExecID := uuid.New()
+	runID := uuid.New()
+
+	original := activityInfo
+	activityInfo = func(context.Context) temporalactivity.Info {
+		return temporalactivity.Info{
+			Namespace:         "org-ns",
+			TaskQueue:         "org-queue",
+			ActivityID:        nodeExecID.String(),
+			WorkflowExecution: workflow.Execution{ID: "choruskube-run-" + runID.String()},
+		}
+	}
+	t.Cleanup(func() { activityInfo = original })
+
+	mockExec := &mockExecutor{
+		executeFn: func(ctx context.Context, params executor.ExecutionParams) (executor.ExecutionResult, error) {
+			return executor.ExecutionResult{PodName: "agent-abc", JobSecretHash: "hash123"}, nil
+		},
+	}
+	mockClient := &mockWorkloadClient{
+		prepareFn: func(ctx context.Context, p workload.PrepareParams) (*workload.PrepareResponse, error) {
+			return &workload.PrepareResponse{Image: "ghcr.io/test/agent:latest"}, nil
+		},
+		completeFn: func(ctx context.Context, p workload.CompleteParams) error { return nil },
+	}
+
+	acts := NewWithExecutor(mockClient, mockExec, callback.NewHashCache())
+	acts.CallbackURL = "http://worker:9090/api/v1/callback"
+	acts.APIServerURL = "http://api-server.invalid"
+
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+		NodeExecutionID: nodeExecID,
+		RunID:           runID,
+		ExecutorType:    "ai",
+		PromptTemplate:  "irrelevant",
+	})
+	requirePending(t, err)
+
+	pending, ok := acts.Pending().Get(nodeExecID)
+	assert.True(t, ok)
+	assert.Equal(t, "org-ns", pending.Namespace)
+	assert.Equal(t, "org-queue", pending.TaskQueue)
+	assert.Equal(t, "choruskube-run-"+runID.String(), pending.WorkflowID)
+	assert.Equal(t, nodeExecID.String(), pending.ActivityID)
+}
+
+// TestExecuteAINodeFromSnapshot_CallsExecutor_ForwardsRegistryCredentials verifies the
+// PrepareResponse.Registry -> ExecutionParams.Credentials.Registry translation, which the happy
+// path above deliberately leaves nil to also cover the no-registry case.
+func TestExecuteAINodeFromSnapshot_CallsExecutor_ForwardsRegistryCredentials(t *testing.T) {
+	var executedParams executor.ExecutionParams
+	mockExec := &mockExecutor{
+		executeFn: func(ctx context.Context, params executor.ExecutionParams) (executor.ExecutionResult, error) {
+			executedParams = params
+			return executor.ExecutionResult{PodName: "agent-abc", JobSecretHash: "hash123"}, nil
+		},
+	}
+	mockClient := &mockWorkloadClient{
+		prepareFn: func(ctx context.Context, p workload.PrepareParams) (*workload.PrepareResponse, error) {
+			return &workload.PrepareResponse{
+				Image: "ghcr.io/test/agent:latest",
+				Registry: &workload.RegistryCredentials{
+					Host:     "registry.example.com",
+					Username: "worker",
+					Password: "s3cr3t",
+				},
+			}, nil
+		},
+		completeFn: func(ctx context.Context, p workload.CompleteParams) error { return nil },
+	}
+
+	acts := NewWithExecutor(mockClient, mockExec, callback.NewHashCache())
+	acts.CallbackURL = "http://worker:9090/api/v1/callback"
+	acts.APIServerURL = "http://api-server.invalid"
+
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+		NodeExecutionID: uuid.New(),
+		RunID:           stubbedRun(t),
+		TemplateNodeID:  uuid.New(),
+		ExecutorType:    "ai",
+		PromptTemplate:  "irrelevant",
+	})
+	assert.ErrorIs(t, err, temporalactivity.ErrResultPending)
+
+	if assert.NotNil(t, executedParams.Credentials.Registry) {
+		assert.Equal(t, "registry.example.com", executedParams.Credentials.Registry.Host)
+		assert.Equal(t, "worker", executedParams.Credentials.Registry.Username)
+		assert.Equal(t, "s3cr3t", executedParams.Credentials.Registry.Password)
+	}
+}
+
+// TestExecuteAINodeFromSnapshot_CallsExecutor_PrepareErrorPropagates verifies a prepare failure
+// is returned as an ordinary error, not masked as ErrResultPending — and that it short-circuits
+// before ever reaching the executor.
+func TestExecuteAINodeFromSnapshot_CallsExecutor_PrepareErrorPropagates(t *testing.T) {
+	executed := false
+	mockExec := &mockExecutor{
+		executeFn: func(ctx context.Context, params executor.ExecutionParams) (executor.ExecutionResult, error) {
+			executed = true
+			return executor.ExecutionResult{}, nil
+		},
+	}
+	mockClient := &mockWorkloadClient{
+		prepareFn: func(ctx context.Context, p workload.PrepareParams) (*workload.PrepareResponse, error) {
+			return nil, errors.New("api-server unreachable")
+		},
+	}
+
+	acts := NewWithExecutor(mockClient, mockExec, callback.NewHashCache())
+	acts.CallbackURL = "http://worker:9090/api/v1/callback"
+	acts.APIServerURL = "http://api-server.invalid"
+
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+		NodeExecutionID: uuid.New(),
+		RunID:           stubbedRun(t),
+		TemplateNodeID:  uuid.New(),
+		ExecutorType:    "ai",
+		PromptTemplate:  "irrelevant",
+	})
+	assert.Error(t, err)
+	assert.NotErrorIs(t, err, temporalactivity.ErrResultPending)
+	assert.False(t, executed, "a failed prepare must not reach the executor")
+}
+
+// TestExecuteAINodeFromSnapshot_CallsExecutor_ExecuteErrorPropagates verifies an executor
+// failure is returned as an ordinary error and never reaches complete or the hash cache.
+func TestExecuteAINodeFromSnapshot_CallsExecutor_ExecuteErrorPropagates(t *testing.T) {
+	nodeExecID := uuid.New()
+	mockExec := &mockExecutor{
+		executeFn: func(ctx context.Context, params executor.ExecutionParams) (executor.ExecutionResult, error) {
+			return executor.ExecutionResult{}, errors.New("launch failed")
+		},
+	}
+	completed := false
+	mockClient := &mockWorkloadClient{
+		prepareFn: func(ctx context.Context, p workload.PrepareParams) (*workload.PrepareResponse, error) {
+			return &workload.PrepareResponse{Image: "ghcr.io/test/agent:latest"}, nil
+		},
+		completeFn: func(ctx context.Context, p workload.CompleteParams) error {
+			completed = true
+			return nil
+		},
+	}
+
+	hashCache := callback.NewHashCache()
+	acts := NewWithExecutor(mockClient, mockExec, hashCache)
+	acts.CallbackURL = "http://worker:9090/api/v1/callback"
+	acts.APIServerURL = "http://api-server.invalid"
+
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+		NodeExecutionID: nodeExecID,
+		RunID:           stubbedRun(t),
+		TemplateNodeID:  uuid.New(),
+		ExecutorType:    "ai",
+		PromptTemplate:  "irrelevant",
+	})
+	assert.Error(t, err)
+	assert.NotErrorIs(t, err, temporalactivity.ErrResultPending)
+	assert.False(t, completed, "a failed execute must not reach complete")
+	_, cached := hashCache.Get(nodeExecID)
+	assert.False(t, cached, "a failed execute must not populate the hash cache")
+}
+
+// TestExecuteAINodeFromSnapshot_CallsExecutor_CompleteErrorPropagates verifies a complete
+// failure is returned as an ordinary error — even though the hash was already cached and the
+// workload is already running by that point.
+func TestExecuteAINodeFromSnapshot_CallsExecutor_CompleteErrorPropagates(t *testing.T) {
+	nodeExecID := uuid.New()
+	mockExec := &mockExecutor{
+		executeFn: func(ctx context.Context, params executor.ExecutionParams) (executor.ExecutionResult, error) {
+			return executor.ExecutionResult{PodName: "agent-abc", JobSecretHash: "hash123"}, nil
+		},
+	}
+	mockClient := &mockWorkloadClient{
+		prepareFn: func(ctx context.Context, p workload.PrepareParams) (*workload.PrepareResponse, error) {
+			return &workload.PrepareResponse{Image: "ghcr.io/test/agent:latest"}, nil
+		},
+		completeFn: func(ctx context.Context, p workload.CompleteParams) error {
+			return errors.New("api-server unreachable")
+		},
+	}
+
+	hashCache := callback.NewHashCache()
+	acts := NewWithExecutor(mockClient, mockExec, hashCache)
+	acts.CallbackURL = "http://worker:9090/api/v1/callback"
+	acts.APIServerURL = "http://api-server.invalid"
+
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+		NodeExecutionID: nodeExecID,
+		RunID:           stubbedRun(t),
+		TemplateNodeID:  uuid.New(),
+		ExecutorType:    "ai",
+		PromptTemplate:  "irrelevant",
+	})
+	assert.Error(t, err)
+	assert.NotErrorIs(t, err, temporalactivity.ErrResultPending)
+
+	// The hash is cached before complete is called (the workload can call back before this
+	// activity's own report to the API server finishes), so it must survive complete's failure.
+	cached, ok := hashCache.Get(nodeExecID)
+	assert.True(t, ok)
+	assert.Equal(t, "hash123", cached)
+
+	// Same reasoning applies to the pending-completion cache: it must be populated before
+	// complete is called, not after, so it too must survive complete's failure.
+	_, ok = acts.Pending().Get(nodeExecID)
+	assert.True(t, ok)
 }
 
 // TestExecuteAINodeFromSnapshot_CallbackAndAPIServerURLsInConfigJson verifies that

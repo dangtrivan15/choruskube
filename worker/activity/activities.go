@@ -7,6 +7,7 @@ package activity
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"sort"
 	"strings"
@@ -15,6 +16,8 @@ import (
 	"github.com/google/uuid"
 	temporalactivity "go.temporal.io/sdk/activity"
 
+	"github.com/dangtrivan15/choruskube/worker/callback"
+	"github.com/dangtrivan15/choruskube/worker/executor"
 	"github.com/dangtrivan15/choruskube/worker/workload"
 )
 
@@ -23,10 +26,29 @@ import (
 // Do NOT define a custom ErrResultPending — the SDK's sentinel is intercepted
 // at the framework level to keep the activity "open" in Temporal.
 
+// workloadClient is the subset of *workload.Client this package calls, declared here at the
+// point of use so a test can inject a fake without a real HTTP server. *workload.Client
+// satisfies it unchanged.
+type workloadClient interface {
+	CreateWorkload(ctx context.Context, params workload.CreateWorkloadParams) (*workload.CreateWorkloadResponse, error)
+	CleanupWorkload(ctx context.Context, runID, nodeExecID uuid.UUID) error
+	GetWorkloadLogs(ctx context.Context, runID, nodeExecID uuid.UUID, tailLines int) (string, error)
+	PrepareWorkload(ctx context.Context, params workload.PrepareParams) (*workload.PrepareResponse, error)
+	CompleteWorkload(ctx context.Context, params workload.CompleteParams) error
+}
+
+var _ workloadClient = (*workload.Client)(nil)
+
 // Activities runs agent-step activities against a workload.Client.
 type Activities struct {
-	client   *workload.Client
-	resolver *templateResolver
+	client workloadClient
+	// executor, hashCache and pending are nil in legacy mode (constructed via New): with
+	// executor nil, ExecuteAINodeFromSnapshot delegates workload creation to the API server
+	// instead of running it locally.
+	executor  executor.Executor
+	hashCache *callback.HashCache
+	pending   *PendingCache
+	resolver  *templateResolver
 	// CallbackURL is the endpoint agent pods POST their results to. Left empty, the agent
 	// pod launches with no way to report back, and the activity hangs until StartToClose
 	// instead of failing — ExecuteAINodeFromSnapshot rejects an empty value up front instead.
@@ -37,10 +59,35 @@ type Activities struct {
 	APIServerURL string
 }
 
-// New returns Activities backed by client. Set CallbackURL and APIServerURL on the result
-// before registering it with a Temporal worker.
+// New returns Activities backed by client, delegating workload creation to the API server
+// (legacy mode — kept for the transition until every Worker runs an Executor). Set CallbackURL
+// and APIServerURL on the result before registering it with a Temporal worker.
 func New(client *workload.Client) *Activities {
 	return &Activities{client: client, resolver: newTemplateResolver()}
+}
+
+// NewWithExecutor returns Activities that run each workload locally through exec instead of
+// delegating creation to the API server: ExecuteAINodeFromSnapshot calls prepare to resolve
+// credentials and identity, launches the workload itself, then calls complete to report the
+// result back. cache is populated with each execution's job-secret hash so the Worker's own
+// callback server can authenticate the agent's completion POST without a network round trip.
+// Set CallbackURL and APIServerURL on the result before registering it with a Temporal worker.
+func NewWithExecutor(client workloadClient, exec executor.Executor, cache *callback.HashCache) *Activities {
+	return &Activities{
+		client:    client,
+		executor:  exec,
+		hashCache: cache,
+		pending:   NewPendingCache(),
+		resolver:  newTemplateResolver(),
+	}
+}
+
+// Pending returns the cache of per-execution Temporal completion addressing this Activities
+// instance populates as it launches each workload locally; nil when constructed via New (legacy
+// mode delegates every execution, so there is nothing local to complete). The Worker reads it to
+// build the callback server's ActivityCompleter and Heartbeater.
+func (a *Activities) Pending() *PendingCache {
+	return a.pending
 }
 
 // --- Activity: ExecuteAINodeFromSnapshot ---
@@ -192,8 +239,23 @@ func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params Execu
 			strings.Join(runInputLines, "\n")
 	}
 
-	// Build config.json content with org-prefixed object storage paths. Keyed by
-	// NodeExecutionID so each iteration owns its own prefix.
+	configJSON := a.buildConfigJSON(params, resolvedPrompt)
+
+	if a.executor != nil {
+		return a.executeLocally(ctx, runID, params, configJSON)
+	}
+	return a.executeDelegated(ctx, params, configJSON)
+}
+
+// buildConfigJSON assembles the agent pod's config.json content — everything the entrypoint
+// reads to run one node execution — with object storage paths prefixed by OrgSlug. Output paths
+// are keyed by NodeExecutionID so each iteration of a self-looping or re-executed node owns its
+// own prefix instead of overwriting a prior iteration's artifacts.
+func (a *Activities) buildConfigJSON(params ExecuteAINodeFromSnapshotParams, resolvedPrompt string) map[string]interface{} {
+	vars := params.Variables
+	if vars == nil {
+		vars = map[string]string{}
+	}
 	baseOutputPath := fmt.Sprintf("runs/%s/%s/out/", params.RunID, params.NodeExecutionID)
 	outputPath := prefixPath(params.OrgSlug, baseOutputPath)
 	configJSON := map[string]interface{}{
@@ -298,8 +360,13 @@ func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params Execu
 		configJSON["task_context"] = taskContext
 	}
 
-	// Delegate workload creation to the API server.
-	_, err = a.client.CreateWorkload(ctx, workload.CreateWorkloadParams{
+	return configJSON
+}
+
+// executeDelegated is the legacy path (a.executor == nil): the API server resolves
+// infrastructure details from configJSON and launches the container itself.
+func (a *Activities) executeDelegated(ctx context.Context, params ExecuteAINodeFromSnapshotParams, configJSON map[string]interface{}) (CallbackResult, error) {
+	_, err := a.client.CreateWorkload(ctx, workload.CreateWorkloadParams{
 		RunID:          params.RunID,
 		NodeExecID:     params.NodeExecutionID,
 		TemplateNodeID: params.TemplateNodeID,
@@ -308,6 +375,87 @@ func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params Execu
 	if err != nil {
 		return CallbackResult{}, fmt.Errorf("create workload: %w", err)
 	}
+
+	return CallbackResult{}, temporalactivity.ErrResultPending
+}
+
+// executeLocally is the ported path (a.executor != nil): this Worker resolves credentials via
+// prepare, launches the workload itself through a.executor, then reports the result via
+// complete instead of asking the API server to launch it.
+func (a *Activities) executeLocally(ctx context.Context, runID uuid.UUID, params ExecuteAINodeFromSnapshotParams, configJSON map[string]interface{}) (CallbackResult, error) {
+	prep, err := a.client.PrepareWorkload(ctx, workload.PrepareParams{
+		RunID:          runID,
+		NodeExecID:     params.NodeExecutionID,
+		TemplateNodeID: params.TemplateNodeID,
+		ConfigJSON:     configJSON,
+	})
+	if err != nil {
+		return CallbackResult{}, fmt.Errorf("prepare workload: %w", err)
+	}
+
+	// A fresh secret per execution: the workload proves its identity by presenting it back on
+	// its completion callback, verified against the hash cached below.
+	secret, _, err := executor.GenerateJobSecret()
+	if err != nil {
+		return CallbackResult{}, fmt.Errorf("generate job secret: %w", err)
+	}
+
+	execParams := executor.ExecutionParams{
+		RunID:           runID,
+		NodeExecutionID: params.NodeExecutionID,
+		NodeID:          params.TemplateNodeID,
+		Image:           prep.Image,
+		JobSecret:       secret,
+		Credentials: executor.NodeCredentials{
+			GitHubTokenURL:   prep.GitHubTokenURL,
+			ClaudeOAuthToken: prep.ClaudeOAuthToken,
+		},
+		ConfigJSON:   configJSON,
+		CallbackURL:  a.CallbackURL,
+		EnableDocker: prep.EnableDocker,
+		Identity: executor.ExecutionIdentity{
+			Namespace:      prep.Namespace,
+			ServiceAccount: prep.ServiceAccount,
+		},
+	}
+	if prep.Registry != nil {
+		execParams.Credentials.Registry = &executor.RegistryCredentials{
+			Host:     prep.Registry.Host,
+			Username: prep.Registry.Username,
+			Password: prep.Registry.Password,
+		}
+	}
+
+	result, err := a.executor.Execute(ctx, execParams)
+	if err != nil {
+		return CallbackResult{}, fmt.Errorf("execute: %w", err)
+	}
+
+	// Both caches are populated before complete is even called: the workload can call back the
+	// moment it starts, racing this activity's own report to the API server -- CompleteWorkload
+	// below is a network round trip a fast (e.g. script) workload can easily win.
+	a.hashCache.Put(params.NodeExecutionID, result.JobSecretHash)
+	// Captured now, not resolved later from params: the agent's completion and heartbeat
+	// requests carry only NodeExecutionID, so this is the one place that also has Temporal's
+	// own addressing for the activity they need to reach.
+	info := activityInfo(ctx)
+	a.pending.Put(params.NodeExecutionID, PendingCompletion{
+		Namespace:  info.Namespace,
+		TaskQueue:  info.TaskQueue,
+		WorkflowID: info.WorkflowExecution.ID,
+		ActivityID: info.ActivityID,
+	})
+
+	if err := a.client.CompleteWorkload(ctx, workload.CompleteParams{
+		RunID:         runID,
+		NodeExecID:    params.NodeExecutionID,
+		PodName:       result.PodName,
+		JobSecretHash: result.JobSecretHash,
+	}); err != nil {
+		return CallbackResult{}, fmt.Errorf("complete workload: %w", err)
+	}
+
+	slog.Info("agent launched", "node_execution_id", params.NodeExecutionID, "pod_name", result.PodName)
 
 	return CallbackResult{}, temporalactivity.ErrResultPending
 }

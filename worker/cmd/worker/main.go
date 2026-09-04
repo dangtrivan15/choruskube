@@ -8,9 +8,11 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 
 	"github.com/dangtrivan15/choruskube/worker"
+	"github.com/dangtrivan15/choruskube/worker/executor/docker"
 )
 
 func main() {
@@ -23,6 +25,33 @@ func main() {
 		CallbackURL:     os.Getenv("CALLBACK_URL"),
 		// Opt-in, so a deployment against a TLS Temporal cannot lose TLS by omission.
 		TemporalTLSDisabled: os.Getenv("TEMPORAL_TLS_DISABLED") == "true",
+	}
+
+	// This binary always runs workloads itself as Docker containers -- it never delegates to
+	// the API server's legacy creation path -- so an Executor it cannot construct is fatal.
+	dockerStagingDir := os.Getenv("DOCKER_STAGING_DIR")
+	if dockerStagingDir == "" {
+		// A named, stable path rather than the package's own blank-means-OS-temp-dir default:
+		// in Docker-out-of-Docker deployments this directory is bind-mounted into the host
+		// daemon at an identical path, which an ephemeral per-process temp dir cannot be.
+		dockerStagingDir = "/tmp/choruskube-agent-staging"
+	}
+	dockerExec, err := docker.New(docker.Config{
+		Host:       os.Getenv("DOCKER_HOST"),
+		Network:    os.Getenv("DOCKER_NETWORK"),
+		StagingDir: dockerStagingDir,
+	})
+	if err != nil {
+		log.Fatalf("create docker executor: %v", err)
+	}
+	cfg.Executor = dockerExec
+
+	if p := os.Getenv("WORKER_CALLBACK_PORT"); p != "" {
+		port, err := strconv.Atoi(p)
+		if err != nil {
+			log.Fatalf("invalid WORKER_CALLBACK_PORT %q: %v", p, err)
+		}
+		cfg.CallbackPort = port
 	}
 
 	capabilities, err := worker.ParseCapabilitiesEnv(os.Getenv("WORKER_CAPABILITIES"))

@@ -3,6 +3,8 @@ package worker
 import (
 	"context"
 	"testing"
+
+	"go.temporal.io/sdk/client"
 )
 
 // serve dials Temporal, which a unit test cannot do — but the guard that makes it safe to call
@@ -16,6 +18,23 @@ func TestSupervisorServeIsIdempotentPerFleet(t *testing.T) {
 	}
 	if got := sup.count(); got != 1 {
 		t.Fatalf("served count = %d, want 1: a second serve must not add a duplicate Worker", got)
+	}
+}
+
+func TestSupervisorClientForReturnsTheDialedClient(t *testing.T) {
+	f := Fleet{Namespace: "ns", TaskQueue: "q"}
+	want := &fakeTemporalClient{}
+	sup := &fleetSupervisor{clients: map[string]client.Client{fleetKey(f): want}}
+
+	if got := sup.clientFor("ns", "q"); got != client.Client(want) {
+		t.Fatalf("clientFor returned a different client than the one dialed for this fleet")
+	}
+}
+
+func TestSupervisorClientForUnservedFleetReturnsNil(t *testing.T) {
+	sup := &fleetSupervisor{clients: map[string]client.Client{}}
+	if got := sup.clientFor("ns", "q"); got != nil {
+		t.Fatalf("clientFor = %v, want nil for a fleet this process is not serving", got)
 	}
 }
 
