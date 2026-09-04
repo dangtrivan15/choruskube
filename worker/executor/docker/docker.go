@@ -48,6 +48,11 @@ const (
 	defaultNetwork          = "choruskube"
 	logLimitBytes           = 64 * 1024
 	defaultDindReadyTimeout = 30 * time.Second
+	// pullTimeout bounds a best-effort image pull, matching SingleTenantDockerExecutor's
+	// awaitCompletion(120, SECONDS) -- without it, a registry that accepts the pull request but
+	// stalls mid-transfer would block Execute for as long as ctx allows, turning a "best-effort"
+	// pull into an unbounded one.
+	pullTimeout = 120 * time.Second
 )
 
 // Config configures a DockerExecutor.
@@ -495,11 +500,18 @@ func (d *DockerExecutor) pullImageBestEffort(ctx context.Context, imageName, enc
 	if _, _, err := d.client.ImageInspectWithRaw(ctx, imageName); err == nil {
 		return
 	}
-	reader, err := d.client.ImagePull(ctx, imageName, image.PullOptions{RegistryAuth: encodedAuth})
+
+	pullCtx, cancel := context.WithTimeout(ctx, pullTimeout)
+	defer cancel()
+
+	reader, err := d.client.ImagePull(pullCtx, imageName, image.PullOptions{RegistryAuth: encodedAuth})
 	if err != nil {
 		return
 	}
 	defer reader.Close()
+	// The pull itself happens as this body is streamed, not at ImagePull's call above, so the
+	// deadline has to cover this read too -- otherwise a registry that accepts the request but
+	// stalls mid-transfer would hang here past pullTimeout.
 	_, _ = io.Copy(io.Discard, reader)
 }
 
