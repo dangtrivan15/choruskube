@@ -42,11 +42,12 @@ var _ workloadClient = (*workload.Client)(nil)
 // Activities runs agent-step activities against a workload.Client.
 type Activities struct {
 	client workloadClient
-	// executor and hashCache are nil in legacy mode (constructed via New): with executor nil,
-	// ExecuteAINodeFromSnapshot delegates workload creation to the API server instead of
-	// running it locally.
+	// executor, hashCache and pending are nil in legacy mode (constructed via New): with
+	// executor nil, ExecuteAINodeFromSnapshot delegates workload creation to the API server
+	// instead of running it locally.
 	executor  executor.Executor
 	hashCache *callback.HashCache
+	pending   *PendingCache
 	resolver  *templateResolver
 	// CallbackURL is the endpoint agent pods POST their results to. Left empty, the agent
 	// pod launches with no way to report back, and the activity hangs until StartToClose
@@ -72,7 +73,21 @@ func New(client *workload.Client) *Activities {
 // callback server can authenticate the agent's completion POST without a network round trip.
 // Set CallbackURL and APIServerURL on the result before registering it with a Temporal worker.
 func NewWithExecutor(client workloadClient, exec executor.Executor, cache *callback.HashCache) *Activities {
-	return &Activities{client: client, executor: exec, hashCache: cache, resolver: newTemplateResolver()}
+	return &Activities{
+		client:    client,
+		executor:  exec,
+		hashCache: cache,
+		pending:   NewPendingCache(),
+		resolver:  newTemplateResolver(),
+	}
+}
+
+// Pending returns the cache of per-execution Temporal completion addressing this Activities
+// instance populates as it launches each workload locally; nil when constructed via New (legacy
+// mode delegates every execution, so there is nothing local to complete). The Worker reads it to
+// build the callback server's ActivityCompleter and Heartbeater.
+func (a *Activities) Pending() *PendingCache {
+	return a.pending
 }
 
 // --- Activity: ExecuteAINodeFromSnapshot ---
@@ -430,6 +445,17 @@ func (a *Activities) executeLocally(ctx context.Context, runID uuid.UUID, params
 	}
 
 	slog.Info("agent launched", "node_execution_id", params.NodeExecutionID, "pod_name", result.PodName)
+
+	// Captured now, not resolved later from params: the agent's completion and heartbeat
+	// requests carry only NodeExecutionID, so this is the one place that also has Temporal's
+	// own addressing for the activity they need to reach.
+	info := activityInfo(ctx)
+	a.pending.Put(params.NodeExecutionID, PendingCompletion{
+		Namespace:  info.Namespace,
+		TaskQueue:  info.TaskQueue,
+		WorkflowID: info.WorkflowExecution.ID,
+		ActivityID: info.ActivityID,
+	})
 
 	return CallbackResult{}, temporalactivity.ErrResultPending
 }

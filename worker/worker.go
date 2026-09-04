@@ -9,6 +9,8 @@ package worker
 import (
 	"context"
 	"errors"
+
+	"github.com/dangtrivan15/choruskube/worker/executor"
 )
 
 // Fleet is one addressable place this Worker serves.
@@ -65,6 +67,13 @@ type Config struct {
 	// omits it fails to connect rather than leaking.
 	TemporalTLSDisabled bool
 	Provider            FleetProvider
+	// CallbackPort is the port the Worker's own callback server listens on when Executor is
+	// set. Zero defaults to defaultCallbackPort; see withDefaults.
+	CallbackPort int
+	// Executor, when set, makes Run launch each node execution's workload itself instead of
+	// asking the API server to (the legacy path -- see activity.New vs activity.NewWithExecutor).
+	// nil keeps the legacy delegation mode.
+	Executor executor.Executor
 }
 
 // Validate reports the first missing required field. Run calls it; callers building a
@@ -81,4 +90,17 @@ func (c Config) Validate() error {
 		return errors.New("Provider is required")
 	}
 	return nil
+}
+
+// defaultCallbackPort is what withDefaults assigns to CallbackPort when it is left at zero.
+const defaultCallbackPort = 9090
+
+// withDefaults returns c with every optional field defaulted. Kept separate from Validate,
+// whose value receiver would discard an assignment the instant it returns -- c here is the copy
+// Run keeps and acts on afterward.
+func (c Config) withDefaults() Config {
+	if c.CallbackPort == 0 {
+		c.CallbackPort = defaultCallbackPort
+	}
+	return c
 }

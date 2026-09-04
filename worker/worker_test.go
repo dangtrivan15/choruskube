@@ -36,3 +36,17 @@ func TestConfigValidate(t *testing.T) {
 		})
 	}
 }
+
+func TestConfigWithDefaults_FillsCallbackPortWhenZero(t *testing.T) {
+	got := Config{}.withDefaults()
+	if got.CallbackPort != defaultCallbackPort {
+		t.Fatalf("CallbackPort = %d, want the default %d", got.CallbackPort, defaultCallbackPort)
+	}
+}
+
+func TestConfigWithDefaults_LeavesAnExplicitCallbackPortAlone(t *testing.T) {
+	got := Config{CallbackPort: 9999}.withDefaults()
+	if got.CallbackPort != 9999 {
+		t.Fatalf("CallbackPort = %d, want the configured 9999 left untouched", got.CallbackPort)
+	}
+}

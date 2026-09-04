@@ -202,6 +202,63 @@ func TestExecuteAINodeFromSnapshot_CallsExecutor(t *testing.T) {
 	cached, ok := hashCache.Get(nodeExecID)
 	assert.True(t, ok)
 	assert.Equal(t, "hash123", cached)
+
+	// the activity's own Temporal addressing was cached under the same id, for the Worker's
+	// completer to complete-by-id once the agent calls back.
+	pending, ok := acts.Pending().Get(nodeExecID)
+	assert.True(t, ok)
+	assert.Equal(t, "choruskube-run-"+runID.String(), pending.WorkflowID)
+}
+
+// TestExecuteAINodeFromSnapshot_CallsExecutor_CachesFullPendingCompletion pins every field
+// PendingCompletion carries, not just WorkflowID: the Worker's completer addresses both the
+// right Temporal activity and the right per-Fleet connection from Namespace and TaskQueue alone,
+// so a gap in either silently misroutes every completion for this execution.
+func TestExecuteAINodeFromSnapshot_CallsExecutor_CachesFullPendingCompletion(t *testing.T) {
+	nodeExecID := uuid.New()
+	runID := uuid.New()
+
+	original := activityInfo
+	activityInfo = func(context.Context) temporalactivity.Info {
+		return temporalactivity.Info{
+			Namespace:         "org-ns",
+			TaskQueue:         "org-queue",
+			ActivityID:        nodeExecID.String(),
+			WorkflowExecution: workflow.Execution{ID: "choruskube-run-" + runID.String()},
+		}
+	}
+	t.Cleanup(func() { activityInfo = original })
+
+	mockExec := &mockExecutor{
+		executeFn: func(ctx context.Context, params executor.ExecutionParams) (executor.ExecutionResult, error) {
+			return executor.ExecutionResult{PodName: "agent-abc", JobSecretHash: "hash123"}, nil
+		},
+	}
+	mockClient := &mockWorkloadClient{
+		prepareFn: func(ctx context.Context, p workload.PrepareParams) (*workload.PrepareResponse, error) {
+			return &workload.PrepareResponse{Image: "ghcr.io/test/agent:latest"}, nil
+		},
+		completeFn: func(ctx context.Context, p workload.CompleteParams) error { return nil },
+	}
+
+	acts := NewWithExecutor(mockClient, mockExec, callback.NewHashCache())
+	acts.CallbackURL = "http://worker:9090/api/v1/callback"
+	acts.APIServerURL = "http://api-server.invalid"
+
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+		NodeExecutionID: nodeExecID,
+		RunID:           runID,
+		ExecutorType:    "ai",
+		PromptTemplate:  "irrelevant",
+	})
+	requirePending(t, err)
+
+	pending, ok := acts.Pending().Get(nodeExecID)
+	assert.True(t, ok)
+	assert.Equal(t, "org-ns", pending.Namespace)
+	assert.Equal(t, "org-queue", pending.TaskQueue)
+	assert.Equal(t, "choruskube-run-"+runID.String(), pending.WorkflowID)
+	assert.Equal(t, nodeExecID.String(), pending.ActivityID)
 }
 
 // TestExecuteAINodeFromSnapshot_CallsExecutor_ForwardsRegistryCredentials verifies the

@@ -46,6 +46,42 @@ func TestHandler_ValidSecret_CompletesActivity(t *testing.T) {
 	assert.True(t, completed)
 }
 
+// TestHandler_ArtifactRefsObjectShape_Decodes pins the actual wire shape entrypoint.sh sends:
+// artifact_refs is always a JSON object (e.g. {"output": "runs/.../out/"}, or {} for a node
+// with no outputs), never an array. A CompletionRequest field typed to decode only an array
+// would 400 every completed callback that carries artifacts.
+func TestHandler_ArtifactRefsObjectShape_Decodes(t *testing.T) {
+	execID := uuid.New()
+	secret := "test-secret-value"
+	hash := executor.HashSecret(secret)
+
+	cache := NewHashCache()
+	cache.Put(execID, hash)
+
+	var captured CompletionRequest
+	completer := &mockCompleter{
+		completeFn: func(ctx context.Context, req CompletionRequest) error {
+			captured = req
+			return nil
+		},
+	}
+	handler := NewHandler(cache, nil, completer)
+
+	body, _ := json.Marshal(map[string]any{
+		"node_execution_id": execID.String(),
+		"status":            "completed",
+		"result":            "done",
+		"artifact_refs":     map[string]string{"output": "runs/x/out/"},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/callback", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+secret)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+	assert.JSONEq(t, `{"output":"runs/x/out/"}`, string(captured.ArtifactRefs))
+}
+
 func TestHandler_InvalidSecret_Returns401(t *testing.T) {
 	execID := uuid.New()
 	cache := NewHashCache()

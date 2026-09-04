@@ -71,8 +71,11 @@ type CompletionRequest struct {
 	Status          string
 	Result          string
 	ErrorMessage    string
-	ArtifactRefs    []string
-	SessionID       string
+	// ArtifactRefs is passed through verbatim as raw JSON -- entrypoint.sh always sends an
+	// object (e.g. {"output": "runs/.../out/"}, or {} when the node produced nothing), never
+	// an array, so a completer must not assume either shape and decode it itself.
+	ArtifactRefs json.RawMessage
+	SessionID    string
 }
 
 // ActivityCompleter resolves the Temporal activity a node execution is blocked on. The concrete
@@ -108,12 +111,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		NodeExecutionID string   `json:"node_execution_id"`
-		Status          string   `json:"status"`
-		Result          string   `json:"result"`
-		ErrorMessage    string   `json:"error_message"`
-		ArtifactRefs    []string `json:"artifact_refs"`
-		SessionID       string   `json:"session_id"`
+		NodeExecutionID string          `json:"node_execution_id"`
+		Status          string          `json:"status"`
+		Result          string          `json:"result"`
+		ErrorMessage    string          `json:"error_message"`
+		ArtifactRefs    json.RawMessage `json:"artifact_refs"`
+		SessionID       string          `json:"session_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)

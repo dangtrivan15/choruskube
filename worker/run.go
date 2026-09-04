@@ -12,6 +12,7 @@ import (
 	tworker "go.temporal.io/sdk/worker"
 
 	"github.com/dangtrivan15/choruskube/worker/activity"
+	"github.com/dangtrivan15/choruskube/worker/callback"
 	"github.com/dangtrivan15/choruskube/worker/workload"
 )
 
@@ -236,6 +237,11 @@ type fleetSupervisor struct {
 	acts   *activity.Activities
 	tokens *tokenCache
 	served map[string]func()
+	// clients holds the Temporal client dialed for each served Fleet, keyed by fleetKey. The
+	// callback completer looks a Fleet's client up here by namespace+taskQueue to complete or
+	// heartbeat one of its activities on the connection its workflow was scheduled on -- the
+	// same reason clientOptions dials one client per Fleet rather than sharing a single one.
+	clients map[string]client.Client
 }
 
 // serve starts a Worker for f unless one is already running for it. Idempotent by fleetKey, so
@@ -262,7 +268,19 @@ func (s *fleetSupervisor) serve(f Fleet) error {
 	}
 	log.Printf("serving fleet: namespace=%s taskQueue=%s", f.Namespace, f.TaskQueue)
 	s.served[key] = func() { w.Stop(); c.Close() }
+	if s.clients != nil {
+		s.clients[key] = c
+	}
 	return nil
+}
+
+// clientFor returns the Temporal client serving namespace+taskQueue -- the same identity
+// fleetKey addresses everywhere else -- or nil if this process is not (or not yet) serving that
+// Fleet.
+func (s *fleetSupervisor) clientFor(namespace, taskQueue string) client.Client {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.clients[fleetKey(Fleet{Namespace: namespace, TaskQueue: taskQueue})]
 }
 
 func (s *fleetSupervisor) stopAll() {
@@ -272,6 +290,7 @@ func (s *fleetSupervisor) stopAll() {
 		stop()
 	}
 	s.served = map[string]func(){}
+	s.clients = map[string]client.Client{}
 }
 
 func (s *fleetSupervisor) count() int {
@@ -319,6 +338,7 @@ func Run(ctx context.Context, cfg Config) error {
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
+	cfg = cfg.withDefaults()
 	reg, err := cfg.Provider.Fleets(ctx)
 	if err != nil {
 		return fmt.Errorf("resolve fleets: %w", err)
@@ -334,7 +354,19 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 
 	credentials := newCredentialCache(reg.InternalToken)
-	acts := activity.New(workload.NewClient(cfg.APIServerURL, credentials.get, nil))
+	wc := workload.NewClient(cfg.APIServerURL, credentials.get, nil)
+
+	// cfg.Executor set means this process runs each workload itself instead of asking the API
+	// server to; its Activities gets a HashCache so the callback server started below can
+	// verify an agent's completion POST without a network round trip to re-resolve it.
+	var acts *activity.Activities
+	var hashCache *callback.HashCache
+	if cfg.Executor != nil {
+		hashCache = callback.NewHashCache()
+		acts = activity.NewWithExecutor(wc, cfg.Executor, hashCache)
+	} else {
+		acts = activity.New(wc)
+	}
 	// Both are required: ExecuteAINodeFromSnapshot rejects an empty value rather than
 	// launching a pod that cannot report back. Passing nil for the HTTP client selects the
 	// package's 30s-timeout default; http.DefaultClient has no timeout and must not be used.
@@ -343,8 +375,31 @@ func Run(ctx context.Context, cfg Config) error {
 
 	tokens := newTokenCache(fleets)
 
-	sup := &fleetSupervisor{cfg: cfg, acts: acts, tokens: tokens, served: map[string]func(){}}
+	sup := &fleetSupervisor{cfg: cfg, acts: acts, tokens: tokens, served: map[string]func(){}, clients: map[string]client.Client{}}
 	defer sup.stopAll()
+
+	// The callback server only makes sense when this process launches workloads itself: the
+	// legacy delegation path (cfg.Executor == nil) reports completion through the API server's
+	// own callback route, which this Worker never serves.
+	if cfg.Executor != nil {
+		completer := newActivityCompleter(acts.Pending(), sup)
+		cbHandler := callback.NewHandler(hashCache, cfg.Executor, completer)
+		hbHandler := callback.NewHeartbeatHandler(hashCache, cfg.Executor, completer)
+		cbServer := callback.NewServer(cfg.CallbackPort, cbHandler, hbHandler)
+		go func() {
+			if err := cbServer.Start(); err != nil {
+				log.Printf("callback server failed: %v", err)
+			}
+		}()
+		// A context of its own, not ctx: ctx is already Done by the time this runs, so deriving
+		// Shutdown's deadline from it would hand Shutdown an expired context and force every
+		// in-flight callback closed instead of draining it.
+		defer func() {
+			if err := cbServer.Shutdown(context.Background()); err != nil {
+				log.Printf("callback server shutdown: %v", err)
+			}
+		}()
+	}
 
 	// A Fleet that cannot be served at startup is fatal, because it means the configured
 	// deployment is wrong (bad address, bad credential) rather than merely incomplete. The
