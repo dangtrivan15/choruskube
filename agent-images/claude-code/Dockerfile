@@ -71,7 +71,6 @@ COPY send-callback /usr/local/bin/send-callback
 COPY artifact /usr/local/bin/artifact
 COPY create-proposal /usr/local/bin/create-proposal
 COPY list-proposals /usr/local/bin/list-proposals
-COPY live-chat-loop /usr/local/bin/live-chat-loop
 COPY register-pr /usr/local/bin/register-pr
 COPY check-prs /usr/local/bin/check-prs
 COPY update-proposal /usr/local/bin/update-proposal
@@ -94,7 +93,6 @@ RUN chmod +x /usr/local/bin/report-result \
     /usr/local/bin/artifact \
     /usr/local/bin/create-proposal \
     /usr/local/bin/list-proposals \
-    /usr/local/bin/live-chat-loop \
     /usr/local/bin/register-pr \
     /usr/local/bin/check-prs \
     /usr/local/bin/update-proposal \
