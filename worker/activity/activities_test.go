@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -93,11 +94,14 @@ var _ executor.Executor = (*mockExecutor)(nil)
 
 // mockWorkloadClient implements workloadClient with func fields, mirroring mockExecutor: a test
 // stubs only the method(s) it exercises, and an un-stubbed one it does call fails loudly (nil
-// func panic) instead of silently returning a zero value.
+// func panic) instead of silently returning a zero value. WriteExecutionLog is the exception,
+// like CleanupWorkload/GetWorkloadLogs above: it is a best-effort, fire-and-forget call made on
+// every execution, so it defaults to a no-op and only tests asserting on it set writeLogFn.
 type mockWorkloadClient struct {
 	createFn   func(ctx context.Context, p workload.CreateWorkloadParams) (*workload.CreateWorkloadResponse, error)
 	prepareFn  func(ctx context.Context, p workload.PrepareParams) (*workload.PrepareResponse, error)
 	completeFn func(ctx context.Context, p workload.CompleteParams) error
+	writeLogFn func(ctx context.Context, runID, nodeExecID uuid.UUID, level, message string)
 }
 
 func (m *mockWorkloadClient) CreateWorkload(ctx context.Context, p workload.CreateWorkloadParams) (*workload.CreateWorkloadResponse, error) {
@@ -114,6 +118,11 @@ func (m *mockWorkloadClient) PrepareWorkload(ctx context.Context, p workload.Pre
 }
 func (m *mockWorkloadClient) CompleteWorkload(ctx context.Context, p workload.CompleteParams) error {
 	return m.completeFn(ctx, p)
+}
+func (m *mockWorkloadClient) WriteExecutionLog(ctx context.Context, runID, nodeExecID uuid.UUID, level, message string) {
+	if m.writeLogFn != nil {
+		m.writeLogFn(ctx, runID, nodeExecID, level, message)
+	}
 }
 
 var _ workloadClient = (*mockWorkloadClient)(nil)
@@ -422,6 +431,105 @@ func TestExecuteAINodeFromSnapshot_CallsExecutor_CompleteErrorPropagates(t *test
 	// complete is called, not after, so it too must survive complete's failure.
 	_, ok = acts.Pending.Get(nodeExecID)
 	assert.True(t, ok)
+}
+
+// TestExecuteLocally_RestoresAgentLaunchedLog pins Task 3's restore: the callback path used to
+// write "Agent launched: <pod>" to the execution log when the API server itself created the
+// workload; now that this Worker launches the workload directly via executeLocally, the write
+// must live here or the line is gone from the run's log for good, not just moved.
+func TestExecuteLocally_RestoresAgentLaunchedLog(t *testing.T) {
+	nodeExecID := uuid.New()
+	runID := stubbedRun(t)
+
+	mockExec := &mockExecutor{
+		executeFn: func(ctx context.Context, params executor.ExecutionParams) (executor.ExecutionResult, error) {
+			return executor.ExecutionResult{PodName: "agent-abc123", JobSecretHash: "hash123"}, nil
+		},
+	}
+
+	type logCall struct {
+		runID, nodeExecID uuid.UUID
+		level, message    string
+	}
+	var logCalls []logCall
+	mockClient := &mockWorkloadClient{
+		prepareFn: func(ctx context.Context, p workload.PrepareParams) (*workload.PrepareResponse, error) {
+			return &workload.PrepareResponse{Image: "ghcr.io/test/agent:latest"}, nil
+		},
+		completeFn: func(ctx context.Context, p workload.CompleteParams) error { return nil },
+		writeLogFn: func(ctx context.Context, runID, nodeExecID uuid.UUID, level, message string) {
+			logCalls = append(logCalls, logCall{runID, nodeExecID, level, message})
+		},
+	}
+
+	acts := NewWithExecutor(mockClient, mockExec, callback.NewHashCache())
+	acts.CallbackURL = "http://worker:9090/api/v1/callback"
+	acts.APIServerURL = "http://api-server.invalid"
+
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+		NodeExecutionID: nodeExecID,
+		RunID:           runID,
+		TemplateNodeID:  uuid.New(),
+		ExecutorType:    "ai",
+		PromptTemplate:  "irrelevant",
+	})
+	requirePending(t, err)
+
+	var found bool
+	for _, c := range logCalls {
+		if c.level == "info" && strings.HasPrefix(c.message, "Agent launched") && strings.Contains(c.message, "agent-abc123") {
+			found = true
+			assert.Equal(t, runID, c.runID)
+			assert.Equal(t, nodeExecID, c.nodeExecID)
+		}
+	}
+	assert.True(t, found, "expected an info log starting with 'Agent launched' and naming the pod, got %+v", logCalls)
+}
+
+var promptResolvedPattern = regexp.MustCompile(`^Prompt resolved \(\d+ chars\)$`)
+
+// TestExecuteAINode_RestoresPromptResolvedLog pins the other half of Task 3's restore: a
+// "Prompt resolved (N chars)" info log, once written by the orchestrator's callback path,
+// now must come from the activity itself right after the prompt template is resolved.
+func TestExecuteAINode_RestoresPromptResolvedLog(t *testing.T) {
+	mockExec := &mockExecutor{
+		executeFn: func(ctx context.Context, params executor.ExecutionParams) (executor.ExecutionResult, error) {
+			return executor.ExecutionResult{PodName: "agent-abc", JobSecretHash: "hash123"}, nil
+		},
+	}
+
+	type logCall struct{ level, message string }
+	var logCalls []logCall
+	mockClient := &mockWorkloadClient{
+		prepareFn: func(ctx context.Context, p workload.PrepareParams) (*workload.PrepareResponse, error) {
+			return &workload.PrepareResponse{Image: "ghcr.io/test/agent:latest"}, nil
+		},
+		completeFn: func(ctx context.Context, p workload.CompleteParams) error { return nil },
+		writeLogFn: func(ctx context.Context, runID, nodeExecID uuid.UUID, level, message string) {
+			logCalls = append(logCalls, logCall{level, message})
+		},
+	}
+
+	acts := NewWithExecutor(mockClient, mockExec, callback.NewHashCache())
+	acts.CallbackURL = "http://worker:9090/api/v1/callback"
+	acts.APIServerURL = "http://api-server.invalid"
+
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+		NodeExecutionID: uuid.New(),
+		RunID:           stubbedRun(t),
+		TemplateNodeID:  uuid.New(),
+		ExecutorType:    "ai",
+		PromptTemplate:  "hello world",
+	})
+	requirePending(t, err)
+
+	var found bool
+	for _, c := range logCalls {
+		if c.level == "info" && promptResolvedPattern.MatchString(c.message) {
+			found = true
+		}
+	}
+	assert.True(t, found, "expected an info log matching 'Prompt resolved (N chars)', got %+v", logCalls)
 }
 
 // TestExecuteAINodeFromSnapshot_CallbackAndAPIServerURLsInConfigJson verifies that

@@ -35,6 +35,7 @@ type workloadClient interface {
 	GetWorkloadLogs(ctx context.Context, runID, nodeExecID uuid.UUID, tailLines int) (string, error)
 	PrepareWorkload(ctx context.Context, params workload.PrepareParams) (*workload.PrepareResponse, error)
 	CompleteWorkload(ctx context.Context, params workload.CompleteParams) error
+	WriteExecutionLog(ctx context.Context, runID, nodeExecID uuid.UUID, level, message string)
 }
 
 var _ workloadClient = (*workload.Client)(nil)
@@ -231,6 +232,9 @@ func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params Execu
 			" (uploaded at run start, downloaded to `/workspace/in/run_input/`):\n" +
 			strings.Join(runInputLines, "\n")
 	}
+
+	a.client.WriteExecutionLog(ctx, runID, params.NodeExecutionID, "info",
+		fmt.Sprintf("Prompt resolved (%d chars)", len(resolvedPrompt)))
 
 	configJSON := a.buildConfigJSON(params, resolvedPrompt)
 
@@ -449,6 +453,8 @@ func (a *Activities) executeLocally(ctx context.Context, runID uuid.UUID, params
 	}
 
 	slog.Info("agent launched", "node_execution_id", params.NodeExecutionID, "pod_name", result.PodName)
+	a.client.WriteExecutionLog(ctx, runID, params.NodeExecutionID, "info",
+		fmt.Sprintf("Agent launched: %s", result.PodName))
 
 	return CallbackResult{}, temporalactivity.ErrResultPending
 }
