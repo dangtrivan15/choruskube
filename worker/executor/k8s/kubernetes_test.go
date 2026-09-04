@@ -1,0 +1,554 @@
+package k8s
+
+import (
+	"context"
+	"fmt"
+	"testing"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
+
+	coreexec "github.com/dangtrivan15/choruskube/worker/executor"
+)
+
+func TestKubernetesExecutor_Execute_CreatesJobAndSecrets(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	namespace := "test-org-ns"
+
+	// Create the namespace
+	_, err := fakeClient.CoreV1().Namespaces().Create(context.Background(),
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace}}, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	exec := NewKubernetesExecutor(fakeClient, Config{
+		AgentServiceAccount: "choruskube-agent",
+	})
+
+	params := coreexec.ExecutionParams{
+		RunID:           uuid.New(),
+		NodeExecutionID: uuid.New(),
+		NodeID:          uuid.New(),
+		Image:           "ghcr.io/test/agent:latest",
+		JobSecret:       "test-secret-123",
+		ConfigJSON:      map[string]any{"run_id": uuid.New().String()},
+		CallbackURL:     "http://worker:9090/api/v1/callback",
+		Identity: coreexec.ExecutionIdentity{
+			Namespace:      namespace,
+			ServiceAccount: "choruskube-agent",
+		},
+	}
+
+	result, err := exec.Execute(context.Background(), params)
+	require.NoError(t, err)
+	assert.NotEmpty(t, result.PodName)
+	assert.NotEmpty(t, result.JobSecretHash)
+
+	// Verify Job was created
+	jobs, err := fakeClient.BatchV1().Jobs(namespace).List(context.Background(), metav1.ListOptions{})
+	require.NoError(t, err)
+	assert.Len(t, jobs.Items, 1)
+	assert.Equal(t, "choruskube-agent", jobs.Items[0].Labels["app"])
+
+	// Verify Secret was created with JOB_SECRET
+	secrets, err := fakeClient.CoreV1().Secrets(namespace).List(context.Background(), metav1.ListOptions{})
+	require.NoError(t, err)
+	found := false
+	for _, s := range secrets.Items {
+		if _, ok := s.Data["JOB_SECRET"]; ok {
+			found = true
+			assert.Equal(t, []byte("test-secret-123"), s.Data["JOB_SECRET"])
+		}
+	}
+	assert.True(t, found, "job-secret Secret should exist")
+
+	// Verify ConfigMap was created
+	cms, err := fakeClient.CoreV1().ConfigMaps(namespace).List(context.Background(), metav1.ListOptions{})
+	require.NoError(t, err)
+	assert.NotEmpty(t, cms.Items)
+}
+
+func TestKubernetesExecutor_ResolveJobSecretHash(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	namespace := "test-org-ns"
+	execID := uuid.New()
+	secret := "resolve-test-secret"
+
+	// Pre-create the Secret the executor would have created
+	_, err := fakeClient.CoreV1().Secrets(namespace).Create(context.Background(), &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("job-secret-%s", execID.String()[:8]),
+			Namespace: namespace,
+			Labels:    map[string]string{"choruskube/exec-id": execID.String()},
+		},
+		Data: map[string][]byte{"JOB_SECRET": []byte(secret)},
+	}, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	exec := NewKubernetesExecutor(fakeClient, Config{})
+
+	hash, err := exec.ResolveJobSecretHash(context.Background(), execID)
+	require.NoError(t, err)
+	assert.Equal(t, coreexec.HashSecret(secret), hash)
+}
+
+// --- Additional coverage beyond the brief's own two tests ---
+
+func newTestParams(namespace string) coreexec.ExecutionParams {
+	return coreexec.ExecutionParams{
+		RunID:           uuid.New(),
+		NodeExecutionID: uuid.New(),
+		NodeID:          uuid.New(),
+		Image:           "ghcr.io/test/agent:latest",
+		JobSecret:       "test-secret-123",
+		ConfigJSON:      map[string]any{"run_id": uuid.New().String()},
+		CallbackURL:     "http://worker:9090/api/v1/callback",
+		Identity: coreexec.ExecutionIdentity{
+			Namespace:      namespace,
+			ServiceAccount: "choruskube-agent",
+		},
+	}
+}
+
+func TestKubernetesExecutor_Execute_ClaudeOAuthToken_InjectedForAiExecution(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	namespace := "test-org-ns"
+
+	exec := NewKubernetesExecutor(fakeClient, Config{AgentServiceAccount: "choruskube-agent"})
+
+	params := newTestParams(namespace)
+	params.Credentials.ClaudeOAuthToken = "oauth-token-value"
+
+	_, err := exec.Execute(context.Background(), params)
+	require.NoError(t, err)
+
+	secretName := fmt.Sprintf("job-secret-%s", params.NodeExecutionID.String()[:8])
+	secret, err := fakeClient.CoreV1().Secrets(namespace).Get(context.Background(), secretName, metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, []byte("oauth-token-value"), secret.Data["CLAUDE_CODE_OAUTH_TOKEN"])
+}
+
+func TestKubernetesExecutor_Execute_ClaudeOAuthToken_OmittedForScriptExecution(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	namespace := "test-org-ns"
+
+	exec := NewKubernetesExecutor(fakeClient, Config{AgentServiceAccount: "choruskube-agent"})
+
+	params := newTestParams(namespace)
+	params.Credentials.ClaudeOAuthToken = "oauth-token-value"
+	params.ConfigJSON = map[string]any{"executor_type": "script"}
+
+	_, err := exec.Execute(context.Background(), params)
+	require.NoError(t, err)
+
+	secretName := fmt.Sprintf("job-secret-%s", params.NodeExecutionID.String()[:8])
+	secret, err := fakeClient.CoreV1().Secrets(namespace).Get(context.Background(), secretName, metav1.GetOptions{})
+	require.NoError(t, err)
+	_, ok := secret.Data["CLAUDE_CODE_OAUTH_TOKEN"]
+	assert.False(t, ok, "script execution should not receive the Claude OAuth token")
+
+	// Test-node executions also get E2E_WORKERS on the agent container.
+	jobName := fmt.Sprintf("agent-%s", params.NodeExecutionID.String()[:8])
+	job, err := fakeClient.BatchV1().Jobs(namespace).Get(context.Background(), jobName, metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.True(t, hasEnv(job.Spec.Template.Spec.Containers[0].Env, "E2E_WORKERS", "3"))
+}
+
+func TestKubernetesExecutor_Execute_RegistryCredentials_CreatesPullSecretAndMounts(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	namespace := "test-org-ns"
+
+	exec := NewKubernetesExecutor(fakeClient, Config{AgentServiceAccount: "choruskube-agent"})
+
+	params := newTestParams(namespace)
+	params.Credentials.Registry = &coreexec.RegistryCredentials{
+		Host:     "registry.example.com",
+		Username: "user",
+		Password: "pass",
+	}
+
+	result, err := exec.Execute(context.Background(), params)
+	require.NoError(t, err)
+
+	execIDShort := params.NodeExecutionID.String()[:8]
+	regcredName := "regcred-" + execIDShort
+
+	regcred, err := fakeClient.CoreV1().Secrets(namespace).Get(context.Background(), regcredName, metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, corev1.SecretTypeDockerConfigJson, regcred.Type)
+	assert.Contains(t, string(regcred.Data[corev1.DockerConfigJsonKey]), "registry.example.com")
+
+	job, err := fakeClient.BatchV1().Jobs(namespace).Get(context.Background(), result.PodName, metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Len(t, job.Spec.Template.Spec.ImagePullSecrets, 1)
+	assert.Equal(t, regcredName, job.Spec.Template.Spec.ImagePullSecrets[0].Name)
+	assert.True(t, hasEnv(job.Spec.Template.Spec.Containers[0].Env, "DOCKER_CONFIG", "/etc/regcred"))
+
+	// Owner reference set so the regcred Secret is GC'd with the Job.
+	require.Len(t, regcred.OwnerReferences, 1)
+	assert.Equal(t, job.Name, regcred.OwnerReferences[0].Name)
+}
+
+func TestKubernetesExecutor_Execute_ResourceQuotaEnabled_PinsAgentResources(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	namespace := "test-org-ns"
+
+	exec := NewKubernetesExecutor(fakeClient, Config{AgentServiceAccount: "choruskube-agent", ResourceQuotaEnabled: true})
+
+	params := newTestParams(namespace)
+	result, err := exec.Execute(context.Background(), params)
+	require.NoError(t, err)
+
+	job, err := fakeClient.BatchV1().Jobs(namespace).Get(context.Background(), result.PodName, metav1.GetOptions{})
+	require.NoError(t, err)
+	res := job.Spec.Template.Spec.Containers[0].Resources
+	assert.Equal(t, "1", res.Limits.Cpu().String())
+	assert.Equal(t, "3Gi", res.Limits.Memory().String())
+	assert.Equal(t, "200m", res.Requests.Cpu().String())
+}
+
+func TestKubernetesExecutor_Execute_ResourceQuotaDisabled_LeavesResourcesUnset(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	namespace := "test-org-ns"
+
+	exec := NewKubernetesExecutor(fakeClient, Config{AgentServiceAccount: "choruskube-agent", ResourceQuotaEnabled: false})
+
+	params := newTestParams(namespace)
+	result, err := exec.Execute(context.Background(), params)
+	require.NoError(t, err)
+
+	job, err := fakeClient.BatchV1().Jobs(namespace).Get(context.Background(), result.PodName, metav1.GetOptions{})
+	require.NoError(t, err)
+	res := job.Spec.Template.Spec.Containers[0].Resources
+	assert.Empty(t, res.Limits)
+	assert.Empty(t, res.Requests)
+}
+
+func TestKubernetesExecutor_Execute_OwnerReferencesLinkConfigMapAndSecretToJob(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	namespace := "test-org-ns"
+
+	exec := NewKubernetesExecutor(fakeClient, Config{AgentServiceAccount: "choruskube-agent"})
+	params := newTestParams(namespace)
+
+	result, err := exec.Execute(context.Background(), params)
+	require.NoError(t, err)
+
+	execIDShort := params.NodeExecutionID.String()[:8]
+	cm, err := fakeClient.CoreV1().ConfigMaps(namespace).Get(context.Background(), "config-"+execIDShort, metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Len(t, cm.OwnerReferences, 1)
+	assert.Equal(t, "Job", cm.OwnerReferences[0].Kind)
+	assert.Equal(t, result.PodName, cm.OwnerReferences[0].Name)
+
+	secret, err := fakeClient.CoreV1().Secrets(namespace).Get(context.Background(), "job-secret-"+execIDShort, metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Len(t, secret.OwnerReferences, 1)
+	assert.Equal(t, result.PodName, secret.OwnerReferences[0].Name)
+}
+
+func TestKubernetesExecutor_Execute_DinD_SplicesTemplate(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	namespace := "test-org-ns"
+	templateNamespace := "choruskube"
+	templateName := "choruskube-agent-pod-template"
+
+	templateYAML := `
+apiVersion: v1
+kind: PodTemplate
+metadata:
+  name: choruskube-agent-pod-template
+template:
+  spec:
+    runtimeClassName: sysbox-runc
+    hostUsers: false
+    initContainers:
+      - name: dind
+        image: docker:29-dind
+        env:
+          - name: DOCKER_TLS_CERTDIR
+            value: ""
+        resources:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+          limits:
+            cpu: "1"
+            memory: 1Gi
+    containers:
+      - name: agent
+        image: placeholder
+        env:
+          - name: DOCKER_HOST
+            value: tcp://localhost:2375
+        volumeMounts:
+          - name: docker-certs
+            mountPath: /certs
+    volumes:
+      - name: docker-certs
+        emptyDir: {}
+`
+	_, err := fakeClient.CoreV1().ConfigMaps(templateNamespace).Create(context.Background(), &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: templateName, Namespace: templateNamespace},
+		Data:       map[string]string{"template.yaml": templateYAML},
+	}, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	exec := NewKubernetesExecutor(fakeClient, Config{
+		AgentServiceAccount:  "choruskube-agent",
+		AgentPodTemplateName: templateName,
+		TemplateNamespace:    templateNamespace,
+		ResourceQuotaEnabled: true,
+	})
+
+	params := newTestParams(namespace)
+	params.EnableDocker = true
+
+	result, err := exec.Execute(context.Background(), params)
+	require.NoError(t, err)
+
+	job, err := fakeClient.BatchV1().Jobs(namespace).Get(context.Background(), result.PodName, metav1.GetOptions{})
+	require.NoError(t, err)
+
+	podSpec := job.Spec.Template.Spec
+	require.NotNil(t, podSpec.RuntimeClassName)
+	assert.Equal(t, "sysbox-runc", *podSpec.RuntimeClassName)
+	require.NotNil(t, podSpec.HostUsers)
+	assert.False(t, *podSpec.HostUsers)
+
+	require.Len(t, podSpec.InitContainers, 1)
+	dind := podSpec.InitContainers[0]
+	assert.Equal(t, "dind", dind.Name)
+	assert.True(t, hasEnv(dind.Env, "REGISTRY_MIRROR", "nexus.test-org-ns.svc.cluster.local:5000"))
+	assert.True(t, hasEnv(dind.Env, "INSECURE_REGISTRIES", "nexus.test-org-ns.svc.cluster.local:5000 nexus.test-org-ns.svc.cluster.local:5001"))
+
+	agent := podSpec.Containers[0]
+	assert.True(t, hasEnv(agent.Env, "DOCKER_HOST", "tcp://localhost:2375"))
+	assert.True(t, hasEnv(agent.Env, "BUILD_CACHE_REGISTRY", "nexus.test-org-ns.svc.cluster.local:5001"))
+	assert.True(t, hasEnv(agent.Env, "DEP_PROXY_BASE", "http://nexus.test-org-ns.svc.cluster.local:8081"))
+	found := false
+	for _, vm := range agent.VolumeMounts {
+		if vm.Name == "docker-certs" {
+			found = true
+		}
+	}
+	assert.True(t, found, "docker-certs volume mount should be spliced onto the agent container")
+
+	foundVol := false
+	for _, v := range podSpec.Volumes {
+		if v.Name == "docker-certs" {
+			foundVol = true
+		}
+	}
+	assert.True(t, foundVol, "docker-certs volume should be spliced onto the pod spec")
+}
+
+func TestKubernetesExecutor_Execute_DinD_MissingTemplate_ReturnsError(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	namespace := "test-org-ns"
+
+	exec := NewKubernetesExecutor(fakeClient, Config{
+		AgentServiceAccount:  "choruskube-agent",
+		AgentPodTemplateName: "does-not-exist",
+		TemplateNamespace:    "choruskube",
+	})
+
+	params := newTestParams(namespace)
+	params.EnableDocker = true
+
+	_, err := exec.Execute(context.Background(), params)
+	require.Error(t, err)
+
+	// The ConfigMap/Secret created before the DinD lookup failed must not be left behind.
+	execIDShort := params.NodeExecutionID.String()[:8]
+	_, cmErr := fakeClient.CoreV1().ConfigMaps(namespace).Get(context.Background(), "config-"+execIDShort, metav1.GetOptions{})
+	assert.Error(t, cmErr, "configmap should have been cleaned up after the failed Execute")
+	_, secretErr := fakeClient.CoreV1().Secrets(namespace).Get(context.Background(), "job-secret-"+execIDShort, metav1.GetOptions{})
+	assert.Error(t, secretErr, "secret should have been cleaned up after the failed Execute")
+}
+
+func TestKubernetesExecutor_Cleanup_DeletesJobAndChildren(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	namespace := "test-org-ns"
+
+	exec := NewKubernetesExecutor(fakeClient, Config{AgentServiceAccount: "choruskube-agent"})
+	params := newTestParams(namespace)
+
+	result, err := exec.Execute(context.Background(), params)
+	require.NoError(t, err)
+
+	err = exec.Cleanup(context.Background(), params.NodeExecutionID)
+	require.NoError(t, err)
+
+	_, err = fakeClient.BatchV1().Jobs(namespace).Get(context.Background(), result.PodName, metav1.GetOptions{})
+	assert.Error(t, err)
+
+	execIDShort := params.NodeExecutionID.String()[:8]
+	_, err = fakeClient.CoreV1().ConfigMaps(namespace).Get(context.Background(), "config-"+execIDShort, metav1.GetOptions{})
+	assert.Error(t, err)
+	_, err = fakeClient.CoreV1().Secrets(namespace).Get(context.Background(), "job-secret-"+execIDShort, metav1.GetOptions{})
+	assert.Error(t, err)
+}
+
+func TestKubernetesExecutor_Cleanup_JobAlreadyGone_StillDeletesSecret(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	namespace := "test-org-ns"
+
+	exec := NewKubernetesExecutor(fakeClient, Config{AgentServiceAccount: "choruskube-agent"})
+	params := newTestParams(namespace)
+
+	result, err := exec.Execute(context.Background(), params)
+	require.NoError(t, err)
+
+	// Simulate the Job already having been reaped (ttlSecondsAfterFinished, or a race with
+	// K8s GC) while its owner-ref'd children are still present -- the fake clientset does not
+	// run a garbage collector, so deleting the Job here does not cascade-delete them, exactly
+	// like a real cluster mid-way through GC.
+	require.NoError(t, fakeClient.BatchV1().Jobs(namespace).Delete(context.Background(), result.PodName, metav1.DeleteOptions{}))
+
+	err = exec.Cleanup(context.Background(), params.NodeExecutionID)
+	require.NoError(t, err)
+
+	execIDShort := params.NodeExecutionID.String()[:8]
+	_, err = fakeClient.CoreV1().Secrets(namespace).Get(context.Background(), "job-secret-"+execIDShort, metav1.GetOptions{})
+	assert.Error(t, err, "job-secret Secret should have been deleted even though the Job was already gone")
+	_, err = fakeClient.CoreV1().ConfigMaps(namespace).Get(context.Background(), "config-"+execIDShort, metav1.GetOptions{})
+	assert.Error(t, err, "ConfigMap should have been deleted even though the Job was already gone")
+}
+
+func TestKubernetesExecutor_Cleanup_JobAndSecretGone_ConfigMapSurvives_StillDeletesConfigMap(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	namespace := "test-org-ns"
+
+	exec := NewKubernetesExecutor(fakeClient, Config{AgentServiceAccount: "choruskube-agent"})
+	params := newTestParams(namespace)
+
+	result, err := exec.Execute(context.Background(), params)
+	require.NoError(t, err)
+
+	execIDShort := params.NodeExecutionID.String()[:8]
+	require.NoError(t, fakeClient.BatchV1().Jobs(namespace).Delete(context.Background(), result.PodName, metav1.DeleteOptions{}))
+	require.NoError(t, fakeClient.CoreV1().Secrets(namespace).Delete(context.Background(), "job-secret-"+execIDShort, metav1.DeleteOptions{}))
+
+	err = exec.Cleanup(context.Background(), params.NodeExecutionID)
+	require.NoError(t, err)
+
+	_, err = fakeClient.CoreV1().ConfigMaps(namespace).Get(context.Background(), "config-"+execIDShort, metav1.GetOptions{})
+	assert.Error(t, err, "ConfigMap should have been deleted via the ConfigMap-label fallback")
+}
+
+func TestKubernetesExecutor_Cleanup_NoJobFound_NoOps(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	exec := NewKubernetesExecutor(fakeClient, Config{})
+
+	err := exec.Cleanup(context.Background(), uuid.New())
+	assert.NoError(t, err)
+}
+
+func TestKubernetesExecutor_Terminate_PatchesActiveDeadline(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	namespace := "test-org-ns"
+
+	exec := NewKubernetesExecutor(fakeClient, Config{AgentServiceAccount: "choruskube-agent"})
+	params := newTestParams(namespace)
+
+	result, err := exec.Execute(context.Background(), params)
+	require.NoError(t, err)
+
+	err = exec.Terminate(context.Background(), params.NodeExecutionID)
+	require.NoError(t, err)
+
+	job, err := fakeClient.BatchV1().Jobs(namespace).Get(context.Background(), result.PodName, metav1.GetOptions{})
+	require.NoError(t, err)
+	require.NotNil(t, job.Spec.ActiveDeadlineSeconds)
+	assert.Equal(t, int64(1), *job.Spec.ActiveDeadlineSeconds)
+}
+
+func TestKubernetesExecutor_Terminate_NoJobFound_NoOps(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	exec := NewKubernetesExecutor(fakeClient, Config{})
+
+	err := exec.Terminate(context.Background(), uuid.New())
+	assert.NoError(t, err)
+}
+
+func TestKubernetesExecutor_GetLogs_NoJobFound(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	exec := NewKubernetesExecutor(fakeClient, Config{})
+
+	logs, err := exec.GetLogs(context.Background(), uuid.New(), 100)
+	require.NoError(t, err)
+	assert.Equal(t, "(no pod found)", logs)
+}
+
+func TestKubernetesExecutor_GetLogs_NoPodForJob(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	namespace := "test-org-ns"
+
+	exec := NewKubernetesExecutor(fakeClient, Config{AgentServiceAccount: "choruskube-agent"})
+	params := newTestParams(namespace)
+
+	_, err := exec.Execute(context.Background(), params)
+	require.NoError(t, err)
+
+	// The fake clientset does not run a Job controller, so no Pod is ever created for the Job.
+	logs, err := exec.GetLogs(context.Background(), params.NodeExecutionID, 100)
+	require.NoError(t, err)
+	assert.Equal(t, "(no pod found)", logs)
+}
+
+func TestKubernetesExecutor_ResolveJobSecretHash_NotFound(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	exec := NewKubernetesExecutor(fakeClient, Config{})
+
+	_, err := exec.ResolveJobSecretHash(context.Background(), uuid.New())
+	assert.Error(t, err)
+}
+
+func TestKubernetesExecutor_HealthCheck(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	exec := NewKubernetesExecutor(fakeClient, Config{})
+
+	err := exec.HealthCheck(context.Background())
+	assert.NoError(t, err)
+}
+
+func TestIsScriptExecution(t *testing.T) {
+	tests := []struct {
+		name       string
+		configJSON map[string]any
+		want       bool
+	}{
+		{"nil config", nil, false},
+		{"no executor_type", map[string]any{}, false},
+		{"ai executor_type", map[string]any{"executor_type": "ai"}, false},
+		{"script executor_type", map[string]any{"executor_type": "script"}, true},
+		{"script uppercase", map[string]any{"executor_type": "SCRIPT"}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			params := coreexec.ExecutionParams{ConfigJSON: tt.configJSON}
+			assert.Equal(t, tt.want, isScriptExecution(params))
+		})
+	}
+}
+
+func TestBuildDockerConfigJSON(t *testing.T) {
+	reg := &coreexec.RegistryCredentials{Host: "registry.example.com", Username: "user", Password: "pass"}
+	data, err := buildDockerConfigJSON(reg)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "registry.example.com")
+	assert.Contains(t, string(data), "dXNlcjpwYXNz") // base64("user:pass")
+}
+
+func hasEnv(env []corev1.EnvVar, name, value string) bool {
+	for _, e := range env {
+		if e.Name == name && e.Value == value {
+			return true
+		}
+	}
+	return false
+}
