@@ -47,7 +47,7 @@ func (s *DAGExecutorTestSuite) TestAIActivityUsesWorkerTaskQueueFromInput() {
 	})).Return(execA, nil).Once()
 
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == nodeA
+		return p.Identity.TemplateNodeID == nodeA
 	})).Return(activity.CallbackResult{}, nil).Once()
 
 	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
@@ -103,7 +103,7 @@ func (s *DAGExecutorTestSuite) TestAIActivityFallsBackWhenNoWorkerTaskQueue() {
 	})).Return(execA, nil).Once()
 
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == nodeA
+		return p.Identity.TemplateNodeID == nodeA
 	})).Return(activity.CallbackResult{}, nil).Once()
 
 	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {

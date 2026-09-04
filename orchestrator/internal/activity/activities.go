@@ -154,42 +154,85 @@ func (a *Activities) GetGraphRuntime(ctx context.Context, runID uuid.UUID) (stri
 // All calls route to params.WorkerTaskQueue, so the orchestrator's worker never receives
 // them. The bodies exist solely so the code compiles and the activity type name resolves.
 
-// ExecuteAINodeFromSnapshotParams is kept for the workflow to reference.
+// ExecuteAINodeFromSnapshotParams is kept for the workflow to reference. Its shape is grouped
+// by concern (Identity/Node/Inputs/Repos/TaskContext/Session) and must stay field-for-field
+// identical to the Worker's mirror of the same name -- Temporal's data converter serializes this
+// struct to JSON on this side and deserializes into the Worker's, so any divergence in field
+// name, order, or nesting silently drops or blanks data on arrival instead of failing loudly.
 type ExecuteAINodeFromSnapshotParams struct {
-	NodeExecutionID        uuid.UUID
-	RunID                  uuid.UUID
-	TemplateNodeID         uuid.UUID
-	Label                  string
-	ExecutorType           string
-	PromptTemplate         string
-	InputArtifacts         map[string]string
+	Identity    Identity
+	Node        Node
+	Inputs      Inputs
+	Repos       Repos
+	TaskContext TaskContext
+	Session     Session
+	// OrgSlug namespaces object storage paths; empty = legacy unprefixed paths.
+	OrgSlug string
+}
+
+type Identity struct {
+	NodeExecutionID uuid.UUID
+	RunID           uuid.UUID
+	TemplateNodeID  uuid.UUID
+}
+
+type Node struct {
+	ExecutorType   string // "ai" or "script"
+	Command        string // for script executor
+	PromptTemplate string
+	Model          string // optional override; empty = agent default
+	Effort         string // optional override; empty = agent default
+	// Per-node turn/retry budget, as configured strings. Empty = agent default
+	// (the entrypoint's own 100 turns / 3 attempts); the entrypoint validates
+	// any value it is given.
+	MaxTurns        string
+	MaxRetries      string
+	OutputSpec      string // JSON string describing required output files; "" or "{}" = no enforcement
+	SupervisorLabel string // label of the template's routing-hub node; "" = template declares none
+	Iteration       int
+	NeedDecision    bool // true if node has conditional edges and is AI type
+	NeedsPR         bool // true if node must open/register a PR before finishing (config_overrides.needs_pr)
+}
+
+type Inputs struct {
+	InputArtifacts map[string]string
+	Variables      map[string]string
+	// RequiredInputArtifacts names the InputArtifacts keys whose absence must fail the node.
+	// Everything else is best-effort: several declarations legitimately reference a prior
+	// iteration that does not exist on iteration 1.
 	RequiredInputArtifacts []string
-	Variables              map[string]string
-	LoopGroup              string
-	Iteration              int
-	RepoURL                string
-	WorkingBranch          string
-	Command                string
-	RunLogPath             string
-	OrgSlug                string
-	NeedDecision           bool
-	NeedsPR                bool
-	OutputSpec             string
-	SupervisorLabel        string
-	Repos                  []map[string]interface{} `json:"repos,omitempty"`
-	Model                  string                   `json:"model,omitempty"`
-	Effort                 string                   `json:"effort,omitempty"`
-	MaxTurns               string                   `json:"max_turns,omitempty"`
-	MaxRetries             string                   `json:"max_retries,omitempty"`
-	TaskID                 string
-	TaskTitle              string
-	StoryID                string
-	StoryTitle             string
-	EpicID                 string
-	EpicTitle              string
-	OpenBlockers           []OpenBlockerParam
-	SessionID              string `json:"session_id,omitempty"`
-	SessionArtifactPath    string `json:"session_artifact_path,omitempty"`
+}
+
+type Repos struct {
+	RepoURL       string
+	WorkingBranch string
+	List          []map[string]any
+}
+
+// TaskContext carries the triggering Task's identity, broadcast into config.json's
+// task_context for every node execution in a task-triggered run. TaskID == "" means the run
+// wasn't started from a Task; StoryID/EpicID may independently be "" if that level no longer
+// resolves even though TaskID is set.
+type TaskContext struct {
+	TaskID     string
+	TaskTitle  string
+	StoryID    string
+	StoryTitle string
+	EpicID     string
+	EpicTitle  string
+	// OpenBlockers lists the triggering Task's own direct, not-yet-done incoming blocking
+	// edges, threaded into config.json's task_context.open_blockers. Empty
+	// (nil or zero-length) omits the key entirely, matching how task_context itself is
+	// omitted when TaskID == "".
+	OpenBlockers []OpenBlockerParam
+}
+
+type Session struct {
+	// Set only when this iteration resumes a session parked by a previous one.
+	// The entrypoint restores the transcript and runs `claude --resume`; empty
+	// means start a fresh session.
+	ID           string
+	ArtifactPath string
 }
 
 type OpenBlockerParam struct {

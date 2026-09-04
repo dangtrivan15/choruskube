@@ -172,11 +172,15 @@ func TestExecuteAINodeFromSnapshot_CallsExecutor(t *testing.T) {
 	acts.APIServerURL = "http://api-server.invalid"
 
 	params := ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: nodeExecID,
-		RunID:           runID,
-		TemplateNodeID:  nodeID,
-		ExecutorType:    "ai",
-		PromptTemplate:  "irrelevant",
+		Identity: Identity{
+			NodeExecutionID: nodeExecID,
+			RunID:           runID,
+			TemplateNodeID:  nodeID,
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "irrelevant",
+		},
 	}
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
@@ -255,10 +259,14 @@ func TestExecuteAINodeFromSnapshot_CallsExecutor_CachesFullPendingCompletion(t *
 	acts.APIServerURL = "http://api-server.invalid"
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: nodeExecID,
-		RunID:           runID,
-		ExecutorType:    "ai",
-		PromptTemplate:  "irrelevant",
+		Identity: Identity{
+			NodeExecutionID: nodeExecID,
+			RunID:           runID,
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "irrelevant",
+		},
 	})
 	requirePending(t, err)
 
@@ -300,11 +308,15 @@ func TestExecuteAINodeFromSnapshot_CallsExecutor_ForwardsRegistryCredentials(t *
 	acts.APIServerURL = "http://api-server.invalid"
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: uuid.New(),
-		RunID:           stubbedRun(t),
-		TemplateNodeID:  uuid.New(),
-		ExecutorType:    "ai",
-		PromptTemplate:  "irrelevant",
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           stubbedRun(t),
+			TemplateNodeID:  uuid.New(),
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "irrelevant",
+		},
 	})
 	assert.ErrorIs(t, err, temporalactivity.ErrResultPending)
 
@@ -337,11 +349,15 @@ func TestExecuteAINodeFromSnapshot_CallsExecutor_PrepareErrorPropagates(t *testi
 	acts.APIServerURL = "http://api-server.invalid"
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: uuid.New(),
-		RunID:           stubbedRun(t),
-		TemplateNodeID:  uuid.New(),
-		ExecutorType:    "ai",
-		PromptTemplate:  "irrelevant",
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           stubbedRun(t),
+			TemplateNodeID:  uuid.New(),
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "irrelevant",
+		},
 	})
 	assert.Error(t, err)
 	assert.NotErrorIs(t, err, temporalactivity.ErrResultPending)
@@ -374,11 +390,15 @@ func TestExecuteAINodeFromSnapshot_CallsExecutor_ExecuteErrorPropagates(t *testi
 	acts.APIServerURL = "http://api-server.invalid"
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: nodeExecID,
-		RunID:           stubbedRun(t),
-		TemplateNodeID:  uuid.New(),
-		ExecutorType:    "ai",
-		PromptTemplate:  "irrelevant",
+		Identity: Identity{
+			NodeExecutionID: nodeExecID,
+			RunID:           stubbedRun(t),
+			TemplateNodeID:  uuid.New(),
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "irrelevant",
+		},
 	})
 	assert.Error(t, err)
 	assert.NotErrorIs(t, err, temporalactivity.ErrResultPending)
@@ -412,11 +432,15 @@ func TestExecuteAINodeFromSnapshot_CallsExecutor_CompleteErrorPropagates(t *test
 	acts.APIServerURL = "http://api-server.invalid"
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: nodeExecID,
-		RunID:           stubbedRun(t),
-		TemplateNodeID:  uuid.New(),
-		ExecutorType:    "ai",
-		PromptTemplate:  "irrelevant",
+		Identity: Identity{
+			NodeExecutionID: nodeExecID,
+			RunID:           stubbedRun(t),
+			TemplateNodeID:  uuid.New(),
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "irrelevant",
+		},
 	})
 	assert.Error(t, err)
 	assert.NotErrorIs(t, err, temporalactivity.ErrResultPending)
@@ -467,11 +491,15 @@ func TestExecuteLocally_RestoresAgentLaunchedLog(t *testing.T) {
 	acts.APIServerURL = "http://api-server.invalid"
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: nodeExecID,
-		RunID:           runID,
-		TemplateNodeID:  uuid.New(),
-		ExecutorType:    "ai",
-		PromptTemplate:  "irrelevant",
+		Identity: Identity{
+			NodeExecutionID: nodeExecID,
+			RunID:           runID,
+			TemplateNodeID:  uuid.New(),
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "irrelevant",
+		},
 	})
 	requirePending(t, err)
 
@@ -515,11 +543,15 @@ func TestExecuteAINode_RestoresPromptResolvedLog(t *testing.T) {
 	acts.APIServerURL = "http://api-server.invalid"
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: uuid.New(),
-		RunID:           stubbedRun(t),
-		TemplateNodeID:  uuid.New(),
-		ExecutorType:    "ai",
-		PromptTemplate:  "hello world",
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           stubbedRun(t),
+			TemplateNodeID:  uuid.New(),
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "hello world",
+		},
 	})
 	requirePending(t, err)
 
@@ -540,11 +572,15 @@ func TestExecuteAINodeFromSnapshot_CallbackAndAPIServerURLsInConfigJson(t *testi
 	acts := newTestActivities(t, &receivedConfigJSON)
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: uuid.New(),
-		RunID:           stubbedRun(t),
-		TemplateNodeID:  uuid.New(),
-		ExecutorType:    "ai",
-		PromptTemplate:  "irrelevant",
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           stubbedRun(t),
+			TemplateNodeID:  uuid.New(),
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "irrelevant",
+		},
 	})
 	requirePending(t, err)
 
@@ -572,11 +608,15 @@ func TestExecuteAINodeFromSnapshot_FailsFastWhenCallbackURLEmpty(t *testing.T) {
 	// CallbackURL intentionally left empty.
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
-		TemplateNodeID:  uuid.New(),
-		ExecutorType:    "ai",
-		PromptTemplate:  "irrelevant",
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           uuid.New(),
+			TemplateNodeID:  uuid.New(),
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "irrelevant",
+		},
 	})
 	if err == nil || errors.Is(err, temporalactivity.ErrResultPending) {
 		t.Fatalf("want an immediate config error, got %v", err)
@@ -591,11 +631,15 @@ func TestExecuteAINodeFromSnapshot_FailsFastWhenAPIServerURLEmpty(t *testing.T) 
 	// APIServerURL intentionally left empty.
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
-		TemplateNodeID:  uuid.New(),
-		ExecutorType:    "ai",
-		PromptTemplate:  "irrelevant",
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           uuid.New(),
+			TemplateNodeID:  uuid.New(),
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "irrelevant",
+		},
 	})
 	if err == nil || errors.Is(err, temporalactivity.ErrResultPending) {
 		t.Fatalf("want an immediate config error, got %v", err)
@@ -611,11 +655,15 @@ func TestExecuteAINodeFromSnapshot_RejectsParamsNamingAnotherRun(t *testing.T) {
 	workflowRun := stubbedRun(t)
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: uuid.New(),
-		RunID:           uuid.New(),
-		TemplateNodeID:  uuid.New(),
-		ExecutorType:    "ai",
-		PromptTemplate:  "irrelevant",
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           uuid.New(),
+			TemplateNodeID:  uuid.New(),
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "irrelevant",
+		},
 	})
 	if err == nil || errors.Is(err, temporalactivity.ErrResultPending) {
 		t.Fatalf("want a mismatch error, got %v", err)
@@ -637,12 +685,16 @@ func TestExecuteAINodeFromSnapshot_OutputPathKeyedByExecutionID(t *testing.T) {
 	acts := newTestActivities(t, &receivedConfigJSON)
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: execID,
-		RunID:           runID,
-		TemplateNodeID:  templateNodeID,
-		ExecutorType:    "ai",
-		PromptTemplate:  "irrelevant",
-		Iteration:       2,
+		Identity: Identity{
+			NodeExecutionID: execID,
+			RunID:           runID,
+			TemplateNodeID:  templateNodeID,
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "irrelevant",
+			Iteration:      2,
+		},
 	})
 	requirePending(t, err)
 
@@ -660,16 +712,24 @@ func TestExecuteAINodeFromSnapshot_ScriptNode_ConfigJson(t *testing.T) {
 	acts := newTestActivities(t, &receivedConfigJSON)
 
 	params := ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: uuid.New(),
-		RunID:           stubbedRun(t),
-		TemplateNodeID:  uuid.New(),
-		ExecutorType:    "script",
-		Command:         "cd /workspace/repo && npm test",
-		RepoURL:         "https://github.com/test/repo",
-		WorkingBranch:   "choruskube-run-abc123",
-		PromptTemplate:  "", // script nodes have no prompt
-		Variables:       map[string]string{"run.id": "abc123"},
-		Iteration:       1,
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           stubbedRun(t),
+			TemplateNodeID:  uuid.New(),
+		},
+		Node: Node{
+			ExecutorType:   "script",
+			Command:        "cd /workspace/repo && npm test",
+			PromptTemplate: "", // script nodes have no prompt
+			Iteration:      1,
+		},
+		Inputs: Inputs{
+			Variables: map[string]string{"run.id": "abc123"},
+		},
+		Repos: Repos{
+			RepoURL:       "https://github.com/test/repo",
+			WorkingBranch: "choruskube-run-abc123",
+		},
 	}
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
@@ -704,13 +764,19 @@ func TestExecuteAINodeFromSnapshot_NoSystemPromptInConfigJson(t *testing.T) {
 	acts := newTestActivities(t, &receivedConfigJSON)
 
 	params := ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: uuid.New(),
-		RunID:           runID,
-		TemplateNodeID:  uuid.New(),
-		ExecutorType:    "ai",
-		PromptTemplate:  "Do the thing",
-		Variables:       map[string]string{"run.id": runID.String()},
-		Iteration:       1,
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           runID,
+			TemplateNodeID:  uuid.New(),
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "Do the thing",
+			Iteration:      1,
+		},
+		Inputs: Inputs{
+			Variables: map[string]string{"run.id": runID.String()},
+		},
 	}
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
@@ -737,18 +803,26 @@ func TestExecuteAINodeFromSnapshot_TaskContextInConfigJson(t *testing.T) {
 	acts := newTestActivities(t, &receivedConfigJSON)
 
 	params := ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: uuid.New(),
-		RunID:           runID,
-		TemplateNodeID:  uuid.New(),
-		ExecutorType:    "ai",
-		PromptTemplate:  "Do the thing",
-		Variables:       map[string]string{"run.id": runID.String()},
-		TaskID:          taskID.String(),
-		TaskTitle:       "Wire up task_context",
-		StoryID:         storyID.String(),
-		StoryTitle:      "Agent identity threading",
-		EpicID:          epicID.String(),
-		EpicTitle:       "Roadmap-aware agents",
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           runID,
+			TemplateNodeID:  uuid.New(),
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "Do the thing",
+		},
+		Inputs: Inputs{
+			Variables: map[string]string{"run.id": runID.String()},
+		},
+		TaskContext: TaskContext{
+			TaskID:     taskID.String(),
+			TaskTitle:  "Wire up task_context",
+			StoryID:    storyID.String(),
+			StoryTitle: "Agent identity threading",
+			EpicID:     epicID.String(),
+			EpicTitle:  "Roadmap-aware agents",
+		},
 	}
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
@@ -781,12 +855,18 @@ func TestExecuteAINodeFromSnapshot_NoTaskContextWhenTaskIDEmpty(t *testing.T) {
 
 	// Manually-started run: no TaskID set at all.
 	params := ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: uuid.New(),
-		RunID:           runID,
-		TemplateNodeID:  uuid.New(),
-		ExecutorType:    "ai",
-		PromptTemplate:  "Do the thing",
-		Variables:       map[string]string{"run.id": runID.String()},
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           runID,
+			TemplateNodeID:  uuid.New(),
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "Do the thing",
+		},
+		Inputs: Inputs{
+			Variables: map[string]string{"run.id": runID.String()},
+		},
 	}
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
@@ -806,16 +886,24 @@ func TestExecuteAINodeFromSnapshot_TaskContextIncludesOpenBlockers(t *testing.T)
 	acts := newTestActivities(t, &receivedConfigJSON)
 
 	params := ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: uuid.New(),
-		RunID:           runID,
-		TemplateNodeID:  uuid.New(),
-		ExecutorType:    "ai",
-		PromptTemplate:  "Do the thing",
-		Variables:       map[string]string{"run.id": runID.String()},
-		TaskID:          taskID.String(),
-		TaskTitle:       "Wire up open blockers",
-		OpenBlockers: []OpenBlockerParam{
-			{ItemType: "task", ItemID: blockerID.String(), Title: "Prerequisite Task", Status: "in_progress"},
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           runID,
+			TemplateNodeID:  uuid.New(),
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "Do the thing",
+		},
+		Inputs: Inputs{
+			Variables: map[string]string{"run.id": runID.String()},
+		},
+		TaskContext: TaskContext{
+			TaskID:    taskID.String(),
+			TaskTitle: "Wire up open blockers",
+			OpenBlockers: []OpenBlockerParam{
+				{ItemType: "task", ItemID: blockerID.String(), Title: "Prerequisite Task", Status: "in_progress"},
+			},
 		},
 	}
 
@@ -850,14 +938,22 @@ func TestExecuteAINodeFromSnapshot_NoOpenBlockersKeyWhenEmpty(t *testing.T) {
 	// TaskID set (task_context present) but OpenBlockers left empty — the run's Task has no
 	// open blockers today.
 	params := ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: uuid.New(),
-		RunID:           runID,
-		TemplateNodeID:  uuid.New(),
-		ExecutorType:    "ai",
-		PromptTemplate:  "Do the thing",
-		Variables:       map[string]string{"run.id": runID.String()},
-		TaskID:          taskID.String(),
-		TaskTitle:       "No blockers here",
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           runID,
+			TemplateNodeID:  uuid.New(),
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "Do the thing",
+		},
+		Inputs: Inputs{
+			Variables: map[string]string{"run.id": runID.String()},
+		},
+		TaskContext: TaskContext{
+			TaskID:    taskID.String(),
+			TaskTitle: "No blockers here",
+		},
 	}
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
@@ -877,14 +973,20 @@ func TestExecuteAINodeFromSnapshot_IterationInConfigJson(t *testing.T) {
 	acts := newTestActivities(t, &receivedConfigJSON)
 
 	params := ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: uuid.New(),
-		RunID:           stubbedRun(t),
-		TemplateNodeID:  uuid.New(),
-		ExecutorType:    "script",
-		Command:         "echo hello",
-		PromptTemplate:  "",
-		Variables:       map[string]string{"run.id": "test123"},
-		Iteration:       3,
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           stubbedRun(t),
+			TemplateNodeID:  uuid.New(),
+		},
+		Node: Node{
+			ExecutorType:   "script",
+			Command:        "echo hello",
+			PromptTemplate: "",
+			Iteration:      3,
+		},
+		Inputs: Inputs{
+			Variables: map[string]string{"run.id": "test123"},
+		},
 	}
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
@@ -905,13 +1007,19 @@ func TestExecuteAINodeFromSnapshot_IterationZeroOmitted(t *testing.T) {
 	acts := newTestActivities(t, &receivedConfigJSON)
 
 	params := ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: uuid.New(),
-		RunID:           stubbedRun(t),
-		TemplateNodeID:  uuid.New(),
-		ExecutorType:    "ai",
-		PromptTemplate:  "Do something",
-		Variables:       map[string]string{"run.id": "test123"},
-		Iteration:       0,
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           stubbedRun(t),
+			TemplateNodeID:  uuid.New(),
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "Do something",
+			Iteration:      0,
+		},
+		Inputs: Inputs{
+			Variables: map[string]string{"run.id": "test123"},
+		},
 	}
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
@@ -927,18 +1035,24 @@ func TestExecuteAINodeFromSnapshot_PredecessorArtifactAnnotation(t *testing.T) {
 	acts := newTestActivities(t, &receivedConfigJSON)
 
 	params := ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: uuid.New(),
-		RunID:           stubbedRun(t),
-		TemplateNodeID:  uuid.New(),
-		ExecutorType:    "ai",
-		PromptTemplate:  "Do the thing",
-		Variables: map[string]string{
-			"run.id":                "abc123",
-			"input.gate.result":     "approved",          // .result entry — must be excluded
-			"input.gate.file.png":   "orgs/x/gate.png",   // artifact — must be included
-			"input.gate.report.pdf": "orgs/x/report.pdf", // artifact — must be included
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           stubbedRun(t),
+			TemplateNodeID:  uuid.New(),
 		},
-		Iteration: 1,
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "Do the thing",
+			Iteration:      1,
+		},
+		Inputs: Inputs{
+			Variables: map[string]string{
+				"run.id":                "abc123",
+				"input.gate.result":     "approved",          // .result entry — must be excluded
+				"input.gate.file.png":   "orgs/x/gate.png",   // artifact — must be included
+				"input.gate.report.pdf": "orgs/x/report.pdf", // artifact — must be included
+			},
+		},
 	}
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
@@ -966,16 +1080,22 @@ func TestExecuteAINodeFromSnapshot_OnlyResultEntries_NoAnnotation(t *testing.T) 
 	acts := newTestActivities(t, &receivedConfigJSON)
 
 	params := ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: uuid.New(),
-		RunID:           stubbedRun(t),
-		TemplateNodeID:  uuid.New(),
-		ExecutorType:    "ai",
-		PromptTemplate:  "Do the thing",
-		Variables: map[string]string{
-			"run.id":            "abc123",
-			"input.gate.result": "approved", // only .result entries — no annotation
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           stubbedRun(t),
+			TemplateNodeID:  uuid.New(),
 		},
-		Iteration: 1,
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "Do the thing",
+			Iteration:      1,
+		},
+		Inputs: Inputs{
+			Variables: map[string]string{
+				"run.id":            "abc123",
+				"input.gate.result": "approved", // only .result entries — no annotation
+			},
+		},
 	}
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
@@ -1061,14 +1181,20 @@ func TestExecuteAINodeFromSnapshot_PredecessorArtifactAnnotation_MaterialisedFil
 			acts := newTestActivities(t, &receivedConfigJSON)
 
 			_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
-				NodeExecutionID: uuid.New(),
-				RunID:           stubbedRun(t),
-				TemplateNodeID:  uuid.New(),
-				ExecutorType:    "ai",
-				PromptTemplate:  "Do the thing",
-				Variables:       tt.variables,
-				InputArtifacts:  tt.inputArtifacts,
-				Iteration:       1,
+				Identity: Identity{
+					NodeExecutionID: uuid.New(),
+					RunID:           stubbedRun(t),
+					TemplateNodeID:  uuid.New(),
+				},
+				Node: Node{
+					ExecutorType:   "ai",
+					PromptTemplate: "Do the thing",
+					Iteration:      1,
+				},
+				Inputs: Inputs{
+					Variables:      tt.variables,
+					InputArtifacts: tt.inputArtifacts,
+				},
 			})
 			requirePending(t, err)
 
@@ -1105,17 +1231,23 @@ func TestExecuteAINodeFromSnapshot_RunInputAnnotation(t *testing.T) {
 	acts := newTestActivities(t, &receivedConfigJSON)
 
 	params := ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: uuid.New(),
-		RunID:           stubbedRun(t),
-		TemplateNodeID:  uuid.New(),
-		ExecutorType:    "ai",
-		PromptTemplate:  "Do the thing",
-		InputArtifacts: map[string]string{
-			"run_input/mockup.png": "system/runs/abc/inputs/mockup.png",  // run-level — must appear
-			"run_input/spec.md":    "system/runs/abc/inputs/spec.md",     // run-level — must appear
-			"input/gate/feedback":  "system/runs/abc/gate-attachments/x", // not run_input/ — must NOT appear in Run Inputs block
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           stubbedRun(t),
+			TemplateNodeID:  uuid.New(),
 		},
-		Iteration: 1,
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "Do the thing",
+			Iteration:      1,
+		},
+		Inputs: Inputs{
+			InputArtifacts: map[string]string{
+				"run_input/mockup.png": "system/runs/abc/inputs/mockup.png",  // run-level — must appear
+				"run_input/spec.md":    "system/runs/abc/inputs/spec.md",     // run-level — must appear
+				"input/gate/feedback":  "system/runs/abc/gate-attachments/x", // not run_input/ — must NOT appear in Run Inputs block
+			},
+		},
 	}
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
@@ -1159,13 +1291,19 @@ func TestExecuteAINodeFromSnapshot_NoRunInputs_NoAnnotation(t *testing.T) {
 	acts := newTestActivities(t, &receivedConfigJSON)
 
 	params := ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: uuid.New(),
-		RunID:           stubbedRun(t),
-		TemplateNodeID:  uuid.New(),
-		ExecutorType:    "ai",
-		PromptTemplate:  "Do the thing",
-		InputArtifacts:  map[string]string{}, // empty — nothing to announce
-		Iteration:       1,
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           stubbedRun(t),
+			TemplateNodeID:  uuid.New(),
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "Do the thing",
+			Iteration:      1,
+		},
+		Inputs: Inputs{
+			InputArtifacts: map[string]string{}, // empty — nothing to announce
+		},
 	}
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
@@ -1188,14 +1326,20 @@ func TestExecuteAINodeFromSnapshot_OutputSpec_Present(t *testing.T) {
 
 	outputSpec := `{"files":[{"name":"report.pdf","required":true}]}`
 	params := ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: uuid.New(),
-		RunID:           stubbedRun(t),
-		TemplateNodeID:  uuid.New(),
-		ExecutorType:    "ai",
-		PromptTemplate:  "Generate a report",
-		Variables:       map[string]string{"run.id": "abc123"},
-		Iteration:       1,
-		OutputSpec:      outputSpec,
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           stubbedRun(t),
+			TemplateNodeID:  uuid.New(),
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "Generate a report",
+			Iteration:      1,
+			OutputSpec:     outputSpec,
+		},
+		Inputs: Inputs{
+			Variables: map[string]string{"run.id": "abc123"},
+		},
 	}
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
@@ -1213,14 +1357,20 @@ func TestExecuteAINodeFromSnapshot_OutputSpec_Empty(t *testing.T) {
 	acts := newTestActivities(t, &receivedConfigJSON)
 
 	params := ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: uuid.New(),
-		RunID:           stubbedRun(t),
-		TemplateNodeID:  uuid.New(),
-		ExecutorType:    "ai",
-		PromptTemplate:  "Do something",
-		Variables:       map[string]string{"run.id": "abc123"},
-		Iteration:       1,
-		OutputSpec:      "", // empty — should not appear in config.json
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           stubbedRun(t),
+			TemplateNodeID:  uuid.New(),
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "Do something",
+			Iteration:      1,
+			OutputSpec:     "", // empty — should not appear in config.json
+		},
+		Inputs: Inputs{
+			Variables: map[string]string{"run.id": "abc123"},
+		},
 	}
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
@@ -1238,14 +1388,20 @@ func TestExecuteAINodeFromSnapshot_OutputSpec_EmptyObject(t *testing.T) {
 	acts := newTestActivities(t, &receivedConfigJSON)
 
 	params := ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: uuid.New(),
-		RunID:           stubbedRun(t),
-		TemplateNodeID:  uuid.New(),
-		ExecutorType:    "ai",
-		PromptTemplate:  "Do something",
-		Variables:       map[string]string{"run.id": "abc123"},
-		Iteration:       1,
-		OutputSpec:      "{}", // empty object — should not appear in config.json
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           stubbedRun(t),
+			TemplateNodeID:  uuid.New(),
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "Do something",
+			Iteration:      1,
+			OutputSpec:     "{}", // empty object — should not appear in config.json
+		},
+		Inputs: Inputs{
+			Variables: map[string]string{"run.id": "abc123"},
+		},
 	}
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
@@ -1276,14 +1432,20 @@ func TestConfigJSON_SupervisorEmittedOnlyWhenDeclared(t *testing.T) {
 			acts := newTestActivities(t, &receivedConfigJSON)
 
 			params := ExecuteAINodeFromSnapshotParams{
-				NodeExecutionID: uuid.New(),
-				RunID:           stubbedRun(t),
-				TemplateNodeID:  uuid.New(),
-				ExecutorType:    "ai",
-				PromptTemplate:  "Do the thing",
-				Variables:       map[string]string{"run.id": "abc123"},
-				Iteration:       1,
-				SupervisorLabel: tt.supervisorLabel,
+				Identity: Identity{
+					NodeExecutionID: uuid.New(),
+					RunID:           stubbedRun(t),
+					TemplateNodeID:  uuid.New(),
+				},
+				Node: Node{
+					ExecutorType:    "ai",
+					PromptTemplate:  "Do the thing",
+					Iteration:       1,
+					SupervisorLabel: tt.supervisorLabel,
+				},
+				Inputs: Inputs{
+					Variables: map[string]string{"run.id": "abc123"},
+				},
 			}
 
 			_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
@@ -1314,12 +1476,16 @@ func TestExecuteAINodeFromSnapshot_ModelInConfigJson(t *testing.T) {
 	acts := newTestActivities(t, &receivedConfigJSON)
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: uuid.New(),
-		RunID:           stubbedRun(t),
-		TemplateNodeID:  uuid.New(),
-		ExecutorType:    "ai",
-		PromptTemplate:  "irrelevant",
-		Model:           "claude-haiku-4-5-20251001",
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           stubbedRun(t),
+			TemplateNodeID:  uuid.New(),
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "irrelevant",
+			Model:          "claude-haiku-4-5-20251001",
+		},
 	})
 	requirePending(t, err)
 
@@ -1335,12 +1501,16 @@ func TestExecuteAINodeFromSnapshot_ModelOmittedWhenEmpty(t *testing.T) {
 	acts := newTestActivities(t, &receivedConfigJSON)
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: uuid.New(),
-		RunID:           stubbedRun(t),
-		TemplateNodeID:  uuid.New(),
-		ExecutorType:    "ai",
-		PromptTemplate:  "irrelevant",
-		// Model intentionally not set
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           stubbedRun(t),
+			TemplateNodeID:  uuid.New(),
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "irrelevant",
+			// Model intentionally not set
+		},
 	})
 	requirePending(t, err)
 
@@ -1357,12 +1527,16 @@ func TestExecuteAINodeFromSnapshot_EffortInConfigJson(t *testing.T) {
 	acts := newTestActivities(t, &receivedConfigJSON)
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: uuid.New(),
-		RunID:           stubbedRun(t),
-		TemplateNodeID:  uuid.New(),
-		ExecutorType:    "ai",
-		PromptTemplate:  "irrelevant",
-		Effort:          "xhigh",
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           stubbedRun(t),
+			TemplateNodeID:  uuid.New(),
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "irrelevant",
+			Effort:         "xhigh",
+		},
 	})
 	requirePending(t, err)
 
@@ -1378,12 +1552,16 @@ func TestExecuteAINodeFromSnapshot_EffortOmittedWhenEmpty(t *testing.T) {
 	acts := newTestActivities(t, &receivedConfigJSON)
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: uuid.New(),
-		RunID:           stubbedRun(t),
-		TemplateNodeID:  uuid.New(),
-		ExecutorType:    "ai",
-		PromptTemplate:  "irrelevant",
-		// Effort intentionally not set
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           stubbedRun(t),
+			TemplateNodeID:  uuid.New(),
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "irrelevant",
+			// Effort intentionally not set
+		},
 	})
 	requirePending(t, err)
 
@@ -1402,14 +1580,18 @@ func TestExecuteAINodeFromSnapshot_ResolvedModelEffortReachConfigJSONUnchanged_B
 	var firstIterationConfigJSON map[string]interface{}
 	firstActs := newTestActivities(t, &firstIterationConfigJSON)
 	_, err := firstActs.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: uuid.New(),
-		RunID:           stubbedRun(t),
-		TemplateNodeID:  uuid.New(),
-		ExecutorType:    "ai",
-		PromptTemplate:  "irrelevant",
-		Model:           "opus-x",
-		Effort:          "xhigh",
-		Iteration:       1,
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           stubbedRun(t),
+			TemplateNodeID:  uuid.New(),
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "irrelevant",
+			Model:          "opus-x",
+			Effort:         "xhigh",
+			Iteration:      1,
+		},
 	})
 	requirePending(t, err)
 	if firstIterationConfigJSON["model"] != "opus-x" || firstIterationConfigJSON["effort"] != "xhigh" {
@@ -1426,14 +1608,18 @@ func TestExecuteAINodeFromSnapshot_ResolvedModelEffortReachConfigJSONUnchanged_B
 	var subsequentIterationConfigJSON map[string]interface{}
 	subsequentActs := newTestActivities(t, &subsequentIterationConfigJSON)
 	_, err = subsequentActs.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: uuid.New(),
-		RunID:           stubbedRun(t),
-		TemplateNodeID:  uuid.New(),
-		ExecutorType:    "ai",
-		PromptTemplate:  "irrelevant",
-		Model:           "sonnet-y",
-		Effort:          "high",
-		Iteration:       2,
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           stubbedRun(t),
+			TemplateNodeID:  uuid.New(),
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "irrelevant",
+			Model:          "sonnet-y",
+			Effort:         "high",
+			Iteration:      2,
+		},
 	})
 	requirePending(t, err)
 	if subsequentIterationConfigJSON["model"] != "sonnet-y" || subsequentIterationConfigJSON["effort"] != "high" {
@@ -1455,13 +1641,17 @@ func TestExecuteAINodeFromSnapshot_TurnBudgetInConfigJson(t *testing.T) {
 	acts := newTestActivities(t, &receivedConfigJSON)
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: uuid.New(),
-		RunID:           stubbedRun(t),
-		TemplateNodeID:  uuid.New(),
-		ExecutorType:    "ai",
-		PromptTemplate:  "irrelevant",
-		MaxTurns:        "250",
-		MaxRetries:      "5",
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           stubbedRun(t),
+			TemplateNodeID:  uuid.New(),
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "irrelevant",
+			MaxTurns:       "250",
+			MaxRetries:     "5",
+		},
 	})
 	requirePending(t, err)
 
@@ -1482,13 +1672,17 @@ func TestExecuteAINodeFromSnapshot_TurnBudgetOmittedWhenEmpty(t *testing.T) {
 	acts := newTestActivities(t, &receivedConfigJSON)
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: uuid.New(),
-		RunID:           stubbedRun(t),
-		TemplateNodeID:  uuid.New(),
-		ExecutorType:    "ai",
-		PromptTemplate:  "irrelevant",
-		MaxTurns:        "150",
-		// MaxRetries intentionally not set
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           stubbedRun(t),
+			TemplateNodeID:  uuid.New(),
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "irrelevant",
+			MaxTurns:       "150",
+			// MaxRetries intentionally not set
+		},
 	})
 	requirePending(t, err)
 
@@ -1501,12 +1695,16 @@ func TestExecuteAINodeFromSnapshot_TurnBudgetOmittedWhenEmpty(t *testing.T) {
 
 	receivedConfigJSON = nil
 	_, err = acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: uuid.New(),
-		RunID:           stubbedRun(t),
-		TemplateNodeID:  uuid.New(),
-		ExecutorType:    "ai",
-		PromptTemplate:  "irrelevant",
-		// Neither MaxTurns nor MaxRetries set
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           stubbedRun(t),
+			TemplateNodeID:  uuid.New(),
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "irrelevant",
+			// Neither MaxTurns nor MaxRetries set
+		},
 	})
 	requirePending(t, err)
 
@@ -1527,13 +1725,19 @@ func TestExecuteAINodeFromSnapshot_SessionInConfigJson(t *testing.T) {
 	acts := newTestActivities(t, &receivedConfigJSON)
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID:     uuid.New(),
-		RunID:               stubbedRun(t),
-		TemplateNodeID:      uuid.New(),
-		ExecutorType:        "ai",
-		PromptTemplate:      "irrelevant",
-		SessionID:           "sess-1",
-		SessionArtifactPath: "runs/r/e/session/sess-1.jsonl",
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           stubbedRun(t),
+			TemplateNodeID:  uuid.New(),
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "irrelevant",
+		},
+		Session: Session{
+			ID:           "sess-1",
+			ArtifactPath: "runs/r/e/session/sess-1.jsonl",
+		},
 	})
 	requirePending(t, err)
 
@@ -1554,11 +1758,15 @@ func TestExecuteAINodeFromSnapshot_SessionOmittedWhenEmpty(t *testing.T) {
 	acts := newTestActivities(t, &receivedConfigJSON)
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: uuid.New(),
-		RunID:           stubbedRun(t),
-		TemplateNodeID:  uuid.New(),
-		ExecutorType:    "ai",
-		PromptTemplate:  "irrelevant",
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           stubbedRun(t),
+			TemplateNodeID:  uuid.New(),
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "irrelevant",
+		},
 		// SessionID intentionally not set
 	})
 	requirePending(t, err)
@@ -1579,12 +1787,16 @@ func TestExecuteAINodeFromSnapshot_NeedsPRInConfigJson(t *testing.T) {
 	acts := newTestActivities(t, &receivedConfigJSON)
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: uuid.New(),
-		RunID:           stubbedRun(t),
-		TemplateNodeID:  uuid.New(),
-		ExecutorType:    "ai",
-		PromptTemplate:  "irrelevant",
-		NeedsPR:         true,
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           stubbedRun(t),
+			TemplateNodeID:  uuid.New(),
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "irrelevant",
+			NeedsPR:        true,
+		},
 	})
 	requirePending(t, err)
 
@@ -1600,12 +1812,16 @@ func TestExecuteAINodeFromSnapshot_NeedsPROmittedWhenFalse(t *testing.T) {
 	acts := newTestActivities(t, &receivedConfigJSON)
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
-		NodeExecutionID: uuid.New(),
-		RunID:           stubbedRun(t),
-		TemplateNodeID:  uuid.New(),
-		ExecutorType:    "ai",
-		PromptTemplate:  "irrelevant",
-		// NeedsPR intentionally not set
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           stubbedRun(t),
+			TemplateNodeID:  uuid.New(),
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "irrelevant",
+			// NeedsPR intentionally not set
+		},
 	})
 	requirePending(t, err)
 
@@ -1681,4 +1897,131 @@ func TestParamsHasNoDeadFields(t *testing.T) {
 			t.Fatalf("%s was reintroduced: it is replay ballast this activity never reads", name)
 		}
 	}
+}
+
+// TestExecuteAINodeFromSnapshotParams_JSONRoundTrip pins the wire shape the orchestrator's
+// mirror of this struct must also produce: Temporal's data converter serializes that struct to
+// JSON and deserializes into this one, so the two are only compatible if they agree field for
+// field. wantJSON is written against the field names directly, not derived by marshaling this
+// struct, so a field renamed or moved to the wrong group on either side of that mirror would
+// redden this test even though marshal/unmarshal on this type alone still round-trips fine.
+func TestExecuteAINodeFromSnapshotParams_JSONRoundTrip(t *testing.T) {
+	nodeExecID := uuid.New()
+	runID := uuid.New()
+	templateNodeID := uuid.New()
+
+	original := ExecuteAINodeFromSnapshotParams{
+		Identity: Identity{
+			NodeExecutionID: nodeExecID,
+			RunID:           runID,
+			TemplateNodeID:  templateNodeID,
+		},
+		Node: Node{
+			ExecutorType:    "ai",
+			Command:         "run.sh",
+			PromptTemplate:  "do the thing",
+			Model:           "opus",
+			Effort:          "high",
+			MaxTurns:        "10",
+			MaxRetries:      "3",
+			OutputSpec:      "{}",
+			SupervisorLabel: "supervisor-node",
+			Iteration:       2,
+			NeedDecision:    true,
+			NeedsPR:         true,
+		},
+		Inputs: Inputs{
+			InputArtifacts:         map[string]string{"gate/file.png": "orgs/x/file.png"},
+			Variables:              map[string]string{"run.id": "abc123"},
+			RequiredInputArtifacts: []string{"gate/file.png"},
+		},
+		Repos: Repos{
+			RepoURL:       "https://github.com/example/repo",
+			WorkingBranch: "choruskube-run-abc123",
+			List:          []map[string]any{{"name": "repo-a", "url": "https://github.com/example/repo-a"}},
+		},
+		TaskContext: TaskContext{
+			TaskID:     "task-1",
+			TaskTitle:  "Task Title",
+			StoryID:    "story-1",
+			StoryTitle: "Story Title",
+			EpicID:     "epic-1",
+			EpicTitle:  "Epic Title",
+			OpenBlockers: []OpenBlockerParam{
+				{ItemType: "task", ItemID: "blocker-1", Title: "Blocker", Status: "open"},
+			},
+		},
+		Session: Session{
+			ID:           "sess-1",
+			ArtifactPath: "runs/x/session.jsonl",
+		},
+		OrgSlug: "acme",
+	}
+
+	wantJSON := `{
+		"Identity": {
+			"NodeExecutionID": "` + nodeExecID.String() + `",
+			"RunID": "` + runID.String() + `",
+			"TemplateNodeID": "` + templateNodeID.String() + `"
+		},
+		"Node": {
+			"ExecutorType": "ai",
+			"Command": "run.sh",
+			"PromptTemplate": "do the thing",
+			"Model": "opus",
+			"Effort": "high",
+			"MaxTurns": "10",
+			"MaxRetries": "3",
+			"OutputSpec": "{}",
+			"SupervisorLabel": "supervisor-node",
+			"Iteration": 2,
+			"NeedDecision": true,
+			"NeedsPR": true
+		},
+		"Inputs": {
+			"InputArtifacts": {"gate/file.png": "orgs/x/file.png"},
+			"Variables": {"run.id": "abc123"},
+			"RequiredInputArtifacts": ["gate/file.png"]
+		},
+		"Repos": {
+			"RepoURL": "https://github.com/example/repo",
+			"WorkingBranch": "choruskube-run-abc123",
+			"List": [{"name": "repo-a", "url": "https://github.com/example/repo-a"}]
+		},
+		"TaskContext": {
+			"TaskID": "task-1",
+			"TaskTitle": "Task Title",
+			"StoryID": "story-1",
+			"StoryTitle": "Story Title",
+			"EpicID": "epic-1",
+			"EpicTitle": "Epic Title",
+			"OpenBlockers": [{"ItemType": "task", "ItemID": "blocker-1", "Title": "Blocker", "Status": "open"}]
+		},
+		"Session": {
+			"ID": "sess-1",
+			"ArtifactPath": "runs/x/session.jsonl"
+		},
+		"OrgSlug": "acme"
+	}`
+
+	gotBytes, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	assert.JSONEq(t, wantJSON, string(gotBytes))
+
+	var roundTripped ExecuteAINodeFromSnapshotParams
+	if err := json.Unmarshal(gotBytes, &roundTripped); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	assert.Equal(t, original, roundTripped)
+
+	// The golden JSON must also deserialize into the exact same value on its own -- this is
+	// the direction a renamed field or a field moved to the wrong group would break even if
+	// this type's own Marshal/Unmarshal pair still agreed with each other.
+	var fromGolden ExecuteAINodeFromSnapshotParams
+	if err := json.Unmarshal([]byte(wantJSON), &fromGolden); err != nil {
+		t.Fatalf("unmarshal golden: %v", err)
+	}
+	assert.Equal(t, original, fromGolden)
 }

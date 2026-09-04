@@ -83,42 +83,68 @@ func NewWithExecutor(client workloadClient, exec executor.Executor, cache *callb
 	}
 }
 
-
 // --- Activity: ExecuteAINodeFromSnapshot ---
 
+// ExecuteAINodeFromSnapshotParams is grouped by concern (Identity/Node/Inputs/Repos/
+// TaskContext/Session) and must stay field-for-field identical to the orchestrator's mirror of
+// the same name -- Temporal's data converter serializes the orchestrator's struct to JSON and
+// deserializes into this one, so any divergence in field name, order, or nesting silently drops
+// or blanks data on arrival instead of failing loudly.
 type ExecuteAINodeFromSnapshotParams struct {
+	Identity    Identity
+	Node        Node
+	Inputs      Inputs
+	Repos       Repos
+	TaskContext TaskContext
+	Session     Session
+	// OrgSlug namespaces object storage paths; empty = legacy unprefixed paths.
+	OrgSlug string
+}
+
+type Identity struct {
 	NodeExecutionID uuid.UUID
 	RunID           uuid.UUID
 	TemplateNodeID  uuid.UUID
-	ExecutorType    string // "ai" or "script"
-	PromptTemplate  string
-	InputArtifacts  map[string]string
+}
+
+type Node struct {
+	ExecutorType   string // "ai" or "script"
+	Command        string // for script executor
+	PromptTemplate string
+	Model          string // optional override; empty = agent default
+	Effort         string // optional override; empty = agent default
+	// Per-node turn/retry budget, as configured strings. Empty = agent default
+	// (the entrypoint's own 100 turns / 3 attempts); the entrypoint validates
+	// any value it is given.
+	MaxTurns        string
+	MaxRetries      string
+	OutputSpec      string // JSON string describing required output files; "" or "{}" = no enforcement
+	SupervisorLabel string // label of the template's routing-hub node; "" = template declares none
+	Iteration       int
+	NeedDecision    bool // true if node has conditional edges and is AI type
+	NeedsPR         bool // true if node must open/register a PR before finishing (config_overrides.needs_pr)
+}
+
+type Inputs struct {
+	InputArtifacts map[string]string
+	Variables      map[string]string
 	// RequiredInputArtifacts names the InputArtifacts keys whose absence must fail the node.
 	// Everything else is best-effort: several declarations legitimately reference a prior
 	// iteration that does not exist on iteration 1.
 	RequiredInputArtifacts []string
-	Variables              map[string]string
-	Iteration              int
-	RepoURL                string
-	WorkingBranch          string
-	Command                string                   // for script executor
-	OrgSlug                string                   // Org slug for object storage path isolation; empty = legacy paths
-	NeedDecision           bool                     // true if node has conditional edges and is AI type
-	NeedsPR                bool                     // true if node must open/register a PR before finishing (config_overrides.needs_pr)
-	OutputSpec             string                   // JSON string describing required output files; "" or "{}" = no enforcement
-	SupervisorLabel        string                   // label of the template's routing-hub node; "" = template declares none
-	Repos                  []map[string]interface{} `json:"repos,omitempty"`
-	Model                  string                   `json:"model,omitempty"`  // optional override; empty = agent default
-	Effort                 string                   `json:"effort,omitempty"` // optional override; empty = agent default
-	// Per-node turn/retry budget, as configured strings. Empty = agent default
-	// (the entrypoint's own 100 turns / 3 attempts); the entrypoint validates
-	// any value it is given.
-	MaxTurns   string `json:"max_turns,omitempty"`
-	MaxRetries string `json:"max_retries,omitempty"`
-	// Triggering Task's identity, broadcast into config.json's task_context
-	// for every node execution in a task-triggered run. TaskID == "" means the run wasn't
-	// started from a Task; StoryID/EpicID may independently be "" if that level no longer
-	// resolves even though TaskID is set.
+}
+
+type Repos struct {
+	RepoURL       string
+	WorkingBranch string
+	List          []map[string]any
+}
+
+// TaskContext carries the triggering Task's identity, broadcast into config.json's
+// task_context for every node execution in a task-triggered run. TaskID == "" means the run
+// wasn't started from a Task; StoryID/EpicID may independently be "" if that level no longer
+// resolves even though TaskID is set.
+type TaskContext struct {
 	TaskID     string
 	TaskTitle  string
 	StoryID    string
@@ -130,11 +156,14 @@ type ExecuteAINodeFromSnapshotParams struct {
 	// (nil or zero-length) omits the key entirely, matching how task_context itself is
 	// omitted when TaskID == "".
 	OpenBlockers []OpenBlockerParam
+}
+
+type Session struct {
 	// Set only when this iteration resumes a session parked by a previous one.
 	// The entrypoint restores the transcript and runs `claude --resume`; empty
 	// means start a fresh session.
-	SessionID           string `json:"session_id,omitempty"`
-	SessionArtifactPath string `json:"session_artifact_path,omitempty"`
+	ID           string
+	ArtifactPath string
 }
 
 // OpenBlockerParam mirrors one entry of state.SnapshotOpenBlocker, flattened into the
@@ -172,16 +201,16 @@ func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params Execu
 	// The parameters and the workflow that scheduled them must name the same run. They cannot
 	// disagree unless something built this activity wrongly, and continuing would send a pair the
 	// server refuses -- as a node failure with no explanation rather than this one.
-	if runID != params.RunID {
-		return CallbackResult{}, fmt.Errorf("activity params name run %s but its workflow is run %s", params.RunID, runID)
+	if runID != params.Identity.RunID {
+		return CallbackResult{}, fmt.Errorf("activity params name run %s but its workflow is run %s", params.Identity.RunID, runID)
 	}
 
 	// Resolve prompt template
-	vars := params.Variables
+	vars := params.Inputs.Variables
 	if vars == nil {
 		vars = map[string]string{}
 	}
-	resolvedPrompt, err := a.resolver.resolve(params.PromptTemplate, vars)
+	resolvedPrompt, err := a.resolver.resolve(params.Node.PromptTemplate, vars)
 	if err != nil {
 		return CallbackResult{}, fmt.Errorf("resolve prompt: %w", err)
 	}
@@ -197,13 +226,13 @@ func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params Execu
 	// here, "{label}/{filename}" there — so compare on the translated key, not the raw
 	// one. A filename may itself contain dots, hence the join over parts[2:].
 	var artifactLines []string
-	for key, val := range params.Variables {
+	for key, val := range params.Inputs.Variables {
 		parts := strings.Split(key, ".")
 		// Must have at least 3 parts (input, label, thing) and not end in "result"
 		if len(parts) < 3 || parts[0] != "input" || parts[len(parts)-1] == "result" {
 			continue
 		}
-		if _, materialised := params.InputArtifacts[parts[1]+"/"+strings.Join(parts[2:], ".")]; materialised {
+		if _, materialised := params.Inputs.InputArtifacts[parts[1]+"/"+strings.Join(parts[2:], ".")]; materialised {
 			continue
 		}
 		artifactLines = append(artifactLines, fmt.Sprintf("- %s: %s", key, val))
@@ -221,7 +250,7 @@ func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params Execu
 	// LLM would not know they exist — entrypoint.sh downloads them silently to
 	// /workspace/in/run_input/, but only this prompt suffix tells the model to look.
 	var runInputLines []string
-	for key, val := range params.InputArtifacts {
+	for key, val := range params.Inputs.InputArtifacts {
 		if strings.HasPrefix(key, "run_input/") {
 			runInputLines = append(runInputLines, fmt.Sprintf("- %s: %s", key, val))
 		}
@@ -233,7 +262,7 @@ func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params Execu
 			strings.Join(runInputLines, "\n")
 	}
 
-	a.client.WriteExecutionLog(ctx, runID, params.NodeExecutionID, "info",
+	a.client.WriteExecutionLog(ctx, runID, params.Identity.NodeExecutionID, "info",
 		fmt.Sprintf("Prompt resolved (%d chars)", len(resolvedPrompt)))
 
 	configJSON := a.buildConfigJSON(params, resolvedPrompt)
@@ -249,102 +278,102 @@ func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params Execu
 // are keyed by NodeExecutionID so each iteration of a self-looping or re-executed node owns its
 // own prefix instead of overwriting a prior iteration's artifacts.
 func (a *Activities) buildConfigJSON(params ExecuteAINodeFromSnapshotParams, resolvedPrompt string) map[string]interface{} {
-	vars := params.Variables
+	vars := params.Inputs.Variables
 	if vars == nil {
 		vars = map[string]string{}
 	}
-	baseOutputPath := fmt.Sprintf("runs/%s/%s/out/", params.RunID, params.NodeExecutionID)
+	baseOutputPath := fmt.Sprintf("runs/%s/%s/out/", params.Identity.RunID, params.Identity.NodeExecutionID)
 	outputPath := prefixPath(params.OrgSlug, baseOutputPath)
 	configJSON := map[string]interface{}{
-		"node_execution_id": params.NodeExecutionID.String(),
-		"run_id":            params.RunID.String(),
+		"node_execution_id": params.Identity.NodeExecutionID.String(),
+		"run_id":            params.Identity.RunID.String(),
 		"prompt":            resolvedPrompt,
 		"callback_url":      a.CallbackURL,
 		"output_path":       outputPath,
-		"input_artifacts":   params.InputArtifacts,
-		"executor_type":     params.ExecutorType,
+		"input_artifacts":   params.Inputs.InputArtifacts,
+		"executor_type":     params.Node.ExecutorType,
 		"api_server_url":    a.APIServerURL,
 	}
 	// Emitted only when non-empty so config.json keeps its existing shape for nodes that
 	// declare nothing — the entrypoint treats an absent key as "every input is best-effort".
-	if len(params.RequiredInputArtifacts) > 0 {
-		configJSON["required_input_artifacts"] = params.RequiredInputArtifacts
+	if len(params.Inputs.RequiredInputArtifacts) > 0 {
+		configJSON["required_input_artifacts"] = params.Inputs.RequiredInputArtifacts
 	}
 	// Add optional fields only if set
-	if params.RepoURL != "" {
-		configJSON["repo_url"] = params.RepoURL
+	if params.Repos.RepoURL != "" {
+		configJSON["repo_url"] = params.Repos.RepoURL
 	}
-	if params.WorkingBranch != "" {
-		configJSON["working_branch"] = params.WorkingBranch
+	if params.Repos.WorkingBranch != "" {
+		configJSON["working_branch"] = params.Repos.WorkingBranch
 	}
-	if params.Command != "" {
-		configJSON["command"] = params.Command
+	if params.Node.Command != "" {
+		configJSON["command"] = params.Node.Command
 	}
 	configJSON["github_token_url"] = fmt.Sprintf("%s/internal/runs/%s/node-executions/%s/github-token",
-		a.APIServerURL, params.RunID, params.NodeExecutionID)
+		a.APIServerURL, params.Identity.RunID, params.Identity.NodeExecutionID)
 	// Build run log path with org prefix
-	baseRunLogPath := fmt.Sprintf("runs/%s/run_log.md", params.RunID)
+	baseRunLogPath := fmt.Sprintf("runs/%s/run_log.md", params.Identity.RunID)
 	runLogPath := prefixPath(params.OrgSlug, baseRunLogPath)
 	configJSON["run_log_path"] = runLogPath
-	if params.NeedDecision {
+	if params.Node.NeedDecision {
 		configJSON["need_decision"] = true
 	}
-	if params.NeedsPR {
+	if params.Node.NeedsPR {
 		configJSON["needs_pr"] = true
 	}
-	if params.OutputSpec != "" && params.OutputSpec != "{}" {
-		configJSON["output_spec"] = params.OutputSpec
+	if params.Node.OutputSpec != "" && params.Node.OutputSpec != "{}" {
+		configJSON["output_spec"] = params.Node.OutputSpec
 	}
 	// Emitted only when the template declares a Supervisor, so config.json keeps its exact
 	// current shape for every other template — and the entrypoint's escalation block, which is
 	// gated on this key, stays silent for them.
-	if params.SupervisorLabel != "" {
+	if params.Node.SupervisorLabel != "" {
 		configJSON["supervisor"] = map[string]string{
-			"label": params.SupervisorLabel,
+			"label": params.Node.SupervisorLabel,
 			"name":  "Supervisor",
 		}
 	}
-	if params.Iteration > 0 {
-		configJSON["iteration"] = params.Iteration
+	if params.Node.Iteration > 0 {
+		configJSON["iteration"] = params.Node.Iteration
 	}
-	if len(params.Repos) > 0 {
-		configJSON["repos"] = params.Repos
+	if len(params.Repos.List) > 0 {
+		configJSON["repos"] = params.Repos.List
 	} else if tc, ok := vars["run.test_command"]; ok && tc != "" {
 		// Single-repo runs don't populate repos[]; expose the run-level test_command at the
 		// top level so run-all-tests can find it (the agent's repo content lives directly at
 		// /workspace/repo, not under a /workspace/repo/<name>/ subdirectory).
 		configJSON["test_command"] = tc
 	}
-	if params.Model != "" {
-		configJSON["model"] = params.Model
+	if params.Node.Model != "" {
+		configJSON["model"] = params.Node.Model
 	}
-	if params.Effort != "" {
-		configJSON["effort"] = params.Effort
+	if params.Node.Effort != "" {
+		configJSON["effort"] = params.Node.Effort
 	}
 	// Written only when configured, so config.json keeps its shape for the nodes
 	// that set no budget and the agent applies its own defaults.
-	if params.MaxTurns != "" {
-		configJSON["max_turns"] = params.MaxTurns
+	if params.Node.MaxTurns != "" {
+		configJSON["max_turns"] = params.Node.MaxTurns
 	}
-	if params.SessionID != "" {
-		configJSON["session_id"] = params.SessionID
-		configJSON["session_artifact_path"] = params.SessionArtifactPath
+	if params.Session.ID != "" {
+		configJSON["session_id"] = params.Session.ID
+		configJSON["session_artifact_path"] = params.Session.ArtifactPath
 	}
-	if params.MaxRetries != "" {
-		configJSON["max_retries"] = params.MaxRetries
+	if params.Node.MaxRetries != "" {
+		configJSON["max_retries"] = params.Node.MaxRetries
 	}
-	if params.TaskID != "" {
+	if params.TaskContext.TaskID != "" {
 		taskContext := map[string]interface{}{
-			"task_id":     params.TaskID,
-			"task_title":  params.TaskTitle,
-			"story_id":    params.StoryID,
-			"story_title": params.StoryTitle,
-			"epic_id":     params.EpicID,
-			"epic_title":  params.EpicTitle,
+			"task_id":     params.TaskContext.TaskID,
+			"task_title":  params.TaskContext.TaskTitle,
+			"story_id":    params.TaskContext.StoryID,
+			"story_title": params.TaskContext.StoryTitle,
+			"epic_id":     params.TaskContext.EpicID,
+			"epic_title":  params.TaskContext.EpicTitle,
 		}
-		if len(params.OpenBlockers) > 0 {
-			openBlockers := make([]map[string]interface{}, 0, len(params.OpenBlockers))
-			for _, b := range params.OpenBlockers {
+		if len(params.TaskContext.OpenBlockers) > 0 {
+			openBlockers := make([]map[string]interface{}, 0, len(params.TaskContext.OpenBlockers))
+			for _, b := range params.TaskContext.OpenBlockers {
 				openBlockers = append(openBlockers, map[string]interface{}{
 					"item_type": b.ItemType,
 					"item_id":   b.ItemID,
@@ -364,9 +393,9 @@ func (a *Activities) buildConfigJSON(params ExecuteAINodeFromSnapshotParams, res
 // infrastructure details from configJSON and launches the container itself.
 func (a *Activities) executeDelegated(ctx context.Context, params ExecuteAINodeFromSnapshotParams, configJSON map[string]interface{}) (CallbackResult, error) {
 	_, err := a.client.CreateWorkload(ctx, workload.CreateWorkloadParams{
-		RunID:          params.RunID,
-		NodeExecID:     params.NodeExecutionID,
-		TemplateNodeID: params.TemplateNodeID,
+		RunID:          params.Identity.RunID,
+		NodeExecID:     params.Identity.NodeExecutionID,
+		TemplateNodeID: params.Identity.TemplateNodeID,
 		ConfigJSON:     configJSON,
 	})
 	if err != nil {
@@ -382,8 +411,8 @@ func (a *Activities) executeDelegated(ctx context.Context, params ExecuteAINodeF
 func (a *Activities) executeLocally(ctx context.Context, runID uuid.UUID, params ExecuteAINodeFromSnapshotParams, configJSON map[string]interface{}) (CallbackResult, error) {
 	prep, err := a.client.PrepareWorkload(ctx, workload.PrepareParams{
 		RunID:          runID,
-		NodeExecID:     params.NodeExecutionID,
-		TemplateNodeID: params.TemplateNodeID,
+		NodeExecID:     params.Identity.NodeExecutionID,
+		TemplateNodeID: params.Identity.TemplateNodeID,
 		ConfigJSON:     configJSON,
 	})
 	if err != nil {
@@ -399,8 +428,8 @@ func (a *Activities) executeLocally(ctx context.Context, runID uuid.UUID, params
 
 	execParams := executor.ExecutionParams{
 		RunID:           runID,
-		NodeExecutionID: params.NodeExecutionID,
-		NodeID:          params.TemplateNodeID,
+		NodeExecutionID: params.Identity.NodeExecutionID,
+		NodeID:          params.Identity.TemplateNodeID,
 		Image:           prep.Image,
 		JobSecret:       secret,
 		Credentials: executor.NodeCredentials{
@@ -431,12 +460,12 @@ func (a *Activities) executeLocally(ctx context.Context, runID uuid.UUID, params
 	// Both caches are populated before complete is even called: the workload can call back the
 	// moment it starts, racing this activity's own report to the API server -- CompleteWorkload
 	// below is a network round trip a fast (e.g. script) workload can easily win.
-	a.hashCache.Put(params.NodeExecutionID, result.JobSecretHash)
+	a.hashCache.Put(params.Identity.NodeExecutionID, result.JobSecretHash)
 	// Captured now, not resolved later from params: the agent's completion and heartbeat
 	// requests carry only NodeExecutionID, so this is the one place that also has Temporal's
 	// own addressing for the activity they need to reach.
 	info := activityInfo(ctx)
-	a.Pending.Put(params.NodeExecutionID, PendingCompletion{
+	a.Pending.Put(params.Identity.NodeExecutionID, PendingCompletion{
 		Namespace:  info.Namespace,
 		TaskQueue:  info.TaskQueue,
 		WorkflowID: info.WorkflowExecution.ID,
@@ -445,15 +474,15 @@ func (a *Activities) executeLocally(ctx context.Context, runID uuid.UUID, params
 
 	if err := a.client.CompleteWorkload(ctx, workload.CompleteParams{
 		RunID:         runID,
-		NodeExecID:    params.NodeExecutionID,
+		NodeExecID:    params.Identity.NodeExecutionID,
 		PodName:       result.PodName,
 		JobSecretHash: result.JobSecretHash,
 	}); err != nil {
 		return CallbackResult{}, fmt.Errorf("complete workload: %w", err)
 	}
 
-	slog.Info("agent launched", "node_execution_id", params.NodeExecutionID, "pod_name", result.PodName)
-	a.client.WriteExecutionLog(ctx, runID, params.NodeExecutionID, "info",
+	slog.Info("agent launched", "node_execution_id", params.Identity.NodeExecutionID, "pod_name", result.PodName)
+	a.client.WriteExecutionLog(ctx, runID, params.Identity.NodeExecutionID, "info",
 		fmt.Sprintf("Agent launched: %s", result.PodName))
 
 	return CallbackResult{}, temporalactivity.ErrResultPending

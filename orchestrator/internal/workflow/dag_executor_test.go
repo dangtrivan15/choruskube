@@ -103,7 +103,7 @@ func (s *DAGExecutorTestSuite) TestLinearTwoNodeGraph() {
 
 	// AI node A executes (async completion — returns nil in test, result is zero-valued)
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == nodeA
+		return p.Identity.TemplateNodeID == nodeA
 	})).Return(activity.CallbackResult{}, nil)
 
 	// Node B created after A completes (unconditional edge fires with empty result)
@@ -113,7 +113,7 @@ func (s *DAGExecutorTestSuite) TestLinearTwoNodeGraph() {
 
 	// AI node B executes
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == nodeB
+		return p.Identity.TemplateNodeID == nodeB
 	})).Return(activity.CallbackResult{}, nil)
 
 	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
@@ -184,21 +184,21 @@ func (s *DAGExecutorTestSuite) TestLinearTwoNodeGraph_TaskContextPropagatesToAll
 	s.env.OnActivity("LoadReviewHistoryJSON", mock.Anything, mock.Anything).Return("[]", nil).Maybe()
 
 	taskContextMatches := func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TaskID == taskID.String() &&
-			p.TaskTitle == "Wire up task_context" &&
-			p.StoryID == storyID.String() &&
-			p.StoryTitle == "Agent identity threading" &&
-			p.EpicID == epicID.String() &&
-			p.EpicTitle == "Roadmap-aware agents" &&
-			len(p.OpenBlockers) == 1 &&
-			p.OpenBlockers[0].ItemType == "task" &&
-			p.OpenBlockers[0].ItemID == blockerID.String() &&
-			p.OpenBlockers[0].Title == "Prerequisite" &&
-			p.OpenBlockers[0].Status == "in_progress"
+		return p.TaskContext.TaskID == taskID.String() &&
+			p.TaskContext.TaskTitle == "Wire up task_context" &&
+			p.TaskContext.StoryID == storyID.String() &&
+			p.TaskContext.StoryTitle == "Agent identity threading" &&
+			p.TaskContext.EpicID == epicID.String() &&
+			p.TaskContext.EpicTitle == "Roadmap-aware agents" &&
+			len(p.TaskContext.OpenBlockers) == 1 &&
+			p.TaskContext.OpenBlockers[0].ItemType == "task" &&
+			p.TaskContext.OpenBlockers[0].ItemID == blockerID.String() &&
+			p.TaskContext.OpenBlockers[0].Title == "Prerequisite" &&
+			p.TaskContext.OpenBlockers[0].Status == "in_progress"
 	}
 
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == nodeA && taskContextMatches(p)
+		return p.Identity.TemplateNodeID == nodeA && taskContextMatches(p)
 	})).Return(activity.CallbackResult{}, nil)
 
 	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
@@ -206,7 +206,7 @@ func (s *DAGExecutorTestSuite) TestLinearTwoNodeGraph_TaskContextPropagatesToAll
 	})).Return(execB, nil).Once()
 
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == nodeB && taskContextMatches(p)
+		return p.Identity.TemplateNodeID == nodeB && taskContextMatches(p)
 	})).Return(activity.CallbackResult{}, nil)
 
 	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
@@ -264,7 +264,7 @@ func (s *DAGExecutorTestSuite) TestFanOutGraph() {
 	})).Return(execA, nil).Once()
 
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == nodeA
+		return p.Identity.TemplateNodeID == nodeA
 	})).Return(activity.CallbackResult{}, nil)
 
 	// Both B and C get created (fan-out)
@@ -276,10 +276,10 @@ func (s *DAGExecutorTestSuite) TestFanOutGraph() {
 	})).Return(execC, nil).Once()
 
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == nodeB
+		return p.Identity.TemplateNodeID == nodeB
 	})).Return(activity.CallbackResult{}, nil)
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == nodeC
+		return p.Identity.TemplateNodeID == nodeC
 	})).Return(activity.CallbackResult{}, nil)
 
 	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
@@ -410,10 +410,10 @@ func (s *DAGExecutorTestSuite) TestGraphWithLoopBackEdge() {
 
 	// AI nodes execute exactly once each
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == nodeB
+		return p.Identity.TemplateNodeID == nodeB
 	})).Return(activity.CallbackResult{}, nil).Once()
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == nodeD
+		return p.Identity.TemplateNodeID == nodeD
 	})).Return(activity.CallbackResult{}, nil).Once()
 
 	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
@@ -675,11 +675,11 @@ func (s *DAGExecutorTestSuite) TestRunInputArtifactRefs_PassedToAINode() {
 
 	// AI node must receive InputArtifacts with "run_input/" prefixed keys
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		if p.TemplateNodeID != nodeA {
+		if p.Identity.TemplateNodeID != nodeA {
 			return false
 		}
-		designPath, hasDesign := p.InputArtifacts["run_input/design.png"]
-		specPath, hasSpec := p.InputArtifacts["run_input/spec.md"]
+		designPath, hasDesign := p.Inputs.InputArtifacts["run_input/design.png"]
+		specPath, hasSpec := p.Inputs.InputArtifacts["run_input/spec.md"]
 		return hasDesign && designPath == "orgs/myorg/runs/abc/design.png" &&
 			hasSpec && specPath == "orgs/myorg/runs/abc/spec.md"
 	})).Return(activity.CallbackResult{}, nil).Once()
@@ -729,10 +729,10 @@ func (s *DAGExecutorTestSuite) TestRunInputArtifactRefs_EmptyOrAbsent_NoInputArt
 
 	// AI node must receive an empty InputArtifacts map (no run_input/ keys)
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		if p.TemplateNodeID != nodeA {
+		if p.Identity.TemplateNodeID != nodeA {
 			return false
 		}
-		for key := range p.InputArtifacts {
+		for key := range p.Inputs.InputArtifacts {
 			if len(key) >= 10 && key[:10] == "run_input/" {
 				return false // must not have any run_input/ keys
 			}
@@ -791,7 +791,7 @@ func (s *DAGExecutorTestSuite) TestNeedsPR_ExtractedFromConfigOverrides() {
 
 	// Node A has needs_pr: "true" in its config_overrides → NeedsPR must be true.
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == nodeA && p.NeedsPR == true
+		return p.Identity.TemplateNodeID == nodeA && p.Node.NeedsPR == true
 	})).Return(activity.CallbackResult{}, nil).Once()
 
 	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
@@ -800,7 +800,7 @@ func (s *DAGExecutorTestSuite) TestNeedsPR_ExtractedFromConfigOverrides() {
 
 	// Node B has no needs_pr override → NeedsPR must be false.
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == nodeB && p.NeedsPR == false
+		return p.Identity.TemplateNodeID == nodeB && p.Node.NeedsPR == false
 	})).Return(activity.CallbackResult{}, nil).Once()
 
 	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
@@ -851,7 +851,7 @@ func (s *DAGExecutorTestSuite) TestTimeoutCallsDeleteAgentJob() {
 
 	// AI node A fails (simulates timeout/error)
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == nodeA
+		return p.Identity.TemplateNodeID == nodeA
 	})).Return(activity.CallbackResult{}, fmt.Errorf("activity timeout"))
 
 	// UpdateNodeExecutionStatus must be called with failed
@@ -912,7 +912,7 @@ func (s *DAGExecutorTestSuite) TestPauseDeletesRunningJobs() {
 	// returns synchronously and the node is "completed" before the pause signal is
 	// delivered, making the pause cleanup loop a no-op.
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == nodeA
+		return p.Identity.TemplateNodeID == nodeA
 	})).After(time.Second).Return(activity.CallbackResult{}, nil)
 
 	// Send pause signal after node starts but before activity completes
@@ -995,12 +995,12 @@ func (s *DAGExecutorTestSuite) TestPauseStampsNodeAsPaused() {
 	// First execution: delayed so the pause signal fires while the activity is
 	// still in-flight, then returns an error to simulate the heartbeat timeout.
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.NodeExecutionID == execA
+		return p.Identity.NodeExecutionID == execA
 	})).After(time.Second).Return(activity.CallbackResult{}, fmt.Errorf("heartbeat timeout"))
 
 	// Second execution (iteration 2): succeeds
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.NodeExecutionID == execA2
+		return p.Identity.NodeExecutionID == execA2
 	})).Return(activity.CallbackResult{}, nil)
 
 	// UpdateNodeExecutionStatus: "paused" must be called exactly once for execA
@@ -1104,17 +1104,17 @@ func (s *DAGExecutorTestSuite) TestTwoNodeGraphOnlyBPaused() {
 
 	// Node A: completes immediately so that B can start before the pause signal fires
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == nodeA
+		return p.Identity.TemplateNodeID == nodeA
 	})).Return(activity.CallbackResult{}, nil)
 
 	// Node B (iteration 1): delayed so it is still in-flight when the pause signal fires
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.NodeExecutionID == execB1
+		return p.Identity.NodeExecutionID == execB1
 	})).After(time.Second).Return(activity.CallbackResult{}, fmt.Errorf("heartbeat timeout"))
 
 	// Node B (iteration 2): succeeds
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.NodeExecutionID == execB2
+		return p.Identity.NodeExecutionID == execB2
 	})).Return(activity.CallbackResult{}, nil)
 
 	// A completes successfully before the pause — "completed" is called by the workflow
@@ -1208,12 +1208,12 @@ func (s *DAGExecutorTestSuite) TestResumeBeforeHeartbeatTimeout() {
 	// resumed the workflow. The pauseInterrupted entry must survive the resume and be
 	// consumed here — confirming that resume does NOT clear the map.
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.NodeExecutionID == execA
+		return p.Identity.NodeExecutionID == execA
 	})).After(500*time.Millisecond).Return(activity.CallbackResult{}, fmt.Errorf("heartbeat timeout"))
 
 	// Second execution succeeds
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.NodeExecutionID == execA2
+		return p.Identity.NodeExecutionID == execA2
 	})).Return(activity.CallbackResult{}, nil)
 
 	// "paused" — execA must be stamped before the K8s job is deleted
@@ -1311,7 +1311,7 @@ func (s *DAGExecutorTestSuite) TestRateLimitedNodeSleepsThenRequeues() {
 	// Iteration 1 returns the park outcome; iteration 2 must receive the session.
 	resumeAt := s.env.Now().Add(30 * time.Minute)
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.NodeExecutionID == execA
+		return p.Identity.NodeExecutionID == execA
 	})).Return(activity.CallbackResult{
 		Status:              "rate_limited",
 		ResumeAt:            resumeAt,
@@ -1320,10 +1320,10 @@ func (s *DAGExecutorTestSuite) TestRateLimitedNodeSleepsThenRequeues() {
 	}, nil).Once()
 
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.NodeExecutionID == execA2 &&
-			p.SessionID == "sess-1" &&
-			p.SessionArtifactPath == "runs/r/e/session/sess-1.jsonl" &&
-			p.Model == "model-first"
+		return p.Identity.NodeExecutionID == execA2 &&
+			p.Session.ID == "sess-1" &&
+			p.Session.ArtifactPath == "runs/r/e/session/sess-1.jsonl" &&
+			p.Node.Model == "model-first"
 	})).Return(activity.CallbackResult{Status: "completed", Result: "done"}, nil).Once()
 
 	// "completed" for execA2 — the re-queued execution succeeds. Without this
@@ -1394,7 +1394,7 @@ func (s *DAGExecutorTestSuite) TestRateLimitedNodeInvalidateFailureMarksNodeFail
 
 	resumeAt := s.env.Now().Add(30 * time.Minute)
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.NodeExecutionID == execA
+		return p.Identity.NodeExecutionID == execA
 	})).Return(activity.CallbackResult{
 		Status:   "rate_limited",
 		ResumeAt: resumeAt,
@@ -1489,25 +1489,25 @@ func (s *DAGExecutorTestSuite) TestRateLimitedNodeParkDoesNotBlockConcurrentSibl
 	})).Return(execC, nil).Once()
 
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.NodeExecutionID == execA
+		return p.Identity.NodeExecutionID == execA
 	})).Return(activity.CallbackResult{}, nil).Once()
 
 	resumeAt := s.env.Now().Add(30 * time.Minute)
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.NodeExecutionID == execB
+		return p.Identity.NodeExecutionID == execB
 	})).Return(activity.CallbackResult{
 		Status:   "rate_limited",
 		ResumeAt: resumeAt,
 	}, nil).Once()
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.NodeExecutionID == execB2
+		return p.Identity.NodeExecutionID == execB2
 	})).Return(activity.CallbackResult{}, nil).Once()
 
 	// C is an independent sibling: a short (virtual) delay, well under B's 30-minute
 	// park, so its completion timestamp is a distinct, meaningfully-earlier point than
 	// B's post-park write rather than both happening to land at t=0.
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.NodeExecutionID == execC
+		return p.Identity.NodeExecutionID == execC
 	})).After(1*time.Minute).Return(activity.CallbackResult{}, nil).Once()
 
 	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
@@ -1645,20 +1645,20 @@ func (s *DAGExecutorTestSuite) TestRateLimitedNodeCarriesForceReadyThroughRequeu
 	})).Return(execFinalApproval2, nil).Once()
 
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == implement
+		return p.Identity.TemplateNodeID == implement
 	})).Return(activity.CallbackResult{}, nil).Once()
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == codeReview
+		return p.Identity.TemplateNodeID == codeReview
 	})).Return(activity.CallbackResult{}, nil).Once()
 	// test fails outright — permanently, never retried in this test — so the predecessor
 	// gate final_approval depends on stays blocked for the rest of the run.
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == test
+		return p.Identity.TemplateNodeID == test
 	})).Return(activity.CallbackResult{}, fmt.Errorf("test environment down")).Once()
 
 	resumeAt := s.env.Now().Add(30 * time.Minute)
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.NodeExecutionID == execFinalApproval1
+		return p.Identity.NodeExecutionID == execFinalApproval1
 	})).Return(activity.CallbackResult{
 		Status:   "rate_limited",
 		ResumeAt: resumeAt,
@@ -1666,7 +1666,7 @@ func (s *DAGExecutorTestSuite) TestRateLimitedNodeCarriesForceReadyThroughRequeu
 	// This call can only happen if forceReady survived the coroutine's tracker rebuild —
 	// test (final_approval's ordinary predecessor) never completes in this graph.
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.NodeExecutionID == execFinalApproval2
+		return p.Identity.NodeExecutionID == execFinalApproval2
 	})).Return(activity.CallbackResult{}, nil).Once()
 
 	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
@@ -1768,7 +1768,7 @@ func (s *DAGExecutorTestSuite) TestRateLimitedNodeParkedDuringPauseStillFailsExp
 
 	resumeAt := s.env.Now().Add(30 * time.Minute)
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.NodeExecutionID == execA
+		return p.Identity.NodeExecutionID == execA
 	})).Return(activity.CallbackResult{
 		Status:              "rate_limited",
 		ResumeAt:            resumeAt,
@@ -1881,10 +1881,10 @@ func (s *DAGExecutorTestSuite) TestGraphWithLoopBackEdge_Rejected() {
 
 	// AI nodes — B runs twice (iterations 1 and 2), D runs once
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == nodeB
+		return p.Identity.TemplateNodeID == nodeB
 	})).Return(activity.CallbackResult{}, nil).Times(2)
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == nodeD
+		return p.Identity.TemplateNodeID == nodeD
 	})).Return(activity.CallbackResult{}, nil).Once()
 
 	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
@@ -1996,13 +1996,13 @@ func (s *DAGExecutorTestSuite) TestSelfLoopingAIReviewerIteratesThenAdvances() {
 	// review must execute twice (iter 1, iter 2). Times(2) is the load-bearing assertion:
 	// without the FindReadyNodes self-edge skip, only iter 1 fires and the suite fails.
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == draft
+		return p.Identity.TemplateNodeID == draft
 	})).Return(activity.CallbackResult{}, nil).Once()
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == review
+		return p.Identity.TemplateNodeID == review
 	})).Return(activity.CallbackResult{}, nil).Times(2)
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == gate
+		return p.Identity.TemplateNodeID == gate
 	})).Return(activity.CallbackResult{}, nil).Once()
 
 	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
@@ -2083,19 +2083,19 @@ func (s *DAGExecutorTestSuite) TestModelEffortResolution_SelfLoopingReviewNode_F
 	})).Return(execGate, nil).Once()
 
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == draft
+		return p.Identity.TemplateNodeID == draft
 	})).Return(activity.CallbackResult{}, nil).Once()
 	// First review pass (reviewPass == 1): resolves model_first_iteration/effort_first_iteration.
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == review && p.Iteration == 1 && p.Model == "opus-x" && p.Effort == "xhigh"
+		return p.Identity.TemplateNodeID == review && p.Node.Iteration == 1 && p.Node.Model == "opus-x" && p.Node.Effort == "xhigh"
 	})).Return(activity.CallbackResult{}, nil).Once()
 	// Second review pass, reached via the back-edge self-loop (reviewPass == 2):
 	// resolves model_subsequent_iteration/effort_subsequent_iteration.
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == review && p.Iteration == 2 && p.Model == "sonnet-y" && p.Effort == "high"
+		return p.Identity.TemplateNodeID == review && p.Node.Iteration == 2 && p.Node.Model == "sonnet-y" && p.Node.Effort == "high"
 	})).Return(activity.CallbackResult{}, nil).Once()
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == gate
+		return p.Identity.TemplateNodeID == gate
 	})).Return(activity.CallbackResult{}, nil).Once()
 
 	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
@@ -2151,7 +2151,7 @@ func (s *DAGExecutorTestSuite) TestModelEffortResolution_NodeWithoutIterationAwa
 	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.Anything).Return(execA, nil).Once()
 
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == nodeA && p.Model == "static-model" && p.Effort == "static-effort"
+		return p.Identity.TemplateNodeID == nodeA && p.Node.Model == "static-model" && p.Node.Effort == "static-effort"
 	})).Return(activity.CallbackResult{}, nil).Once()
 
 	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.Anything).Return("no_decision", nil).Once()
@@ -2208,12 +2208,12 @@ func (s *DAGExecutorTestSuite) TestModelEffortResolution_PartialIterationKeys_Fa
 
 	// reviewPass == 1: model_first_iteration/effort_first_iteration are set — use them.
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.Iteration == 1 && p.Model == "opus-x" && p.Effort == "xhigh"
+		return p.Node.Iteration == 1 && p.Node.Model == "opus-x" && p.Node.Effort == "xhigh"
 	})).Return(activity.CallbackResult{}, nil).Once()
 	// reviewPass == 2: model_subsequent_iteration/effort_subsequent_iteration are absent —
 	// must fall back to the static model/flat effort, NOT resolve to "".
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.Iteration == 2 && p.Model == "static-fallback-model" && p.Effort == "static-fallback-effort"
+		return p.Node.Iteration == 2 && p.Node.Model == "static-fallback-model" && p.Node.Effort == "static-fallback-effort"
 	})).Return(activity.CallbackResult{}, nil).Once()
 
 	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
@@ -2357,22 +2357,22 @@ func (s *DAGExecutorTestSuite) TestSupervisorRoutesPastAnUnrunPredecessor() {
 	finalApprovalStartedWhileTestIncomplete := false
 
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == implement
+		return p.Identity.TemplateNodeID == implement
 	})).Return(activity.CallbackResult{}, nil).Once()
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == codeReview
+		return p.Identity.TemplateNodeID == codeReview
 	})).Return(activity.CallbackResult{}, nil).Once()
 	// test is held in-flight for 1 virtual second so it is still "running" — tracked,
 	// not absent — at the moment the Supervisor routes around it.
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == test
+		return p.Identity.TemplateNodeID == test
 	})).After(time.Second).Run(func(args mock.Arguments) {
 		mu.Lock()
 		testCompleted = true
 		mu.Unlock()
 	}).Return(activity.CallbackResult{}, nil).Once()
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == finalApproval
+		return p.Identity.TemplateNodeID == finalApproval
 	})).Run(func(args mock.Arguments) {
 		mu.Lock()
 		if !testCompleted {
@@ -2514,16 +2514,16 @@ func (s *DAGExecutorTestSuite) TestForceReadyCarriesForwardThroughLateHumanDecis
 	})).Return(execFinalApproval2, nil).Once()
 
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == implement
+		return p.Identity.TemplateNodeID == implement
 	})).Return(activity.CallbackResult{}, nil).Once()
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == codeReview
+		return p.Identity.TemplateNodeID == codeReview
 	})).Return(activity.CallbackResult{}, nil).Once()
 	// test fails outright — permanently, never retried in this test — so the predecessor
 	// gate final_approval depends on stays blocked for the rest of the run. If forceReady
 	// is lost anywhere, final_approval has no other way to ever become ready again.
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == test
+		return p.Identity.TemplateNodeID == test
 	})).Return(activity.CallbackResult{}, fmt.Errorf("test environment down")).Once()
 
 	// code_review escalates instead of following a normal edge.
@@ -2793,7 +2793,7 @@ func (s *DAGExecutorTestSuite) TestCleanupActivityNotScheduledOnFailure() {
 
 	// AI node A fails permanently (simulates a timeout/error), driving finalStatus to "failed".
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.TemplateNodeID == nodeA
+		return p.Identity.TemplateNodeID == nodeA
 	})).Return(activity.CallbackResult{}, fmt.Errorf("activity timeout"))
 
 	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.MatchedBy(func(p activity.UpdateNodeExecStatusParams) bool {
