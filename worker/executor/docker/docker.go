@@ -1,6 +1,7 @@
 // Package docker implements executor.Executor by launching agent workloads as Docker
-// containers, for the open, single-tenant self-hosted deployment. It is the OSS counterpart
-// to the closed Kubernetes executor: same contract, no per-org namespace isolation.
+// containers, for the open, single-tenant self-hosted deployment. It is the single-tenant
+// counterpart to github.com/dangtrivan15/choruskube/worker/executor/k8s: same contract, no
+// per-org namespace isolation.
 package docker
 
 import (
