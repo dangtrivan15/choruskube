@@ -8,6 +8,5 @@ public enum WorkflowRunStatus {
     failed,
     cancelled,
     awaiting_human,
-    awaiting_retry,
-    live_chat
+    awaiting_retry
 }

@@ -222,7 +222,7 @@ public class AutopilotService implements AutopilotSafetyValve {
             case pending, running -> new RunClass(true, Settle.NOT_FINISHED, Bucket.NONE);
             // Parked on a human. Costs nothing to hold, so it frees its slot — that is the
             // whole point, since otherwise stepping away stalls the Autopilot.
-            case awaiting_human, live_chat, paused -> new RunClass(false, Settle.NOT_FINISHED, Bucket.AWAITING_YOU);
+            case awaiting_human, paused -> new RunClass(false, Settle.NOT_FINISHED, Bucket.AWAITING_YOU);
             // Failed and held for seven days. A failure for the breaker, and it stays on the
             // needs-attention list afterwards, because the Autopilot never retries it.
             case awaiting_retry -> new RunClass(false, Settle.FAILURE, Bucket.NEEDS_ATTENTION);

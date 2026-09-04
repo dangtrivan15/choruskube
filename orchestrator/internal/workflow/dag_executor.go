@@ -253,7 +253,7 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 			for nodeID, tracker := range nodes {
 				if tracker.status == "running" {
 					snapshotNode, ok := GetNodeByID(snap, nodeID)
-					if !ok || snapshotNode.ExecutorType == "human" || snapshotNode.ExecutorType == "live_chat" {
+					if !ok || snapshotNode.ExecutorType == "human" {
 						continue
 					}
 					// Stamp node as paused before deleting the job so any in-flight callback

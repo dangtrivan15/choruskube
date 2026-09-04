@@ -8,6 +8,5 @@ public enum NodeExecutionStatus {
     completed,
     failed,
     skipped,
-    invalidated,
-    live_chat
+    invalidated
 }
