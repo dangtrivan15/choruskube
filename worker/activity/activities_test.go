@@ -277,7 +277,7 @@ func TestExecuteAINodeFromSnapshot_CallsExecutor_ForwardsRegistryCredentials(t *
 			return &workload.PrepareResponse{
 				Image: "ghcr.io/test/agent:latest",
 				Registry: &workload.RegistryCredentials{
-					Host:     "registry.internal",
+					Host:     "registry.example.com",
 					Username: "worker",
 					Password: "s3cr3t",
 				},
@@ -300,7 +300,7 @@ func TestExecuteAINodeFromSnapshot_CallsExecutor_ForwardsRegistryCredentials(t *
 	assert.ErrorIs(t, err, temporalactivity.ErrResultPending)
 
 	if assert.NotNil(t, executedParams.Credentials.Registry) {
-		assert.Equal(t, "registry.internal", executedParams.Credentials.Registry.Host)
+		assert.Equal(t, "registry.example.com", executedParams.Credentials.Registry.Host)
 		assert.Equal(t, "worker", executedParams.Credentials.Registry.Username)
 		assert.Equal(t, "s3cr3t", executedParams.Credentials.Registry.Password)
 	}
