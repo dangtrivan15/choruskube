@@ -1,8 +1,10 @@
 package com.choruskube.core.controller;
 
 import com.choruskube.core.config.WorkerAuthFilter;
+import com.choruskube.core.dto.CompleteWorkloadRequest;
 import com.choruskube.core.dto.CreateWorkloadRequest;
 import com.choruskube.core.dto.CreateWorkloadResponse;
+import com.choruskube.core.dto.PrepareWorkloadResponse;
 import com.choruskube.core.dto.WorkloadLogsResponse;
 import com.choruskube.core.service.SingleFleetWorkerAuthorizer;
 import com.choruskube.core.service.WorkerAuthorizer;
@@ -71,6 +73,35 @@ public class WorkerWorkloadController {
         authorizer.requireMayActOn(credential, runId);
         workloadService.cleanupWorkload(runId, nodeExecId);
         return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/prepare")
+    public ResponseEntity<PrepareWorkloadResponse> prepareWorkload(
+            HttpServletRequest httpRequest,
+            @PathVariable UUID runId,
+            @PathVariable UUID nodeExecId,
+            @RequestBody CreateWorkloadRequest request) {
+        String credential = credentialOf(httpRequest);
+        if (credential == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+        authorizer.requireMayActOn(credential, runId);
+        return ResponseEntity.ok(workloadService.prepareWorkload(runId, nodeExecId, request));
+    }
+
+    @PostMapping("/complete")
+    public ResponseEntity<Void> completeWorkload(
+            HttpServletRequest httpRequest,
+            @PathVariable UUID runId,
+            @PathVariable UUID nodeExecId,
+            @RequestBody CompleteWorkloadRequest request) {
+        String credential = credentialOf(httpRequest);
+        if (credential == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+        authorizer.requireMayActOn(credential, runId);
+        workloadService.completeWorkload(runId, nodeExecId, request);
+        return ResponseEntity.ok().build();
     }
 
     @GetMapping("/logs")

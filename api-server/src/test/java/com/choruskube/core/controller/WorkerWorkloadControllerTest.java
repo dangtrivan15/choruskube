@@ -13,7 +13,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.choruskube.core.config.WorkerAuthFilter;
+import com.choruskube.core.dto.CompleteWorkloadRequest;
 import com.choruskube.core.dto.CreateWorkloadResponse;
+import com.choruskube.core.dto.PrepareWorkloadResponse;
 import com.choruskube.core.dto.WorkloadLogsResponse;
 import com.choruskube.core.exception.ForbiddenException;
 import com.choruskube.core.exception.GlobalExceptionHandler;
@@ -120,5 +122,49 @@ class WorkerWorkloadControllerTest {
 
         verify(authorizer, never()).requireMayActOn(any(), any());
         verify(workloadService, never()).cleanupWorkload(any(), any());
+    }
+
+    @Test
+    void prepareAuthorizesTheRunThenDelegates() throws Exception {
+        var response = new PrepareWorkloadResponse(
+                "agent:latest", false, "oauth-token", "http://api/github-token", null, null, "choruskube-agent");
+        when(workloadService.prepareWorkload(eq(runId), eq(nodeExecId), any())).thenReturn(response);
+
+        mvc.perform(post(path("/prepare"))
+                        .requestAttr(WorkerAuthFilter.FLEET_TOKEN_ATTRIBUTE, "ckw_abc")
+                        .contentType("application/json")
+                        .content("{\"templateNodeId\":null,\"configJson\":{}}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.image").value("agent:latest"))
+                .andExpect(jsonPath("$.serviceAccount").value("choruskube-agent"));
+
+        verify(authorizer).requireMayActOn("ckw_abc", runId);
+        verify(workloadService).prepareWorkload(eq(runId), eq(nodeExecId), any());
+    }
+
+    @Test
+    void completeAuthorizesTheRunThenDelegates() throws Exception {
+        mvc.perform(post(path("/complete"))
+                        .requestAttr(WorkerAuthFilter.FLEET_TOKEN_ATTRIBUTE, "ckw_abc")
+                        .contentType("application/json")
+                        .content("{\"podName\":\"agent-abc12345\",\"jobSecretHash\":\"deadbeef\"}"))
+                .andExpect(status().isOk());
+
+        verify(authorizer).requireMayActOn("ckw_abc", runId);
+        verify(workloadService)
+                .completeWorkload(
+                        eq(runId), eq(nodeExecId), eq(new CompleteWorkloadRequest("agent-abc12345", "deadbeef")));
+    }
+
+    @Test
+    void prepareAndCompleteRejectAMissingCredentialWithoutConsultingTheAuthorizer() throws Exception {
+        mvc.perform(post(path("/prepare")).contentType("application/json").content("{}"))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(post(path("/complete")).contentType("application/json").content("{}"))
+                .andExpect(status().isUnauthorized());
+
+        verify(authorizer, never()).requireMayActOn(any(), any());
+        verify(workloadService, never()).prepareWorkload(any(), any(), any());
+        verify(workloadService, never()).completeWorkload(any(), any(), any());
     }
 }

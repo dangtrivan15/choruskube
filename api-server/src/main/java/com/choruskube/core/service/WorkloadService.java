@@ -1,7 +1,10 @@
 package com.choruskube.core.service;
 
+import com.choruskube.core.credential.AiCredentialResolver;
+import com.choruskube.core.dto.CompleteWorkloadRequest;
 import com.choruskube.core.dto.CreateWorkloadRequest;
 import com.choruskube.core.dto.CreateWorkloadResponse;
+import com.choruskube.core.dto.PrepareWorkloadResponse;
 import com.choruskube.core.dto.WorkloadLogsResponse;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.executor.*;
@@ -47,6 +50,8 @@ public class WorkloadService {
     private final ObjectMapper objectMapper;
     private final String defaultAgentImage;
     private final String defaultServiceAccount;
+    private final AiCredentialResolver aiCredentialResolver;
+    private final String apiServerUrl;
 
     public WorkloadService(
             WorkloadExecutor executor,
@@ -56,7 +61,9 @@ public class WorkloadService {
             GraphSnapshotBuilder snapshotBuilder,
             ObjectMapper objectMapper,
             @Qualifier("executorDefaultAgentImage") String defaultAgentImage,
-            @Value("${executor.k8s.agent-service-account:choruskube-agent}") String defaultServiceAccount) {
+            @Value("${executor.k8s.agent-service-account:choruskube-agent}") String defaultServiceAccount,
+            AiCredentialResolver aiCredentialResolver,
+            @Qualifier("executorApiServerUrl") String apiServerUrl) {
         this.executor = executor;
         this.execRepo = execRepo;
         this.eventPublisher = eventPublisher;
@@ -65,6 +72,8 @@ public class WorkloadService {
         this.objectMapper = objectMapper;
         this.defaultAgentImage = defaultAgentImage;
         this.defaultServiceAccount = defaultServiceAccount;
+        this.aiCredentialResolver = aiCredentialResolver;
+        this.apiServerUrl = apiServerUrl;
     }
 
     /**
@@ -100,6 +109,61 @@ public class WorkloadService {
         log.info("Created workload for execution {}: handle={}", nodeExecId, result.executionHandle());
 
         return new CreateWorkloadResponse(result.executionHandle(), result.jobSecretHash());
+    }
+
+    /**
+     * Resolves what a Worker needs to launch this workload itself: image, credentials, and
+     * identity. The api-server is the only party with DB access, so it resolves inputs here
+     * instead of launching a container the way {@link #createWorkload} still does.
+     */
+    @Transactional(readOnly = true)
+    public PrepareWorkloadResponse prepareWorkload(UUID runId, UUID nodeExecId, CreateWorkloadRequest req) {
+        NodeExecution exec = execRepo.findById(nodeExecId)
+                .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
+        NodeExecutionUtil.requireInRun(exec, runId);
+
+        WorkflowRun run =
+                runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
+
+        ExecutionParams params = resolveExecutionParams(nodeExecId, run, exec.getTemplateNodeId(), req);
+
+        String claudeOAuthToken = needsOauthToken(params) ? aiCredentialResolver.resolveOauthToken(runId) : null;
+        String githubTokenUrl =
+                apiServerUrl + "/internal/runs/" + runId + "/node-executions/" + nodeExecId + "/github-token";
+
+        return new PrepareWorkloadResponse(
+                params.image(),
+                params.enableDocker(),
+                claudeOAuthToken,
+                githubTokenUrl,
+                // Core has no registry-credential or per-org-namespace concept — both are
+                // resolved only by a closed overlay's own executor wiring, not by this class.
+                null,
+                null,
+                params.identity() != null ? params.identity().name() : null);
+    }
+
+    /**
+     * Records what a Worker launched on its own and transitions the execution to running.
+     * Mirrors the DB-write tail of {@link #createWorkload}, which still performs this write
+     * itself when the api-server is the one launching the container.
+     */
+    @Transactional
+    public void completeWorkload(UUID runId, UUID nodeExecId, CompleteWorkloadRequest req) {
+        NodeExecution exec = execRepo.findById(nodeExecId)
+                .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
+        NodeExecutionUtil.requireInRun(exec, runId);
+
+        exec.setStatus(NodeExecutionStatus.running);
+        exec.setPodName(req.podName());
+        exec.setJobSecretHash(req.jobSecretHash());
+        if (exec.getStartedAt() == null) {
+            exec.setStartedAt(Instant.now());
+        }
+        execRepo.save(exec);
+
+        eventPublisher.publishNodeStatusChanged(runId, nodeExecId, "running");
+        log.info("Completed workload for execution {}: pod={}", nodeExecId, req.podName());
     }
 
     public void cleanupWorkload(UUID executionId) {
@@ -150,6 +214,17 @@ public class WorkloadService {
 
     public void healthCheck() {
         executor.healthCheck();
+    }
+
+    /**
+     * Script nodes never invoke {@code claude}; resolving a token for them would force
+     * CLAUDE_CODE_OAUTH_TOKEN configured in environments that only run test nodes. Mirrors
+     * {@code SingleTenantDockerExecutor.needsOauthToken}, duplicated because that class is
+     * executor-specific and scheduled for deletion once the Worker launches containers itself.
+     */
+    private static boolean needsOauthToken(ExecutionParams params) {
+        Object raw = params.configJson() != null ? params.configJson().getOrDefault("executor_type", "ai") : "ai";
+        return !"script".equalsIgnoreCase(String.valueOf(raw));
     }
 
     private ExecutionParams resolveExecutionParams(
