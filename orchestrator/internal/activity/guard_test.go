@@ -46,40 +46,10 @@ func TestGuardRunRejectsAForeignRunThroughARealActivityContext(t *testing.T) {
 	assert.Contains(t, err.Error(), "is not a run's")
 }
 
-// TestGetGraphRuntimeRejectsAForeignRun, TestDeleteAgentJobRejectsAForeignRun and
-// TestFetchPodLogsRejectsAForeignRun cover the three methods a first pass at this guard
-// missed: GetGraphRuntime takes its run id as a bare argument rather than a params field, and
-// DeleteAgentJob/FetchPodLogs previously carried no run id at all — a hijacked workflow task
-// could delete another tenant's agent job, or exfiltrate its pod logs, by NodeExecutionID
-// alone. Each test schedules the activity under one run and claims a different one.
-
 func TestGetGraphRuntimeRejectsAForeignRun(t *testing.T) {
 	acts := NewActivities(apiclient.NewClient("http://unused.invalid"), nil, nil, nil)
 
 	_, err := acts.GetGraphRuntime(withWorkflowRunID(t, uuid.New()), uuid.New())
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "but was scheduled by run")
-}
-
-func TestDeleteAgentJobRejectsAForeignRun(t *testing.T) {
-	acts := NewActivities(apiclient.NewClient("http://unused.invalid"), nil, nil, nil)
-
-	err := acts.DeleteAgentJob(withWorkflowRunID(t, uuid.New()), DeleteAgentJobParams{
-		RunID:           uuid.New(),
-		NodeExecutionID: uuid.New(),
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "but was scheduled by run")
-}
-
-func TestFetchPodLogsRejectsAForeignRun(t *testing.T) {
-	acts := NewActivities(apiclient.NewClient("http://unused.invalid"), nil, nil, nil)
-
-	_, err := acts.FetchPodLogs(withWorkflowRunID(t, uuid.New()), FetchPodLogsParams{
-		RunID:           uuid.New(),
-		NodeExecutionID: uuid.New(),
-		TailLines:       50,
-	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "but was scheduled by run")
 }

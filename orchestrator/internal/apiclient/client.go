@@ -417,75 +417,7 @@ func (c *Client) GetInputArtifacts(ctx context.Context, runID, nodeExecID uuid.U
 	return &state.InputArtifactManifest{Artifacts: result.Artifacts, Required: result.Required}, nil
 }
 
-// --- Workloads (delegated to API server) ---
-
-type createWorkloadRequest struct {
-	TemplateNodeID uuid.UUID              `json:"templateNodeId"`
-	ConfigJSON     map[string]interface{} `json:"configJson"`
-}
-
-type CreateWorkloadResponse struct {
-	ExecutionHandle string `json:"executionHandle"`
-	JobSecretHash   string `json:"jobSecretHash"`
-}
-
-// CreateWorkloadParams contains everything needed to create a workload via the API server.
-type CreateWorkloadParams struct {
-	RunID          uuid.UUID
-	NodeExecID     uuid.UUID
-	TemplateNodeID uuid.UUID
-	ConfigJSON     map[string]interface{}
-}
-
-// CreateWorkload delegates container creation to the API server. The API server
-// resolves infrastructure details (image, namespace, secrets, docker config,
-// identity) from the stored graph snapshot and atomically creates the container.
-func (c *Client) CreateWorkload(ctx context.Context, params CreateWorkloadParams) (*CreateWorkloadResponse, error) {
-	body := createWorkloadRequest{
-		TemplateNodeID: params.TemplateNodeID,
-		ConfigJSON:     params.ConfigJSON,
-	}
-	path := fmt.Sprintf("/internal/workloads/%s/%s", params.RunID, params.NodeExecID)
-	resp, err := c.doJSON(ctx, http.MethodPost, path, body)
-	if err != nil {
-		return nil, fmt.Errorf("create workload: %w", err)
-	}
-	var result CreateWorkloadResponse
-	if err := json.Unmarshal(resp, &result); err != nil {
-		return nil, fmt.Errorf("unmarshal create workload response: %w", err)
-	}
-	return &result, nil
-}
-
-// CleanupWorkload removes all resources associated with a completed execution. Run-scoped:
-// the api-server 404s unless executionID belongs to runID, so a caller cannot pair a run it
-// controls with a guessed executionID to delete another run's agent job.
-func (c *Client) CleanupWorkload(ctx context.Context, runID, executionID uuid.UUID) error {
-	path := fmt.Sprintf("/internal/workloads/%s/%s", runID, executionID)
-	_, err := c.doJSON(ctx, http.MethodDelete, path, nil)
-	if err != nil {
-		return fmt.Errorf("cleanup workload: %w", err)
-	}
-	return nil
-}
-
-// GetWorkloadLogs returns recent log output from the agent container. Run-scoped: same 404
-// check as CleanupWorkload, so pod logs cannot be read across runs by pairing an authorized
-// runID with a guessed executionID.
-func (c *Client) GetWorkloadLogs(ctx context.Context, runID, executionID uuid.UUID, tailLines int) (string, error) {
-	path := fmt.Sprintf("/internal/workloads/%s/%s/logs?tailLines=%d", runID, executionID, tailLines)
-	resp, err := c.doJSON(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return "", fmt.Errorf("get workload logs: %w", err)
-	}
-	var result struct {
-		Logs string `json:"logs"`
-	}
-	if err := json.Unmarshal(resp, &result); err != nil {
-		return "", fmt.Errorf("unmarshal workload logs: %w", err)
-	}
-	return result.Logs, nil
-}
+// --- Workloads (reconciler) ---
 
 // TerminateWorkload stops a running execution.
 func (c *Client) TerminateWorkload(ctx context.Context, executionID uuid.UUID) error {
@@ -514,15 +446,6 @@ func (c *Client) ListWorkloads(ctx context.Context) ([]WorkloadExecutionInfo, er
 		return nil, fmt.Errorf("unmarshal workload list: %w", err)
 	}
 	return result, nil
-}
-
-// WorkloadHealth checks executor backend connectivity via the API server.
-func (c *Client) WorkloadHealth(ctx context.Context) error {
-	_, err := c.doJSON(ctx, http.MethodGet, "/internal/workloads/health", nil)
-	if err != nil {
-		return fmt.Errorf("workload health check: %w", err)
-	}
-	return nil
 }
 
 // --- Job Secret Hash ---

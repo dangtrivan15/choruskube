@@ -14,8 +14,6 @@ import (
 
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/activity"
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/apiclient"
-	"github.com/dangtrivan15/choruskube/orchestrator/internal/callback"
-	"github.com/dangtrivan15/choruskube/orchestrator/internal/completer"
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/config"
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/namespaces"
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/objectstore"
@@ -50,11 +48,6 @@ func main() {
 	defer temporalClient.Close()
 	log.Println("Connected to Temporal")
 
-	// --- Executor is now in the API server ---
-	// The orchestrator delegates workload creation/management to the API server via
-	// /internal/workloads endpoints. No local executor is needed.
-	log.Println("Executor delegated to API server via /internal/workloads endpoints")
-
 	// --- Object storage client (for run log) ---
 	objectStoreClient, err := objectstore.NewClient(
 		cfg.ObjectStore.Endpoint, cfg.ObjectStore.Bucket,
@@ -82,35 +75,22 @@ func main() {
 	go namespaces.Run(ctx, sup, apiClient, namespaces.RefreshInterval)
 	log.Println("Temporal workflow workers started")
 
-	// --- Activity Completer (wraps Temporal client for async completion) ---
-	activityCompleter := completer.New(temporalClient, apiClient, cfg.Temporal.Namespace)
-
-	// --- Callback & Heartbeat HTTP Server ---
-	callbackHandler := callback.NewHandler(apiClient, activityCompleter)
-	heartbeatHandler := callback.NewHeartbeatHandler(apiClient, activityCompleter)
+	// --- Health HTTP Server ---
 	mux := http.NewServeMux()
-	mux.Handle("/api/v1/callback", callbackHandler)
-	mux.Handle("/api/v1/heartbeat", heartbeatHandler)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		// Health check delegates to the API server's workload health endpoint
-		if err := apiClient.WorkloadHealth(r.Context()); err != nil {
-			// Fall through to healthy if the API server workload health fails
-			// (executor may not be configured, but orchestrator itself is healthy)
-			log.Printf("Workload health check warning: %v", err)
-		}
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, `{"status":"healthy"}`)
 	})
 
 	server := &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.Callback.Port),
+		Addr:    fmt.Sprintf(":%d", cfg.HealthPort),
 		Handler: mux,
 	}
 
 	go func() {
-		log.Printf("Callback server listening on :%d", cfg.Callback.Port)
+		log.Printf("Health server listening on :%d", cfg.HealthPort)
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("Callback server failed: %v", err)
+			log.Fatalf("Health server failed: %v", err)
 		}
 	}()
 

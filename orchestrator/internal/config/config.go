@@ -1,7 +1,6 @@
 package config
 
 import (
-	"fmt"
 	"os"
 	"strconv"
 )
@@ -10,7 +9,7 @@ type Config struct {
 	APIServerURL       string
 	OrchestratorSecret string // Shared secret for orchestrator → API server auth
 	Temporal           TemporalConfig
-	Callback           CallbackConfig
+	HealthPort         int
 	ObjectStore        ObjectStoreConfig
 }
 
@@ -18,11 +17,6 @@ type TemporalConfig struct {
 	Address   string
 	Namespace string
 	TaskQueue string
-}
-
-type CallbackConfig struct {
-	Port int
-	URL  string // Full internal URL for callback (injected into config.json)
 }
 
 type ObjectStoreConfig struct {
@@ -41,10 +35,7 @@ func Load() *Config {
 			Namespace: envOrDefault("TEMPORAL_NAMESPACE", "choruskube"),
 			TaskQueue: envOrDefault("TEMPORAL_TASK_QUEUE", "choruskube"),
 		},
-		Callback: CallbackConfig{
-			Port: envOrDefaultInt("CALLBACK_PORT", 9090),
-			URL:  requireEnv("CALLBACK_URL"),
-		},
+		HealthPort: envOrDefaultInt("HEALTH_PORT", 8080),
 		ObjectStore: ObjectStoreConfig{
 			Endpoint:  envOrDefault("OBJECT_STORE_ENDPOINT", "http://localhost:9000"),
 			Bucket:    envOrDefault("OBJECT_STORE_BUCKET", "choruskube"),
@@ -52,14 +43,6 @@ func Load() *Config {
 			SecretKey: envOrDefault("OBJECT_STORE_SECRET_KEY", ""),
 		},
 	}
-}
-
-func requireEnv(key string) string {
-	v := os.Getenv(key)
-	if v == "" {
-		panic(fmt.Sprintf("required environment variable %s is not set", key))
-	}
-	return v
 }
 
 func envOrDefault(key, fallback string) string {

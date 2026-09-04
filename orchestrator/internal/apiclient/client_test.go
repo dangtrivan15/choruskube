@@ -282,74 +282,9 @@ func TestAPIError_429_ReturnsTypedError(t *testing.T) {
 	assert.Contains(t, apiErr.Body, "quota_exceeded")
 }
 
-func TestCreateWorkload_SlimBody(t *testing.T) {
-	runID := uuid.New()
-	nodeExecID := uuid.New()
-	templateNodeID := uuid.New()
-
-	_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPost, r.Method)
-		assert.Equal(t, fmt.Sprintf("/internal/workloads/%s/%s", runID, nodeExecID), r.URL.Path)
-
-		var body map[string]interface{}
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
-
-		// Only templateNodeId and configJson should be present
-		assert.Len(t, body, 2)
-		assert.Equal(t, templateNodeID.String(), body["templateNodeId"])
-		assert.NotNil(t, body["configJson"])
-
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(CreateWorkloadResponse{
-			ExecutionHandle: "agent-xyz",
-			JobSecretHash:   "hash456",
-		})
-	})
-
-	resp, err := client.CreateWorkload(context.Background(), CreateWorkloadParams{
-		RunID:          runID,
-		NodeExecID:     nodeExecID,
-		TemplateNodeID: templateNodeID,
-		ConfigJSON:     map[string]interface{}{"key": "value"},
-	})
-	require.NoError(t, err)
-	assert.Equal(t, "agent-xyz", resp.ExecutionHandle)
-	assert.Equal(t, "hash456", resp.JobSecretHash)
-}
-
 // TestCleanupWorkload_UsesRunScopedPath and TestGetWorkloadLogs_UsesRunScopedPath pin the
 // request URL to the run-scoped shape: the api-server rejects a NodeExecutionID that does not
 // belong to RunID (see api-server's WorkloadService), so the run id must actually reach it.
-
-func TestCleanupWorkload_UsesRunScopedPath(t *testing.T) {
-	runID := uuid.New()
-	execID := uuid.New()
-
-	_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodDelete, r.Method)
-		assert.Equal(t, fmt.Sprintf("/internal/workloads/%s/%s", runID, execID), r.URL.Path)
-		w.WriteHeader(http.StatusNoContent)
-	})
-
-	err := client.CleanupWorkload(context.Background(), runID, execID)
-	require.NoError(t, err)
-}
-
-func TestGetWorkloadLogs_UsesRunScopedPath(t *testing.T) {
-	runID := uuid.New()
-	execID := uuid.New()
-
-	_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodGet, r.Method)
-		assert.Equal(t, fmt.Sprintf("/internal/workloads/%s/%s/logs", runID, execID), r.URL.Path)
-		assert.Equal(t, "100", r.URL.Query().Get("tailLines"))
-		json.NewEncoder(w).Encode(map[string]string{"logs": "line1\nline2"})
-	})
-
-	logs, err := client.GetWorkloadLogs(context.Background(), runID, execID, 100)
-	require.NoError(t, err)
-	assert.Equal(t, "line1\nline2", logs)
-}
 
 // TestGetReviewHistory_IncludesFeedbackFields is the regression test for the bug where
 // the orchestrator's review-history decode struct silently dropped the reviewer's
