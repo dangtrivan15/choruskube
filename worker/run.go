@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"go.temporal.io/sdk/client"
 	tworker "go.temporal.io/sdk/worker"
 
@@ -226,6 +227,67 @@ func renewOnce(ctx context.Context, provider FleetProvider, tokens *tokenCache, 
 	return reg, nil
 }
 
+// workloadClientResolver looks up the workload client serving one Fleet by namespace and task
+// queue. fleetSupervisor satisfies it; narrowed here so the StatusClient bridge is testable.
+type workloadClientResolver interface {
+	workloadClientFor(namespace, taskQueue string) *workload.Client
+}
+
+var _ workloadClientResolver = (*fleetSupervisor)(nil)
+
+// statusBridge implements callback.StatusClient by resolving execution→Fleet→workload client
+// using the same pending cache the activity completer uses.
+type statusBridge struct {
+	pending          pendingLookup
+	workloadClients  workloadClientResolver
+}
+
+func (b *statusBridge) GetNodeExecution(ctx context.Context, runID, nodeExecID uuid.UUID) (callback.NodeExecutionStatus, error) {
+	wc, err := b.resolveClient(nodeExecID)
+	if err != nil {
+		return callback.NodeExecutionStatus{}, err
+	}
+	ne, err := wc.GetNodeExecution(ctx, runID, nodeExecID)
+	if err != nil {
+		return callback.NodeExecutionStatus{}, err
+	}
+	return callback.NodeExecutionStatus{Status: ne.Status}, nil
+}
+
+func (b *statusBridge) UpdateNodeExecution(ctx context.Context, runID, nodeExecID uuid.UUID, status, result, artifactRefs, podName, errorMessage string) error {
+	wc, err := b.resolveClient(nodeExecID)
+	if err != nil {
+		return err
+	}
+	return wc.UpdateNodeExecution(ctx, runID, nodeExecID, workload.UpdateStatusRequest{
+		Status:       status,
+		Result:       result,
+		ArtifactRefs: artifactRefs,
+		PodName:      podName,
+		ErrorMessage: errorMessage,
+	})
+}
+
+func (b *statusBridge) WriteExecutionLog(ctx context.Context, runID, nodeExecID uuid.UUID, level, message string) {
+	wc, err := b.resolveClient(nodeExecID)
+	if err != nil {
+		return
+	}
+	wc.WriteExecutionLog(ctx, runID, nodeExecID, level, message)
+}
+
+func (b *statusBridge) resolveClient(execID uuid.UUID) (*workload.Client, error) {
+	p, ok := b.pending.Get(execID)
+	if !ok {
+		return nil, fmt.Errorf("no pending entry for execution %s", execID)
+	}
+	wc := b.workloadClients.workloadClientFor(p.Namespace, p.TaskQueue)
+	if wc == nil {
+		return nil, fmt.Errorf("no workload client for namespace=%s taskQueue=%s", p.Namespace, p.TaskQueue)
+	}
+	return wc, nil
+}
+
 // fleetSupervisor owns the Temporal Workers this process is running, one per Fleet, keyed by
 // fleetKey. It exists because the roster is not fixed at startup: an organization created after
 // this process booted gets a Fleet, runs in that org are dispatched to that Fleet's task queue,
@@ -241,7 +303,12 @@ type fleetSupervisor struct {
 	// callback completer looks a Fleet's client up here by namespace+taskQueue to complete or
 	// heartbeat one of its activities on the connection its workflow was scheduled on -- the
 	// same reason clientOptions dials one client per Fleet rather than sharing a single one.
-	clients map[string]client.Client
+	clients   map[string]client.Client
+	// wkClients holds the workload client for each served Fleet, keyed by fleetKey. Today all
+	// Fleets share one API-server credential, so they point at the same *workload.Client; the
+	// per-Fleet map keeps the addressing symmetric with Temporal's clientFor path.
+	wkClients map[string]*workload.Client
+	defaultWC *workload.Client
 }
 
 // serve starts a Worker for f unless one is already running for it. Idempotent by fleetKey, so
@@ -271,6 +338,9 @@ func (s *fleetSupervisor) serve(f Fleet) error {
 	if s.clients != nil {
 		s.clients[key] = c
 	}
+	if s.wkClients != nil && s.defaultWC != nil {
+		s.wkClients[key] = s.defaultWC
+	}
 	return nil
 }
 
@@ -283,6 +353,14 @@ func (s *fleetSupervisor) clientFor(namespace, taskQueue string) client.Client {
 	return s.clients[fleetKey(Fleet{Namespace: namespace, TaskQueue: taskQueue})]
 }
 
+// workloadClientFor returns the workload client serving namespace+taskQueue, or nil if this
+// process is not serving that Fleet.
+func (s *fleetSupervisor) workloadClientFor(namespace, taskQueue string) *workload.Client {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.wkClients[fleetKey(Fleet{Namespace: namespace, TaskQueue: taskQueue})]
+}
+
 func (s *fleetSupervisor) stopAll() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -291,6 +369,7 @@ func (s *fleetSupervisor) stopAll() {
 	}
 	s.served = map[string]func(){}
 	s.clients = map[string]client.Client{}
+	s.wkClients = map[string]*workload.Client{}
 }
 
 func (s *fleetSupervisor) count() int {
@@ -375,7 +454,13 @@ func Run(ctx context.Context, cfg Config) error {
 
 	tokens := newTokenCache(fleets)
 
-	sup := &fleetSupervisor{cfg: cfg, acts: acts, tokens: tokens, served: map[string]func(){}, clients: map[string]client.Client{}}
+	sup := &fleetSupervisor{
+		cfg: cfg, acts: acts, tokens: tokens,
+		served:    map[string]func(){},
+		clients:   map[string]client.Client{},
+		wkClients: map[string]*workload.Client{},
+		defaultWC: wc,
+	}
 	defer sup.stopAll()
 
 	// The callback server only makes sense when this process launches workloads itself: the
@@ -383,7 +468,8 @@ func Run(ctx context.Context, cfg Config) error {
 	// own callback route, which this Worker never serves.
 	if cfg.Executor != nil {
 		completer := newActivityCompleter(acts.Pending(), sup)
-		cbHandler := callback.NewHandler(hashCache, cfg.Executor, completer)
+		sc := &statusBridge{pending: acts.Pending(), workloadClients: sup}
+		cbHandler := callback.NewHandler(hashCache, cfg.Executor, completer, sc)
 		hbHandler := callback.NewHeartbeatHandler(hashCache, cfg.Executor, completer)
 		cbServer := callback.NewServer(cfg.CallbackPort, cbHandler, hbHandler)
 		if err := cbServer.Listen(); err != nil {

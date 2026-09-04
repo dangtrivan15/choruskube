@@ -205,3 +205,59 @@ func TestCompleteWorkload(t *testing.T) {
 	assert.Equal(t, "agent-abc123", received.PodName)
 	assert.Equal(t, "deadbeef", received.JobSecretHash)
 }
+
+func TestGetNodeExecution(t *testing.T) {
+	runID, nodeExecID := uuid.New(), uuid.New()
+	wantID := uuid.New()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodGet, r.Method)
+		assert.Equal(t, "/worker/runs/"+runID.String()+"/node-executions/"+nodeExecID.String(), r.URL.Path)
+		assert.Equal(t, "Bearer tok", r.Header.Get("Authorization"))
+		_ = json.NewEncoder(w).Encode(NodeExecution{ID: wantID, Status: "running"})
+	}))
+	defer srv.Close()
+
+	got, err := NewClient(srv.URL, func() string { return "tok" }, srv.Client()).
+		GetNodeExecution(context.Background(), runID, nodeExecID)
+	require.NoError(t, err)
+	assert.Equal(t, wantID, got.ID)
+	assert.Equal(t, "running", got.Status)
+}
+
+func TestUpdateNodeExecution(t *testing.T) {
+	runID, nodeExecID := uuid.New(), uuid.New()
+	var received UpdateStatusRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPut, r.Method)
+		assert.Equal(t, "/worker/runs/"+runID.String()+"/node-executions/"+nodeExecID.String()+"/status", r.URL.Path)
+		_ = json.NewDecoder(r.Body).Decode(&received)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	err := NewClient(srv.URL, func() string { return "tok" }, srv.Client()).
+		UpdateNodeExecution(context.Background(), runID, nodeExecID, UpdateStatusRequest{
+			Status: "completed",
+			Result: "ok",
+		})
+	require.NoError(t, err)
+	assert.Equal(t, "completed", received.Status)
+	assert.Equal(t, "ok", received.Result)
+}
+
+func TestWriteExecutionLog(t *testing.T) {
+	runID, nodeExecID := uuid.New(), uuid.New()
+	var received WriteLogRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "/worker/runs/"+runID.String()+"/node-executions/"+nodeExecID.String()+"/logs", r.URL.Path)
+		_ = json.NewDecoder(r.Body).Decode(&received)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	NewClient(srv.URL, func() string { return "tok" }, srv.Client()).
+		WriteExecutionLog(context.Background(), runID, nodeExecID, "info", "hello world")
+	assert.Equal(t, "info", received.Level)
+	assert.Equal(t, "hello world", received.Message)
+}

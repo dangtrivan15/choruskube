@@ -74,10 +74,9 @@ func (c *activityCompleter) resolve(executionID uuid.UUID) (temporalCompletions,
 	return cl, p, nil
 }
 
-// Complete reports the agent's outcome to the Temporal activity waiting on it. Only "completed"
-// reports a successful result; every other status -- including the agent's own "failed" -- fails
-// the activity so the workflow's retry/error path runs, mirroring the split the orchestrator's
-// own completer makes between CompleteActivity and FailActivity.
+// Complete reports the agent's outcome to the Temporal activity waiting on it. "completed" and
+// "rate_limited" report a successful result (so the workflow can advance or sleep-and-requeue);
+// every other status fails the activity so the workflow's retry/error path runs.
 func (c *activityCompleter) Complete(ctx context.Context, req callback.CompletionRequest) error {
 	cl, p, err := c.resolve(req.NodeExecutionID)
 	if err != nil {
@@ -86,7 +85,8 @@ func (c *activityCompleter) Complete(ctx context.Context, req callback.Completio
 
 	var result interface{}
 	var activityErr error
-	if req.Status == "completed" {
+	switch req.Status {
+	case "completed":
 		result = activity.CallbackResult{
 			Status:       req.Status,
 			Result:       req.Result,
@@ -94,7 +94,14 @@ func (c *activityCompleter) Complete(ctx context.Context, req callback.Completio
 			ErrorMessage: req.ErrorMessage,
 			SessionID:    req.SessionID,
 		}
-	} else {
+	case "rate_limited":
+		result = activity.CallbackResult{
+			Status:              "rate_limited",
+			ResumeAt:            req.ResumeAt,
+			SessionID:           req.SessionID,
+			SessionArtifactPath: req.SessionArtifactPath,
+		}
+	default:
 		activityErr = fmt.Errorf("agent reported status %q: %s", req.Status, req.ErrorMessage)
 	}
 
@@ -102,6 +109,21 @@ func (c *activityCompleter) Complete(ctx context.Context, req callback.Completio
 		return fmt.Errorf("complete activity by id: %w", err)
 	}
 	c.pending.Remove(req.NodeExecutionID)
+	return nil
+}
+
+// Fail fails the Temporal activity without a result, so the workflow's retry/error path runs.
+// This is the handler's direct entry point for cases where the callback is rejected before it
+// reaches the normal Complete path (e.g. empty-result rejection).
+func (c *activityCompleter) Fail(ctx context.Context, executionID uuid.UUID, reason error) error {
+	cl, p, err := c.resolve(executionID)
+	if err != nil {
+		return err
+	}
+	if err := cl.CompleteActivityByID(ctx, p.Namespace, p.WorkflowID, "", p.ActivityID, nil, reason); err != nil {
+		return fmt.Errorf("fail activity by id: %w", err)
+	}
+	c.pending.Remove(executionID)
 	return nil
 }
 

@@ -90,10 +90,66 @@ func (c *Client) doJSON(ctx context.Context, method, path string, reqBody interf
 	return c.do(req)
 }
 
-// workloadPath addresses one node execution within the run that owns it. The run id is part of
+// nodeExecPath addresses one node execution within the run that owns it. The run id is part of
 // the path, not a body field, because the server authorizes the credential against it.
+func nodeExecPath(runID, nodeExecID uuid.UUID) string {
+	return fmt.Sprintf("/worker/runs/%s/node-executions/%s", runID, nodeExecID)
+}
+
+// workloadPath addresses the workload sub-resource of one node execution.
 func workloadPath(runID, nodeExecID uuid.UUID) string {
-	return fmt.Sprintf("/worker/runs/%s/node-executions/%s/workload", runID, nodeExecID)
+	return nodeExecPath(runID, nodeExecID) + "/workload"
+}
+
+// NodeExecution is the minimal GET response from the node-execution endpoint.
+type NodeExecution struct {
+	ID     uuid.UUID `json:"id"`
+	Status string    `json:"status"`
+}
+
+// UpdateStatusRequest is the PUT body for the node-execution status endpoint.
+type UpdateStatusRequest struct {
+	Status       string `json:"status"`
+	Result       string `json:"result,omitempty"`
+	ArtifactRefs string `json:"artifact_refs,omitempty"`
+	PodName      string `json:"pod_name,omitempty"`
+	ErrorMessage string `json:"error_message,omitempty"`
+}
+
+// WriteLogRequest is the POST body for the node-execution logs endpoint.
+type WriteLogRequest struct {
+	Level   string `json:"level"`
+	Message string `json:"message"`
+}
+
+// GetNodeExecution reads the current status of a node execution from the API server.
+func (c *Client) GetNodeExecution(ctx context.Context, runID, nodeExecID uuid.UUID) (*NodeExecution, error) {
+	resp, err := c.doJSON(ctx, http.MethodGet, nodeExecPath(runID, nodeExecID), nil)
+	if err != nil {
+		return nil, fmt.Errorf("get node execution: %w", err)
+	}
+	var result NodeExecution
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("unmarshal node execution: %w", err)
+	}
+	return &result, nil
+}
+
+// UpdateNodeExecution updates the status and associated fields of a node execution.
+func (c *Client) UpdateNodeExecution(ctx context.Context, runID, nodeExecID uuid.UUID, req UpdateStatusRequest) error {
+	_, err := c.doJSON(ctx, http.MethodPut, nodeExecPath(runID, nodeExecID)+"/status", req)
+	if err != nil {
+		return fmt.Errorf("update node execution: %w", err)
+	}
+	return nil
+}
+
+// WriteExecutionLog appends a log line to a node execution's log stream.
+func (c *Client) WriteExecutionLog(ctx context.Context, runID, nodeExecID uuid.UUID, level, message string) {
+	_, _ = c.doJSON(ctx, http.MethodPost, nodeExecPath(runID, nodeExecID)+"/logs", WriteLogRequest{
+		Level:   level,
+		Message: message,
+	})
 }
 
 type createWorkloadRequest struct {

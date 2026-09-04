@@ -8,10 +8,12 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -64,18 +66,26 @@ type SecretHashResolver interface {
 // the resolver — so a signature drift there fails here at compile time, not at the Run() call site.
 var _ SecretHashResolver = executor.Executor(nil)
 
+// maxParkDuration is the longest quota park the Worker will schedule, matching the agent's own
+// limit. A resume_at beyond this degrades to the node's existing failure path rather than an
+// unbounded wait.
+const maxParkDuration = 6 * time.Hour
+
 // CompletionRequest is the agent-reported outcome of one node execution, as the callback handler
 // hands it to an ActivityCompleter.
 type CompletionRequest struct {
 	NodeExecutionID uuid.UUID
+	RunID           uuid.UUID
 	Status          string
 	Result          string
 	ErrorMessage    string
 	// ArtifactRefs is passed through verbatim as raw JSON -- entrypoint.sh always sends an
 	// object (e.g. {"output": "runs/.../out/"}, or {} when the node produced nothing), never
 	// an array, so a completer must not assume either shape and decode it itself.
-	ArtifactRefs json.RawMessage
-	SessionID    string
+	ArtifactRefs        json.RawMessage
+	SessionID           string
+	ResumeAt            time.Time
+	SessionArtifactPath string
 }
 
 // ActivityCompleter resolves the Temporal activity a node execution is blocked on. The concrete
@@ -83,6 +93,24 @@ type CompletionRequest struct {
 // caller — this package only depends on the interface, so it can be unit tested with a mock.
 type ActivityCompleter interface {
 	Complete(ctx context.Context, req CompletionRequest) error
+	Fail(ctx context.Context, executionID uuid.UUID, reason error) error
+}
+
+// StatusClient reads and writes node-execution state on the API server, for the finalized check
+// and best-effort DB writes the handler performs around the Temporal completion. The interface is
+// narrow: the handler needs exactly these three calls, and the concrete implementation resolves
+// the right per-Fleet workload client from the execution ID the same way the activity completer
+// does. A nil StatusClient is valid — the handler skips finalized check and DB writes.
+type StatusClient interface {
+	GetNodeExecution(ctx context.Context, runID, nodeExecID uuid.UUID) (NodeExecutionStatus, error)
+	UpdateNodeExecution(ctx context.Context, runID, nodeExecID uuid.UUID, status, result, artifactRefs, podName, errorMessage string) error
+	WriteExecutionLog(ctx context.Context, runID, nodeExecID uuid.UUID, level, message string)
+}
+
+// NodeExecutionStatus is the subset of a node execution the handler reads from the API server
+// to decide whether the callback is stale.
+type NodeExecutionStatus struct {
+	Status string
 }
 
 // Handler serves POST /api/v1/callback: an agent pod reporting that its node execution finished.
@@ -90,12 +118,33 @@ type Handler struct {
 	cache     *HashCache
 	resolver  SecretHashResolver
 	completer ActivityCompleter
+	status    StatusClient // nil skips finalized check and DB writes
 }
 
 // NewHandler constructs a Handler. resolver may be nil — verification then relies on cache alone,
-// which is sufficient in tests and whenever the cache is known to be warm.
-func NewHandler(cache *HashCache, resolver SecretHashResolver, completer ActivityCompleter) *Handler {
-	return &Handler{cache: cache, resolver: resolver, completer: completer}
+// which is sufficient in tests and whenever the cache is known to be warm. status may be nil —
+// finalized check and DB writes are skipped when it is.
+func NewHandler(cache *HashCache, resolver SecretHashResolver, completer ActivityCompleter, status StatusClient) *Handler {
+	return &Handler{cache: cache, resolver: resolver, completer: completer, status: status}
+}
+
+// formatParkWait renders a park duration the way an operator reads it: whole minutes, no
+// seconds component.
+func formatParkWait(d time.Duration) string {
+	d = d.Round(time.Minute)
+	if d < time.Minute {
+		return "<1m"
+	}
+	h := int(d / time.Hour)
+	m := int((d % time.Hour) / time.Minute)
+	switch {
+	case h == 0:
+		return fmt.Sprintf("%dm", m)
+	case m == 0:
+		return fmt.Sprintf("%dh", h)
+	default:
+		return fmt.Sprintf("%dh%dm", h, m)
+	}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -111,12 +160,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		NodeExecutionID string          `json:"node_execution_id"`
-		Status          string          `json:"status"`
-		Result          string          `json:"result"`
-		ErrorMessage    string          `json:"error_message"`
-		ArtifactRefs    json.RawMessage `json:"artifact_refs"`
-		SessionID       string          `json:"session_id"`
+		NodeExecutionID     string          `json:"node_execution_id"`
+		RunID               string          `json:"run_id"`
+		Status              string          `json:"status"`
+		Result              string          `json:"result"`
+		ErrorMessage        string          `json:"error_message"`
+		ArtifactRefs        json.RawMessage `json:"artifact_refs"`
+		SessionID           string          `json:"session_id"`
+		ResumeAt            *time.Time      `json:"resume_at"`
+		SessionArtifactPath string          `json:"session_artifact_path"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -129,13 +181,98 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !verifySecret(r.Context(), h.cache, h.resolver, execID, bearer) {
+	runID, err := uuid.Parse(body.RunID)
+	if err != nil {
+		http.Error(w, "invalid run_id", http.StatusBadRequest)
+		return
+	}
+
+	ctx := r.Context()
+
+	if !verifySecret(ctx, h.cache, h.resolver, execID, bearer) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	err = h.completer.Complete(r.Context(), CompletionRequest{
+	// --- Behavior 1: finalized check ---
+	if h.status != nil {
+		nodeExec, err := h.status.GetNodeExecution(ctx, runID, execID)
+		if err != nil {
+			slog.Error("failed to get node execution for finalized check", "execution_id", execID, "error", err)
+			// Continue without the check rather than rejecting a valid callback.
+		} else {
+			switch nodeExec.Status {
+			case "completed", "failed", "invalidated", "paused":
+				http.Error(w, "node execution already finalized", http.StatusConflict)
+				return
+			}
+		}
+	}
+
+	// --- Behavior 2: empty-result rejection ---
+	if body.Status == "completed" && strings.TrimSpace(body.Result) == "" {
+		if err := h.completer.Fail(ctx, execID,
+			fmt.Errorf("node reported completed but result is empty")); err != nil {
+			slog.Error("failed to fail activity for empty result", "execution_id", execID, "error", err)
+		}
+		if h.status != nil {
+			errMsg := "completed with empty result"
+			if err := h.status.UpdateNodeExecution(ctx, runID, execID,
+				"failed", "", "", "", errMsg); err != nil {
+				slog.Error("failed to update node execution for empty result", "execution_id", execID, "error", err)
+			}
+			h.status.WriteExecutionLog(ctx, runID, execID, "warn",
+				"Callback rejected: node reported completed but result is empty — failing activity for retry")
+		}
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"status": "rejected", "reason": "empty result"})
+		return
+	}
+
+	// --- Behavior 3: rate-limited ---
+	if body.Status == "rate_limited" {
+		if body.ResumeAt == nil {
+			http.Error(w, "rate_limited requires resume_at", http.StatusBadRequest)
+			return
+		}
+		wait := time.Until(*body.ResumeAt)
+		if wait > maxParkDuration {
+			http.Error(w, "rate_limited requires resume_at within "+maxParkDuration.String(),
+				http.StatusBadRequest)
+			return
+		}
+
+		if err := h.completer.Complete(ctx, CompletionRequest{
+			NodeExecutionID:     execID,
+			RunID:               runID,
+			Status:              "rate_limited",
+			ResumeAt:            *body.ResumeAt,
+			SessionID:           body.SessionID,
+			SessionArtifactPath: body.SessionArtifactPath,
+		}); err != nil {
+			slog.Error("failed to complete rate-limited activity", "execution_id", execID, "error", err)
+		}
+
+		// Clear the pod reference so the UI does not point at a deleted pod.
+		if h.status != nil {
+			if err := h.status.UpdateNodeExecution(ctx, runID, execID,
+				"running", "", "", "", ""); err != nil {
+				slog.Error("failed to clear pod_name for rate-limited", "execution_id", execID, "error", err)
+			}
+			h.status.WriteExecutionLog(ctx, runID, execID, "info",
+				fmt.Sprintf("Claude quota exhausted. Resuming automatically at %s (in ~%s). No action needed.",
+					body.ResumeAt.UTC().Format("15:04 UTC"), formatParkWait(wait)))
+		}
+
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"status": "parked"})
+		return
+	}
+
+	// --- Normal completion / failure ---
+	err = h.completer.Complete(ctx, CompletionRequest{
 		NodeExecutionID: execID,
+		RunID:           runID,
 		Status:          body.Status,
 		Result:          body.Result,
 		ErrorMessage:    body.ErrorMessage,
@@ -148,7 +285,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// --- Behavior 4: best-effort DB writes ---
+	if h.status != nil {
+		if err := h.status.UpdateNodeExecution(ctx, runID, execID,
+			body.Status, body.Result, string(body.ArtifactRefs), "", body.ErrorMessage); err != nil {
+			slog.Error("failed to update node execution after completion", "execution_id", execID, "error", err)
+		}
+		h.status.WriteExecutionLog(ctx, runID, execID, "info",
+			fmt.Sprintf("Callback received: status=%s result=%s", body.Status, body.Result))
+	}
+
 	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
 }
 
 // verifySecret checks bearer against the hash on record for execID, resolving and caching it

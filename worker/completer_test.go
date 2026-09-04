@@ -3,7 +3,9 @@ package worker
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -169,6 +171,68 @@ func TestActivityCompleter_Complete_TemporalError_KeepsPendingForRetry(t *testin
 	err := c.Complete(context.Background(), callback.CompletionRequest{NodeExecutionID: execID, Status: "completed"})
 	assert.Error(t, err)
 	assert.False(t, pending.removed[execID], "a failed Temporal call must not be treated as delivered")
+}
+
+func TestActivityCompleter_Fail(t *testing.T) {
+	execID := uuid.New()
+	pending := newFakePending()
+	pending.entries[execID] = activity.PendingCompletion{
+		Namespace: "ns", TaskQueue: "q", WorkflowID: "wf", ActivityID: execID.String(),
+	}
+	fake := &fakeTemporalClient{}
+	c := newActivityCompleter(pending, singleClientResolver{namespace: "ns", taskQueue: "q", client: fake})
+
+	err := c.Fail(context.Background(), execID, fmt.Errorf("empty result"))
+	assert.NoError(t, err)
+
+	if assert.Len(t, fake.calls, 1) {
+		assert.Nil(t, fake.calls[0].result, "Fail must not report a result")
+		assert.Error(t, fake.calls[0].err)
+		assert.Contains(t, fake.calls[0].err.Error(), "empty result")
+	}
+	assert.True(t, pending.removed[execID])
+}
+
+func TestActivityCompleter_Fail_NoPending_ReturnsError(t *testing.T) {
+	fake := &fakeTemporalClient{}
+	c := newActivityCompleter(newFakePending(), singleClientResolver{client: fake})
+
+	err := c.Fail(context.Background(), uuid.New(), fmt.Errorf("reason"))
+	assert.Error(t, err)
+	assert.Empty(t, fake.calls)
+}
+
+func TestActivityCompleter_Complete_RateLimited(t *testing.T) {
+	execID := uuid.New()
+	pending := newFakePending()
+	pending.entries[execID] = activity.PendingCompletion{
+		Namespace: "ns", TaskQueue: "q", WorkflowID: "wf", ActivityID: execID.String(),
+	}
+	fake := &fakeTemporalClient{}
+	c := newActivityCompleter(pending, singleClientResolver{namespace: "ns", taskQueue: "q", client: fake})
+
+	resumeAt := time.Now().Add(30 * time.Minute).UTC()
+	err := c.Complete(context.Background(), callback.CompletionRequest{
+		NodeExecutionID:     execID,
+		Status:              "rate_limited",
+		ResumeAt:            resumeAt,
+		SessionID:           "sess-1",
+		SessionArtifactPath: "/path/to/transcript",
+	})
+	assert.NoError(t, err)
+
+	if assert.Len(t, fake.calls, 1) {
+		call := fake.calls[0]
+		assert.Nil(t, call.err, "rate_limited must NOT fail the activity")
+		result, ok := call.result.(activity.CallbackResult)
+		if assert.True(t, ok) {
+			assert.Equal(t, "rate_limited", result.Status)
+			assert.WithinDuration(t, resumeAt, result.ResumeAt, time.Second)
+			assert.Equal(t, "sess-1", result.SessionID)
+			assert.Equal(t, "/path/to/transcript", result.SessionArtifactPath)
+		}
+	}
+	assert.True(t, pending.removed[execID])
 }
 
 func TestActivityCompleter_RecordHeartbeat(t *testing.T) {
