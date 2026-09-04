@@ -4,12 +4,17 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/mount"
+	dclient "github.com/docker/docker/client"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -82,6 +87,64 @@ func TestRegistryAuthHeader_MatchesHost(t *testing.T) {
 
 // --- Docker-daemon-backed tests ---
 
+var (
+	bindMountOnce   sync.Once
+	bindMountWorks  bool
+	bindMountReason string
+)
+
+// probeBindMount checks whether the Docker daemon can see files this process creates on disk.
+// DinD setups where the daemon runs in a different mount namespace fail silently — the
+// ContainerCreate call returns "bind source path does not exist" instead of a usable container.
+func probeBindMount() {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cli, err := dclient.NewClientWithOpts(dclient.WithHost("unix:///var/run/docker.sock"), dclient.WithAPIVersionNegotiation())
+	if err != nil {
+		bindMountReason = fmt.Sprintf("docker client: %v", err)
+		return
+	}
+	defer cli.Close()
+
+	dir, err := os.MkdirTemp("", "ck-bind-probe-")
+	if err != nil {
+		bindMountReason = fmt.Sprintf("mktempdir: %v", err)
+		return
+	}
+	defer os.RemoveAll(dir)
+
+	probe := filepath.Join(dir, "probe")
+	if err := os.WriteFile(probe, []byte("ok"), 0o644); err != nil {
+		bindMountReason = fmt.Sprintf("write probe: %v", err)
+		return
+	}
+
+	resp, err := cli.ContainerCreate(ctx, &container.Config{
+		Image: "alpine:latest",
+		Cmd:   []string{"cat", "/mnt/probe"},
+	}, &container.HostConfig{
+		Mounts: []mount.Mount{{Type: mount.TypeBind, Source: probe, Target: "/mnt/probe", ReadOnly: true}},
+	}, nil, nil, "ck-bind-probe-"+uuid.New().String()[:8])
+	if err != nil {
+		bindMountReason = fmt.Sprintf("bind mount not visible to daemon: %v", err)
+		return
+	}
+	_ = cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	bindMountWorks = true
+}
+
+func skipUnlessBindMountWorks(t *testing.T) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("requires Docker daemon")
+	}
+	bindMountOnce.Do(probeBindMount)
+	if !bindMountWorks {
+		t.Skipf("Docker bind mounts unavailable: %s", bindMountReason)
+	}
+}
+
 func newTestExecutor(t *testing.T) *DockerExecutor {
 	t.Helper()
 	exec, err := New(Config{
@@ -94,9 +157,7 @@ func newTestExecutor(t *testing.T) *DockerExecutor {
 }
 
 func TestDockerExecutor_Execute_CreatesContainer(t *testing.T) {
-	if testing.Short() {
-		t.Skip("requires Docker daemon")
-	}
+	skipUnlessBindMountWorks(t)
 
 	exec := newTestExecutor(t)
 
@@ -150,9 +211,7 @@ func TestDockerExecutor_Execute_CreatesContainer(t *testing.T) {
 }
 
 func TestDockerExecutor_ResolveJobSecretHash(t *testing.T) {
-	if testing.Short() {
-		t.Skip("requires Docker daemon")
-	}
+	skipUnlessBindMountWorks(t)
 
 	exec := newTestExecutor(t)
 
@@ -178,9 +237,7 @@ func TestDockerExecutor_ResolveJobSecretHash(t *testing.T) {
 }
 
 func TestDockerExecutor_ResolveJobSecretHash_MissingContainerReturnsError(t *testing.T) {
-	if testing.Short() {
-		t.Skip("requires Docker daemon")
-	}
+	skipUnlessBindMountWorks(t)
 
 	exec := newTestExecutor(t)
 	_, err := exec.ResolveJobSecretHash(context.Background(), uuid.New())
@@ -188,9 +245,7 @@ func TestDockerExecutor_ResolveJobSecretHash_MissingContainerReturnsError(t *tes
 }
 
 func TestDockerExecutor_Execute_ScriptExecutionSetsE2EWorkers(t *testing.T) {
-	if testing.Short() {
-		t.Skip("requires Docker daemon")
-	}
+	skipUnlessBindMountWorks(t)
 
 	exec := newTestExecutor(t)
 	params := executor.ExecutionParams{
@@ -215,9 +270,7 @@ func TestDockerExecutor_Execute_ScriptExecutionSetsE2EWorkers(t *testing.T) {
 }
 
 func TestDockerExecutor_Execute_NonScriptSkipsE2EWorkers(t *testing.T) {
-	if testing.Short() {
-		t.Skip("requires Docker daemon")
-	}
+	skipUnlessBindMountWorks(t)
 
 	exec := newTestExecutor(t)
 	params := executor.ExecutionParams{
@@ -244,9 +297,7 @@ func TestDockerExecutor_Execute_NonScriptSkipsE2EWorkers(t *testing.T) {
 }
 
 func TestDockerExecutor_Cleanup_IdempotentWhenContainerMissing(t *testing.T) {
-	if testing.Short() {
-		t.Skip("requires Docker daemon")
-	}
+	skipUnlessBindMountWorks(t)
 
 	exec := newTestExecutor(t)
 	err := exec.Cleanup(context.Background(), uuid.New())
@@ -254,9 +305,7 @@ func TestDockerExecutor_Cleanup_IdempotentWhenContainerMissing(t *testing.T) {
 }
 
 func TestDockerExecutor_Terminate_IdempotentWhenContainerMissing(t *testing.T) {
-	if testing.Short() {
-		t.Skip("requires Docker daemon")
-	}
+	skipUnlessBindMountWorks(t)
 
 	exec := newTestExecutor(t)
 	err := exec.Terminate(context.Background(), uuid.New())
@@ -264,9 +313,7 @@ func TestDockerExecutor_Terminate_IdempotentWhenContainerMissing(t *testing.T) {
 }
 
 func TestDockerExecutor_GetLogs_ReturnsContainerOutput(t *testing.T) {
-	if testing.Short() {
-		t.Skip("requires Docker daemon")
-	}
+	skipUnlessBindMountWorks(t)
 
 	exec := newTestExecutor(t)
 	params := executor.ExecutionParams{
@@ -290,18 +337,14 @@ func TestDockerExecutor_GetLogs_ReturnsContainerOutput(t *testing.T) {
 }
 
 func TestDockerExecutor_HealthCheck_Succeeds(t *testing.T) {
-	if testing.Short() {
-		t.Skip("requires Docker daemon")
-	}
+	skipUnlessBindMountWorks(t)
 
 	exec := newTestExecutor(t)
 	assert.NoError(t, exec.HealthCheck(context.Background()))
 }
 
 func TestDockerExecutor_Execute_StagesRegistryAuthConfig(t *testing.T) {
-	if testing.Short() {
-		t.Skip("requires Docker daemon")
-	}
+	skipUnlessBindMountWorks(t)
 
 	exec := newTestExecutor(t)
 	params := executor.ExecutionParams{
@@ -348,9 +391,7 @@ func TestDockerExecutor_Execute_StagesRegistryAuthConfig(t *testing.T) {
 }
 
 func TestDockerExecutor_Execute_WithDinD_SetsDockerHostEnv(t *testing.T) {
-	if testing.Short() {
-		t.Skip("requires Docker daemon")
-	}
+	skipUnlessBindMountWorks(t)
 
 	exec, err := New(Config{
 		Host:             "unix:///var/run/docker.sock",
@@ -405,9 +446,7 @@ func TestDockerExecutor_Execute_WithDinD_SetsDockerHostEnv(t *testing.T) {
 }
 
 func TestDockerExecutor_Execute_WritesConfigJSONToStagingDir(t *testing.T) {
-	if testing.Short() {
-		t.Skip("requires Docker daemon")
-	}
+	skipUnlessBindMountWorks(t)
 
 	stagingDir := t.TempDir()
 	exec, err := New(Config{
