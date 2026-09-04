@@ -99,6 +99,7 @@ locally and to self-host.
 |-----------|-------|----------------|
 | **api-server** | Java / Spring Boot | Source of truth for state; owns the workload executor (Docker locally, Kubernetes Jobs in a cluster); REST API; STOMP/WebSocket broadcasts. |
 | **orchestrator** | Go + Temporal | Drives the graph; delegates all container lifecycle to the api-server over HTTP. |
+| **worker** | Go + Temporal | Runs executors (Docker, Kubernetes) and the agent callback server; receives work from Fleets. |
 | **web-ui** | React + Vite | Graph visualization, live run monitoring, human-approval gates; subscribes to WebSocket events. |
 | **agent images** | container images | The containers a node runs in — the AI agent (Claude Code) and a fuller dev image built on top of it. |
 

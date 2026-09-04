@@ -38,6 +38,8 @@ the API is open and every request is scoped to a seeded "system" organization.
   workload executor (Docker locally, Kubernetes Jobs in a cluster).
 - **orchestrator** — Go + Temporal. Drives the graph; delegates all container
   lifecycle to the api-server over HTTP.
+- **worker** — Go + Temporal. Runs executors (Docker, Kubernetes) and the
+  agent callback server; receives work from Fleets.
 - **web-ui** — React + Vite. Graph visualization, live monitoring, approval gates.
 - **agent images** — `claude-code` (the AI agent) and `choruskube-dev` (a fuller
   dev toolchain on top).
