@@ -7,7 +7,7 @@ ChorusKube lets you define work as a directed graph — AI tasks, scripts, and
 human-approval gates — and runs each node as an isolated container, so agents
 do the work while you keep control. AI nodes run [Claude Code](https://claude.com/claude-code)
 against a target git repo; a Temporal-backed orchestrator drives the graph and
-the API server owns the container lifecycle.
+a Worker owns the container lifecycle.
 
 This is the open-source core: single-tenant, no external identity provider —
 the API is open and every request is scoped to a seeded "system" organization.
@@ -34,10 +34,10 @@ the API is open and every request is scoped to a seeded "system" organization.
 
 ## Components
 
-- **api-server** — Spring Boot (Java 25). Source of truth for run state; owns the
-  workload executor (Docker locally, Kubernetes Jobs in a cluster).
-- **orchestrator** — Go + Temporal. Drives the graph; delegates all container
-  lifecycle to the api-server over HTTP.
+- **api-server** — Spring Boot (Java 25). Source of truth for run state; resolves
+  per-run credentials and records Worker-reported execution state.
+- **orchestrator** — Go + Temporal. Drives the graph; dispatches each node as a
+  Temporal activity for a Worker to execute.
 - **worker** — Go + Temporal. Runs executors (Docker, Kubernetes) and the
   agent callback server; receives work from Fleets.
 - **web-ui** — React + Vite. Graph visualization, live monitoring, approval gates.

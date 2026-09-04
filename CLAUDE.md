@@ -44,7 +44,7 @@ cd api-server && ./gradlew jacocoTestCoverageVerification
 - All internal packages live under `internal/` — nothing is exported outside the module
 - Temporal workflows must be **deterministic**: no `time.Now()`, no `rand`, no network calls inside workflow functions — use activities for side effects
 - Temporal signals use per-execution names: `human-decision-{execID}` (not global)
-- The orchestrator does **not** create containers — it delegates to the API server's workload executor over HTTP
+- The orchestrator does **not** create containers — it dispatches each node as a Temporal activity that a Worker picks up and executes
 - Tests use `github.com/stretchr/testify` — prefer `assert` and `require`
 - Error handling: return errors, don't panic; wrap with `fmt.Errorf("context: %w", err)`
 
@@ -118,7 +118,7 @@ The entrypoint passes every clone to Claude Code as a working directory (`--add-
 
 ## Local Stack
 
-`docker-compose.yaml` is the reference environment: API server, orchestrator, web UI, PostgreSQL, Temporal, and MinIO-compatible object storage. `SingleTenantDockerExecutor` launches agent containers as siblings on the host Docker socket, so the local stack exercises the real workload path, not a stub. Bring it up with `./scripts/up.sh` and down (wiping volumes) with `./scripts/down.sh` — see [QUICKSTART.md](QUICKSTART.md#quick-start).
+`docker-compose.yaml` is the reference environment: API server, orchestrator, worker, web UI, PostgreSQL, Temporal, and MinIO-compatible object storage. A Worker runs the Docker executor, launching agent containers as siblings on the host Docker socket, so the local stack exercises the real workload path, not a stub. Bring it up with `./scripts/up.sh` and down (wiping volumes) with `./scripts/down.sh` — see [QUICKSTART.md](QUICKSTART.md#quick-start).
 
 **Keep `docker-compose.yaml` in sync when touching wiring:**
 - **New API env var / secret** → supply a working default in `docker-compose.yaml` so the stack boots from a clean volume with **zero configuration** (the OSS promise: no OIDC, no GitHub App, no Claude token required just to come up)
@@ -144,7 +144,8 @@ The entrypoint passes every clone to Claude Code as a working directory (`--add-
 
 ## Architecture Rules
 
-- The **API server owns the workload executor** — it creates and manages the agent containers (Docker locally, Kubernetes Jobs in a cluster). The orchestrator delegates container lifecycle to the API server over HTTP; it never creates containers directly
+- The **Worker owns the workload executor** — it creates and manages the agent containers (a Docker container locally, a Kubernetes Job in a cluster) for each node execution. The orchestrator dispatches node work as Temporal activities; it never creates containers directly
+- **The workload executor is tenant-agnostic** — it launches into a namespace, service account, and credentials it is *given*, and never resolves an organization, namespace, or credential itself. The API server resolves per-run credentials (workload `prepare`) and records execution state (workload `complete`); it is the source of truth for state but is out of the execution hot path
 - Workflows are Temporal workflows — all side effects must be in activities, not workflow functions
 - The API server is the single source of truth for run/execution state (PostgreSQL)
 - WebSocket events (STOMP) broadcast state changes — the web UI subscribes, never polls
