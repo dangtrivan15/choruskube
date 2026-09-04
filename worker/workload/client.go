@@ -144,6 +144,89 @@ func (c *Client) CleanupWorkload(ctx context.Context, runID, nodeExecID uuid.UUI
 	return nil
 }
 
+// prepareWorkloadRequest mirrors createWorkloadRequest: the API server resolves EnableDocker in
+// PrepareResponse from ConfigJSON's executor_type, so prepare must send the same config a create
+// call would, not just the template node id.
+type prepareWorkloadRequest struct {
+	TemplateNodeID uuid.UUID              `json:"templateNodeId"`
+	ConfigJSON     map[string]interface{} `json:"configJson"`
+}
+
+// RegistryCredentials is a container registry login a Worker needs to pull a private agent image.
+type RegistryCredentials struct {
+	Host     string `json:"host"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+// PrepareResponse is what a Worker needs to launch a workload itself, resolved server-side from
+// the stored graph snapshot and DB-held secrets.
+type PrepareResponse struct {
+	Image            string               `json:"image"`
+	EnableDocker     bool                 `json:"enableDocker"`
+	ClaudeOAuthToken string               `json:"claudeOAuthToken"`
+	GitHubTokenURL   string               `json:"githubTokenUrl"`
+	Registry         *RegistryCredentials `json:"registryCredentials"`
+	Namespace        string               `json:"namespace"`
+	ServiceAccount   string               `json:"serviceAccount"`
+}
+
+// PrepareParams contains everything needed to resolve a workload's launch inputs via the API
+// server, without asking it to launch the container.
+type PrepareParams struct {
+	RunID          uuid.UUID
+	NodeExecID     uuid.UUID
+	TemplateNodeID uuid.UUID
+	ConfigJSON     map[string]interface{}
+}
+
+// PrepareWorkload resolves everything a Worker needs to launch this workload itself — image,
+// credentials, and identity — without the API server launching the container. It is the
+// counterpart to CreateWorkload for the case where the Worker runs the container.
+func (c *Client) PrepareWorkload(ctx context.Context, params PrepareParams) (*PrepareResponse, error) {
+	body := prepareWorkloadRequest{
+		TemplateNodeID: params.TemplateNodeID,
+		ConfigJSON:     params.ConfigJSON,
+	}
+	path := workloadPath(params.RunID, params.NodeExecID) + "/prepare"
+	resp, err := c.doJSON(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return nil, fmt.Errorf("prepare workload: %w", err)
+	}
+	var result PrepareResponse
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("unmarshal prepare workload response: %w", err)
+	}
+	return &result, nil
+}
+
+// CompleteRequest is the wire body CompleteWorkload sends: what a Worker reports back after it
+// has launched a workload on its own.
+type CompleteRequest struct {
+	PodName       string `json:"podName"`
+	JobSecretHash string `json:"jobSecretHash"`
+}
+
+// CompleteParams identifies the node execution CompleteWorkload records completion for.
+type CompleteParams struct {
+	RunID         uuid.UUID
+	NodeExecID    uuid.UUID
+	PodName       string
+	JobSecretHash string
+}
+
+// CompleteWorkload records the pod name and job secret hash for a workload the Worker launched
+// itself, and transitions the node execution to running. It mirrors the DB-write tail
+// CreateWorkload performs atomically when the API server is the one launching the container.
+func (c *Client) CompleteWorkload(ctx context.Context, params CompleteParams) error {
+	body := CompleteRequest{PodName: params.PodName, JobSecretHash: params.JobSecretHash}
+	path := workloadPath(params.RunID, params.NodeExecID) + "/complete"
+	if _, err := c.doJSON(ctx, http.MethodPost, path, body); err != nil {
+		return fmt.Errorf("complete workload: %w", err)
+	}
+	return nil
+}
+
 // GetWorkloadLogs returns recent log output from the agent container.
 func (c *Client) GetWorkloadLogs(ctx context.Context, runID, nodeExecID uuid.UUID, tailLines int) (string, error) {
 	path := workloadPath(runID, nodeExecID) + fmt.Sprintf("/logs?tailLines=%d", tailLines)
