@@ -150,7 +150,6 @@ services:
       # sibling agent container bind-mounts. The host daemon resolves the bind source against the
       # HOST filesystem, so this dir is mounted at an IDENTICAL path on host and container (below).
       AGENT_STAGING_DIR: *agent-staging-dir
-      CALLBACK_URL: http://orchestrator:9090/api/v1/callback
       API_SERVER_URL: http://api-server:8080
       ORCHESTRATOR_SECRET_HASH: fcb34c11ecbf6914ad43903e539ade6901f864d9772c36e63a78c2488cd0958a
       # DEFAULT_AGENT_IMAGE / CHORUSKUBE_REPO_AGENT_IMAGE are intentionally UNSET —
@@ -218,14 +217,12 @@ services:
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_NAMESPACE: default
       TEMPORAL_TASK_QUEUE: choruskube
-      CALLBACK_PORT: "9090"
-      CALLBACK_URL: http://orchestrator:9090/api/v1/callback
       OBJECT_STORE_ENDPOINT: http://object-storage:9000
       OBJECT_STORE_ACCESS_KEY: minioadmin
       OBJECT_STORE_SECRET_KEY: minioadmin
       OBJECT_STORE_BUCKET: choruskube
     ports:
-      - "39090:9090"
+      - "39080:8080"
     networks:
       - choruskube
     depends_on:
@@ -234,7 +231,7 @@ services:
       temporal:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/healthz | grep -q healthy"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/healthz | grep -q healthy"]
       interval: 10s
       timeout: 5s
       retries: 10

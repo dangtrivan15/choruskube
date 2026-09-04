@@ -58,9 +58,6 @@ class RunServiceNodeExecutionScopingTest {
     private GitRepoRepository gitRepoRepo;
 
     @Mock
-    private WorkloadService workloadService;
-
-    @Mock
     private AuditSink auditService;
 
     @Mock
@@ -85,7 +82,6 @@ class RunServiceNodeExecutionScopingTest {
                 objectMapper,
                 eventPublisher,
                 gitRepoRepo,
-                workloadService,
                 new AuthorizationService(new AlwaysAllowAuthorizationStrategy(), false),
                 Optional.empty(), // quotaService
                 null, // placements
@@ -149,7 +145,5 @@ class RunServiceNodeExecutionScopingTest {
         stubForeignExec(NodeExecutionStatus.failed);
 
         assertThrows(NotFoundException.class, () -> service.retryNode(runId, foreignExecId));
-
-        verifyNoInteractions(workloadService);
     }
 }

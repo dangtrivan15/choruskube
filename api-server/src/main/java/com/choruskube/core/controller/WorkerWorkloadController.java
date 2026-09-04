@@ -3,9 +3,7 @@ package com.choruskube.core.controller;
 import com.choruskube.core.config.WorkerAuthFilter;
 import com.choruskube.core.dto.CompleteWorkloadRequest;
 import com.choruskube.core.dto.CreateWorkloadRequest;
-import com.choruskube.core.dto.CreateWorkloadResponse;
 import com.choruskube.core.dto.PrepareWorkloadResponse;
-import com.choruskube.core.dto.WorkloadLogsResponse;
 import com.choruskube.core.service.SingleFleetWorkerAuthorizer;
 import com.choruskube.core.service.WorkerAuthorizer;
 import com.choruskube.core.service.WorkloadService;
@@ -15,13 +13,10 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.DeleteMapping;
-import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -30,8 +25,6 @@ import org.springframework.web.bind.annotation.RestController;
  * <p>They live under {@code /worker/**} rather than beside the orchestrator's routes so that what a
  * Worker can reach is a route list rather than a pattern to reason about. Every route names its run,
  * which is what lets one authorization call cover the surface.
- *
- * <p>The orchestrator's {@code /internal/workloads/**} routes are unchanged and still serve it.
  */
 @RestController
 @RequestMapping("/worker/runs/{runId}/node-executions/{nodeExecId}/workload")
@@ -46,33 +39,6 @@ public class WorkerWorkloadController {
             WorkloadService workloadService) {
         this.authorizer = authorizerProvider.getIfAvailable(() -> new SingleFleetWorkerAuthorizer(registrationToken));
         this.workloadService = workloadService;
-    }
-
-    @PostMapping
-    public ResponseEntity<CreateWorkloadResponse> createWorkload(
-            HttpServletRequest httpRequest,
-            @PathVariable UUID runId,
-            @PathVariable UUID nodeExecId,
-            @RequestBody CreateWorkloadRequest request) {
-        String credential = credentialOf(httpRequest);
-        if (credential == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
-        }
-        authorizer.requireMayActOn(credential, runId);
-        return ResponseEntity.status(HttpStatus.CREATED)
-                .body(workloadService.createWorkload(runId, nodeExecId, request));
-    }
-
-    @DeleteMapping
-    public ResponseEntity<Void> cleanupWorkload(
-            HttpServletRequest httpRequest, @PathVariable UUID runId, @PathVariable UUID nodeExecId) {
-        String credential = credentialOf(httpRequest);
-        if (credential == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
-        }
-        authorizer.requireMayActOn(credential, runId);
-        workloadService.cleanupWorkload(runId, nodeExecId);
-        return ResponseEntity.noContent().build();
     }
 
     @PostMapping("/prepare")
@@ -102,20 +68,6 @@ public class WorkerWorkloadController {
         authorizer.requireMayActOn(credential, runId);
         workloadService.completeWorkload(runId, nodeExecId, request);
         return ResponseEntity.ok().build();
-    }
-
-    @GetMapping("/logs")
-    public ResponseEntity<WorkloadLogsResponse> getWorkloadLogs(
-            HttpServletRequest httpRequest,
-            @PathVariable UUID runId,
-            @PathVariable UUID nodeExecId,
-            @RequestParam(defaultValue = "50") int tailLines) {
-        String credential = credentialOf(httpRequest);
-        if (credential == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
-        }
-        authorizer.requireMayActOn(credential, runId);
-        return ResponseEntity.ok(workloadService.getWorkloadLogs(runId, nodeExecId, tailLines));
     }
 
     /**

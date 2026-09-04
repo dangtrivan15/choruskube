@@ -29,7 +29,6 @@ class RunServiceInputValidationTest {
                 new ObjectMapper(),
                 null,
                 null,
-                null,
                 new AuthorizationService(new AlwaysAllowAuthorizationStrategy(), false),
                 Optional.empty(), // quotaService
                 null, // placements

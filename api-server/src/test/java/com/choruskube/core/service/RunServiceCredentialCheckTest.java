@@ -131,7 +131,6 @@ class RunServiceCredentialCheckTest {
                 objectMapper,
                 eventPublisher,
                 gitRepoRepo,
-                null,
                 new AuthorizationService(new AlwaysAllowAuthorizationStrategy(), false),
                 Optional.of(quotaService),
                 placements,

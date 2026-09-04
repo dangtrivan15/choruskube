@@ -59,7 +59,6 @@ public class RunService {
     private final ObjectMapper objectMapper;
     private final RunEventPublisher eventPublisher;
     private final GitRepoRepository gitRepoRepo;
-    private final WorkloadService workloadService;
     private final AuthorizationService authService;
     private final Optional<QuotaChecker> quotaService;
     private final RunPlacementService placements;
@@ -104,7 +103,6 @@ public class RunService {
             ObjectMapper objectMapper,
             RunEventPublisher eventPublisher,
             GitRepoRepository gitRepoRepo,
-            WorkloadService workloadService,
             AuthorizationService authService,
             Optional<QuotaChecker> quotaService,
             RunPlacementService placements,
@@ -139,7 +137,6 @@ public class RunService {
         this.objectMapper = objectMapper;
         this.eventPublisher = eventPublisher;
         this.gitRepoRepo = gitRepoRepo;
-        this.workloadService = workloadService;
         this.authService = authService;
         this.quotaService = quotaService;
         this.placements = placements;
@@ -354,15 +351,6 @@ public class RunService {
         authService.checkOrgAccess("workflow_run", id);
         rejectIfTerminal(run, "pause");
         signalWorkflowOrThrow(run, "pause");
-        // Delete K8s jobs for running nodes immediately to avoid orphaned pods
-        // while the run is paused. After the pod is gone, Temporal's heartbeat
-        // timeout (≤15 min) will fire, transition the node to failed, and move
-        // the run into awaiting_retry. The user must explicitly retry nodes on resume.
-        for (NodeExecution exec : execRepo.findByWorkflowRunId(id)) {
-            if (exec.getStatus() == NodeExecutionStatus.running) {
-                cleanupWorkloadQuietly(exec.getId());
-            }
-        }
         auditSink.record(AuditSink.RUN_PAUSED, "workflow_run", id, null);
     }
 
@@ -394,13 +382,6 @@ public class RunService {
                 NodeExecutionStatus.live_chat);
         for (NodeExecution exec : execRepo.findByWorkflowRunId(id)) {
             if (activeStatuses.contains(exec.getStatus())) {
-                // Hard-kill any live workload before marking skipped. Fire-and-forget:
-                // a missing or already-gone workload is fine — the Temporal cancel
-                // signal would otherwise leave the pod running until its activity
-                // timeout eventually fires.
-                if (exec.getStatus() == NodeExecutionStatus.running) {
-                    cleanupWorkloadQuietly(exec.getId());
-                }
                 exec.setStatus(NodeExecutionStatus.skipped);
                 execRepo.save(exec);
                 eventPublisher.publishNodeStatusChanged(id, exec.getId(), "skipped");
@@ -427,25 +408,11 @@ public class RunService {
                     List.of("Cannot retry node: node status is " + exec.getStatus() + ", expected failed"));
         }
 
-        // Hard-kill any lingering workload for this execution before signaling retry.
-        // Covers the zombie-pod case where Temporal timed out the activity but the
-        // agent pod is still running — retrying without terminating first would
-        // leave two agents racing on the same working branch.
-        cleanupWorkloadQuietly(nodeExecId);
-
         WorkflowStub stub =
                 workflowClients.clientFor(run.getTemporalNamespace()).newUntypedWorkflowStub(run.getExternalRunId());
         Map<String, String> payload =
                 Map.of("templateNodeId", exec.getTemplateNodeId().toString());
         stub.signal("retry-node", payload);
-    }
-
-    private void cleanupWorkloadQuietly(UUID nodeExecId) {
-        try {
-            workloadService.cleanupWorkload(nodeExecId);
-        } catch (Exception e) {
-            logger.warn("cleanupWorkload failed for {} (likely already gone): {}", nodeExecId, e.getMessage());
-        }
     }
 
     /**

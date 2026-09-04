@@ -101,7 +101,6 @@ class RunServiceSoftwareProjectDisplayTest {
                 objectMapper,
                 eventPublisher,
                 gitRepoRepo,
-                null, // workloadService
                 new AuthorizationService(new AlwaysAllowAuthorizationStrategy(), false),
                 Optional.empty(), // quotaService
                 null, // placements

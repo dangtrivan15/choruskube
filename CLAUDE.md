@@ -66,7 +66,7 @@ cd api-server && ./gradlew jacocoTestCoverageVerification
 - Agent entrypoint is `agent-images/claude-code/entrypoint.sh` — changes affect all agent pods and ship via the published agent image
 - The dev image (`agent-images/choruskube-dev`) builds on top of `claude-code` with a fuller toolchain
 - Agent-facing CLI scripts (on PATH in the agent image): `report-result`, `fetch-github-token`, `check-decision`, `list-decisions`, `artifact`, `create-proposal`, `list-proposals`, `update-proposal`, `register-pr`, `check-prs`, `run-all-tests`, `get-roadmap-graph`, `update-task-status`, `create-dependency`, `create-milestone`
-- Entrypoint-only scripts: `send-heartbeat`, `send-callback`, `live-chat-loop`
+- Entrypoint-only scripts: `send-heartbeat`, `send-callback`
 - All scripts use `JOB_SECRET` Bearer auth for API calls
 - Agents access object storage through **presigned URLs** issued by the API server (`artifact` CLI) — object-store credentials never enter the pod
 
@@ -77,7 +77,7 @@ cd api-server && ./gradlew jacocoTestCoverageVerification
 - Naming: `V{next}__{snake_case_description}.sql`
 - NEVER modify an existing migration file — always create a new one
 - NEVER use Flyway undo/rollback — write forward-only migrations
-- Custom enum types exist: `executor_type`, `workflow_run_status`, `node_execution_status`, `log_level`, `reviewer_type`, `provisioning_status`, `live_chat_status`, `work_item_status`, `invitation_status`, `github_credential_health_status`, `work_item_priority` — add new values with `ALTER TYPE ... ADD VALUE`.
+- Custom enum types exist: `executor_type`, `workflow_run_status`, `node_execution_status`, `log_level`, `reviewer_type`, `provisioning_status`, `work_item_status`, `invitation_status`, `github_credential_health_status`, `work_item_priority` — add new values with `ALTER TYPE ... ADD VALUE`.
 - Migrations run automatically on API server startup
 
 ## Agent Pod Workspace Layout
@@ -151,7 +151,6 @@ The entrypoint passes every clone to Claude Code as a working directory (`--add-
 - Conditional routing uses the `decision` column on `node_execution` — edges with matching conditions are followed
 - **Templates are base-only** — no parent/child template inheritance. `git_repo_id` is a run input, not a template field. Templates are immutable seed data with no mutation endpoints
 - **GitRepo is a first-class entity** — each org gets its own Kubernetes namespace with provisioned RBAC, network policies, and optional Docker registry mirrors
-- **Live Chat** runs as a separate agent pod mode (`mode=live_chat`) spawned at human gates, relaying messages between the reviewer and the AI via STOMP + HTTP polling
 - **Single-tenant identity** — there is no OIDC provider in the OSS core. `SingleTenantResolver` / `SingleTenantUserInfoProvider` resolve every request to the seeded system org; `SystemOrgSeeder` materializes it (and its credentials) at boot
 - Each component has its own Dockerfile with multi-stage builds — keep build and runtime stages separate
 

@@ -54,9 +54,6 @@ class RunServiceTemplateAuthorizationTest {
     private GitRepoRepository gitRepoRepo;
 
     @Mock
-    private WorkloadService workloadService;
-
-    @Mock
     private AuthorizationService authService;
 
     @Mock
@@ -79,7 +76,6 @@ class RunServiceTemplateAuthorizationTest {
                 objectMapper,
                 eventPublisher,
                 gitRepoRepo,
-                workloadService,
                 authService,
                 Optional.empty(), // quotaService
                 null, // placements

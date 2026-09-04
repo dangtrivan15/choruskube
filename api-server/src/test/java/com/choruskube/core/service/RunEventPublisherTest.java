@@ -1,6 +1,5 @@
 package com.choruskube.core.service;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
@@ -139,5 +138,4 @@ class RunEventPublisherTest {
         verifyNoMoreInteractions(messagingTemplate);
         verifyNoInteractions(feedPublisher);
     }
-
 }

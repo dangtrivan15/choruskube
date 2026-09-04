@@ -3,9 +3,7 @@ package com.choruskube.core.service;
 import com.choruskube.core.credential.AiCredentialResolver;
 import com.choruskube.core.dto.CompleteWorkloadRequest;
 import com.choruskube.core.dto.CreateWorkloadRequest;
-import com.choruskube.core.dto.CreateWorkloadResponse;
 import com.choruskube.core.dto.PrepareWorkloadResponse;
-import com.choruskube.core.dto.WorkloadLogsResponse;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.executor.*;
 import com.choruskube.core.model.NodeExecution;
@@ -30,19 +28,15 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * Service layer for workload execution operations.
  *
- * <p>Creating the workload and writing its {@code job_secret_hash} are one transaction on
- * purpose: split across a create call and a separate DB update, the pod is live before its hash
- * is persisted, so its own callbacks 401 at {@code InternalAuthFilter} and the Job orphans.
- *
- * <p>Infrastructure details (image, secrets, docker config, identity) are resolved
- * from the stored graph snapshot rather than being passed by the caller.
+ * <p>The Worker binary now owns the full container lifecycle (launch, cleanup, logs,
+ * terminate). This service resolves what a Worker needs to launch a workload
+ * ({@link #prepareWorkload}) and records the result ({@link #completeWorkload}).
  */
 @Service
 public class WorkloadService {
 
     private static final Logger log = LoggerFactory.getLogger(WorkloadService.class);
 
-    private final WorkloadExecutor executor;
     private final NodeExecutionRepository execRepo;
     private final RunEventPublisher eventPublisher;
     private final WorkflowRunRepository runRepo;
@@ -54,7 +48,6 @@ public class WorkloadService {
     private final String apiServerUrl;
 
     public WorkloadService(
-            WorkloadExecutor executor,
             NodeExecutionRepository execRepo,
             RunEventPublisher eventPublisher,
             WorkflowRunRepository runRepo,
@@ -64,7 +57,6 @@ public class WorkloadService {
             @Value("${executor.k8s.agent-service-account:choruskube-agent}") String defaultServiceAccount,
             AiCredentialResolver aiCredentialResolver,
             @Qualifier("executorApiServerUrl") String apiServerUrl) {
-        this.executor = executor;
         this.execRepo = execRepo;
         this.eventPublisher = eventPublisher;
         this.runRepo = runRepo;
@@ -77,44 +69,9 @@ public class WorkloadService {
     }
 
     /**
-     * Creates a workload (launches an agent container) and atomically updates the
-     * node execution with pod_name, job_secret_hash, and status=running.
-     */
-    @Transactional
-    public CreateWorkloadResponse createWorkload(UUID runId, UUID nodeExecId, CreateWorkloadRequest req) {
-        NodeExecution exec = execRepo.findById(nodeExecId)
-                .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
-
-        // Both ids arrive from the caller. Without this, a caller entitled to runId can pair it
-        // with any execution id at all and have this method overwrite that execution's pod name,
-        // job secret and status -- node executions carry no authorization of their own.
-        NodeExecutionUtil.requireInRun(exec, runId);
-
-        WorkflowRun run =
-                runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
-
-        ExecutionParams params = resolveExecutionParams(nodeExecId, run, exec.getTemplateNodeId(), req);
-
-        ExecutionResult result = executor.execute(params);
-
-        exec.setStatus(NodeExecutionStatus.running);
-        exec.setPodName(result.executionHandle());
-        exec.setJobSecretHash(result.jobSecretHash());
-        if (exec.getStartedAt() == null) {
-            exec.setStartedAt(Instant.now());
-        }
-        execRepo.save(exec);
-
-        eventPublisher.publishNodeStatusChanged(runId, nodeExecId, "running");
-        log.info("Created workload for execution {}: handle={}", nodeExecId, result.executionHandle());
-
-        return new CreateWorkloadResponse(result.executionHandle(), result.jobSecretHash());
-    }
-
-    /**
      * Resolves what a Worker needs to launch this workload itself: image, credentials, and
      * identity. The api-server is the only party with DB access, so it resolves inputs here
-     * instead of launching a container the way {@link #createWorkload} still does.
+     * instead of launching a container itself.
      */
     @Transactional(readOnly = true)
     public PrepareWorkloadResponse prepareWorkload(UUID runId, UUID nodeExecId, CreateWorkloadRequest req) {
@@ -136,8 +93,6 @@ public class WorkloadService {
                 params.enableDocker(),
                 claudeOAuthToken,
                 githubTokenUrl,
-                // Core has no registry-credential or per-org-namespace concept — both are
-                // resolved only by a closed overlay's own executor wiring, not by this class.
                 null,
                 null,
                 params.identity() != null ? params.identity().name() : null);
@@ -145,8 +100,6 @@ public class WorkloadService {
 
     /**
      * Records what a Worker launched on its own and transitions the execution to running.
-     * Mirrors the DB-write tail of {@link #createWorkload}, which still performs this write
-     * itself when the api-server is the one launching the container.
      */
     @Transactional
     public void completeWorkload(UUID runId, UUID nodeExecId, CompleteWorkloadRequest req) {
@@ -166,62 +119,6 @@ public class WorkloadService {
         log.info("Completed workload for execution {}: pod={}", nodeExecId, req.podName());
     }
 
-    public void cleanupWorkload(UUID executionId) {
-        executor.cleanup(executionId);
-        log.info("Cleaned up workload for execution {}", executionId);
-    }
-
-    /**
-     * Run-scoped cleanup: verifies executionId belongs to runId before deleting anything, so a
-     * caller that only holds runId cannot reach another run's execution by guessing its id.
-     */
-    @Transactional(readOnly = true)
-    public void cleanupWorkload(UUID runId, UUID executionId) {
-        NodeExecution exec = execRepo.findById(executionId)
-                .orElseThrow(() -> new NotFoundException("Node execution not found: " + executionId));
-        NodeExecutionUtil.requireInRun(exec, runId);
-        cleanupWorkload(executionId);
-    }
-
-    public WorkloadLogsResponse getWorkloadLogs(UUID executionId, int tailLines) {
-        if (tailLines <= 0) {
-            tailLines = 50;
-        }
-        String logs = executor.getLogs(executionId, tailLines);
-        return new WorkloadLogsResponse(logs);
-    }
-
-    /**
-     * Run-scoped log read: verifies executionId belongs to runId first, so pod logs cannot be
-     * read across runs by pairing an authorized runId with a guessed executionId.
-     */
-    @Transactional(readOnly = true)
-    public WorkloadLogsResponse getWorkloadLogs(UUID runId, UUID executionId, int tailLines) {
-        NodeExecution exec = execRepo.findById(executionId)
-                .orElseThrow(() -> new NotFoundException("Node execution not found: " + executionId));
-        NodeExecutionUtil.requireInRun(exec, runId);
-        return getWorkloadLogs(executionId, tailLines);
-    }
-
-    public void terminateWorkload(UUID executionId) {
-        executor.terminate(executionId);
-        log.info("Terminated workload for execution {}", executionId);
-    }
-
-    public List<ExecutionInfo> listWorkloads() {
-        return executor.listExecutions();
-    }
-
-    public void healthCheck() {
-        executor.healthCheck();
-    }
-
-    /**
-     * Script nodes never invoke {@code claude}; resolving a token for them would force
-     * CLAUDE_CODE_OAUTH_TOKEN configured in environments that only run test nodes. Mirrors
-     * {@code SingleTenantDockerExecutor.needsOauthToken}, duplicated because that class is
-     * executor-specific and scheduled for deletion once the Worker launches containers itself.
-     */
     private static boolean needsOauthToken(ExecutionParams params) {
         Object raw = params.configJson() != null ? params.configJson().getOrDefault("executor_type", "ai") : "ai";
         return !"script".equalsIgnoreCase(String.valueOf(raw));
@@ -256,7 +153,6 @@ public class WorkloadService {
             throw new NotFoundException("Template node " + templateNodeId + " not found in snapshot");
         }
 
-        // Resolve image: node override → run input agent_image → system default
         String image = targetNode.path("image").asText(null);
         if (image == null || image.isBlank()) {
             JsonNode inputs = snapshot.path("inputs");

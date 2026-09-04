@@ -130,7 +130,6 @@ class RunServiceTest {
                 objectMapper,
                 eventPublisher,
                 gitRepoRepo,
-                null,
                 new AuthorizationService(new AlwaysAllowAuthorizationStrategy(), false),
                 Optional.empty(), // quotaService
                 null, // placements

@@ -96,5 +96,4 @@ public class RunEventPublisher {
         messagingTemplate.convertAndSend("/topic/runs/" + runId, event);
         feedPublisher.pendingGatesChanged(runId, event);
     }
-
 }

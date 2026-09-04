@@ -19,7 +19,7 @@
 #   27233  temporal
 #   29000  object-storage API
 #   29001  object-storage console
-#   29090  orchestrator
+#   29080  orchestrator
 #   28085  wiremock (admin + stub API)
 
 name: choruskube-e2e
@@ -186,7 +186,6 @@ services:
       DOCKER_NETWORK: choruskube-e2e
       # Docker-out-of-Docker staging dir — must be identical on host and container.
       AGENT_STAGING_DIR: *agent-staging-dir
-      CALLBACK_URL: http://orchestrator:9090/api/v1/callback
       API_SERVER_URL: http://api-server:8080
       ORCHESTRATOR_SECRET_HASH: fcb34c11ecbf6914ad43903e539ade6901f864d9772c36e63a78c2488cd0958a
       # E2E agent image — used by E2eTestDataSeeder (no default; must be set).
@@ -249,14 +248,12 @@ services:
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_NAMESPACE: default
       TEMPORAL_TASK_QUEUE: choruskube
-      CALLBACK_PORT: "9090"
-      CALLBACK_URL: http://orchestrator:9090/api/v1/callback
       OBJECT_STORE_ENDPOINT: http://object-storage:9000
       OBJECT_STORE_ACCESS_KEY: minioadmin
       OBJECT_STORE_SECRET_KEY: minioadmin
       OBJECT_STORE_BUCKET: choruskube
     ports:
-      - "29090:9090"
+      - "29080:8080"
     networks:
       - choruskube-e2e
     depends_on:
@@ -265,7 +262,7 @@ services:
       temporal:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/healthz | grep -q healthy"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/healthz | grep -q healthy"]
       interval: 10s
       timeout: 5s
       retries: 10
