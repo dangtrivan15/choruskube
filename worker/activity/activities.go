@@ -431,9 +431,20 @@ func (a *Activities) executeLocally(ctx context.Context, runID uuid.UUID, params
 		return CallbackResult{}, fmt.Errorf("execute: %w", err)
 	}
 
-	// Cached before complete is even called: the workload can call back the moment it starts,
-	// racing this activity's own report to the API server.
+	// Both caches are populated before complete is even called: the workload can call back the
+	// moment it starts, racing this activity's own report to the API server -- CompleteWorkload
+	// below is a network round trip a fast (e.g. script) workload can easily win.
 	a.hashCache.Put(params.NodeExecutionID, result.JobSecretHash)
+	// Captured now, not resolved later from params: the agent's completion and heartbeat
+	// requests carry only NodeExecutionID, so this is the one place that also has Temporal's
+	// own addressing for the activity they need to reach.
+	info := activityInfo(ctx)
+	a.pending.Put(params.NodeExecutionID, PendingCompletion{
+		Namespace:  info.Namespace,
+		TaskQueue:  info.TaskQueue,
+		WorkflowID: info.WorkflowExecution.ID,
+		ActivityID: info.ActivityID,
+	})
 
 	if err := a.client.CompleteWorkload(ctx, workload.CompleteParams{
 		RunID:         runID,
@@ -445,17 +456,6 @@ func (a *Activities) executeLocally(ctx context.Context, runID uuid.UUID, params
 	}
 
 	slog.Info("agent launched", "node_execution_id", params.NodeExecutionID, "pod_name", result.PodName)
-
-	// Captured now, not resolved later from params: the agent's completion and heartbeat
-	// requests carry only NodeExecutionID, so this is the one place that also has Temporal's
-	// own addressing for the activity they need to reach.
-	info := activityInfo(ctx)
-	a.pending.Put(params.NodeExecutionID, PendingCompletion{
-		Namespace:  info.Namespace,
-		TaskQueue:  info.TaskQueue,
-		WorkflowID: info.WorkflowExecution.ID,
-		ActivityID: info.ActivityID,
-	})
 
 	return CallbackResult{}, temporalactivity.ErrResultPending
 }

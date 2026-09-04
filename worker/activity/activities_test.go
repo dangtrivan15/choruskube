@@ -417,6 +417,11 @@ func TestExecuteAINodeFromSnapshot_CallsExecutor_CompleteErrorPropagates(t *test
 	cached, ok := hashCache.Get(nodeExecID)
 	assert.True(t, ok)
 	assert.Equal(t, "hash123", cached)
+
+	// Same reasoning applies to the pending-completion cache: it must be populated before
+	// complete is called, not after, so it too must survive complete's failure.
+	_, ok = acts.Pending().Get(nodeExecID)
+	assert.True(t, ok)
 }
 
 // TestExecuteAINodeFromSnapshot_CallbackAndAPIServerURLsInConfigJson verifies that
