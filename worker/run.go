@@ -467,8 +467,8 @@ func Run(ctx context.Context, cfg Config) error {
 	// legacy delegation path (cfg.Executor == nil) reports completion through the API server's
 	// own callback route, which this Worker never serves.
 	if cfg.Executor != nil {
-		completer := newActivityCompleter(acts.Pending(), sup)
-		sc := &statusBridge{pending: acts.Pending(), workloadClients: sup}
+		completer := newActivityCompleter(acts.Pending, sup)
+		sc := &statusBridge{pending: acts.Pending, workloadClients: sup}
 		cbHandler := callback.NewHandler(hashCache, cfg.Executor, completer, sc)
 		hbHandler := callback.NewHeartbeatHandler(hashCache, cfg.Executor, completer)
 		cbServer := callback.NewServer(cfg.CallbackPort, cbHandler, hbHandler)

@@ -205,7 +205,7 @@ func TestExecuteAINodeFromSnapshot_CallsExecutor(t *testing.T) {
 
 	// the activity's own Temporal addressing was cached under the same id, for the Worker's
 	// completer to complete-by-id once the agent calls back.
-	pending, ok := acts.Pending().Get(nodeExecID)
+	pending, ok := acts.Pending.Get(nodeExecID)
 	assert.True(t, ok)
 	assert.Equal(t, "choruskube-run-"+runID.String(), pending.WorkflowID)
 }
@@ -253,7 +253,7 @@ func TestExecuteAINodeFromSnapshot_CallsExecutor_CachesFullPendingCompletion(t *
 	})
 	requirePending(t, err)
 
-	pending, ok := acts.Pending().Get(nodeExecID)
+	pending, ok := acts.Pending.Get(nodeExecID)
 	assert.True(t, ok)
 	assert.Equal(t, "org-ns", pending.Namespace)
 	assert.Equal(t, "org-queue", pending.TaskQueue)
@@ -420,7 +420,7 @@ func TestExecuteAINodeFromSnapshot_CallsExecutor_CompleteErrorPropagates(t *test
 
 	// Same reasoning applies to the pending-completion cache: it must be populated before
 	// complete is called, not after, so it too must survive complete's failure.
-	_, ok = acts.Pending().Get(nodeExecID)
+	_, ok = acts.Pending.Get(nodeExecID)
 	assert.True(t, ok)
 }
 

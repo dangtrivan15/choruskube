@@ -47,7 +47,7 @@ type Activities struct {
 	// instead of running it locally.
 	executor  executor.Executor
 	hashCache *callback.HashCache
-	pending   *PendingCache
+	Pending   *PendingCache
 	resolver  *templateResolver
 	// CallbackURL is the endpoint agent pods POST their results to. Left empty, the agent
 	// pod launches with no way to report back, and the activity hangs until StartToClose
@@ -77,18 +77,11 @@ func NewWithExecutor(client workloadClient, exec executor.Executor, cache *callb
 		client:    client,
 		executor:  exec,
 		hashCache: cache,
-		pending:   NewPendingCache(),
+		Pending:   NewPendingCache(),
 		resolver:  newTemplateResolver(),
 	}
 }
 
-// Pending returns the cache of per-execution Temporal completion addressing this Activities
-// instance populates as it launches each workload locally; nil when constructed via New (legacy
-// mode delegates every execution, so there is nothing local to complete). The Worker reads it to
-// build the callback server's ActivityCompleter and Heartbeater.
-func (a *Activities) Pending() *PendingCache {
-	return a.pending
-}
 
 // --- Activity: ExecuteAINodeFromSnapshot ---
 
@@ -439,7 +432,7 @@ func (a *Activities) executeLocally(ctx context.Context, runID uuid.UUID, params
 	// requests carry only NodeExecutionID, so this is the one place that also has Temporal's
 	// own addressing for the activity they need to reach.
 	info := activityInfo(ctx)
-	a.pending.Put(params.NodeExecutionID, PendingCompletion{
+	a.Pending.Put(params.NodeExecutionID, PendingCompletion{
 		Namespace:  info.Namespace,
 		TaskQueue:  info.TaskQueue,
 		WorkflowID: info.WorkflowExecution.ID,
