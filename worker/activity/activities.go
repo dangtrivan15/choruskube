@@ -460,6 +460,9 @@ type DeleteAgentJobParams struct {
 }
 
 func (a *Activities) DeleteAgentJob(ctx context.Context, params DeleteAgentJobParams) error {
+	if a.executor != nil {
+		return a.executor.Cleanup(ctx, params.NodeExecutionID)
+	}
 	runID, err := runIDOf(ctx)
 	if err != nil {
 		return err
@@ -475,13 +478,16 @@ type FetchPodLogsParams struct {
 }
 
 func (a *Activities) FetchPodLogs(ctx context.Context, params FetchPodLogsParams) (string, error) {
-	runID, err := runIDOf(ctx)
-	if err != nil {
-		return "", err
-	}
 	tailLines := params.TailLines
 	if tailLines <= 0 {
 		tailLines = 50
+	}
+	if a.executor != nil {
+		return a.executor.GetLogs(ctx, params.NodeExecutionID, tailLines)
+	}
+	runID, err := runIDOf(ctx)
+	if err != nil {
+		return "", err
 	}
 	return a.client.GetWorkloadLogs(ctx, runID, params.NodeExecutionID, tailLines)
 }
