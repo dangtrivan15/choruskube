@@ -37,8 +37,7 @@ public class Phase3GatingTest extends BaseTest {
             WorkflowRunStatus.running,
             WorkflowRunStatus.paused,
             WorkflowRunStatus.awaiting_human,
-            WorkflowRunStatus.awaiting_retry,
-            WorkflowRunStatus.live_chat);
+            WorkflowRunStatus.awaiting_retry);
 
     @Autowired
     private GraphTemplateRepository templateRepo;

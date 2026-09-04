@@ -78,7 +78,6 @@ public class RunEventPublisher {
         messagingTemplate.convertAndSend("/topic/runs/" + runId, event);
 
         if ("awaiting_human".equals(status)
-                || "live_chat".equals(status)
                 || "completed".equals(status)
                 || "failed".equals(status)
                 || "signaled".equals(status)) {

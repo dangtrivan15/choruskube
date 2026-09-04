@@ -138,11 +138,6 @@ describe("DagNode", () => {
     expect(container.querySelector(".animate-pulse")).toBeNull();
   });
 
-  it("renders live_chat status", () => {
-    renderDagNode({ status: "live_chat" });
-    expect(screen.getByText("live chat")).toBeInTheDocument();
-  });
-
   it("title-cases snake_case labels for human gates", () => {
     renderDagNode({ label: "approve_spec_and_plan", executorType: "human" });
     expect(screen.getByText("Approve Spec And Plan")).toBeInTheDocument();

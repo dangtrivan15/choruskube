@@ -135,7 +135,7 @@ export interface NodeExecutionResponse {
   /**
    * The Roadmap Provisioner analyzer's structured Epic/Story/Task breakdown for this
    * node, if any (mirrors `PendingGateResponse.candidateBreakdown` — only populated
-   * while the node is `awaiting_human`/`live_chat`). Lets the Run Detail page's gate
+   * while the node is `awaiting_human`). Lets the Run Detail page's gate
    * surface (`HumanGatePanel` via `DetailPanel`) render the same editable breakdown
    * the Approvals dashboard does. A document (the roadmap
    * dependencies/priorities/milestones feature) — no longer a bare Epic array.
@@ -145,7 +145,7 @@ export interface NodeExecutionResponse {
    * Why this run was escalated to the Supervisor, mirroring
    * `PendingGateResponse.escalation` (both now built by the api-server's shared
    * `EscalationContextResolver`). Populated only for the Supervisor's own
-   * gate-status (`awaiting_human`/`live_chat`) execution — `null` for every other
+   * gate-status (`awaiting_human`) execution — `null` for every other
    * execution in the run, including ordinary gates. Optional in the type because
    * an older API pod during a rolling deploy may omit it.
    */

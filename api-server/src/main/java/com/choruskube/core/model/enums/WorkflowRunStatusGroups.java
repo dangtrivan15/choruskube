@@ -20,8 +20,7 @@ public final class WorkflowRunStatusGroups {
             WorkflowRunStatus.running,
             WorkflowRunStatus.paused,
             WorkflowRunStatus.awaiting_human,
-            WorkflowRunStatus.awaiting_retry,
-            WorkflowRunStatus.live_chat);
+            WorkflowRunStatus.awaiting_retry);
 
     /**
      * The complement of {@link #ACTIVE}: a run here has stopped moving and only a human or an

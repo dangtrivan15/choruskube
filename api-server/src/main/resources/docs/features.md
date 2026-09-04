@@ -11,8 +11,7 @@ all major capabilities. Click any feature name to read the dedicated guide.
 |---|---|---|
 | Workflow Templates | Directed-acyclic-graph (DAG) templates define reusable automation pipelines | [Workflow Templates](workflow-templates) |
 | AI Agent Nodes | Claude Code agent pods that write code, commit changes, and open PRs autonomously | [AI Agent Nodes](ai-agent-nodes) |
-| Human Gates | Pause points requiring a human approval before the workflow continues | [Human Gates & Live Chat](human-gates-and-live-chat) |
-| Live Chat | Real-time conversation with an AI agent at a human gate before approving | [Human Gates & Live Chat](human-gates-and-live-chat) |
+| Human Gates | Pause points requiring a human approval before the workflow continues | [Human Gates](human-gates) |
 | Multi-Repo Support | Run workflows across multiple repositories using Repository Groups | [Multi-Repo Support](multi-repo-support) |
 | Analytics | Run trend charts, throughput metrics, and bottleneck detection | [Analytics](analytics) |
 | Pull Request Tracking | Capture and display PR URLs opened by agent nodes in the run detail view | [Running Workflows](running-workflows) |
@@ -30,16 +29,15 @@ Each AI node in a workflow run spawns a **Claude Code agent pod** that:
 
 See [AI Agent Nodes](ai-agent-nodes) for the full lifecycle.
 
-## Human Gates & Live Chat
+## Human Gates
 
 **Human Gates** pause a workflow at a designated node and notify reviewers via the **Approvals** page.
 Reviewers can:
 
 - Read the AI agent's output and attached artifacts
-- Open a **Live Chat** session to ask the agent questions or provide guidance in real time
 - Approve or reject the gate — the workflow routes accordingly
 
-See [Human Gates & Live Chat](human-gates-and-live-chat) for details.
+See [Human Gates](human-gates) for details.
 
 ## Multi-Repo Support
 

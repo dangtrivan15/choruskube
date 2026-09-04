@@ -168,7 +168,7 @@ test.describe("Autopilot", () => {
     await api.updateAutopilot(Math.max(1, afterStart.inFlight));
 
     // Pausing occupies no slot (AutopilotService#classify groups `paused` with
-    // `awaiting_human`/`live_chat` — "costs nothing to hold"), without touching the Task's own
+    // `awaiting_human` — "costs nothing to hold"), without touching the Task's own
     // `in_progress` status.
     await api.pauseRun(started.latestRunId!);
     await api.waitForRunStatus(started.latestRunId!, ["paused"], 30_000);

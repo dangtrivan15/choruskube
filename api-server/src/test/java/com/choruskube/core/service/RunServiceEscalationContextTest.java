@@ -163,22 +163,6 @@ class RunServiceEscalationContextTest {
     }
 
     @Test
-    void supervisorGateLiveChat_alsoPopulatesEscalation() {
-        // live_chat is the other gate status requiredArtifacts already resolves for — escalation
-        // must match that scoping, not just awaiting_human.
-        stubRun();
-        stubHubSnapshot();
-        stubExec(hubNodeId, NodeExecutionStatus.live_chat);
-        EscalationContext escalation =
-                new EscalationContext("code_review", UUID.randomUUID(), "impl-review", null, null);
-        when(escalationContextResolver.resolve(runId)).thenReturn(escalation);
-
-        RunResponse response = service.getRun(runId);
-
-        assertThat(response.nodeExecutions().get(0).escalation()).isEqualTo(escalation);
-    }
-
-    @Test
     void ordinaryGateOnNonHubNode_neverResolvesEscalation() {
         // An ordinary human-review gate (awaiting_human, but not the routing hub) must never carry
         // escalation data — that would render a nonsensical "escalated by" banner on a plain
@@ -195,7 +179,7 @@ class RunServiceEscalationContextTest {
 
     @Test
     void hubNodeNotInGateStatus_neverResolvesEscalation() {
-        // The Supervisor's own node, but completed rather than awaiting_human/live_chat — the
+        // The Supervisor's own node, but completed rather than awaiting_human — the
         // resolution cost (an object-storage read for escalation.md) must not be paid for every
         // execution in the run, exactly as requiredArtifacts/candidateBreakdown are scoped.
         stubRun();

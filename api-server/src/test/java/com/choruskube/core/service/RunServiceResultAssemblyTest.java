@@ -27,7 +27,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
  * Tests for result assembly logic in RunService.signalHumanDecision().
- * Verifies that Chat Transcript and Reviewer Feedback use proper Markdown H2 headers.
+ * Verifies that Reviewer Feedback uses proper Markdown H2 headers when appended to an existing result.
  */
 @ExtendWith(MockitoExtension.class)
 class RunServiceResultAssemblyTest {
@@ -175,9 +175,7 @@ class RunServiceResultAssemblyTest {
         service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", "Looks good", null, null));
 
         String feedback = captureSignalFeedback();
-        assertThat(feedback)
-                .isEqualTo(
-                        "## Chat Transcript\n\n**Human:** Hello\n\n**AI:** Hi there\n\n## Reviewer Feedback\n\nLooks good");
+        assertThat(feedback).isEqualTo("**Human:** Hello\n\n**AI:** Hi there\n\n## Reviewer Feedback\n\nLooks good");
     }
 
     @Test
@@ -188,8 +186,7 @@ class RunServiceResultAssemblyTest {
         service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", "Please fix X", null, null));
 
         String feedback = captureSignalFeedback();
-        assertThat(feedback).isEqualTo("## Reviewer Feedback\n\nPlease fix X");
-        assertThat(feedback).doesNotContain("## Chat Transcript");
+        assertThat(feedback).isEqualTo("Please fix X");
     }
 
     @Test
@@ -216,7 +213,6 @@ class RunServiceResultAssemblyTest {
         service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", "Some feedback", null, null));
 
         String feedback = captureSignalFeedback();
-        assertThat(feedback).isEqualTo("## Reviewer Feedback\n\nSome feedback");
-        assertThat(feedback).doesNotContain("## Chat Transcript");
+        assertThat(feedback).isEqualTo("Some feedback");
     }
 }

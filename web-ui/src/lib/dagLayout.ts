@@ -2,7 +2,6 @@ const statusToToken: Record<string, string> = {
   completed: "--status-success",
   running: "--status-info",
   awaiting_human: "--status-warning",
-  live_chat: "--status-accent",
   failed: "--status-error",
   paused: "--status-accent",
   cancelled: "--status-neutral",

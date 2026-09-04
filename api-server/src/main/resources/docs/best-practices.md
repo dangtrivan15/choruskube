@@ -42,21 +42,15 @@ Before approving a human gate, open the **Artifact Browser** and **Log Panel** f
 AI Agent node. Read the summary artifact and scan the logs for warnings. Approving without reviewing
 can let subtle errors slip through.
 
-### 6. Use Live Chat to Guide an Uncertain Agent
-
-If an agent's output is close but not quite right, do not simply reject and re-run. Open a
-**Live Chat** session, explain what needs to change, and then approve. This saves a full re-run
-and produces a more targeted correction.
-
 ## Repository Management
 
-### 7. Use Repository Groups for Multi-Repo Operations
+### 6. Use Repository Groups for Multi-Repo Operations
 
 When a change touches multiple services, use a **Repository Group** rather than running separate
 workflows per repo. The fan-out / fan-in pattern ensures all repos are updated atomically (or
 individually reported) within a single run.
 
-### 8. Ensure RBAC Provisioning Completes Before Starting Runs
+### 7. Ensure RBAC Provisioning Completes Before Starting Runs
 
 Newly created Git Repos require Kubernetes RBAC provisioning before they can be used in a run.
 Check the repo's status in **Settings → Git Repos** — it must show `READY` before you select it
@@ -64,13 +58,13 @@ in the Start Run dialog. Starting a run against an unprovisioned repo will fail 
 
 ## Operations
 
-### 9. Review PR Diffs Before Approving a Gate
+### 8. Review PR Diffs Before Approving a Gate
 
 When an AI agent opens a Pull Request and the workflow pauses at a gate, open the PR link in
 GitHub and review the diff before approving. The Run Monitor shows the PR link in the node detail
 panel. Do not approve based solely on the agent's summary.
 
-### 10. Monitor the Analytics Page for Recurring Bottlenecks
+### 9. Monitor the Analytics Page for Recurring Bottlenecks
 
 Set a weekly routine to check the **Analytics** page. Recurring high P95 values on a specific
 node type are a signal to simplify the node's prompt, break the node into smaller steps, or
@@ -78,13 +72,13 @@ add a dedicated human gate for iterative refinement.
 
 ## Security
 
-### 11. Never Share JOB_SECRET or ORCHESTRATOR_SECRET
+### 10. Never Share JOB_SECRET or ORCHESTRATOR_SECRET
 
 These secrets are injected by the platform into agent pods at runtime. Never log them, include
 them in prompts, commit them to code, or share them. They rotate per-execution (JOB_SECRET) or
 per-deployment (ORCHESTRATOR_SECRET).
 
-### 12. Manage Per-Org Claude OAuth Tokens
+### 11. Manage Per-Org Claude OAuth Tokens
 
 Each org stores its own `CLAUDE_CODE_OAUTH_TOKEN` (long-lived, ~1-year TTL, generated via
 `claude setup-token`) encrypted in the `org_ai_credential` table. The system org's token is

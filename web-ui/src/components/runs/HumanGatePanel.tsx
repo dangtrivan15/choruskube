@@ -249,7 +249,7 @@ export default function HumanGatePanel({
 
           <Separator />
 
-          {/* Chat transcript (from completed live chat) */}
+          {/* Node result */}
           {nodeResult && (
             <>
               <div className="space-y-1.5">

@@ -64,8 +64,7 @@ public class PendingGateService {
         this.escalationContextResolver = escalationContextResolver;
     }
 
-    private static final List<NodeExecutionStatus> GATE_STATUSES =
-            List.of(NodeExecutionStatus.awaiting_human, NodeExecutionStatus.live_chat);
+    private static final List<NodeExecutionStatus> GATE_STATUSES = List.of(NodeExecutionStatus.awaiting_human);
 
     public List<PendingGateResponse> getPendingGates() {
         Specification<NodeExecution> spec = gateStatusSpec().and(scopeProvider.scope(NodeExecution.class));

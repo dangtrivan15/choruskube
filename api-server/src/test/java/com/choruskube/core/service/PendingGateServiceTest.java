@@ -316,40 +316,6 @@ class PendingGateServiceTest {
     }
 
     @Test
-    void getPendingGates_includesLiveChatStatus() {
-        UUID runId = UUID.randomUUID();
-        UUID nodeId = UUID.randomUUID();
-
-        String snapshot = """
-                {"nodes": [{"template_node_id": "%s", "label": "Chat Gate"}], "edges": []}
-                """.formatted(nodeId);
-
-        WorkflowRun run = new WorkflowRun();
-        run.setId(runId);
-        run.setName("Chat Run");
-        run.setStatus(WorkflowRunStatus.running);
-
-        NodeExecution liveChatExec = new NodeExecution();
-        liveChatExec.setId(UUID.randomUUID());
-        liveChatExec.setWorkflowRunId(runId);
-        liveChatExec.setTemplateNodeId(nodeId);
-        liveChatExec.setStatus(NodeExecutionStatus.live_chat);
-        liveChatExec.setIteration(1);
-
-        Mockito.when(execRepo.findAll(ArgumentMatchers.<Specification<NodeExecution>>any()))
-                .thenReturn(List.of(liveChatExec));
-        Mockito.when(runRepo.findAllById(Mockito.anyCollection())).thenReturn(List.of(run));
-        Mockito.when(execRepo.findByWorkflowRunIdIn(Mockito.anyCollection())).thenReturn(List.of(liveChatExec));
-        Mockito.when(snapshotBuilder.buildSnapshotForRun(run)).thenReturn(snapshot);
-
-        List<PendingGateResponse> result = service.getPendingGates();
-
-        assertThat(result).hasSize(1);
-        assertThat(result.get(0).status()).isEqualTo("live_chat");
-        assertThat(result.get(0).nodeLabel()).isEqualTo("Chat Gate");
-    }
-
-    @Test
     void getPendingGateCount_includesBothStatuses() {
         // Both gate statuses are covered by the gate-status spec; the count is a single scoped query.
         Mockito.when(execRepo.count(Mockito.<Specification<NodeExecution>>any()))

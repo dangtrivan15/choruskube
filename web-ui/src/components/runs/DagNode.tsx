@@ -25,7 +25,7 @@ export type DagNodeType = Node<DagNodeData, "dag">;
  * Append DagNode-specific opacity values to the base semantic tokens.
  *
  * `bgActive` / `borderActive` are higher-saturation variants used to make a
- * running / awaiting-human / live-chat node visually pop next to its
+ * running / awaiting-human node visually pop next to its
  * completed neighbours (which sit at the calm /10 + /60 baseline).
  */
 function getStatusColors(status: string) {
@@ -39,7 +39,7 @@ function getStatusColors(status: string) {
   };
 }
 
-const ACTIVE_STATUSES = new Set(["running", "awaiting_human", "live_chat"]);
+const ACTIVE_STATUSES = new Set(["running", "awaiting_human"]);
 
 function ExecutorIcon({ type }: { type: string }) {
   switch (type) {

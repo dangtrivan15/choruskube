@@ -32,7 +32,7 @@ const nodeTypes = { dag: DagNode };
 const edgeTypes = { dag: DagEdge };
 
 /** Statuses considered "active" for edge highlighting — must match DagNode's pulse set. */
-const ACTIVE_EDGE_TARGET_STATUSES = new Set(["running", "awaiting_human", "live_chat"]);
+const ACTIVE_EDGE_TARGET_STATUSES = new Set(["running", "awaiting_human"]);
 
 /** Edge conditions that semantically represent a failure / rejection branch. */
 const NEGATIVE_EDGE_CONDITIONS = new Set(["rejected", "failed"]);

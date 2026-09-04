@@ -169,7 +169,7 @@ class HumanDecisionValidationTest {
         ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
         verify(workflowStub).signal(eq("human-decision-" + nodeExecId), captor.capture());
         JsonNode payloadNode = objectMapper.valueToTree(captor.getValue());
-        assertThat(payloadNode.get("feedback").asText()).isEqualTo("## Reviewer Feedback\n\nLGTM");
+        assertThat(payloadNode.get("feedback").asText()).isEqualTo("LGTM");
     }
 
     @Test
@@ -199,12 +199,10 @@ class HumanDecisionValidationTest {
         verify(workflowStub).signal(eq("human-decision-" + nodeExecId), captor.capture());
         String feedback =
                 objectMapper.valueToTree(captor.getValue()).get("feedback").asText();
-        assertThat(feedback).startsWith("## Chat Transcript\n\n");
         assertThat(feedback).contains("Previous AI output");
         assertThat(feedback).contains("## Reviewer Feedback\n\n");
         assertThat(feedback).contains("Looks good");
-        assertThat(feedback)
-                .isEqualTo("## Chat Transcript\n\nPrevious AI output\n\n## Reviewer Feedback\n\nLooks good");
+        assertThat(feedback).isEqualTo("Previous AI output\n\n## Reviewer Feedback\n\nLooks good");
     }
 
     @Test

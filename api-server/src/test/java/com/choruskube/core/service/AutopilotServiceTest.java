@@ -1182,14 +1182,11 @@ class AutopilotServiceTest {
         StoryFixture s = story(epic("E"));
         Task parked = task(s, "Parked", WorkItemStatus.in_progress, Readiness.READY);
         WorkflowRun gate = run(WorkflowRunStatus.awaiting_human, parked.getId());
-        WorkflowRun chat = run(WorkflowRunStatus.live_chat, parked.getId());
         run(WorkflowRunStatus.running, parked.getId());
 
         AutopilotStatusResponse status = newService().getStatus();
 
-        assertThat(status.awaitingYou())
-                .extracting(AutopilotTaskRef::runId)
-                .containsExactlyInAnyOrder(gate.getId(), chat.getId());
+        assertThat(status.awaitingYou()).extracting(AutopilotTaskRef::runId).containsExactly(gate.getId());
         assertThat(status.awaitingYou()).allMatch(ref -> "Parked".equals(ref.title()));
         assertThat(status.inFlight()).as("only the running run occupies a slot").isEqualTo(1);
     }

@@ -375,11 +375,8 @@ public class RunService {
         // linger on the approvals page. This is necessary because the
         // Temporal workflow may have already completed or been cancelled
         // externally, in which case the orchestrator's cleanup never runs.
-        Set<NodeExecutionStatus> activeStatuses = Set.of(
-                NodeExecutionStatus.pending,
-                NodeExecutionStatus.running,
-                NodeExecutionStatus.awaiting_human,
-                NodeExecutionStatus.live_chat);
+        Set<NodeExecutionStatus> activeStatuses =
+                Set.of(NodeExecutionStatus.pending, NodeExecutionStatus.running, NodeExecutionStatus.awaiting_human);
         for (NodeExecution exec : execRepo.findByWorkflowRunId(id)) {
             if (activeStatuses.contains(exec.getStatus())) {
                 exec.setStatus(NodeExecutionStatus.skipped);
@@ -482,19 +479,12 @@ public class RunService {
             String validatedDecision =
                     validateDecisionAgainstEdges(snapshot, exec.getTemplateNodeId(), request.decision());
 
-            // Assemble the full result for the signal — includes any existing content
-            // (e.g. live chat transcript) plus human feedback. The orchestrator will
-            // write this as the node's result via UpdateNodeExecutionStatus, keeping
-            // a single authoritative write path for result.
             String assembledResult = exec.getResult();
             if (request.feedback() != null && !request.feedback().isBlank()) {
                 if (assembledResult != null && !assembledResult.isBlank()) {
-                    assembledResult = "## Chat Transcript\n\n"
-                            + assembledResult
-                            + "\n\n## Reviewer Feedback\n\n"
-                            + request.feedback();
+                    assembledResult = assembledResult + "\n\n## Reviewer Feedback\n\n" + request.feedback();
                 } else {
-                    assembledResult = "## Reviewer Feedback\n\n" + request.feedback();
+                    assembledResult = request.feedback();
                 }
             }
 
@@ -823,8 +813,7 @@ public class RunService {
                 .map(e -> {
                     UUID[] edges = e.getTraversedEdgeIds();
                     List<UUID> edgeList = edges == null ? null : java.util.Arrays.asList(edges);
-                    boolean isGateStatus = e.getStatus() == NodeExecutionStatus.awaiting_human
-                            || e.getStatus() == NodeExecutionStatus.live_chat;
+                    boolean isGateStatus = e.getStatus() == NodeExecutionStatus.awaiting_human;
                     List<ResolvedArtifactGroup> requiredArtifacts = isGateStatus
                             ? artifactResolutionService.resolveRequiredArtifacts(e.getTemplateNodeId(), run.getId())
                             : null;

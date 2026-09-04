@@ -64,8 +64,7 @@ If the workflow reaches a **Human Gate** node:
 1. A badge appears on **Approvals** in the sidebar.
 2. Navigate to **Approvals** and open the pending request.
 3. Review the context, attached artifacts, and AI agent output.
-4. Optionally, start a **Live Chat** session to ask the AI agent questions or provide guidance.
-5. Click **Approve** or **Reject** — the workflow continues based on your decision.
+4. Click **Approve** or **Reject** — the workflow continues based on your decision.
 
 ### Step 5 — Review the Result
 
@@ -143,6 +142,6 @@ Now that you have completed your first run, explore these topics:
 
 - [Workflow Templates](workflow-templates) — learn how to read and design graph templates
 - [AI Agent Nodes](ai-agent-nodes) — understand what agent pods do and how to guide them
-- [Human Gates & Live Chat](human-gates-and-live-chat) — get the most out of approval workflows
+- [Human Gates](human-gates) — get the most out of approval workflows
 - [Multi-Repo Support](multi-repo-support) — run workflows across multiple repositories
 - [Best Practices](best-practices) — recommended patterns for production use

@@ -22,8 +22,6 @@ export function statusBadgeClass(status: string): string {
       return "bg-status-warning/15 text-status-warning border-status-warning/20";
     case "awaiting_retry":
       return "bg-status-warning/15 text-status-warning border-status-warning/20";
-    case "live_chat":
-      return "bg-status-accent/15 text-status-accent border-status-accent/20";
     case "paused":
       return "bg-status-accent/15 text-status-accent border-status-accent/20";
     case "cancelled":
@@ -52,8 +50,6 @@ export function statusColorTokens(status: string): StatusColorTokens {
       return { bg: "bg-status-warning", border: "border-status-warning", text: "text-status-warning" };
     case "awaiting_retry":
       return { bg: "bg-status-warning", border: "border-status-warning", text: "text-status-warning" };
-    case "live_chat":
-      return { bg: "bg-status-accent", border: "border-status-accent", text: "text-status-accent" };
     case "paused":
       return { bg: "bg-status-accent", border: "border-status-accent", text: "text-status-accent" };
     case "cancelled":

@@ -293,7 +293,7 @@ that silently occupies no slot and settles as nothing.
 | `WorkflowRunStatus` | Occupies a slot | Settles as | Reported bucket |
 |---|---|---|---|
 | `pending`, `running` | ✅ | — (not finished) | — |
-| `awaiting_human`, `live_chat`, `paused` | ❌ | — (not finished) | `awaitingYou` |
+| `awaiting_human`, `paused` | ❌ | — (not finished) | `awaitingYou` |
 | `awaiting_retry` | ❌ | **FAILURE** | `needsAttention` |
 | `completed` | ❌ | SUCCESS | — |
 | `failed` | ❌ | **FAILURE** | — |
@@ -620,7 +620,7 @@ the constructor asserts a 30-second floor and refuses to start below it. Thirty 
 a floor, not a recommendation; a real pass includes a readiness sweep and several
 container starts, and the default is ten times it.
 
-**`paused` is an "awaiting you" status, not a slot holder.** So is `live_chat`.
+**`paused` is an "awaiting you" status, not a slot holder.**
 Conversely `awaiting_retry` is simultaneously a FAILURE for the breaker and a permanent
 `needsAttention` entry, because the Autopilot never retries it.
 

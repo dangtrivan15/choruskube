@@ -72,10 +72,9 @@ When a run reaches a **Human Gate** node:
 1. The node enters **Waiting** status and a badge count appears on **Approvals**.
 2. Navigate to **Approvals** and click the pending item.
 3. Review the gate's context, the run log summary, and any attached artifacts.
-4. Optionally open a **Live Chat** session to interact with the AI agent before deciding.
-5. Click **Approve** or **Reject** (or the custom decision label shown) to resume the workflow.
+4. Click **Approve** or **Reject** (or the custom decision label shown) to resume the workflow.
 
-See [Human Gates & Live Chat](human-gates-and-live-chat) for a detailed walkthrough.
+See [Human Gates](human-gates) for a detailed walkthrough.
 
 ## Cancelling a Run
 

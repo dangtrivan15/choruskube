@@ -17,8 +17,7 @@ import java.util.List;
  * @param nextUp the ordered ready frontier, capped — what a tick would start next
  * @param whyIdle human-readable reasons the Autopilot is not starting work, in the form
  *     {@code "Epic 'Billing' — no tasks defined"}.
- * @param awaitingYou runs parked on a human — {@code awaiting_human}, {@code live_chat},
- *     {@code paused}
+ * @param awaitingYou runs parked on a human — {@code awaiting_human}, {@code paused}
  * @param needsAttention runs in {@code awaiting_retry}: failed, held for seven days, and never
  *     retried by the Autopilot
  * @param heldTasks Tasks left {@code in_progress} by a run that has finished. Nothing moves them:

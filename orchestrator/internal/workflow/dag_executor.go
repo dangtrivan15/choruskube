@@ -246,7 +246,7 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 			).Get(ctx, nil)
 		}
 
-		// When the run is paused, stamp running non-human/non-live_chat nodes as "paused"
+		// When the run is paused, stamp running non-human nodes as "paused"
 		// and delete their K8s jobs. This complements the api-server's pauseRun() cleanup;
 		// both sides are idempotent (api-server returns 204 even on 404).
 		if paused {

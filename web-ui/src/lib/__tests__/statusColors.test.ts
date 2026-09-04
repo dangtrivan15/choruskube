@@ -32,12 +32,6 @@ describe("statusBadgeClass", () => {
     );
   });
 
-  it("returns accent classes for live_chat", () => {
-    expect(statusBadgeClass("live_chat")).toBe(
-      "bg-status-accent/15 text-status-accent border-status-accent/20"
-    );
-  });
-
   it("returns accent classes for paused", () => {
     expect(statusBadgeClass("paused")).toBe(
       "bg-status-accent/15 text-status-accent border-status-accent/20"
@@ -97,13 +91,6 @@ describe("statusColorTokens", () => {
     expect(tokens.bg).toBe("bg-status-warning");
     expect(tokens.border).toBe("border-status-warning");
     expect(tokens.text).toBe("text-status-warning");
-  });
-
-  it("returns accent tokens for live_chat", () => {
-    const tokens = statusColorTokens("live_chat");
-    expect(tokens.bg).toBe("bg-status-accent");
-    expect(tokens.border).toBe("border-status-accent");
-    expect(tokens.text).toBe("text-status-accent");
   });
 
   it("returns accent tokens for paused", () => {
