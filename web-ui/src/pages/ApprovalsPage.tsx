@@ -27,7 +27,6 @@ import { usePendingGatesSubscription } from "@/hooks/usePendingGatesSubscription
 import PredecessorOutputDialog from "@/components/runs/PredecessorOutputDialog";
 import ArtifactBrowser from "@/components/runs/ArtifactBrowser";
 import ArtifactList from "@/components/runs/ArtifactList";
-import LiveChatPanel from "@/components/runs/LiveChatPanel";
 import FileUploadZone from "@/components/runs/FileUploadZone";
 import RoadmapCandidateBreakdown from "@/components/runs/RoadmapCandidateBreakdown";
 import EscalationGatePanel from "@/components/runs/EscalationGatePanel";
@@ -109,7 +108,6 @@ function GateCard({ gate }: { gate: PendingGateResponse }) {
     gate.candidateBreakdown ?? { milestones: [], epics: [], dependencies: [] }
   );
   const signalMutation = useSignalFromDashboard();
-  const isLiveChat = gate.status === "live_chat";
   const { canOperate } = usePermission();
   const options = gate.decisionOptions ?? LEGACY_DECISION_OPTIONS;
   const isEscalation = isEscalationGate(options);
@@ -157,11 +155,6 @@ function GateCard({ gate }: { gate: PendingGateResponse }) {
             <Badge variant="outline" className="shrink-0">
               Iteration {gate.iteration}
             </Badge>
-            {isLiveChat && (
-              <Badge data-testid="live-chat-badge" className="shrink-0 bg-status-accent/15 text-status-accent">
-                Live Chat
-              </Badge>
-            )}
           </div>
           <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
             <TruncatedText>{gate.runName}</TruncatedText>
@@ -194,7 +187,7 @@ function GateCard({ gate }: { gate: PendingGateResponse }) {
           guidance={feedback}
           onGuidanceChange={setFeedback}
           onConfirm={handleSubmit}
-          isPending={signalMutation.isPending || isLiveChat}
+          isPending={signalMutation.isPending}
           readOnly={!canOperate}
         />
       ) : (
@@ -272,13 +265,6 @@ function GateCard({ gate }: { gate: PendingGateResponse }) {
         </>
       )}
 
-      {/* Live Chat */}
-      <LiveChatPanel
-        runId={gate.runId}
-        nodeExecId={gate.nodeExecutionId}
-        nodeLabel={gate.nodeLabel}
-      />
-
       <Separator className="my-3" />
 
       {/* Feedback + Actions */}
@@ -289,14 +275,14 @@ function GateCard({ gate }: { gate: PendingGateResponse }) {
             placeholder="Provide feedback for the AI agent..."
             value={feedback}
             onChange={(e) => setFeedback(e.target.value)}
-            disabled={signalMutation.isPending || isLiveChat}
+            disabled={signalMutation.isPending}
             className="min-h-[60px]"
           />
           <FileUploadZone onFilesChange={setAttachmentFiles} disabled={signalMutation.isPending} />
           <DecisionButtons
             options={options}
             onSubmit={handleSubmit}
-            isPending={signalMutation.isPending || isLiveChat}
+            isPending={signalMutation.isPending}
             feedback={feedback}
             testIdPrefix="gate-card"
           />

@@ -35,29 +35,6 @@ vi.mock("../ArtifactList", () => ({
   ),
 }));
 
-vi.mock("@/hooks/useLiveChat", () => ({
-  useLiveChatSession: vi.fn(() => ({
-    data: undefined,
-    isLoading: false,
-  })),
-  useStartLiveChat: vi.fn(() => ({
-    mutate: vi.fn(),
-    isPending: false,
-  })),
-  useCompleteLiveChat: vi.fn(() => ({
-    mutate: vi.fn(),
-    isPending: false,
-  })),
-  useSendLiveChatMessage: vi.fn(() => ({
-    mutate: vi.fn(),
-    isPending: false,
-  })),
-  useLiveChatMessages: vi.fn(() => ({
-    messages: [],
-    addMessage: vi.fn(),
-    clearMessages: vi.fn(),
-  })),
-}));
 
 describe("HumanGatePanel", () => {
   const defaultProps = {
@@ -193,12 +170,6 @@ describe("HumanGatePanel", () => {
     await user.click(screen.getByText("Raw"));
     expect(screen.getByText("Rendered")).toBeInTheDocument();
     expect(screen.getByText("**formatted**")).toBeInTheDocument();
-  });
-
-  it("renders LiveChatPanel within HumanGatePanel", () => {
-    renderWithProviders(<HumanGatePanel {...defaultProps} />);
-
-    expect(screen.getByTestId("start-live-chat-button")).toBeInTheDocument();
   });
 
   it("shows chat transcript when nodeResult is provided", () => {

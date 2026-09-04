@@ -406,18 +406,6 @@ elif [ -d /workspace/repo ]; then
 fi
 echo "Workspace roots: ${ADD_DIR_ARGS[*]:-none}"
 
-# --- Live Chat mode: delegate to dedicated loop (after workspace setup) ---
-MODE=$(jq -r '.mode // empty' "$CONFIG_FILE")
-if [ "$MODE" = "live_chat" ]; then
-  SESSION_ID=$(jq -r '.session_id // empty' "$CONFIG_FILE")
-  if [ -z "$SESSION_ID" ]; then
-    echo "ERROR: session_id missing from config for live_chat mode"
-    exit 1
-  fi
-  export SESSION_ID RUN_ID NODE_EXECUTION_ID API_SERVER_URL JOB_SECRET
-  exec live-chat-loop
-fi
-
 # Derive heartbeat URL from callback URL (sibling endpoint on same server)
 export HEARTBEAT_URL="${CALLBACK_URL%/callback}/heartbeat"
 

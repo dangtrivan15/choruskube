@@ -219,7 +219,7 @@ export interface GraphTemplateResponse {
 }
 
 export interface RunEvent {
-  type: "run_status_changed" | "node_status_changed" | "node_logs_updated" | "live_chat_status_changed" | "run_pull_request_created";
+  type: "run_status_changed" | "node_status_changed" | "node_logs_updated" | "run_pull_request_created";
   runId: string;
   nodeExecutionId: string | null;
   status: string | null;
@@ -953,44 +953,6 @@ export interface RoadmapItemEvent {
  * so there is no separate PendingGateEvent type.
  */
 export type WebSocketEvent = RunEvent | RoadmapItemEvent;
-
-// --- Live Chat ---
-
-export interface LiveChatSessionResponse {
-  id: string;
-  nodeExecutionId: string;
-  workflowRunId: string;
-  sourceNodeExecutionId: string | null;
-  status: "pending" | "active" | "completed" | "failed";
-  transcript: string | null;
-  chatPodName: string | null;
-  namespace: string | null;
-  startedAt: string | null;
-  completedAt: string | null;
-  createdAt: string;
-}
-
-export interface LiveChatMessageEvent {
-  type: "live_chat_message";
-  sessionId: string;
-  role: "user" | "assistant";
-  content: string;
-}
-
-export interface ChatMessage {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  timestamp: number;
-}
-
-export interface LiveChatMessageResponse {
-  id: string;
-  sessionId: string;
-  role: "user" | "assistant";
-  content: string;
-  createdAt: string;
-}
 
 // --- Activity Feed ---
 

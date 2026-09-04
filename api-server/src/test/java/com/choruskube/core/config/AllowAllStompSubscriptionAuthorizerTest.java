@@ -19,8 +19,6 @@ class AllowAllStompSubscriptionAuthorizerTest {
                 .isTrue();
         assertThat(authorizer.canSubscribe("/topic/git-repos/" + UUID.randomUUID() + "/status", org, user))
                 .isTrue();
-        assertThat(authorizer.canSubscribe("/topic/live-chat/" + UUID.randomUUID(), org, user))
-                .isTrue();
         assertThat(authorizer.canSubscribe("/topic/anything-at-all", org, user)).isTrue();
     }
 }

@@ -38,30 +38,6 @@ vi.mock("../ArtifactList", () => ({
   ),
 }));
 
-vi.mock("@/hooks/useLiveChat", () => ({
-  useLiveChatSession: vi.fn(() => ({
-    data: undefined,
-    isLoading: false,
-  })),
-  useStartLiveChat: vi.fn(() => ({
-    mutate: vi.fn(),
-    isPending: false,
-  })),
-  useCompleteLiveChat: vi.fn(() => ({
-    mutate: vi.fn(),
-    isPending: false,
-  })),
-  useSendLiveChatMessage: vi.fn(() => ({
-    mutate: vi.fn(),
-    isPending: false,
-  })),
-  useLiveChatMessages: vi.fn(() => ({
-    messages: [],
-    addMessage: vi.fn(),
-    clearMessages: vi.fn(),
-  })),
-}));
-
 vi.mock("@/hooks/useExecutionLogs", () => ({
   useExecutionLogs: vi.fn(() => ({
     data: [],

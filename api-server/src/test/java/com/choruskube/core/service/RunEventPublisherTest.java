@@ -11,7 +11,6 @@ import com.choruskube.core.event.OrgScopedFeedPublisher;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 
 class RunEventPublisherTest {
@@ -22,7 +21,6 @@ class RunEventPublisherTest {
 
     private static final UUID RUN_ID = UUID.randomUUID();
     private static final UUID NODE_EXEC_ID = UUID.randomUUID();
-    private static final UUID SESSION_ID = UUID.randomUUID();
     private static final UUID TASK_ID = UUID.randomUUID();
 
     @BeforeEach
@@ -126,14 +124,6 @@ class RunEventPublisherTest {
     }
 
     @Test
-    void publishLiveChatStatusChanged_sendsToRunAndPendingGates() {
-        publisher.publishLiveChatStatusChanged(RUN_ID, NODE_EXEC_ID, SESSION_ID, "active");
-
-        verify(messagingTemplate).convertAndSend(eq("/topic/runs/" + RUN_ID), any(RunEvent.class));
-        verify(feedPublisher).pendingGatesChanged(eq(RUN_ID), any(RunEvent.class));
-    }
-
-    @Test
     void publishPullRequestCreated_sendsToRunAndPendingGates() {
         publisher.publishPullRequestCreated(RUN_ID);
 
@@ -150,14 +140,4 @@ class RunEventPublisherTest {
         verifyNoInteractions(feedPublisher);
     }
 
-    @Test
-    void publishLiveChatMessage_sendsOnlyToLiveChatTopic() {
-        publisher.publishLiveChatMessage(RUN_ID, SESSION_ID, "user", "hello");
-
-        ArgumentCaptor<String> topicCaptor = ArgumentCaptor.forClass(String.class);
-        verify(messagingTemplate).convertAndSend(topicCaptor.capture(), any(Object.class));
-        assertThat(topicCaptor.getValue()).isEqualTo("/topic/live-chat/" + SESSION_ID);
-        verifyNoMoreInteractions(messagingTemplate);
-        verifyNoInteractions(feedPublisher);
-    }
 }

@@ -15,7 +15,6 @@
 #   flaky            Fail on iterations < --succeed-after, then succeed
 #   gate_approve     Submit "approved" decision via API (for human-type nodes)
 #   gate_reject      Submit "rejected" decision via API (for human-type nodes)
-#   live_chat        Simulate a live chat session: submit transcript + decision
 #   multi_repo_pr    Register PRs for all repos in a multi-repo run
 #   check_prs_gate   Drives the real check-prs/register-pr CLI contract end to end
 #                    (PR completion gate): the FIRST repo in this
@@ -341,33 +340,6 @@ case "$SCENARIO" in
     echo "Mock agent: gate_reject scenario — submitting decision '$DECISION'"
     submit_decision "$DECISION"
     write_artifact "result.txt" "Gate rejected with decision: $DECISION"
-    exit 0
-    ;;
-
-  live_chat)
-    echo "Mock agent: live_chat scenario — simulating chat session"
-
-    # Generate a pre-scripted transcript
-    TRANSCRIPT="**Human:** Can you explain the changes you made?\n\n**AI:** I modified the authentication module to use JWT tokens instead of session cookies. The key changes are:\n1. Added jwt-decode dependency\n2. Updated AuthService to issue and validate tokens\n3. Added token refresh middleware\n\n**Human:** Looks good, I approve."
-
-    # Write transcript as artifact
-    mkdir -p /workspace/out
-    echo -e "$TRANSCRIPT" > /workspace/out/chat_transcript.md
-
-    # If we have API access, update the session using the node-execution-scoped endpoint
-    if [ -n "${API_SERVER_URL:-}" ] && [ -n "${RUN_ID:-}" ] && [ -n "${NODE_EXECUTION_ID:-}" ]; then
-      # Use node-execution-scoped endpoint (matches InternalAuthFilter pattern)
-      curl -sf -X PUT "${API_SERVER_URL}/internal/runs/${RUN_ID}/node-executions/${NODE_EXECUTION_ID}/live-chat/session" \
-        -H "Content-Type: application/json" \
-        -H "Authorization: Bearer ${JOB_SECRET}" \
-        -d "{\"status\": \"completed\", \"transcript\": \"$(echo -e "$TRANSCRIPT" | sed 's/"/\\"/g')\"}" || true
-    fi
-
-    # Submit approved decision
-    DECISION="${CUSTOM_DECISION:-approved}"
-    submit_decision "$DECISION"
-    write_artifact "result.txt" "Live chat completed with decision: $DECISION"
-    echo "Mock agent: live_chat completed"
     exit 0
     ;;
 
@@ -854,13 +826,13 @@ JSON
   "")
     echo "ERROR: No scenario specified" >&2
     echo "Usage: mock-agent.sh <scenario> [options]" >&2
-    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, live_chat, multi_repo_pr, check_prs_gate, roadmap_status_update, roadmap_status_update_env_default, roadmap_status_update_missing_task_id, roadmap_candidates, roadmap_imperative_links, single_repo_claude_md, dind_isolation, dind_network_connectivity, many_artifacts, rate_limited" >&2
+    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, multi_repo_pr, check_prs_gate, roadmap_status_update, roadmap_status_update_env_default, roadmap_status_update_missing_task_id, roadmap_candidates, roadmap_imperative_links, single_repo_claude_md, dind_isolation, dind_network_connectivity, many_artifacts, rate_limited" >&2
     exit 1
     ;;
 
   *)
     echo "ERROR: Unknown scenario '$SCENARIO'" >&2
-    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, live_chat, multi_repo_pr, check_prs_gate, roadmap_status_update, roadmap_status_update_env_default, roadmap_status_update_missing_task_id, roadmap_candidates, roadmap_imperative_links, single_repo_claude_md, dind_isolation, dind_network_connectivity, many_artifacts, rate_limited" >&2
+    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, multi_repo_pr, check_prs_gate, roadmap_status_update, roadmap_status_update_env_default, roadmap_status_update_missing_task_id, roadmap_candidates, roadmap_imperative_links, single_repo_claude_md, dind_isolation, dind_network_connectivity, many_artifacts, rate_limited" >&2
     exit 1
     ;;
 esac

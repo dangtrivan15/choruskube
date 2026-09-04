@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Clock, AlertCircle, CheckCircle, Info, Maximize2, RotateCcw, MessageCircle, ChevronLeft } from "lucide-react";
+import { Clock, AlertCircle, CheckCircle, Info, Maximize2, RotateCcw, ChevronLeft } from "lucide-react";
 import { format } from "date-fns";
 import type { RunResponse, NodeExecutionResponse, SnapshotNode } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
@@ -11,7 +11,6 @@ import { useRetryNode } from "@/hooks/useRuns";
 import Authorized from "@/components/Authorized";
 import ExecutionLogs from "./ExecutionLogs";
 import HumanGatePanel from "./HumanGatePanel";
-import LiveChatPanel from "./LiveChatPanel";
 import ArtifactBrowser from "./ArtifactBrowser";
 import ResultViewerDialog from "./ResultViewerDialog";
 import PredecessorOutputDialog from "./PredecessorOutputDialog";
@@ -117,8 +116,6 @@ function StatusIcon({ status }: { status: string }) {
       return <AlertCircle className="h-4 w-4 text-status-error" />;
     case "running":
       return <Clock className="h-4 w-4 animate-pulse text-status-info" />;
-    case "live_chat":
-      return <MessageCircle className="h-4 w-4 animate-pulse text-status-accent" />;
     default:
       return <Info className="h-4 w-4 text-muted-foreground" />;
   }
@@ -421,16 +418,6 @@ export default function DetailPanel({ run, nodeId, onBackToRunMeta }: DetailPane
             decisionOptions={findDecisionOptions(run, nodeId)}
             escalation={latestExec.escalation}
           />
-        )}
-
-        {status === "live_chat" && latestExec && (
-          <div className="space-y-4">
-            <LiveChatPanel
-              runId={run.id}
-              nodeExecId={latestExec.id}
-              nodeLabel={snapshotNode.label}
-            />
-          </div>
         )}
 
         {status === "running" && latestExec && (

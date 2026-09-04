@@ -12,7 +12,6 @@ import ReviewHistory from "./ReviewHistory";
 import ArtifactBrowser from "./ArtifactBrowser";
 import ArtifactList from "./ArtifactList";
 import PredecessorOutputDialog from "./PredecessorOutputDialog";
-import LiveChatPanel from "./LiveChatPanel";
 import DecisionButtons, { LEGACY_DECISION_OPTIONS } from "./DecisionButtons";
 import RoadmapCandidateBreakdown from "./RoadmapCandidateBreakdown";
 import EscalationGatePanel from "./EscalationGatePanel";
@@ -298,8 +297,6 @@ export default function HumanGatePanel({
         </>
       )}
 
-      {/* Live Chat */}
-      <LiveChatPanel runId={runId} nodeExecId={nodeExecId} nodeLabel={nodeLabel} />
     </div>
   );
 }

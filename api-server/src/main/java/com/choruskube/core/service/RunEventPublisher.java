@@ -97,15 +97,4 @@ public class RunEventPublisher {
         feedPublisher.pendingGatesChanged(runId, event);
     }
 
-    public void publishLiveChatStatusChanged(UUID runId, UUID nodeExecutionId, UUID sessionId, String status) {
-        RunEvent event = new RunEvent("live_chat_status_changed", runId, nodeExecutionId, status);
-        messagingTemplate.convertAndSend("/topic/runs/" + runId, event);
-        feedPublisher.pendingGatesChanged(runId, event);
-    }
-
-    public void publishLiveChatMessage(UUID runId, UUID sessionId, String role, String content) {
-        com.choruskube.core.dto.LiveChatMessageEvent event =
-                new com.choruskube.core.dto.LiveChatMessageEvent("live_chat_message", sessionId, role, content);
-        messagingTemplate.convertAndSend("/topic/live-chat/" + sessionId, event);
-    }
 }

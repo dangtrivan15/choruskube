@@ -47,7 +47,7 @@ public class DocsControllerTest extends BaseTest {
     void listDocs_allEntriesHaveNonEmptyDescriptions() throws Exception {
         mockMvc.perform(get("/api/v1/docs"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[*].description", hasSize(10)));
+                .andExpect(jsonPath("$[*].description", hasSize(9)));
     }
 
     @Test
@@ -71,7 +71,6 @@ public class DocsControllerTest extends BaseTest {
                 "features",
                 "workflow-templates",
                 "running-workflows",
-                "human-gates-and-live-chat",
                 "ai-agent-nodes",
                 "multi-repo-support",
                 "analytics",

@@ -28,13 +28,6 @@ vi.mock("@/hooks/useArtifacts", () => ({
   })),
 }));
 
-vi.mock("@/components/runs/LiveChatPanel", () => ({
-  default: ({ runId, nodeExecId }: { runId: string; nodeExecId: string; nodeLabel: string }) => (
-    <div data-testid="live-chat-panel-mock" data-run-id={runId} data-node-exec-id={nodeExecId}>
-      LiveChatPanel
-    </div>
-  ),
-}));
 
 vi.mock("@/components/runs/ArtifactList", () => ({
   default: ({ groups }: { runId: string; groups: unknown[] }) => (
@@ -294,95 +287,6 @@ describe("ApprovalsPage", () => {
 
     // Artifact browser should NOT be rendered since nodeExecutionId is null
     expect(screen.queryByText("Artifacts")).not.toBeInTheDocument();
-  });
-
-  it("renders LiveChatPanel in each gate card", () => {
-    mockUsePendingGates.mockReturnValue({
-      data: { content: [
-        {
-          nodeExecutionId: "exec-1",
-          runId: "run-1",
-          runStatus: "awaiting_human",
-          runName: "Workflow A",
-          nodeLabel: "Gate 1",
-          iteration: 1,
-          timeoutSeconds: null,
-          waitingSince: null,
-          status: "awaiting_human",
-          predecessorOutputs: [],
-        },
-      ], totalElements: 1, totalPages: 1, number: 0, size: 20, first: true, last: true, empty: false },
-      isLoading: false,
-      isError: false,
-    });
-
-    renderWithProviders(<ApprovalsPage />);
-
-    const liveChatPanel = screen.getByTestId("live-chat-panel-mock");
-    expect(liveChatPanel).toBeInTheDocument();
-    expect(liveChatPanel).toHaveAttribute("data-run-id", "run-1");
-    expect(liveChatPanel).toHaveAttribute("data-node-exec-id", "exec-1");
-  });
-
-  it("shows Live Chat badge and disables buttons when status is live_chat", () => {
-    mockUsePendingGates.mockReturnValue({
-      data: { content: [
-        {
-          nodeExecutionId: "exec-1",
-          runId: "run-1",
-          runStatus: "running",
-          runName: "Chat Workflow",
-          nodeLabel: "Chat Gate",
-          iteration: 1,
-          timeoutSeconds: null,
-          waitingSince: new Date(Date.now() - 60_000).toISOString(),
-          status: "live_chat",
-          predecessorOutputs: [],
-        },
-      ], totalElements: 1, totalPages: 1, number: 0, size: 20, first: true, last: true, empty: false },
-      isLoading: false,
-      isError: false,
-    });
-
-    renderWithProviders(<ApprovalsPage />);
-
-    // Live Chat badge should be visible
-    expect(screen.getByTestId("live-chat-badge")).toBeInTheDocument();
-    expect(screen.getByText("Live Chat")).toBeInTheDocument();
-
-    // Approve and Reject buttons should be disabled
-    expect(screen.getByTestId("gate-card-approve-button")).toBeDisabled();
-    expect(screen.getByTestId("gate-card-reject-button")).toBeDisabled();
-
-    // Feedback textarea should be disabled
-    expect(screen.getByTestId("gate-card-feedback")).toBeDisabled();
-  });
-
-  it("does not show Live Chat badge when status is awaiting_human", () => {
-    mockUsePendingGates.mockReturnValue({
-      data: { content: [
-        {
-          nodeExecutionId: "exec-1",
-          runId: "run-1",
-          runStatus: "awaiting_human",
-          runName: "Workflow A",
-          nodeLabel: "Gate 1",
-          iteration: 1,
-          timeoutSeconds: null,
-          waitingSince: null,
-          status: "awaiting_human",
-          predecessorOutputs: [],
-        },
-      ], totalElements: 1, totalPages: 1, number: 0, size: 20, first: true, last: true, empty: false },
-      isLoading: false,
-      isError: false,
-    });
-
-    renderWithProviders(<ApprovalsPage />);
-
-    expect(screen.queryByTestId("live-chat-badge")).not.toBeInTheDocument();
-    // Approve button should be enabled
-    expect(screen.getByTestId("gate-card-approve-button")).not.toBeDisabled();
   });
 
   it("renders FileUploadZone in each GateCard", () => {
