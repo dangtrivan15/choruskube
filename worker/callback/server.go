@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 )
@@ -16,6 +17,7 @@ const shutdownTimeout = 10 * time.Second
 // completion and heartbeats.
 type Server struct {
 	httpServer *http.Server
+	ln         net.Listener
 }
 
 // NewServer builds a Server listening on port, routing /api/v1/callback and /api/v1/heartbeat to
@@ -35,11 +37,22 @@ func NewServer(port int, handler *Handler, heartbeat *HeartbeatHandler) *Server 
 	}
 }
 
-// Start blocks serving until the server is shut down, or fails to bind. Callers run it in its
-// own goroutine.
-func (s *Server) Start() error {
-	slog.Info("callback server starting", "addr", s.httpServer.Addr)
-	if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+// Listen binds the server socket. Call it before Serve so a port conflict surfaces as an error
+// to the caller rather than disappearing inside a goroutine.
+func (s *Server) Listen() error {
+	ln, err := net.Listen("tcp", s.httpServer.Addr)
+	if err != nil {
+		return fmt.Errorf("callback server bind %s: %w", s.httpServer.Addr, err)
+	}
+	s.ln = ln
+	slog.Info("callback server listening", "addr", ln.Addr())
+	return nil
+}
+
+// Serve blocks accepting connections on the listener opened by Listen. Callers run it in its
+// own goroutine after Listen returns successfully.
+func (s *Server) Serve() error {
+	if err := s.httpServer.Serve(s.ln); err != nil && err != http.ErrServerClosed {
 		return fmt.Errorf("callback server: %w", err)
 	}
 	return nil

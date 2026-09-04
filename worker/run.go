@@ -386,8 +386,11 @@ func Run(ctx context.Context, cfg Config) error {
 		cbHandler := callback.NewHandler(hashCache, cfg.Executor, completer)
 		hbHandler := callback.NewHeartbeatHandler(hashCache, cfg.Executor, completer)
 		cbServer := callback.NewServer(cfg.CallbackPort, cbHandler, hbHandler)
+		if err := cbServer.Listen(); err != nil {
+			return fmt.Errorf("callback server: %w", err)
+		}
 		go func() {
-			if err := cbServer.Start(); err != nil {
+			if err := cbServer.Serve(); err != nil {
 				log.Printf("callback server failed: %v", err)
 			}
 		}()
