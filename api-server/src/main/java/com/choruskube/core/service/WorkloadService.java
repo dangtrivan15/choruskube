@@ -48,6 +48,7 @@ public class WorkloadService {
     private final AiCredentialResolver aiCredentialResolver;
     private final String apiServerUrl;
     private final WorkloadRegistryMirrorResolver registryMirrorResolver;
+    private final WorkloadNamespaceResolver namespaceResolver;
 
     public WorkloadService(
             NodeExecutionRepository execRepo,
@@ -59,7 +60,8 @@ public class WorkloadService {
             @Value("${executor.k8s.agent-service-account:choruskube-agent}") String defaultServiceAccount,
             AiCredentialResolver aiCredentialResolver,
             @Qualifier("executorApiServerUrl") String apiServerUrl,
-            ObjectProvider<WorkloadRegistryMirrorResolver> registryMirrorResolverProvider) {
+            ObjectProvider<WorkloadRegistryMirrorResolver> registryMirrorResolverProvider,
+            ObjectProvider<WorkloadNamespaceResolver> namespaceResolverProvider) {
         this.execRepo = execRepo;
         this.eventPublisher = eventPublisher;
         this.runRepo = runRepo;
@@ -70,6 +72,7 @@ public class WorkloadService {
         this.aiCredentialResolver = aiCredentialResolver;
         this.apiServerUrl = apiServerUrl;
         this.registryMirrorResolver = registryMirrorResolverProvider.getIfAvailable(NoRegistryMirrorResolver::new);
+        this.namespaceResolver = namespaceResolverProvider.getIfAvailable(NoWorkloadNamespaceResolver::new);
     }
 
     /**
@@ -96,18 +99,42 @@ public class WorkloadService {
         // DB round trip and could fail a launch that never needed a mirror.
         RegistryMirror mirror = params.enableDocker() ? registryMirrorResolver.resolve(runId) : null;
 
+        // The K8s executor launches into this namespace and later addresses the same resources by
+        // name via the /worker node-exec GET, which resolves through this same seam — so both must
+        // agree, and using one resolver for both is what guarantees it. Best-effort: a run with no
+        // resolvable tenant (the Docker/single-tenant case, where namespace is irrelevant) yields
+        // null rather than failing prepare; a K8s deployment with no namespace fails loudly at
+        // resource creation instead.
+        String namespace = resolveNamespaceOrNull(runId);
+
         return new PrepareWorkloadResponse(
                 params.image(),
                 params.enableDocker(),
                 claudeOAuthToken,
                 githubTokenUrl,
                 null,
-                null,
+                namespace,
                 params.identity() != null ? params.identity().name() : null,
                 mirror == null
                         ? null
                         : new PrepareWorkloadResponse.RegistryMirrorDto(
                                 mirror.mirror(), mirror.buildCache(), mirror.depProxyBase()));
+    }
+
+    /**
+     * Resolves the run's workload namespace, returning {@code null} when no tenant is resolvable.
+     * The Docker and single-tenant paths have no per-run namespace, and a run with no tenant row
+     * (e.g. an e2e run) must still prepare — so an unresolvable tenant degrades to a namespace-less
+     * launch here rather than failing the request. Empty resolves to {@code null} for the same reason.
+     */
+    private String resolveNamespaceOrNull(UUID runId) {
+        try {
+            String ns = namespaceResolver.resolve(runId);
+            return (ns == null || ns.isEmpty()) ? null : ns;
+        } catch (RuntimeException e) {
+            log.debug("No workload namespace resolved for run {}; launching namespace-less: {}", runId, e.toString());
+            return null;
+        }
     }
 
     /**
