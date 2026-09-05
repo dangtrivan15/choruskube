@@ -149,7 +149,11 @@ func (d *DockerExecutor) Execute(ctx context.Context, params executor.ExecutionP
 	if err != nil {
 		return executor.ExecutionResult{}, fmt.Errorf("marshal config.json: %w", err)
 	}
-	if err := os.WriteFile(configPath, configBytes, 0o600); err != nil {
+	// 0o644, not 0o600: the agent image drops to a non-root user, and this file is bind-mounted
+	// read-only into it — an owner-only mode (the worker writes it as root) makes the entrypoint's
+	// jq reads fail with EACCES, killing the agent before it can call back. The per-execution
+	// staging dir is 0o700, so this stays unreadable to other host users; only the mount exposes it.
+	if err := os.WriteFile(configPath, configBytes, 0o644); err != nil {
 		return executor.ExecutionResult{}, fmt.Errorf("write config.json: %w", err)
 	}
 
@@ -193,7 +197,10 @@ func (d *DockerExecutor) Execute(ctx context.Context, params executor.ExecutionP
 			return executor.ExecutionResult{}, fmt.Errorf("build registry auth config: %w", err)
 		}
 		regcredPath := filepath.Join(tmpDir, "docker-config.json")
-		if err := os.WriteFile(regcredPath, authJSON, 0o600); err != nil {
+		// 0o644 for the same reason as config.json: the non-root agent reads this via its bind
+		// mount, so an owner-only mode makes its docker pulls fail. The 0o700 staging dir is the
+		// isolation boundary that keeps these registry credentials off other host users.
+		if err := os.WriteFile(regcredPath, authJSON, 0o644); err != nil {
 			return executor.ExecutionResult{}, fmt.Errorf("stage registry auth config: %w", err)
 		}
 		// Same payload serves two purposes: authenticating this executor's own pull of

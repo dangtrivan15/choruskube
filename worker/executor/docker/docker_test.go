@@ -479,4 +479,11 @@ func TestDockerExecutor_Execute_WritesConfigJSONToStagingDir(t *testing.T) {
 	data, err := os.ReadFile(entries[0])
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "abc-123")
+
+	// The agent image runs as a non-root user; config.json is bind-mounted read-only into it,
+	// so it must stay group/other-readable or the entrypoint's jq reads fail and the agent dies
+	// before its callback (its private staging dir is what actually restricts host-side access).
+	info, err := os.Stat(entries[0])
+	require.NoError(t, err)
+	assert.NotZero(t, info.Mode().Perm()&0o044, "config.json must be readable by the non-root agent user")
 }
