@@ -21,7 +21,11 @@ public class RunPlacementService {
     public RunPlacementService(
             Optional<RunPlacementResolver> resolver,
             @Value("${temporal.namespace}") String defaultNamespace,
-            @Value("${temporal.task-queue}") String defaultTaskQueue) {
+            // The workflow runs on temporal.task-queue (the orchestrator's queue), but a run's
+            // agent-step activities must go to the Worker's queue — the orchestrator refuses them.
+            // Single-tenant deployments (no RunPlacementResolver) set temporal.worker-task-queue to
+            // that distinct queue; it falls back to temporal.task-queue when they share a process.
+            @Value("${temporal.worker-task-queue:${temporal.task-queue}}") String defaultTaskQueue) {
         this.resolver = resolver;
         this.defaultNamespace = defaultNamespace;
         this.defaultTaskQueue = defaultTaskQueue;

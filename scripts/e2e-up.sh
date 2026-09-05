@@ -80,6 +80,8 @@ if [ "$DO_IMAGES" = "1" ]; then
       "${REPO_ROOT}/api-server"   "${REPO_ROOT}/api-server/Dockerfile"
     build_image orchestrator choruskube-e2e-orchestrator:local \
       "${REPO_ROOT}/orchestrator" "${REPO_ROOT}/orchestrator/Dockerfile"
+    build_image worker       choruskube-e2e-worker:local \
+      "${REPO_ROOT}/worker"       "${REPO_ROOT}/worker/Dockerfile"
     build_image web-ui       choruskube-e2e-web-ui:local \
       "${REPO_ROOT}/web-ui"       "${REPO_ROOT}/web-ui/Dockerfile"
   fi
