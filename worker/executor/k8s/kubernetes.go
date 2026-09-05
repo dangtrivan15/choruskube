@@ -128,9 +128,9 @@ var _ coreexec.Executor = (*KubernetesExecutor)(nil)
 // so a burst of per-org copies coordinate one cache and issue no duplicate template fetches --
 // only config.Namespace differs. Used by a multi-tenant deployment to obtain a per-org executor.
 func (k *KubernetesExecutor) WithNamespace(ns string) *KubernetesExecutor {
-	copy := *k
-	copy.config.Namespace = ns
-	return &copy
+	cp := *k
+	cp.config.Namespace = ns
+	return &cp
 }
 
 // Execute launches params as a new Kubernetes Job in k.config.Namespace: it creates a
