@@ -2018,6 +2018,71 @@ func TestFetchPodLogs_ExecutorPath_ResolvesAndPassesNamespace(t *testing.T) {
 	assert.Equal(t, "org-ns-9", gotNamespace)
 }
 
+// TestDeleteAgentJob_ExecutorPath_NamespaceResolveError_BestEffort pins that a namespace-
+// resolution failure does not fail the cleanup activity: GetNodeExecution legitimately throws in
+// deployments where a run has no resolvable org (the same case FleetPlacementResolver tolerates),
+// and cleanup is best-effort. The executor is still invoked, with an empty namespace -- Docker
+// ignores it, and a real k8s deployment resolves a real one.
+func TestDeleteAgentJob_ExecutorPath_NamespaceResolveError_BestEffort(t *testing.T) {
+	execID := uuid.New()
+	stubbedRun(t)
+
+	cleanupCalled := false
+	var gotNamespace = "unset"
+	mockExec := &mockExecutor{
+		cleanupFn: func(ctx context.Context, namespace string, id uuid.UUID) error {
+			cleanupCalled = true
+			gotNamespace = namespace
+			return nil
+		},
+	}
+	mockClient := &mockWorkloadClient{
+		getNodeExecFn: func(ctx context.Context, r, n uuid.UUID) (*workload.NodeExecution, error) {
+			return nil, errors.New("api error 403: Organization not found for run")
+		},
+	}
+
+	acts := NewWithExecutor(mockClient, mockExec, callback.NewHashCache())
+	if err := acts.DeleteAgentJob(context.Background(), DeleteAgentJobParams{NodeExecutionID: execID}); err != nil {
+		t.Fatalf("cleanup must not fail on a namespace-resolution error: %v", err)
+	}
+
+	assert.True(t, cleanupCalled, "executor.Cleanup must still be invoked")
+	assert.Equal(t, "", gotNamespace, "an unresolved namespace falls back to empty, not skipped")
+}
+
+// TestFetchPodLogs_ExecutorPath_NamespaceResolveError_BestEffort is FetchPodLogs' mirror: a
+// namespace-resolution failure must not fail the log-fetch activity.
+func TestFetchPodLogs_ExecutorPath_NamespaceResolveError_BestEffort(t *testing.T) {
+	execID := uuid.New()
+	stubbedRun(t)
+
+	getLogsCalled := false
+	var gotNamespace = "unset"
+	mockExec := &mockExecutor{
+		getLogsFn: func(ctx context.Context, namespace string, id uuid.UUID, tailLines int) (string, error) {
+			getLogsCalled = true
+			gotNamespace = namespace
+			return "log output", nil
+		},
+	}
+	mockClient := &mockWorkloadClient{
+		getNodeExecFn: func(ctx context.Context, r, n uuid.UUID) (*workload.NodeExecution, error) {
+			return nil, errors.New("api error 403: Organization not found for run")
+		},
+	}
+
+	acts := NewWithExecutor(mockClient, mockExec, callback.NewHashCache())
+	logs, err := acts.FetchPodLogs(context.Background(), FetchPodLogsParams{NodeExecutionID: execID, TailLines: 50})
+	if err != nil {
+		t.Fatalf("log fetch must not fail on a namespace-resolution error: %v", err)
+	}
+
+	assert.Equal(t, "log output", logs)
+	assert.True(t, getLogsCalled, "executor.GetLogs must still be invoked")
+	assert.Equal(t, "", gotNamespace, "an unresolved namespace falls back to empty, not skipped")
+}
+
 // TestParamsHasNoDeadFields pins the deletion of three fields the orchestrator's struct
 // carries but this activity's body never reads (RunLogPath, Label, LoopGroup) — each is read
 // only by activities that stay behind in the orchestrator, so here they would be pure replay

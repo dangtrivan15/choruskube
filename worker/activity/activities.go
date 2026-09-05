@@ -508,13 +508,17 @@ func (a *Activities) DeleteAgentJob(ctx context.Context, params DeleteAgentJobPa
 		return err
 	}
 	if a.executor != nil {
-		// The namespace is resolved server-side from the run's org; the executor addresses its
-		// resources by name within it, so a stale local cache can't send a delete to the wrong one.
-		ne, err := a.client.GetNodeExecution(ctx, runID, params.NodeExecutionID)
-		if err != nil {
-			return fmt.Errorf("resolve namespace for cleanup: %w", err)
+		// Namespace resolution is best-effort: it legitimately fails for a run with no resolvable
+		// org, and cleanup must not leak resources by refusing to run. Docker ignores the empty
+		// fallback; a real k8s deployment resolves the org namespace here.
+		namespace := ""
+		if ne, err := a.client.GetNodeExecution(ctx, runID, params.NodeExecutionID); err != nil {
+			slog.Warn("resolve namespace for cleanup failed; cleaning up namespace-less",
+				"node_execution_id", params.NodeExecutionID, "error", err)
+		} else {
+			namespace = ne.Namespace
 		}
-		return a.executor.Cleanup(ctx, ne.Namespace, params.NodeExecutionID)
+		return a.executor.Cleanup(ctx, namespace, params.NodeExecutionID)
 	}
 	return a.client.CleanupWorkload(ctx, runID, params.NodeExecutionID)
 }
@@ -536,11 +540,17 @@ func (a *Activities) FetchPodLogs(ctx context.Context, params FetchPodLogsParams
 		return "", err
 	}
 	if a.executor != nil {
-		ne, err := a.client.GetNodeExecution(ctx, runID, params.NodeExecutionID)
-		if err != nil {
-			return "", fmt.Errorf("resolve namespace for logs: %w", err)
+		// Namespace resolution is best-effort here too: log-fetch is diagnostic and must not fail
+		// the step because a run has no resolvable org. Docker ignores the empty fallback; a real
+		// k8s deployment resolves the org namespace.
+		namespace := ""
+		if ne, err := a.client.GetNodeExecution(ctx, runID, params.NodeExecutionID); err != nil {
+			slog.Warn("resolve namespace for logs failed; fetching logs namespace-less",
+				"node_execution_id", params.NodeExecutionID, "error", err)
+		} else {
+			namespace = ne.Namespace
 		}
-		return a.executor.GetLogs(ctx, ne.Namespace, params.NodeExecutionID, tailLines)
+		return a.executor.GetLogs(ctx, namespace, params.NodeExecutionID, tailLines)
 	}
 	return a.client.GetWorkloadLogs(ctx, runID, params.NodeExecutionID, tailLines)
 }
