@@ -91,7 +91,7 @@ func TestKubernetesExecutor_ResolveJobSecretHash(t *testing.T) {
 
 	exec := NewKubernetesExecutor(fakeClient, Config{})
 
-	hash, err := exec.ResolveJobSecretHash(context.Background(), execID)
+	hash, err := exec.ResolveJobSecretHash(context.Background(), namespace, execID)
 	require.NoError(t, err)
 	assert.Equal(t, coreexec.HashSecret(secret), hash)
 }
@@ -438,7 +438,7 @@ func TestKubernetesExecutor_Cleanup_DeletesJobAndChildren(t *testing.T) {
 	result, err := exec.Execute(context.Background(), params)
 	require.NoError(t, err)
 
-	err = exec.Cleanup(context.Background(), params.NodeExecutionID)
+	err = exec.Cleanup(context.Background(), namespace, params.NodeExecutionID)
 	require.NoError(t, err)
 
 	_, err = fakeClient.BatchV1().Jobs(namespace).Get(context.Background(), result.PodName, metav1.GetOptions{})
@@ -467,7 +467,7 @@ func TestKubernetesExecutor_Cleanup_JobAlreadyGone_StillDeletesSecret(t *testing
 	// like a real cluster mid-way through GC.
 	require.NoError(t, fakeClient.BatchV1().Jobs(namespace).Delete(context.Background(), result.PodName, metav1.DeleteOptions{}))
 
-	err = exec.Cleanup(context.Background(), params.NodeExecutionID)
+	err = exec.Cleanup(context.Background(), namespace, params.NodeExecutionID)
 	require.NoError(t, err)
 
 	execIDShort := params.NodeExecutionID.String()[:8]
@@ -491,7 +491,7 @@ func TestKubernetesExecutor_Cleanup_JobAndSecretGone_ConfigMapSurvives_StillDele
 	require.NoError(t, fakeClient.BatchV1().Jobs(namespace).Delete(context.Background(), result.PodName, metav1.DeleteOptions{}))
 	require.NoError(t, fakeClient.CoreV1().Secrets(namespace).Delete(context.Background(), "job-secret-"+execIDShort, metav1.DeleteOptions{}))
 
-	err = exec.Cleanup(context.Background(), params.NodeExecutionID)
+	err = exec.Cleanup(context.Background(), namespace, params.NodeExecutionID)
 	require.NoError(t, err)
 
 	_, err = fakeClient.CoreV1().ConfigMaps(namespace).Get(context.Background(), "config-"+execIDShort, metav1.GetOptions{})
@@ -502,7 +502,7 @@ func TestKubernetesExecutor_Cleanup_NoJobFound_NoOps(t *testing.T) {
 	fakeClient := fake.NewSimpleClientset()
 	exec := NewKubernetesExecutor(fakeClient, Config{})
 
-	err := exec.Cleanup(context.Background(), uuid.New())
+	err := exec.Cleanup(context.Background(), "test-org-ns", uuid.New())
 	assert.NoError(t, err)
 }
 
@@ -516,7 +516,7 @@ func TestKubernetesExecutor_Terminate_PatchesActiveDeadline(t *testing.T) {
 	result, err := exec.Execute(context.Background(), params)
 	require.NoError(t, err)
 
-	err = exec.Terminate(context.Background(), params.NodeExecutionID)
+	err = exec.Terminate(context.Background(), namespace, params.NodeExecutionID)
 	require.NoError(t, err)
 
 	job, err := fakeClient.BatchV1().Jobs(namespace).Get(context.Background(), result.PodName, metav1.GetOptions{})
@@ -529,7 +529,7 @@ func TestKubernetesExecutor_Terminate_NoJobFound_NoOps(t *testing.T) {
 	fakeClient := fake.NewSimpleClientset()
 	exec := NewKubernetesExecutor(fakeClient, Config{})
 
-	err := exec.Terminate(context.Background(), uuid.New())
+	err := exec.Terminate(context.Background(), "test-org-ns", uuid.New())
 	assert.NoError(t, err)
 }
 
@@ -537,7 +537,7 @@ func TestKubernetesExecutor_GetLogs_NoJobFound(t *testing.T) {
 	fakeClient := fake.NewSimpleClientset()
 	exec := NewKubernetesExecutor(fakeClient, Config{})
 
-	logs, err := exec.GetLogs(context.Background(), uuid.New(), 100)
+	logs, err := exec.GetLogs(context.Background(), "test-org-ns", uuid.New(), 100)
 	require.NoError(t, err)
 	assert.Equal(t, "(no pod found)", logs)
 }
@@ -553,7 +553,7 @@ func TestKubernetesExecutor_GetLogs_NoPodForJob(t *testing.T) {
 	require.NoError(t, err)
 
 	// The fake clientset does not run a Job controller, so no Pod is ever created for the Job.
-	logs, err := exec.GetLogs(context.Background(), params.NodeExecutionID, 100)
+	logs, err := exec.GetLogs(context.Background(), namespace, params.NodeExecutionID, 100)
 	require.NoError(t, err)
 	assert.Equal(t, "(no pod found)", logs)
 }
@@ -562,7 +562,7 @@ func TestKubernetesExecutor_ResolveJobSecretHash_NotFound(t *testing.T) {
 	fakeClient := fake.NewSimpleClientset()
 	exec := NewKubernetesExecutor(fakeClient, Config{})
 
-	_, err := exec.ResolveJobSecretHash(context.Background(), uuid.New())
+	_, err := exec.ResolveJobSecretHash(context.Background(), "test-org-ns", uuid.New())
 	assert.Error(t, err)
 }
 
@@ -572,6 +572,56 @@ func TestKubernetesExecutor_HealthCheck(t *testing.T) {
 
 	err := exec.HealthCheck(context.Background())
 	assert.NoError(t, err)
+}
+
+// TestKubernetesExecutor_Teardown_IsNamespacedGetByName_NoClusterWideList is the anti-vacuity
+// guard for this task: every teardown/recovery call must reach its resources by name within the
+// given namespace, never via a cluster-wide (all-namespaces) LIST. It inspects the fake
+// clientset's recorded actions and fails if any carries an empty namespace, which is exactly
+// what an all-namespaces list looks like on the wire.
+func TestKubernetesExecutor_Teardown_IsNamespacedGetByName_NoClusterWideList(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	namespace := "test-org-ns"
+
+	exec := NewKubernetesExecutor(fakeClient, Config{AgentServiceAccount: "choruskube-agent"})
+	params := newTestParams(namespace)
+
+	_, err := exec.Execute(context.Background(), params)
+	require.NoError(t, err)
+
+	// Only teardown/recovery calls are under test, so drop Execute's own create actions.
+	fakeClient.ClearActions()
+
+	_, err = exec.ResolveJobSecretHash(context.Background(), namespace, params.NodeExecutionID)
+	require.NoError(t, err)
+	_, err = exec.GetLogs(context.Background(), namespace, params.NodeExecutionID, 100)
+	require.NoError(t, err)
+	require.NoError(t, exec.Cleanup(context.Background(), namespace, params.NodeExecutionID))
+
+	sawSecretGet := false
+	sawJobGet := false
+	for _, a := range fakeClient.Actions() {
+		// An empty namespace on any verb is the all-namespaces signature this task must eliminate.
+		assert.NotEmpty(t, a.GetNamespace(),
+			"action %s on %s must be namespace-scoped, not cluster-wide", a.GetVerb(), a.GetResource().Resource)
+		assert.Equal(t, namespace, a.GetNamespace(),
+			"action %s on %s targeted the wrong namespace", a.GetVerb(), a.GetResource().Resource)
+		// A cluster-wide read of secrets/jobs/configmaps (list on all namespaces) is exactly the
+		// read-all-secrets grant this task removes -- assert those resources are never listed.
+		if a.GetVerb() == "list" {
+			res := a.GetResource().Resource
+			assert.NotContains(t, []string{"secrets", "jobs", "configmaps"}, res,
+				"%s must be fetched by name, never listed", res)
+		}
+		if a.GetVerb() == "get" && a.GetResource().Resource == "secrets" {
+			sawSecretGet = true
+		}
+		if a.GetVerb() == "get" && a.GetResource().Resource == "jobs" {
+			sawJobGet = true
+		}
+	}
+	assert.True(t, sawSecretGet, "ResolveJobSecretHash should GET the job-secret Secret by name")
+	assert.True(t, sawJobGet, "GetLogs should GET the Job by name")
 }
 
 func TestIsScriptExecution(t *testing.T) {

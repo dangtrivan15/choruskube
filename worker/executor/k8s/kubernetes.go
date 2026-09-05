@@ -32,9 +32,9 @@ const (
 	// package's workloads by a stable convention.
 	labelAppKey = "app"
 	labelApp    = "choruskube-agent"
-	// labelExecID/labelRunID key this package's own resource lookups (which have no
-	// namespace to key off, per the Executor interface), so they are load-bearing, not
-	// just labels for operators to read.
+	// labelExecID/labelRunID let cluster operators correlate a Job/Pod back to one run and
+	// execution. Teardown addresses resources by their deterministic name in the given
+	// namespace, so these are for operators to read, not lookup keys.
 	labelExecID = "choruskube/exec-id"
 	labelRunID  = "choruskube/run-id"
 
@@ -365,77 +365,40 @@ func (k *KubernetesExecutor) buildJob(
 	}
 }
 
-// Cleanup removes all Kubernetes resources for executionID: the Job (foreground propagation,
-// so K8s removes Pods before the Job object disappears), and its ConfigMap and Secret(s) by
-// name. The namespace is resolved from the Job when it still exists; once it's gone
-// (ttlSecondsAfterFinished, or a race with K8s GC) the Job's own label lookup can no longer
-// find it, so Cleanup falls back to the exec-id label on the job-secret Secret, then the
-// ConfigMap, to keep resolving a namespace instead of orphaning Secrets that hold JOB_SECRET,
-// the Claude OAuth token, and the registry password. Idempotent: a missing Job or child
-// resource is not an error, and an executionID with no exec-id-labeled resource left anywhere
-// (already fully reaped, or Execute never got that far) makes this a no-op.
-func (k *KubernetesExecutor) Cleanup(ctx context.Context, executionID uuid.UUID) error {
-	job, err := k.findJobByExecID(ctx, executionID)
-	if err != nil {
-		return fmt.Errorf("find job: %w", err)
-	}
-
-	ns := ""
-	switch {
-	case job != nil:
-		ns = job.Namespace
-	default:
-		secret, err := k.findJobSecretByExecID(ctx, executionID)
-		if err != nil {
-			return fmt.Errorf("find secret: %w", err)
-		}
-		if secret != nil {
-			ns = secret.Namespace
-		} else if cm, err := k.findConfigMapByExecID(ctx, executionID); err != nil {
-			return fmt.Errorf("find configmap: %w", err)
-		} else if cm != nil {
-			ns = cm.Namespace
-		}
-	}
-	if ns == "" {
-		return nil
-	}
-
-	if job != nil {
-		propagation := metav1.DeletePropagationForeground
-		if err := k.client.BatchV1().Jobs(ns).Delete(ctx, job.Name, metav1.DeleteOptions{PropagationPolicy: &propagation}); err != nil && !apierrors.IsNotFound(err) {
-			return fmt.Errorf("delete job: %w", err)
-		}
-	}
-
+// Cleanup removes all Kubernetes resources for executionID in namespace: the Job (foreground
+// propagation, so K8s removes Pods before the Job object disappears), and its ConfigMap and
+// Secret(s), each addressed by its deterministic name (derived from executionID) rather than
+// found by a cluster-wide label search -- so this needs only namespaced delete rights in the
+// one namespace, never a cluster-scoped grant. Idempotent: a missing Job or child resource is
+// not an error, so an already-reaped execution (or one Execute never got far enough to create)
+// makes this a no-op.
+func (k *KubernetesExecutor) Cleanup(ctx context.Context, namespace string, executionID uuid.UUID) error {
 	execIDShort := executionID.String()[:8]
-	if err := k.client.CoreV1().ConfigMaps(ns).Delete(ctx, configMapPrefix+execIDShort, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+
+	propagation := metav1.DeletePropagationForeground
+	if err := k.client.BatchV1().Jobs(namespace).Delete(ctx, jobPrefix+execIDShort, metav1.DeleteOptions{PropagationPolicy: &propagation}); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("delete job: %w", err)
+	}
+	if err := k.client.CoreV1().ConfigMaps(namespace).Delete(ctx, configMapPrefix+execIDShort, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("delete configmap: %w", err)
 	}
-	if err := k.client.CoreV1().Secrets(ns).Delete(ctx, jobSecretPrefix+execIDShort, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+	if err := k.client.CoreV1().Secrets(namespace).Delete(ctx, jobSecretPrefix+execIDShort, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("delete secret: %w", err)
 	}
-	if err := k.client.CoreV1().Secrets(ns).Delete(ctx, regcredPrefix+execIDShort, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+	if err := k.client.CoreV1().Secrets(namespace).Delete(ctx, regcredPrefix+execIDShort, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("delete regcred secret: %w", err)
 	}
 	return nil
 }
 
-// Terminate patches executionID's Job with a 1-second activeDeadlineSeconds so the Job
-// controller stops it almost immediately, rather than deleting it outright -- Cleanup (called
-// separately, later) is what removes the Job and its child resources. Idempotent: an
-// already-gone Job is not an error.
-func (k *KubernetesExecutor) Terminate(ctx context.Context, executionID uuid.UUID) error {
-	job, err := k.findJobByExecID(ctx, executionID)
-	if err != nil {
-		return fmt.Errorf("find job: %w", err)
-	}
-	if job == nil {
-		return nil
-	}
-
+// Terminate patches executionID's Job (addressed by name in namespace) with a 1-second
+// activeDeadlineSeconds so the Job controller stops it almost immediately, rather than deleting
+// it outright -- Cleanup (called separately, later) is what removes the Job and its child
+// resources. Idempotent: an already-gone Job is not an error.
+func (k *KubernetesExecutor) Terminate(ctx context.Context, namespace string, executionID uuid.UUID) error {
+	jobName := jobPrefix + executionID.String()[:8]
 	patch := []byte(`{"spec":{"activeDeadlineSeconds":1}}`)
-	if _, err := k.client.BatchV1().Jobs(job.Namespace).Patch(ctx, job.Name, types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
+	if _, err := k.client.BatchV1().Jobs(namespace).Patch(ctx, jobName, types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil
 		}
@@ -445,19 +408,20 @@ func (k *KubernetesExecutor) Terminate(ctx context.Context, executionID uuid.UUI
 }
 
 // GetLogs returns up to the last tailLines lines of executionID's agent container output,
-// capped at 64KB. Errors from a not-yet-scheduled or already-reaped pod are reported back as
-// text rather than as an error -- log retrieval is best-effort diagnostic output, not a
-// correctness-affecting call.
-func (k *KubernetesExecutor) GetLogs(ctx context.Context, executionID uuid.UUID, tailLines int) (string, error) {
-	job, err := k.findJobByExecID(ctx, executionID)
-	if err != nil {
-		return "", fmt.Errorf("find job: %w", err)
-	}
-	if job == nil {
-		return "(no pod found)", nil
+// capped at 64KB. The Job is addressed by name in namespace, and its Pod is found by the
+// built-in job-name label within that same namespace -- a namespaced LIST, never cluster-wide.
+// Errors from a not-yet-scheduled or already-reaped pod are reported back as text rather than
+// as an error -- log retrieval is best-effort diagnostic output, not a correctness-affecting call.
+func (k *KubernetesExecutor) GetLogs(ctx context.Context, namespace string, executionID uuid.UUID, tailLines int) (string, error) {
+	jobName := jobPrefix + executionID.String()[:8]
+	if _, err := k.client.BatchV1().Jobs(namespace).Get(ctx, jobName, metav1.GetOptions{}); err != nil {
+		if apierrors.IsNotFound(err) {
+			return "(no pod found)", nil
+		}
+		return "", fmt.Errorf("get job: %w", err)
 	}
 
-	pods, err := k.client.CoreV1().Pods(job.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "job-name=" + job.Name})
+	pods, err := k.client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: "job-name=" + jobName})
 	if err != nil {
 		return "", fmt.Errorf("list pods: %w", err)
 	}
@@ -467,7 +431,7 @@ func (k *KubernetesExecutor) GetLogs(ctx context.Context, executionID uuid.UUID,
 	podName := pods.Items[0].Name
 
 	tail := int64(tailLines)
-	stream, err := k.client.CoreV1().Pods(job.Namespace).GetLogs(podName, &corev1.PodLogOptions{
+	stream, err := k.client.CoreV1().Pods(namespace).GetLogs(podName, &corev1.PodLogOptions{
 		Container: agentContainerName,
 		TailLines: &tail,
 	}).Stream(ctx)
@@ -489,85 +453,31 @@ func (k *KubernetesExecutor) GetLogs(ctx context.Context, executionID uuid.UUID,
 	return string(data), nil
 }
 
-// ResolveJobSecretHash reads JOB_SECRET back from executionID's job-secret Secret (found by the
-// choruskube/exec-id label, cluster-wide -- the interface passes no namespace) and returns its
-// SHA-256 hash. Used to recover the hash cache after a Worker restart.
-func (k *KubernetesExecutor) ResolveJobSecretHash(ctx context.Context, executionID uuid.UUID) (string, error) {
-	secret, err := k.findJobSecretByExecID(ctx, executionID)
+// ResolveJobSecretHash reads JOB_SECRET back from executionID's job-secret Secret (addressed by
+// its deterministic name in namespace) and returns its SHA-256 hash. Used to recover the hash
+// cache after a Worker restart.
+func (k *KubernetesExecutor) ResolveJobSecretHash(ctx context.Context, namespace string, executionID uuid.UUID) (string, error) {
+	secretName := jobSecretPrefix + executionID.String()[:8]
+	secret, err := k.client.CoreV1().Secrets(namespace).Get(ctx, secretName, metav1.GetOptions{})
 	if err != nil {
-		return "", fmt.Errorf("find secret: %w", err)
-	}
-	if secret == nil {
-		return "", fmt.Errorf("no job-secret found for execution %s", executionID)
+		if apierrors.IsNotFound(err) {
+			return "", fmt.Errorf("no job-secret found for execution %s", executionID)
+		}
+		return "", fmt.Errorf("get secret: %w", err)
 	}
 	raw, ok := secret.Data["JOB_SECRET"]
 	if !ok {
-		return "", fmt.Errorf("secret %s/%s missing JOB_SECRET", secret.Namespace, secret.Name)
+		return "", fmt.Errorf("secret %s/%s missing JOB_SECRET", namespace, secretName)
 	}
 	return coreexec.HashSecret(string(raw)), nil
 }
 
-// HealthCheck verifies the Kubernetes API server is reachable, using the same cluster-scoped
-// Job list call this package's own resource lookups rely on -- a healthy probe proves those
-// lookups will work too.
+// HealthCheck verifies the Kubernetes API server is reachable via the version discovery
+// endpoint -- a call that needs no RBAC and no namespace, so a healthy probe never depends on
+// (or implies) any cluster-scoped grant.
 func (k *KubernetesExecutor) HealthCheck(ctx context.Context) error {
-	_, err := k.client.BatchV1().Jobs(metav1.NamespaceAll).List(ctx, metav1.ListOptions{LabelSelector: labelAppKey + "=" + labelApp})
+	_, err := k.client.Discovery().ServerVersion()
 	return err
-}
-
-// --- Lookup helpers ---
-//
-// The Executor interface's teardown methods (Cleanup, Terminate, GetLogs,
-// ResolveJobSecretHash) take only an executionID, no namespace -- this package has no
-// ownership-resolver/DB path back to the org namespace. Every resource this
-// package creates therefore carries the choruskube/exec-id label, and teardown looks resources
-// up by that label across all namespaces instead. Cleanup in particular chains these lookups
-// (Job, then Secret, then ConfigMap) because the Job -- Cleanup's primary namespace source --
-// is the first of the four to disappear once ttlSecondsAfterFinished elapses.
-
-func (k *KubernetesExecutor) findJobByExecID(ctx context.Context, execID uuid.UUID) (*batchv1.Job, error) {
-	list, err := k.client.BatchV1().Jobs(metav1.NamespaceAll).List(ctx, metav1.ListOptions{
-		LabelSelector: labelExecID + "=" + execID.String(),
-	})
-	if err != nil {
-		return nil, err
-	}
-	if len(list.Items) == 0 {
-		return nil, nil
-	}
-	return &list.Items[0], nil
-}
-
-// findJobSecretByExecID disambiguates by name prefix because the job-secret and regcred
-// Secrets for one execution carry the same choruskube/exec-id label.
-func (k *KubernetesExecutor) findJobSecretByExecID(ctx context.Context, execID uuid.UUID) (*corev1.Secret, error) {
-	list, err := k.client.CoreV1().Secrets(metav1.NamespaceAll).List(ctx, metav1.ListOptions{
-		LabelSelector: labelExecID + "=" + execID.String(),
-	})
-	if err != nil {
-		return nil, err
-	}
-	for i := range list.Items {
-		if strings.HasPrefix(list.Items[i].Name, jobSecretPrefix) {
-			return &list.Items[i], nil
-		}
-	}
-	return nil, nil
-}
-
-// findConfigMapByExecID is Cleanup's second fallback (after findJobSecretByExecID) for
-// resolving a namespace once the Job is already gone.
-func (k *KubernetesExecutor) findConfigMapByExecID(ctx context.Context, execID uuid.UUID) (*corev1.ConfigMap, error) {
-	list, err := k.client.CoreV1().ConfigMaps(metav1.NamespaceAll).List(ctx, metav1.ListOptions{
-		LabelSelector: labelExecID + "=" + execID.String(),
-	})
-	if err != nil {
-		return nil, err
-	}
-	if len(list.Items) == 0 {
-		return nil, nil
-	}
-	return &list.Items[0], nil
 }
 
 func execLabels(params coreexec.ExecutionParams) map[string]string {

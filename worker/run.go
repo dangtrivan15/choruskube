@@ -238,8 +238,8 @@ var _ workloadClientResolver = (*fleetSupervisor)(nil)
 // statusBridge implements callback.StatusClient by resolving execution→Fleet→workload client
 // using the same pending cache the activity completer uses.
 type statusBridge struct {
-	pending          pendingLookup
-	workloadClients  workloadClientResolver
+	pending         pendingLookup
+	workloadClients workloadClientResolver
 }
 
 func (b *statusBridge) GetNodeExecution(ctx context.Context, runID, nodeExecID uuid.UUID) (callback.NodeExecutionStatus, error) {
@@ -251,7 +251,7 @@ func (b *statusBridge) GetNodeExecution(ctx context.Context, runID, nodeExecID u
 	if err != nil {
 		return callback.NodeExecutionStatus{}, err
 	}
-	return callback.NodeExecutionStatus{Status: ne.Status}, nil
+	return callback.NodeExecutionStatus{Status: ne.Status, Namespace: ne.Namespace}, nil
 }
 
 func (b *statusBridge) UpdateNodeExecution(ctx context.Context, runID, nodeExecID uuid.UUID, status, result, artifactRefs, podName, errorMessage string) error {
@@ -303,7 +303,7 @@ type fleetSupervisor struct {
 	// callback completer looks a Fleet's client up here by namespace+taskQueue to complete or
 	// heartbeat one of its activities on the connection its workflow was scheduled on -- the
 	// same reason clientOptions dials one client per Fleet rather than sharing a single one.
-	clients   map[string]client.Client
+	clients map[string]client.Client
 	// wkClients holds the workload client for each served Fleet, keyed by fleetKey. Today all
 	// Fleets share one API-server credential, so they point at the same *workload.Client; the
 	// per-Fleet map keeps the addressing symmetric with Temporal's clientFor path.

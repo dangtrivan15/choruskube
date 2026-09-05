@@ -117,16 +117,17 @@ func TestHandler_CacheMiss_ResolvesFromExecutor(t *testing.T) {
 
 	resolverCalled := false
 	mockExec := &mockExecutor{
-		resolveJobSecretHashFn: func(ctx context.Context, id uuid.UUID) (string, error) {
+		resolveJobSecretHashFn: func(ctx context.Context, namespace string, id uuid.UUID) (string, error) {
 			resolverCalled = true
 			assert.Equal(t, execID, id)
+			assert.Equal(t, "org-ns", namespace)
 			return hash, nil
 		},
 	}
 
 	handler := NewHandler(cache, mockExec, &mockCompleter{
 		completeFn: func(ctx context.Context, req CompletionRequest) error { return nil },
-	}, nil)
+	}, &mockStatusClient{getStatus: "running", getNamespace: "org-ns"})
 
 	body, _ := json.Marshal(map[string]any{
 		"node_execution_id": execID.String(),
@@ -171,10 +172,11 @@ func (m *mockCompleter) Fail(ctx context.Context, executionID uuid.UUID, reason 
 }
 
 type mockStatusClient struct {
-	getStatus        string
-	getErr           error
-	updateCalls      []updateCall
-	logCalls         []logCall
+	getStatus    string
+	getNamespace string
+	getErr       error
+	updateCalls  []updateCall
+	logCalls     []logCall
 }
 
 type updateCall struct {
@@ -188,7 +190,7 @@ type logCall struct {
 }
 
 func (m *mockStatusClient) GetNodeExecution(_ context.Context, runID, execID uuid.UUID) (NodeExecutionStatus, error) {
-	return NodeExecutionStatus{Status: m.getStatus}, m.getErr
+	return NodeExecutionStatus{Status: m.getStatus, Namespace: m.getNamespace}, m.getErr
 }
 
 func (m *mockStatusClient) UpdateNodeExecution(_ context.Context, runID, execID uuid.UUID, status, result, artifactRefs, podName, errorMessage string) error {
@@ -201,11 +203,11 @@ func (m *mockStatusClient) WriteExecutionLog(_ context.Context, runID, execID uu
 }
 
 type mockExecutor struct {
-	resolveJobSecretHashFn func(context.Context, uuid.UUID) (string, error)
+	resolveJobSecretHashFn func(context.Context, string, uuid.UUID) (string, error)
 }
 
-func (m *mockExecutor) ResolveJobSecretHash(ctx context.Context, id uuid.UUID) (string, error) {
-	return m.resolveJobSecretHashFn(ctx, id)
+func (m *mockExecutor) ResolveJobSecretHash(ctx context.Context, namespace string, id uuid.UUID) (string, error) {
+	return m.resolveJobSecretHashFn(ctx, namespace, id)
 }
 
 // --- Tests for the 5 new behaviors ---
@@ -324,12 +326,12 @@ func TestHandler_RateLimited_CompletesWithPark(t *testing.T) {
 
 	resumeAt := time.Now().Add(30 * time.Minute).UTC()
 	r := callbackReq(t, execID, secret, map[string]any{
-		"node_execution_id":      execID.String(),
-		"run_id":                 runID.String(),
-		"status":                 "rate_limited",
-		"resume_at":              resumeAt.Format(time.RFC3339),
-		"session_id":             "sess-123",
-		"session_artifact_path":  "/transcript/path",
+		"node_execution_id":     execID.String(),
+		"run_id":                runID.String(),
+		"status":                "rate_limited",
+		"resume_at":             resumeAt.Format(time.RFC3339),
+		"session_id":            "sess-123",
+		"session_artifact_path": "/transcript/path",
 	})
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, r)

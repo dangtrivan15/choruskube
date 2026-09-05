@@ -61,9 +61,12 @@ func TestHeartbeatHandler_CacheMiss_ResolvesFromExecutor(t *testing.T) {
 
 	resolverCalled := false
 	mockExec := &mockExecutor{
-		resolveJobSecretHashFn: func(ctx context.Context, id uuid.UUID) (string, error) {
+		resolveJobSecretHashFn: func(ctx context.Context, namespace string, id uuid.UUID) (string, error) {
 			resolverCalled = true
 			assert.Equal(t, execID, id)
+			// The heartbeat body carries no runID, so no namespace can be resolved for recovery;
+			// the executor is still consulted, with an empty namespace, and here recovers the hash.
+			assert.Empty(t, namespace)
 			return hash, nil
 		},
 	}

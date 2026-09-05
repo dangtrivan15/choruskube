@@ -101,10 +101,14 @@ func workloadPath(runID, nodeExecID uuid.UUID) string {
 	return nodeExecPath(runID, nodeExecID) + "/workload"
 }
 
-// NodeExecution is the minimal GET response from the node-execution endpoint.
+// NodeExecution is the minimal GET response from the node-execution endpoint. Namespace is the
+// K8s namespace the execution's workload runs in, resolved server-side (empty in a single-tenant
+// deployment that runs no per-org namespaces); teardown and hash-recovery pass it to the executor
+// so it addresses resources by name without any cluster-wide search.
 type NodeExecution struct {
-	ID     uuid.UUID `json:"id"`
-	Status string    `json:"status"`
+	ID        uuid.UUID `json:"id"`
+	Status    string    `json:"status"`
+	Namespace string    `json:"namespace"`
 }
 
 // UpdateStatusRequest is the PUT body for the node-execution status endpoint.

@@ -13,12 +13,18 @@ import (
 )
 
 // Executor runs and manages the lifecycle of node execution workloads.
+//
+// The teardown methods (Cleanup, Terminate, GetLogs, ResolveJobSecretHash) take the workload's
+// namespace so an implementation can address its resources by name within it, rather than
+// searching cluster-wide -- the K8s executor's resource names are deterministic from the
+// executionID, so a namespace plus that id is enough to reach every resource without any
+// cluster-scoped LIST (and therefore without any cluster-wide RBAC). Docker ignores namespace.
 type Executor interface {
 	Execute(ctx context.Context, params ExecutionParams) (ExecutionResult, error)
-	Cleanup(ctx context.Context, executionID uuid.UUID) error
-	Terminate(ctx context.Context, executionID uuid.UUID) error
-	GetLogs(ctx context.Context, executionID uuid.UUID, tailLines int) (string, error)
-	ResolveJobSecretHash(ctx context.Context, executionID uuid.UUID) (string, error)
+	Cleanup(ctx context.Context, namespace string, executionID uuid.UUID) error
+	Terminate(ctx context.Context, namespace string, executionID uuid.UUID) error
+	GetLogs(ctx context.Context, namespace string, executionID uuid.UUID, tailLines int) (string, error)
+	ResolveJobSecretHash(ctx context.Context, namespace string, executionID uuid.UUID) (string, error)
 	HealthCheck(ctx context.Context) error
 }
 

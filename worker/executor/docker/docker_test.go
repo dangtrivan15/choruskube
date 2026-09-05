@@ -202,7 +202,7 @@ func TestDockerExecutor_Execute_CreatesContainer(t *testing.T) {
 	assert.True(t, foundConfigMount, "expected a bind mount at /workspace/config.json")
 
 	// Cleanup
-	err = exec.Cleanup(context.Background(), params.NodeExecutionID)
+	err = exec.Cleanup(context.Background(), "", params.NodeExecutionID)
 	assert.NoError(t, err)
 
 	c, err = exec.findContainer(context.Background(), params.NodeExecutionID)
@@ -229,9 +229,9 @@ func TestDockerExecutor_ResolveJobSecretHash(t *testing.T) {
 
 	_, err := exec.Execute(context.Background(), params)
 	require.NoError(t, err)
-	defer exec.Cleanup(context.Background(), params.NodeExecutionID)
+	defer exec.Cleanup(context.Background(), "", params.NodeExecutionID)
 
-	hash, err := exec.ResolveJobSecretHash(context.Background(), params.NodeExecutionID)
+	hash, err := exec.ResolveJobSecretHash(context.Background(), "", params.NodeExecutionID)
 	require.NoError(t, err)
 	assert.Equal(t, executor.HashSecret(secret), hash)
 }
@@ -240,7 +240,7 @@ func TestDockerExecutor_ResolveJobSecretHash_MissingContainerReturnsError(t *tes
 	skipUnlessBindMountWorks(t)
 
 	exec := newTestExecutor(t)
-	_, err := exec.ResolveJobSecretHash(context.Background(), uuid.New())
+	_, err := exec.ResolveJobSecretHash(context.Background(), "", uuid.New())
 	assert.Error(t, err)
 }
 
@@ -259,7 +259,7 @@ func TestDockerExecutor_Execute_ScriptExecutionSetsE2EWorkers(t *testing.T) {
 	}
 	_, err := exec.Execute(context.Background(), params)
 	require.NoError(t, err)
-	defer exec.Cleanup(context.Background(), params.NodeExecutionID)
+	defer exec.Cleanup(context.Background(), "", params.NodeExecutionID)
 
 	c, err := exec.findContainer(context.Background(), params.NodeExecutionID)
 	require.NoError(t, err)
@@ -284,7 +284,7 @@ func TestDockerExecutor_Execute_NonScriptSkipsE2EWorkers(t *testing.T) {
 	}
 	_, err := exec.Execute(context.Background(), params)
 	require.NoError(t, err)
-	defer exec.Cleanup(context.Background(), params.NodeExecutionID)
+	defer exec.Cleanup(context.Background(), "", params.NodeExecutionID)
 
 	c, err := exec.findContainer(context.Background(), params.NodeExecutionID)
 	require.NoError(t, err)
@@ -300,7 +300,7 @@ func TestDockerExecutor_Cleanup_IdempotentWhenContainerMissing(t *testing.T) {
 	skipUnlessBindMountWorks(t)
 
 	exec := newTestExecutor(t)
-	err := exec.Cleanup(context.Background(), uuid.New())
+	err := exec.Cleanup(context.Background(), "", uuid.New())
 	assert.NoError(t, err, "cleanup of an execution with no container must be a no-op, not an error")
 }
 
@@ -308,7 +308,7 @@ func TestDockerExecutor_Terminate_IdempotentWhenContainerMissing(t *testing.T) {
 	skipUnlessBindMountWorks(t)
 
 	exec := newTestExecutor(t)
-	err := exec.Terminate(context.Background(), uuid.New())
+	err := exec.Terminate(context.Background(), "", uuid.New())
 	assert.NoError(t, err, "terminate of an execution with no container must be a no-op, not an error")
 }
 
@@ -327,11 +327,11 @@ func TestDockerExecutor_GetLogs_ReturnsContainerOutput(t *testing.T) {
 	}
 	_, err := exec.Execute(context.Background(), params)
 	require.NoError(t, err)
-	defer exec.Cleanup(context.Background(), params.NodeExecutionID)
+	defer exec.Cleanup(context.Background(), "", params.NodeExecutionID)
 
 	// Give the process a moment to emit its output before we ask for logs.
 	require.Eventually(t, func() bool {
-		logs, err := exec.GetLogs(context.Background(), params.NodeExecutionID, 100)
+		logs, err := exec.GetLogs(context.Background(), "", params.NodeExecutionID, 100)
 		return err == nil && strings.Contains(logs, "hello-from-container")
 	}, 10*time.Second, 200*time.Millisecond)
 }
@@ -365,7 +365,7 @@ func TestDockerExecutor_Execute_StagesRegistryAuthConfig(t *testing.T) {
 	}
 	_, err := exec.Execute(context.Background(), params)
 	require.NoError(t, err)
-	defer exec.Cleanup(context.Background(), params.NodeExecutionID)
+	defer exec.Cleanup(context.Background(), "", params.NodeExecutionID)
 
 	c, err := exec.findContainer(context.Background(), params.NodeExecutionID)
 	require.NoError(t, err)
@@ -414,7 +414,7 @@ func TestDockerExecutor_Execute_WithDinD_SetsDockerHostEnv(t *testing.T) {
 
 	result, err := exec.Execute(context.Background(), params)
 	require.NoError(t, err)
-	defer exec.Cleanup(context.Background(), params.NodeExecutionID)
+	defer exec.Cleanup(context.Background(), "", params.NodeExecutionID)
 
 	assert.NotEmpty(t, result.PodName)
 
@@ -436,7 +436,7 @@ func TestDockerExecutor_Execute_WithDinD_SetsDockerHostEnv(t *testing.T) {
 	assert.True(t, dindInspect.State.Running)
 
 	// Cleanup must remove both the agent container and the DinD sidecar + its volume.
-	require.NoError(t, exec.Cleanup(context.Background(), params.NodeExecutionID))
+	require.NoError(t, exec.Cleanup(context.Background(), "", params.NodeExecutionID))
 
 	_, err = exec.client.ContainerInspect(context.Background(), dindName)
 	assert.Error(t, err, "DinD sidecar must be removed by Cleanup")
@@ -467,7 +467,7 @@ func TestDockerExecutor_Execute_WritesConfigJSONToStagingDir(t *testing.T) {
 	}
 	_, err = exec.Execute(context.Background(), params)
 	require.NoError(t, err)
-	defer exec.Cleanup(context.Background(), params.NodeExecutionID)
+	defer exec.Cleanup(context.Background(), "", params.NodeExecutionID)
 
 	// The staged config.json must live under the configured StagingDir (required for
 	// Docker-out-of-Docker: the bind source must resolve on the host daemon, not just

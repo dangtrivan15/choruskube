@@ -33,6 +33,7 @@ type workloadClient interface {
 	CreateWorkload(ctx context.Context, params workload.CreateWorkloadParams) (*workload.CreateWorkloadResponse, error)
 	CleanupWorkload(ctx context.Context, runID, nodeExecID uuid.UUID) error
 	GetWorkloadLogs(ctx context.Context, runID, nodeExecID uuid.UUID, tailLines int) (string, error)
+	GetNodeExecution(ctx context.Context, runID, nodeExecID uuid.UUID) (*workload.NodeExecution, error)
 	PrepareWorkload(ctx context.Context, params workload.PrepareParams) (*workload.PrepareResponse, error)
 	CompleteWorkload(ctx context.Context, params workload.CompleteParams) error
 	WriteExecutionLog(ctx context.Context, runID, nodeExecID uuid.UUID, level, message string)
@@ -502,12 +503,18 @@ type DeleteAgentJobParams struct {
 }
 
 func (a *Activities) DeleteAgentJob(ctx context.Context, params DeleteAgentJobParams) error {
-	if a.executor != nil {
-		return a.executor.Cleanup(ctx, params.NodeExecutionID)
-	}
 	runID, err := runIDOf(ctx)
 	if err != nil {
 		return err
+	}
+	if a.executor != nil {
+		// The namespace is resolved server-side from the run's org; the executor addresses its
+		// resources by name within it, so a stale local cache can't send a delete to the wrong one.
+		ne, err := a.client.GetNodeExecution(ctx, runID, params.NodeExecutionID)
+		if err != nil {
+			return fmt.Errorf("resolve namespace for cleanup: %w", err)
+		}
+		return a.executor.Cleanup(ctx, ne.Namespace, params.NodeExecutionID)
 	}
 	return a.client.CleanupWorkload(ctx, runID, params.NodeExecutionID)
 }
@@ -524,12 +531,16 @@ func (a *Activities) FetchPodLogs(ctx context.Context, params FetchPodLogsParams
 	if tailLines <= 0 {
 		tailLines = 50
 	}
-	if a.executor != nil {
-		return a.executor.GetLogs(ctx, params.NodeExecutionID, tailLines)
-	}
 	runID, err := runIDOf(ctx)
 	if err != nil {
 		return "", err
+	}
+	if a.executor != nil {
+		ne, err := a.client.GetNodeExecution(ctx, runID, params.NodeExecutionID)
+		if err != nil {
+			return "", fmt.Errorf("resolve namespace for logs: %w", err)
+		}
+		return a.executor.GetLogs(ctx, ne.Namespace, params.NodeExecutionID, tailLines)
 	}
 	return a.client.GetWorkloadLogs(ctx, runID, params.NodeExecutionID, tailLines)
 }

@@ -54,7 +54,10 @@ func (h *HeartbeatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !verifySecret(r.Context(), h.cache, h.resolver, execID, bearer) {
+	// The heartbeat body carries no runID, so there is no path to the execution's namespace for
+	// a cache-miss recovery read; "" makes the executor's namespaced lookup fail closed to 401.
+	// The completion callback (which does carry runID) is what recovers the hash after a restart.
+	if !verifySecret(r.Context(), h.cache, h.resolver, execID, bearer, func() (string, error) { return "", nil }) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
