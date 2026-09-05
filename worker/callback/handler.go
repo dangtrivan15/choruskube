@@ -57,11 +57,11 @@ func (c *HashCache) Remove(executionID uuid.UUID) {
 
 // SecretHashResolver recovers a job-secret hash the cache doesn't have — the case where the
 // Worker restarted after Execute() ran and lost its in-memory cache. executor.Executor satisfies
-// this with ResolveJobSecretHash; the handler only needs that one method. namespace scopes the
-// resolver's lookup to the execution's own namespace (empty in a single-tenant deployment);
-// the caller resolves it and passes it, since recovery here has no other path back to it.
+// this with ResolveJobSecretHash; the handler only needs that one method. The resolver is bound to
+// the execution's namespace (a multi-tenant deployment passes a per-org, namespace-bound one), so
+// recovery here needs no namespace of its own.
 type SecretHashResolver interface {
-	ResolveJobSecretHash(ctx context.Context, namespace string, executionID uuid.UUID) (string, error)
+	ResolveJobSecretHash(ctx context.Context, executionID uuid.UUID) (string, error)
 }
 
 // executor.Executor must keep satisfying this narrower interface — Run() passes it directly as
@@ -110,11 +110,9 @@ type StatusClient interface {
 }
 
 // NodeExecutionStatus is the subset of a node execution the handler reads from the API server:
-// Status decides whether the callback is stale, and Namespace scopes a cache-miss hash recovery
-// to the execution's own namespace (empty in a single-tenant deployment).
+// Status decides whether the callback is stale.
 type NodeExecutionStatus struct {
-	Status    string
-	Namespace string
+	Status string
 }
 
 // Handler serves POST /api/v1/callback: an agent pod reporting that its node execution finished.
@@ -193,21 +191,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	// namespaceFn is consulted only on a cache miss (a Worker that restarted after launch), so
-	// the common warm-cache path makes no extra call before authenticating. The callback body
-	// carries runID, which with the status client resolves the execution's namespace for the
-	// executor's namespaced hash-recovery read.
-	namespaceFn := func() (string, error) {
-		if h.status == nil {
-			return "", nil
-		}
-		ne, err := h.status.GetNodeExecution(ctx, runID, execID)
-		if err != nil {
-			return "", err
-		}
-		return ne.Namespace, nil
-	}
-	if !verifySecret(ctx, h.cache, h.resolver, execID, bearer, namespaceFn) {
+	if !verifySecret(ctx, h.cache, h.resolver, execID, bearer) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -319,18 +303,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // verifySecret checks bearer against the hash on record for execID, resolving and caching it
 // first on a cache miss. Shared by Handler and HeartbeatHandler so both endpoints authenticate
-// exactly the same way. namespaceFn is invoked only on a cache miss to resolve the execution's
-// namespace for the recovery read; a caller that cannot resolve one (the heartbeat endpoint,
-// whose body carries no runID) returns "" and the namespaced read then fails closed to 401.
-func verifySecret(ctx context.Context, cache *HashCache, resolver SecretHashResolver, execID uuid.UUID, bearer string, namespaceFn func() (string, error)) bool {
+// exactly the same way. The resolver (when set) is bound to the execution's namespace, so recovery
+// needs no namespace here; a resolve error fails closed to 401 rather than any cluster-wide search.
+func verifySecret(ctx context.Context, cache *HashCache, resolver SecretHashResolver, execID uuid.UUID, bearer string) bool {
 	expectedHash, ok := cache.Get(execID)
 	if !ok && resolver != nil {
-		namespace, err := namespaceFn()
-		if err != nil {
-			slog.Warn("failed to resolve namespace for job secret hash", "execution_id", execID, "error", err)
-			return false
-		}
-		resolved, err := resolver.ResolveJobSecretHash(ctx, namespace, execID)
+		resolved, err := resolver.ResolveJobSecretHash(ctx, execID)
 		if err != nil {
 			slog.Warn("failed to resolve job secret hash", "execution_id", execID, "error", err)
 			return false

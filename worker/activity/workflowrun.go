@@ -32,3 +32,9 @@ var activityInfo = temporalactivity.GetInfo
 func runIDOf(ctx context.Context) (uuid.UUID, error) {
 	return runIDFromWorkflowID(activityInfo(ctx).WorkflowExecution.ID)
 }
+
+// RunIDOf exposes runIDOf to other packages (the multi-tenant overlay resolves a run's org from
+// the activity context the same way an activity here does).
+func RunIDOf(ctx context.Context) (uuid.UUID, error) {
+	return runIDOf(ctx)
+}

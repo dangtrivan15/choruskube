@@ -254,9 +254,9 @@ func (d *DockerExecutor) Execute(ctx context.Context, params executor.ExecutionP
 // Cleanup removes all Docker resources for executionID: the agent container, its staging
 // directory, and — if this execution had DinD enabled — the DinD sidecar and its data volume.
 // It is idempotent: a missing container is not an error, since the caller may retry after a
-// partial cleanup or call Cleanup for an execution that never created any resources. namespace
-// is ignored: a single Docker host has no namespaces, and containers are found by exec-id label.
-func (d *DockerExecutor) Cleanup(ctx context.Context, namespace string, executionID uuid.UUID) error {
+// partial cleanup or call Cleanup for an execution that never created any resources. A single
+// Docker host has no namespaces, and containers are found by exec-id label.
+func (d *DockerExecutor) Cleanup(ctx context.Context, executionID uuid.UUID) error {
 	c, err := d.findContainer(ctx, executionID)
 	if err != nil {
 		return fmt.Errorf("find container: %w", err)
@@ -283,9 +283,9 @@ func (d *DockerExecutor) Cleanup(ctx context.Context, namespace string, executio
 }
 
 // Terminate stops executionID's container gracefully (SIGTERM, 30s grace before SIGKILL).
-// Idempotent: an already-stopped or already-gone container is not an error. namespace is
-// ignored -- a single Docker host has no namespaces.
-func (d *DockerExecutor) Terminate(ctx context.Context, namespace string, executionID uuid.UUID) error {
+// Idempotent: an already-stopped or already-gone container is not an error. A single Docker host
+// has no namespaces.
+func (d *DockerExecutor) Terminate(ctx context.Context, executionID uuid.UUID) error {
 	c, err := d.findContainer(ctx, executionID)
 	if err != nil {
 		return fmt.Errorf("find container: %w", err)
@@ -305,9 +305,8 @@ func (d *DockerExecutor) Terminate(ctx context.Context, namespace string, execut
 }
 
 // GetLogs returns up to the last tailLines lines of executionID's container output (stdout and
-// stderr interleaved), capped at 64KB. namespace is ignored -- a single Docker host has no
-// namespaces.
-func (d *DockerExecutor) GetLogs(ctx context.Context, namespace string, executionID uuid.UUID, tailLines int) (string, error) {
+// stderr interleaved), capped at 64KB. A single Docker host has no namespaces.
+func (d *DockerExecutor) GetLogs(ctx context.Context, executionID uuid.UUID, tailLines int) (string, error) {
 	c, err := d.findContainer(ctx, executionID)
 	if err != nil {
 		return "", fmt.Errorf("find container: %w", err)
@@ -342,9 +341,9 @@ func (d *DockerExecutor) GetLogs(ctx context.Context, namespace string, executio
 }
 
 // ResolveJobSecretHash reads JOB_SECRET back from executionID's container environment and
-// returns its SHA-256 hash. Used to recover the hash cache after a Worker restart. namespace is
-// ignored -- a single Docker host has no namespaces.
-func (d *DockerExecutor) ResolveJobSecretHash(ctx context.Context, namespace string, executionID uuid.UUID) (string, error) {
+// returns its SHA-256 hash. Used to recover the hash cache after a Worker restart. A single
+// Docker host has no namespaces.
+func (d *DockerExecutor) ResolveJobSecretHash(ctx context.Context, executionID uuid.UUID) (string, error) {
 	c, err := d.findContainer(ctx, executionID)
 	if err != nil {
 		return "", fmt.Errorf("find container: %w", err)

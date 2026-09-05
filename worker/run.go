@@ -251,7 +251,7 @@ func (b *statusBridge) GetNodeExecution(ctx context.Context, runID, nodeExecID u
 	if err != nil {
 		return callback.NodeExecutionStatus{}, err
 	}
-	return callback.NodeExecutionStatus{Status: ne.Status, Namespace: ne.Namespace}, nil
+	return callback.NodeExecutionStatus{Status: ne.Status}, nil
 }
 
 func (b *statusBridge) UpdateNodeExecution(ctx context.Context, runID, nodeExecID uuid.UUID, status, result, artifactRefs, podName, errorMessage string) error {
@@ -470,7 +470,7 @@ func Run(ctx context.Context, cfg Config) error {
 		completer := newActivityCompleter(acts.Pending, sup)
 		sc := &statusBridge{pending: acts.Pending, workloadClients: sup}
 		cbHandler := callback.NewHandler(hashCache, cfg.Executor, completer, sc)
-		hbHandler := callback.NewHeartbeatHandler(hashCache, cfg.Executor, completer, sc)
+		hbHandler := callback.NewHeartbeatHandler(hashCache, cfg.Executor, completer)
 		cbServer := callback.NewServer(cfg.CallbackPort, cbHandler, hbHandler)
 		if err := cbServer.Listen(); err != nil {
 			return fmt.Errorf("callback server: %w", err)

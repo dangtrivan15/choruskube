@@ -75,29 +75,29 @@ func requirePending(t *testing.T, err error) {
 // loudly instead of masking an unexpected call with a quiet zero value.
 type mockExecutor struct {
 	executeFn func(ctx context.Context, params executor.ExecutionParams) (executor.ExecutionResult, error)
-	cleanupFn func(ctx context.Context, namespace string, executionID uuid.UUID) error
-	getLogsFn func(ctx context.Context, namespace string, executionID uuid.UUID, tailLines int) (string, error)
+	cleanupFn func(ctx context.Context, executionID uuid.UUID) error
+	getLogsFn func(ctx context.Context, executionID uuid.UUID, tailLines int) (string, error)
 }
 
 func (m *mockExecutor) Execute(ctx context.Context, params executor.ExecutionParams) (executor.ExecutionResult, error) {
 	return m.executeFn(ctx, params)
 }
-func (m *mockExecutor) Cleanup(ctx context.Context, namespace string, executionID uuid.UUID) error {
+func (m *mockExecutor) Cleanup(ctx context.Context, executionID uuid.UUID) error {
 	if m.cleanupFn != nil {
-		return m.cleanupFn(ctx, namespace, executionID)
+		return m.cleanupFn(ctx, executionID)
 	}
 	return nil
 }
-func (m *mockExecutor) Terminate(ctx context.Context, namespace string, executionID uuid.UUID) error {
+func (m *mockExecutor) Terminate(ctx context.Context, executionID uuid.UUID) error {
 	return nil
 }
-func (m *mockExecutor) GetLogs(ctx context.Context, namespace string, executionID uuid.UUID, tailLines int) (string, error) {
+func (m *mockExecutor) GetLogs(ctx context.Context, executionID uuid.UUID, tailLines int) (string, error) {
 	if m.getLogsFn != nil {
-		return m.getLogsFn(ctx, namespace, executionID, tailLines)
+		return m.getLogsFn(ctx, executionID, tailLines)
 	}
 	return "", nil
 }
-func (m *mockExecutor) ResolveJobSecretHash(ctx context.Context, namespace string, executionID uuid.UUID) (string, error) {
+func (m *mockExecutor) ResolveJobSecretHash(ctx context.Context, executionID uuid.UUID) (string, error) {
 	return "", nil
 }
 func (m *mockExecutor) HealthCheck(ctx context.Context) error { return nil }
@@ -110,11 +110,10 @@ var _ executor.Executor = (*mockExecutor)(nil)
 // like CleanupWorkload/GetWorkloadLogs above: it is a best-effort, fire-and-forget call made on
 // every execution, so it defaults to a no-op and only tests asserting on it set writeLogFn.
 type mockWorkloadClient struct {
-	createFn      func(ctx context.Context, p workload.CreateWorkloadParams) (*workload.CreateWorkloadResponse, error)
-	prepareFn     func(ctx context.Context, p workload.PrepareParams) (*workload.PrepareResponse, error)
-	completeFn    func(ctx context.Context, p workload.CompleteParams) error
-	writeLogFn    func(ctx context.Context, runID, nodeExecID uuid.UUID, level, message string)
-	getNodeExecFn func(ctx context.Context, runID, nodeExecID uuid.UUID) (*workload.NodeExecution, error)
+	createFn   func(ctx context.Context, p workload.CreateWorkloadParams) (*workload.CreateWorkloadResponse, error)
+	prepareFn  func(ctx context.Context, p workload.PrepareParams) (*workload.PrepareResponse, error)
+	completeFn func(ctx context.Context, p workload.CompleteParams) error
+	writeLogFn func(ctx context.Context, runID, nodeExecID uuid.UUID, level, message string)
 }
 
 func (m *mockWorkloadClient) CreateWorkload(ctx context.Context, p workload.CreateWorkloadParams) (*workload.CreateWorkloadResponse, error) {
@@ -125,9 +124,6 @@ func (m *mockWorkloadClient) CleanupWorkload(ctx context.Context, runID, nodeExe
 }
 func (m *mockWorkloadClient) GetWorkloadLogs(ctx context.Context, runID, nodeExecID uuid.UUID, tailLines int) (string, error) {
 	return "", nil
-}
-func (m *mockWorkloadClient) GetNodeExecution(ctx context.Context, runID, nodeExecID uuid.UUID) (*workload.NodeExecution, error) {
-	return m.getNodeExecFn(ctx, runID, nodeExecID)
 }
 func (m *mockWorkloadClient) PrepareWorkload(ctx context.Context, p workload.PrepareParams) (*workload.PrepareResponse, error) {
 	return m.prepareFn(ctx, p)
@@ -216,7 +212,6 @@ func TestExecuteAINodeFromSnapshot_CallsExecutor(t *testing.T) {
 	assert.NotEmpty(t, executedParams.JobSecret)
 	assert.Equal(t, "http://worker:9090/api/v1/callback", executedParams.CallbackURL)
 	assert.Equal(t, "tok_test", executedParams.Credentials.ClaudeOAuthToken)
-	assert.Equal(t, "org-ns", executedParams.Identity.Namespace)
 	assert.Equal(t, "choruskube-agent", executedParams.Identity.ServiceAccount)
 	assert.Nil(t, executedParams.Credentials.Registry)
 	assert.Nil(t, executedParams.RegistryMirror)
@@ -1953,134 +1948,58 @@ func TestDeleteAgentJob_DelegatesToAPIServer(t *testing.T) {
 	}
 }
 
-// TestDeleteAgentJob_ExecutorPath_ResolvesAndPassesNamespace pins that the local-execution path
-// resolves the workload's namespace server-side (GetNodeExecution) and hands it to the executor,
-// so Cleanup addresses resources by name in the right namespace with no cluster-wide search.
-func TestDeleteAgentJob_ExecutorPath_ResolvesAndPassesNamespace(t *testing.T) {
+// TestDeleteAgentJob_ExecutorPath_CleansUpNamespaceFree pins that the local-execution path calls
+// the executor's namespace-free Cleanup directly. It no longer resolves a namespace server-side
+// (GetNodeExecution is gone from the workload client this package depends on): the executor
+// instance is bound to its own namespace, so no per-call namespace is threaded here.
+func TestDeleteAgentJob_ExecutorPath_CleansUpNamespaceFree(t *testing.T) {
 	execID := uuid.New()
-	runID := stubbedRun(t)
+	stubbedRun(t)
 
-	var gotNamespace string
 	var gotExecID uuid.UUID
+	cleanupCalled := false
 	mockExec := &mockExecutor{
-		cleanupFn: func(ctx context.Context, namespace string, id uuid.UUID) error {
-			gotNamespace, gotExecID = namespace, id
+		cleanupFn: func(ctx context.Context, id uuid.UUID) error {
+			cleanupCalled = true
+			gotExecID = id
 			return nil
 		},
 	}
-	var askedRunID, askedExecID uuid.UUID
-	mockClient := &mockWorkloadClient{
-		getNodeExecFn: func(ctx context.Context, r, n uuid.UUID) (*workload.NodeExecution, error) {
-			askedRunID, askedExecID = r, n
-			return &workload.NodeExecution{ID: n, Status: "running", Namespace: "org-ns-7"}, nil
-		},
-	}
 
-	acts := NewWithExecutor(mockClient, mockExec, callback.NewHashCache())
+	acts := NewWithExecutor(&mockWorkloadClient{}, mockExec, callback.NewHashCache())
 	if err := acts.DeleteAgentJob(context.Background(), DeleteAgentJobParams{NodeExecutionID: execID}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	assert.Equal(t, runID, askedRunID)
-	assert.Equal(t, execID, askedExecID)
-	assert.Equal(t, "org-ns-7", gotNamespace)
+	assert.True(t, cleanupCalled, "executor.Cleanup must be invoked")
 	assert.Equal(t, execID, gotExecID)
 }
 
-// TestFetchPodLogs_ExecutorPath_ResolvesAndPassesNamespace is FetchPodLogs' mirror of the above.
-func TestFetchPodLogs_ExecutorPath_ResolvesAndPassesNamespace(t *testing.T) {
+// TestFetchPodLogs_ExecutorPath_FetchesNamespaceFree is FetchPodLogs' mirror: the local-execution
+// path calls the executor's namespace-free GetLogs directly, with no GetNodeExecution namespace
+// resolution.
+func TestFetchPodLogs_ExecutorPath_FetchesNamespaceFree(t *testing.T) {
 	execID := uuid.New()
-	runID := stubbedRun(t)
+	stubbedRun(t)
 
-	var gotNamespace string
+	var gotExecID uuid.UUID
+	var gotTail int
 	mockExec := &mockExecutor{
-		getLogsFn: func(ctx context.Context, namespace string, id uuid.UUID, tailLines int) (string, error) {
-			gotNamespace = namespace
+		getLogsFn: func(ctx context.Context, id uuid.UUID, tailLines int) (string, error) {
+			gotExecID, gotTail = id, tailLines
 			return "log output", nil
 		},
 	}
-	var askedRunID uuid.UUID
-	mockClient := &mockWorkloadClient{
-		getNodeExecFn: func(ctx context.Context, r, n uuid.UUID) (*workload.NodeExecution, error) {
-			askedRunID = r
-			return &workload.NodeExecution{ID: n, Status: "running", Namespace: "org-ns-9"}, nil
-		},
-	}
 
-	acts := NewWithExecutor(mockClient, mockExec, callback.NewHashCache())
+	acts := NewWithExecutor(&mockWorkloadClient{}, mockExec, callback.NewHashCache())
 	logs, err := acts.FetchPodLogs(context.Background(), FetchPodLogsParams{NodeExecutionID: execID, TailLines: 50})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	assert.Equal(t, "log output", logs)
-	assert.Equal(t, runID, askedRunID)
-	assert.Equal(t, "org-ns-9", gotNamespace)
-}
-
-// TestDeleteAgentJob_ExecutorPath_NamespaceResolveError_BestEffort pins that a namespace-
-// resolution failure does not fail the cleanup activity: GetNodeExecution legitimately throws in
-// deployments where a run has no resolvable org (the same case FleetPlacementResolver tolerates),
-// and cleanup is best-effort. The executor is still invoked, with an empty namespace -- Docker
-// ignores it, and a real k8s deployment resolves a real one.
-func TestDeleteAgentJob_ExecutorPath_NamespaceResolveError_BestEffort(t *testing.T) {
-	execID := uuid.New()
-	stubbedRun(t)
-
-	cleanupCalled := false
-	var gotNamespace = "unset"
-	mockExec := &mockExecutor{
-		cleanupFn: func(ctx context.Context, namespace string, id uuid.UUID) error {
-			cleanupCalled = true
-			gotNamespace = namespace
-			return nil
-		},
-	}
-	mockClient := &mockWorkloadClient{
-		getNodeExecFn: func(ctx context.Context, r, n uuid.UUID) (*workload.NodeExecution, error) {
-			return nil, errors.New("api error 403: Organization not found for run")
-		},
-	}
-
-	acts := NewWithExecutor(mockClient, mockExec, callback.NewHashCache())
-	if err := acts.DeleteAgentJob(context.Background(), DeleteAgentJobParams{NodeExecutionID: execID}); err != nil {
-		t.Fatalf("cleanup must not fail on a namespace-resolution error: %v", err)
-	}
-
-	assert.True(t, cleanupCalled, "executor.Cleanup must still be invoked")
-	assert.Equal(t, "", gotNamespace, "an unresolved namespace falls back to empty, not skipped")
-}
-
-// TestFetchPodLogs_ExecutorPath_NamespaceResolveError_BestEffort is FetchPodLogs' mirror: a
-// namespace-resolution failure must not fail the log-fetch activity.
-func TestFetchPodLogs_ExecutorPath_NamespaceResolveError_BestEffort(t *testing.T) {
-	execID := uuid.New()
-	stubbedRun(t)
-
-	getLogsCalled := false
-	var gotNamespace = "unset"
-	mockExec := &mockExecutor{
-		getLogsFn: func(ctx context.Context, namespace string, id uuid.UUID, tailLines int) (string, error) {
-			getLogsCalled = true
-			gotNamespace = namespace
-			return "log output", nil
-		},
-	}
-	mockClient := &mockWorkloadClient{
-		getNodeExecFn: func(ctx context.Context, r, n uuid.UUID) (*workload.NodeExecution, error) {
-			return nil, errors.New("api error 403: Organization not found for run")
-		},
-	}
-
-	acts := NewWithExecutor(mockClient, mockExec, callback.NewHashCache())
-	logs, err := acts.FetchPodLogs(context.Background(), FetchPodLogsParams{NodeExecutionID: execID, TailLines: 50})
-	if err != nil {
-		t.Fatalf("log fetch must not fail on a namespace-resolution error: %v", err)
-	}
-
-	assert.Equal(t, "log output", logs)
-	assert.True(t, getLogsCalled, "executor.GetLogs must still be invoked")
-	assert.Equal(t, "", gotNamespace, "an unresolved namespace falls back to empty, not skipped")
+	assert.Equal(t, execID, gotExecID)
+	assert.Equal(t, 50, gotTail)
 }
 
 // TestParamsHasNoDeadFields pins the deletion of three fields the orchestrator's struct

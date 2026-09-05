@@ -14,17 +14,17 @@ import (
 
 // Executor runs and manages the lifecycle of node execution workloads.
 //
-// The teardown methods (Cleanup, Terminate, GetLogs, ResolveJobSecretHash) take the workload's
-// namespace so an implementation can address its resources by name within it, rather than
-// searching cluster-wide -- the K8s executor's resource names are deterministic from the
-// executionID, so a namespace plus that id is enough to reach every resource without any
-// cluster-scoped LIST (and therefore without any cluster-wide RBAC). Docker ignores namespace.
+// The teardown methods (Cleanup, Terminate, GetLogs, ResolveJobSecretHash) take only the
+// executionID: an instance is bound to a single namespace at construction, so these address
+// resources by their deterministic name within that one namespace, never via a cluster-wide LIST
+// (and so never needing cluster-scoped RBAC). A multi-tenant deployment obtains a namespace-bound
+// instance per org (KubernetesExecutor.WithNamespace); Docker has no namespaces at all.
 type Executor interface {
 	Execute(ctx context.Context, params ExecutionParams) (ExecutionResult, error)
-	Cleanup(ctx context.Context, namespace string, executionID uuid.UUID) error
-	Terminate(ctx context.Context, namespace string, executionID uuid.UUID) error
-	GetLogs(ctx context.Context, namespace string, executionID uuid.UUID, tailLines int) (string, error)
-	ResolveJobSecretHash(ctx context.Context, namespace string, executionID uuid.UUID) (string, error)
+	Cleanup(ctx context.Context, executionID uuid.UUID) error
+	Terminate(ctx context.Context, executionID uuid.UUID) error
+	GetLogs(ctx context.Context, executionID uuid.UUID, tailLines int) (string, error)
+	ResolveJobSecretHash(ctx context.Context, executionID uuid.UUID) (string, error)
 	HealthCheck(ctx context.Context) error
 }
 
@@ -94,9 +94,10 @@ type RegistryCredentials struct {
 	Password string
 }
 
-// ExecutionIdentity is the identity a workload runs under.
+// ExecutionIdentity is the identity a workload runs under. The namespace a workload launches
+// into is a property of the executor instance (bound at construction), not of a single call, so
+// it is not carried here.
 type ExecutionIdentity struct {
-	Namespace      string
 	ServiceAccount string
 }
 

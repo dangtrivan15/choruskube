@@ -1,8 +1,8 @@
 // Package k8s implements executor.Executor by launching agent workloads as Kubernetes Jobs.
-// It is generic and tenant-agnostic: it launches into whatever namespace, service account,
-// and credentials its ExecutionParams carry, and resolves no organization, namespace, or
-// credential itself. A multi-tenant deployment provisions those inputs elsewhere and passes
-// them in; a single-tenant deployment has one fixed set of them.
+// It is generic and tenant-agnostic: an instance is bound to a single namespace (Config.Namespace)
+// and launches into it with whatever service account and credentials its ExecutionParams carry,
+// resolving no organization, namespace, or credential itself. A multi-tenant deployment derives a
+// per-org instance with WithNamespace; a single-tenant deployment has one fixed namespace.
 package k8s
 
 import (
@@ -59,6 +59,11 @@ const (
 
 // Config configures a KubernetesExecutor.
 type Config struct {
+	// Namespace is the single namespace every client call this instance makes is scoped to:
+	// the Job, ConfigMap, and Secret(s) it creates, and the resources its teardown methods
+	// address by name. WithNamespace returns a copy that differs only in this field.
+	Namespace string
+
 	// AgentServiceAccount is the ServiceAccount agent pods run under when
 	// params.Identity.ServiceAccount is empty.
 	AgentServiceAccount string
@@ -93,7 +98,7 @@ type podTemplateStore struct {
 }
 
 // KubernetesExecutor implements executor.Executor by launching agent workloads as Kubernetes
-// Jobs in the org namespace named by each execution's ExecutionIdentity.
+// Jobs in its configured namespace (Config.Namespace).
 type KubernetesExecutor struct {
 	client kubernetes.Interface
 	config Config
@@ -118,12 +123,22 @@ func NewKubernetesExecutor(client kubernetes.Interface, cfg Config) *KubernetesE
 
 var _ coreexec.Executor = (*KubernetesExecutor)(nil)
 
-// Execute launches params as a new Kubernetes Job in params.Identity.Namespace: it creates a
+// WithNamespace returns a copy of k that launches into and tears down within ns instead of
+// k.config.Namespace. The copy shares k's Kubernetes client and pod-template cache (pointer),
+// so a burst of per-org copies coordinate one cache and issue no duplicate template fetches --
+// only config.Namespace differs. Used by a multi-tenant deployment to obtain a per-org executor.
+func (k *KubernetesExecutor) WithNamespace(ns string) *KubernetesExecutor {
+	copy := *k
+	copy.config.Namespace = ns
+	return &copy
+}
+
+// Execute launches params as a new Kubernetes Job in k.config.Namespace: it creates a
 // ConfigMap for config.json, a Secret for JOB_SECRET (and, when present, the Claude OAuth
 // token), an optional registry pull Secret, then the Job itself, and finally owner-refs the
 // ConfigMap/Secret(s) to the Job so they are garbage-collected together.
 func (k *KubernetesExecutor) Execute(ctx context.Context, params coreexec.ExecutionParams) (coreexec.ExecutionResult, error) {
-	ns := params.Identity.Namespace
+	ns := k.config.Namespace
 	execIDShort := params.NodeExecutionID.String()[:8]
 
 	configBytes, err := json.MarshalIndent(params.ConfigJSON, "", "  ")
@@ -373,14 +388,15 @@ func (k *KubernetesExecutor) buildJob(
 	}
 }
 
-// Cleanup removes all Kubernetes resources for executionID in namespace: the Job (foreground
-// propagation, so K8s removes Pods before the Job object disappears), and its ConfigMap and
-// Secret(s), each addressed by its deterministic name (derived from executionID) rather than
-// found by a cluster-wide label search -- so this needs only namespaced delete rights in the
-// one namespace, never a cluster-scoped grant. Idempotent: a missing Job or child resource is
-// not an error, so an already-reaped execution (or one Execute never got far enough to create)
+// Cleanup removes all Kubernetes resources for executionID in k.config.Namespace: the Job
+// (foreground propagation, so K8s removes Pods before the Job object disappears), and its
+// ConfigMap and Secret(s), each addressed by its deterministic name (derived from executionID)
+// rather than found by a cluster-wide label search -- so this needs only namespaced delete rights
+// in the one namespace, never a cluster-scoped grant. Idempotent: a missing Job or child resource
+// is not an error, so an already-reaped execution (or one Execute never got far enough to create)
 // makes this a no-op.
-func (k *KubernetesExecutor) Cleanup(ctx context.Context, namespace string, executionID uuid.UUID) error {
+func (k *KubernetesExecutor) Cleanup(ctx context.Context, executionID uuid.UUID) error {
+	namespace := k.config.Namespace
 	execIDShort := executionID.String()[:8]
 
 	propagation := metav1.DeletePropagationForeground
@@ -399,11 +415,12 @@ func (k *KubernetesExecutor) Cleanup(ctx context.Context, namespace string, exec
 	return nil
 }
 
-// Terminate patches executionID's Job (addressed by name in namespace) with a 1-second
+// Terminate patches executionID's Job (addressed by name in k.config.Namespace) with a 1-second
 // activeDeadlineSeconds so the Job controller stops it almost immediately, rather than deleting
 // it outright -- Cleanup (called separately, later) is what removes the Job and its child
 // resources. Idempotent: an already-gone Job is not an error.
-func (k *KubernetesExecutor) Terminate(ctx context.Context, namespace string, executionID uuid.UUID) error {
+func (k *KubernetesExecutor) Terminate(ctx context.Context, executionID uuid.UUID) error {
+	namespace := k.config.Namespace
 	jobName := jobPrefix + executionID.String()[:8]
 	patch := []byte(`{"spec":{"activeDeadlineSeconds":1}}`)
 	if _, err := k.client.BatchV1().Jobs(namespace).Patch(ctx, jobName, types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
@@ -416,11 +433,12 @@ func (k *KubernetesExecutor) Terminate(ctx context.Context, namespace string, ex
 }
 
 // GetLogs returns up to the last tailLines lines of executionID's agent container output,
-// capped at 64KB. The Job is addressed by name in namespace, and its Pod is found by the
+// capped at 64KB. The Job is addressed by name in k.config.Namespace, and its Pod is found by the
 // built-in job-name label within that same namespace -- a namespaced LIST, never cluster-wide.
 // Errors from a not-yet-scheduled or already-reaped pod are reported back as text rather than
 // as an error -- log retrieval is best-effort diagnostic output, not a correctness-affecting call.
-func (k *KubernetesExecutor) GetLogs(ctx context.Context, namespace string, executionID uuid.UUID, tailLines int) (string, error) {
+func (k *KubernetesExecutor) GetLogs(ctx context.Context, executionID uuid.UUID, tailLines int) (string, error) {
+	namespace := k.config.Namespace
 	jobName := jobPrefix + executionID.String()[:8]
 	if _, err := k.client.BatchV1().Jobs(namespace).Get(ctx, jobName, metav1.GetOptions{}); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -462,9 +480,10 @@ func (k *KubernetesExecutor) GetLogs(ctx context.Context, namespace string, exec
 }
 
 // ResolveJobSecretHash reads JOB_SECRET back from executionID's job-secret Secret (addressed by
-// its deterministic name in namespace) and returns its SHA-256 hash. Used to recover the hash
-// cache after a Worker restart.
-func (k *KubernetesExecutor) ResolveJobSecretHash(ctx context.Context, namespace string, executionID uuid.UUID) (string, error) {
+// its deterministic name in k.config.Namespace) and returns its SHA-256 hash. Used to recover the
+// hash cache after a Worker restart.
+func (k *KubernetesExecutor) ResolveJobSecretHash(ctx context.Context, executionID uuid.UUID) (string, error) {
+	namespace := k.config.Namespace
 	secretName := jobSecretPrefix + executionID.String()[:8]
 	secret, err := k.client.CoreV1().Secrets(namespace).Get(ctx, secretName, metav1.GetOptions{})
 	if err != nil {

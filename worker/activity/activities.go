@@ -33,7 +33,6 @@ type workloadClient interface {
 	CreateWorkload(ctx context.Context, params workload.CreateWorkloadParams) (*workload.CreateWorkloadResponse, error)
 	CleanupWorkload(ctx context.Context, runID, nodeExecID uuid.UUID) error
 	GetWorkloadLogs(ctx context.Context, runID, nodeExecID uuid.UUID, tailLines int) (string, error)
-	GetNodeExecution(ctx context.Context, runID, nodeExecID uuid.UUID) (*workload.NodeExecution, error)
 	PrepareWorkload(ctx context.Context, params workload.PrepareParams) (*workload.PrepareResponse, error)
 	CompleteWorkload(ctx context.Context, params workload.CompleteParams) error
 	WriteExecutionLog(ctx context.Context, runID, nodeExecID uuid.UUID, level, message string)
@@ -440,8 +439,9 @@ func (a *Activities) executeLocally(ctx context.Context, runID uuid.UUID, params
 		ConfigJSON:   configJSON,
 		CallbackURL:  a.CallbackURL,
 		EnableDocker: prep.EnableDocker,
+		// The namespace a workload launches into is bound to the executor instance, not passed
+		// per call; the single-tenant core executor uses its one Config.Namespace.
 		Identity: executor.ExecutionIdentity{
-			Namespace:      prep.Namespace,
 			ServiceAccount: prep.ServiceAccount,
 		},
 	}
@@ -508,17 +508,7 @@ func (a *Activities) DeleteAgentJob(ctx context.Context, params DeleteAgentJobPa
 		return err
 	}
 	if a.executor != nil {
-		// Namespace resolution is best-effort: it legitimately fails for a run with no resolvable
-		// org, and cleanup must not leak resources by refusing to run. Docker ignores the empty
-		// fallback; a real k8s deployment resolves the org namespace here.
-		namespace := ""
-		if ne, err := a.client.GetNodeExecution(ctx, runID, params.NodeExecutionID); err != nil {
-			slog.Warn("resolve namespace for cleanup failed; cleaning up namespace-less",
-				"node_execution_id", params.NodeExecutionID, "error", err)
-		} else {
-			namespace = ne.Namespace
-		}
-		return a.executor.Cleanup(ctx, namespace, params.NodeExecutionID)
+		return a.executor.Cleanup(ctx, params.NodeExecutionID)
 	}
 	return a.client.CleanupWorkload(ctx, runID, params.NodeExecutionID)
 }
@@ -540,17 +530,7 @@ func (a *Activities) FetchPodLogs(ctx context.Context, params FetchPodLogsParams
 		return "", err
 	}
 	if a.executor != nil {
-		// Namespace resolution is best-effort here too: log-fetch is diagnostic and must not fail
-		// the step because a run has no resolvable org. Docker ignores the empty fallback; a real
-		// k8s deployment resolves the org namespace.
-		namespace := ""
-		if ne, err := a.client.GetNodeExecution(ctx, runID, params.NodeExecutionID); err != nil {
-			slog.Warn("resolve namespace for logs failed; fetching logs namespace-less",
-				"node_execution_id", params.NodeExecutionID, "error", err)
-		} else {
-			namespace = ne.Namespace
-		}
-		return a.executor.GetLogs(ctx, namespace, params.NodeExecutionID, tailLines)
+		return a.executor.GetLogs(ctx, params.NodeExecutionID, tailLines)
 	}
 	return a.client.GetWorkloadLogs(ctx, runID, params.NodeExecutionID, tailLines)
 }

@@ -117,17 +117,16 @@ func TestHandler_CacheMiss_ResolvesFromExecutor(t *testing.T) {
 
 	resolverCalled := false
 	mockExec := &mockExecutor{
-		resolveJobSecretHashFn: func(ctx context.Context, namespace string, id uuid.UUID) (string, error) {
+		resolveJobSecretHashFn: func(ctx context.Context, id uuid.UUID) (string, error) {
 			resolverCalled = true
 			assert.Equal(t, execID, id)
-			assert.Equal(t, "org-ns", namespace)
 			return hash, nil
 		},
 	}
 
 	handler := NewHandler(cache, mockExec, &mockCompleter{
 		completeFn: func(ctx context.Context, req CompletionRequest) error { return nil },
-	}, &mockStatusClient{getStatus: "running", getNamespace: "org-ns"})
+	}, &mockStatusClient{getStatus: "running"})
 
 	body, _ := json.Marshal(map[string]any{
 		"node_execution_id": execID.String(),
@@ -172,11 +171,10 @@ func (m *mockCompleter) Fail(ctx context.Context, executionID uuid.UUID, reason 
 }
 
 type mockStatusClient struct {
-	getStatus    string
-	getNamespace string
-	getErr       error
-	updateCalls  []updateCall
-	logCalls     []logCall
+	getStatus   string
+	getErr      error
+	updateCalls []updateCall
+	logCalls    []logCall
 }
 
 type updateCall struct {
@@ -190,7 +188,7 @@ type logCall struct {
 }
 
 func (m *mockStatusClient) GetNodeExecution(_ context.Context, runID, execID uuid.UUID) (NodeExecutionStatus, error) {
-	return NodeExecutionStatus{Status: m.getStatus, Namespace: m.getNamespace}, m.getErr
+	return NodeExecutionStatus{Status: m.getStatus}, m.getErr
 }
 
 func (m *mockStatusClient) UpdateNodeExecution(_ context.Context, runID, execID uuid.UUID, status, result, artifactRefs, podName, errorMessage string) error {
@@ -203,11 +201,11 @@ func (m *mockStatusClient) WriteExecutionLog(_ context.Context, runID, execID uu
 }
 
 type mockExecutor struct {
-	resolveJobSecretHashFn func(context.Context, string, uuid.UUID) (string, error)
+	resolveJobSecretHashFn func(context.Context, uuid.UUID) (string, error)
 }
 
-func (m *mockExecutor) ResolveJobSecretHash(ctx context.Context, namespace string, id uuid.UUID) (string, error) {
-	return m.resolveJobSecretHashFn(ctx, namespace, id)
+func (m *mockExecutor) ResolveJobSecretHash(ctx context.Context, id uuid.UUID) (string, error) {
+	return m.resolveJobSecretHashFn(ctx, id)
 }
 
 // --- Tests for the 5 new behaviors ---

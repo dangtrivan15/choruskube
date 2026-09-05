@@ -52,6 +52,9 @@ func main() {
 			log.Fatalf("create kubernetes client: %v", err)
 		}
 		cfg.Executor = k8s.NewKubernetesExecutor(clientset, k8s.Config{
+			// The single namespace this core executor launches every agent Job into and tears
+			// it down within -- a multi-tenant deployment overrides per org via WithNamespace.
+			Namespace:            envOrDefault("K8S_NAMESPACE", "choruskube"),
 			AgentServiceAccount:  envOrDefault("K8S_AGENT_SERVICE_ACCOUNT", "choruskube-agent"),
 			AgentPodTemplateName: envOrDefault("K8S_AGENT_POD_TEMPLATE_NAME", "choruskube-agent-pod-template"),
 			TemplateNamespace:    envOrDefault("K8S_TEMPLATE_NAMESPACE", "choruskube"),
