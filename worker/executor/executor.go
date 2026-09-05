@@ -53,6 +53,22 @@ type ExecutionParams struct {
 	// lives (a per-org proxy, a shared mirror, nothing) is a deployment-specific choice made
 	// upstream of ExecutionParams.
 	RegistryMirror *RegistryMirror
+
+	// AgentResources overrides the executor's default agent-container CPU/memory for this one
+	// execution. Nil uses the deployment default (the K8s executor's Config). What a given node
+	// should be sized at is a caller decision (resolved in prepare), not something this package
+	// infers from node type -- it only applies what it is handed.
+	AgentResources *AgentResources
+}
+
+// AgentResources sets the agent container's CPU/memory requests and limits. Values are
+// Kubernetes quantity strings (e.g. "200m", "1Gi"); an empty field falls back to the
+// executor's corresponding Config default. The Docker executor ignores this.
+type AgentResources struct {
+	CPURequest    string
+	MemoryRequest string
+	CPULimit      string
+	MemoryLimit   string
 }
 
 // RegistryMirror is the registry-mirror/build-cache/dependency-proxy endpoint set a DinD-enabled

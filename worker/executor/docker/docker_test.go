@@ -24,26 +24,6 @@ import (
 
 // --- Pure-logic unit tests (no Docker daemon required) ---
 
-func TestIsScriptExecution(t *testing.T) {
-	tests := []struct {
-		name       string
-		configJSON map[string]any
-		want       bool
-	}{
-		{"explicit script", map[string]any{"executor_type": "script"}, true},
-		{"case-insensitive script", map[string]any{"executor_type": "SCRIPT"}, true},
-		{"explicit ai", map[string]any{"executor_type": "ai"}, false},
-		{"missing defaults to ai", map[string]any{}, false},
-		{"nil configJSON defaults to ai", nil, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			params := executor.ExecutionParams{ConfigJSON: tt.configJSON}
-			assert.Equal(t, tt.want, isScriptExecution(params))
-		})
-	}
-}
-
 func TestBuildRegistryAuthConfigJSON(t *testing.T) {
 	reg := &executor.RegistryCredentials{
 		Host:     "registry.example.com",
@@ -244,7 +224,9 @@ func TestDockerExecutor_ResolveJobSecretHash_MissingContainerReturnsError(t *tes
 	assert.Error(t, err)
 }
 
-func TestDockerExecutor_Execute_ScriptExecutionSetsE2EWorkers(t *testing.T) {
+// The executor injects only the env the caller supplies via Environment and adds none of its
+// own from node type -- a "script" node gets its caller-set vars and no auto-injected E2E_WORKERS.
+func TestDockerExecutor_Execute_InjectsOnlyCallerEnv(t *testing.T) {
 	skipUnlessBindMountWorks(t)
 
 	exec := newTestExecutor(t)
@@ -256,6 +238,7 @@ func TestDockerExecutor_Execute_ScriptExecutionSetsE2EWorkers(t *testing.T) {
 		Command:         []string{"sleep", "30"},
 		JobSecret:       "sec",
 		ConfigJSON:      map[string]any{"executor_type": "script"},
+		Environment:     map[string]string{"CALLER_SET": "yes"},
 	}
 	_, err := exec.Execute(context.Background(), params)
 	require.NoError(t, err)
@@ -266,33 +249,9 @@ func TestDockerExecutor_Execute_ScriptExecutionSetsE2EWorkers(t *testing.T) {
 	require.NotNil(t, c)
 	inspect, err := exec.client.ContainerInspect(context.Background(), c.ID)
 	require.NoError(t, err)
-	assert.Contains(t, inspect.Config.Env, "E2E_WORKERS=3")
-}
-
-func TestDockerExecutor_Execute_NonScriptSkipsE2EWorkers(t *testing.T) {
-	skipUnlessBindMountWorks(t)
-
-	exec := newTestExecutor(t)
-	params := executor.ExecutionParams{
-		RunID:           uuid.New(),
-		NodeExecutionID: uuid.New(),
-		NodeID:          uuid.New(),
-		Image:           "alpine:latest",
-		Command:         []string{"sleep", "30"},
-		JobSecret:       "sec",
-		ConfigJSON:      map[string]any{"executor_type": "ai"},
-	}
-	_, err := exec.Execute(context.Background(), params)
-	require.NoError(t, err)
-	defer exec.Cleanup(context.Background(), "", params.NodeExecutionID)
-
-	c, err := exec.findContainer(context.Background(), params.NodeExecutionID)
-	require.NoError(t, err)
-	require.NotNil(t, c)
-	inspect, err := exec.client.ContainerInspect(context.Background(), c.ID)
-	require.NoError(t, err)
+	assert.Contains(t, inspect.Config.Env, "CALLER_SET=yes")
 	for _, e := range inspect.Config.Env {
-		assert.False(t, strings.HasPrefix(e, "E2E_WORKERS="), "non-script execution must not set E2E_WORKERS")
+		assert.False(t, strings.HasPrefix(e, "E2E_WORKERS="), "executor must inject no E2E_WORKERS of its own")
 	}
 }
 

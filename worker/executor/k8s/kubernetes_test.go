@@ -132,30 +132,45 @@ func TestKubernetesExecutor_Execute_ClaudeOAuthToken_InjectedForAiExecution(t *t
 	assert.Equal(t, []byte("oauth-token-value"), secret.Data["CLAUDE_CODE_OAUTH_TOKEN"])
 }
 
-func TestKubernetesExecutor_Execute_ClaudeOAuthToken_OmittedForScriptExecution(t *testing.T) {
-	fakeClient := fake.NewSimpleClientset()
-	namespace := "test-org-ns"
+// testAgentResources is the default sizing a real deployment supplies via Config; tests that
+// enable ResourceQuota pass it so pinAgentContainerResources has values to apply.
+func testAgentResources() coreexec.AgentResources {
+	return coreexec.AgentResources{CPURequest: "200m", MemoryRequest: "1Gi", CPULimit: "1", MemoryLimit: "3Gi"}
+}
 
-	exec := NewKubernetesExecutor(fakeClient, Config{AgentServiceAccount: "choruskube-agent"})
+// The executor injects whatever credential it is handed and decides nothing from node type:
+// present -> in the Secret; empty (the caller/prepare omits it for e.g. script nodes) -> absent.
+func TestKubernetesExecutor_Execute_ClaudeOAuthToken_InjectedWhenPresentOnly(t *testing.T) {
+	cases := []struct {
+		name  string
+		token string
+		want  bool
+	}{
+		{"token present", "oauth-token-value", true},
+		{"token empty", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeClient := fake.NewSimpleClientset()
+			namespace := "test-org-ns"
+			exec := NewKubernetesExecutor(fakeClient, Config{AgentServiceAccount: "choruskube-agent"})
 
-	params := newTestParams(namespace)
-	params.Credentials.ClaudeOAuthToken = "oauth-token-value"
-	params.ConfigJSON = map[string]any{"executor_type": "script"}
+			params := newTestParams(namespace)
+			params.Credentials.ClaudeOAuthToken = tc.token
+			// executor_type is deliberately "script" to prove the executor does NOT gate the token
+			// on node type -- only on whether a value was supplied.
+			params.ConfigJSON = map[string]any{"executor_type": "script"}
 
-	_, err := exec.Execute(context.Background(), params)
-	require.NoError(t, err)
+			_, err := exec.Execute(context.Background(), params)
+			require.NoError(t, err)
 
-	secretName := fmt.Sprintf("job-secret-%s", params.NodeExecutionID.String()[:8])
-	secret, err := fakeClient.CoreV1().Secrets(namespace).Get(context.Background(), secretName, metav1.GetOptions{})
-	require.NoError(t, err)
-	_, ok := secret.Data["CLAUDE_CODE_OAUTH_TOKEN"]
-	assert.False(t, ok, "script execution should not receive the Claude OAuth token")
-
-	// Test-node executions also get E2E_WORKERS on the agent container.
-	jobName := fmt.Sprintf("agent-%s", params.NodeExecutionID.String()[:8])
-	job, err := fakeClient.BatchV1().Jobs(namespace).Get(context.Background(), jobName, metav1.GetOptions{})
-	require.NoError(t, err)
-	assert.True(t, hasEnv(job.Spec.Template.Spec.Containers[0].Env, "E2E_WORKERS", "3"))
+			secretName := fmt.Sprintf("job-secret-%s", params.NodeExecutionID.String()[:8])
+			secret, err := fakeClient.CoreV1().Secrets(namespace).Get(context.Background(), secretName, metav1.GetOptions{})
+			require.NoError(t, err)
+			_, ok := secret.Data["CLAUDE_CODE_OAUTH_TOKEN"]
+			assert.Equal(t, tc.want, ok)
+		})
+	}
 }
 
 func TestKubernetesExecutor_Execute_RegistryCredentials_CreatesPullSecretAndMounts(t *testing.T) {
@@ -193,11 +208,15 @@ func TestKubernetesExecutor_Execute_RegistryCredentials_CreatesPullSecretAndMoun
 	assert.Equal(t, job.Name, regcred.OwnerReferences[0].Name)
 }
 
-func TestKubernetesExecutor_Execute_ResourceQuotaEnabled_PinsAgentResources(t *testing.T) {
+func TestKubernetesExecutor_Execute_ResourceQuotaEnabled_PinsConfigDefault(t *testing.T) {
 	fakeClient := fake.NewSimpleClientset()
 	namespace := "test-org-ns"
 
-	exec := NewKubernetesExecutor(fakeClient, Config{AgentServiceAccount: "choruskube-agent", ResourceQuotaEnabled: true})
+	exec := NewKubernetesExecutor(fakeClient, Config{
+		AgentServiceAccount:  "choruskube-agent",
+		ResourceQuotaEnabled: true,
+		AgentResources:       testAgentResources(),
+	})
 
 	params := newTestParams(namespace)
 	result, err := exec.Execute(context.Background(), params)
@@ -209,6 +228,44 @@ func TestKubernetesExecutor_Execute_ResourceQuotaEnabled_PinsAgentResources(t *t
 	assert.Equal(t, "1", res.Limits.Cpu().String())
 	assert.Equal(t, "3Gi", res.Limits.Memory().String())
 	assert.Equal(t, "200m", res.Requests.Cpu().String())
+	assert.Equal(t, "1Gi", res.Requests.Memory().String())
+}
+
+// A per-execution override wins over the Config default, field by field -- the caller sizes a
+// node, the executor applies it verbatim.
+func TestKubernetesExecutor_Execute_PerExecutionResourceOverride(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	namespace := "test-org-ns"
+
+	exec := NewKubernetesExecutor(fakeClient, Config{
+		AgentServiceAccount:  "choruskube-agent",
+		ResourceQuotaEnabled: true,
+		AgentResources:       testAgentResources(),
+	})
+
+	params := newTestParams(namespace)
+	params.AgentResources = &coreexec.AgentResources{CPULimit: "2", MemoryLimit: "6Gi"} // requests fall back to default
+
+	result, err := exec.Execute(context.Background(), params)
+	require.NoError(t, err)
+
+	job, err := fakeClient.BatchV1().Jobs(namespace).Get(context.Background(), result.PodName, metav1.GetOptions{})
+	require.NoError(t, err)
+	res := job.Spec.Template.Spec.Containers[0].Resources
+	assert.Equal(t, "2", res.Limits.Cpu().String())
+	assert.Equal(t, "6Gi", res.Limits.Memory().String())
+	assert.Equal(t, "200m", res.Requests.Cpu().String(), "empty override field falls back to the Config default")
+}
+
+// ResourceQuota is on but neither the Config default nor an override supplies values: the pod
+// would be rejected at admission, so the executor fails loudly at build time instead.
+func TestKubernetesExecutor_Execute_ResourceQuotaEnabled_UnconfiguredErrors(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	exec := NewKubernetesExecutor(fakeClient, Config{AgentServiceAccount: "choruskube-agent", ResourceQuotaEnabled: true})
+
+	_, err := exec.Execute(context.Background(), newTestParams("test-org-ns"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not configured")
 }
 
 func TestKubernetesExecutor_Execute_ResourceQuotaDisabled_LeavesResourcesUnset(t *testing.T) {
@@ -310,6 +367,7 @@ func TestKubernetesExecutor_Execute_DinD_SplicesTemplate(t *testing.T) {
 		AgentPodTemplateName: templateName,
 		TemplateNamespace:    templateNamespace,
 		ResourceQuotaEnabled: true,
+		AgentResources:       testAgentResources(),
 	})
 
 	params := newTestParams(namespace)
@@ -622,26 +680,6 @@ func TestKubernetesExecutor_Teardown_IsNamespacedGetByName_NoClusterWideList(t *
 	}
 	assert.True(t, sawSecretGet, "ResolveJobSecretHash should GET the job-secret Secret by name")
 	assert.True(t, sawJobGet, "GetLogs should GET the Job by name")
-}
-
-func TestIsScriptExecution(t *testing.T) {
-	tests := []struct {
-		name       string
-		configJSON map[string]any
-		want       bool
-	}{
-		{"nil config", nil, false},
-		{"no executor_type", map[string]any{}, false},
-		{"ai executor_type", map[string]any{"executor_type": "ai"}, false},
-		{"script executor_type", map[string]any{"executor_type": "script"}, true},
-		{"script uppercase", map[string]any{"executor_type": "SCRIPT"}, true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			params := coreexec.ExecutionParams{ConfigJSON: tt.configJSON}
-			assert.Equal(t, tt.want, isScriptExecution(params))
-		})
-	}
 }
 
 func TestBuildDockerConfigJSON(t *testing.T) {

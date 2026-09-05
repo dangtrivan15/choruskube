@@ -163,13 +163,8 @@ func (d *DockerExecutor) Execute(ctx context.Context, params executor.ExecutionP
 	if params.Credentials.ClaudeOAuthToken != "" {
 		env = append(env, "CLAUDE_CODE_OAUTH_TOKEN="+params.Credentials.ClaudeOAuthToken)
 	}
-	// Test-node ("script" executor_type) dogfood executions run a single subprocess tree with
-	// no shard-level fan-out available to it, only in-stack Playwright worker parallelism —
-	// without this the suite silently falls back to serial, which is correct for local dev but
-	// wastes a Test-node run's only parallelism lever.
-	if isScriptExecution(params) {
-		env = append(env, "E2E_WORKERS=3")
-	}
+	// The caller supplies every extra env var via Environment -- this package injects no env of
+	// its own beyond JOB_SECRET/token above and (below) the registry wiring.
 	for k, v := range params.Environment {
 		env = append(env, k+"="+v)
 	}
@@ -525,20 +520,6 @@ func (d *DockerExecutor) pullImageBestEffort(ctx context.Context, imageName, enc
 	// deadline has to cover this read too -- otherwise a registry that accepts the request but
 	// stalls mid-transfer would hang here past pullTimeout.
 	_, _ = io.Copy(io.Discard, reader)
-}
-
-// isScriptExecution reports whether params is a Test-node ("script" executor_type) execution.
-// Mirrors SingleTenantDockerExecutor.isScriptExecution / KubernetesWorkloadExecutor's copy of
-// the same check.
-func isScriptExecution(params executor.ExecutionParams) bool {
-	if params.ConfigJSON == nil {
-		return false
-	}
-	raw, ok := params.ConfigJSON["executor_type"]
-	if !ok {
-		return false
-	}
-	return strings.EqualFold(fmt.Sprintf("%v", raw), "script")
 }
 
 // buildRegistryAuthConfigJSON renders reg as a Docker CLI config.json ("auths" map keyed by

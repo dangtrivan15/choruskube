@@ -78,6 +78,11 @@ type Config struct {
 	// tracks cpu/memory rejects any pod that omits resources, and pinning resources
 	// without a quota is unnecessary overhead.
 	ResourceQuotaEnabled bool
+
+	// AgentResources is the default agent-container CPU/memory applied when ResourceQuotaEnabled
+	// and a launch supplies no per-execution ExecutionParams.AgentResources override. The
+	// deployment sets these; this package hardcodes no sizing of its own.
+	AgentResources coreexec.AgentResources
 }
 
 // KubernetesExecutor implements executor.Executor by launching agent workloads as Kubernetes
@@ -118,7 +123,6 @@ func (k *KubernetesExecutor) Execute(ctx context.Context, params coreexec.Execut
 		return coreexec.ExecutionResult{}, fmt.Errorf("marshal config.json: %w", err)
 	}
 
-	testNodeExecution := isScriptExecution(params)
 	hash := coreexec.HashSecret(params.JobSecret)
 
 	cmName := configMapPrefix + execIDShort
@@ -147,10 +151,11 @@ func (k *KubernetesExecutor) Execute(ctx context.Context, params coreexec.Execut
 		}
 	}()
 
-	// Script nodes don't invoke `claude` and don't need the token -- keeping it out of their
-	// Secret narrows the credential's blast radius.
+	// Inject whatever credential the caller resolved -- prepare omits the token for nodes that
+	// don't invoke `claude` (e.g. script nodes), so an empty value simply keeps it out of the
+	// Secret. This package makes no decision from node type.
 	secretData := map[string][]byte{"JOB_SECRET": []byte(params.JobSecret)}
-	if params.Credentials.ClaudeOAuthToken != "" && !testNodeExecution {
+	if params.Credentials.ClaudeOAuthToken != "" {
 		secretData["CLAUDE_CODE_OAUTH_TOKEN"] = []byte(params.Credentials.ClaudeOAuthToken)
 	}
 	secret := &corev1.Secret{
@@ -199,9 +204,9 @@ func (k *KubernetesExecutor) Execute(ctx context.Context, params coreexec.Execut
 		serviceAccount = k.config.AgentServiceAccount
 	}
 
-	job := k.buildJob(jobName, ns, serviceAccount, secretName, cmName, regcredName, params, testNodeExecution)
+	job := k.buildJob(jobName, ns, serviceAccount, secretName, cmName, regcredName, params)
 
-	if err := k.pinAgentContainerResources(job, testNodeExecution); err != nil {
+	if err := k.pinAgentContainerResources(job, params.AgentResources); err != nil {
 		return coreexec.ExecutionResult{}, err
 	}
 
@@ -258,7 +263,6 @@ func (k *KubernetesExecutor) Execute(ctx context.Context, params coreexec.Execut
 func (k *KubernetesExecutor) buildJob(
 	jobName, ns, serviceAccount, secretName, cmName, regcredName string,
 	params coreexec.ExecutionParams,
-	testNodeExecution bool,
 ) *batchv1.Job {
 	envFrom := []corev1.EnvFromSource{
 		{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: secretName}}},
@@ -288,12 +292,8 @@ func (k *KubernetesExecutor) buildJob(
 		},
 	}
 
-	if testNodeExecution {
-		// Test-node ("script" executor_type) dogfood executions run a single subprocess
-		// tree with no shard fan-out available to it -- only in-stack Playwright worker
-		// parallelism -- so without this the suite silently falls back to serial.
-		agentContainer.Env = append(agentContainer.Env, corev1.EnvVar{Name: "E2E_WORKERS", Value: "3"})
-	}
+	// The caller supplies every extra env var via Environment -- this package injects no env of
+	// its own beyond the Secret's JOB_SECRET/token and (below) the registry-mirror wiring.
 	for envName, envValue := range params.Environment {
 		agentContainer.Env = append(agentContainer.Env, corev1.EnvVar{Name: envName, Value: envValue})
 	}
@@ -491,17 +491,24 @@ func execLabels(params coreexec.ExecutionParams) map[string]string {
 
 // pinAgentContainerResources pins explicit CPU/memory on the "agent" container. The namespace
 // ships no LimitRange, so every container must set its own resources or ResourceQuota rejects
-// admission. testNodeExecution raises the limit so the extra Playwright workers E2E_WORKERS
-// enables have real headroom instead of contending on one pinned core.
-func (k *KubernetesExecutor) pinAgentContainerResources(job *batchv1.Job, testNodeExecution bool) error {
+// admission. Values come from the per-execution override when set, else the deployment default
+// (Config.AgentResources) -- this package chooses no sizing itself, and knows nothing of node
+// type. All four (cpu/memory x requests/limits) must resolve, or ResourceQuota rejects the pod.
+func (k *KubernetesExecutor) pinAgentContainerResources(job *batchv1.Job, override *coreexec.AgentResources) error {
 	if !k.config.ResourceQuotaEnabled {
 		return nil
 	}
-	cpuLimit := "1"
-	memoryLimit := "3Gi"
-	if testNodeExecution {
-		cpuLimit = "2"
-		memoryLimit = "6Gi"
+	def := k.config.AgentResources
+	cpuRequest := resolveResource(override, func(r coreexec.AgentResources) string { return r.CPURequest }, def.CPURequest)
+	memoryRequest := resolveResource(override, func(r coreexec.AgentResources) string { return r.MemoryRequest }, def.MemoryRequest)
+	cpuLimit := resolveResource(override, func(r coreexec.AgentResources) string { return r.CPULimit }, def.CPULimit)
+	memoryLimit := resolveResource(override, func(r coreexec.AgentResources) string { return r.MemoryLimit }, def.MemoryLimit)
+	for name, val := range map[string]string{
+		"cpu request": cpuRequest, "memory request": memoryRequest, "cpu limit": cpuLimit, "memory limit": memoryLimit,
+	} {
+		if val == "" {
+			return fmt.Errorf("agent %s not configured (set the deployment default or a per-execution override)", name)
+		}
 	}
 
 	containers := job.Spec.Template.Spec.Containers
@@ -511,8 +518,8 @@ func (k *KubernetesExecutor) pinAgentContainerResources(job *batchv1.Job, testNo
 		}
 		containers[i].Resources = corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("200m"),
-				corev1.ResourceMemory: resource.MustParse("1Gi"),
+				corev1.ResourceCPU:    resource.MustParse(cpuRequest),
+				corev1.ResourceMemory: resource.MustParse(memoryRequest),
 			},
 			Limits: corev1.ResourceList{
 				corev1.ResourceCPU:    resource.MustParse(cpuLimit),
@@ -522,6 +529,18 @@ func (k *KubernetesExecutor) pinAgentContainerResources(job *batchv1.Job, testNo
 		return nil
 	}
 	return fmt.Errorf("agent container not found in job %s", job.Name)
+}
+
+// resolveResource returns the override's field when the override is set and that field is
+// non-empty, else the deployment default. Keeps the empty-field-falls-back-to-default rule in
+// one place.
+func resolveResource(override *coreexec.AgentResources, field func(coreexec.AgentResources) string, def string) string {
+	if override != nil {
+		if v := field(*override); v != "" {
+			return v
+		}
+	}
+	return def
 }
 
 // --- DinD support ---
@@ -652,19 +671,6 @@ func (k *KubernetesExecutor) loadPodTemplate(ctx context.Context) (*corev1.PodTe
 }
 
 // --- Misc helpers ---
-
-// isScriptExecution reports whether params is a Test-node ("script" executor_type) execution --
-// mirrors the Docker executor's identical helper.
-func isScriptExecution(params coreexec.ExecutionParams) bool {
-	if params.ConfigJSON == nil {
-		return false
-	}
-	raw, ok := params.ConfigJSON["executor_type"]
-	if !ok {
-		return false
-	}
-	return strings.EqualFold(fmt.Sprintf("%v", raw), "script")
-}
 
 // buildDockerConfigJSON renders reg as a Docker CLI config.json ("auths" map keyed by registry
 // host) -- the same document shape a kubernetes.io/dockerconfigjson Secret carries, so it

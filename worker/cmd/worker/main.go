@@ -16,6 +16,7 @@ import (
 	"k8s.io/client-go/rest"
 
 	"github.com/dangtrivan15/choruskube/worker"
+	"github.com/dangtrivan15/choruskube/worker/executor"
 	"github.com/dangtrivan15/choruskube/worker/executor/docker"
 	"github.com/dangtrivan15/choruskube/worker/executor/k8s"
 )
@@ -55,6 +56,14 @@ func main() {
 			AgentPodTemplateName: envOrDefault("K8S_AGENT_POD_TEMPLATE_NAME", "choruskube-agent-pod-template"),
 			TemplateNamespace:    envOrDefault("K8S_TEMPLATE_NAMESPACE", "choruskube"),
 			ResourceQuotaEnabled: os.Getenv("K8S_RESOURCE_QUOTA_ENABLED") != "false",
+			// Default agent-container sizing, overridable per execution by the api-server. The
+			// executor pins no numbers of its own; these env defaults are the deployment's.
+			AgentResources: executor.AgentResources{
+				CPURequest:    envOrDefault("K8S_AGENT_CPU_REQUEST", "200m"),
+				MemoryRequest: envOrDefault("K8S_AGENT_MEMORY_REQUEST", "1Gi"),
+				CPULimit:      envOrDefault("K8S_AGENT_CPU_LIMIT", "1"),
+				MemoryLimit:   envOrDefault("K8S_AGENT_MEMORY_LIMIT", "3Gi"),
+			},
 		})
 	case "docker":
 		dockerStagingDir := os.Getenv("DOCKER_STAGING_DIR")
