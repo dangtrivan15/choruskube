@@ -85,26 +85,34 @@ type Config struct {
 	AgentResources coreexec.AgentResources
 }
 
+// podTemplateStore holds the cache of DinD PodTemplates and its synchronization lock, shared
+// across shallow copies of KubernetesExecutor so they can safely coordinate cache lookups.
+type podTemplateStore struct {
+	mu    sync.Mutex
+	cache map[string]*corev1.PodTemplate
+}
+
 // KubernetesExecutor implements executor.Executor by launching agent workloads as Kubernetes
 // Jobs in the org namespace named by each execution's ExecutionIdentity.
 type KubernetesExecutor struct {
 	client kubernetes.Interface
 	config Config
 
-	// podTemplateMu/podTemplateCache cache the DinD PodTemplate by name so a burst of
-	// DinD-enabled launches does not re-fetch and re-parse the same wrapper ConfigMap on
-	// every Execute call -- mirrors TemplateRegistry's cache on the Java side.
-	podTemplateMu    sync.Mutex
-	podTemplateCache map[string]*corev1.PodTemplate
+	// templates points to a shared pod-template cache so that shallow copies (used in
+	// multi-tenant overlay) can safely coordinate cache lookups across instances.
+	// It caches the DinD PodTemplate by name so a burst of DinD-enabled launches does not
+	// re-fetch and re-parse the same wrapper ConfigMap on every Execute call -- mirrors
+	// TemplateRegistry's cache on the Java side.
+	templates *podTemplateStore
 }
 
 // NewKubernetesExecutor returns a KubernetesExecutor that issues Kubernetes API calls through
 // client.
 func NewKubernetesExecutor(client kubernetes.Interface, cfg Config) *KubernetesExecutor {
 	return &KubernetesExecutor{
-		client:           client,
-		config:           cfg,
-		podTemplateCache: make(map[string]*corev1.PodTemplate),
+		client:    client,
+		config:    cfg,
+		templates: &podTemplateStore{cache: map[string]*corev1.PodTemplate{}},
 	}
 }
 
@@ -641,12 +649,12 @@ func (k *KubernetesExecutor) addDindSupport(ctx context.Context, job *batchv1.Jo
 func (k *KubernetesExecutor) loadPodTemplate(ctx context.Context) (*corev1.PodTemplate, error) {
 	name := k.config.AgentPodTemplateName
 
-	k.podTemplateMu.Lock()
-	if cached, ok := k.podTemplateCache[name]; ok {
-		k.podTemplateMu.Unlock()
+	k.templates.mu.Lock()
+	if cached, ok := k.templates.cache[name]; ok {
+		k.templates.mu.Unlock()
 		return cached, nil
 	}
-	k.podTemplateMu.Unlock()
+	k.templates.mu.Unlock()
 
 	wrapper, err := k.client.CoreV1().ConfigMaps(k.config.TemplateNamespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
@@ -664,9 +672,9 @@ func (k *KubernetesExecutor) loadPodTemplate(ctx context.Context) (*corev1.PodTe
 		return nil, fmt.Errorf("unmarshal PodTemplate from wrapper ConfigMap %q: %w", name, err)
 	}
 
-	k.podTemplateMu.Lock()
-	k.podTemplateCache[name] = &tmpl
-	k.podTemplateMu.Unlock()
+	k.templates.mu.Lock()
+	k.templates.cache[name] = &tmpl
+	k.templates.mu.Unlock()
 	return &tmpl, nil
 }
 
