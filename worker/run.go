@@ -470,7 +470,7 @@ func Run(ctx context.Context, cfg Config) error {
 		completer := newActivityCompleter(acts.Pending, sup)
 		sc := &statusBridge{pending: acts.Pending, workloadClients: sup}
 		cbHandler := callback.NewHandler(hashCache, cfg.Executor, completer, sc)
-		hbHandler := callback.NewHeartbeatHandler(hashCache, cfg.Executor, completer)
+		hbHandler := callback.NewHeartbeatHandler(hashCache, cfg.Executor, completer, sc)
 		cbServer := callback.NewServer(cfg.CallbackPort, cbHandler, hbHandler)
 		if err := cbServer.Listen(); err != nil {
 			return fmt.Errorf("callback server: %w", err)

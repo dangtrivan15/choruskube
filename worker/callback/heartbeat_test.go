@@ -24,7 +24,7 @@ func TestHeartbeatHandler_ValidSecret_RecordsHeartbeat(t *testing.T) {
 	cache.Put(execID, hash)
 
 	hb := &mockHeartbeater{}
-	handler := NewHeartbeatHandler(cache, nil, hb)
+	handler := NewHeartbeatHandler(cache, nil, hb, nil)
 
 	body, _ := json.Marshal(map[string]any{"node_execution_id": execID.String()})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/heartbeat", bytes.NewReader(body))
@@ -41,7 +41,7 @@ func TestHeartbeatHandler_InvalidSecret_Returns401(t *testing.T) {
 	cache := NewHashCache()
 	cache.Put(execID, executor.HashSecret("correct-secret"))
 
-	handler := NewHeartbeatHandler(cache, nil, &mockHeartbeater{})
+	handler := NewHeartbeatHandler(cache, nil, &mockHeartbeater{}, nil)
 
 	body, _ := json.Marshal(map[string]any{"node_execution_id": execID.String()})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/heartbeat", bytes.NewReader(body))
@@ -52,41 +52,84 @@ func TestHeartbeatHandler_InvalidSecret_Returns401(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
-func TestHeartbeatHandler_CacheMiss_ResolvesFromExecutor(t *testing.T) {
+// A heartbeat carrying run_id (which the agent always sends) recovers the hash after a Worker
+// restart the same way the completion callback does: resolve the execution's namespace via
+// GetNodeExecution(runID, execID), then a namespaced ResolveJobSecretHash -- never a cluster-wide
+// search.
+func TestHeartbeatHandler_CacheMiss_WithRunID_RecoversViaNamespace(t *testing.T) {
 	execID := uuid.New()
+	runID := uuid.New()
 	secret := "resolv-secret"
 	hash := executor.HashSecret(secret)
 
 	cache := NewHashCache() // empty — no entry for execID
 
-	resolverCalled := false
+	var gotNamespace string
 	mockExec := &mockExecutor{
 		resolveJobSecretHashFn: func(ctx context.Context, namespace string, id uuid.UUID) (string, error) {
-			resolverCalled = true
+			gotNamespace = namespace
 			assert.Equal(t, execID, id)
-			// The heartbeat body carries no runID, so no namespace can be resolved for recovery;
-			// the executor is still consulted, with an empty namespace, and here recovers the hash.
-			assert.Empty(t, namespace)
 			return hash, nil
 		},
 	}
 
 	hb := &mockHeartbeater{}
-	handler := NewHeartbeatHandler(cache, mockExec, hb)
+	handler := NewHeartbeatHandler(cache, mockExec, hb, &mockStatusClient{getStatus: "running", getNamespace: "org-ns"})
 
-	body, _ := json.Marshal(map[string]any{"node_execution_id": execID.String()})
+	body, _ := json.Marshal(map[string]any{
+		"node_execution_id": execID.String(),
+		"run_id":            runID.String(),
+	})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/heartbeat", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+secret)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.True(t, resolverCalled)
+	assert.Equal(t, "org-ns", gotNamespace, "heartbeat must resolve the namespace from run_id")
 	assert.Equal(t, execID, hb.recordedExecID)
 
 	cached, ok := cache.Get(execID)
 	assert.True(t, ok)
 	assert.Equal(t, hash, cached)
+}
+
+// An older agent that omits run_id cannot have its namespace resolved, so a cache-miss recovery
+// read gets "" and the executor's namespaced lookup fails closed to 401 -- never a cluster-wide
+// fallback. mockExec here stands in for that real-executor behavior by rejecting an empty namespace.
+func TestHeartbeatHandler_CacheMiss_NoRunID_FailsClosed(t *testing.T) {
+	execID := uuid.New()
+	secret := "resolv-secret"
+
+	cache := NewHashCache() // empty — no entry for execID
+
+	var gotNamespace string
+	resolverCalled := false
+	mockExec := &mockExecutor{
+		resolveJobSecretHashFn: func(ctx context.Context, namespace string, id uuid.UUID) (string, error) {
+			resolverCalled = true
+			gotNamespace = namespace
+			if namespace == "" {
+				return "", errors.New("an empty namespace may not be set")
+			}
+			return executor.HashSecret(secret), nil
+		},
+	}
+
+	handler := NewHeartbeatHandler(cache, mockExec, &mockHeartbeater{}, &mockStatusClient{getNamespace: "org-ns"})
+
+	// Body carries no run_id, as an older agent would send.
+	body, _ := json.Marshal(map[string]any{"node_execution_id": execID.String()})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/heartbeat", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+secret)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.True(t, resolverCalled)
+	assert.Empty(t, gotNamespace, "with no run_id the recovery read must get an empty namespace")
+	_, cached := cache.Get(execID)
+	assert.False(t, cached, "a failed recovery must not populate the cache")
 }
 
 // A heartbeat can legitimately race the callback (the activity may already be complete by the
@@ -100,7 +143,7 @@ func TestHeartbeatHandler_HeartbeaterError_StillReturns200(t *testing.T) {
 	cache.Put(execID, hash)
 
 	hb := &mockHeartbeater{err: errors.New("activity already completed")}
-	handler := NewHeartbeatHandler(cache, nil, hb)
+	handler := NewHeartbeatHandler(cache, nil, hb, nil)
 
 	body, _ := json.Marshal(map[string]any{"node_execution_id": execID.String()})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/heartbeat", bytes.NewReader(body))
@@ -113,7 +156,7 @@ func TestHeartbeatHandler_HeartbeaterError_StillReturns200(t *testing.T) {
 }
 
 func TestHeartbeatHandler_MethodNotAllowed(t *testing.T) {
-	handler := NewHeartbeatHandler(NewHashCache(), nil, &mockHeartbeater{})
+	handler := NewHeartbeatHandler(NewHashCache(), nil, &mockHeartbeater{}, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/heartbeat", nil)
 	w := httptest.NewRecorder()
