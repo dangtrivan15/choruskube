@@ -203,6 +203,7 @@ func TestExecuteAINodeFromSnapshot_CallsExecutor(t *testing.T) {
 	assert.Equal(t, "org-ns", executedParams.Identity.Namespace)
 	assert.Equal(t, "choruskube-agent", executedParams.Identity.ServiceAccount)
 	assert.Nil(t, executedParams.Credentials.Registry)
+	assert.Nil(t, executedParams.RegistryMirror)
 
 	// complete reported exactly what the executor returned.
 	assert.Equal(t, runID, completedParams.RunID)
@@ -324,6 +325,56 @@ func TestExecuteAINodeFromSnapshot_CallsExecutor_ForwardsRegistryCredentials(t *
 		assert.Equal(t, "registry.example.com", executedParams.Credentials.Registry.Host)
 		assert.Equal(t, "worker", executedParams.Credentials.Registry.Username)
 		assert.Equal(t, "s3cr3t", executedParams.Credentials.Registry.Password)
+	}
+}
+
+// TestExecuteAINodeFromSnapshot_CallsExecutor_ForwardsRegistryMirror verifies the
+// PrepareResponse.RegistryMirror -> ExecutionParams.RegistryMirror translation, which the happy
+// path above deliberately leaves nil to also cover the no-mirror case (task 8b: this Worker
+// derives no registry-mirror host itself, so it only ever has what prepare handed it).
+func TestExecuteAINodeFromSnapshot_CallsExecutor_ForwardsRegistryMirror(t *testing.T) {
+	var executedParams executor.ExecutionParams
+	mockExec := &mockExecutor{
+		executeFn: func(ctx context.Context, params executor.ExecutionParams) (executor.ExecutionResult, error) {
+			executedParams = params
+			return executor.ExecutionResult{PodName: "agent-abc", JobSecretHash: "hash123"}, nil
+		},
+	}
+	mockClient := &mockWorkloadClient{
+		prepareFn: func(ctx context.Context, p workload.PrepareParams) (*workload.PrepareResponse, error) {
+			return &workload.PrepareResponse{
+				Image: "ghcr.io/test/agent:latest",
+				RegistryMirror: &workload.RegistryMirror{
+					Mirror:       "mirror.internal.test:5000",
+					BuildCache:   "mirror.internal.test:5001",
+					DepProxyBase: "http://mirror.internal.test:8081",
+				},
+			}, nil
+		},
+		completeFn: func(ctx context.Context, p workload.CompleteParams) error { return nil },
+	}
+
+	acts := NewWithExecutor(mockClient, mockExec, callback.NewHashCache())
+	acts.CallbackURL = "http://worker:9090/api/v1/callback"
+	acts.APIServerURL = "http://api-server.invalid"
+
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           stubbedRun(t),
+			TemplateNodeID:  uuid.New(),
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "irrelevant",
+		},
+	})
+	assert.ErrorIs(t, err, temporalactivity.ErrResultPending)
+
+	if assert.NotNil(t, executedParams.RegistryMirror) {
+		assert.Equal(t, "mirror.internal.test:5000", executedParams.RegistryMirror.Mirror)
+		assert.Equal(t, "mirror.internal.test:5001", executedParams.RegistryMirror.BuildCache)
+		assert.Equal(t, "http://mirror.internal.test:8081", executedParams.RegistryMirror.DepProxyBase)
 	}
 }
 

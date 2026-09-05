@@ -451,6 +451,13 @@ func (a *Activities) executeLocally(ctx context.Context, runID uuid.UUID, params
 			Password: prep.Registry.Password,
 		}
 	}
+	if prep.RegistryMirror != nil {
+		execParams.RegistryMirror = &executor.RegistryMirror{
+			Mirror:       prep.RegistryMirror.Mirror,
+			BuildCache:   prep.RegistryMirror.BuildCache,
+			DepProxyBase: prep.RegistryMirror.DepProxyBase,
+		}
+	}
 
 	result, err := a.executor.Execute(ctx, execParams)
 	if err != nil {

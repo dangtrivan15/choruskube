@@ -28,15 +28,13 @@ import (
 )
 
 const (
-	// labelAppKey/labelApp mirror KubernetesWorkloadExecutor.java's "app"/LABEL_APP so
-	// cluster operators reading Job/Pod labels recognize the same convention regardless of
-	// which side (Java api-server, Go Worker) launched the workload.
+	// labelAppKey/labelApp let cluster operators reading Job/Pod labels recognize this
+	// package's workloads by a stable convention.
 	labelAppKey = "app"
 	labelApp    = "choruskube-agent"
-	// labelExecID/labelRunID mirror Java's "choruskube/exec-id"/"choruskube/run-id" keys.
-	// This package's own resource lookups (which have no namespace to key off, per the
-	// Executor interface) select by labelExecID, so it is load-bearing here too, not just
-	// cosmetic parity with the Java side.
+	// labelExecID/labelRunID key this package's own resource lookups (which have no
+	// namespace to key off, per the Executor interface), so they are load-bearing, not
+	// just labels for operators to read.
 	labelExecID = "choruskube/exec-id"
 	labelRunID  = "choruskube/run-id"
 
@@ -48,12 +46,12 @@ const (
 	dindInitContainerName = "dind"
 	agentContainerName    = "agent"
 
-	// logLimitBytes caps GetLogs' return value, matching KubernetesWorkloadExecutor's
-	// LOG_LIMIT_BYTES -- callback payloads have an upstream size ceiling this stays under.
+	// logLimitBytes caps GetLogs' return value -- callback payloads have an upstream size
+	// ceiling this stays under.
 	logLimitBytes = 64 * 1024
 
-	// ttlSecondsAfterFinished is set by this package's own spec, not KubernetesWorkloadExecutor.java
-	// (which uses 43200) -- see this package's kubernetes_test.go for the value under test.
+	// ttlSecondsAfterFinished bounds how long a finished Job survives before K8s garbage-
+	// collects it and its Pod -- see kubernetes_test.go for the value under test.
 	ttlSecondsAfterFinished = int32(300)
 
 	podTemplateDataKey = "template.yaml"
@@ -208,7 +206,7 @@ func (k *KubernetesExecutor) Execute(ctx context.Context, params coreexec.Execut
 	}
 
 	if params.EnableDocker {
-		if err := k.addDindSupport(ctx, job, ns); err != nil {
+		if err := k.addDindSupport(ctx, job, params.RegistryMirror); err != nil {
 			return coreexec.ExecutionResult{}, fmt.Errorf("add dind support: %w", err)
 		}
 	}
@@ -256,7 +254,7 @@ func (k *KubernetesExecutor) Execute(ctx context.Context, params coreexec.Execut
 // buildJob assembles the inline Job spec: the "agent" container, its base volumes, and --
 // when a registry credential is present -- the regcred volume/mounts and DOCKER_CONFIG env.
 // DinD and resource-pinning are spliced on afterward by addDindSupport/pinAgentContainerResources,
-// mirroring the Java source's post-build mutation of the same Job object.
+// each mutating the same Job object post-build rather than folding into this constructor.
 func (k *KubernetesExecutor) buildJob(
 	jobName, ns, serviceAccount, secretName, cmName, regcredName string,
 	params coreexec.ExecutionParams,
@@ -520,8 +518,8 @@ func (k *KubernetesExecutor) HealthCheck(ctx context.Context) error {
 // --- Lookup helpers ---
 //
 // The Executor interface's teardown methods (Cleanup, Terminate, GetLogs,
-// ResolveJobSecretHash) take only an executionID, no namespace -- unlike the Java source, this
-// package has no ownership-resolver/DB path back to the org namespace. Every resource this
+// ResolveJobSecretHash) take only an executionID, no namespace -- this package has no
+// ownership-resolver/DB path back to the org namespace. Every resource this
 // package creates therefore carries the choruskube/exec-id label, and teardown looks resources
 // up by that label across all namespaces instead. Cleanup in particular chains these lookups
 // (Job, then Secret, then ConfigMap) because the Job -- Cleanup's primary namespace source --
@@ -623,10 +621,10 @@ func (k *KubernetesExecutor) pinAgentContainerResources(job *batchv1.Job, testNo
 // init container (deep-copied so the cached template is never mutated) with per-exec
 // REGISTRY_MIRROR(S)/INSECURE_REGISTRIES env, the template "agent" container's env and
 // volumeMounts appended to the inline agent, and the template's pod-level volumes appended to
-// the pod. Every registry/cache endpoint is deterministic per-namespace K8s service DNS,
-// derived from targetNamespace -- this executor has no DB-backed registry config to plumb
-// through ExecutionParams.
-func (k *KubernetesExecutor) addDindSupport(ctx context.Context, job *batchv1.Job, targetNamespace string) error {
+// the pod. mirror carries whatever registry-mirror/build-cache/dep-proxy endpoints a
+// prepare-time seam resolved for this workload, if any -- this package resolves no such
+// endpoint itself, so nil skips all of that env rather than injecting it.
+func (k *KubernetesExecutor) addDindSupport(ctx context.Context, job *batchv1.Job, mirror *coreexec.RegistryMirror) error {
 	tmpl, err := k.loadPodTemplate(ctx)
 	if err != nil {
 		return err
@@ -658,16 +656,16 @@ func (k *KubernetesExecutor) addDindSupport(ctx context.Context, job *batchv1.Jo
 		dind.Resources = corev1.ResourceRequirements{}
 	}
 
-	// REGISTRY_MIRROR is the wildcard-mirror dispatch path read by the dind script and the
-	// agent entrypoint; REGISTRY_MIRRORS/INSECURE_REGISTRIES are the legacy fallback the dind
-	// script uses when no mirror host is set.
-	nexusHost := fmt.Sprintf("nexus.%s.svc.cluster.local:5000", targetNamespace)
-	nexusCacheHost := fmt.Sprintf("nexus.%s.svc.cluster.local:5001", targetNamespace)
-	dind.Env = append(dind.Env,
-		corev1.EnvVar{Name: "REGISTRY_MIRROR", Value: nexusHost},
-		corev1.EnvVar{Name: "REGISTRY_MIRRORS", Value: "http://" + nexusHost},
-		corev1.EnvVar{Name: "INSECURE_REGISTRIES", Value: nexusHost + " " + nexusCacheHost},
-	)
+	if mirror != nil {
+		// REGISTRY_MIRROR is the wildcard-mirror dispatch path read by the dind script and
+		// the agent entrypoint; REGISTRY_MIRRORS/INSECURE_REGISTRIES are the legacy fallback
+		// the dind script uses when no mirror host is set.
+		dind.Env = append(dind.Env,
+			corev1.EnvVar{Name: "REGISTRY_MIRROR", Value: mirror.Mirror},
+			corev1.EnvVar{Name: "REGISTRY_MIRRORS", Value: "http://" + mirror.Mirror},
+			corev1.EnvVar{Name: "INSECURE_REGISTRIES", Value: mirror.Mirror + " " + mirror.BuildCache},
+		)
+	}
 	podSpec.InitContainers = append(podSpec.InitContainers, *dind)
 
 	var templateAgent *corev1.Container
@@ -687,18 +685,20 @@ func (k *KubernetesExecutor) addDindSupport(ctx context.Context, job *batchv1.Jo
 	inlineAgent := &podSpec.Containers[0]
 	inlineAgent.Env = append(inlineAgent.Env, templateAgent.Env...)
 
-	// BUILD_CACHE_REGISTRY/BUILD_CACHE_PUSH self-warm the per-org build cache; DEP_PROXY_BASE
-	// and friends route Gradle/Go/npm downloads through the per-org dependency proxy.
-	nexusHTTPBase := fmt.Sprintf("http://nexus.%s.svc.cluster.local:8081", targetNamespace)
-	inlineAgent.Env = append(inlineAgent.Env,
-		corev1.EnvVar{Name: "BUILD_CACHE_REGISTRY", Value: nexusCacheHost},
-		corev1.EnvVar{Name: "BUILD_CACHE_PUSH", Value: "1"},
-		corev1.EnvVar{Name: "REGISTRY_MIRROR", Value: nexusHost},
-		corev1.EnvVar{Name: "DEP_PROXY_BASE", Value: nexusHTTPBase},
-		corev1.EnvVar{Name: "GOPROXY", Value: nexusHTTPBase + "/repository/go-proxy/,direct"},
-		corev1.EnvVar{Name: "GOSUMDB", Value: "off"},
-		corev1.EnvVar{Name: "npm_config_registry", Value: nexusHTTPBase + "/repository/npm-proxy/"},
-	)
+	if mirror != nil {
+		// BUILD_CACHE_REGISTRY/BUILD_CACHE_PUSH self-warm the build cache; DEP_PROXY_BASE and
+		// friends route Gradle/Go/npm downloads through the dependency proxy -- both
+		// provisioned by whatever deployment resolved mirror, not by this package.
+		inlineAgent.Env = append(inlineAgent.Env,
+			corev1.EnvVar{Name: "BUILD_CACHE_REGISTRY", Value: mirror.BuildCache},
+			corev1.EnvVar{Name: "BUILD_CACHE_PUSH", Value: "1"},
+			corev1.EnvVar{Name: "REGISTRY_MIRROR", Value: mirror.Mirror},
+			corev1.EnvVar{Name: "DEP_PROXY_BASE", Value: mirror.DepProxyBase},
+			corev1.EnvVar{Name: "GOPROXY", Value: mirror.DepProxyBase + "/repository/go-proxy/,direct"},
+			corev1.EnvVar{Name: "GOSUMDB", Value: "off"},
+			corev1.EnvVar{Name: "npm_config_registry", Value: mirror.DepProxyBase + "/repository/npm-proxy/"},
+		)
+	}
 	inlineAgent.VolumeMounts = append(inlineAgent.VolumeMounts, templateAgent.VolumeMounts...)
 
 	podSpec.Volumes = append(podSpec.Volumes, templateSpec.Volumes...)
@@ -744,8 +744,7 @@ func (k *KubernetesExecutor) loadPodTemplate(ctx context.Context) (*corev1.PodTe
 // --- Misc helpers ---
 
 // isScriptExecution reports whether params is a Test-node ("script" executor_type) execution --
-// mirrors KubernetesWorkloadExecutor.isScriptExecution and the Docker executor's identical
-// helper.
+// mirrors the Docker executor's identical helper.
 func isScriptExecution(params coreexec.ExecutionParams) bool {
 	if params.ConfigJSON == nil {
 		return false

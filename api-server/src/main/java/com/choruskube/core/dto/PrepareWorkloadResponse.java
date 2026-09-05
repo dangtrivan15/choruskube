@@ -8,7 +8,11 @@ public record PrepareWorkloadResponse(
         String githubTokenUrl,
         RegistryCredentialsDto registryCredentials,
         String namespace,
-        String serviceAccount) {
+        String serviceAccount,
+        RegistryMirrorDto registryMirror) {
 
     public record RegistryCredentialsDto(String host, String username, String password) {}
+
+    /** Null when this deployment provisions no registry mirror for the workload. */
+    public record RegistryMirrorDto(String mirror, String buildCache, String depProxyBase) {}
 }
