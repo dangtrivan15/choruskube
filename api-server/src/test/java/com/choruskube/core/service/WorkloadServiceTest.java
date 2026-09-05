@@ -181,7 +181,8 @@ class WorkloadServiceTest {
                     "is_entrypoint": true
                   }],
                   "edges": [],
-                  "inputs": {}
+                  "inputs": {},
+                  "enable_docker": true
                 }
                 """.formatted(templateNodeId);
 
@@ -237,7 +238,8 @@ class WorkloadServiceTest {
                     "is_entrypoint": true
                   }],
                   "edges": [],
-                  "inputs": {}
+                  "inputs": {},
+                  "enable_docker": true
                 }
                 """.formatted(templateNodeId);
 
@@ -255,6 +257,63 @@ class WorkloadServiceTest {
                 new PrepareWorkloadResponse.RegistryMirrorDto(
                         "mirror.internal.test:5000", "mirror.internal.test:5001", "http://mirror.internal.test:8081"),
                 response.registryMirror());
+        verify(registryMirrorResolver).resolve(runId);
+    }
+
+    /**
+     * Anti-vacuity guard: the registry mirror is only ever consumed by the executor's DinD path,
+     * which runs only when {@code enableDocker} is true. A non-Docker prepare must not pay for a
+     * resolver call (real implementations hit the DB) or be able to fail because of one — a
+     * resolver that throws must not stop a non-Docker prepare from succeeding.
+     */
+    @Test
+    void prepareWorkload_doesNotConsultRegistryMirrorResolver_whenDockerDisabled() {
+        UUID runId = UUID.randomUUID();
+        UUID nodeExecId = UUID.randomUUID();
+        UUID templateNodeId = UUID.randomUUID();
+        UUID graphTemplateId = UUID.randomUUID();
+
+        var nodeExec = new NodeExecution();
+        nodeExec.setId(nodeExecId);
+        nodeExec.setWorkflowRunId(runId);
+        nodeExec.setTemplateNodeId(templateNodeId);
+        nodeExec.setStatus(NodeExecutionStatus.pending);
+
+        var workflowRun = new WorkflowRun();
+        workflowRun.setId(runId);
+        workflowRun.setGraphTemplateId(graphTemplateId);
+        workflowRun.setInputs("{}");
+
+        String snapshotJson = """
+                {
+                  "nodes": [{
+                    "template_node_id": "%s",
+                    "label": "Test Node",
+                    "executor_type": "ai",
+                    "image": "test-image:latest",
+                    "secrets": [],
+                    "is_entrypoint": true
+                  }],
+                  "edges": [],
+                  "inputs": {}
+                }
+                """.formatted(templateNodeId);
+
+        when(execRepo.findById(nodeExecId)).thenReturn(Optional.of(nodeExec));
+        when(runRepo.findById(runId)).thenReturn(Optional.of(workflowRun));
+        when(snapshotBuilder.buildSnapshotForRun(workflowRun)).thenReturn(snapshotJson);
+        when(aiCredentialResolver.resolveOauthToken(runId)).thenReturn("oauth-secret");
+        // lenient(): the assertion below is precisely that this stub is never invoked, which
+        // strict stubbing would otherwise flag as unnecessary.
+        lenient()
+                .when(registryMirrorResolver.resolve(any()))
+                .thenThrow(new IllegalStateException("resolver must not be consulted for a non-Docker prepare"));
+
+        var response = service.prepareWorkload(runId, nodeExecId, new CreateWorkloadRequest(templateNodeId, Map.of()));
+
+        assertFalse(response.enableDocker());
+        assertNull(response.registryMirror());
+        verify(registryMirrorResolver, never()).resolve(any());
     }
 
     @Test

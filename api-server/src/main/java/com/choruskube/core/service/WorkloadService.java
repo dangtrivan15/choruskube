@@ -91,7 +91,10 @@ public class WorkloadService {
         String claudeOAuthToken = needsOauthToken(params) ? aiCredentialResolver.resolveOauthToken(runId) : null;
         String githubTokenUrl =
                 apiServerUrl + "/internal/runs/" + runId + "/node-executions/" + nodeExecId + "/github-token";
-        RegistryMirror mirror = registryMirrorResolver.resolve(runId);
+        // Only the executor's DinD path reads registryMirror, gated on enableDocker itself --
+        // consulting the resolver here for every other prepare would cost a real implementation a
+        // DB round trip and could fail a launch that never needed a mirror.
+        RegistryMirror mirror = params.enableDocker() ? registryMirrorResolver.resolve(runId) : null;
 
         return new PrepareWorkloadResponse(
                 params.image(),
