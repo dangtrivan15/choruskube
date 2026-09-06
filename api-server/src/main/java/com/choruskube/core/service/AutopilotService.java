@@ -107,6 +107,7 @@ public class AutopilotService implements AutopilotSafetyValve {
     private final RunPullRequestRepository prRepo;
     private final EpicReadinessAssembler readinessAssembler;
     private final AutopilotCandidateSource candidateSource;
+    private final AutopilotSlotCounter slotCounter;
     private final TaskService taskService;
     private final RunEventPublisher eventPublisher;
     private final ApplicationEventPublisher applicationEventPublisher;
@@ -147,6 +148,7 @@ public class AutopilotService implements AutopilotSafetyValve {
             RunPullRequestRepository prRepo,
             EpicReadinessAssembler readinessAssembler,
             AutopilotCandidateSource candidateSource,
+            AutopilotSlotCounter slotCounter,
             TaskService taskService,
             RunEventPublisher eventPublisher,
             ApplicationEventPublisher applicationEventPublisher,
@@ -169,6 +171,7 @@ public class AutopilotService implements AutopilotSafetyValve {
         this.prRepo = prRepo;
         this.readinessAssembler = readinessAssembler;
         this.candidateSource = candidateSource;
+        this.slotCounter = slotCounter;
         this.taskService = taskService;
         this.eventPublisher = eventPublisher;
         this.applicationEventPublisher = applicationEventPublisher;
@@ -518,9 +521,12 @@ public class AutopilotService implements AutopilotSafetyValve {
     private Plan plan(UUID autopilotId) {
         return reads.execute(status -> {
             int maxParallel = autopilotRepo.findMaxParallelById(autopilotId).orElse(0);
-            List<WorkflowRun> live = runRepo.findByAutopilotIdAndStatusIn(autopilotId, REPORTED_LIVE);
-            return new Plan(
-                    maxParallel - countOccupyingSlots(live), computeFrontier(autopilotId, affinityEpicIds(live)));
+            // Occupancy is scope-wide (a person's manual runs count too); affinity reads only this
+            // Autopilot's own live runs, since "batch work where the Autopilot already has a pod" is
+            // about its own containers, not a human's.
+            List<WorkflowRun> ownLive = runRepo.findByAutopilotIdAndStatusIn(autopilotId, REPORTED_LIVE);
+            long occupied = slotCounter.occupiedSlots(autopilotId, OCCUPIES_A_SLOT);
+            return new Plan(maxParallel - (int) occupied, computeFrontier(autopilotId, affinityEpicIds(ownLive)));
         });
     }
 
@@ -557,7 +563,7 @@ public class AutopilotService implements AutopilotSafetyValve {
                 break;
             }
             int maxParallel = autopilotRepo.findMaxParallelById(autopilotId).orElse(0);
-            if (runRepo.countByAutopilotIdAndStatusIn(autopilotId, OCCUPIES_A_SLOT) >= maxParallel) {
+            if (slotCounter.occupiedSlots(autopilotId, OCCUPIES_A_SLOT) >= maxParallel) {
                 break;
             }
             try {
@@ -615,7 +621,8 @@ public class AutopilotService implements AutopilotSafetyValve {
             }
             Autopilot autopilot = current.get();
             List<WorkflowRun> live = runRepo.findByAutopilotIdAndStatusIn(autopilotId, REPORTED_LIVE);
-            publish(autopilot, buildStatus(autopilot, live, frontier, started, notes));
+            int inFlight = (int) slotCounter.occupiedSlots(autopilotId, OCCUPIES_A_SLOT);
+            publish(autopilot, buildStatus(autopilot, live, frontier, started, notes, inFlight));
         });
     }
 
@@ -1014,7 +1021,8 @@ public class AutopilotService implements AutopilotSafetyValve {
         List<WorkflowRun> live = runRepo.findByAutopilotIdAndStatusIn(autopilot.getId(), REPORTED_LIVE);
         Frontier frontier =
                 autopilot.isEngaged() ? computeFrontier(autopilot.getId(), affinityEpicIds(live)) : Frontier.EMPTY;
-        return buildStatus(autopilot, live, frontier, Set.of(), List.of());
+        int inFlight = (int) slotCounter.occupiedSlots(autopilot.getId(), OCCUPIES_A_SLOT);
+        return buildStatus(autopilot, live, frontier, Set.of(), List.of(), inFlight);
     }
 
     /**
@@ -1023,14 +1031,17 @@ public class AutopilotService implements AutopilotSafetyValve {
      *     swept before any of them moved out of {@code backlog}.
      * @param notes findings from the tick that produced this snapshot — quota back-pressure, a
      *     failed start — which have no other route into {@code whyIdle}
+     * @param inFlight scope-wide slot occupancy from {@link AutopilotSlotCounter} — counts a
+     *     person's manual runs too, so it is not derivable from {@code live} (this Autopilot's own
+     *     runs) and is passed in already resolved.
      */
     private AutopilotStatusResponse buildStatus(
             Autopilot autopilot,
             List<WorkflowRun> live,
             Frontier frontier,
             Set<UUID> excludedTaskIds,
-            List<String> notes) {
-        int inFlight = countOccupyingSlots(live);
+            List<String> notes,
+            int inFlight) {
         int slots = Math.max(0, autopilot.getMaxParallel() - inFlight);
 
         List<AutopilotTaskRef> nextUp = frontier.readyTasks().stream()
@@ -1205,12 +1216,6 @@ public class AutopilotService implements AutopilotSafetyValve {
         Map<UUID, String> titles = new HashMap<>();
         taskRepo.findAllById(taskIds).forEach(task -> titles.put(task.getId(), task.getTitle()));
         return titles;
-    }
-
-    private static int countOccupyingSlots(List<WorkflowRun> live) {
-        return (int) live.stream()
-                .filter(run -> OCCUPIES_A_SLOT.contains(run.getStatus()))
-                .count();
     }
 
     /**

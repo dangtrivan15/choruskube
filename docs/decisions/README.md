@@ -33,6 +33,7 @@ Every entry gets a row, newest last.
 | [2026-09-05---01-worker-owns-tenant-agnostic-executor.md](2026-09-05---01-worker-owns-tenant-agnostic-executor.md) | 2026-09-05 | Which component creates workloads, and why the generic Kubernetes executor is public | current |
 | [2026-09-06---01-worker-scoped-internal-credential.md](2026-09-06---01-worker-scoped-internal-credential.md) | 2026-09-06 | Why a Worker authenticates on its own run-scoped credential instead of `ORCHESTRATOR_SECRET` | current |
 | [2026-09-06---02-worker-placement-and-executor-seams.md](2026-09-06---02-worker-placement-and-executor-seams.md) | 2026-09-06 | Why `WorkerRegistrar`, `RunPlacementResolver`, `NodePlacementChecker`, and `executor.CredentialConsumer` ship with exactly one caller and one implementation | current |
+| [2026-09-06---03-autopilot-parallelism-counts-scope-not-attribution.md](2026-09-06---03-autopilot-parallelism-counts-scope-not-attribution.md) | 2026-09-06 | Why Autopilot occupancy is counted through the `AutopilotSlotCounter` seam — attribution-scoped single-tenant, org-owned (counting members' manual runs) multi-tenant — while the failure breaker stays attribution-scoped | current |
 
 - **Entry** — the filename, linked.
 - **Date** — the date in the filename.

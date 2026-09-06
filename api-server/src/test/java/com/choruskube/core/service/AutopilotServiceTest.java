@@ -53,6 +53,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.stream.IntStream;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -118,6 +119,9 @@ class AutopilotServiceTest {
     private AutopilotCandidateSource candidateSource;
 
     @Mock
+    private AutopilotSlotCounter slotCounter;
+
+    @Mock
     private TaskService taskService;
 
     @Mock
@@ -146,6 +150,16 @@ class AutopilotServiceTest {
 
     private final List<EpicFixture> epics = new ArrayList<>();
     private final List<WorkflowRun> live = new ArrayList<>();
+
+    /**
+     * Runs in the Autopilot's scope that it did not start — a person's manual runs. Invisible to
+     * {@code findByAutopilotIdAndStatusIn} (their {@code autopilot_id} is null), but the {@link
+     * AutopilotSlotCounter} counts them toward occupancy, which is the whole point of the seam.
+     * Empty by default, so scope-wide occupancy equals {@code live} and every pre-existing slot
+     * assertion is untouched.
+     */
+    private final List<WorkflowRun> manualLive = new ArrayList<>();
+
     private final List<WorkflowRun> settleBatch = new ArrayList<>();
     private final Map<UUID, Readiness> readiness = new HashMap<>();
     private final List<WorkItemDependency> edges = new ArrayList<>();
@@ -214,6 +228,33 @@ class AutopilotServiceTest {
         newService().tick();
 
         verify(taskService, never()).startForAutopilot(any(), any());
+    }
+
+    @Test
+    void tick_manuallyStartedRunOccupiesASlot_soAutopilotStartsNothing() {
+        // A person restarting a run from the task page launches a real agent pod with a null
+        // autopilot_id. findByAutopilotIdAndStatusIn never sees it, but max_parallel still has to,
+        // or max_parallel = 1 with one manual run in flight oversubscribes the cluster.
+        StoryFixture s = story(epic("E"));
+        task(s, "Ready", WorkItemStatus.backlog, Readiness.READY);
+        manualRun(WorkflowRunStatus.running);
+
+        newService().tick();
+
+        verify(taskService, never()).startForAutopilot(any(), any());
+    }
+
+    @Test
+    void status_manuallyStartedRunsCountTowardInFlightAndSlots() {
+        // The panel's "N of M in use / K available" must reflect the same scope-wide occupancy the
+        // tick gates on — otherwise it reports a free slot the Autopilot will refuse to fill.
+        manualRun(WorkflowRunStatus.running);
+
+        AutopilotStatusResponse status = newService().getStatus();
+
+        assertThat(status.inFlight()).as("the manual run occupies a slot").isEqualTo(1);
+        assertThat(status.slots()).as("no slot is free at max_parallel = 1").isZero();
+        assertThat(status.whyIdle()).contains("At capacity — 1 of 1 slot(s) in use");
     }
 
     @Test
@@ -1785,6 +1826,15 @@ class AutopilotServiceTest {
             Set<?> statuses = statusesOf(invocation.getArgument(1));
             return live.stream().filter(r -> statuses.contains(r.getStatus())).count();
         });
+        // Scope-wide occupancy: the Autopilot's own live runs plus any a person started by hand.
+        // manualLive is empty unless a test adds to it, so this equals the old
+        // countByAutopilotIdAndStatusIn for every pre-existing case.
+        when(slotCounter.occupiedSlots(any(), any())).thenAnswer(invocation -> {
+            Set<?> statuses = statusesOf(invocation.getArgument(1));
+            return Stream.concat(live.stream(), manualLive.stream())
+                    .filter(r -> statuses.contains(r.getStatus()))
+                    .count();
+        });
         when(runRepo.findByAutopilotIdAndAutopilotSettledAtIsNullAndStatusIn(any(), any()))
                 .thenAnswer(invocation -> {
                     Set<?> statuses = statusesOf(invocation.getArgument(1));
@@ -1852,6 +1902,7 @@ class AutopilotServiceTest {
                 prRepo,
                 readinessAssembler,
                 candidateSource,
+                slotCounter,
                 taskService,
                 eventPublisher,
                 ownershipEvents::add,
@@ -1951,6 +2002,21 @@ class AutopilotServiceTest {
         run.setAutopilotId(autopilotId);
         ReflectionTestUtils.setField(run, "createdAt", Instant.now());
         live.add(run);
+        return run;
+    }
+
+    /**
+     * A live run in the Autopilot's scope that a person started by hand — {@code autopilot_id} null,
+     * so it never shows up in {@code findByAutopilotIdAndStatusIn}, and only the {@link
+     * AutopilotSlotCounter} accounts for it.
+     */
+    private WorkflowRun manualRun(WorkflowRunStatus status) {
+        WorkflowRun run = new WorkflowRun();
+        run.setId(UUID.randomUUID());
+        run.setStatus(status);
+        run.setAutopilotId(null);
+        ReflectionTestUtils.setField(run, "createdAt", Instant.now());
+        manualLive.add(run);
         return run;
     }
 
