@@ -134,10 +134,10 @@ The entrypoint passes every clone to Claude Code as a working directory (`--add-
 - **NEVER** log or print `JOB_SECRET`, `ORCHESTRATOR_SECRET`, `CLAUDE_CODE_OAUTH_TOKEN`, object-store access/secret keys, or GitHub tokens
 - **NEVER** commit credentials, API keys, IP addresses, or secrets to the repository
 - **NEVER** disable TLS verification or security middleware
-- **NEVER** modify `SecurityConfig.java` or `InternalAuthFilter.java` without explicit approval
+- **NEVER** modify `SecurityConfig.java`, `InternalAuthFilter.java`, or `WorkerAuthFilter.java` without explicit approval
 - **NEVER** expose internal API endpoints (`/internal/*`) to unauthenticated callers
 - **NEVER** store GitHub tokens at rest — they are provisioned dynamically (1-hour TTL via GitHub App installation tokens)
-- Two-tier internal auth (always on, regardless of `AUTH_ENABLED`): `ORCHESTRATOR_SECRET` (shared secret) for orchestrator → full access; `JOB_SECRET` (per-execution) for agents → scoped to own execution
+- Three-tier internal auth (always on, regardless of `AUTH_ENABLED`): `ORCHESTRATOR_SECRET` (shared secret) for the orchestrator → full `/internal/**` access; `JOB_SECRET` (per-execution) for agents → scoped to their own execution; and a **Fleet-scoped Worker credential** (`ckw_`-prefixed, minted at Worker registration, rotated on a TTL+grace cycle) authorizing `/worker/**` calls per-request via `WorkerAuthorizer` against a live Fleet→run pin — so revoking a Worker takes effect on its next request. Workers no longer present `ORCHESTRATOR_SECRET`.
 - `InternalAuthFilter` enforces Bearer token validation on all `/internal/**` endpoints via SHA-256 hash comparison; mode is set by `INTERNAL_AUTH_MODE` (`enforce` rejects, `warn` logs only)
 - The public `/api/**` surface is **open in the OSS core** (`AUTH_ENABLED=false`); `SecurityConfig` delegates `/api/**` to an `AuthConfigurer` that permits all in single-tenant mode. Do not assume a logged-in principal — every request resolves to the seeded system org
 - **Claude OAuth token (per-org)**: the system org's `CLAUDE_CODE_OAUTH_TOKEN` (long-lived, ~1-year TTL from `claude setup-token`) is seeded from the env var at startup and stored encrypted. Executors resolve it at pod-launch time and inject it into the per-execution secret. Without a token the stack still boots and serves the full API — only AI nodes fail soft

@@ -45,7 +45,9 @@ The executor is deliberately **tenant-agnostic**: it launches into a namespace, 
 account, and credentials it is *given*, and resolves none of them itself. The
 single-tenant core has one tenant, so the boundary is invisible here — but it is the
 same boundary that lets a Worker run on infrastructure the operator controls without
-reaching anything but its own work.
+reaching anything but its own work. Placement and credential scoping across more than
+one Fleet are extension seams core declares but does not implement — see
+[docs/decisions/2026-09-06---02-worker-placement-and-executor-seams.md](docs/decisions/2026-09-06---02-worker-placement-and-executor-seams.md).
 
 ```
    ┌──────────┐  REST / WS   ┌──────────────┐  Temporal signals  ┌──────────────────┐

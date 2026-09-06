@@ -31,6 +31,8 @@ Every entry gets a row, newest last.
 |---|---|---|---|
 | [2026-08-29---01-original-rose-pine-dawn-light-theme.md](2026-08-29---01-original-rose-pine-dawn-light-theme.md) | 2026-08-29 | Which light look is the canonical "original Rose Pine" and how the core app's current light theme deviates from it | current |
 | [2026-09-05---01-worker-owns-tenant-agnostic-executor.md](2026-09-05---01-worker-owns-tenant-agnostic-executor.md) | 2026-09-05 | Which component creates workloads, and why the generic Kubernetes executor is public | current |
+| [2026-09-06---01-worker-scoped-internal-credential.md](2026-09-06---01-worker-scoped-internal-credential.md) | 2026-09-06 | Why a Worker authenticates on its own run-scoped credential instead of `ORCHESTRATOR_SECRET` | current |
+| [2026-09-06---02-worker-placement-and-executor-seams.md](2026-09-06---02-worker-placement-and-executor-seams.md) | 2026-09-06 | Why `WorkerRegistrar`, `RunPlacementResolver`, `NodePlacementChecker`, and `executor.CredentialConsumer` ship with exactly one caller and one implementation | current |
 
 - **Entry** — the filename, linked.
 - **Date** — the date in the filename.

@@ -3,9 +3,10 @@
 **Autopilot** decides what to do. An **Agent** does it. A **Worker** runs the Agent. A **Fleet** is the set of Workers.
 
 A Worker is a Go process that polls one Temporal task queue and runs the agent steps it
-claims there. It is the only part of ChorusKube that has to sit next to the compute — it
-launches agent containers through the api-server's workload executor, so wherever the Worker
-runs is where the work runs.
+claims there. It is the only part of ChorusKube that has to sit next to the compute — it owns
+a workload executor itself (Docker or Kubernetes) and launches agent containers directly, so
+wherever the Worker runs is where the work runs. The api-server is off this hot path: it only
+resolves per-run credentials before launch and records the result the Worker reports back.
 
 ## One Fleet
 
@@ -77,6 +78,8 @@ would only return what you configured.
 | `WORKER_INTERNAL_TOKEN` | static path | Authenticates this Worker on the api-server's `/worker/**` routes. Must equal the server's `WORKER_REGISTRATION_TOKEN`. Ignored when registering. |
 | `TEMPORAL_TLS_DISABLED` | no | Set `true` for a Temporal that serves plaintext gRPC. |
 | `WORKER_CAPABILITIES` | no | `key=value,key=value` pairs this Worker reports about its own infrastructure at registration. Default empty. A server that records required capabilities on a Fleet refuses a Worker that does not report them. |
+| `EXECUTOR_TYPE` | no | `docker` (default) or `k8s` — which executor this process builds at startup. Any other value fails startup. |
+| `WORKER_CALLBACK_PORT` | no | Port the callback server listens on for agent completion/heartbeat callbacks. Default `9090`. |
 
 `TEMPORAL_TLS_DISABLED` is opt-in so a deployment against a TLS Temporal cannot lose TLS by
 omission. It is only needed when a Fleet carries a credential: the Temporal SDK turns TLS on
@@ -92,6 +95,36 @@ this deployment every Worker presents the same `WORKER_REGISTRATION_TOKEN`, whet
 handed it back or the operator configured it directly, so it is one shared value, not a per-Worker
 one. A server that mints a credential per registration returns it in the registration response and
 the Worker presents that instead.
+
+## Executor configuration
+
+`EXECUTOR_TYPE` selects the executor `cmd/worker` builds once at startup; the remaining
+variables in each row below configure only that one. An executor never resolves a namespace,
+service account, or credential itself — see
+[the executor decision](../docs/decisions/2026-09-05---01-worker-owns-tenant-agnostic-executor.md)
+— so every one of these is supplied by whoever runs the Worker, not inferred.
+
+**Kubernetes (`EXECUTOR_TYPE=k8s`)** — always runs in-cluster; there is no kubeconfig fallback.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `K8S_NAMESPACE` | `choruskube` | The single namespace every agent Job launches into and is torn down within. |
+| `K8S_AGENT_SERVICE_ACCOUNT` | `choruskube-agent` | Service account the agent Job's pod runs as. |
+| `K8S_AGENT_POD_TEMPLATE_NAME` | `choruskube-agent-pod-template` | Pod template the Job's pod is built from. |
+| `K8S_TEMPLATE_NAMESPACE` | `choruskube` | Namespace the pod template above is read from. |
+| `K8S_RESOURCE_QUOTA_ENABLED` | `true` | Set `false` to skip enforcing the namespace's ResourceQuota. |
+| `K8S_AGENT_CPU_REQUEST` | `200m` | Default agent-container CPU request; a node execution's own sizing overrides it. |
+| `K8S_AGENT_MEMORY_REQUEST` | `1Gi` | Default agent-container memory request; overridable per node. |
+| `K8S_AGENT_CPU_LIMIT` | `1` | Default agent-container CPU limit; overridable per node. |
+| `K8S_AGENT_MEMORY_LIMIT` | `3Gi` | Default agent-container memory limit; overridable per node. |
+
+**Docker (`EXECUTOR_TYPE=docker`, the default)** — the local-stack and self-hosted-on-a-single-host path.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `DOCKER_HOST` | Docker SDK's own environment-based default | Daemon socket, e.g. `unix:///var/run/docker.sock`. |
+| `DOCKER_NETWORK` | `choruskube` | Docker network agent containers and DinD sidecars attach to. |
+| `DOCKER_STAGING_DIR` | `/tmp/choruskube-agent-staging` | Base directory for per-execution config/credential staging. In Docker-out-of-Docker deployments this path must be bind-mounted identically on both sides — the Worker's own filesystem and the host daemon it talks to. |
 
 ## Build and test
 
