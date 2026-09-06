@@ -134,10 +134,10 @@ The entrypoint passes every clone to Claude Code as a working directory (`--add-
 - **NEVER** log or print `JOB_SECRET`, `ORCHESTRATOR_SECRET`, `CLAUDE_CODE_OAUTH_TOKEN`, object-store access/secret keys, or GitHub tokens
 - **NEVER** commit credentials, API keys, IP addresses, or secrets to the repository
 - **NEVER** disable TLS verification or security middleware
-- **NEVER** modify `SecurityConfig.java` or `InternalAuthFilter.java` without explicit approval
+- **NEVER** modify `SecurityConfig.java`, `InternalAuthFilter.java`, or `WorkerAuthFilter.java` without explicit approval
 - **NEVER** expose internal API endpoints (`/internal/*`) to unauthenticated callers
 - **NEVER** store GitHub tokens at rest — they are provisioned dynamically (1-hour TTL via GitHub App installation tokens)
-- Two-tier internal auth (always on, regardless of `AUTH_ENABLED`): `ORCHESTRATOR_SECRET` (shared secret) for orchestrator → full access; `JOB_SECRET` (per-execution) for agents → scoped to own execution
+- Three-tier internal auth (always on, regardless of `AUTH_ENABLED`): `ORCHESTRATOR_SECRET` (shared secret) for the orchestrator → full `/internal/**` access; `JOB_SECRET` (per-execution) for agents → scoped to their own execution; and a **Fleet-scoped Worker credential** (`ckw_`-prefixed, minted at Worker registration, rotated on a TTL+grace cycle) authorizing `/worker/**` calls per-request via `WorkerAuthorizer` against a live Fleet→run pin — so revoking a Worker takes effect on its next request. Workers no longer present `ORCHESTRATOR_SECRET`.
 - `InternalAuthFilter` enforces Bearer token validation on all `/internal/**` endpoints via SHA-256 hash comparison; mode is set by `INTERNAL_AUTH_MODE` (`enforce` rejects, `warn` logs only)
 - The public `/api/**` surface is **open in the OSS core** (`AUTH_ENABLED=false`); `SecurityConfig` delegates `/api/**` to an `AuthConfigurer` that permits all in single-tenant mode. Do not assume a logged-in principal — every request resolves to the seeded system org
 - **Claude OAuth token (per-org)**: the system org's `CLAUDE_CODE_OAUTH_TOKEN` (long-lived, ~1-year TTL from `claude setup-token`) is seeded from the env var at startup and stored encrypted. Executors resolve it at pod-launch time and inject it into the per-execution secret. Without a token the stack still boots and serves the full API — only AI nodes fail soft
@@ -169,6 +169,11 @@ A comment states the constraint that fires if you edit **this line**. Target ≤
 3. **No run-scoped references.** Never cite a run's spec by ordinal — `Decision N`, `§N.N`, `Caveat N`, "the plan". Those identifiers are scoped to one run; the next agent resolves them against its own spec and gets a different answer. State the constraint instead. Durable references — a repo-relative file path, a type name, an issue URL — are fine.
 
 Enforced by `scripts/check-comment-refs.sh`, which runs as part of the root `./gradlew test`.
+
+## Design Decisions
+
+- **Consult `docs/decisions/` before changing architecture, contracts, or security boundaries** — each entry records why the code is shaped the way it is. `docs/decisions/README.md` is the index and the full convention.
+- **Record a decision that graduates.** When a change makes an architectural or security choice a later reader could not recover from the code alone, add an entry — naming, immutability, and supersession rules are in `docs/decisions/README.md` — and update its index row. Run-scoped specs stay with the run; only durable decisions graduate here.
 
 ## Documentation Conventions
 
