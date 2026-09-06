@@ -244,6 +244,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// Clear the pod reference so the UI does not point at a deleted pod, and record the park.
+		// Both resolve their client through the pending entry completer.Complete drops below, so
+		// they run before it -- issued afterward they fail with "no pending entry".
+		if h.status != nil {
+			if err := h.status.UpdateNodeExecution(ctx, runID, execID,
+				"running", "", "", "", ""); err != nil {
+				slog.Error("failed to clear pod_name for rate-limited", "execution_id", execID, "error", err)
+			}
+			h.status.WriteExecutionLog(ctx, runID, execID, "info",
+				fmt.Sprintf("Claude quota exhausted. Resuming automatically at %s (in ~%s). No action needed.",
+					body.ResumeAt.UTC().Format("15:04 UTC"), formatParkWait(wait)))
+		}
+
 		if err := h.completer.Complete(ctx, CompletionRequest{
 			NodeExecutionID:     execID,
 			RunID:               runID,
@@ -255,23 +268,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			slog.Error("failed to complete rate-limited activity", "execution_id", execID, "error", err)
 		}
 
-		// Clear the pod reference so the UI does not point at a deleted pod.
-		if h.status != nil {
-			if err := h.status.UpdateNodeExecution(ctx, runID, execID,
-				"running", "", "", "", ""); err != nil {
-				slog.Error("failed to clear pod_name for rate-limited", "execution_id", execID, "error", err)
-			}
-			h.status.WriteExecutionLog(ctx, runID, execID, "info",
-				fmt.Sprintf("Claude quota exhausted. Resuming automatically at %s (in ~%s). No action needed.",
-					body.ResumeAt.UTC().Format("15:04 UTC"), formatParkWait(wait)))
-		}
-
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(map[string]string{"status": "parked"})
 		return
 	}
 
 	// --- Normal completion / failure ---
+	// Breadcrumb before Complete: completer.Complete drops the pending entry this write resolves
+	// its client through, so issuing it afterward fails with "no pending entry". The node's
+	// status/result/artifactRefs are persisted authoritatively by the orchestrator's
+	// UpdateNodeExecutionStatus on completion, so nothing is duplicated here.
+	if h.status != nil {
+		h.status.WriteExecutionLog(ctx, runID, execID, "info",
+			fmt.Sprintf("Callback received: status=%s result=%s", body.Status, body.Result))
+	}
+
 	err = h.completer.Complete(ctx, CompletionRequest{
 		NodeExecutionID: execID,
 		RunID:           runID,
@@ -285,16 +296,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		slog.Error("failed to complete activity", "execution_id", execID, "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
-	}
-
-	// --- Behavior 4: best-effort DB writes ---
-	if h.status != nil {
-		if err := h.status.UpdateNodeExecution(ctx, runID, execID,
-			body.Status, body.Result, string(body.ArtifactRefs), "", body.ErrorMessage); err != nil {
-			slog.Error("failed to update node execution after completion", "execution_id", execID, "error", err)
-		}
-		h.status.WriteExecutionLog(ctx, runID, execID, "info",
-			fmt.Sprintf("Callback received: status=%s result=%s", body.Status, body.Result))
 	}
 
 	w.WriteHeader(http.StatusOK)

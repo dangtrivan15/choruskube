@@ -219,6 +219,43 @@ func callbackReq(t *testing.T, execID uuid.UUID, secret string, bodyMap map[stri
 	return req
 }
 
+func TestHandler_NormalCompletion_BreadcrumbBeforeComplete_NoRedundantUpdate(t *testing.T) {
+	execID := uuid.New()
+	runID := uuid.New()
+	secret := "s"
+	cache := NewHashCache()
+	cache.Put(execID, executor.HashSecret(secret))
+
+	sc := &mockStatusClient{getStatus: "running"}
+	// completer.Complete drops the pending entry that every status write resolves its client
+	// through, so a write issued after it fails with "no pending entry". The breadcrumb must
+	// therefore be written before Complete -- the production ordering bug this guards against.
+	completer := &mockCompleter{completeFn: func(context.Context, CompletionRequest) error {
+		if len(sc.logCalls) == 0 {
+			t.Errorf("execution-log breadcrumb must be written before completer.Complete")
+		}
+		return nil
+	}}
+	handler := NewHandler(cache, nil, completer, sc)
+
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, callbackReq(t, execID, secret, map[string]any{
+		"node_execution_id": execID.String(),
+		"run_id":            runID.String(),
+		"status":            "completed",
+		"result":            "done",
+	}))
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, 1, completer.completeCt)
+	// The orchestrator's UpdateNodeExecutionStatus authoritatively persists status/result/
+	// artifactRefs on completion; the worker must not issue a second, redundant write.
+	assert.Empty(t, sc.updateCalls, "normal completion must not redundantly UpdateNodeExecution")
+	if assert.Len(t, sc.logCalls, 1) {
+		assert.Contains(t, sc.logCalls[0].message, "Callback received")
+	}
+}
+
 func TestHandler_MissingRunID_Returns400(t *testing.T) {
 	execID := uuid.New()
 	secret := "s"
@@ -378,8 +415,9 @@ func TestHandler_DBWritesAfterNormalCompletion(t *testing.T) {
 	cache := NewHashCache()
 	cache.Put(execID, executor.HashSecret(secret))
 
+	var got CompletionRequest
 	completer := &mockCompleter{
-		completeFn: func(_ context.Context, _ CompletionRequest) error { return nil },
+		completeFn: func(_ context.Context, req CompletionRequest) error { got = req; return nil },
 	}
 	sc := &mockStatusClient{getStatus: "running"}
 	handler := NewHandler(cache, nil, completer, sc)
@@ -397,15 +435,13 @@ func TestHandler_DBWritesAfterNormalCompletion(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	if assert.Len(t, sc.updateCalls, 1) {
-		u := sc.updateCalls[0]
-		assert.Equal(t, runID, u.runID)
-		assert.Equal(t, execID, u.execID)
-		assert.Equal(t, "completed", u.status)
-		assert.Equal(t, "some result", u.result)
-		assert.Contains(t, u.artifactRefs, "runs/x/out/")
-	}
-	assert.Len(t, sc.logCalls, 1, "an execution log must be written")
+	// status/result/artifactRefs travel to the orchestrator via the completed activity, which
+	// persists them authoritatively -- the worker does not write them a second time.
+	assert.Equal(t, "completed", got.Status)
+	assert.Equal(t, "some result", got.Result)
+	assert.Contains(t, string(got.ArtifactRefs), "runs/x/out/")
+	assert.Empty(t, sc.updateCalls, "the worker must not redundantly UpdateNodeExecution on normal completion")
+	assert.Len(t, sc.logCalls, 1, "an execution-log breadcrumb must be written")
 }
 
 func TestHandler_FinalizedCheckSkippedWhenStatusClientNil(t *testing.T) {
