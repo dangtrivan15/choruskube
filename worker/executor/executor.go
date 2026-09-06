@@ -13,6 +13,12 @@ import (
 )
 
 // Executor runs and manages the lifecycle of node execution workloads.
+//
+// The teardown methods (Cleanup, Terminate, GetLogs, ResolveJobSecretHash) take only the
+// executionID: an instance is bound to a single namespace at construction, so these address
+// resources by their deterministic name within that one namespace, never via a cluster-wide LIST
+// (and so never needing cluster-scoped RBAC). A multi-tenant deployment obtains a namespace-bound
+// instance per org (KubernetesExecutor.WithNamespace); Docker has no namespaces at all.
 type Executor interface {
 	Execute(ctx context.Context, params ExecutionParams) (ExecutionResult, error)
 	Cleanup(ctx context.Context, executionID uuid.UUID) error
@@ -40,6 +46,38 @@ type ExecutionParams struct {
 
 	EnableDocker bool
 	Identity     ExecutionIdentity
+
+	// RegistryMirror carries the registry-mirror/build-cache/dependency-proxy endpoints to
+	// inject into a DinD-enabled workload, when this deployment provisions one. Nil means
+	// none was resolved -- this package derives no such endpoint itself, since where it
+	// lives (a per-org proxy, a shared mirror, nothing) is a deployment-specific choice made
+	// upstream of ExecutionParams.
+	RegistryMirror *RegistryMirror
+
+	// AgentResources overrides the executor's default agent-container CPU/memory for this one
+	// execution. Nil uses the deployment default (the K8s executor's Config). What a given node
+	// should be sized at is a caller decision (resolved in prepare), not something this package
+	// infers from node type -- it only applies what it is handed.
+	AgentResources *AgentResources
+}
+
+// AgentResources sets the agent container's CPU/memory requests and limits. Values are
+// Kubernetes quantity strings (e.g. "200m", "1Gi"); an empty field falls back to the
+// executor's corresponding Config default. The Docker executor ignores this.
+type AgentResources struct {
+	CPURequest    string
+	MemoryRequest string
+	CPULimit      string
+	MemoryLimit   string
+}
+
+// RegistryMirror is the registry-mirror/build-cache/dependency-proxy endpoint set a DinD-enabled
+// workload's init container and agent process route image pulls, build-cache traffic, and
+// package-manager downloads through.
+type RegistryMirror struct {
+	Mirror       string // host:port a container runtime pulls images through
+	BuildCache   string // host:port the build-cache push/pull path uses
+	DepProxyBase string // base URL package-manager proxies (Go/npm) are rooted at
 }
 
 // NodeCredentials are the credentials injected into a node execution's workload.
@@ -56,9 +94,10 @@ type RegistryCredentials struct {
 	Password string
 }
 
-// ExecutionIdentity is the identity a workload runs under.
+// ExecutionIdentity is the identity a workload runs under. The namespace a workload launches
+// into is a property of the executor instance (bound at construction), not of a single call, so
+// it is not carried here.
 type ExecutionIdentity struct {
-	Namespace      string
 	ServiceAccount string
 }
 

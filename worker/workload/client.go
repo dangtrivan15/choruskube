@@ -101,10 +101,14 @@ func workloadPath(runID, nodeExecID uuid.UUID) string {
 	return nodeExecPath(runID, nodeExecID) + "/workload"
 }
 
-// NodeExecution is the minimal GET response from the node-execution endpoint.
+// NodeExecution is the minimal GET response from the node-execution endpoint. Namespace is the
+// K8s namespace the execution's workload runs in, resolved server-side (empty in a single-tenant
+// deployment that runs no per-org namespaces); teardown and hash-recovery pass it to the executor
+// so it addresses resources by name without any cluster-wide search.
 type NodeExecution struct {
-	ID     uuid.UUID `json:"id"`
-	Status string    `json:"status"`
+	ID        uuid.UUID `json:"id"`
+	Status    string    `json:"status"`
+	Namespace string    `json:"namespace"`
 }
 
 // UpdateStatusRequest is the PUT body for the node-execution status endpoint.
@@ -215,6 +219,15 @@ type RegistryCredentials struct {
 	Password string `json:"password"`
 }
 
+// RegistryMirror is the registry-mirror/build-cache/dependency-proxy endpoint set the API server
+// resolved for this workload's launch, when this deployment provisions one. Nil means none was
+// resolved.
+type RegistryMirror struct {
+	Mirror       string `json:"mirror"`
+	BuildCache   string `json:"buildCache"`
+	DepProxyBase string `json:"depProxyBase"`
+}
+
 // PrepareResponse is what a Worker needs to launch a workload itself, resolved server-side from
 // the stored graph snapshot and DB-held secrets.
 type PrepareResponse struct {
@@ -225,6 +238,7 @@ type PrepareResponse struct {
 	Registry         *RegistryCredentials `json:"registryCredentials"`
 	Namespace        string               `json:"namespace"`
 	ServiceAccount   string               `json:"serviceAccount"`
+	RegistryMirror   *RegistryMirror      `json:"registryMirror"`
 }
 
 // PrepareParams contains everything needed to resolve a workload's launch inputs via the API

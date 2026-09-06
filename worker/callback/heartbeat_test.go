@@ -52,7 +52,10 @@ func TestHeartbeatHandler_InvalidSecret_Returns401(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
-func TestHeartbeatHandler_CacheMiss_ResolvesFromExecutor(t *testing.T) {
+// On a cache miss (a Worker that restarted after launch) the resolver -- bound to the execution's
+// namespace -- recovers the hash the same way the completion callback does, and the recovered
+// value is cached for next time. No cluster-wide search, and no per-call namespace.
+func TestHeartbeatHandler_CacheMiss_RecoversViaResolver(t *testing.T) {
 	execID := uuid.New()
 	secret := "resolv-secret"
 	hash := executor.HashSecret(secret)
@@ -84,6 +87,36 @@ func TestHeartbeatHandler_CacheMiss_ResolvesFromExecutor(t *testing.T) {
 	cached, ok := cache.Get(execID)
 	assert.True(t, ok)
 	assert.Equal(t, hash, cached)
+}
+
+// A resolver that cannot recover the hash (e.g. the job-secret Secret is gone) fails closed to
+// 401 rather than admitting the request, and must not populate the cache with a bad value.
+func TestHeartbeatHandler_CacheMiss_ResolverError_FailsClosed(t *testing.T) {
+	execID := uuid.New()
+	secret := "resolv-secret"
+
+	cache := NewHashCache() // empty — no entry for execID
+
+	resolverCalled := false
+	mockExec := &mockExecutor{
+		resolveJobSecretHashFn: func(ctx context.Context, id uuid.UUID) (string, error) {
+			resolverCalled = true
+			return "", errors.New("no job-secret found")
+		},
+	}
+
+	handler := NewHeartbeatHandler(cache, mockExec, &mockHeartbeater{})
+
+	body, _ := json.Marshal(map[string]any{"node_execution_id": execID.String()})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/heartbeat", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+secret)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.True(t, resolverCalled)
+	_, cached := cache.Get(execID)
+	assert.False(t, cached, "a failed recovery must not populate the cache")
 }
 
 // A heartbeat can legitimately race the callback (the activity may already be complete by the

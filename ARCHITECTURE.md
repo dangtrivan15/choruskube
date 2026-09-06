@@ -27,33 +27,50 @@ which node runs next, follows edges, and applies conditional routing based on th
 outcome of each node (including human decisions at approval gates). Temporal gives
 the walk durability and retries.
 
-The orchestrator does **not** create containers itself. It delegates all container
-lifecycle to the **api-server**, which **owns the workload executor**. For each
-node the api-server spawns an isolated workload:
+The orchestrator does **not** create containers itself. It dispatches each ready node
+as a **Temporal activity**, and a **Worker** — a process subscribed to the node's task
+queue — picks it up and creates the workload itself:
 
 - an **isolated Docker container** when running locally, or
 - a **Kubernetes Job** when running in a cluster.
 
-The api-server creates the workload, injects per-run configuration and credentials,
-watches it to completion, collects its outputs, and reports the result back so the
-orchestrator can advance the graph.
+The Worker owns the executor. Before launching, it asks the **api-server** to resolve
+per-run configuration and credentials (the workload `prepare` call); when the agent
+finishes, the Worker's own callback server receives the result and records execution
+state back to the api-server (the workload `complete` call). The api-server is the
+source of truth for state, but it is **out of the execution hot path** — it never
+creates a container.
+
+The executor is deliberately **tenant-agnostic**: it launches into a namespace, service
+account, and credentials it is *given*, and resolves none of them itself. The
+single-tenant core has one tenant, so the boundary is invisible here — but it is the
+same boundary that lets a Worker run on infrastructure the operator controls without
+reaching anything but its own work.
 
 ```
-   ┌──────────┐   REST / WebSocket    ┌──────────────┐   workflow signals   ┌──────────────────┐
-   │  web-ui  │ <───────────────────> │  api-server  │ <──────────────────> │   orchestrator   │
-   └──────────┘                       │  (executor)  │                      │ (Temporal driver)│
-                                      └──────┬───────┘                      └──────────────────┘
-                                             │ spawns per node
-                       ┌─────────────────────┼─────────────────────┐
-                       v                      v                     v
-                 ┌───────────┐          ┌───────────┐         ┌──────────────┐
-                 │  agent    │          │ PostgreSQL│         │ object store │
-                 │ container │          │  (state)  │         │ (artifacts)  │
-                 └───────────┘          └───────────┘         └──────────────┘
+   ┌──────────┐  REST / WS   ┌──────────────┐  Temporal signals  ┌──────────────────┐
+   │  web-ui  │ <──────────> │  api-server  │ <────────────────> │   orchestrator   │
+   └──────────┘              │ state + creds│                    │ (Temporal driver)│
+                             └──────┬───────┘                    └────────┬─────────┘
+                                    │                                     │ dispatches each
+                     PostgreSQL ────┤                                     │ node as an activity
+                     object store ──┘                                     ▼
+                                    ▲                             ┌──────────────────┐
+                     prepare (creds)│                             │      worker      │
+                     complete (state)──── worker calls ───────────┤ owns executor +  │
+                                                                  │ callback server  │
+                                                                  └────────┬─────────┘
+                                                                           │ creates per node;
+                                                                           │ agent returns its
+                                                                           ▼ result via callback
+                                                                  ┌──────────────────┐
+                                                                  │  agent container │
+                                                                  │    or K8s Job    │
+                                                                  └──────────────────┘
 ```
 
-The orchestrator drives the graph; the api-server is the only component that
-creates containers, owns state, and talks to the data stores.
+The orchestrator drives the graph; the **Worker** creates and owns the agent workloads;
+the **api-server** owns state and credentials and talks to the data stores.
 
 ## AI nodes and artifacts
 
@@ -97,8 +114,8 @@ locally and to self-host.
 
 | Component | Stack | Responsibility |
 |-----------|-------|----------------|
-| **api-server** | Java / Spring Boot | Source of truth for state; owns the workload executor (Docker locally, Kubernetes Jobs in a cluster); REST API; STOMP/WebSocket broadcasts. |
-| **orchestrator** | Go + Temporal | Drives the graph; delegates all container lifecycle to the api-server over HTTP. |
+| **api-server** | Java / Spring Boot | Source of truth for state; resolves per-run credentials and records Worker-reported execution state; REST API; STOMP/WebSocket broadcasts. |
+| **orchestrator** | Go + Temporal | Drives the graph; dispatches each node as a Temporal activity for a Worker to execute. |
 | **worker** | Go + Temporal | Runs executors (Docker, Kubernetes) and the agent callback server; receives work from Fleets. |
 | **web-ui** | React + Vite | Graph visualization, live run monitoring, human-approval gates; subscribes to WebSocket events. |
 | **agent images** | container images | The containers a node runs in — the AI agent (Claude Code) and a fuller dev image built on top of it. |

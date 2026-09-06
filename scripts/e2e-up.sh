@@ -80,6 +80,8 @@ if [ "$DO_IMAGES" = "1" ]; then
       "${REPO_ROOT}/api-server"   "${REPO_ROOT}/api-server/Dockerfile"
     build_image orchestrator choruskube-e2e-orchestrator:local \
       "${REPO_ROOT}/orchestrator" "${REPO_ROOT}/orchestrator/Dockerfile"
+    build_image worker       choruskube-e2e-worker:local \
+      "${REPO_ROOT}/worker"       "${REPO_ROOT}/worker/Dockerfile"
     build_image web-ui       choruskube-e2e-web-ui:local \
       "${REPO_ROOT}/web-ui"       "${REPO_ROOT}/web-ui/Dockerfile"
   fi
@@ -110,7 +112,7 @@ if [ "$DO_STACK" = "1" ]; then
   # otherwise waits for it, so a slow image build (e.g. cold layer cache) can leave the
   # container still dialing Temporal when :e2eSmoke's single unretried curl hits it.
   echo "--- Waiting for orchestrator health ---"
-  if ! wait_for_health http://localhost:29090/healthz 60 2 healthy; then
+  if ! wait_for_health http://localhost:29080/healthz 60 2 healthy; then
     echo "ERROR: orchestrator did not become healthy within ~120s" >&2
     echo "       Inspect: docker compose -f docker-compose.e2e.yaml logs orchestrator" >&2
     exit 1

@@ -126,7 +126,7 @@ func TestHandler_CacheMiss_ResolvesFromExecutor(t *testing.T) {
 
 	handler := NewHandler(cache, mockExec, &mockCompleter{
 		completeFn: func(ctx context.Context, req CompletionRequest) error { return nil },
-	}, nil)
+	}, &mockStatusClient{getStatus: "running"})
 
 	body, _ := json.Marshal(map[string]any{
 		"node_execution_id": execID.String(),
@@ -171,10 +171,10 @@ func (m *mockCompleter) Fail(ctx context.Context, executionID uuid.UUID, reason 
 }
 
 type mockStatusClient struct {
-	getStatus        string
-	getErr           error
-	updateCalls      []updateCall
-	logCalls         []logCall
+	getStatus   string
+	getErr      error
+	updateCalls []updateCall
+	logCalls    []logCall
 }
 
 type updateCall struct {
@@ -324,12 +324,12 @@ func TestHandler_RateLimited_CompletesWithPark(t *testing.T) {
 
 	resumeAt := time.Now().Add(30 * time.Minute).UTC()
 	r := callbackReq(t, execID, secret, map[string]any{
-		"node_execution_id":      execID.String(),
-		"run_id":                 runID.String(),
-		"status":                 "rate_limited",
-		"resume_at":              resumeAt.Format(time.RFC3339),
-		"session_id":             "sess-123",
-		"session_artifact_path":  "/transcript/path",
+		"node_execution_id":     execID.String(),
+		"run_id":                runID.String(),
+		"status":                "rate_limited",
+		"resume_at":             resumeAt.Format(time.RFC3339),
+		"session_id":            "sess-123",
+		"session_artifact_path": "/transcript/path",
 	})
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, r)

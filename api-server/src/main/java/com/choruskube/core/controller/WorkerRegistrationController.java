@@ -37,7 +37,10 @@ public class WorkerRegistrationController {
     public WorkerRegistrationController(
             ObjectProvider<WorkerRegistrar> registrarProvider,
             @Value("${temporal.namespace}") String temporalNamespace,
-            @Value("${temporal.task-queue}") String taskQueue,
+            // A registering Worker is told the queue it should poll: the Worker queue, distinct
+            // from the orchestrator's temporal.task-queue (the orchestrator refuses agent-step
+            // activities). Falls back to temporal.task-queue when Worker and orchestrator share it.
+            @Value("${temporal.worker-task-queue:${temporal.task-queue}}") String taskQueue,
             @Value("${worker.registration.token:}") String registrationToken) {
         this.registrar = registrarProvider.getIfAvailable(
                 () -> new SingleFleetWorkerRegistrar(temporalNamespace, taskQueue, registrationToken));

@@ -142,11 +142,11 @@ services:
       # Single-tenant OSS mode: no OIDC provider. /api/v1/** is open and every
       # request is scoped to the seeded system org (see NoAuthConfigurer + TenantFilter).
       AUTH_ENABLED: "false"
-      # api-server owns the workload executor; spawns agent containers via DooD.
+      # A Worker runs the Docker executor and spawns agent containers via DooD.
       EXECUTOR_TYPE: docker
       DOCKER_HOST: unix:///var/run/docker.sock
       DOCKER_NETWORK: choruskube
-      # Docker-out-of-Docker staging: the api-server stages config.json / credentials that the
+      # Docker-out-of-Docker staging: the Worker stages config.json / credentials that the
       # sibling agent container bind-mounts. The host daemon resolves the bind source against the
       # HOST filesystem, so this dir is mounted at an IDENTICAL path on host and container (below).
       AGENT_STAGING_DIR: *agent-staging-dir

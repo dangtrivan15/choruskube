@@ -16,6 +16,7 @@ import com.choruskube.core.config.WorkerAuthFilter;
 import com.choruskube.core.dto.NodeExecutionResponse;
 import com.choruskube.core.exception.ForbiddenException;
 import com.choruskube.core.exception.GlobalExceptionHandler;
+import com.choruskube.core.executor.WorkloadNamespaceResolver;
 import com.choruskube.core.service.InternalRunService;
 import com.choruskube.core.service.WorkerAuthorizer;
 import java.time.Instant;
@@ -31,6 +32,7 @@ class WorkerNodeExecutionControllerTest {
 
     private InternalRunService runService;
     private WorkerAuthorizer authorizer;
+    private WorkloadNamespaceResolver namespaceResolver;
     private MockMvc mvc;
 
     private final UUID runId = UUID.randomUUID();
@@ -42,9 +44,13 @@ class WorkerNodeExecutionControllerTest {
     void setUp() {
         runService = Mockito.mock(InternalRunService.class);
         authorizer = Mockito.mock(WorkerAuthorizer.class);
+        namespaceResolver = Mockito.mock(WorkloadNamespaceResolver.class);
         ObjectProvider<WorkerAuthorizer> provider = Mockito.mock(ObjectProvider.class);
         when(provider.getIfAvailable(any())).thenReturn(authorizer);
-        mvc = MockMvcBuilders.standaloneSetup(new WorkerNodeExecutionController(provider, "unused-token", runService))
+        ObjectProvider<WorkloadNamespaceResolver> nsProvider = Mockito.mock(ObjectProvider.class);
+        when(nsProvider.getIfAvailable(any())).thenReturn(namespaceResolver);
+        mvc = MockMvcBuilders.standaloneSetup(
+                        new WorkerNodeExecutionController(provider, nsProvider, "unused-token", runService))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }
@@ -77,16 +83,19 @@ class WorkerNodeExecutionControllerTest {
     }
 
     @Test
-    void getNodeExecutionAuthorizesTheRunThenReturnsStatusAndPodName() throws Exception {
+    void getNodeExecutionAuthorizesTheRunThenReturnsStatusIdAndResolvedNamespace() throws Exception {
         when(runService.getNodeExecution(runId, nodeExecId)).thenReturn(response("completed", "agent-xyz"));
+        when(namespaceResolver.resolve(runId)).thenReturn("org-ns-42");
 
         mvc.perform(get(path("")).requestAttr(WorkerAuthFilter.FLEET_TOKEN_ATTRIBUTE, "ckw_abc"))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(nodeExecId.toString()))
                 .andExpect(jsonPath("$.status").value("completed"))
-                .andExpect(jsonPath("$.podName").value("agent-xyz"));
+                .andExpect(jsonPath("$.namespace").value("org-ns-42"));
 
         verify(authorizer).requireMayActOn("ckw_abc", runId);
         verify(runService).getNodeExecution(runId, nodeExecId);
+        verify(namespaceResolver).resolve(runId);
     }
 
     @Test

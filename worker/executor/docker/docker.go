@@ -1,6 +1,7 @@
 // Package docker implements executor.Executor by launching agent workloads as Docker
-// containers, for the open, single-tenant self-hosted deployment. It is the OSS counterpart
-// to the closed Kubernetes executor: same contract, no per-org namespace isolation.
+// containers, for the open, single-tenant self-hosted deployment. It is the single-tenant
+// counterpart to github.com/dangtrivan15/choruskube/worker/executor/k8s: same contract, no
+// per-org namespace isolation.
 package docker
 
 import (
@@ -148,7 +149,11 @@ func (d *DockerExecutor) Execute(ctx context.Context, params executor.ExecutionP
 	if err != nil {
 		return executor.ExecutionResult{}, fmt.Errorf("marshal config.json: %w", err)
 	}
-	if err := os.WriteFile(configPath, configBytes, 0o600); err != nil {
+	// 0o644, not 0o600: the agent image drops to a non-root user, and this file is bind-mounted
+	// read-only into it — an owner-only mode (the worker writes it as root) makes the entrypoint's
+	// jq reads fail with EACCES, killing the agent before it can call back. The per-execution
+	// staging dir is 0o700, so this stays unreadable to other host users; only the mount exposes it.
+	if err := os.WriteFile(configPath, configBytes, 0o644); err != nil {
 		return executor.ExecutionResult{}, fmt.Errorf("write config.json: %w", err)
 	}
 
@@ -158,13 +163,8 @@ func (d *DockerExecutor) Execute(ctx context.Context, params executor.ExecutionP
 	if params.Credentials.ClaudeOAuthToken != "" {
 		env = append(env, "CLAUDE_CODE_OAUTH_TOKEN="+params.Credentials.ClaudeOAuthToken)
 	}
-	// Test-node ("script" executor_type) dogfood executions run a single subprocess tree with
-	// no shard-level fan-out available to it, only in-stack Playwright worker parallelism —
-	// without this the suite silently falls back to serial, which is correct for local dev but
-	// wastes a Test-node run's only parallelism lever.
-	if isScriptExecution(params) {
-		env = append(env, "E2E_WORKERS=3")
-	}
+	// The caller supplies every extra env var via Environment -- this package injects no env of
+	// its own beyond JOB_SECRET/token above and (below) the registry wiring.
 	for k, v := range params.Environment {
 		env = append(env, k+"="+v)
 	}
@@ -192,7 +192,10 @@ func (d *DockerExecutor) Execute(ctx context.Context, params executor.ExecutionP
 			return executor.ExecutionResult{}, fmt.Errorf("build registry auth config: %w", err)
 		}
 		regcredPath := filepath.Join(tmpDir, "docker-config.json")
-		if err := os.WriteFile(regcredPath, authJSON, 0o600); err != nil {
+		// 0o644 for the same reason as config.json: the non-root agent reads this via its bind
+		// mount, so an owner-only mode makes its docker pulls fail. The 0o700 staging dir is the
+		// isolation boundary that keeps these registry credentials off other host users.
+		if err := os.WriteFile(regcredPath, authJSON, 0o644); err != nil {
 			return executor.ExecutionResult{}, fmt.Errorf("stage registry auth config: %w", err)
 		}
 		// Same payload serves two purposes: authenticating this executor's own pull of
@@ -251,7 +254,8 @@ func (d *DockerExecutor) Execute(ctx context.Context, params executor.ExecutionP
 // Cleanup removes all Docker resources for executionID: the agent container, its staging
 // directory, and — if this execution had DinD enabled — the DinD sidecar and its data volume.
 // It is idempotent: a missing container is not an error, since the caller may retry after a
-// partial cleanup or call Cleanup for an execution that never created any resources.
+// partial cleanup or call Cleanup for an execution that never created any resources. A single
+// Docker host has no namespaces, and containers are found by exec-id label.
 func (d *DockerExecutor) Cleanup(ctx context.Context, executionID uuid.UUID) error {
 	c, err := d.findContainer(ctx, executionID)
 	if err != nil {
@@ -279,7 +283,8 @@ func (d *DockerExecutor) Cleanup(ctx context.Context, executionID uuid.UUID) err
 }
 
 // Terminate stops executionID's container gracefully (SIGTERM, 30s grace before SIGKILL).
-// Idempotent: an already-stopped or already-gone container is not an error.
+// Idempotent: an already-stopped or already-gone container is not an error. A single Docker host
+// has no namespaces.
 func (d *DockerExecutor) Terminate(ctx context.Context, executionID uuid.UUID) error {
 	c, err := d.findContainer(ctx, executionID)
 	if err != nil {
@@ -300,7 +305,7 @@ func (d *DockerExecutor) Terminate(ctx context.Context, executionID uuid.UUID) e
 }
 
 // GetLogs returns up to the last tailLines lines of executionID's container output (stdout and
-// stderr interleaved), capped at 64KB.
+// stderr interleaved), capped at 64KB. A single Docker host has no namespaces.
 func (d *DockerExecutor) GetLogs(ctx context.Context, executionID uuid.UUID, tailLines int) (string, error) {
 	c, err := d.findContainer(ctx, executionID)
 	if err != nil {
@@ -336,7 +341,8 @@ func (d *DockerExecutor) GetLogs(ctx context.Context, executionID uuid.UUID, tai
 }
 
 // ResolveJobSecretHash reads JOB_SECRET back from executionID's container environment and
-// returns its SHA-256 hash. Used to recover the hash cache after a Worker restart.
+// returns its SHA-256 hash. Used to recover the hash cache after a Worker restart. A single
+// Docker host has no namespaces.
 func (d *DockerExecutor) ResolveJobSecretHash(ctx context.Context, executionID uuid.UUID) (string, error) {
 	c, err := d.findContainer(ctx, executionID)
 	if err != nil {
@@ -513,20 +519,6 @@ func (d *DockerExecutor) pullImageBestEffort(ctx context.Context, imageName, enc
 	// deadline has to cover this read too -- otherwise a registry that accepts the request but
 	// stalls mid-transfer would hang here past pullTimeout.
 	_, _ = io.Copy(io.Discard, reader)
-}
-
-// isScriptExecution reports whether params is a Test-node ("script" executor_type) execution.
-// Mirrors SingleTenantDockerExecutor.isScriptExecution / KubernetesWorkloadExecutor's copy of
-// the same check.
-func isScriptExecution(params executor.ExecutionParams) bool {
-	if params.ConfigJSON == nil {
-		return false
-	}
-	raw, ok := params.ConfigJSON["executor_type"]
-	if !ok {
-		return false
-	}
-	return strings.EqualFold(fmt.Sprintf("%v", raw), "script")
 }
 
 // buildRegistryAuthConfigJSON renders reg as a Docker CLI config.json ("auths" map keyed by

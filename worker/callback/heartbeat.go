@@ -23,7 +23,9 @@ type HeartbeatHandler struct {
 }
 
 // NewHeartbeatHandler constructs a HeartbeatHandler. cache and resolver are shared with the
-// completion Handler so both endpoints authenticate against the same hash.
+// completion Handler so both endpoints authenticate against the same hash; on a cache-miss
+// recovery (a restarted Worker) the resolver, bound to the execution's namespace, recovers the
+// hash the same way. resolver may be nil, which disables that recovery (cache-only verification).
 func NewHeartbeatHandler(cache *HashCache, resolver SecretHashResolver, hb Heartbeater) *HeartbeatHandler {
 	return &HeartbeatHandler{cache: cache, resolver: resolver, heartbeater: hb}
 }
@@ -54,7 +56,9 @@ func (h *HeartbeatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !verifySecret(r.Context(), h.cache, h.resolver, execID, bearer) {
+	ctx := r.Context()
+
+	if !verifySecret(ctx, h.cache, h.resolver, execID, bearer) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -62,7 +66,7 @@ func (h *HeartbeatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Non-fatal: a heartbeat can race the callback (the activity may already be
 	// complete), which is an expected outcome, not a failure the agent's heartbeat
 	// loop should see as one.
-	if err := h.heartbeater.RecordHeartbeat(r.Context(), execID); err != nil {
+	if err := h.heartbeater.RecordHeartbeat(ctx, execID); err != nil {
 		slog.Warn("heartbeat failed", "execution_id", execID, "error", err)
 	}
 

@@ -36,3 +36,17 @@ func TestRunIDOfReadsTheActivityContext(t *testing.T) {
 		t.Fatalf("got (%v, %v), want (%v, nil)", got, err, id)
 	}
 }
+
+func TestRunIDOfExportedWrapper(t *testing.T) {
+	id := uuid.New()
+	original := activityInfo
+	activityInfo = func(context.Context) temporalactivity.Info {
+		return temporalactivity.Info{WorkflowExecution: workflow.Execution{ID: "choruskube-run-" + id.String()}}
+	}
+	defer func() { activityInfo = original }()
+
+	got, err := RunIDOf(context.Background())
+	if err != nil || got != id {
+		t.Fatalf("got (%v, %v), want (%v, nil)", got, err, id)
+	}
+}

@@ -4,6 +4,9 @@ import com.choruskube.core.config.WorkerAuthFilter;
 import com.choruskube.core.dto.InternalUpdateNodeExecutionRequest;
 import com.choruskube.core.dto.InternalWriteLogRequest;
 import com.choruskube.core.dto.NodeExecutionResponse;
+import com.choruskube.core.dto.WorkerNodeExecutionResponse;
+import com.choruskube.core.executor.NoWorkloadNamespaceResolver;
+import com.choruskube.core.executor.WorkloadNamespaceResolver;
 import com.choruskube.core.service.InternalRunService;
 import com.choruskube.core.service.SingleFleetWorkerAuthorizer;
 import com.choruskube.core.service.WorkerAuthorizer;
@@ -33,25 +36,30 @@ import org.springframework.web.bind.annotation.RestController;
 public class WorkerNodeExecutionController {
 
     private final WorkerAuthorizer authorizer;
+    private final WorkloadNamespaceResolver namespaceResolver;
     private final InternalRunService runService;
 
     public WorkerNodeExecutionController(
             ObjectProvider<WorkerAuthorizer> authorizerProvider,
+            ObjectProvider<WorkloadNamespaceResolver> namespaceResolverProvider,
             @Value("${worker.registration.token:}") String registrationToken,
             InternalRunService runService) {
         this.authorizer = authorizerProvider.getIfAvailable(() -> new SingleFleetWorkerAuthorizer(registrationToken));
+        this.namespaceResolver = namespaceResolverProvider.getIfAvailable(NoWorkloadNamespaceResolver::new);
         this.runService = runService;
     }
 
     @GetMapping
-    public ResponseEntity<NodeExecutionResponse> getNodeExecution(
+    public ResponseEntity<WorkerNodeExecutionResponse> getNodeExecution(
             HttpServletRequest httpRequest, @PathVariable UUID runId, @PathVariable UUID nodeExecId) {
         String credential = credentialOf(httpRequest);
         if (credential == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
         authorizer.requireMayActOn(credential, runId);
-        return ResponseEntity.ok(runService.getNodeExecution(runId, nodeExecId));
+        NodeExecutionResponse exec = runService.getNodeExecution(runId, nodeExecId);
+        return ResponseEntity.ok(
+                new WorkerNodeExecutionResponse(exec.id(), exec.status(), namespaceResolver.resolve(runId)));
     }
 
     @PutMapping("/status")

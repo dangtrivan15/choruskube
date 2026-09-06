@@ -161,6 +161,13 @@ services:
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_NAMESPACE: default
       TEMPORAL_TASK_QUEUE: choruskube
+      # The Worker polls a queue distinct from the orchestrator's (choruskube) — the orchestrator
+      # refuses agent-step activities. Run placement and the Worker's registration response both
+      # resolve to this queue, so the Worker created below serves it and runs land on it.
+      TEMPORAL_WORKER_TASK_QUEUE: choruskube-worker
+      # test-only: the token the Worker presents to /worker/register; must equal the Worker's
+      # FLEET_TOKEN below or registration is refused and its queue goes unpolled.
+      WORKER_REGISTRATION_TOKEN: e2e-worker-registration-token
       OBJECT_STORE_ENDPOINT: http://object-storage:9000
       OBJECT_STORE_ACCESS_KEY: minioadmin
       OBJECT_STORE_SECRET_KEY: minioadmin
@@ -180,12 +187,8 @@ services:
       AUTOPILOT_ENABLED: "false"
       # Activate the e2e Spring profile to trigger E2eTestDataSeeder at boot.
       SPRING_PROFILES_ACTIVE: e2e
-      # api-server owns the workload executor; spawns agent containers via DooD.
-      EXECUTOR_TYPE: docker
-      DOCKER_HOST: unix:///var/run/docker.sock
-      DOCKER_NETWORK: choruskube-e2e
-      # Docker-out-of-Docker staging dir — must be identical on host and container.
-      AGENT_STAGING_DIR: *agent-staging-dir
+      # No executor/Docker wiring here: the api-server no longer runs workloads (the Worker below
+      # owns the executor), so it needs neither the host Docker socket nor DooD staging.
       API_SERVER_URL: http://api-server:8080
       ORCHESTRATOR_SECRET_HASH: fcb34c11ecbf6914ad43903e539ade6901f864d9772c36e63a78c2488cd0958a
       # E2E agent image — used by E2eTestDataSeeder (no default; must be set).
@@ -213,13 +216,7 @@ services:
     networks:
       - choruskube-e2e
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
       - ./.secrets:/run/secrets:ro
-      - type: bind
-        source: *agent-staging-dir
-        target: *agent-staging-dir
-        bind:
-          create_host_path: true
     depends_on:
       postgres:
         condition: service_healthy
@@ -267,6 +264,61 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+
+  # The Worker owns the agent-workload executor (moved off the api-server). The orchestrator
+  # dispatches agent-step activities to the Worker's task queue — nothing else serves it — so
+  # without this service every AI/script node fails and parks in awaiting_retry.
+  worker:
+    image: choruskube-e2e-worker:local
+    build:
+      context: ./worker
+      dockerfile: Dockerfile
+    dns_search: .
+    environment:
+      API_SERVER_URL: http://api-server:8080
+      # test-only: must equal the api-server's WORKER_REGISTRATION_TOKEN or /worker/register 403s.
+      # Present (LookupEnv) also selects the registration path — the Worker registers, then polls
+      # the queue the api-server hands back (TEMPORAL_WORKER_TASK_QUEUE = choruskube-worker).
+      FLEET_TOKEN: e2e-worker-registration-token
+      WORKER_CAPABILITIES: docker=true
+      TEMPORAL_ADDRESS: temporal:7233
+      # Plaintext gRPC here; the SDK auto-enables TLS on credential presence, so without this the
+      # Worker dies before serving.
+      TEMPORAL_TLS_DISABLED: "true"
+      CALLBACK_URL: http://worker:9090/api/v1/callback
+      # The Worker runs the Docker executor: DOCKER_HOST is the host socket for DooD; DOCKER_NETWORK
+      # is the stack network the spawned agent siblings join so they resolve api-server/object-storage;
+      # DOCKER_STAGING_DIR is bind-mounted at an identical host/container path so the daemon reads the
+      # config.json the Worker stages.
+      EXECUTOR_TYPE: docker
+      DOCKER_HOST: unix:///var/run/docker.sock
+      DOCKER_NETWORK: choruskube-e2e
+      DOCKER_STAGING_DIR: *agent-staging-dir
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - type: bind
+        source: *agent-staging-dir
+        target: *agent-staging-dir
+        bind:
+          create_host_path: true
+    networks:
+      - choruskube-e2e
+    depends_on:
+      api-server:
+        condition: service_healthy
+      temporal:
+        condition: service_healthy
+    # Registration is a single boot-time call with no in-process retry; a losing race against the
+    # api-server finishing its seeding (health is not coupled to it) self-corrects on restart.
+    restart: on-failure:5
+    # No ports / HTTP check: the Worker polls Temporal and serves its callback endpoint only
+    # in-network. A refused registration exits the process, so a live process is a real signal.
+    healthcheck:
+      test: ["CMD", "pgrep", "worker"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
   web-ui:
     image: choruskube-e2e-web-ui:local
