@@ -28,6 +28,17 @@ type Executor interface {
 	HealthCheck(ctx context.Context) error
 }
 
+// CredentialConsumer is an optional capability an Executor implements when it makes its own
+// calls to the API server. The Worker's credential is minted at registration and rotated by the
+// renewal loop, so it does not exist when the Executor is constructed; the Worker hands over a
+// getter that reads whatever is currently cached, and the Executor's own requests then carry the
+// same live credential every other workload call does. A single-namespace Executor that resolves
+// everything from static configuration makes no such calls and does not implement this -- the
+// Worker skips it via a type assertion, so leaving it unimplemented is the correct default.
+type CredentialConsumer interface {
+	SetAPIServerCredential(get func() string)
+}
+
 // ExecutionParams describes one node execution to run.
 type ExecutionParams struct {
 	RunID           uuid.UUID

@@ -14,8 +14,20 @@ import (
 
 	"github.com/dangtrivan15/choruskube/worker/activity"
 	"github.com/dangtrivan15/choruskube/worker/callback"
+	"github.com/dangtrivan15/choruskube/worker/executor"
 	"github.com/dangtrivan15/choruskube/worker/workload"
 )
+
+// wireExecutorCredential hands an executor that makes its own API-server calls -- a multi-tenant
+// overlay resolves each execution's namespace there -- the Worker's rotating credential getter, so
+// those calls carry the same live credential every other workload call does. An executor that
+// resolves everything from static configuration implements no such capability, and this is a
+// no-op for it.
+func wireExecutorCredential(exec executor.Executor, get func() string) {
+	if cc, ok := exec.(executor.CredentialConsumer); ok {
+		cc.SetAPIServerCredential(get)
+	}
+}
 
 // resolveAddress picks where to reach Temporal for one Fleet.
 func resolveAddress(f Fleet, cfg Config) string {
@@ -443,6 +455,9 @@ func Run(ctx context.Context, cfg Config) error {
 	if cfg.Executor != nil {
 		hashCache = callback.NewHashCache()
 		acts = activity.NewWithExecutor(wc, cfg.Executor, hashCache)
+		// Late-bound: the credential is minted at registration above and rotated by renewLoop, so
+		// an executor that calls the API server itself must read it live, never capture it here.
+		wireExecutorCredential(cfg.Executor, credentials.get)
 	} else {
 		acts = activity.New(wc)
 	}
