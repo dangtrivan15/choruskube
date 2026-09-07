@@ -2,6 +2,40 @@
 # agent-images/claude-code/entrypoint.sh
 set -euo pipefail
 
+# --- Warm Docker cache: load a baked preload archive at boot ---
+# Defined and hooked before any other startup side effect (config parsing,
+# the JOB_SECRET check, etc.) so `--preload-only` lets a test `source` this
+# file and exercise just this step, and so the real call further down (right
+# before the buildx-builder bootstrap) has both pieces already in scope.
+# The path is a shared contract with the image bake that produces the
+# archive — both sides must reference this same constant.
+: "${PRELOAD_ARCHIVE:=/opt/choruskube/preload/stack.tar}"
+
+wait_for_docker() {
+  for _ in $(seq 1 60); do docker info >/dev/null 2>&1 && return 0; sleep 2; done
+  return 1
+}
+
+load_preload_archive() {
+  if [ ! -f "$PRELOAD_ARCHIVE" ]; then echo "preload: none ($PRELOAD_ARCHIVE absent)"; return 0; fi
+  # A warm image without a reachable daemon means enable_docker's dind sidecar
+  # is missing or unhealthy -- skipping silently would ship a cold cache with
+  # no signal, so this must abort the pod instead.
+  if ! wait_for_docker; then
+    echo "preload: FATAL docker daemon not reachable; enable_docker requires a docker-capable image" >&2
+    return 1
+  fi
+  local t0 t1; t0=$(date +%s)
+  if ! docker load -i "$PRELOAD_ARCHIVE" >/dev/null; then
+    echo "preload: FATAL failed to load $PRELOAD_ARCHIVE" >&2; return 1
+  fi
+  t1=$(date +%s); echo "preload: loaded $PRELOAD_ARCHIVE in $((t1-t0))s"
+}
+
+# Lets the test harness exercise load_preload_archive in isolation via `source`,
+# without running the rest of this script (which expects a real /workspace).
+if [ "${1:-}" = "--preload-only" ]; then load_preload_archive; return 0 2>/dev/null || exit 0; fi
+
 # --- Configuration ---
 CONFIG_FILE="/workspace/config.json"
 WORKSPACE_IN="/workspace/in"
@@ -89,6 +123,12 @@ if [ -z "${JOB_SECRET:-}" ]; then
   echo "ERROR: JOB_SECRET environment variable not set"
   exit 1
 fi
+
+# --- Warm Docker cache: load the baked preload archive, if this image has one ---
+# Runs before the buildx-builder bootstrap so cache-eligible layers are already
+# in the daemon by the time either buildx or the agent's own docker/build
+# commands run. No-op on a non-warm image; see load_preload_archive above.
+load_preload_archive
 
 # --- BuildKit builder setup (DinD + cache registry only) ---
 # Embedded BuildKit (dind 29 + containerd-snapshotter mode) does NOT honor
