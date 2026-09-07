@@ -1,0 +1,4 @@
+postgres:17-alpine
+temporalio/auto-setup:1.25
+minio/minio:latest
+wiremock/wiremock:3.13.0

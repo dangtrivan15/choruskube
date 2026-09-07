@@ -3,6 +3,21 @@
 # BASE_AGENT_IMAGE selects the base agent runtime to extend. Defaults to the public
 # agent image; CI overrides it (via --build-arg) to build from a freshly-built agent.
 ARG BASE_AGENT_IMAGE=registry.choruskube.com/claude-code:latest
+
+# Warm Docker cache: PRELOAD_TAR names a build-preload.sh archive, in the build
+# context, to bake at the path entrypoint.sh loads at boot. A bare
+# `COPY ${PRELOAD_TAR} ...` fails the build when the ARG is unset (the default, for
+# a non-warm build), and Dockerfile has no conditional-COPY syntax; picking between
+# an empty and a populated scratch stage by ARG-substituted stage name stands in for
+# one, without duplicating any of the expensive stages below.
+ARG PRELOAD_TAR=
+ARG PRELOAD_MODE=${PRELOAD_TAR:+file}
+FROM scratch AS preload-empty
+FROM scratch AS preload-file
+ARG PRELOAD_TAR
+COPY ${PRELOAD_TAR} /stack.tar
+FROM preload-${PRELOAD_MODE:-empty} AS preload-src
+
 FROM ${BASE_AGENT_IMAGE}
 
 USER root
@@ -84,5 +99,11 @@ RUN cd /warmup/api-server \
          --init-script /warmup/gradle-warmup.init.gradle warmUpDependencies \
     && rm -rf /warmup /home/agent/.gradle/daemon /home/agent/.gradle/native \
     && chown -R 1000:1000 /home/agent/.gradle
+
+# Warm Docker cache: no-op (empty directory) on a non-warm build; entrypoint.sh's
+# load_preload_archive() treats a missing stack.tar as a cold-cache no-op, not a
+# failure. Placed LAST for the same reason as the Gradle warm-up above: a preload
+# tar refresh should invalidate only this layer, not the JDK/Go/Gradle ones before it.
+COPY --from=preload-src / /opt/choruskube/preload/
 
 USER 1000
