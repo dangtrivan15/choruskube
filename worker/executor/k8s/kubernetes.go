@@ -50,9 +50,11 @@ const (
 	// ceiling this stays under.
 	logLimitBytes = 64 * 1024
 
-	// ttlSecondsAfterFinished bounds how long a finished Job survives before K8s garbage-
-	// collects it and its Pod -- see kubernetes_test.go for the value under test.
-	ttlSecondsAfterFinished = int32(300)
+	// Hard lower bound: must exceed the orchestrator's node heartbeat timeout (capped at 15m in
+	// dag_executor.go), else a crashed agent's Pod is GC'd before the workflow's post-timeout
+	// FetchPodLogs runs and the crash logs vanish -- the node then surfaces as a bare heartbeat
+	// timeout. Also the sole reaper of successful Pods, so the ceiling is node ephemeral disk.
+	ttlSecondsAfterFinished = int32(3600)
 
 	podTemplateDataKey = "template.yaml"
 )

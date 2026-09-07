@@ -208,6 +208,28 @@ func TestKubernetesExecutor_Execute_RegistryCredentials_CreatesPullSecretAndMoun
 	assert.Equal(t, job.Name, regcred.OwnerReferences[0].Name)
 }
 
+// The finished-Job GC TTL must outlive the orchestrator's node heartbeat timeout (capped at 15m
+// = 900s in dag_executor.go). Otherwise a crashed agent's Pod is reaped before the workflow's
+// post-timeout FetchPodLogs runs, and the failure reaches operators as a bare heartbeat timeout
+// with no pod logs. Guards the constant against being lowered back under that bound.
+func TestKubernetesExecutor_Execute_JobTTLOutlivesHeartbeatTimeout(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+
+	exec := NewKubernetesExecutor(fakeClient, Config{
+		Namespace:           testNamespace,
+		AgentServiceAccount: "choruskube-agent",
+	})
+
+	result, err := exec.Execute(context.Background(), newTestParams())
+	require.NoError(t, err)
+
+	job, err := fakeClient.BatchV1().Jobs(testNamespace).Get(context.Background(), result.PodName, metav1.GetOptions{})
+	require.NoError(t, err)
+	require.NotNil(t, job.Spec.TTLSecondsAfterFinished)
+	assert.Greater(t, *job.Spec.TTLSecondsAfterFinished, int32(900),
+		"Job TTL must exceed the 15m heartbeat timeout so a crashed Pod survives to FetchPodLogs")
+}
+
 func TestKubernetesExecutor_Execute_ResourceQuotaEnabled_PinsConfigDefault(t *testing.T) {
 	fakeClient := fake.NewSimpleClientset()
 
