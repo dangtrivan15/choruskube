@@ -33,6 +33,11 @@ func (s *DAGExecutorTestSuite) TestHumanGateTimeout_RetryViaApproval() {
 	s.env.OnActivity("WriteExecutionLog", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.env.OnActivity("InitRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.env.OnActivity("AppendRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	// SetupTest registers a nil *Activities, so these best-effort activities the
+	// completion path schedules run for real and panic unless stubbed -- and the
+	// panic's retries starve the run of its deadline under load.
+	s.env.OnActivity("SetTraversedEdges", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("DeleteStaleBranches", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	// First execution created
 	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
@@ -179,6 +184,9 @@ func (s *DAGExecutorTestSuite) TestScriptNodeRetry_RefreshesSnapshot() {
 	s.env.OnActivity("LoadPredecessorInputs", mock.Anything, mock.Anything).Return(map[string]string{}, nil).Maybe()
 	s.env.OnActivity("LoadRequiredInputArtifacts", mock.Anything, mock.Anything).Return(activity.LoadRequiredInputArtifactsResult{}, nil).Maybe()
 	s.env.OnActivity("FetchPodLogs", mock.Anything, mock.Anything).Return("", nil).Maybe()
+	// Unmocked, the nil-registered real impls panic and their retries starve the run under load.
+	s.env.OnActivity("SetTraversedEdges", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("DeleteStaleBranches", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
 		return p.NodeExecutionID == execA2
 	})).Return("passed", nil).Once()
@@ -256,6 +264,9 @@ func (s *DAGExecutorTestSuite) TestModelEffortResolution_RetryNodeSignal_Preserv
 	s.env.OnActivity("LoadReviewHistoryJSON", mock.Anything, mock.Anything).Return("[]", nil).Maybe()
 	s.env.OnActivity("FetchPodLogs", mock.Anything, mock.Anything).Return("", nil).Maybe()
 	s.env.OnActivity("DeleteAgentJob", mock.Anything, mock.Anything).Return(nil).Maybe()
+	// Unmocked, the nil-registered real impls panic and their retries starve the run under load.
+	s.env.OnActivity("SetTraversedEdges", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("DeleteStaleBranches", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
 		return p.TemplateNodeID == nodeA && p.Iteration == 1
@@ -325,6 +336,9 @@ func (s *DAGExecutorTestSuite) TestModelEffortResolution_PauseHeartbeatTimeoutRe
 	s.env.OnActivity("LoadRequiredInputArtifacts", mock.Anything, mock.Anything).Return(activity.LoadRequiredInputArtifactsResult{}, nil).Maybe()
 	s.env.OnActivity("LoadReviewHistoryJSON", mock.Anything, mock.Anything).Return("[]", nil).Maybe()
 	s.env.OnActivity("DeleteAgentJob", mock.Anything, mock.Anything).Return(nil).Maybe()
+	// Unmocked, the nil-registered real impls panic and their retries starve the run under load.
+	s.env.OnActivity("SetTraversedEdges", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("DeleteStaleBranches", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
 		return p.TemplateNodeID == nodeA && p.Iteration == 1
