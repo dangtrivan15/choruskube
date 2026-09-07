@@ -113,12 +113,15 @@ func TestHandler_CacheMiss_ResolvesFromExecutor(t *testing.T) {
 	secret := "resolv-secret"
 	hash := executor.HashSecret(secret)
 
+	runID := uuid.New()
 	cache := NewHashCache() // empty — no entry for execID
 
 	resolverCalled := false
+	var gotRunID uuid.UUID
 	mockExec := &mockExecutor{
-		resolveJobSecretHashFn: func(ctx context.Context, id uuid.UUID) (string, error) {
+		resolveJobSecretHashFn: func(ctx context.Context, rid, id uuid.UUID) (string, error) {
 			resolverCalled = true
+			gotRunID = rid
 			assert.Equal(t, execID, id)
 			return hash, nil
 		},
@@ -130,7 +133,7 @@ func TestHandler_CacheMiss_ResolvesFromExecutor(t *testing.T) {
 
 	body, _ := json.Marshal(map[string]any{
 		"node_execution_id": execID.String(),
-		"run_id":            uuid.New().String(),
+		"run_id":            runID.String(),
 		"status":            "completed",
 		"result":            "ok",
 	})
@@ -141,6 +144,7 @@ func TestHandler_CacheMiss_ResolvesFromExecutor(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.True(t, resolverCalled)
+	assert.Equal(t, runID, gotRunID, "the callback's run_id must reach the resolver so it can resolve the namespace")
 	// Verify it was cached
 	cached, ok := cache.Get(execID)
 	assert.True(t, ok)
@@ -201,11 +205,11 @@ func (m *mockStatusClient) WriteExecutionLog(_ context.Context, runID, execID uu
 }
 
 type mockExecutor struct {
-	resolveJobSecretHashFn func(context.Context, uuid.UUID) (string, error)
+	resolveJobSecretHashFn func(ctx context.Context, runID, execID uuid.UUID) (string, error)
 }
 
-func (m *mockExecutor) ResolveJobSecretHash(ctx context.Context, id uuid.UUID) (string, error) {
-	return m.resolveJobSecretHashFn(ctx, id)
+func (m *mockExecutor) ResolveJobSecretHash(ctx context.Context, runID, execID uuid.UUID) (string, error) {
+	return m.resolveJobSecretHashFn(ctx, runID, execID)
 }
 
 // --- Tests for the 5 new behaviors ---

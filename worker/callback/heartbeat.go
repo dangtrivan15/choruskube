@@ -44,6 +44,7 @@ func (h *HeartbeatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	var body struct {
 		NodeExecutionID string `json:"node_execution_id"`
+		RunID           string `json:"run_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -56,9 +57,16 @@ func (h *HeartbeatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// run_id reaches a multi-tenant resolver that recovers the hash from the run's namespace after a
+	// Worker restart empties the cache (this HTTP path has no activity context to derive it from).
+	// Best-effort, not required: a liveness ping must never be rejected for a missing run_id — that
+	// would add a new way to starve heartbeats, the very failure this endpoint guards against. It is
+	// unused on a cache hit; on a cache miss a Nil runID simply fails recovery closed to 401.
+	runID, _ := uuid.Parse(body.RunID)
+
 	ctx := r.Context()
 
-	if !verifySecret(ctx, h.cache, h.resolver, execID, bearer) {
+	if !verifySecret(ctx, h.cache, h.resolver, runID, execID, bearer) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}

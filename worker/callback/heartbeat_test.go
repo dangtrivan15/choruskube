@@ -52,20 +52,24 @@ func TestHeartbeatHandler_InvalidSecret_Returns401(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
-// On a cache miss (a Worker that restarted after launch) the resolver -- bound to the execution's
-// namespace -- recovers the hash the same way the completion callback does, and the recovered
-// value is cached for next time. No cluster-wide search, and no per-call namespace.
+// On a cache miss (a Worker that restarted after launch) the resolver recovers the hash the same
+// way the completion callback does, and the recovered value is cached for next time. A multi-tenant
+// resolver derives the execution's namespace from the run, so the heartbeat's run_id must reach it
+// -- this HTTP path has no Temporal activity context to read the run from.
 func TestHeartbeatHandler_CacheMiss_RecoversViaResolver(t *testing.T) {
 	execID := uuid.New()
+	runID := uuid.New()
 	secret := "resolv-secret"
 	hash := executor.HashSecret(secret)
 
 	cache := NewHashCache() // empty — no entry for execID
 
 	resolverCalled := false
+	var gotRunID uuid.UUID
 	mockExec := &mockExecutor{
-		resolveJobSecretHashFn: func(ctx context.Context, id uuid.UUID) (string, error) {
+		resolveJobSecretHashFn: func(ctx context.Context, rid, id uuid.UUID) (string, error) {
 			resolverCalled = true
+			gotRunID = rid
 			assert.Equal(t, execID, id)
 			return hash, nil
 		},
@@ -74,7 +78,7 @@ func TestHeartbeatHandler_CacheMiss_RecoversViaResolver(t *testing.T) {
 	hb := &mockHeartbeater{}
 	handler := NewHeartbeatHandler(cache, mockExec, hb)
 
-	body, _ := json.Marshal(map[string]any{"node_execution_id": execID.String()})
+	body, _ := json.Marshal(map[string]any{"node_execution_id": execID.String(), "run_id": runID.String()})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/heartbeat", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+secret)
 	w := httptest.NewRecorder()
@@ -82,6 +86,7 @@ func TestHeartbeatHandler_CacheMiss_RecoversViaResolver(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.True(t, resolverCalled)
+	assert.Equal(t, runID, gotRunID, "the heartbeat's run_id must reach the resolver so it can resolve the namespace")
 	assert.Equal(t, execID, hb.recordedExecID)
 
 	cached, ok := cache.Get(execID)
@@ -99,7 +104,7 @@ func TestHeartbeatHandler_CacheMiss_ResolverError_FailsClosed(t *testing.T) {
 
 	resolverCalled := false
 	mockExec := &mockExecutor{
-		resolveJobSecretHashFn: func(ctx context.Context, id uuid.UUID) (string, error) {
+		resolveJobSecretHashFn: func(ctx context.Context, rid, id uuid.UUID) (string, error) {
 			resolverCalled = true
 			return "", errors.New("no job-secret found")
 		},

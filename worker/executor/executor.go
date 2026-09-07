@@ -14,17 +14,23 @@ import (
 
 // Executor runs and manages the lifecycle of node execution workloads.
 //
-// The teardown methods (Cleanup, Terminate, GetLogs, ResolveJobSecretHash) take only the
-// executionID: an instance is bound to a single namespace at construction, so these address
-// resources by their deterministic name within that one namespace, never via a cluster-wide LIST
-// (and so never needing cluster-scoped RBAC). A multi-tenant deployment obtains a namespace-bound
-// instance per org (KubernetesExecutor.WithNamespace); Docker has no namespaces at all.
+// Cleanup, Terminate, and GetLogs take only the executionID: an instance is bound to a single
+// namespace at construction, so these address resources by their deterministic name within that
+// one namespace, never via a cluster-wide LIST (and so never needing cluster-scoped RBAC). A
+// multi-tenant deployment obtains a namespace-bound instance per org
+// (KubernetesExecutor.WithNamespace); Docker has no namespaces at all.
+//
+// ResolveJobSecretHash additionally takes the runID: it is the one method a Worker calls from its
+// HTTP callback server (verifying an agent's bearer on a cache miss), where there is no Temporal
+// activity context to derive the run from. A multi-tenant overlay that resolves the namespace from
+// the run must therefore be handed the runID explicitly here; a single-namespace instance ignores
+// it and reads the deterministic Secret name in its one bound namespace.
 type Executor interface {
 	Execute(ctx context.Context, params ExecutionParams) (ExecutionResult, error)
 	Cleanup(ctx context.Context, executionID uuid.UUID) error
 	Terminate(ctx context.Context, executionID uuid.UUID) error
 	GetLogs(ctx context.Context, executionID uuid.UUID, tailLines int) (string, error)
-	ResolveJobSecretHash(ctx context.Context, executionID uuid.UUID) (string, error)
+	ResolveJobSecretHash(ctx context.Context, runID, executionID uuid.UUID) (string, error)
 	HealthCheck(ctx context.Context) error
 }
 
