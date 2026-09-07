@@ -97,7 +97,7 @@ func (m *mockExecutor) GetLogs(ctx context.Context, executionID uuid.UUID, tailL
 	}
 	return "", nil
 }
-func (m *mockExecutor) ResolveJobSecretHash(ctx context.Context, executionID uuid.UUID) (string, error) {
+func (m *mockExecutor) ResolveJobSecretHash(ctx context.Context, runID, executionID uuid.UUID) (string, error) {
 	return "", nil
 }
 func (m *mockExecutor) HealthCheck(ctx context.Context) error { return nil }

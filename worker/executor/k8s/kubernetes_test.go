@@ -91,7 +91,7 @@ func TestKubernetesExecutor_ResolveJobSecretHash(t *testing.T) {
 
 	exec := NewKubernetesExecutor(fakeClient, Config{Namespace: namespace})
 
-	hash, err := exec.ResolveJobSecretHash(context.Background(), execID)
+	hash, err := exec.ResolveJobSecretHash(context.Background(), uuid.Nil, execID)
 	require.NoError(t, err)
 	assert.Equal(t, coreexec.HashSecret(secret), hash)
 }
@@ -674,7 +674,7 @@ func TestKubernetesExecutor_ResolveJobSecretHash_NotFound(t *testing.T) {
 	fakeClient := fake.NewSimpleClientset()
 	exec := NewKubernetesExecutor(fakeClient, Config{Namespace: testNamespace})
 
-	_, err := exec.ResolveJobSecretHash(context.Background(), uuid.New())
+	_, err := exec.ResolveJobSecretHash(context.Background(), uuid.Nil, uuid.New())
 	assert.Error(t, err)
 }
 
@@ -703,7 +703,7 @@ func TestKubernetesExecutor_Teardown_IsNamespacedGetByName_NoClusterWideList(t *
 	// Only teardown/recovery calls are under test, so drop Execute's own create actions.
 	fakeClient.ClearActions()
 
-	_, err = exec.ResolveJobSecretHash(context.Background(), params.NodeExecutionID)
+	_, err = exec.ResolveJobSecretHash(context.Background(), uuid.Nil, params.NodeExecutionID)
 	require.NoError(t, err)
 	_, err = exec.GetLogs(context.Background(), params.NodeExecutionID, 100)
 	require.NoError(t, err)

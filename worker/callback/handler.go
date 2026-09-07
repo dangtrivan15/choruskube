@@ -57,11 +57,12 @@ func (c *HashCache) Remove(executionID uuid.UUID) {
 
 // SecretHashResolver recovers a job-secret hash the cache doesn't have — the case where the
 // Worker restarted after Execute() ran and lost its in-memory cache. executor.Executor satisfies
-// this with ResolveJobSecretHash; the handler only needs that one method. The resolver is bound to
-// the execution's namespace (a multi-tenant deployment passes a per-org, namespace-bound one), so
-// recovery here needs no namespace of its own.
+// this with ResolveJobSecretHash; the handler only needs that one method. It takes the runID
+// because a multi-tenant resolver derives the execution's namespace from the run, and this recovery
+// path runs in the callback's HTTP context — there is no Temporal activity context here to read the
+// run from, so the caller passes it explicitly (a single-namespace resolver ignores it).
 type SecretHashResolver interface {
-	ResolveJobSecretHash(ctx context.Context, executionID uuid.UUID) (string, error)
+	ResolveJobSecretHash(ctx context.Context, runID, executionID uuid.UUID) (string, error)
 }
 
 // executor.Executor must keep satisfying this narrower interface — Run() passes it directly as
@@ -191,7 +192,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	if !verifySecret(ctx, h.cache, h.resolver, execID, bearer) {
+	if !verifySecret(ctx, h.cache, h.resolver, runID, execID, bearer) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -304,12 +305,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // verifySecret checks bearer against the hash on record for execID, resolving and caching it
 // first on a cache miss. Shared by Handler and HeartbeatHandler so both endpoints authenticate
-// exactly the same way. The resolver (when set) is bound to the execution's namespace, so recovery
-// needs no namespace here; a resolve error fails closed to 401 rather than any cluster-wide search.
-func verifySecret(ctx context.Context, cache *HashCache, resolver SecretHashResolver, execID uuid.UUID, bearer string) bool {
+// exactly the same way. runID reaches a multi-tenant resolver that derives the execution's
+// namespace from the run (this HTTP path carries no Temporal activity context to read it from); a
+// resolve error fails closed to 401 rather than any cluster-wide search.
+func verifySecret(ctx context.Context, cache *HashCache, resolver SecretHashResolver, runID, execID uuid.UUID, bearer string) bool {
 	expectedHash, ok := cache.Get(execID)
 	if !ok && resolver != nil {
-		resolved, err := resolver.ResolveJobSecretHash(ctx, execID)
+		resolved, err := resolver.ResolveJobSecretHash(ctx, runID, execID)
 		if err != nil {
 			slog.Warn("failed to resolve job secret hash", "execution_id", execID, "error", err)
 			return false

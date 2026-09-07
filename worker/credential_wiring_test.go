@@ -19,7 +19,9 @@ func (nopExecutor) Execute(context.Context, executor.ExecutionParams) (executor.
 func (nopExecutor) Cleanup(context.Context, uuid.UUID) error                        { return nil }
 func (nopExecutor) Terminate(context.Context, uuid.UUID) error                      { return nil }
 func (nopExecutor) GetLogs(context.Context, uuid.UUID, int) (string, error)         { return "", nil }
-func (nopExecutor) ResolveJobSecretHash(context.Context, uuid.UUID) (string, error) { return "", nil }
+func (nopExecutor) ResolveJobSecretHash(context.Context, uuid.UUID, uuid.UUID) (string, error) {
+	return "", nil
+}
 func (nopExecutor) HealthCheck(context.Context) error                               { return nil }
 
 // credConsumerExecutor records the getter it is handed, so a test can prove wireExecutorCredential

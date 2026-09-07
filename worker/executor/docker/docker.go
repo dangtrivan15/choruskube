@@ -342,8 +342,8 @@ func (d *DockerExecutor) GetLogs(ctx context.Context, executionID uuid.UUID, tai
 
 // ResolveJobSecretHash reads JOB_SECRET back from executionID's container environment and
 // returns its SHA-256 hash. Used to recover the hash cache after a Worker restart. A single
-// Docker host has no namespaces.
-func (d *DockerExecutor) ResolveJobSecretHash(ctx context.Context, executionID uuid.UUID) (string, error) {
+// Docker host has no namespaces, so the runID is ignored.
+func (d *DockerExecutor) ResolveJobSecretHash(ctx context.Context, _, executionID uuid.UUID) (string, error) {
 	c, err := d.findContainer(ctx, executionID)
 	if err != nil {
 		return "", fmt.Errorf("find container: %w", err)

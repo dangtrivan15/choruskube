@@ -481,8 +481,10 @@ func (k *KubernetesExecutor) GetLogs(ctx context.Context, executionID uuid.UUID,
 
 // ResolveJobSecretHash reads JOB_SECRET back from executionID's job-secret Secret (addressed by
 // its deterministic name in k.config.Namespace) and returns its SHA-256 hash. Used to recover the
-// hash cache after a Worker restart.
-func (k *KubernetesExecutor) ResolveJobSecretHash(ctx context.Context, executionID uuid.UUID) (string, error) {
+// hash cache after a Worker restart. The runID is ignored: this instance is bound to one namespace,
+// so the deterministic Secret name locates the Secret without it (a multi-tenant overlay uses runID
+// to pick the namespace before delegating here).
+func (k *KubernetesExecutor) ResolveJobSecretHash(ctx context.Context, _, executionID uuid.UUID) (string, error) {
 	namespace := k.config.Namespace
 	secretName := jobSecretPrefix + executionID.String()[:8]
 	secret, err := k.client.CoreV1().Secrets(namespace).Get(ctx, secretName, metav1.GetOptions{})

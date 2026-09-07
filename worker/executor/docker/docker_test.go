@@ -211,7 +211,7 @@ func TestDockerExecutor_ResolveJobSecretHash(t *testing.T) {
 	require.NoError(t, err)
 	defer exec.Cleanup(context.Background(), params.NodeExecutionID)
 
-	hash, err := exec.ResolveJobSecretHash(context.Background(), params.NodeExecutionID)
+	hash, err := exec.ResolveJobSecretHash(context.Background(), uuid.Nil, params.NodeExecutionID)
 	require.NoError(t, err)
 	assert.Equal(t, executor.HashSecret(secret), hash)
 }
@@ -220,7 +220,7 @@ func TestDockerExecutor_ResolveJobSecretHash_MissingContainerReturnsError(t *tes
 	skipUnlessBindMountWorks(t)
 
 	exec := newTestExecutor(t)
-	_, err := exec.ResolveJobSecretHash(context.Background(), uuid.New())
+	_, err := exec.ResolveJobSecretHash(context.Background(), uuid.Nil, uuid.New())
 	assert.Error(t, err)
 }
 
