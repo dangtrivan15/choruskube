@@ -144,15 +144,32 @@ EOF
     sleep 1
   done
 
-  if docker buildx create --use --bootstrap \
+  # buildx's docker-container driver rejects TLS supplied through the DOCKER_HOST/DOCKER_TLS_VERIFY/
+  # DOCKER_CERT_PATH env vars ("could not create a builder instance with TLS data loaded from
+  # environment") -- it stores a named docker context, not the ambient env, so a later `buildx build`
+  # can reconnect. The dind sidecar exposes a TLS endpoint, so materialize a context from those same
+  # certs and target the builder at it. Without TLS the default context already carries the endpoint,
+  # so builder_endpoint stays empty and no context arg is passed.
+  builder_endpoint=""
+  if [ "${DOCKER_TLS_VERIFY:-}" = "1" ] && [ -n "${DOCKER_CERT_PATH:-}" ]; then
+    docker context create choruskube-dind \
+      --docker "host=${DOCKER_HOST},ca=${DOCKER_CERT_PATH}/ca.pem,cert=${DOCKER_CERT_PATH}/cert.pem,key=${DOCKER_CERT_PATH}/key.pem" \
+      >/dev/null 2>&1 || true
+    builder_endpoint=choruskube-dind
+  fi
+
+  # Capture stderr instead of discarding it: a silent failure here left the cache-registry builder
+  # unbuilt on every dind node with no clue why. On success buildx's own progress is uninteresting.
+  if bootstrap_err=$(docker buildx create --use --bootstrap \
       --name choruskube-builder \
       --driver docker-container \
-      --buildkitd-config /tmp/buildkitd.toml >/dev/null 2>&1; then
+      --buildkitd-config /tmp/buildkitd.toml \
+      ${builder_endpoint} 2>&1); then
     echo "BuildKit builder ready: choruskube-builder (HTTP trust: ${BUILD_CACHE_REGISTRY}${REGISTRY_MIRROR:+, ${REGISTRY_MIRROR}})"
   else
     # Don't fail the agent — e2e-up.sh's bake invocation has a no-cache
     # fallback that still produces a working build, just slower.
-    echo "WARNING: docker-container builder bootstrap failed; falling back to embedded BuildKit (cache registry will not work)"
+    echo "WARNING: docker-container builder bootstrap failed; falling back to embedded BuildKit (cache registry will not work): ${bootstrap_err}"
   fi
 fi
 
