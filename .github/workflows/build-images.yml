@@ -44,6 +44,7 @@ jobs:
       worker: ${{ steps.filter.outputs.worker }}
       claude-code: ${{ steps.filter.outputs.claude-code }}
       choruskube-dev: ${{ steps.filter.outputs.choruskube-dev }}
+      choruskube-dind: ${{ steps.filter.outputs.choruskube-dind }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -68,6 +69,8 @@ jobs:
               - 'api-server/build.gradle'
               - 'api-server/settings.gradle.kts'
               - 'api-server/gradle/**'
+            choruskube-dind:
+              - 'agent-images/choruskube-dind/**'
 
   build-orchestrator:
     needs: detect-changes
@@ -372,3 +375,80 @@ jobs:
             ${{ env.PUBLIC_REGISTRY }}/choruskube-dev:${{ github.sha }}
           cache-from: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/choruskube-dev:buildcache
           cache-to: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/choruskube-dev:buildcache,mode=max
+
+  build-choruskube-dind:
+    needs: detect-changes
+    # FROM docker:29-dind (public), unlike choruskube-dev -- no claude-code base dependency.
+    if: needs.detect-changes.outputs.choruskube-dind == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch'
+    runs-on: arc-runner-choruskube
+    concurrency:
+      group: build-choruskube-dind
+      cancel-in-progress: ${{ github.event_name != 'repository_dispatch' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Export registry env
+        run: |
+          echo "::add-mask::$REGISTRY_MIRROR"
+          echo "REGISTRY_MIRROR=$REGISTRY_MIRROR" >> "$GITHUB_ENV"
+          echo "::add-mask::$PUBLIC_REGISTRY"
+          echo "PUBLIC_REGISTRY=$PUBLIC_REGISTRY" >> "$GITHUB_ENV"
+
+      # `if:` can't read the secrets context directly (actionlint: [expression]), so
+      # stage presence as a plain env flag here — never the token value itself.
+      - name: Check Docker Hub credentials
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: echo "HAS_DOCKERHUB_TOKEN=${DOCKERHUB_TOKEN:+true}" >> "$GITHUB_ENV"
+
+      # Authenticates before the docker.io pulls below (both this step's own builder
+      # image and build-preload.sh's stack images), to avoid anonymous-pull rate
+      # limits; skipped when the repo secret isn't provisioned yet.
+      - name: Log in to Docker Hub
+        if: ${{ env.HAS_DOCKERHUB_TOKEN == 'true' }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["${{ env.REGISTRY_MIRROR }}"]
+            [registry."${{ env.REGISTRY_MIRROR }}"]
+              http = true
+            [registry."${{ env.PUBLIC_REGISTRY }}"]
+              http = true
+
+      # Warm Docker cache: OUT must stay inside the build context below, or the
+      # Dockerfile's PRELOAD_TAR COPY can't reach it. Runs against the runner's own
+      # docker daemon (dind sidecar) — not part of the image build itself.
+      - name: Bake preload archive
+        working-directory: agent-images/choruskube-dind
+        run: OUT=stack.tar ./build-preload.sh
+
+      - name: Authenticate to the public registry (core)
+        run: |
+          AUTH=$(printf '%s:%s' "$PUBLIC_REGISTRY_USER" "$PUBLIC_REGISTRY_TOKEN" | base64 | tr -d '\n')
+          echo "::add-mask::$AUTH"
+          mkdir -p "$HOME/.docker"
+          printf '{"auths":{"%s":{"auth":"%s"}}}\n' "$PUBLIC_REGISTRY" "$AUTH" > "$HOME/.docker/config.json"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: agent-images/choruskube-dind
+          file: agent-images/choruskube-dind/Dockerfile
+          platforms: linux/amd64
+          push: true
+          # PRELOAD_TAR must match the Bake preload archive step's OUT (both
+          # "stack.tar"), relative to the context.
+          build-args: |
+            PRELOAD_TAR=stack.tar
+          tags: |
+            ${{ env.PUBLIC_REGISTRY }}/choruskube-dind:latest
+            ${{ env.PUBLIC_REGISTRY }}/choruskube-dind:${{ github.sha }}
+          cache-from: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/choruskube-dind:buildcache
+          cache-to: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/choruskube-dind:buildcache,mode=max
