@@ -27,6 +27,7 @@ export function useCreateGitRepo() {
       agentImage?: string;
       secrets?: string;
       enableDocker?: boolean;
+      dindImage?: string;
     }) => api.post<GitRepoResponse>("/git-repos", body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["git-repos"] });
@@ -54,6 +55,7 @@ export function useUpdateGitRepo() {
         agentImage?: string;
         secrets?: string;
         enableDocker?: boolean;
+        dindImage?: string;
       };
     }) => api.put<GitRepoResponse>(`/git-repos/${id}`, body),
     onSuccess: () => {

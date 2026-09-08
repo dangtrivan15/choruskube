@@ -196,6 +196,7 @@ export interface GitRepoResponse {
   agentImage: string | null;
   secrets: unknown[];
   enableDocker: boolean;
+  dindImage: string | null;
   createdAt: string;
   updatedAt: string;
 }
