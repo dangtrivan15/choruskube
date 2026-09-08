@@ -31,9 +31,12 @@ public class GitRepo extends SoftwareProject {
     @Column(name = "enable_docker", nullable = false)
     private boolean enableDocker;
 
+    @Column(name = "dind_image")
+    private String dindImage;
+
     @Override
     public RuntimeRequirements getRuntimeRequirements() {
-        return new RuntimeRequirements(getAgentImage(), enableDocker);
+        return new RuntimeRequirements(getAgentImage(), enableDocker, dindImage);
     }
 
     @Override
@@ -79,5 +82,13 @@ public class GitRepo extends SoftwareProject {
 
     public void setEnableDocker(boolean enableDocker) {
         this.enableDocker = enableDocker;
+    }
+
+    public String getDindImage() {
+        return dindImage;
+    }
+
+    public void setDindImage(String dindImage) {
+        this.dindImage = dindImage;
     }
 }

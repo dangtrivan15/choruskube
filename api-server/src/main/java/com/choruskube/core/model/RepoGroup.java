@@ -22,7 +22,7 @@ public class RepoGroup extends SoftwareProject {
     @Override
     public RuntimeRequirements getRuntimeRequirements() {
         boolean anyDocker = members.stream().map(RepoGroupMember::getGitRepo).anyMatch(GitRepo::isEnableDocker);
-        return new RuntimeRequirements(getAgentImage(), anyDocker);
+        return new RuntimeRequirements(getAgentImage(), anyDocker, null);
     }
 
     @Override

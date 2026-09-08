@@ -8,4 +8,5 @@ public record GitRepoRequest(
         String testCommand,
         String agentImage,
         String secrets,
-        Boolean enableDocker) {}
+        Boolean enableDocker,
+        String dindImage) {}

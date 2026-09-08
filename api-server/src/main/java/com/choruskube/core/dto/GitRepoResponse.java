@@ -10,6 +10,7 @@ public record GitRepoResponse(
         String defaultBranch,
         String testCommand,
         String agentImage,
+        String dindImage,
         JsonNode secrets,
         boolean enableDocker,
         Instant createdAt,

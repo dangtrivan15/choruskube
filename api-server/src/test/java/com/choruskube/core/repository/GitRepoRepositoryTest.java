@@ -64,6 +64,31 @@ class GitRepoRepositoryTest extends BaseTest {
     }
 
     @Test
+    void dindImage_roundTripsThroughPersistence() {
+        GitRepo repo1 = buildRepo("https://github.com/dind/custom-" + UUID.randomUUID());
+        repo1.setDindImage("registry.example/foo-dind:latest");
+        GitRepo saved = repo.saveAndFlush(repo1);
+        entityManager.clear();
+
+        GitRepo reloaded = repo.findById(saved.getId()).orElseThrow();
+
+        assertThat(reloaded.getDindImage()).isEqualTo("registry.example/foo-dind:latest");
+        assertThat(reloaded.getRuntimeRequirements().dindImage()).isEqualTo("registry.example/foo-dind:latest");
+    }
+
+    @Test
+    void dindImage_defaultsToNull() {
+        GitRepo repo1 = buildRepo("https://github.com/dind/default-" + UUID.randomUUID());
+        GitRepo saved = repo.saveAndFlush(repo1);
+        entityManager.clear();
+
+        GitRepo reloaded = repo.findById(saved.getId()).orElseThrow();
+
+        assertThat(reloaded.getDindImage()).isNull();
+        assertThat(reloaded.getRuntimeRequirements().dindImage()).isNull();
+    }
+
+    @Test
     void hardDeleteTombstoneById_doesNothingForLiveRow() {
         GitRepo live = repo.saveAndFlush(buildRepo("https://github.com/hd/live-" + UUID.randomUUID()));
 
