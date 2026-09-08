@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Pulls the e2e infra stack and `docker save`s it to a portable tar for baking into
-# the choruskube-dev image (see Dockerfile's PRELOAD_TAR). Run against a reachable
+# the choruskube-dind image (see Dockerfile's PRELOAD_TAR). Run against a reachable
 # docker daemon with network access; not part of the image build itself.
 set -euo pipefail
 

@@ -1,9 +1,9 @@
 #!/bin/bash
-# Unit tests for entrypoint.sh's warm-Docker-cache preload step (no live container needed).
+# Unit tests for entrypoint.sh's warm-Docker-cache preload step (no live dind needed).
 #
-# load_preload_archive() is defined and hooked before any other entrypoint side effect,
-# behind a --preload-only flag, precisely so this file can `source` the real, unmodified
-# entrypoint.sh and exercise just that step through a stubbed `docker` on PATH.
+# run_preload() is defined and hooked behind a --preload-only flag precisely so this
+# file can `source` the real, unmodified entrypoint.sh and exercise just that step
+# through a stubbed `docker` on PATH, without it launching a real dockerd first.
 set -euo pipefail
 
 PASS=0
@@ -32,18 +32,23 @@ EOF
   chmod +x "$bin/docker"
 }
 
-# --- Test 1: archive present, daemon reachable, load succeeds -> loaded ---
+# --- Test 1: archive present, daemon reachable, load succeeds -> loaded + marker ---
 BIN1="$TESTDIR/bin1"
 make_docker_stub "$BIN1" 0 0
 mkdir -p "$TESTDIR/preload1"; : > "$TESTDIR/preload1/stack.tar"
-OUT1=$(PATH="$BIN1:$PATH" PRELOAD_ARCHIVE="$TESTDIR/preload1/stack.tar" \
+MARKER1="$TESTDIR/preload1/ready"
+OUT1=$(PATH="$BIN1:$PATH" PRELOAD_ARCHIVE="$TESTDIR/preload1/stack.tar" READY_MARKER="$MARKER1" \
   bash -c 'source "'"$ENTRYPOINT"'" --preload-only 2>&1')
 echo "$OUT1" | grep -q "preload: loaded" \
   && ok "archive present + daemon reachable + load succeeds: loads" \
   || fail "archive present + daemon reachable + load succeeds: loads (got: $OUT1)"
+[ -f "$MARKER1" ] \
+  && ok "archive present + load succeeds: readiness marker created" \
+  || fail "archive present + load succeeds: readiness marker created"
 
 # --- Test 2: archive absent -> no-op, no failure ---
-OUT2=$(PATH="$BIN1:$PATH" PRELOAD_ARCHIVE="$TESTDIR/preload1/missing.tar" \
+MARKER2="$TESTDIR/preload1/ready2"
+OUT2=$(PATH="$BIN1:$PATH" PRELOAD_ARCHIVE="$TESTDIR/preload1/missing.tar" READY_MARKER="$MARKER2" \
   bash -c 'source "'"$ENTRYPOINT"'" --preload-only 2>&1')
 echo "$OUT2" | grep -q "preload: none" \
   && ok "archive absent: no-op" \
@@ -51,12 +56,12 @@ echo "$OUT2" | grep -q "preload: none" \
 
 # --- Test 3: archive present, daemon reachable, docker load fails -> fail loud ---
 # The one case that must never degrade to a silent skip: a warm image whose daemon
-# rejects the archive has to abort the pod, not ship a cold cache with no signal.
+# rejects the archive has to abort the sidecar, not ship a cold cache with no signal.
 BIN3="$TESTDIR/bin3"
 make_docker_stub "$BIN3" 0 1
 mkdir -p "$TESTDIR/preload3"; : > "$TESTDIR/preload3/stack.tar"
 set +e
-OUT3=$(PATH="$BIN3:$PATH" PRELOAD_ARCHIVE="$TESTDIR/preload3/stack.tar" \
+OUT3=$(PATH="$BIN3:$PATH" PRELOAD_ARCHIVE="$TESTDIR/preload3/stack.tar" READY_MARKER="$TESTDIR/preload3/ready" \
   bash -c 'source "'"$ENTRYPOINT"'" --preload-only 2>&1')
 RC3=$?
 set -e
@@ -65,6 +70,9 @@ set -e
 echo "$OUT3" | grep -q "preload: FATAL" \
   && ok "docker load fails: FATAL message on stderr" \
   || fail "docker load fails: FATAL message on stderr (got: $OUT3)"
+[ ! -f "$TESTDIR/preload3/ready" ] \
+  && ok "docker load fails: no readiness marker" \
+  || fail "docker load fails: no readiness marker"
 
 # --- Test 4: archive present, daemon never comes up -> fail loud ---
 # wait_for_docker retries for up to 60 * 2s in production; a stubbed `sleep` (same
@@ -79,7 +87,7 @@ EOF
 chmod +x "$BIN4/sleep"
 mkdir -p "$TESTDIR/preload4"; : > "$TESTDIR/preload4/stack.tar"
 set +e
-OUT4=$(PATH="$BIN4:$PATH" PRELOAD_ARCHIVE="$TESTDIR/preload4/stack.tar" \
+OUT4=$(PATH="$BIN4:$PATH" PRELOAD_ARCHIVE="$TESTDIR/preload4/stack.tar" READY_MARKER="$TESTDIR/preload4/ready" \
   bash -c 'source "'"$ENTRYPOINT"'" --preload-only 2>&1')
 RC4=$?
 set -e
