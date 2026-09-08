@@ -1,15 +1,17 @@
 #!/bin/sh
 # agent-images/choruskube-dind/entrypoint.sh
-# Sidecar wrapper around the stock dind daemon: starts dockerd, loads a baked
-# warm-Docker-cache archive if this image has one, drops a readiness marker the
+# Sidecar wrapper around the stock dind daemon: starts dockerd, loads every baked
+# warm-Docker-cache archive this image carries, drops a readiness marker the
 # agent container can poll for, then runs dockerd in the foreground.
 # POSIX sh, not bash: docker:29-dind is Alpine-based and ships no bash, same as
 # the base image's own dockerd-entrypoint.sh this script delegates to.
 set -euo pipefail
 
-# The path is a shared contract with the image bake that produces the archive —
-# both sides must reference this same constant.
-: "${PRELOAD_ARCHIVE:=/opt/choruskube/preload/stack.tar}"
+# The directory is a shared contract with the image bake that copies archives into
+# it — both sides must reference this same constant. Every *.tar here loads, so a
+# base image and an image built FROM it each drop their own archive under distinct
+# filenames, letting an overlay bake only its delta instead of re-baking the base's.
+: "${PRELOAD_DIR:=/opt/choruskube/preload}"
 : "${READY_MARKER:=/tmp/preload-ready}"
 
 wait_for_docker() {
@@ -17,16 +19,21 @@ wait_for_docker() {
   return 1
 }
 
-load_preload_archive() {
-  if [ ! -f "$PRELOAD_ARCHIVE" ]; then echo "preload: none ($PRELOAD_ARCHIVE absent)"; return 0; fi
-  local t0 t1; t0=$(date +%s)
-  if ! docker load -i "$PRELOAD_ARCHIVE" >/dev/null; then
-    echo "preload: FATAL failed to load $PRELOAD_ARCHIVE" >&2; return 1
-  fi
-  t1=$(date +%s); echo "preload: loaded $PRELOAD_ARCHIVE in $((t1-t0))s"
+load_preload_archives() {
+  local loaded=0 arch t0 t1
+  for arch in "$PRELOAD_DIR"/*.tar; do
+    [ -e "$arch" ] || continue  # no match: the glob stays literal, so skip it
+    t0=$(date +%s)
+    if ! docker load -i "$arch" >/dev/null; then
+      echo "preload: FATAL failed to load $arch" >&2; return 1
+    fi
+    t1=$(date +%s); echo "preload: loaded $arch in $((t1-t0))s"
+    loaded=$((loaded+1))
+  done
+  [ "$loaded" -gt 0 ] || echo "preload: none ($PRELOAD_DIR/*.tar absent)"
 }
 
-# Waits for the (already-started) daemon, loads the archive, then drops the
+# Waits for the (already-started) daemon, loads the archives, then drops the
 # readiness marker the agent container's startupProbe polls for. Split out so
 # --preload-only below can exercise it against an already-reachable stubbed
 # `docker`, without this script itself launching a real dockerd.
@@ -35,7 +42,7 @@ run_preload() {
     echo "preload: FATAL docker daemon not reachable" >&2
     return 1
   fi
-  load_preload_archive || return 1
+  load_preload_archives || return 1
   touch "$READY_MARKER"
 }
 
