@@ -24,6 +24,7 @@ export default function CreateGitRepoDialog({ open, onOpenChange }: Props) {
   const [testCommand, setTestCommand] = useState("");
   const [agentImage, setAgentImage] = useState("");
   const [enableDocker, setEnableDocker] = useState(false);
+  const [dindImage, setDindImage] = useState("");
 
   const { organizationId } = useAuth();
   const { data: gitHubCredential } = useGitHubCredential(organizationId ?? "");
@@ -41,6 +42,7 @@ export default function CreateGitRepoDialog({ open, onOpenChange }: Props) {
         testCommand: testCommand.trim() || undefined,
         agentImage: agentImage.trim() || undefined,
         enableDocker,
+        dindImage: dindImage.trim() || undefined,
       },
       {
         onSuccess: () => {
@@ -57,6 +59,7 @@ export default function CreateGitRepoDialog({ open, onOpenChange }: Props) {
     setTestCommand("");
     setAgentImage("");
     setEnableDocker(false);
+    setDindImage("");
     createGitRepo.reset();
   }
 
@@ -146,6 +149,20 @@ export default function CreateGitRepoDialog({ open, onOpenChange }: Props) {
               Enable Docker-in-Docker
             </label>
           </div>
+
+          {enableDocker && (
+            <div className="flex flex-col gap-1">
+              <label htmlFor="repo-dind-image" className="text-sm font-medium">
+                Custom dind image
+              </label>
+              <Input
+                id="repo-dind-image"
+                value={dindImage}
+                onChange={(e) => setDindImage(e.target.value)}
+                placeholder="dind:latest"
+              />
+            </div>
+          )}
 
         </div>
 

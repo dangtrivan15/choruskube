@@ -439,6 +439,7 @@ func (a *Activities) executeLocally(ctx context.Context, runID uuid.UUID, params
 		ConfigJSON:   configJSON,
 		CallbackURL:  a.CallbackURL,
 		EnableDocker: prep.EnableDocker,
+		DindImage:    prep.DindImage,
 		// The namespace a workload launches into is bound to the executor instance, not passed
 		// per call; the single-tenant core executor uses its one Config.Namespace.
 		Identity: executor.ExecutionIdentity{

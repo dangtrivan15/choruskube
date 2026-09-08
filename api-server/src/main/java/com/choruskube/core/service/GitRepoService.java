@@ -229,6 +229,7 @@ public class GitRepoService {
         entity.setAgentImage(request.agentImage());
         entity.setSecrets(request.secrets() != null ? request.secrets() : "[]");
         entity.setEnableDocker(request.enableDocker() != null ? request.enableDocker() : false);
+        entity.setDindImage(request.dindImage());
         return entity;
     }
 
@@ -252,6 +253,7 @@ public class GitRepoService {
                 entity.getDefaultBranch(),
                 entity.getTestCommand(),
                 entity.getAgentImage(),
+                entity.getDindImage(),
                 secretsNode,
                 entity.isEnableDocker(),
                 entity.getCreatedAt(),

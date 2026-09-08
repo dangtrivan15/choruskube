@@ -58,7 +58,8 @@ class GitRepoServiceTest extends BaseTest {
                 "npm test",
                 "agent:latest",
                 "[{\"name\":\"GH_TOKEN\",\"secretName\":\"gh-token\"}]",
-                true);
+                true,
+                "registry.example/foo-dind:latest");
     }
 
     @Test
@@ -69,6 +70,7 @@ class GitRepoServiceTest extends BaseTest {
         assertThat(created.defaultBranch()).isEqualTo("main");
         assertThat(created.testCommand()).isEqualTo("npm test");
         assertThat(created.agentImage()).isEqualTo("agent:latest");
+        assertThat(created.dindImage()).isEqualTo("registry.example/foo-dind:latest");
         assertThat(created.enableDocker()).isTrue();
         assertThat(created.secrets().isArray()).isTrue();
 
@@ -91,7 +93,7 @@ class GitRepoServiceTest extends BaseTest {
         repoA.setName(RepoNameUtil.deriveOwnerRepoName(sharedUrl));
         repo.save(repoA);
 
-        assertThatThrownBy(() -> service.create(new GitRepoRequest(sharedUrl, "main", null, null, "[]", false)))
+        assertThatThrownBy(() -> service.create(new GitRepoRequest(sharedUrl, "main", null, null, "[]", false, null)))
                 .isInstanceOf(ConflictException.class)
                 .hasMessageContaining(sharedUrl);
     }
@@ -100,7 +102,7 @@ class GitRepoServiceTest extends BaseTest {
     void updateChangesFields() {
         var created = service.create(sampleRequest());
         var updateReq = new GitRepoRequest(
-                "https://github.com/test/repo", "develop", "./gradlew test", "new-agent:v2", "[]", false);
+                "https://github.com/test/repo", "develop", "./gradlew test", "new-agent:v2", "[]", false, null);
         var updated = service.update(created.id(), updateReq);
         assertThat(updated.defaultBranch()).isEqualTo("develop");
         assertThat(updated.testCommand()).isEqualTo("./gradlew test");
@@ -110,8 +112,8 @@ class GitRepoServiceTest extends BaseTest {
     @Test
     void updateWithEnableDockerChangeDoesNotTriggerReprovisioning() {
         var created = service.create(sampleRequest()); // enableDocker=true
-        var updateReq =
-                new GitRepoRequest("https://github.com/test/repo", "main", "npm test", "agent:latest", "[]", false);
+        var updateReq = new GitRepoRequest(
+                "https://github.com/test/repo", "main", "npm test", "agent:latest", "[]", false, null);
         var updated = service.update(created.id(), updateReq);
         assertThat(updated.enableDocker()).isFalse();
         // Docker toggle no longer triggers reprovisioning — Docker resources always exist
@@ -130,7 +132,7 @@ class GitRepoServiceTest extends BaseTest {
     void listReturnsPaginatedResults() {
         long baseline = repo.count();
         service.create(sampleRequest());
-        service.create(new GitRepoRequest("https://github.com/test/other", null, null, null, null, null));
+        service.create(new GitRepoRequest("https://github.com/test/other", null, null, null, null, null, null));
         var page = service.list(Pageable.ofSize(10));
         assertThat(page.getTotalElements()).isEqualTo(baseline + 2);
     }
@@ -167,8 +169,8 @@ class GitRepoServiceTest extends BaseTest {
     @Test
     void delete_listExcludesTombstonedRows() {
         var kept = service.create(sampleRequest());
-        var doomed =
-                service.create(new GitRepoRequest("https://github.com/test/doomed", "main", null, null, null, false));
+        var doomed = service.create(
+                new GitRepoRequest("https://github.com/test/doomed", "main", null, null, null, false, null));
 
         service.delete(doomed.id());
 
@@ -247,9 +249,9 @@ class GitRepoServiceTest extends BaseTest {
 
     @Test
     void reconcileTombstonedBatch_cleansUpAndReturnsCount() {
-        var r1 = service.create(new GitRepoRequest("https://github.com/test/a", "main", null, null, null, false));
-        var r2 = service.create(new GitRepoRequest("https://github.com/test/b", "main", null, null, null, false));
-        var r3 = service.create(new GitRepoRequest("https://github.com/test/c", "main", null, null, null, false));
+        var r1 = service.create(new GitRepoRequest("https://github.com/test/a", "main", null, null, null, false, null));
+        var r2 = service.create(new GitRepoRequest("https://github.com/test/b", "main", null, null, null, false, null));
+        var r3 = service.create(new GitRepoRequest("https://github.com/test/c", "main", null, null, null, false, null));
         service.delete(r1.id());
         service.delete(r2.id());
         service.delete(r3.id());
@@ -266,7 +268,7 @@ class GitRepoServiceTest extends BaseTest {
     void reconcileTombstonedBatch_respectsBatchSize() {
         for (int i = 0; i < 5; i++) {
             var c = service.create(
-                    new GitRepoRequest("https://github.com/test/batch-" + i, "main", null, null, null, false));
+                    new GitRepoRequest("https://github.com/test/batch-" + i, "main", null, null, null, false, null));
             service.delete(c.id());
         }
 

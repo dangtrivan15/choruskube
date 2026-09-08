@@ -24,6 +24,7 @@ export default function EditGitRepoDialog({ gitRepo, open, onOpenChange }: Props
   const [testCommand, setTestCommand] = useState("");
   const [agentImage, setAgentImage] = useState("");
   const [enableDocker, setEnableDocker] = useState(false);
+  const [dindImage, setDindImage] = useState("");
 
   const updateGitRepo = useUpdateGitRepo();
 
@@ -34,6 +35,7 @@ export default function EditGitRepoDialog({ gitRepo, open, onOpenChange }: Props
       setTestCommand(gitRepo.testCommand ?? "");
       setAgentImage(gitRepo.agentImage ?? "");
       setEnableDocker(gitRepo.enableDocker);
+      setDindImage(gitRepo.dindImage ?? "");
     }
   }, [gitRepo]);
 
@@ -49,6 +51,7 @@ export default function EditGitRepoDialog({ gitRepo, open, onOpenChange }: Props
           testCommand: testCommand.trim() || undefined,
           agentImage: agentImage.trim() || undefined,
           enableDocker,
+          dindImage: dindImage.trim() || undefined,
         },
       },
       { onSuccess: () => onOpenChange(false) }
@@ -120,6 +123,20 @@ export default function EditGitRepoDialog({ gitRepo, open, onOpenChange }: Props
               Enable Docker-in-Docker
             </label>
           </div>
+
+          {enableDocker && (
+            <div className="flex flex-col gap-1">
+              <label htmlFor="edit-repo-dind-image" className="text-sm font-medium">
+                Custom dind image
+              </label>
+              <Input
+                id="edit-repo-dind-image"
+                value={dindImage}
+                onChange={(e) => setDindImage(e.target.value)}
+                placeholder="dind:latest"
+              />
+            </div>
+          )}
         </div>
 
         <DialogFooter>

@@ -205,6 +205,13 @@ public class GraphSnapshotBuilder {
         snapshot.set("edges", edgesArray);
         snapshot.put("enable_docker", enableDocker);
 
+        String dindImage = project != null
+                ? project.getRuntimeRequirements().dindImage()
+                : (gitRepo != null ? gitRepo.getDindImage() : null);
+        if (dindImage != null && !dindImage.isBlank()) {
+            snapshot.put("dind_image", dindImage);
+        }
+
         // Inject repo fields into inputs so {run.*} template variables still resolve
         Map<String, Object> enrichedInputs = new HashMap<>();
         if (inputs != null) {

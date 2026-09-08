@@ -49,6 +49,7 @@ public class WorkloadService {
     private final String apiServerUrl;
     private final WorkloadRegistryMirrorResolver registryMirrorResolver;
     private final WorkloadNamespaceResolver namespaceResolver;
+    private final WorkloadRegistryCredentialResolver registryCredentialResolver;
 
     public WorkloadService(
             NodeExecutionRepository execRepo,
@@ -61,7 +62,8 @@ public class WorkloadService {
             AiCredentialResolver aiCredentialResolver,
             @Qualifier("executorApiServerUrl") String apiServerUrl,
             ObjectProvider<WorkloadRegistryMirrorResolver> registryMirrorResolverProvider,
-            ObjectProvider<WorkloadNamespaceResolver> namespaceResolverProvider) {
+            ObjectProvider<WorkloadNamespaceResolver> namespaceResolverProvider,
+            ObjectProvider<WorkloadRegistryCredentialResolver> registryCredentialResolverProvider) {
         this.execRepo = execRepo;
         this.eventPublisher = eventPublisher;
         this.runRepo = runRepo;
@@ -73,6 +75,8 @@ public class WorkloadService {
         this.apiServerUrl = apiServerUrl;
         this.registryMirrorResolver = registryMirrorResolverProvider.getIfAvailable(NoRegistryMirrorResolver::new);
         this.namespaceResolver = namespaceResolverProvider.getIfAvailable(NoWorkloadNamespaceResolver::new);
+        this.registryCredentialResolver =
+                registryCredentialResolverProvider.getIfAvailable(NoRegistryCredentialResolver::new);
     }
 
     /**
@@ -110,9 +114,10 @@ public class WorkloadService {
         return new PrepareWorkloadResponse(
                 params.image(),
                 params.enableDocker(),
+                params.dindImage(),
                 claudeOAuthToken,
                 githubTokenUrl,
-                null,
+                resolveRegistryCredentialsOrNull(runId),
                 namespace,
                 params.identity() != null ? params.identity().name() : null,
                 mirror == null
@@ -133,6 +138,25 @@ public class WorkloadService {
             return (ns == null || ns.isEmpty()) ? null : ns;
         } catch (RuntimeException e) {
             log.debug("No workload namespace resolved for run {}; launching namespace-less: {}", runId, e.toString());
+            return null;
+        }
+    }
+
+    /**
+     * Resolves the run's image-pull credential, returning {@code null} when none is resolvable.
+     * Mirrors {@link #resolveNamespaceOrNull}: a deployment-specific resolver bean may derive a tenant
+     * from the run and throw on a run with no tenant row (e.g. an e2e run), which must still prepare —
+     * so a throwing resolver degrades to an anonymous pull rather than hard-failing every launch,
+     * keeping it best-effort.
+     */
+    private PrepareWorkloadResponse.RegistryCredentialsDto resolveRegistryCredentialsOrNull(UUID runId) {
+        try {
+            return registryCredentialResolver.resolve(runId);
+        } catch (RuntimeException e) {
+            log.debug(
+                    "No registry credential resolved for run {}; launching without a pull secret: {}",
+                    runId,
+                    e.toString());
             return null;
         }
     }
@@ -205,6 +229,9 @@ public class WorkloadService {
 
         boolean enableDocker = snapshot.path("enable_docker").asBoolean(false);
 
+        JsonNode dindNode = snapshot.path("dind_image");
+        String dindImage = dindNode.isMissingNode() || dindNode.isNull() ? null : dindNode.asText();
+
         List<CredentialSpec> nodeCredentials = List.of();
         if (targetNode.has("secrets") && targetNode.get("secrets").isArray()) {
             List<CredentialSpec> creds = new ArrayList<>();
@@ -221,6 +248,14 @@ public class WorkloadService {
         IdentitySpec identity = new IdentitySpec(defaultServiceAccount, 1000, false);
 
         return new ExecutionParams(
-                nodeExecId, runId, templateNodeId, image, req.configJson(), enableDocker, nodeCredentials, identity);
+                nodeExecId,
+                runId,
+                templateNodeId,
+                image,
+                req.configJson(),
+                enableDocker,
+                dindImage,
+                nodeCredentials,
+                identity);
     }
 }

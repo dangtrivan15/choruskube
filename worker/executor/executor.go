@@ -62,7 +62,10 @@ type ExecutionParams struct {
 	CallbackURL string
 
 	EnableDocker bool
-	Identity     ExecutionIdentity
+	// DindImage overrides the dind sidecar image for this launch (a per-project custom
+	// image). Empty means use the executor's configured default.
+	DindImage string
+	Identity  ExecutionIdentity
 
 	// RegistryMirror carries the registry-mirror/build-cache/dependency-proxy endpoints to
 	// inject into a DinD-enabled workload, when this deployment provisions one. Nil means

@@ -173,8 +173,8 @@ class MappableCreatedPublicationTest extends BaseTest {
 
     @Test
     void gitRepoCreate_publishesMappableCreated_withSoftwareProjectType_andNoParent() {
-        var resp = gitRepoService.create(
-                new GitRepoRequest("https://github.com/test/event-pub-test.git", "main", null, null, "[]", false));
+        var resp = gitRepoService.create(new GitRepoRequest(
+                "https://github.com/test/event-pub-test.git", "main", null, null, "[]", false, null));
 
         List<MappableCreated> events = collector.getCaptured();
         assertThat(events)

@@ -4,6 +4,7 @@ package com.choruskube.core.dto;
 public record PrepareWorkloadResponse(
         String image,
         boolean enableDocker,
+        String dindImage,
         String claudeOAuthToken,
         String githubTokenUrl,
         RegistryCredentialsDto registryCredentials,

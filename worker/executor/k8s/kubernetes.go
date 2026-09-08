@@ -236,7 +236,7 @@ func (k *KubernetesExecutor) Execute(ctx context.Context, params coreexec.Execut
 	}
 
 	if params.EnableDocker {
-		if err := k.addDindSupport(ctx, job, params.RegistryMirror); err != nil {
+		if err := k.addDindSupport(ctx, job, params.RegistryMirror, params.DindImage); err != nil {
 			return coreexec.ExecutionResult{}, fmt.Errorf("add dind support: %w", err)
 		}
 	}
@@ -583,8 +583,10 @@ func resolveResource(override *coreexec.AgentResources, field func(coreexec.Agen
 // volumeMounts appended to the inline agent, and the template's pod-level volumes appended to
 // the pod. mirror carries whatever registry-mirror/build-cache/dep-proxy endpoints a
 // prepare-time seam resolved for this workload, if any -- this package resolves no such
-// endpoint itself, so nil skips all of that env rather than injecting it.
-func (k *KubernetesExecutor) addDindSupport(ctx context.Context, job *batchv1.Job, mirror *coreexec.RegistryMirror) error {
+// endpoint itself, so nil skips all of that env rather than injecting it. dindImageOverride
+// replaces the template's dind image ref when non-empty (a per-project custom image); empty
+// leaves the template's image as-is.
+func (k *KubernetesExecutor) addDindSupport(ctx context.Context, job *batchv1.Job, mirror *coreexec.RegistryMirror, dindImageOverride string) error {
 	tmpl, err := k.loadPodTemplate(ctx)
 	if err != nil {
 		return err
@@ -610,6 +612,9 @@ func (k *KubernetesExecutor) addDindSupport(ctx context.Context, job *batchv1.Jo
 		return fmt.Errorf("PodTemplate %q missing required init container %q", k.config.AgentPodTemplateName, dindInitContainerName)
 	}
 	dind := templateDind.DeepCopy()
+	if dindImageOverride != "" {
+		dind.Image = dindImageOverride
+	}
 	if !k.config.ResourceQuotaEnabled {
 		// Kubelet schedules against node capacity rather than admission requirements when
 		// no ResourceQuota is present.
