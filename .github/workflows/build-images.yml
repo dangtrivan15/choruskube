@@ -333,23 +333,6 @@ jobs:
           echo "::add-mask::$PUBLIC_REGISTRY"
           echo "PUBLIC_REGISTRY=$PUBLIC_REGISTRY" >> "$GITHUB_ENV"
 
-      # `if:` can't read the secrets context directly (actionlint: [expression]), so
-      # stage presence as a plain env flag here — never the token value itself.
-      - name: Check Docker Hub credentials
-        env:
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        run: echo "HAS_DOCKERHUB_TOKEN=${DOCKERHUB_TOKEN:+true}" >> "$GITHUB_ENV"
-
-      # Authenticates before the docker.io pulls below (both this step's own builder
-      # image and build-preload.sh's stack images), to avoid anonymous-pull rate
-      # limits; skipped when the repo secret isn't provisioned yet.
-      - name: Log in to Docker Hub
-        if: ${{ env.HAS_DOCKERHUB_TOKEN == 'true' }}
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
@@ -360,13 +343,6 @@ jobs:
               http = true
             [registry."${{ env.PUBLIC_REGISTRY }}"]
               http = true
-
-      # Warm Docker cache: OUT must stay inside the build context below, or the
-      # Dockerfile's PRELOAD_TAR COPY can't reach it. Runs against the runner's own
-      # docker daemon (dind sidecar) — not part of the image build itself.
-      - name: Bake preload archive
-        working-directory: agent-images/choruskube-dev
-        run: OUT=stack.tar ./build-preload.sh
 
       - name: Authenticate to the public registry (core)
         run: |
@@ -388,11 +364,9 @@ jobs:
           platforms: linux/amd64
           push: true
           # Pin the base to the public :latest agent — published by build-claude-code just
-          # above, or already present when claude-code is skipped. PRELOAD_TAR must match
-          # the Bake preload archive step's OUT (both "stack.tar"), relative to the context.
+          # above, or already present when claude-code is skipped.
           build-args: |
             BASE_AGENT_IMAGE=${{ env.PUBLIC_REGISTRY }}/claude-code:latest
-            PRELOAD_TAR=stack.tar
           tags: |
             ${{ env.PUBLIC_REGISTRY }}/choruskube-dev:latest
             ${{ env.PUBLIC_REGISTRY }}/choruskube-dev:${{ github.sha }}
