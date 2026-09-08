@@ -482,6 +482,66 @@ func TestKubernetesExecutor_Execute_DinD_NoRegistryMirror_InjectsNoMirrorEnv(t *
 	}
 }
 
+// TestKubernetesExecutor_Execute_DinD_ImageOverride_SetsDindImage guards the per-project custom
+// dind image: a non-empty params.DindImage must replace the template's init-container image
+// rather than being ignored in favor of what the operator-supplied PodTemplate carries.
+func TestKubernetesExecutor_Execute_DinD_ImageOverride_SetsDindImage(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	templateNamespace := "choruskube"
+	templateName := "choruskube-agent-pod-template"
+	setupDindTemplate(t, fakeClient, templateNamespace, templateName)
+
+	exec := NewKubernetesExecutor(fakeClient, Config{
+		Namespace:            testNamespace,
+		AgentServiceAccount:  "choruskube-agent",
+		AgentPodTemplateName: templateName,
+		TemplateNamespace:    templateNamespace,
+	})
+
+	params := newTestParams()
+	params.EnableDocker = true
+	params.DindImage = "registry.example/custom-dind:v2"
+
+	result, err := exec.Execute(context.Background(), params)
+	require.NoError(t, err)
+
+	job, err := fakeClient.BatchV1().Jobs(testNamespace).Get(context.Background(), result.PodName, metav1.GetOptions{})
+	require.NoError(t, err)
+
+	require.Len(t, job.Spec.Template.Spec.InitContainers, 1)
+	assert.Equal(t, "registry.example/custom-dind:v2", job.Spec.Template.Spec.InitContainers[0].Image)
+}
+
+// TestKubernetesExecutor_Execute_DinD_NoImageOverride_UsesTemplateImage guards the empty-override
+// default: leaving params.DindImage unset must keep the operator-supplied PodTemplate's image
+// rather than blanking it out.
+func TestKubernetesExecutor_Execute_DinD_NoImageOverride_UsesTemplateImage(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	templateNamespace := "choruskube"
+	templateName := "choruskube-agent-pod-template"
+	setupDindTemplate(t, fakeClient, templateNamespace, templateName)
+
+	exec := NewKubernetesExecutor(fakeClient, Config{
+		Namespace:            testNamespace,
+		AgentServiceAccount:  "choruskube-agent",
+		AgentPodTemplateName: templateName,
+		TemplateNamespace:    templateNamespace,
+	})
+
+	params := newTestParams()
+	params.EnableDocker = true
+	// params.DindImage left empty.
+
+	result, err := exec.Execute(context.Background(), params)
+	require.NoError(t, err)
+
+	job, err := fakeClient.BatchV1().Jobs(testNamespace).Get(context.Background(), result.PodName, metav1.GetOptions{})
+	require.NoError(t, err)
+
+	require.Len(t, job.Spec.Template.Spec.InitContainers, 1)
+	assert.Equal(t, "docker:29-dind", job.Spec.Template.Spec.InitContainers[0].Image)
+}
+
 func TestKubernetesExecutor_Execute_DinD_MissingTemplate_ReturnsError(t *testing.T) {
 	fakeClient := fake.NewSimpleClientset()
 

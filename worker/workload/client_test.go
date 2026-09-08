@@ -156,6 +156,7 @@ func TestPrepareWorkload(t *testing.T) {
 	resp := PrepareResponse{
 		Image:            "ghcr.io/test/agent:latest",
 		EnableDocker:     true,
+		DindImage:        "registry.example/custom-dind:v2",
 		ClaudeOAuthToken: "tok_test",
 		Namespace:        "org-ns",
 		ServiceAccount:   "choruskube-agent",
@@ -181,6 +182,7 @@ func TestPrepareWorkload(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "ghcr.io/test/agent:latest", got.Image)
 	assert.True(t, got.EnableDocker)
+	assert.Equal(t, "registry.example/custom-dind:v2", got.DindImage)
 	assert.Equal(t, "org-ns", got.Namespace)
 }
 

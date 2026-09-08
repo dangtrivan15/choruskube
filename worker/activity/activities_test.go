@@ -389,6 +389,47 @@ func TestExecuteAINodeFromSnapshot_CallsExecutor_ForwardsRegistryMirror(t *testi
 	}
 }
 
+// TestExecuteAINodeFromSnapshot_CallsExecutor_ForwardsDindImage verifies the
+// PrepareResponse.DindImage -> ExecutionParams.DindImage translation, which the happy path above
+// deliberately leaves empty to also cover the no-override case.
+func TestExecuteAINodeFromSnapshot_CallsExecutor_ForwardsDindImage(t *testing.T) {
+	var executedParams executor.ExecutionParams
+	mockExec := &mockExecutor{
+		executeFn: func(ctx context.Context, params executor.ExecutionParams) (executor.ExecutionResult, error) {
+			executedParams = params
+			return executor.ExecutionResult{PodName: "agent-abc", JobSecretHash: "hash123"}, nil
+		},
+	}
+	mockClient := &mockWorkloadClient{
+		prepareFn: func(ctx context.Context, p workload.PrepareParams) (*workload.PrepareResponse, error) {
+			return &workload.PrepareResponse{
+				Image:     "ghcr.io/test/agent:latest",
+				DindImage: "registry.example/custom-dind:v2",
+			}, nil
+		},
+		completeFn: func(ctx context.Context, p workload.CompleteParams) error { return nil },
+	}
+
+	acts := NewWithExecutor(mockClient, mockExec, callback.NewHashCache())
+	acts.CallbackURL = "http://worker:9090/api/v1/callback"
+	acts.APIServerURL = "http://api-server.invalid"
+
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           stubbedRun(t),
+			TemplateNodeID:  uuid.New(),
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "irrelevant",
+		},
+	})
+	assert.ErrorIs(t, err, temporalactivity.ErrResultPending)
+
+	assert.Equal(t, "registry.example/custom-dind:v2", executedParams.DindImage)
+}
+
 // TestExecuteAINodeFromSnapshot_CallsExecutor_PrepareErrorPropagates verifies a prepare failure
 // is returned as an ordinary error, not masked as ErrResultPending — and that it short-circuits
 // before ever reaching the executor.

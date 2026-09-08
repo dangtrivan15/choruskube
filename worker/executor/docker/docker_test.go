@@ -370,6 +370,60 @@ func TestDockerExecutor_Execute_StagesRegistryAuthConfig(t *testing.T) {
 	assert.Contains(t, string(data), "regUser")
 }
 
+// TestDockerExecutor_StartDindSidecar_ImageOverride_UsesOverride guards the per-project custom
+// dind image: a non-empty override must be the sidecar's image rather than d.dindImage. It calls
+// startDindSidecar directly (not the full Execute -> waitForDindReady path) so the assertion does
+// not depend on the override image actually running a Docker daemon.
+func TestDockerExecutor_StartDindSidecar_ImageOverride_UsesOverride(t *testing.T) {
+	skipUnlessBindMountWorks(t)
+
+	exec, err := New(Config{
+		Host:       "unix:///var/run/docker.sock",
+		Network:    "bridge",
+		StagingDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+
+	execIDShort := uuid.New().String()[:8]
+	containerID, err := exec.startDindSidecar(context.Background(), execIDShort, "alpine:latest")
+	require.NoError(t, err)
+	defer func() {
+		_ = exec.client.ContainerRemove(context.Background(), containerID, container.RemoveOptions{Force: true})
+		_ = exec.client.VolumeRemove(context.Background(), dindVolumePrefix+execIDShort, true)
+	}()
+
+	inspect, err := exec.client.ContainerInspect(context.Background(), containerID)
+	require.NoError(t, err)
+	assert.Equal(t, "alpine:latest", inspect.Config.Image)
+}
+
+// TestDockerExecutor_StartDindSidecar_NoOverride_FallsBackToConfiguredDefault guards the
+// empty-override default: an empty override must leave d.dindImage as the sidecar's image.
+func TestDockerExecutor_StartDindSidecar_NoOverride_FallsBackToConfiguredDefault(t *testing.T) {
+	skipUnlessBindMountWorks(t)
+
+	exec, err := New(Config{
+		Host:       "unix:///var/run/docker.sock",
+		Network:    "bridge",
+		StagingDir: t.TempDir(),
+		// Configured to alpine so this test asserts the fallback plumbing, not a real dind pull.
+		DindImage: "alpine:latest",
+	})
+	require.NoError(t, err)
+
+	execIDShort := uuid.New().String()[:8]
+	containerID, err := exec.startDindSidecar(context.Background(), execIDShort, "")
+	require.NoError(t, err)
+	defer func() {
+		_ = exec.client.ContainerRemove(context.Background(), containerID, container.RemoveOptions{Force: true})
+		_ = exec.client.VolumeRemove(context.Background(), dindVolumePrefix+execIDShort, true)
+	}()
+
+	inspect, err := exec.client.ContainerInspect(context.Background(), containerID)
+	require.NoError(t, err)
+	assert.Equal(t, "alpine:latest", inspect.Config.Image)
+}
+
 func TestDockerExecutor_Execute_WithDinD_SetsDockerHostEnv(t *testing.T) {
 	skipUnlessBindMountWorks(t)
 

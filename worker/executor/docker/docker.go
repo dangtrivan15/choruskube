@@ -185,7 +185,7 @@ func (d *DockerExecutor) Execute(ctx context.Context, params executor.ExecutionP
 
 	if params.EnableDocker {
 		dindStarted = true
-		dindContainerID, err := d.startDindSidecar(ctx, execIDShort)
+		dindContainerID, err := d.startDindSidecar(ctx, execIDShort, params.DindImage)
 		if err != nil {
 			return executor.ExecutionResult{}, fmt.Errorf("start DinD sidecar: %w", err)
 		}
@@ -403,8 +403,9 @@ func (d *DockerExecutor) findContainer(ctx context.Context, executionID uuid.UUI
 // startDindSidecar launches the Docker-in-Docker sidecar for a DinD-enabled execution and
 // returns its container ID. The sidecar runs privileged (required for the inner daemon) with
 // its own named volume for /var/lib/docker, on the same network as the agent container so the
-// agent can reach it at ck-dind-<execIdShort>:2375.
-func (d *DockerExecutor) startDindSidecar(ctx context.Context, execIDShort string) (string, error) {
+// agent can reach it at ck-dind-<execIdShort>:2375. dindImageOverride, when non-empty, replaces
+// d.dindImage for this one launch (a per-project custom image).
+func (d *DockerExecutor) startDindSidecar(ctx context.Context, execIDShort string, dindImageOverride string) (string, error) {
 	dindName := dindNamePrefix + execIDShort
 	volName := dindVolumePrefix + execIDShort
 
@@ -412,9 +413,14 @@ func (d *DockerExecutor) startDindSidecar(ctx context.Context, execIDShort strin
 		return "", fmt.Errorf("create DinD volume: %w", err)
 	}
 
+	img := dindImageOverride
+	if img == "" {
+		img = d.dindImage
+	}
+
 	// The Engine API's container-create does not auto-pull, so pull the sidecar image first
 	// (best-effort, like the agent image) -- otherwise a fresh daemon 404s with "No such image".
-	d.pullImageBestEffort(ctx, d.dindImage, "")
+	d.pullImageBestEffort(ctx, img, "")
 
 	healthcheck := &container.HealthConfig{
 		Test:        []string{"CMD", "docker", "version"},
@@ -426,7 +432,7 @@ func (d *DockerExecutor) startDindSidecar(ctx context.Context, execIDShort strin
 
 	resp, err := d.client.ContainerCreate(ctx,
 		&container.Config{
-			Image:       d.dindImage,
+			Image:       img,
 			Env:         []string{"DOCKER_TLS_CERTDIR="},
 			Labels:      map[string]string{labelAppKey: labelApp, "choruskube/dind": "true"},
 			Healthcheck: healthcheck,

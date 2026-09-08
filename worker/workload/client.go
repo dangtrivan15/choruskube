@@ -231,8 +231,11 @@ type RegistryMirror struct {
 // PrepareResponse is what a Worker needs to launch a workload itself, resolved server-side from
 // the stored graph snapshot and DB-held secrets.
 type PrepareResponse struct {
-	Image            string               `json:"image"`
-	EnableDocker     bool                 `json:"enableDocker"`
+	Image        string `json:"image"`
+	EnableDocker bool   `json:"enableDocker"`
+	// DindImage is the per-project custom dind sidecar image ref resolved server-side. Empty
+	// means no override -- the executor falls back to its own configured default.
+	DindImage        string               `json:"dindImage"`
 	ClaudeOAuthToken string               `json:"claudeOAuthToken"`
 	GitHubTokenURL   string               `json:"githubTokenUrl"`
 	Registry         *RegistryCredentials `json:"registryCredentials"`
