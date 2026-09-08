@@ -49,6 +49,7 @@ public class WorkloadService {
     private final String apiServerUrl;
     private final WorkloadRegistryMirrorResolver registryMirrorResolver;
     private final WorkloadNamespaceResolver namespaceResolver;
+    private final WorkloadRegistryCredentialResolver registryCredentialResolver;
 
     public WorkloadService(
             NodeExecutionRepository execRepo,
@@ -61,7 +62,8 @@ public class WorkloadService {
             AiCredentialResolver aiCredentialResolver,
             @Qualifier("executorApiServerUrl") String apiServerUrl,
             ObjectProvider<WorkloadRegistryMirrorResolver> registryMirrorResolverProvider,
-            ObjectProvider<WorkloadNamespaceResolver> namespaceResolverProvider) {
+            ObjectProvider<WorkloadNamespaceResolver> namespaceResolverProvider,
+            ObjectProvider<WorkloadRegistryCredentialResolver> registryCredentialResolverProvider) {
         this.execRepo = execRepo;
         this.eventPublisher = eventPublisher;
         this.runRepo = runRepo;
@@ -73,6 +75,8 @@ public class WorkloadService {
         this.apiServerUrl = apiServerUrl;
         this.registryMirrorResolver = registryMirrorResolverProvider.getIfAvailable(NoRegistryMirrorResolver::new);
         this.namespaceResolver = namespaceResolverProvider.getIfAvailable(NoWorkloadNamespaceResolver::new);
+        this.registryCredentialResolver =
+                registryCredentialResolverProvider.getIfAvailable(NoRegistryCredentialResolver::new);
     }
 
     /**
@@ -113,7 +117,7 @@ public class WorkloadService {
                 params.dindImage(),
                 claudeOAuthToken,
                 githubTokenUrl,
-                null,
+                registryCredentialResolver.resolve(runId),
                 namespace,
                 params.identity() != null ? params.identity().name() : null,
                 mirror == null
