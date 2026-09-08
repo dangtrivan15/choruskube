@@ -87,12 +87,15 @@ jobs:
           echo "::add-mask::$PUBLIC_REGISTRY"
           echo "PUBLIC_REGISTRY=$PUBLIC_REGISTRY" >> "$GITHUB_ENV"
 
-      - name: Set up Docker Buildx
+      - name: Export BuildKit endpoint
+        run: |
+          echo "::add-mask::$BUILDKIT_ENDPOINT"
+          echo "BUILDKIT_ENDPOINT=$BUILDKIT_ENDPOINT" >> "$GITHUB_ENV"
+      - name: Set up Docker Buildx (shared remote builder)
         uses: docker/setup-buildx-action@v3
         with:
-          buildkitd-config-inline: |
-            [registry."${{ env.PUBLIC_REGISTRY }}"]
-              http = true
+          driver: remote
+          endpoint: tcp://${{ env.BUILDKIT_ENDPOINT }}
 
       # Write the registry auth to config.json so buildkit uses it for the push
       # below, avoiding a separate `docker login` step.
@@ -113,12 +116,10 @@ jobs:
           tags: |
             ${{ env.PUBLIC_REGISTRY }}/orchestrator:latest
             ${{ env.PUBLIC_REGISTRY }}/orchestrator:${{ github.sha }}
-          cache-from: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/orchestrator:buildcache
-          cache-to: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/orchestrator:buildcache,mode=max
 
   build-worker:
-    needs: detect-changes
-    if: needs.detect-changes.outputs.worker == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch'
+    needs: [detect-changes, build-orchestrator]
+    if: ${{ !cancelled() && (needs.detect-changes.outputs.worker == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch') }}
     runs-on: arc-runner-choruskube
     concurrency:
       group: build-worker
@@ -131,12 +132,15 @@ jobs:
           echo "::add-mask::$PUBLIC_REGISTRY"
           echo "PUBLIC_REGISTRY=$PUBLIC_REGISTRY" >> "$GITHUB_ENV"
 
-      - name: Set up Docker Buildx
+      - name: Export BuildKit endpoint
+        run: |
+          echo "::add-mask::$BUILDKIT_ENDPOINT"
+          echo "BUILDKIT_ENDPOINT=$BUILDKIT_ENDPOINT" >> "$GITHUB_ENV"
+      - name: Set up Docker Buildx (shared remote builder)
         uses: docker/setup-buildx-action@v3
         with:
-          buildkitd-config-inline: |
-            [registry."${{ env.PUBLIC_REGISTRY }}"]
-              http = true
+          driver: remote
+          endpoint: tcp://${{ env.BUILDKIT_ENDPOINT }}
 
       - name: Authenticate to the public registry (core)
         run: |
@@ -155,12 +159,10 @@ jobs:
           tags: |
             ${{ env.PUBLIC_REGISTRY }}/worker:latest
             ${{ env.PUBLIC_REGISTRY }}/worker:${{ github.sha }}
-          cache-from: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/worker:buildcache
-          cache-to: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/worker:buildcache,mode=max
 
   build-api-server:
-    needs: detect-changes
-    if: needs.detect-changes.outputs.api-server == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch'
+    needs: [detect-changes, build-worker]
+    if: ${{ !cancelled() && (needs.detect-changes.outputs.api-server == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch') }}
     runs-on: arc-runner-choruskube
     concurrency:
       group: build-api-server
@@ -173,12 +175,15 @@ jobs:
           echo "::add-mask::$PUBLIC_REGISTRY"
           echo "PUBLIC_REGISTRY=$PUBLIC_REGISTRY" >> "$GITHUB_ENV"
 
-      - name: Set up Docker Buildx
+      - name: Export BuildKit endpoint
+        run: |
+          echo "::add-mask::$BUILDKIT_ENDPOINT"
+          echo "BUILDKIT_ENDPOINT=$BUILDKIT_ENDPOINT" >> "$GITHUB_ENV"
+      - name: Set up Docker Buildx (shared remote builder)
         uses: docker/setup-buildx-action@v3
         with:
-          buildkitd-config-inline: |
-            [registry."${{ env.PUBLIC_REGISTRY }}"]
-              http = true
+          driver: remote
+          endpoint: tcp://${{ env.BUILDKIT_ENDPOINT }}
 
       - name: Authenticate to the public registry (core)
         run: |
@@ -197,12 +202,10 @@ jobs:
           tags: |
             ${{ env.PUBLIC_REGISTRY }}/api-server:latest
             ${{ env.PUBLIC_REGISTRY }}/api-server:${{ github.sha }}
-          cache-from: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/api-server:buildcache
-          cache-to: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/api-server:buildcache,mode=max
 
   build-web-ui:
-    needs: detect-changes
-    if: needs.detect-changes.outputs.web-ui == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch'
+    needs: [detect-changes, build-api-server]
+    if: ${{ !cancelled() && (needs.detect-changes.outputs.web-ui == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch') }}
     runs-on: arc-runner-choruskube
     concurrency:
       group: build-web-ui
@@ -215,12 +218,15 @@ jobs:
           echo "::add-mask::$PUBLIC_REGISTRY"
           echo "PUBLIC_REGISTRY=$PUBLIC_REGISTRY" >> "$GITHUB_ENV"
 
-      - name: Set up Docker Buildx
+      - name: Export BuildKit endpoint
+        run: |
+          echo "::add-mask::$BUILDKIT_ENDPOINT"
+          echo "BUILDKIT_ENDPOINT=$BUILDKIT_ENDPOINT" >> "$GITHUB_ENV"
+      - name: Set up Docker Buildx (shared remote builder)
         uses: docker/setup-buildx-action@v3
         with:
-          buildkitd-config-inline: |
-            [registry."${{ env.PUBLIC_REGISTRY }}"]
-              http = true
+          driver: remote
+          endpoint: tcp://${{ env.BUILDKIT_ENDPOINT }}
 
       - name: Authenticate to the public registry (core)
         run: |
@@ -239,12 +245,10 @@ jobs:
           tags: |
             ${{ env.PUBLIC_REGISTRY }}/web-ui:latest
             ${{ env.PUBLIC_REGISTRY }}/web-ui:${{ github.sha }}
-          cache-from: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/web-ui:buildcache
-          cache-to: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/web-ui:buildcache,mode=max
 
   build-claude-code:
-    needs: detect-changes
-    if: needs.detect-changes.outputs.claude-code == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch'
+    needs: [detect-changes, build-web-ui]
+    if: ${{ !cancelled() && (needs.detect-changes.outputs.claude-code == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch') }}
     runs-on: arc-runner-choruskube
     concurrency:
       group: build-claude-code
@@ -257,12 +261,15 @@ jobs:
           echo "::add-mask::$PUBLIC_REGISTRY"
           echo "PUBLIC_REGISTRY=$PUBLIC_REGISTRY" >> "$GITHUB_ENV"
 
-      - name: Set up Docker Buildx
+      - name: Export BuildKit endpoint
+        run: |
+          echo "::add-mask::$BUILDKIT_ENDPOINT"
+          echo "BUILDKIT_ENDPOINT=$BUILDKIT_ENDPOINT" >> "$GITHUB_ENV"
+      - name: Set up Docker Buildx (shared remote builder)
         uses: docker/setup-buildx-action@v3
         with:
-          buildkitd-config-inline: |
-            [registry."${{ env.PUBLIC_REGISTRY }}"]
-              http = true
+          driver: remote
+          endpoint: tcp://${{ env.BUILDKIT_ENDPOINT }}
 
       - name: Authenticate to the public registry (core)
         run: |
@@ -281,8 +288,6 @@ jobs:
           tags: |
             ${{ env.PUBLIC_REGISTRY }}/claude-code:latest
             ${{ env.PUBLIC_REGISTRY }}/claude-code:${{ github.sha }}
-          cache-from: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/claude-code:buildcache
-          cache-to: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/claude-code:buildcache,mode=max
 
   build-choruskube-dev:
     needs: [detect-changes, build-claude-code]
@@ -304,12 +309,15 @@ jobs:
           echo "::add-mask::$PUBLIC_REGISTRY"
           echo "PUBLIC_REGISTRY=$PUBLIC_REGISTRY" >> "$GITHUB_ENV"
 
-      - name: Set up Docker Buildx
+      - name: Export BuildKit endpoint
+        run: |
+          echo "::add-mask::$BUILDKIT_ENDPOINT"
+          echo "BUILDKIT_ENDPOINT=$BUILDKIT_ENDPOINT" >> "$GITHUB_ENV"
+      - name: Set up Docker Buildx (shared remote builder)
         uses: docker/setup-buildx-action@v3
         with:
-          buildkitd-config-inline: |
-            [registry."${{ env.PUBLIC_REGISTRY }}"]
-              http = true
+          driver: remote
+          endpoint: tcp://${{ env.BUILDKIT_ENDPOINT }}
 
       - name: Authenticate to the public registry (core)
         run: |
@@ -337,13 +345,11 @@ jobs:
           tags: |
             ${{ env.PUBLIC_REGISTRY }}/choruskube-dev:latest
             ${{ env.PUBLIC_REGISTRY }}/choruskube-dev:${{ github.sha }}
-          cache-from: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/choruskube-dev:buildcache
-          cache-to: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/choruskube-dev:buildcache,mode=max
 
   build-choruskube-dind:
-    needs: detect-changes
+    needs: [detect-changes, build-choruskube-dev]
     # FROM docker:29-dind (public), unlike choruskube-dev -- no claude-code base dependency.
-    if: needs.detect-changes.outputs.choruskube-dind == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch'
+    if: ${{ !cancelled() && (needs.detect-changes.outputs.choruskube-dind == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch') }}
     runs-on: arc-runner-choruskube
     concurrency:
       group: build-choruskube-dind
@@ -356,12 +362,15 @@ jobs:
           echo "::add-mask::$PUBLIC_REGISTRY"
           echo "PUBLIC_REGISTRY=$PUBLIC_REGISTRY" >> "$GITHUB_ENV"
 
-      - name: Set up Docker Buildx
+      - name: Export BuildKit endpoint
+        run: |
+          echo "::add-mask::$BUILDKIT_ENDPOINT"
+          echo "BUILDKIT_ENDPOINT=$BUILDKIT_ENDPOINT" >> "$GITHUB_ENV"
+      - name: Set up Docker Buildx (shared remote builder)
         uses: docker/setup-buildx-action@v3
         with:
-          buildkitd-config-inline: |
-            [registry."${{ env.PUBLIC_REGISTRY }}"]
-              http = true
+          driver: remote
+          endpoint: tcp://${{ env.BUILDKIT_ENDPOINT }}
 
       # Warm Docker cache: OUT must stay inside the build context below, or the
       # Dockerfile's PRELOAD_TAR COPY can't reach it. Runs against the runner's own
@@ -391,5 +400,3 @@ jobs:
           tags: |
             ${{ env.PUBLIC_REGISTRY }}/choruskube-dind:latest
             ${{ env.PUBLIC_REGISTRY }}/choruskube-dind:${{ github.sha }}
-          cache-from: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/choruskube-dind:buildcache
-          cache-to: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/choruskube-dind:buildcache,mode=max
