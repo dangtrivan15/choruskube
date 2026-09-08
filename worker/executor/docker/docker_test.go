@@ -136,6 +136,27 @@ func newTestExecutor(t *testing.T) *DockerExecutor {
 	return exec
 }
 
+func TestNew_DindImage_DefaultsWhenUnset(t *testing.T) {
+	exec, err := New(Config{
+		Host:       "unix:///var/run/docker.sock",
+		Network:    "bridge",
+		StagingDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, defaultDindImage, exec.dindImage)
+}
+
+func TestNew_DindImage_UsesConfigOverride(t *testing.T) {
+	exec, err := New(Config{
+		Host:       "unix:///var/run/docker.sock",
+		Network:    "bridge",
+		StagingDir: t.TempDir(),
+		DindImage:  "registry.example.com/choruskube-dind:latest",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "registry.example.com/choruskube-dind:latest", exec.dindImage)
+}
+
 func TestDockerExecutor_Execute_CreatesContainer(t *testing.T) {
 	skipUnlessBindMountWorks(t)
 

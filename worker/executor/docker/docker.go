@@ -43,7 +43,7 @@ const (
 	labelExecID             = "choruskube/exec-id"
 	labelTmpDir             = "choruskube/tmp-dir"
 	labelHasDind            = "choruskube/has-dind"
-	dindImage               = "docker:29-dind"
+	defaultDindImage        = "docker:29-dind"
 	dindNamePrefix          = "ck-dind-"
 	dindVolumePrefix        = "ck-dind-data-"
 	defaultNetwork          = "choruskube"
@@ -75,6 +75,10 @@ type Config struct {
 	// DindReadyTimeout bounds how long Execute waits for a DinD sidecar's healthcheck to pass
 	// before failing the execution. Zero defaults to 30s.
 	DindReadyTimeout time.Duration
+	// DindImage is the image started as the DinD sidecar. Empty falls back to the stock
+	// "docker:29-dind" -- set it to point at a warm-preloaded variant (e.g. choruskube-dind)
+	// without changing code.
+	DindImage string
 }
 
 // DockerExecutor implements executor.Executor by launching agent workloads as Docker
@@ -84,6 +88,7 @@ type DockerExecutor struct {
 	network          string
 	stagingDir       string
 	dindReadyTimeout time.Duration
+	dindImage        string
 }
 
 // New returns a DockerExecutor connected to the Docker daemon described by cfg.
@@ -105,12 +110,17 @@ func New(cfg Config) (*DockerExecutor, error) {
 	if dindTimeout == 0 {
 		dindTimeout = defaultDindReadyTimeout
 	}
+	dindImg := cfg.DindImage
+	if dindImg == "" {
+		dindImg = defaultDindImage
+	}
 
 	return &DockerExecutor{
 		client:           c,
 		network:          network,
 		stagingDir:       cfg.StagingDir,
 		dindReadyTimeout: dindTimeout,
+		dindImage:        dindImg,
 	}, nil
 }
 
@@ -404,7 +414,7 @@ func (d *DockerExecutor) startDindSidecar(ctx context.Context, execIDShort strin
 
 	// The Engine API's container-create does not auto-pull, so pull the sidecar image first
 	// (best-effort, like the agent image) -- otherwise a fresh daemon 404s with "No such image".
-	d.pullImageBestEffort(ctx, dindImage, "")
+	d.pullImageBestEffort(ctx, d.dindImage, "")
 
 	healthcheck := &container.HealthConfig{
 		Test:        []string{"CMD", "docker", "version"},
@@ -416,7 +426,7 @@ func (d *DockerExecutor) startDindSidecar(ctx context.Context, execIDShort strin
 
 	resp, err := d.client.ContainerCreate(ctx,
 		&container.Config{
-			Image:       dindImage,
+			Image:       d.dindImage,
 			Env:         []string{"DOCKER_TLS_CERTDIR="},
 			Labels:      map[string]string{labelAppKey: labelApp, "choruskube/dind": "true"},
 			Healthcheck: healthcheck,
