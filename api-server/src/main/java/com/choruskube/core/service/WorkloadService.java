@@ -110,6 +110,7 @@ public class WorkloadService {
         return new PrepareWorkloadResponse(
                 params.image(),
                 params.enableDocker(),
+                params.dindImage(),
                 claudeOAuthToken,
                 githubTokenUrl,
                 null,
@@ -205,6 +206,9 @@ public class WorkloadService {
 
         boolean enableDocker = snapshot.path("enable_docker").asBoolean(false);
 
+        JsonNode dindNode = snapshot.path("dind_image");
+        String dindImage = dindNode.isMissingNode() || dindNode.isNull() ? null : dindNode.asText();
+
         List<CredentialSpec> nodeCredentials = List.of();
         if (targetNode.has("secrets") && targetNode.get("secrets").isArray()) {
             List<CredentialSpec> creds = new ArrayList<>();
@@ -221,6 +225,14 @@ public class WorkloadService {
         IdentitySpec identity = new IdentitySpec(defaultServiceAccount, 1000, false);
 
         return new ExecutionParams(
-                nodeExecId, runId, templateNodeId, image, req.configJson(), enableDocker, nodeCredentials, identity);
+                nodeExecId,
+                runId,
+                templateNodeId,
+                image,
+                req.configJson(),
+                enableDocker,
+                dindImage,
+                nodeCredentials,
+                identity);
     }
 }

@@ -54,7 +54,15 @@ class WorkerWorkloadControllerTest {
     @Test
     void prepareAuthorizesTheRunThenDelegates() throws Exception {
         var response = new PrepareWorkloadResponse(
-                "agent:latest", false, "oauth-token", "http://api/github-token", null, null, "choruskube-agent", null);
+                "agent:latest",
+                false,
+                null,
+                "oauth-token",
+                "http://api/github-token",
+                null,
+                null,
+                "choruskube-agent",
+                null);
         when(workloadService.prepareWorkload(eq(runId), eq(nodeExecId), any())).thenReturn(response);
 
         mvc.perform(post(path("/prepare"))

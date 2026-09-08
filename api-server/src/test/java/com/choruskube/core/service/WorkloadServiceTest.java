@@ -642,6 +642,95 @@ class WorkloadServiceTest {
     }
 
     @Test
+    void prepareWorkload_returnsDindImage_whenSnapshotHasOne() {
+        UUID runId = UUID.randomUUID();
+        UUID nodeExecId = UUID.randomUUID();
+        UUID templateNodeId = UUID.randomUUID();
+        UUID graphTemplateId = UUID.randomUUID();
+
+        var nodeExec = new NodeExecution();
+        nodeExec.setId(nodeExecId);
+        nodeExec.setWorkflowRunId(runId);
+        nodeExec.setTemplateNodeId(templateNodeId);
+        nodeExec.setStatus(NodeExecutionStatus.pending);
+
+        var workflowRun = new WorkflowRun();
+        workflowRun.setId(runId);
+        workflowRun.setGraphTemplateId(graphTemplateId);
+        workflowRun.setInputs("{}");
+
+        String snapshotJson = """
+                {
+                  "nodes": [{
+                    "template_node_id": "%s",
+                    "label": "Docker Node",
+                    "executor_type": "ai",
+                    "image": "test:latest",
+                    "secrets": [],
+                    "is_entrypoint": true
+                  }],
+                  "edges": [],
+                  "inputs": {},
+                  "enable_docker": true,
+                  "dind_image": "registry.example/foo-dind:latest"
+                }
+                """.formatted(templateNodeId);
+
+        when(execRepo.findById(nodeExecId)).thenReturn(Optional.of(nodeExec));
+        when(runRepo.findById(runId)).thenReturn(Optional.of(workflowRun));
+        when(snapshotBuilder.buildSnapshotForRun(workflowRun)).thenReturn(snapshotJson);
+        when(aiCredentialResolver.resolveOauthToken(runId)).thenReturn("token");
+
+        var request = new CreateWorkloadRequest(templateNodeId, Map.of());
+        var response = service.prepareWorkload(runId, nodeExecId, request);
+
+        assertEquals("registry.example/foo-dind:latest", response.dindImage());
+    }
+
+    @Test
+    void prepareWorkload_returnsNullDindImage_whenSnapshotHasNone() {
+        UUID runId = UUID.randomUUID();
+        UUID nodeExecId = UUID.randomUUID();
+        UUID templateNodeId = UUID.randomUUID();
+        UUID graphTemplateId = UUID.randomUUID();
+
+        var nodeExec = new NodeExecution();
+        nodeExec.setId(nodeExecId);
+        nodeExec.setWorkflowRunId(runId);
+        nodeExec.setTemplateNodeId(templateNodeId);
+        nodeExec.setStatus(NodeExecutionStatus.pending);
+
+        var workflowRun = new WorkflowRun();
+        workflowRun.setId(runId);
+        workflowRun.setGraphTemplateId(graphTemplateId);
+        workflowRun.setInputs("{}");
+
+        String snapshotJson = """
+                {
+                  "nodes": [{
+                    "template_node_id": "%s",
+                    "label": "Test Node",
+                    "executor_type": "ai",
+                    "image": "test-image:latest",
+                    "secrets": [],
+                    "is_entrypoint": true
+                  }],
+                  "edges": [],
+                  "inputs": {}
+                }
+                """.formatted(templateNodeId);
+
+        when(execRepo.findById(nodeExecId)).thenReturn(Optional.of(nodeExec));
+        when(runRepo.findById(runId)).thenReturn(Optional.of(workflowRun));
+        when(snapshotBuilder.buildSnapshotForRun(workflowRun)).thenReturn(snapshotJson);
+        when(aiCredentialResolver.resolveOauthToken(runId)).thenReturn("oauth-secret");
+
+        var response = service.prepareWorkload(runId, nodeExecId, new CreateWorkloadRequest(templateNodeId, Map.of()));
+
+        assertNull(response.dindImage());
+    }
+
+    @Test
     void completeWorkload_recordsPodNameHashAndStatus() {
         UUID runId = UUID.randomUUID();
         UUID nodeExecId = UUID.randomUUID();

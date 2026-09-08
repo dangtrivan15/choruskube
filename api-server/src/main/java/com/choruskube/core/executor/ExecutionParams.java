@@ -11,5 +11,6 @@ public record ExecutionParams(
         String image,
         Map<String, Object> configJson,
         boolean enableDocker,
+        String dindImage,
         List<CredentialSpec> nodeCredentials,
         IdentitySpec identity) {}

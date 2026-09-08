@@ -115,6 +115,59 @@ public class GraphSnapshotBuilderTest extends BaseTest {
     }
 
     @Test
+    void buildSnapshotForRunIncludesDindImageWhenGitRepoHasOne() throws Exception {
+        var baseTemplate = templateRepo
+                .findFirstByGraphIdOrderByVersionDesc(GraphIds.FEATURE_DEVELOPMENT)
+                .orElseThrow();
+
+        GitRepo gitRepo = new GitRepo();
+        gitRepo.setUrl("https://github.com/dind-image-test/repo");
+        gitRepo.setName(RepoNameUtil.deriveOwnerRepoName("https://github.com/dind-image-test/repo"));
+        gitRepo.setTestCommand("t");
+        gitRepo.setAgentImage("i");
+        gitRepo.setSecrets("[]");
+        gitRepo.setEnableDocker(true);
+        gitRepo.setDindImage("registry.example/foo-dind:latest");
+        gitRepo = gitRepoRepo.save(gitRepo);
+
+        WorkflowRun run = new WorkflowRun();
+        run.setGraphTemplateId(baseTemplate.getId());
+        run.setInputs("{\"feature_request\":\"test\",\"software_project_id\":\"" + gitRepo.getId() + "\"}");
+        run = runRepo.save(run);
+
+        String snapshot = snapshotBuilder.buildSnapshotForRun(run);
+        JsonNode snapshotJson = objectMapper.readTree(snapshot);
+
+        assertThat(snapshotJson.get("dind_image").asText()).isEqualTo("registry.example/foo-dind:latest");
+    }
+
+    @Test
+    void buildSnapshotForRunOmitsDindImageWhenGitRepoHasNone() throws Exception {
+        var baseTemplate = templateRepo
+                .findFirstByGraphIdOrderByVersionDesc(GraphIds.FEATURE_DEVELOPMENT)
+                .orElseThrow();
+
+        GitRepo gitRepo = new GitRepo();
+        gitRepo.setUrl("https://github.com/no-dind-image-test/repo");
+        gitRepo.setName(RepoNameUtil.deriveOwnerRepoName("https://github.com/no-dind-image-test/repo"));
+        gitRepo.setTestCommand("t");
+        gitRepo.setAgentImage("i");
+        gitRepo.setSecrets("[]");
+        gitRepo.setEnableDocker(true);
+        gitRepo = gitRepoRepo.save(gitRepo);
+
+        WorkflowRun run = new WorkflowRun();
+        run.setGraphTemplateId(baseTemplate.getId());
+        run.setInputs("{\"feature_request\":\"test\",\"software_project_id\":\"" + gitRepo.getId() + "\"}");
+        run = runRepo.save(run);
+
+        String snapshot = snapshotBuilder.buildSnapshotForRun(run);
+        JsonNode snapshotJson = objectMapper.readTree(snapshot);
+
+        assertThat(snapshotJson.has("dind_image")).isFalse();
+    }
+
+    @Test
     void buildSnapshotForRunWithNoGitRepoStillBuilds() throws Exception {
         var baseTemplate = templateRepo
                 .findFirstByGraphIdOrderByVersionDesc(GraphIds.FEATURE_DEVELOPMENT)
