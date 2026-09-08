@@ -117,7 +117,7 @@ public class WorkloadService {
                 params.dindImage(),
                 claudeOAuthToken,
                 githubTokenUrl,
-                registryCredentialResolver.resolve(runId),
+                resolveRegistryCredentialsOrNull(runId),
                 namespace,
                 params.identity() != null ? params.identity().name() : null,
                 mirror == null
@@ -138,6 +138,25 @@ public class WorkloadService {
             return (ns == null || ns.isEmpty()) ? null : ns;
         } catch (RuntimeException e) {
             log.debug("No workload namespace resolved for run {}; launching namespace-less: {}", runId, e.toString());
+            return null;
+        }
+    }
+
+    /**
+     * Resolves the run's image-pull credential, returning {@code null} when none is resolvable.
+     * Mirrors {@link #resolveNamespaceOrNull}: a deployment-specific resolver bean may derive a tenant
+     * from the run and throw on a run with no tenant row (e.g. an e2e run), which must still prepare —
+     * so a throwing resolver degrades to an anonymous pull rather than hard-failing every launch,
+     * keeping it best-effort.
+     */
+    private PrepareWorkloadResponse.RegistryCredentialsDto resolveRegistryCredentialsOrNull(UUID runId) {
+        try {
+            return registryCredentialResolver.resolve(runId);
+        } catch (RuntimeException e) {
+            log.debug(
+                    "No registry credential resolved for run {}; launching without a pull secret: {}",
+                    runId,
+                    e.toString());
             return null;
         }
     }

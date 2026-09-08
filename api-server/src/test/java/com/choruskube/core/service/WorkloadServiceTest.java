@@ -367,6 +367,54 @@ class WorkloadServiceTest {
     }
 
     @Test
+    void prepareWorkload_launchesWithoutPullSecret_whenCredentialResolverThrows() {
+        // A deployment-specific resolver bean may derive a tenant from the run and throw
+        // (IllegalStateException) on a run with no tenant row (e.g. an e2e run); prepareWorkload must
+        // degrade to an anonymous pull, not hard-fail every launch — mirroring the namespace guard.
+        UUID runId = UUID.randomUUID();
+        UUID nodeExecId = UUID.randomUUID();
+        UUID templateNodeId = UUID.randomUUID();
+        UUID graphTemplateId = UUID.randomUUID();
+
+        var nodeExec = new NodeExecution();
+        nodeExec.setId(nodeExecId);
+        nodeExec.setWorkflowRunId(runId);
+        nodeExec.setTemplateNodeId(templateNodeId);
+        nodeExec.setStatus(NodeExecutionStatus.pending);
+
+        var workflowRun = new WorkflowRun();
+        workflowRun.setId(runId);
+        workflowRun.setGraphTemplateId(graphTemplateId);
+        workflowRun.setInputs("{}");
+
+        String snapshotJson = """
+                {
+                  "nodes": [{
+                    "template_node_id": "%s",
+                    "label": "Test Node",
+                    "executor_type": "ai",
+                    "image": "test-image:latest",
+                    "secrets": [],
+                    "is_entrypoint": true
+                  }],
+                  "edges": [],
+                  "inputs": {}
+                }
+                """.formatted(templateNodeId);
+
+        when(execRepo.findById(nodeExecId)).thenReturn(Optional.of(nodeExec));
+        when(runRepo.findById(runId)).thenReturn(Optional.of(workflowRun));
+        when(snapshotBuilder.buildSnapshotForRun(workflowRun)).thenReturn(snapshotJson);
+        when(aiCredentialResolver.resolveOauthToken(runId)).thenReturn("oauth-secret");
+        when(registryCredentialResolver.resolve(runId))
+                .thenThrow(new IllegalStateException("run has no ownership row"));
+
+        var response = service.prepareWorkload(runId, nodeExecId, new CreateWorkloadRequest(templateNodeId, Map.of()));
+
+        assertNull(response.registryCredentials());
+    }
+
+    @Test
     void prepareWorkload_returnsRegistryMirror_whenResolverProvidesOne() {
         UUID runId = UUID.randomUUID();
         UUID nodeExecId = UUID.randomUUID();

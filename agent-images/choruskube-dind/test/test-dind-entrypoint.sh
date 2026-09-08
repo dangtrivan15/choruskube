@@ -96,7 +96,7 @@ echo "$OUT4" | grep -q "preload: FATAL" \
 # instead of re-baking (and shadowing) the base's archive.
 BIN5="$TESTDIR/bin5"
 make_docker_stub "$BIN5" 0 0
-mkdir -p "$TESTDIR/preload5"; : > "$TESTDIR/preload5/stack.tar"; : > "$TESTDIR/preload5/cloud-stack.tar"
+mkdir -p "$TESTDIR/preload5"; : > "$TESTDIR/preload5/stack.tar"; : > "$TESTDIR/preload5/overlay-stack.tar"
 OUT5=$(PATH="$BIN5:$PATH" PRELOAD_DIR="$TESTDIR/preload5" \
   bash -c 'source "'"$ENTRYPOINT"'" --preload-only 2>&1')
 [ "$(echo "$OUT5" | grep -c "preload: loaded")" -eq 2 ] \
