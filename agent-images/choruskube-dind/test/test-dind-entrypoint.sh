@@ -37,7 +37,7 @@ BIN1="$TESTDIR/bin1"
 make_docker_stub "$BIN1" 0 0
 mkdir -p "$TESTDIR/preload1"; : > "$TESTDIR/preload1/stack.tar"
 MARKER1="$TESTDIR/preload1/ready"
-OUT1=$(PATH="$BIN1:$PATH" PRELOAD_ARCHIVE="$TESTDIR/preload1/stack.tar" READY_MARKER="$MARKER1" \
+OUT1=$(PATH="$BIN1:$PATH" PRELOAD_DIR="$TESTDIR/preload1" READY_MARKER="$MARKER1" \
   bash -c 'source "'"$ENTRYPOINT"'" --preload-only 2>&1')
 echo "$OUT1" | grep -q "preload: loaded" \
   && ok "archive present + daemon reachable + load succeeds: loads" \
@@ -46,9 +46,10 @@ echo "$OUT1" | grep -q "preload: loaded" \
   && ok "archive present + load succeeds: readiness marker created" \
   || fail "archive present + load succeeds: readiness marker created"
 
-# --- Test 2: archive absent -> no-op, no failure ---
+# --- Test 2: no archives in the dir -> no-op, no failure ---
 MARKER2="$TESTDIR/preload1/ready2"
-OUT2=$(PATH="$BIN1:$PATH" PRELOAD_ARCHIVE="$TESTDIR/preload1/missing.tar" READY_MARKER="$MARKER2" \
+mkdir -p "$TESTDIR/preload2"  # empty: contains no *.tar
+OUT2=$(PATH="$BIN1:$PATH" PRELOAD_DIR="$TESTDIR/preload2" READY_MARKER="$MARKER2" \
   bash -c 'source "'"$ENTRYPOINT"'" --preload-only 2>&1')
 echo "$OUT2" | grep -q "preload: none" \
   && ok "archive absent: no-op" \
@@ -61,7 +62,7 @@ BIN3="$TESTDIR/bin3"
 make_docker_stub "$BIN3" 0 1
 mkdir -p "$TESTDIR/preload3"; : > "$TESTDIR/preload3/stack.tar"
 set +e
-OUT3=$(PATH="$BIN3:$PATH" PRELOAD_ARCHIVE="$TESTDIR/preload3/stack.tar" READY_MARKER="$TESTDIR/preload3/ready" \
+OUT3=$(PATH="$BIN3:$PATH" PRELOAD_DIR="$TESTDIR/preload3" READY_MARKER="$TESTDIR/preload3/ready" \
   bash -c 'source "'"$ENTRYPOINT"'" --preload-only 2>&1')
 RC3=$?
 set -e
@@ -87,7 +88,7 @@ EOF
 chmod +x "$BIN4/sleep"
 mkdir -p "$TESTDIR/preload4"; : > "$TESTDIR/preload4/stack.tar"
 set +e
-OUT4=$(PATH="$BIN4:$PATH" PRELOAD_ARCHIVE="$TESTDIR/preload4/stack.tar" READY_MARKER="$TESTDIR/preload4/ready" \
+OUT4=$(PATH="$BIN4:$PATH" PRELOAD_DIR="$TESTDIR/preload4" READY_MARKER="$TESTDIR/preload4/ready" \
   bash -c 'source "'"$ENTRYPOINT"'" --preload-only 2>&1')
 RC4=$?
 set -e
@@ -96,6 +97,19 @@ set -e
 echo "$OUT4" | grep -q "preload: FATAL" \
   && ok "daemon never reachable: FATAL message on stderr" \
   || fail "daemon never reachable: FATAL message on stderr (got: $OUT4)"
+
+# --- Test 5: multiple archives in the dir -> each loads (base + overlay additivity) ---
+# The additive-preload contract: a base image's stack.tar and an image-built-FROM-it's
+# own archive both sit in the dir, and each loads — so an overlay bakes only its delta
+# instead of re-baking (and shadowing) the base's archive.
+BIN5="$TESTDIR/bin5"
+make_docker_stub "$BIN5" 0 0
+mkdir -p "$TESTDIR/preload5"; : > "$TESTDIR/preload5/stack.tar"; : > "$TESTDIR/preload5/cloud-stack.tar"
+OUT5=$(PATH="$BIN5:$PATH" PRELOAD_DIR="$TESTDIR/preload5" READY_MARKER="$TESTDIR/preload5/ready" \
+  bash -c 'source "'"$ENTRYPOINT"'" --preload-only 2>&1')
+[ "$(echo "$OUT5" | grep -c "preload: loaded")" -eq 2 ] \
+  && ok "multiple archives: every *.tar loads" \
+  || fail "multiple archives: every *.tar loads (got: $OUT5)"
 
 # --- Summary ---
 echo ""

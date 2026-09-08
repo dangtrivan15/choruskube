@@ -22,9 +22,11 @@ FROM preload-${PRELOAD_MODE:-empty} AS preload-src
 FROM docker:29-dind
 
 # Warm Docker cache: no-op (empty directory) on a non-warm build; entrypoint.sh's
-# load_preload_archive() treats a missing stack.tar as a cold-cache no-op, not a
-# failure. The base image's VOLUME /var/lib/docker doesn't cover this path, so the
-# baked file survives independently of the container's docker storage volume.
+# load_preload_archives() sweeps this directory and treats no *.tar as a cold-cache
+# no-op, not a failure. An image built FROM this one drops its own delta archive here
+# under a distinct name (both load) rather than overwriting stack.tar. The base image's
+# VOLUME /var/lib/docker doesn't cover this path, so the baked archive survives
+# independently of the container's docker storage volume.
 COPY --from=preload-src / /opt/choruskube/preload/
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
