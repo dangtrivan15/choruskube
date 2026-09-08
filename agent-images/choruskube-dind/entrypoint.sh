@@ -44,12 +44,24 @@ run_preload() {
 # agent entrypoint's --preload-only used before this step moved here).
 if [ "${1:-}" = "--preload-only" ]; then run_preload; return 0 2>/dev/null || exit 0; fi
 
+# This script is PID 1, so without a trap the container's SIGTERM never reaches
+# dockerd and every teardown rides out the full grace period to SIGKILL. dockerd
+# is a straight exec of dockerd-entrypoint.sh, so $DOCKERD_PID still names it.
+# The trap does its own `wait`: POSIX has a trapped signal interrupt the `wait`
+# below and return immediately, before dockerd has actually exited, so that one
+# alone would let PID 1 exit while dockerd is still mid-shutdown.
+forward_term() {
+  kill -TERM "$DOCKERD_PID" 2>/dev/null || true
+  wait "$DOCKERD_PID" 2>/dev/null || true
+}
+
 # Delegate to the base image's own entrypoint for TLS cert setup and dockerd
 # flags, backgrounded so this script can load the preload archive and drop the
 # readiness marker before taking over as the container's foreground process.
 dockerd-entrypoint.sh dockerd &
 DOCKERD_PID=$!
+trap forward_term TERM INT
 
 run_preload
 
-wait "$DOCKERD_PID"
+wait "$DOCKERD_PID" || true
