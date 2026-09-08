@@ -49,10 +49,14 @@ if [ "${1:-}" = "--preload-only" ]; then run_preload; return 0 2>/dev/null || ex
 # is a straight exec of dockerd-entrypoint.sh, so $DOCKERD_PID still names it.
 # The trap does its own `wait`: POSIX has a trapped signal interrupt the `wait`
 # below and return immediately, before dockerd has actually exited, so that one
-# alone would let PID 1 exit while dockerd is still mid-shutdown.
+# alone would let PID 1 exit while dockerd is still mid-shutdown. The trailing
+# `exit 0` is just as load-bearing: without it, a signal arriving during
+# run_preload resumes that interrupted loop (up to ~120s in wait_for_docker)
+# instead of tearing down promptly once dockerd is already gone.
 forward_term() {
   kill -TERM "$DOCKERD_PID" 2>/dev/null || true
   wait "$DOCKERD_PID" 2>/dev/null || true
+  exit 0
 }
 
 # Delegate to the base image's own entrypoint for TLS cert setup and dockerd
@@ -64,4 +68,4 @@ trap forward_term TERM INT
 
 run_preload
 
-wait "$DOCKERD_PID" || true
+wait "$DOCKERD_PID"
