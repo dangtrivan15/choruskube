@@ -34,6 +34,10 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+concurrency:
+  group: build-images
+  cancel-in-progress: false
+
 jobs:
   detect-changes:
     runs-on: arc-runner-choruskube
@@ -118,8 +122,8 @@ jobs:
             ${{ env.PUBLIC_REGISTRY }}/orchestrator:${{ github.sha }}
 
   build-worker:
-    needs: [detect-changes, build-orchestrator]
-    if: ${{ !cancelled() && (needs.detect-changes.outputs.worker == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch') }}
+    needs: detect-changes
+    if: needs.detect-changes.outputs.worker == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch'
     runs-on: arc-runner-choruskube
     concurrency:
       group: build-worker
@@ -161,8 +165,8 @@ jobs:
             ${{ env.PUBLIC_REGISTRY }}/worker:${{ github.sha }}
 
   build-api-server:
-    needs: [detect-changes, build-worker]
-    if: ${{ !cancelled() && (needs.detect-changes.outputs.api-server == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch') }}
+    needs: detect-changes
+    if: needs.detect-changes.outputs.api-server == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch'
     runs-on: arc-runner-choruskube
     concurrency:
       group: build-api-server
@@ -204,8 +208,8 @@ jobs:
             ${{ env.PUBLIC_REGISTRY }}/api-server:${{ github.sha }}
 
   build-web-ui:
-    needs: [detect-changes, build-api-server]
-    if: ${{ !cancelled() && (needs.detect-changes.outputs.web-ui == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch') }}
+    needs: detect-changes
+    if: needs.detect-changes.outputs.web-ui == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch'
     runs-on: arc-runner-choruskube
     concurrency:
       group: build-web-ui
@@ -247,8 +251,8 @@ jobs:
             ${{ env.PUBLIC_REGISTRY }}/web-ui:${{ github.sha }}
 
   build-claude-code:
-    needs: [detect-changes, build-web-ui]
-    if: ${{ !cancelled() && (needs.detect-changes.outputs.claude-code == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch') }}
+    needs: detect-changes
+    if: needs.detect-changes.outputs.claude-code == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch'
     runs-on: arc-runner-choruskube
     concurrency:
       group: build-claude-code
@@ -347,9 +351,9 @@ jobs:
             ${{ env.PUBLIC_REGISTRY }}/choruskube-dev:${{ github.sha }}
 
   build-choruskube-dind:
-    needs: [detect-changes, build-choruskube-dev]
+    needs: detect-changes
     # FROM docker:29-dind (public), unlike choruskube-dev -- no claude-code base dependency.
-    if: ${{ !cancelled() && (needs.detect-changes.outputs.choruskube-dind == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch') }}
+    if: needs.detect-changes.outputs.choruskube-dind == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch'
     runs-on: arc-runner-choruskube
     concurrency:
       group: build-choruskube-dind
