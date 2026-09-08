@@ -80,6 +80,7 @@ func main() {
 			Host:       os.Getenv("DOCKER_HOST"),
 			Network:    os.Getenv("DOCKER_NETWORK"),
 			StagingDir: dockerStagingDir,
+			DindImage:  os.Getenv("DIND_IMAGE"),
 		})
 		if err != nil {
 			log.Fatalf("create docker executor: %v", err)
