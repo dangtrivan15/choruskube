@@ -32,24 +32,19 @@ EOF
   chmod +x "$bin/docker"
 }
 
-# --- Test 1: archive present, daemon reachable, load succeeds -> loaded + marker ---
+# --- Test 1: archive present, daemon reachable, load succeeds -> loaded ---
 BIN1="$TESTDIR/bin1"
 make_docker_stub "$BIN1" 0 0
 mkdir -p "$TESTDIR/preload1"; : > "$TESTDIR/preload1/stack.tar"
-MARKER1="$TESTDIR/preload1/ready"
-OUT1=$(PATH="$BIN1:$PATH" PRELOAD_DIR="$TESTDIR/preload1" READY_MARKER="$MARKER1" \
+OUT1=$(PATH="$BIN1:$PATH" PRELOAD_DIR="$TESTDIR/preload1" \
   bash -c 'source "'"$ENTRYPOINT"'" --preload-only 2>&1')
 echo "$OUT1" | grep -q "preload: loaded" \
   && ok "archive present + daemon reachable + load succeeds: loads" \
   || fail "archive present + daemon reachable + load succeeds: loads (got: $OUT1)"
-[ -f "$MARKER1" ] \
-  && ok "archive present + load succeeds: readiness marker created" \
-  || fail "archive present + load succeeds: readiness marker created"
 
 # --- Test 2: no archives in the dir -> no-op, no failure ---
-MARKER2="$TESTDIR/preload1/ready2"
 mkdir -p "$TESTDIR/preload2"  # empty: contains no *.tar
-OUT2=$(PATH="$BIN1:$PATH" PRELOAD_DIR="$TESTDIR/preload2" READY_MARKER="$MARKER2" \
+OUT2=$(PATH="$BIN1:$PATH" PRELOAD_DIR="$TESTDIR/preload2" \
   bash -c 'source "'"$ENTRYPOINT"'" --preload-only 2>&1')
 echo "$OUT2" | grep -q "preload: none" \
   && ok "archive absent: no-op" \
@@ -62,7 +57,7 @@ BIN3="$TESTDIR/bin3"
 make_docker_stub "$BIN3" 0 1
 mkdir -p "$TESTDIR/preload3"; : > "$TESTDIR/preload3/stack.tar"
 set +e
-OUT3=$(PATH="$BIN3:$PATH" PRELOAD_DIR="$TESTDIR/preload3" READY_MARKER="$TESTDIR/preload3/ready" \
+OUT3=$(PATH="$BIN3:$PATH" PRELOAD_DIR="$TESTDIR/preload3" \
   bash -c 'source "'"$ENTRYPOINT"'" --preload-only 2>&1')
 RC3=$?
 set -e
@@ -71,9 +66,6 @@ set -e
 echo "$OUT3" | grep -q "preload: FATAL" \
   && ok "docker load fails: FATAL message on stderr" \
   || fail "docker load fails: FATAL message on stderr (got: $OUT3)"
-[ ! -f "$TESTDIR/preload3/ready" ] \
-  && ok "docker load fails: no readiness marker" \
-  || fail "docker load fails: no readiness marker"
 
 # --- Test 4: archive present, daemon never comes up -> fail loud ---
 # wait_for_docker retries for up to 60 * 2s in production; a stubbed `sleep` (same
@@ -88,7 +80,7 @@ EOF
 chmod +x "$BIN4/sleep"
 mkdir -p "$TESTDIR/preload4"; : > "$TESTDIR/preload4/stack.tar"
 set +e
-OUT4=$(PATH="$BIN4:$PATH" PRELOAD_DIR="$TESTDIR/preload4" READY_MARKER="$TESTDIR/preload4/ready" \
+OUT4=$(PATH="$BIN4:$PATH" PRELOAD_DIR="$TESTDIR/preload4" \
   bash -c 'source "'"$ENTRYPOINT"'" --preload-only 2>&1')
 RC4=$?
 set -e
@@ -105,7 +97,7 @@ echo "$OUT4" | grep -q "preload: FATAL" \
 BIN5="$TESTDIR/bin5"
 make_docker_stub "$BIN5" 0 0
 mkdir -p "$TESTDIR/preload5"; : > "$TESTDIR/preload5/stack.tar"; : > "$TESTDIR/preload5/cloud-stack.tar"
-OUT5=$(PATH="$BIN5:$PATH" PRELOAD_DIR="$TESTDIR/preload5" READY_MARKER="$TESTDIR/preload5/ready" \
+OUT5=$(PATH="$BIN5:$PATH" PRELOAD_DIR="$TESTDIR/preload5" \
   bash -c 'source "'"$ENTRYPOINT"'" --preload-only 2>&1')
 [ "$(echo "$OUT5" | grep -c "preload: loaded")" -eq 2 ] \
   && ok "multiple archives: every *.tar loads" \

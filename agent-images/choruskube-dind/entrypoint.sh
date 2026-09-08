@@ -1,8 +1,9 @@
 #!/bin/sh
 # agent-images/choruskube-dind/entrypoint.sh
 # Sidecar wrapper around the stock dind daemon: starts dockerd, loads every baked
-# warm-Docker-cache archive this image carries, drops a readiness marker the
-# agent container can poll for, then runs dockerd in the foreground.
+# warm-Docker-cache archive this image carries best-effort, then runs dockerd in
+# the foreground. Readiness is generic daemon-up on 2375, gated externally by the
+# k8s startupProbe / docker HEALTHCHECK — this script does not signal it itself.
 # POSIX sh, not bash: docker:29-dind is Alpine-based and ships no bash, same as
 # the base image's own dockerd-entrypoint.sh this script delegates to.
 set -euo pipefail
@@ -12,7 +13,6 @@ set -euo pipefail
 # base image and an image built FROM it each drop their own archive under distinct
 # filenames, letting an overlay bake only its delta instead of re-baking the base's.
 : "${PRELOAD_DIR:=/opt/choruskube/preload}"
-: "${READY_MARKER:=/tmp/preload-ready}"
 
 wait_for_docker() {
   for _ in $(seq 1 60); do docker info >/dev/null 2>&1 && return 0; sleep 2; done
@@ -33,8 +33,7 @@ load_preload_archives() {
   [ "$loaded" -gt 0 ] || echo "preload: none ($PRELOAD_DIR/*.tar absent)"
 }
 
-# Waits for the (already-started) daemon, loads the archives, then drops the
-# readiness marker the agent container's startupProbe polls for. Split out so
+# Waits for the (already-started) daemon, then loads the archives. Split out so
 # --preload-only below can exercise it against an already-reachable stubbed
 # `docker`, without this script itself launching a real dockerd.
 run_preload() {
@@ -43,7 +42,6 @@ run_preload() {
     return 1
   fi
   load_preload_archives || return 1
-  touch "$READY_MARKER"
 }
 
 # Lets the test harness exercise run_preload in isolation via `source`, without
@@ -67,8 +65,8 @@ forward_term() {
 }
 
 # Delegate to the base image's own entrypoint for TLS cert setup and dockerd
-# flags, backgrounded so this script can load the preload archive and drop the
-# readiness marker before taking over as the container's foreground process.
+# flags, backgrounded so this script can load the preload archive before taking
+# over as the container's foreground process.
 dockerd-entrypoint.sh dockerd &
 DOCKERD_PID=$!
 trap forward_term TERM INT
