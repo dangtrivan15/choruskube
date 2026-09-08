@@ -394,23 +394,6 @@ jobs:
           echo "::add-mask::$PUBLIC_REGISTRY"
           echo "PUBLIC_REGISTRY=$PUBLIC_REGISTRY" >> "$GITHUB_ENV"
 
-      # `if:` can't read the secrets context directly (actionlint: [expression]), so
-      # stage presence as a plain env flag here — never the token value itself.
-      - name: Check Docker Hub credentials
-        env:
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        run: echo "HAS_DOCKERHUB_TOKEN=${DOCKERHUB_TOKEN:+true}" >> "$GITHUB_ENV"
-
-      # Authenticates before the docker.io pulls below (both this step's own builder
-      # image and build-preload.sh's stack images), to avoid anonymous-pull rate
-      # limits; skipped when the repo secret isn't provisioned yet.
-      - name: Log in to Docker Hub
-        if: ${{ env.HAS_DOCKERHUB_TOKEN == 'true' }}
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
