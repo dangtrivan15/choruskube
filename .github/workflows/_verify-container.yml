@@ -7,6 +7,7 @@ jobs:
     runs-on: arc-runner-choruskube
     container:
       image: registry.choruskube.com/choruskube-dev:latest
+      options: --user 0
     steps:
       - name: env + toolchains + caches + docker access
         run: |
@@ -18,5 +19,7 @@ jobs:
           echo "== gradle modules baked =="; ls /home/agent/.gradle/caches/modules-2 2>/dev/null | head -1 || echo NO_MODULES
           echo "== go build cache baked =="; test -d /home/agent/.cache/go-build && echo GOCACHE_PRESENT || echo NO_GOCACHE
           echo "== playwright baked =="; ls /usr/lib/ms-playwright 2>/dev/null | head -1 || echo NO_PLAYWRIGHT
-          echo "== docker ps (reach dind) =="; docker ps 2>&1 | head -2 || echo NO_DOCKER
+          echo "== whoami2 =="; id
+          echo "== docker ps (reach dind) =="; docker ps 2>&1 | head -3
+          echo "== gradle cache writable? =="; touch /home/agent/.gradle/_probe 2>&1 && echo GRADLE_WRITE_OK || echo GRADLE_WRITE_FAIL
           echo "== docker compose =="; docker compose version 2>&1 | head -1 || echo NO_COMPOSE
