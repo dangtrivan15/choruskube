@@ -85,4 +85,21 @@ RUN cd /warmup/api-server \
     && rm -rf /warmup /home/agent/.gradle/daemon /home/agent/.gradle/native \
     && chown -R 1000:1000 /home/agent/.gradle
 
+# Pre-resolve AND pre-compile the Go module + build caches for the Go components, so a
+# CI job that builds them in this image reuses compiled stdlib+deps+packages instead of
+# paying a full cold `go build` (the compile, not the download, is what a from-scratch
+# build spends its time on). orchestrator and worker are separate modules, warmed
+# independently. Only the sources needed to compile are copied; a stale cache stays
+# correct — Go content-hashes every input and recompiles only what changed. Placed LAST,
+# after the Gradle warm-up, for the same reason: source changes here must not invalidate
+# the layers above. Resolution goes straight to the public proxy — never thread a mirror
+# through a --build-arg (it is recorded in this public image's history).
+ENV GOPATH=/home/agent/go GOMODCACHE=/home/agent/go/pkg/mod GOCACHE=/home/agent/.cache/go-build
+COPY --from=orchestrator . /warmup/orchestrator/
+COPY --from=worker . /warmup/worker/
+RUN cd /warmup/orchestrator && go mod download && CGO_ENABLED=0 go build ./... \
+    && cd /warmup/worker && go mod download && CGO_ENABLED=0 go build ./... \
+    && rm -rf /warmup \
+    && chown -R 1000:1000 /home/agent/go /home/agent/.cache
+
 USER 1000

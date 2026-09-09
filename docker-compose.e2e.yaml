@@ -238,6 +238,11 @@ services:
     build:
       context: ./orchestrator
       dockerfile: Dockerfile
+      args:
+        # Build stage base. Defaults to the stock Go toolchain; CI sets E2E_DEV_BASE to a
+        # warm build image (baked Go module + compile caches) so a from-scratch build reuses
+        # them instead of a cold `go build`. Unset (local dev, forks) => stock, unchanged.
+        BUILD_BASE: ${E2E_DEV_BASE:-golang:1.25-alpine}
     dns_search: .
     environment:
       API_SERVER_URL: http://api-server:8080
@@ -273,6 +278,9 @@ services:
     build:
       context: ./worker
       dockerfile: Dockerfile
+      args:
+        # See orchestrator: warm Go build base when CI sets E2E_DEV_BASE, else stock.
+        BUILD_BASE: ${E2E_DEV_BASE:-golang:1.25-alpine}
     dns_search: .
     environment:
       API_SERVER_URL: http://api-server:8080
