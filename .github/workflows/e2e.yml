@@ -81,8 +81,12 @@ jobs:
       # config.json and would otherwise abort). GRADLE_USER_HOME is passed explicitly
       # because the container's HOME is not the image's build user, so Gradle would
       # otherwise miss the baked cache; the Go, npm, and Playwright caches resolve through
-      # ENV baked into the image and need no help here. npm ci repopulates the gitignored
-      # node_modules that checkout does not carry, offline from the baked cache.
+      # ENV baked into the image and need no help here. The Gradle build installs web-ui's
+      # node_modules itself (:web-ui:npmInstall, offline from the baked npm cache), so no
+      # separate npm ci is needed. The safe.directory line is required because the
+      # container runs as root while the checkout is owned by the runner user, which git
+      # otherwise rejects as dubious ownership (:checkCommentRefs and other tasks shell
+      # out to git).
       #
       # -Pe2eNoTeardown suppresses the :e2eDown finalizer so the stack outlives the build
       # and the steps below can read it — `docker compose logs` and the Playwright report
@@ -109,7 +113,7 @@ jobs:
             -e E2E_DEV_BASE="$DEV_IMAGE" \
             -e E2E_WORKERS=4 \
             "$DEV_IMAGE" -euo pipefail -c '
-              cd web-ui && npm ci --no-audit --no-fund && cd ..
+              git config --global --add safe.directory "$PWD"
               ./gradlew test -Pe2e -Pe2eNoTeardown \
                 -Dtest.reports.dir="$PWD/build/reports/choruskube"
             '
