@@ -73,6 +73,10 @@ jobs:
               - 'api-server/build.gradle'
               - 'api-server/settings.gradle.kts'
               - 'api-server/gradle/**'
+              # Same for the baked Go module + compile caches: orchestrator/worker source is
+              # a build input. A stale cache stays correct (Go recompiles only the delta).
+              - 'orchestrator/**'
+              - 'worker/**'
             choruskube-dind:
               - 'agent-images/choruskube-dind/**'
 
@@ -340,6 +344,8 @@ jobs:
           # repo-root context would ship the whole working tree to BuildKit instead.
           build-contexts: |
             api-server=api-server
+            orchestrator=orchestrator
+            worker=worker
           platforms: linux/amd64
           push: true
           # Pin the base to the public :latest agent — published by build-claude-code just
