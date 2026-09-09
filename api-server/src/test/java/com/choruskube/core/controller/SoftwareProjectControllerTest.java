@@ -5,6 +5,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.choruskube.core.BaseTest;
+import com.choruskube.core.dto.RepoGroupRequest;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.service.OrgIdentitySync;
@@ -54,7 +55,7 @@ class SoftwareProjectControllerTest extends BaseTest {
         solo.setDefaultBranch("main");
         gitRepoRepo.saveAndFlush(solo);
 
-        repoGroupService.create(groupName, null, null, List.of(solo.getId()));
+        repoGroupService.create(new RepoGroupRequest(groupName, null, null, List.of(solo.getId()), null));
 
         mockMvc.perform(get("/api/v1/software-projects"))
                 .andExpect(status().isOk())

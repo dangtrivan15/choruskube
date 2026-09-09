@@ -90,4 +90,39 @@ describe("RepoGroupForm", () => {
       }),
     );
   });
+
+  it("renders the custom dind image field unconditionally and submits its value", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+
+    renderWithProviders(
+      <RepoGroupForm availableRepos={availableRepos} onSubmit={onSubmit} />,
+    );
+
+    // No per-group Docker toggle exists (Docker is derived from members), so the
+    // dind field is always visible — unlike the GitRepo dialog where it is gated.
+    const dindInput = screen.getByLabelText(/custom dind image/i);
+    expect(dindInput).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText(/name/i), "g");
+    await user.click(screen.getByLabelText(/r1/i));
+    await user.type(dindInput, "registry.example/dind:custom");
+    await user.click(screen.getByRole("button", { name: /save/i }));
+
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ dindImage: "registry.example/dind:custom" }),
+    );
+  });
+
+  it("seeds the dind field from `initial`", () => {
+    renderWithProviders(
+      <RepoGroupForm
+        initial={{ name: "preset", dindImage: "seeded/dind:tag" }}
+        availableRepos={availableRepos}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText(/custom dind image/i)).toHaveValue("seeded/dind:tag");
+  });
 });

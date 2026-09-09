@@ -31,6 +31,9 @@ public class SingleTenantRepoSeeder implements ApplicationRunner {
     @Value("${choruskube.repo.agent-image}")
     private String agentImage;
 
+    @Value("${CHORUSKUBE_REPO_DIND_IMAGE:}")
+    private String dindImage;
+
     public SingleTenantRepoSeeder(GitRepoRepository gitRepoRepository) {
         this.gitRepoRepository = gitRepoRepository;
     }
@@ -59,6 +62,9 @@ public class SingleTenantRepoSeeder implements ApplicationRunner {
         repo.setTestCommand("./gradlew test -Pe2e -Dtest.reports.dir=/workspace/out/reports/choruskube");
         repo.setAgentImage(agentImage);
         repo.setEnableDocker(true);
+        if (dindImage != null && !dindImage.isBlank()) {
+            repo.setDindImage(dindImage);
+        }
         gitRepoRepository.save(repo);
         log.info("SingleTenantRepoSeeder: upserted GitRepo '{}'", CHORUSKUBE_REPO_URL);
     }

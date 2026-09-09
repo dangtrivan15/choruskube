@@ -9,6 +9,7 @@ public record RepoGroupResponse(
         UUID id,
         String name,
         String agentImage,
+        String dindImage,
         String description,
         RuntimeRequirements runtimeRequirements,
         List<MemberView> members,

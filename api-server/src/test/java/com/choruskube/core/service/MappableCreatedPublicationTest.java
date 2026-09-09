@@ -6,6 +6,7 @@ import com.choruskube.core.BaseTest;
 import com.choruskube.core.dto.CreateRunPullRequestRequest;
 import com.choruskube.core.dto.GitRepoRequest;
 import com.choruskube.core.dto.NodeDefinitionRequest;
+import com.choruskube.core.dto.RepoGroupRequest;
 import com.choruskube.core.event.MappableCreated;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.GraphTemplate;
@@ -313,11 +314,12 @@ class MappableCreatedPublicationTest extends BaseTest {
                 seedGitRepo("rg-event-pub-" + UUID.randomUUID().toString().substring(0, 8));
         collector.clear(); // discard the GitRepo creation event
 
-        RepoGroup group = repoGroupService.create(
+        RepoGroup group = repoGroupService.create(new RepoGroupRequest(
                 "rg-event-pub-" + UUID.randomUUID().toString().substring(0, 8),
                 "registry/agent:latest",
                 "Test group for event publication",
-                List.of(repo.getId()));
+                List.of(repo.getId()),
+                null));
 
         List<MappableCreated> events = collector.getCaptured();
         assertThat(events)
@@ -391,11 +393,12 @@ class MappableCreatedPublicationTest extends BaseTest {
         GitRepo repo = seedGitRepo("rg-noevent-" + UUID.randomUUID().toString().substring(0, 8));
         collector.clear(); // discard the GitRepo creation event
 
-        repoGroupService.createInternal(
+        repoGroupService.createInternal(new RepoGroupRequest(
                 "rg-noevent-" + UUID.randomUUID().toString().substring(0, 8),
                 "registry/agent:latest",
                 "Test group — seeder path, must emit no event",
-                List.of(repo.getId()));
+                List.of(repo.getId()),
+                null));
 
         assertThat(collector.getCaptured())
                 .as("createInternal (seeder path) must NOT publish any MappableCreated event")

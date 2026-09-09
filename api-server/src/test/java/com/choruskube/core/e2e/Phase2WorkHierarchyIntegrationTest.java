@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.choruskube.core.BaseTest;
 import com.choruskube.core.CommittedFixtureCleaner;
+import com.choruskube.core.dto.RepoGroupRequest;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.RepoGroup;
 import com.choruskube.core.model.Task;
@@ -129,11 +130,12 @@ public class Phase2WorkHierarchyIntegrationTest extends BaseTest {
     void create_epic_with_repo_group_target_persists_group_id() throws Exception {
         GitRepo r1 = createGitRepo("https://github.com/phase2-int/grp-r1.git");
         GitRepo r2 = createGitRepo("https://github.com/phase2-int/grp-r2.git");
-        RepoGroup group = repoGroupService.create(
+        RepoGroup group = repoGroupService.create(new RepoGroupRequest(
                 "phase2-int-grp-" + UUID.randomUUID().toString().substring(0, 8),
                 null,
                 null,
-                List.of(r1.getId(), r2.getId()));
+                List.of(r1.getId(), r2.getId()),
+                null));
         cleaner.trackSoftwareProject(group.getId());
 
         Map<String, Object> body = Map.of(

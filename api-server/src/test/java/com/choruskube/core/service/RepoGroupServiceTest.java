@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.choruskube.core.BaseTest;
+import com.choruskube.core.dto.RepoGroupRequest;
 import com.choruskube.core.exception.BadRequestException;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.RepoGroup;
@@ -45,7 +46,8 @@ class RepoGroupServiceTest extends BaseTest {
         GitRepo r1 = saveRepo("r1");
         GitRepo r2 = saveRepo("r2");
 
-        RepoGroup created = service.create("proj-a", "registry/agent:v1", "desc", List.of(r1.getId(), r2.getId()));
+        RepoGroup created = service.create(
+                new RepoGroupRequest("proj-a", "registry/agent:v1", "desc", List.of(r1.getId(), r2.getId()), null));
 
         RepoGroup loaded = repoGroups.findById(created.getId()).orElseThrow();
         assertThat(loaded.getName()).isEqualTo("proj-a");
@@ -56,7 +58,7 @@ class RepoGroupServiceTest extends BaseTest {
     void create_allows_any_member_under_always_allow_strategy() {
         GitRepo member = saveRepo("member");
 
-        RepoGroup created = service.create("proj-x", null, null, List.of(member.getId()));
+        RepoGroup created = service.create(new RepoGroupRequest("proj-x", null, null, List.of(member.getId()), null));
 
         assertThat(created.resolveRepos()).extracting(GitRepo::getName).containsExactly("member");
     }
@@ -66,7 +68,8 @@ class RepoGroupServiceTest extends BaseTest {
         saveRepo("name-clash");
         GitRepo other = saveRepo("other");
 
-        assertThatThrownBy(() -> service.create("name-clash", null, null, List.of(other.getId())))
+        assertThatThrownBy(() ->
+                        service.create(new RepoGroupRequest("name-clash", null, null, List.of(other.getId()), null)))
                 .isInstanceOf(BadRequestException.class)
                 .hasMessageContaining("name");
     }
@@ -77,7 +80,8 @@ class RepoGroupServiceTest extends BaseTest {
         GitRepo r2 = saveRepo("r2");
         GitRepo r3 = saveRepo("r3");
 
-        RepoGroup group = service.create("proj-b", null, null, List.of(r1.getId(), r2.getId()));
+        RepoGroup group =
+                service.create(new RepoGroupRequest("proj-b", null, null, List.of(r1.getId(), r2.getId()), null));
 
         entityManager.flush();
         entityManager.clear();
@@ -94,7 +98,7 @@ class RepoGroupServiceTest extends BaseTest {
     @Test
     void delete_removes_group_when_no_external_references() {
         GitRepo r1 = saveRepo("r1");
-        RepoGroup group = service.create("proj-c", null, null, List.of(r1.getId()));
+        RepoGroup group = service.create(new RepoGroupRequest("proj-c", null, null, List.of(r1.getId()), null));
 
         service.delete(group.getId());
 

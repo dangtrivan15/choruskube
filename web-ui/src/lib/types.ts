@@ -1236,6 +1236,7 @@ export type SoftwareProjectType = "git_repo" | "repo_group";
 export interface RuntimeRequirements {
   agentImage: string | null;
   enableDocker: boolean;
+  dindImage?: string | null;
 }
 
 export interface SoftwareProject {
@@ -1259,6 +1260,7 @@ export interface RepoGroup {
   id: string;
   name: string;
   agentImage: string | null;
+  dindImage?: string | null;
   description: string | null;
   runtimeRequirements: RuntimeRequirements;
   members: RepoGroupMember[];
@@ -1269,6 +1271,7 @@ export interface RepoGroup {
 export interface RepoGroupRequest {
   name: string;
   agentImage?: string | null;
+  dindImage?: string;
   description?: string | null;
   memberRepoIds: string[];
 }

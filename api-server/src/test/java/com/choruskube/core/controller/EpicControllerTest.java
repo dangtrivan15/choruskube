@@ -11,6 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.choruskube.core.BaseTest;
 import com.choruskube.core.config.OrgSecurity;
 import com.choruskube.core.dto.CreateDependencyRequest;
+import com.choruskube.core.dto.RepoGroupRequest;
 import com.choruskube.core.dto.StoryRequest;
 import com.choruskube.core.dto.TaskRequest;
 import com.choruskube.core.model.Epic;
@@ -671,7 +672,7 @@ public class EpicControllerTest extends BaseTest {
 
     private RepoGroup createRepoGroup(String name, GitRepo... members) {
         List<UUID> ids = java.util.Arrays.stream(members).map(GitRepo::getId).toList();
-        return repoGroupService.create(name, null, null, ids);
+        return repoGroupService.create(new RepoGroupRequest(name, null, null, ids, null));
     }
 
     /** Creates a backlog Epic targeting {@code repo}'s software_project id. */

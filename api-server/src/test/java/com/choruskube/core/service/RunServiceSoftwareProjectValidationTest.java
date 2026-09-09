@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.choruskube.core.BaseTest;
+import com.choruskube.core.dto.RepoGroupRequest;
 import com.choruskube.core.exception.ValidationException;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.GraphTemplate;
@@ -71,7 +72,8 @@ class RunServiceSoftwareProjectValidationTest extends BaseTest {
         // query), this test will fail with LazyInitializationException — that's the protection.
         GitRepo m1 = createGitRepo("https://github.com/test/m1-" + suffix());
         GitRepo m2 = createGitRepo("https://github.com/test/m2-" + suffix());
-        RepoGroup g = groupService.create("g-" + suffix(), "registry/agent:v1", null, List.of(m1.getId(), m2.getId()));
+        RepoGroup g = groupService.create(new RepoGroupRequest(
+                "g-" + suffix(), "registry/agent:v1", null, List.of(m1.getId(), m2.getId()), null));
         GraphTemplate t = spTemplate();
         assertThatCode(() -> runs.validateInputs(
                         t.getInputSchema(),

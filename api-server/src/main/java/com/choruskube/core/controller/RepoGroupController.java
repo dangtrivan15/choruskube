@@ -81,7 +81,7 @@ public class RepoGroupController {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public RepoGroupResponse create(@Valid @RequestBody RepoGroupRequest body) {
-        RepoGroup group = service.create(body.name(), body.agentImage(), body.description(), body.memberRepoIds());
+        RepoGroup group = service.create(body);
         return toResponse(group);
     }
 
@@ -89,7 +89,7 @@ public class RepoGroupController {
     @PutMapping("/{id}")
     public RepoGroupResponse update(@PathVariable UUID id, @Valid @RequestBody RepoGroupRequest body) {
         findInActiveOrg(id);
-        service.update(id, body.name(), body.agentImage(), body.description());
+        service.update(id, body);
         if (body.memberRepoIds() != null) {
             service.replaceMembers(id, body.memberRepoIds());
         }
@@ -140,6 +140,7 @@ public class RepoGroupController {
                 g.getId(),
                 g.getName(),
                 g.getAgentImage(),
+                g.getDindImage(),
                 g.getDescription(),
                 g.getRuntimeRequirements(),
                 members,

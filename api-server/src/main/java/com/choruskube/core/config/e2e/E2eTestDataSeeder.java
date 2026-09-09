@@ -1,5 +1,6 @@
 package com.choruskube.core.config.e2e;
 
+import com.choruskube.core.dto.RepoGroupRequest;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.GraphTemplate;
 import com.choruskube.core.model.NodeDefinition;
@@ -210,11 +211,12 @@ public class E2eTestDataSeeder implements ApplicationRunner {
                 .orElseThrow(
                         () -> new IllegalStateException("seedSecondaryGitRepo() must run before seedDemoRepoGroup()"))
                 .getId();
-        repoGroupService.createInternal(
+        repoGroupService.createInternal(new RepoGroupRequest(
                 "demo-stack",
                 agentImage,
                 "Demo two-repo project for E2E SoftwareProject hierarchy coverage",
-                java.util.List.of(r1, r2));
+                java.util.List.of(r1, r2),
+                null));
     }
 
     private void seedGitRepo() {

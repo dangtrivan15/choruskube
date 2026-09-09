@@ -66,6 +66,7 @@ export default function EditRepoGroupDialog({
             initial={{
               name: group.name,
               agentImage: group.agentImage ?? "",
+              dindImage: group.dindImage ?? "",
               description: group.description ?? "",
               memberRepoIds: group.members
                 .slice()
