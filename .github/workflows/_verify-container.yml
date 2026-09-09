@@ -7,25 +7,24 @@ jobs:
     runs-on: arc-runner-choruskube
     steps:
       - uses: actions/checkout@v4
-      - name: wrapper pattern — shared volume + netns via docker run --network host
+      - name: wrapper pattern with --entrypoint bash
         run: |
           set -x
-          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
           echo "hello-from-runner" > "$GITHUB_WORKSPACE/_probe.txt"
-          echo "== 1) shared volume + path match: dev container reads runner-written file =="
-          docker run --rm --network host --user 0 \
+          echo "== 1) shared volume + toolchains + gradle cache =="
+          docker run --rm --network host --user 0 --entrypoint bash \
             -v "$GITHUB_WORKSPACE":"$GITHUB_WORKSPACE" -w "$GITHUB_WORKSPACE" \
             registry.choruskube.com/choruskube-dev:latest \
-            bash -c 'echo PWD=$(pwd); cat _probe.txt 2>&1 || echo FILE_MISSING; echo "== toolchains =="; java -version 2>&1|head -1; go version; node -v; echo GRADLE_USER_HOME_default=$HOME/.gradle; ls -d /home/agent/.gradle/caches/modules-2 2>/dev/null && echo GRADLE_CACHE_VISIBLE || echo NO_GRADLE_CACHE'
-          echo "== 2) netns: start published-port container on dind, curl from --network host dev container =="
+            -c 'echo PWD=$(pwd); cat _probe.txt 2>&1 || echo FILE_MISSING; java -version 2>&1|head -1; go version; node -v; npm -v; echo HOME=$HOME; echo NPM_CONFIG_CACHE=${NPM_CONFIG_CACHE:-<unset>}; ls -d /home/agent/.gradle/caches/modules-2 && echo GRADLE_CACHE_VISIBLE || echo NO_GRADLE_CACHE; echo GOMODCACHE=$GOMODCACHE; echo PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH; ls /usr/lib/ms-playwright 2>/dev/null | head -3 || echo NO_PW'
+          echo "== 2) netns: dind published port reachable via --network host =="
           docker run -d --name nginxprobe -p 18080:80 nginx:alpine >/dev/null
           sleep 3
-          docker run --rm --network host --user 0 \
+          docker run --rm --network host --user 0 --entrypoint bash \
             registry.choruskube.com/choruskube-dev:latest \
-            bash -c 'curl -sf -m 5 -o /dev/null -w "LOCALHOST_HTTP=%{http_code}\n" http://localhost:18080/ || echo LOCALHOST_FAIL'
+            -c 'curl -sf -m 5 -o /dev/null -w "LOCALHOST_HTTP=%{http_code}\n" http://localhost:18080/ || echo LOCALHOST_FAIL'
           docker rm -f nginxprobe >/dev/null 2>&1 || true
-          echo "== 3) docker.sock reachable from dev container (compose needs it) =="
-          docker run --rm --network host --user 0 \
+          echo "== 3) docker.sock reachable (compose) =="
+          docker run --rm --network host --user 0 --entrypoint bash \
             -v /var/run/docker.sock:/var/run/docker.sock \
             registry.choruskube.com/choruskube-dev:latest \
-            bash -c 'docker ps >/dev/null 2>&1 && echo SOCK_OK || echo SOCK_FAIL'
+            -c 'docker ps >/dev/null 2>&1 && echo SOCK_OK || echo SOCK_FAIL'
