@@ -9,4 +9,5 @@ public record RepoGroupRequest(
         @NotBlank String name,
         String agentImage,
         String description,
-        @NotEmpty List<UUID> memberRepoIds) {}
+        @NotEmpty List<UUID> memberRepoIds,
+        String dindImage) {}

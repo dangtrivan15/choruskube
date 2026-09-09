@@ -3,6 +3,7 @@ package com.choruskube.core.service;
 import static org.assertj.core.api.Assertions.*;
 
 import com.choruskube.core.BaseTest;
+import com.choruskube.core.dto.RepoGroupRequest;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.GraphTemplate;
 import com.choruskube.core.model.RepoGroup;
@@ -75,8 +76,8 @@ class GraphSnapshotBuilderSoftwareProjectTest extends BaseTest {
         GitRepo r1 = createGitRepoWithName("r1", "https://github.com/test/r1", null, false);
         GitRepo r2 = createGitRepoWithName("r2", "https://github.com/test/r2", null, true);
 
-        RepoGroup group =
-                repoGroupService.create("g", "registry/group-agent:v1", null, List.of(r1.getId(), r2.getId()));
+        RepoGroup group = repoGroupService.create(
+                new RepoGroupRequest("g", "registry/group-agent:v1", null, List.of(r1.getId(), r2.getId()), null));
 
         GraphTemplate template = createTemplateWithSoftwareProjectSchema();
 
@@ -97,6 +98,32 @@ class GraphSnapshotBuilderSoftwareProjectTest extends BaseTest {
 
         assertThat(snapshotJson.get("inputs").get("agent_image").asText()).isEqualTo("registry/group-agent:v1");
         assertThat(snapshotJson.get("enable_docker").asBoolean()).isTrue();
+    }
+
+    @Test
+    void snapshot_for_repo_group_includes_dind_image_when_set() throws Exception {
+        String suffix = UUID.randomUUID().toString().substring(0, 8);
+        GitRepo r1 = createGitRepoWithName("rd1-" + suffix, "https://github.com/test/rd1-" + suffix, null, true);
+        GitRepo r2 = createGitRepoWithName("rd2-" + suffix, "https://github.com/test/rd2-" + suffix, null, false);
+
+        RepoGroup group = repoGroupService.create(new RepoGroupRequest(
+                "gd-" + suffix,
+                "registry/group-agent:v1",
+                null,
+                List.of(r1.getId(), r2.getId()),
+                "registry.example/grp-dind:latest"));
+
+        GraphTemplate template = createTemplateWithSoftwareProjectSchema();
+
+        WorkflowRun run = new WorkflowRun();
+        run.setGraphTemplateId(template.getId());
+        run.setInputs("{\"software_project_id\":\"" + group.getId() + "\",\"feature_request\":\"test\"}");
+        run = runRepo.save(run);
+
+        String snapshot = snapshotBuilder.buildSnapshotForRun(run);
+        JsonNode snapshotJson = objectMapper.readTree(snapshot);
+
+        assertThat(snapshotJson.get("dind_image").asText()).isEqualTo("registry.example/grp-dind:latest");
     }
 
     private GraphTemplate createTemplateWithSoftwareProjectSchema() {

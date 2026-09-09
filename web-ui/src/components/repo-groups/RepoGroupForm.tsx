@@ -40,6 +40,7 @@ export default function RepoGroupForm({
 }: RepoGroupFormProps) {
   const [name, setName] = useState(initial?.name ?? "");
   const [agentImage, setAgentImage] = useState(initial?.agentImage ?? "");
+  const [dindImage, setDindImage] = useState(initial?.dindImage ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
   const [selected, setSelected] = useState<string[]>(initial?.memberRepoIds ?? []);
 
@@ -57,6 +58,7 @@ export default function RepoGroupForm({
     onSubmit({
       name: trimmedName,
       agentImage: agentImage.trim() ? agentImage.trim() : null,
+      dindImage: dindImage.trim() || undefined,
       description: description.trim() ? description.trim() : null,
       memberRepoIds: selected,
     });
@@ -87,6 +89,21 @@ export default function RepoGroupForm({
             onChange={(e) => setAgentImage(e.target.value)}
             placeholder="agent:latest"
           />
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label htmlFor="repo-group-dind-image" className="text-sm font-medium">
+            Custom dind image
+          </label>
+          <Input
+            id="repo-group-dind-image"
+            value={dindImage}
+            onChange={(e) => setDindImage(e.target.value)}
+            placeholder="dind:latest"
+          />
+          <p className="text-xs text-muted-foreground">
+            Overrides the default Docker-in-Docker image for runs of this group.
+          </p>
         </div>
 
         <div className="flex flex-col gap-1">

@@ -1,6 +1,7 @@
 package com.choruskube.core.model;
 
 import jakarta.persistence.CascadeType;
+import jakarta.persistence.Column;
 import jakarta.persistence.DiscriminatorValue;
 import jakarta.persistence.Entity;
 import jakarta.persistence.OneToMany;
@@ -19,10 +20,13 @@ public class RepoGroup extends SoftwareProject {
     @OrderBy("position ASC")
     private List<RepoGroupMember> members = new ArrayList<>();
 
+    @Column(name = "dind_image")
+    private String dindImage;
+
     @Override
     public RuntimeRequirements getRuntimeRequirements() {
         boolean anyDocker = members.stream().map(RepoGroupMember::getGitRepo).anyMatch(GitRepo::isEnableDocker);
-        return new RuntimeRequirements(getAgentImage(), anyDocker, null);
+        return new RuntimeRequirements(getAgentImage(), anyDocker, dindImage);
     }
 
     @Override
@@ -39,5 +43,13 @@ public class RepoGroup extends SoftwareProject {
 
     public void setMembers(List<RepoGroupMember> members) {
         this.members = members;
+    }
+
+    public String getDindImage() {
+        return dindImage;
+    }
+
+    public void setDindImage(String dindImage) {
+        this.dindImage = dindImage;
     }
 }

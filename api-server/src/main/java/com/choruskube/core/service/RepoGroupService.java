@@ -1,5 +1,6 @@
 package com.choruskube.core.service;
 
+import com.choruskube.core.dto.RepoGroupRequest;
 import com.choruskube.core.event.MappableCreated;
 import com.choruskube.core.exception.BadRequestException;
 import com.choruskube.core.model.GitRepo;
@@ -45,22 +46,23 @@ public class RepoGroupService {
     }
 
     @Transactional
-    public RepoGroup create(String name, String agentImage, String description, List<UUID> memberRepoIds) {
-        assertMembersInCallerOrg(memberRepoIds);
-        uniquenessChecker.assertNameAvailable(name);
-        RepoGroup group = createInternal(name, agentImage, description, memberRepoIds);
+    public RepoGroup create(RepoGroupRequest request) {
+        assertMembersInCallerOrg(request.memberRepoIds());
+        uniquenessChecker.assertNameAvailable(request.name());
+        RepoGroup group = createInternal(request);
         applicationEventPublisher.publishEvent(MappableCreated.of("software_project", group.getId()));
         return group;
     }
 
     @Transactional
-    public RepoGroup createInternal(String name, String agentImage, String description, List<UUID> memberRepoIds) {
+    public RepoGroup createInternal(RepoGroupRequest request) {
         RepoGroup group = new RepoGroup();
-        group.setName(name);
-        group.setAgentImage(agentImage);
-        group.setDescription(description);
+        group.setName(request.name());
+        group.setAgentImage(request.agentImage());
+        group.setDescription(request.description());
+        group.setDindImage(request.dindImage());
         groups.save(group);
-        applyMembers(group, memberRepoIds);
+        applyMembers(group, request.memberRepoIds());
         return group;
     }
 
@@ -77,15 +79,16 @@ public class RepoGroupService {
     }
 
     @Transactional
-    public RepoGroup update(UUID groupId, String name, String agentImage, String description) {
+    public RepoGroup update(UUID groupId, RepoGroupRequest request) {
         RepoGroup group =
                 groups.findById(groupId).orElseThrow(() -> new BadRequestException("RepoGroup not found: " + groupId));
-        if (!group.getName().equals(name)) {
-            uniquenessChecker.assertNameAvailable(name);
-            group.setName(name);
+        if (!group.getName().equals(request.name())) {
+            uniquenessChecker.assertNameAvailable(request.name());
+            group.setName(request.name());
         }
-        group.setAgentImage(agentImage);
-        group.setDescription(description);
+        group.setAgentImage(request.agentImage());
+        group.setDescription(request.description());
+        group.setDindImage(request.dindImage());
         return group;
     }
 
