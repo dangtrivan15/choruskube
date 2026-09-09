@@ -7,22 +7,16 @@ jobs:
     runs-on: arc-runner-choruskube
     container:
       image: registry.choruskube.com/choruskube-dev:latest
-      options: --user 0
+      options: --user 0 --network host
     steps:
-      - name: dind port reachability from container job
+      - name: dind port reachability with --network host
         run: |
           set -x
-          echo "== hostname/ip =="; hostname; hostname -i || true
-          echo "== start a published-port container on the dind =="
+          echo "== whoami/net =="; id; ip -o addr show 2>/dev/null | awk '{print $2,$4}' | head
           docker run -d --name nginxprobe -p 18080:80 nginx:alpine >/dev/null 2>&1 || docker run -d --name nginxprobe -p 18080:80 nginx:alpine
           sleep 3
           docker ps --filter name=nginxprobe --format '{{.Ports}}'
-          echo "== curl localhost:18080 (same-pod-localhost model?) =="
+          echo "== curl localhost:18080 with --network host =="
           curl -sf -m 5 -o /dev/null -w "LOCALHOST_HTTP=%{http_code}\n" http://localhost:18080/ || echo LOCALHOST_FAIL
-          echo "== curl 127.0.0.1:18080 =="
           curl -sf -m 5 -o /dev/null -w "LOOPBACK_HTTP=%{http_code}\n" http://127.0.0.1:18080/ || echo LOOPBACK_FAIL
-          echo "== DOCKER_HOST env =="; echo "DOCKER_HOST=${DOCKER_HOST:-<unset>}"
-          echo "== resolve host.docker.internal =="; getent hosts host.docker.internal || echo NO_HDI
-          echo "== try host.docker.internal:18080 =="
-          curl -sf -m 5 -o /dev/null -w "HDI_HTTP=%{http_code}\n" http://host.docker.internal:18080/ || echo HDI_FAIL
           docker rm -f nginxprobe >/dev/null 2>&1 || true
