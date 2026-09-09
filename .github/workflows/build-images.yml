@@ -77,6 +77,10 @@ jobs:
               # a build input. A stale cache stays correct (Go recompiles only the delta).
               - 'orchestrator/**'
               - 'worker/**'
+              # The image bakes web-ui's npm cache from the lockfile only, so a dep bump is
+              # a build input but a UI source change is not (npm ci fetches only the delta).
+              - 'web-ui/package.json'
+              - 'web-ui/package-lock.json'
             choruskube-dind:
               - 'agent-images/choruskube-dind/**'
 
@@ -346,6 +350,7 @@ jobs:
             api-server=api-server
             orchestrator=orchestrator
             worker=worker
+            web-ui=web-ui
           platforms: linux/amd64
           push: true
           # Pin the base to the public :latest agent — published by build-claude-code just
