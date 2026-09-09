@@ -102,4 +102,13 @@ RUN cd /warmup/orchestrator && go mod download && CGO_ENABLED=0 go build ./... \
     && rm -rf /warmup \
     && chown -R 1000:1000 /home/agent/go /home/agent/.cache
 
+# Warm npm's cache for web-ui development. NPM_CONFIG_CACHE is an ENV (not inline)
+# so a job that overrides HOME still finds it; only the lockfile is copied, so a UI
+# source change does not rebuild this layer. Placed LAST, like the Go warm-up above.
+ENV NPM_CONFIG_CACHE=/home/agent/.npm
+COPY --from=web-ui package.json package-lock.json /warmup/web-ui/
+RUN cd /warmup/web-ui && npm ci --no-audit --no-fund \
+    && rm -rf /warmup \
+    && chown -R 1000:1000 /home/agent/.npm
+
 USER 1000

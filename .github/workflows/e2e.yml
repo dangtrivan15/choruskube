@@ -43,6 +43,12 @@ permissions:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  # The whole suite runs inside this image, which bakes every toolchain the run needs —
+  # JDK 25, Go 1.25, Node 22, the Gradle wrapper + warmed module cache, the Go module +
+  # compile caches, the npm cache, and the Playwright browser — so this workflow installs
+  # nothing. It is the public OSS pull endpoint, pulled anonymously. See
+  # agent-images/choruskube-dev/Dockerfile.
+  DEV_IMAGE: registry.choruskube.com/choruskube-dev:latest
 
 jobs:
   e2e:
@@ -52,161 +58,73 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: web-ui/package-lock.json
-
-      # Java + Go on the host: `./gradlew test -Pe2e` runs the three unit suites
-      # (:api-server:test, :orchestrator:test, :web-ui:test) before booting the stack, so
-      # the runner needs those toolchains, not only Node. Pinned Temurin 25 via jdkfile
-      # for the same reason the (now-removed) unit-tests.yml did: api.adoptium.net's TLS is
-      # slow/high-variance from our CI egress, while the GitHub release tarball is fast.
-      # Pinned by release tag + SHA256 for reproducibility; cached across runs.
-      - name: Cache Temurin 25 tarball
-        uses: actions/cache@v4
-        with:
-          path: ${{ runner.temp }}/temurin25.tar.gz
-          key: temurin-jdk-25.0.3+9-x64-linux
-
-      - name: Fetch and verify Temurin 25
-        run: |
-          url="https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.3%2B9/OpenJDK25U-jdk_x64_linux_hotspot_25.0.3_9.tar.gz"
-          if [ ! -f "$RUNNER_TEMP/temurin25.tar.gz" ]; then
-            curl -fSL --retry 5 --retry-delay 3 -o "$RUNNER_TEMP/temurin25.tar.gz" "$url"
-          fi
-          echo "69264a7a211bf5029830d07bc3370f879769d62ebc5b5488e90c9343a2da0e1f  $RUNNER_TEMP/temurin25.tar.gz" | sha256sum -c -
-
-      # No `cache: gradle`. It was a net LOSS on this runner, measured on run 31028073161:
-      # restoring the 387 MB module cache took 150s (the runner gets ~3 MB/s to GitHub's
-      # cache service) to save roughly 50s of dependency resolution — and resolution here
-      # goes through the in-cluster dependency proxy below, which is far faster than the
-      # cache service it was standing in for.
-      #
-      # It was also fragile in a way that is easy to miss: setup-java keys the cache on a
-      # hash of every *.gradle* file in the workspace and sets NO restoreKeys, deliberately
-      # (upstream cache.ts: "No restoreKeys is set, to start with a clear cache after
-      # dependency update"). Exact match only — so editing one line of one build file
-      # discarded the entire cache and re-downloaded everything, with no partial reuse.
-      # The root Gradle build added more files to that hash, so the invalidation surface is
-      # wider now than when this was measured; the conclusion is unchanged either way.
-      - uses: actions/setup-java@v4
-        with:
-          distribution: jdkfile
-          jdkFile: ${{ runner.temp }}/temurin25.tar.gz
-          java-version: 25.0.3
-          architecture: x64
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.25"
-          cache-dependency-path: orchestrator/go.sum
-
-      - name: Apply dependency proxy (no-op when unset)
-        run: |
-          if [ -n "${DEP_PROXY_BASE:-}" ]; then echo "::add-mask::$DEP_PROXY_BASE"; fi
-          # Gradle reads init scripts from GRADLE_USER_HOME/init.d; default it for CI.
-          export GRADLE_USER_HOME="${GRADLE_USER_HOME:-$HOME/.gradle}"
-          source scripts/lib/dep-proxy.sh
-          apply_dep_proxy "$GRADLE_USER_HOME"
-          # Propagate the exported vars to later steps.
-          { echo "GOPROXY=${GOPROXY:-}"; echo "GOSUMDB=${GOSUMDB:-}"; echo "npm_config_registry=${npm_config_registry:-}"; echo "GRADLE_USER_HOME=$GRADLE_USER_HOME"; } >> "$GITHUB_ENV"
-
-      # Key the browser cache on the resolved Playwright version so a version bump
-      # busts it, but an unrelated dependency change does not.
-      - name: Resolve Playwright version
-        id: playwright
-        working-directory: web-ui
-        run: echo "version=$(node -p "require('./package-lock.json').packages['node_modules/playwright'].version")" >> "$GITHUB_OUTPUT"
-
-      - name: Cache Playwright browsers
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ steps.playwright.outputs.version }}
-
-      # The e2e stack is driven by `docker compose`. The self-hosted runners provide it, so
-      # this only installs as a fallback when it is missing (idempotent — skips when present).
-      - name: Ensure Docker Compose v2
-        run: |
-          if docker compose version >/dev/null 2>&1; then
-            echo "docker compose already present: $(docker compose version)"
-            exit 0
-          fi
-          COMPOSE_VERSION=v2.29.7
-          arch="$(uname -m)"
-          mkdir -p "$HOME/.docker/cli-plugins"
-          dest="$HOME/.docker/cli-plugins/docker-compose"
-          curl -fsSL \
-            "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-${arch}" \
-            -o "$dest"
-          chmod +x "$dest"
-          docker compose version
-
-      # Playwright runs from the host against the composed stack, so the host needs the
-      # web-ui deps and the chromium browser (the suite's only project).
-      - name: Install web-ui deps and Playwright browser
-        working-directory: web-ui
-        run: |
-          npm ci
-          npx playwright install --with-deps chromium
-
-      # No registry build-cache and no buildx builder: e2e builds the app images with
-      # `compose up --build` on the runner's own Docker daemon, which pulls base images
-      # through its configured docker.io mirror. The Go images build FROM a warm dev base
-      # (E2E_DEV_BASE on the run step) instead of a cold `go build`.
-
       # `./gradlew test -Pe2e`: the three unit suites in parallel, then the e2e chain —
       # :e2eImages → :e2eStackUp → :e2eSmoke → :e2eSeed → :e2ePlaywright. The `-Pe2e` is
       # load-bearing: a bare `./gradlew test` runs the unit suites only and never boots the
-      # stack, so dropping it here would turn this required check into a unit-test job
-      # while still reporting green.
+      # stack, so dropping it would turn a dispatched run into a unit-test job while still
+      # reporting green.
+      #
+      # It runs inside DEV_IMAGE rather than on the runner because the runner carries no
+      # toolchains; the image carries all of them, warmed. Three flags make the container
+      # able to drive the stack the same way the bare runner did:
+      #   --network host    the ARC runner and its dind sidecar share one pod network
+      #                     namespace, so the stack's published ports answer on localhost
+      #                     there; a plain container gets its own namespace and cannot
+      #                     reach them, so it must join the host's (a GitHub `container:`
+      #                     job can't — GitHub forces its own --network and the two
+      #                     conflict, which is why this is a `docker run`, not `container:`).
+      #   docker.sock mount  compose talks to the same dind the runner uses.
+      #   workspace mount at the same path  dind resolves bind mounts on its own
+      #                     filesystem, which shares the runner's _work volume, so mounting
+      #                     $GITHUB_WORKSPACE at its own path makes the checkout visible.
+      # --entrypoint bash overrides the agent image's entrypoint (it expects an agent
+      # config.json and would otherwise abort). GRADLE_USER_HOME is passed explicitly
+      # because the container's HOME is not the image's build user, so Gradle would
+      # otherwise miss the baked cache; the Go, npm, and Playwright caches resolve through
+      # ENV baked into the image and need no help here. The Gradle build installs web-ui's
+      # node_modules itself (:web-ui:npmInstall, offline from the baked npm cache), so no
+      # separate npm ci is needed. The safe.directory line is required because the
+      # container runs as root while the checkout is owned by the runner user, which git
+      # otherwise rejects as dubious ownership (:checkCommentRefs and other tasks shell
+      # out to git).
       #
       # -Pe2eNoTeardown suppresses the :e2eDown finalizer so the stack outlives the build
       # and the steps below can read it — `docker compose logs` and the Playwright report
-      # both come from state teardown destroys. This job then owns the cleanup, which is
-      # the `always()` teardown at the end. Without the flag :e2eDown finalizes :e2eStackUp
-      # and therefore runs even when a later phase failed, which is what stops a local run
-      # from leaking containers mid-chain.
+      # both come from state teardown destroys. This job then owns cleanup via the
+      # `always()` teardown at the end.
       #
-      # Both accelerators arrive through the environment rather than through Gradle
-      # plumbing, because an Exec task inherits the daemon's environment:
-      # E2E_DEV_BASE reaches the compose build args and selects the warm Go build base,
-      # and E2E_WORKERS reaches :e2ePlaywright, which forwards it to
-      # `npx playwright test` as --workers (the -Pworkers property does the same for a
-      # direct invocation). A run that sets neither builds cold and stays serial.
+      # E2E_DEV_BASE selects the warm Go build base for the compose image builds (see
+      # docker-compose.e2e.yaml's BUILD_BASE arg); E2E_WORKERS reaches :e2ePlaywright as
+      # --workers. The limit on raising workers is backend contention (one api-server, one
+      # PostgreSQL, one Temporal, one Docker daemon), not runner capacity.
       #
-      # The build prints a per-task timing table — and writes timings.tsv — on success and
-      # on failure alike, so a slow or broken run can be attributed to a phase from the log
-      # itself rather than by re-running with a stopwatch.
-      #
-      # -Dtest.reports.dir gathers every suite's reports plus that timing summary under one
-      # tree, which is what the two upload steps below collect. The repo-name segment is not
-      # decoration: the dogfood Test node runs several repos' test commands into one shared
-      # output directory, and more than one of them has an api-server, so the segment is what
-      # keeps their reports from overwriting each other. Passing it here also means the flag
-      # is exercised on every PR instead of only on dogfood runs, which have no CI.
-      - name: Run e2e suite
-        env:
-          CI: "true"
-          # The e2e Go image builds go FROM this warm dev base (baked Go module + compile
-          # caches) instead of a cold `go build` — see docker-compose.e2e.yaml's BUILD_BASE
-          # arg. It is the public OSS pull endpoint, pulled anonymously; a fork that leaves
-          # this unset builds from the Dockerfile's stock Go base instead.
-          E2E_DEV_BASE: registry.choruskube.com/choruskube-dev:latest
-          # Playwright workers sharing this job's single Compose stack. Raising this is the
-          # way to speed the suite up; the limit is backend contention (one api-server, one
-          # PostgreSQL, one Temporal, one Docker daemon), so raise it against measured run
-          # times rather than by assumption.
-          E2E_WORKERS: 4
-        run: >-
-          ./gradlew test -Pe2e -Pe2eNoTeardown
-          -Dtest.reports.dir=${{ github.workspace }}/build/reports/choruskube
+      # -Dtest.reports.dir gathers every suite's reports plus the per-task timing summary
+      # under one tree for the upload steps. The repo-name segment is not decoration: the
+      # dogfood Test node runs several repos' test commands into one shared output
+      # directory, and more than one has an api-server, so the segment keeps their reports
+      # from overwriting each other.
+      - name: Run e2e suite in choruskube-dev
+        run: |
+          docker run --rm --network host --user 0 --entrypoint bash \
+            -v "$GITHUB_WORKSPACE":"$GITHUB_WORKSPACE" -w "$GITHUB_WORKSPACE" \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -e CI=true \
+            -e GRADLE_USER_HOME=/home/agent/.gradle \
+            -e E2E_DEV_BASE="$DEV_IMAGE" \
+            -e E2E_WORKERS=4 \
+            "$DEV_IMAGE" -euo pipefail -c '
+              git config --global --add safe.directory "$PWD"
+              ./gradlew test -Pe2e -Pe2eNoTeardown \
+                -Dtest.reports.dir="$PWD/build/reports/choruskube"
+            '
 
       - name: Dump stack logs on failure
         if: failure()
-        run: docker compose -f docker-compose.e2e.yaml logs --no-color --tail=400 || true
+        run: |
+          docker run --rm --entrypoint bash \
+            -v "$GITHUB_WORKSPACE":"$GITHUB_WORKSPACE" -w "$GITHUB_WORKSPACE" \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            "$DEV_IMAGE" -c 'docker compose -f docker-compose.e2e.yaml logs --no-color --tail=400 || true'
 
       # Both upload steps read from the single tree that the run step's -Dtest.reports.dir
       # creates. Passing that property here is deliberate beyond tidiness: the dogfood Test
@@ -240,4 +158,8 @@ jobs:
 
       - name: Tear down stack
         if: always()
-        run: scripts/e2e-down.sh --volumes || true
+        run: |
+          docker run --rm --entrypoint bash \
+            -v "$GITHUB_WORKSPACE":"$GITHUB_WORKSPACE" -w "$GITHUB_WORKSPACE" \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            "$DEV_IMAGE" -c 'scripts/e2e-down.sh --volumes || true'
