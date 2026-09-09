@@ -65,6 +65,7 @@ class SoftwareProjectHierarchyIntegrationTest extends BaseTest {
         RepoGroup group = new RepoGroup();
         group.setName("my-project");
         group.setAgentImage("registry/group-agent:v1");
+        group.setEnableDocker(true);
         RepoGroupMember m0 = newMember(group, r1, 0);
         RepoGroupMember m1 = newMember(group, r2, 1);
         group.setMembers(new ArrayList<>(List.of(m0, m1)));
@@ -73,7 +74,7 @@ class SoftwareProjectHierarchyIntegrationTest extends BaseTest {
         RepoGroup loaded = repoGroups.findById(group.getId()).orElseThrow();
         assertThat(loaded.getMembers()).hasSize(2);
         assertThat(loaded.resolveRepos()).extracting(GitRepo::getName).containsExactly("r1", "r2");
-        // anyDocker aggregation: r1=true, r2=false → true
+        // enableDocker is the group's own field, not inferred from members (r1=true, r2=false)
         assertThat(loaded.getRuntimeRequirements().enableDocker()).isTrue();
         assertThat(loaded.getRuntimeRequirements().agentImage()).isEqualTo("registry/group-agent:v1");
     }
