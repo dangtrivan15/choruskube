@@ -40,6 +40,7 @@ export default function RepoGroupForm({
 }: RepoGroupFormProps) {
   const [name, setName] = useState(initial?.name ?? "");
   const [agentImage, setAgentImage] = useState(initial?.agentImage ?? "");
+  const [enableDocker, setEnableDocker] = useState(initial?.enableDocker ?? false);
   const [dindImage, setDindImage] = useState(initial?.dindImage ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
   const [selected, setSelected] = useState<string[]>(initial?.memberRepoIds ?? []);
@@ -58,7 +59,8 @@ export default function RepoGroupForm({
     onSubmit({
       name: trimmedName,
       agentImage: agentImage.trim() ? agentImage.trim() : null,
-      dindImage: dindImage.trim() || undefined,
+      enableDocker,
+      dindImage: enableDocker ? dindImage.trim() || undefined : undefined,
       description: description.trim() ? description.trim() : null,
       memberRepoIds: selected,
     });
@@ -91,20 +93,35 @@ export default function RepoGroupForm({
           />
         </div>
 
-        <div className="flex flex-col gap-1">
-          <label htmlFor="repo-group-dind-image" className="text-sm font-medium">
-            Custom dind image
-          </label>
-          <Input
-            id="repo-group-dind-image"
-            value={dindImage}
-            onChange={(e) => setDindImage(e.target.value)}
-            placeholder="dind:latest"
+        <div className="flex items-center gap-2">
+          <input
+            id="repo-group-docker"
+            type="checkbox"
+            checked={enableDocker}
+            onChange={(e) => setEnableDocker(e.target.checked)}
+            className="size-4 rounded border"
           />
-          <p className="text-xs text-muted-foreground">
-            Overrides the default Docker-in-Docker image for runs of this group.
-          </p>
+          <label htmlFor="repo-group-docker" className="text-sm font-medium">
+            Enable Docker-in-Docker
+          </label>
         </div>
+
+        {enableDocker && (
+          <div className="flex flex-col gap-1">
+            <label htmlFor="repo-group-dind-image" className="text-sm font-medium">
+              Custom dind image
+            </label>
+            <Input
+              id="repo-group-dind-image"
+              value={dindImage}
+              onChange={(e) => setDindImage(e.target.value)}
+              placeholder="dind:latest"
+            />
+            <p className="text-xs text-muted-foreground">
+              Overrides the default Docker-in-Docker image for runs of this group.
+            </p>
+          </div>
+        )}
 
         <div className="flex flex-col gap-1">
           <label htmlFor="repo-group-description" className="text-sm font-medium">

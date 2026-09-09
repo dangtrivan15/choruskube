@@ -10,6 +10,7 @@ public record RepoGroupResponse(
         String name,
         String agentImage,
         String dindImage,
+        boolean enableDocker,
         String description,
         RuntimeRequirements runtimeRequirements,
         List<MemberView> members,

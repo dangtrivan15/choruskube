@@ -319,6 +319,7 @@ class MappableCreatedPublicationTest extends BaseTest {
                 "registry/agent:latest",
                 "Test group for event publication",
                 List.of(repo.getId()),
+                null,
                 null));
 
         List<MappableCreated> events = collector.getCaptured();
@@ -398,6 +399,7 @@ class MappableCreatedPublicationTest extends BaseTest {
                 "registry/agent:latest",
                 "Test group — seeder path, must emit no event",
                 List.of(repo.getId()),
+                null,
                 null));
 
         assertThat(collector.getCaptured())

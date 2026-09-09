@@ -16,21 +16,23 @@ class RepoGroupTest {
     }
 
     @Test
-    void enable_docker_is_or_aggregation_of_members_all_off() {
+    void enable_docker_is_the_groups_own_field_true_even_when_all_members_off() {
         RepoGroup group = groupWith(null, repoWithDocker(false), repoWithDocker(false));
+        group.setEnableDocker(true);
+        assertThat(group.getRuntimeRequirements().enableDocker()).isTrue();
+    }
+
+    @Test
+    void enable_docker_is_the_groups_own_field_false_even_when_a_member_is_on() {
+        RepoGroup group = groupWith(null, repoWithDocker(false), repoWithDocker(true));
+        group.setEnableDocker(false);
         assertThat(group.getRuntimeRequirements().enableDocker()).isFalse();
     }
 
     @Test
-    void enable_docker_is_or_aggregation_of_members_mixed() {
-        RepoGroup group = groupWith(null, repoWithDocker(false), repoWithDocker(true));
-        assertThat(group.getRuntimeRequirements().enableDocker()).isTrue();
-    }
-
-    @Test
-    void enable_docker_is_or_aggregation_of_members_all_on() {
+    void enable_docker_defaults_false_and_is_never_inferred_from_members() {
         RepoGroup group = groupWith(null, repoWithDocker(true), repoWithDocker(true));
-        assertThat(group.getRuntimeRequirements().enableDocker()).isTrue();
+        assertThat(group.getRuntimeRequirements().enableDocker()).isFalse();
     }
 
     @Test

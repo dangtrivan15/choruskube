@@ -20,13 +20,15 @@ public class RepoGroup extends SoftwareProject {
     @OrderBy("position ASC")
     private List<RepoGroupMember> members = new ArrayList<>();
 
+    @Column(name = "enable_docker", nullable = false)
+    private boolean enableDocker;
+
     @Column(name = "dind_image")
     private String dindImage;
 
     @Override
     public RuntimeRequirements getRuntimeRequirements() {
-        boolean anyDocker = members.stream().map(RepoGroupMember::getGitRepo).anyMatch(GitRepo::isEnableDocker);
-        return new RuntimeRequirements(getAgentImage(), anyDocker, dindImage);
+        return new RuntimeRequirements(getAgentImage(), enableDocker, dindImage);
     }
 
     @Override
@@ -43,6 +45,14 @@ public class RepoGroup extends SoftwareProject {
 
     public void setMembers(List<RepoGroupMember> members) {
         this.members = members;
+    }
+
+    public boolean isEnableDocker() {
+        return enableDocker;
+    }
+
+    public void setEnableDocker(boolean enableDocker) {
+        this.enableDocker = enableDocker;
     }
 
     public String getDindImage() {
