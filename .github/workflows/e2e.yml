@@ -5,15 +5,14 @@ name: E2E
 # No real Claude token is needed: the agent runs the deterministic mock-agent and AI calls
 # are stubbed by WireMock with a dummy token.
 #
-# Runs on every PR to main, as a REQUIRED status check — a pre-merge gate, and deliberately
-# only that. It is intentionally NOT path-filtered: a required check that is skipped (e.g. on
-# a docs-only PR) is reported as pending and blocks the merge forever.
-#
-# There is no `push: main` trigger. Re-running the suite on main after a merge re-verifies a
-# commit whose content this workflow already passed on the PR, at the cost of a full runner
-# allocation and stack boot per merge — the pool is small enough that those runs contend with
-# the PR checks that actually gate something. Anything reaching main outside a PR (an admin
-# merge, a direct push) can be covered on demand via `workflow_dispatch`.
+# DISPATCH-ONLY, and NOT a required status check. This suite is dogfooded downstream: a
+# deployment that composes over this OSS core runs `./gradlew test -Pe2e` as its in-cluster
+# test gate on every change (core included, via the sibling build), so a per-PR run here
+# would re-verify what that already covers while contending for the small
+# `arc-runner-choruskube` pool. What this workflow adds is running the suite against an
+# arbitrary ref on demand (a change that never went through that gate, or a merge outside
+# one). Trigger via `workflow_dispatch`. It must NOT become a required check: a required
+# check that is never triggered is reported as pending and blocks the merge forever.
 #
 # Parallelism is Playwright workers (E2E_WORKERS, or -Pworkers on a direct Gradle
 # invocation) inside this one job, against the one Compose stack it boots.
@@ -31,15 +30,13 @@ name: E2E
 # (web-ui/e2e/helpers/api-client.ts) to stay collision-free against its siblings.
 on:
   workflow_dispatch:
-  pull_request:
-    branches: [main]
 
-# One e2e run per ref — supersede an in-flight run when new commits land. Workflow-level
-# (not per-job): it cancels the superseded run as a whole, so no straggler job survives to
-# occupy a runner and report a spurious failure against the new commit.
+# One run per ref. Unlike a PR-triggered suite this does NOT cancel in progress: every run
+# here was asked for by a human, so a long run is not worth discarding because a second
+# dispatch arrived. A concurrent dispatch on the same ref queues instead.
 concurrency:
   group: e2e-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -48,32 +45,9 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  # Single job, and its name is the required status check branch protection watches.
-  # Keep it named `e2e` — renaming it silently detaches the branch-protection rule, which
-  # then waits forever on a check that is never reported. That constraint is also why the
-  # runner choice below is an expression on ONE job rather than two jobs with complementary
-  # `if:` conditions: a second job means a second check name, and branch protection would
-  # stop seeing the one it is configured for.
   e2e:
-    # Same-repo PRs and manual runs use the self-hosted pool. PRs FROM FORKS run on a
-    # GitHub-hosted runner instead.
-    #
-    # Why: this repository is public, so anyone can open a PR from a fork, and a workflow
-    # triggered that way executes the PR's own code. GitHub withholds `secrets.*` from fork
-    # PRs precisely to stop that code reading credentials — but the self-hosted pool supplies
-    # its configuration through the runner's process environment, which GitHub does not
-    # manage and therefore cannot withhold. Sending fork PRs to a GitHub-hosted runner is
-    # what restores that boundary; it has none of that environment.
-    #
-    # Fork PRs keep full e2e coverage. Every accelerator this workflow reads from the runner
-    # environment (dependency proxy, registry mirror, layer cache) is already optional and
-    # no-ops when unset — see the steps below, which were written to stay runnable anywhere.
-    # A fork run is slower because it fetches from upstream instead, not less thorough.
-    #
-    # `github.event_name != 'pull_request'` keeps workflow_dispatch on the self-hosted pool:
-    # on that event `github.event.pull_request` is null, so testing the repo match alone
-    # would send every manual run to a GitHub-hosted runner.
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'arc-runner-choruskube' || 'ubuntu-latest' }}
+    # Dispatch-only, so always the self-hosted pool — there is no fork-PR path to guard.
+    runs-on: arc-runner-choruskube
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
