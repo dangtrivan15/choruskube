@@ -141,6 +141,7 @@ public class RepoGroupController {
                 g.getName(),
                 g.getAgentImage(),
                 g.getDindImage(),
+                g.isEnableDocker(),
                 g.getDescription(),
                 g.getRuntimeRequirements(),
                 members,

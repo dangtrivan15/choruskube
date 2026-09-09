@@ -672,7 +672,7 @@ public class EpicControllerTest extends BaseTest {
 
     private RepoGroup createRepoGroup(String name, GitRepo... members) {
         List<UUID> ids = java.util.Arrays.stream(members).map(GitRepo::getId).toList();
-        return repoGroupService.create(new RepoGroupRequest(name, null, null, ids, null));
+        return repoGroupService.create(new RepoGroupRequest(name, null, null, ids, null, null));
     }
 
     /** Creates a backlog Epic targeting {@code repo}'s software_project id. */

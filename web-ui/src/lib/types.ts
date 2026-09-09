@@ -1260,6 +1260,7 @@ export interface RepoGroup {
   id: string;
   name: string;
   agentImage: string | null;
+  enableDocker?: boolean;
   dindImage?: string | null;
   description: string | null;
   runtimeRequirements: RuntimeRequirements;
@@ -1271,6 +1272,7 @@ export interface RepoGroup {
 export interface RepoGroupRequest {
   name: string;
   agentImage?: string | null;
+  enableDocker?: boolean;
   dindImage?: string;
   description?: string | null;
   memberRepoIds: string[];

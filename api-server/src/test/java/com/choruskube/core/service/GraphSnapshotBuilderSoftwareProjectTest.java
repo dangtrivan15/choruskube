@@ -72,12 +72,14 @@ class GraphSnapshotBuilderSoftwareProjectTest extends BaseTest {
     }
 
     @Test
-    void snapshot_for_repo_group_software_project_uses_groups_image_and_anyDocker() throws Exception {
+    void snapshot_for_repo_group_software_project_uses_groups_image_and_own_enable_docker() throws Exception {
+        // Both members have Docker off; the group's own enable_docker=true is what must reach the
+        // snapshot, proving the value is self-composed and no longer inferred (OR-aggregated) from members.
         GitRepo r1 = createGitRepoWithName("r1", "https://github.com/test/r1", null, false);
-        GitRepo r2 = createGitRepoWithName("r2", "https://github.com/test/r2", null, true);
+        GitRepo r2 = createGitRepoWithName("r2", "https://github.com/test/r2", null, false);
 
-        RepoGroup group = repoGroupService.create(
-                new RepoGroupRequest("g", "registry/group-agent:v1", null, List.of(r1.getId(), r2.getId()), null));
+        RepoGroup group = repoGroupService.create(new RepoGroupRequest(
+                "g", "registry/group-agent:v1", null, List.of(r1.getId(), r2.getId()), true, null));
 
         GraphTemplate template = createTemplateWithSoftwareProjectSchema();
 
@@ -111,6 +113,7 @@ class GraphSnapshotBuilderSoftwareProjectTest extends BaseTest {
                 "registry/group-agent:v1",
                 null,
                 List.of(r1.getId(), r2.getId()),
+                null,
                 "registry.example/grp-dind:latest"));
 
         GraphTemplate template = createTemplateWithSoftwareProjectSchema();

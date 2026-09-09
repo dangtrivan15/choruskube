@@ -91,7 +91,7 @@ describe("RepoGroupForm", () => {
     );
   });
 
-  it("renders the custom dind image field unconditionally and submits its value", async () => {
+  it("hides the custom dind image field until Enable Docker is checked", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn();
 
@@ -99,30 +99,67 @@ describe("RepoGroupForm", () => {
       <RepoGroupForm availableRepos={availableRepos} onSubmit={onSubmit} />,
     );
 
-    // No per-group Docker toggle exists (Docker is derived from members), so the
-    // dind field is always visible — unlike the GitRepo dialog where it is gated.
-    const dindInput = screen.getByLabelText(/custom dind image/i);
-    expect(dindInput).toBeInTheDocument();
+    // Docker off by default → the dind field is gated, mirroring the GitRepo dialog.
+    expect(screen.getByLabelText(/enable docker-in-docker/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/custom dind image/i)).not.toBeInTheDocument();
+
+    await user.click(screen.getByLabelText(/enable docker-in-docker/i));
+
+    expect(screen.getByLabelText(/custom dind image/i)).toBeInTheDocument();
+  });
+
+  it("checking Enable Docker submits enableDocker:true and the revealed dind image", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+
+    renderWithProviders(
+      <RepoGroupForm availableRepos={availableRepos} onSubmit={onSubmit} />,
+    );
 
     await user.type(screen.getByLabelText(/name/i), "g");
     await user.click(screen.getByLabelText(/r1/i));
-    await user.type(dindInput, "registry.example/dind:custom");
+    await user.click(screen.getByLabelText(/enable docker-in-docker/i));
+    await user.type(
+      screen.getByLabelText(/custom dind image/i),
+      "registry.example/dind:custom",
+    );
     await user.click(screen.getByRole("button", { name: /save/i }));
 
     expect(onSubmit).toHaveBeenCalledWith(
-      expect.objectContaining({ dindImage: "registry.example/dind:custom" }),
+      expect.objectContaining({
+        enableDocker: true,
+        dindImage: "registry.example/dind:custom",
+      }),
     );
   });
 
-  it("seeds the dind field from `initial`", () => {
+  it("submits enableDocker:false and no dind image when Docker is off", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+
+    renderWithProviders(
+      <RepoGroupForm availableRepos={availableRepos} onSubmit={onSubmit} />,
+    );
+
+    await user.type(screen.getByLabelText(/name/i), "g");
+    await user.click(screen.getByLabelText(/r1/i));
+    await user.click(screen.getByRole("button", { name: /save/i }));
+
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ enableDocker: false, dindImage: undefined }),
+    );
+  });
+
+  it("seeds the dind field from `initial` when Docker is enabled", () => {
     renderWithProviders(
       <RepoGroupForm
-        initial={{ name: "preset", dindImage: "seeded/dind:tag" }}
+        initial={{ name: "preset", enableDocker: true, dindImage: "seeded/dind:tag" }}
         availableRepos={availableRepos}
         onSubmit={vi.fn()}
       />,
     );
 
+    expect(screen.getByLabelText(/enable docker-in-docker/i)).toBeChecked();
     expect(screen.getByLabelText(/custom dind image/i)).toHaveValue("seeded/dind:tag");
   });
 });

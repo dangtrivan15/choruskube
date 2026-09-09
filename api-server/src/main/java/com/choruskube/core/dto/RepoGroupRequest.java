@@ -10,4 +10,5 @@ public record RepoGroupRequest(
         String agentImage,
         String description,
         @NotEmpty List<UUID> memberRepoIds,
+        Boolean enableDocker,
         String dindImage) {}

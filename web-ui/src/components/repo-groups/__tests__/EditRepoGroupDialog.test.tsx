@@ -103,6 +103,7 @@ describe("EditRepoGroupDialog", () => {
       expect(mockApi.put).toHaveBeenCalledWith("/repo-groups/g1", {
         name: "renamed",
         agentImage: "img:1",
+        enableDocker: false,
         description: "desc",
         memberRepoIds: ["r1", "r2", "r3"],
       });

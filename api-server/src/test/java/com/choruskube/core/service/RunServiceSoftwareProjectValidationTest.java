@@ -73,7 +73,7 @@ class RunServiceSoftwareProjectValidationTest extends BaseTest {
         GitRepo m1 = createGitRepo("https://github.com/test/m1-" + suffix());
         GitRepo m2 = createGitRepo("https://github.com/test/m2-" + suffix());
         RepoGroup g = groupService.create(new RepoGroupRequest(
-                "g-" + suffix(), "registry/agent:v1", null, List.of(m1.getId(), m2.getId()), null));
+                "g-" + suffix(), "registry/agent:v1", null, List.of(m1.getId(), m2.getId()), null, null));
         GraphTemplate t = spTemplate();
         assertThatCode(() -> runs.validateInputs(
                         t.getInputSchema(),

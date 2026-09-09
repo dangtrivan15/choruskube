@@ -60,6 +60,7 @@ public class RepoGroupService {
         group.setName(request.name());
         group.setAgentImage(request.agentImage());
         group.setDescription(request.description());
+        group.setEnableDocker(request.enableDocker() != null ? request.enableDocker() : false);
         group.setDindImage(request.dindImage());
         groups.save(group);
         applyMembers(group, request.memberRepoIds());
@@ -88,6 +89,7 @@ public class RepoGroupService {
         }
         group.setAgentImage(request.agentImage());
         group.setDescription(request.description());
+        group.setEnableDocker(request.enableDocker() != null ? request.enableDocker() : false);
         group.setDindImage(request.dindImage());
         return group;
     }

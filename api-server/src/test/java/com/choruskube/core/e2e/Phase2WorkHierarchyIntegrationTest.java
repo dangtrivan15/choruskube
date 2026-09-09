@@ -135,6 +135,7 @@ public class Phase2WorkHierarchyIntegrationTest extends BaseTest {
                 null,
                 null,
                 List.of(r1.getId(), r2.getId()),
+                null,
                 null));
         cleaner.trackSoftwareProject(group.getId());
 
