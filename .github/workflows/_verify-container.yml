@@ -1,0 +1,22 @@
+name: _verify-container
+on:
+  push:
+    branches: [ci/verify-container]
+jobs:
+  verify:
+    runs-on: arc-runner-choruskube
+    container:
+      image: registry.choruskube.com/choruskube-dev:latest
+    steps:
+      - name: env + toolchains + caches + docker access
+        run: |
+          echo "whoami=$(whoami) HOME=$HOME"
+          echo "== java =="; java -version 2>&1 | head -1 || echo NO_JAVA
+          echo "== go =="; go version 2>&1 || echo NO_GO
+          echo "== node =="; node -v 2>&1 || echo NO_NODE
+          echo "== gradle wrapper baked =="; ls -d /home/agent/.gradle/wrapper/dists/*/* 2>/dev/null | head -1 || echo NO_WRAPPER
+          echo "== gradle modules baked =="; ls /home/agent/.gradle/caches/modules-2 2>/dev/null | head -1 || echo NO_MODULES
+          echo "== go build cache baked =="; test -d /home/agent/.cache/go-build && echo GOCACHE_PRESENT || echo NO_GOCACHE
+          echo "== playwright baked =="; ls /usr/lib/ms-playwright 2>/dev/null | head -1 || echo NO_PLAYWRIGHT
+          echo "== docker ps (reach dind) =="; docker ps 2>&1 | head -2 || echo NO_DOCKER
+          echo "== docker compose =="; docker compose version 2>&1 | head -1 || echo NO_COMPOSE
