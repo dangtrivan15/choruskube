@@ -5,14 +5,9 @@ name: E2E
 # No real Claude token is needed: the agent runs the deterministic mock-agent and AI calls
 # are stubbed by WireMock with a dummy token.
 #
-# DISPATCH-ONLY, and NOT a required status check. This suite is dogfooded downstream: a
-# deployment that composes over this OSS core runs `./gradlew test -Pe2e` as its in-cluster
-# test gate on every change (core included, via the sibling build), so a per-PR run here
-# would re-verify what that already covers while contending for the small
-# `arc-runner-choruskube` pool. What this workflow adds is running the suite against an
-# arbitrary ref on demand (a change that never went through that gate, or a merge outside
-# one). Trigger via `workflow_dispatch`. It must NOT become a required check: a required
-# check that is never triggered is reported as pending and blocks the merge forever.
+# Triggers: `pull_request` to main (gated below) and `workflow_dispatch` for an arbitrary ref.
+# Never make it a required check -- it is skipped for the agent and for fork authors, whose PRs
+# a required check would then block on a run that never comes.
 #
 # Parallelism is Playwright workers (E2E_WORKERS, or -Pworkers on a direct Gradle
 # invocation) inside this one job, against the one Compose stack it boots.
@@ -30,13 +25,13 @@ name: E2E
 # (web-ui/e2e/helpers/api-client.ts) to stay collision-free against its siblings.
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [main]
 
-# One run per ref. Unlike a PR-triggered suite this does NOT cancel in progress: every run
-# here was asked for by a human, so a long run is not worth discarding because a second
-# dispatch arrived. A concurrent dispatch on the same ref queues instead.
+# Cancel a superseded PR run; let concurrent dispatches queue.
 concurrency:
   group: e2e-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -51,8 +46,56 @@ env:
   DEV_IMAGE: registry.choruskube.com/choruskube-dev:latest
 
 jobs:
+  # Preflight (PR only): e2e runs UNLESS every author (opener + commit authors) is in
+  # E2E_SKIP_AUTHORS -- injected onto the self-hosted runner out of band and read from the ambient
+  # env here (curl + jq are on the stock runner image), never a GitHub variable. The opener trust
+  # gate stays; a fork ships its own copy of this file, so the require-approval setting is the
+  # real fork guard.
+  gate:
+    if: >-
+      github.event_name == 'pull_request' &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
+    runs-on: arc-runner-choruskube
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          OPENER: ${{ github.event.pull_request.user.login }}
+        run: |
+          set -euo pipefail
+          skip="${E2E_SKIP_AUTHORS:-[]}"
+          authors=$(
+            { printf '%s\n' "$OPENER"
+              page=1
+              while :; do
+                resp=$(curl -sfS -H "Authorization: Bearer $GH_TOKEN" \
+                  -H "Accept: application/vnd.github+json" -H "User-Agent: e2e-gate" \
+                  "https://api.github.com/repos/$REPO/pulls/$PR/commits?per_page=100&page=$page")
+                jq -r '.[].author.login // empty' <<<"$resp"
+                [ "$(jq 'length' <<<"$resp")" -lt 100 ] && break
+                page=$((page + 1))
+              done
+            } | sort -u)
+          run=false
+          while IFS= read -r a; do
+            [ -z "$a" ] && continue
+            jq -e --arg a "$a" 'index($a) != null' <<<"$skip" >/dev/null || { run=true; break; }
+          done <<<"$authors"
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+
   e2e:
-    # Dispatch-only, so always the self-hosted pool — there is no fork-PR path to guard.
+    needs: gate
+    # Dispatch always runs; a PR runs only if the preflight said so (a skipped gate is "no").
+    if: >-
+      !cancelled() &&
+      ( github.event_name != 'pull_request' || needs.gate.outputs.run == 'true' )
     runs-on: arc-runner-choruskube
     timeout-minutes: 45
     steps:
