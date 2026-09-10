@@ -46,13 +46,46 @@ env:
   DEV_IMAGE: registry.choruskube.com/choruskube-dev:latest
 
 jobs:
-  e2e:
-    # Same-repo PRs only: a fork ships its own copy of this file, so the repo's require-approval
-    # runner setting is the real fork guard. Unset E2E_SKIP_AUTHORS skips nobody.
+  # Preflight (PR only): e2e runs UNLESS every author (opener + commit authors) is in
+  # E2E_SKIP_AUTHORS. The opener trust gate is here, but a fork ships its own copy of this file,
+  # so the repo's require-approval runner setting is the real fork guard.
+  gate:
     if: >-
-      github.event_name != 'pull_request' ||
-      ( contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
-        && !contains(fromJSON(vars.E2E_SKIP_AUTHORS || '[]'), github.event.pull_request.user.login) )
+      github.event_name == 'pull_request' &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          OPENER: ${{ github.event.pull_request.user.login }}
+          SKIP: ${{ vars.E2E_SKIP_AUTHORS || '[]' }}
+        run: |
+          set -euo pipefail
+          authors=$(
+            { printf '%s\n' "$OPENER"
+              gh api --paginate "repos/$REPO/pulls/$PR/commits" --jq '.[].author.login // empty'
+            } | sort -u)
+          run=false
+          while IFS= read -r a; do
+            [ -z "$a" ] && continue
+            jq -e --arg a "$a" 'index($a) != null' <<<"$SKIP" >/dev/null || { run=true; break; }
+          done <<<"$authors"
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+
+  e2e:
+    needs: gate
+    # Dispatch always runs; a PR runs only if the preflight said so (a skipped gate is "no").
+    if: >-
+      !cancelled() &&
+      ( github.event_name != 'pull_request' || needs.gate.outputs.run == 'true' )
     runs-on: arc-runner-choruskube
     timeout-minutes: 45
     steps:
