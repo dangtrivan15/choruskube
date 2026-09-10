@@ -79,16 +79,11 @@ type Config struct {
 	// ConfigMap -- the api-server's own namespace, not an org namespace.
 	TemplateNamespace string
 
-	// ResourceQuotaEnabled toggles whether the agent (and, when DinD is enabled, the dind
-	// init container) declares explicit cpu/memory requests/limits. Must match the org
-	// namespace provisioner's own resource-quota flag: a namespace ResourceQuota that
-	// tracks cpu/memory rejects any pod that omits resources, and pinning resources
-	// without a quota is unnecessary overhead.
-	ResourceQuotaEnabled bool
-
-	// AgentResources is the default agent-container CPU/memory applied when ResourceQuotaEnabled
-	// and a launch supplies no per-execution ExecutionParams.AgentResources override. The
-	// deployment sets these; this package hardcodes no sizing of its own.
+	// AgentResources is the default agent-container CPU/memory the executor pins unless a launch
+	// supplies a per-execution ExecutionParams.AgentResources override. The deployment sets
+	// these; this package hardcodes no sizing of its own. Leave every field empty to run the
+	// agent without resource declarations (BestEffort). The dind sidecar's resources are the
+	// template's, always — this package never overrides them.
 	AgentResources coreexec.AgentResources
 }
 
@@ -526,14 +521,17 @@ func execLabels(params coreexec.ExecutionParams) map[string]string {
 // (Config.AgentResources) -- this package chooses no sizing itself, and knows nothing of node
 // type. All four (cpu/memory x requests/limits) must resolve, or ResourceQuota rejects the pod.
 func (k *KubernetesExecutor) pinAgentContainerResources(job *batchv1.Job, override *coreexec.AgentResources) error {
-	if !k.config.ResourceQuotaEnabled {
-		return nil
-	}
 	def := k.config.AgentResources
 	cpuRequest := resolveResource(override, func(r coreexec.AgentResources) string { return r.CPURequest }, def.CPURequest)
 	memoryRequest := resolveResource(override, func(r coreexec.AgentResources) string { return r.MemoryRequest }, def.MemoryRequest)
 	cpuLimit := resolveResource(override, func(r coreexec.AgentResources) string { return r.CPULimit }, def.CPULimit)
 	memoryLimit := resolveResource(override, func(r coreexec.AgentResources) string { return r.MemoryLimit }, def.MemoryLimit)
+	// Nothing configured: run the agent without resource declarations (BestEffort) rather than
+	// failing. A deployment that wants limits sets them; one that doesn't, doesn't.
+	if cpuRequest == "" && memoryRequest == "" && cpuLimit == "" && memoryLimit == "" {
+		return nil
+	}
+	// Partial config is a mistake, not an intent — fail loudly rather than ship a half-sized pod.
 	for name, val := range map[string]string{
 		"cpu request": cpuRequest, "memory request": memoryRequest, "cpu limit": cpuLimit, "memory limit": memoryLimit,
 	} {
@@ -614,11 +612,6 @@ func (k *KubernetesExecutor) addDindSupport(ctx context.Context, job *batchv1.Jo
 	dind := templateDind.DeepCopy()
 	if dindImageOverride != "" {
 		dind.Image = dindImageOverride
-	}
-	if !k.config.ResourceQuotaEnabled {
-		// Kubelet schedules against node capacity rather than admission requirements when
-		// no ResourceQuota is present.
-		dind.Resources = corev1.ResourceRequirements{}
 	}
 
 	if mirror != nil {

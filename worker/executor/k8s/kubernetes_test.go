@@ -230,14 +230,13 @@ func TestKubernetesExecutor_Execute_JobTTLOutlivesHeartbeatTimeout(t *testing.T)
 		"Job TTL must exceed the 15m heartbeat timeout so a crashed Pod survives to FetchPodLogs")
 }
 
-func TestKubernetesExecutor_Execute_ResourceQuotaEnabled_PinsConfigDefault(t *testing.T) {
+func TestKubernetesExecutor_Execute_PinsConfiguredAgentResources(t *testing.T) {
 	fakeClient := fake.NewSimpleClientset()
 
 	exec := NewKubernetesExecutor(fakeClient, Config{
-		Namespace:            testNamespace,
-		AgentServiceAccount:  "choruskube-agent",
-		ResourceQuotaEnabled: true,
-		AgentResources:       testAgentResources(),
+		Namespace:           testNamespace,
+		AgentServiceAccount: "choruskube-agent",
+		AgentResources:      testAgentResources(),
 	})
 
 	params := newTestParams()
@@ -259,10 +258,9 @@ func TestKubernetesExecutor_Execute_PerExecutionResourceOverride(t *testing.T) {
 	fakeClient := fake.NewSimpleClientset()
 
 	exec := NewKubernetesExecutor(fakeClient, Config{
-		Namespace:            testNamespace,
-		AgentServiceAccount:  "choruskube-agent",
-		ResourceQuotaEnabled: true,
-		AgentResources:       testAgentResources(),
+		Namespace:           testNamespace,
+		AgentServiceAccount: "choruskube-agent",
+		AgentResources:      testAgentResources(),
 	})
 
 	params := newTestParams()
@@ -279,21 +277,27 @@ func TestKubernetesExecutor_Execute_PerExecutionResourceOverride(t *testing.T) {
 	assert.Equal(t, "200m", res.Requests.Cpu().String(), "empty override field falls back to the Config default")
 }
 
-// ResourceQuota is on but neither the Config default nor an override supplies values: the pod
-// would be rejected at admission, so the executor fails loudly at build time instead.
-func TestKubernetesExecutor_Execute_ResourceQuotaEnabled_UnconfiguredErrors(t *testing.T) {
+// Partial agent resources (some fields set, others empty) is a configuration mistake, not an
+// intent to run BestEffort — the executor fails loudly at build time rather than ship a half-sized pod.
+func TestKubernetesExecutor_Execute_PartialAgentResources_Errors(t *testing.T) {
 	fakeClient := fake.NewSimpleClientset()
-	exec := NewKubernetesExecutor(fakeClient, Config{Namespace: testNamespace, AgentServiceAccount: "choruskube-agent", ResourceQuotaEnabled: true})
+	exec := NewKubernetesExecutor(fakeClient, Config{
+		Namespace:           testNamespace,
+		AgentServiceAccount: "choruskube-agent",
+		AgentResources:      coreexec.AgentResources{CPULimit: "1"}, // requests + memory limit left empty
+	})
 
 	_, err := exec.Execute(context.Background(), newTestParams())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not configured")
 }
 
-func TestKubernetesExecutor_Execute_ResourceQuotaDisabled_LeavesResourcesUnset(t *testing.T) {
+// No agent resources configured at all -> the agent container runs BestEffort (empty
+// requests/limits) rather than failing. No quota flag gates this.
+func TestKubernetesExecutor_Execute_NoAgentResources_LeavesResourcesUnset(t *testing.T) {
 	fakeClient := fake.NewSimpleClientset()
 
-	exec := NewKubernetesExecutor(fakeClient, Config{Namespace: testNamespace, AgentServiceAccount: "choruskube-agent", ResourceQuotaEnabled: false})
+	exec := NewKubernetesExecutor(fakeClient, Config{Namespace: testNamespace, AgentServiceAccount: "choruskube-agent"})
 
 	params := newTestParams()
 	result, err := exec.Execute(context.Background(), params)
@@ -386,7 +390,6 @@ func TestKubernetesExecutor_Execute_DinD_SplicesTemplate(t *testing.T) {
 		AgentServiceAccount:  "choruskube-agent",
 		AgentPodTemplateName: templateName,
 		TemplateNamespace:    templateNamespace,
-		ResourceQuotaEnabled: true,
 		AgentResources:       testAgentResources(),
 	})
 
@@ -417,6 +420,12 @@ func TestKubernetesExecutor_Execute_DinD_SplicesTemplate(t *testing.T) {
 	assert.Equal(t, "dind", dind.Name)
 	assert.True(t, hasEnv(dind.Env, "REGISTRY_MIRROR", "mirror.internal.test:5000"))
 	assert.True(t, hasEnv(dind.Env, "INSECURE_REGISTRIES", "mirror.internal.test:5000 mirror.internal.test:5001"))
+	// The dind sidecar's resources come straight from the template, always — no quota flag gates
+	// them. This is the whole point of the operator-supplied template: it is the sizing authority.
+	assert.Equal(t, "1", dind.Resources.Limits.Cpu().String())
+	assert.Equal(t, "1Gi", dind.Resources.Limits.Memory().String())
+	assert.Equal(t, "500m", dind.Resources.Requests.Cpu().String())
+	assert.Equal(t, "512Mi", dind.Resources.Requests.Memory().String())
 
 	agent := podSpec.Containers[0]
 	assert.True(t, hasEnv(agent.Env, "DOCKER_HOST", "tcp://localhost:2375"))

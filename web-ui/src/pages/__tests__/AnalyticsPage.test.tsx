@@ -16,7 +16,6 @@ vi.mock("@/hooks/useUsage", () => ({
       repos: { current: 2, limit: 25 },
       monthlyRuns: { current: 99, limit: 500, periodStart: "2026-04-01T00:00:00Z" },
       monthlyNodeExecutions: { current: 387, limit: 5000, periodStart: "2026-04-01T00:00:00Z" },
-      k8s: { maxPodsPerNamespace: 20, maxCpuPerNamespace: "8", maxMemoryPerNamespace: "16Gi" },
     },
     isLoading: false,
     error: null,
