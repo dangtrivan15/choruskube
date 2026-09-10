@@ -1081,12 +1081,6 @@ export interface MonthlyUsageMetric {
   periodStart: string;
 }
 
-export interface KubernetesQuotaConfig {
-  maxPodsPerNamespace: number;
-  maxCpuPerNamespace: string;
-  maxMemoryPerNamespace: string;
-}
-
 export interface K8sAggregateUsage {
   totalCpuAllocated: string;
   maxCpuPerOrg: string;
@@ -1101,7 +1095,6 @@ export interface UsageSummaryResponse {
   repos: UsageMetric;
   monthlyRuns: MonthlyUsageMetric;
   monthlyNodeExecutions: MonthlyUsageMetric;
-  k8s: KubernetesQuotaConfig;
   k8sAggregate?: K8sAggregateUsage;
 }
 
