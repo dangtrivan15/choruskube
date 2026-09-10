@@ -69,10 +69,13 @@ func (f *fakeTemporalClient) RecordActivityHeartbeatByID(ctx context.Context, na
 var _ client.Client = (*fakeTemporalClient)(nil)
 
 // singleClientResolver is a clientResolver serving exactly one Fleet -- enough for these tests
-// without fleetSupervisor's real dial-and-map machinery.
+// without fleetSupervisor's real dial-and-map machinery. reattachClient returns the same client
+// and namespace unless reattachErr is set, standing in for a Worker that serves zero or several
+// Temporal namespaces and so cannot pick one for an execution it never launched.
 type singleClientResolver struct {
 	namespace, taskQueue string
 	client               client.Client
+	reattachErr          error
 }
 
 func (r singleClientResolver) clientFor(namespace, taskQueue string) client.Client {
@@ -80,6 +83,13 @@ func (r singleClientResolver) clientFor(namespace, taskQueue string) client.Clie
 		return nil
 	}
 	return r.client
+}
+
+func (r singleClientResolver) reattachClient() (client.Client, string, error) {
+	if r.reattachErr != nil {
+		return nil, "", r.reattachErr
+	}
+	return r.client, r.namespace, nil
 }
 
 var _ clientResolver = singleClientResolver{}
@@ -139,7 +149,10 @@ func TestActivityCompleter_Complete_FailedStatus_FailsTheActivity(t *testing.T) 
 	assert.True(t, pending.removed[execID])
 }
 
-func TestActivityCompleter_Complete_NoPendingEntry_ReturnsErrorWithoutCallingTemporal(t *testing.T) {
+// A cache miss reattaches by rebuilding the activity's workflow id from the callback's run id; a
+// callback that carries no run id (Nil) leaves nothing to rebuild it from, so it must error rather
+// than address the wrong activity.
+func TestActivityCompleter_Complete_CacheMiss_NoRunID_CannotReattach(t *testing.T) {
 	fake := &fakeTemporalClient{}
 	c := newActivityCompleter(newFakePending(), singleClientResolver{client: fake})
 
@@ -182,7 +195,7 @@ func TestActivityCompleter_Fail(t *testing.T) {
 	fake := &fakeTemporalClient{}
 	c := newActivityCompleter(pending, singleClientResolver{namespace: "ns", taskQueue: "q", client: fake})
 
-	err := c.Fail(context.Background(), execID, fmt.Errorf("empty result"))
+	err := c.Fail(context.Background(), uuid.New(), execID, fmt.Errorf("empty result"))
 	assert.NoError(t, err)
 
 	if assert.Len(t, fake.calls, 1) {
@@ -193,11 +206,11 @@ func TestActivityCompleter_Fail(t *testing.T) {
 	assert.True(t, pending.removed[execID])
 }
 
-func TestActivityCompleter_Fail_NoPending_ReturnsError(t *testing.T) {
+func TestActivityCompleter_Fail_CacheMiss_NoRunID_CannotReattach(t *testing.T) {
 	fake := &fakeTemporalClient{}
 	c := newActivityCompleter(newFakePending(), singleClientResolver{client: fake})
 
-	err := c.Fail(context.Background(), uuid.New(), fmt.Errorf("reason"))
+	err := c.Fail(context.Background(), uuid.Nil, uuid.New(), fmt.Errorf("reason"))
 	assert.Error(t, err)
 	assert.Empty(t, fake.calls)
 }
@@ -242,11 +255,75 @@ func TestActivityCompleter_RecordHeartbeat(t *testing.T) {
 	fake := &fakeTemporalClient{}
 	c := newActivityCompleter(pending, singleClientResolver{namespace: "ns", taskQueue: "q", client: fake})
 
-	err := c.RecordHeartbeat(context.Background(), execID)
+	err := c.RecordHeartbeat(context.Background(), uuid.New(), execID)
 	assert.NoError(t, err)
 	if assert.Len(t, fake.heartbeats, 1) {
 		assert.Equal(t, "wf", fake.heartbeats[0].workflowID)
 		assert.Equal(t, "a", fake.heartbeats[0].activityID)
 	}
 	assert.False(t, pending.removed[execID], "a heartbeat must not clear the pending entry -- the activity has not completed")
+}
+
+// A redeploy leaves the new Worker's cache empty while the agent pod it inherited keeps calling
+// back. The heartbeat must still reach Temporal, addressed by ids rebuilt from the callback's run
+// id and execution id, or the inherited node dies at its heartbeat timeout.
+func TestActivityCompleter_RecordHeartbeat_ReattachesOnCacheMiss(t *testing.T) {
+	execID := uuid.New()
+	runID := uuid.New()
+	pending := newFakePending() // empty: this Worker never launched execID
+	fake := &fakeTemporalClient{}
+	resolver := singleClientResolver{namespace: "org-ns", taskQueue: "org-q", client: fake}
+
+	c := newActivityCompleter(pending, resolver)
+	err := c.RecordHeartbeat(context.Background(), runID, execID)
+	assert.NoError(t, err)
+
+	if assert.Len(t, fake.heartbeats, 1, "an inherited heartbeat must still be relayed to Temporal") {
+		assert.Equal(t, "org-ns", fake.heartbeats[0].namespace)
+		assert.Equal(t, "choruskube-run-"+runID.String(), fake.heartbeats[0].workflowID)
+		assert.Equal(t, execID.String(), fake.heartbeats[0].activityID)
+	}
+}
+
+// The completion of an inherited node (its Worker was replaced mid-run) must likewise reattach by
+// rebuilt ids so the workflow advances instead of the activity timing out.
+func TestActivityCompleter_Complete_ReattachesOnCacheMiss(t *testing.T) {
+	execID := uuid.New()
+	runID := uuid.New()
+	pending := newFakePending() // empty
+	fake := &fakeTemporalClient{}
+	resolver := singleClientResolver{namespace: "org-ns", taskQueue: "org-q", client: fake}
+
+	c := newActivityCompleter(pending, resolver)
+	err := c.Complete(context.Background(), callback.CompletionRequest{
+		NodeExecutionID: execID,
+		RunID:           runID,
+		Status:          "completed",
+		Result:          "reattached result",
+	})
+	assert.NoError(t, err)
+
+	if assert.Len(t, fake.calls, 1) {
+		call := fake.calls[0]
+		assert.Equal(t, "org-ns", call.namespace)
+		assert.Equal(t, "choruskube-run-"+runID.String(), call.workflowID)
+		assert.Equal(t, execID.String(), call.activityID)
+		result, ok := call.result.(activity.CallbackResult)
+		if assert.True(t, ok) {
+			assert.Equal(t, "reattached result", result.Result)
+		}
+	}
+}
+
+// When the Worker serves zero or several Temporal namespaces it cannot tell which one an inherited
+// execution belongs to; reattach must fail rather than complete the wrong activity, and never
+// touch Temporal.
+func TestActivityCompleter_RecordHeartbeat_ReattachUnavailable_Errors(t *testing.T) {
+	fake := &fakeTemporalClient{}
+	resolver := singleClientResolver{client: fake, reattachErr: errors.New("more than one served namespace")}
+
+	c := newActivityCompleter(newFakePending(), resolver)
+	err := c.RecordHeartbeat(context.Background(), uuid.New(), uuid.New())
+	assert.Error(t, err)
+	assert.Empty(t, fake.heartbeats)
 }

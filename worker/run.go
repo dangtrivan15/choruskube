@@ -321,6 +321,11 @@ type fleetSupervisor struct {
 	// per-Fleet map keeps the addressing symmetric with Temporal's clientFor path.
 	wkClients map[string]*workload.Client
 	defaultWC *workload.Client
+	// nsClients holds one Temporal client per served Temporal namespace, for completing or
+	// heartbeating by id an execution launched under a previous Worker whose in-memory addressing
+	// this process never held. By-id addressing needs only the namespace, so any client on it
+	// serves; reattachClient reads this and refuses to guess when more than one namespace is served.
+	nsClients map[string]client.Client
 }
 
 // serve starts a Worker for f unless one is already running for it. Idempotent by fleetKey, so
@@ -353,6 +358,14 @@ func (s *fleetSupervisor) serve(f Fleet) error {
 	if s.wkClients != nil && s.defaultWC != nil {
 		s.wkClients[key] = s.defaultWC
 	}
+	// First client per Temporal namespace wins: any client on a namespace can complete or
+	// heartbeat any of its activities by id, so a second Fleet in the same namespace needs no
+	// second reattach entry.
+	if s.nsClients != nil {
+		if _, ok := s.nsClients[f.Namespace]; !ok {
+			s.nsClients[f.Namespace] = c
+		}
+	}
 	return nil
 }
 
@@ -382,6 +395,23 @@ func (s *fleetSupervisor) stopAll() {
 	s.served = map[string]func(){}
 	s.clients = map[string]client.Client{}
 	s.wkClients = map[string]*workload.Client{}
+	s.nsClients = map[string]client.Client{}
+}
+
+// reattachClient returns a Temporal client for completing or heartbeating by id an execution this
+// Worker never launched -- a previous Worker did, before a restart -- together with the Temporal
+// namespace it serves. See clientResolver.reattachClient for why the namespace alone suffices and
+// why serving more than one is refused rather than guessed.
+func (s *fleetSupervisor) reattachClient() (client.Client, string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.nsClients) != 1 {
+		return nil, "", fmt.Errorf("reattach needs exactly one served Temporal namespace, have %d", len(s.nsClients))
+	}
+	for ns, cl := range s.nsClients {
+		return cl, ns, nil
+	}
+	return nil, "", errors.New("unreachable")
 }
 
 func (s *fleetSupervisor) count() int {
@@ -475,6 +505,7 @@ func Run(ctx context.Context, cfg Config) error {
 		clients:   map[string]client.Client{},
 		wkClients: map[string]*workload.Client{},
 		defaultWC: wc,
+		nsClients: map[string]client.Client{},
 	}
 	defer sup.stopAll()
 

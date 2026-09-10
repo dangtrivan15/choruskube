@@ -10,9 +10,11 @@ import (
 )
 
 // Heartbeater records that a running node execution is still alive, keeping its Temporal
-// activity from timing out.
+// activity from timing out. runID accompanies executionID so a Worker that did not launch the
+// execution (a restart emptied its cache) can rebuild the activity's by-id addressing and relay
+// the ping anyway; the launching Worker ignores it and uses the addressing it cached.
 type Heartbeater interface {
-	RecordHeartbeat(ctx context.Context, executionID uuid.UUID) error
+	RecordHeartbeat(ctx context.Context, runID, executionID uuid.UUID) error
 }
 
 // HeartbeatHandler serves POST /api/v1/heartbeat: an agent pod's periodic liveness ping.
@@ -74,7 +76,7 @@ func (h *HeartbeatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Non-fatal: a heartbeat can race the callback (the activity may already be
 	// complete), which is an expected outcome, not a failure the agent's heartbeat
 	// loop should see as one.
-	if err := h.heartbeater.RecordHeartbeat(ctx, execID); err != nil {
+	if err := h.heartbeater.RecordHeartbeat(ctx, runID, execID); err != nil {
 		slog.Warn("heartbeat failed", "execution_id", execID, "error", err)
 	}
 
