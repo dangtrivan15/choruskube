@@ -36,6 +36,30 @@ func TestHeartbeatHandler_ValidSecret_RecordsHeartbeat(t *testing.T) {
 	assert.Equal(t, execID, hb.recordedExecID)
 }
 
+// The body's run_id must reach the Heartbeater: a Worker that inherited this execution across a
+// restart rebuilds the activity's workflow id from it to relay the ping. Dropping it here strands
+// every inherited node at its heartbeat timeout.
+func TestHeartbeatHandler_PassesRunIDToHeartbeater(t *testing.T) {
+	execID := uuid.New()
+	runID := uuid.New()
+	secret := "test-secret-value"
+
+	cache := NewHashCache()
+	cache.Put(execID, executor.HashSecret(secret))
+
+	hb := &mockHeartbeater{}
+	handler := NewHeartbeatHandler(cache, nil, hb)
+
+	body, _ := json.Marshal(map[string]any{"node_execution_id": execID.String(), "run_id": runID.String()})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/heartbeat", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+secret)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, runID, hb.recordedRunID, "handler must thread the body's run_id to RecordHeartbeat")
+}
+
 func TestHeartbeatHandler_InvalidSecret_Returns401(t *testing.T) {
 	execID := uuid.New()
 	cache := NewHashCache()
@@ -159,10 +183,12 @@ func TestHeartbeatHandler_MethodNotAllowed(t *testing.T) {
 
 type mockHeartbeater struct {
 	recordedExecID uuid.UUID
+	recordedRunID  uuid.UUID
 	err            error
 }
 
-func (m *mockHeartbeater) RecordHeartbeat(ctx context.Context, executionID uuid.UUID) error {
+func (m *mockHeartbeater) RecordHeartbeat(ctx context.Context, runID, executionID uuid.UUID) error {
 	m.recordedExecID = executionID
+	m.recordedRunID = runID
 	return m.err
 }

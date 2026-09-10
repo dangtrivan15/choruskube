@@ -153,9 +153,10 @@ func TestHandler_CacheMiss_ResolvesFromExecutor(t *testing.T) {
 
 type mockCompleter struct {
 	completeFn func(context.Context, CompletionRequest) error
-	failFn     func(context.Context, uuid.UUID, error) error
+	failFn     func(context.Context, uuid.UUID, uuid.UUID, error) error
 	completeCt int
 	failCt     int
+	failedRun  uuid.UUID
 }
 
 func (m *mockCompleter) Complete(ctx context.Context, req CompletionRequest) error {
@@ -166,10 +167,11 @@ func (m *mockCompleter) Complete(ctx context.Context, req CompletionRequest) err
 	return nil
 }
 
-func (m *mockCompleter) Fail(ctx context.Context, executionID uuid.UUID, reason error) error {
+func (m *mockCompleter) Fail(ctx context.Context, runID, executionID uuid.UUID, reason error) error {
 	m.failCt++
+	m.failedRun = runID
 	if m.failFn != nil {
-		return m.failFn(ctx, executionID, reason)
+		return m.failFn(ctx, runID, executionID, reason)
 	}
 	return nil
 }

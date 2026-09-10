@@ -96,7 +96,10 @@ type CompletionRequest struct {
 // caller — this package only depends on the interface, so it can be unit tested with a mock.
 type ActivityCompleter interface {
 	Complete(ctx context.Context, req CompletionRequest) error
-	Fail(ctx context.Context, executionID uuid.UUID, reason error) error
+	// Fail takes runID alongside executionID so a restarted Worker, whose cache no longer holds
+	// this execution's addressing, can rebuild it by id and still fail the activity. Complete
+	// carries the run id on its CompletionRequest for the same reason.
+	Fail(ctx context.Context, runID, executionID uuid.UUID, reason error) error
 }
 
 // StatusClient reads and writes node-execution state on the API server, for the finalized check
@@ -214,7 +217,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// --- Behavior 2: empty-result rejection ---
 	if body.Status == "completed" && strings.TrimSpace(body.Result) == "" {
-		if err := h.completer.Fail(ctx, execID,
+		if err := h.completer.Fail(ctx, runID, execID,
 			fmt.Errorf("node reported completed but result is empty")); err != nil {
 			slog.Error("failed to fail activity for empty result", "execution_id", execID, "error", err)
 		}

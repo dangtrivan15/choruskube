@@ -55,6 +55,40 @@ func TestSupervisorStopAllClearsTheServedSet(t *testing.T) {
 	}
 }
 
+// reattachClient hands the completer a client for an execution this Worker never launched. By-id
+// addressing needs only the Temporal namespace, so the sole served client is the answer.
+func TestSupervisorReattachClientReturnsTheSoleNamespaceClient(t *testing.T) {
+	want := &fakeTemporalClient{}
+	sup := &fleetSupervisor{nsClients: map[string]client.Client{"org-ns": want}}
+
+	cl, ns, err := sup.reattachClient()
+	if err != nil {
+		t.Fatalf("reattachClient = %v, want nil", err)
+	}
+	if cl != client.Client(want) || ns != "org-ns" {
+		t.Fatalf("reattachClient = (%v, %q), want the sole served client and its namespace", cl, ns)
+	}
+}
+
+func TestSupervisorReattachClientWithoutServedNamespaceErrors(t *testing.T) {
+	sup := &fleetSupervisor{nsClients: map[string]client.Client{}}
+	if _, _, err := sup.reattachClient(); err == nil {
+		t.Fatal("reattachClient with no served namespace = nil error, want an error rather than a nil client")
+	}
+}
+
+// With several Temporal namespaces the callback's ids do not say which one the run lives in, so
+// reattach must refuse rather than complete an activity in the wrong namespace.
+func TestSupervisorReattachClientWithMultipleNamespacesErrors(t *testing.T) {
+	sup := &fleetSupervisor{nsClients: map[string]client.Client{
+		"ns-a": &fakeTemporalClient{},
+		"ns-b": &fakeTemporalClient{},
+	}}
+	if _, _, err := sup.reattachClient(); err == nil {
+		t.Fatal("reattachClient with two served namespaces = nil error, want a refusal")
+	}
+}
+
 // The reason renewOnce returns the roster at all: without it the loop has nothing to serve, and a
 // Fleet created after startup is never polled — its runs sit unclaimed until they time out.
 func TestRenewOnceReturnsTheRosterSoNewFleetsCanBeServed(t *testing.T) {

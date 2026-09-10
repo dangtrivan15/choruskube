@@ -13,6 +13,13 @@ import (
 // of which run an activity belongs to that the activity's own parameters cannot contradict.
 const workflowIDPrefix = "choruskube-run-"
 
+// WorkflowID returns the Temporal workflow id for a run. A Worker that inherited an execution
+// across a restart rebuilds the id here from the callback's run id to reattach to the activity by
+// id, the inverse of runIDFromWorkflowID.
+func WorkflowID(runID uuid.UUID) string {
+	return workflowIDPrefix + runID.String()
+}
+
 func runIDFromWorkflowID(workflowID string) (uuid.UUID, error) {
 	if !strings.HasPrefix(workflowID, workflowIDPrefix) {
 		return uuid.Nil, fmt.Errorf("workflow id %q is not a run's", workflowID)
