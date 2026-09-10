@@ -112,7 +112,6 @@ service account, or credential itself — see
 | `K8S_AGENT_SERVICE_ACCOUNT` | `choruskube-agent` | Service account the agent Job's pod runs as. |
 | `K8S_AGENT_POD_TEMPLATE_NAME` | `choruskube-agent-pod-template` | Pod template the Job's pod is built from. |
 | `K8S_TEMPLATE_NAMESPACE` | `choruskube` | Namespace the pod template above is read from. |
-| `K8S_RESOURCE_QUOTA_ENABLED` | `true` | Set `false` to skip enforcing the namespace's ResourceQuota. |
 | `K8S_AGENT_CPU_REQUEST` | `200m` | Default agent-container CPU request; a node execution's own sizing overrides it. |
 | `K8S_AGENT_MEMORY_REQUEST` | `1Gi` | Default agent-container memory request; overridable per node. |
 | `K8S_AGENT_CPU_LIMIT` | `1` | Default agent-container CPU limit; overridable per node. |

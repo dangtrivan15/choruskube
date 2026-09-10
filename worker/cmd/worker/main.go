@@ -58,7 +58,6 @@ func main() {
 			AgentServiceAccount:  envOrDefault("K8S_AGENT_SERVICE_ACCOUNT", "choruskube-agent"),
 			AgentPodTemplateName: envOrDefault("K8S_AGENT_POD_TEMPLATE_NAME", "choruskube-agent-pod-template"),
 			TemplateNamespace:    envOrDefault("K8S_TEMPLATE_NAMESPACE", "choruskube"),
-			ResourceQuotaEnabled: os.Getenv("K8S_RESOURCE_QUOTA_ENABLED") != "false",
 			// Default agent-container sizing, overridable per execution by the api-server. The
 			// executor pins no numbers of its own; these env defaults are the deployment's.
 			AgentResources: executor.AgentResources{
