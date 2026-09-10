@@ -47,13 +47,15 @@ env:
 
 jobs:
   # Preflight (PR only): e2e runs UNLESS every author (opener + commit authors) is in
-  # E2E_SKIP_AUTHORS. The opener trust gate is here, but a fork ships its own copy of this file,
-  # so the repo's require-approval runner setting is the real fork guard.
+  # E2E_SKIP_AUTHORS -- injected onto the self-hosted runner out of band and read from the ambient
+  # env here (curl + jq are on the stock runner image), never a GitHub variable. The opener trust
+  # gate stays; a fork ships its own copy of this file, so the require-approval setting is the
+  # real fork guard.
   gate:
     if: >-
       github.event_name == 'pull_request' &&
       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
-    runs-on: ubuntu-latest
+    runs-on: arc-runner-choruskube
     permissions:
       contents: read
       pull-requests: read
@@ -66,17 +68,25 @@ jobs:
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
           OPENER: ${{ github.event.pull_request.user.login }}
-          SKIP: ${{ vars.E2E_SKIP_AUTHORS || '[]' }}
         run: |
           set -euo pipefail
+          skip="${E2E_SKIP_AUTHORS:-[]}"
           authors=$(
             { printf '%s\n' "$OPENER"
-              gh api --paginate "repos/$REPO/pulls/$PR/commits" --jq '.[].author.login // empty'
+              page=1
+              while :; do
+                resp=$(curl -sfS -H "Authorization: Bearer $GH_TOKEN" \
+                  -H "Accept: application/vnd.github+json" -H "User-Agent: e2e-gate" \
+                  "https://api.github.com/repos/$REPO/pulls/$PR/commits?per_page=100&page=$page")
+                jq -r '.[].author.login // empty' <<<"$resp"
+                [ "$(jq 'length' <<<"$resp")" -lt 100 ] && break
+                page=$((page + 1))
+              done
             } | sort -u)
           run=false
           while IFS= read -r a; do
             [ -z "$a" ] && continue
-            jq -e --arg a "$a" 'index($a) != null' <<<"$SKIP" >/dev/null || { run=true; break; }
+            jq -e --arg a "$a" 'index($a) != null' <<<"$skip" >/dev/null || { run=true; break; }
           done <<<"$authors"
           echo "run=$run" >> "$GITHUB_OUTPUT"
 
