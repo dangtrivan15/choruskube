@@ -5,14 +5,9 @@ name: E2E
 # No real Claude token is needed: the agent runs the deterministic mock-agent and AI calls
 # are stubbed by WireMock with a dummy token.
 #
-# DISPATCH-ONLY, and NOT a required status check. This suite is dogfooded downstream: a
-# deployment that composes over this OSS core runs `./gradlew test -Pe2e` as its in-cluster
-# test gate on every change (core included, via the sibling build), so a per-PR run here
-# would re-verify what that already covers while contending for the small
-# `arc-runner-choruskube` pool. What this workflow adds is running the suite against an
-# arbitrary ref on demand (a change that never went through that gate, or a merge outside
-# one). Trigger via `workflow_dispatch`. It must NOT become a required check: a required
-# check that is never triggered is reported as pending and blocks the merge forever.
+# Triggers: `pull_request` to main (gated below) and `workflow_dispatch` for an arbitrary ref.
+# Never make it a required check -- it is skipped for the agent and for fork authors, whose PRs
+# a required check would then block on a run that never comes.
 #
 # Parallelism is Playwright workers (E2E_WORKERS, or -Pworkers on a direct Gradle
 # invocation) inside this one job, against the one Compose stack it boots.
@@ -30,13 +25,13 @@ name: E2E
 # (web-ui/e2e/helpers/api-client.ts) to stay collision-free against its siblings.
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [main]
 
-# One run per ref. Unlike a PR-triggered suite this does NOT cancel in progress: every run
-# here was asked for by a human, so a long run is not worth discarding because a second
-# dispatch arrived. A concurrent dispatch on the same ref queues instead.
+# Cancel a superseded PR run; let concurrent dispatches queue.
 concurrency:
   group: e2e-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -52,7 +47,12 @@ env:
 
 jobs:
   e2e:
-    # Dispatch-only, so always the self-hosted pool — there is no fork-PR path to guard.
+    # Same-repo PRs only: a fork ships its own copy of this file, so the repo's require-approval
+    # runner setting is the real fork guard. Unset E2E_SKIP_AUTHORS skips nobody.
+    if: >-
+      github.event_name != 'pull_request' ||
+      ( contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
+        && !contains(fromJSON(vars.E2E_SKIP_AUTHORS || '[]'), github.event.pull_request.user.login) )
     runs-on: arc-runner-choruskube
     timeout-minutes: 45
     steps:
