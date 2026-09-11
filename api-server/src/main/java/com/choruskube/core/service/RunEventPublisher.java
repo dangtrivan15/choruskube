@@ -8,6 +8,8 @@ import com.choruskube.core.event.OrgScopedFeedPublisher;
 import java.util.UUID;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Service
 public class RunEventPublisher {
@@ -41,7 +43,7 @@ public class RunEventPublisher {
      */
     public void publishRoadmapItemChanged(String itemType, UUID itemId, String status) {
         RoadmapItemEvent event = new RoadmapItemEvent(itemType + "_changed", itemId, status);
-        feedPublisher.roadmapItemChanged(itemType, itemId, event);
+        publishAfterCommit(() -> feedPublisher.roadmapItemChanged(itemType, itemId, event));
     }
 
     /**
@@ -56,7 +58,24 @@ public class RunEventPublisher {
      */
     public void publishDependencyChanged(DependencyEdgeResponse edge, String status) {
         RoadmapItemEvent event = new RoadmapItemEvent("dependency_changed", edge.id(), status);
-        feedPublisher.roadmapItemChanged(edge.blockedItemType(), edge.blockedItemId(), event);
+        publishAfterCommit(() -> feedPublisher.roadmapItemChanged(edge.blockedItemType(), edge.blockedItemId(), event));
+    }
+
+    // Roadmap-item broadcasts must fire only after the DB commit: a subscriber refetches on
+    // receipt, so sending inside the writing transaction lets that read beat the commit and cache
+    // pre-commit state, leaving the UI stale until an unrelated event happens to refresh it. Falls
+    // through to an immediate send when no transaction is active (callers outside a tx boundary).
+    private void publishAfterCommit(Runnable send) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    send.run();
+                }
+            });
+        } else {
+            send.run();
+        }
     }
 
     /**
