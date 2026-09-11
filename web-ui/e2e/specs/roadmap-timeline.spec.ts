@@ -1,6 +1,7 @@
 import { test, expect } from "../fixtures";
 import { RoadmapTimelinePage } from "../pages/roadmap-timeline.page";
 import { uniqueName } from "../helpers/api-client";
+import { waitForRoadmapSubscription } from "../helpers/stomp";
 
 test.describe("Roadmap Timeline View", () => {
   test("reachable from the Roadmap list's nav link and shows a lane per Epic and a marker per Story", async ({
@@ -50,8 +51,10 @@ test.describe("Roadmap Timeline View", () => {
     const timelinePage = new RoadmapTimelinePage(page);
 
     try {
+      const subscribed = waitForRoadmapSubscription(page);
       await timelinePage.goto();
       await expect(timelinePage.laneByLabel(epic.title)).toBeVisible();
+      await subscribed;
 
       // Simulate a second session creating a Story directly via the API — mirrors
       // roadmap-graph.spec.ts's "reflects a dependency created out-of-band without a manual
@@ -61,7 +64,9 @@ test.describe("Roadmap Timeline View", () => {
         description: "desc",
       });
 
-      await expect(timelinePage.markerByLabel(story.title)).toBeVisible({ timeout: 15_000 });
+      await expect(timelinePage.markerByLabel(story.title)).toBeVisible({
+        timeout: 15_000,
+      });
     } finally {
       await api.deleteEpic(epic.id);
     }
@@ -99,11 +104,15 @@ test.describe("Roadmap Timeline View", () => {
 
       const blockedMarker = timelinePage.markerByLabel(blocked.title);
       await expect(blockedMarker).toBeVisible();
-      await expect(blockedMarker.getByTestId("roadmap-timeline-story-blocked-badge")).toBeVisible();
+      await expect(
+        blockedMarker.getByTestId("roadmap-timeline-story-blocked-badge"),
+      ).toBeVisible();
       expect(await timelinePage.riskFor(blocked.title)).toBe("blocked");
 
       const blockingMarker = timelinePage.markerByLabel(blocking.title);
-      await expect(blockingMarker.getByTestId("roadmap-timeline-story-blocked-badge")).toHaveCount(0);
+      await expect(
+        blockingMarker.getByTestId("roadmap-timeline-story-blocked-badge"),
+      ).toHaveCount(0);
     } finally {
       await api.deleteEpic(epic.id);
     }
@@ -159,9 +168,11 @@ test.describe("Roadmap Timeline View", () => {
     const timelinePage = new RoadmapTimelinePage(page);
 
     try {
+      const subscribed = waitForRoadmapSubscription(page);
       await timelinePage.goto();
       await expect(timelinePage.markerByLabel(blocked.title)).toBeVisible();
       expect(await timelinePage.riskFor(blocked.title)).toBe("none");
+      await subscribed;
 
       // Simulate a second session creating the dependency directly via the API — mirrors this
       // file's own "reflects a Story created out-of-band without a manual refresh" pattern (drive
@@ -174,7 +185,9 @@ test.describe("Roadmap Timeline View", () => {
       });
 
       await expect(
-        timelinePage.markerByLabel(blocked.title).getByTestId("roadmap-timeline-story-blocked-badge"),
+        timelinePage
+          .markerByLabel(blocked.title)
+          .getByTestId("roadmap-timeline-story-blocked-badge"),
       ).toBeVisible({ timeout: 15_000 });
     } finally {
       await api.deleteEpic(epic.id);
@@ -204,7 +217,10 @@ test.describe("Roadmap Timeline View", () => {
         const marker = timelinePage.markerByLabel(story.title);
         await expect(marker).toBeVisible();
 
-        await timelinePage.hoverToRevealPreview(marker, [story.title, epic.title]);
+        await timelinePage.hoverToRevealPreview(marker, [
+          story.title,
+          epic.title,
+        ]);
 
         // The hover preview never opens the pinned panel — it's a client-only glance.
         await expect(timelinePage.detailPanel).toHaveCount(0);
@@ -257,7 +273,11 @@ test.describe("Roadmap Timeline View", () => {
       }
     });
 
-    test("clicking a ready Story opens the panel with no blocker section", async ({ api, workerRepo, page }) => {
+    test("clicking a ready Story opens the panel with no blocker section", async ({
+      api,
+      workerRepo,
+      page,
+    }) => {
       const epic = await api.createEpic({
         title: uniqueName("E2E Timeline Detail Ready Epic"),
         description: "desc",
@@ -282,7 +302,11 @@ test.describe("Roadmap Timeline View", () => {
       }
     });
 
-    test("a deep link carrying a focused Story id opens the panel on load", async ({ api, workerRepo, page }) => {
+    test("a deep link carrying a focused Story id opens the panel on load", async ({
+      api,
+      workerRepo,
+      page,
+    }) => {
       const epic = await api.createEpic({
         title: uniqueName("E2E Timeline Detail Deep Link Epic"),
         description: "desc",

@@ -1,5 +1,6 @@
 import { test, expect } from "../fixtures";
 import { uniqueName } from "../helpers/api-client";
+import { waitForRoadmapSubscription } from "../helpers/stomp";
 
 test.describe("Roadmap Graph View", () => {
   test("opens the graph view for an Epic and shows the Story/Task tree shape", async ({
@@ -29,7 +30,9 @@ test.describe("Roadmap Graph View", () => {
     try {
       // Reachable from the Epic list, not just by direct URL.
       await roadmapPage.goto();
-      await expect(roadmapPage.page.getByTestId("epic-graph-link").first()).toBeVisible();
+      await expect(
+        roadmapPage.page.getByTestId("epic-graph-link").first(),
+      ).toBeVisible();
 
       await roadmapGraphPage.goto(epic.id);
       await expect(roadmapGraphPage.nodeByLabel(epic.title)).toBeVisible();
@@ -52,8 +55,14 @@ test.describe("Roadmap Graph View", () => {
       description: "desc",
       softwareProjectId: workerRepo.gitRepo.id,
     });
-    const story = await api.createStory(epic.id, { title: "Detail Story", description: "desc" });
-    const task = await api.createTask(story.id, { title: uniqueName("Detail Task"), description: "desc" });
+    const story = await api.createStory(epic.id, {
+      title: "Detail Story",
+      description: "desc",
+    });
+    const task = await api.createTask(story.id, {
+      title: uniqueName("Detail Task"),
+      description: "desc",
+    });
 
     try {
       await roadmapGraphPage.goto(epic.id);
@@ -62,7 +71,9 @@ test.describe("Roadmap Graph View", () => {
       await expect(roadmapGraphPage.detailStatus).toBeVisible();
       await expect(roadmapGraphPage.detailDescription).toBeVisible();
       await expect(roadmapGraphPage.taskRunHistoryList).toBeVisible();
-      await expect(roadmapGraphPage.page.getByText(/No runs yet/i)).toBeVisible();
+      await expect(
+        roadmapGraphPage.page.getByText(/No runs yet/i),
+      ).toBeVisible();
 
       await roadmapGraphPage.detailClose.click();
       await expect(roadmapGraphPage.detailPanel).not.toBeVisible();
@@ -81,7 +92,10 @@ test.describe("Roadmap Graph View", () => {
       description: "desc",
       softwareProjectId: workerRepo.gitRepo.id,
     });
-    const story = await api.createStory(epic.id, { title: "Dependency Story", description: "desc" });
+    const story = await api.createStory(epic.id, {
+      title: "Dependency Story",
+      description: "desc",
+    });
     const blockingTask = await api.createTask(story.id, {
       title: uniqueName("Blocking Task"),
       description: "desc",
@@ -97,17 +111,23 @@ test.describe("Roadmap Graph View", () => {
       await roadmapGraphPage.addBlocker(blockingTask.title);
 
       await expect(roadmapGraphPage.blockingDependencies).toBeVisible();
-      await expect(roadmapGraphPage.blockingDependencyBadges).toContainText(blockingTask.title);
+      await expect(roadmapGraphPage.blockingDependencyBadges).toContainText(
+        blockingTask.title,
+      );
 
       // The new blocking edge renders as its own React Flow edge, distinct
       // from the Epic->Story/Story->Task hierarchy edges (see
       // roadmapDependencyEdgeId's "dep:" prefix in src/lib/elkLayout.ts).
-      const dependencyEdge = roadmapGraphPage.page.locator('.react-flow__edge[data-id^="dep:"]');
+      const dependencyEdge = roadmapGraphPage.page.locator(
+        '.react-flow__edge[data-id^="dep:"]',
+      );
       await expect(dependencyEdge).toHaveCount(1);
 
       // Clean up the edge itself via the remove button, then confirm it's gone.
       await roadmapGraphPage.blockingDependencyRemoveButtons.first().click();
-      await expect(roadmapGraphPage.page.getByText("No blocking dependencies.")).toBeVisible();
+      await expect(
+        roadmapGraphPage.page.getByText("No blocking dependencies."),
+      ).toBeVisible();
     } finally {
       await api.deleteEpic(epic.id);
     }
@@ -123,7 +143,10 @@ test.describe("Roadmap Graph View", () => {
       description: "desc",
       softwareProjectId: workerRepo.gitRepo.id,
     });
-    const story = await api.createStory(epic.id, { title: "Live Update Story", description: "desc" });
+    const story = await api.createStory(epic.id, {
+      title: "Live Update Story",
+      description: "desc",
+    });
     const blockingTask = await api.createTask(story.id, {
       title: uniqueName("Live Blocking Task"),
       description: "desc",
@@ -134,9 +157,13 @@ test.describe("Roadmap Graph View", () => {
     });
 
     try {
+      const subscribed = waitForRoadmapSubscription(roadmapGraphPage.page);
       await roadmapGraphPage.goto(epic.id);
       await roadmapGraphPage.selectNode(blockedTask.title);
-      await expect(roadmapGraphPage.page.getByText("No blocking dependencies.")).toBeVisible();
+      await expect(
+        roadmapGraphPage.page.getByText("No blocking dependencies."),
+      ).toBeVisible();
+      await subscribed;
 
       // Simulate a second session creating the dependency directly via the API
       // (mirrors real-time-updates.spec.ts's "drive state via API, assert the
@@ -148,9 +175,12 @@ test.describe("Roadmap Graph View", () => {
         blockedItemId: blockedTask.id,
       });
 
-      await expect(roadmapGraphPage.blockingDependencyBadges).toContainText(blockingTask.title, {
-        timeout: 15_000,
-      });
+      await expect(roadmapGraphPage.blockingDependencyBadges).toContainText(
+        blockingTask.title,
+        {
+          timeout: 15_000,
+        },
+      );
     } finally {
       await api.deleteEpic(epic.id);
     }
@@ -166,7 +196,10 @@ test.describe("Roadmap Graph View", () => {
       description: "desc",
       softwareProjectId: workerRepo.gitRepo.id,
     });
-    const story = await api.createStory(epic.id, { title: "Chain Story", description: "desc" });
+    const story = await api.createStory(epic.id, {
+      title: "Chain Story",
+      description: "desc",
+    });
     const taskA = await api.createTask(story.id, {
       title: uniqueName("Chain Task A (root)"),
       description: "desc",
@@ -226,7 +259,9 @@ test.describe("Roadmap Graph View", () => {
     // taskC must still render BLOCKED rather than flipping to READY the
     // moment its own immediate blocker clears.
     const tailNode = roadmapGraphPage.nodeByLabel(taskC.title);
-    await expect(tailNode.getByTestId("roadmap-graph-node-blocked-badge")).toBeVisible();
+    await expect(
+      tailNode.getByTestId("roadmap-graph-node-blocked-badge"),
+    ).toBeVisible();
 
     // No cleanup: starting taskB has moved it out of "backlog", and
     // DefaultEpicService#delete refuses to delete an Epic with any started
@@ -250,12 +285,18 @@ test.describe("Roadmap Graph View", () => {
       description: "desc",
       softwareProjectId: workerRepo.gitRepo.id,
     });
-    const firstStory = await api.createStory(firstEpic.id, { title: "Blocked Story", description: "desc" });
+    const firstStory = await api.createStory(firstEpic.id, {
+      title: "Blocked Story",
+      description: "desc",
+    });
     const blockedTask = await api.createTask(firstStory.id, {
       title: uniqueName("Externally Blocked Task"),
       description: "desc",
     });
-    const secondStory = await api.createStory(secondEpic.id, { title: "Blocking Story", description: "desc" });
+    const secondStory = await api.createStory(secondEpic.id, {
+      title: "Blocking Story",
+      description: "desc",
+    });
     const blockingTask = await api.createTask(secondStory.id, {
       title: uniqueName("External Blocking Task"),
       description: "desc",
@@ -273,12 +314,16 @@ test.describe("Roadmap Graph View", () => {
       await roadmapGraphPage.selectNode(blockedTask.title);
 
       await expect(roadmapGraphPage.externalBlockers).toBeVisible();
-      await expect(roadmapGraphPage.externalBlockerBadges).toContainText(secondEpic.title);
+      await expect(roadmapGraphPage.externalBlockerBadges).toContainText(
+        secondEpic.title,
+      );
 
       await roadmapGraphPage.externalBlockerLink(blockingTask.title).click();
 
       await expect(page).toHaveURL(`/roadmap/epics/${secondEpic.id}`);
-      await expect(page.getByTestId("epic-detail-title")).toHaveText(secondEpic.title);
+      await expect(page.getByTestId("epic-detail-title")).toHaveText(
+        secondEpic.title,
+      );
     } finally {
       await api.deleteEpic(firstEpic.id);
       await api.deleteEpic(secondEpic.id);
@@ -301,12 +346,18 @@ test.describe("Roadmap Graph View", () => {
       description: "desc",
       softwareProjectId: workerRepo.gitRepo.id,
     });
-    const firstStory = await api.createStory(firstEpic.id, { title: "Blocked Story", description: "desc" });
+    const firstStory = await api.createStory(firstEpic.id, {
+      title: "Blocked Story",
+      description: "desc",
+    });
     const blockedTask = await api.createTask(firstStory.id, {
       title: "Canvas Externally Blocked Task",
       description: "desc",
     });
-    const secondStory = await api.createStory(secondEpic.id, { title: "Blocking Story", description: "desc" });
+    const secondStory = await api.createStory(secondEpic.id, {
+      title: "Blocking Story",
+      description: "desc",
+    });
     const blockingTask = await api.createTask(secondStory.id, {
       title: uniqueName("Canvas External Blocking Task"),
       description: "desc",
@@ -326,7 +377,9 @@ test.describe("Roadmap Graph View", () => {
       await roadmapGraphPage.goto(firstEpic.id);
 
       await expect(roadmapGraphPage.crossEpicEdges).toHaveCount(1);
-      await expect(roadmapGraphPage.externalNodeByLabel(blockingTask.title)).toBeVisible();
+      await expect(
+        roadmapGraphPage.externalNodeByLabel(blockingTask.title),
+      ).toBeVisible();
 
       // Distinct from the pre-existing sidebar-link test above, which
       // asserts the Epic *detail* route (no "/graph" suffix) — the canvas
@@ -349,14 +402,20 @@ test.describe("Roadmap Graph View", () => {
       description: "desc",
       softwareProjectId: workerRepo.gitRepo.id,
     });
-    const bigStory = await api.createStory(epic.id, { title: uniqueName("Big Story"), description: "desc" });
+    const bigStory = await api.createStory(epic.id, {
+      title: uniqueName("Big Story"),
+      description: "desc",
+    });
     // One more Task than RoadmapGraph's AUTO_COLLAPSE_TASK_THRESHOLD (8), so
     // this branch starts collapsed by default.
     const collapseTaskPrefix = uniqueName("Collapse Task");
     const tasks = [];
     for (let i = 0; i < 9; i++) {
       tasks.push(
-        await api.createTask(bigStory.id, { title: `${collapseTaskPrefix} ${i}`, description: "desc" }),
+        await api.createTask(bigStory.id, {
+          title: `${collapseTaskPrefix} ${i}`,
+          description: "desc",
+        }),
       );
     }
 
@@ -364,7 +423,9 @@ test.describe("Roadmap Graph View", () => {
       await roadmapGraphPage.goto(epic.id);
 
       expect(await roadmapGraphPage.isCollapsed(bigStory.title)).toBe(true);
-      await expect(roadmapGraphPage.nodeByLabel(tasks[0].title)).not.toBeVisible();
+      await expect(
+        roadmapGraphPage.nodeByLabel(tasks[0].title),
+      ).not.toBeVisible();
 
       await roadmapGraphPage.toggleCollapse(bigStory.title);
       expect(await roadmapGraphPage.isCollapsed(bigStory.title)).toBe(false);
@@ -372,7 +433,9 @@ test.describe("Roadmap Graph View", () => {
 
       await roadmapGraphPage.toggleCollapse(bigStory.title);
       expect(await roadmapGraphPage.isCollapsed(bigStory.title)).toBe(true);
-      await expect(roadmapGraphPage.nodeByLabel(tasks[0].title)).not.toBeVisible();
+      await expect(
+        roadmapGraphPage.nodeByLabel(tasks[0].title),
+      ).not.toBeVisible();
     } finally {
       await api.deleteEpic(epic.id);
     }
