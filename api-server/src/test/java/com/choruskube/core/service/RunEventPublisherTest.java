@@ -8,9 +8,12 @@ import com.choruskube.core.dto.RoadmapItemEvent;
 import com.choruskube.core.dto.RunEvent;
 import com.choruskube.core.event.OrgScopedFeedPublisher;
 import java.util.UUID;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class RunEventPublisherTest {
 
@@ -27,6 +30,19 @@ class RunEventPublisherTest {
         messagingTemplate = mock(SimpMessagingTemplate.class);
         feedPublisher = mock(OrgScopedFeedPublisher.class);
         publisher = new RunEventPublisher(messagingTemplate, feedPublisher);
+    }
+
+    @AfterEach
+    void tearDown() {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+    }
+
+    private static void fireAfterCommit() {
+        for (TransactionSynchronization s : TransactionSynchronizationManager.getSynchronizations()) {
+            s.afterCommit();
+        }
     }
 
     @Test
@@ -120,6 +136,32 @@ class RunEventPublisherTest {
 
         verify(feedPublisher).roadmapItemChanged(eq("story"), eq(blockedStoryId), any(RoadmapItemEvent.class));
         verify(feedPublisher, never()).roadmapItemChanged(eq("dependency"), any(), any());
+    }
+
+    @Test
+    void publishRoadmapItemChanged_defersBroadcastUntilAfterCommit() {
+        TransactionSynchronizationManager.initSynchronization();
+
+        publisher.publishRoadmapItemChanged("story", TASK_ID, "backlog");
+        // A refetch on receipt would read pre-commit state; the broadcast must not go out yet.
+        verify(feedPublisher, never()).roadmapItemChanged(any(), any(), any());
+
+        fireAfterCommit();
+        verify(feedPublisher).roadmapItemChanged(eq("story"), eq(TASK_ID), any(RoadmapItemEvent.class));
+    }
+
+    @Test
+    void publishDependencyChanged_defersBroadcastUntilAfterCommit() {
+        UUID blockedStoryId = UUID.randomUUID();
+        DependencyEdgeResponse edge =
+                new DependencyEdgeResponse(UUID.randomUUID(), "task", UUID.randomUUID(), "story", blockedStoryId, null);
+        TransactionSynchronizationManager.initSynchronization();
+
+        publisher.publishDependencyChanged(edge, "created");
+        verify(feedPublisher, never()).roadmapItemChanged(any(), any(), any());
+
+        fireAfterCommit();
+        verify(feedPublisher).roadmapItemChanged(eq("story"), eq(blockedStoryId), any(RoadmapItemEvent.class));
     }
 
     @Test
