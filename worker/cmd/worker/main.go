@@ -51,7 +51,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("create kubernetes client: %v", err)
 		}
-		cfg.Executor = k8s.NewKubernetesExecutor(clientset, k8s.Config{
+		k8sExec := k8s.NewKubernetesExecutor(clientset, k8s.Config{
 			// The single namespace this core executor launches every agent Job into and tears
 			// it down within -- a multi-tenant deployment overrides per org via WithNamespace.
 			Namespace:            envOrDefault("K8S_NAMESPACE", "choruskube"),
@@ -67,6 +67,13 @@ func main() {
 				MemoryLimit:   envOrDefault("K8S_AGENT_MEMORY_LIMIT", "3Gi"),
 			},
 		})
+		// Fail fast at boot on a missing/malformed agent pod template rather than at the first
+		// DinD node launch: the Worker is the sole consumer, so this is where that misconfiguration
+		// surfaces.
+		if err := k8sExec.ValidatePodTemplate(ctx); err != nil {
+			log.Fatalf("agent pod template: %v", err)
+		}
+		cfg.Executor = k8sExec
 	case "docker":
 		dockerStagingDir := os.Getenv("DOCKER_STAGING_DIR")
 		if dockerStagingDir == "" {

@@ -663,6 +663,16 @@ func (k *KubernetesExecutor) addDindSupport(ctx context.Context, job *batchv1.Jo
 	return nil
 }
 
+// ValidatePodTemplate loads and parses the DinD PodTemplate once, returning an error if its
+// wrapper ConfigMap is missing or malformed. The Worker is the sole consumer of this template, so
+// this is the process that should fail fast on a missing-template misconfiguration — call it at
+// startup rather than surfacing the failure at the first DinD node launch. The successful load
+// also warms the cache.
+func (k *KubernetesExecutor) ValidatePodTemplate(ctx context.Context) error {
+	_, err := k.loadPodTemplate(ctx)
+	return err
+}
+
 // loadPodTemplate fetches the DinD PodTemplate from its wrapper ConfigMap (the operator-
 // supplied ConfigMap named Config.AgentPodTemplateName in Config.TemplateNamespace, whose
 // "template.yaml" key holds the serialized PodTemplate), caching it so repeat DinD launches
