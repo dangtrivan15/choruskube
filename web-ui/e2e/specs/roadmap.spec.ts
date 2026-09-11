@@ -1,6 +1,5 @@
 import { test, expect } from "../fixtures";
 import { uniqueName } from "../helpers/api-client";
-import { waitForRoadmapSubscription } from "../helpers/stomp";
 
 test.describe("Roadmap drill-down", () => {
   test("displays roadmap page with heading", async ({ roadmapPage }) => {
@@ -59,9 +58,7 @@ test.describe("Roadmap drill-down", () => {
     await expect(roadmapPage.epicDetailTitle).toContainText(uniqueTitle);
     await expect(roadmapPage.epicDetailDescription).toBeVisible();
     // The three hierarchy levels render a distinct "kind" identity (icon + label).
-    await expect(roadmapPage.page.getByTestId("level-badge-epic")).toHaveText(
-      /Epic/,
-    );
+    await expect(roadmapPage.page.getByTestId("level-badge-epic")).toHaveText(/Epic/);
 
     // Create a Story under it, then a Task under that Story.
     const storyTitle = uniqueName("E2E Story");
@@ -71,9 +68,7 @@ test.describe("Roadmap drill-down", () => {
     await roadmapPage.createStorySubmitButton.click();
 
     await roadmapPage.openStory(storyTitle);
-    await expect(roadmapPage.page.getByTestId("level-badge-story")).toHaveText(
-      /Story/,
-    );
+    await expect(roadmapPage.page.getByTestId("level-badge-story")).toHaveText(/Story/);
     const taskTitle = uniqueName("E2E Task");
     await roadmapPage.newTaskButton.click();
     await roadmapPage.createTaskTitleInput.fill(taskTitle);
@@ -83,9 +78,7 @@ test.describe("Roadmap drill-down", () => {
     await roadmapPage.openTask(taskTitle);
     await expect(roadmapPage.taskDetailTitle).toContainText(taskTitle);
     await expect(roadmapPage.taskStartButton).toBeVisible();
-    await expect(roadmapPage.page.getByTestId("level-badge-task")).toHaveText(
-      /Task/,
-    );
+    await expect(roadmapPage.page.getByTestId("level-badge-task")).toHaveText(/Task/);
 
     // The Task's real parent is its Story, not the roadmap root — clicking
     // "Back to Story" must land on the parent Story's detail page.
@@ -130,11 +123,7 @@ test.describe("Roadmap drill-down", () => {
     await api.deleteEpic(epic.id);
   });
 
-  test("delete confirmation dialog works for an Epic", async ({
-    roadmapPage,
-    api,
-    workerRepo,
-  }) => {
+  test("delete confirmation dialog works for an Epic", async ({ roadmapPage, api, workerRepo }) => {
     const uniqueTitle = uniqueName("E2E Delete");
     await api.createEpic({
       title: uniqueTitle,
@@ -222,47 +211,33 @@ test.describe("Roadmap drill-down", () => {
     });
 
     // Not the graph — the Epic detail page's flat Story list.
-    const subscribed = waitForRoadmapSubscription(roadmapPage.page);
     await roadmapPage.goto();
     await roadmapPage.openEpic(epic.title);
-    await expect(
-      roadmapPage.storyItemReadinessBadge(blockedStory.title),
-    ).toBeVisible();
+    await expect(roadmapPage.storyItemReadinessBadge(blockedStory.title)).toBeVisible();
     // Proves the comment above: a Task-to-Task edge inside `story` never
     // propagates up to block `story` itself.
-    await expect(
-      roadmapPage.storyItemReadinessBadge(story.title),
-    ).not.toBeVisible();
+    await expect(roadmapPage.storyItemReadinessBadge(story.title)).not.toBeVisible();
 
     // Not the graph — the Story detail page's flat Task list.
     await roadmapPage.openStory(story.title);
-    await expect(
-      roadmapPage.taskItemReadinessBadge(blockedTask.title),
-    ).toBeVisible();
-    await expect(
-      roadmapPage.taskItemReadinessBadge(blockingTask.title),
-    ).not.toBeVisible();
+    await expect(roadmapPage.taskItemReadinessBadge(blockedTask.title)).toBeVisible();
+    await expect(roadmapPage.taskItemReadinessBadge(blockingTask.title)).not.toBeVisible();
 
     // Complete the blocking Task out-of-band (mirrors roadmap-graph.spec.ts's
     // equivalent pattern — completeTask only needs a terminal run, not a real
     // "Feature Development" template run) and confirm the Task row's badge
     // clears on the already-open Story detail page without a manual reload —
     // exercises the realtime push-driven update flow.
-    await subscribed;
     const started = await api.startTask(blockingTask.id);
     expect(started.latestRunId).not.toBeNull();
     await api.waitForRunStatus(started.latestRunId!, ["running"], 15_000);
     await api.cancelRun(started.latestRunId!);
     await api.completeTask(blockingTask.id);
 
-    await expect(
-      roadmapPage.taskItemReadinessBadge(blockedTask.title),
-    ).not.toBeVisible();
+    await expect(roadmapPage.taskItemReadinessBadge(blockedTask.title)).not.toBeVisible();
 
     await roadmapPage.page.goto(`/roadmap/epics/${epic.id}`);
-    await expect(
-      roadmapPage.storyItemReadinessBadge(blockedStory.title),
-    ).not.toBeVisible();
+    await expect(roadmapPage.storyItemReadinessBadge(blockedStory.title)).not.toBeVisible();
 
     // No cleanup: starting blockingTask moved it out of backlog, and
     // DefaultEpicService#delete refuses to delete an Epic with any started
@@ -292,27 +267,17 @@ test.describe("Roadmap drill-down", () => {
 
     await roadmapPage.goto();
     // Each row surfaces its priority badge.
-    await expect(roadmapPage.epicItemPriorityBadge(highEpic.title)).toHaveText(
-      /High/,
-    );
-    await expect(roadmapPage.epicItemPriorityBadge(lowEpic.title)).toHaveText(
-      /Low/,
-    );
+    await expect(roadmapPage.epicItemPriorityBadge(highEpic.title)).toHaveText(/High/);
+    await expect(roadmapPage.epicItemPriorityBadge(lowEpic.title)).toHaveText(/Low/);
 
     // Filter to High-only: the high Epic stays, the low one is hidden.
     await roadmapPage.filterByPriority("high");
-    await expect(
-      roadmapPage.epicItems.filter({ hasText: highEpic.title }),
-    ).toBeVisible();
-    await expect(
-      roadmapPage.epicItems.filter({ hasText: lowEpic.title }),
-    ).toHaveCount(0);
+    await expect(roadmapPage.epicItems.filter({ hasText: highEpic.title })).toBeVisible();
+    await expect(roadmapPage.epicItems.filter({ hasText: lowEpic.title })).toHaveCount(0);
 
     // Clearing the filter brings the low Epic back.
     await roadmapPage.filterByPriority("all");
-    await expect(
-      roadmapPage.epicItems.filter({ hasText: lowEpic.title }),
-    ).toBeVisible();
+    await expect(roadmapPage.epicItems.filter({ hasText: lowEpic.title })).toBeVisible();
 
     // Priority sort: this spec is the only one in the whole e2e suite that sets
     // a non-default `priority` (every other spec's Epics default to "medium"),
@@ -337,10 +302,7 @@ test.describe("Roadmap drill-down", () => {
     // Re-prioritize the low Epic to High via the inline detail-page selector.
     await roadmapPage.page.goto(`/roadmap/epics/${lowEpic.id}`);
     await expect(roadmapPage.epicDetailPriorityBadge).toHaveText(/Low/);
-    await roadmapPage.setPriorityViaSelect(
-      roadmapPage.epicDetailPrioritySelect,
-      "high",
-    );
+    await roadmapPage.setPriorityViaSelect(roadmapPage.epicDetailPrioritySelect, "high");
     await expect(roadmapPage.epicDetailPriorityBadge).toHaveText(/High/);
 
     // Clean up.
@@ -362,10 +324,7 @@ test.describe("Roadmap drill-down", () => {
     await roadmapPage.page.goto(`/roadmap/epics/${epic.id}`);
     await expect(roadmapPage.epicDetailTargetDate).toHaveText(/No target date/);
 
-    await roadmapPage.fillTargetDate(
-      roadmapPage.epicDetailTargetDateInput,
-      "2026-08-13",
-    );
+    await roadmapPage.fillTargetDate(roadmapPage.epicDetailTargetDateInput, "2026-08-13");
     await expect(roadmapPage.epicDetailTargetDate).toHaveText(/Aug 13, 2026/);
 
     // Reload — the value must have persisted server-side, not just in local state.
@@ -394,17 +353,10 @@ test.describe("Roadmap drill-down", () => {
       description: "desc",
     });
 
-    await roadmapPage.page.goto(
-      `/roadmap/epics/${epic.id}/stories/${story.id}`,
-    );
-    await expect(roadmapPage.storyDetailTargetDate).toHaveText(
-      /No target date/,
-    );
+    await roadmapPage.page.goto(`/roadmap/epics/${epic.id}/stories/${story.id}`);
+    await expect(roadmapPage.storyDetailTargetDate).toHaveText(/No target date/);
 
-    await roadmapPage.fillTargetDate(
-      roadmapPage.storyDetailTargetDateInput,
-      "2026-08-13",
-    );
+    await roadmapPage.fillTargetDate(roadmapPage.storyDetailTargetDateInput, "2026-08-13");
     await expect(roadmapPage.storyDetailTargetDate).toHaveText(/Aug 13, 2026/);
 
     // Reload — the value must have persisted server-side, not just in local state.
@@ -412,9 +364,7 @@ test.describe("Roadmap drill-down", () => {
     await expect(roadmapPage.storyDetailTargetDate).toHaveText(/Aug 13, 2026/);
 
     await roadmapPage.clearTargetDate(roadmapPage.storyDetailTargetDateInput);
-    await expect(roadmapPage.storyDetailTargetDate).toHaveText(
-      /No target date/,
-    );
+    await expect(roadmapPage.storyDetailTargetDate).toHaveText(/No target date/);
 
     // Clean up.
     await api.deleteEpic(epic.id);
@@ -437,10 +387,7 @@ test.describe("Roadmap drill-down", () => {
     // The filter counts startable Tasks, not Stories, so each Epic needs real backlog work under
     // it — otherwise both would be filtered out for being empty and the blocked one would drop
     // out for the wrong reason.
-    await api.createTask(unblockedStory.id, {
-      title: "Unblocked task",
-      description: "desc",
-    });
+    await api.createTask(unblockedStory.id, { title: "Unblocked task", description: "desc" });
 
     const blockedEpic = await api.createEpic({
       title: uniqueName("E2E Ready Filter Blocked Epic"),
@@ -451,10 +398,7 @@ test.describe("Roadmap drill-down", () => {
       title: "Blocked story",
       description: "desc",
     });
-    await api.createTask(blockedStory.id, {
-      title: "Blocked task",
-      description: "desc",
-    });
+    await api.createTask(blockedStory.id, { title: "Blocked task", description: "desc" });
     const blockerEpic = await api.createEpic({
       title: uniqueName("E2E Ready Filter Blocker Owner Epic"),
       description: "desc",
@@ -472,21 +416,13 @@ test.describe("Roadmap drill-down", () => {
     });
 
     await roadmapPage.goto();
-    await expect(
-      roadmapPage.epicItems.filter({ hasText: readyEpic.title }),
-    ).toBeVisible();
-    await expect(
-      roadmapPage.epicItems.filter({ hasText: blockedEpic.title }),
-    ).toBeVisible();
+    await expect(roadmapPage.epicItems.filter({ hasText: readyEpic.title })).toBeVisible();
+    await expect(roadmapPage.epicItems.filter({ hasText: blockedEpic.title })).toBeVisible();
 
     await roadmapPage.readyToStartToggle.click();
 
-    await expect(
-      roadmapPage.epicItems.filter({ hasText: readyEpic.title }),
-    ).toBeVisible();
-    await expect(
-      roadmapPage.epicItems.filter({ hasText: blockedEpic.title }),
-    ).toHaveCount(0);
+    await expect(roadmapPage.epicItems.filter({ hasText: readyEpic.title })).toBeVisible();
+    await expect(roadmapPage.epicItems.filter({ hasText: blockedEpic.title })).toHaveCount(0);
 
     // Clean up.
     await api.deleteEpic(readyEpic.id);
