@@ -379,6 +379,36 @@ template:
 	require.NoError(t, err)
 }
 
+// The Worker is the sole consumer of the DinD PodTemplate, so a missing/malformed template is
+// its misconfiguration to catch — at startup, via ValidatePodTemplate, not at the first DinD launch.
+func TestKubernetesExecutor_ValidatePodTemplate(t *testing.T) {
+	templateNamespace := "choruskube"
+	templateName := "choruskube-agent-pod-template"
+
+	t.Run("nil when the template exists", func(t *testing.T) {
+		fakeClient := fake.NewSimpleClientset()
+		setupDindTemplate(t, fakeClient, templateNamespace, templateName)
+		exec := NewKubernetesExecutor(fakeClient, Config{
+			Namespace:            testNamespace,
+			AgentPodTemplateName: templateName,
+			TemplateNamespace:    templateNamespace,
+		})
+		require.NoError(t, exec.ValidatePodTemplate(context.Background()))
+	})
+
+	t.Run("errors when the template is absent", func(t *testing.T) {
+		fakeClient := fake.NewSimpleClientset()
+		exec := NewKubernetesExecutor(fakeClient, Config{
+			Namespace:            testNamespace,
+			AgentPodTemplateName: templateName,
+			TemplateNamespace:    templateNamespace,
+		})
+		err := exec.ValidatePodTemplate(context.Background())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+}
+
 func TestKubernetesExecutor_Execute_DinD_SplicesTemplate(t *testing.T) {
 	fakeClient := fake.NewSimpleClientset()
 	templateNamespace := "choruskube"
