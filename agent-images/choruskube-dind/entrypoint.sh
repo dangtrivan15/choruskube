@@ -67,7 +67,18 @@ forward_term() {
 # Delegate to the base image's own entrypoint for TLS cert setup and dockerd
 # flags, backgrounded so this script can load the preload archive before taking
 # over as the container's foreground process.
-dockerd-entrypoint.sh dockerd &
+#
+# Pin the pod MTU on the default bridge AND every later-created bridge (compose's
+# per-project network, a runner job network). dockerd's own pulls run in the pod
+# netns at the right MTU, but a nested container on a 1500-MTU bridge over a
+# smaller pod MTU stalls on the first bulk transfer with no ICMP to shrink it.
+# When this daemon runs as a plain dind service (no privileged sidecar to set it)
+# it must set the MTU itself. Fallback 1230 = the derived pod MTU when eth0 detection returns nothing.
+POD_MTU=$(ip -o link show eth0 2>/dev/null | sed -n 's/.*mtu \([0-9]*\).*/\1/p')
+POD_MTU=${POD_MTU:-1230}
+dockerd-entrypoint.sh dockerd \
+  --mtu="$POD_MTU" \
+  --default-network-opt=bridge=com.docker.network.driver.mtu="$POD_MTU" &
 DOCKERD_PID=$!
 trap forward_term TERM INT
 
