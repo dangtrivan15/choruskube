@@ -1,7 +1,5 @@
 // Package workload calls the API server's Worker workload routes — creating an agent
-// container, deleting it, and reading its logs. It is the only application surface a Worker
-// touches; every other endpoint (execution logs, review history, decisions, ...) stays behind
-// the orchestrator's own client.
+// container, deleting it, and reading its logs.
 package workload
 
 import (
@@ -27,13 +25,12 @@ type Client struct {
 }
 
 // NewClient returns a Client that authenticates every request to the API server at baseURL
-// with a Bearer token from credential. It panics when credential is nil. hc defaults to a
-// 30-second-timeout client when nil — CreateWorkload runs under a 30-minute activity timeout
-// with MaximumAttempts: 1, so an unbounded default client would let one hung POST stall a node
-// for the full 30 minutes with no retry, instead of failing fast enough for Temporal to retry it.
+// with a Bearer token from credential. hc defaults to a 30-second-timeout client when nil:
+// CreateWorkload runs under a 30-minute activity timeout with MaximumAttempts: 1, so an unbounded
+// client would let one hung POST stall a node for 30 minutes with no retry.
 func NewClient(baseURL string, credential func() string, hc *http.Client) *Client {
-	// Left nil, the first request panics inside an activity, where Temporal reports it as a node
-	// failure and retries it. Failing here fails the process at the wiring mistake instead.
+	// Fail at the wiring mistake here, rather than let the first request panic inside an activity
+	// where Temporal would retry a permanent misconfiguration.
 	if credential == nil {
 		panic("workload.NewClient: credential must not be nil")
 	}
@@ -44,7 +41,6 @@ func NewClient(baseURL string, credential func() string, hc *http.Client) *Clien
 }
 
 // APIError represents an HTTP error response from the API server.
-// Callers can use errors.As to extract the status code for specific handling.
 type APIError struct {
 	StatusCode int
 	Body       string
@@ -101,10 +97,9 @@ func workloadPath(runID, nodeExecID uuid.UUID) string {
 	return nodeExecPath(runID, nodeExecID) + "/workload"
 }
 
-// NodeExecution is the minimal GET response from the node-execution endpoint. Namespace is the
-// K8s namespace the execution's workload runs in, resolved server-side (empty in a single-tenant
-// deployment that runs no per-org namespaces); teardown and hash-recovery pass it to the executor
-// so it addresses resources by name without any cluster-wide search.
+// NodeExecution is the minimal GET response from the node-execution endpoint. Namespace is
+// resolved server-side (empty in single-tenant, which runs no per-org namespaces); teardown and
+// hash-recovery pass it to the executor to address resources by name without a cluster-wide search.
 type NodeExecution struct {
 	ID        uuid.UUID `json:"id"`
 	Status    string    `json:"status"`

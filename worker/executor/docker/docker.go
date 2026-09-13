@@ -33,9 +33,8 @@ import (
 )
 
 const (
-	// containerNamePrefix and the constants below mirror SingleTenantDockerExecutor.java's
-	// resource naming so that anyone reading Docker resources on a host running both a legacy
-	// api-server-launched agent and a Worker-launched one recognizes the same conventions.
+	// Resource names mirror SingleTenantDockerExecutor.java so both launchers use one naming
+	// convention on a shared host. Containers are found by label, so a divergent name is cosmetic.
 	containerNamePrefix     = "ck-agent-"
 	labelAppKey             = "app"
 	labelApp                = "choruskube-agent"
@@ -49,10 +48,8 @@ const (
 	defaultNetwork          = "choruskube"
 	logLimitBytes           = 64 * 1024
 	defaultDindReadyTimeout = 30 * time.Second
-	// pullTimeout bounds a best-effort image pull, matching SingleTenantDockerExecutor's
-	// awaitCompletion(120, SECONDS) -- without it, a registry that accepts the pull request but
-	// stalls mid-transfer would block Execute for as long as ctx allows, turning a "best-effort"
-	// pull into an unbounded one.
+	// pullTimeout bounds a best-effort image pull: without it a registry that accepts the request
+	// but stalls mid-transfer blocks Execute for as long as ctx allows.
 	pullTimeout = 120 * time.Second
 )
 
@@ -76,8 +73,7 @@ type Config struct {
 	// before failing the execution. Zero defaults to 30s.
 	DindReadyTimeout time.Duration
 	// DindImage is the image started as the DinD sidecar. Empty falls back to the stock
-	// "docker:29-dind" -- set it to point at a warm-preloaded variant (e.g. choruskube-dind)
-	// without changing code.
+	// "docker:29-dind".
 	DindImage string
 }
 
@@ -146,9 +142,8 @@ func (d *DockerExecutor) Execute(ctx context.Context, params executor.ExecutionP
 		if !success {
 			d.deleteTempDir(tmpDir)
 			if dindStarted {
-				// Best-effort: Execute is already failing for its own reason below: a
-				// second error from unwinding the DinD sidecar has no caller left to
-				// report to here.
+				// Best-effort: Execute is already failing, so a second error here has no
+				// caller left to report to.
 				_ = d.cleanupDindResources(context.WithoutCancel(ctx), execIDShort)
 			}
 		}
@@ -159,10 +154,9 @@ func (d *DockerExecutor) Execute(ctx context.Context, params executor.ExecutionP
 	if err != nil {
 		return executor.ExecutionResult{}, fmt.Errorf("marshal config.json: %w", err)
 	}
-	// 0o644, not 0o600: the agent image drops to a non-root user, and this file is bind-mounted
-	// read-only into it — an owner-only mode (the worker writes it as root) makes the entrypoint's
-	// jq reads fail with EACCES, killing the agent before it can call back. The per-execution
-	// staging dir is 0o700, so this stays unreadable to other host users; only the mount exposes it.
+	// 0o644, not 0o600: the non-root agent bind-mounts this read-only, so an owner-only mode (the
+	// worker writes it as root) fails the entrypoint's jq reads with EACCES, killing the agent
+	// before callback. The 0o700 staging dir keeps it off other host users; only the mount exposes it.
 	if err := os.WriteFile(configPath, configBytes, 0o644); err != nil {
 		return executor.ExecutionResult{}, fmt.Errorf("write config.json: %w", err)
 	}
@@ -173,8 +167,6 @@ func (d *DockerExecutor) Execute(ctx context.Context, params executor.ExecutionP
 	if params.Credentials.ClaudeOAuthToken != "" {
 		env = append(env, "CLAUDE_CODE_OAUTH_TOKEN="+params.Credentials.ClaudeOAuthToken)
 	}
-	// The caller supplies every extra env var via Environment -- this package injects no env of
-	// its own beyond JOB_SECRET/token above and (below) the registry wiring.
 	for k, v := range params.Environment {
 		env = append(env, k+"="+v)
 	}
@@ -209,9 +201,8 @@ func (d *DockerExecutor) Execute(ctx context.Context, params executor.ExecutionP
 			return executor.ExecutionResult{}, fmt.Errorf("stage registry auth config: %w", err)
 		}
 		// Same payload serves two purposes: authenticating this executor's own pull of
-		// params.Image below (via pullAuth), and being mounted into the container as its
-		// Docker client config so the agent's own docker commands against DOCKER_HOST (DinD)
-		// can pull/push against the same registry.
+		// params.Image (via pullAuth), and mounted as the container's DOCKER_CONFIG so the
+		// agent's own docker commands against DinD authenticate to the same registry.
 		mounts = append(mounts, mount.Mount{
 			Type:     mount.TypeBind,
 			Source:   regcredPath,
@@ -264,8 +255,7 @@ func (d *DockerExecutor) Execute(ctx context.Context, params executor.ExecutionP
 // Cleanup removes all Docker resources for executionID: the agent container, its staging
 // directory, and — if this execution had DinD enabled — the DinD sidecar and its data volume.
 // It is idempotent: a missing container is not an error, since the caller may retry after a
-// partial cleanup or call Cleanup for an execution that never created any resources. A single
-// Docker host has no namespaces, and containers are found by exec-id label.
+// partial cleanup or call Cleanup for an execution that never created any resources.
 func (d *DockerExecutor) Cleanup(ctx context.Context, executionID uuid.UUID) error {
 	c, err := d.findContainer(ctx, executionID)
 	if err != nil {
@@ -293,8 +283,7 @@ func (d *DockerExecutor) Cleanup(ctx context.Context, executionID uuid.UUID) err
 }
 
 // Terminate stops executionID's container gracefully (SIGTERM, 30s grace before SIGKILL).
-// Idempotent: an already-stopped or already-gone container is not an error. A single Docker host
-// has no namespaces.
+// Idempotent: an already-stopped or already-gone container is not an error.
 func (d *DockerExecutor) Terminate(ctx context.Context, executionID uuid.UUID) error {
 	c, err := d.findContainer(ctx, executionID)
 	if err != nil {
@@ -315,7 +304,7 @@ func (d *DockerExecutor) Terminate(ctx context.Context, executionID uuid.UUID) e
 }
 
 // GetLogs returns up to the last tailLines lines of executionID's container output (stdout and
-// stderr interleaved), capped at 64KB. A single Docker host has no namespaces.
+// stderr interleaved), capped at 64KB.
 func (d *DockerExecutor) GetLogs(ctx context.Context, executionID uuid.UUID, tailLines int) (string, error) {
 	c, err := d.findContainer(ctx, executionID)
 	if err != nil {
@@ -513,11 +502,8 @@ func (d *DockerExecutor) deleteTempDir(dir string) {
 }
 
 // pullImageBestEffort ensures imageName is available locally, pulling only when it is absent.
-// Local-first by design: when the image is already present we skip the registry round-trip
-// entirely, which keeps a self-hosted stack (agent images built locally) fully self-contained
-// and avoids a per-run pull that 404s on a host whose architecture the published image lacks.
-// The pull, when needed, stays best-effort: a failure is swallowed and Execute proceeds against
-// whatever is present, matching SingleTenantDockerExecutor.pullImageBestEffort.
+// Local-first keeps a self-hosted stack (locally built agent images) self-contained; the pull,
+// when needed, is best-effort -- a failure is swallowed and Execute proceeds against what is present.
 func (d *DockerExecutor) pullImageBestEffort(ctx context.Context, imageName, encodedAuth string) {
 	if _, _, err := d.client.ImageInspectWithRaw(ctx, imageName); err == nil {
 		return
@@ -538,9 +524,7 @@ func (d *DockerExecutor) pullImageBestEffort(ctx context.Context, imageName, enc
 }
 
 // buildRegistryAuthConfigJSON renders reg as a Docker CLI config.json ("auths" map keyed by
-// registry host), the same document shape kubectl's kubernetes.io/dockerconfigjson secret type
-// carries -- so a private agent image and, once staged into the container as DOCKER_CONFIG, the
-// agent's own docker pushes/pulls, authenticate the same way.
+// registry host) -- the shape both this executor's image pull and the agent's own DOCKER_CONFIG use.
 func buildRegistryAuthConfigJSON(reg *executor.RegistryCredentials) ([]byte, error) {
 	doc := map[string]any{
 		"auths": map[string]any{

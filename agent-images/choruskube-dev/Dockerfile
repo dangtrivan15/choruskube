@@ -15,13 +15,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends wget apt-transp
     && apt-get update && apt-get install -y --no-install-recommends temurin-25-jdk \
     && rm -rf /var/lib/apt/lists/*
 
-# Pre-bake the Gradle wrapper distribution. The wrapper computes a deterministic hash
-# from distributionUrl and looks for the unpacked dist at
-# $GRADLE_USER_HOME/wrapper/dists/gradle-<version>-bin/<hash>/. Pre-populating the cache
-# eliminates the per-run cold download that, in our environment, ran at ~100 KB/s under
-# the wrapper's hard-coded -Xmx64m JVM and burned ~10-15 minutes per agent execution.
-# Bump GRADLE_VERSION + GRADLE_WRAPPER_HASH together when bumping the wrapper in repos
-# this image serves; the hash is the directory name observed at runtime.
+# Pre-bake the Gradle wrapper distribution. The wrapper looks for the unpacked dist at
+# $GRADLE_USER_HOME/wrapper/dists/gradle-<version>-bin/<hash>/, so pre-populating that path
+# eliminates a slow per-run cold download. Bump GRADLE_VERSION and GRADLE_WRAPPER_HASH together
+# when bumping the wrapper; the hash is the dist directory name observed at runtime.
 ARG GRADLE_VERSION=9.2.1
 ARG GRADLE_WRAPPER_HASH=2t0n5ozlw9xmuyvbp7dnzaxug
 RUN install -d -o 1000 -g 1000 /home/agent/.gradle \
@@ -39,7 +36,7 @@ ARG TARGETARCH
 RUN curl -fsSL https://go.dev/dl/go1.25.0.linux-${TARGETARCH}.tar.gz | tar -C /usr/local -xz
 ENV PATH="/usr/local/go/bin:${PATH}"
 
-# Install Docker Compose and Buildx plugins (Docker apt repo inherited from base image)
+# Docker Compose + Buildx plugins (Docker apt repo inherited from the base image)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     docker-compose-plugin \
     docker-buildx-plugin \
@@ -53,29 +50,17 @@ RUN npm install -g @playwright/test@1.58.2 \
     && playwright install chromium
 
 # Pre-resolve the api-server dependency graph into the Gradle module cache
-# (~/.gradle/caches/modules-2), so a CI job running in this image begins with the
-# artifacts already on disk instead of re-downloading them per run.
+# (~/.gradle/caches/modules-2) so a CI job in this image starts with the artifacts on disk.
+# Prefer this to actions/setup-java's `cache: gradle`, which sets no restoreKeys, so editing one
+# build file discards the whole cache; a baked cache instead fetches only the delta.
 #
-# This exists because the obvious alternative is a trap. actions/setup-java's
-# `cache: gradle` keys the cache on a hash of every *.gradle* file in the workspace and
-# sets no restoreKeys at all — upstream cache.ts says so outright: "No restoreKeys is set,
-# to start with a clear cache after dependency update". Editing a single line of a single
-# build file therefore discards the ENTIRE cache and re-downloads every artifact; measured
-# at ~205s of added CI wall-clock on one build-file commit. A cache baked into the image
-# degrades gracefully instead: Gradle keeps everything still valid and fetches only the
-# delta.
+# Only build files are copied, never sources, so a dependency change invalidates this layer, not
+# every commit. api-server arrives as a named build context so the main context stays scoped to
+# this directory (see build-images.yml). Placed LAST: build files change more often than the
+# JDK/Go/Playwright layers, and a rebuilt layer invalidates every layer after it.
 #
-# Only the build files are copied — never sources — so this layer is invalidated by a
-# dependency change rather than by every commit. api-server arrives as a named build
-# context so the main context stays scoped to this directory (see build-images.yml).
-#
-# Placed LAST on purpose: build files change far more often than the JDK/Go/Playwright
-# layers above, and a busted layer invalidates every layer after it. Keeping the warm-up
-# at the end means a dependency bump rebuilds only this layer.
-#
-# Resolution goes straight to Maven Central. Do NOT thread a faster internal mirror
-# through a --build-arg: build args are recorded in the image history, and this image is
-# published to a public registry.
+# Resolution goes straight to Maven Central. Do NOT thread a faster internal mirror through a
+# --build-arg: build args are recorded in the image history, and this image is published publicly.
 COPY gradle-warmup.init.gradle /warmup/
 COPY --from=api-server gradlew settings.gradle.kts build.gradle /warmup/api-server/
 COPY --from=api-server gradle /warmup/api-server/gradle
@@ -85,15 +70,13 @@ RUN cd /warmup/api-server \
     && rm -rf /warmup /home/agent/.gradle/daemon /home/agent/.gradle/native \
     && chown -R 1000:1000 /home/agent/.gradle
 
-# Pre-resolve AND pre-compile the Go module + build caches for the Go components, so a
-# CI job that builds them in this image reuses compiled stdlib+deps+packages instead of
-# paying a full cold `go build` (the compile, not the download, is what a from-scratch
-# build spends its time on). orchestrator and worker are separate modules, warmed
-# independently. Only the sources needed to compile are copied; a stale cache stays
-# correct — Go content-hashes every input and recompiles only what changed. Placed LAST,
-# after the Gradle warm-up, for the same reason: source changes here must not invalidate
-# the layers above. Resolution goes straight to the public proxy — never thread a mirror
-# through a --build-arg (it is recorded in this public image's history).
+# Pre-resolve AND pre-compile the Go module + build caches, so a CI job reuses compiled
+# stdlib+deps+packages instead of a full cold `go build` (the compile, not the download, dominates
+# a from-scratch build). orchestrator and worker are separate modules, warmed independently. Only
+# the sources needed to compile are copied; a stale cache stays correct, since Go content-hashes
+# every input. Placed LAST like the Gradle warm-up: source changes must not invalidate the layers
+# above. Resolution goes straight to the public proxy — never thread a mirror through a --build-arg
+# (it lands in this public image's history).
 ENV GOPATH=/home/agent/go GOMODCACHE=/home/agent/go/pkg/mod GOCACHE=/home/agent/.cache/go-build
 COPY --from=orchestrator . /warmup/orchestrator/
 COPY --from=worker . /warmup/worker/

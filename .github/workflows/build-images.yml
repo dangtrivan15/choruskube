@@ -2,19 +2,15 @@ name: Build Images
 run-name: Build Images (${{ github.event_name }})
 
 # Builds and publishes the OSS images — api-server, web-ui, orchestrator, worker, agent
-# (claude-code), and the dev image (choruskube-dev) — on push to main (lazily, per
-# changed path) or on demand.
+# (claude-code), and the dev image (choruskube-dev) — on push to main (lazily, per changed
+# path) or on demand.
 #
-# Publishing api-server and web-ui is decoupled from the local stack: docker-compose.yaml
-# still builds those two from source (no `image:` override), so `./scripts/up.sh` always
-# compiles locally. These published images exist for users who want to pull a full remote
-# stack instead of building it.
+# api-server and web-ui are published for users pulling a full remote stack; docker-compose.yaml
+# still builds those two from source, so `./scripts/up.sh` always compiles locally.
 #
 # Each image is published to the registry supplied to the runner as masked env, so this
-# (public-bound) workflow carries no registry hostname:
-#   - PUBLIC_REGISTRY/<name>  : the OSS-consumable image ref. The registry supplied to the
-#     runner already namespaces published images, so these tags are intentionally project-less
-#     (the workflow carries no project segment).
+# public-bound workflow carries no registry hostname. Tags are intentionally project-less:
+# the supplied registry already namespaces published images.
 #
 # choruskube-dev derives FROM the freshly published agent image, so its job depends on
 # build-claude-code and consumes PUBLIC_REGISTRY/claude-code:latest as BASE_AGENT_IMAGE.
@@ -67,9 +63,8 @@ jobs:
               - 'agent-images/claude-code/**'
             choruskube-dev:
               - 'agent-images/choruskube-dev/**'
-              # The image bakes a warmed Gradle module cache resolved from these files, so
-              # they are build inputs too. A stale cache is not incorrect — Gradle just
-              # fetches the delta — but rebuilding here keeps it doing no work at all.
+              # The image bakes a warmed Gradle module cache from these files, so they are
+              # build inputs; a change here rebuilds the image to keep the cache fully warm.
               - 'api-server/build.gradle'
               - 'api-server/settings.gradle.kts'
               - 'api-server/gradle/**'
@@ -109,8 +104,7 @@ jobs:
           driver: remote
           endpoint: tcp://${{ env.BUILDKIT_ENDPOINT }}
 
-      # Write the registry auth to config.json so buildkit uses it for the push
-      # below, avoiding a separate `docker login` step.
+      # Write registry auth to config.json so buildkit uses it for the push below.
       - name: Authenticate to the public registry (core)
         run: |
           AUTH=$(printf '%s:%s' "$PUBLIC_REGISTRY_USER" "$PUBLIC_REGISTRY_TOKEN" | base64 | tr -d '\n')

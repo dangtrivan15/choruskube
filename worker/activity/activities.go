@@ -1,7 +1,5 @@
-// Package activity runs the agent-step Temporal activities against the workload API — the
-// only application surface a Worker touches. Everything else an agent step needs (execution
-// logs, review history, decisions, predecessor artifacts) stays with the orchestrator's own
-// activities, which keep serving in-flight runs against the same API server.
+// Package activity runs the agent-step Temporal activities against the workload API — the only
+// application surface a Worker touches.
 package activity
 
 import (
@@ -21,14 +19,11 @@ import (
 	"github.com/dangtrivan15/choruskube/worker/workload"
 )
 
-// NOTE: This package uses temporalactivity.ErrResultPending from the Temporal SDK
-// (go.temporal.io/sdk/activity) to signal async activity completion.
-// Do NOT define a custom ErrResultPending — the SDK's sentinel is intercepted
-// at the framework level to keep the activity "open" in Temporal.
+// Async completion is signaled with temporalactivity.ErrResultPending. Do NOT substitute a custom
+// sentinel: only the SDK's own is intercepted at the framework level to keep the activity "open".
 
-// workloadClient is the subset of *workload.Client this package calls, declared here at the
-// point of use so a test can inject a fake without a real HTTP server. *workload.Client
-// satisfies it unchanged.
+// workloadClient is the subset of *workload.Client this package calls, declared at the point of use
+// so a test can inject a fake. *workload.Client satisfies it unchanged.
 type workloadClient interface {
 	CreateWorkload(ctx context.Context, params workload.CreateWorkloadParams) (*workload.CreateWorkloadResponse, error)
 	CleanupWorkload(ctx context.Context, runID, nodeExecID uuid.UUID) error
@@ -50,28 +45,24 @@ type Activities struct {
 	hashCache *callback.HashCache
 	Pending   *PendingCache
 	resolver  *templateResolver
-	// CallbackURL is the endpoint agent pods POST their results to. Left empty, the agent
-	// pod launches with no way to report back, and the activity hangs until StartToClose
-	// instead of failing — ExecuteAINodeFromSnapshot rejects an empty value up front instead.
+	// CallbackURL is the endpoint agent pods POST results to. Empty would launch an agent with no
+	// way to report back, hanging the activity until StartToClose, so ExecuteAINodeFromSnapshot
+	// rejects it up front.
 	CallbackURL string
-	// APIServerURL is embedded in agent config, including as the base of github_token_url.
-	// Left empty, github_token_url becomes a relative path the agent cannot call —
-	// ExecuteAINodeFromSnapshot rejects an empty value up front instead.
+	// APIServerURL is embedded in agent config as the base of github_token_url. Empty would make
+	// that a relative path the agent cannot call, so ExecuteAINodeFromSnapshot rejects it up front.
 	APIServerURL string
 }
 
-// New returns Activities backed by client, delegating workload creation to the API server
-// (legacy mode — kept for the transition until every Worker runs an Executor). Set CallbackURL
-// and APIServerURL on the result before registering it with a Temporal worker.
+// New returns Activities that delegate workload creation to the API server (legacy mode). Set
+// CallbackURL and APIServerURL on the result before registering it with a Temporal worker.
 func New(client *workload.Client) *Activities {
 	return &Activities{client: client, resolver: newTemplateResolver()}
 }
 
-// NewWithExecutor returns Activities that run each workload locally through exec instead of
-// delegating creation to the API server: ExecuteAINodeFromSnapshot calls prepare to resolve
-// credentials and identity, launches the workload itself, then calls complete to report the
-// result back. cache is populated with each execution's job-secret hash so the Worker's own
-// callback server can authenticate the agent's completion POST without a network round trip.
+// NewWithExecutor returns Activities that run each workload locally through exec rather than
+// delegating creation to the API server. cache is populated with each execution's job-secret hash
+// so the Worker's callback server can authenticate the agent's completion POST without a round trip.
 // Set CallbackURL and APIServerURL on the result before registering it with a Temporal worker.
 func NewWithExecutor(client workloadClient, exec executor.Executor, cache *callback.HashCache) *Activities {
 	return &Activities{
@@ -85,11 +76,10 @@ func NewWithExecutor(client workloadClient, exec executor.Executor, cache *callb
 
 // --- Activity: ExecuteAINodeFromSnapshot ---
 
-// ExecuteAINodeFromSnapshotParams is grouped by concern (Identity/Node/Inputs/Repos/
-// TaskContext/Session) and must stay field-for-field identical to the orchestrator's mirror of
-// the same name -- Temporal's data converter serializes the orchestrator's struct to JSON and
-// deserializes into this one, so any divergence in field name, order, or nesting silently drops
-// or blanks data on arrival instead of failing loudly.
+// ExecuteAINodeFromSnapshotParams must stay field-for-field identical to the orchestrator's mirror
+// of the same name: Temporal's data converter serializes that struct to JSON and deserializes into
+// this one, so any divergence in field name, order, or nesting silently drops or blanks data on
+// arrival rather than failing loudly.
 type ExecuteAINodeFromSnapshotParams struct {
 	Identity    Identity
 	Node        Node
@@ -140,10 +130,9 @@ type Repos struct {
 	List          []map[string]any
 }
 
-// TaskContext carries the triggering Task's identity, broadcast into config.json's
-// task_context for every node execution in a task-triggered run. TaskID == "" means the run
-// wasn't started from a Task; StoryID/EpicID may independently be "" if that level no longer
-// resolves even though TaskID is set.
+// TaskContext carries the triggering Task's identity, broadcast into config.json's task_context
+// for every node execution in a task-triggered run. TaskID == "" means the run was not
+// Task-triggered; StoryID/EpicID may independently be "" even when TaskID is set.
 type TaskContext struct {
 	TaskID     string
 	TaskTitle  string
@@ -151,23 +140,20 @@ type TaskContext struct {
 	StoryTitle string
 	EpicID     string
 	EpicTitle  string
-	// OpenBlockers lists the triggering Task's own direct, not-yet-done incoming blocking
-	// edges, threaded into config.json's task_context.open_blockers. Empty
-	// (nil or zero-length) omits the key entirely, matching how task_context itself is
-	// omitted when TaskID == "".
+	// OpenBlockers lists the triggering Task's own direct, not-yet-done incoming blocking edges,
+	// threaded into config.json's task_context.open_blockers. Empty omits the key entirely.
 	OpenBlockers []OpenBlockerParam
 }
 
 type Session struct {
-	// Set only when this iteration resumes a session parked by a previous one.
-	// The entrypoint restores the transcript and runs `claude --resume`; empty
-	// means start a fresh session.
+	// Set only when this iteration resumes a session parked by a previous one: the entrypoint
+	// restores the transcript and runs `claude --resume`. Empty starts a fresh session.
 	ID           string
 	ArtifactPath string
 }
 
-// OpenBlockerParam mirrors one entry of state.SnapshotOpenBlocker, flattened into the
-// activity's plain-string param shape (same convention as TaskID/TaskTitle/... above).
+// OpenBlockerParam mirrors one entry of state.SnapshotOpenBlocker, flattened into the activity's
+// plain-string param shape.
 type OpenBlockerParam struct {
 	ItemType string
 	ItemID   string
@@ -198,9 +184,8 @@ func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params Execu
 	if err != nil {
 		return CallbackResult{}, err
 	}
-	// The parameters and the workflow that scheduled them must name the same run. They cannot
-	// disagree unless something built this activity wrongly, and continuing would send a pair the
-	// server refuses -- as a node failure with no explanation rather than this one.
+	// Params and the scheduling workflow must name the same run; a mismatch is a wiring bug, and
+	// continuing would send a pair the server refuses as an unexplained node failure instead of this.
 	if runID != params.Identity.RunID {
 		return CallbackResult{}, fmt.Errorf("activity params name run %s but its workflow is run %s", params.Identity.RunID, runID)
 	}
@@ -215,20 +200,15 @@ func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params Execu
 		return CallbackResult{}, fmt.Errorf("resolve prompt: %w", err)
 	}
 
-	// Append predecessor artifact annotation to prompt when artifact refs are present.
-	// vars from LoadPredecessorInputs use keys "input.{label}.result" (text) and
-	// "input.{label}.{filename}" (object storage path). Filter out .result entries.
-	//
-	// Anything also present in InputArtifacts is left out: the entrypoint materialises
-	// those under /workspace/in/{label}/{filename} before the agent starts, so a
-	// "download it yourself" instruction would send the agent after a file it already
-	// has. The two maps spell the same file differently — "input.{label}.{filename}"
-	// here, "{label}/{filename}" there — so compare on the translated key, not the raw
-	// one. A filename may itself contain dots, hence the join over parts[2:].
+	// Append predecessor artifact refs to the prompt. Variables from LoadPredecessorInputs use keys
+	// "input.{label}.result" (text, skipped here) and "input.{label}.{filename}" (object path).
+	// Anything already in InputArtifacts is skipped: the entrypoint materialises those under
+	// /workspace/in/{label}/{filename}, so annotating them would send the agent after a file it has.
+	// The two maps spell the file differently ("input.{label}.{filename}" vs "{label}/{filename}"),
+	// so compare on the translated key; a filename may contain dots, hence the join over parts[2:].
 	var artifactLines []string
 	for key, val := range params.Inputs.Variables {
 		parts := strings.Split(key, ".")
-		// Must have at least 3 parts (input, label, thing) and not end in "result"
 		if len(parts) < 3 || parts[0] != "input" || parts[len(parts)-1] == "result" {
 			continue
 		}
@@ -244,11 +224,9 @@ func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params Execu
 			strings.Join(artifactLines, "\n")
 	}
 
-	// Append run-level input annotation. These are attachments uploaded by the user
-	// at run start (Run Start Dialog) and are bundled into every AI/script node's
-	// input_artifacts under the "run_input/" key prefix. Without this annotation the
-	// LLM would not know they exist — entrypoint.sh downloads them silently to
-	// /workspace/in/run_input/, but only this prompt suffix tells the model to look.
+	// Append run-level inputs: attachments the user uploaded at run start, bundled into every
+	// node's input_artifacts under the "run_input/" prefix. entrypoint.sh downloads them silently
+	// to /workspace/in/run_input/, so without this suffix the model would not know they exist.
 	var runInputLines []string
 	for key, val := range params.Inputs.InputArtifacts {
 		if strings.HasPrefix(key, "run_input/") {
@@ -273,10 +251,10 @@ func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params Execu
 	return a.executeDelegated(ctx, params, configJSON)
 }
 
-// buildConfigJSON assembles the agent pod's config.json content — everything the entrypoint
-// reads to run one node execution — with object storage paths prefixed by OrgSlug. Output paths
-// are keyed by NodeExecutionID so each iteration of a self-looping or re-executed node owns its
-// own prefix instead of overwriting a prior iteration's artifacts.
+// buildConfigJSON assembles the agent pod's config.json — everything the entrypoint reads to run
+// one node execution — with object storage paths prefixed by OrgSlug. Output paths are keyed by
+// NodeExecutionID so a re-executed or self-looping node owns its own prefix instead of overwriting
+// a prior iteration's artifacts.
 func (a *Activities) buildConfigJSON(params ExecuteAINodeFromSnapshotParams, resolvedPrompt string) map[string]interface{} {
 	vars := params.Inputs.Variables
 	if vars == nil {
@@ -294,12 +272,10 @@ func (a *Activities) buildConfigJSON(params ExecuteAINodeFromSnapshotParams, res
 		"executor_type":     params.Node.ExecutorType,
 		"api_server_url":    a.APIServerURL,
 	}
-	// Emitted only when non-empty so config.json keeps its existing shape for nodes that
-	// declare nothing — the entrypoint treats an absent key as "every input is best-effort".
+	// Emitted only when non-empty: an absent key tells the entrypoint every input is best-effort.
 	if len(params.Inputs.RequiredInputArtifacts) > 0 {
 		configJSON["required_input_artifacts"] = params.Inputs.RequiredInputArtifacts
 	}
-	// Add optional fields only if set
 	if params.Repos.RepoURL != "" {
 		configJSON["repo_url"] = params.Repos.RepoURL
 	}
@@ -311,7 +287,6 @@ func (a *Activities) buildConfigJSON(params ExecuteAINodeFromSnapshotParams, res
 	}
 	configJSON["github_token_url"] = fmt.Sprintf("%s/internal/runs/%s/node-executions/%s/github-token",
 		a.APIServerURL, params.Identity.RunID, params.Identity.NodeExecutionID)
-	// Build run log path with org prefix
 	baseRunLogPath := fmt.Sprintf("runs/%s/run_log.md", params.Identity.RunID)
 	runLogPath := prefixPath(params.OrgSlug, baseRunLogPath)
 	configJSON["run_log_path"] = runLogPath
@@ -324,9 +299,8 @@ func (a *Activities) buildConfigJSON(params ExecuteAINodeFromSnapshotParams, res
 	if params.Node.OutputSpec != "" && params.Node.OutputSpec != "{}" {
 		configJSON["output_spec"] = params.Node.OutputSpec
 	}
-	// Emitted only when the template declares a Supervisor, so config.json keeps its exact
-	// current shape for every other template — and the entrypoint's escalation block, which is
-	// gated on this key, stays silent for them.
+	// Emitted only when the template declares a Supervisor: the entrypoint's escalation block is
+	// gated on this key, so omitting it keeps that block silent for every other template.
 	if params.Node.SupervisorLabel != "" {
 		configJSON["supervisor"] = map[string]string{
 			"label": params.Node.SupervisorLabel,
@@ -339,9 +313,9 @@ func (a *Activities) buildConfigJSON(params ExecuteAINodeFromSnapshotParams, res
 	if len(params.Repos.List) > 0 {
 		configJSON["repos"] = params.Repos.List
 	} else if tc, ok := vars["run.test_command"]; ok && tc != "" {
-		// Single-repo runs don't populate repos[]; expose the run-level test_command at the
-		// top level so run-all-tests can find it (the agent's repo content lives directly at
-		// /workspace/repo, not under a /workspace/repo/<name>/ subdirectory).
+		// Single-repo runs don't populate repos[]; expose test_command at the top level so
+		// run-all-tests finds it — the repo content lives directly at /workspace/repo, not a
+		// /workspace/repo/<name>/ subdirectory.
 		configJSON["test_command"] = tc
 	}
 	if params.Node.Model != "" {
@@ -350,8 +324,7 @@ func (a *Activities) buildConfigJSON(params ExecuteAINodeFromSnapshotParams, res
 	if params.Node.Effort != "" {
 		configJSON["effort"] = params.Node.Effort
 	}
-	// Written only when configured, so config.json keeps its shape for the nodes
-	// that set no budget and the agent applies its own defaults.
+	// Written only when configured; otherwise the agent applies its own default budget.
 	if params.Node.MaxTurns != "" {
 		configJSON["max_turns"] = params.Node.MaxTurns
 	}
@@ -463,9 +436,8 @@ func (a *Activities) executeLocally(ctx context.Context, runID uuid.UUID, params
 	// moment it starts, racing this activity's own report to the API server -- CompleteWorkload
 	// below is a network round trip a fast (e.g. script) workload can easily win.
 	a.hashCache.Put(params.Identity.NodeExecutionID, result.JobSecretHash)
-	// Captured now, not resolved later from params: the agent's completion and heartbeat
-	// requests carry only NodeExecutionID, so this is the one place that also has Temporal's
-	// own addressing for the activity they need to reach.
+	// Captured now, not resolved later: the agent's callbacks carry only NodeExecutionID, so this
+	// is the one place that also holds Temporal's own addressing for the activity they must reach.
 	info := activityInfo(ctx)
 	a.Pending.Put(params.Identity.NodeExecutionID, PendingCompletion{
 		Namespace:  info.Namespace,

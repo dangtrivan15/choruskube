@@ -7,11 +7,9 @@
 // graph from POM metadata without fetching the JARs. Touching `configuration.files` is
 // what forces the artifacts themselves to be downloaded.
 //
-// Each configuration is resolved independently and failures are swallowed. Some
-// configurations are not resolvable in isolation (they expect a composite build, a
-// project dependency, or a platform that only exists downstream), and one of those must
-// not fail the image build — a partially warmed cache is still strictly better than a
-// cold one, because Gradle fetches only what is missing.
+// Each configuration is resolved independently and failures are swallowed: some are not resolvable
+// in isolation (they expect a composite build, a project dependency, or a downstream platform),
+// and one such failure must not fail the image build — a partial warm cache still beats a cold one.
 allprojects {
     tasks.register("warmUpDependencies") {
         doLast {

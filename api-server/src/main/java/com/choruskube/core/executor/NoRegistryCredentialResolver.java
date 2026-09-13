@@ -4,12 +4,10 @@ import com.choruskube.core.dto.PrepareWorkloadResponse;
 import java.util.UUID;
 
 /**
- * The default {@link WorkloadRegistryCredentialResolver}: no deployment-specific registry
- * credential is known, so {@link com.choruskube.core.service.WorkloadService} injects none.
+ * Default no-op {@link WorkloadRegistryCredentialResolver}: injects no pull credential.
  *
- * <p><b>Not a Spring bean.</b> {@code WorkloadService} holds it as the fallback behind an {@code
- * ObjectProvider}, the same arrangement as {@code NoWorkloadNamespaceResolver}, so an implementation
- * replaces it by existing rather than by bean-scan ordering.
+ * <p><b>Not a Spring bean.</b> {@code WorkloadService} holds it as the {@code ObjectProvider}
+ * fallback, so a real implementation replaces it by existing rather than by bean-scan ordering.
  */
 public class NoRegistryCredentialResolver implements WorkloadRegistryCredentialResolver {
 

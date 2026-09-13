@@ -27,11 +27,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Service layer for workload execution operations.
- *
- * <p>The Worker binary now owns the full container lifecycle (launch, cleanup, logs,
- * terminate). This service resolves what a Worker needs to launch a workload
- * ({@link #prepareWorkload}) and records the result ({@link #completeWorkload}).
+ * Resolves what a Worker needs to launch a workload ({@link #prepareWorkload}) and records what it
+ * launched ({@link #completeWorkload}). The Worker owns the container lifecycle.
  */
 @Service
 public class WorkloadService {
@@ -77,9 +74,8 @@ public class WorkloadService {
     }
 
     /**
-     * Resolves what a Worker needs to launch this workload itself: image, credentials, and
-     * identity. The api-server is the only party with DB access, so it resolves inputs here
-     * instead of launching a container itself.
+     * Resolves what a Worker needs to launch this workload: image, credentials, and identity. The
+     * api-server holds DB access, so it resolves these inputs rather than the Worker.
      */
     @Transactional(readOnly = true)
     public PrepareWorkloadResponse prepareWorkload(UUID runId, UUID nodeExecId, CreateWorkloadRequest req) {
@@ -96,12 +92,8 @@ public class WorkloadService {
         String githubTokenUrl =
                 apiServerUrl + "/internal/runs/" + runId + "/node-executions/" + nodeExecId + "/github-token";
 
-        // The K8s executor launches into this namespace and later addresses the same resources by
-        // name via the /worker node-exec GET, which resolves through this same seam — so both must
-        // agree, and using one resolver for both is what guarantees it. Best-effort: a run with no
-        // resolvable tenant (the Docker/single-tenant case, where namespace is irrelevant) yields
-        // null rather than failing prepare; a K8s deployment with no namespace fails loudly at
-        // resource creation instead.
+        // Launch namespace and the teardown namespace (resolved later through this same seam by the
+        // /worker node-exec GET) must agree; one resolver for both is what guarantees it.
         String namespace = resolveNamespaceOrNull(runId);
 
         return new PrepareWorkloadResponse(
@@ -116,10 +108,8 @@ public class WorkloadService {
     }
 
     /**
-     * Resolves the run's workload namespace, returning {@code null} when no tenant is resolvable.
-     * The Docker and single-tenant paths have no per-run namespace, and a run with no tenant row
-     * (e.g. an e2e run) must still prepare — so an unresolvable tenant degrades to a namespace-less
-     * launch here rather than failing the request. Empty resolves to {@code null} for the same reason.
+     * Resolves the run's workload namespace, degrading to {@code null} (namespace-less launch) when
+     * no tenant is resolvable or it resolves empty — a run with no tenant row must still prepare.
      */
     private String resolveNamespaceOrNull(UUID runId) {
         try {
@@ -132,11 +122,8 @@ public class WorkloadService {
     }
 
     /**
-     * Resolves the run's image-pull credential, returning {@code null} when none is resolvable.
-     * Mirrors {@link #resolveNamespaceOrNull}: a deployment-specific resolver bean may derive a tenant
-     * from the run and throw on a run with no tenant row (e.g. an e2e run), which must still prepare —
-     * so a throwing resolver degrades to an anonymous pull rather than hard-failing every launch,
-     * keeping it best-effort.
+     * Resolves the run's image-pull credential, degrading to {@code null} (anonymous pull) when the
+     * resolver throws — mirrors {@link #resolveNamespaceOrNull}, so a run with no tenant row still prepares.
      */
     private PrepareWorkloadResponse.RegistryCredentialsDto resolveRegistryCredentialsOrNull(UUID runId) {
         try {
@@ -151,7 +138,7 @@ public class WorkloadService {
     }
 
     /**
-     * Records what a Worker launched on its own and transitions the execution to running.
+     * Records what a Worker launched and transitions the execution to running.
      */
     @Transactional
     public void completeWorkload(UUID runId, UUID nodeExecId, CompleteWorkloadRequest req) {

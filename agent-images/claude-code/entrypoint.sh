@@ -25,23 +25,18 @@ COMMAND=$(jq -r '.command // empty' "$CONFIG_FILE")
 EXECUTOR_TYPE=$(jq -r '.executor_type // "ai"' "$CONFIG_FILE")
 MODEL=$(jq -r '.model // empty' "$CONFIG_FILE")
 # A session parked by a previous iteration on a quota hit (see the "Quota resume"
-# block below). Both empty on an ordinary run — Task 8's orchestrator step sets
-# them only when this execution carries a park reference forward.
+# block below). Both empty on an ordinary run; set only when this execution
+# carries a park reference forward.
 RESUME_SESSION_ID=$(jq -r '.session_id // empty' "$CONFIG_FILE")
 RESUME_SESSION_PATH=$(jq -r '.session_artifact_path // empty' "$CONFIG_FILE")
-# Whatever effort the node configures reaches claude's argv verbatim — the set of
-# levels is claude's to define, not this entrypoint's, so no allowlist is kept in
-# sync here. Unlike max_turns/max_retries below, a bad value is not structurally
-# fatal: claude warns and falls back to its default effort, degrading the run
-# rather than breaking it.
+# Not validated, unlike max_turns/max_retries below: a bad effort is not
+# structurally fatal — claude warns and falls back to its default, degrading the
+# run rather than breaking it.
 EFFORT=$(jq -r '.effort // empty' "$CONFIG_FILE")
 # --- Per-node turn/retry budget (max_turns / max_retries) ---
-# Both feed loop/argv arithmetic further down: max_turns becomes --max-turns,
-# max_retries bounds the attempt loops. Read them here with the other config
-# fields and validate before any run_claude() call, so a typo'd config.json
-# value fails loudly rather than reaching claude's argv unexamined or
-# collapsing the retry loops to zero attempts. Empty means "not configured" —
-# the defaults live at the assignment site in the AI branch below.
+# Validate before any run_claude() call: a typo'd value must fail loudly here
+# rather than reach claude's argv unexamined or collapse the retry loops to zero
+# attempts. Empty means "not configured"; defaults are set in the AI branch below.
 MAX_TURNS=$(jq -r '.max_turns // empty' "$CONFIG_FILE")
 MAX_RETRIES=$(jq -r '.max_retries // empty' "$CONFIG_FILE")
 validate_positive_int() {
@@ -65,10 +60,9 @@ export API_SERVER_URL=$(jq -r '.api_server_url // empty' "$CONFIG_FILE")
 NEED_DECISION=$(jq -r '.need_decision // false' "$CONFIG_FILE")
 NEED_PR=$(jq -r '.needs_pr // false' "$CONFIG_FILE")
 
-# Triggering Task's identity — present only for runs started from
-# a Task. Story/Epic may independently be empty if that level no longer resolves
-# even though TASK_ID is set. update-task-status/get-roadmap-graph
-# default their --task-id/--epic-id flags from these when the caller omits them.
+# Triggering Task's identity, present only for Task-started runs; Story/Epic may
+# each be empty even when TASK_ID is set. update-task-status/get-roadmap-graph
+# default their --task-id/--epic-id flags from these.
 export TASK_ID=$(jq -r '.task_context.task_id // empty' "$CONFIG_FILE")
 export TASK_TITLE=$(jq -r '.task_context.task_title // empty' "$CONFIG_FILE")
 export STORY_ID=$(jq -r '.task_context.story_id // empty' "$CONFIG_FILE")
@@ -76,25 +70,20 @@ export STORY_TITLE=$(jq -r '.task_context.story_title // empty' "$CONFIG_FILE")
 export EPIC_ID=$(jq -r '.task_context.epic_id // empty' "$CONFIG_FILE")
 export EPIC_TITLE=$(jq -r '.task_context.epic_title // empty' "$CONFIG_FILE")
 
-# The Task's own direct, not-yet-done incoming blocking edges —
-# informational only, does not gate the run. "// []" defaults to an
-# empty array both when task_context itself is absent and when an older
-# config.json (written before this field existed) has task_context but no
-# open_blockers key, so this never crashes on a mismatched agent/API-server pairing.
+# The Task's own not-yet-done incoming blocking edges — informational, does not
+# gate the run. "// []" defaults to empty when task_context or the open_blockers
+# key is absent, so an older config.json from a mismatched API-server never crashes here.
 OPEN_BLOCKERS_JSON=$(jq -c '.task_context.open_blockers // []' "$CONFIG_FILE")
 export OPEN_BLOCKERS_JSON
 
-# JOB_SECRET is injected via K8s Secret as an environment variable
 if [ -z "${JOB_SECRET:-}" ]; then
   echo "ERROR: JOB_SECRET environment variable not set"
   exit 1
 fi
 
-# Claude credentials are delivered via the CLAUDE_CODE_OAUTH_TOKEN env var (long-lived
-# OAuth token from `claude setup-token`). The Claude CLI reads it natively as a bearer
-# token — no credentials file to symlink, no hostpath to mount. For script-executor
-# nodes the API server omits the token from the Secret on purpose, so this check
-# only fails AI/human/both executors.
+# Claude credentials arrive via the CLAUDE_CODE_OAUTH_TOKEN env var, read natively
+# as a bearer token. Script-executor nodes get no token on purpose, so this check
+# is gated to AI/human/both executors.
 if [ "$EXECUTOR_TYPE" != "script" ] && [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
   echo "ERROR: CLAUDE_CODE_OAUTH_TOKEN env var is empty for executor_type=$EXECUTOR_TYPE"
   echo "       Generate one with \`claude setup-token\` and inject it into the api-server pod."
@@ -102,14 +91,9 @@ if [ "$EXECUTOR_TYPE" != "script" ] && [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; th
 fi
 
 # --- Step 1: Pull input artifacts via presigned URLs ---
-# Keys are paths, not flat names: predecessor and gate files arrive as
-# "<source_label>/<filename>" so the agent finds them where the node prompts say they
-# are, rather than hunting object storage for them. Create the parent directory first.
-#
-# Absence is normal, not exceptional: declarations legitimately reference a prior
-# iteration that does not exist on iteration 1, and gate attachments only exist when a
-# reviewer actually attached something. So a failed download is fatal only for keys the
-# api-server marked required — everything else logs and continues.
+# Keys are paths ("<source_label>/<filename>"), not flat names, so create each
+# parent dir. Absence is normal — a prior iteration missing on iteration 1, an
+# unattached gate file — so only api-server-required keys are fatal; the rest log and continue.
 mkdir -p "$WORKSPACE_IN"
 REQUIRED_KEYS=$(jq -r '.required_input_artifacts // [] | .[]' "$CONFIG_FILE" 2>/dev/null || true)
 INPUT_KEYS=$(jq -r '.input_artifacts // {} | keys[]' "$CONFIG_FILE" 2>/dev/null || true)
@@ -134,17 +118,15 @@ if [ -n "$RUN_LOG_PATH" ]; then
 fi
 
 # --- Step 2: Configure git credentials (before clone, so private repos work) ---
-# Identity is required by `git rebase` (which rewrites commits and stamps
-# them with the current committer) and by any in-repo commits the agent
-# script makes. Set it unconditionally — it's harmless when unused, and
-# without it the rebase-on-clone step (Step 3) silently falls back.
+# Identity is required by git rebase (it stamps the committer) and by in-repo
+# commits. Set unconditionally: harmless when unused, and without it the
+# rebase-on-clone below silently falls back.
 git config --global user.email "agent@choruskube.local"
 git config --global user.name "ChorusKube Agent"
 
 if [ -n "$GITHUB_TOKEN_URL" ]; then
   git config --global credential.helper \
     '!f() { echo "protocol=https"; echo "host=github.com"; echo "username=x-access-token"; echo "password=$(fetch-github-token)"; }; f'
-  # Configure gh CLI
   TOKEN=$(fetch-github-token 2>/dev/null || true)
   if [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ]; then
     echo "$TOKEN" | gh auth login --with-token 2>/dev/null || true
@@ -156,7 +138,6 @@ fi
 REPOS_JSON=$(jq -r '.repos // empty' /workspace/config.json)
 
 if [ -n "$REPOS_JSON" ] && [ "$REPOS_JSON" != "null" ]; then
-  # Multi-repo mode: clone each repo to /workspace/repo/{name}/
   echo "Multi-repo mode: cloning repositories..."
 
   # Launch all clones in parallel
@@ -173,10 +154,9 @@ if [ -n "$REPOS_JSON" ] && [ "$REPOS_JSON" != "null" ]; then
       if [ -n "$repo_branch" ]; then
         cd "$repo_path"
         git checkout "$repo_branch" 2>/dev/null || git checkout -b "$repo_branch"
-        # Best-effort rebase onto current origin/main so safety-net commits
-        # (e.g. script timeouts) reach long-lived run branches cut from an
-        # older base. Depth=200 covers typical branch lifetimes; on conflict,
-        # abort and continue on the stale base rather than breaking the run.
+        # Best-effort rebase onto origin/main so safety-net commits reach run
+        # branches cut from an older base. Depth 200 covers typical branch
+        # lifetimes; on conflict, abort and continue on the stale base rather than break the run.
         if git fetch --depth=200 origin main "$repo_branch" 2>/dev/null; then
           if ! git rebase origin/main; then
             echo "WARNING: rebase onto origin/main failed for $repo_name; continuing on stale base" >&2
@@ -204,9 +184,7 @@ if [ -n "$REPOS_JSON" ] && [ "$REPOS_JSON" != "null" ]; then
 
   echo "Multi-repo workspace ready. $(echo "$REPOS_JSON" | jq length) repos cloned."
 
-  # Add multi-repo workspace description to system prompt. Repos are peers —
-  # there is no primary. Each repo's CLAUDE.md, skills and subagents are loaded
-  # by Claude Code itself from the --add-dir set built below.
+  # Describe the multi-repo workspace in the system prompt. Repos are peers, no primary.
   REPO_LIST=""
   while IFS= read -r repo; do
     repo_path=$(echo "$repo" | jq -r '.local_path')
@@ -244,10 +222,8 @@ elif [ -n "$REPO_URL" ]; then
   echo "Repo ready at /workspace/repo/"
 fi
 
-# Narrate the triggering Task's identity into the system prompt —
-# exporting TASK_ID/STORY_ID/EPIC_ID above makes the roadmap CLI tools work, but
-# an env var the model never learns about is operationally invisible. Tell it
-# plainly, in addition to (not instead of) the environment variables.
+# Narrate the Task identity into the system prompt too: the exports above drive
+# the roadmap CLI tools, but an env var the model never sees is invisible to it.
 if [ -n "$TASK_ID" ]; then
   SYSTEM_PROMPT="${SYSTEM_PROMPT}
 
@@ -260,9 +236,8 @@ You can call \`get-roadmap-graph\` without passing --epic-id — it defaults to 
 run's Epic automatically. Do not mark this Task done: it closes by itself once this
 run's pull requests are merged."
 
-  # Narrate open blockers — readiness now gates Task start, so
-  # open_blockers is empty at launch for every run. This block can therefore only
-  # fire for an edge added mid-run: a change of circumstances, not routine context.
+  # Narrate open blockers. Readiness gates Task start, so open_blockers is empty at
+  # launch — this block only fires for an edge added mid-run.
   BLOCKER_COUNT=$(echo "$OPEN_BLOCKERS_JSON" | jq 'length')
   if [ "$BLOCKER_COUNT" -gt 0 ]; then
     BLOCKER_LINES=$(echo "$OPEN_BLOCKERS_JSON" | jq -r '.[] | "- \(.title) (\(.item_type), status: \(.status))"')
@@ -279,13 +254,9 @@ fi
 export SYSTEM_PROMPT
 
 # --- Dependency proxy (Gradle init script) ---
-# When DEP_PROXY_BASE is injected, write the Gradle init script that routes Maven
-# resolution through the in-cluster proxy. Runs AFTER the clone so the repo-shipped
-# helper exists. GOPROXY/GOSUMDB/npm_config_registry are already injected as env by
-# the executor; only the Gradle init script needs the helper. The helper ships at
-# /workspace/repo/scripts/lib/dep-proxy.sh (single-repo) or a child dir (multi-repo);
-# source the first match. No-op when DEP_PROXY_BASE is unset or no repo ships the
-# helper — graceful degradation.
+# Must run AFTER the clone: the helper ships in the repo tree. Only Gradle needs
+# it; GOPROXY/npm_config_registry are injected as env by the executor. Sources the
+# first dep-proxy.sh match (single- or multi-repo); no-op if unset or absent.
 if [ -n "${DEP_PROXY_BASE:-}" ]; then
   for _dp in /workspace/repo/scripts/lib/dep-proxy.sh /workspace/repo/*/scripts/lib/dep-proxy.sh; do
     if [ -f "$_dp" ]; then
@@ -295,20 +266,16 @@ if [ -n "${DEP_PROXY_BASE:-}" ]; then
     fi
   done
 
-  # npm bakes the registry it fetched from into package-lock.json `resolved`
-  # URLs, so any dependency the agent adds records the proxy host and commits it.
-  # A global pre-commit hook normalizes staged lockfiles back to the canonical
-  # public registry (see normalize-lockfiles for why that keeps proxy caching).
-  # core.hooksPath is global so it covers every clone in a multi-repo run; a repo
-  # that sets its own hooksPath locally (husky) still wins, as local config beats
-  # global.
+  # npm bakes the registry it fetched from into package-lock.json "resolved" URLs,
+  # so a dependency the agent adds would commit the proxy host. This pre-commit hook
+  # normalizes staged lockfiles back to the public registry (see normalize-lockfiles).
+  # core.hooksPath is global to cover every clone; a repo's own husky hooksPath still wins.
   HOOKS_DIR="$HOME/.choruskube-git-hooks"
   mkdir -p "$HOOKS_DIR"
   cat > "$HOOKS_DIR/pre-commit" <<'HOOK'
 #!/bin/bash
 set -euo pipefail
-# A read loop rather than `mapfile`, which needs bash 4+ and so would not run on
-# a stock macOS shell if anyone exercises this hook outside the container.
+# read loop, not mapfile (bash 4+): this hook can run on a stock macOS shell.
 LOCKS=()
 while IFS= read -r f; do
   [ -n "$f" ] && LOCKS+=("$f")
@@ -324,12 +291,9 @@ HOOK
 fi
 
 # --- Step 3b: Declare the workspace roots to Claude Code ---
-# Claude Code discovers CLAUDE.md, .claude/skills/ and .claude/agents/ from its
-# set of working directories: the cwd plus every --add-dir. It does NOT descend
-# into subdirectories of the cwd on its own, so each repo must be named
-# explicitly even though they all sit under /workspace/repo.
-# CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD (set in the Dockerfile) is what
-# makes CLAUDE.md load from the added dirs rather than access alone.
+# Claude Code loads CLAUDE.md/.claude from the cwd plus each --add-dir; it does NOT
+# descend into subdirs on its own, so every repo must be named explicitly.
+# CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD (Dockerfile) makes CLAUDE.md load from added dirs.
 ADD_DIR_ARGS=()
 if [ -n "$REPOS_JSON" ] && [ "$REPOS_JSON" != "null" ]; then
   for repo_dir in /workspace/repo/*/; do
@@ -340,22 +304,17 @@ elif [ -d /workspace/repo ]; then
 fi
 echo "Workspace roots: ${ADD_DIR_ARGS[*]:-none}"
 
-# Derive heartbeat URL from callback URL (sibling endpoint on same server)
 export HEARTBEAT_URL="${CALLBACK_URL%/callback}/heartbeat"
 
-# Shared stream file that run_claude writes to and send-heartbeat reads from.
-# Liveness is tied to the number of stream events (tool_use, tool_result, assistant,
-# etc.) — send-heartbeat only POSTs when this count changes since the last tick,
-# so a stuck Claude session stops heartbeating and Temporal's heartbeat timeout
-# fires instead of silently running out the full activity deadline.
+# Shared stream file: run_claude writes it, send-heartbeat reads it. Heartbeats
+# only POST when the event count advances, so a stuck Claude session stops
+# heartbeating and Temporal's timeout fires instead of running out the full deadline.
 export CLAUDE_STREAM_FILE="/tmp/claude_stream_current.jsonl"
 
 # shellcheck source=/dev/null
 source /usr/local/bin/quota-lib.sh
 
 # --- Heartbeat loop (background) ---
-# Reports liveness to Temporal via orchestrator every 60s, but only if the
-# Claude stream has advanced. Killed on exit so it doesn't outlive the agent.
 heartbeat_loop() {
     while true; do
         sleep 60
@@ -365,7 +324,6 @@ heartbeat_loop() {
 heartbeat_loop &
 HEARTBEAT_PID=$!
 
-# Ensure heartbeat loop is killed on any exit (success, failure, signal)
 cleanup_heartbeat() {
     kill $HEARTBEAT_PID 2>/dev/null || true
 }
@@ -377,26 +335,16 @@ RESULT_STATUS="completed"
 RESULT="completed"
 ERROR_MESSAGE=""
 CLAUDE_OUTPUT=""
-# Read unconditionally below -- by the quota-park block and by the callback's jq
-# filter -- but assigned only inside the AI branch. A script-executor node and a
-# skipped-agent node both fall through to those reads without ever entering that
-# branch, and under `set -u` an unset variable there aborts the pod *before*
-# send-callback runs: no callback at all, so the orchestrator only learns of the
-# node when its heartbeat timeout expires. Initialised here for the same reason
-# as the four above; the AI branch's own resets stay where they are.
+# Init here or set -u aborts the pod when a script/skipped-agent node reaches the
+# quota-park block and callback below without entering the AI branch that assigns
+# them — aborting before send-callback runs, so the node only surfaces at heartbeat timeout.
 QUOTA_RESET_AT=""
 CLAUDE_SESSION_ID=""
 
 # --- Compose decisions suffix into the system prompt (AI nodes only) ---
-# Query the api-server for the set of decisions this node may submit via
-# report-result, then append a frame-setting suffix to SYSTEM_PROMPT so the
-# agent knows up-front what conclusions are available. Knowing the set primes
-# the agent's reasoning mode (e.g. presence/absence of alternative_proposal
-# determines whether architectural critique is in scope).
-#
-# Failure to fetch is fatal for AI decision-emitting nodes: starting an agent
-# that doesn't know its allowed decisions risks invented values that 400 at
-# submit time, wasting a full run. Surface as a normal failure via callback.
+# Append the decisions this node may submit so the agent knows them up front.
+# Fetch failure is fatal here: an agent that doesn't know its allowed decisions
+# invents values that 400 at submit time, wasting a full run.
 SKIP_AGENT_INVOCATION=false
 if [ "$NEED_DECISION" = "true" ] && [ "$EXECUTOR_TYPE" != "script" ] && [ -n "${API_SERVER_URL:-}" ]; then
   echo "Fetching valid decisions for this node execution..."
@@ -427,9 +375,8 @@ Knowing this set up-front frames how to approach the work. The absence of a deci
 fi
 
 # --- Compose the Supervisor escalation contract (AI nodes only) ---
-# Emitted only when the template declares a routing_hub node, which the orchestrator surfaces
-# as config.json's `supervisor` key. Absent for every template without one, so a frozen older
-# graph version gets no escalation framing it cannot act on.
+# Only when the template declares a routing_hub (surfaced as config.json's
+# "supervisor" key), so a graph version without one gets no escalation framing.
 SUPERVISOR_LABEL=$(jq -r '.supervisor.label // ""' "$CONFIG_FILE")
 if [ -n "$SUPERVISOR_LABEL" ] && [ "$EXECUTOR_TYPE" != "script" ]; then
   SYSTEM_PROMPT="${SYSTEM_PROMPT}
@@ -489,11 +436,9 @@ and write the document."
   echo "Composed system prompt with Supervisor escalation contract (label=$SUPERVISOR_LABEL)"
 fi
 
-# Compose a PR-requirement note into the system prompt (AI nodes only) when this
-# node must register a pull request for every repo it pushes to before finishing.
-# Informational only — the actual gate runs after the Claude
-# session ends (see "PR verification" below); this just tells the agent about
-# the constraint up front instead of only on retry.
+# Compose a PR-requirement note into the system prompt (AI nodes only). Informational
+# only — the actual gate runs after the session (see "PR verification" below); this
+# tells the agent up front instead of only on retry.
 if [ "$NEED_PR" = "true" ] && [ "$EXECUTOR_TYPE" != "script" ]; then
   SYSTEM_PROMPT="${SYSTEM_PROMPT}
 
@@ -508,9 +453,8 @@ fi
 
 if [ "$SKIP_AGENT_INVOCATION" = "true" ]; then
   echo "Skipping agent invocation: $ERROR_MESSAGE"
-  # Nothing ran, so the initial RESULT sentinel is still in place and would
-  # report the literal text "completed" for a node that failed. The failure
-  # composer below supplies the real text.
+  # Nothing ran; clear the "completed" sentinel so it isn't reported for a failed
+  # node. The failure composer below supplies the real text.
   RESULT=""
 elif [ "$EXECUTOR_TYPE" = "script" ]; then
   echo "Running script: $COMMAND"
@@ -544,11 +488,9 @@ elif [ "$EXECUTOR_TYPE" = "script" ]; then
     fi
   fi
 
-  # Full output goes to test_output.txt unconditionally, to avoid ARG_MAX issues in
-  # RESULT — this string is what lands in run_log.md, which every downstream node reads
-  # first. Not every script node runs run-all-tests (e.g. mock-agent scenarios used by
-  # other script nodes), so /workspace/out/test_report.md is not guaranteed to exist;
-  # RESULT points at it only when it does, and falls back to the raw output otherwise.
+  # Full output to a file, not RESULT: RESULT lands in run_log.md (read by every
+  # downstream node) and a large value hits ARG_MAX. test_report.md isn't always
+  # produced, so RESULT points at it only when present, else the raw output.
   mkdir -p /workspace/out
   echo "$SCRIPT_OUTPUT" > /workspace/out/test_output.txt
   if [ -f /workspace/out/test_report.md ]; then
@@ -559,14 +501,12 @@ elif [ "$EXECUTOR_TYPE" = "script" ]; then
 else
   # AI path — run Claude Code with retry on missing result
 
-  # Set up report-result URL for the helper script
   if [ -n "$API_SERVER_URL" ]; then
     export REPORT_RESULT_URL="$API_SERVER_URL/internal/runs/$RUN_ID/node-executions/$NODE_EXECUTION_ID/decision"
   fi
 
-  # /workspace/repo is the repo itself in single-repo mode, and the parent of the
-  # clones in multi-repo mode. Either way it is the root of the workspace; the
-  # repos themselves are declared via ADD_DIR_ARGS.
+  # /workspace/repo is the repo (single-repo) or the parent of the clones
+  # (multi-repo); either way the workspace root. Repos are declared via ADD_DIR_ARGS.
   if [ -d /workspace/repo ]; then
     cd /workspace/repo
   fi
@@ -582,12 +522,9 @@ else
     fi
   fi
 
-  # Helper: log tool_use events from a stream-json line.
-  # Writes to /dev/stderr directly to bypass subshell fd inheritance issues
-  # (run_claude is invoked inside $(...), which captures stdout).
-  # Redirection order matters: /dev/stderr is a symlink to /proc/self/fd/2, so
-  # `2>/dev/null` before `>/dev/stderr` resolves the target to /dev/null and
-  # discards every progress line. Point stdout at fd 2 first, silence jq second.
+  # Log tool_use events to /dev/stderr directly (run_claude runs inside $(...), which
+  # captures stdout). Order matters: /dev/stderr is /proc/self/fd/2, so 2>/dev/null
+  # before >/dev/stderr would send all progress to /dev/null — stdout to fd 2 first.
   log_progress() {
     local line="$1"
     local msg_type
@@ -625,14 +562,12 @@ else
     # Truncate before each invocation so send-heartbeat's line-count comparison
     # observes a fresh stream for every claude run (retries, decision retries).
     : > "$stream_file"
-    # Stream JSON output: each line is a JSON event.
-    # tee saves to file (for parse_claude_output), while the loop logs progress to stderr.
-    # stdbuf -oL forces line-buffered stdout so stream-json events flow
-    # through the tee|while pipeline in real-time instead of block-buffering.
-    # The turn cap is a CLI flag, not a settings.json key: settings.json has no
-    # maxTurns setting, and user settings files are validated strictly — one
-    # unrecognized key rejects the whole file. Hitting the cap exits non-zero
-    # and yields a result message with is_error set, which the caller gates on.
+    # stdbuf -oL forces line-buffered stdout so events flow through the tee|while
+    # pipeline in real time instead of block-buffering; tee also saves the stream for
+    # parse_claude_output.
+    # --max-turns is a CLI flag, not a settings.json key: an unrecognized settings key
+    # rejects the whole file. Hitting the cap exits non-zero with is_error set, which
+    # the caller gates on.
     set +e
     stdbuf -oL claude -p "$prompt" \
       --output-format stream-json \
@@ -664,47 +599,34 @@ else
   # Helper: extract fields from Claude stream-json output
   parse_claude_output() {
     local output="$1"
-    # Session ID from the init event
     CLAUDE_SESSION_ID=$(echo "$output" | grep '"subtype":"init"' | head -1 | jq -r '.session_id // empty' 2>/dev/null || true)
-    # Result and metadata from the result event
     local result_line
     result_line=$(echo "$output" | grep '"type":"result"' | tail -1)
     CLAUDE_RESULT=$(echo "$result_line" | jq -r '.result // empty' 2>/dev/null || true)
     CLAUDE_SUBTYPE=$(echo "$result_line" | jq -r '.subtype // empty' 2>/dev/null || true)
     CLAUDE_TURNS=$(echo "$result_line" | jq -r '.num_turns // empty' 2>/dev/null || true)
-    # is_error is the failure flag to branch on. It is documented on the result
-    # message across SDK surfaces, whereas the subtype enum is not stable: the
-    # published TypeScript and Python references list different members. Treat
-    # subtype/terminal_reason/errors as opaque strings for the message only.
+    # Branch on is_error, not subtype: is_error is stable across SDK surfaces, the
+    # subtype enum is not (TS and Python references differ). subtype/terminal_reason/
+    # errors are opaque strings for the message only.
     CLAUDE_IS_ERROR=$(echo "$result_line" | jq -r 'if .is_error == true then "true" else "false" end' 2>/dev/null || true)
     [ -n "$CLAUDE_IS_ERROR" ] || CLAUDE_IS_ERROR="false"
     CLAUDE_ERRORS=$(echo "$result_line" | jq -r '(.errors // []) | join("; ")' 2>/dev/null || true)
     CLAUDE_TERMINAL_REASON=$(echo "$result_line" | jq -r '.terminal_reason // empty' 2>/dev/null || true)
-    # Text of the last assistant message, held separately from CLAUDE_RESULT.
-    # An error result carries no .result field at all, so folding this into
-    # CLAUDE_RESULT would make a truncated run look finished and skip the retry
-    # loop below — the run would call back "completed" on a mid-task message.
+    # Last assistant message, kept separate from CLAUDE_RESULT: an error result has no
+    # .result, so folding it in would make a truncated run look finished, skip the
+    # retry loop, and call back "completed" on a mid-task message.
     CLAUDE_PARTIAL_TEXT=$(echo "$output" | grep '"type":"assistant"' | tail -1 | \
       jq -r '[.message.content[]? | select(.type == "text") | .text] | join("\n")' 2>/dev/null || true)
   }
 
-  # Helper: (re-)decide whether this attempt's result is a quota exhaustion.
+  # Helper: (re-)decide whether this attempt hit quota exhaustion. Quota is fleet-wide and
+  # wall-clock-reset, so a hit can land on any attempt; called after every retry
+  # parse so a mid-loop hit parks the node instead of burning the rest of the budget.
+  # Every retry loop is guarded on [ -z "$QUOTA_RESET_AT" ], so setting it here exits them.
   #
-  # Quota is fleet-wide and resets on a wall clock, so a hit can land on ANY
-  # attempt, not just the first: the artifact, decision, escalation and PR retry
-  # loops below each call run_claude again and are just as exposed. Called after
-  # every retry parse so a mid-loop hit parks the node instead of spending the
-  # rest of the budget against an exhausted quota and then reporting that loop's
-  # own diagnostic ("Required output files not produced after 3 attempts") --
-  # the exact pair of defects this feature exists to remove, in a narrower
-  # window. Every loop is guarded on `[ -z "$QUOTA_RESET_AT" ]`, so setting it
-  # here is what makes the loop exit on its own.
-  #
-  # Only ever sets, never clears: a park already decided must not be revoked by
-  # a later parse. Sets RESULT_STATUS="failed" for the same reason the first
-  # detection does -- that is what runs the failure safety net, so the pod's
-  # in-progress work is committed and pushed before it is evicted for the park.
-  # The quota-park block below then flips the status to rate_limited.
+  # Only sets, never clears: a decided park must not be revoked by a later parse.
+  # Sets RESULT_STATUS="failed" to run the failure safety net (commit+push work
+  # before eviction); the quota-park block below flips it to rate_limited.
   refresh_quota_reset_at() {
     [ -z "$QUOTA_RESET_AT" ] || return 0
     [ "${CLAUDE_IS_ERROR:-false}" = "true" ] || return 0
@@ -716,9 +638,7 @@ else
     echo "QUOTA: $ERROR_MESSAGE"
   }
 
-  # Defaults; config.json's max_retries/max_turns (read and validated at the top
-  # of this script) win over them, so a node that configures nothing keeps the
-  # budget it has always had.
+  # Defaults; config.json's max_retries/max_turns override them (validated up top).
   MAX_RETRIES="${MAX_RETRIES:-3}"
   MAX_TURNS="${MAX_TURNS:-100}"
   ATTEMPT=1
@@ -727,9 +647,8 @@ else
   CLAUDE_PARTIAL_TEXT=""
   CLAUDE_IS_ERROR="false"
 
-  # Pre-invocation diagnostic: surface Claude auth state so auth failures can be
-  # distinguished from prompt/model issues. Safe: only reports presence and length
-  # of the OAuth token, never its value.
+  # Pre-invocation diagnostic to distinguish auth failures from prompt/model issues.
+  # Reports only presence and length of the OAuth token, never its value.
   echo "=== Pre-claude auth diagnostic ==="
   echo "HOME=$HOME  whoami=$(whoami)  id=$(id -u):$(id -g)"
   if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
@@ -749,49 +668,31 @@ ${PROMPT}"
   # Restoring the transcript alone is sufficient; the directory is keyed on the
   # claude cwd, which is always /workspace/repo.
   if [ -n "$RESUME_SESSION_ID" ] && [ -n "$RESUME_SESSION_PATH" ]; then
-    # Claude Code's own project-directory encoding: substitute "/" for "-"
-    # across the absolute cwd. Derived by substitution from the literal cwd
-    # (not written as the opaque string "-workspace-repo") so a change to
-    # either side is visibly a change to the other. Verified empirically:
-    # restoring a transcript into the matching directory and resuming it
-    # succeeds; deleting the directory instead reproduces "No conversation
-    # found" from claude. If Claude Code's encoding ever changes, this
-    # mismatches and --resume silently finds nothing -- the guard below still
-    # degrades to a fresh run rather than failing the node, and the restored
-    # path is echoed on success so a mismatch is diagnosable on first contact
-    # instead of a permanent, silent no-op.
+    # Claude Code's project-directory encoding: "/" → "-" across the absolute cwd.
+    # Derived by substitution from the literal cwd so a change to either side is
+    # visibly a change to the other. If the encoding changes, --resume silently finds
+    # nothing; the guard below degrades to a fresh run rather than failing the node.
     RESTORE_CWD="/workspace/repo"
     RESTORE_DIR="$HOME/.claude/projects/${RESTORE_CWD//\//-}"
     RESTORE_TRANSCRIPT="$RESTORE_DIR/${RESUME_SESSION_ID}.jsonl"
-    # mkdir failure (unwritable $HOME, disk pressure, a stray non-directory
-    # file already at that path) must not abort the pod under set -e -- fold
-    # it into the same guarded `if` as the fetch below so both fall back to a
-    # fresh run instead of failing the node.
+    # mkdir failure (unwritable $HOME, disk pressure, a file at that path) must not
+    # abort under set -e — folded into the fetch's guarded if so both fall back to a fresh run.
     #
-    # mkdir's stderr is deliberately left UNsuppressed: "Permission denied",
-    # "No space left on device", "File exists" are plain OS diagnostics with
-    # nothing secret in them -- exactly what an operator needs to see in pod
-    # logs when a restore degrades to a fresh run.
+    # mkdir's stderr is left unsuppressed on purpose: plain OS diagnostics with nothing
+    # secret, exactly what an operator needs when a restore degrades to a fresh run.
     #
-    # artifact's stderr is the same kind of thing and is captured for the same
-    # reason: it never prints the signed URL, only the presign endpoint's own
-    # error body or curl's -f message, neither of which carries a signature.
-    # Excerpted into the warning the way the quota-park block below already
-    # does it, because "Access denied: path outside allowed scope" would
-    # otherwise be the entire lost diagnosis of a silently degrading restore.
+    # artifact's stderr is captured and excerpted for the same reason: it never prints
+    # the signed URL, only the presign endpoint's error body or curl's -f message —
+    # no signature. Without it a silently degrading restore loses its whole diagnosis.
     RESTORE_ERR_FILE="/tmp/session_restore.err"
-    # Truncated up front: a failing mkdir short-circuits the `&&` before the
-    # redirection below ever creates the file, and a stale one would attach the
-    # wrong cause to the warning.
+    # Truncated up front: a failing mkdir short-circuits the && before the redirection
+    # creates the file, and a stale file would attach the wrong cause to the warning.
     : > "$RESTORE_ERR_FILE" 2>/dev/null || true
     if mkdir -p "$RESTORE_DIR" && artifact get "$RESUME_SESSION_PATH" "$RESTORE_TRANSCRIPT" 2>"$RESTORE_ERR_FILE"; then
       echo "Restored parked session $RESUME_SESSION_ID -> $RESTORE_TRANSCRIPT"
-      # Consume-once: overwrite the object with zero bytes. The parked transcript
-      # may hold credentials the agent discovered and that no redaction we can
-      # write would have caught, so the bytes must not outlive the resume.
-      # This is an overwrite rather than a delete because the presign endpoint
-      # allows only GET and PUT; PUT already permits overwriting anything in the
-      # run's scope, so this costs no extra privilege.
+      # Consume-once: overwrite with zero bytes. The parked transcript may hold
+      # credentials no redaction caught, so it must not outlive the resume. Overwrite
+      # not delete because the presign endpoint allows only GET/PUT.
       : > /tmp/empty_session
       CLEAR_ERR_FILE="/tmp/session_clear.err"
       if ! artifact put /tmp/empty_session "$RESUME_SESSION_PATH" 2>"$CLEAR_ERR_FILE"; then
@@ -834,9 +735,8 @@ ${PROMPT}"
 
   QUOTA_RESET_AT=""
   if [ "$CLAUDE_IS_ERROR" = "true" ]; then
-    # A quota hit is transient and shared across the whole org: retrying costs
-    # nothing but gains nothing, and the retry budget is the wrong resource to
-    # spend on it. Detect it before anything else can consume an attempt.
+    # A quota hit is transient and org-wide: retrying gains nothing and wastes the
+    # retry budget. Detect it before anything else consumes an attempt.
     refresh_quota_reset_at
     if [ -z "$QUOTA_RESET_AT" ]; then
       RESULT="${CLAUDE_RESULT:-$CLAUDE_PARTIAL_TEXT}"
@@ -857,9 +757,8 @@ ${PROMPT}"
     ERROR_MESSAGE="Claude produced no result after $ATTEMPT attempts (last subtype=${CLAUDE_SUBTYPE:-none}, exit=$CLAUDE_EXIT_CODE)"
   fi
 
-  # NOTE: $ATTEMPT is shared across the main retry, artifact enforcement, decision
-  # verification, and PR verification loops to cap total retries at $MAX_RETRIES
-  # across all phases.
+  # $ATTEMPT is shared across the main-retry, artifact, decision, and PR loops to cap
+  # total retries at $MAX_RETRIES across all phases.
   # --- Artifact enforcement: verify required output files were produced ---
   OUTPUT_SPEC=$(jq -r '.output_spec // ""' "$CONFIG_FILE")
   if [ -n "$OUTPUT_SPEC" ] && [ "$OUTPUT_SPEC" != "{}" ] && [ -n "$CLAUDE_RESULT" ]; then
@@ -923,23 +822,15 @@ ${PROMPT}"
     fi
   fi
 
-  # PR verification: only for nodes that must register a pull request for every
-  # repo they pushed to this run. Unlike DECISION above,
-  # check-prs has no single-value sentinel to string-match against — it prints a
-  # variable-length list of "<repo>: no PR registered" lines (or a distinct
-  # "could not reach origin for <repo>" / "could not reach $API_SERVER_URL" message
-  # if it fails loudly), so branch on exit status instead: 0 = nothing
-  # missing, non-zero = something missing or check-prs itself failed. This is a
-  # fourth phase drawing on the same shared $ATTEMPT budget as the three phases
-  # above — it may start with little or no budget left. It is the last
-  # phase that can resume the session, which is why the escalation gate sits below
-  # it rather than above: see that block's header.
+  # PR verification (nodes that must register a PR for every repo they pushed).
+  # check-prs has no single-value sentinel like DECISION, so branch on exit status:
+  # 0 = nothing missing, non-zero = missing or check-prs failed. Shares the $ATTEMPT
+  # budget; it is the last phase that can resume the session, so the escalation gate
+  # sits below it (see that block's header).
   #
-  # Capture check-prs's stderr along with its stdout (2>&1): check-prs's loud
-  # failure diagnostics (unreachable origin/API server, HTTP failure) are written
-  # to stderr — without 2>&1 here, those diagnostics would never reach the retry
-  # prompt or the final ERROR_MESSAGE below, silently defeating the "fail
-  # loudly" intent at the one place a human or the resumed agent actually sees it.
+  # 2>&1 captures check-prs's stderr: its loud failure diagnostics go there, and
+  # without this they would never reach the retry prompt or ERROR_MESSAGE, silently
+  # defeating the fail-loudly intent.
   if [ "$NEED_PR" = "true" ] && [ -n "$API_SERVER_URL" ] && [ -n "$CLAUDE_RESULT" ]; then
     set +e
     PR_CHECK_OUTPUT=$(check-prs 2>&1)
@@ -965,12 +856,9 @@ ${PROMPT}"
     if [ -z "$QUOTA_RESET_AT" ] && [ "$PR_CHECK_STATUS" -ne 0 ]; then
       PR_FAILURE_MESSAGE="PR registration missing for ${PR_CHECK_OUTPUT:-unknown repo(s)} after $ATTEMPT/$MAX_RETRIES total resume attempts this node"
       echo "ERROR: $PR_FAILURE_MESSAGE"
-      # Don't clobber an earlier phase's diagnosis (e.g. decision verification
-      # above, on a Code Review-shaped node where both NEED_DECISION and NEED_PR
-      # are true and the shared $ATTEMPT budget was already exhausted before PR
-      # verification's own loop ever ran) — append instead of overwrite, so the
-      # persisted error_message still names the more fundamental problem instead
-      # of only the last one checked.
+      # Don't clobber an earlier phase's diagnosis — append, so the persisted
+      # error_message names the more fundamental problem, not only the last checked
+      # (e.g. a node with both NEED_DECISION and NEED_PR that exhausted $ATTEMPT earlier).
       if [ "$RESULT_STATUS" = "failed" ]; then
         ERROR_MESSAGE="${ERROR_MESSAGE}; additionally, ${PR_FAILURE_MESSAGE}"
       else
@@ -983,25 +871,18 @@ ${PROMPT}"
   fi
 
   # --- Escalation artifact enforcement ---
-  # Gated on SUPERVISOR_LABEL, not NEED_DECISION: NEED_DECISION is purely edge-based
-  # (HasConditionalEdges) and knows nothing about the implicit escalate decision, so a node
-  # with zero conditional edges (need_decision=false) still gets told about escalate in its
-  # system prompt whenever a Supervisor is configured, and can still submit it.
+  # Gated on SUPERVISOR_LABEL, not NEED_DECISION: NEED_DECISION is edge-based and
+  # knows nothing about the implicit escalate decision, so a node with no conditional
+  # edges can still be offered escalate whenever a Supervisor is configured.
   #
-  # Deliberately the LAST verification phase, below PR verification rather than above it.
-  # Every phase above can resume the Claude session, and a resumed agent can call
-  # report-result — so the decision is only settled once no phase can mint another one.
-  # Placed any earlier this gate reads a decision that is not final: an agent that escalates
-  # while answering the PR-verification retry prompt walks straight past a gate that already
-  # ran, and the server then rejects the completed status for a missing escalation.md. That
-  # is also why $DECISION is re-read here rather than reused from the decision-verification
-  # block above — that block's value can be stale by now. Still above the upload, which is
-  # the last point at which a repair can reach object storage. Shares $ATTEMPT with the
-  # other retry phases and so may start with little or none of it left.
+  # Deliberately the LAST verification phase: every phase above can resume the
+  # session and mint another decision, so the decision is only final here. Placed
+  # earlier, an agent that escalates during PR-retry walks past a gate that already
+  # ran and the server rejects the completed status for a missing escalation.md. So
+  # $DECISION is re-read (the block above's value can be stale). Still above the upload.
   #
-  # Offers two exits, because by this point an escalation can be stale rather than merely
-  # undocumented: the blocker may have been resolved by the agent itself in a later phase.
-  # Writing escalation.md and withdrawing the decision both leave the node consistent.
+  # Two exits: write escalation.md, or withdraw a now-stale escalation (the blocker
+  # may have been resolved in a later phase). Both leave the node consistent.
   if [ -n "$SUPERVISOR_LABEL" ] && [ -n "$API_SERVER_URL" ] && [ -n "$CLAUDE_RESULT" ]; then
     DECISION=$(check-decision 2>/dev/null || echo "")
     if [ "$DECISION" = "(none)" ]; then DECISION=""; fi
@@ -1015,9 +896,8 @@ ${PROMPT}"
         parse_claude_output "$CLAUDE_OUTPUT"
         refresh_quota_reset_at
 
-        # Withdrawal resolves this gate without producing a file, so re-read the decision
-        # rather than looping on escalation.md alone — otherwise the agent takes the exit
-        # it was just offered and the loop spends the rest of the budget ignoring it.
+        # Withdrawal resolves this gate without a file, so re-read the decision rather than
+        # loop on escalation.md alone — else the loop ignores the exit it just offered.
         DECISION=$(check-decision 2>/dev/null || echo "")
         if [ "$DECISION" = "(none)" ]; then DECISION=""; fi
         if [ "$DECISION" != "escalate" ]; then
@@ -1029,10 +909,8 @@ ${PROMPT}"
       if [ -z "$QUOTA_RESET_AT" ] && [ "$DECISION" = "escalate" ] && [ ! -f "$WORKSPACE_OUT/escalation.md" ]; then
         ESCALATION_FAILURE_MESSAGE="Decision 'escalate' requires /workspace/out/escalation.md, which was not produced after $ATTEMPT attempts"
         echo "ERROR: $ESCALATION_FAILURE_MESSAGE"
-        # This phase runs last, so it inherits PR verification's append-don't-overwrite rule:
-        # every phase sets ERROR_MESSAGE on failure, and the persisted message should name the
-        # more fundamental problem (an exhausted budget upstream is usually why this phase had
-        # none left) rather than only the last thing checked.
+        # Append, don't overwrite (as PR verification above): the persisted message should
+        # name the more fundamental problem, not only the last checked.
         if [ "$RESULT_STATUS" = "failed" ]; then
           ERROR_MESSAGE="${ERROR_MESSAGE}; additionally, ${ESCALATION_FAILURE_MESSAGE}"
         else
@@ -1046,15 +924,10 @@ ${PROMPT}"
 fi
 
 # --- Failure safety net: preserve in-progress work ---
-# A failed node is retried as an entirely new node execution: new pod, new
-# clone. Work that exists only in this pod's filesystem is therefore lost
-# outright, and the retry re-derives from nothing what may have been an hour of
-# agent time. Commit and push each repo's run branch first so the retry inherits
-# real work, and name what was pushed in the result: a Claude run that ends in
-# an error carries no .result text at all, and the last assistant message is
-# empty whenever the cut-off landed mid-tool-call, so the callback otherwise
-# reports a failure with no content for the run log or the next attempt to
-# start from.
+# A failed node is retried as a brand-new pod and clone, so work only in this pod's
+# filesystem is lost. Commit and push each run branch so the retry inherits it, and
+# name what was pushed: an errored run has no .result and often no last-message text,
+# so the callback otherwise reports a failure with no content for the retry to use.
 #
 # Best-effort by construction: the failure that must reach the caller is the
 # original one, so no git command here may abort the pod or alter RESULT_STATUS.
@@ -1135,24 +1008,20 @@ ${RESULT}}"
 fi
 
 # --- Quota park: carry the Claude session across the pod's eviction ---
-# The transcript is the whole of the session's portable state: restoring only
-# that file into a fresh pod is sufficient for `claude --resume`, verified
-# against a deleted project directory. Nothing else in ~/.claude is needed.
+# The transcript is the session's entire portable state — restoring just that file
+# into a fresh pod is enough for claude --resume; nothing else in ~/.claude is needed.
 SESSION_ARTIFACT_PATH=""
 if [ -n "$QUOTA_RESET_AT" ]; then
   RESULT_STATUS="rate_limited"
 
-  # Discover the directory rather than reconstructing it from cwd, so a change
-  # to Claude Code's path encoding cannot silently park a sessionless run.
-  # The trailing `|| true` is load-bearing now that a park no longer implies a
-  # session: with no session id there may be no projects directory at all, and
-  # a failing `ls` inside a pipeline under `set -o pipefail` would abort the pod
-  # before the callback -- the one outcome this whole block exists to avoid.
+  # Discover the directory rather than rebuild it from cwd, so an encoding change
+  # can't silently park a sessionless run. The trailing || true is load-bearing: with
+  # no session there may be no projects dir, and ls failing under pipefail would abort
+  # the pod before the callback — the outcome this whole block exists to avoid.
   CLAUDE_PROJECT_DIR=$(ls -d "$HOME"/.claude/projects/*/ 2>/dev/null | head -1 || true)
-  # More than one project directory means `head -1` is choosing arbitrarily, so
-  # the transcript parked here may belong to a different session than the one
-  # the next pod resumes -- which shows up a pod later as an obscure resume
-  # failure. Name what was found while it is still a visible anomaly.
+  # More than one project dir means head -1 chooses arbitrarily, so the parked
+  # transcript may belong to a different session — an obscure resume failure a pod
+  # later. Name what was found while it is still a visible anomaly.
   CLAUDE_PROJECT_DIR_COUNT=$(ls -d "$HOME"/.claude/projects/*/ 2>/dev/null | wc -l | tr -d '[:space:]' || true)
   if [ "${CLAUDE_PROJECT_DIR_COUNT:-0}" -gt 1 ]; then
     CLAUDE_PROJECT_DIRS=$(ls -d "$HOME"/.claude/projects/*/ 2>/dev/null | tr '\n' ' ' || true)
@@ -1161,23 +1030,16 @@ if [ -n "$QUOTA_RESET_AT" ]; then
   TRANSCRIPT_SRC="${CLAUDE_PROJECT_DIR%/}/${CLAUDE_SESSION_ID}.jsonl"
   TRANSCRIPT_REDACTED="/tmp/session_redacted.jsonl"
 
-  # The session id comes from the stream's `init` event, so it can legitimately
-  # be empty -- a quota hit before the first event carries none. A park with no
-  # session reference is a supported, degraded outcome: the next iteration just
-  # starts fresh. Parking is most of the value on its own (it is what stops the
-  # node spending its retry budget against an exhausted quota), so a missing
-  # session id costs the resume, never the park. Handled exactly like a failed
-  # upload below -- session_id and session_artifact_path both null.
+  # The session id comes from the stream's init event, so it can be empty (a quota
+  # hit before the first event). A park with no session is a supported degraded
+  # outcome — the next iteration starts fresh; a missing id costs the resume, not the
+  # park. Handled like a failed upload below: session_id and path both null.
   if [ -z "$CLAUDE_SESSION_ID" ]; then
     echo "WARNING: the quota hit carries no Claude session id; parking without one, the retry will start fresh" >&2
   elif [ -f "$TRANSCRIPT_SRC" ]; then
-    # Diagnosability is the point of this feature -- the incident that motivated
-    # it was diagnosed from pod logs, so a token or upload failure must leave a
-    # cause behind, not just a generic warning. Capture stderr to a private file
-    # rather than discarding it, but only ever excerpt a short, truncated prefix:
-    # these are the token-fetch and presign endpoints' own diagnostics (HTTP
-    # status, response body), never a token or transcript value -- neither
-    # fetch-github-token nor artifact ever writes a secret to stderr.
+    # Capture stderr to a private file so a token/upload failure leaves a cause behind,
+    # but only excerpt a short truncated prefix: these are the fetch/presign endpoints'
+    # own diagnostics (HTTP status, body), never a token or transcript value.
     TOKEN_FETCH_ERR_FILE="/tmp/session_token_fetch.err"
     if ! GITHUB_TOKEN_FOR_REDACTION=$(fetch-github-token 2>"$TOKEN_FETCH_ERR_FILE"); then
       GITHUB_TOKEN_FOR_REDACTION=""
@@ -1185,10 +1047,8 @@ if [ -n "$QUOTA_RESET_AT" ]; then
       echo "WARNING: could not fetch a GitHub token for redaction, continuing without it${TOKEN_FETCH_ERR:+ ($TOKEN_FETCH_ERR)}" >&2
     fi
     rm -f "$TOKEN_FETCH_ERR_FILE"
-    # Deliberately NOT exported: redact_transcript is a shell function sourced
-    # into this same shell, so it reads the plain variable. Exporting would only
-    # widen the blast radius -- the token would be inherited by every child this
-    # block spawns (artifact, and the curl inside it).
+    # Deliberately NOT exported: redact_transcript is sourced into this shell and reads
+    # the plain variable. Exporting would leak the token to every child (artifact, curl).
     if redact_transcript "$TRANSCRIPT_SRC" "$TRANSCRIPT_REDACTED"; then
       SESSION_ARTIFACT_PATH="${OUTPUT_PATH%out/}session/${CLAUDE_SESSION_ID}.jsonl"
       UPLOAD_ERR_FILE="/tmp/session_upload.err"
@@ -1211,7 +1071,6 @@ fi
 # --- Step 5: Push output artifacts via presigned URLs ---
 ARTIFACT_REFS="{}"
 if [ -d "$WORKSPACE_OUT" ] && [ "$(ls -A "$WORKSPACE_OUT" 2>/dev/null)" ]; then
-  # Upload each file individually, preserving relative paths
   (cd "$WORKSPACE_OUT" && find . -type f | while read -r file; do
     rel_path="${file#./}"
     artifact put "$WORKSPACE_OUT/$rel_path" "${OUTPUT_PATH}${rel_path}"
@@ -1220,12 +1079,9 @@ if [ -d "$WORKSPACE_OUT" ] && [ "$(ls -A "$WORKSPACE_OUT" 2>/dev/null)" ]; then
 fi
 
 # --- Step 6: POST callback to orchestrator ---
-# resume_at is the one field the orchestrator hard-requires on a rate_limited
-# callback -- it rejects the body with 400 without it -- and send-callback has no
-# retry, so a conversion that came back empty would abort the pod with no
-# callback at all. Convert first and check: if `date` cannot render the epoch,
-# report the node as an ordinary failure instead. A failed node is retried; a pod
-# that dies silently is not.
+# resume_at is hard-required on a rate_limited callback (400 without it) and
+# send-callback has no retry, so convert first and check: if date can't render the
+# epoch, fail the node instead. A failed node is retried; a silently dead pod is not.
 RESUME_AT_RFC3339=""
 if [ -n "$QUOTA_RESET_AT" ]; then
   RESUME_AT_RFC3339=$(date -u -d "@$QUOTA_RESET_AT" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || true)
@@ -1233,9 +1089,9 @@ if [ -n "$QUOTA_RESET_AT" ]; then
     echo "WARNING: could not render the quota reset instant ($QUOTA_RESET_AT) as RFC3339; failing the node instead of parking" >&2
     RESULT_STATUS="failed"
     ERROR_MESSAGE="${ERROR_MESSAGE:-Claude quota exhausted}; the reset instant could not be encoded for the callback, so this node fails rather than parking"
-    # A failed node is retried from scratch, so a session reference on it would
-    # point at an object nothing will read. Clearing the path clears the id too:
-    # session_id below is written as ${SESSION_ARTIFACT_PATH:+$CLAUDE_SESSION_ID}.
+    # A failed node is retried from scratch, so a session reference would point at an
+    # object nothing reads. Clearing the path clears the id too (session_id below is
+    # ${SESSION_ARTIFACT_PATH:+$CLAUDE_SESSION_ID}).
     SESSION_ARTIFACT_PATH=""
   fi
 fi

@@ -9,20 +9,10 @@ name: E2E
 # Never make it a required check -- it is skipped for the agent and for fork authors, whose PRs
 # a required check would then block on a run that never comes.
 #
-# Parallelism is Playwright workers (E2E_WORKERS, or -Pworkers on a direct Gradle
-# invocation) inside this one job, against the one Compose stack it boots.
-#
-# Splitting the suite across multiple runner pods was tried and removed: every pod re-pays
-# the whole non-Playwright preamble (image builds, stack boot, the full unit stage that
-# `./gradlew test -Pe2e` runs first), so each one buys parallelism at a fixed cost measured
-# in minutes, and the `arc-runner-choruskube-e2e` pool admits few enough concurrent runners that
-# the extra pods queued into a second wave rather than running sooner. A worker is one more
-# process against a stack that is already up, which costs ~nothing.
-#
-# The trade-off workers carry instead: they share one backend (a single api-server,
-# PostgreSQL, Temporal and Docker daemon), so their ceiling is backend contention rather than
-# runner capacity, and every spec must name the resources it creates via uniqueName()
-# (web-ui/e2e/helpers/api-client.ts) to stay collision-free against its siblings.
+# Parallelism is Playwright workers (E2E_WORKERS, or -Pworkers on a direct Gradle invocation)
+# inside this one job, against the one Compose stack it boots. The workers share one backend
+# (a single api-server, PostgreSQL, Temporal and Docker daemon), so every spec must name the
+# resources it creates via uniqueName() (web-ui/e2e/helpers/api-client.ts) to stay collision-free.
 on:
   workflow_dispatch:
   pull_request:
@@ -38,19 +28,16 @@ permissions:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  # The whole suite runs inside this image, which bakes every toolchain the run needs —
-  # JDK 25, Go 1.25, Node 22, the Gradle wrapper + warmed module cache, the Go module +
-  # compile caches, the npm cache, and the Playwright browser — so this workflow installs
-  # nothing. It is the public OSS pull endpoint, pulled anonymously. See
-  # agent-images/choruskube-dev/Dockerfile.
+  # The whole suite runs inside this image, which bakes every toolchain the run needs (JDK, Go,
+  # Node, the Gradle wrapper + warmed caches, the Go and npm caches, the Playwright browser), so
+  # this workflow installs nothing. Public OSS pull endpoint. See agent-images/choruskube-dev/Dockerfile.
   DEV_IMAGE: registry.choruskube.com/choruskube-dev:latest
 
 jobs:
   # Preflight (PR only): e2e runs UNLESS every author (opener + commit authors) is in
-  # E2E_SKIP_AUTHORS -- injected onto the self-hosted runner out of band and read from the ambient
-  # env here (curl + jq are on the stock runner image), never a GitHub variable. The opener trust
-  # gate stays; a fork ships its own copy of this file, so the require-approval setting is the
-  # real fork guard.
+  # E2E_SKIP_AUTHORS -- injected onto the self-hosted runner out of band and read from ambient env
+  # here, never a GitHub variable. A fork ships its own copy of this file, so the require-approval
+  # setting is the real fork guard.
   gate:
     if: >-
       github.event_name == 'pull_request' &&
@@ -108,28 +95,23 @@ jobs:
       # reporting green.
       #
       # It runs inside DEV_IMAGE rather than on the runner because the runner carries no
-      # toolchains; the image carries all of them, warmed. Three flags make the container
-      # able to drive the stack the same way the bare runner did:
-      #   --network host    the ARC runner and its dind sidecar share one pod network
-      #                     namespace, so the stack's published ports answer on localhost
-      #                     there; a plain container gets its own namespace and cannot
-      #                     reach them, so it must join the host's (a GitHub `container:`
-      #                     job can't — GitHub forces its own --network and the two
-      #                     conflict, which is why this is a `docker run`, not `container:`).
+      # toolchains; the image carries all of them, warmed. Three flags let the container drive
+      # the stack the way the bare runner did:
+      #   --network host    the ARC runner and its dind sidecar share one pod network namespace,
+      #                     so the stack's published ports answer on localhost; a plain container
+      #                     gets its own namespace and can't reach them. A GitHub `container:` job
+      #                     can't do this (it forces its own --network), which is why this is a
+      #                     `docker run`.
       #   docker.sock mount  compose talks to the same dind the runner uses.
-      #   workspace mount at the same path  dind resolves bind mounts on its own
-      #                     filesystem, which shares the runner's _work volume, so mounting
-      #                     $GITHUB_WORKSPACE at its own path makes the checkout visible.
-      # --entrypoint bash overrides the agent image's entrypoint (it expects an agent
-      # config.json and would otherwise abort). GRADLE_USER_HOME is passed explicitly
-      # because the container's HOME is not the image's build user, so Gradle would
-      # otherwise miss the baked cache; the Go, npm, and Playwright caches resolve through
-      # ENV baked into the image and need no help here. The Gradle build installs web-ui's
-      # node_modules itself (:web-ui:npmInstall, offline from the baked npm cache), so no
-      # separate npm ci is needed. The safe.directory line is required because the
-      # container runs as root while the checkout is owned by the runner user, which git
-      # otherwise rejects as dubious ownership (:checkCommentRefs and other tasks shell
-      # out to git).
+      #   workspace mount at the same path  dind resolves bind mounts on its own filesystem (the
+      #                     shared _work volume), so mounting $GITHUB_WORKSPACE at its own path
+      #                     makes the checkout visible.
+      # --entrypoint bash overrides the agent image's entrypoint (it expects an agent config.json
+      # and would otherwise abort). GRADLE_USER_HOME is passed explicitly because the container's
+      # HOME is not the image's build user, so Gradle would otherwise miss the baked cache; the Go,
+      # npm, and Playwright caches resolve through baked ENV. safe.directory is required because the
+      # container runs as root while the checkout is owned by the runner user, which git otherwise
+      # rejects as dubious ownership (:checkCommentRefs and other tasks shell out to git).
       #
       # -Pe2eNoTeardown suppresses the :e2eDown finalizer so the stack outlives the build
       # and the steps below can read it — `docker compose logs` and the Playwright report
@@ -137,21 +119,18 @@ jobs:
       # `always()` teardown at the end.
       #
       # E2E_DEV_BASE selects the warm Go build base for the compose image builds (see
-      # docker-compose.e2e.yaml's BUILD_BASE arg); E2E_WORKERS reaches :e2ePlaywright as
-      # --workers. The limit on raising workers is backend contention (one api-server, one
-      # PostgreSQL, one Temporal, one Docker daemon), not runner capacity.
+      # docker-compose.e2e.yaml's BUILD_BASE arg); E2E_WORKERS reaches :e2ePlaywright as --workers,
+      # capped by backend contention (one api-server, PostgreSQL, Temporal, Docker daemon).
       #
-      # TESTCONTAINERS_RYUK_DISABLED skips the reaper container TestContainers otherwise starts:
-      # the runner's docker daemon is ephemeral and torn down with the pod, so nothing outlives the
-      # run for Ryuk to clean up, and its image is the only thing the integration tests (Postgres,
-      # MinIO) would still pull over the network -- every other image they use is in the preloaded
-      # stack. Disabling it keeps the whole run off the registry.
+      # TESTCONTAINERS_RYUK_DISABLED skips the reaper TestContainers otherwise starts: the runner's
+      # docker daemon is ephemeral and torn down with the pod, so nothing outlives the run for Ryuk
+      # to clean up. Its image is also the only thing the integration tests (Postgres, MinIO) would
+      # still pull over the network, so disabling it keeps the whole run off the registry.
       #
-      # -Dtest.reports.dir gathers every suite's reports plus the per-task timing summary
-      # under one tree for the upload steps. The repo-name segment is not decoration: the
-      # dogfood Test node runs several repos' test commands into one shared output
-      # directory, and more than one has an api-server, so the segment keeps their reports
-      # from overwriting each other.
+      # -Dtest.reports.dir gathers every suite's reports plus the per-task timing summary under one
+      # tree for the upload steps. The repo-name segment is not decoration: the dogfood Test node
+      # runs several repos' test commands into one shared directory, more than one with an
+      # api-server, so the segment keeps their reports from overwriting each other.
       - name: Run e2e suite in choruskube-dev
         run: |
           docker run --rm --network host --user 0 --entrypoint bash \
@@ -176,13 +155,9 @@ jobs:
             -v /var/run/docker.sock:/var/run/docker.sock \
             "$DEV_IMAGE" -c 'docker compose -f docker-compose.e2e.yaml logs --no-color --tail=400 || true'
 
-      # Both upload steps read from the single tree that the run step's -Dtest.reports.dir
-      # creates. Passing that property here is deliberate beyond tidiness: the dogfood Test
-      # node is the only other caller that sets it, and the dogfood run has no CI of its own,
-      # so without this the flag would ship completely unexercised. Now every PR proves it.
-      #
-      # Kept as two artifacts rather than one: `playwright-report` is the name people already
-      # reach for, and the exclusion below stops the HTML being uploaded twice.
+      # Both upload steps read from the single tree the run step's -Dtest.reports.dir creates.
+      # Two artifacts, not one: `playwright-report` is the name people reach for, and the exclusion
+      # below stops the HTML being uploaded twice.
       - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@v4

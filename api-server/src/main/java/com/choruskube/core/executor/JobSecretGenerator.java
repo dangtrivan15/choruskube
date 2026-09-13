@@ -7,9 +7,6 @@ import java.security.SecureRandom;
 
 /**
  * Generates JOB_SECRET and its SHA-256 hash for agent pod authentication.
- *
- * <p>The secret is 32 random bytes, hex-encoded (64 chars).
- * The hash is SHA-256 of the secret, hex-encoded (64 chars).
  */
 public final class JobSecretGenerator {
 
