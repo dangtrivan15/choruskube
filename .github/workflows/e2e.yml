@@ -15,7 +15,7 @@ name: E2E
 # Splitting the suite across multiple runner pods was tried and removed: every pod re-pays
 # the whole non-Playwright preamble (image builds, stack boot, the full unit stage that
 # `./gradlew test -Pe2e` runs first), so each one buys parallelism at a fixed cost measured
-# in minutes, and the `arc-runner-choruskube` pool admits few enough concurrent runners that
+# in minutes, and the `arc-runner-choruskube-e2e` pool admits few enough concurrent runners that
 # the extra pods queued into a second wave rather than running sooner. A worker is one more
 # process against a stack that is already up, which costs ~nothing.
 #
@@ -55,7 +55,7 @@ jobs:
     if: >-
       github.event_name == 'pull_request' &&
       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
-    runs-on: arc-runner-choruskube
+    runs-on: arc-runner-choruskube-build
     permissions:
       contents: read
       pull-requests: read
@@ -96,7 +96,7 @@ jobs:
     if: >-
       !cancelled() &&
       ( github.event_name != 'pull_request' || needs.gate.outputs.run == 'true' )
-    runs-on: arc-runner-choruskube
+    runs-on: arc-runner-choruskube-e2e
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -141,6 +141,12 @@ jobs:
       # --workers. The limit on raising workers is backend contention (one api-server, one
       # PostgreSQL, one Temporal, one Docker daemon), not runner capacity.
       #
+      # TESTCONTAINERS_RYUK_DISABLED skips the reaper container TestContainers otherwise starts:
+      # the runner's docker daemon is ephemeral and torn down with the pod, so nothing outlives the
+      # run for Ryuk to clean up, and its image is the only thing the integration tests (Postgres,
+      # MinIO) would still pull over the network -- every other image they use is in the preloaded
+      # stack. Disabling it keeps the whole run off the registry.
+      #
       # -Dtest.reports.dir gathers every suite's reports plus the per-task timing summary
       # under one tree for the upload steps. The repo-name segment is not decoration: the
       # dogfood Test node runs several repos' test commands into one shared output
@@ -154,6 +160,7 @@ jobs:
             -e CI=true \
             -e GRADLE_USER_HOME=/home/agent/.gradle \
             -e E2E_DEV_BASE="$DEV_IMAGE" \
+            -e TESTCONTAINERS_RYUK_DISABLED=true \
             -e E2E_WORKERS=4 \
             "$DEV_IMAGE" -euo pipefail -c '
               git config --global --add safe.directory "$PWD"
