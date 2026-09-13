@@ -19,7 +19,9 @@ ARG PRELOAD_TAR
 COPY ${PRELOAD_TAR} /stack.tar
 FROM preload-${PRELOAD_MODE:-empty} AS preload-src
 
-FROM docker:29-dind
+# Pin to 27: docker 29 defaults to the containerd image store, whose build steps
+# ignore the daemon MTU and fail on reduced-MTU networks. Nothing here needs 29.
+FROM docker:27-dind
 
 # Warm Docker cache: no-op (empty directory) on a non-warm build; entrypoint.sh's
 # load_preload_archives() sweeps this directory and treats no *.tar as a cold-cache

@@ -4,8 +4,8 @@
 # warm-Docker-cache archive this image carries best-effort, then runs dockerd in
 # the foreground. Readiness is generic daemon-up on 2375, gated externally by the
 # k8s startupProbe / docker HEALTHCHECK — this script does not signal it itself.
-# POSIX sh, not bash: docker:29-dind is Alpine-based and ships no bash, same as
-# the base image's own dockerd-entrypoint.sh this script delegates to.
+# POSIX sh, not bash: the docker:*-dind base is Alpine-based and ships no bash, same
+# as the base image's own dockerd-entrypoint.sh this script delegates to.
 set -euo pipefail
 
 # The directory is a shared contract with the image bake that copies archives into
