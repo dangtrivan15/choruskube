@@ -42,6 +42,9 @@ its warm-DinD decision is unchanged and stands.
 - Image supply is unchanged in practice — the seam already resolved to none everywhere, so no
   runtime behavior changes; an image absent from the warm/custom DinD still falls back to pulling
   from its origin registry.
-- The separate build-cache (`BUILD_CACHE_REGISTRY`) and dependency-proxy (`DEP_PROXY_BASE`)
-  contracts, which the agent entrypoint still honors when those env vars are set by other means,
-  are untouched.
+- The build-cache (`BUILD_CACHE_REGISTRY`) agent-entrypoint block — which bootstrapped a
+  `docker-container` buildx builder trusting a cache registry over HTTP — is removed as well:
+  after the injection above is gone nothing sets the variable and no build step consumes the
+  builder (image builds use plain `docker build`), so it was dead code, not a live contract.
+- The dependency-proxy (`DEP_PROXY_BASE`) entrypoint contract is left in place, a distinct
+  package-manager-proxy concern honored only when that variable is set by other means.

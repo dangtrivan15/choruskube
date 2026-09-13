@@ -90,62 +90,6 @@ if [ -z "${JOB_SECRET:-}" ]; then
   exit 1
 fi
 
-# --- BuildKit builder setup (DinD + cache registry only) ---
-# Embedded BuildKit (dind 29 + containerd-snapshotter mode) does NOT honor
-# dockerd's daemon.json `insecure-registries` for its cache import/export
-# pipeline, and `/etc/containerd/certs.d/<host>/hosts.toml` is also unreliable
-# for that pipeline. The result: cache fetches against our plain-HTTP
-# in-cluster `cache-registry` default to HTTPS, fail the TLS handshake, and
-# wedge the buildx CLI on a Solve gRPC call that never returns.
-#
-# Switch to a `docker-container` driver builder whose `buildkitd.toml` we own.
-# That config IS the canonical one buildkitd reads, so HTTP trust is honored.
-# The buildkitd container runs INSIDE dind, so it talks to the cache-registry
-# over the same in-cluster network the embedded BuildKit was using.
-if [ -n "${BUILD_CACHE_REGISTRY:-}" ] && [ -n "${DOCKER_HOST:-}" ]; then
-  cat > /tmp/buildkitd.toml <<EOF
-debug = false
-
-[registry."${BUILD_CACHE_REGISTRY}"]
-  http = true
-EOF
-
-  # The dind sidecar starts before this container but dockerd may still be
-  # initializing TLS certs. Poll briefly before creating the builder.
-  for _ in $(seq 1 30); do
-    if docker version >/dev/null 2>&1; then break; fi
-    sleep 1
-  done
-
-  # buildx's docker-container driver rejects TLS supplied through the DOCKER_HOST/DOCKER_TLS_VERIFY/
-  # DOCKER_CERT_PATH env vars ("could not create a builder instance with TLS data loaded from
-  # environment") -- it stores a named docker context, not the ambient env, so a later `buildx build`
-  # can reconnect. The dind sidecar exposes a TLS endpoint, so materialize a context from those same
-  # certs and target the builder at it. Without TLS the default context already carries the endpoint,
-  # so builder_endpoint stays empty and no context arg is passed.
-  builder_endpoint=""
-  if [ "${DOCKER_TLS_VERIFY:-}" = "1" ] && [ -n "${DOCKER_CERT_PATH:-}" ]; then
-    docker context create choruskube-dind \
-      --docker "host=${DOCKER_HOST},ca=${DOCKER_CERT_PATH}/ca.pem,cert=${DOCKER_CERT_PATH}/cert.pem,key=${DOCKER_CERT_PATH}/key.pem" \
-      >/dev/null 2>&1 || true
-    builder_endpoint=choruskube-dind
-  fi
-
-  # Capture stderr instead of discarding it: a silent failure here left the cache-registry builder
-  # unbuilt on every dind node with no clue why. On success buildx's own progress is uninteresting.
-  if bootstrap_err=$(docker buildx create --use --bootstrap \
-      --name choruskube-builder \
-      --driver docker-container \
-      --buildkitd-config /tmp/buildkitd.toml \
-      ${builder_endpoint} 2>&1); then
-    echo "BuildKit builder ready: choruskube-builder (HTTP trust: ${BUILD_CACHE_REGISTRY})"
-  else
-    # Don't fail the agent — e2e-up.sh's bake invocation has a no-cache
-    # fallback that still produces a working build, just slower.
-    echo "WARNING: docker-container builder bootstrap failed; falling back to embedded BuildKit (cache registry will not work): ${bootstrap_err}"
-  fi
-fi
-
 # Claude credentials are delivered via the CLAUDE_CODE_OAUTH_TOKEN env var (long-lived
 # OAuth token from `claude setup-token`). The Claude CLI reads it natively as a bearer
 # token — no credentials file to symlink, no hostpath to mount. For script-executor
