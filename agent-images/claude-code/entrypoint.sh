@@ -619,7 +619,7 @@ else
       jq -r '[.message.content[]? | select(.type == "text") | .text] | join("\n")' 2>/dev/null || true)
   }
 
-  # (Re-)decide whether this attempt hit quota exhaustion. Quota is fleet-wide and
+  # Helper: (re-)decide whether this attempt hit quota exhaustion. Quota is fleet-wide and
   # wall-clock-reset, so a hit can land on any attempt; called after every retry
   # parse so a mid-loop hit parks the node instead of burning the rest of the budget.
   # Every retry loop is guarded on [ -z "$QUOTA_RESET_AT" ], so setting it here exits them.
@@ -638,7 +638,7 @@ else
     echo "QUOTA: $ERROR_MESSAGE"
   }
 
-  # Defaults; validated config.json max_retries/max_turns override them.
+  # Defaults; config.json's max_retries/max_turns override them (validated up top).
   MAX_RETRIES="${MAX_RETRIES:-3}"
   MAX_TURNS="${MAX_TURNS:-100}"
   ATTEMPT=1
