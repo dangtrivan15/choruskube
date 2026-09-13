@@ -7,7 +7,7 @@ import java.util.UUID;
  * Resolves the registry pull credential to inject into a workload's launch, if this deployment
  * has one to offer.
  *
- * <p>The sibling of {@link WorkloadRegistryMirrorResolver} — replaced the same way, by an
+ * <p>The sibling of {@link WorkloadNamespaceResolver} — replaced the same way, by an
  * implementation existing as a bean, resolved through the same {@code ObjectProvider} fallback in
  * {@link com.choruskube.core.service.WorkloadService}. Where the credential comes from (a
  * per-org registry account, a shared platform credential, none at all) is a deployment-specific

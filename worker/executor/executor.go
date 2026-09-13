@@ -67,13 +67,6 @@ type ExecutionParams struct {
 	DindImage string
 	Identity  ExecutionIdentity
 
-	// RegistryMirror carries the registry-mirror/build-cache/dependency-proxy endpoints to
-	// inject into a DinD-enabled workload, when this deployment provisions one. Nil means
-	// none was resolved -- this package derives no such endpoint itself, since where it
-	// lives (a per-org proxy, a shared mirror, nothing) is a deployment-specific choice made
-	// upstream of ExecutionParams.
-	RegistryMirror *RegistryMirror
-
 	// AgentResources overrides the executor's default agent-container CPU/memory for this one
 	// execution. Nil uses the deployment default (the K8s executor's Config). What a given node
 	// should be sized at is a caller decision (resolved in prepare), not something this package
@@ -89,15 +82,6 @@ type AgentResources struct {
 	MemoryRequest string
 	CPULimit      string
 	MemoryLimit   string
-}
-
-// RegistryMirror is the registry-mirror/build-cache/dependency-proxy endpoint set a DinD-enabled
-// workload's init container and agent process route image pulls, build-cache traffic, and
-// package-manager downloads through.
-type RegistryMirror struct {
-	Mirror       string // host:port a container runtime pulls images through
-	BuildCache   string // host:port the build-cache push/pull path uses
-	DepProxyBase string // base URL package-manager proxies (Go/npm) are rooted at
 }
 
 // NodeCredentials are the credentials injected into a node execution's workload.

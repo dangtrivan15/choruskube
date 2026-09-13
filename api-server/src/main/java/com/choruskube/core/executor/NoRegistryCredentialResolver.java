@@ -8,7 +8,7 @@ import java.util.UUID;
  * credential is known, so {@link com.choruskube.core.service.WorkloadService} injects none.
  *
  * <p><b>Not a Spring bean.</b> {@code WorkloadService} holds it as the fallback behind an {@code
- * ObjectProvider}, the same arrangement as {@code NoRegistryMirrorResolver}, so an implementation
+ * ObjectProvider}, the same arrangement as {@code NoWorkloadNamespaceResolver}, so an implementation
  * replaces it by existing rather than by bean-scan ordering.
  */
 public class NoRegistryCredentialResolver implements WorkloadRegistryCredentialResolver {

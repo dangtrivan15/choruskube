@@ -11,7 +11,7 @@ import java.util.UUID;
  *
  * <p><b>Not a Spring bean.</b> Both the {@code /worker} node-execution route and
  * {@code WorkloadService.prepareWorkload} hold it as the fallback behind an {@code ObjectProvider},
- * the same arrangement as {@code NoRegistryMirrorResolver} and {@code SingleFleetWorkerAuthorizer},
+ * the same arrangement as {@code NoRegistryCredentialResolver} and {@code SingleFleetWorkerAuthorizer},
  * so an implementation replaces it by existing rather than by bean-scan ordering. Using it in both
  * places is what keeps the launch namespace and the teardown namespace in lockstep.
  */

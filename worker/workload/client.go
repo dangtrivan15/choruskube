@@ -219,15 +219,6 @@ type RegistryCredentials struct {
 	Password string `json:"password"`
 }
 
-// RegistryMirror is the registry-mirror/build-cache/dependency-proxy endpoint set the API server
-// resolved for this workload's launch, when this deployment provisions one. Nil means none was
-// resolved.
-type RegistryMirror struct {
-	Mirror       string `json:"mirror"`
-	BuildCache   string `json:"buildCache"`
-	DepProxyBase string `json:"depProxyBase"`
-}
-
 // PrepareResponse is what a Worker needs to launch a workload itself, resolved server-side from
 // the stored graph snapshot and DB-held secrets.
 type PrepareResponse struct {
@@ -241,7 +232,6 @@ type PrepareResponse struct {
 	Registry         *RegistryCredentials `json:"registryCredentials"`
 	Namespace        string               `json:"namespace"`
 	ServiceAccount   string               `json:"serviceAccount"`
-	RegistryMirror   *RegistryMirror      `json:"registryMirror"`
 }
 
 // PrepareParams contains everything needed to resolve a workload's launch inputs via the API
