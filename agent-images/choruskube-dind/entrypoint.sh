@@ -66,8 +66,10 @@ forward_term() {
 
 # Delegate to the base image's own entrypoint for TLS cert setup and dockerd
 # flags, backgrounded so this script can load the preload archive before taking
-# over as the container's foreground process.
-dockerd-entrypoint.sh dockerd &
+# over as the container's foreground process. Forward "$@" so a caller can pass
+# extra dockerd flags — they were dropped before, which silently disabled the
+# preload for any caller that needed to set them.
+dockerd-entrypoint.sh dockerd "$@" &
 DOCKERD_PID=$!
 trap forward_term TERM INT
 
