@@ -1,5 +1,12 @@
-# Stage 1: Build
-FROM node:22-alpine AS build
+# Stage 1: Build. BUILD_BASE defaults to the stock Node image (the published build passes
+# nothing); e2e overrides it to a warm dev base whose npm cache is pre-baked at NPM_CONFIG_CACHE
+# below, so a from-scratch install reuses it with no downloads. On the default base that cache
+# starts empty (cold), unchanged from before. USER root so the build can write its workdir on
+# either base (the warm base ends as a non-root user).
+ARG BUILD_BASE=node:22-alpine
+FROM ${BUILD_BASE} AS build
+USER root
+ENV NPM_CONFIG_CACHE=/home/agent/.npm
 WORKDIR /app
 COPY package.json package-lock.json ./
 # Retry transient registry network resets (ECONNRESET) — generic, no registry host pinned.

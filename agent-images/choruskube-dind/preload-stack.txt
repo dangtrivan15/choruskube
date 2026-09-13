@@ -1,4 +1,11 @@
 postgres:17-alpine
 temporalio/auto-setup:1.25
-minio/minio:RELEASE.2025-09-07T16-13-09Z
+quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
 wiremock/wiremock:3.13.0
+# Runtime-stage base images the e2e compose build stages produce (api-server, web-ui,
+# orchestrator/worker). The build-stage bases (gradle/go/node) route through the warm dev
+# base now, so only these remain as registry pulls — baked so a warm dind needs no registry.
+eclipse-temurin:25-jre-alpine
+alpine:3.21
+nginx:alpine

@@ -82,7 +82,7 @@ services:
 
   # S3-compatible object storage for run artifacts.
   object-storage:
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
     dns_search: .
     command: server /data --console-address ":9001"
     environment:
@@ -102,7 +102,7 @@ services:
       retries: 10
 
   object-storage-setup:
-    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
     dns_search: .
     networks:
       - choruskube-e2e
@@ -152,6 +152,11 @@ services:
     build:
       context: ./api-server
       dockerfile: Dockerfile
+      args:
+        # Build stage base. Defaults to the stock Gradle+JDK toolchain; CI sets E2E_DEV_BASE to a
+        # warm build image (baked Gradle wrapper dist + module cache) so a from-scratch build
+        # reuses them instead of a cold download. Unset (local dev, forks) => stock, unchanged.
+        BUILD_BASE: ${E2E_DEV_BASE:-gradle:9.2.1-jdk25-alpine}
     dns_search: .
     environment:
       DATABASE_URL: jdbc:postgresql://postgres:5432/choruskube
@@ -333,6 +338,11 @@ services:
     build:
       context: ./web-ui
       dockerfile: Dockerfile
+      args:
+        # Build stage base. Defaults to the stock Node toolchain; CI sets E2E_DEV_BASE to a warm
+        # build image (baked npm cache) so a from-scratch install reuses it instead of a cold
+        # download. Unset (local dev, forks) => stock, unchanged.
+        BUILD_BASE: ${E2E_DEV_BASE:-node:22-alpine}
     dns_search: .
     environment:
       # Same-origin: the image swaps in nginx-proxy.conf, reverse-proxying /api,
