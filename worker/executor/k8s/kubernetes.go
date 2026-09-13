@@ -1,8 +1,8 @@
 // Package k8s implements executor.Executor by launching agent workloads as Kubernetes Jobs.
-// It is generic and tenant-agnostic: an instance is bound to a single namespace (Config.Namespace)
-// and launches into it with whatever service account and credentials its ExecutionParams carry,
-// resolving no organization, namespace, or credential itself. A multi-tenant deployment derives a
-// per-org instance with WithNamespace; a single-tenant deployment has one fixed namespace.
+// It is generic and tenant-agnostic: an instance is bound to one namespace (Config.Namespace) and
+// launches with whatever service account and credentials its ExecutionParams carry, resolving no
+// organization, namespace, or credential itself (WithNamespace derives a per-org copy).
+// See docs/decisions/2026-09-05---01-worker-owns-tenant-agnostic-executor.md.
 package k8s
 
 import (
@@ -28,13 +28,11 @@ import (
 )
 
 const (
-	// labelAppKey/labelApp let cluster operators reading Job/Pod labels recognize this
-	// package's workloads by a stable convention.
+	// labelApp is a stable convention so operators can recognize this package's Job/Pods.
 	labelAppKey = "app"
 	labelApp    = "choruskube-agent"
-	// labelExecID/labelRunID let cluster operators correlate a Job/Pod back to one run and
-	// execution. Teardown addresses resources by their deterministic name in the given
-	// namespace, so these are for operators to read, not lookup keys.
+	// exec-id/run-id are for operators to read, not lookup keys: teardown addresses resources by
+	// deterministic name, needing only namespaced delete rights, never a cluster-scoped label list.
 	labelExecID = "choruskube/exec-id"
 	labelRunID  = "choruskube/run-id"
 
@@ -46,14 +44,12 @@ const (
 	dindInitContainerName = "dind"
 	agentContainerName    = "agent"
 
-	// logLimitBytes caps GetLogs' return value -- callback payloads have an upstream size
-	// ceiling this stays under.
+	// logLimitBytes keeps GetLogs' return under the callback payload's upstream size ceiling.
 	logLimitBytes = 64 * 1024
 
 	// Hard lower bound: must exceed the orchestrator's node heartbeat timeout (capped at 15m in
-	// dag_executor.go), else a crashed agent's Pod is GC'd before the workflow's post-timeout
-	// FetchPodLogs runs and the crash logs vanish -- the node then surfaces as a bare heartbeat
-	// timeout. Also the sole reaper of successful Pods, so the ceiling is node ephemeral disk.
+	// dag_executor.go), or a crashed agent's Pod is GC'd before post-timeout FetchPodLogs runs and
+	// the crash logs vanish. Upper bound is node ephemeral disk: this also reaps successful Pods.
 	ttlSecondsAfterFinished = int32(3600)
 
 	podTemplateDataKey = "template.yaml"
@@ -61,9 +57,9 @@ const (
 
 // Config configures a KubernetesExecutor.
 type Config struct {
-	// Namespace is the single namespace every client call this instance makes is scoped to:
-	// the Job, ConfigMap, and Secret(s) it creates, and the resources its teardown methods
-	// address by name. WithNamespace returns a copy that differs only in this field.
+	// Namespace scopes every client call this instance makes -- the Job, ConfigMap, and Secret(s)
+	// it creates, and the resources its teardown addresses by name. WithNamespace copies with only
+	// this field changed.
 	Namespace string
 
 	// AgentServiceAccount is the ServiceAccount agent pods run under when
@@ -79,16 +75,14 @@ type Config struct {
 	// ConfigMap -- the api-server's own namespace, not an org namespace.
 	TemplateNamespace string
 
-	// AgentResources is the default agent-container CPU/memory the executor pins unless a launch
-	// supplies a per-execution ExecutionParams.AgentResources override. The deployment sets
-	// these; this package hardcodes no sizing of its own. Leave every field empty to run the
-	// agent without resource declarations (BestEffort). The dind sidecar's resources are the
-	// template's, always — this package never overrides them.
+	// AgentResources is the default agent-container CPU/memory, overridable per-execution via
+	// ExecutionParams.AgentResources. All fields empty runs the agent as BestEffort. The dind
+	// sidecar keeps the template's resources; this package never overrides them.
 	AgentResources coreexec.AgentResources
 }
 
-// podTemplateStore holds the cache of DinD PodTemplates and its synchronization lock, shared
-// across shallow copies of KubernetesExecutor so they can safely coordinate cache lookups.
+// podTemplateStore is the DinD PodTemplate cache and its lock, shared by pointer across
+// KubernetesExecutor copies so they coordinate one cache.
 type podTemplateStore struct {
 	mu    sync.Mutex
 	cache map[string]*corev1.PodTemplate
@@ -100,11 +94,8 @@ type KubernetesExecutor struct {
 	client kubernetes.Interface
 	config Config
 
-	// templates points to a shared pod-template cache so that shallow copies (used in
-	// multi-tenant overlay) can safely coordinate cache lookups across instances.
-	// It caches the DinD PodTemplate by name so a burst of DinD-enabled launches does not
-	// re-fetch and re-parse the same wrapper ConfigMap on every Execute call -- mirrors
-	// TemplateRegistry's cache on the Java side.
+	// templates is shared by pointer across WithNamespace copies so per-org instances coordinate
+	// one DinD PodTemplate cache.
 	templates *podTemplateStore
 }
 
@@ -120,20 +111,18 @@ func NewKubernetesExecutor(client kubernetes.Interface, cfg Config) *KubernetesE
 
 var _ coreexec.Executor = (*KubernetesExecutor)(nil)
 
-// WithNamespace returns a copy of k that launches into and tears down within ns instead of
-// k.config.Namespace. The copy shares k's Kubernetes client and pod-template cache (pointer),
-// so a burst of per-org copies coordinate one cache and issue no duplicate template fetches --
-// only config.Namespace differs. Used by a multi-tenant deployment to obtain a per-org executor.
+// WithNamespace returns a copy of k that launches into and tears down within ns. The copy shares
+// k's client and pod-template cache (pointer); only config.Namespace differs. A multi-tenant
+// deployment uses it to obtain a per-org executor.
 func (k *KubernetesExecutor) WithNamespace(ns string) *KubernetesExecutor {
 	cp := *k
 	cp.config.Namespace = ns
 	return &cp
 }
 
-// Execute launches params as a new Kubernetes Job in k.config.Namespace: it creates a
-// ConfigMap for config.json, a Secret for JOB_SECRET (and, when present, the Claude OAuth
-// token), an optional registry pull Secret, then the Job itself, and finally owner-refs the
-// ConfigMap/Secret(s) to the Job so they are garbage-collected together.
+// Execute launches params as a new Kubernetes Job in k.config.Namespace: a ConfigMap for
+// config.json, a Secret for JOB_SECRET (and the Claude OAuth token when present), an optional
+// registry pull Secret, then the Job, owner-ref'ing the ConfigMap/Secret(s) to it for GC.
 func (k *KubernetesExecutor) Execute(ctx context.Context, params coreexec.ExecutionParams) (coreexec.ExecutionResult, error) {
 	ns := k.config.Namespace
 	execIDShort := params.NodeExecutionID.String()[:8]
@@ -161,9 +150,8 @@ func (k *KubernetesExecutor) Execute(ctx context.Context, params coreexec.Execut
 		return coreexec.ExecutionResult{}, fmt.Errorf("create configmap: %w", err)
 	}
 
-	// Unlike Java's createOrReplace, Create fails outright on a retry that finds its own
-	// prior partial output still present, so anything created before a later failure must be
-	// unwound here -- there is no caller-side handle to find and remove it afterward.
+	// Create fails on a retry that finds its own prior partial output, and no caller-side handle
+	// can remove it later, so each resource created below is unwound here on any later failure.
 	success := false
 	defer func() {
 		if !success {
@@ -171,9 +159,8 @@ func (k *KubernetesExecutor) Execute(ctx context.Context, params coreexec.Execut
 		}
 	}()
 
-	// Inject whatever credential the caller resolved -- prepare omits the token for nodes that
-	// don't invoke `claude` (e.g. script nodes), so an empty value simply keeps it out of the
-	// Secret. This package makes no decision from node type.
+	// The caller resolves the credential; prepare omits the token for nodes that don't invoke
+	// `claude`, and an empty value simply stays out of the Secret. This package reads no node type.
 	secretData := map[string][]byte{"JOB_SECRET": []byte(params.JobSecret)}
 	if params.Credentials.ClaudeOAuthToken != "" {
 		secretData["CLAUDE_CODE_OAUTH_TOKEN"] = []byte(params.Credentials.ClaudeOAuthToken)
@@ -192,10 +179,9 @@ func (k *KubernetesExecutor) Execute(ctx context.Context, params coreexec.Execut
 		}
 	}()
 
-	// Ephemeral per-execution image pull secret: kubelet reads it via imagePullSecrets, and
-	// the same payload is mounted as the in-pod Docker client config (DOCKER_CONFIG). Owner-
-	// ref'd to the Job below, so it is GC'd with it -- the org's registry credential row
-	// stays the only durable copy.
+	// Ephemeral per-execution pull secret: kubelet reads it via imagePullSecrets and the same
+	// payload mounts as the in-pod Docker client config (DOCKER_CONFIG). Owner-ref'd to the Job
+	// so it's GC'd with it -- the org's registry credential row stays the only durable copy.
 	reg := params.Credentials.Registry
 	var createdRegcred *corev1.Secret
 	if reg != nil {
@@ -249,18 +235,14 @@ func (k *KubernetesExecutor) Execute(ctx context.Context, params coreexec.Execut
 		}
 	}
 
-	// Owner references so ConfigMap and Secret(s) are garbage-collected with the Job.
-	// Best-effort, matching Java: a failure here does not fail the launch -- the resources
-	// still work for the run, they simply survive Cleanup's Job-foreground-delete cascade
-	// and rely on Cleanup's explicit per-name deletes instead.
+	// Owner references so the ConfigMap and Secret(s) are GC'd with the Job. Best-effort: a failed
+	// Update here doesn't fail the launch -- Cleanup's explicit per-name deletes still reach them.
 	ownerRef := metav1.OwnerReference{
 		APIVersion: "batch/v1",
 		Kind:       "Job",
 		Name:       createdJob.Name,
 		UID:        createdJob.UID,
 	}
-	// Best-effort: Cleanup's explicit per-name deletes still reach these resources even if an
-	// owner-ref Update here fails, so a failure is not propagated as an Execute error.
 	createdCM.OwnerReferences = append(createdCM.OwnerReferences, ownerRef)
 	_, _ = k.client.CoreV1().ConfigMaps(ns).Update(ctx, createdCM, metav1.UpdateOptions{})
 
@@ -276,10 +258,9 @@ func (k *KubernetesExecutor) Execute(ctx context.Context, params coreexec.Execut
 	return coreexec.ExecutionResult{PodName: jobName, JobSecretHash: hash}, nil
 }
 
-// buildJob assembles the inline Job spec: the "agent" container, its base volumes, and --
-// when a registry credential is present -- the regcred volume/mounts and DOCKER_CONFIG env.
-// DinD and resource-pinning are spliced on afterward by addDindSupport/pinAgentContainerResources,
-// each mutating the same Job object post-build rather than folding into this constructor.
+// buildJob assembles the inline Job spec: the "agent" container, base volumes, and -- when a
+// registry credential is present -- the regcred volume/mounts and DOCKER_CONFIG env. DinD and
+// resource-pinning are spliced on afterward by addDindSupport/pinAgentContainerResources.
 func (k *KubernetesExecutor) buildJob(
 	jobName, ns, serviceAccount, secretName, cmName, regcredName string,
 	params coreexec.ExecutionParams,
@@ -288,10 +269,9 @@ func (k *KubernetesExecutor) buildJob(
 		{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: secretName}}},
 	}
 
-	// readOnlyRootFilesystem is intentionally false. The agent's tools (git, gh, claude CLI,
-	// gradle) write runtime state under $HOME on the image-baked rootfs; RORFS would mount it
-	// EROFS and every such write would fail. sysbox-runc, runAsNonRoot+runAsUser=1000, dropped
-	// capabilities, and restartPolicy=Never are the compensating controls.
+	// readOnlyRootFilesystem is intentionally false: the agent's tools (git, gh, claude, gradle)
+	// write under $HOME on the image-baked rootfs, which RORFS would mount EROFS. sysbox-runc,
+	// runAsNonRoot/runAsUser=1000, dropped capabilities, and restartPolicy=Never compensate.
 	agentContainer := corev1.Container{
 		Name:            agentContainerName,
 		Image:           params.Image,
@@ -312,9 +292,8 @@ func (k *KubernetesExecutor) buildJob(
 		},
 	}
 
-	// The caller supplies every extra env var via Environment -- this package injects no env of
-	// its own beyond the Secret's JOB_SECRET/token and (below) DOCKER_CONFIG when a private-registry
-	// pull secret is present.
+	// The caller supplies every extra env var; this package injects none of its own beyond the
+	// Secret's JOB_SECRET/token and DOCKER_CONFIG (below).
 	for envName, envValue := range params.Environment {
 		agentContainer.Env = append(agentContainer.Env, corev1.EnvVar{Name: envName, Value: envValue})
 	}
@@ -332,10 +311,9 @@ func (k *KubernetesExecutor) buildJob(
 
 	var imagePullSecrets []corev1.LocalObjectReference
 	if params.Credentials.Registry != nil {
-		// $DOCKER_CONFIG must be a writable directory: `docker buildx` creates its
-		// builder-state subdir at bootstrap, and a read-only secret mount there breaks it
-		// with "read-only file system". So a writable emptyDir is mounted at /etc/regcred
-		// and only config.json is overlaid (read-only) from the secret via subPath.
+		// $DOCKER_CONFIG must be a writable directory: `docker buildx` creates its builder-state
+		// subdir there at bootstrap and a read-only secret mount breaks it ("read-only file
+		// system"). So a writable emptyDir holds /etc/regcred and only config.json is overlaid RO.
 		volumes = append(volumes,
 			corev1.Volume{Name: "docker-config", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 			corev1.Volume{
@@ -387,12 +365,9 @@ func (k *KubernetesExecutor) buildJob(
 }
 
 // Cleanup removes all Kubernetes resources for executionID in k.config.Namespace: the Job
-// (foreground propagation, so K8s removes Pods before the Job object disappears), and its
-// ConfigMap and Secret(s), each addressed by its deterministic name (derived from executionID)
-// rather than found by a cluster-wide label search -- so this needs only namespaced delete rights
-// in the one namespace, never a cluster-scoped grant. Idempotent: a missing Job or child resource
-// is not an error, so an already-reaped execution (or one Execute never got far enough to create)
-// makes this a no-op.
+// (foreground propagation, so Pods go before the Job object), its ConfigMap, and Secret(s). Each
+// is addressed by deterministic name, not a cluster-wide label search, so this needs only
+// namespaced delete rights, never a cluster-scoped grant. Idempotent: a missing resource is fine.
 func (k *KubernetesExecutor) Cleanup(ctx context.Context, executionID uuid.UUID) error {
 	namespace := k.config.Namespace
 	execIDShort := executionID.String()[:8]
@@ -413,10 +388,9 @@ func (k *KubernetesExecutor) Cleanup(ctx context.Context, executionID uuid.UUID)
 	return nil
 }
 
-// Terminate patches executionID's Job (addressed by name in k.config.Namespace) with a 1-second
-// activeDeadlineSeconds so the Job controller stops it almost immediately, rather than deleting
-// it outright -- Cleanup (called separately, later) is what removes the Job and its child
-// resources. Idempotent: an already-gone Job is not an error.
+// Terminate patches executionID's Job with activeDeadlineSeconds=1 so the Job controller stops it
+// almost immediately, rather than deleting it -- Cleanup removes the Job and children separately.
+// Idempotent: an already-gone Job is not an error.
 func (k *KubernetesExecutor) Terminate(ctx context.Context, executionID uuid.UUID) error {
 	namespace := k.config.Namespace
 	jobName := jobPrefix + executionID.String()[:8]
@@ -430,11 +404,9 @@ func (k *KubernetesExecutor) Terminate(ctx context.Context, executionID uuid.UUI
 	return nil
 }
 
-// GetLogs returns up to the last tailLines lines of executionID's agent container output,
-// capped at 64KB. The Job is addressed by name in k.config.Namespace, and its Pod is found by the
-// built-in job-name label within that same namespace -- a namespaced LIST, never cluster-wide.
-// Errors from a not-yet-scheduled or already-reaped pod are reported back as text rather than
-// as an error -- log retrieval is best-effort diagnostic output, not a correctness-affecting call.
+// GetLogs returns up to the last tailLines of executionID's agent container, capped at 64KB. The
+// Pod is found by the built-in job-name label -- a namespaced LIST, never cluster-wide. Errors
+// (pod not scheduled or already reaped) come back as text: log retrieval is best-effort.
 func (k *KubernetesExecutor) GetLogs(ctx context.Context, executionID uuid.UUID, tailLines int) (string, error) {
 	namespace := k.config.Namespace
 	jobName := jobPrefix + executionID.String()[:8]
@@ -477,11 +449,9 @@ func (k *KubernetesExecutor) GetLogs(ctx context.Context, executionID uuid.UUID,
 	return string(data), nil
 }
 
-// ResolveJobSecretHash reads JOB_SECRET back from executionID's job-secret Secret (addressed by
-// its deterministic name in k.config.Namespace) and returns its SHA-256 hash. Used to recover the
-// hash cache after a Worker restart. The runID is ignored: this instance is bound to one namespace,
-// so the deterministic Secret name locates the Secret without it (a multi-tenant overlay uses runID
-// to pick the namespace before delegating here).
+// ResolveJobSecretHash reads JOB_SECRET back from executionID's Secret and returns its SHA-256
+// hash, recovering the hash cache after a Worker restart. runID is ignored: the namespace is
+// fixed (a multi-tenant overlay uses runID to pick the namespace before delegating here).
 func (k *KubernetesExecutor) ResolveJobSecretHash(ctx context.Context, _, executionID uuid.UUID) (string, error) {
 	namespace := k.config.Namespace
 	secretName := jobSecretPrefix + executionID.String()[:8]
@@ -499,9 +469,8 @@ func (k *KubernetesExecutor) ResolveJobSecretHash(ctx context.Context, _, execut
 	return coreexec.HashSecret(string(raw)), nil
 }
 
-// HealthCheck verifies the Kubernetes API server is reachable via the version discovery
-// endpoint -- a call that needs no RBAC and no namespace, so a healthy probe never depends on
-// (or implies) any cluster-scoped grant.
+// HealthCheck verifies the Kubernetes API server is reachable via version discovery -- a call
+// that needs no RBAC and no namespace, so the probe never depends on a cluster-scoped grant.
 func (k *KubernetesExecutor) HealthCheck(ctx context.Context) error {
 	_, err := k.client.Discovery().ServerVersion()
 	return err
@@ -516,19 +485,17 @@ func execLabels(params coreexec.ExecutionParams) map[string]string {
 
 // --- Resource sizing ---
 
-// pinAgentContainerResources pins explicit CPU/memory on the "agent" container. The namespace
-// ships no LimitRange, so every container must set its own resources or ResourceQuota rejects
-// admission. Values come from the per-execution override when set, else the deployment default
-// (Config.AgentResources) -- this package chooses no sizing itself, and knows nothing of node
-// type. All four (cpu/memory x requests/limits) must resolve, or ResourceQuota rejects the pod.
+// pinAgentContainerResources pins explicit CPU/memory on the "agent" container. Values come from
+// the per-execution override when set, else the deployment default (Config.AgentResources); this
+// package chooses no sizing and knows no node type. The namespace ships no LimitRange to supply
+// defaults, so all four (cpu/memory x requests/limits) must resolve, or none (BestEffort).
 func (k *KubernetesExecutor) pinAgentContainerResources(job *batchv1.Job, override *coreexec.AgentResources) error {
 	def := k.config.AgentResources
 	cpuRequest := resolveResource(override, func(r coreexec.AgentResources) string { return r.CPURequest }, def.CPURequest)
 	memoryRequest := resolveResource(override, func(r coreexec.AgentResources) string { return r.MemoryRequest }, def.MemoryRequest)
 	cpuLimit := resolveResource(override, func(r coreexec.AgentResources) string { return r.CPULimit }, def.CPULimit)
 	memoryLimit := resolveResource(override, func(r coreexec.AgentResources) string { return r.MemoryLimit }, def.MemoryLimit)
-	// Nothing configured: run the agent without resource declarations (BestEffort) rather than
-	// failing. A deployment that wants limits sets them; one that doesn't, doesn't.
+	// Nothing configured: run BestEffort rather than failing.
 	if cpuRequest == "" && memoryRequest == "" && cpuLimit == "" && memoryLimit == "" {
 		return nil
 	}
@@ -561,9 +528,7 @@ func (k *KubernetesExecutor) pinAgentContainerResources(job *batchv1.Job, overri
 	return fmt.Errorf("agent container not found in job %s", job.Name)
 }
 
-// resolveResource returns the override's field when the override is set and that field is
-// non-empty, else the deployment default. Keeps the empty-field-falls-back-to-default rule in
-// one place.
+// resolveResource returns the override's field when set and non-empty, else the deployment default.
 func resolveResource(override *coreexec.AgentResources, field func(coreexec.AgentResources) string, def string) string {
 	if override != nil {
 		if v := field(*override); v != "" {
@@ -575,12 +540,10 @@ func resolveResource(override *coreexec.AgentResources, field func(coreexec.Agen
 
 // --- DinD support ---
 
-// addDindSupport augments the inline-built Job with DinD bits sourced from the operator-
-// supplied PodTemplate (see loadPodTemplate): pod-level runtimeClassName/hostUsers, the "dind"
-// init container (deep-copied so the cached template is never mutated), the template "agent"
-// container's env and volumeMounts appended to the inline agent, and the template's pod-level
-// volumes appended to the pod. dindImageOverride replaces the template's dind image ref when
-// non-empty (a per-project custom image); empty leaves the template's image as-is.
+// addDindSupport splices the operator-supplied PodTemplate (loadPodTemplate) onto the inline Job:
+// pod-level runtimeClassName/hostUsers, the "dind" init container (deep-copied so the cached
+// template is never mutated), and the template agent's env/volumeMounts/volumes. dindImageOverride
+// replaces the template's dind image when non-empty.
 func (k *KubernetesExecutor) addDindSupport(ctx context.Context, job *batchv1.Job, dindImageOverride string) error {
 	tmpl, err := k.loadPodTemplate(ctx)
 	if err != nil {
@@ -634,20 +597,17 @@ func (k *KubernetesExecutor) addDindSupport(ctx context.Context, job *batchv1.Jo
 	return nil
 }
 
-// ValidatePodTemplate loads and parses the DinD PodTemplate once, returning an error if its
-// wrapper ConfigMap is missing or malformed. The Worker is the sole consumer of this template, so
-// this is the process that should fail fast on a missing-template misconfiguration — call it at
-// startup rather than surfacing the failure at the first DinD node launch. The successful load
-// also warms the cache.
+// ValidatePodTemplate loads and parses the DinD PodTemplate once (also warming the cache),
+// erroring if its wrapper ConfigMap is missing or malformed. Call it at startup so a missing-
+// template misconfiguration fails fast rather than at the first DinD launch.
 func (k *KubernetesExecutor) ValidatePodTemplate(ctx context.Context) error {
 	_, err := k.loadPodTemplate(ctx)
 	return err
 }
 
-// loadPodTemplate fetches the DinD PodTemplate from its wrapper ConfigMap (the operator-
-// supplied ConfigMap named Config.AgentPodTemplateName in Config.TemplateNamespace, whose
-// "template.yaml" key holds the serialized PodTemplate), caching it so repeat DinD launches
-// don't re-fetch and re-parse it.
+// loadPodTemplate fetches the DinD PodTemplate from its wrapper ConfigMap
+// (Config.AgentPodTemplateName in Config.TemplateNamespace, "template.yaml" key), caching it
+// across repeat DinD launches.
 func (k *KubernetesExecutor) loadPodTemplate(ctx context.Context) (*corev1.PodTemplate, error) {
 	name := k.config.AgentPodTemplateName
 
@@ -682,10 +642,9 @@ func (k *KubernetesExecutor) loadPodTemplate(ctx context.Context) (*corev1.PodTe
 
 // --- Misc helpers ---
 
-// buildDockerConfigJSON renders reg as a Docker CLI config.json ("auths" map keyed by registry
-// host) -- the same document shape a kubernetes.io/dockerconfigjson Secret carries, so it
-// serves both as the image-pull Secret payload and, mounted via DOCKER_CONFIG, the in-pod
-// docker client's own credentials.
+// buildDockerConfigJSON renders reg as a Docker CLI config.json ("auths" keyed by registry host)
+// -- the kubernetes.io/dockerconfigjson shape, so it serves both as the image-pull Secret payload
+// and, via DOCKER_CONFIG, the in-pod docker client's credentials.
 func buildDockerConfigJSON(reg *coreexec.RegistryCredentials) ([]byte, error) {
 	doc := map[string]any{
 		"auths": map[string]any{

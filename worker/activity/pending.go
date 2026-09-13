@@ -6,11 +6,10 @@ import (
 	"github.com/google/uuid"
 )
 
-// PendingCompletion is everything the Worker needs to complete, by ID, the Temporal activity
-// ExecuteAINodeFromSnapshot is blocked in once the workload it launched reports back. It is
-// captured from the activity's own Info at Execute() time: the agent's completion and heartbeat
-// requests carry only a NodeExecutionID, which alone cannot address a specific workflow run or
-// the per-Fleet Temporal connection it is polled on.
+// PendingCompletion is what the Worker needs to complete, by ID, the Temporal activity a workload
+// is blocked in. Captured from the activity's own Info at Execute() time because the agent's
+// callbacks carry only a NodeExecutionID, which alone cannot address the workflow run or the
+// per-Fleet Temporal connection it is polled on.
 type PendingCompletion struct {
 	Namespace  string
 	TaskQueue  string
@@ -18,11 +17,9 @@ type PendingCompletion struct {
 	ActivityID string
 }
 
-// PendingCache holds one PendingCompletion per execution this Worker has launched locally and
-// is waiting to hear back from, keyed by NodeExecutionID. executeLocally populates it
-// immediately before returning temporalactivity.ErrResultPending; a callback.ActivityCompleter
-// built over it (see the worker package) reads it once the agent's completion or heartbeat POST
-// arrives.
+// PendingCache holds one PendingCompletion per locally launched execution awaiting callback, keyed
+// by NodeExecutionID. executeLocally populates it before returning ErrResultPending so a callback
+// always finds its entry; a callback.ActivityCompleter over it reads it on the agent's POST.
 type PendingCache struct {
 	mu    sync.RWMutex
 	store map[uuid.UUID]PendingCompletion

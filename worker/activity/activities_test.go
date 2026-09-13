@@ -509,10 +509,10 @@ func TestExecuteAINodeFromSnapshot_CallsExecutor_CompleteErrorPropagates(t *test
 	assert.True(t, ok)
 }
 
-// TestExecuteLocally_RestoresAgentLaunchedLog pins Task 3's restore: the callback path used to
-// write "Agent launched: <pod>" to the execution log when the API server itself created the
-// workload; now that this Worker launches the workload directly via executeLocally, the write
-// must live here or the line is gone from the run's log for good, not just moved.
+// TestExecuteLocally_RestoresAgentLaunchedLog pins that executeLocally writes the
+// "Agent launched: <pod>" execution-log line itself: when this Worker launches the workload
+// directly rather than the API server creating it, the write must live here or the line is
+// absent from the run's log entirely.
 func TestExecuteLocally_RestoresAgentLaunchedLog(t *testing.T) {
 	nodeExecID := uuid.New()
 	runID := stubbedRun(t)
@@ -568,9 +568,8 @@ func TestExecuteLocally_RestoresAgentLaunchedLog(t *testing.T) {
 
 var promptResolvedPattern = regexp.MustCompile(`^Prompt resolved \(\d+ chars\)$`)
 
-// TestExecuteAINode_RestoresPromptResolvedLog pins the other half of Task 3's restore: a
-// "Prompt resolved (N chars)" info log, once written by the orchestrator's callback path,
-// now must come from the activity itself right after the prompt template is resolved.
+// TestExecuteAINode_RestoresPromptResolvedLog pins that the activity itself writes the
+// "Prompt resolved (N chars)" info log, right after it resolves the prompt template.
 func TestExecuteAINode_RestoresPromptResolvedLog(t *testing.T) {
 	mockExec := &mockExecutor{
 		executeFn: func(ctx context.Context, params executor.ExecutionParams) (executor.ExecutionResult, error) {
@@ -1939,9 +1938,8 @@ func TestDeleteAgentJob_DelegatesToAPIServer(t *testing.T) {
 }
 
 // TestDeleteAgentJob_ExecutorPath_CleansUpNamespaceFree pins that the local-execution path calls
-// the executor's namespace-free Cleanup directly. It no longer resolves a namespace server-side
-// (GetNodeExecution is gone from the workload client this package depends on): the executor
-// instance is bound to its own namespace, so no per-call namespace is threaded here.
+// the executor's namespace-free Cleanup directly: the executor instance is bound to its own
+// namespace, so no per-call namespace is threaded here.
 func TestDeleteAgentJob_ExecutorPath_CleansUpNamespaceFree(t *testing.T) {
 	execID := uuid.New()
 	stubbedRun(t)

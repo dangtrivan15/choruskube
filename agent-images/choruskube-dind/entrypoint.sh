@@ -8,10 +8,9 @@
 # the base image's own dockerd-entrypoint.sh this script delegates to.
 set -euo pipefail
 
-# The directory is a shared contract with the image bake that copies archives into
-# it — both sides must reference this same constant. Every *.tar here loads, so a
-# base image and an image built FROM it each drop their own archive under distinct
-# filenames, letting an overlay bake only its delta instead of re-baking the base's.
+# Shared contract with the image bake that copies archives here — both sides must use this same
+# constant. Every *.tar loads, so a base image and one built FROM it drop archives under distinct
+# names and both load, rather than one overwriting the other.
 : "${PRELOAD_DIR:=/opt/choruskube/preload}"
 
 wait_for_docker() {
@@ -33,9 +32,7 @@ load_preload_archives() {
   [ "$loaded" -gt 0 ] || echo "preload: none ($PRELOAD_DIR/*.tar absent)"
 }
 
-# Waits for the (already-started) daemon, then loads the archives. Split out so
-# --preload-only below can exercise it against an already-reachable stubbed
-# `docker`, without this script itself launching a real dockerd.
+# Waits for the (already-started) daemon, then loads the archives.
 run_preload() {
   if ! wait_for_docker; then
     echo "preload: FATAL docker daemon not reachable" >&2
@@ -44,31 +41,24 @@ run_preload() {
   load_preload_archives || return 1
 }
 
-# Lets the test harness exercise run_preload in isolation via `source`, without
-# this script launching a real dockerd first (same technique as the claude-code
-# agent entrypoint's --preload-only used before this step moved here).
+# --preload-only lets the test harness exercise run_preload in isolation via `source`, without
+# launching a real dockerd first.
 if [ "${1:-}" = "--preload-only" ]; then run_preload; return 0 2>/dev/null || exit 0; fi
 
-# This script is PID 1, so without a trap the container's SIGTERM never reaches
-# dockerd and every teardown rides out the full grace period to SIGKILL. dockerd
-# is a straight exec of dockerd-entrypoint.sh, so $DOCKERD_PID still names it.
-# The trap does its own `wait`: POSIX has a trapped signal interrupt the `wait`
-# below and return immediately, before dockerd has actually exited, so that one
-# alone would let PID 1 exit while dockerd is still mid-shutdown. The trailing
-# `exit 0` is just as load-bearing: without it, a signal arriving during
-# run_preload resumes that interrupted loop (up to ~120s in wait_for_docker)
-# instead of tearing down promptly once dockerd is already gone.
+# PID 1: without a trap the container's SIGTERM never reaches dockerd and teardown rides the full
+# grace period to SIGKILL. dockerd-entrypoint.sh execs dockerd, so $DOCKERD_PID keeps naming it.
+# The trap does its own `wait` because a trapped signal interrupts the `wait` below and returns
+# before dockerd has exited; the trailing `exit 0` is load-bearing too — without it a signal during
+# run_preload resumes that interrupted loop (~120s) instead of tearing down once dockerd is gone.
 forward_term() {
   kill -TERM "$DOCKERD_PID" 2>/dev/null || true
   wait "$DOCKERD_PID" 2>/dev/null || true
   exit 0
 }
 
-# Delegate to the base image's own entrypoint for TLS cert setup and dockerd
-# flags, backgrounded so this script can load the preload archive before taking
-# over as the container's foreground process. Forward "$@" so a caller can pass
-# extra dockerd flags — they were dropped before, which silently disabled the
-# preload for any caller that needed to set them.
+# Delegate to the base image's own entrypoint for TLS cert setup and dockerd flags, backgrounded
+# so this script can load the preload archive before taking over as the foreground process.
+# Forward "$@" so a caller's extra dockerd flags reach dockerd.
 dockerd-entrypoint.sh dockerd "$@" &
 DOCKERD_PID=$!
 trap forward_term TERM INT

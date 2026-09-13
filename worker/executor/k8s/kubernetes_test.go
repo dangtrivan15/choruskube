@@ -96,8 +96,6 @@ func TestKubernetesExecutor_ResolveJobSecretHash(t *testing.T) {
 	assert.Equal(t, coreexec.HashSecret(secret), hash)
 }
 
-// --- Additional coverage beyond the brief's own two tests ---
-
 // testNamespace is the launch namespace the executor is bound to across these tests; the
 // executor is single-namespace, so it is a Config field, not a per-call parameter.
 const testNamespace = "test-org-ns"
@@ -134,8 +132,7 @@ func TestKubernetesExecutor_Execute_ClaudeOAuthToken_InjectedForAiExecution(t *t
 	assert.Equal(t, []byte("oauth-token-value"), secret.Data["CLAUDE_CODE_OAUTH_TOKEN"])
 }
 
-// testAgentResources is the default sizing a real deployment supplies via Config; tests that
-// enable ResourceQuota pass it so pinAgentContainerResources has values to apply.
+// testAgentResources is the default sizing a real deployment supplies via Config.
 func testAgentResources() coreexec.AgentResources {
 	return coreexec.AgentResources{CPURequest: "200m", MemoryRequest: "1Gi", CPULimit: "1", MemoryLimit: "3Gi"}
 }
@@ -209,9 +206,8 @@ func TestKubernetesExecutor_Execute_RegistryCredentials_CreatesPullSecretAndMoun
 }
 
 // The finished-Job GC TTL must outlive the orchestrator's node heartbeat timeout (capped at 15m
-// = 900s in dag_executor.go). Otherwise a crashed agent's Pod is reaped before the workflow's
-// post-timeout FetchPodLogs runs, and the failure reaches operators as a bare heartbeat timeout
-// with no pod logs. Guards the constant against being lowered back under that bound.
+// = 900s in dag_executor.go), or a crashed agent's Pod is reaped before post-timeout FetchPodLogs
+// runs and the failure reaches operators as a bare heartbeat timeout. Guards against lowering it.
 func TestKubernetesExecutor_Execute_JobTTLOutlivesHeartbeatTimeout(t *testing.T) {
 	fakeClient := fake.NewSimpleClientset()
 
@@ -292,8 +288,8 @@ func TestKubernetesExecutor_Execute_PartialAgentResources_Errors(t *testing.T) {
 	assert.Contains(t, err.Error(), "not configured")
 }
 
-// No agent resources configured at all -> the agent container runs BestEffort (empty
-// requests/limits) rather than failing. No quota flag gates this.
+// No agent resources configured -> the agent container runs BestEffort (empty requests/limits)
+// rather than failing.
 func TestKubernetesExecutor_Execute_NoAgentResources_LeavesResourcesUnset(t *testing.T) {
 	fakeClient := fake.NewSimpleClientset()
 
@@ -441,8 +437,8 @@ func TestKubernetesExecutor_Execute_DinD_SplicesTemplate(t *testing.T) {
 	require.Len(t, podSpec.InitContainers, 1)
 	dind := podSpec.InitContainers[0]
 	assert.Equal(t, "dind", dind.Name)
-	// The dind sidecar's resources come straight from the template, always — no quota flag gates
-	// them. This is the whole point of the operator-supplied template: it is the sizing authority.
+	// The dind sidecar's resources come straight from the template, always -- the operator-supplied
+	// template is the sizing authority.
 	assert.Equal(t, "1", dind.Resources.Limits.Cpu().String())
 	assert.Equal(t, "1Gi", dind.Resources.Limits.Memory().String())
 	assert.Equal(t, "500m", dind.Resources.Requests.Cpu().String())
@@ -551,10 +547,9 @@ func TestKubernetesExecutor_Execute_DinD_MissingTemplate_ReturnsError(t *testing
 	assert.Error(t, secretErr, "secret should have been cleaned up after the failed Execute")
 }
 
-// TestKubernetesExecutor_WithNamespace_LaunchesInCopyNamespaceAndSharesTemplateCache pins the
-// two properties WithNamespace must have: the derived copy launches into (and would tear down
-// within) its own namespace while the base keeps using Config.Namespace, and the two share ONE
-// pod-template cache -- across both DinD launches the wrapper ConfigMap is fetched exactly once.
+// TestKubernetesExecutor_WithNamespace_LaunchesInCopyNamespaceAndSharesTemplateCache pins the two
+// properties WithNamespace must have: the derived copy launches into its own namespace while the
+// base keeps Config.Namespace, and the two share ONE pod-template cache (one wrapper GET, not two).
 func TestKubernetesExecutor_WithNamespace_LaunchesInCopyNamespaceAndSharesTemplateCache(t *testing.T) {
 	fakeClient := fake.NewSimpleClientset()
 	nsA := "ns-a"
@@ -643,10 +638,9 @@ func TestKubernetesExecutor_Cleanup_JobAlreadyGone_StillDeletesSecret(t *testing
 	result, err := exec.Execute(context.Background(), params)
 	require.NoError(t, err)
 
-	// Simulate the Job already having been reaped (ttlSecondsAfterFinished, or a race with
-	// K8s GC) while its owner-ref'd children are still present -- the fake clientset does not
-	// run a garbage collector, so deleting the Job here does not cascade-delete them, exactly
-	// like a real cluster mid-way through GC.
+	// Simulate the Job already reaped (ttlSecondsAfterFinished, or a race with K8s GC) while its
+	// owner-ref'd children remain -- the fake clientset runs no garbage collector, so deleting the
+	// Job here does not cascade-delete them, like a real cluster mid-GC.
 	require.NoError(t, fakeClient.BatchV1().Jobs(testNamespace).Delete(context.Background(), result.PodName, metav1.DeleteOptions{}))
 
 	err = exec.Cleanup(context.Background(), params.NodeExecutionID)
@@ -753,11 +747,10 @@ func TestKubernetesExecutor_HealthCheck(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// TestKubernetesExecutor_Teardown_IsNamespacedGetByName_NoClusterWideList is the anti-vacuity
-// guard for this task: every teardown/recovery call must reach its resources by name within the
-// executor's configured namespace, never via a cluster-wide (all-namespaces) LIST. It inspects
-// the fake clientset's recorded actions and fails if any carries an empty namespace, which is
-// exactly what an all-namespaces list looks like on the wire.
+// TestKubernetesExecutor_Teardown_IsNamespacedGetByName_NoClusterWideList guards the RBAC boundary:
+// every teardown/recovery call must reach its resources by name within the executor's configured
+// namespace, never via a cluster-wide (all-namespaces) LIST. It inspects the fake clientset's
+// recorded actions and fails if any carries an empty namespace -- the all-namespaces signature.
 func TestKubernetesExecutor_Teardown_IsNamespacedGetByName_NoClusterWideList(t *testing.T) {
 	fakeClient := fake.NewSimpleClientset()
 
@@ -779,13 +772,13 @@ func TestKubernetesExecutor_Teardown_IsNamespacedGetByName_NoClusterWideList(t *
 	sawSecretGet := false
 	sawJobGet := false
 	for _, a := range fakeClient.Actions() {
-		// An empty namespace on any verb is the all-namespaces signature this task must eliminate.
+		// An empty namespace on any verb is the all-namespaces signature this guards against.
 		assert.NotEmpty(t, a.GetNamespace(),
 			"action %s on %s must be namespace-scoped, not cluster-wide", a.GetVerb(), a.GetResource().Resource)
 		assert.Equal(t, testNamespace, a.GetNamespace(),
 			"action %s on %s targeted the wrong namespace", a.GetVerb(), a.GetResource().Resource)
-		// A cluster-wide read of secrets/jobs/configmaps (list on all namespaces) is exactly the
-		// read-all-secrets grant this task removes -- assert those resources are never listed.
+		// A cluster-wide list of secrets/jobs/configmaps is exactly the read-all-secrets grant this
+		// boundary forbids -- assert those resources are never listed.
 		if a.GetVerb() == "list" {
 			res := a.GetResource().Resource
 			assert.NotContains(t, []string{"secrets", "jobs", "configmaps"}, res,

@@ -16,7 +16,6 @@ func TestGenerateJobSecret(t *testing.T) {
 	assert.Len(t, secret, 64, "secret should be 32 bytes hex-encoded")
 	assert.Len(t, hash, 64, "hash should be sha256 hex")
 
-	// Hash matches the secret
 	h := sha256.Sum256([]byte(secret))
 	assert.Equal(t, hex.EncodeToString(h[:]), hash)
 }

@@ -141,8 +141,6 @@ func TestEveryRequestReadsTheCredentialAfresh(t *testing.T) {
 	}
 }
 
-// A nil credential used to be unrepresentable: this constructor took a string. It now takes a
-// function, and the next caller to be written is in another module.
 func TestNewClientRejectsANilCredential(t *testing.T) {
 	defer func() {
 		if recover() == nil {

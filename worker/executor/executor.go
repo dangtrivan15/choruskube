@@ -12,19 +12,15 @@ import (
 	"github.com/google/uuid"
 )
 
-// Executor runs and manages the lifecycle of node execution workloads.
+// Executor runs and manages the lifecycle of node execution workloads. Seam rationale:
+// docs/decisions/2026-09-06---02-worker-placement-and-executor-seams.md.
 //
-// Cleanup, Terminate, and GetLogs take only the executionID: an instance is bound to a single
-// namespace at construction, so these address resources by their deterministic name within that
-// one namespace, never via a cluster-wide LIST (and so never needing cluster-scoped RBAC). A
-// multi-tenant deployment obtains a namespace-bound instance per org
-// (KubernetesExecutor.WithNamespace); Docker has no namespaces at all.
+// Cleanup, Terminate, and GetLogs take only the executionID: an instance is namespace-bound at
+// construction, so they address resources by deterministic name, never a cluster-wide LIST.
 //
-// ResolveJobSecretHash additionally takes the runID: it is the one method a Worker calls from its
-// HTTP callback server (verifying an agent's bearer on a cache miss), where there is no Temporal
-// activity context to derive the run from. A multi-tenant overlay that resolves the namespace from
-// the run must therefore be handed the runID explicitly here; a single-namespace instance ignores
-// it and reads the deterministic Secret name in its one bound namespace.
+// ResolveJobSecretHash additionally takes the runID because a Worker calls it from its HTTP
+// callback server, where no Temporal activity context exists to derive the run; a multi-tenant
+// overlay needs the runID to resolve the namespace, and a single-namespace instance ignores it.
 type Executor interface {
 	Execute(ctx context.Context, params ExecutionParams) (ExecutionResult, error)
 	Cleanup(ctx context.Context, executionID uuid.UUID) error
@@ -34,13 +30,10 @@ type Executor interface {
 	HealthCheck(ctx context.Context) error
 }
 
-// CredentialConsumer is an optional capability an Executor implements when it makes its own
-// calls to the API server. The Worker's credential is minted at registration and rotated by the
-// renewal loop, so it does not exist when the Executor is constructed; the Worker hands over a
-// getter that reads whatever is currently cached, and the Executor's own requests then carry the
-// same live credential every other workload call does. A single-namespace Executor that resolves
-// everything from static configuration makes no such calls and does not implement this -- the
-// Worker skips it via a type assertion, so leaving it unimplemented is the correct default.
+// CredentialConsumer is an optional capability an Executor implements when it makes its own calls
+// to the API server. The Worker's credential is minted at registration and rotated, so it does not
+// exist at construction; the getter reads whatever is currently cached. An Executor that makes no
+// such calls leaves this unimplemented, and the Worker skips it via a type assertion.
 type CredentialConsumer interface {
 	SetAPIServerCredential(get func() string)
 }
@@ -68,9 +61,7 @@ type ExecutionParams struct {
 	Identity  ExecutionIdentity
 
 	// AgentResources overrides the executor's default agent-container CPU/memory for this one
-	// execution. Nil uses the deployment default (the K8s executor's Config). What a given node
-	// should be sized at is a caller decision (resolved in prepare), not something this package
-	// infers from node type -- it only applies what it is handed.
+	// execution. Nil uses the deployment default (the K8s executor's Config).
 	AgentResources *AgentResources
 }
 

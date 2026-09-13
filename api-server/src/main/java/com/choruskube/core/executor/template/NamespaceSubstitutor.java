@@ -10,12 +10,10 @@ import io.fabric8.kubernetes.client.utils.Serialization;
 import java.util.Map;
 
 /**
- * Walks a fabric8-loaded resource and replaces every {@code __NAMESPACE__} token
- * appearing in string-typed fields with the supplied namespace value.
+ * Walks a fabric8-loaded resource and replaces every {@code __NAMESPACE__} token in string-typed
+ * fields with the supplied namespace.
  *
- * <p>Rejects templates that put the placeholder into {@code metadata.name} (a K8s
- * identifier field) — names should not be derived from the namespace. Other fields
- * are validated only by virtue of being string-typed in the resource schema.
+ * <p>Rejects the placeholder in {@code metadata.name}: resource names must not be namespace-derived.
  */
 public final class NamespaceSubstitutor {
     public static final String PLACEHOLDER = "__NAMESPACE__";
