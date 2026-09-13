@@ -9,11 +9,8 @@ import com.choruskube.core.dto.CompleteWorkloadRequest;
 import com.choruskube.core.dto.CreateWorkloadRequest;
 import com.choruskube.core.dto.PrepareWorkloadResponse;
 import com.choruskube.core.exception.NotFoundException;
-import com.choruskube.core.executor.NoRegistryMirrorResolver;
-import com.choruskube.core.executor.RegistryMirror;
 import com.choruskube.core.executor.WorkloadNamespaceResolver;
 import com.choruskube.core.executor.WorkloadRegistryCredentialResolver;
-import com.choruskube.core.executor.WorkloadRegistryMirrorResolver;
 import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.NodeExecutionStatus;
@@ -50,9 +47,6 @@ class WorkloadServiceTest {
     private AiCredentialResolver aiCredentialResolver;
 
     @Mock
-    private WorkloadRegistryMirrorResolver registryMirrorResolver;
-
-    @Mock
     private WorkloadNamespaceResolver namespaceResolver;
 
     @Mock
@@ -69,8 +63,6 @@ class WorkloadServiceTest {
     @BeforeEach
     @SuppressWarnings("unchecked")
     void setUp() {
-        ObjectProvider<WorkloadRegistryMirrorResolver> registryMirrorResolverProvider = mock(ObjectProvider.class);
-        when(registryMirrorResolverProvider.getIfAvailable(any())).thenReturn(registryMirrorResolver);
         ObjectProvider<WorkloadNamespaceResolver> namespaceResolverProvider = mock(ObjectProvider.class);
         when(namespaceResolverProvider.getIfAvailable(any())).thenReturn(namespaceResolver);
         ObjectProvider<WorkloadRegistryCredentialResolver> registryCredentialResolverProvider =
@@ -87,7 +79,6 @@ class WorkloadServiceTest {
                 DEFAULT_SERVICE_ACCOUNT,
                 aiCredentialResolver,
                 API_SERVER_URL,
-                registryMirrorResolverProvider,
                 namespaceResolverProvider,
                 registryCredentialResolverProvider);
     }
@@ -98,17 +89,6 @@ class WorkloadServiceTest {
      * to prove {@link WorkloadService} actually falls through to the real default resolver, not
      * just to whatever a test double returns.
      */
-    @SuppressWarnings("unchecked")
-    private static ObjectProvider<WorkloadRegistryMirrorResolver> noBeanRegisteredProvider() {
-        ObjectProvider<WorkloadRegistryMirrorResolver> provider = mock(ObjectProvider.class);
-        when(provider.getIfAvailable(any())).thenAnswer(invocation -> {
-            java.util.function.Supplier<WorkloadRegistryMirrorResolver> fallback = invocation.getArgument(0);
-            return fallback.get();
-        });
-        return provider;
-    }
-
-    /** As {@link #noBeanRegisteredProvider()}, for the namespace seam's real default. */
     @SuppressWarnings("unchecked")
     private static ObjectProvider<WorkloadNamespaceResolver> noNamespaceBeanRegisteredProvider() {
         ObjectProvider<WorkloadNamespaceResolver> provider = mock(ObjectProvider.class);
@@ -180,17 +160,17 @@ class WorkloadServiceTest {
         assertNull(response.registryCredentials());
         assertNull(response.namespace());
         assertEquals(DEFAULT_SERVICE_ACCOUNT, response.serviceAccount());
-        assertNull(response.registryMirror());
     }
 
     /**
-     * Anti-vacuity guard: with no {@code WorkloadRegistryMirrorResolver} bean registered,
-     * {@code prepareWorkload} must fall through to the real {@link NoRegistryMirrorResolver} (via
-     * {@code ObjectProvider.getIfAvailable}'s fallback supplier, not a test double standing in for
-     * one) and return a null {@code registryMirror}.
+     * Anti-vacuity guard: with no {@code WorkloadNamespaceResolver} bean registered,
+     * {@code prepareWorkload} must fall through to the real {@link
+     * com.choruskube.core.executor.NoWorkloadNamespaceResolver} (via {@code
+     * ObjectProvider.getIfAvailable}'s fallback supplier, not a test double standing in for one),
+     * which returns {@code ""} — mapped to a null (namespace-less) launch.
      */
     @Test
-    void prepareWorkload_returnsNullRegistryMirror_withTheDefaultSeam() {
+    void prepareWorkload_returnsNullNamespace_withTheDefaultSeam() {
         UUID runId = UUID.randomUUID();
         UUID nodeExecId = UUID.randomUUID();
         UUID templateNodeId = UUID.randomUUID();
@@ -228,7 +208,7 @@ class WorkloadServiceTest {
         when(snapshotBuilder.buildSnapshotForRun(workflowRun)).thenReturn(snapshotJson);
         when(aiCredentialResolver.resolveOauthToken(runId)).thenReturn("oauth-secret");
 
-        WorkloadService serviceWithoutMirrorBean = new WorkloadService(
+        WorkloadService serviceWithoutNamespaceBean = new WorkloadService(
                 execRepo,
                 eventPublisher,
                 runRepo,
@@ -238,16 +218,14 @@ class WorkloadServiceTest {
                 DEFAULT_SERVICE_ACCOUNT,
                 aiCredentialResolver,
                 API_SERVER_URL,
-                noBeanRegisteredProvider(),
                 noNamespaceBeanRegisteredProvider(),
                 noCredentialBeanRegisteredProvider());
 
-        var response = serviceWithoutMirrorBean.prepareWorkload(
+        var response = serviceWithoutNamespaceBean.prepareWorkload(
                 runId, nodeExecId, new CreateWorkloadRequest(templateNodeId, Map.of()));
 
-        assertNull(response.registryMirror());
-        // Same anti-vacuity guard for the namespace seam: the real NoWorkloadNamespaceResolver
-        // returns "", which prepare maps to a null (namespace-less) launch.
+        // The real NoWorkloadNamespaceResolver returns "", which prepare maps to a null
+        // (namespace-less) launch.
         assertNull(response.namespace());
     }
 
@@ -307,7 +285,6 @@ class WorkloadServiceTest {
                 DEFAULT_SERVICE_ACCOUNT,
                 aiCredentialResolver,
                 API_SERVER_URL,
-                noBeanRegisteredProvider(),
                 noNamespaceBeanRegisteredProvider(),
                 noCredentialBeanRegisteredProvider());
 
@@ -415,57 +392,6 @@ class WorkloadServiceTest {
     }
 
     @Test
-    void prepareWorkload_returnsRegistryMirror_whenResolverProvidesOne() {
-        UUID runId = UUID.randomUUID();
-        UUID nodeExecId = UUID.randomUUID();
-        UUID templateNodeId = UUID.randomUUID();
-        UUID graphTemplateId = UUID.randomUUID();
-
-        var nodeExec = new NodeExecution();
-        nodeExec.setId(nodeExecId);
-        nodeExec.setWorkflowRunId(runId);
-        nodeExec.setTemplateNodeId(templateNodeId);
-        nodeExec.setStatus(NodeExecutionStatus.pending);
-
-        var workflowRun = new WorkflowRun();
-        workflowRun.setId(runId);
-        workflowRun.setGraphTemplateId(graphTemplateId);
-        workflowRun.setInputs("{}");
-
-        String snapshotJson = """
-                {
-                  "nodes": [{
-                    "template_node_id": "%s",
-                    "label": "Test Node",
-                    "executor_type": "ai",
-                    "image": "test-image:latest",
-                    "secrets": [],
-                    "is_entrypoint": true
-                  }],
-                  "edges": [],
-                  "inputs": {},
-                  "enable_docker": true
-                }
-                """.formatted(templateNodeId);
-
-        when(execRepo.findById(nodeExecId)).thenReturn(Optional.of(nodeExec));
-        when(runRepo.findById(runId)).thenReturn(Optional.of(workflowRun));
-        when(snapshotBuilder.buildSnapshotForRun(workflowRun)).thenReturn(snapshotJson);
-        when(aiCredentialResolver.resolveOauthToken(runId)).thenReturn("oauth-secret");
-        when(registryMirrorResolver.resolve(runId))
-                .thenReturn(new RegistryMirror(
-                        "mirror.internal.test:5000", "mirror.internal.test:5001", "http://mirror.internal.test:8081"));
-
-        var response = service.prepareWorkload(runId, nodeExecId, new CreateWorkloadRequest(templateNodeId, Map.of()));
-
-        assertEquals(
-                new PrepareWorkloadResponse.RegistryMirrorDto(
-                        "mirror.internal.test:5000", "mirror.internal.test:5001", "http://mirror.internal.test:8081"),
-                response.registryMirror());
-        verify(registryMirrorResolver).resolve(runId);
-    }
-
-    @Test
     void prepareWorkload_returnsNamespace_fromTheResolver() {
         UUID runId = UUID.randomUUID();
         UUID nodeExecId = UUID.randomUUID();
@@ -482,8 +408,7 @@ class WorkloadServiceTest {
         workflowRun.setGraphTemplateId(UUID.randomUUID());
         workflowRun.setInputs("{}");
 
-        // enable_docker false: the launch namespace is resolved for every node, unlike the
-        // registry mirror which is gated on the DinD path.
+        // enable_docker false: the launch namespace is resolved for every node.
         String snapshotJson = """
                 {
                   "nodes": [{
@@ -558,62 +483,6 @@ class WorkloadServiceTest {
         var response = service.prepareWorkload(runId, nodeExecId, new CreateWorkloadRequest(templateNodeId, Map.of()));
 
         assertNull(response.namespace());
-    }
-
-    /**
-     * Anti-vacuity guard: the registry mirror is only ever consumed by the executor's DinD path,
-     * which runs only when {@code enableDocker} is true. A non-Docker prepare must not pay for a
-     * resolver call (real implementations hit the DB) or be able to fail because of one — a
-     * resolver that throws must not stop a non-Docker prepare from succeeding.
-     */
-    @Test
-    void prepareWorkload_doesNotConsultRegistryMirrorResolver_whenDockerDisabled() {
-        UUID runId = UUID.randomUUID();
-        UUID nodeExecId = UUID.randomUUID();
-        UUID templateNodeId = UUID.randomUUID();
-        UUID graphTemplateId = UUID.randomUUID();
-
-        var nodeExec = new NodeExecution();
-        nodeExec.setId(nodeExecId);
-        nodeExec.setWorkflowRunId(runId);
-        nodeExec.setTemplateNodeId(templateNodeId);
-        nodeExec.setStatus(NodeExecutionStatus.pending);
-
-        var workflowRun = new WorkflowRun();
-        workflowRun.setId(runId);
-        workflowRun.setGraphTemplateId(graphTemplateId);
-        workflowRun.setInputs("{}");
-
-        String snapshotJson = """
-                {
-                  "nodes": [{
-                    "template_node_id": "%s",
-                    "label": "Test Node",
-                    "executor_type": "ai",
-                    "image": "test-image:latest",
-                    "secrets": [],
-                    "is_entrypoint": true
-                  }],
-                  "edges": [],
-                  "inputs": {}
-                }
-                """.formatted(templateNodeId);
-
-        when(execRepo.findById(nodeExecId)).thenReturn(Optional.of(nodeExec));
-        when(runRepo.findById(runId)).thenReturn(Optional.of(workflowRun));
-        when(snapshotBuilder.buildSnapshotForRun(workflowRun)).thenReturn(snapshotJson);
-        when(aiCredentialResolver.resolveOauthToken(runId)).thenReturn("oauth-secret");
-        // lenient(): the assertion below is precisely that this stub is never invoked, which
-        // strict stubbing would otherwise flag as unnecessary.
-        lenient()
-                .when(registryMirrorResolver.resolve(any()))
-                .thenThrow(new IllegalStateException("resolver must not be consulted for a non-Docker prepare"));
-
-        var response = service.prepareWorkload(runId, nodeExecId, new CreateWorkloadRequest(templateNodeId, Map.of()));
-
-        assertFalse(response.enableDocker());
-        assertNull(response.registryMirror());
-        verify(registryMirrorResolver, never()).resolve(any());
     }
 
     @Test

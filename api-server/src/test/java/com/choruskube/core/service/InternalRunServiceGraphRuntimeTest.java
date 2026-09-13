@@ -79,7 +79,7 @@ class InternalRunServiceGraphRuntimeTest {
                 "condition": "approved"
               }],
               "enable_docker": true,
-              "docker_config": {"registry_mirrors": ["mirror.local"]},
+              "docker_config": {"privileged": true},
               "namespace": "agent-ns",
               "inputs": {"repo_url": "https://github.com/test/repo", "git_repo_id": "44444444-4444-4444-4444-444444444444"}
             }

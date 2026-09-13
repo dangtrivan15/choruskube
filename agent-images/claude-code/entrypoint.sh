@@ -102,40 +102,13 @@ fi
 # That config IS the canonical one buildkitd reads, so HTTP trust is honored.
 # The buildkitd container runs INSIDE dind, so it talks to the cache-registry
 # over the same in-cluster network the embedded BuildKit was using.
-#
-# Side effect: the new buildkitd has its own registry config and does NOT
-# inherit dockerd's daemon.json mirrors, so we replicate the docker.io
-# pull-through mirror here too — otherwise build-time base-image pulls bypass
-# the mirror and risk Docker Hub rate limiting.
 if [ -n "${BUILD_CACHE_REGISTRY:-}" ] && [ -n "${DOCKER_HOST:-}" ]; then
-  # The executor injects the upstream Docker registry mirror host as
-  # REGISTRY_MIRROR. When set, trust it over plain HTTP and use it as the
-  # docker.io pull-through mirror so base-image pulls go through the mirror
-  # instead of hitting Docker Hub directly; when unset, BuildKit pulls from
-  # docker.io directly (no mirror).
-  #
-  # Self-default once so the rest of this block can reference REGISTRY_MIRROR plainly:
-  # the script runs under `set -u`, where a bare unset reference aborts the agent, and
-  # repeating `:-` at every use site invites one being forgotten.
-  REGISTRY_MIRROR="${REGISTRY_MIRROR:-}"
-
   cat > /tmp/buildkitd.toml <<EOF
 debug = false
 
 [registry."${BUILD_CACHE_REGISTRY}"]
   http = true
 EOF
-
-  if [ -n "${REGISTRY_MIRROR}" ]; then
-    cat >> /tmp/buildkitd.toml <<EOF
-
-[registry."${REGISTRY_MIRROR}"]
-  http = true
-
-[registry."docker.io"]
-  mirrors = ["${REGISTRY_MIRROR}"]
-EOF
-  fi
 
   # The dind sidecar starts before this container but dockerd may still be
   # initializing TLS certs. Poll briefly before creating the builder.
@@ -165,7 +138,7 @@ EOF
       --driver docker-container \
       --buildkitd-config /tmp/buildkitd.toml \
       ${builder_endpoint} 2>&1); then
-    echo "BuildKit builder ready: choruskube-builder (HTTP trust: ${BUILD_CACHE_REGISTRY}${REGISTRY_MIRROR:+, ${REGISTRY_MIRROR}})"
+    echo "BuildKit builder ready: choruskube-builder (HTTP trust: ${BUILD_CACHE_REGISTRY})"
   else
     # Don't fail the agent — e2e-up.sh's bake invocation has a no-cache
     # fallback that still produces a working build, just slower.

@@ -425,13 +425,6 @@ func TestKubernetesExecutor_Execute_DinD_SplicesTemplate(t *testing.T) {
 
 	params := newTestParams()
 	params.EnableDocker = true
-	// A deployment-specific host template -- this package must inject exactly these values
-	// verbatim, never derive its own from the namespace.
-	params.RegistryMirror = &coreexec.RegistryMirror{
-		Mirror:       "mirror.internal.test:5000",
-		BuildCache:   "mirror.internal.test:5001",
-		DepProxyBase: "http://mirror.internal.test:8081",
-	}
 
 	result, err := exec.Execute(context.Background(), params)
 	require.NoError(t, err)
@@ -448,8 +441,6 @@ func TestKubernetesExecutor_Execute_DinD_SplicesTemplate(t *testing.T) {
 	require.Len(t, podSpec.InitContainers, 1)
 	dind := podSpec.InitContainers[0]
 	assert.Equal(t, "dind", dind.Name)
-	assert.True(t, hasEnv(dind.Env, "REGISTRY_MIRROR", "mirror.internal.test:5000"))
-	assert.True(t, hasEnv(dind.Env, "INSECURE_REGISTRIES", "mirror.internal.test:5000 mirror.internal.test:5001"))
 	// The dind sidecar's resources come straight from the template, always — no quota flag gates
 	// them. This is the whole point of the operator-supplied template: it is the sizing authority.
 	assert.Equal(t, "1", dind.Resources.Limits.Cpu().String())
@@ -459,8 +450,6 @@ func TestKubernetesExecutor_Execute_DinD_SplicesTemplate(t *testing.T) {
 
 	agent := podSpec.Containers[0]
 	assert.True(t, hasEnv(agent.Env, "DOCKER_HOST", "tcp://localhost:2375"))
-	assert.True(t, hasEnv(agent.Env, "BUILD_CACHE_REGISTRY", "mirror.internal.test:5001"))
-	assert.True(t, hasEnv(agent.Env, "DEP_PROXY_BASE", "http://mirror.internal.test:8081"))
 	found := false
 	for _, vm := range agent.VolumeMounts {
 		if vm.Name == "docker-certs" {
@@ -476,49 +465,6 @@ func TestKubernetesExecutor_Execute_DinD_SplicesTemplate(t *testing.T) {
 		}
 	}
 	assert.True(t, foundVol, "docker-certs volume should be spliced onto the pod spec")
-}
-
-// TestKubernetesExecutor_Execute_DinD_NoRegistryMirror_InjectsNoMirrorEnv guards against this
-// package deriving its own registry-mirror host from the target namespace instead of reading it
-// from params: a version of addDindSupport that computes such a host internally, ignoring
-// params.RegistryMirror, reddens this test by injecting the env below regardless of the nil.
-func TestKubernetesExecutor_Execute_DinD_NoRegistryMirror_InjectsNoMirrorEnv(t *testing.T) {
-	fakeClient := fake.NewSimpleClientset()
-	templateNamespace := "choruskube"
-	templateName := "choruskube-agent-pod-template"
-	setupDindTemplate(t, fakeClient, templateNamespace, templateName)
-
-	exec := NewKubernetesExecutor(fakeClient, Config{
-		Namespace:            testNamespace,
-		AgentServiceAccount:  "choruskube-agent",
-		AgentPodTemplateName: templateName,
-		TemplateNamespace:    templateNamespace,
-	})
-
-	params := newTestParams()
-	params.EnableDocker = true
-	params.RegistryMirror = nil // the OSS default seam resolves no mirror
-
-	result, err := exec.Execute(context.Background(), params)
-	require.NoError(t, err)
-
-	job, err := fakeClient.BatchV1().Jobs(testNamespace).Get(context.Background(), result.PodName, metav1.GetOptions{})
-	require.NoError(t, err)
-
-	podSpec := job.Spec.Template.Spec
-	require.Len(t, podSpec.InitContainers, 1)
-	dind := podSpec.InitContainers[0]
-	agent := podSpec.Containers[0]
-
-	for _, name := range []string{"REGISTRY_MIRROR", "REGISTRY_MIRRORS", "INSECURE_REGISTRIES"} {
-		assert.False(t, hasEnvName(dind.Env, name), "dind should carry no %s when no registry mirror was resolved", name)
-	}
-	for _, name := range []string{
-		"REGISTRY_MIRROR", "BUILD_CACHE_REGISTRY", "BUILD_CACHE_PUSH",
-		"DEP_PROXY_BASE", "GOPROXY", "GOSUMDB", "npm_config_registry",
-	} {
-		assert.False(t, hasEnvName(agent.Env, name), "agent should carry no %s when no registry mirror was resolved", name)
-	}
 }
 
 // TestKubernetesExecutor_Execute_DinD_ImageOverride_SetsDindImage guards the per-project custom
@@ -867,15 +813,6 @@ func TestBuildDockerConfigJSON(t *testing.T) {
 func hasEnv(env []corev1.EnvVar, name, value string) bool {
 	for _, e := range env {
 		if e.Name == name && e.Value == value {
-			return true
-		}
-	}
-	return false
-}
-
-func hasEnvName(env []corev1.EnvVar, name string) bool {
-	for _, e := range env {
-		if e.Name == name {
 			return true
 		}
 	}

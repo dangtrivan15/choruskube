@@ -231,7 +231,7 @@ func (k *KubernetesExecutor) Execute(ctx context.Context, params coreexec.Execut
 	}
 
 	if params.EnableDocker {
-		if err := k.addDindSupport(ctx, job, params.RegistryMirror, params.DindImage); err != nil {
+		if err := k.addDindSupport(ctx, job, params.DindImage); err != nil {
 			return coreexec.ExecutionResult{}, fmt.Errorf("add dind support: %w", err)
 		}
 	}
@@ -313,7 +313,8 @@ func (k *KubernetesExecutor) buildJob(
 	}
 
 	// The caller supplies every extra env var via Environment -- this package injects no env of
-	// its own beyond the Secret's JOB_SECRET/token and (below) the registry-mirror wiring.
+	// its own beyond the Secret's JOB_SECRET/token and (below) DOCKER_CONFIG when a private-registry
+	// pull secret is present.
 	for envName, envValue := range params.Environment {
 		agentContainer.Env = append(agentContainer.Env, corev1.EnvVar{Name: envName, Value: envValue})
 	}
@@ -576,15 +577,11 @@ func resolveResource(override *coreexec.AgentResources, field func(coreexec.Agen
 
 // addDindSupport augments the inline-built Job with DinD bits sourced from the operator-
 // supplied PodTemplate (see loadPodTemplate): pod-level runtimeClassName/hostUsers, the "dind"
-// init container (deep-copied so the cached template is never mutated) with per-exec
-// REGISTRY_MIRROR(S)/INSECURE_REGISTRIES env, the template "agent" container's env and
-// volumeMounts appended to the inline agent, and the template's pod-level volumes appended to
-// the pod. mirror carries whatever registry-mirror/build-cache/dep-proxy endpoints a
-// prepare-time seam resolved for this workload, if any -- this package resolves no such
-// endpoint itself, so nil skips all of that env rather than injecting it. dindImageOverride
-// replaces the template's dind image ref when non-empty (a per-project custom image); empty
-// leaves the template's image as-is.
-func (k *KubernetesExecutor) addDindSupport(ctx context.Context, job *batchv1.Job, mirror *coreexec.RegistryMirror, dindImageOverride string) error {
+// init container (deep-copied so the cached template is never mutated), the template "agent"
+// container's env and volumeMounts appended to the inline agent, and the template's pod-level
+// volumes appended to the pod. dindImageOverride replaces the template's dind image ref when
+// non-empty (a per-project custom image); empty leaves the template's image as-is.
+func (k *KubernetesExecutor) addDindSupport(ctx context.Context, job *batchv1.Job, dindImageOverride string) error {
 	tmpl, err := k.loadPodTemplate(ctx)
 	if err != nil {
 		return err
@@ -613,17 +610,6 @@ func (k *KubernetesExecutor) addDindSupport(ctx context.Context, job *batchv1.Jo
 	if dindImageOverride != "" {
 		dind.Image = dindImageOverride
 	}
-
-	if mirror != nil {
-		// REGISTRY_MIRROR is the wildcard-mirror dispatch path read by the dind script and
-		// the agent entrypoint; REGISTRY_MIRRORS/INSECURE_REGISTRIES are the legacy fallback
-		// the dind script uses when no mirror host is set.
-		dind.Env = append(dind.Env,
-			corev1.EnvVar{Name: "REGISTRY_MIRROR", Value: mirror.Mirror},
-			corev1.EnvVar{Name: "REGISTRY_MIRRORS", Value: "http://" + mirror.Mirror},
-			corev1.EnvVar{Name: "INSECURE_REGISTRIES", Value: mirror.Mirror + " " + mirror.BuildCache},
-		)
-	}
 	podSpec.InitContainers = append(podSpec.InitContainers, *dind)
 
 	var templateAgent *corev1.Container
@@ -642,21 +628,6 @@ func (k *KubernetesExecutor) addDindSupport(ctx context.Context, job *batchv1.Jo
 	}
 	inlineAgent := &podSpec.Containers[0]
 	inlineAgent.Env = append(inlineAgent.Env, templateAgent.Env...)
-
-	if mirror != nil {
-		// BUILD_CACHE_REGISTRY/BUILD_CACHE_PUSH self-warm the build cache; DEP_PROXY_BASE and
-		// friends route Gradle/Go/npm downloads through the dependency proxy -- both
-		// provisioned by whatever deployment resolved mirror, not by this package.
-		inlineAgent.Env = append(inlineAgent.Env,
-			corev1.EnvVar{Name: "BUILD_CACHE_REGISTRY", Value: mirror.BuildCache},
-			corev1.EnvVar{Name: "BUILD_CACHE_PUSH", Value: "1"},
-			corev1.EnvVar{Name: "REGISTRY_MIRROR", Value: mirror.Mirror},
-			corev1.EnvVar{Name: "DEP_PROXY_BASE", Value: mirror.DepProxyBase},
-			corev1.EnvVar{Name: "GOPROXY", Value: mirror.DepProxyBase + "/repository/go-proxy/,direct"},
-			corev1.EnvVar{Name: "GOSUMDB", Value: "off"},
-			corev1.EnvVar{Name: "npm_config_registry", Value: mirror.DepProxyBase + "/repository/npm-proxy/"},
-		)
-	}
 	inlineAgent.VolumeMounts = append(inlineAgent.VolumeMounts, templateAgent.VolumeMounts...)
 
 	podSpec.Volumes = append(podSpec.Volumes, templateSpec.Volumes...)

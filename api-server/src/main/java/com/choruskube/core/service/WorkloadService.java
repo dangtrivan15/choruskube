@@ -47,7 +47,6 @@ public class WorkloadService {
     private final String defaultServiceAccount;
     private final AiCredentialResolver aiCredentialResolver;
     private final String apiServerUrl;
-    private final WorkloadRegistryMirrorResolver registryMirrorResolver;
     private final WorkloadNamespaceResolver namespaceResolver;
     private final WorkloadRegistryCredentialResolver registryCredentialResolver;
 
@@ -61,7 +60,6 @@ public class WorkloadService {
             @Value("${executor.k8s.agent-service-account:choruskube-agent}") String defaultServiceAccount,
             AiCredentialResolver aiCredentialResolver,
             @Qualifier("executorApiServerUrl") String apiServerUrl,
-            ObjectProvider<WorkloadRegistryMirrorResolver> registryMirrorResolverProvider,
             ObjectProvider<WorkloadNamespaceResolver> namespaceResolverProvider,
             ObjectProvider<WorkloadRegistryCredentialResolver> registryCredentialResolverProvider) {
         this.execRepo = execRepo;
@@ -73,7 +71,6 @@ public class WorkloadService {
         this.defaultServiceAccount = defaultServiceAccount;
         this.aiCredentialResolver = aiCredentialResolver;
         this.apiServerUrl = apiServerUrl;
-        this.registryMirrorResolver = registryMirrorResolverProvider.getIfAvailable(NoRegistryMirrorResolver::new);
         this.namespaceResolver = namespaceResolverProvider.getIfAvailable(NoWorkloadNamespaceResolver::new);
         this.registryCredentialResolver =
                 registryCredentialResolverProvider.getIfAvailable(NoRegistryCredentialResolver::new);
@@ -98,10 +95,6 @@ public class WorkloadService {
         String claudeOAuthToken = needsOauthToken(params) ? aiCredentialResolver.resolveOauthToken(runId) : null;
         String githubTokenUrl =
                 apiServerUrl + "/internal/runs/" + runId + "/node-executions/" + nodeExecId + "/github-token";
-        // Only the executor's DinD path reads registryMirror, gated on enableDocker itself --
-        // consulting the resolver here for every other prepare would cost a real implementation a
-        // DB round trip and could fail a launch that never needed a mirror.
-        RegistryMirror mirror = params.enableDocker() ? registryMirrorResolver.resolve(runId) : null;
 
         // The K8s executor launches into this namespace and later addresses the same resources by
         // name via the /worker node-exec GET, which resolves through this same seam — so both must
@@ -119,11 +112,7 @@ public class WorkloadService {
                 githubTokenUrl,
                 resolveRegistryCredentialsOrNull(runId),
                 namespace,
-                params.identity() != null ? params.identity().name() : null,
-                mirror == null
-                        ? null
-                        : new PrepareWorkloadResponse.RegistryMirrorDto(
-                                mirror.mirror(), mirror.buildCache(), mirror.depProxyBase()));
+                params.identity() != null ? params.identity().name() : null);
     }
 
     /**
