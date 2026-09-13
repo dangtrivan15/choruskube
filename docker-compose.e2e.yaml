@@ -152,6 +152,11 @@ services:
     build:
       context: ./api-server
       dockerfile: Dockerfile
+      args:
+        # Build stage base. Defaults to the stock Gradle+JDK toolchain; CI sets E2E_DEV_BASE to a
+        # warm build image (baked Gradle wrapper dist + module cache) so a from-scratch build
+        # reuses them instead of a cold download. Unset (local dev, forks) => stock, unchanged.
+        BUILD_BASE: ${E2E_DEV_BASE:-gradle:9.2.1-jdk25-alpine}
     dns_search: .
     environment:
       DATABASE_URL: jdbc:postgresql://postgres:5432/choruskube
@@ -333,6 +338,11 @@ services:
     build:
       context: ./web-ui
       dockerfile: Dockerfile
+      args:
+        # Build stage base. Defaults to the stock Node toolchain; CI sets E2E_DEV_BASE to a warm
+        # build image (baked npm cache) so a from-scratch install reuses it instead of a cold
+        # download. Unset (local dev, forks) => stock, unchanged.
+        BUILD_BASE: ${E2E_DEV_BASE:-node:22-alpine}
     dns_search: .
     environment:
       # Same-origin: the image swaps in nginx-proxy.conf, reverse-proxying /api,
