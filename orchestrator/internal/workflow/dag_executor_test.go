@@ -1194,6 +1194,11 @@ func (s *DAGExecutorTestSuite) TestResumeBeforeHeartbeatTimeout() {
 	s.env.OnActivity("LoadRequiredInputArtifacts", mock.Anything, mock.Anything).Return(activity.LoadRequiredInputArtifactsResult{}, nil).Maybe()
 	s.env.OnActivity("LoadReviewHistoryJSON", mock.Anything, mock.Anything).Return("[]", nil).Maybe()
 	s.env.OnActivity("DeleteAgentJob", mock.Anything, mock.Anything).Return(nil).Maybe()
+	// Both fire unconditionally on this run's completion path (edge-traversal recording,
+	// then Step 6 cleanup); leaving either unmocked routes the call to the real activity
+	// with a nil *Activities receiver (registered for type discovery only), which panics.
+	s.env.OnActivity("SetTraversedEdges", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("DeleteStaleBranches", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
 		return p.TemplateNodeID == nodeA && p.Iteration == 1
