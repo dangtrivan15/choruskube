@@ -1506,7 +1506,9 @@ class AutopilotServiceTest {
     }
 
     @Test
-    void tick_awaitingHumanCeilingUnderZero_meansUnlimited_startsProceedRegardless() {
+    void tick_awaitingHumanCeilingOfZero_meansUnlimited_startsProceedRegardless() {
+        // 0 is the unlimited sentinel: parked runs pile up past any count and the start loop still
+        // launches, because the ceiling check is skipped entirely rather than compared against 0.
         StoryFixture s = story(epic("E"));
         Task ready = task(s, "Ready", WorkItemStatus.backlog, Readiness.READY);
         autopilot.setMaxAwaitingHuman(0);
