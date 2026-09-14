@@ -12,6 +12,7 @@ const mockUseBlockingChain = vi.fn();
 const mockDeleteMutate = vi.fn();
 const mockStartMutate = vi.fn();
 const mockCompleteMutate = vi.fn();
+const mockUpdateTaskMutate = vi.fn();
 
 vi.mock("@/hooks/useTasks", () => ({
   useTask: (id: string) => mockUseTask(id),
@@ -19,6 +20,13 @@ vi.mock("@/hooks/useTasks", () => ({
     mutate: mockDeleteMutate,
     isPending: false,
     isError: false,
+    reset: vi.fn(),
+  }),
+  useUpdateTask: () => ({
+    mutate: mockUpdateTaskMutate,
+    isPending: false,
+    isError: false,
+    error: null,
     reset: vi.fn(),
   }),
   useStartTask: () => ({
@@ -69,6 +77,7 @@ beforeEach(() => {
   mockDeleteMutate.mockReset();
   mockStartMutate.mockReset();
   mockCompleteMutate.mockReset();
+  mockUpdateTaskMutate.mockReset();
   mockUseTaskRuns.mockReturnValue({ data: undefined, isLoading: false });
   mockUseStory.mockReturnValue({ data: undefined });
   mockUseBlockingChain.mockReturnValue({ data: undefined, isLoading: false });
@@ -127,11 +136,37 @@ describe("TaskDetailPage", () => {
     expect(link).toHaveAttribute("href", "/roadmap");
   });
 
-  it("shows Start and Delete buttons for a backlog task", () => {
+  it("shows Start, Edit, and Delete buttons for a backlog task", () => {
     mockUseTask.mockReturnValue({ data: makeTask({ status: "backlog" }), isLoading: false });
     renderWithProviders(<TaskDetailPage />);
     expect(screen.getByTestId("task-start-button")).toBeInTheDocument();
+    expect(screen.getByTestId("task-edit-button")).toBeInTheDocument();
     expect(screen.getByTestId("task-delete-button")).toBeInTheDocument();
+  });
+
+  it("hides the Edit button once a task has left backlog", () => {
+    mockUseTask.mockReturnValue({ data: makeTask({ status: "in_progress" }), isLoading: false });
+    renderWithProviders(<TaskDetailPage />);
+    expect(screen.queryByTestId("task-edit-button")).not.toBeInTheDocument();
+  });
+
+  it("hides the Edit button for a done task", () => {
+    mockUseTask.mockReturnValue({
+      data: makeTask({ status: "done", latestRunStatus: "completed" }),
+      isLoading: false,
+    });
+    renderWithProviders(<TaskDetailPage />);
+    expect(screen.queryByTestId("task-edit-button")).not.toBeInTheDocument();
+  });
+
+  it("clicking Edit opens the Edit Task dialog pre-populated from the task", async () => {
+    mockUseTask.mockReturnValue({ data: makeTask({ status: "backlog" }), isLoading: false });
+    renderWithProviders(<TaskDetailPage />);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("task-edit-button"));
+
+    expect(screen.getByTestId("edit-task-title")).toHaveValue("Implement toggle switch");
   });
 
   it("fetches the blocking chain for the current task id, not a `readiness` field on the Task response", () => {

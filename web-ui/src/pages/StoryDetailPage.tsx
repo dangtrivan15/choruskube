@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { ArrowLeft, Trash2, Plus } from "lucide-react";
+import { ArrowLeft, Trash2, Pencil, Plus } from "lucide-react";
 import Authorized from "@/components/Authorized";
 import {
   useStory,
@@ -25,6 +25,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import CreateTaskDialog from "@/components/roadmap/CreateTaskDialog";
+import EditStoryDialog from "@/components/roadmap/EditStoryDialog";
 import ReadinessBadge from "@/components/roadmap/ReadinessBadge";
 import RoadmapReadyToggle from "@/components/roadmap/RoadmapReadyToggle";
 import PriorityBadge from "@/components/roadmap/PriorityBadge";
@@ -63,6 +64,7 @@ export default function StoryDetailPage() {
 
   const [createTaskOpen, setCreateTaskOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const [readyOnly, setReadyOnly] = useState(false);
 
   // "Ready to start" is the same predicate the server counts into `EpicResponse.readyItemCount`
@@ -156,6 +158,15 @@ export default function StoryDetailPage() {
         <div className="flex flex-wrap gap-2 pt-2 border-t">
           <Authorized require="canAdmin">
             <Button
+              data-testid="story-edit-button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setEditOpen(true)}
+            >
+              <Pencil className="size-4" />
+              Edit
+            </Button>
+            <Button
               data-testid="story-delete-button"
               variant="ghost"
               size="sm"
@@ -215,6 +226,8 @@ export default function StoryDetailPage() {
       </div>
 
       <CreateTaskDialog storyId={story.id} open={createTaskOpen} onOpenChange={setCreateTaskOpen} />
+
+      <EditStoryDialog story={story} open={editOpen} onOpenChange={setEditOpen} />
 
       <Dialog
         open={deleteOpen}

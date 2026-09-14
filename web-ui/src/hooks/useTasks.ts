@@ -80,6 +80,35 @@ export function useCreateTask(storyId: string) {
   });
 }
 
+/**
+ * Full-replace edit of a Task's title/description via `PUT /tasks/{id}` — the Task-level mirror
+ * of `useUpdateEpic`/`useUpdateStory`. The body is typed against `TaskRequest` but always omits
+ * `priority`: `DefaultTaskService.update` never reads that field (priority is fixed at create
+ * time), so sending it would silently do nothing. Server-side, this rejects (409) once the Task
+ * has left `backlog`; the caller hides the Edit affordance accordingly and surfaces that 409's
+ * body text. Invalidates `["tasks"]` / `["tasks", id]` directly, plus `["stories", storyId,
+ * "tasks"]`, `["stories"]`, and `["epics"]` so every ancestor list picks up the new title.
+ */
+export function useUpdateTask() {
+  const queryClient = useQueryClient();
+  const { addEntry } = useActivityFeed();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Omit<TaskRequest, "priority"> }) =>
+      api.put<TaskResponse>(`/tasks/${id}`, body),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["tasks"] });
+      queryClient.invalidateQueries({ queryKey: ["tasks", data.id] });
+      queryClient.invalidateQueries({ queryKey: ["stories", data.storyId, "tasks"] });
+      queryClient.invalidateQueries({ queryKey: ["stories"] });
+      queryClient.invalidateQueries({ queryKey: ["epics"] });
+      addEntry(showMutationToast("Task updated", "success"));
+    },
+    onError: () => {
+      addEntry(showMutationToast("Failed to update task", "error"));
+    },
+  });
+}
+
 export function useDeleteTask(storyId: string) {
   const queryClient = useQueryClient();
   const { addEntry } = useActivityFeed();

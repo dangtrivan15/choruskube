@@ -43,6 +43,7 @@ export class RoadmapPage {
 
   // Story detail
   readonly storyDetailTitle: Locator;
+  readonly storyEditButton: Locator;
   readonly storyDeleteButton: Locator;
   readonly newTaskButton: Locator;
   readonly taskList: Locator;
@@ -54,6 +55,7 @@ export class RoadmapPage {
   readonly taskStartButton: Locator;
   readonly taskRestartButton: Locator;
   readonly taskCompleteButton: Locator;
+  readonly taskEditButton: Locator;
   readonly taskDeleteButton: Locator;
   readonly taskRunHistoryList: Locator;
   readonly backToStoryLink: Locator;
@@ -78,10 +80,20 @@ export class RoadmapPage {
   readonly createStoryDescriptionInput: Locator;
   readonly createStorySubmitButton: Locator;
 
+  // Edit Story dialog
+  readonly editStoryTitleInput: Locator;
+  readonly editStoryDescriptionInput: Locator;
+  readonly editStorySaveButton: Locator;
+
   // Create Task dialog
   readonly createTaskTitleInput: Locator;
   readonly createTaskDescriptionInput: Locator;
   readonly createTaskSubmitButton: Locator;
+
+  // Edit Task dialog
+  readonly editTaskTitleInput: Locator;
+  readonly editTaskDescriptionInput: Locator;
+  readonly editTaskSaveButton: Locator;
 
   // Confirmation dialogs
   readonly deleteEpicConfirmButton: Locator;
@@ -136,6 +148,7 @@ export class RoadmapPage {
     this.storyItems = page.getByTestId("story-item");
 
     this.storyDetailTitle = page.getByTestId("story-detail-title");
+    this.storyEditButton = page.getByTestId("story-edit-button");
     this.storyDeleteButton = page.getByTestId("story-delete-button");
     this.newTaskButton = page.getByTestId("new-task-button");
     this.taskList = page.getByTestId("task-list");
@@ -146,6 +159,7 @@ export class RoadmapPage {
     this.taskStartButton = page.getByTestId("task-start-button");
     this.taskRestartButton = page.getByTestId("task-restart-button");
     this.taskCompleteButton = page.getByTestId("task-complete-button");
+    this.taskEditButton = page.getByTestId("task-edit-button");
     this.taskDeleteButton = page.getByTestId("task-delete-button");
     this.taskRunHistoryList = page.getByTestId("task-run-history-list");
     this.backToStoryLink = page.getByRole("link", { name: "Back to Story" });
@@ -178,10 +192,20 @@ export class RoadmapPage {
     this.createStoryDescriptionInput = page.getByTestId("create-story-description");
     this.createStorySubmitButton = page.getByTestId("create-story-submit");
 
+    // Edit Story dialog
+    this.editStoryTitleInput = page.getByTestId("edit-story-title");
+    this.editStoryDescriptionInput = page.getByTestId("edit-story-description");
+    this.editStorySaveButton = page.getByTestId("edit-story-save");
+
     // Create Task dialog
     this.createTaskTitleInput = page.getByTestId("create-task-title");
     this.createTaskDescriptionInput = page.getByTestId("create-task-description");
     this.createTaskSubmitButton = page.getByTestId("create-task-submit");
+
+    // Edit Task dialog
+    this.editTaskTitleInput = page.getByTestId("edit-task-title");
+    this.editTaskDescriptionInput = page.getByTestId("edit-task-description");
+    this.editTaskSaveButton = page.getByTestId("edit-task-save");
 
     // Confirmation dialogs
     this.deleteEpicConfirmButton = page.getByTestId("delete-epic-confirm");
@@ -211,6 +235,22 @@ export class RoadmapPage {
     const item = this.taskItems.filter({ hasText: title });
     await item.click();
     await expect(this.taskDetailTitle).toContainText(title);
+  }
+
+  /** From an already-open Story detail page, edit its title/description and save. */
+  async editStory(title: string, description: string) {
+    await this.storyEditButton.click();
+    await this.editStoryTitleInput.fill(title);
+    await this.editStoryDescriptionInput.fill(description);
+    await this.editStorySaveButton.click();
+  }
+
+  /** From an already-open Task detail page, edit its title/description and save. */
+  async editTask(title: string, description: string) {
+    await this.taskEditButton.click();
+    await this.editTaskTitleInput.fill(title);
+    await this.editTaskDescriptionInput.fill(description);
+    await this.editTaskSaveButton.click();
   }
 
   /** The priority badge on the Epic row (Roadmap list) titled `title`. */

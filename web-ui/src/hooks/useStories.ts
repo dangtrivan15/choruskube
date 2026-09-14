@@ -5,6 +5,7 @@ import { useActivityFeed } from "./useActivityFeed";
 import type {
   StoryResponse,
   StoryRequest,
+  StoryUpdateRequest,
   StoryStageUpdateRequest,
   StoryPriorityUpdateRequest,
   StoryTargetDateUpdateRequest,
@@ -81,6 +82,33 @@ export function useCreateStory(epicId: string) {
     },
     onError: () => {
       addEntry(showMutationToast("Failed to create story", "error"));
+    },
+  });
+}
+
+/**
+ * Full-replace edit of a Story's title/description via `PUT /stories/{id}` — the Story-level
+ * mirror of `useUpdateEpic`. Server-side, this rejects (409) once any descendant Task has left
+ * `backlog`; the caller is responsible for hiding the Edit affordance accordingly and for
+ * surfacing that 409's body text. Invalidates `["stories"]` (list/board) and `["stories", id]`
+ * (detail) directly, plus `["epics"]` so an Epic's embedded Story list picks up the new title —
+ * TanStack Query's prefix matching means that also covers `["epics", epicId, "stories"]` without
+ * needing `epicId` threaded through here.
+ */
+export function useUpdateStory() {
+  const queryClient = useQueryClient();
+  const { addEntry } = useActivityFeed();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: StoryUpdateRequest }) =>
+      api.put<StoryResponse>(`/stories/${id}`, body),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["stories"] });
+      queryClient.invalidateQueries({ queryKey: ["stories", data.id] });
+      queryClient.invalidateQueries({ queryKey: ["epics"] });
+      addEntry(showMutationToast("Story updated", "success"));
+    },
+    onError: () => {
+      addEntry(showMutationToast("Failed to update story", "error"));
     },
   });
 }
