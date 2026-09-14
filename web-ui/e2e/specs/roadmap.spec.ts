@@ -173,8 +173,9 @@ test.describe("Roadmap drill-down", () => {
     await roadmapPage.page.goto(`/roadmap/epics/${epic.id}/stories/${story.id}`);
     await expect(roadmapPage.storyEditButton).not.toBeVisible();
 
-    // Clean up
-    await api.deleteEpic(epic.id);
+    // No cleanup: DefaultEpicService#delete rejects an Epic with any started
+    // descendant Task, and that's permanent — starting `task` above means this
+    // Epic can never be deleted. `uniqueTitle` keeps it from affecting other specs.
   });
 
   test("delete confirmation dialog works for an Epic", async ({ roadmapPage, api, workerRepo }) => {
