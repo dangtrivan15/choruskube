@@ -40,6 +40,11 @@ public class Autopilot {
     @Column(name = "max_parallel", nullable = false)
     private int maxParallel = 1;
 
+    /** {@code 0} means unlimited — the ceiling on runs parked on a human ({@code awaiting_human} +
+     * {@code paused}), independent of {@link #maxParallel}. */
+    @Column(name = "max_awaiting_human", nullable = false)
+    private int maxAwaitingHuman = 0;
+
     @Column(name = "consecutive_failures", nullable = false)
     private int consecutiveFailures = 0;
 
@@ -89,6 +94,14 @@ public class Autopilot {
 
     public void setMaxParallel(int maxParallel) {
         this.maxParallel = maxParallel;
+    }
+
+    public int getMaxAwaitingHuman() {
+        return maxAwaitingHuman;
+    }
+
+    public void setMaxAwaitingHuman(int maxAwaitingHuman) {
+        this.maxAwaitingHuman = maxAwaitingHuman;
     }
 
     public int getConsecutiveFailures() {

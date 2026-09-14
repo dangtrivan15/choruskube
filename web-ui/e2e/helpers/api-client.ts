@@ -727,8 +727,8 @@ export class TestApiClient {
     return this.get("/api/v1/autopilot");
   }
 
-  async updateAutopilot(maxParallel: number): Promise<AutopilotStatus> {
-    return this.patch("/api/v1/autopilot", { maxParallel });
+  async updateAutopilot(update: { maxParallel?: number; maxAwaitingHuman?: number }): Promise<AutopilotStatus> {
+    return this.patch("/api/v1/autopilot", update);
   }
 
   async engageAutopilot(): Promise<AutopilotStatus> {

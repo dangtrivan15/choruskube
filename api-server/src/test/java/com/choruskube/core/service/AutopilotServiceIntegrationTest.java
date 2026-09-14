@@ -338,7 +338,7 @@ public class AutopilotServiceIntegrationTest extends BaseTest {
             assertThat(awaiting(pool.submit(() -> autopilotService.engage()), 10))
                     .as("nor may engage — it no longer contends with anything")
                     .isNull();
-            assertThat(awaiting(pool.submit(() -> autopilotService.update(2)), 10))
+            assertThat(awaiting(pool.submit(() -> autopilotService.update(2, null)), 10))
                     .isNull();
 
             // The hazard the tick's javadoc is about, re-checked in this configuration: nothing
@@ -647,7 +647,7 @@ public class AutopilotServiceIntegrationTest extends BaseTest {
     }
 
     private void setMaxParallel(UUID autopilotId, int maxParallel) {
-        autopilotService.update(maxParallel);
+        autopilotService.update(maxParallel, null);
         assertThat(autopilotRepo.findById(autopilotId).orElseThrow().getMaxParallel())
                 .isEqualTo(maxParallel);
     }

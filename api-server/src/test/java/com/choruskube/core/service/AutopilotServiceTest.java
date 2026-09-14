@@ -624,7 +624,7 @@ class AutopilotServiceTest {
         AutopilotService service = newService();
 
         service.engage();
-        service.update(2);
+        service.update(2, null);
         service.disengage();
 
         verify(autopilotRepo, never()).acquireTickLease(any(), any(), anyInt());
@@ -1412,7 +1412,7 @@ class AutopilotServiceTest {
 
     @Test
     void update_setsMaxParallelAndPublishes() {
-        AutopilotStatusResponse status = newService().update(4);
+        AutopilotStatusResponse status = newService().update(4, null);
 
         assertThat(status.maxParallel()).isEqualTo(4);
         assertThat(status.slots()).isEqualTo(4);
@@ -1423,7 +1423,7 @@ class AutopilotServiceTest {
     void update_withNullMaxParallel_leavesItAlone() {
         autopilot.setMaxParallel(3);
 
-        assertThat(newService().update(null).maxParallel()).isEqualTo(3);
+        assertThat(newService().update(null, null).maxParallel()).isEqualTo(3);
         verify(autopilotRepo, never()).setMaxParallel(any(), anyInt(), any());
     }
 
@@ -1431,8 +1431,102 @@ class AutopilotServiceTest {
     void update_belowOne_isRejected() {
         AutopilotService service = newService();
 
-        assertThatThrownBy(() -> service.update(0)).isInstanceOf(BadRequestException.class);
+        assertThatThrownBy(() -> service.update(0, null)).isInstanceOf(BadRequestException.class);
         verify(autopilotRepo, never()).setMaxParallel(any(), anyInt(), any());
+    }
+
+    // -----------------------------------------------------------------------------------
+    // 8b — the max_awaiting_human ceiling
+    // -----------------------------------------------------------------------------------
+
+    @Test
+    void update_setsMaxAwaitingHumanIndependentlyOfMaxParallel() {
+        autopilot.setMaxParallel(3);
+
+        AutopilotStatusResponse status = newService().update(null, 5);
+
+        assertThat(status.maxAwaitingHuman()).isEqualTo(5);
+        assertThat(status.maxParallel())
+                .as("the two ceilings are independent settings")
+                .isEqualTo(3);
+        verify(autopilotRepo, never()).setMaxParallel(any(), anyInt(), any());
+    }
+
+    @Test
+    void update_partialUpdate_leavesTheOtherFieldUnchanged() {
+        autopilot.setMaxParallel(2);
+        autopilot.setMaxAwaitingHuman(4);
+
+        AutopilotStatusResponse status = newService().update(7, null);
+
+        assertThat(status.maxParallel()).isEqualTo(7);
+        assertThat(status.maxAwaitingHuman())
+                .as("a null maxAwaitingHuman in the same PATCH must not touch it")
+                .isEqualTo(4);
+        verify(autopilotRepo, never()).setMaxAwaitingHuman(any(), anyInt(), any());
+    }
+
+    @Test
+    void update_negativeMaxAwaitingHuman_isRejected() {
+        AutopilotService service = newService();
+
+        assertThatThrownBy(() -> service.update(null, -1)).isInstanceOf(BadRequestException.class);
+        verify(autopilotRepo, never()).setMaxAwaitingHuman(any(), anyInt(), any());
+    }
+
+    @Test
+    void update_maxAwaitingHumanZero_isAccepted() {
+        // 0 is the unlimited sentinel, not a value below the floor — the validation is >= 0, not
+        // >= 1 as maxParallel's is.
+        AutopilotStatusResponse status = newService().update(null, 0);
+
+        assertThat(status.maxAwaitingHuman()).isZero();
+    }
+
+    @Test
+    void tick_awaitingHumanCeilingReached_startsNothingAndReportsWhyIdle() {
+        // Three runs already parked on a human at a ceiling of 3: the start loop must not launch
+        // the READY Task below, and the reason must be legible on the published status.
+        StoryFixture s = story(epic("E"));
+        task(s, "Ready", WorkItemStatus.backlog, Readiness.READY);
+        autopilot.setMaxAwaitingHuman(3);
+        run(WorkflowRunStatus.awaiting_human, null);
+        run(WorkflowRunStatus.paused, null);
+        run(WorkflowRunStatus.awaiting_human, null);
+
+        AutopilotStatusResponse published = tickAndCapturePublished();
+
+        verify(taskService, never()).startForAutopilot(any(), any());
+        assertThat(published.awaitingHuman()).isEqualTo(3);
+        assertThat(published.maxAwaitingHuman()).isEqualTo(3);
+        assertThat(published.whyIdle()).contains("At awaiting-human capacity — 3 of 3 awaiting human");
+        // A throttle, never a disengage: the ceiling must not touch the failure breaker.
+        assertThat(published.engaged()).isTrue();
+        assertThat(autopilot.getConsecutiveFailures()).isZero();
+    }
+
+    @Test
+    void tick_awaitingHumanCeilingUnderZero_meansUnlimited_startsProceedRegardless() {
+        StoryFixture s = story(epic("E"));
+        Task ready = task(s, "Ready", WorkItemStatus.backlog, Readiness.READY);
+        autopilot.setMaxAwaitingHuman(0);
+        run(WorkflowRunStatus.awaiting_human, null);
+        run(WorkflowRunStatus.paused, null);
+
+        newService().tick();
+
+        verify(taskService).startForAutopilot(ready.getId(), autopilotId);
+    }
+
+    @Test
+    void getStatus_reportsMaxAwaitingHumanAndAwaitingHumanCount() {
+        autopilot.setMaxAwaitingHuman(2);
+        run(WorkflowRunStatus.awaiting_human, null);
+
+        AutopilotStatusResponse status = newService().getStatus();
+
+        assertThat(status.maxAwaitingHuman()).isEqualTo(2);
+        assertThat(status.awaitingHuman()).isEqualTo(1);
     }
 
     @Test
@@ -1552,7 +1646,7 @@ class AutopilotServiceTest {
         AutopilotService service = newService();
 
         service.engage();
-        service.update(3);
+        service.update(3, null);
         service.disengage();
 
         assertThat(ownershipEvents)
@@ -1719,6 +1813,9 @@ class AutopilotServiceTest {
         when(autopilotRepo.findMaxParallelById(any()))
                 .thenAnswer(
                         invocation -> autopilot == null ? Optional.empty() : Optional.of(autopilot.getMaxParallel()));
+        when(autopilotRepo.findMaxAwaitingHumanById(any()))
+                .thenAnswer(invocation ->
+                        autopilot == null ? Optional.empty() : Optional.of(autopilot.getMaxAwaitingHuman()));
         when(autopilotRepo.findConsecutiveFailuresById(any()))
                 .thenAnswer(invocation ->
                         autopilot == null ? Optional.empty() : Optional.of(autopilot.getConsecutiveFailures()));
@@ -1766,6 +1863,13 @@ class AutopilotServiceTest {
                 return 0;
             }
             autopilot.setMaxParallel(invocation.getArgument(1));
+            return 1;
+        });
+        when(autopilotRepo.setMaxAwaitingHuman(any(), anyInt(), any())).thenAnswer(invocation -> {
+            if (invocation.getArgument(0) == null || autopilot == null) {
+                return 0;
+            }
+            autopilot.setMaxAwaitingHuman(invocation.getArgument(1));
             return 1;
         });
         when(autopilotRepo.addFailures(any(), anyInt(), any())).thenAnswer(invocation -> {

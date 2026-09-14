@@ -34,7 +34,7 @@ public class AutopilotController {
     @PreAuthorize("@orgSecurity.canOperate()")
     @PatchMapping
     public AutopilotStatusResponse update(@Valid @RequestBody AutopilotUpdateRequest request) {
-        return service.update(request.maxParallel());
+        return service.update(request.maxParallel(), request.maxAwaitingHuman());
     }
 
     @PreAuthorize("@orgSecurity.canOperate()")

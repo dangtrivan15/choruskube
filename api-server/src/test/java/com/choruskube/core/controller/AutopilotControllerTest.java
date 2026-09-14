@@ -82,6 +82,42 @@ public class AutopilotControllerTest extends BaseTest {
     }
 
     @Test
+    void patch_setsBothCeilings_andEchoesBoth() throws Exception {
+        mockMvc.perform(patch("/api/v1/autopilot")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("maxParallel", 5, "maxAwaitingHuman", 2))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.maxParallel").value(5))
+                .andExpect(jsonPath("$.maxAwaitingHuman").value(2));
+    }
+
+    @Test
+    void patch_withNegativeMaxAwaitingHuman_returns400() throws Exception {
+        mockMvc.perform(patch("/api/v1/autopilot")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("maxAwaitingHuman", -1))))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void patch_setsMaxAwaitingHuman_thenGet_reflectsIt() throws Exception {
+        mockMvc.perform(patch("/api/v1/autopilot")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("maxAwaitingHuman", 3))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.maxAwaitingHuman").value(3));
+
+        mockMvc.perform(get("/api/v1/autopilot"))
+                .andExpect(jsonPath("$.maxAwaitingHuman").value(3));
+    }
+
+    @Test
+    void get_withNoRow_reportsMaxAwaitingHumanZero() throws Exception {
+        mockMvc.perform(get("/api/v1/autopilot"))
+                .andExpect(jsonPath("$.maxAwaitingHuman").value(0));
+    }
+
+    @Test
     void engage_thenGet_reflectsEngaged() throws Exception {
         mockMvc.perform(post("/api/v1/autopilot/engage"))
                 .andExpect(status().isOk())

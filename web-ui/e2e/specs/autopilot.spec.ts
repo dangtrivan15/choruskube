@@ -77,7 +77,7 @@ test.describe("Autopilot", () => {
     // READY Task is started even under a few concurrently-in-flight Autopilot runs, while
     // bounding how many stray board Tasks a single tick could start if this lands badly (see the
     // file-level comment above).
-    await api.updateAutopilot(before.inFlight + 10);
+    await api.updateAutopilot({ maxParallel: before.inFlight + 10 });
     await api.engageAutopilot();
     await api.tickAutopilot();
 
@@ -140,7 +140,7 @@ test.describe("Autopilot", () => {
     let pending: Task | undefined;
     for (let attempt = 0; attempt < 10 && !started; attempt++) {
       const status = await api.getAutopilot();
-      await api.updateAutopilot(status.inFlight + 1);
+      await api.updateAutopilot({ maxParallel: status.inFlight + 1 });
       await api.tickAutopilot();
       const tasks = await api.listTasks(story.id);
       const a = tasks.find((t) => t.id === taskA.id);
@@ -165,7 +165,7 @@ test.describe("Autopilot", () => {
     // Clamp maxParallel to exactly current usage — zero headroom — so `pending` cannot start
     // for any reason OTHER than the slot `started`'s run is about to free.
     const afterStart = await api.getAutopilot();
-    await api.updateAutopilot(Math.max(1, afterStart.inFlight));
+    await api.updateAutopilot({ maxParallel: Math.max(1, afterStart.inFlight) });
 
     // Pausing occupies no slot (AutopilotService#classify groups `paused` with
     // `awaiting_human` — "costs nothing to hold"), without touching the Task's own
@@ -179,7 +179,7 @@ test.describe("Autopilot", () => {
     let pendingStarted = false;
     for (let attempt = 0; attempt < 10 && !pendingStarted; attempt++) {
       const status = await api.getAutopilot();
-      await api.updateAutopilot(status.inFlight + 1);
+      await api.updateAutopilot({ maxParallel: status.inFlight + 1 });
       await api.tickAutopilot();
       const tasks = await api.listTasks(story.id);
       const p = tasks.find((t) => t.id === pending!.id);
@@ -190,6 +190,100 @@ test.describe("Autopilot", () => {
     expect(pendingStarted).toBe(true);
 
     // No cleanup — same started-descendant-Task convention as the previous test.
+  });
+
+  test("max_awaiting_human throttles new starts once the backlog of parked runs is full, and starts resume once it drains", async ({
+    api,
+    workerRepo,
+  }) => {
+    // Independent of max_parallel throughout: every headroom offered below is generous enough
+    // that max_parallel is never the reason a start is withheld, so a lack of a start can only be
+    // attributed to the max_awaiting_human ceiling under test.
+    const epic = await api.createEpic({
+      title: uniqueName("Autopilot Awaiting Human Epic"),
+      description: "desc",
+      softwareProjectId: workerRepo.gitRepo.id,
+    });
+    const story = await api.createStory(epic.id, {
+      title: uniqueName("Autopilot Awaiting Human Story"),
+      description: "desc",
+    });
+    const parkedTask = await api.createTask(story.id, {
+      title: uniqueName("Autopilot Awaiting Human Parked Task"),
+      description: "desc",
+    });
+
+    const originalMaxAwaitingHuman = (await api.getAutopilot()).maxAwaitingHuman ?? 0;
+    await api.engageAutopilot();
+
+    try {
+      // Get parkedTask running and attributed to THIS Autopilot (autopilot_id set), then park it,
+      // so it occupies the max_awaiting_human ceiling below. A manually-started run would not:
+      // this stack's slot counter is attribution-scoped single-tenant (SingleTenantAutopilotSlotCounter),
+      // so only runs this Autopilot itself started ever count.
+      let started: Task | undefined;
+      for (let attempt = 0; attempt < 10 && !started; attempt++) {
+        const status = await api.getAutopilot();
+        await api.updateAutopilot({ maxParallel: status.inFlight + 10 });
+        await api.tickAutopilot();
+        started = (await api.listTasks(story.id)).find(
+          (t) => t.id === parkedTask.id && t.status === "in_progress",
+        );
+      }
+      if (!started) {
+        throw new Error(
+          "Autopilot never started the parked Task after 10 ticks — see the cross-worker slot " +
+            "contention note in this file's top-of-file comment.",
+        );
+      }
+      const parkedRunId = started.latestRunId!;
+      await api.pauseRun(parkedRunId);
+      await api.waitForRunStatus(parkedRunId, ["paused"], 30_000);
+
+      // gatedTask is created only now, after parkedTask has already claimed its slot and parked —
+      // creating it earlier risks the Autopilot starting IT instead of parkedTask during the loop
+      // above, which would race the assertions below.
+      const gatedTask = await api.createTask(story.id, {
+        title: uniqueName("Autopilot Awaiting Human Gated Task"),
+        description: "desc",
+      });
+
+      // The ceiling is set to exactly the CURRENT awaiting-human occupancy (which already
+      // includes parkedTask's run, plus whatever this singleton Autopilot has parked from
+      // earlier — never assumed to be zero on a shared, never-reset stack) — so it reads as
+      // "reached" without this test caring about its absolute value.
+      const parked = await api.getAutopilot();
+      const ceiling = parked.awaitingHuman ?? 0;
+      expect(ceiling).toBeGreaterThanOrEqual(1);
+      await api.updateAutopilot({ maxParallel: parked.inFlight + 10, maxAwaitingHuman: ceiling });
+      await api.tickAutopilot();
+
+      const afterThrottledTick = await api.listTasks(story.id);
+      expect(afterThrottledTick.find((t) => t.id === gatedTask.id)?.status).toBe("backlog");
+
+      // Drain the backlog. There is no "resume" endpoint on this API — cancelling is what removes
+      // a run from the awaiting-human bucket entirely (AutopilotService#classify has no bucket for
+      // `cancelled`), freeing the ceiling for the next tick.
+      await api.cancelRun(parkedRunId);
+      await api.waitForRunStatus(parkedRunId, ["cancelled"], 30_000);
+
+      let gatedStarted = false;
+      for (let attempt = 0; attempt < 10 && !gatedStarted; attempt++) {
+        const status = await api.getAutopilot();
+        await api.updateAutopilot({ maxParallel: status.inFlight + 10 });
+        await api.tickAutopilot();
+        gatedStarted =
+          (await api.listTasks(story.id)).find((t) => t.id === gatedTask.id)?.status === "in_progress";
+      }
+      expect(gatedStarted).toBe(true);
+    } finally {
+      // Never leaves a ceiling behind that would poison a sibling serial test in this file.
+      await api.updateAutopilot({ maxAwaitingHuman: originalMaxAwaitingHuman });
+    }
+
+    // No cleanup beyond the ceiling reset above — both Tasks are now started (one via a cancelled
+    // run), and DefaultEpicService#delete refuses to delete an Epic with a started descendant
+    // Task, same convention as the neighboring tests in this file.
   });
 
   test("a Task stranded by a cancelled run is reported as held, and its run is badged", async ({
@@ -220,7 +314,7 @@ test.describe("Autopilot", () => {
     let started: Task | undefined;
     for (let attempt = 0; attempt < 10 && !started; attempt++) {
       const status = await api.getAutopilot();
-      await api.updateAutopilot(status.inFlight + 1);
+      await api.updateAutopilot({ maxParallel: status.inFlight + 1 });
       await api.tickAutopilot();
       started = (await api.listTasks(story.id)).find(
         (t) => t.id === task.id && t.status === "in_progress",
@@ -236,7 +330,7 @@ test.describe("Autopilot", () => {
     // Zero headroom from here on: nothing below this line needs a start, and the 30s reconciler
     // is off in this stack, so no further Task can leave backlog on this test's account.
     const afterStart = await api.getAutopilot();
-    await api.updateAutopilot(Math.max(1, afterStart.inFlight));
+    await api.updateAutopilot({ maxParallel: Math.max(1, afterStart.inFlight) });
 
     const runId = started.latestRunId!;
     expect(runId).toBeTruthy();

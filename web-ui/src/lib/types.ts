@@ -1359,8 +1359,21 @@ export interface AutopilotTaskRef {
 export interface AutopilotStatus {
   engaged: boolean;
   maxParallel: number;
+  /**
+   * The ceiling on runs parked on a human (`awaiting_human` + `paused`) that the tick's start
+   * loop stops against; `0` means unlimited. Optional so a build running against an older API
+   * (which never sends this field) still satisfies this type — read sites must default with
+   * `?? 0`.
+   */
+  maxAwaitingHuman?: number;
   inFlight: number;
   slots: number;
+  /**
+   * How many runs currently count against `maxAwaitingHuman` — scope-wide occupancy, not the
+   * (possibly narrower) `awaitingYou` list below. Optional for the same older-API reason as
+   * `maxAwaitingHuman`.
+   */
+  awaitingHuman?: number;
   nextUp: AutopilotTaskRef[];
   whyIdle: string[];
   awaitingYou: AutopilotTaskRef[];
@@ -1375,6 +1388,12 @@ export interface AutopilotStatus {
   lastTickAt: string | null;
 }
 
+/**
+ * PATCH /autopilot body. Both fields are optional and independent — a null/omitted field leaves
+ * that ceiling unchanged, mirroring the backend's `AutopilotUpdateRequest` partial-update
+ * contract.
+ */
 export interface AutopilotUpdateRequest {
-  maxParallel: number;
+  maxParallel?: number;
+  maxAwaitingHuman?: number;
 }

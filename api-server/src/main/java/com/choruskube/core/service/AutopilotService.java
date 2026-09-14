@@ -243,6 +243,14 @@ public class AutopilotService implements AutopilotSafetyValve {
      */
     static final Set<WorkflowRunStatus> OCCUPIES_A_SLOT = statusesWhere(c -> c.occupiesSlot());
 
+    /**
+     * The "awaiting-you" bucket — {@code awaiting_human} and {@code paused} — as the {@code
+     * max_awaiting_human} ceiling counts it. Derived from {@link #classify} rather than a literal
+     * two-status list, so the ceiling and the {@code awaitingYou} list it sits beside can never
+     * name different sets of statuses.
+     */
+    static final Set<WorkflowRunStatus> AWAITING_HUMAN = statusesWhere(c -> c.bucket() == Bucket.AWAITING_YOU);
+
     /** Terminal, or {@code awaiting_retry} — the statuses the breaker has an opinion about. */
     private static final Set<WorkflowRunStatus> SETTLEABLE = statusesWhere(c -> c.settle() != Settle.NOT_FINISHED);
 
@@ -566,6 +574,15 @@ public class AutopilotService implements AutopilotSafetyValve {
             if (slotCounter.occupiedSlots(autopilotId, OCCUPIES_A_SLOT) >= maxParallel) {
                 break;
             }
+            // A throttle, not a disengage: reaching this ceiling only ever stops the loop from
+            // launching more this pass. It must never touch the failure breaker or the safety
+            // valve. 0 means unlimited, so a never-configured or explicitly-uncapped Autopilot
+            // skips the check entirely rather than comparing against a real 0-occupancy ceiling.
+            int maxAwaitingHuman =
+                    autopilotRepo.findMaxAwaitingHumanById(autopilotId).orElse(0);
+            if (maxAwaitingHuman > 0 && slotCounter.occupiedSlots(autopilotId, AWAITING_HUMAN) >= maxAwaitingHuman) {
+                break;
+            }
             try {
                 taskService.startForAutopilot(task.getId(), autopilotId);
                 started.add(task.getId());
@@ -622,7 +639,8 @@ public class AutopilotService implements AutopilotSafetyValve {
             Autopilot autopilot = current.get();
             List<WorkflowRun> live = runRepo.findByAutopilotIdAndStatusIn(autopilotId, REPORTED_LIVE);
             int inFlight = (int) slotCounter.occupiedSlots(autopilotId, OCCUPIES_A_SLOT);
-            publish(autopilot, buildStatus(autopilot, live, frontier, started, notes, inFlight));
+            int awaitingHuman = (int) slotCounter.occupiedSlots(autopilotId, AWAITING_HUMAN);
+            publish(autopilot, buildStatus(autopilot, live, frontier, started, notes, inFlight, awaitingHuman));
         });
     }
 
@@ -876,15 +894,25 @@ public class AutopilotService implements AutopilotSafetyValve {
                 .orElseGet(AutopilotService::unconfiguredStatus);
     }
 
-    /** Get-or-create, then set. A null {@code maxParallel} leaves it alone. */
+    /**
+     * Get-or-create, then set. A null {@code maxParallel} or {@code maxAwaitingHuman} leaves that
+     * ceiling alone — they are independent settings, so either may be omitted from a PATCH without
+     * touching the other.
+     */
     @Transactional
-    public AutopilotStatusResponse update(Integer maxParallel) {
+    public AutopilotStatusResponse update(Integer maxParallel, Integer maxAwaitingHuman) {
         if (maxParallel != null && maxParallel < 1) {
             throw new BadRequestException("maxParallel must be at least 1");
+        }
+        if (maxAwaitingHuman != null && maxAwaitingHuman < 0) {
+            throw new BadRequestException("maxAwaitingHuman must be at least 0");
         }
         UUID autopilotId = ensureRow();
         if (maxParallel != null) {
             autopilotRepo.setMaxParallel(autopilotId, maxParallel, Instant.now());
+        }
+        if (maxAwaitingHuman != null) {
+            autopilotRepo.setMaxAwaitingHuman(autopilotId, maxAwaitingHuman, Instant.now());
         }
         return publishCurrent(autopilotId);
     }
@@ -1022,7 +1050,8 @@ public class AutopilotService implements AutopilotSafetyValve {
         Frontier frontier =
                 autopilot.isEngaged() ? computeFrontier(autopilot.getId(), affinityEpicIds(live)) : Frontier.EMPTY;
         int inFlight = (int) slotCounter.occupiedSlots(autopilot.getId(), OCCUPIES_A_SLOT);
-        return buildStatus(autopilot, live, frontier, Set.of(), List.of(), inFlight);
+        int awaitingHuman = (int) slotCounter.occupiedSlots(autopilot.getId(), AWAITING_HUMAN);
+        return buildStatus(autopilot, live, frontier, Set.of(), List.of(), inFlight, awaitingHuman);
     }
 
     /**
@@ -1034,6 +1063,9 @@ public class AutopilotService implements AutopilotSafetyValve {
      * @param inFlight scope-wide slot occupancy from {@link AutopilotSlotCounter} — counts a
      *     person's manual runs too, so it is not derivable from {@code live} (this Autopilot's own
      *     runs) and is passed in already resolved.
+     * @param awaitingHuman scope-wide occupancy of the {@code max_awaiting_human} ceiling, through
+     *     the same seam as {@code inFlight} — deliberately not derived from {@code live}'s {@code
+     *     awaitingYou} bucket, which is attribution-scoped rather than occupancy-scoped.
      */
     private AutopilotStatusResponse buildStatus(
             Autopilot autopilot,
@@ -1041,7 +1073,8 @@ public class AutopilotService implements AutopilotSafetyValve {
             Frontier frontier,
             Set<UUID> excludedTaskIds,
             List<String> notes,
-            int inFlight) {
+            int inFlight,
+            int awaitingHuman) {
         int slots = Math.max(0, autopilot.getMaxParallel() - inFlight);
 
         List<AutopilotTaskRef> nextUp = frontier.readyTasks().stream()
@@ -1057,10 +1090,12 @@ public class AutopilotService implements AutopilotSafetyValve {
         return new AutopilotStatusResponse(
                 autopilot.isEngaged(),
                 autopilot.getMaxParallel(),
+                autopilot.getMaxAwaitingHuman(),
                 inFlight,
                 slots,
+                awaitingHuman,
                 nextUp,
-                whyIdle(autopilot, live, frontier, nextUp, inFlight, slots, notes),
+                whyIdle(autopilot, live, frontier, nextUp, inFlight, slots, awaitingHuman, notes),
                 refsFor(live, Bucket.AWAITING_YOU, titles),
                 refsFor(live, Bucket.NEEDS_ATTENTION, titles),
                 frontier.heldTasks(),
@@ -1081,6 +1116,7 @@ public class AutopilotService implements AutopilotSafetyValve {
             List<AutopilotTaskRef> nextUp,
             int inFlight,
             int slots,
+            int awaitingHuman,
             List<String> notes) {
         if (!autopilot.isEngaged()) {
             return List.of("Autopilot is not engaged");
@@ -1090,6 +1126,11 @@ public class AutopilotService implements AutopilotSafetyValve {
         reasons.addAll(unresolvablePullRequestReasons(autopilot.getId()));
         if (slots == 0) {
             reasons.add("At capacity — " + inFlight + " of " + autopilot.getMaxParallel() + " slot(s) in use");
+        }
+        int maxAwaitingHuman = autopilot.getMaxAwaitingHuman();
+        if (maxAwaitingHuman > 0 && awaitingHuman >= maxAwaitingHuman) {
+            reasons.add(
+                    "At awaiting-human capacity — " + awaitingHuman + " of " + maxAwaitingHuman + " awaiting human");
         }
         if (!frontier.heldTasks().isEmpty()) {
             reasons.add(heldTasksReason(frontier.heldTasks()));
@@ -1227,8 +1268,10 @@ public class AutopilotService implements AutopilotSafetyValve {
         return new AutopilotStatusResponse(
                 unconfigured.isEngaged(),
                 unconfigured.getMaxParallel(),
+                unconfigured.getMaxAwaitingHuman(),
                 0,
                 unconfigured.getMaxParallel(),
+                0,
                 List.of(),
                 List.of("Autopilot has never been configured"),
                 List.of(),

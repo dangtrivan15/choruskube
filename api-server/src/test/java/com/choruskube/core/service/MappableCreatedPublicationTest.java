@@ -347,13 +347,13 @@ class MappableCreatedPublicationTest extends BaseTest {
      * how it went without an ownership event at all. Downstream this event is what gives the row an
      * owner; a row created without one is one the scope provider cannot resolve afterwards.
      *
-     * <p>{@code update(null)} is the cheapest way through get-or-create — it inserts and then
+     * <p>{@code update(null, null)} is the cheapest way through get-or-create — it inserts and then
      * changes nothing. {@code engage()} would reach the same insert and then sweep readiness across
      * every Epic in the shared test database on its way back out.
      */
     @Test
     void autopilotGetOrCreate_publishesMappableCreated_withAutopilotType_andNoParent() {
-        autopilotService.update(null);
+        autopilotService.update(null, null);
 
         List<MappableCreated> events = collector.getCaptured();
         assertThat(events)
