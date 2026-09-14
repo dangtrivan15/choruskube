@@ -82,7 +82,6 @@ COPY get-roadmap-graph /usr/local/bin/get-roadmap-graph
 COPY update-task-status /usr/local/bin/update-task-status
 COPY run-all-tests /usr/local/bin/run-all-tests
 COPY harvest-junit.js /usr/local/bin/harvest-junit.js
-COPY normalize-lockfiles /usr/local/bin/normalize-lockfiles
 COPY system_prompt.md /usr/local/share/choruskube/system_prompt.md
 RUN chmod +x /usr/local/bin/report-result \
     /usr/local/bin/fetch-github-token \
@@ -103,7 +102,6 @@ RUN chmod +x /usr/local/bin/report-result \
     /usr/local/bin/get-roadmap-graph \
     /usr/local/bin/update-task-status \
     /usr/local/bin/run-all-tests \
-    /usr/local/bin/normalize-lockfiles \
     /usr/local/bin/quota-lib.sh
 
 # Disable telemetry, update checks, and other non-essential network traffic.
