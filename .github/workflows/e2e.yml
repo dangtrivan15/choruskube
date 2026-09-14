@@ -156,9 +156,12 @@ jobs:
       - name: Dump stack logs on failure
         if: failure()
         run: |
-          docker run --rm --entrypoint bash \
+          docker run --rm --network host --user 0 --entrypoint bash \
             -v "$GITHUB_WORKSPACE":"$GITHUB_WORKSPACE" -w "$GITHUB_WORKSPACE" \
-            -v /var/run/docker.sock:/var/run/docker.sock \
+            -e DOCKER_HOST=tcp://localhost:2376 \
+            -e DOCKER_TLS_VERIFY=1 \
+            -e DOCKER_CERT_PATH=/certs/client \
+            -v /certs/client:/certs/client \
             "$DEV_IMAGE" -c 'docker compose -f docker-compose.e2e.yaml logs --no-color --tail=400 || true'
 
       # Both upload steps read from the single tree the run step's -Dtest.reports.dir creates.
@@ -190,7 +193,10 @@ jobs:
       - name: Tear down stack
         if: always()
         run: |
-          docker run --rm --entrypoint bash \
+          docker run --rm --network host --user 0 --entrypoint bash \
             -v "$GITHUB_WORKSPACE":"$GITHUB_WORKSPACE" -w "$GITHUB_WORKSPACE" \
-            -v /var/run/docker.sock:/var/run/docker.sock \
+            -e DOCKER_HOST=tcp://localhost:2376 \
+            -e DOCKER_TLS_VERIFY=1 \
+            -e DOCKER_CERT_PATH=/certs/client \
+            -v /certs/client:/certs/client \
             "$DEV_IMAGE" -c 'scripts/e2e-down.sh --volumes || true'
