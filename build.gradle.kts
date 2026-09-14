@@ -254,7 +254,7 @@ val e2eDown = tasks.register<Exec>("e2eDown") {
 }
 
 val e2eImages = tasks.register<Exec>("e2eImages") {
-    description = "Build the agent (and, when a build cache registry is set, application) images"
+    description = "Build the agent images (claude-code and its e2e mock derivative)"
     group = "verification"
     workingDir = rootDir
     commandLine("bash", "scripts/e2e-up.sh", "--images")
