@@ -525,6 +525,14 @@ export class TestApiClient {
   }
 
   /**
+   * Full-replace edit of a Story's title/description via PUT /stories/{id} (mirrors
+   * useUpdateStory). Rejects with a 409 once any descendant Task has left `backlog`.
+   */
+  async updateStory(id: string, body: { title: string; description: string }): Promise<Story> {
+    return this.put(`/api/v1/stories/${id}`, body);
+  }
+
+  /**
    * Set or clear (via `null`) a Story's target date via PATCH /stories/{id}/target-date
    * (mirrors useUpdateStoryTargetDate).
    */
@@ -541,6 +549,15 @@ export class TestApiClient {
     body: { title: string; description: string },
   ): Promise<Task> {
     return this.post(`/api/v1/stories/${storyId}/tasks`, body);
+  }
+
+  /**
+   * Full-replace edit of a Task's title/description via PUT /tasks/{id} (mirrors
+   * useUpdateTask). Rejects with a 409 once the Task has left `backlog`. No `priority`
+   * key: the update path never persists it (priority is fixed at create time).
+   */
+  async updateTask(id: string, body: { title: string; description: string }): Promise<Task> {
+    return this.put(`/api/v1/tasks/${id}`, body);
   }
 
   async startTask(id: string): Promise<Task> {

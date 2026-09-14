@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { ArrowLeft, Trash2, Play, CheckCircle2, GitBranch, Layers } from "lucide-react";
+import { ArrowLeft, Trash2, Pencil, Play, CheckCircle2, GitBranch, Layers } from "lucide-react";
 import Authorized from "@/components/Authorized";
 import { useTask, useDeleteTask, useStartTask, useCompleteTask } from "@/hooks/useTasks";
 import { useStory } from "@/hooks/useStories";
@@ -21,6 +21,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import TaskRunHistoryList from "@/components/roadmap/TaskRunHistoryList";
+import EditTaskDialog from "@/components/roadmap/EditTaskDialog";
 import LevelBadge from "@/components/roadmap/LevelBadge";
 import PageHeader from "@/components/layout/PageHeader";
 
@@ -68,6 +69,7 @@ export default function TaskDetailPage() {
   const completeTask = useCompleteTask();
 
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const [startOpen, setStartOpen] = useState(false);
 
   function handleDelete() {
@@ -189,6 +191,15 @@ export default function TaskDetailPage() {
             </Authorized>
             <Authorized require="canAdmin">
               <Button
+                data-testid="task-edit-button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setEditOpen(true)}
+              >
+                <Pencil className="size-4" />
+                Edit
+              </Button>
+              <Button
                 data-testid="task-delete-button"
                 variant="ghost"
                 size="sm"
@@ -225,6 +236,8 @@ export default function TaskDetailPage() {
           <TaskRunHistoryList runs={runsPage?.content} isLoading={runsLoading} />
         </div>
       </div>
+
+      <EditTaskDialog task={task} open={editOpen} onOpenChange={setEditOpen} />
 
       <Dialog
         open={deleteOpen}

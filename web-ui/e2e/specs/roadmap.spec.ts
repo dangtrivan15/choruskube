@@ -69,6 +69,17 @@ test.describe("Roadmap drill-down", () => {
 
     await roadmapPage.openStory(storyTitle);
     await expect(roadmapPage.page.getByTestId("level-badge-story")).toHaveText(/Story/);
+
+    // Edit the Story's title/description and confirm the new values persist across reload.
+    const editedStoryTitle = uniqueName("E2E Story Edited");
+    await roadmapPage.editStory(editedStoryTitle, "An edited story description");
+    await expect(roadmapPage.storyDetailTitle).toContainText(editedStoryTitle);
+    await roadmapPage.page.reload();
+    await expect(roadmapPage.storyDetailTitle).toContainText(editedStoryTitle);
+    await expect(roadmapPage.page.getByTestId("story-detail-description")).toContainText(
+      "An edited story description",
+    );
+
     const taskTitle = uniqueName("E2E Task");
     await roadmapPage.newTaskButton.click();
     await roadmapPage.createTaskTitleInput.fill(taskTitle);
@@ -80,10 +91,20 @@ test.describe("Roadmap drill-down", () => {
     await expect(roadmapPage.taskStartButton).toBeVisible();
     await expect(roadmapPage.page.getByTestId("level-badge-task")).toHaveText(/Task/);
 
+    // Edit the Task's title/description and confirm the new values persist across reload.
+    const editedTaskTitle = uniqueName("E2E Task Edited");
+    await roadmapPage.editTask(editedTaskTitle, "An edited task description");
+    await expect(roadmapPage.taskDetailTitle).toContainText(editedTaskTitle);
+    await roadmapPage.page.reload();
+    await expect(roadmapPage.taskDetailTitle).toContainText(editedTaskTitle);
+    await expect(roadmapPage.page.getByTestId("task-detail-description")).toContainText(
+      "An edited task description",
+    );
+
     // The Task's real parent is its Story, not the roadmap root — clicking
     // "Back to Story" must land on the parent Story's detail page.
     await roadmapPage.backToStoryLink.click();
-    await expect(roadmapPage.storyDetailTitle).toContainText(storyTitle);
+    await expect(roadmapPage.storyDetailTitle).toContainText(editedStoryTitle);
 
     // Clean up — deleting the Epic cascades to its Story and Task.
     await api.listEpics().then(async (epics) => {
@@ -117,10 +138,44 @@ test.describe("Roadmap drill-down", () => {
     await roadmapPage.page.goto(`/tasks/${task.id}`);
     await expect(roadmapPage.taskDetailTitle).toContainText(taskTitle);
     await expect(roadmapPage.taskStartButton).toBeVisible();
+    await expect(roadmapPage.taskEditButton).toBeVisible();
     await expect(roadmapPage.taskDeleteButton).toBeVisible();
 
     // Clean up
     await api.deleteEpic(epic.id);
+  });
+
+  test("Edit affordance is hidden on a Story with a started Task and on a Task that isn't in backlog", async ({
+    roadmapPage,
+    api,
+    workerRepo,
+  }) => {
+    const uniqueTitle = uniqueName("E2E Edit Guard");
+    const epic = await api.createEpic({
+      title: uniqueTitle,
+      description: "Testing the edit affordance guard",
+      softwareProjectId: workerRepo.gitRepo.id,
+    });
+    const story = await api.createStory(epic.id, {
+      title: "Story for edit guard test",
+      description: "desc",
+    });
+    const task = await api.createTask(story.id, {
+      title: uniqueName("Task for edit guard test"),
+      description: "desc",
+    });
+    await api.startTask(task.id);
+
+    await roadmapPage.page.goto(`/tasks/${task.id}`);
+    await expect(roadmapPage.taskDetailStatus).toHaveText(/in progress/);
+    await expect(roadmapPage.taskEditButton).not.toBeVisible();
+
+    await roadmapPage.page.goto(`/roadmap/epics/${epic.id}/stories/${story.id}`);
+    await expect(roadmapPage.storyEditButton).not.toBeVisible();
+
+    // No cleanup: DefaultEpicService#delete rejects an Epic with any started
+    // descendant Task, and that's permanent — starting `task` above means this
+    // Epic can never be deleted. `uniqueTitle` keeps it from affecting other specs.
   });
 
   test("delete confirmation dialog works for an Epic", async ({ roadmapPage, api, workerRepo }) => {

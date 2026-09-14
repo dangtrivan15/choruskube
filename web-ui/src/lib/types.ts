@@ -731,8 +731,11 @@ export interface TaskResponse {
 }
 
 /**
- * Create-only (POST) request body for a Task. `priority` is optional; an absent value
- * defaults to `"medium"` server-side, mirroring `EpicRequest`/`StoryRequest`.
+ * Request body for a Task: the create-only (POST) shape, and also reused as-is for the full PUT
+ * edit (`PUT /tasks/{id}`) since Task has no separate `*UpdateRequest` type like Epic/Story.
+ * `priority` is optional on create (an absent value defaults to `"medium"` server-side, mirroring
+ * `EpicRequest`/`StoryRequest`); on the PUT edit path it must be omitted entirely — the backend
+ * update path never reads it, so sending a value would silently fail to persist.
  */
 export interface TaskRequest {
   title: string;

@@ -251,6 +251,24 @@ public class TaskControllerTest extends BaseTest {
     }
 
     @Test
+    void updateTask_withPriorityInBody_leavesPriorityUnchanged() throws Exception {
+        // TaskRequest carries a `priority` field (reused as the PUT body), but the update
+        // path never reads it — confirm the stored priority survives a PUT untouched, the
+        // Task-tier equivalent of StoryControllerTest's priority-noop regression test.
+        StoryResponse story = makeStory("https://github.com/test/task-priority-put-noop.git");
+        TaskResponse task = taskService.create(
+                story.id(), new TaskRequest("Priority Put Noop", "D", com.choruskube.core.model.enums.Priority.high));
+
+        var body = Map.of("title", "New Title", "description", "New Desc", "priority", "low");
+
+        mockMvc.perform(put("/api/v1/tasks/" + task.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.priority").value("high"));
+    }
+
+    @Test
     void deleteTask_inBacklog_returns204() throws Exception {
         StoryResponse story = makeStory("https://github.com/test/task-delete.git");
         TaskResponse task = taskService.create(story.id(), new TaskRequest("To Delete", "D"));

@@ -9,6 +9,7 @@ const mockUseStory = vi.fn();
 const mockUseTasks = vi.fn();
 const mockDeleteMutate = vi.fn();
 const mockStageMutate = vi.fn();
+const mockUpdateStoryMutate = vi.fn();
 
 vi.mock("@/hooks/useStories", () => ({
   useStory: (id: string) => mockUseStory(id),
@@ -22,6 +23,13 @@ vi.mock("@/hooks/useStories", () => ({
     mutate: mockDeleteMutate,
     isPending: false,
     isError: false,
+    reset: vi.fn(),
+  }),
+  useUpdateStory: () => ({
+    mutate: mockUpdateStoryMutate,
+    isPending: false,
+    isError: false,
+    error: null,
     reset: vi.fn(),
   }),
   useUpdateStoryPriority: () => ({
@@ -65,6 +73,7 @@ beforeEach(() => {
   mockUseStory.mockReset();
   mockUseTasks.mockReset();
   mockDeleteMutate.mockReset();
+  mockUpdateStoryMutate.mockReset();
 });
 
 function makeStory(overrides: Partial<StoryResponse> = {}): StoryResponse {
@@ -189,6 +198,40 @@ describe("StoryDetailPage", () => {
     mockUseTasks.mockReturnValue({ data: [], isLoading: false });
     renderWithProviders(<StoryDetailPage />);
     expect(screen.queryByTestId("story-delete-button")).not.toBeInTheDocument();
+  });
+
+  it("shows Edit button while no Task has started", () => {
+    mockUseStory.mockReturnValue({
+      data: makeStory({ progress: { totalTasks: 2, doneTasks: 0, startedTasks: 0 } }),
+      isLoading: false,
+    });
+    mockUseTasks.mockReturnValue({ data: [], isLoading: false });
+    renderWithProviders(<StoryDetailPage />);
+    expect(screen.getByTestId("story-edit-button")).toBeInTheDocument();
+  });
+
+  it("hides Edit button once a Task has started", () => {
+    mockUseStory.mockReturnValue({
+      data: makeStory({ progress: { totalTasks: 2, doneTasks: 0, startedTasks: 1 } }),
+      isLoading: false,
+    });
+    mockUseTasks.mockReturnValue({ data: [], isLoading: false });
+    renderWithProviders(<StoryDetailPage />);
+    expect(screen.queryByTestId("story-edit-button")).not.toBeInTheDocument();
+  });
+
+  it("clicking Edit opens the Edit Story dialog pre-populated from the story", async () => {
+    mockUseStory.mockReturnValue({
+      data: makeStory({ progress: { totalTasks: 2, doneTasks: 0, startedTasks: 0 } }),
+      isLoading: false,
+    });
+    mockUseTasks.mockReturnValue({ data: [], isLoading: false });
+    renderWithProviders(<StoryDetailPage />);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("story-edit-button"));
+
+    expect(screen.getByTestId("edit-story-title")).toHaveValue("Dark theme toggle");
   });
 
   it("renders the task list with links to each task's detail route", () => {
