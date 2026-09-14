@@ -63,6 +63,9 @@ dockerd-entrypoint.sh dockerd "$@" &
 DOCKERD_PID=$!
 trap forward_term TERM INT
 
-run_preload
+# Never fatal: the preload is a warm-cache optimization, so a failed load must not exit this
+# PID-1 script (under `set -e`) and take dockerd down with it -- that would leave consumers with
+# no daemon at all. On failure dockerd keeps serving and images are pulled cold.
+run_preload || echo "preload: continuing without warm cache; dockerd stays up" >&2
 
 wait "$DOCKERD_PID"
