@@ -136,7 +136,17 @@ func newTestExecutor(t *testing.T) *DockerExecutor {
 	return exec
 }
 
+// New() runs client.FromEnv, which eagerly loads TLS certs when DOCKER_TLS_VERIFY is set in the
+// ambient environment (some CI does, pointing at a docker-in-docker daemon whose certs this
+// process can't read). These tests only check config defaulting, so clear it before constructing.
+func withoutAmbientDockerTLS(t *testing.T) {
+	t.Helper()
+	t.Setenv("DOCKER_TLS_VERIFY", "")
+	t.Setenv("DOCKER_CERT_PATH", "")
+}
+
 func TestNew_DindImage_DefaultsWhenUnset(t *testing.T) {
+	withoutAmbientDockerTLS(t)
 	exec, err := New(Config{
 		Host:       "unix:///var/run/docker.sock",
 		Network:    "bridge",
@@ -147,6 +157,7 @@ func TestNew_DindImage_DefaultsWhenUnset(t *testing.T) {
 }
 
 func TestNew_DindImage_UsesConfigOverride(t *testing.T) {
+	withoutAmbientDockerTLS(t)
 	exec, err := New(Config{
 		Host:       "unix:///var/run/docker.sock",
 		Network:    "bridge",
