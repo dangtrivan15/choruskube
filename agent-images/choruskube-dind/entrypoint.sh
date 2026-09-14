@@ -56,10 +56,13 @@ forward_term() {
   exit 0
 }
 
-# Delegate to the base image's own entrypoint for TLS cert setup and dockerd flags, backgrounded
-# so this script can load the preload archive before taking over as the foreground process.
-# Forward "$@" so a caller's extra dockerd flags reach dockerd.
-dockerd-entrypoint.sh dockerd "$@" &
+# Delegate to the base image's own entrypoint (TLS cert generation + dockerd host defaults),
+# backgrounded so this script can load the preload before taking over the foreground.
+# Pass "$@" WITHOUT a literal `dockerd`: dockerd-entrypoint.sh runs its cert-gen and TLS setup
+# only when its first arg starts with `-` (or there are none), so a literal `dockerd` silently
+# skips TLS and the daemon comes up socket-only. Callers pass their dockerd flags directly (all
+# `-`-prefixed), which keeps that setup running.
+dockerd-entrypoint.sh "$@" &
 DOCKERD_PID=$!
 trap forward_term TERM INT
 
