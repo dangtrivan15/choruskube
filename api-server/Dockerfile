@@ -20,8 +20,16 @@ COPY gradlew ./
 COPY gradle gradle
 COPY settings.gradle.kts build.gradle ./
 
-# Resolve dependencies to warm the cache layer
-RUN ./gradlew dependencies --no-daemon
+# Resolve dependencies to warm the cache layer. Retried: the Gradle wrapper's own
+# distribution download has no retry of its own, so one dropped connection mid-fetch
+# fails the whole layer even though the same download would succeed a moment later.
+RUN i=1; \
+    until ./gradlew dependencies --no-daemon; do \
+      if [ "$i" -ge 3 ]; then exit 1; fi; \
+      echo "gradlew dependencies failed (attempt $i/3), retrying in 5s..." >&2; \
+      i=$((i + 1)); \
+      sleep 5; \
+    done
 
 # Stage 2: Build application (rebuilds on source change)
 FROM deps AS build
