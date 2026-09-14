@@ -95,14 +95,17 @@ jobs:
       # reporting green.
       #
       # It runs inside DEV_IMAGE rather than on the runner because the runner carries no
-      # toolchains; the image carries all of them, warmed. Three flags let the container drive
+      # toolchains; the image carries all of them, warmed. These flags let the container drive
       # the stack the way the bare runner did:
       #   --network host    the ARC runner and its dind sidecar share one pod network namespace,
-      #                     so the stack's published ports answer on localhost; a plain container
-      #                     gets its own namespace and can't reach them. A GitHub `container:` job
-      #                     can't do this (it forces its own --network), which is why this is a
-      #                     `docker run`.
-      #   docker.sock mount  compose talks to the same dind the runner uses.
+      #                     so both the stack's published ports and the dind's TLS endpoint answer
+      #                     on localhost; a plain container gets its own namespace and can't reach
+      #                     them. A GitHub `container:` job can't do this (it forces its own
+      #                     --network), which is why this is a `docker run`.
+      #   DOCKER_HOST=tcp + TLS  reach the dind over its TLS listener (:2376) with the certs it
+      #                     generated -- the same path the dogfood/production agents use, not the
+      #                     unix socket. DOCKER_CERT_PATH is bind-mounted from /certs/client, which
+      #                     Docker resolves on the daemon (the dind) where the certs live.
       #   workspace mount at the same path  dind resolves bind mounts on its own filesystem (the
       #                     shared _work volume), so mounting $GITHUB_WORKSPACE at its own path
       #                     makes the checkout visible.
@@ -135,7 +138,10 @@ jobs:
         run: |
           docker run --rm --network host --user 0 --entrypoint bash \
             -v "$GITHUB_WORKSPACE":"$GITHUB_WORKSPACE" -w "$GITHUB_WORKSPACE" \
-            -v /var/run/docker.sock:/var/run/docker.sock \
+            -e DOCKER_HOST=tcp://localhost:2376 \
+            -e DOCKER_TLS_VERIFY=1 \
+            -e DOCKER_CERT_PATH=/certs/client \
+            -v /certs/client:/certs/client \
             -e CI=true \
             -e GRADLE_USER_HOME=/home/agent/.gradle \
             -e E2E_DEV_BASE="$DEV_IMAGE" \
