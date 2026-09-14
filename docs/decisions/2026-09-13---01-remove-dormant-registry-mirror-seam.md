@@ -46,5 +46,15 @@ its warm-DinD decision is unchanged and stands.
   `docker-container` buildx builder trusting a cache registry over HTTP — is removed as well:
   after the injection above is gone nothing sets the variable and no build step consumes the
   builder (image builds use plain `docker build`), so it was dead code, not a live contract.
-- The dependency-proxy (`DEP_PROXY_BASE`) entrypoint contract is left in place, a distinct
-  package-manager-proxy concern honored only when that variable is set by other means.
+- The dependency-proxy (`DEP_PROXY_BASE`) entrypoint contract was initially left in place as a
+  distinct package-manager-proxy concern, but was subsequently removed too. Its history: it was the
+  package-manager arm of the 2026-07-15 three-environment dependency-caching feature (alongside
+  `REGISTRY_MIRROR_HOST` and `BUILD_CACHE_REGISTRY`), all backed by one in-cluster Nexus. It had a
+  real, deployed producer/consumer in CI — the runners injected `DEP_PROXY_BASE` (Nexus) and the
+  `unit-tests.yml`/`e2e.yml` "Apply dependency proxy" steps consumed it — from 2026-07 to 2026-09.
+  That wiring was dismantled in two cuts: the CI consumer step was dropped when `e2e.yml` moved
+  into the warm dev image (#96), and the producer was removed when the CI Nexus was retired with
+  the pull-through mirror (homelab #218). The one path that never got a producer was the agent-pod
+  entrypoint block (its executor-injection producer was never built). After both cuts, the entrypoint
+  Gradle-init/`normalize-lockfiles` block and `scripts/lib/dep-proxy.sh` were fully inert. Removed as
+  the last orphaned limb of a retired feature, not a live contract.

@@ -253,43 +253,6 @@ Factor the change into your remaining work."
 fi
 export SYSTEM_PROMPT
 
-# --- Dependency proxy (Gradle init script) ---
-# Must run AFTER the clone: the helper ships in the repo tree. Only Gradle needs
-# it; GOPROXY/npm_config_registry are injected as env by the executor. Sources the
-# first dep-proxy.sh match (single- or multi-repo); no-op if unset or absent.
-if [ -n "${DEP_PROXY_BASE:-}" ]; then
-  for _dp in /workspace/repo/scripts/lib/dep-proxy.sh /workspace/repo/*/scripts/lib/dep-proxy.sh; do
-    if [ -f "$_dp" ]; then
-      source "$_dp"
-      apply_dep_proxy "${GRADLE_USER_HOME:-$HOME/.gradle}"
-      break
-    fi
-  done
-
-  # npm bakes the registry it fetched from into package-lock.json "resolved" URLs,
-  # so a dependency the agent adds would commit the proxy host. This pre-commit hook
-  # normalizes staged lockfiles back to the public registry (see normalize-lockfiles).
-  # core.hooksPath is global to cover every clone; a repo's own husky hooksPath still wins.
-  HOOKS_DIR="$HOME/.choruskube-git-hooks"
-  mkdir -p "$HOOKS_DIR"
-  cat > "$HOOKS_DIR/pre-commit" <<'HOOK'
-#!/bin/bash
-set -euo pipefail
-# read loop, not mapfile (bash 4+): this hook can run on a stock macOS shell.
-LOCKS=()
-while IFS= read -r f; do
-  [ -n "$f" ] && LOCKS+=("$f")
-done < <(git diff --cached --name-only --diff-filter=ACM \
-  | grep -E '(^|/)package-lock\.json$' || true)
-[ "${#LOCKS[@]}" -gt 0 ] || exit 0
-normalize-lockfiles "${LOCKS[@]}"
-# Re-stage so the rewrite lands in this commit rather than the working tree.
-git add -- "${LOCKS[@]}"
-HOOK
-  chmod +x "$HOOKS_DIR/pre-commit"
-  git config --global core.hooksPath "$HOOKS_DIR"
-fi
-
 # --- Step 3b: Declare the workspace roots to Claude Code ---
 # Claude Code loads CLAUDE.md/.claude from the cwd plus each --add-dir; it does NOT
 # descend into subdirs on its own, so every repo must be named explicitly.
