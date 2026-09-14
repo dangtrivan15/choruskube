@@ -118,6 +118,7 @@ public class AutopilotRepositoryTest extends BaseTest {
                 "disengageIfEngagedWithReason",
                 new Statement(id -> repo.engage(id, now), id -> repo.disengageIfEngagedWithReason(id, "reason", now)));
         statements.put("setMaxParallel", new Statement(noSetup(), id -> repo.setMaxParallel(id, 3, now)));
+        statements.put("setMaxAwaitingHuman", new Statement(noSetup(), id -> repo.setMaxAwaitingHuman(id, 3, now)));
         statements.put("addFailures", new Statement(noSetup(), id -> repo.addFailures(id, 1, now)));
         statements.put("resetFailures", new Statement(noSetup(), id -> repo.resetFailures(id, now)));
         statements.put("stampTick", new Statement(noSetup(), id -> repo.stampTick(id, now)));
