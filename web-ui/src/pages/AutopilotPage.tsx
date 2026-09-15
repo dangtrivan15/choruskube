@@ -103,6 +103,30 @@ export default function AutopilotPage() {
     }
   }
 
+  // A second, independent ceiling — its own local echo, its own focus ref, and its own resync
+  // effect. Sharing maxParallel's ref would gate resync of BOTH fields on whichever one happens
+  // to be focused, so a human editing one field would freeze the other's live updates too.
+  const [maxAwaitingHumanInput, setMaxAwaitingHumanInput] = useState("0");
+  const maxAwaitingHumanFocused = useRef(false);
+
+  useEffect(() => {
+    if (status && !maxAwaitingHumanFocused.current) {
+      setMaxAwaitingHumanInput(String(status.maxAwaitingHuman ?? 0));
+    }
+  }, [status]);
+
+  function commitMaxAwaitingHuman() {
+    const parsed = Number.parseInt(maxAwaitingHumanInput, 10);
+    const current = status?.maxAwaitingHuman ?? 0;
+    if (!status || !Number.isInteger(parsed) || parsed < 0) {
+      setMaxAwaitingHumanInput(String(current));
+      return;
+    }
+    if (parsed !== current) {
+      updateMut.mutate({ maxAwaitingHuman: parsed });
+    }
+  }
+
   if (isLoading) {
     return (
       <PageShell>
@@ -121,6 +145,11 @@ export default function AutopilotPage() {
       </PageShell>
     );
   }
+
+  // Defaulted rather than assumed present: an older API pod during a rolling deploy omits both
+  // fields, and `AutopilotStatus` marks them optional for exactly that reason.
+  const awaitingHuman = status.awaitingHuman ?? 0;
+  const maxAwaitingHuman = status.maxAwaitingHuman ?? 0;
 
   return (
     <PageShell>
@@ -181,6 +210,32 @@ export default function AutopilotPage() {
               }}
             />
           </div>
+          <div className="flex flex-col gap-1">
+            <label htmlFor="autopilot-max-awaiting-human" className="text-xs text-muted-foreground">
+              Max awaiting human (0 = unlimited)
+            </label>
+            <Input
+              id="autopilot-max-awaiting-human"
+              data-testid="autopilot-max-awaiting-human"
+              type="number"
+              min={0}
+              className="w-24"
+              value={maxAwaitingHumanInput}
+              onChange={(e) => setMaxAwaitingHumanInput(e.target.value)}
+              onFocus={() => {
+                maxAwaitingHumanFocused.current = true;
+              }}
+              onBlur={() => {
+                maxAwaitingHumanFocused.current = false;
+                commitMaxAwaitingHuman();
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.currentTarget.blur();
+                }
+              }}
+            />
+          </div>
           <Button
             data-testid="autopilot-tick"
             variant="outline"
@@ -208,6 +263,13 @@ export default function AutopilotPage() {
             {status.consecutiveFailures > 0 && (
               <Badge variant="destructive">{status.consecutiveFailures} consecutive failure(s)</Badge>
             )}
+          </div>
+
+          <div data-testid="autopilot-awaiting-human" className="flex items-center gap-2 text-sm">
+            <span className="font-medium">{awaitingHuman}</span>
+            <span className="text-muted-foreground">
+              awaiting human {maxAwaitingHuman > 0 ? `of ${maxAwaitingHuman}` : "(no limit)"}
+            </span>
           </div>
 
           <section className="flex flex-col gap-1.5">

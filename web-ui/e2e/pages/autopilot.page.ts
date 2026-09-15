@@ -11,8 +11,11 @@ export class AutopilotPage {
 
   readonly toggle: Locator;
   readonly maxParallelInput: Locator;
+  readonly maxAwaitingHumanInput: Locator;
   readonly tickButton: Locator;
   readonly inFlight: Locator;
+  /** The awaiting-human occupancy/ceiling line beside `inFlight` — see `max_awaiting_human`. */
+  readonly awaitingHuman: Locator;
   readonly whyIdle: Locator;
   readonly disengagedBanner: Locator;
   /** Tasks left `in_progress` by a finished run — the Autopilot will not move these itself. */
@@ -23,8 +26,10 @@ export class AutopilotPage {
 
     this.toggle = page.getByTestId("autopilot-toggle");
     this.maxParallelInput = page.getByTestId("autopilot-max-parallel");
+    this.maxAwaitingHumanInput = page.getByTestId("autopilot-max-awaiting-human");
     this.tickButton = page.getByTestId("autopilot-tick");
     this.inFlight = page.getByTestId("autopilot-in-flight");
+    this.awaitingHuman = page.getByTestId("autopilot-awaiting-human");
     this.whyIdle = page.getByTestId("autopilot-why-idle");
     this.disengagedBanner = page.getByTestId("autopilot-disengaged-banner");
     this.heldTasks = page.getByTestId("autopilot-held-tasks");

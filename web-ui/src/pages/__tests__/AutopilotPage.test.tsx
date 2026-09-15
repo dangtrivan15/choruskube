@@ -42,8 +42,10 @@ function makeStatus(overrides: Partial<AutopilotStatus> = {}): AutopilotStatus {
   return {
     engaged: true,
     maxParallel: 2,
+    maxAwaitingHuman: 0,
     inFlight: 1,
     slots: 1,
+    awaitingHuman: 0,
     nextUp: [],
     whyIdle: [],
     awaitingYou: [],
@@ -287,6 +289,118 @@ describe("AutopilotPage", () => {
     await user.tab();
 
     expect(updateMutate).not.toHaveBeenCalled();
+  });
+
+  it("renders the max-awaiting-human input with a floor of 0", () => {
+    mockUseAutopilot.mockReturnValue({
+      data: makeStatus({ maxAwaitingHuman: 4 }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderWithProviders(<AutopilotPage />);
+
+    const input = screen.getByTestId("autopilot-max-awaiting-human");
+    expect(input).toHaveAttribute("min", "0");
+    expect(input).toHaveValue(4);
+  });
+
+  it("commits a new maxAwaitingHuman value on blur", async () => {
+    const user = userEvent.setup();
+    mockUseAutopilot.mockReturnValue({
+      data: makeStatus({ maxAwaitingHuman: 2 }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderWithProviders(<AutopilotPage />);
+
+    const input = screen.getByTestId("autopilot-max-awaiting-human");
+    await user.clear(input);
+    await user.type(input, "5");
+    await user.tab();
+
+    expect(updateMutate).toHaveBeenCalledWith({ maxAwaitingHuman: 5 });
+  });
+
+  it("commits a new maxAwaitingHuman value on Enter", async () => {
+    const user = userEvent.setup();
+    mockUseAutopilot.mockReturnValue({
+      data: makeStatus({ maxAwaitingHuman: 2 }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderWithProviders(<AutopilotPage />);
+
+    const input = screen.getByTestId("autopilot-max-awaiting-human");
+    await user.clear(input);
+    await user.type(input, "5");
+    await user.keyboard("{Enter}");
+
+    expect(updateMutate).toHaveBeenCalledWith({ maxAwaitingHuman: 5 });
+  });
+
+  it("does not commit maxAwaitingHuman when the value is unchanged", async () => {
+    const user = userEvent.setup();
+    mockUseAutopilot.mockReturnValue({
+      data: makeStatus({ maxAwaitingHuman: 2 }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderWithProviders(<AutopilotPage />);
+
+    const input = screen.getByTestId("autopilot-max-awaiting-human");
+    await user.click(input);
+    await user.tab();
+
+    expect(updateMutate).not.toHaveBeenCalled();
+  });
+
+  it("reverts maxAwaitingHuman on an invalid entry", async () => {
+    const user = userEvent.setup();
+    mockUseAutopilot.mockReturnValue({
+      data: makeStatus({ maxAwaitingHuman: 3 }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderWithProviders(<AutopilotPage />);
+
+    const input = screen.getByTestId("autopilot-max-awaiting-human");
+    await user.clear(input);
+    await user.type(input, "-1");
+    await user.tab();
+
+    expect(updateMutate).not.toHaveBeenCalled();
+    expect(input).toHaveValue(3);
+  });
+
+  it("shows the awaiting-human count and limit", () => {
+    mockUseAutopilot.mockReturnValue({
+      data: makeStatus({ awaitingHuman: 2, maxAwaitingHuman: 5 }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderWithProviders(<AutopilotPage />);
+
+    const line = screen.getByTestId("autopilot-awaiting-human");
+    expect(line).toHaveTextContent("2");
+    expect(line).toHaveTextContent("of 5");
+  });
+
+  it("shows no limit when maxAwaitingHuman is 0", () => {
+    mockUseAutopilot.mockReturnValue({
+      data: makeStatus({ awaitingHuman: 0, maxAwaitingHuman: 0 }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderWithProviders(<AutopilotPage />);
+
+    expect(screen.getByTestId("autopilot-awaiting-human")).toHaveTextContent("no limit");
   });
 
   it("runs a manual tick when the tick button is clicked", async () => {

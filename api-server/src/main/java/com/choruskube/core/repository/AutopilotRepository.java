@@ -57,6 +57,10 @@ public interface AutopilotRepository extends Repository<Autopilot, UUID> {
     @Query("SELECT a.maxParallel FROM Autopilot a WHERE a.id = :id")
     Optional<Integer> findMaxParallelById(@Param("id") UUID id);
 
+    /** The awaiting-human ceiling alone, for the start loop's per-item stop-check. */
+    @Query("SELECT a.maxAwaitingHuman FROM Autopilot a WHERE a.id = :id")
+    Optional<Integer> findMaxAwaitingHumanById(@Param("id") UUID id);
+
     /**
      * The counter after someone else's increment as well as our own. A scalar projection rather
      * than {@code findById}, so the answer can never be served from the persistence context.
@@ -130,6 +134,12 @@ public interface AutopilotRepository extends Repository<Autopilot, UUID> {
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("UPDATE Autopilot a SET a.maxParallel = :maxParallel, a.updatedAt = :now WHERE a.id = :id")
     int setMaxParallel(@Param("id") UUID id, @Param("maxParallel") int maxParallel, @Param("now") Instant now);
+
+    @Transactional
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("UPDATE Autopilot a SET a.maxAwaitingHuman = :maxAwaitingHuman, a.updatedAt = :now WHERE a.id = :id")
+    int setMaxAwaitingHuman(
+            @Param("id") UUID id, @Param("maxAwaitingHuman") int maxAwaitingHuman, @Param("now") Instant now);
 
     /**
      * Adds to the failure counter <strong>in the database</strong>.

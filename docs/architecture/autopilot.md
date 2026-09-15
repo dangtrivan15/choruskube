@@ -35,10 +35,12 @@ Two consequences of that framing shape everything below:
 | [`V15__autopilot_settled.sql`](../../api-server/src/main/resources/db/migration/V15__autopilot_settled.sql) | `workflow_run.autopilot_settled_at` + partial index on unsettled rows |
 | [`V16__autopilot_tick_lease.sql`](../../api-server/src/main/resources/db/migration/V16__autopilot_tick_lease.sql) | `autopilot.tick_owner`, `autopilot.tick_lease_until` |
 | [`V19__run_pull_request_quarantine.sql`](../../api-server/src/main/resources/db/migration/V19__run_pull_request_quarantine.sql) | `run_pull_request.unreadable_since`, `run_pull_request.unreadable_reason` + partial index — see [the safety valve](#the-safety-valve--a-separate-stop) |
+| [`V27__autopilot_max_awaiting_human.sql`](../../api-server/src/main/resources/db/migration/V27__autopilot_max_awaiting_human.sql) | `autopilot.max_awaiting_human` |
 
 `autopilot` columns: `id`, `engaged` (default `false`), `max_parallel` (default `1`,
-`CHECK (max_parallel >= 1)`), `consecutive_failures` (default `0`), `disengaged_reason`,
-`last_tick_at`, `tick_owner`, `tick_lease_until`, `created_at`, `updated_at`.
+`CHECK (max_parallel >= 1)`), `max_awaiting_human` (default `0`, `CHECK (max_awaiting_human >= 0)` —
+`0` means unlimited), `consecutive_failures` (default `0`), `disengaged_reason`, `last_tick_at`,
+`tick_owner`, `tick_lease_until`, `created_at`, `updated_at`.
 
 Two schema decisions carry weight:
 
@@ -195,6 +197,34 @@ decisions, which is worse. Phase 2's `slots` is spent downward only, so **loweri
 `maxParallel` mid-pass takes effect immediately while **raising** it does nothing until
 the next tick — acting on a ceiling that is too low costs one scheduler interval, acting
 on one that is too high costs agent containers nobody authorised.
+
+### `maxAwaitingHuman` is a second, independent ceiling — a throttle, never a disengage
+
+`max_awaiting_human` caps how many runs may sit parked on a human (`awaiting_human` +
+`paused` — the same bucket `AutopilotService.AWAITING_HUMAN` derives from `classify`,
+never a separately maintained status list) before phase 3 stops launching more work for
+that pass. `0` is the unlimited sentinel, matching every pre-existing row and the
+id-only `insertDefaults` seed.
+
+It reuses the parameterized `AutopilotSlotCounter` seam rather than adding a second
+counting method: the per-item check in `start()` is
+`slotCounter.occupiedSlots(autopilotId, AWAITING_HUMAN) >= maxAwaitingHuman`, called
+right after the existing `max_parallel` check and in the same per-item, re-read style —
+so a human raising the ceiling mid-pass is not obeyed until the ceiling is re-read on the
+next item, exactly like `max_parallel`. The status panel's `awaitingHuman` field goes
+through the identical seam call (scope-wide occupancy), **not** `awaitingYou.size()` —
+`awaitingYou` is attribution-scoped to this Autopilot's own runs, while `awaitingHuman`
+must be occupancy-scoped like `inFlight`, for the same reason
+[`2026-09-06---03-autopilot-parallelism-counts-scope-not-attribution.md`](../decisions/2026-09-06---03-autopilot-parallelism-counts-scope-not-attribution.md)
+gives for `inFlight` — a multi-tenant overlay's org-scoped counter must see a member's
+manually parked run too.
+
+Reaching this ceiling **only ever stops the start loop from launching more this pass**.
+It does not touch `consecutive_failures` and does not call any `disengage*` statement —
+a backlog of runs waiting on a human is not a platform fault, and conflating the two
+would let normal review latency spend the Autopilot's three-strikes failure budget for no
+reason. See
+[`2026-09-14---01-max-awaiting-human-throttle.md`](../decisions/2026-09-14---01-max-awaiting-human-throttle.md).
 
 ### `ReadinessAuthMode`
 
@@ -544,16 +574,18 @@ not satisfy the security-annotation completeness test).
 | Verb | Path | Guard | Notes |
 |---|---|---|---|
 | `GET` | `/api/v1/autopilot` | `@orgSecurity.canRead()` | never inserts; a disengaged Autopilot gets no `nextUp` at all, since an ordered list for something that will start nothing is a fiction |
-| `PATCH` | `/api/v1/autopilot` | `@orgSecurity.canOperate()` | `maxParallel`; null leaves it unchanged |
+| `PATCH` | `/api/v1/autopilot` | `@orgSecurity.canOperate()` | `maxParallel`, `maxAwaitingHuman`; either null leaves that ceiling unchanged, independently of the other |
 | `POST` | `/api/v1/autopilot/engage` | `canOperate()` | also clears `consecutive_failures` and `disengaged_reason` |
 | `POST` | `/api/v1/autopilot/disengage` | `canOperate()` | never touches in-flight runs; clears `disengaged_reason`, because a human switching it off is not a fault and the UI renders that field as a fault banner |
 | `POST` | `/api/v1/autopilot/tick` | `canOperate()` | runs one tick synchronously — the hook that makes the e2e suite deterministic instead of timing-dependent |
 
-All five return `AutopilotStatusResponse` (`engaged`, `maxParallel`, `inFlight`, `slots`,
-`nextUp`, `whyIdle`, `awaitingYou`, `needsAttention`, `consecutiveFailures`,
-`disengagedReason`, `lastTickAt`), with `AutopilotTaskRef(taskId, title, runId, status)`
-in the three lists. `runId` is null in `nextUp`, and `status` follows it: the Task's own
-status where there is no run, the run's status where there is.
+All five return `AutopilotStatusResponse` (`engaged`, `maxParallel`, `maxAwaitingHuman`,
+`inFlight`, `slots`, `awaitingHuman`, `nextUp`, `whyIdle`, `awaitingYou`, `needsAttention`,
+`consecutiveFailures`, `disengagedReason`, `lastTickAt`), with `AutopilotTaskRef(taskId,
+title, runId, status)` in the three lists. `runId` is null in `nextUp`, and `status`
+follows it: the Task's own status where there is no run, the run's status where there is.
+`awaitingHuman` is scope-wide occupancy of the `maxAwaitingHuman` ceiling through
+`AutopilotSlotCounter`, not the size of the (attribution-scoped) `awaitingYou` list.
 
 `whyIdle` is the trust-critical field. An unattended dispatcher that has stopped for a
 structural reason — at capacity, nothing ready, an Epic with no Tasks blocking everything
