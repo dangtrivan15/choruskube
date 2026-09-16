@@ -357,55 +357,12 @@ describe("RoadmapGraphDetailPanel", () => {
     expect(screen.getAllByTestId("roadmap-external-blocker-badge")).toHaveLength(2);
   });
 
-  it("renders a 'Blocked by' section for an Epic node — an Epic can be blocked too", () => {
+  it("does not render a within-Epic 'Blocked by' section for an Epic node", () => {
+    // Every same-Epic item is a descendant of the Epic, so a within-Epic blocker
+    // of the Epic would be a self-cycle the backend rejects; an Epic is blocked
+    // only cross-Epic (CrossEpicBlockerPicker), never here.
     renderPanel({ detail: { itemType: "epic", item: epic } });
-    expect(screen.getByTestId("roadmap-blocking-dependencies")).toBeInTheDocument();
-  });
-
-  it("lists an existing blocking dependency whose blocked item is the Epic node", () => {
-    renderPanel({
-      detail: { itemType: "epic", item: epic },
-      dependencies: [
-        {
-          id: "dep-epic",
-          blockingItemType: "story",
-          blockingItemId: story.id,
-          blockedItemType: "epic",
-          blockedItemId: epic.id,
-          createdAt: "2026-04-01T00:00:00Z",
-        },
-      ],
-    });
-
-    expect(screen.getByTestId("roadmap-blocking-dependency-badge")).toHaveTextContent(
-      "Dark theme toggle",
-    );
-  });
-
-  it("creates a blocking dependency for an Epic node via the picker (Story blocks Epic)", async () => {
-    mockApi.post.mockResolvedValue({
-      id: "dep-new",
-      blockingItemType: "story",
-      blockingItemId: story.id,
-      blockedItemType: "epic",
-      blockedItemId: epic.id,
-      createdAt: "2026-04-01T00:00:00Z",
-    });
-    renderPanel({ detail: { itemType: "epic", item: epic } });
-
-    const user = userEvent.setup();
-    await user.click(screen.getByTestId("roadmap-add-blocker-select"));
-    await user.click(await screen.findByText("Dark theme toggle (story)"));
-    await user.click(screen.getByTestId("roadmap-add-blocker-submit"));
-
-    await waitFor(() =>
-      expect(mockApi.post).toHaveBeenCalledWith("/dependencies", {
-        blockingItemType: "story",
-        blockingItemId: story.id,
-        blockedItemType: "epic",
-        blockedItemId: epic.id,
-      }),
-    );
+    expect(screen.queryByTestId("roadmap-blocking-dependencies")).not.toBeInTheDocument();
   });
 
   it("lists an existing blocking dependency for a Task node", () => {
@@ -482,8 +439,13 @@ describe("RoadmapGraphDetailPanel", () => {
     );
   });
 
-  it("renders the cross-Epic blocker picker for a node", () => {
+  it("renders the cross-Epic blocker picker for a Story/Task node", () => {
     renderPanel({ detail: { itemType: "task", item: task } });
+    expect(screen.getByTestId("roadmap-cross-epic-picker")).toBeInTheDocument();
+  });
+
+  it("renders the cross-Epic blocker picker for an Epic node — an Epic is blocked only cross-Epic", () => {
+    renderPanel({ detail: { itemType: "epic", item: epic } });
     expect(screen.getByTestId("roadmap-cross-epic-picker")).toBeInTheDocument();
   });
 

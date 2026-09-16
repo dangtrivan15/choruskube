@@ -113,39 +113,6 @@ test.describe("Roadmap Graph View", () => {
     }
   });
 
-  test("adds a blocking dependency onto an Epic node itself", async ({
-    roadmapGraphPage,
-    api,
-    workerRepo,
-  }) => {
-    const epic = await api.createEpic({
-      title: uniqueName("E2E Epic Blocker Epic"),
-      description: "desc",
-      softwareProjectId: workerRepo.gitRepo.id,
-    });
-    const story = await api.createStory(epic.id, { title: "Epic Blocker Story", description: "desc" });
-    const blockingTask = await api.createTask(story.id, {
-      title: uniqueName("Epic Blocking Task"),
-      description: "desc",
-    });
-
-    try {
-      await roadmapGraphPage.goto(epic.id);
-      // Select the Epic node itself and block it by one of its own Tasks — the
-      // detail panel now offers the "Blocked by" picker for an Epic node, not
-      // just Story/Task nodes.
-      await roadmapGraphPage.selectNode(epic.title);
-      await roadmapGraphPage.addBlocker(blockingTask.title);
-
-      await expect(roadmapGraphPage.blockingDependencies).toBeVisible();
-      await expect(roadmapGraphPage.blockingDependencyBadges).toContainText(blockingTask.title);
-      // The Epic-tier edge renders as its own React Flow dependency edge.
-      await expect(roadmapGraphPage.page.locator('.react-flow__edge[data-id^="dep:"]')).toHaveCount(1);
-    } finally {
-      await api.deleteEpic(epic.id);
-    }
-  });
-
   test("adds a cross-Epic blocker via the picker and draws an external node", async ({
     roadmapGraphPage,
     api,

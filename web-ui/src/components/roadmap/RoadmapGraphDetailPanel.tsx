@@ -144,10 +144,12 @@ function ExternalBlockersSection({ blockers }: { blockers: ExternalBlockerRef[] 
 }
 
 /**
- * "Blocked by" management for any node (Epic/Story/Task) — lists existing
- * blocking edges (with a remove action) and a picker + button to add one.
- * `blockableItems` includes the Epic itself, so the `i.id !== itemId` filter
- * below is what stops a node being offered as a blocker of itself.
+ * "Blocked by" management for a Story/Task node — lists existing blocking
+ * edges (with a remove action) and a picker to add one. Not rendered for an
+ * Epic node: every same-Epic item is a descendant of the Epic, and blocking a
+ * container propagates the block to its descendants, so any within-Epic blocker
+ * of the Epic is a self-cycle the backend rejects. An Epic is blocked only by
+ * items in other Epics, offered separately via CrossEpicBlockerPicker.
  */
 function BlockingDependenciesSection({
   itemType,
@@ -340,17 +342,19 @@ export default function RoadmapGraphDetailPanel({
         </div>
       )}
 
-      <BlockingDependenciesSection
-        // Remount on item change so the uncommitted picker selection
-        // (selectedBlockerId) can't leak from one node to the next — see
-        // the regression test for the bug this prevents.
-        key={item.id}
-        itemType={itemType}
-        itemId={item.id}
-        epicId={epicId}
-        dependencies={dependencies}
-        blockableItems={blockableItems}
-      />
+      {itemType !== "epic" && (
+        <BlockingDependenciesSection
+          // Remount on item change so the uncommitted picker selection
+          // (selectedBlockerId) can't leak from one node to the next — see
+          // the regression test for the bug this prevents.
+          key={item.id}
+          itemType={itemType}
+          itemId={item.id}
+          epicId={epicId}
+          dependencies={dependencies}
+          blockableItems={blockableItems}
+        />
+      )}
 
       <CrossEpicBlockerPicker
         // Remount on item change so a half-made cross-Epic selection can't leak
