@@ -13,7 +13,7 @@ import ArtifactBrowser from "./ArtifactBrowser";
 import ArtifactList from "./ArtifactList";
 import PredecessorOutputDialog from "./PredecessorOutputDialog";
 import DecisionButtons, { LEGACY_DECISION_OPTIONS } from "./DecisionButtons";
-import RoadmapCandidateBreakdown from "./RoadmapCandidateBreakdown";
+import RoadmapCandidateReview from "./RoadmapCandidateReview";
 import EscalationGatePanel from "./EscalationGatePanel";
 import TriggerBanner from "./TriggerBanner";
 import { parseGateTrigger, isEscalationGate } from "@/lib/decisions";
@@ -239,7 +239,7 @@ export default function HumanGatePanel({
           {/* Roadmap candidate breakdown (editable), when the analyzer produced one */}
           {candidateBreakdown != null && (
             <>
-              <RoadmapCandidateBreakdown value={editedCandidates} onChange={setEditedCandidates} />
+              <RoadmapCandidateReview value={editedCandidates} onChange={setEditedCandidates} />
               <Separator />
             </>
           )}
