@@ -113,6 +113,74 @@ test.describe("Roadmap Graph View", () => {
     }
   });
 
+  test("adds a blocking dependency onto an Epic node itself", async ({
+    roadmapGraphPage,
+    api,
+    workerRepo,
+  }) => {
+    const epic = await api.createEpic({
+      title: uniqueName("E2E Epic Blocker Epic"),
+      description: "desc",
+      softwareProjectId: workerRepo.gitRepo.id,
+    });
+    const story = await api.createStory(epic.id, { title: "Epic Blocker Story", description: "desc" });
+    const blockingTask = await api.createTask(story.id, {
+      title: uniqueName("Epic Blocking Task"),
+      description: "desc",
+    });
+
+    try {
+      await roadmapGraphPage.goto(epic.id);
+      // Select the Epic node itself and block it by one of its own Tasks — the
+      // detail panel now offers the "Blocked by" picker for an Epic node, not
+      // just Story/Task nodes.
+      await roadmapGraphPage.selectNode(epic.title);
+      await roadmapGraphPage.addBlocker(blockingTask.title);
+
+      await expect(roadmapGraphPage.blockingDependencies).toBeVisible();
+      await expect(roadmapGraphPage.blockingDependencyBadges).toContainText(blockingTask.title);
+      // The Epic-tier edge renders as its own React Flow dependency edge.
+      await expect(roadmapGraphPage.page.locator('.react-flow__edge[data-id^="dep:"]')).toHaveCount(1);
+    } finally {
+      await api.deleteEpic(epic.id);
+    }
+  });
+
+  test("adds a cross-Epic blocker via the picker and draws an external node", async ({
+    roadmapGraphPage,
+    api,
+    workerRepo,
+  }) => {
+    const epicA = await api.createEpic({
+      title: uniqueName("E2E Cross A"),
+      description: "desc",
+      softwareProjectId: workerRepo.gitRepo.id,
+    });
+    const storyA = await api.createStory(epicA.id, { title: "Cross Story A", description: "desc" });
+    const taskA = await api.createTask(storyA.id, { title: uniqueName("Cross Task A"), description: "desc" });
+
+    const epicB = await api.createEpic({
+      title: uniqueName("E2E Cross B"),
+      description: "desc",
+      softwareProjectId: workerRepo.gitRepo.id,
+    });
+    const storyB = await api.createStory(epicB.id, { title: "Cross Story B", description: "desc" });
+    const taskB = await api.createTask(storyB.id, { title: uniqueName("Cross Task B"), description: "desc" });
+
+    try {
+      await roadmapGraphPage.goto(epicA.id);
+      await roadmapGraphPage.selectNode(taskA.title);
+      // Pick a blocker that lives in Epic B — the created edge crosses Epics, so
+      // Epic A's graph gains an external "ghost" node for Epic B's Task.
+      await roadmapGraphPage.addCrossEpicBlocker(epicB.title, taskB.title);
+
+      await expect(roadmapGraphPage.externalNodeByLabel(taskB.title)).toBeVisible();
+    } finally {
+      await api.deleteEpic(epicA.id);
+      await api.deleteEpic(epicB.id);
+    }
+  });
+
   test("reflects a dependency created out-of-band without a manual refresh", async ({
     roadmapGraphPage,
     api,

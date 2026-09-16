@@ -13,6 +13,7 @@ import {
 import MarkdownViewer from "@/components/ui/MarkdownViewer";
 import TaskRunHistoryList from "@/components/roadmap/TaskRunHistoryList";
 import BlockingChainSection from "@/components/roadmap/BlockingChainSection";
+import CrossEpicBlockerPicker from "@/components/roadmap/CrossEpicBlockerPicker";
 import ReadinessBadge from "@/components/roadmap/ReadinessBadge";
 import StageBadge from "@/components/roadmap/StageBadge";
 import PriorityBadge from "@/components/roadmap/PriorityBadge";
@@ -143,12 +144,10 @@ function ExternalBlockersSection({ blockers }: { blockers: ExternalBlockerRef[] 
 }
 
 /**
- * "Blocked by" management for a Story/Task node — lists existing blocking
- * edges (with a remove action) and a picker + button to add a new one. Only
- * rendered for a Story/Task node (never an Epic node): this section manages
- * the *selected item's own* blockers, and an Epic node has no such list of
- * its own to manage here — but the Epic itself is still offered as a pickable
- * blocker for a Story/Task (Epic-tier dependencies), via `blockableItems`.
+ * "Blocked by" management for any node (Epic/Story/Task) — lists existing
+ * blocking edges (with a remove action) and a picker + button to add one.
+ * `blockableItems` includes the Epic itself, so the `i.id !== itemId` filter
+ * below is what stops a node being offered as a blocker of itself.
  */
 function BlockingDependenciesSection({
   itemType,
@@ -341,19 +340,26 @@ export default function RoadmapGraphDetailPanel({
         </div>
       )}
 
-      {itemType !== "epic" && (
-        <BlockingDependenciesSection
-          // Remount on item change so the uncommitted picker selection
-          // (selectedBlockerId) can't leak from one node to the next — see
-          // the regression test for the bug this prevents.
-          key={item.id}
-          itemType={itemType}
-          itemId={item.id}
-          epicId={epicId}
-          dependencies={dependencies}
-          blockableItems={blockableItems}
-        />
-      )}
+      <BlockingDependenciesSection
+        // Remount on item change so the uncommitted picker selection
+        // (selectedBlockerId) can't leak from one node to the next — see
+        // the regression test for the bug this prevents.
+        key={item.id}
+        itemType={itemType}
+        itemId={item.id}
+        epicId={epicId}
+        dependencies={dependencies}
+        blockableItems={blockableItems}
+      />
+
+      <CrossEpicBlockerPicker
+        // Remount on item change so a half-made cross-Epic selection can't leak
+        // across nodes, the same reason BlockingDependenciesSection is keyed.
+        key={`cross-${item.id}`}
+        blockedItemType={itemType}
+        blockedItemId={item.id}
+        currentEpicId={epicId}
+      />
 
       <ExternalBlockersSection
         blockers={

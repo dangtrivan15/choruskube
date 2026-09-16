@@ -210,7 +210,13 @@ describe("RoadmapGraphDetailPanel", () => {
     renderPanel({ detail: { itemType: "task", item: taskWithRuns } });
 
     expect(await screen.findByTestId("task-run-history-item")).toBeInTheDocument();
-    expect(mockApi.getPage).not.toHaveBeenCalled();
+    // Embedded recentRuns render directly — no follow-up runs fetch. Asserted on
+    // the runs URL specifically because the cross-Epic blocker picker legitimately
+    // fetches Epics through getPage.
+    expect(mockApi.getPage).not.toHaveBeenCalledWith(
+      expect.stringContaining("runs"),
+      expect.anything(),
+    );
   });
 
   it("shows the truncated-history count when totalRunCount exceeds the embedded recentRuns", () => {
@@ -351,9 +357,55 @@ describe("RoadmapGraphDetailPanel", () => {
     expect(screen.getAllByTestId("roadmap-external-blocker-badge")).toHaveLength(2);
   });
 
-  it("does not render a 'Blocked by' section for an Epic node", () => {
+  it("renders a 'Blocked by' section for an Epic node — an Epic can be blocked too", () => {
     renderPanel({ detail: { itemType: "epic", item: epic } });
-    expect(screen.queryByTestId("roadmap-blocking-dependencies")).not.toBeInTheDocument();
+    expect(screen.getByTestId("roadmap-blocking-dependencies")).toBeInTheDocument();
+  });
+
+  it("lists an existing blocking dependency whose blocked item is the Epic node", () => {
+    renderPanel({
+      detail: { itemType: "epic", item: epic },
+      dependencies: [
+        {
+          id: "dep-epic",
+          blockingItemType: "story",
+          blockingItemId: story.id,
+          blockedItemType: "epic",
+          blockedItemId: epic.id,
+          createdAt: "2026-04-01T00:00:00Z",
+        },
+      ],
+    });
+
+    expect(screen.getByTestId("roadmap-blocking-dependency-badge")).toHaveTextContent(
+      "Dark theme toggle",
+    );
+  });
+
+  it("creates a blocking dependency for an Epic node via the picker (Story blocks Epic)", async () => {
+    mockApi.post.mockResolvedValue({
+      id: "dep-new",
+      blockingItemType: "story",
+      blockingItemId: story.id,
+      blockedItemType: "epic",
+      blockedItemId: epic.id,
+      createdAt: "2026-04-01T00:00:00Z",
+    });
+    renderPanel({ detail: { itemType: "epic", item: epic } });
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("roadmap-add-blocker-select"));
+    await user.click(await screen.findByText("Dark theme toggle (story)"));
+    await user.click(screen.getByTestId("roadmap-add-blocker-submit"));
+
+    await waitFor(() =>
+      expect(mockApi.post).toHaveBeenCalledWith("/dependencies", {
+        blockingItemType: "story",
+        blockingItemId: story.id,
+        blockedItemType: "epic",
+        blockedItemId: epic.id,
+      }),
+    );
   });
 
   it("lists an existing blocking dependency for a Task node", () => {
@@ -428,6 +480,11 @@ describe("RoadmapGraphDetailPanel", () => {
         blockedItemId: task.id,
       }),
     );
+  });
+
+  it("renders the cross-Epic blocker picker for a node", () => {
+    renderPanel({ detail: { itemType: "task", item: task } });
+    expect(screen.getByTestId("roadmap-cross-epic-picker")).toBeInTheDocument();
   });
 
   it("excludes an item already listed as a blocker from the add-blocker picker", async () => {
