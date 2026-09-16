@@ -192,4 +192,28 @@ test.describe("Roadmap Provisioner candidate gate", () => {
     const beforeIds = new Set(beforeReject.map((e) => e.id));
     expect(afterReject.every((e) => beforeIds.has(e.id))).toBe(true);
   });
+
+  test("the candidate breakdown can be viewed as a dependency graph", async ({ page, api }) => {
+    const template = await api.getTemplateByName("e2e-roadmap-candidate-gate");
+    const runName = uniqueName("cg-graph");
+    const run = await api.startRun({ graphTemplateId: template.id, name: runName });
+
+    await api.waitForNodeStatus(run.id, "review_candidates", ["awaiting_human"], 60_000);
+
+    const gatePage = new RoadmapCandidateGatePage(page);
+    await gatePage.goto();
+    const card = await gatePage.waitForGateCard(runName);
+    await expect(gatePage.breakdown(card)).toBeVisible();
+
+    // Switch the reviewer's view from cards to graph — the same proposal renders
+    // as an Epic/Story/Task graph with its dependency edges, no page reload.
+    await gatePage.viewAsGraph(card);
+    const graph = gatePage.graph(card);
+    await expect(graph).toHaveAttribute("data-elk-ready", "true", { timeout: 15_000 });
+    await expect(graph.getByTestId("roadmap-graph-node").first()).toBeVisible();
+
+    // The editable card breakdown is still one click away.
+    await gatePage.viewAsCards(card);
+    await expect(gatePage.breakdown(card)).toBeVisible();
+  });
 });

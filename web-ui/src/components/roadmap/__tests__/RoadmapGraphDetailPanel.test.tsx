@@ -210,7 +210,13 @@ describe("RoadmapGraphDetailPanel", () => {
     renderPanel({ detail: { itemType: "task", item: taskWithRuns } });
 
     expect(await screen.findByTestId("task-run-history-item")).toBeInTheDocument();
-    expect(mockApi.getPage).not.toHaveBeenCalled();
+    // Embedded recentRuns render directly — no follow-up runs fetch. Asserted on
+    // the runs URL specifically because the cross-Epic blocker picker legitimately
+    // fetches Epics through getPage.
+    expect(mockApi.getPage).not.toHaveBeenCalledWith(
+      expect.stringContaining("runs"),
+      expect.anything(),
+    );
   });
 
   it("shows the truncated-history count when totalRunCount exceeds the embedded recentRuns", () => {
@@ -351,7 +357,10 @@ describe("RoadmapGraphDetailPanel", () => {
     expect(screen.getAllByTestId("roadmap-external-blocker-badge")).toHaveLength(2);
   });
 
-  it("does not render a 'Blocked by' section for an Epic node", () => {
+  it("does not render a within-Epic 'Blocked by' section for an Epic node", () => {
+    // Every same-Epic item is a descendant of the Epic, so a within-Epic blocker
+    // of the Epic would be a self-cycle the backend rejects; an Epic is blocked
+    // only cross-Epic (CrossEpicBlockerPicker), never here.
     renderPanel({ detail: { itemType: "epic", item: epic } });
     expect(screen.queryByTestId("roadmap-blocking-dependencies")).not.toBeInTheDocument();
   });
@@ -428,6 +437,16 @@ describe("RoadmapGraphDetailPanel", () => {
         blockedItemId: task.id,
       }),
     );
+  });
+
+  it("renders the cross-Epic blocker picker for a Story/Task node", () => {
+    renderPanel({ detail: { itemType: "task", item: task } });
+    expect(screen.getByTestId("roadmap-cross-epic-picker")).toBeInTheDocument();
+  });
+
+  it("renders the cross-Epic blocker picker for an Epic node — an Epic is blocked only cross-Epic", () => {
+    renderPanel({ detail: { itemType: "epic", item: epic } });
+    expect(screen.getByTestId("roadmap-cross-epic-picker")).toBeInTheDocument();
   });
 
   it("excludes an item already listed as a blocker from the add-blocker picker", async () => {

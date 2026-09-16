@@ -52,6 +52,19 @@ export class RoadmapCandidateGatePage {
     return card.getByTestId("roadmap-candidate-breakdown");
   }
 
+  /** The proposal graph (RoadmapCandidateGraph), shown after switching to the Graph view. */
+  graph(card: Locator): Locator {
+    return card.getByTestId("roadmap-candidate-graph");
+  }
+
+  async viewAsGraph(card: Locator) {
+    await card.getByTestId("candidate-view-graph").click();
+  }
+
+  async viewAsCards(card: Locator) {
+    await card.getByTestId("candidate-view-cards").click();
+  }
+
   epicTitleInput(card: Locator, epicIdx = 0): Locator {
     return card.getByTestId(`candidate-epic-title-${epicIdx}`);
   }

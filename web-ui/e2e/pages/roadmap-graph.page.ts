@@ -32,6 +32,10 @@ export class RoadmapGraphPage {
   readonly addBlockerSelect: Locator;
   readonly addBlockerSubmit: Locator;
 
+  readonly crossEpicTargetSelect: Locator;
+  readonly crossEpicItemSelect: Locator;
+  readonly crossEpicSubmit: Locator;
+
   readonly externalBlockers: Locator;
   readonly externalBlockerBadges: Locator;
 
@@ -66,6 +70,10 @@ export class RoadmapGraphPage {
     this.blockingDependencyRemoveButtons = page.getByTestId("roadmap-blocking-dependency-remove");
     this.addBlockerSelect = page.getByTestId("roadmap-add-blocker-select");
     this.addBlockerSubmit = page.getByTestId("roadmap-add-blocker-submit");
+
+    this.crossEpicTargetSelect = page.getByTestId("roadmap-cross-epic-target-select");
+    this.crossEpicItemSelect = page.getByTestId("roadmap-cross-epic-item-select");
+    this.crossEpicSubmit = page.getByTestId("roadmap-cross-epic-submit");
 
     this.externalBlockers = page.getByTestId("roadmap-external-blockers");
     this.externalBlockerBadges = page.getByTestId("roadmap-external-blocker-badge");
@@ -131,5 +139,19 @@ export class RoadmapGraphPage {
     await this.addBlockerSelect.click();
     await this.page.getByRole("option", { name: blockerItemTitle }).click();
     await this.addBlockerSubmit.click();
+  }
+
+  /**
+   * Adds a blocker from a *different* Epic via the detail panel's cross-Epic
+   * picker (CrossEpicBlockerPicker): pick the target Epic, then one of its items.
+   * The option label carries the item's `(type)` suffix, but the accessible-name
+   * match is a substring, so passing the bare title still resolves it.
+   */
+  async addCrossEpicBlocker(targetEpicTitle: string, blockerItemTitle: string) {
+    await this.crossEpicTargetSelect.click();
+    await this.page.getByRole("option", { name: targetEpicTitle }).click();
+    await this.crossEpicItemSelect.click();
+    await this.page.getByRole("option", { name: blockerItemTitle }).click();
+    await this.crossEpicSubmit.click();
   }
 }

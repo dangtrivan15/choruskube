@@ -28,7 +28,7 @@ import PredecessorOutputDialog from "@/components/runs/PredecessorOutputDialog";
 import ArtifactBrowser from "@/components/runs/ArtifactBrowser";
 import ArtifactList from "@/components/runs/ArtifactList";
 import FileUploadZone from "@/components/runs/FileUploadZone";
-import RoadmapCandidateBreakdown from "@/components/runs/RoadmapCandidateBreakdown";
+import RoadmapCandidateReview from "@/components/runs/RoadmapCandidateReview";
 import EscalationGatePanel from "@/components/runs/EscalationGatePanel";
 import PageHeader from "@/components/layout/PageHeader";
 import PageShell from "@/components/layout/PageShell";
@@ -258,7 +258,7 @@ function GateCard({ gate }: { gate: PendingGateResponse }) {
 
           {gate.candidateBreakdown != null && (
             <>
-              <RoadmapCandidateBreakdown value={editedCandidates} onChange={setEditedCandidates} />
+              <RoadmapCandidateReview value={editedCandidates} onChange={setEditedCandidates} />
               <Separator className="my-3" />
             </>
           )}

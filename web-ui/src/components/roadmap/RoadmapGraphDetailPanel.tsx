@@ -13,6 +13,7 @@ import {
 import MarkdownViewer from "@/components/ui/MarkdownViewer";
 import TaskRunHistoryList from "@/components/roadmap/TaskRunHistoryList";
 import BlockingChainSection from "@/components/roadmap/BlockingChainSection";
+import CrossEpicBlockerPicker from "@/components/roadmap/CrossEpicBlockerPicker";
 import ReadinessBadge from "@/components/roadmap/ReadinessBadge";
 import StageBadge from "@/components/roadmap/StageBadge";
 import PriorityBadge from "@/components/roadmap/PriorityBadge";
@@ -144,11 +145,11 @@ function ExternalBlockersSection({ blockers }: { blockers: ExternalBlockerRef[] 
 
 /**
  * "Blocked by" management for a Story/Task node — lists existing blocking
- * edges (with a remove action) and a picker + button to add a new one. Only
- * rendered for a Story/Task node (never an Epic node): this section manages
- * the *selected item's own* blockers, and an Epic node has no such list of
- * its own to manage here — but the Epic itself is still offered as a pickable
- * blocker for a Story/Task (Epic-tier dependencies), via `blockableItems`.
+ * edges (with a remove action) and a picker to add one. Not rendered for an
+ * Epic node: every same-Epic item is a descendant of the Epic, and blocking a
+ * container propagates the block to its descendants, so any within-Epic blocker
+ * of the Epic is a self-cycle the backend rejects. An Epic is blocked only by
+ * items in other Epics, offered separately via CrossEpicBlockerPicker.
  */
 function BlockingDependenciesSection({
   itemType,
@@ -354,6 +355,15 @@ export default function RoadmapGraphDetailPanel({
           blockableItems={blockableItems}
         />
       )}
+
+      <CrossEpicBlockerPicker
+        // Remount on item change so a half-made cross-Epic selection can't leak
+        // across nodes, the same reason BlockingDependenciesSection is keyed.
+        key={`cross-${item.id}`}
+        blockedItemType={itemType}
+        blockedItemId={item.id}
+        currentEpicId={epicId}
+      />
 
       <ExternalBlockersSection
         blockers={

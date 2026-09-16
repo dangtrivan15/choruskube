@@ -113,6 +113,41 @@ test.describe("Roadmap Graph View", () => {
     }
   });
 
+  test("adds a cross-Epic blocker via the picker and draws an external node", async ({
+    roadmapGraphPage,
+    api,
+    workerRepo,
+  }) => {
+    const epicA = await api.createEpic({
+      title: uniqueName("E2E Cross A"),
+      description: "desc",
+      softwareProjectId: workerRepo.gitRepo.id,
+    });
+    const storyA = await api.createStory(epicA.id, { title: "Cross Story A", description: "desc" });
+    const taskA = await api.createTask(storyA.id, { title: uniqueName("Cross Task A"), description: "desc" });
+
+    const epicB = await api.createEpic({
+      title: uniqueName("E2E Cross B"),
+      description: "desc",
+      softwareProjectId: workerRepo.gitRepo.id,
+    });
+    const storyB = await api.createStory(epicB.id, { title: "Cross Story B", description: "desc" });
+    const taskB = await api.createTask(storyB.id, { title: uniqueName("Cross Task B"), description: "desc" });
+
+    try {
+      await roadmapGraphPage.goto(epicA.id);
+      await roadmapGraphPage.selectNode(taskA.title);
+      // Pick a blocker that lives in Epic B — the created edge crosses Epics, so
+      // Epic A's graph gains an external "ghost" node for Epic B's Task.
+      await roadmapGraphPage.addCrossEpicBlocker(epicB.title, taskB.title);
+
+      await expect(roadmapGraphPage.externalNodeByLabel(taskB.title)).toBeVisible();
+    } finally {
+      await api.deleteEpic(epicA.id);
+      await api.deleteEpic(epicB.id);
+    }
+  });
+
   test("reflects a dependency created out-of-band without a manual refresh", async ({
     roadmapGraphPage,
     api,
