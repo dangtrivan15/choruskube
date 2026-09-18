@@ -17,6 +17,15 @@ function readRootBlock(): string {
   return match[1];
 }
 
+function readDarkBlock(): string {
+  const css = readFileSync(CSS_PATH, "utf-8");
+  const match = css.match(/\.dark\s*{([^}]*)}/);
+  if (!match) {
+    throw new Error("Could not find .dark block in index.css");
+  }
+  return match[1];
+}
+
 function tokenValue(block: string, token: string): string {
   const match = block.match(
     new RegExp(`--${token}:\\s*([^;]+);`),
@@ -76,6 +85,53 @@ describe("light theme neutral tokens match canonical Rose Pine Dawn", () => {
     ["accent", "#f2e9e1"], // overlay
     ["sidebar-accent", "#f2e9e1"], // overlay
   ])("--%s equals canonical Dawn %s", (token, canonical) => {
+    expect(tokenValue(block, token)).toBe(canonical);
+  });
+});
+
+// The :root pins above exist because a hand-edited hex can drift from canonical
+// Rose Pine with nothing catching it. The .dark block had no equivalent guard;
+// these two blocks close that gap the same way, against Rose Pine's "main" variant.
+describe("dark theme accent tokens match canonical Rose Pine main", () => {
+  const block = readDarkBlock();
+
+  it.each([
+    ["primary", "#c4a7e7"], // iris
+    ["ring", "#c4a7e7"], // iris
+    ["sidebar-primary", "#c4a7e7"], // iris
+    ["primary-foreground", "#191724"], // base
+    ["destructive", "#eb6f92"], // love
+    ["muted-foreground", "#908caa"], // subtle
+    ["chart-1", "#9ccfd8"], // foam
+    ["chart-2", "#c4a7e7"], // iris
+    ["chart-3", "#ebbcba"], // rose
+    ["chart-4", "#31748f"], // pine
+    ["chart-5", "#f6c177"], // gold
+    ["status-success", "#9ccfd8"], // foam
+    ["status-error", "#eb6f92"], // love
+    ["status-info", "#31748f"], // pine
+    ["status-warning", "#f6c177"], // gold
+    ["status-accent", "#c4a7e7"], // iris
+    ["status-neutral", "#908caa"], // subtle
+  ])("--%s equals canonical main %s", (token, canonical) => {
+    expect(tokenValue(block, token)).toBe(canonical);
+  });
+});
+
+describe("dark theme neutral tokens match canonical Rose Pine main", () => {
+  const block = readDarkBlock();
+
+  it.each([
+    ["background", "#191724"], // base
+    ["card", "#1f1d2e"], // surface
+    ["popover", "#1f1d2e"], // surface
+    ["sidebar", "#1f1d2e"], // surface
+    ["foreground", "#e0def4"], // text
+    ["secondary", "#26233a"], // overlay
+    ["muted", "#26233a"], // overlay
+    ["accent", "#26233a"], // overlay
+    ["sidebar-accent", "#26233a"], // overlay
+  ])("--%s equals canonical main %s", (token, canonical) => {
     expect(tokenValue(block, token)).toBe(canonical);
   });
 });
