@@ -15,6 +15,22 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Human-readable message from a failed api call. GlobalExceptionHandler sends a plain-string body
+ * for 4xx (Conflict/BadRequest/NotFound/Forbidden) and a JSON object for validation/quota errors,
+ * so surface the string directly or its {@code message} field, else the caller's fallback.
+ */
+export function apiErrorMessage(err: unknown, fallback: string): string {
+  if (err instanceof ApiError) {
+    if (typeof err.body === "string" && err.body.trim()) return err.body;
+    if (err.body && typeof err.body === "object" && "message" in err.body) {
+      const message = (err.body as { message?: unknown }).message;
+      if (typeof message === "string" && message.trim()) return message;
+    }
+  }
+  return fallback;
+}
+
 function authHeaders(): Record<string, string> {
   const headers: Record<string, string> = {};
   const token = getToken();

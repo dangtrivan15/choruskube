@@ -206,11 +206,11 @@ class RepoGroupControllerTest extends BaseTest {
     }
 
     @Test
-    void delete_repo_group_with_active_task_is_409() throws Exception {
-        GitRepo r1 = saveRepo("active-task-r1");
-        GitRepo r2 = saveRepo("active-task-r2");
+    void delete_repo_group_with_epic_and_tasks_soft_deletes() throws Exception {
+        GitRepo r1 = saveRepo("archive-r1");
+        GitRepo r2 = saveRepo("archive-r2");
         RepoGroup group = repoGroupService.create(new RepoGroupRequest(
-                "g-active-task-" + UUID.randomUUID().toString().substring(0, 8),
+                "g-archive-" + UUID.randomUUID().toString().substring(0, 8),
                 null,
                 null,
                 List.of(r1.getId(), r2.getId()),
@@ -218,30 +218,55 @@ class RepoGroupControllerTest extends BaseTest {
                 null));
         entityManager.flush();
 
-        // Seed an Epic -> Story -> Task chain targeting this group, with the Task left non-done
-        // (Task carries software_project_id directly).
+        // An Epic -> Story -> Task chain targeting this group. Roadmap work no longer blocks the
+        // delete — it is archived alongside the group instead of returning 409.
         var epic = epicService.create(
-                new EpicRequest("Active epic", "Holds the group from delete", null, group.getId()), null);
-        var story = storyService.create(epic.id(), new StoryRequest("Story", "Desc"));
-        taskService.create(story.id(), new TaskRequest("Active task", "Holds the group from delete"));
+                new EpicRequest("Shipped epic", "Completed work under this group", null, group.getId()), null);
+        var story = storyService.create(epic.id(), new StoryRequest("Story", "Done"));
+        taskService.create(story.id(), new TaskRequest("Done task", "Completed"));
         entityManager.flush();
 
-        String body = mockMvc.perform(delete("/api/v1/repo-groups/{id}", group.getId()))
-                .andExpect(status().isConflict())
-                .andReturn()
-                .getResponse()
-                .getContentAsString();
+        mockMvc.perform(delete("/api/v1/repo-groups/{id}", group.getId())).andExpect(status().isNoContent());
 
-        assertThat(body).contains("active task");
+        // Archive, not purge: the row survives with deleted_at set (so the Epic/Task FKs stay valid),
+        // and @SQLRestriction hides it from every read path.
+        entityManager.flush();
+        entityManager.clear();
+        List<?> rows = entityManager
+                .createNativeQuery("SELECT deleted_at FROM software_project WHERE id = :id")
+                .setParameter("id", group.getId())
+                .getResultList();
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0)).isNotNull();
+
+        mockMvc.perform(get("/api/v1/repo-groups/{id}", group.getId())).andExpect(status().isNotFound());
     }
 
     @Test
-    void delete_repo_group_with_epic_and_no_story_or_task_is_409() throws Exception {
-        // Epic.software_project_id carries a FK to software_project (like Task's) with no ON
-        // DELETE clause, so an Epic that hasn't grown a Story/Task yet must still block the hard
-        // delete below the controller. Regression test for the gap where the delete guard only
-        // looked at TaskRepository#countNonDoneBySoftwareProjectId and missed this case entirely,
-        // turning it into an unhandled 500 instead of this 409.
+    void member_git_repo_can_be_deleted_after_its_group_is_archived() throws Exception {
+        GitRepo r1 = saveRepo("freed-r1");
+        RepoGroup group = repoGroupService.create(new RepoGroupRequest(
+                "g-freed-" + UUID.randomUUID().toString().substring(0, 8),
+                null,
+                null,
+                List.of(r1.getId()),
+                null,
+                null));
+        entityManager.flush();
+
+        // Archiving the group clears its membership rows, so the member repo is no longer held by an
+        // invisible group and its own (soft) delete succeeds instead of 409ing.
+        mockMvc.perform(delete("/api/v1/repo-groups/{id}", group.getId())).andExpect(status().isNoContent());
+        entityManager.flush();
+
+        mockMvc.perform(delete("/api/v1/git-repos/{id}", r1.getId())).andExpect(status().isNoContent());
+    }
+
+    @Test
+    void delete_repo_group_with_lonely_epic_soft_deletes() throws Exception {
+        // An Epic with no Story/Task under it used to block the hard delete — its
+        // software_project_id FK has no ON DELETE clause. Archiving keeps the row, so the FK stays
+        // valid and the delete succeeds instead of 409ing.
         GitRepo r1 = saveRepo("epic-only-r1");
         RepoGroup group = repoGroupService.create(new RepoGroupRequest(
                 "g-epic-only-" + UUID.randomUUID().toString().substring(0, 8),
@@ -255,34 +280,14 @@ class RepoGroupControllerTest extends BaseTest {
         epicService.create(new EpicRequest("Lonely epic", "No Story/Task yet", null, group.getId()), null);
         entityManager.flush();
 
-        String body = mockMvc.perform(delete("/api/v1/repo-groups/{id}", group.getId()))
-                .andExpect(status().isConflict())
-                .andReturn()
-                .getResponse()
-                .getContentAsString();
+        mockMvc.perform(delete("/api/v1/repo-groups/{id}", group.getId())).andExpect(status().isNoContent());
 
-        assertThat(body).contains("epic");
-    }
-
-    @Test
-    void delete_repo_group_with_story_and_no_task_is_409() throws Exception {
-        // Same gap as above, one level deeper: a Story with no Task yet is only reachable through
-        // its Epic (epic_id is NOT NULL), so the Epic count above is what catches this case too.
-        GitRepo r1 = saveRepo("story-only-r1");
-        RepoGroup group = repoGroupService.create(new RepoGroupRequest(
-                "g-story-only-" + UUID.randomUUID().toString().substring(0, 8),
-                null,
-                null,
-                List.of(r1.getId()),
-                null,
-                null));
+        // Clear the session so the GET re-reads through @SQLRestriction (a cache hit by id would
+        // ignore it); in production the GET is a separate request, so this only bridges the shared
+        // test transaction.
         entityManager.flush();
-
-        var epic = epicService.create(new EpicRequest("Epic with story", "No Task yet", null, group.getId()), null);
-        storyService.create(epic.id(), new StoryRequest("Story", "No Task yet"));
-        entityManager.flush();
-
-        mockMvc.perform(delete("/api/v1/repo-groups/{id}", group.getId())).andExpect(status().isConflict());
+        entityManager.clear();
+        mockMvc.perform(get("/api/v1/repo-groups/{id}", group.getId())).andExpect(status().isNotFound());
     }
 
     @Test

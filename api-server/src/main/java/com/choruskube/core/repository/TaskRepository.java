@@ -38,9 +38,6 @@ public interface TaskRepository extends JpaRepository<Task, UUID>, JpaSpecificat
      */
     List<Task> findByStoryIdInOrderByCreatedAtDesc(Collection<UUID> storyIds);
 
-    @Query("SELECT count(t) FROM Task t " + "WHERE t.status <> 'done' AND t.softwareProjectId = :id")
-    long countNonDoneBySoftwareProjectId(@Param("id") UUID id);
-
     // --- Analytics queries ---
 
     @Query(value = """

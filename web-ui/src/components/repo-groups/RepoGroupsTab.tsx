@@ -30,6 +30,7 @@ import Authorized from "@/components/Authorized";
 import { repoDisplayName } from "@/lib/utils";
 import RepoGroupForm from "@/components/repo-groups/RepoGroupForm";
 import EditRepoGroupDialog from "@/components/repo-groups/EditRepoGroupDialog";
+import { apiErrorMessage } from "@/lib/api";
 import type { RepoGroup, RepoGroupRequest } from "@/lib/types";
 
 /**
@@ -254,7 +255,7 @@ export default function RepoGroupsTab() {
           <DialogFooter>
             {deleteMut.isError && (
               <p className="text-sm text-destructive mr-auto">
-                Failed to delete repo group.
+                {apiErrorMessage(deleteMut.error, "Failed to delete repo group.")}
               </p>
             )}
             <Button

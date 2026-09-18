@@ -28,6 +28,7 @@ import Authorized from "@/components/Authorized";
 import CreateGitRepoDialog from "@/components/git-repos/CreateGitRepoDialog";
 import EditGitRepoDialog from "@/components/git-repos/EditGitRepoDialog";
 import { repoDisplayName } from "@/lib/utils";
+import { apiErrorMessage } from "@/lib/api";
 
 /**
  * Repositories tab body for the Software Projects page. Extracted from the
@@ -164,7 +165,7 @@ export default function RepositoriesTab() {
           <DialogFooter>
             {deleteGitRepo.isError && (
               <p className="text-sm text-destructive mr-auto">
-                Failed to delete git repo.
+                {apiErrorMessage(deleteGitRepo.error, "Failed to delete git repo.")}
               </p>
             )}
             <Button
