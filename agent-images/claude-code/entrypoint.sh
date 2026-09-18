@@ -61,8 +61,9 @@ NEED_DECISION=$(jq -r '.need_decision // false' "$CONFIG_FILE")
 NEED_PR=$(jq -r '.needs_pr // false' "$CONFIG_FILE")
 
 # Triggering Task's identity, present only for Task-started runs; Story/Epic may
-# each be empty even when TASK_ID is set. update-task-status/get-roadmap-graph
-# default their --task-id/--epic-id flags from these.
+# each be empty even when TASK_ID is set. update-task-status defaults its --task-id
+# flag from TASK_ID; get-roadmap-graph takes no --task-id and, when --epic-id is
+# omitted, resolves the Epic server-side from this run's Task rather than from EPIC_ID.
 export TASK_ID=$(jq -r '.task_context.task_id // empty' "$CONFIG_FILE")
 export TASK_TITLE=$(jq -r '.task_context.task_title // empty' "$CONFIG_FILE")
 export STORY_ID=$(jq -r '.task_context.story_id // empty' "$CONFIG_FILE")
@@ -234,7 +235,13 @@ Epic: ${EPIC_TITLE}}
 
 You can call \`get-roadmap-graph\` without passing --epic-id — it defaults to this
 run's Epic automatically. Do not mark this Task done: it closes by itself once this
-run's pull requests are merged."
+run's pull requests are merged.
+
+Treat the parent Story/Epic summaries already folded into your task above as
+authoritative starting context. For anything beyond that — the live ticket,
+open dependencies/blockers, and sibling Tasks under the same Story — call
+\`get-roadmap-graph\` (no flags needed here; it resolves this run's Epic on its
+own) to discover the full picture before you start drafting."
 
   # Narrate open blockers. Readiness gates Task start, so open_blockers is empty at
   # launch — this block only fires for an edge added mid-run.

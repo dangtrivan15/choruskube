@@ -22,12 +22,14 @@ import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.Readiness;
 import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
+import com.choruskube.core.repository.AutopilotRepository;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.RunPullRequestRepository;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkItemDependencyRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.util.RepoNameUtil;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowOptions;
 import io.temporal.client.WorkflowStub;
@@ -76,6 +78,9 @@ public class DefaultTaskServiceTest extends BaseTest {
 
     @Autowired
     private RunPullRequestRepository prRepo;
+
+    @Autowired
+    private AutopilotRepository autopilotRepo;
 
     @MockitoBean
     private WorkflowServiceStubs workflowServiceStubs;
@@ -211,6 +216,82 @@ public class DefaultTaskServiceTest extends BaseTest {
 
         WorkflowRun run = runRepo.findById(started.latestRunId()).orElseThrow();
         assertThat(run.getTaskId()).isEqualTo(task.id());
+    }
+
+    @Test
+    void start_composesFeatureRequestWithParentStoryAndEpic() throws Exception {
+        GitRepo r = makeRepo("https://github.com/test/task-feature-request-enriched.git");
+        EpicResponse epic = epicService.create(
+                new EpicRequest("Ship the widget", "Epic desc", "Because customers asked for it", r.getId()), null);
+        StoryResponse story = storyService.create(epic.id(), new StoryRequest("Widget backend", "Story desc"));
+        TaskResponse task = service.create(story.id(), new TaskRequest("Add health check", "Task desc"));
+
+        TaskResponse started = service.start(task.id());
+
+        String featureRequest = featureRequestOf(started);
+        assertThat(featureRequest).contains("Add health check", "Task desc");
+        assertThat(featureRequest).contains("Widget backend", "Story desc");
+        assertThat(featureRequest).contains("Ship the widget", "Epic desc", "Because customers asked for it");
+    }
+
+    @Test
+    void start_taskSectionRemainsLead() throws Exception {
+        GitRepo r = makeRepo("https://github.com/test/task-feature-request-lead.git");
+        EpicResponse epic =
+                epicService.create(new EpicRequest("Epic title", "Epic desc", "Motivation", r.getId()), null);
+        StoryResponse story = storyService.create(epic.id(), new StoryRequest("Story title", "Story desc"));
+        TaskResponse task = service.create(story.id(), new TaskRequest("Task title", "Task desc"));
+
+        TaskResponse started = service.start(task.id());
+
+        assertThat(featureRequestOf(started)).startsWith("## Task title");
+        assertThat(featureRequestOf(started)).contains("## Parent context");
+    }
+
+    @Test
+    void start_omitsBlankParentFields() throws Exception {
+        GitRepo r = makeRepo("https://github.com/test/task-feature-request-blank.git");
+        // Epic motivation null, Story description blank — neither should surface as a literal
+        // "null" or an empty header; the fields that ARE present must still come through.
+        EpicResponse epic = epicService.create(new EpicRequest("Epic title", "Epic desc", null, r.getId()), null);
+        StoryResponse story = storyService.create(epic.id(), new StoryRequest("Story title", ""));
+        TaskResponse task = service.create(story.id(), new TaskRequest("Task title", "Task desc"));
+
+        TaskResponse started = service.start(task.id());
+
+        String featureRequest = featureRequestOf(started);
+        assertThat(featureRequest).doesNotContain("null");
+        // No blank description body between the two headers: the Story subsection is exactly the
+        // header with nothing else, directly followed by the Epic header.
+        assertThat(featureRequest).contains("### Story: Story title\n\n### Epic: Epic title");
+        assertThat(featureRequest).contains("Epic desc");
+    }
+
+    @Test
+    void start_autopilotPath_isAlsoEnriched() throws Exception {
+        GitRepo r = makeRepo("https://github.com/test/task-feature-request-autopilot.git");
+        EpicResponse epic =
+                epicService.create(new EpicRequest("Epic title", "Epic desc", "Motivation", r.getId()), null);
+        StoryResponse story = storyService.create(epic.id(), new StoryRequest("Story title", "Story desc"));
+        TaskResponse task = service.create(story.id(), new TaskRequest("Task title", "Task desc"));
+
+        TaskResponse started = service.startForAutopilot(task.id(), makeAutopilot());
+
+        String featureRequest = featureRequestOf(started);
+        assertThat(featureRequest).startsWith("## Task title");
+        assertThat(featureRequest).contains("### Story: Story title", "Story desc");
+        assertThat(featureRequest).contains("### Epic: Epic title", "Epic desc", "Motivation");
+    }
+
+    /** Re-fetches the started run and pulls its {@code feature_request} input back out of the
+     * persisted {@code inputs} JSON — {@link WorkflowRun#getInputs()} returns that JSON as a raw
+     * string, not a parsed structure. */
+    private String featureRequestOf(TaskResponse started) throws Exception {
+        WorkflowRun run = runRepo.findById(started.latestRunId()).orElseThrow();
+        return new ObjectMapper()
+                .readTree(run.getInputs())
+                .get("feature_request")
+                .asText();
     }
 
     @Test
@@ -795,5 +876,15 @@ public class DefaultTaskServiceTest extends BaseTest {
         r.setUrl(url);
         r.setName(RepoNameUtil.deriveOwnerRepoName(url));
         return gitRepoRepo.save(r);
+    }
+
+    // workflow_run.autopilot_id is a real FK into autopilot(id) — startForAutopilot needs a row
+    // that exists, not just a random UUID. AutopilotRepository exposes no entity save path (see its
+    // javadoc), so insertDefaults+engage is the only way to create one.
+    private UUID makeAutopilot() {
+        UUID id = UUID.randomUUID();
+        autopilotRepo.insertDefaults(id);
+        autopilotRepo.engage(id, Instant.now());
+        return id;
     }
 }

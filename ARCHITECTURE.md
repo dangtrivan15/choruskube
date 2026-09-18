@@ -74,6 +74,23 @@ one Fleet are extension seams core declares but does not implement — see
 The orchestrator drives the graph; the **Worker** creates and owns the agent workloads;
 the **api-server** owns state and credentials and talks to the data stores.
 
+## Task-triggered runs
+
+A Feature Development run can be started from a roadmap **Task** — the leaf of the
+**Epic → Story → Task** hierarchy — rather than manually. Starting a Task composes the
+run's `feature_request` input deterministically: the task-start path (`DefaultTaskService`)
+walks the Task's parent Story and grandparent Epic and folds their titles, descriptions,
+and the Epic's motivation into `feature_request`, with the Task as the lead section and a
+labelled "Parent context" section beneath it. A blank or missing parent field is omitted
+rather than rendered as an empty header, so a Task with no ancestry content degrades to a
+Task-only prompt.
+
+This composition happens once, at start — it is a point-in-time snapshot, not a live view.
+To reach anything beyond it (the live ticket, open dependencies, sibling Tasks), the agent
+system prompt for a task-triggered run points every AI node at the roadmap CLI
+(`get-roadmap-graph`, which resolves this run's Epic server-side with no flags needed) as
+the source of truth for current state.
+
 ## AI nodes and artifacts
 
 An AI node runs Claude Code inside the agent container against the target repo.

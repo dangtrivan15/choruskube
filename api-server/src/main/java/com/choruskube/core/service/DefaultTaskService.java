@@ -345,9 +345,9 @@ public class DefaultTaskService implements TaskService {
             throw new ConflictException("Can only start tasks in backlog status");
         }
 
-        StringBuilder featureRequest = new StringBuilder();
-        featureRequest.append("## ").append(locked.getTitle()).append("\n\n");
-        featureRequest.append(locked.getDescription());
+        Story story = findStoryOrThrow(locked.getStoryId());
+        Epic epic = findEpicOrThrow(story.getEpicId());
+        String featureRequest = composeFeatureRequest(locked, story, epic);
 
         GraphTemplate featureDevTemplate = graphTemplateRepo
                 .findFirstByGraphIdOrderByVersionDesc(GraphIds.FEATURE_DEVELOPMENT)
@@ -356,8 +356,10 @@ public class DefaultTaskService implements TaskService {
         CreateRunRequest runRequest = new CreateRunRequest(
                 featureDevTemplate.getId(),
                 Map.of(
-                        "software_project_id", locked.getSoftwareProjectId().toString(),
-                        "feature_request", featureRequest.toString()),
+                        "software_project_id",
+                        locked.getSoftwareProjectId().toString(),
+                        "feature_request",
+                        featureRequest),
                 locked.getTitle(),
                 null);
 
@@ -377,6 +379,54 @@ public class DefaultTaskService implements TaskService {
         eventPublisher.publishRoadmapItemChanged(
                 "task", saved.getId(), saved.getStatus().name());
         return response;
+    }
+
+    /**
+     * Composes the drafting node's {@code feature_request} input: the Task stays the lead
+     * section so the agent cannot mistake ancestor background for the actual unit of work, with a
+     * labelled "Parent context" section appended so the run carries Story/Epic intent without the
+     * human re-pasting it. A subsection/field that is null or blank is omitted outright — never a
+     * literal {@code null} or an empty header — so an Epic/Story with no body degrades to today's
+     * Task-only output.
+     */
+    private String composeFeatureRequest(Task task, Story story, Epic epic) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("## ").append(task.getTitle());
+        if (isNotBlank(task.getDescription())) {
+            sb.append("\n\n").append(task.getDescription());
+        }
+
+        StringBuilder parentContext = new StringBuilder();
+        appendParentSection(parentContext, "Story", story.getTitle(), story.getDescription(), null);
+        appendParentSection(parentContext, "Epic", epic.getTitle(), epic.getDescription(), epic.getMotivation());
+
+        if (parentContext.length() > 0) {
+            sb.append("\n\n## Parent context").append(parentContext);
+        }
+        return sb.toString();
+    }
+
+    /** One "### {label}: {title}" subsection of the Parent context section; omitted entirely when
+     * the parent has no title (never observed in practice, since story_id/epic_id are NOT NULL, but
+     * guards against emitting a header for a body-less subsection). */
+    private void appendParentSection(
+            StringBuilder sb, String label, String title, String description, String motivation) {
+        if (!isNotBlank(title)) {
+            return;
+        }
+        StringBuilder section = new StringBuilder();
+        section.append("\n\n### ").append(label).append(": ").append(title);
+        if (isNotBlank(description)) {
+            section.append("\n\n").append(description);
+        }
+        if (isNotBlank(motivation)) {
+            section.append("\n\nMotivation: ").append(motivation);
+        }
+        sb.append(section);
+    }
+
+    private static boolean isNotBlank(String s) {
+        return s != null && !s.isBlank();
     }
 
     private void requireReady(Task task) {
