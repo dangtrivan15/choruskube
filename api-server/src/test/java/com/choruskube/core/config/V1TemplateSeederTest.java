@@ -813,9 +813,9 @@ class V1TemplateSeederTest extends BaseTest {
 
     @Test
     void currentVersionIsBumpedForFutureWorkIssueTethering() {
-        // v40: IMPLEMENT_PROMPT now files each §7 "Future work" caveat as a repo-pinned,
+        // v40: IMPLEMENT_PROMPT now files each "Future work" caveat as a repo-pinned,
         // visibility-guarded, labeled GitHub issue linked to the run's PR, instead of the
-        // orphaned ad-hoc issue v39's directive produced. This is the rolling version
+        // orphaned ad-hoc issue the previous directive produced. This is the rolling version
         // tripwire: rewrite it and bump the literal whenever CURRENT_VERSION changes, so a
         // template edit that forgets the bump cannot ship silently.
         assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(40);
