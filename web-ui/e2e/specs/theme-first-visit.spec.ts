@@ -8,13 +8,21 @@ function currentBaseURL(testInfo: { project: { use: { baseURL?: string } } }): s
   return testInfo.project.use.baseURL ?? "http://localhost:23000";
 }
 
+// Clears only the "theme" cookie. A bare context().clearCookies() also wipes
+// the closed cloud overlay's storageState-loaded OIDC session cookie, which
+// bounces the next goto("/") to the identity provider's own login page —
+// an origin with no pre-paint theme script — instead of the app.
+async function clearThemeCookie(page: import("@playwright/test").Page): Promise<void> {
+  await page.context().clearCookies({ name: "theme" });
+}
+
 test.describe("first-visit theme — OS color-scheme", () => {
   test.use({ colorScheme: "dark" });
 
   test("no saved preference under OS-dark opens dark on the first frame", async ({
     page,
   }) => {
-    await page.context().clearCookies();
+    await clearThemeCookie(page);
     await page.goto("/");
     await expect(page.locator("html")).toHaveClass(/dark/);
   });
@@ -22,7 +30,7 @@ test.describe("first-visit theme — OS color-scheme", () => {
   test("an invalid saved cookie under OS-dark resolves from the OS, not a flash to light", async ({
     page,
   }, testInfo) => {
-    await page.context().clearCookies();
+    await clearThemeCookie(page);
     await page.context().addCookies([
       { name: "theme", value: "ocean", url: currentBaseURL(testInfo) },
     ]);
@@ -33,7 +41,7 @@ test.describe("first-visit theme — OS color-scheme", () => {
   test("a saved light preference wins over an OS-dark setting", async ({
     page,
   }, testInfo) => {
-    await page.context().clearCookies();
+    await clearThemeCookie(page);
     await page.context().addCookies([
       { name: "theme", value: "light", url: currentBaseURL(testInfo) },
     ]);
@@ -44,7 +52,7 @@ test.describe("first-visit theme — OS color-scheme", () => {
   test("blocked cookie access still falls through to the OS check", async ({
     page,
   }) => {
-    await page.context().clearCookies();
+    await clearThemeCookie(page);
     await page.addInitScript(() => {
       Object.defineProperty(document, "cookie", {
         get() {
@@ -64,7 +72,7 @@ test.describe("first-visit theme — OS color-scheme light", () => {
   test.use({ colorScheme: "light" });
 
   test("no saved preference under OS-light opens light", async ({ page }) => {
-    await page.context().clearCookies();
+    await clearThemeCookie(page);
     await page.goto("/");
     await expect(page.locator("html")).not.toHaveClass(/dark/);
   });
