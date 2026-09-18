@@ -237,11 +237,10 @@ You can call \`get-roadmap-graph\` without passing --epic-id — it defaults to 
 run's Epic automatically. Do not mark this Task done: it closes by itself once this
 run's pull requests are merged.
 
-Treat the parent Story/Epic summaries already folded into your task above as
-authoritative starting context. For anything beyond that — the live ticket,
-open dependencies/blockers, and sibling Tasks under the same Story — call
-\`get-roadmap-graph\` (no flags needed here; it resolves this run's Epic on its
-own) to discover the full picture before you start drafting."
+Treat any parent Story/Epic summaries already provided to you — in the feature
+request or the drafted spec — as authoritative starting context, and use
+\`get-roadmap-graph\` to discover anything beyond them: the live ticket, its
+open dependencies/blockers, and sibling Tasks under the same Story."
 
   # Narrate open blockers. Readiness gates Task start, so open_blockers is empty at
   # launch — this block only fires for an edge added mid-run.
