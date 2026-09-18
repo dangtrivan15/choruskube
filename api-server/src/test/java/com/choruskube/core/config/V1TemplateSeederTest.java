@@ -812,14 +812,14 @@ class V1TemplateSeederTest extends BaseTest {
     }
 
     @Test
-    void currentVersionIsBumpedForDecisionsIndexRow() {
-        // v39: IMPLEMENT_PROMPT now tells the agent to add its own row to
-        // docs/decisions/README.md's index. v38 told it only to mark an entry it
-        // supersedes, so on the common path — superseding nothing — the index stayed
-        // empty and the supersession check had nothing to read. Verifies only that the
-        // seeder actually bumped its version constant when it shipped this change.
-        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(39);
-        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 39))
+    void currentVersionIsBumpedForFutureWorkIssueTethering() {
+        // v40: IMPLEMENT_PROMPT now files each "Future work" caveat as a repo-pinned,
+        // visibility-guarded, labeled GitHub issue linked to the run's PR, instead of the
+        // orphaned ad-hoc issue the previous directive produced. This is the rolling version
+        // tripwire: rewrite it and bump the literal whenever CURRENT_VERSION changes, so a
+        // template edit that forgets the bump cannot ship silently.
+        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(40);
+        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 40))
                 .isPresent();
     }
 
