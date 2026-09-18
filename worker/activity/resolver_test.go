@@ -76,3 +76,22 @@ func TestResolve_CurlyBracesInText(t *testing.T) {
 		t.Fatalf("result = %q, want %q", result, "JSON: {{not_a_var}}")
 	}
 }
+
+// Distinct from TestResolve_CurlyBracesInText: that case covers an escaped {{...}} literal in the
+// template text itself. This covers braces inside a substituted VALUE — e.g. a Story/Epic
+// description quoting JSON or another template's placeholder syntax — proving the resolver's
+// single-pass substitution inserts them verbatim rather than re-scanning and either mistaking them
+// for a second placeholder or raising a missing-variable error.
+func TestResolve_BracesInSubstitutedValue(t *testing.T) {
+	r := newTemplateResolver()
+	result, err := r.resolve("Feature: {feature_request}", map[string]string{
+		"feature_request": "See {this} and {that} for details",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "Feature: See {this} and {that} for details"
+	if result != want {
+		t.Fatalf("result = %q, want %q", result, want)
+	}
+}

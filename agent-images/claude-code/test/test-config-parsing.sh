@@ -217,6 +217,12 @@ grep -q '## Triggering Task' "$ENTRYPOINT" \
 grep -qE 'if \[ -n "\$TASK_ID" \]' "$ENTRYPOINT" \
   && ok "Triggering Task / Open Blockers narration guarded by TASK_ID check" || fail "Triggering Task / Open Blockers narration guarded by TASK_ID check"
 
+# --- Test 14b: Triggering Task narration encourages discovering parent/dependency/metadata context ---
+# Mirrors Test 12/14's grep-on-script-content style. Guards against the discovery
+# guidance regressing or drifting back out of the TASK_ID-guarded block.
+grep -q "authoritative starting context" "$ENTRYPOINT" \
+  && ok "Triggering Task narration encourages discovery via get-roadmap-graph" || fail "Triggering Task narration encourages discovery via get-roadmap-graph"
+
 # --- Test 15: --effort reaches run_claude()'s argv construction (structural) ---
 # Mirrors the existing --max-turns assertion style (Test 2): grep the actual
 # entrypoint.sh text rather than a hand-copied fragment, so the assertion tracks

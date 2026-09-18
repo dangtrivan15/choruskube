@@ -202,6 +202,16 @@ public class Phase2WorkHierarchyIntegrationTest extends BaseTest {
 
         WorkflowRun run = runRepo.findById(runId).orElseThrow();
         assertThat(run.getTaskId()).isEqualTo(taskId);
+
+        // The composed feature_request reaches the persisted run through the same
+        // POST /tasks/{id}/start path exercised above, carrying the parent Story/Epic content
+        // deterministically rather than relying on the agent to discover it.
+        String featureRequest =
+                objectMapper.readTree(run.getInputs()).get("feature_request").asText();
+        assertThat(featureRequest).contains("Implement /healthz handler", "Task desc");
+        assertThat(featureRequest).contains("Add /healthz route", "Backend story");
+        assertThat(featureRequest).contains("Add a health check endpoint", "We need /healthz for the LB");
+
         run.setStatus(WorkflowRunStatus.completed);
         runRepo.save(run);
 

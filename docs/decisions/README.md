@@ -37,6 +37,7 @@ Every entry gets a row, newest last.
 | [2026-09-09---01-warm-dind-image-supply-over-registry-mirror.md](2026-09-09---01-warm-dind-image-supply-over-registry-mirror.md) | 2026-09-09 | Why agent workloads get Docker images from a pre-warmed (optionally custom `dind_image`) DinD sidecar, and the registry-mirror seam defaults to none | superseded by 2026-09-13---01 |
 | [2026-09-13---01-remove-dormant-registry-mirror-seam.md](2026-09-13---01-remove-dormant-registry-mirror-seam.md) | 2026-09-13 | Why the dormant registry-mirror injection seam was removed, leaving warm/custom DinD as the sole image-supply path | current |
 | [2026-09-14---01-max-awaiting-human-throttle.md](2026-09-14---01-max-awaiting-human-throttle.md) | 2026-09-14 | Why the `max_awaiting_human` ceiling reuses `AutopilotSlotCounter` and the `Bucket.AWAITING_YOU` classification instead of adding new seams, and why reaching it only throttles the start loop rather than disengaging | current |
+| [2026-09-18---01-task-triggered-feature-request-parent-context.md](2026-09-18---01-task-triggered-feature-request-parent-context.md) | 2026-09-18 | Why deterministic parent Story/Epic context is folded into `feature_request` at task-start rather than through new run-input plumbing, and why live-roadmap discovery guidance ships in the agent entrypoint rather than the frozen prompt template | current |
 
 - **Entry** — the filename, linked.
 - **Date** — the date in the filename.
