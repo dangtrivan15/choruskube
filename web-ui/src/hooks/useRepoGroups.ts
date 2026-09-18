@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, apiErrorMessage } from "@/lib/api";
 import { showMutationToast } from "@/lib/toast-messages";
 import { useActivityFeed } from "./useActivityFeed";
 import type { RepoGroup, RepoGroupRequest } from "@/lib/types";
@@ -88,8 +88,8 @@ export function useDeleteRepoGroup() {
       queryClient.invalidateQueries({ queryKey: ["software-projects"] });
       addEntry(showMutationToast("Repo group deleted", "success"));
     },
-    onError: () => {
-      addEntry(showMutationToast("Failed to delete repo group", "error"));
+    onError: (error) => {
+      addEntry(showMutationToast(apiErrorMessage(error, "Failed to delete repo group"), "error"));
     },
   });
 }

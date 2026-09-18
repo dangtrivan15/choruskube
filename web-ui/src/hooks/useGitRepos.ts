@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, apiErrorMessage } from "@/lib/api";
 import { showMutationToast } from "@/lib/toast-messages";
 import { useActivityFeed } from "./useActivityFeed";
 import type { GitRepoResponse, PageResponse, PaginationParams } from "@/lib/types";
@@ -77,8 +77,8 @@ export function useDeleteGitRepo() {
       queryClient.invalidateQueries({ queryKey: ["git-repos"] });
       addEntry(showMutationToast("Git repo deleted", "success"));
     },
-    onError: () => {
-      addEntry(showMutationToast("Failed to delete git repo", "error"));
+    onError: (error) => {
+      addEntry(showMutationToast(apiErrorMessage(error, "Failed to delete git repo"), "error"));
     },
   });
 }

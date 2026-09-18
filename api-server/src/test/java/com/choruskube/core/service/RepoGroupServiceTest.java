@@ -97,13 +97,24 @@ class RepoGroupServiceTest extends BaseTest {
     }
 
     @Test
-    void delete_removes_group_when_no_external_references() {
+    void delete_archives_group_and_keeps_the_row() {
         GitRepo r1 = saveRepo("r1");
         RepoGroup group = service.create(new RepoGroupRequest("proj-c", null, null, List.of(r1.getId()), null, null));
 
         service.delete(group.getId());
 
+        // Archive, not hard-delete: findById no longer returns it (@SQLRestriction hides deleted_at
+        // rows), but the row physically survives so Epics/Tasks/runs keep a valid FK target. Clear the
+        // session first, or findById returns the still-cached entity and skips the SQL filter.
+        entityManager.flush();
+        entityManager.clear();
         assertThat(repoGroups.findById(group.getId())).isEmpty();
+        List<?> rows = entityManager
+                .createNativeQuery("SELECT deleted_at FROM software_project WHERE id = :id")
+                .setParameter("id", group.getId())
+                .getResultList();
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0)).isNotNull();
     }
 
     private GitRepo saveRepo(String name) {

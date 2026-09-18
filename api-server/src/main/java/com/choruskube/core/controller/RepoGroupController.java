@@ -6,9 +6,7 @@ import com.choruskube.core.dto.RepoGroupResponse;
 import com.choruskube.core.exception.ConflictException;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.RepoGroup;
-import com.choruskube.core.repository.EpicRepository;
 import com.choruskube.core.repository.RepoGroupRepository;
-import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.scope.ScopeProvider;
 import com.choruskube.core.service.AuthorizationService;
@@ -36,8 +34,6 @@ public class RepoGroupController {
     private final RepoGroupService service;
     private final RepoGroupRepository groups;
     private final WorkflowRunRepository runs;
-    private final TaskRepository tasks;
-    private final EpicRepository epics;
     private final AuthorizationService authService;
     private final ScopeProvider scopeProvider;
 
@@ -45,15 +41,11 @@ public class RepoGroupController {
             RepoGroupService service,
             RepoGroupRepository groups,
             WorkflowRunRepository runs,
-            TaskRepository tasks,
-            EpicRepository epics,
             AuthorizationService authService,
             ScopeProvider scopeProvider) {
         this.service = service;
         this.groups = groups;
         this.runs = runs;
-        this.tasks = tasks;
-        this.epics = epics;
         this.authService = authService;
         this.scopeProvider = scopeProvider;
     }
@@ -109,17 +101,12 @@ public class RepoGroupController {
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@PathVariable UUID id) {
         findInActiveOrg(id);
+        // Only an in-flight run blocks archiving — its agent would keep resolving this now-hidden
+        // project. Completed Epics/Tasks ride along into the tombstone (delete is a soft-delete).
         long activeRuns = runs.countNonTerminalBySoftwareProjectId(id);
-        long activeTasks = tasks.countNonDoneBySoftwareProjectId(id);
-        // Epic.software_project_id (like Task's) has no ON DELETE clause, so any existing Epic —
-        // even one with no Story/Task under it yet — would otherwise leave a dangling reference and
-        // turn the hard-delete below into an unhandled DataIntegrityViolationException instead of
-        // this clean 409. Epic has no status of its own to filter "active" vs "done" on, so any
-        // Epic for this project counts.
-        long existingEpics = epics.countBySoftwareProjectId(id);
-        if (activeRuns > 0 || activeTasks > 0 || existingEpics > 0) {
-            throw new ConflictException("Cannot delete RepoGroup: %d active run(s), %d active task(s), %d epic(s)"
-                    .formatted(activeRuns, activeTasks, existingEpics));
+        if (activeRuns > 0) {
+            throw new ConflictException(
+                    "Cannot delete RepoGroup: %d active run(s) still in progress".formatted(activeRuns));
         }
         service.delete(id);
     }

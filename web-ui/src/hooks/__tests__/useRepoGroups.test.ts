@@ -10,6 +10,9 @@ vi.mock("@/lib/api", () => ({
     put: vi.fn(),
     delete: vi.fn(),
   },
+  // Hooks import apiErrorMessage for onError toasts; the real one returns the fallback for a
+  // non-ApiError, so this passthrough matches its behavior for the plain Error the tests reject with.
+  apiErrorMessage: (_err: unknown, fallback: string) => fallback,
 }));
 
 vi.mock("@/lib/toast-messages", () => ({

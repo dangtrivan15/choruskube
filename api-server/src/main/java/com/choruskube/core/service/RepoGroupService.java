@@ -3,6 +3,7 @@ package com.choruskube.core.service;
 import com.choruskube.core.dto.RepoGroupRequest;
 import com.choruskube.core.event.MappableCreated;
 import com.choruskube.core.exception.BadRequestException;
+import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.RepoGroup;
 import com.choruskube.core.model.RepoGroupMember;
@@ -10,6 +11,7 @@ import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.RepoGroupRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -96,10 +98,14 @@ public class RepoGroupService {
 
     @Transactional
     public void delete(UUID groupId) {
-        // Active-run/task blocking belongs to the controller layer (returns 409) where the
-        // WorkflowRunRepository and TaskRepository are in scope; here the group is hard-deleted and
-        // orphanRemoval cascades the members.
-        groups.deleteById(groupId);
+        RepoGroup group =
+                groups.findById(groupId).orElseThrow(() -> new NotFoundException("RepoGroup not found: " + groupId));
+        // Archive, not hard-delete: @SQLRestriction hides the tombstoned row while Epics/Tasks/runs
+        // that still reference this software_project_id keep a live FK target. Clearing members frees
+        // each member git_repo from being delete-blocked by a group the user can no longer see.
+        group.getMembers().clear();
+        group.setDeletedAt(Instant.now());
+        groups.save(group);
     }
 
     private void applyMembers(RepoGroup group, List<UUID> memberRepoIds) {
