@@ -47,6 +47,19 @@ class FeatureDevPromptConventionsTest {
     }
 
     @Test
+    void implementPromptTethersFutureWorkIssues() throws Exception {
+        String p = promptField("IMPLEMENT_PROMPT");
+        assertThat(p)
+                .as("an unpinned Future-work issue misfiles or leaks private context into a public repo")
+                .contains("in the repo")
+                .contains("visibility");
+        assertThat(p)
+                .as("a Future-work issue is orphaned unless it is labeled and linked back to its run")
+                .contains("future-work")
+                .contains("link the run's PR");
+    }
+
+    @Test
     void implementPromptRepairsReferencesLeftDanglingByGraduation() throws Exception {
         assertThat(promptField("IMPLEMENT_PROMPT"))
                 .as("graduating some decisions and not others is what strands a reference")

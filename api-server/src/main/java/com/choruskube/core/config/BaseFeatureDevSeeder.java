@@ -35,7 +35,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
     // and executor changes here never retroactively mutate prior versions. To ship a
     // change, edit the constants in this file (prompt, executor, schema), increment
     // CURRENT_VERSION, and the next boot creates the new snapshot.
-    static final int CURRENT_VERSION = 39;
+    static final int CURRENT_VERSION = 40;
 
     private static final String TEMPLATE_NAME = "Feature Development";
 
@@ -565,8 +565,15 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                 §4 Flow Diagrams  -> merge into ARCHITECTURE.md (rewritten in place, so it
                                      does NOT accumulate); this is present-tense state, not
                                      a record of this change
-              - §7 Caveats tagged "Future work" -> open a GitHub issue or a roadmap item;
-                                     do not create a new docs/ surface for them
+              - §7 Caveats tagged "Future work" -> file a GitHub issue for each, in the repo
+                                     that caveat concerns. Resolve that repo's visibility the
+                                     same way the PR body does below and generalize or drop
+                                     anything a PUBLIC repo may not carry. Label it `future-work`
+                                     (create the label with `gh label create --force` if the repo
+                                     lacks it) and link the run's PR for that repo, opened below,
+                                     so the item stays findable and tied to what deferred it. A
+                                     roadmap item is an acceptable home instead; either way do
+                                     not create a new docs/ surface for them
               - §1, §5, §6, §8 and Part 2 -> discard; they are execution scaffolding
             Graduate a decision only when something in this repo cites it. Do not bulk-copy
             the spec.
