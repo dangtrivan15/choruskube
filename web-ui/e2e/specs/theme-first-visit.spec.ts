@@ -9,9 +9,9 @@ function currentBaseURL(testInfo: { project: { use: { baseURL?: string } } }): s
 }
 
 // Clears only the "theme" cookie. A bare context().clearCookies() also wipes
-// the closed cloud overlay's storageState-loaded OIDC session cookie, which
-// bounces the next goto("/") to the identity provider's own login page —
-// an origin with no pre-paint theme script — instead of the app.
+// any session cookie a downstream deployment's storageState relies on,
+// bouncing the next goto("/") to an identity provider's login page — an
+// origin with no pre-paint theme script — instead of the app.
 async function clearThemeCookie(page: import("@playwright/test").Page): Promise<void> {
   await page.context().clearCookies({ name: "theme" });
 }
