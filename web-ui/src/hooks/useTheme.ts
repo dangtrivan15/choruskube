@@ -2,16 +2,16 @@ import { useEffect, useState } from "react";
 import {
   type Theme,
   THEME_COOKIE,
-  DEFAULT_THEME,
   getCookie,
   setCookie,
+  resolveInitialTheme,
 } from "@/lib/theme";
 
 export type { Theme };
 
 function readTheme(): Theme {
   const raw = getCookie(THEME_COOKIE);
-  return raw === "dark" || raw === "light" ? raw : DEFAULT_THEME;
+  return raw === "dark" || raw === "light" ? raw : resolveInitialTheme();
 }
 
 export function useTheme() {

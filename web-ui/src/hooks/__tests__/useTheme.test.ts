@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useTheme } from "@/hooks/useTheme";
 
@@ -10,15 +10,47 @@ function clearCookie(name: string) {
   document.cookie = `${name}=;path=/;max-age=0`;
 }
 
+function stubMatchMedia(matches: boolean) {
+  vi.stubGlobal(
+    "matchMedia",
+    vi.fn().mockReturnValue({ matches, media: "(prefers-color-scheme: dark)" }),
+  );
+}
+
 describe("useTheme", () => {
   beforeEach(() => {
     clearCookie("theme");
     document.documentElement.classList.remove("dark");
   });
 
-  it("defaults to light theme when no cookie exists", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("defaults to dark when no cookie exists and the OS prefers dark", () => {
+    stubMatchMedia(true);
+    const { result } = renderHook(() => useTheme());
+    expect(result.current.theme).toBe("dark");
+  });
+
+  it("defaults to light when no cookie exists and the OS prefers light", () => {
+    stubMatchMedia(false);
     const { result } = renderHook(() => useTheme());
     expect(result.current.theme).toBe("light");
+  });
+
+  it("theme=light cookie wins over an OS-dark preference", () => {
+    stubMatchMedia(true);
+    setCookieForTest("theme", "light");
+    const { result } = renderHook(() => useTheme());
+    expect(result.current.theme).toBe("light");
+  });
+
+  it("theme=dark cookie wins over an OS-light preference", () => {
+    stubMatchMedia(false);
+    setCookieForTest("theme", "dark");
+    const { result } = renderHook(() => useTheme());
+    expect(result.current.theme).toBe("dark");
   });
 
   it("reads theme=dark cookie", () => {
@@ -33,7 +65,14 @@ describe("useTheme", () => {
     expect(result.current.theme).toBe("light");
   });
 
-  it("ignores invalid cookie value and defaults to light", () => {
+  it("ignores invalid cookie value and resolves from the OS (dark)", () => {
+    stubMatchMedia(true);
+    setCookieForTest("theme", "ocean");
+    const { result } = renderHook(() => useTheme());
+    expect(result.current.theme).toBe("dark");
+  });
+
+  it("ignores invalid cookie value and falls back to light when the OS is unobservable", () => {
     setCookieForTest("theme", "ocean");
     const { result } = renderHook(() => useTheme());
     expect(result.current.theme).toBe("light");

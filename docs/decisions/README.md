@@ -39,6 +39,7 @@ Every entry gets a row, newest last.
 | [2026-09-14---01-max-awaiting-human-throttle.md](2026-09-14---01-max-awaiting-human-throttle.md) | 2026-09-14 | Why the `max_awaiting_human` ceiling reuses `AutopilotSlotCounter` and the `Bucket.AWAITING_YOU` classification instead of adding new seams, and why reaching it only throttles the start loop rather than disengaging | current |
 | [2026-09-18---01-task-triggered-feature-request-parent-context.md](2026-09-18---01-task-triggered-feature-request-parent-context.md) | 2026-09-18 | Why deterministic parent Story/Epic context is folded into `feature_request` at task-start rather than through new run-input plumbing, and why live-roadmap discovery guidance ships in the agent entrypoint rather than the frozen prompt template | current |
 | [2026-09-18---02-repo-group-delete-is-archive.md](2026-09-18---02-repo-group-delete-is-archive.md) | 2026-09-18 | Why deleting a RepoGroup archives it (soft-delete) with only an in-flight run blocking, instead of hard-deleting behind an epic/task guard | current |
+| [2026-09-18---03-first-visit-follows-device-color-scheme.md](2026-09-18---03-first-visit-follows-device-color-scheme.md) | 2026-09-18 | Why the first-visit theme default resolves from `prefers-color-scheme` while a saved preference stays authoritative, seeded once rather than live-tracked, with the OS check duplicated across the pre-paint script and React under a sync test | current |
 
 - **Entry** — the filename, linked.
 - **Date** — the date in the filename.
