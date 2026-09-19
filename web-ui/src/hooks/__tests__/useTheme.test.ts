@@ -123,4 +123,35 @@ describe("useTheme", () => {
     renderHook(() => useTheme());
     expect(document.documentElement.classList.contains("dark")).toBe(false);
   });
+
+  it("two hooks in the same tab observe the same value after one toggles (shared store state)", () => {
+    const a = renderHook(() => useTheme());
+    const b = renderHook(() => useTheme());
+    expect(a.result.current.theme).toBe("light");
+    expect(b.result.current.theme).toBe("light");
+
+    act(() => {
+      a.result.current.toggle();
+    });
+
+    expect(a.result.current.theme).toBe("dark");
+    expect(b.result.current.theme).toBe("dark");
+  });
+
+  it("picks up a same-origin toggle broadcast from another tab", async () => {
+    const { result } = renderHook(() => useTheme());
+    expect(result.current.theme).toBe("light");
+
+    const otherTab = new BroadcastChannel("theme");
+    try {
+      act(() => {
+        otherTab.postMessage("dark");
+      });
+      await vi.waitFor(() => {
+        expect(result.current.theme).toBe("dark");
+      });
+    } finally {
+      otherTab.close();
+    }
+  });
 });
