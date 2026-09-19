@@ -3,10 +3,35 @@ import { config } from "@/config";
 /** Cookie name shared across ecosystem apps for consistent theming. */
 export const THEME_COOKIE = "theme";
 
-/** Fallback when cookie is missing, unreadable, or blocked. */
+/** Last-resort fallback, used only when the OS preference is also unobservable (matchMedia absent/throwing). */
 export const DEFAULT_THEME: Theme = "light";
 
 export type Theme = "dark" | "light";
+
+/**
+ * Whether the OS reports a dark color-scheme preference.
+ * Returns false (never throws) when matchMedia is unavailable, mirroring the
+ * typeof-window guard in useMobileBreakpoint.ts.
+ */
+export function systemPrefersDark(): boolean {
+  if (typeof window === "undefined" || !window.matchMedia) return false;
+  try {
+    return window.matchMedia("(prefers-color-scheme: dark)").matches;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Theme to use when there is no valid saved preference: the OS setting,
+ * falling back to DEFAULT_THEME only when that is unobservable.
+ *
+ * SYNC: The FOUC script in index.html duplicates this no-preference branch.
+ *       If you change the resolution rule, update the script too.
+ */
+export function resolveInitialTheme(): Theme {
+  return systemPrefersDark() ? "dark" : DEFAULT_THEME;
+}
 
 /**
  * Read a cookie value by name.

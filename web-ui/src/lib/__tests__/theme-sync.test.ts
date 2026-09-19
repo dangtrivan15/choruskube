@@ -37,4 +37,13 @@ describe("FOUC / theme.ts sync", () => {
   it("DEFAULT_THEME in theme.ts is light", () => {
     expect(DEFAULT_THEME).toBe("light");
   });
+
+  it("index.html carries the OS no-preference branch", () => {
+    expect(indexHtml).toContain("prefers-color-scheme");
+    expect(indexHtml).toContain("matchMedia");
+  });
+
+  it("theme.ts carries the OS no-preference branch", () => {
+    expect(themeTs).toContain("prefers-color-scheme");
+  });
 });

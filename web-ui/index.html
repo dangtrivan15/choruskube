@@ -4,12 +4,24 @@
     <meta charset="UTF-8" />
     <script>
       // FOUC prevention: apply .dark before first paint.
-      // SYNC: cookie name "theme" and default "light" must match src/lib/theme.ts
+      // SYNC: cookie name "theme" and the no-preference branch (absent, invalid,
+      // or unreadable cookie -> consult prefers-color-scheme) must match
+      // resolveInitialTheme() in src/lib/theme.ts.
       try {
-        var m = document.cookie.match(/(?:^|; )theme=([^;]*)/);
-        if (m && decodeURIComponent(m[1]) === "dark")
+        var raw = null;
+        try {
+          var m = document.cookie.match(/(?:^|; )theme=([^;]*)/);
+          raw = m ? decodeURIComponent(m[1]) : null;
+        } catch (e) {
+          raw = null; // cookie access blocked — fall through to the OS check below
+        }
+        if (raw === "dark") {
           document.documentElement.classList.add("dark");
-      } catch(e) { /* cookie blocked — default to light (no .dark class) */ }
+        } else if (raw !== "light") {
+          if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches)
+            document.documentElement.classList.add("dark");
+        }
+      } catch(e) { /* OS check itself failed (e.g. matchMedia threw) — default to light (no .dark class) */ }
     </script>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
