@@ -178,6 +178,24 @@ public class AutopilotServiceIntegrationTest extends BaseTest {
     }
 
     @Test
+    void tickCurrentScope_whileDisengaged_startsReadyWorkOnDemand() {
+        // The "Run tick now" button against real Postgres: the scheduler starts nothing on a
+        // disengaged Autopilot, but one manual pass launches the ready work — which is the only
+        // thing the button is for.
+        StoryResponse story = makeStory(makeRepo("autopilot-manual-tick").getId());
+        TaskResponse task = taskService.create(story.id(), new TaskRequest("Ready", "D"));
+        UUID autopilotId = engageThenDisengage();
+
+        autopilotService.tickCurrentScope();
+
+        assertThat(taskService.get(task.id()).status()).isEqualTo("in_progress");
+        List<WorkflowRun> runs = runsFor(autopilotId);
+        assertThat(runs).hasSize(1);
+        assertThat(runs.getFirst().getTaskId()).isEqualTo(task.id());
+        assertThat(runs.getFirst().getStatus()).isEqualTo(WorkflowRunStatus.pending);
+    }
+
+    @Test
     void tick_blockedTask_isNeverStarted() {
         StoryResponse story = makeStory(makeRepo("autopilot-blocked").getId());
         TaskResponse blocker = taskService.create(story.id(), new TaskRequest("Blocker", "D"));
@@ -642,6 +660,14 @@ public class AutopilotServiceIntegrationTest extends BaseTest {
     /** Creates the singleton via the real path and registers it for deletion. */
     private UUID engage() {
         autopilotService.engage();
+        Autopilot autopilot = autopilotRepo.findAll().getFirst();
+        return cleaner.trackAutopilot(autopilot.getId());
+    }
+
+    /** A configured-but-off Autopilot: the row exists (so a manual tick can resolve it) and is disengaged. */
+    private UUID engageThenDisengage() {
+        autopilotService.engage();
+        autopilotService.disengage();
         Autopilot autopilot = autopilotRepo.findAll().getFirst();
         return cleaner.trackAutopilot(autopilot.getId());
     }

@@ -202,6 +202,35 @@ class AutopilotServiceTest {
         verify(autopilotRepo, never()).insertDefaults(any());
     }
 
+    @Test
+    void tickCurrentScope_whenDisengaged_startsReadyWorkAnyway() {
+        // The manual tick is an explicit human action, so it runs a full pass whatever the engaged
+        // flag says — the flag gates only the unattended scheduler. Without this a disengaged
+        // Autopilot's "Run tick now" button is a no-op that still returns 200.
+        autopilot.setEngaged(false);
+        Task ready = task(story(epic("E")), "Ready", WorkItemStatus.backlog, Readiness.READY);
+
+        newService().tickCurrentScope();
+
+        verify(autopilotRepo).acquireTickLease(eq(autopilotId), eq(THIS_INSTANCE), anyInt());
+        verify(taskService).startForAutopilot(ready.getId(), autopilotId);
+    }
+
+    @Test
+    void tickCurrentScope_resolvesTheCallersAutopilot_notEveryEngagedRow() {
+        // Org-scoped: a manual tick acts on the caller's own Autopilot (forCurrentScope), never the
+        // scheduler's installation-wide findAllEngaged sweep — that sweep from a per-org request
+        // would tick other organisations' Autopilots the caller has no authority over.
+        RecordingResolver resolver = engaged(autopilotId);
+
+        newService(Duration.ofMinutes(5), resolver).tickCurrentScope();
+
+        assertThat(resolver.requestScopedCalls).isEqualTo(1);
+        assertThat(resolver.engagedLookups)
+                .as("the manual tick must not use the global sweep")
+                .isZero();
+    }
+
     // -----------------------------------------------------------------------------------
     // 2 — slots
     // -----------------------------------------------------------------------------------
@@ -485,6 +514,24 @@ class AutopilotServiceTest {
         assertThat(autopilot.isEngaged()).isFalse();
         assertThat(autopilot.getDisengagedReason()).isNotNull();
         verify(taskService, never()).startForAutopilot(any(), any());
+    }
+
+    @Test
+    void tickCurrentScope_whenAFailureWouldTripTheBreaker_startsAnyway() {
+        // Option A: a manual pass still counts the failure and lets the breaker disengage the
+        // Autopilot for future automatic operation, but the breaker never aborts the pass the human
+        // just asked for. The scheduler equivalent (tick_breakerTrips_stopsBeforeStartingAnything)
+        // starts nothing here; the human clicking once is its own throttle.
+        Task ready = task(story(epic("E")), "Ready", WorkItemStatus.backlog, Readiness.READY);
+        autopilot.setConsecutiveFailures(2);
+        settling(WorkflowRunStatus.failed);
+
+        newService().tickCurrentScope();
+
+        verify(taskService).startForAutopilot(ready.getId(), autopilotId);
+        assertThat(autopilot.getDisengagedReason())
+                .as("the failure is still recorded")
+                .isNotNull();
     }
 
     // -----------------------------------------------------------------------------------
@@ -1583,11 +1630,13 @@ class AutopilotServiceTest {
         List<Method> shouldBeTransactional = Arrays.stream(AutopilotService.class.getDeclaredMethods())
                 .filter(method -> Modifier.isPublic(method.getModifiers()))
                 .filter(method -> !method.isSynthetic())
-                // The one public method that must NOT be, asserted by
-                // tickCarriesNoTransactionalAnnotation. Matched on its signature and not just its
-                // name: a future tick(UUID) is a different method with different obligations, and
-                // exempting it by name alone would hand it the carve-out for free.
-                .filter(method -> !("tick".equals(method.getName()) && method.getParameterCount() == 0))
+                // The two public methods that must NOT be, asserted by
+                // tickCarriesNoTransactionalAnnotation. Both own their transaction boundaries — four
+                // short transactions plus the lease — so an ambient one would merge them. Matched on
+                // signature and not just name: a future tick(UUID) is a different method with
+                // different obligations, and exempting it by name alone would hand it the carve-out.
+                .filter(method -> !(("tick".equals(method.getName()) || "tickCurrentScope".equals(method.getName()))
+                        && method.getParameterCount() == 0))
                 .toList();
 
         assertThat(shouldBeTransactional)
@@ -1696,6 +1745,9 @@ class AutopilotServiceTest {
                 .isNull();
         assertThat(AutopilotService.class.getMethod("tick").getAnnotation(Transactional.class))
                 .as("tick() must own its transaction boundaries, not inherit one")
+                .isNull();
+        assertThat(AutopilotService.class.getMethod("tickCurrentScope").getAnnotation(Transactional.class))
+                .as("the manual tick runs the same lease-plus-four-phases pass and must own its boundaries too")
                 .isNull();
     }
 
