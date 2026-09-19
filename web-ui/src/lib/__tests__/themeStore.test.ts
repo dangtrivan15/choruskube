@@ -86,6 +86,41 @@ describe("themeStore", () => {
     }
   });
 
+  it("toggle broadcasts the new theme so other same-origin tabs receive it", async () => {
+    setCookieForTest("theme", "light");
+    unsubscribe = themeStore.subscribe(() => {});
+
+    const otherTab = new BroadcastChannel("theme");
+    const received: unknown[] = [];
+    otherTab.onmessage = (event) => received.push(event.data);
+    try {
+      themeStore.toggle();
+      await vi.waitFor(() => {
+        expect(received).toContain("dark");
+      });
+    } finally {
+      otherTab.close();
+    }
+  });
+
+  it("ignores a BroadcastChannel message that is not a valid theme", async () => {
+    setCookieForTest("theme", "light");
+    const listener = vi.fn();
+    unsubscribe = themeStore.subscribe(listener);
+    expect(themeStore.getSnapshot()).toBe("light");
+
+    const otherTab = new BroadcastChannel("theme");
+    try {
+      otherTab.postMessage("ocean");
+      // Give any (mis)handling a full macrotask to run before asserting nothing changed.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(themeStore.getSnapshot()).toBe("light");
+      expect(listener).not.toHaveBeenCalled();
+    } finally {
+      otherTab.close();
+    }
+  });
+
   it("a visibilitychange after the cookie is changed externally re-reads and applies it", () => {
     setCookieForTest("theme", "light");
     unsubscribe = themeStore.subscribe(() => {});
