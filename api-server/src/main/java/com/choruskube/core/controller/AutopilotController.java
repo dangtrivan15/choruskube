@@ -52,7 +52,10 @@ public class AutopilotController {
     @PreAuthorize("@orgSecurity.canOperate()")
     @PostMapping("/tick")
     public AutopilotStatusResponse tickNow() {
-        service.tick();
+        // Scoped to the caller's own Autopilot, and runs whether or not it is engaged — see
+        // AutopilotService#tickCurrentScope. The scheduler's installation-wide tick() must not be
+        // reached from a per-org request: canOperate authorizes this org, not every org.
+        service.tickCurrentScope();
         return service.getStatus();
     }
 }

@@ -274,6 +274,21 @@ public class AutopilotService implements AutopilotSafetyValve {
     }
 
     /**
+     * What drove a pass, and therefore whether the engaged flag and the failure breaker may stop it.
+     *
+     * <p>A {@code SCHEDULED} pass is the unattended scheduler: it obeys both, so an emergency stop
+     * or three failures halt it. A {@code MANUAL} pass is an explicit human click on {@code POST
+     * /api/v1/autopilot/tick} — it runs one pass whatever the engaged flag says and is never
+     * aborted by the breaker, while still counting outcomes so the breaker can disengage the
+     * Autopilot for the scheduler that follows. Removing that distinction makes the manual tick a
+     * no-op on a disengaged Autopilot, which is the whole reason the button exists.
+     */
+    private enum Trigger {
+        SCHEDULED,
+        MANUAL
+    }
+
+    /**
      * Everything phase 2 works out. Deliberately carries no {@code maxParallel}: the ceiling is a
      * live setting a human can lower with a PATCH mid-pass, so phase 3 re-reads it rather than
      * spending a budget computed before the change.
@@ -334,7 +349,7 @@ public class AutopilotService implements AutopilotSafetyValve {
             try {
                 // The whole pass, lease included, and never tickOne() directly — a pass reached
                 // outside the binder is a pass with no scope bound.
-                scopeBinder.runInScopeOf(autopilotId, () -> tickOne(autopilotId));
+                scopeBinder.runInScopeOf(autopilotId, () -> tickOne(autopilotId, Trigger.SCHEDULED));
             } catch (RuntimeException e) {
                 log.warn("Autopilot pass failed on {}: {}", autopilotId, e.getMessage());
                 if (failure == null) {
@@ -350,6 +365,33 @@ public class AutopilotService implements AutopilotSafetyValve {
         if (failure != null) {
             throw failure;
         }
+    }
+
+    /**
+     * One pass on the caller's own Autopilot, run on demand from {@code POST /api/v1/autopilot/tick}.
+     *
+     * <p>Two things separate it from {@link #tick()}. It resolves the caller's Autopilot through the
+     * request-scoped {@link AutopilotResolver#forCurrentScope()} rather than the scheduler's
+     * installation-wide {@link AutopilotResolver#findAllEngaged()} sweep, so a manual tick from one
+     * organisation never reaches another's — the resolver is the seam that makes the endpoint
+     * org-scoped downstream. And it runs the pass with {@link Trigger#MANUAL}, so engagement and the
+     * breaker no longer gate it: the button does one pass on demand rather than nothing while the
+     * Autopilot is off. An absent row means this scope never configured an Autopilot, so there is
+     * nothing to tick and the endpoint's own {@code getStatus()} renders the unconfigured panel.
+     *
+     * <p>Runs on the request thread, which already carries a scope; the binder still resolves the
+     * pass's scope from the Autopilot id and restores the caller's afterwards, as it does for the
+     * scheduler.
+     */
+    public void tickCurrentScope() {
+        Assert.state(
+                !TransactionSynchronizationManager.isActualTransactionActive(),
+                "AutopilotService.tickCurrentScope() must not run inside a transaction: its phases and the "
+                        + "tick lease are separate short transactions on purpose, and an ambient one would merge "
+                        + "them back into the single long transaction this design exists to remove.");
+        autopilotResolver
+                .forCurrentScope()
+                .ifPresent(id -> scopeBinder.runInScopeOf(id, () -> tickOne(id, Trigger.MANUAL)));
     }
 
     /**
@@ -388,14 +430,14 @@ public class AutopilotService implements AutopilotSafetyValve {
      * would queue instances behind a slow tick; skipping costs one scheduler interval, and the
      * work is still there next time.
      */
-    private void tickOne(UUID autopilotId) {
+    private void tickOne(UUID autopilotId, Trigger trigger) {
         Instant now = Instant.now();
         if (autopilotRepo.acquireTickLease(autopilotId, instanceId, leaseTtlSeconds()) == 0) {
             log.debug("Autopilot pass skipped: another instance holds the tick lease on {}", autopilotId);
             return;
         }
         try {
-            runPass(autopilotId, now);
+            runPass(autopilotId, now, trigger);
         } finally {
             // Guarded on ownership inside the statement, so this is a no-op if the lease was lost
             // and taken over. Skipping the release entirely would only cost one TTL of idleness.
@@ -419,12 +461,12 @@ public class AutopilotService implements AutopilotSafetyValve {
      * open to a second instance that would count the same free slots and start the same work,
      * violating {@code max_parallel}. See {@link AutopilotRepository#acquireTickLease}.
      */
-    private void runPass(UUID autopilotId, Instant now) {
+    private void runPass(UUID autopilotId, Instant now, Trigger trigger) {
         List<String> notes = new ArrayList<>();
         Set<UUID> startedTaskIds = new LinkedHashSet<>();
         Frontier frontier = Frontier.EMPTY;
 
-        Settled settled = writes.execute(status -> settle(autopilotId, now));
+        Settled settled = writes.execute(status -> settle(autopilotId, now, trigger));
         if (settled == Settled.DISENGAGED) {
             return;
         }
@@ -436,7 +478,7 @@ public class AutopilotService implements AutopilotSafetyValve {
             }
             Plan plan = plan(autopilotId);
             frontier = plan.frontier();
-            if (!renewLease(autopilotId) || !start(autopilotId, plan, startedTaskIds, notes)) {
+            if (!renewLease(autopilotId) || !start(autopilotId, plan, startedTaskIds, notes, trigger)) {
                 // Whoever holds the lease next owns the reporting too. Publishing this pass's view
                 // on top of theirs would be two writers on one live panel.
                 return;
@@ -482,11 +524,11 @@ public class AutopilotService implements AutopilotSafetyValve {
      * two instances could both see the same unsettled failure and both add to the counter. The
      * lease covers this phase along with the rest of the pass.
      */
-    private Settled settle(UUID autopilotId, Instant now) {
-        // Read again now the lease is held: the check in tick() preceded it, so a Disengage that
-        // arrived in between would otherwise go unnoticed until the next pass. A scalar re-read
-        // rather than a refresh, because no entity is held to refresh.
-        if (!isEngaged(autopilotId)) {
+    private Settled settle(UUID autopilotId, Instant now, Trigger trigger) {
+        // Re-read under the lease: a Disengage that arrived since the scheduler's pre-lease check
+        // would otherwise go unnoticed until the next pass. A manual pass skips the gate entirely —
+        // it runs whatever the flag says.
+        if (trigger == Trigger.SCHEDULED && !isEngaged(autopilotId)) {
             return Settled.DISENGAGED;
         }
         autopilotRepo.stampTick(autopilotId, now);
@@ -515,9 +557,11 @@ public class AutopilotService implements AutopilotSafetyValve {
         } else if (successes > 0) {
             autopilotRepo.resetFailures(autopilotId, now);
         }
-        return applyBreaker(autopilotId, "its runs failed instead of completing. Nothing is retried automatically", now)
-                ? Settled.BREAKER_TRIPPED
-                : Settled.PROCEED;
+        // A manual pass counts the failure and lets the breaker disengage the Autopilot for the
+        // scheduler that follows, but is never itself aborted by it — the human asked for this pass.
+        boolean tripped = applyBreaker(
+                autopilotId, "its runs failed instead of completing. Nothing is retried automatically", now);
+        return trigger == Trigger.SCHEDULED && tripped ? Settled.BREAKER_TRIPPED : Settled.PROCEED;
     }
 
     /**
@@ -557,7 +601,7 @@ public class AutopilotService implements AutopilotSafetyValve {
      *
      * @return false if the lease was lost and the caller must abandon the pass
      */
-    private boolean start(UUID autopilotId, Plan plan, Set<UUID> started, List<String> notes) {
+    private boolean start(UUID autopilotId, Plan plan, Set<UUID> started, List<String> notes, Trigger trigger) {
         int remaining = plan.slots();
         for (Task task : plan.frontier().readyTasks()) {
             if (remaining <= 0) {
@@ -566,7 +610,9 @@ public class AutopilotService implements AutopilotSafetyValve {
             if (!renewLease(autopilotId)) {
                 return false;
             }
-            if (!isEngaged(autopilotId)) {
+            // The scheduler's mid-pass emergency stop: a Disengage takes effect during a pass, not
+            // only between passes. A manual pass is exempt — it runs whatever the flag says.
+            if (trigger == Trigger.SCHEDULED && !isEngaged(autopilotId)) {
                 log.info("Autopilot was disengaged mid-pass; {} start(s) not attempted", remaining);
                 break;
             }
@@ -607,7 +653,10 @@ public class AutopilotService implements AutopilotSafetyValve {
                 // the starts already made in this loop are committed and unaffected.
                 notes.add("Could not start Task '" + task.getTitle() + "': " + e.getMessage());
                 log.warn("Autopilot failed to start Task {}: {}", task.getId(), e.getMessage());
-                if (recordFailure(autopilotId, "the last failure was: " + e.getMessage())) {
+                // A manual pass still records the failure but keeps trying the rest of the frontier;
+                // only the scheduler stops itself when this failure trips the breaker.
+                if (recordFailure(autopilotId, "the last failure was: " + e.getMessage())
+                        && trigger == Trigger.SCHEDULED) {
                     break;
                 }
             }
