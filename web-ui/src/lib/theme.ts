@@ -34,6 +34,16 @@ export function resolveInitialTheme(): Theme {
 }
 
 /**
+ * Read the persisted theme cookie, returning null unless it holds exactly
+ * "dark" or "light" — an absent, invalid, or blocked cookie all read as null
+ * so callers fall through to resolveInitialTheme() uniformly.
+ */
+export function readStoredTheme(): Theme | null {
+  const raw = getCookie(THEME_COOKIE);
+  return raw === "dark" || raw === "light" ? raw : null;
+}
+
+/**
  * Read a cookie value by name.
  * Returns null if the cookie is absent or document.cookie is blocked.
  *
