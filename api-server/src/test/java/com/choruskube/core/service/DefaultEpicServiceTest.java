@@ -42,6 +42,7 @@ import io.temporal.client.WorkflowClient;
 import io.temporal.serviceclient.WorkflowServiceStubs;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -164,6 +165,34 @@ public class DefaultEpicServiceTest extends BaseTest {
 
         List<EpicResponse> result = service.listBySoftwareProjectId(r.getId());
         assertThat(result).extracting(EpicResponse::id).contains(created.id());
+    }
+
+    @Test
+    void readEpicWhoseSoftwareProjectSoftDeleted_stillResolvesRefByName() {
+        GitRepo r = makeRepo("https://github.com/test/epic-soft-deleted-project.git");
+        EpicResponse created = service.create(new EpicRequest("Epic", "Desc", null, r.getId()), null);
+
+        // Soft-delete the project, then flush+clear so reads go through @SQLRestriction rather than
+        // the session cache — the cache would serve the just-deleted row and mask the filter the
+        // read paths must now tolerate.
+        r.setDeletedAt(Instant.now());
+        gitRepoRepo.saveAndFlush(r);
+        entityManager.flush();
+        entityManager.clear();
+
+        // Single-Epic get (get/updateStage/etc. share this path).
+        EpicResponse got = service.get(created.id());
+        assertThat(got.softwareProject()).isNotNull();
+        assertThat(got.softwareProject().id()).isEqualTo(r.getId());
+        assertThat(got.softwareProject().name()).isEqualTo(r.getName());
+
+        // Batch list path (backs the list/board/timeline endpoint).
+        Page<EpicResponse> page = service.list(null, null, null, null, PageRequest.of(0, 50));
+        EpicResponse fromList = page.getContent().stream()
+                .filter(x -> x.id().equals(created.id()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(fromList.softwareProject().name()).isEqualTo(r.getName());
     }
 
     @Test

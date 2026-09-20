@@ -34,6 +34,8 @@ import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowOptions;
 import io.temporal.client.WorkflowStub;
 import io.temporal.serviceclient.WorkflowServiceStubs;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -91,6 +93,9 @@ public class DefaultTaskServiceTest extends BaseTest {
     @MockitoBean
     private RunEventPublisher runEventPublisher;
 
+    @PersistenceContext
+    private EntityManager entityManager;
+
     @BeforeEach
     void setUp() {
         WorkflowStub mockStub = Mockito.mock(WorkflowStub.class);
@@ -111,6 +116,27 @@ public class DefaultTaskServiceTest extends BaseTest {
         assertThat(task.softwareProject().id()).isEqualTo(r.getId());
         assertThat(task.status()).isEqualTo("backlog");
         assertThat(task.priority()).isEqualTo("medium");
+    }
+
+    @Test
+    void get_taskWhoseSoftwareProjectSoftDeleted_stillResolvesRefByName() {
+        GitRepo r = makeRepo("https://github.com/test/task-soft-deleted-project.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("Task title", "Task desc"));
+
+        // Soft-delete the project, then flush+clear so the re-read goes through @SQLRestriction
+        // rather than the session cache — the cache would serve the just-deleted row and mask the
+        // filter that the read path must now tolerate.
+        r.setDeletedAt(Instant.now());
+        gitRepoRepo.saveAndFlush(r);
+        entityManager.flush();
+        entityManager.clear();
+
+        TaskResponse read = service.get(task.id());
+
+        assertThat(read.softwareProject()).isNotNull();
+        assertThat(read.softwareProject().id()).isEqualTo(r.getId());
+        assertThat(read.softwareProject().name()).isEqualTo(r.getName());
     }
 
     @Test

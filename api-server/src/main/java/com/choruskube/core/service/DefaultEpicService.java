@@ -63,6 +63,7 @@ public class DefaultEpicService implements EpicService {
     private final ScopeProvider scopeProvider;
     private final WorkItemDependencyService workItemDependencyService;
     private final EpicReadinessAssembler readinessAssembler;
+    private final SoftwareProjectRefResolver softwareProjectRefResolver;
 
     public DefaultEpicService(
             EpicRepository repo,
@@ -77,7 +78,8 @@ public class DefaultEpicService implements EpicService {
             ApplicationEventPublisher applicationEventPublisher,
             ScopeProvider scopeProvider,
             WorkItemDependencyService workItemDependencyService,
-            EpicReadinessAssembler readinessAssembler) {
+            EpicReadinessAssembler readinessAssembler,
+            SoftwareProjectRefResolver softwareProjectRefResolver) {
         this.repo = repo;
         this.storyRepo = storyRepo;
         this.taskRepo = taskRepo;
@@ -91,6 +93,7 @@ public class DefaultEpicService implements EpicService {
         this.scopeProvider = scopeProvider;
         this.workItemDependencyService = workItemDependencyService;
         this.readinessAssembler = readinessAssembler;
+        this.softwareProjectRefResolver = softwareProjectRefResolver;
     }
 
     @Override
@@ -438,10 +441,9 @@ public class DefaultEpicService implements EpicService {
                 .map(Epic::getSoftwareProjectId)
                 .filter(Objects::nonNull)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
-        Map<UUID, SoftwareProject> projectsById = projectIds.isEmpty()
-                ? Map.of()
-                : softwareProjectRepo.findAllById(projectIds).stream()
-                        .collect(Collectors.toMap(SoftwareProject::getId, p -> p));
+        // Tolerates a soft-deleted project (its row is kept so linked Epics stay readable) — one
+        // such Epic must not 404 the whole list/board/timeline.
+        Map<UUID, SoftwareProjectRefResolver.Resolved> projectsById = softwareProjectRefResolver.resolveAll(projectIds);
 
         Set<UUID> milestoneIds = epics.stream()
                 .map(Epic::getMilestoneId)
@@ -457,7 +459,7 @@ public class DefaultEpicService implements EpicService {
 
         List<EpicResponse> out = new ArrayList<>(epics.size());
         for (Epic e : epics) {
-            SoftwareProject project = projectsById.get(e.getSoftwareProjectId());
+            SoftwareProjectRefResolver.Resolved project = projectsById.get(e.getSoftwareProjectId());
             if (project == null) {
                 throw new NotFoundException(
                         "SoftwareProject not found for epic " + e.getId() + ": " + e.getSoftwareProjectId());
@@ -466,7 +468,7 @@ public class DefaultEpicService implements EpicService {
                     rollupsByEpicId.getOrDefault(e.getId(), new RollupCalculator.Rollup(0, 0, 0));
             long readyItemCount = readyItemCountsByEpicId.getOrDefault(e.getId(), 0L);
             MilestoneRef milestone = e.getMilestoneId() != null ? milestoneRefsById.get(e.getMilestoneId()) : null;
-            out.add(buildResponse(e, project, rollup, readyItemCount, milestone));
+            out.add(buildResponse(e, project.ref(), project.repos(), rollup, readyItemCount, milestone));
         }
         return out;
     }
@@ -538,14 +540,11 @@ public class DefaultEpicService implements EpicService {
 
     private EpicResponse buildResponse(
             Epic e,
-            SoftwareProject project,
+            SoftwareProjectRef projectRef,
+            List<RepoRef> repos,
             RollupCalculator.Rollup rollup,
             long readyItemCount,
             MilestoneRef milestone) {
-        SoftwareProjectRef projectRef = toProjectRef(project);
-        List<RepoRef> repos = project.resolveRepos().stream()
-                .map(g -> new RepoRef(g.getId(), g.getUrl(), RepoNameUtil.deriveRepoName(g.getUrl())))
-                .toList();
         return new EpicResponse(
                 e.getId(),
                 e.getTitle(),
@@ -566,6 +565,12 @@ public class DefaultEpicService implements EpicService {
     private SoftwareProjectRef toProjectRef(SoftwareProject project) {
         String type = (project instanceof RepoGroup) ? "repo_group" : "git_repo";
         return new SoftwareProjectRef(project.getId(), type, project.getName());
+    }
+
+    private List<RepoRef> reposOf(SoftwareProject project) {
+        return project.resolveRepos().stream()
+                .map(g -> new RepoRef(g.getId(), g.getUrl(), RepoNameUtil.deriveRepoName(g.getUrl())))
+                .toList();
     }
 
     /**
@@ -611,14 +616,17 @@ public class DefaultEpicService implements EpicService {
     }
 
     private EpicResponse toResponse(Epic e) {
-        SoftwareProject project = softwareProjectRepo
-                .findById(e.getSoftwareProjectId())
-                .orElseThrow(() -> new NotFoundException(
-                        "SoftwareProject not found for epic " + e.getId() + ": " + e.getSoftwareProjectId()));
-        return toResponse(e, project);
+        // Tolerates a soft-deleted project: its row is kept so a linked Epic still reads back rather
+        // than 404-ing on get/updateStage/etc.
+        SoftwareProjectRefResolver.Resolved project = softwareProjectRefResolver.resolve(e.getSoftwareProjectId());
+        return toResponse(e, project.ref(), project.repos());
     }
 
     private EpicResponse toResponse(Epic e, SoftwareProject project) {
+        return toResponse(e, toProjectRef(project), reposOf(project));
+    }
+
+    private EpicResponse toResponse(Epic e, SoftwareProjectRef projectRef, List<RepoRef> repos) {
         List<Story> stories = storyRepo.findByEpicIdOrderByCreatedAtDesc(e.getId());
         Set<UUID> storyIds = stories.stream().map(Story::getId).collect(Collectors.toSet());
         List<Task> tasks = storyIds.isEmpty() ? List.of() : taskRepo.findByStoryIdIn(storyIds);
@@ -638,6 +646,6 @@ public class DefaultEpicService implements EpicService {
                         .map(m -> new MilestoneRef(m.getId(), m.getName()))
                         .orElse(null)
                 : null;
-        return buildResponse(e, project, rollup, 0, milestone);
+        return buildResponse(e, projectRef, repos, rollup, 0, milestone);
     }
 }

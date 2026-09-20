@@ -7,14 +7,9 @@ import com.choruskube.core.dto.RunSummary;
 import com.choruskube.core.dto.SoftwareProjectRef;
 import com.choruskube.core.dto.StoryResponse;
 import com.choruskube.core.dto.TaskResponse;
-import com.choruskube.core.exception.NotFoundException;
-import com.choruskube.core.model.RepoGroup;
-import com.choruskube.core.model.SoftwareProject;
 import com.choruskube.core.model.Story;
 import com.choruskube.core.model.Task;
 import com.choruskube.core.model.enums.Readiness;
-import com.choruskube.core.repository.SoftwareProjectRepository;
-import com.choruskube.core.util.RepoNameUtil;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
@@ -31,7 +26,7 @@ public class DefaultRoadmapGraphService implements RoadmapGraphService {
 
     private final EpicService epicService;
     private final TaskService taskService;
-    private final SoftwareProjectRepository softwareProjectRepo;
+    private final SoftwareProjectRefResolver softwareProjectRefResolver;
     // Owns dependency-edge loading, external-blocker resolution (org-checked), and the transitive
     // readiness walk — shared with DefaultStoryService/DefaultTaskService's flat list
     // endpoints so all three read paths agree on exactly one "is this item blocked" answer. Also
@@ -45,11 +40,11 @@ public class DefaultRoadmapGraphService implements RoadmapGraphService {
     public DefaultRoadmapGraphService(
             EpicService epicService,
             TaskService taskService,
-            SoftwareProjectRepository softwareProjectRepo,
+            SoftwareProjectRefResolver softwareProjectRefResolver,
             EpicReadinessAssembler readinessAssembler) {
         this.epicService = epicService;
         this.taskService = taskService;
-        this.softwareProjectRepo = softwareProjectRepo;
+        this.softwareProjectRefResolver = softwareProjectRefResolver;
         this.readinessAssembler = readinessAssembler;
     }
 
@@ -146,15 +141,11 @@ public class DefaultRoadmapGraphService implements RoadmapGraphService {
     }
 
     private TaskResponse toTaskResponse(Task t, Readiness readiness, boolean internal) {
-        SoftwareProject project = softwareProjectRepo
-                .findById(t.getSoftwareProjectId())
-                .orElseThrow(() -> new NotFoundException(
-                        "SoftwareProject not found for task " + t.getId() + ": " + t.getSoftwareProjectId()));
-        SoftwareProjectRef projectRef = new SoftwareProjectRef(
-                project.getId(), (project instanceof RepoGroup) ? "repo_group" : "git_repo", project.getName());
-        List<RepoRef> repos = project.resolveRepos().stream()
-                .map(g -> new RepoRef(g.getId(), g.getUrl(), RepoNameUtil.deriveRepoName(g.getUrl())))
-                .toList();
+        // Tolerates a soft-deleted project: its row is kept so linked Tasks stay readable, so one
+        // such Task must not 404 the whole roadmap graph.
+        SoftwareProjectRefResolver.Resolved project = softwareProjectRefResolver.resolve(t.getSoftwareProjectId());
+        SoftwareProjectRef projectRef = project.ref();
+        List<RepoRef> repos = project.repos();
 
         // A single newest-first page serves both the embedded recentRuns and
         // latestRunId/latestRunStatus (its first element) — one query instead of the two separate
