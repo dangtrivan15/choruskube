@@ -37,7 +37,6 @@ import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.scope.ScopeProvider;
-import com.choruskube.core.util.RepoNameUtil;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityManager;
 import java.util.LinkedHashMap;
@@ -105,6 +104,7 @@ public class DefaultTaskService implements TaskService {
     // (see startCore) — Spring Data has no refresh, and a locking finder alone returns the
     // already-loaded instance with its pre-lock state.
     private final EntityManager entityManager;
+    private final SoftwareProjectRefResolver softwareProjectRefResolver;
 
     public DefaultTaskService(
             TaskRepository repo,
@@ -123,7 +123,8 @@ public class DefaultTaskService implements TaskService {
             EpicReadinessAssembler readinessAssembler,
             ScopeProvider scopeProvider,
             RunPullRequestRepository prRepo,
-            EntityManager entityManager) {
+            EntityManager entityManager,
+            SoftwareProjectRefResolver softwareProjectRefResolver) {
         this.repo = repo;
         this.storyRepo = storyRepo;
         this.epicRepo = epicRepo;
@@ -141,6 +142,7 @@ public class DefaultTaskService implements TaskService {
         this.scopeProvider = scopeProvider;
         this.prRepo = prRepo;
         this.entityManager = entityManager;
+        this.softwareProjectRefResolver = softwareProjectRefResolver;
     }
 
     @Override
@@ -703,14 +705,11 @@ public class DefaultTaskService implements TaskService {
     }
 
     private TaskResponse toResponse(Task t, Readiness readiness) {
-        SoftwareProject project = softwareProjectRepo
-                .findById(t.getSoftwareProjectId())
-                .orElseThrow(() -> new NotFoundException(
-                        "SoftwareProject not found for task " + t.getId() + ": " + t.getSoftwareProjectId()));
-        SoftwareProjectRef projectRef = toProjectRef(project);
-        List<RepoRef> repos = project.resolveRepos().stream()
-                .map(g -> new RepoRef(g.getId(), g.getUrl(), RepoNameUtil.deriveRepoName(g.getUrl())))
-                .toList();
+        // Tolerates a soft-deleted project: its row is kept so linked Tasks stay readable, so the
+        // board/list must not 404 when the linked project has been soft-deleted.
+        SoftwareProjectRefResolver.Resolved project = softwareProjectRefResolver.resolve(t.getSoftwareProjectId());
+        SoftwareProjectRef projectRef = project.ref();
+        List<RepoRef> repos = project.repos();
         Optional<WorkflowRun> mostRecent = mostRecentRun(t.getId());
         UUID latestRunId = mostRecent.map(WorkflowRun::getId).orElse(null);
         String latestRunStatus = mostRecent.map(r -> r.getStatus().name()).orElse(null);
