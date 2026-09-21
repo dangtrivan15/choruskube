@@ -106,40 +106,42 @@ test.describe("Roadmap Graph status colors and legend fidelity", () => {
     });
     const doneTask = await api.createTask(story.id, { title: uniqueName("Done Task"), description: "desc" });
 
-    try {
-      await api.startTask(inProgressTask.id);
+    await api.startTask(inProgressTask.id);
 
-      // Get doneTask to "done" without depending on its Task-triggered run
-      // actually completing (mirrors roadmap-graph.spec.ts's "creates a
-      // blocking-chain..." test) — completeTask only requires the Task's
-      // most recent linked run to be terminal, not specifically "completed".
-      const started = await api.startTask(doneTask.id);
-      await api.waitForRunStatus(started.latestRunId!, ["running"], 15_000);
-      await api.cancelRun(started.latestRunId!);
-      await api.completeTask(doneTask.id);
+    // Get doneTask to "done" without depending on its Task-triggered run
+    // actually completing (mirrors roadmap-graph.spec.ts's "creates a
+    // blocking-chain..." test) — completeTask only requires the Task's
+    // most recent linked run to be terminal, not specifically "completed".
+    const started = await api.startTask(doneTask.id);
+    await api.waitForRunStatus(started.latestRunId!, ["running"], 15_000);
+    await api.cancelRun(started.latestRunId!);
+    await api.completeTask(doneTask.id);
 
-      await roadmapGraphPage.goto(epic.id);
+    await roadmapGraphPage.goto(epic.id);
 
-      const backlogColor = await roadmapGraphPage.nodeStatusColor(backlogTask.title);
-      const inProgressColor = await roadmapGraphPage.nodeStatusColor(inProgressTask.title);
-      const doneColor = await roadmapGraphPage.nodeStatusColor(doneTask.title);
+    const backlogColor = await roadmapGraphPage.nodeStatusColor(backlogTask.title);
+    const inProgressColor = await roadmapGraphPage.nodeStatusColor(inProgressTask.title);
+    const doneColor = await roadmapGraphPage.nodeStatusColor(doneTask.title);
 
-      expect(new Set([backlogColor, inProgressColor, doneColor]).size).toBe(3);
+    expect(new Set([backlogColor, inProgressColor, doneColor]).size).toBe(3);
 
-      await toggleTheme(roadmapGraphPage.page);
-      await expect(roadmapGraphPage.page.locator("html")).toHaveClass(/dark/);
+    await toggleTheme(roadmapGraphPage.page);
+    await expect(roadmapGraphPage.page.locator("html")).toHaveClass(/dark/);
 
-      const darkBacklogColor = await roadmapGraphPage.nodeStatusColor(backlogTask.title);
-      const darkInProgressColor = await roadmapGraphPage.nodeStatusColor(inProgressTask.title);
-      const darkDoneColor = await roadmapGraphPage.nodeStatusColor(doneTask.title);
+    const darkBacklogColor = await roadmapGraphPage.nodeStatusColor(backlogTask.title);
+    const darkInProgressColor = await roadmapGraphPage.nodeStatusColor(inProgressTask.title);
+    const darkDoneColor = await roadmapGraphPage.nodeStatusColor(doneTask.title);
 
-      expect(new Set([darkBacklogColor, darkInProgressColor, darkDoneColor]).size).toBe(3);
-      expect(darkBacklogColor).not.toBe(backlogColor);
-      expect(darkInProgressColor).not.toBe(inProgressColor);
-      expect(darkDoneColor).not.toBe(doneColor);
-    } finally {
-      await api.deleteEpic(epic.id);
-    }
+    expect(new Set([darkBacklogColor, darkInProgressColor, darkDoneColor]).size).toBe(3);
+    expect(darkBacklogColor).not.toBe(backlogColor);
+    expect(darkInProgressColor).not.toBe(inProgressColor);
+    expect(darkDoneColor).not.toBe(doneColor);
+
+    // No cleanup: starting inProgressTask/doneTask has moved them out of
+    // "backlog", and DefaultEpicService#delete refuses to delete an Epic with
+    // any started descendant Task (see roadmap-graph.spec.ts's blocking-chain
+    // test) — the uniqueName() titles keep this fixture from colliding with
+    // concurrent runs.
   });
 
   test("the blocking-dependency legend swatch matches its edge's stroke color, in both themes", async ({
