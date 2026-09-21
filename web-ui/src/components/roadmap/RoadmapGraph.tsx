@@ -36,6 +36,7 @@ import RoadmapExternalNode, { type RoadmapExternalNodeData } from "./RoadmapExte
 import RoadmapCrossEpicEdge, { type RoadmapCrossEpicEdgeData } from "./RoadmapCrossEpicEdge";
 import RoadmapGraphLegend from "./RoadmapGraphLegend";
 import type { RoadmapDetailItem } from "./RoadmapGraphDetailPanel";
+import { ROADMAP_EDGE_STYLES } from "@/lib/roadmapEdgeStyles";
 
 const nodeTypes = { roadmap: RoadmapGraphNode, "roadmap-external": RoadmapExternalNode };
 const edgeTypes = {
@@ -376,8 +377,8 @@ export default function RoadmapGraph({ snapshot, onNodeSelect }: RoadmapGraphPro
     // EdgeProps.markerEnd (see that component) — the color must be resolved
     // to an actual value here (not a CSS var()), since it becomes a literal
     // SVG attribute rather than an inline style.
-    const dependencyMarkerColor = resolveStatusColors()["--status-warning"];
-    const epicDependencyMarkerColor = resolveStatusColors()["--status-info"];
+    const dependencyMarkerColor = resolveStatusColors()[ROADMAP_EDGE_STYLES.dependency.token];
+    const epicDependencyMarkerColor = resolveStatusColors()[ROADMAP_EDGE_STYLES.epicDependency.token];
     // Epic-tier dependencies (an edge where the Epic itself is the blocking or
     // blocked endpoint, not one of its Stories/Tasks — see
     // RoadmapEpicDependencyEdge's doc comment) get their own edge type so
@@ -424,7 +425,7 @@ export default function RoadmapGraph({ snapshot, onNodeSelect }: RoadmapGraphPro
     // external item is the blocker, so the React Flow edge (and the point
     // order handed to RoadmapCrossEpicEdge) is reversed to run
     // external -> internal instead.
-    const crossEpicMarkerColor = resolveStatusColors()["--status-accent"];
+    const crossEpicMarkerColor = resolveStatusColors()[ROADMAP_EDGE_STYLES.crossEpic.token];
     const crossEpicEdges: Edge<RoadmapCrossEpicEdgeData, "roadmap-cross-epic-dependency">[] =
       visibleExternalBlockers.flatMap((b) => {
         const id = roadmapCrossEpicEdgeId(blockerKey(b));

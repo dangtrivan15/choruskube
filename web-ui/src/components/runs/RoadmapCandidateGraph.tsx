@@ -21,6 +21,7 @@ import {
 import { useActivityFeed } from "@/hooks/useActivityFeed";
 import { showMutationToast } from "@/lib/toast-messages";
 import type { RoadmapCandidatesDocument } from "@/lib/types";
+import { ROADMAP_EDGE_STYLES } from "@/lib/roadmapEdgeStyles";
 
 // Declared at module scope so xyflow doesn't warn about a new nodeTypes/edgeTypes
 // object every render. Only the two edge kinds a candidate graph draws — hierarchy
@@ -101,7 +102,7 @@ export default function RoadmapCandidateGraph({ value, onChange }: Props) {
 
   const flowEdges = useMemo(() => {
     if (!layout) return [];
-    const dependencyColor = resolveStatusColors()["--status-warning"];
+    const dependencyColor = resolveStatusColors()[ROADMAP_EDGE_STYLES.dependency.token];
     const hierarchy = model.nodes.flatMap((n) => {
       if (!n.parentId) return [];
       const id = roadmapHierarchyEdgeId(n.parentId, n.id);

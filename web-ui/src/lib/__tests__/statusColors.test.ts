@@ -121,3 +121,41 @@ describe("statusColorTokens", () => {
     expect(tokens.text).toBe("text-status-neutral");
   });
 });
+
+describe("five-state distinctness and full coverage", () => {
+  // The five states a run/node can be in that a viewer must be able to tell
+  // apart at a glance; each must resolve to a different --status-* token
+  // family so no two ever collapse onto the same color.
+  const FIVE_NAMED_STATES = ["completed", "failed", "running", "awaiting_human", "pending"];
+
+  it("each of the five named states resolves to a different token", () => {
+    const tokens = FIVE_NAMED_STATES.map((status) => statusColorTokens(status).text);
+    expect(new Set(tokens).size).toBe(FIVE_NAMED_STATES.length);
+  });
+
+  it("no two of the five named states share a badge class", () => {
+    const classes = FIVE_NAMED_STATES.map((status) => statusBadgeClass(status));
+    expect(new Set(classes).size).toBe(FIVE_NAMED_STATES.length);
+  });
+
+  it("every known run/node status string maps to a token — no silent collision via the neutral fallback", () => {
+    const known: Record<string, string> = {
+      completed: "success",
+      failed: "error",
+      running: "info",
+      awaiting_human: "warning",
+      awaiting_retry: "warning",
+      paused: "accent",
+      cancelled: "neutral",
+      pending: "neutral",
+    };
+    for (const [status, token] of Object.entries(known)) {
+      expect(statusColorTokens(status).text).toBe(`text-status-${token}`);
+    }
+  });
+
+  it("an unrecognized status resolves to the documented neutral fallback, not a wrong state's color", () => {
+    expect(statusColorTokens("some_future_status").text).toBe("text-status-neutral");
+    expect(statusBadgeClass("some_future_status")).toContain("status-neutral");
+  });
+});

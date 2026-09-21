@@ -2,6 +2,7 @@ import { memo } from "react";
 import { BaseEdge, type EdgeProps, type Edge } from "@xyflow/react";
 import { buildOrthogonalPath } from "@/components/runs/DagEdge";
 import type { ElkPoint } from "@/lib/elkLayout";
+import { ROADMAP_EDGE_STYLES } from "@/lib/roadmapEdgeStyles";
 
 export interface RoadmapDependencyEdgeData {
   points?: ElkPoint[];
@@ -49,9 +50,9 @@ function RoadmapDependencyEdge({
       path={edgePath}
       markerEnd={markerEnd}
       style={{
-        stroke: "var(--color-status-warning)",
+        stroke: `var(${ROADMAP_EDGE_STYLES.dependency.token})`,
         strokeWidth: 1.75,
-        strokeDasharray: "6 4",
+        strokeDasharray: ROADMAP_EDGE_STYLES.dependency.dashArray,
       }}
     />
   );
