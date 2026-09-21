@@ -38,6 +38,7 @@ services:
   postgres:
     image: postgres:17-alpine
     dns_search: .
+    mem_limit: 512m
     environment:
       POSTGRES_DB: choruskube
       POSTGRES_USER: choruskube
@@ -57,6 +58,7 @@ services:
   temporal:
     image: temporalio/auto-setup:1.25
     dns_search: .
+    mem_limit: 768m
     environment:
       - DB=postgres12
       - DB_PORT=5432
@@ -84,6 +86,7 @@ services:
   object-storage:
     image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
     dns_search: .
+    mem_limit: 512m
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minioadmin
@@ -130,6 +133,7 @@ services:
   wiremock:
     image: wiremock/wiremock:3.13.0
     dns_search: .
+    mem_limit: 768m
     command: ["--port", "8080", "--disable-banner"]
     networks:
       - choruskube-e2e
@@ -158,7 +162,11 @@ services:
         # reuses them instead of a cold download. Unset (local dev, forks) => stock, unchanged.
         BUILD_BASE: ${E2E_DEV_BASE:-gradle:9.2.1-jdk25-alpine}
     dns_search: .
+    mem_limit: 1536m
     environment:
+      # Container-aware ergonomics size the heap off mem_limit; the 25% default would give ~384m in
+      # the 1536m cap and risk GC churn under the run, so raise the fraction to ~768m heap.
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=50"
       DATABASE_URL: jdbc:postgresql://postgres:5432/choruskube
       DATABASE_USERNAME: choruskube
       DATABASE_PASSWORD: choruskube
@@ -249,6 +257,7 @@ services:
         # them instead of a cold `go build`. Unset (local dev, forks) => stock, unchanged.
         BUILD_BASE: ${E2E_DEV_BASE:-golang:1.25-alpine}
     dns_search: .
+    mem_limit: 512m
     environment:
       API_SERVER_URL: http://api-server:8080
       ORCHESTRATOR_SECRET: choruskube-orchestrator
@@ -287,6 +296,7 @@ services:
         # See orchestrator: warm Go build base when CI sets E2E_DEV_BASE, else stock.
         BUILD_BASE: ${E2E_DEV_BASE:-golang:1.25-alpine}
     dns_search: .
+    mem_limit: 512m
     environment:
       API_SERVER_URL: http://api-server:8080
       # test-only: must equal the api-server's WORKER_REGISTRATION_TOKEN or /worker/register 403s.
@@ -344,6 +354,7 @@ services:
         # download. Unset (local dev, forks) => stock, unchanged.
         BUILD_BASE: ${E2E_DEV_BASE:-node:22-alpine}
     dns_search: .
+    mem_limit: 256m
     environment:
       # Same-origin: the image swaps in nginx-proxy.conf, reverse-proxying /api,
       # /internal, /ws, /swagger, /actuator to api-server:8080 so the SPA (relative

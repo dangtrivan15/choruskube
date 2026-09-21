@@ -149,9 +149,17 @@ tasks.register('coverageCheck') {
     dependsOn jacocoTestCoverageVerification
 }
 
+// The forked test worker caches a Spring ApplicationContext per @TestPropertySource/@MockitoBean
+// combination (dozens across the suite), which OOMs Gradle's small default worker heap. 2560m holds
+// the LRU-capped context set with headroom while still fitting a memory-constrained Test-node agent
+// that runs this suite alongside the compose stack; override with -Dtest.maxHeapSize where a host
+// has room to spare.
+def testMaxHeapSize = providers.systemProperty('test.maxHeapSize').orElse('2560m')
+
 tasks.named('test') {
     useJUnitPlatform()
     jvmArgs '-Dnet.bytebuddy.experimental=true'
+    maxHeapSize = testMaxHeapSize.get()
     finalizedBy jacocoTestReport
 
     if (apiServerReportsDir != null) {
