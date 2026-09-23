@@ -812,14 +812,14 @@ class V1TemplateSeederTest extends BaseTest {
     }
 
     @Test
-    void currentVersionIsBumpedForFutureWorkIssueTethering() {
-        // v40: IMPLEMENT_PROMPT now files each "Future work" caveat as a repo-pinned,
-        // visibility-guarded, labeled GitHub issue linked to the run's PR, instead of the
-        // orphaned ad-hoc issue the previous directive produced. This is the rolling version
-        // tripwire: rewrite it and bump the literal whenever CURRENT_VERSION changes, so a
-        // template edit that forgets the bump cannot ship silently.
-        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(40);
-        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 40))
+    void currentVersionIsBumpedForModelAliases() {
+        // v41: the Opus/Sonnet nodes and the review loops' iteration bands carry Claude Code
+        // model aliases instead of full model IDs, so the agent image's CLI pin picks the
+        // model. This is the rolling version tripwire: rewrite it and bump the literal
+        // whenever CURRENT_VERSION changes, so a template edit that forgets the bump cannot
+        // ship silently.
+        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(41);
+        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 41))
                 .isPresent();
     }
 

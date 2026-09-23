@@ -48,14 +48,15 @@ class BaseRoadmapProvisionerSeederTest extends BaseTest {
         var template = templateRepo.findByName("Roadmap Provisioner");
         assertThat(template).isPresent();
         assertThat(template.get().getGraphId()).isEqualTo("roadmap-provisioner");
-        // v15 (roadmap dependencies/priorities/milestones): the roadmap_candidates.json
-        // schema documented in the prompt gains milestones/dependencies/per-level priority
-        // — no template shape change from v14's per-node-type model/effort
+        // v16: the analyzer's model is a Claude Code alias instead of a full model ID — no
+        // template shape change from v15, whose roadmap_candidates.json schema documented
+        // in the prompt gained milestones/dependencies/per-level priority — itself no
+        // template shape change from v14's per-node-type model/effort
         // config, itself unchanged in shape from v13's terminal-decision human gate +
         // deterministic materialization (replacing the v12 3-node analyzer → gate →
         // feature-creator shape).
         assertThat(template.get().getVersion()).isEqualTo(BaseRoadmapProvisionerSeeder.VERSION);
-        assertThat(BaseRoadmapProvisionerSeeder.VERSION).isEqualTo(15);
+        assertThat(BaseRoadmapProvisionerSeeder.VERSION).isEqualTo(16);
     }
 
     @Test

@@ -32,8 +32,9 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
 # outcomes — 2.1.182 capped how long `claude -p` waits for background subagents,
 # and 2.1.198 made subagents run in the background by default. An unpinned
 # install adopts those on any rebuild, with no change in this repo. Bump
-# deliberately and re-run scripts/oss-smoke.sh.
-ARG CLAUDE_CODE_VERSION=2.1.209
+# deliberately and re-run scripts/oss-smoke.sh. This pin also decides which model
+# the `opus`/`sonnet` aliases in ModelIds.java resolve to.
+ARG CLAUDE_CODE_VERSION=2.1.280
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
 
 # Install GitHub CLI (gh)
@@ -118,6 +119,10 @@ ENV CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1
 # deadline is the Temporal activity timeout, which the heartbeat loop already
 # feeds from stream progress, so wait without a separate limit here.
 ENV CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0
+
+# Subagent turns do not count against --max-turns, so each extra nesting level is
+# unbudgeted work. The CLI default rose from 1 to 3 in 2.1.219; hold it at 1.
+ENV CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1
 
 # Create ~/.claude/skills/ with agent ownership BEFORE switching to USER 1000.
 # chown -R ensures directories (not just files) are writable by uid 1000 at runtime.

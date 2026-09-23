@@ -26,7 +26,7 @@ public class BaseRoadmapProvisionerSeeder implements ApplicationRunner {
     private static final Logger log = LoggerFactory.getLogger(BaseRoadmapProvisionerSeeder.class);
 
     static final String GRAPH_ID = GraphIds.ROADMAP_PROVISIONER;
-    static final int VERSION = 15;
+    static final int VERSION = 16;
 
     private static final String TEMPLATE_NAME = "Roadmap Provisioner";
 
