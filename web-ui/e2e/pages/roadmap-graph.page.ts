@@ -46,6 +46,8 @@ export class RoadmapGraphPage {
   readonly blockingChainNodes: Locator;
   readonly blockingChainTruncatedNotice: Locator;
 
+  readonly legend: Locator;
+
   constructor(page: Page) {
     this.page = page;
 
@@ -89,6 +91,8 @@ export class RoadmapGraphPage {
     this.blockingChainSection = page.getByTestId("roadmap-blocking-chain");
     this.blockingChainNodes = page.getByTestId("roadmap-blocking-chain-node");
     this.blockingChainTruncatedNotice = page.getByTestId("roadmap-blocking-chain-truncated");
+
+    this.legend = page.getByTestId("roadmap-graph-legend");
   }
 
   async goto(epicId: string) {
@@ -153,5 +157,40 @@ export class RoadmapGraphPage {
     await this.crossEpicItemSelect.click();
     await this.page.getByRole("option", { name: blockerItemTitle }).click();
     await this.crossEpicSubmit.click();
+  }
+
+  /**
+   * Computed text color of a roadmap graph node's status label — mirrors
+   * RunMonitorPage.nodeStatusColor's rationale (real DOM, real cascade).
+   */
+  async nodeStatusColor(label: string): Promise<string> {
+    return this.nodeByLabel(label)
+      .locator("span.capitalize")
+      .evaluate((el) => getComputedStyle(el).color);
+  }
+
+  /**
+   * Computed stroke color of a legend row's inline SVG swatch line
+   * (RoadmapGraphLegend.tsx) — `kind` matches the `roadmap-graph-legend-*`
+   * testid suffix (e.g. "dependency", "hierarchy").
+   */
+  async legendSwatchColor(kind: string): Promise<string> {
+    return this.page
+      .getByTestId(`roadmap-graph-legend-${kind}`)
+      .locator("line")
+      .evaluate((el) => getComputedStyle(el).stroke);
+  }
+
+  /**
+   * Computed stroke color of a rendered edge's `<path>`, matched by its React
+   * Flow `data-id` prefix (see `roadmapDependencyEdgeId` /
+   * `roadmapHierarchyEdgeId` in src/lib/elkLayout.ts for the prefixes an edge
+   * kind is keyed under).
+   */
+  async edgeStrokeColor(idPrefix: string): Promise<string> {
+    return this.page
+      .locator(`.react-flow__edge[data-id^="${idPrefix}"] path`)
+      .first()
+      .evaluate((el) => getComputedStyle(el).stroke);
   }
 }

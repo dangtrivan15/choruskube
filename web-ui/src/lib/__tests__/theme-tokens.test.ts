@@ -77,4 +77,34 @@ describe(":root / .dark token parity", () => {
       expect(rootNames.has(name)).toBe(true);
     }
   });
+
+  // Not a blanket reverse-parity check: `--radius` is a non-themed constant
+  // that legitimately lives only in `:root`, so only the *color* tokens
+  // (anything with a hex or rgba() value) are required to appear in both.
+  it("every color token defined in :root is also defined in .dark", () => {
+    const root = block(":root");
+    const dark = block("\\.dark");
+    const darkNames = new Set(tokenNames(dark));
+    const colorTokenNames = tokenNames(root).filter((name) => {
+      const value = tokenValue(root, name);
+      return value.startsWith("#") || value.startsWith("rgba(");
+    });
+    expect(colorTokenNames.length).toBeGreaterThan(0);
+    for (const name of colorTokenNames) {
+      expect(darkNames.has(name)).toBe(true);
+    }
+  });
+});
+
+describe("--status-* tokens are pairwise-distinct within a theme", () => {
+  const STATUS_TOKENS = ["status-success", "status-error", "status-info", "status-warning", "status-accent", "status-neutral"];
+
+  it.each([
+    [":root", ":root"],
+    [".dark", "\\.dark"],
+  ])("the six --status-* hexes are pairwise-unequal within %s", (_label, selector) => {
+    const cssBlock = block(selector);
+    const values = STATUS_TOKENS.map((token) => tokenValue(cssBlock, token));
+    expect(new Set(values).size).toBe(values.length);
+  });
 });

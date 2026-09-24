@@ -147,6 +147,37 @@ describe("DagNode", () => {
     renderDagNode({ label: "code_review", executorType: "ai" });
     expect(screen.getByText("Code Review")).toBeInTheDocument();
   });
+
+  it("renders the five named states with distinct status-text token classes", () => {
+    const FIVE_NAMED_STATES = ["completed", "failed", "running", "awaiting_human", "pending"];
+    const classes = FIVE_NAMED_STATES.map((status) => {
+      renderDagNode({ status, label: `node-${status}` });
+      return screen.getByText(status.replace(/_/g, " ")).className;
+    });
+    const tokenClasses = classes.map((c) => c.match(/text-status-\S+/)?.[0]);
+    expect(tokenClasses.every(Boolean)).toBe(true);
+    expect(new Set(tokenClasses).size).toBe(FIVE_NAMED_STATES.length);
+  });
+
+  it("running carries the active-state pulse emphasis", () => {
+    const { container } = renderDagNode({ status: "running" });
+    expect(container.querySelector(".animate-pulse")).not.toBeNull();
+  });
+
+  it("awaiting_human carries the active-state pulse emphasis", () => {
+    const { container } = renderDagNode({ status: "awaiting_human" });
+    expect(container.querySelector(".animate-pulse")).not.toBeNull();
+  });
+
+  it("pending does not carry the active-state pulse emphasis", () => {
+    const { container } = renderDagNode({ status: "pending" });
+    expect(container.querySelector(".animate-pulse")).toBeNull();
+  });
+
+  it("completed does not carry the active-state pulse emphasis", () => {
+    const { container } = renderDagNode({ status: "completed" });
+    expect(container.querySelector(".animate-pulse")).toBeNull();
+  });
 });
 
 describe("formatNodeLabel", () => {

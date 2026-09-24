@@ -4,6 +4,7 @@ import { screen, waitFor } from "@testing-library/react";
 import type { ComponentType, CSSProperties } from "react";
 import { renderWithProviders } from "@/__tests__/test-utils";
 import { candidateDocToGraph } from "@/lib/roadmapCandidateGraph";
+import { ROADMAP_EDGE_STYLES } from "@/lib/roadmapEdgeStyles";
 import type { RoadmapCandidatesDocument } from "@/lib/types";
 
 // Capture the flow's connect/delete handlers so the test can drive them
@@ -12,6 +13,11 @@ import type { RoadmapCandidatesDocument } from "@/lib/types";
 const flow = vi.hoisted(() => ({
   onConnect: undefined as ((c: { source: string; target: string }) => void) | undefined,
   onEdgesDelete: undefined as ((e: { id: string }[]) => void) | undefined,
+  // Raw edges as passed to ReactFlow, captured (rather than read off the
+  // rendered mock BaseEdge, which only forwards a truthy marker-end marker
+  // string) so a test can assert on the real markerEnd.color value the
+  // component computed.
+  edges: [] as { id: string; markerEnd?: unknown }[],
 }));
 
 vi.mock("@xyflow/react", () => ({
@@ -35,6 +41,7 @@ vi.mock("@xyflow/react", () => ({
   }) => {
     flow.onConnect = onConnect;
     flow.onEdgesDelete = onEdgesDelete;
+    flow.edges = edges;
     return (
       <div data-testid="mock-flow">
         {nodes.map((n) => {
@@ -104,6 +111,13 @@ beforeEach(() => {
   vi.clearAllMocks();
   flow.onConnect = undefined;
   flow.onEdgesDelete = undefined;
+  flow.edges = [];
+  // Real hexes so resolveStatusColors() (dagLayout.ts) resolves something
+  // meaningful instead of "" — see dagLayout.test.ts for the same pattern.
+  const root = document.documentElement;
+  root.classList.remove("dark");
+  root.style.setProperty("--status-warning", "#ea9d34");
+  root.style.setProperty("--status-info", "#286983");
 });
 
 describe("RoadmapCandidateGraph", () => {
@@ -161,5 +175,29 @@ describe("RoadmapCandidateGraph", () => {
     act(() => flow.onEdgesDelete!([{ id: "dep:0" }]));
 
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ dependencies: [] }));
+  });
+
+  it("resolves its dependency edge's arrowhead marker color from the shared roadmap edge-style registry, not a hardcoded literal", async () => {
+    renderWithProviders(<RoadmapCandidateGraph value={makeDoc()} onChange={vi.fn()} />);
+    await waitForElkReady();
+
+    const depEdge = flow.edges.find((e) => e.id === "dep:0");
+    const markerColor = (depEdge?.markerEnd as { color?: string } | undefined)?.color;
+    expect(markerColor).toBeTruthy();
+    // Same value RoadmapGraph.tsx's own marker construction resolves for the
+    // same "dependency" kind — proving this second, independent call site
+    // (RoadmapCandidateGraph's own `dependencyColor`) shares the registry
+    // instead of carrying its own `resolveStatusColors()["--status-warning"]`
+    // copy that could silently diverge from it.
+    const expected = getComputedStyle(document.documentElement)
+      .getPropertyValue(ROADMAP_EDGE_STYLES.dependency.token)
+      .trim();
+    expect(markerColor).toBe(expected);
+    // And distinct from a *different* kind's token, so this isn't a
+    // coincidental match against the wrong entry.
+    const otherToken = getComputedStyle(document.documentElement)
+      .getPropertyValue(ROADMAP_EDGE_STYLES.epicDependency.token)
+      .trim();
+    expect(markerColor).not.toBe(otherToken);
   });
 });

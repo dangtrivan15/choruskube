@@ -123,6 +123,17 @@ export class RunMonitorPage {
     await expect(node).toContainText(status);
   }
 
+  /**
+   * Computed text color of a DAG node's status label — the resolved hex of
+   * whichever `text-status-*` token `statusColorTokens()` (src/lib/statusColors.ts)
+   * assigned this status, read straight from the rendered DOM rather than the
+   * source map so a real browser's CSS cascade is what's asserted on.
+   */
+  async nodeStatusColor(nodeLabel: string): Promise<string> {
+    const node = this.page.locator(`[data-testid="dag-node"][data-label="${nodeLabel}"]`);
+    return node.locator("span.capitalize").evaluate((el) => getComputedStyle(el).color);
+  }
+
   async approveGate(feedback?: string) {
     if (feedback) {
       await this.gateFeedbackInput.fill(feedback);
