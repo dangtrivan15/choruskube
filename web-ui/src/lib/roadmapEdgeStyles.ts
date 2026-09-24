@@ -21,7 +21,7 @@ export interface RoadmapEdgeStyle {
  * construction at both RoadmapGraph.tsx and RoadmapCandidateGraph.tsx, and
  * RoadmapGraphLegend's swatches, so none of those four call sites can drift
  * from another by carrying its own hardcoded copy. See
- * docs/decisions/2026-09-21---01-roadmap-edge-style-registry.md.
+ * docs/decisions/2026-09-21---02-roadmap-edge-style-registry.md.
  */
 export const ROADMAP_EDGE_STYLES: Record<RoadmapEdgeKind, RoadmapEdgeStyle> = {
   hierarchy: { token: "--muted-foreground", dashArray: "", label: "Hierarchy" },

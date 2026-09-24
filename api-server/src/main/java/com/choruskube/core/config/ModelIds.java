@@ -1,22 +1,15 @@
 package com.choruskube.core.config;
 
 /**
- * Canonical Claude model ID constants shared across template seeders.
+ * Claude Code model aliases shared across template seeders.
  *
- * <p>Mirrors {@link GraphIds}'s shape (a small holder of {@code public static final String}
- * constants with a private no-arg constructor) so seeders reference one shared literal per
- * model instead of each declaring its own local copy.
- *
- * <p>These are the current, non-dated model ID strings (verified against the live model
- * catalog at implementation time, not guessed) — Claude's current-generation model IDs are
- * bare aliases with no {@code -YYYYMMDD} suffix; only superseded/legacy model IDs carry a
- * dated suffix. A human should confirm the org's
- * Anthropic entitlement covers these exact IDs before rollout, and re-check this file against
- * the current model catalog if it has been a while since these were last verified.
+ * <p>Aliases resolve inside the Claude Code CLI, so the {@code CLAUDE_CODE_VERSION} pin in
+ * {@code agent-images/claude-code/Dockerfile} decides which model each one runs. Move agents to
+ * a newer model by bumping that pin; a full model ID here would freeze it past every bump.
  */
 public final class ModelIds {
-    public static final String MODEL_OPUS = "claude-opus-4-8";
-    public static final String MODEL_SONNET = "claude-sonnet-5";
+    public static final String MODEL_OPUS = "opus";
+    public static final String MODEL_SONNET = "sonnet";
 
     private ModelIds() {}
 }
