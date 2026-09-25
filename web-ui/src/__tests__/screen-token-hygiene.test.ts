@@ -41,3 +41,25 @@ describe("platform credential panel renders its dot through the shared status pr
     expect(source).toContain("StatusDot");
   });
 });
+
+describe("log viewer severity styling draws only on semantic status tokens", () => {
+  const RAW_COLOR_PATTERNS = [/\b(red|amber|yellow|orange|blue|green)-/, /#[0-9a-fA-F]{3,8}\b/];
+
+  it("logLevelStyles.ts uses status- tokens", () => {
+    expect(read("src/lib/logLevelStyles.ts")).toContain("status-");
+  });
+
+  it.each(["src/lib/logLevelStyles.ts", "src/components/runs/ExecutionLogs.tsx"])(
+    "%s has no raw palette class or hex literal",
+    (relPath) => {
+      const source = read(relPath);
+      for (const pattern of RAW_COLOR_PATTERNS) {
+        expect(source).not.toMatch(pattern);
+      }
+    },
+  );
+
+  it("ExecutionLogs.tsx consumes the centralized severity resolver", () => {
+    expect(read("src/components/runs/ExecutionLogs.tsx")).toContain("logLevelStyle");
+  });
+});

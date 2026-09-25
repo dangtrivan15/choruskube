@@ -41,12 +41,18 @@ export function useRun(id: string) {
   });
 }
 
-export function useNodeLogs(runId: string, nodeExecId: string | null, enabled: boolean) {
+/**
+ * `live` gates polling only: gating the fetch on it hides a finished node's
+ * warn/error entries, which the orchestrator writes after the node turns terminal.
+ * A finished node refreshes only through the run subscription's `["runs", runId]`
+ * invalidation, so the query key must keep that prefix.
+ */
+export function useNodeLogs(runId: string, nodeExecId: string | null, live: boolean) {
   return useQuery({
     queryKey: ["runs", runId, "nodes", nodeExecId, "logs"],
     queryFn: () => api.get<ExecutionLogResponse[]>(`/runs/${runId}/nodes/${nodeExecId}/logs`),
-    enabled: !!nodeExecId && enabled,
-    refetchInterval: enabled ? 3_000 : false,
+    enabled: !!nodeExecId,
+    refetchInterval: live ? 3_000 : false,
   });
 }
 

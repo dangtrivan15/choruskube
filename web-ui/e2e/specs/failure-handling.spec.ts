@@ -57,6 +57,10 @@ test.describe("Failure Handling", () => {
     await expect(runMonitorPage.detailStatus).toContainText(/failed/i);
     await expect(runMonitorPage.detailNodeError).toBeVisible();
     await expect(runMonitorPage.detailNodeError).not.toBeEmpty();
+
+    // The orchestrator writes this entry only after the node turns "failed", so it
+    // can land after the panel's first fetch and arrive via the run subscription.
+    await expect(runMonitorPage.logRow("error").first()).toBeVisible({ timeout: 15_000 });
   });
 
   test("run not found shows appropriate message", async ({ page }) => {

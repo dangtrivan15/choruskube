@@ -62,11 +62,10 @@ test.describe("Real-Time Updates", () => {
     runMonitorPage,
     api,
   }) => {
-    // NOTE: the streaming execution-logs panel only mounts for *active* nodes
-    // (DetailPanel passes isActive=false for terminal nodes, so useNodeLogs is
-    // disabled). The mock pipeline completes in ~1s, so an active node can't be
-    // caught deterministically. Instead we assert the post-execution data the UI
-    // *does* surface for a completed node: its status badge and its result text.
+    // NOTE: this test asserts the completed node's status and result — its
+    // logs are covered separately (log-severity.spec.ts, failure-handling.spec.ts).
+    // The mock pipeline completes in ~1s, so catching an *active* node deterministically
+    // isn't reliable here; a completed node's status badge and result text are.
     const template = await api.getTemplateByName("e2e-linear-pipeline");
 
     const run = await api.startRun({

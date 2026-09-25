@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { format } from "date-fns";
 import { Loader2 } from "lucide-react";
 import { useNodeLogs } from "@/hooks/useRuns";
+import { logLevelStyle } from "@/lib/logLevelStyles";
 import { cn } from "@/lib/utils";
 
 interface ExecutionLogsProps {
@@ -9,12 +10,6 @@ interface ExecutionLogsProps {
   nodeExecId: string;
   isActive: boolean;
 }
-
-const levelStyles: Record<string, string> = {
-  info: "text-status-info",
-  warn: "text-status-warning",
-  error: "text-status-error",
-};
 
 export default function ExecutionLogs({
   runId,
@@ -53,22 +48,29 @@ export default function ExecutionLogs({
       data-testid="execution-logs"
       className="max-h-80 overflow-y-auto rounded-md border bg-muted/30 p-3 font-mono text-xs"
     >
-      {logs.map((log) => (
-        <div key={log.id} className="flex gap-2 py-0.5">
-          <span className="shrink-0 text-muted-foreground">
-            {format(new Date(log.timestamp), "HH:mm:ss.SSS")}
-          </span>
-          <span
-            className={cn(
-              "shrink-0 w-12 text-right uppercase",
-              levelStyles[log.level] ?? "text-foreground"
-            )}
+      {logs.map((log) => {
+        const { Icon, text, weight, border, row } = logLevelStyle(log.level);
+        return (
+          <div
+            key={log.id}
+            data-testid="log-row"
+            data-level={log.level}
+            className={cn("flex items-start gap-2 border-l-2 py-0.5 pl-2", border, row)}
           >
-            {log.level}
-          </span>
-          <span className="break-all">{log.message}</span>
-        </div>
-      ))}
+            <span className="shrink-0 text-muted-foreground">
+              {format(new Date(log.timestamp), "HH:mm:ss.SSS")}
+            </span>
+            <Icon aria-hidden className={cn("mt-px h-3.5 w-3.5 shrink-0", text)} />
+            <span
+              data-testid="log-level"
+              className={cn("shrink-0 w-12 text-right uppercase", text, weight)}
+            >
+              {log.level}
+            </span>
+            <span className="break-all">{log.message}</span>
+          </div>
+        );
+      })}
     </div>
   );
 }
