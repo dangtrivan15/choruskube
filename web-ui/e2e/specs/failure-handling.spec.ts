@@ -58,11 +58,8 @@ test.describe("Failure Handling", () => {
     await expect(runMonitorPage.detailNodeError).toBeVisible();
     await expect(runMonitorPage.detailNodeError).not.toBeEmpty();
 
-    // The orchestrator writes the node's error entry ("Node failed: …") only
-    // after it flips to "failed" — this proves a finished node's log query now
-    // actually fetches it (real server data, not a stubbed payload), and that
-    // it arrives via the run subscription's refresh rather than a snapshot
-    // that predates the failure.
+    // The orchestrator writes this entry only after the node turns "failed", so it
+    // can land after the panel's first fetch and arrive via the run subscription.
     await expect(runMonitorPage.logRow("error").first()).toBeVisible({ timeout: 15_000 });
   });
 

@@ -1,17 +1,6 @@
-// Proves info/warn/error log rows are distinguishable in a real browser —
-// pairwise-distinct icon glyphs and label colors — and stay distinct and
-// recolor after a theme toggle. Mirrors status-colors.spec.ts's structure
-// and `toggleTheme` helper.
-//
-// The e2e seeder never seeds runs or node executions (only templates, node
-// definitions, git repos and repo groups), and the real flow that reaches
-// all three severities in one node (a failed node's orchestrator-written
-// warn + error entries) is best-effort on the warn line. So this spec starts
-// a real completed run and intercepts only its node-logs request with
-// page.route() to serve a deterministic info/warn/error fixture — following
-// the precedent set by pull-request-links.spec.ts, the first user of
-// route-mocking in this repo. failure-handling.spec.ts separately asserts a
-// real, unstubbed error row on a genuinely failed node.
+// Stubs only the node-logs request of a real run: no real flow reliably writes all
+// three levels onto one node, and seeding a synthetic run would add a phantom run to
+// the shared e2e database. failure-handling.spec.ts covers a real, unstubbed error row.
 import { test, expect } from "../fixtures";
 import { uniqueName } from "../helpers/api-client";
 import { toggleTheme } from "../helpers/colors";

@@ -42,13 +42,10 @@ export function useRun(id: string) {
 }
 
 /**
- * `live` (formerly `enabled`) now only gates polling. The query itself
- * always runs once a node execution id is present, so a finished node's
- * warn/error entries — written by the orchestrator only after it flips a
- * node to a terminal status — are no longer hidden behind a fetch that
- * never ran. The query key stays under the `["runs", runId, ...]` prefix
- * so the run subscription's invalidation still refreshes a finished node's
- * logs without polling.
+ * `live` gates polling only: gating the fetch on it hides a finished node's
+ * warn/error entries, which the orchestrator writes after the node turns terminal.
+ * A finished node refreshes only through the run subscription's `["runs", runId]`
+ * invalidation, so the query key must keep that prefix.
  */
 export function useNodeLogs(runId: string, nodeExecId: string | null, live: boolean) {
   return useQuery({

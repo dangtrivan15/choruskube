@@ -60,7 +60,7 @@ export default function ExecutionLogs({
             <span className="shrink-0 text-muted-foreground">
               {format(new Date(log.timestamp), "HH:mm:ss.SSS")}
             </span>
-            <Icon aria-hidden className={cn("h-3.5 w-3.5 shrink-0 self-center", text)} />
+            <Icon aria-hidden className={cn("mt-px h-3.5 w-3.5 shrink-0", text)} />
             <span
               data-testid="log-level"
               className={cn("shrink-0 w-12 text-right uppercase", text, weight)}

@@ -114,18 +114,27 @@ describe("useRuns hooks", () => {
 
   describe("useNodeLogs", () => {
     it("fetches and polls every 3s when live", async () => {
-      const logs = [{ id: "l1", level: "info", message: "hello", timestamp: "2026-01-01T00:00:00Z" }];
-      mockApi.get.mockResolvedValueOnce(logs);
-      const { wrapper } = createTestHookWrapper();
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        const logs = [{ id: "l1", level: "info", message: "hello", timestamp: "2026-01-01T00:00:00Z" }];
+        mockApi.get.mockResolvedValueOnce(logs).mockResolvedValueOnce(logs);
+        const { wrapper } = createTestHookWrapper();
 
-      const { result } = renderHook(
-        () => useNodeLogs("run-1", "exec-1", true),
-        { wrapper }
-      );
+        const { result } = renderHook(
+          () => useNodeLogs("run-1", "exec-1", true),
+          { wrapper }
+        );
 
-      await waitFor(() => expect(result.current.isSuccess).toBe(true));
-      expect(result.current.data).toEqual(logs);
-      expect(mockApi.get).toHaveBeenCalledWith("/runs/run-1/nodes/exec-1/logs");
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+        expect(result.current.data).toEqual(logs);
+        expect(mockApi.get).toHaveBeenCalledTimes(1);
+        expect(mockApi.get).toHaveBeenCalledWith("/runs/run-1/nodes/exec-1/logs");
+
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(mockApi.get).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("does not fetch when nodeExecId is null", () => {
@@ -144,7 +153,7 @@ describe("useRuns hooks", () => {
       vi.useFakeTimers({ shouldAdvanceTime: true });
       try {
         const logs = [{ id: "l1", level: "info", message: "hello", timestamp: "2026-01-01T00:00:00Z" }];
-        mockApi.get.mockResolvedValue(logs);
+        mockApi.get.mockResolvedValueOnce(logs);
         const { wrapper } = createTestHookWrapper();
 
         const { result } = renderHook(

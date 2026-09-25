@@ -49,6 +49,13 @@ describe("logLevelStyle", () => {
     expect(logLevelStyle("").text).toBe("text-status-neutral");
   });
 
+  it.each(["constructor", "__proto__", "hasOwnProperty"])(
+    "falls back to the neutral treatment for %s, an Object.prototype member name",
+    (level) => {
+      expect(logLevelStyle(level)).toEqual(logLevelStyle("debug"));
+    },
+  );
+
   it("resolves pairwise-distinct colors for info/warn/error", () => {
     const colors = ["info", "warn", "error"].map((level) => logLevelStyle(level).text);
     expect(new Set(colors).size).toBe(3);
