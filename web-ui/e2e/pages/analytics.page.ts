@@ -25,16 +25,22 @@ export class AnalyticsPage {
     await expect(this.heading).toBeVisible();
   }
 
+  private areaCurve(key: string): Locator {
+    return this.runTrendChart.locator(`.recharts-area.series-${key} .recharts-area-curve`).first();
+  }
+
+  private legendIcon(chart: Locator, label: string): Locator {
+    return chart.locator(`[aria-label="${label} legend icon"] .recharts-legend-icon`);
+  }
+
   /** Computed `stroke` of a Run Trend area's curve path for the given series key (e.g. `"total"`). */
   async areaStroke(key: string): Promise<string> {
-    const curve = this.runTrendChart.locator(`.recharts-area.series-${key} .recharts-area-curve`).first();
-    return curve.evaluate((el) => getComputedStyle(el).stroke);
+    return this.areaCurve(key).evaluate((el) => getComputedStyle(el).stroke);
   }
 
   /** A Run Trend area curve's `stroke-dasharray` attribute; `null` when the line is solid. */
   async areaDash(key: string): Promise<string | null> {
-    const curve = this.runTrendChart.locator(`.recharts-area.series-${key} .recharts-area-curve`).first();
-    return curve.getAttribute("stroke-dasharray");
+    return this.areaCurve(key).getAttribute("stroke-dasharray");
   }
 
   /** Computed `fill` of a Bottlenecks bar rectangle for the given series key (e.g. `"avg"`). */
@@ -49,14 +55,12 @@ export class AnalyticsPage {
    * (Bottlenecks) carry it in `fill`.
    */
   async legendIconColor(chart: Locator, label: string, prop: "stroke" | "fill"): Promise<string> {
-    const icon = chart.locator(`[aria-label="${label} legend icon"] .recharts-legend-icon`);
-    return icon.evaluate((el, p) => getComputedStyle(el)[p as "stroke" | "fill"], prop);
+    return this.legendIcon(chart, label).evaluate((el, p) => getComputedStyle(el)[p], prop);
   }
 
   /** A legend icon's `stroke-dasharray` attribute; `null` when the icon is solid. */
   async legendIconDash(chart: Locator, label: string): Promise<string | null> {
-    const icon = chart.locator(`[aria-label="${label} legend icon"] .recharts-legend-icon`);
-    return icon.getAttribute("stroke-dasharray");
+    return this.legendIcon(chart, label).getAttribute("stroke-dasharray");
   }
 
   /** Computed text color of a chart's legend label for the given series. */

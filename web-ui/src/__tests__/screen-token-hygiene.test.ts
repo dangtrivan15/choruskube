@@ -12,11 +12,11 @@ function read(relPath: string): string {
 }
 
 describe("analytics charts reference tokens directly, not through hsl()", () => {
-  const CHART_PATHS = [
+  const LEGEND_CHART_PATHS = [
     "src/components/analytics/RunTrendChart.tsx",
     "src/components/analytics/BottleneckChart.tsx",
-    "src/components/analytics/RoadmapThroughputChart.tsx",
   ];
+  const CHART_PATHS = [...LEGEND_CHART_PATHS, "src/components/analytics/RoadmapThroughputChart.tsx"];
 
   it.each(CHART_PATHS)("%s has no hsl(var(--...)) wrapper and still uses var(--card)/var(--border)", (relPath) => {
     const source = read(relPath);
@@ -34,8 +34,12 @@ describe("analytics charts reference tokens directly, not through hsl()", () => 
     expect(source).not.toMatch(/\b(stroke|fill)=\{?\s*["'`]var\(--/);
   });
 
-  it.each(CHART_PATHS)("%s pins its tooltip text to the foreground ink", (relPath) => {
-    expect(read(relPath)).toContain('color: "var(--foreground)"');
+  it.each(CHART_PATHS)("%s pins its tooltip item text to the foreground ink", (relPath) => {
+    expect(read(relPath)).toMatch(/itemStyle=\{\{\s*color:\s*"var\(--foreground\)"\s*\}\}/);
+  });
+
+  it.each(LEGEND_CHART_PATHS)("%s pins its legend label text to the foreground ink", (relPath) => {
+    expect(read(relPath)).toMatch(/labelStyle=\{\{\s*color:\s*"var\(--foreground\)"\s*\}\}/);
   });
 });
 

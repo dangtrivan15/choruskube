@@ -1,21 +1,10 @@
-/**
- * Test-only color math for chart-series distinguishability. Not application
- * code: nothing under src/ imports this module. Excluded from Vitest's own
- * `*.test.ts` include pattern, so it can export helpers without being run as
- * a test file itself.
- */
+/** Test-only color math for chart-series-distinguishable.test.ts. */
 import { readFileSync } from "fs";
 import path from "path";
 
 const CSS_PATH = path.resolve(__dirname, "../../../index.css");
 
-/**
- * Reads a theme block (`:root` or `.dark`) straight from index.css and
- * returns its custom-property values keyed by name, without the leading
- * `--`. Parses the stylesheet text rather than computed styles so it also
- * catches a value changed by hand outside a browser context — the same
- * approach palette-canonical.test.ts uses.
- */
+/** A theme block's (`:root` or `.dark`) custom-property values from index.css, keyed by name without the leading `--`. */
 export function readThemeTokens(selector: ":root" | ".dark"): Record<string, string> {
   const css = readFileSync(CSS_PATH, "utf-8");
   const pattern = selector === ":root" ? /:root\s*{([^}]*)}/ : /\.dark\s*{([^}]*)}/;
@@ -30,7 +19,10 @@ export function readThemeTokens(selector: ":root" | ".dark"): Record<string, str
   return tokens;
 }
 
-/** Parses `#rrggbb` into `[r, g, b]` in the 0–255 range. Throws on any other form (e.g. `rgba()`), so a series pointed at a translucent token fails loudly rather than silently comparing garbage. */
+/**
+ * Parses `#rrggbb` into `[r, g, b]` (0–255). Throws on any other form, so a series
+ * pointed at a translucent `rgba()` token fails the gate instead of being measured wrongly.
+ */
 export function parseHex(hex: string): [number, number, number] {
   const match = /^#([0-9a-fA-F]{6})$/.exec(hex);
   if (!match) {
@@ -40,14 +32,15 @@ export function parseHex(hex: string): [number, number, number] {
   return [(int >> 16) & 0xff, (int >> 8) & 0xff, int & 0xff];
 }
 
-function srgbChannelToLinear(c: number): number {
+// WCAG 2.x's 0.03928 breakpoint and sRGB's 0.04045 pick the same branch for every
+// 8-bit channel, so one conversion serves both the contrast ratio and OKLab.
+function srgbToLinear(c: number): number {
   const v = c / 255;
-  return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
 }
 
 function relativeLuminance([r, g, b]: [number, number, number]): number {
-  const [lr, lg, lb] = [srgbChannelToLinear(r), srgbChannelToLinear(g), srgbChannelToLinear(b)];
-  return 0.2126 * lr + 0.7152 * lg + 0.0722 * lb;
+  return 0.2126 * srgbToLinear(r) + 0.7152 * srgbToLinear(g) + 0.0722 * srgbToLinear(b);
 }
 
 /** WCAG 2.x contrast ratio between two `#rrggbb` colors, in [1, 21]. */
@@ -56,13 +49,6 @@ export function contrastRatio(a: string, b: string): number {
   const lb = relativeLuminance(parseHex(b));
   const [lighter, darker] = la >= lb ? [la, lb] : [lb, la];
   return (lighter + 0.05) / (darker + 0.05);
-}
-
-// sRGB -> linear-light, using the standard (non-WCAG-truncated) 0.04045 breakpoint,
-// as OKLab conversion expects.
-function srgbToLinear(c: number): number {
-  const v = c / 255;
-  return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
 }
 
 type Vec3 = [number, number, number];

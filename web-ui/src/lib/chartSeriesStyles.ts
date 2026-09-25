@@ -11,11 +11,9 @@ export interface ChartSeriesStyle {
 }
 
 /**
- * Single source of truth for each analytics chart series' color, dash pattern
- * and legend label — read by the chart components' stroke/fill props and by
- * chart-series-distinguishable.test.ts, which gates every pair's per-theme
- * separation so a future edit here or in index.css can't silently reintroduce
- * a collision. See docs/decisions/2026-09-25---02-chart-series-style-registry.md.
+ * Single source of every analytics chart series' color, dash and label; each entry's per-theme
+ * separation is gated by chart-series-distinguishable.test.ts, so add new series here, not inline.
+ * See docs/decisions/2026-09-25---02-chart-series-style-registry.md.
  */
 export const CHART_SERIES_STYLES = {
   runTrend: {
@@ -38,10 +36,8 @@ export function seriesColor(style: ChartSeriesStyle): string {
 }
 
 /**
- * Recharts 3.8.1's legend `plainline` icon checks `'strokeDasharray' in payload`
- * before rendering it, so a solid series must omit the key entirely rather than
- * set it to `undefined` — otherwise the icon renders a literal
- * `stroke-dasharray="undefined"`.
+ * Omits the key for a solid series: Recharts' legend icon tests `'strokeDasharray' in payload`,
+ * so an explicit `undefined` would render a literal `stroke-dasharray="undefined"`.
  */
 export function seriesDashProps(style: ChartSeriesStyle): { strokeDasharray?: string } {
   return style.dashArray === "" ? {} : { strokeDasharray: style.dashArray };

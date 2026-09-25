@@ -28,6 +28,7 @@ describe("color metrics sanity", () => {
   });
 });
 
+// Light --card is translucent rgba(), so the opaque --background stands in as the light chart surface.
 const THEMES = [
   { theme: "light", selector: ":root" as const, surfaceToken: "background" },
   { theme: "dark", selector: ".dark" as const, surfaceToken: "card" },
@@ -36,20 +37,20 @@ const THEMES = [
 describe.each(THEMES)("chart series distinguishability — $theme", ({ theme, selector, surfaceToken }) => {
   const tokens = readThemeTokens(selector);
   const surface = tokens[surfaceToken];
+  const hexOf = (style: ChartSeriesStyle) => tokens[style.token.slice(2)];
 
   describe.each(Object.entries(CHART_SERIES_STYLES))("%s", (chartName, seriesRaw) => {
     const series = seriesRaw as Record<string, ChartSeriesStyle>;
     const entries = Object.entries(series);
 
     it.each(entries)("%s's series token resolves to a hex color in this theme", (_name, style) => {
-      const hex = tokens[style.token.slice(2)];
+      const hex = hexOf(style);
       expect(hex, `${theme} ${chartName}: ${style.token} missing from ${selector}`).toBeDefined();
-      expect(() => hex.match(/^#[0-9a-fA-F]{6}$/)).toBeTruthy();
+      expect(hex, `${theme} ${chartName}: ${style.token} is not #rrggbb`).toMatch(/^#[0-9a-fA-F]{6}$/);
     });
 
-    it.each(entries)("%s clears the %d:1 contrast floor against the chart surface", (name, style) => {
-      const hex = tokens[style.token.slice(2)];
-      const value = contrastRatio(hex, surface);
+    it.each(entries)(`%s clears the ${CONTRAST_MIN}:1 contrast floor against the chart surface`, (name, style) => {
+      const value = contrastRatio(hexOf(style), surface);
       expect(value, `${theme} ${chartName}: ${name} vs surface contrast`).toBeGreaterThanOrEqual(
         CONTRAST_MIN,
       );
@@ -62,21 +63,19 @@ describe.each(THEMES)("chart series distinguishability — $theme", ({ theme, se
       }
     }
 
-    it.each(pairs)("%s and %s clear normal-vision ΔE ≥ %d", (nameA, nameB) => {
-      const a = tokens[series[nameA].token.slice(2)];
-      const b = tokens[series[nameB].token.slice(2)];
-      const value = deltaE(a, b);
+    it.each(pairs)(`%s and %s clear normal-vision ΔE ≥ ${NORMAL_DELTA_E_MIN}`, (nameA, nameB) => {
+      const value = deltaE(hexOf(series[nameA]), hexOf(series[nameB]));
       expect(
         value,
         `${theme} ${chartName}: ${nameA}↔${nameB} normal ΔE`,
       ).toBeGreaterThanOrEqual(NORMAL_DELTA_E_MIN);
     });
 
-    it.each(pairs)("%s and %s clear CVD ΔE ≥ %d, or are relieved by distinct line dash patterns", (nameA, nameB) => {
+    it.each(pairs)(`%s and %s clear CVD ΔE ≥ ${CVD_DELTA_E_MIN}, or are relieved by distinct line dash patterns`, (nameA, nameB) => {
       const styleA = series[nameA];
       const styleB = series[nameB];
-      const a = tokens[styleA.token.slice(2)];
-      const b = tokens[styleB.token.slice(2)];
+      const a = hexOf(styleA);
+      const b = hexOf(styleB);
       const value = Math.min(deltaE(a, b, "protan"), deltaE(a, b, "deutan"));
       const dashRelieved =
         styleA.mark === "line" && styleB.mark === "line" && styleA.dashArray !== styleB.dashArray;
