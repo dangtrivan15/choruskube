@@ -114,8 +114,7 @@ Run graph and roadmap graph nodes/edges, all status/priority/level badges, and t
 `statusColors` / `priorityMeta` / `milestoneMeta` maps route through the semantic tokens
 above — no deviation found in any of them.
 
-Status indicators across the app, including org/admin screens in downstream builds that
-compose this web-ui, route through `STATUS_TONE_CLASSES` and the `StatusDot`/
+Status indicators across the app route through `STATUS_TONE_CLASSES` and the `StatusDot`/
 `StatusCallout` primitives (`src/lib/statusColors.ts`,
 `src/components/ui/StatusDot.tsx`, `src/components/ui/StatusCallout.tsx`), so a state's
 tone and class recipe have exactly one source. `palette-hygiene.test.ts` scans the whole

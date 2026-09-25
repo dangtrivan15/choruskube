@@ -1,7 +1,7 @@
 /**
  * Shared status-to-CSS-class mappings for status badges, DAG nodes, and the
- * status primitives (`StatusDot`, `StatusCallout`) that org/admin screens
- * build on.
+ * `StatusDot` / `StatusCallout` primitives. What each tone means is recorded
+ * in `docs/decisions/2026-09-24---01-status-tone-vocabulary.md`.
  *
  * All classes use semantic status tokens (`bg-status-*`, `text-status-*`,
  * `border-status-*`) defined as CSS custom properties in `index.css` and
@@ -78,10 +78,6 @@ export const STATUS_TONE_CLASSES: Record<StatusTone, StatusToneClassSet> = {
     callout: "border-status-neutral/40 bg-status-neutral/10 text-foreground",
   },
 };
-
-export function statusToneClasses(tone: StatusTone): StatusToneClassSet {
-  return STATUS_TONE_CLASSES[tone];
-}
 
 /** Maps a run/node status string to its tone. Unknown statuses fall back to neutral. */
 export function statusTone(status: string): StatusTone {

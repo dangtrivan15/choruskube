@@ -215,6 +215,7 @@ test.describe("Toast colors", () => {
           .locator('[data-sonner-toast][data-type="success"]')
           .filter({ hasText: "Epic created" });
         await expect(toastEl).toBeVisible();
+        await toastEl.hover();
 
         const icon = toastEl.locator("[data-icon]").first();
         const iconColor = await icon.evaluate((el) => getComputedStyle(el).color);

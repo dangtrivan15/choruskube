@@ -65,7 +65,7 @@ of "off-brand" to keep in sync.
 - **A full `StatusBadge` component family.** Changes more markup than the fix needs; the
   existing `Badge` component plus a class string from the table already works for badges.
 - **Turn off `richColors` and style each toast type with utility classes.** The library's
-  unlayered CSS still beats Tailwind's layered utilities on specificity ties, so every
+  unlayered CSS beats Tailwind's layered utilities whatever their specificity, so every
   utility class would need `!important` to win — worse than one small unlayered block.
 - **Darken the tone tokens themselves so tone-colored sentence text becomes readable.**
   That is a token-value change, which would recolor every consumer of that token,
@@ -78,5 +78,7 @@ A state's tone and class recipe now have exactly one place to change, and the sc
 means a new raw color anywhere under `src/` — in this repo or a downstream composed
 build — fails a test instead of shipping. The toast bridge depends on the library's
 internal CSS variable names, which are not a guaranteed-stable API; a rename would
-silently fall back to the library's own palette, so `theme-tokens.test.ts` pins the
-variable names and the unlayered/specificity relationship the bridge depends on.
+silently fall back to the library's own palette. `theme-tokens.test.ts` only pins this
+repo's side (the variable names the bridge sets, and that the block is unlayered); a
+rename on the library's side is caught by the toast test in
+`web-ui/e2e/specs/status-colors.spec.ts`, which checks a rendered toast's colors.

@@ -1,11 +1,17 @@
 /**
  * Lexical scanner for off-brand colors: raw Tailwind palette utilities, hex
  * literals and CSS color functions that bypass the `--status-*` / theme
- * token system. A helper, not a test file — `palette-hygiene.test.ts` and
- * the downstream overlay guard both call `findOffBrandColors`.
+ * token system. A helper, not a test file, so Vitest does not collect it;
+ * `palette-hygiene.test.ts` and any downstream build that composes this
+ * web-ui call `findOffBrandColors`.
  */
 import fs from "fs";
 import path from "path";
+
+// Finding paths, and so the allow-list's `file` keys, are relative to this
+// web-ui root; anchoring on process.cwd() instead makes every exception miss
+// when Vitest runs from another directory.
+const WEB_UI_ROOT = path.resolve(__dirname, "../..");
 
 export type OffBrandCategory = "palette" | "white-black" | "hex" | "color-function";
 
@@ -114,7 +120,8 @@ export function findOffBrandColors(paths: string[]): {
   let filesScanned = 0;
 
   for (const target of paths) {
-    if (!fs.existsSync(target)) continue;
+    // A missing target would otherwise shrink the scan silently while it still passes.
+    if (!fs.existsSync(target)) throw new Error(`palette scan target does not exist: ${target}`);
     const stat = fs.statSync(target);
     const root = stat.isDirectory() ? target : path.dirname(target);
     const relFiles: string[] = [];
@@ -128,8 +135,7 @@ export function findOffBrandColors(paths: string[]): {
     for (const relFile of relFiles) {
       const abs = path.join(root, relFile);
       const text = fs.readFileSync(abs, "utf-8");
-      // Report paths relative to the scan root passed in, matching how callers name files elsewhere.
-      const relPath = path.relative(process.cwd(), abs).split(path.sep).join("/");
+      const relPath = path.relative(WEB_UI_ROOT, abs).split(path.sep).join("/");
       findings.push(...scanSource(relPath, text));
       filesScanned += 1;
     }

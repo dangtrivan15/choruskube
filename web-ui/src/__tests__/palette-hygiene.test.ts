@@ -1,8 +1,8 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { findOffBrandColors, scanSource } from "./palette-hygiene";
+import { ACCEPTED_COLOR_EXCEPTIONS, findOffBrandColors, scanSource } from "./palette-hygiene";
 
 describe("findOffBrandColors over the whole src/ tree", () => {
   it("is clean and scans more than 50 files", () => {
@@ -56,6 +56,11 @@ describe("scanSource self-tests", () => {
     }
   });
 
+  it("throws on a target that does not exist rather than scanning nothing", () => {
+    const missing = path.join(os.tmpdir(), "palette-hygiene-missing", "Gone.tsx");
+    expect(() => findOffBrandColors([missing])).toThrow(/does not exist/);
+  });
+
   it("an empty directory gives filesScanned === 0", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "palette-hygiene-empty-"));
     try {
@@ -69,17 +74,23 @@ describe("scanSource self-tests", () => {
 });
 
 describe("ACCEPTED_COLOR_EXCEPTIONS", () => {
-  const tmpDirs: string[] = [];
-  afterEach(() => {
-    for (const dir of tmpDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
-  });
-
   it("does not flag an exception's own file for its listed pattern", () => {
-    // The exception list keys on a relative path from the web-ui root, so this
-    // exercises scanSource directly rather than the exception's real file.
     expect(scanSource("src/components/Logo.tsx", 'stopColor="#907aa9"')).toEqual([]);
     expect(
       scanSource("src/components/layout/ActivityFeedButton.tsx", 'className="text-white"')
     ).toEqual([]);
+  });
+
+  it("still flags the same pattern in any other file", () => {
+    expect(scanSource("src/components/Other.tsx", 'stopColor="#907aa9"')).toHaveLength(1);
+  });
+
+  it("keys match the paths the file walker reports for each exception's real file", () => {
+    const webUiRoot = path.resolve(__dirname, "../..");
+    const { findings, filesScanned } = findOffBrandColors(
+      ACCEPTED_COLOR_EXCEPTIONS.map((exception) => path.join(webUiRoot, exception.file))
+    );
+    expect(findings).toEqual([]);
+    expect(filesScanned).toBe(ACCEPTED_COLOR_EXCEPTIONS.length);
   });
 });
