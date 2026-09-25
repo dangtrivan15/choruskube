@@ -10,7 +10,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
+	temporalactivity "go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/testsuite"
 
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/activity"
@@ -63,6 +65,27 @@ func (s *DAGExecutorTestSuite) dagRunID() uuid.UUID {
 	runID := uuid.New()
 	s.env.SetStartWorkflowOptions(client.StartWorkflowOptions{ID: dagTestWorkflowIDPrefix + runID.String()})
 	return runID
+}
+
+// pauseResumeAfterStart signals pause and resume at the given offsets from the moment execID's
+// ExecuteAINodeFromSnapshot starts. Timing them from ExecuteWorkflow instead is racy: while any
+// activity runs, the test env fires delayed callbacks on wall-clock time, so under CPU load the
+// pause lands before the node is dispatched and the run takes the plain failure path.
+func (s *DAGExecutorTestSuite) pauseResumeAfterStart(execID uuid.UUID, pauseAfter, resumeAfter time.Duration) {
+	var once sync.Once
+	s.env.SetOnActivityStartedListener(func(info *temporalactivity.Info, _ context.Context, args converter.EncodedValues) {
+		if info.ActivityType.Name != "ExecuteAINodeFromSnapshot" {
+			return
+		}
+		var p activity.ExecuteAINodeFromSnapshotParams
+		if err := args.Get(&p); err != nil || p.Identity.NodeExecutionID != execID {
+			return
+		}
+		once.Do(func() {
+			s.env.RegisterDelayedCallback(func() { s.env.SignalWorkflow(SignalPause, nil) }, pauseAfter)
+			s.env.RegisterDelayedCallback(func() { s.env.SignalWorkflow(SignalResume, nil) }, resumeAfter)
+		})
+	})
 }
 
 // TestLinearTwoNodeGraph verifies: A → B (unconditional), both AI nodes.
@@ -1030,12 +1053,7 @@ func (s *DAGExecutorTestSuite) TestPauseStampsNodeAsPaused() {
 	})).Return("no_decision", nil).Once()
 
 	// Pause while node A is in-flight (100 ms), then resume (200 ms)
-	s.env.RegisterDelayedCallback(func() {
-		s.env.SignalWorkflow(SignalPause, nil)
-	}, time.Millisecond*100)
-	s.env.RegisterDelayedCallback(func() {
-		s.env.SignalWorkflow(SignalResume, nil)
-	}, time.Millisecond*200)
+	s.pauseResumeAfterStart(execA, 100*time.Millisecond, 200*time.Millisecond)
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
 		RunID: runID, GraphVersion: 1,
@@ -1079,12 +1097,7 @@ func (s *DAGExecutorTestSuite) TestTwoNodeGraphOnlyBPaused() {
 	s.env.OnActivity("LoadPredecessorInputs", mock.Anything, mock.Anything).Return(map[string]string{}, nil).Maybe()
 	s.env.OnActivity("LoadRequiredInputArtifacts", mock.Anything, mock.Anything).Return(activity.LoadRequiredInputArtifactsResult{}, nil).Maybe()
 	s.env.OnActivity("LoadReviewHistoryJSON", mock.Anything, mock.Anything).Return("[]", nil).Maybe()
-	// SetTraversedEdges must be mocked so it returns immediately when A completes.
-	// Without this mock the test framework calls the real activity which panics
-	// (nil *Activities receiver), causing Temporal to schedule a 1 s retry timer.
-	// That retry timer fires after the 100 ms pause/resume window, pushing B's
-	// creation past the pause signal — making B "pending" (not "running") when the
-	// stamp loop runs, so the test expectations are never satisfied.
+	// Unmocked, A's completion hits the nil-registered real impl, which panics and is retried.
 	s.env.OnActivity("SetTraversedEdges", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	// Node A created (entry node)
@@ -1152,12 +1165,7 @@ func (s *DAGExecutorTestSuite) TestTwoNodeGraphOnlyBPaused() {
 	})).Return("no_decision", nil).Once()
 
 	// Pause after B starts (A has already completed) and resume shortly after
-	s.env.RegisterDelayedCallback(func() {
-		s.env.SignalWorkflow(SignalPause, nil)
-	}, time.Millisecond*100)
-	s.env.RegisterDelayedCallback(func() {
-		s.env.SignalWorkflow(SignalResume, nil)
-	}, time.Millisecond*200)
+	s.pauseResumeAfterStart(execB1, 100*time.Millisecond, 200*time.Millisecond)
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
 		RunID: runID, GraphVersion: 1,
@@ -1244,12 +1252,7 @@ func (s *DAGExecutorTestSuite) TestResumeBeforeHeartbeatTimeout() {
 	})).Return("no_decision", nil).Once()
 
 	// Pause at 50 ms, resume at 100 ms (well before the 500 ms timeout)
-	s.env.RegisterDelayedCallback(func() {
-		s.env.SignalWorkflow(SignalPause, nil)
-	}, time.Millisecond*50)
-	s.env.RegisterDelayedCallback(func() {
-		s.env.SignalWorkflow(SignalResume, nil)
-	}, time.Millisecond*100)
+	s.pauseResumeAfterStart(execA, 50*time.Millisecond, 100*time.Millisecond)
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
 		RunID: runID, GraphVersion: 1,
@@ -1807,12 +1810,7 @@ func (s *DAGExecutorTestSuite) TestRateLimitedNodeParkedDuringPauseStillFailsExp
 	// keeps runningCount correct through the whole park), so the top-of-loop pause-stamp
 	// matches it and adds its execID to pauseInterrupted. Resume follows so the run
 	// proceeds normally once the park itself ends ~30 (virtual) minutes later.
-	s.env.RegisterDelayedCallback(func() {
-		s.env.SignalWorkflow(SignalPause, nil)
-	}, 50*time.Millisecond)
-	s.env.RegisterDelayedCallback(func() {
-		s.env.SignalWorkflow(SignalResume, nil)
-	}, 100*time.Millisecond)
+	s.pauseResumeAfterStart(execA, 50*time.Millisecond, 100*time.Millisecond)
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{RunID: runID, GraphVersion: 1})
 

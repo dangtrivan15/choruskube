@@ -376,12 +376,7 @@ func (s *DAGExecutorTestSuite) TestModelEffortResolution_PauseHeartbeatTimeoutRe
 
 	// Pause at 50 ms, resume at 100 ms (well before the 500 ms timeout) — same
 	// timing as TestResumeBeforeHeartbeatTimeout.
-	s.env.RegisterDelayedCallback(func() {
-		s.env.SignalWorkflow(SignalPause, nil)
-	}, time.Millisecond*50)
-	s.env.RegisterDelayedCallback(func() {
-		s.env.SignalWorkflow(SignalResume, nil)
-	}, time.Millisecond*100)
+	s.pauseResumeAfterStart(execA, 50*time.Millisecond, 100*time.Millisecond)
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
 		RunID: runID, GraphVersion: 1,
