@@ -4,6 +4,7 @@ import { useAuth } from "@/components/AuthProvider";
 import { useGitHubCredential } from "@/hooks/useGitHubCredential";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import StatusCallout from "@/components/ui/StatusCallout";
 import {
   Dialog,
   DialogContent,
@@ -80,13 +81,10 @@ export default function CreateGitRepoDialog({ open, onOpenChange }: Props) {
 
         <div className="min-h-0 flex-1 overflow-y-auto py-2 flex flex-col gap-4 -mx-4 px-4">
           {showCredentialBanner && (
-            <div
-              role="alert"
-              className="rounded-md border border-status-info/20 bg-status-info/10 p-3 text-sm text-status-info"
-            >
+            <StatusCallout tone="warning" role="alert">
               No GitHub credential is configured. Repositories may not be accessible. Configure
               one in Org Settings → Integrations.
-            </div>
+            </StatusCallout>
           )}
 
           <div className="flex flex-col gap-1">

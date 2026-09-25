@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { statusBadgeClass, statusColorTokens } from "../statusColors";
+import {
+  statusBadgeClass,
+  statusColorTokens,
+  statusTone,
+  provisioningTone,
+  credentialHealthTone,
+  STATUS_TONE_CLASSES,
+  type StatusTone,
+} from "../statusColors";
 
 describe("statusBadgeClass", () => {
   it("returns success classes for completed", () => {
@@ -157,5 +165,99 @@ describe("five-state distinctness and full coverage", () => {
   it("an unrecognized status resolves to the documented neutral fallback, not a wrong state's color", () => {
     expect(statusColorTokens("some_future_status").text).toBe("text-status-neutral");
     expect(statusBadgeClass("some_future_status")).toContain("status-neutral");
+  });
+});
+
+describe("STATUS_TONE_CLASSES", () => {
+  const TONES: StatusTone[] = ["success", "error", "info", "warning", "accent", "neutral"];
+  const OTHER_TONES: Record<StatusTone, StatusTone[]> = {
+    success: ["error", "info", "warning", "accent", "neutral"],
+    error: ["success", "info", "warning", "accent", "neutral"],
+    info: ["success", "error", "warning", "accent", "neutral"],
+    warning: ["success", "error", "info", "accent", "neutral"],
+    accent: ["success", "error", "info", "warning", "neutral"],
+    neutral: ["success", "error", "info", "warning", "accent"],
+  };
+
+  it.each(TONES)("%s has all six recipes, each referencing only its own tone", (tone) => {
+    const recipes = STATUS_TONE_CLASSES[tone];
+    for (const key of ["badge", "bg", "border", "text", "dot", "callout"] as const) {
+      expect(recipes[key]).toContain(`status-${tone}`);
+      for (const other of OTHER_TONES[tone]) {
+        expect(recipes[key]).not.toContain(`status-${other}`);
+      }
+    }
+  });
+
+  it.each(TONES)("%s's callout uses foreground text, never a tone-colored text class", (tone) => {
+    const { callout } = STATUS_TONE_CLASSES[tone];
+    expect(callout).toContain("text-foreground");
+    expect(callout).not.toMatch(/text-status-/);
+  });
+});
+
+describe("statusTone", () => {
+  const CASES: [string, StatusTone][] = [
+    ["completed", "success"],
+    ["failed", "error"],
+    ["running", "info"],
+    ["awaiting_human", "warning"],
+    ["awaiting_retry", "warning"],
+    ["paused", "accent"],
+    ["cancelled", "neutral"],
+    ["pending", "neutral"],
+    ["some_future_status", "neutral"],
+  ];
+
+  it.each(CASES)("%s -> %s", (status, tone) => {
+    expect(statusTone(status)).toBe(tone);
+  });
+});
+
+describe("provisioningTone", () => {
+  it("maps pending to neutral", () => {
+    expect(provisioningTone("pending")).toBe("neutral");
+  });
+  it("maps provisioning to info", () => {
+    expect(provisioningTone("provisioning")).toBe("info");
+  });
+  it("maps ready to success", () => {
+    expect(provisioningTone("ready")).toBe("success");
+  });
+  it("maps failed to error", () => {
+    expect(provisioningTone("failed")).toBe("error");
+  });
+});
+
+describe("credentialHealthTone", () => {
+  it("maps VALID to success", () => {
+    expect(credentialHealthTone("VALID")).toBe("success");
+  });
+  it("maps EXPIRED to error", () => {
+    expect(credentialHealthTone("EXPIRED")).toBe("error");
+  });
+  it("maps INSUFFICIENT_PERMISSIONS to error", () => {
+    expect(credentialHealthTone("INSUFFICIENT_PERMISSIONS")).toBe("error");
+  });
+  it("maps UNREACHABLE to warning", () => {
+    expect(credentialHealthTone("UNREACHABLE")).toBe("warning");
+  });
+});
+
+describe("statusBadgeClass matches the tone table for every run status", () => {
+  const STATUSES = [
+    "completed",
+    "failed",
+    "running",
+    "awaiting_human",
+    "awaiting_retry",
+    "paused",
+    "cancelled",
+    "pending",
+    "unknown_status",
+  ];
+
+  it.each(STATUSES)("%s", (status) => {
+    expect(statusBadgeClass(status)).toBe(STATUS_TONE_CLASSES[statusTone(status)].badge);
   });
 });

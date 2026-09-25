@@ -1,3 +1,5 @@
+import StatusDot from "@/components/ui/StatusDot";
+
 interface PlatformManagedCredentialPanelProps {
   badgeLabel: string;
   hintPrefix: string;
@@ -16,7 +18,7 @@ export default function PlatformManagedCredentialPanel({
   return (
     <div className="space-y-3" data-testid={testId}>
       <div className="flex items-center gap-3 rounded-md border p-3">
-        <div className="h-2 w-2 rounded-full bg-status-success" />
+        <StatusDot tone="success" />
         <span className="text-sm font-medium">{badgeLabel}</span>
         <span className="font-mono text-sm text-muted-foreground">
           {hintPrefix}****{hint}

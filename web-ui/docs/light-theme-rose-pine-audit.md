@@ -101,7 +101,7 @@ additions layered on top:
 | `web-ui/src/components/layout/MobileDrawer.tsx` | 15 | `bg-black/40` overlay scrim | a token-based scrim color | accepted as-is — theme-agnostic backdrop, see repo's Caveats & Known Limitations |
 | `web-ui/src/components/layout/CommandPalette.tsx` | 154 | `bg-black/10` overlay scrim | a token-based scrim color | accepted as-is — theme-agnostic backdrop, see repo's Caveats & Known Limitations |
 | `web-ui/src/components/ui/MarkdownViewer.tsx` | 12 | mermaid diagrams pinned to `theme: "default"` | the app's semantic tokens; currently ignores both the light palette and dark mode | future work — see repo's Caveats & Known Limitations |
-| `web-ui/src/components/ui/toaster.tsx` | 11 | sonner `richColors` | the app's semantic tokens instead of sonner's built-in palette | future work — see repo's Caveats & Known Limitations |
+| `web-ui/src/components/ui/toaster.tsx` | 11 | sonner `richColors` | the app's semantic tokens instead of sonner's built-in palette | ✓ fixed — rich-color variables bridged to `--status-*` in `index.css` |
 | `web-ui/src/components/analytics/RunTrendChart.tsx` | 47–48, 58–59 | `hsl(var(--card))`, `hsl(var(--border))`, `hsl(var(--foreground))` | **broken, not just off-palette** — these tokens hold hex/rgba values, not `H S% L%` triples, so wrapping them in `hsl(...)` produces invalid CSS | ✓ fixed |
 | `web-ui/src/components/analytics/BottleneckChart.tsx` | 56–57 | same `hsl(var(...))` pattern | same fix — reference the token directly, no `hsl()` wrapper | ✓ fixed |
 | `web-ui/src/components/analytics/RoadmapThroughputChart.tsx` | 40–41 | same `hsl(var(...))` pattern | same fix — reference the token directly, no `hsl()` wrapper | ✓ fixed |
@@ -113,6 +113,13 @@ additions layered on top:
 Run graph and roadmap graph nodes/edges, all status/priority/level badges, and the
 `statusColors` / `priorityMeta` / `milestoneMeta` maps route through the semantic tokens
 above — no deviation found in any of them.
+
+Status indicators across the app, including org/admin screens in downstream builds that
+compose this web-ui, route through `STATUS_TONE_CLASSES` and the `StatusDot`/
+`StatusCallout` primitives (`src/lib/statusColors.ts`,
+`src/components/ui/StatusDot.tsx`, `src/components/ui/StatusCallout.tsx`), so a state's
+tone and class recipe have exactly one source. `palette-hygiene.test.ts` scans the whole
+`src/` tree for off-brand colors and guards this from regressing.
 
 ## Known limitation
 

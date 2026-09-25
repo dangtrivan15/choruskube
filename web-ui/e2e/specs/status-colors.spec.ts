@@ -11,10 +11,7 @@
 // in a real browser against a real run/roadmap render.
 import { test, expect } from "../fixtures";
 import { uniqueName } from "../helpers/api-client";
-
-async function toggleTheme(page: import("@playwright/test").Page) {
-  await page.getByRole("button", { name: "Toggle theme" }).click();
-}
+import { resolveColor, toggleTheme, alphaOf } from "../helpers/colors";
 
 test.describe("Run Monitor status colors", () => {
   test("DAG node colors are pairwise distinct across completed / running / pending, and stay distinct and recolor after a theme toggle", async ({
@@ -190,6 +187,56 @@ test.describe("Roadmap Graph status colors and legend fidelity", () => {
       expect(darkSwatch).not.toBe(lightSwatch);
     } finally {
       await api.deleteEpic(epic.id);
+    }
+  });
+});
+
+test.describe("Toast colors", () => {
+  test("toasts take their colors from the status tokens, in both themes", async ({
+    roadmapPage,
+    workerRepo,
+    api,
+  }) => {
+    const projectName = workerRepo.gitRepo.url
+      .replace(/^https?:\/\/[^/]+\//, "")
+      .replace(/\.git$/, "");
+    const createdTitles: string[] = [];
+    const iconColors: string[] = [];
+
+    try {
+      for (let i = 0; i < 2; i++) {
+        const title = uniqueName("e2e-toast-color");
+        createdTitles.push(title);
+
+        await roadmapPage.goto();
+        await roadmapPage.createEpic(title, "desc", projectName);
+
+        const toastEl = roadmapPage.page
+          .locator('[data-sonner-toast][data-type="success"]')
+          .filter({ hasText: "Epic created" });
+        await expect(toastEl).toBeVisible();
+
+        const icon = toastEl.locator("[data-icon]").first();
+        const iconColor = await icon.evaluate((el) => getComputedStyle(el).color);
+        expect(iconColor).toBe(await resolveColor(roadmapPage.page, "var(--status-success)"));
+        iconColors.push(iconColor);
+
+        const bg = await toastEl.evaluate((el) => getComputedStyle(el).backgroundColor);
+        expect(alphaOf(bg)).toBe(1);
+
+        if (i === 0) {
+          await toggleTheme(roadmapPage.page);
+          await expect(roadmapPage.page.locator("html")).toHaveClass(/dark/);
+        }
+      }
+
+      expect(iconColors[1]).not.toBe(iconColors[0]);
+    } finally {
+      const epics = await api.listEpicsForProject(workerRepo.gitRepo.id);
+      for (const title of createdTitles) {
+        const match = epics.find((e) => e.title === title);
+        if (match) await api.deleteEpic(match.id).catch(() => {});
+      }
     }
   });
 });

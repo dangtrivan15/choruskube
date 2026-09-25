@@ -254,3 +254,39 @@ html:not(.dark) body::before {
 [data-sonner-toaster] [data-sonner-toast] [data-close-button] {
   border-color: var(--border);
 }
+
+/* The library injects its own unlayered stylesheet at runtime, and an
+   unlayered rule always wins over a layered one regardless of specificity.
+   This block must stay unlayered and more specific than the library's
+   `[data-sonner-toaster][data-sonner-theme='…']` (0,2,0), or toasts silently
+   fall back to its palette. */
+:root [data-sonner-toaster][data-sonner-theme] {
+  --success-bg: color-mix(in oklab, var(--status-success) 12%, var(--popover));
+  --success-border: color-mix(in oklab, var(--status-success) 40%, var(--popover));
+  --success-text: var(--popover-foreground);
+
+  --info-bg: color-mix(in oklab, var(--status-info) 12%, var(--popover));
+  --info-border: color-mix(in oklab, var(--status-info) 40%, var(--popover));
+  --info-text: var(--popover-foreground);
+
+  --warning-bg: color-mix(in oklab, var(--status-warning) 12%, var(--popover));
+  --warning-border: color-mix(in oklab, var(--status-warning) 40%, var(--popover));
+  --warning-text: var(--popover-foreground);
+
+  --error-bg: color-mix(in oklab, var(--status-error) 12%, var(--popover));
+  --error-border: color-mix(in oklab, var(--status-error) 40%, var(--popover));
+  --error-text: var(--popover-foreground);
+}
+
+:root [data-sonner-toast][data-type='success'] [data-icon] {
+  color: var(--status-success);
+}
+:root [data-sonner-toast][data-type='info'] [data-icon] {
+  color: var(--status-info);
+}
+:root [data-sonner-toast][data-type='warning'] [data-icon] {
+  color: var(--status-warning);
+}
+:root [data-sonner-toast][data-type='error'] [data-icon] {
+  color: var(--status-error);
+}
