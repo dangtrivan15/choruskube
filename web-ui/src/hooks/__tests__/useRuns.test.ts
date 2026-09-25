@@ -113,7 +113,7 @@ describe("useRuns hooks", () => {
   });
 
   describe("useNodeLogs", () => {
-    it("fetches logs when enabled and nodeExecId provided", async () => {
+    it("fetches and polls every 3s when live", async () => {
       const logs = [{ id: "l1", level: "info", message: "hello", timestamp: "2026-01-01T00:00:00Z" }];
       mockApi.get.mockResolvedValueOnce(logs);
       const { wrapper } = createTestHookWrapper();
@@ -140,15 +140,28 @@ describe("useRuns hooks", () => {
       expect(mockApi.get).not.toHaveBeenCalled();
     });
 
-    it("does not fetch when enabled is false", () => {
-      const { wrapper } = createTestHookWrapper();
+    it("fetches once without polling when live is false", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        const logs = [{ id: "l1", level: "info", message: "hello", timestamp: "2026-01-01T00:00:00Z" }];
+        mockApi.get.mockResolvedValue(logs);
+        const { wrapper } = createTestHookWrapper();
 
-      const { result } = renderHook(
-        () => useNodeLogs("run-1", "exec-1", false),
-        { wrapper }
-      );
+        const { result } = renderHook(
+          () => useNodeLogs("run-1", "exec-1", false),
+          { wrapper }
+        );
 
-      expect(result.current.fetchStatus).toBe("idle");
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+        expect(result.current.data).toEqual(logs);
+        expect(mockApi.get).toHaveBeenCalledTimes(1);
+
+        // No refetchInterval means no second GET past the live-mode 3s poll window.
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(mockApi.get).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 

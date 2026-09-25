@@ -134,6 +134,30 @@ export class RunMonitorPage {
     return node.locator("span.capitalize").evaluate((el) => getComputedStyle(el).color);
   }
 
+  /** A log row in the execution log panel for a given severity level. */
+  logRow(level: string): Locator {
+    return this.executionLogs.locator(`[data-testid="log-row"][data-level="${level}"]`);
+  }
+
+  /**
+   * Computed text color of a severity's label — the resolved hex of whichever
+   * `text-status-*` token `logLevelStyle()` (src/lib/logLevelStyles.ts) assigned
+   * this level, read from the rendered DOM so a real browser's CSS cascade is
+   * what's asserted on. Mirrors `nodeStatusColor`.
+   */
+  async logSeverityColor(level: string): Promise<string> {
+    return this.logRow(level).first().getByTestId("log-level").evaluate((el) => getComputedStyle(el).color);
+  }
+
+  /**
+   * A severity row's icon glyph — the SVG's markup, independent of color — so
+   * a test can assert the three levels use pairwise-distinct icon *shapes*,
+   * not just distinct colors.
+   */
+  async logSeverityGlyph(level: string): Promise<string> {
+    return this.logRow(level).first().locator("svg").evaluate((el) => el.innerHTML);
+  }
+
   async approveGate(feedback?: string) {
     if (feedback) {
       await this.gateFeedbackInput.fill(feedback);
