@@ -46,6 +46,7 @@ Every entry gets a row, newest last.
 | [2026-09-21---02-roadmap-edge-style-registry.md](2026-09-21---02-roadmap-edge-style-registry.md) | 2026-09-21 | Why every roadmap dependency-edge color/dash-pattern consumer (stroke, both marker call sites, legend swatch) reads one shared `ROADMAP_EDGE_STYLES` registry keyed by the raw `--status-*` token instead of each carrying its own literal | current |
 | [2026-09-24---01-status-tone-vocabulary.md](2026-09-24---01-status-tone-vocabulary.md) | 2026-09-24 | The six status-tone meanings, why banner/callout sentences render in the foreground color instead of the tone color, the `destructive`-vs-tone-table split, and why the toast bridge and the palette scanner are each a single shared definition | current |
 | [2026-09-25---01-log-severity-redundant-encoding.md](2026-09-25---01-log-severity-redundant-encoding.md) | 2026-09-25 | Why log severity is carried by icon shape, label weight and row accent/tint (not color alone) via a dedicated `logLevelStyles` module, and why `useNodeLogs` now always fetches a finished node's logs once and polls only when live | current |
+| [2026-09-25---02-chart-series-style-registry.md](2026-09-25---02-chart-series-style-registry.md) | 2026-09-25 | Why analytics chart series read one `CHART_SERIES_STYLES` registry whose per-theme separation is computed by a test, why "Total" gets its own neutral reference token, and why Bottlenecks takes existing chart slots instead of re-ordering them | current |
 
 - **Entry** — the filename, linked.
 - **Date** — the date in the filename.

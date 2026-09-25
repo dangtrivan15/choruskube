@@ -9,18 +9,14 @@ import {
   Legend,
 } from "recharts";
 import type { RunTrendPoint } from "@/lib/types";
+import { CHART_SERIES_STYLES, seriesColor, seriesDashProps } from "@/lib/chartSeriesStyles";
 
 interface RunTrendChartProps {
   points: RunTrendPoint[];
 }
 
-/**
- * NOTE: Recharts receives CSS `var()` references for stroke/fill attributes.
- * SVG presentation attributes resolve `var()` correctly, but Recharts legend
- * and tooltip color swatches render inline `<li style="color: ...">` which
- * may pass the raw `var(...)` string. Visually verify legend/tooltip swatches
- * after theme changes. If broken, resolve colors via getComputedStyle at render.
- */
+const { completed, failed, total } = CHART_SERIES_STYLES.runTrend;
+
 export default function RunTrendChart({ points }: RunTrendChartProps) {
   if (points.length === 0) {
     return (
@@ -31,7 +27,7 @@ export default function RunTrendChart({ points }: RunTrendChartProps) {
   }
 
   return (
-    <div className="h-64">
+    <div className="h-64" data-testid="run-trend-chart">
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={points} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
@@ -49,34 +45,51 @@ export default function RunTrendChart({ points }: RunTrendChartProps) {
               borderRadius: "0.5rem",
               fontSize: "0.875rem",
             }}
+            itemStyle={{ color: "var(--foreground)" }}
           />
-          <Legend wrapperStyle={{ fontSize: "0.75rem" }} />
-          <Area
-            type="monotone"
-            dataKey="total"
-            name="Total"
-            stroke="var(--foreground)"
-            fill="var(--foreground)"
-            fillOpacity={0.05}
-            strokeWidth={2}
+          {/* iconSize 24: Recharts scales its 32-unit legend icon viewBox to iconSize,
+              so the default 14px shrinks Failed's dotted pattern below legibility. */}
+          <Legend
+            wrapperStyle={{ fontSize: "0.75rem" }}
+            labelStyle={{ color: "var(--foreground)" }}
+            iconSize={24}
           />
           <Area
             type="monotone"
             dataKey="completed"
-            name="Completed"
-            stroke="var(--status-success)"
-            fill="var(--status-success)"
+            name={completed.label}
+            className="series-completed"
+            stroke={seriesColor(completed)}
+            fill={seriesColor(completed)}
             fillOpacity={0.1}
             strokeWidth={2}
+            legendType="plainline"
+            {...seriesDashProps(completed)}
           />
           <Area
             type="monotone"
             dataKey="failed"
-            name="Failed"
-            stroke="var(--status-error)"
-            fill="var(--status-error)"
+            name={failed.label}
+            className="series-failed"
+            stroke={seriesColor(failed)}
+            fill={seriesColor(failed)}
             fillOpacity={0.1}
             strokeWidth={2}
+            legendType="plainline"
+            {...seriesDashProps(failed)}
+          />
+          {/* Total is unfilled and painted last (on top) so it stays visible when
+              every run succeeds and its value coincides with Completed's. */}
+          <Area
+            type="monotone"
+            dataKey="total"
+            name={total.label}
+            className="series-total"
+            stroke={seriesColor(total)}
+            fill="none"
+            strokeWidth={2}
+            legendType="plainline"
+            {...seriesDashProps(total)}
           />
         </AreaChart>
       </ResponsiveContainer>

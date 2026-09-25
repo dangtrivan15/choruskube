@@ -35,7 +35,7 @@ Published upstream palette (rosepinetheme.com), the target this catalog measures
 | highlightMed | `#dfdad9` |
 | highlightHigh | `#cecacd` |
 
-## Tier 1 — token-level deviations (`web-ui/src/index.css`, `:root`, lines 8–57)
+## Tier 1 — token-level deviations (`web-ui/src/index.css`, `:root`, lines 8–58)
 
 Accent tokens — faithful:
 
@@ -64,6 +64,7 @@ Neutral tokens — restored to canonical Dawn:
 | `--background`, `--sidebar` | `#faf4ed` / `#fffaf3` | base `#faf4ed` / surface `#fffaf3` | ✓ |
 | `--popover` | `#fffaf3` | surface `#fffaf3` | ✓ |
 | `--foreground`, `--card-foreground`, `--popover-foreground`, `--secondary-foreground`, `--accent-foreground`, `--sidebar-foreground`, `--sidebar-accent-foreground` | `#575279` | text `#575279` | ✓ |
+| `--chart-reference` | `#575279` | text `#575279` (chart reference series; same ink as `--foreground`, diverges in dark) | ✓ |
 | `--card` | `rgba(255, 255, 255, 0.55)` (line 14) | surface `#fffaf3` (kept translucent over the warm gradient by design — the glass/gradient treatment is intentionally preserved, only its underlying ink was corrected) | ✓ |
 | `--secondary`, `--muted`, `--accent`, `--sidebar-accent` | `#f2e9e1` | overlay `#f2e9e1` | ✓ |
 | `--border`, `--sidebar-border` | `rgba(87,82,121,0.08)` | text-ink (`#575279`) at 8% — canonical Dawn has no solid highlight-role equivalent for hairline borders, so this stays ink-alpha | ✓ |
