@@ -96,6 +96,41 @@ describe(":root / .dark token parity", () => {
   });
 });
 
+describe("toast bridge maps each rich-color type to its matching status token", () => {
+  const TYPES: [string, string][] = [
+    ["success", "success"],
+    ["info", "info"],
+    ["warning", "warning"],
+    ["error", "error"],
+  ];
+
+  it.each(TYPES)("--%s-bg and --%s-border reference --status-%s, --%s-text is the popover foreground", (type, token) => {
+    const bgMatch = css.match(new RegExp(`--${type}-bg:\\s*([^;]+);`));
+    const borderMatch = css.match(new RegExp(`--${type}-border:\\s*([^;]+);`));
+    const textMatch = css.match(new RegExp(`--${type}-text:\\s*([^;]+);`));
+    expect(bgMatch?.[1]).toContain(`--status-${token}`);
+    expect(borderMatch?.[1]).toContain(`--status-${token}`);
+    expect(textMatch?.[1].trim()).toBe("var(--popover-foreground)");
+  });
+
+  it.each(TYPES)("has an icon rule using var(--status-%s)", (type, token) => {
+    const re = new RegExp(`\\[data-type='${type}'\\][^{]*\\{[^}]*color:\\s*var\\(--status-${token}\\)`);
+    expect(css).toMatch(re);
+  });
+
+  it("the bridge block sits outside every @layer", () => {
+    const selectorIndex = css.indexOf(":root [data-sonner-toaster][data-sonner-theme]");
+    expect(selectorIndex).toBeGreaterThan(-1);
+    const before = css.slice(0, selectorIndex);
+    let depth = 0;
+    for (const ch of before) {
+      if (ch === "{") depth += 1;
+      if (ch === "}") depth -= 1;
+    }
+    expect(depth).toBe(0);
+  });
+});
+
 describe("--status-* tokens are pairwise-distinct within a theme", () => {
   const STATUS_TOKENS = ["status-success", "status-error", "status-info", "status-warning", "status-accent", "status-neutral"];
 

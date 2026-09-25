@@ -44,6 +44,7 @@ Every entry gets a row, newest last.
 | [2026-09-19---02-theme-preference-shared-store-and-cross-tab-sync.md](2026-09-19---02-theme-preference-shared-store-and-cross-tab-sync.md) | 2026-09-19 | Why theme state moves to a single `useSyncExternalStore` store and how a chosen preference propagates across same-origin tabs (`BroadcastChannel`) and on refocus (`visibilitychange`), without adding OS live-tracking | current |
 | [2026-09-21---01-e2e-memory-fits-constrained-test-node.md](2026-09-21---01-e2e-memory-fits-constrained-test-node.md) | 2026-09-21 | Why the forked `:api-server:test` worker heap is bounded (`-Dtest.maxHeapSize`, 2560m default) and every compose service gets a `mem_limit`, so `test -Pe2e` fits a memory-constrained Test-node agent | current |
 | [2026-09-21---02-roadmap-edge-style-registry.md](2026-09-21---02-roadmap-edge-style-registry.md) | 2026-09-21 | Why every roadmap dependency-edge color/dash-pattern consumer (stroke, both marker call sites, legend swatch) reads one shared `ROADMAP_EDGE_STYLES` registry keyed by the raw `--status-*` token instead of each carrying its own literal | current |
+| [2026-09-24---01-status-tone-vocabulary.md](2026-09-24---01-status-tone-vocabulary.md) | 2026-09-24 | The six status-tone meanings, why banner/callout sentences render in the foreground color instead of the tone color, the `destructive`-vs-tone-table split, and why the toast bridge and the palette scanner are each a single shared definition | current |
 
 - **Entry** — the filename, linked.
 - **Date** — the date in the filename.

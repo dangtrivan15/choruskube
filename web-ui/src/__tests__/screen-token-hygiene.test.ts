@@ -24,20 +24,20 @@ describe("analytics charts reference tokens directly, not through hsl()", () => 
   });
 });
 
-describe("git-repo dialog uses the status-info token, not a raw blue", () => {
+describe("git-repo dialog renders its notice through the shared callout primitive", () => {
   it("CreateGitRepoDialog.tsx contains no blue- class", () => {
     const source = read("src/components/git-repos/CreateGitRepoDialog.tsx");
     expect(source).not.toMatch(/\bblue-/);
-    expect(source).toContain("status-info");
+    expect(source).toContain("StatusCallout");
   });
 });
 
-describe("platform credential panel uses the status-success token, not a raw green", () => {
+describe("platform credential panel renders its dot through the shared status primitive", () => {
   it("PlatformManagedCredentialPanel.tsx contains no green- class", () => {
     const source = read(
       "src/components/integrations/PlatformManagedCredentialPanel.tsx",
     );
     expect(source).not.toMatch(/\bgreen-/);
-    expect(source).toContain("status-success");
+    expect(source).toContain("StatusDot");
   });
 });

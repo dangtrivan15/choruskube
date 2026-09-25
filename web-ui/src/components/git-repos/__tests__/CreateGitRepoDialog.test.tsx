@@ -56,6 +56,7 @@ describe("CreateGitRepoDialog", () => {
     });
 
     expect(screen.getByText(/No GitHub credential is configured/i)).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveAttribute("data-tone", "warning");
   });
 
   it("form remains usable when no credential is configured", async () => {

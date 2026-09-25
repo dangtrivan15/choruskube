@@ -13,4 +13,9 @@ describe("ErrorAlert", () => {
     expect(screen.getByRole("alert")).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("Error occurred");
   });
+
+  it("carries the error tone", () => {
+    render(<ErrorAlert message="Error occurred" />);
+    expect(screen.getByRole("alert")).toHaveAttribute("data-tone", "error");
+  });
 });
