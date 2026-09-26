@@ -2,7 +2,11 @@ package k8s
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -12,6 +16,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/kubernetes/scheme"
+	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
+	"k8s.io/client-go/rest"
+	fakerest "k8s.io/client-go/rest/fake"
 
 	coreexec "github.com/dangtrivan15/choruskube/worker/executor"
 )
@@ -729,6 +737,234 @@ func TestKubernetesExecutor_GetLogs_NoPodForJob(t *testing.T) {
 	logs, err := exec.GetLogs(context.Background(), params.NodeExecutionID, 100)
 	require.NoError(t, err)
 	assert.Equal(t, "(no pod found)", logs)
+}
+
+// fakeLogsBody is what the fake clientset's pod log stream always returns.
+const fakeLogsBody = "fake logs"
+
+// createAgentPod stands in for the Job controller the fake clientset does not run: it stores a Pod
+// carrying the job-name label GetLogs selects on, with the given status.
+func createAgentPod(t *testing.T, client kubernetes.Interface, execID uuid.UUID, status corev1.PodStatus) {
+	t.Helper()
+	jobName := jobPrefix + execID.String()[:8]
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      jobName + "-x7k2p",
+			Namespace: testNamespace,
+			Labels:    map[string]string{"job-name": jobName},
+		},
+		Status: status,
+	}
+	_, err := client.CoreV1().Pods(testNamespace).Create(context.Background(), pod, metav1.CreateOptions{})
+	require.NoError(t, err)
+}
+
+func TestKubernetesExecutor_GetLogs_PodStatusSummary(t *testing.T) {
+	tests := []struct {
+		name   string
+		status corev1.PodStatus
+		want   string
+	}{
+		{
+			name: "healthy running pod is unchanged",
+			status: corev1.PodStatus{
+				Phase: corev1.PodRunning,
+				ContainerStatuses: []corev1.ContainerStatus{
+					{Name: agentContainerName, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}},
+					// Only the agent container's termination is reported.
+					{Name: "sidecar", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "Error", ExitCode: 2}}},
+				},
+			},
+			want: fakeLogsBody,
+		},
+		{
+			name: "evicted pod surfaces pod reason and message",
+			status: corev1.PodStatus{
+				Phase:   corev1.PodFailed,
+				Reason:  "Evicted",
+				Message: "The node was low on resource: ephemeral-storage.",
+			},
+			want: "pod Evicted: The node was low on resource: ephemeral-storage.\n" + fakeLogsBody,
+		},
+		{
+			name: "OOM-killed agent surfaces reason and exit code",
+			status: corev1.PodStatus{
+				Phase: corev1.PodFailed,
+				ContainerStatuses: []corev1.ContainerStatus{{
+					Name:  agentContainerName,
+					State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "OOMKilled", ExitCode: 137}},
+				}},
+			},
+			want: "container agent OOMKilled (exit code 137)\n" + fakeLogsBody,
+		},
+		{
+			name: "last termination is used when the agent has since restarted",
+			status: corev1.PodStatus{
+				Phase: corev1.PodRunning,
+				ContainerStatuses: []corev1.ContainerStatus{{
+					Name:  agentContainerName,
+					State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+					LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+						Reason: "Error", ExitCode: 1, Message: "entrypoint failed",
+					}},
+				}},
+			},
+			want: "container agent Error (exit code 1): entrypoint failed\n" + fakeLogsBody,
+		},
+		{
+			name: "pod and container facts each get their own line",
+			status: corev1.PodStatus{
+				Phase:   corev1.PodFailed,
+				Reason:  "Evicted",
+				Message: "The node was low on resource: memory.",
+				ContainerStatuses: []corev1.ContainerStatus{{
+					Name:  agentContainerName,
+					State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 137}},
+				}},
+			},
+			want: "pod Evicted: The node was low on resource: memory.\n" +
+				"container agent terminated (exit code 137)\n" + fakeLogsBody,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeClient := fake.NewSimpleClientset()
+			exec := NewKubernetesExecutor(fakeClient, Config{Namespace: testNamespace, AgentServiceAccount: "choruskube-agent"})
+			params := newTestParams()
+			_, err := exec.Execute(context.Background(), params)
+			require.NoError(t, err)
+			createAgentPod(t, fakeClient, params.NodeExecutionID, tc.status)
+
+			logs, err := exec.GetLogs(context.Background(), params.NodeExecutionID, 100)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, logs)
+		})
+	}
+}
+
+// logStreamClient wraps a fake clientset so the pod log stream answers with respond instead of the
+// fake's fixed body -- the fake cannot otherwise fail a log read or return empty logs.
+type logStreamClient struct {
+	kubernetes.Interface
+	respond func() *http.Response
+}
+
+func (c logStreamClient) CoreV1() typedcorev1.CoreV1Interface {
+	return logStreamCoreV1{CoreV1Interface: c.Interface.CoreV1(), respond: c.respond}
+}
+
+type logStreamCoreV1 struct {
+	typedcorev1.CoreV1Interface
+	respond func() *http.Response
+}
+
+func (c logStreamCoreV1) Pods(namespace string) typedcorev1.PodInterface {
+	return logStreamPods{PodInterface: c.CoreV1Interface.Pods(namespace), respond: c.respond}
+}
+
+type logStreamPods struct {
+	typedcorev1.PodInterface
+	respond func() *http.Response
+}
+
+func (p logStreamPods) GetLogs(name string, _ *corev1.PodLogOptions) *rest.Request {
+	client := &fakerest.RESTClient{
+		Client: fakerest.CreateHTTPClient(func(*http.Request) (*http.Response, error) {
+			return p.respond(), nil
+		}),
+		NegotiatedSerializer: scheme.Codecs.WithoutConversion(),
+		GroupVersion:         corev1.SchemeGroupVersion,
+		VersionedAPIPath:     "/api/v1/namespaces/" + testNamespace + "/pods/" + name + "/log",
+	}
+	return client.Request()
+}
+
+type failingReader struct{}
+
+func (failingReader) Read([]byte) (int, error) { return 0, errors.New("connection reset") }
+
+// TestKubernetesExecutor_GetLogs_EvictedPod_UnreadableLogs covers the case the summary exists for:
+// an evicted Pod whose agent container is gone, so the log read itself fails or comes back empty.
+func TestKubernetesExecutor_GetLogs_EvictedPod_UnreadableLogs(t *testing.T) {
+	const summary = "pod Evicted: The node was low on resource: ephemeral-storage.\n"
+	tests := []struct {
+		name     string
+		respond  func() *http.Response
+		wantBody string
+	}{
+		{
+			name: "log stream rejected",
+			respond: func() *http.Response {
+				return &http.Response{
+					StatusCode: http.StatusBadRequest,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body: io.NopCloser(strings.NewReader(`{"kind":"Status","apiVersion":"v1","status":"Failure",` +
+						`"message":"container \"agent\" in pod \"agent-0\" is terminated","reason":"BadRequest","code":400}`)),
+				}
+			},
+			wantBody: `(failed to read logs: container "agent" in pod "agent-0" is terminated)`,
+		},
+		{
+			name: "log body read fails",
+			respond: func() *http.Response {
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(failingReader{})}
+			},
+			wantBody: "(failed to read logs: connection reset)",
+		},
+		{
+			name: "log body empty",
+			respond: func() *http.Response {
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(""))}
+			},
+			wantBody: "(no logs available)",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeClient := fake.NewSimpleClientset()
+			exec := NewKubernetesExecutor(logStreamClient{Interface: fakeClient, respond: tc.respond},
+				Config{Namespace: testNamespace, AgentServiceAccount: "choruskube-agent"})
+			params := newTestParams()
+			_, err := exec.Execute(context.Background(), params)
+			require.NoError(t, err)
+			createAgentPod(t, fakeClient, params.NodeExecutionID, corev1.PodStatus{
+				Phase:   corev1.PodFailed,
+				Reason:  "Evicted",
+				Message: "The node was low on resource: ephemeral-storage.",
+			})
+
+			logs, err := exec.GetLogs(context.Background(), params.NodeExecutionID, 100)
+			require.NoError(t, err)
+			assert.Equal(t, summary+tc.wantBody, logs)
+		})
+	}
+}
+
+// TestKubernetesExecutor_GetLogs_CapsLogsNotSummary proves the 64KB cap trims the log body only, so
+// an oversized log can never push the status summary out of the returned text.
+func TestKubernetesExecutor_GetLogs_CapsLogsNotSummary(t *testing.T) {
+	body := strings.Repeat("a", 10) + strings.Repeat("b", logLimitBytes)
+	fakeClient := fake.NewSimpleClientset()
+	exec := NewKubernetesExecutor(logStreamClient{Interface: fakeClient, respond: func() *http.Response {
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}
+	}}, Config{Namespace: testNamespace, AgentServiceAccount: "choruskube-agent"})
+	params := newTestParams()
+	_, err := exec.Execute(context.Background(), params)
+	require.NoError(t, err)
+	createAgentPod(t, fakeClient, params.NodeExecutionID, corev1.PodStatus{
+		Phase: corev1.PodFailed,
+		ContainerStatuses: []corev1.ContainerStatus{{
+			Name:  agentContainerName,
+			State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "OOMKilled", ExitCode: 137}},
+		}},
+	})
+
+	logs, err := exec.GetLogs(context.Background(), params.NodeExecutionID, 100)
+	require.NoError(t, err)
+	const summary = "container agent OOMKilled (exit code 137)\n"
+	require.True(t, strings.HasPrefix(logs, summary), "summary lost to the cap, got %.80q", logs)
+	assert.True(t, logs[len(summary):] == strings.Repeat("b", logLimitBytes),
+		"log body should be exactly the last %d bytes of the stream", logLimitBytes)
 }
 
 func TestKubernetesExecutor_ResolveJobSecretHash_NotFound(t *testing.T) {

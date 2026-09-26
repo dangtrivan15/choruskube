@@ -404,9 +404,10 @@ func (k *KubernetesExecutor) Terminate(ctx context.Context, executionID uuid.UUI
 	return nil
 }
 
-// GetLogs returns up to the last tailLines of executionID's agent container, capped at 64KB. The
-// Pod is found by the built-in job-name label -- a namespaced LIST, never cluster-wide. Errors
-// (pod not scheduled or already reaped) come back as text: log retrieval is best-effort.
+// GetLogs returns up to the last tailLines of executionID's agent container, capped at 64KB and
+// preceded by podStatusSummary. The Pod is found by the built-in job-name label -- a namespaced
+// LIST, never cluster-wide. Errors (pod not scheduled or already reaped) come back as text: log
+// retrieval is best-effort.
 func (k *KubernetesExecutor) GetLogs(ctx context.Context, executionID uuid.UUID, tailLines int) (string, error) {
 	namespace := k.config.Namespace
 	jobName := jobPrefix + executionID.String()[:8]
@@ -424,29 +425,70 @@ func (k *KubernetesExecutor) GetLogs(ctx context.Context, executionID uuid.UUID,
 	if len(pods.Items) == 0 {
 		return "(no pod found)", nil
 	}
-	podName := pods.Items[0].Name
+	pod := &pods.Items[0]
+	summary := podStatusSummary(pod)
 
 	tail := int64(tailLines)
-	stream, err := k.client.CoreV1().Pods(namespace).GetLogs(podName, &corev1.PodLogOptions{
+	stream, err := k.client.CoreV1().Pods(namespace).GetLogs(pod.Name, &corev1.PodLogOptions{
 		Container: agentContainerName,
 		TailLines: &tail,
 	}).Stream(ctx)
 	if err != nil {
-		return fmt.Sprintf("(failed to read logs: %s)", err), nil
+		return summary + fmt.Sprintf("(failed to read logs: %s)", err), nil
 	}
 	defer stream.Close()
 
 	data, err := io.ReadAll(stream)
 	if err != nil {
-		return fmt.Sprintf("(failed to read logs: %s)", err), nil
+		return summary + fmt.Sprintf("(failed to read logs: %s)", err), nil
 	}
 	if len(data) == 0 {
-		return "(no logs available)", nil
+		return summary + "(no logs available)", nil
 	}
+	// Cap before prepending: trimming the combined text from the front would drop the summary.
 	if len(data) > logLimitBytes {
 		data = data[len(data)-logLimitBytes:]
 	}
-	return string(data), nil
+	return summary + string(data), nil
+}
+
+// podStatusSummary states why pod or its agent container stopped, one newline-terminated line per
+// fact, and is "" when neither carries a reason -- so a healthy pod's logs are returned unchanged.
+// An evicted or killed agent's logs are often unreadable, leaving this the only record of the cause.
+func podStatusSummary(pod *corev1.Pod) string {
+	var b strings.Builder
+	if pod.Status.Reason != "" || pod.Status.Message != "" {
+		b.WriteString("pod")
+		if pod.Status.Reason != "" {
+			b.WriteString(" " + pod.Status.Reason)
+		}
+		if pod.Status.Message != "" {
+			b.WriteString(": " + pod.Status.Message)
+		}
+		b.WriteString("\n")
+	}
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.Name != agentContainerName {
+			continue
+		}
+		term := cs.State.Terminated
+		if term == nil {
+			term = cs.LastTerminationState.Terminated
+		}
+		if term == nil {
+			continue
+		}
+		reason := term.Reason
+		if reason == "" {
+			reason = "terminated"
+		}
+		fmt.Fprintf(&b, "container %s %s (exit code %d)", agentContainerName, reason, term.ExitCode)
+		if term.Message != "" {
+			b.WriteString(": " + term.Message)
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
 }
 
 // ResolveJobSecretHash reads JOB_SECRET back from executionID's Secret and returns its SHA-256
