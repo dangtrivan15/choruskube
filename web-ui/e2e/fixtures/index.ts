@@ -19,6 +19,7 @@ import { RoadmapGraphPage } from "../pages/roadmap-graph.page";
 import { ApprovalsPage } from "../pages/approvals.page";
 import { DocsPage } from "../pages/docs.page";
 import { AutopilotPage } from "../pages/autopilot.page";
+import { AnalyticsPage } from "../pages/analytics.page";
 
 export interface TestFixtures {
   api: TestApiClient;
@@ -34,6 +35,7 @@ export interface TestFixtures {
   approvalsPage: ApprovalsPage;
   docsPage: DocsPage;
   autopilotPage: AutopilotPage;
+  analyticsPage: AnalyticsPage;
 }
 
 /** A GitRepo + RepoGroup dedicated to the current Playwright worker. */
@@ -153,6 +155,10 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
 
   autopilotPage: async ({ page }, use) => {
     await use(new AutopilotPage(page));
+  },
+
+  analyticsPage: async ({ page }, use) => {
+    await use(new AnalyticsPage(page));
   },
 });
 

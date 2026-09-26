@@ -84,6 +84,7 @@ describe("light theme neutral tokens match canonical Rose Pine Dawn", () => {
     ["muted", "#f2e9e1"], // overlay
     ["accent", "#f2e9e1"], // overlay
     ["sidebar-accent", "#f2e9e1"], // overlay
+    ["chart-reference", "#575279"], // text
   ])("--%s equals canonical Dawn %s", (token, canonical) => {
     expect(tokenValue(block, token)).toBe(canonical);
   });
@@ -131,6 +132,7 @@ describe("dark theme neutral tokens match canonical Rose Pine main", () => {
     ["muted", "#26233a"], // overlay
     ["accent", "#26233a"], // overlay
     ["sidebar-accent", "#26233a"], // overlay
+    ["chart-reference", "#6e6a86"], // muted
   ])("--%s equals canonical main %s", (token, canonical) => {
     expect(tokenValue(block, token)).toBe(canonical);
   });

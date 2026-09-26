@@ -8,12 +8,16 @@ import {
   Tooltip,
 } from "recharts";
 import type { RoadmapThroughputPoint } from "@/lib/types";
+import { CHART_SERIES_STYLES, seriesColor } from "@/lib/chartSeriesStyles";
 
 interface RoadmapThroughputChartProps {
   points: RoadmapThroughputPoint[];
 }
 
-// NOTE: Recharts legend/tooltip swatches may not resolve CSS var() — see RunTrendChart.tsx
+const { done } = CHART_SERIES_STYLES.roadmapThroughput;
+
+// Series color comes from @/lib/chartSeriesStyles, so its contrast is gated by
+// chart-series-distinguishable.test.ts.
 export default function RoadmapThroughputChart({ points }: RoadmapThroughputChartProps) {
   if (points.length === 0) {
     return (
@@ -24,7 +28,7 @@ export default function RoadmapThroughputChart({ points }: RoadmapThroughputChar
   }
 
   return (
-    <div className="h-48">
+    <div className="h-48" data-testid="roadmap-throughput-chart">
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={points} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
@@ -42,8 +46,9 @@ export default function RoadmapThroughputChart({ points }: RoadmapThroughputChar
               borderRadius: "0.5rem",
               fontSize: "0.875rem",
             }}
+            itemStyle={{ color: "var(--foreground)" }}
           />
-          <Bar dataKey="count" name="Done" fill="var(--status-success)" radius={[4, 4, 0, 0]} />
+          <Bar dataKey="count" name={done.label} className="series-done" fill={seriesColor(done)} radius={[4, 4, 0, 0]} />
         </BarChart>
       </ResponsiveContainer>
     </div>
