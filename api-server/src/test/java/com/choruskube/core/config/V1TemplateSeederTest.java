@@ -157,6 +157,14 @@ class V1TemplateSeederTest extends BaseTest {
         assertThat(timeoutSecondsFor("code_review")).isEqualTo(timeoutSecondsFor("implement"));
     }
 
+    @Test
+    void draftSpecAndPlanHasHeadroomForAuditShapedRequests() {
+        // A "check and correct X across the app" request makes the drafter run the audit
+        // itself to write a file-level plan; typical drafts finish in ~20 minutes, but
+        // those die on StartToClose at 1800s.
+        assertThat(timeoutSecondsFor("draft_spec_and_plan")).isEqualTo(3600);
+    }
+
     private int timeoutSecondsFor(String label) {
         var template = templateRepo
                 .findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION)
@@ -812,14 +820,12 @@ class V1TemplateSeederTest extends BaseTest {
     }
 
     @Test
-    void currentVersionIsBumpedForModelAliases() {
-        // v41: the Opus/Sonnet nodes and the review loops' iteration bands carry Claude Code
-        // model aliases instead of full model IDs, so the agent image's CLI pin picks the
-        // model. This is the rolling version tripwire: rewrite it and bump the literal
-        // whenever CURRENT_VERSION changes, so a template edit that forgets the bump cannot
-        // ship silently.
-        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(41);
-        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 41))
+    void currentVersionIsBumpedForDraftSpecTimeout() {
+        // v42: Draft Spec & Plan's budget rises from 1800s to 3600s. This is the rolling
+        // version tripwire: rewrite it and bump the literal whenever CURRENT_VERSION
+        // changes, so a template edit that forgets the bump cannot ship silently.
+        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(42);
+        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 42))
                 .isPresent();
     }
 

@@ -35,7 +35,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
     // and executor changes here never retroactively mutate prior versions. To ship a
     // change, edit the constants in this file (prompt, executor, schema), increment
     // CURRENT_VERSION, and the next boot creates the new snapshot.
-    static final int CURRENT_VERSION = 41;
+    static final int CURRENT_VERSION = 42;
 
     private static final String TEMPLATE_NAME = "Feature Development";
 
@@ -1069,7 +1069,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
     private Map<String, NodeDefinition> seedNodeDefinitions() {
         Map<String, NodeDefinition> defs = new HashMap<>();
         NodeDefinition draftSpecAndPlan =
-                createNodeDef("Draft Spec & Plan", ExecutorType.ai, SPEC_AND_PLAN_PROMPT, 1800);
+                createNodeDef("Draft Spec & Plan", ExecutorType.ai, SPEC_AND_PLAN_PROMPT, 3600);
         draftSpecAndPlan.setModel(ModelIds.MODEL_OPUS);
         draftSpecAndPlan.setOutputSpec(
                 "{\"files\":[{\"name\":\"spec_and_plan.md\",\"required\":true,\"description\":\"Technical specification and implementation plan\"}]}");
