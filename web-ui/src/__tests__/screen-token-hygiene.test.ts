@@ -38,22 +38,26 @@ describe("analytics charts reference tokens directly, not through hsl()", () => 
     expect(source).not.toMatch(/\b(stroke|fill)=\{?\s*["'`]var\(--/);
   });
 
-  it.each(CHART_PATHS)("%s pins its tooltip to the shared chartTooltipProps() recipe", (relPath) => {
-    expect(read(relPath)).toMatch(/<Tooltip\s*\{\.\.\.chartTooltipProps\(\)\}/);
+  /** Every self-closing `<Tag …/>` element of `tag` in `source`, props included (props may hold `=>`). */
+  function jsxTags(source: string, tag: string): string[] {
+    return source.match(new RegExp(`<${tag}\\b[\\s\\S]*?\\/>`, "g")) ?? [];
+  }
+
+  it.each(CHART_PATHS)("%s styles every tooltip through chartTooltipProps() alone", (relPath) => {
+    const tooltips = jsxTags(read(relPath), "Tooltip");
+    expect(tooltips).toHaveLength(1);
+    for (const tooltip of tooltips) {
+      expect(tooltip).toMatch(/^<Tooltip\s+\{\.\.\.chartTooltipProps\(\)\}/);
+      // A style prop after the spread would silently override the opaque surface or ink text.
+      expect(tooltip).not.toMatch(/\b(?:contentStyle|itemStyle|labelStyle|wrapperStyle)=/);
+    }
   });
 
   it.each(CHART_PATHS)("%s pins every axis tick to chartTickProps() at its expected font size", (relPath) => {
     const source = read(relPath);
-    const sizes = AXIS_FONT_SIZES[relPath];
-    for (const size of sizes) {
-      expect(source).toMatch(new RegExp(`tick=\\{chartTickProps\\(${size}\\)\\}`));
-    }
-  });
-
-  it.each(CHART_PATHS)("%s carries no inline tick/tooltip var(--...) literal, bypassing the shared helpers", (relPath) => {
-    const source = read(relPath);
-    expect(source).not.toMatch(/contentStyle=\{\{/);
-    expect(source).not.toMatch(/itemStyle=\{\{/);
+    const axes = [...jsxTags(source, "XAxis"), ...jsxTags(source, "YAxis")];
+    const sizes = axes.map((axis) => axis.match(/\btick=\{chartTickProps\((\d+)\)\}/)?.[1]);
+    expect(sizes).toEqual(AXIS_FONT_SIZES[relPath].map(String));
   });
 
   it.each(LEGEND_CHART_PATHS)("%s pins its legend label text to the foreground ink", (relPath) => {

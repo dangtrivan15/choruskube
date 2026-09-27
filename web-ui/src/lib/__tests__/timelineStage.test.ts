@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { STAGE_TOKEN_MAP, stageColors } from "../timelineStage";
+import { STAGE_TOKEN_MAP, stageColors, stageTone } from "../timelineStage";
 import { statusColorTokens } from "../statusColors";
 
 describe("stageColors", () => {
@@ -21,5 +21,14 @@ describe("stageColors", () => {
       border: expected.borderSoft,
       text: expected.text,
     });
+  });
+});
+
+describe("stageTone", () => {
+  it("maps each board stage to the tone its status token carries, falling back to neutral", () => {
+    expect(stageTone("backlog")).toBe("neutral");
+    expect(stageTone("in_progress")).toBe("info");
+    expect(stageTone("rolled_out")).toBe("success");
+    expect(stageTone("some-unknown-stage")).toBe("neutral");
   });
 });

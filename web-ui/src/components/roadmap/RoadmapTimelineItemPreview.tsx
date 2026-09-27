@@ -1,5 +1,4 @@
-import { STAGE_TOKEN_MAP } from "@/lib/timelineStage";
-import { statusTone } from "@/lib/statusColors";
+import { stageTone } from "@/lib/timelineStage";
 import type { TimelineEpicLaneNodeData, TimelineStoryNodeData } from "@/lib/timelineLayout";
 import ReadinessBadge from "@/components/roadmap/ReadinessBadge";
 import StalledBadge from "@/components/roadmap/StalledBadge";
@@ -28,13 +27,13 @@ function isStory(item: TimelineEpicLaneNodeData | TimelineStoryNodeData): item i
  * entirely rather than showing a misleading "this Epic is blocked" pill.
  */
 export default function RoadmapTimelineItemPreview({ item }: Props) {
-  const tone = statusTone(STAGE_TOKEN_MAP[item.stage] ?? item.stage);
+  const tone = stageTone(item.stage);
   const story = isStory(item) ? item : null;
 
   return (
     <div data-testid="roadmap-timeline-item-preview" className="flex flex-col gap-1">
       <span className="font-medium">{item.title}</span>
-      <span className="inline-flex items-center gap-1">
+      <span data-testid="roadmap-timeline-item-preview-stage" className="inline-flex items-center gap-1">
         <StatusDot tone={tone} />
         {item.stage.replace("_", " ")}
       </span>

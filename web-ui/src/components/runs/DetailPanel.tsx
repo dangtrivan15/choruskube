@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import MarkdownViewer from "@/components/ui/MarkdownViewer";
-import { statusBadgeClass, statusTone, STATUS_TONE_CLASSES } from "@/lib/statusColors";
+import { statusBadgeClass, STATUS_TONE_CLASSES } from "@/lib/statusColors";
 import { cn } from "@/lib/utils";
 import { useRetryNode } from "@/hooks/useRuns";
 import Authorized from "@/components/Authorized";
@@ -112,13 +112,11 @@ function findTriggerDecision(run: RunResponse, nodeId: string): string | null {
 function StatusIcon({ status }: { status: string }) {
   switch (status) {
     case "completed":
-      return <CheckCircle className={cn("h-4 w-4", STATUS_TONE_CLASSES[statusTone(status)].text)} />;
+      return <CheckCircle className={cn("h-4 w-4", STATUS_TONE_CLASSES.success.text)} />;
     case "failed":
-      return <AlertCircle className={cn("h-4 w-4", STATUS_TONE_CLASSES[statusTone(status)].text)} />;
+      return <AlertCircle className={cn("h-4 w-4", STATUS_TONE_CLASSES.error.text)} />;
     case "running":
-      return (
-        <Clock className={cn("h-4 w-4 animate-pulse", STATUS_TONE_CLASSES[statusTone(status)].text)} />
-      );
+      return <Clock className={cn("h-4 w-4 animate-pulse", STATUS_TONE_CLASSES.info.text)} />;
     default:
       return <Info className="h-4 w-4 text-muted-foreground" />;
   }

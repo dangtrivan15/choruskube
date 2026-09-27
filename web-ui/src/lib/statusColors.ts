@@ -33,7 +33,7 @@ interface StatusToneClassSet {
   tint: string;
   /** Opaque 25% tint over `--popover`, for hover/emphasis states. */
   tintStrong: string;
-  /** Softer border alpha for a tint background pairing (`/60` vs. the default `/40`). */
+  /** `/60` border to pair with `tint` on a node (the badge recipe uses `/40`; `border` is solid). */
   borderSoft: string;
 }
 

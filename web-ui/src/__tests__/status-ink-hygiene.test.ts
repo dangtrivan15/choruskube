@@ -44,6 +44,9 @@ describe("scanStatusInkSource self-tests", () => {
     expect(scanStatusInkSource("a.ts", 'bgClass: "bg-status-error/15",')).toEqual([
       expect.objectContaining({ category: "translucent-tint", match: "bg-status-error/15" }),
     ]);
+    expect(scanStatusInkSource("a.tsx", '<div className="[a]:hover:bg-status-info/[.2]" />')).toEqual([
+      expect.objectContaining({ category: "translucent-tint", match: "hover:bg-status-info/[.2]" }),
+    ]);
   });
 
   it("does not flag translucent bg-primary/N or bg-destructive/N — those are control fills, out of scope", () => {
@@ -51,12 +54,13 @@ describe("scanStatusInkSource self-tests", () => {
     expect(scanStatusInkSource("a.tsx", '<div className="bg-destructive/20" />')).toEqual([]);
   });
 
-  it("does not flag an opaque bg-tint-status-* or full-opacity text-status-* mark usage in the right file type", () => {
-    expect(scanStatusInkSource("a.tsx", '<div className="bg-tint-status-success" />')).toEqual([]);
-    // A tone color on an icon (not a text word) still literally matches the
-    // `text-status-*` pattern — the guard cannot distinguish "icon" from
-    // "label" lexically, so icon usages must route through STATUS_TONE_CLASSES
-    // in a .ts recipe module (never inline in a .tsx) to stay clean.
+  it("does not flag an opaque tint, a solid mark fill, or the badge recipe's ::before dot", () => {
+    expect(
+      scanStatusInkSource(
+        "a.tsx",
+        '<div className="bg-tint-status-success hover:bg-tint-strong-chart-1 bg-status-error before:bg-status-info" />',
+      ),
+    ).toEqual([]);
   });
 
   it("the DecisionButtons.tsx allowlist entry is not flagged in its own file but is flagged elsewhere", () => {

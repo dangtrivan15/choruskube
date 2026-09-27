@@ -36,10 +36,9 @@ export const ACCEPTED_EXCEPTIONS: AcceptedException[] = [
 ];
 
 const TONE_TEXT_RE = /\btext-(?:status|chart)-[a-z0-9-]+/g;
-// `(?:[a-z-]+:)*` swallows any variant prefix (`hover:`, `dark:`, `[a]:hover:`,
-// …) ahead of the utility itself, so a translucent tint hidden behind a
-// variant chain is still caught.
-const TRANSLUCENT_TINT_RE = /\b(?:[a-z-]+:)*bg-(?:status|chart)-[a-z0-9-]+\/\d+/g;
+// `(?:[a-z-]+:)*` swallows a variant prefix (`hover:`, `dark:`) so the finding
+// names it; the opacity is a fraction (`/15`) or a bracketed value (`/[.15]`).
+const TRANSLUCENT_TINT_RE = /\b(?:[a-z-]+:)*bg-(?:status|chart)-[a-z0-9-]+\/(?:\d+|\[[^\]]+\])/g;
 
 function isAcceptedException(relPath: string, match: string): boolean {
   return ACCEPTED_EXCEPTIONS.some(

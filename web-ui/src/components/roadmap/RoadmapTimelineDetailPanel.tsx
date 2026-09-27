@@ -1,8 +1,7 @@
 import { Link } from "react-router";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { STAGE_TOKEN_MAP } from "@/lib/timelineStage";
-import { statusTone } from "@/lib/statusColors";
+import { stageTone } from "@/lib/timelineStage";
 import ReadinessBadge from "@/components/roadmap/ReadinessBadge";
 import StalledBadge from "@/components/roadmap/StalledBadge";
 import BlockingChainSection from "@/components/roadmap/BlockingChainSection";
@@ -50,7 +49,7 @@ function EpicStoryRollup({ epic }: { epic: TimelineEpicSummary }) {
  */
 export default function RoadmapTimelineDetailPanel({ epic, story, onClose }: Props) {
   const item = story ?? epic;
-  const tone = statusTone(STAGE_TOKEN_MAP[item.stage] ?? item.stage);
+  const tone = stageTone(item.stage);
 
   // Hooks must run unconditionally on every render — `enabled` is what actually gates the
   // network call, so this is harmlessly inert (query stays disabled) when nothing is focused as a
