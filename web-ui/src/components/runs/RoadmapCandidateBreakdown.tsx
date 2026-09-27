@@ -166,7 +166,7 @@ export default function RoadmapCandidateBreakdown({ value, onChange }: RoadmapCa
       {epics.length > MAX_EPICS && (
         <p
           data-testid="candidate-epic-cap-warning"
-          className="rounded-md border border-destructive/50 bg-destructive/10 p-2 text-xs text-destructive"
+          className="rounded-md border border-destructive/50 bg-destructive/5 p-2 text-xs text-destructive"
         >
           {epics.length} Epics proposed, but only {MAX_EPICS} are allowed per breakdown. Remove{" "}
           {epics.length - MAX_EPICS} before approving, or the submission will be rejected.

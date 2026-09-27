@@ -1,4 +1,7 @@
-/** Test-only color math for chart-series-distinguishable.test.ts. */
+/**
+ * Test-only color math shared by chart-series-distinguishable.test.ts and the
+ * text/control contrast gate (text-control-contrast.test.ts).
+ */
 import { readFileSync } from "fs";
 import path from "path";
 
@@ -113,3 +116,127 @@ export function deltaE(a: string, b: string, kind?: "protan" | "deutan"): number
 export const CONTRAST_MIN = 3;
 export const NORMAL_DELTA_E_MIN = 15;
 export const CVD_DELTA_E_MIN = 8;
+
+export const TEXT_CONTRAST_MIN = 4.5;
+export const NON_TEXT_CONTRAST_MIN = 3;
+
+function formatHex([r, g, b]: Vec3): string {
+  const toByte = (v: number) => Math.round(v).toString(16).padStart(2, "0");
+  return `#${toByte(r)}${toByte(g)}${toByte(b)}`;
+}
+
+/**
+ * Parses `#rrggbb` or a comma-separated `rgb(...)`/`rgba(...)` string into its
+ * channels and alpha (1 when absent). Throws on any other form (e.g. `oklab(...)`),
+ * so a token the gate cannot resolve fails loudly instead of being measured wrongly.
+ */
+export function parseCssColor(value: string): { rgb: [number, number, number]; alpha: number } {
+  const hexMatch = /^#([0-9a-fA-F]{6})$/.exec(value.trim());
+  if (hexMatch) {
+    return { rgb: parseHex(value.trim()), alpha: 1 };
+  }
+  const rgbMatch = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+)\s*)?\)$/.exec(
+    value.trim(),
+  );
+  if (rgbMatch) {
+    const [, r, g, b, a] = rgbMatch;
+    return {
+      rgb: [Number(r), Number(g), Number(b)],
+      alpha: a === undefined ? 1 : Number(a),
+    };
+  }
+  throw new Error(`Expected a #rrggbb or rgb()/rgba() color, got "${value}"`);
+}
+
+/**
+ * Per-channel `round(alpha*fg + (1-alpha)*bg)` in gamma-encoded sRGB, returned as
+ * `#rrggbb`. Models a translucent layer (`fgHex` at `alpha`) painted over an opaque
+ * background.
+ */
+export function blendOver(fgHex: string, alpha: number, bgHex: string): string {
+  const [fr, fg, fb] = parseHex(fgHex);
+  const [br, bg, bb] = parseHex(bgHex);
+  return formatHex([
+    alpha * fr + (1 - alpha) * br,
+    alpha * fg + (1 - alpha) * bg,
+    alpha * fb + (1 - alpha) * bb,
+  ]);
+}
+
+/**
+ * Same arithmetic as `blendOver`, named for the "deepen toward a role" use rather
+ * than the "translucent layer over a background" use — both are a weighted sRGB mix.
+ */
+export function mixSrgb(aHex: string, bHex: string, weightA: number): string {
+  return blendOver(aHex, weightA, bHex);
+}
+
+/**
+ * Composites a `#rrggbb`/`rgb()`/`rgba()` layer, at its own alpha, over an
+ * opaque background — so a translucent token is modelled from its declared
+ * value rather than from a copy of its channels or alpha.
+ */
+export function compositeOver(cssColor: string, bgHex: string): string {
+  const { rgb, alpha } = parseCssColor(cssColor);
+  return blendOver(formatHex(rgb), alpha, bgHex);
+}
+
+type RoseRole =
+  | "base"
+  | "surface"
+  | "overlay"
+  | "muted"
+  | "subtle"
+  | "text"
+  | "love"
+  | "gold"
+  | "rose"
+  | "pine"
+  | "foam"
+  | "iris"
+  | "highlightLow"
+  | "highlightMed"
+  | "highlightHigh";
+
+// Published Rose Pine Dawn palette (rosepinetheme.com), also catalogued in
+// web-ui/docs/light-theme-rose-pine-audit.md.
+export const DAWN: Record<RoseRole, string> = {
+  base: "#faf4ed",
+  surface: "#fffaf3",
+  overlay: "#f2e9e1",
+  muted: "#9893a5",
+  subtle: "#797593",
+  text: "#575279",
+  love: "#b4637a",
+  gold: "#ea9d34",
+  rose: "#d7827e",
+  pine: "#286983",
+  foam: "#56949f",
+  iris: "#907aa9",
+  highlightLow: "#f4ede8",
+  highlightMed: "#dfdad9",
+  highlightHigh: "#cecacd",
+};
+
+// Published Rose Pine "main" (dark) palette (rosepinetheme.com). Every role but
+// the highlight trio is also pinned in palette-canonical.test.ts's comments;
+// highlightLow/Med/High have no in-repo mapping today (two of the three hexes
+// appear under unrelated token names --border/--input, not under a highlight
+// label), so they are sourced from upstream here instead.
+export const MAIN: Record<RoseRole, string> = {
+  base: "#191724",
+  surface: "#1f1d2e",
+  overlay: "#26233a",
+  muted: "#6e6a86",
+  subtle: "#908caa",
+  text: "#e0def4",
+  love: "#eb6f92",
+  gold: "#f6c177",
+  rose: "#ebbcba",
+  pine: "#31748f",
+  foam: "#9ccfd8",
+  iris: "#c4a7e7",
+  highlightLow: "#21202e",
+  highlightMed: "#403d52",
+  highlightHigh: "#524f67",
+};

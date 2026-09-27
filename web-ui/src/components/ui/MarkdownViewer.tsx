@@ -62,7 +62,7 @@ function ImageWithFallback({ src, alt }: { src: string; alt: string }) {
         href={src}
         target="_blank"
         rel="noopener noreferrer"
-        className="text-primary underline underline-offset-2 hover:text-primary/80"
+        className="text-primary underline underline-offset-2 hover:decoration-2"
       >
         {alt || "Image"}
       </a>
@@ -360,24 +360,24 @@ function buildMarkdownComponents(
         // Root-relative internal route — SPA navigation, same tab.
         // The !startsWith("//") guard prevents protocol-relative URLs (//cdn.example.com)
         // from being routed as SPA paths.
-        return <Link to={h} className="text-primary underline underline-offset-2 hover:text-primary/80">{children}</Link>;
+        return <Link to={h} className="text-primary underline underline-offset-2 hover:decoration-2">{children}</Link>;
       }
       if (h.startsWith("#")) {
         // Anchor — same-page scroll, no target
-        return <a href={h} className="text-primary underline underline-offset-2 hover:text-primary/80">{children}</a>;
+        return <a href={h} className="text-primary underline underline-offset-2 hover:decoration-2">{children}</a>;
       }
       if (h.startsWith("http://") || h.startsWith("https://") || h.startsWith("//")) {
         // HTTP/HTTPS/protocol-relative external site — open in new tab
-        return <a href={h} target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2 hover:text-primary/80">{children}</a>;
+        return <a href={h} target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2 hover:decoration-2">{children}</a>;
       }
       if (linkBase && !h.includes(":")) {
         // Bare slug (e.g. "workflow-templates") with a linkBase configured —
         // resolve to linkBase/slug via React Router so cross-doc links stay
         // in-app without a full page reload.
-        return <Link to={`${linkBase}/${h}`} className="text-primary underline underline-offset-2 hover:text-primary/80">{children}</Link>;
+        return <Link to={`${linkBase}/${h}`} className="text-primary underline underline-offset-2 hover:decoration-2">{children}</Link>;
       }
       // Other schemes (mailto:, tel:, etc.) — native browser handling, no target override
-      return <a href={h} className="text-primary underline underline-offset-2 hover:text-primary/80">{children}</a>;
+      return <a href={h} className="text-primary underline underline-offset-2 hover:decoration-2">{children}</a>;
     },
 
     // Images → inline with fallback

@@ -20,7 +20,7 @@ export default function RoadmapReadyToggle({ checked, onChange }: RoadmapReadyTo
       pressed={checked}
       onPressedChange={onChange}
       className={cn(
-        "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 text-sm font-medium text-muted-foreground transition-all outline-none select-none hover:bg-muted hover:text-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50",
+        "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 text-sm font-medium text-muted-foreground transition-all outline-none select-none hover:bg-muted hover:text-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring",
         "data-[pressed]:border-transparent data-[pressed]:bg-primary data-[pressed]:text-primary-foreground"
       )}
     >

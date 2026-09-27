@@ -61,7 +61,7 @@ export default function ArtifactBrowser({ runId, execId, filterArtifactNames }: 
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground hover:text-foreground/80"
+        className="flex w-full items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground hover:text-foreground"
       >
         {expanded ? (
           <ChevronDown className="h-4 w-4" />
