@@ -99,7 +99,7 @@ additions layered on top:
 |---|---|---|---|---|
 | `web-ui/src/components/git-repos/CreateGitRepoDialog.tsx` | 82 | `border-blue-300 bg-blue-50 text-blue-800` (+ dark variants) info banner | `--status-info` (pine) | ✓ fixed |
 | `web-ui/src/components/integrations/PlatformManagedCredentialPanel.tsx` | 19 | `bg-green-500` status dot | `--status-success` (foam) | ✓ fixed |
-| `web-ui/src/components/layout/ActivityFeedButton.tsx` | 24 | `text-white` badge text | a `*-foreground` token (it sits on `bg-destructive`, so `--destructive-foreground` if one is added, or `--primary-foreground`-style pattern) | not in scope — see repo's Caveats & Known Limitations |
+| `web-ui/src/components/layout/ActivityFeedButton.tsx` | ~24 | `text-white` badge text | `text-foreground` on an opaque `bg-tint-status-error` | ✓ fixed — see Contrast section below |
 | `web-ui/src/components/ui/dialog.tsx` | 33 | `bg-black/10` overlay scrim | a token-based scrim color | accepted as-is — theme-agnostic backdrop, see repo's Caveats & Known Limitations |
 | `web-ui/src/components/layout/MobileDrawer.tsx` | 15 | `bg-black/40` overlay scrim | a token-based scrim color | accepted as-is — theme-agnostic backdrop, see repo's Caveats & Known Limitations |
 | `web-ui/src/components/layout/CommandPalette.tsx` | 154 | `bg-black/10` overlay scrim | a token-based scrim color | accepted as-is — theme-agnostic backdrop, see repo's Caveats & Known Limitations |
@@ -131,3 +131,46 @@ other failing light-mode text/control pair are now deepened per
 [`docs/decisions/2026-09-26---01-aa-contrast-text-and-controls.md`](../../docs/decisions/2026-09-26---01-aa-contrast-text-and-controls.md),
 which also covers why the deepened tokens are still "on-palette" despite no longer being
 exact canonical hexes.
+
+## Contrast: status indicators, badges, charts
+
+Badges, roadmap/priority/milestone chips, and log severity labels used to render their
+*word* in the tone color over a translucent `bg-status-*/15` tint. Both numbers below are
+computed by `src/lib/__tests__/status-contrast.test.ts`, straight from `index.css`: "before"
+is the tone color against its own translucent tint over `--popover`; "after" is
+`--foreground` against the new opaque `bg-tint-status-*` (15%) tint. All six "after" values
+clear the 4.5:1 AA text floor in both themes; four of six "before" values failed it in
+light, two of six in dark.
+
+| Tone | Light before → after | Dark before → after |
+|---|---|---|
+| success | 2.84:1 → 6.02:1 | 6.87:1 → 8.87:1 |
+| error | 3.38:1 → 5.86:1 | 4.54:1 → 10.02:1 |
+| info | 4.75:1 → 5.66:1 | 2.74:1 → 10.86:1 |
+| warning | 1.93:1 → 6.27:1 | 7.13:1 → 8.86:1 |
+| accent | 3.11:1 → 5.97:1 | 5.82:1 → 9.24:1 |
+| neutral | 3.55:1 → 5.88:1 | 4.09:1 → 10.00:1 |
+
+Recharts' axis/legend/tooltip labels were pinned to a fixed `#666`, regardless of theme.
+Against the dark card that measured only **2.87:1**; against the new opaque chart
+surface (`--popover`, via `chartTickProps()`/`chartTooltipProps()` in
+`src/lib/chartSeriesStyles.ts`), `--foreground` now measures **7.00:1 in light, 12.50:1
+in dark**.
+
+Some marks and tone pairs cannot reach these floors within Rose Pine's existing hues at
+all — relieved by an adjacent status word rather than a threshold change, and enforced
+as exact-match data (not a loosened check) in `status-contrast.test.ts`:
+
+- **Marks below 3:1** against both `--background` and `--popover`, light only: `status-warning`
+  (≈2.05:1/2.16:1), `chart-3` rose (≈2.60:1/2.74:1), `chart-5` gold (≈2.05:1/2.16:1). No
+  dark-mode marks fail. Cue: the status word always sits beside the mark.
+- **Tone pairs too close by OKLab ΔE** (normal vision < 15, or simulated protanopia/
+  deuteranopia < 8): nine of the fifteen light pairs (every pairing that includes
+  success, error, info, accent, or neutral except a `warning` pairing) and four of the
+  fifteen dark pairs (success/accent, error/neutral, info/neutral, accent/neutral). Cue:
+  the same — a status word, never two bare same-shaped dots side by side.
+
+See `docs/decisions/2026-09-27---01-status-ink-labels-and-contrast-gate.md` for the full
+decision (the opaque tint utility, the badge's `::before` dot, and the three-part gate:
+`src/lib/__tests__/status-contrast.test.ts`, `src/__tests__/status-ink-hygiene.ts`, and
+`e2e/specs/status-contrast.spec.ts`).
