@@ -197,10 +197,14 @@ test.describe("status-contrast: roadmap surfaces", () => {
       const marker = timelinePage.markerByLabel(blockedStory.title);
       await expect(marker).toBeVisible();
       await forBothThemes(page, async () => {
-        // The theme toggle click moves the pointer off the marker, closing the preview.
-        await timelinePage.hoverToRevealPreview(marker, [blockedStory.title]);
-        await expectReadable(timelinePage.itemPreview.getByTestId("roadmap-timeline-item-preview-stage"));
-        await expectReadable(timelinePage.itemPreview.getByTitle("Blocked by an unfinished dependency"));
+        // The theme toggle click moves the pointer off the marker, closing the preview. The
+        // contrast reads run inside the same re-hover retry as the open check: an org-wide
+        // refetch from a concurrent worker's mutation can unmount/remount the preview between
+        // the open check and a later read, same as it can reposition the marker mid-hover.
+        await timelinePage.hoverToRevealPreview(marker, [blockedStory.title], async () => {
+          await expectReadable(timelinePage.itemPreview.getByTestId("roadmap-timeline-item-preview-stage"));
+          await expectReadable(timelinePage.itemPreview.getByTitle("Blocked by an unfinished dependency"));
+        });
       });
     } finally {
       await api.deleteEpic(epic.id).catch(() => {});
@@ -258,8 +262,8 @@ test.describe("status-contrast: analytics chart labels", () => {
         await expectReadable(legendTexts.nth(i));
       }
 
-      await analyticsPage.hoverDataPoint(analyticsPage.runTrendChart);
-      const tooltip = analyticsPage.tooltip.locator(".recharts-default-tooltip");
+      const tooltipWrapper = await analyticsPage.hoverDataPoint(analyticsPage.runTrendChart);
+      const tooltip = tooltipWrapper.locator(".recharts-default-tooltip");
       await expectOpaque(tooltip);
       await expectReadable(tooltip.locator(".recharts-tooltip-label"));
       const items = tooltip.locator(".recharts-tooltip-item");

@@ -13,8 +13,6 @@ export class AnalyticsPage {
   readonly runTrendChart: Locator;
   readonly bottleneckChart: Locator;
   readonly roadmapThroughputChart: Locator;
-  /** Recharts' floating tooltip content — present only while hovering a data point. */
-  readonly tooltip: Locator;
   /** Every axis tick label across the whole page (scope to a chart's own container to narrow). */
   readonly axisTickLabels: Locator;
   /** Usage-quota "Warning"/"Critical" chips (UsageDashboard.tsx). */
@@ -26,7 +24,6 @@ export class AnalyticsPage {
     this.runTrendChart = page.getByTestId("run-trend-chart");
     this.bottleneckChart = page.getByTestId("bottleneck-chart");
     this.roadmapThroughputChart = page.getByTestId("roadmap-throughput-chart");
-    this.tooltip = page.locator(".recharts-tooltip-wrapper");
     this.axisTickLabels = page.locator(".recharts-cartesian-axis-tick-value");
     this.quotaChips = page.getByTestId("usage-quota-chip");
   }
@@ -94,13 +91,22 @@ export class AnalyticsPage {
     );
   }
 
-  /** Hovers the middle of a chart's plotting surface to trigger Recharts' tooltip. */
-  async hoverDataPoint(chart: Locator): Promise<void> {
+  /**
+   * Hovers the middle of a chart's plotting surface to trigger Recharts' tooltip, and returns
+   * that chart's tooltip wrapper. Every chart on the page (Run Trend, Bottlenecks, Roadmap
+   * Throughput) renders its own `.recharts-tooltip-wrapper` at all times — hidden via inline
+   * style until hovered, not absent from the DOM — so a page-wide `.recharts-tooltip-wrapper`
+   * locator is a strict-mode violation whenever more than one chart is mounted; the lookup must
+   * be scoped to the chart just hovered.
+   */
+  async hoverDataPoint(chart: Locator): Promise<Locator> {
     const surface = chart.locator(".recharts-surface").first();
     const box = await surface.boundingBox();
     if (!box) throw new Error("Chart surface has no bounding box — is it visible?");
     await this.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-    await expect(this.tooltip).toBeVisible();
+    const tooltip = chart.locator(".recharts-tooltip-wrapper");
+    await expect(tooltip).toBeVisible();
+    return tooltip;
   }
 
   async isDark(): Promise<boolean> {

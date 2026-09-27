@@ -185,8 +185,8 @@ test.describe("Analytics chart series colors", () => {
     }
 
     // Tooltip surface is opaque, not the translucent glass card.
-    await analyticsPage.hoverDataPoint(analyticsPage.runTrendChart);
-    const tooltipBg = await analyticsPage.tooltip
+    const tooltip = await analyticsPage.hoverDataPoint(analyticsPage.runTrendChart);
+    const tooltipBg = await tooltip
       .locator(".recharts-default-tooltip")
       .evaluate((el) => getComputedStyle(el).backgroundColor);
     expect(alphaOf(tooltipBg)).toBe(1);

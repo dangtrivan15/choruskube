@@ -94,14 +94,28 @@ export class RoadmapTimelinePage {
    * preview just never opens. Re-issuing `hover()` inside `toPass` re-measures the marker's
    * *current* position each attempt — the same "re-measure and retry" fix `RoadmapBoardPage`
    * already uses for the analogous drag-interruption flake (see web-ui/e2e/PARALLELISM.md).
+   *
+   * `afterOpen`, when given, runs inside the same retried attempt as the hover — per
+   * PARALLELISM.md's "re-entrant hover" rule, any assertion that reads the opened preview has to
+   * re-issue the hover on failure too, not just the initial visible/contains-text check: the same
+   * org-wide refetch that can reposition the marker can just as easily unmount and remount the
+   * preview mid-read, so a caller that asserts against it *after* this method already returned
+   * would be reading a element that can vanish out from under it with no retry left to catch it.
    */
-  async hoverToRevealPreview(marker: Locator, expectedTexts: string[]): Promise<void> {
+  async hoverToRevealPreview(
+    marker: Locator,
+    expectedTexts: string[],
+    afterOpen?: () => Promise<void>,
+  ): Promise<void> {
     await expect(async () => {
       await marker.hover();
       await expect(this.itemPreview).toBeVisible({ timeout: 2_000 });
       for (const text of expectedTexts) {
         await expect(this.itemPreview).toContainText(text, { timeout: 2_000 });
       }
-    }).toPass({ timeout: 20_000 });
+      if (afterOpen) await afterOpen();
+      // A contrast poll inside `afterOpen` can itself take up to the suite's 10s expect
+      // timeout, so one failing attempt alone can approach the plain 20s budget below.
+    }).toPass({ timeout: afterOpen ? 60_000 : 20_000 });
   }
 }
