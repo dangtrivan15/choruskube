@@ -107,21 +107,23 @@ function walk(root: string, entry: string, out: string[]): void {
   out.push(entry);
 }
 
+export interface ScannableFile {
+  abs: string;
+  relPath: string;
+}
+
 /**
  * Walks the given files/directories for `*.ts`/`*.tsx`, skipping
- * `__tests__/` directories and `*.test.*`/`*.spec.*` files, and reports
- * every off-brand color found.
+ * `__tests__/` directories and `*.test.*`/`*.spec.*` files. Shared by every
+ * lexical scanner over this tree (off-brand colors, translucent inks) so the
+ * walk rules can't drift between them.
  */
-export function findOffBrandColors(paths: string[]): {
-  findings: OffBrandFinding[];
-  filesScanned: number;
-} {
-  const findings: OffBrandFinding[] = [];
-  let filesScanned = 0;
+export function listScannableFiles(paths: string[]): ScannableFile[] {
+  const out: ScannableFile[] = [];
 
   for (const target of paths) {
     // A missing target would otherwise shrink the scan silently while it still passes.
-    if (!fs.existsSync(target)) throw new Error(`palette scan target does not exist: ${target}`);
+    if (!fs.existsSync(target)) throw new Error(`scan target does not exist: ${target}`);
     const stat = fs.statSync(target);
     const root = stat.isDirectory() ? target : path.dirname(target);
     const relFiles: string[] = [];
@@ -134,11 +136,29 @@ export function findOffBrandColors(paths: string[]): {
 
     for (const relFile of relFiles) {
       const abs = path.join(root, relFile);
-      const text = fs.readFileSync(abs, "utf-8");
       const relPath = path.relative(WEB_UI_ROOT, abs).split(path.sep).join("/");
-      findings.push(...scanSource(relPath, text));
-      filesScanned += 1;
+      out.push({ abs, relPath });
     }
+  }
+
+  return out;
+}
+
+/**
+ * Reports every off-brand color found by walking the given files/directories
+ * via `listScannableFiles`.
+ */
+export function findOffBrandColors(paths: string[]): {
+  findings: OffBrandFinding[];
+  filesScanned: number;
+} {
+  const findings: OffBrandFinding[] = [];
+  let filesScanned = 0;
+
+  for (const { abs, relPath } of listScannableFiles(paths)) {
+    const text = fs.readFileSync(abs, "utf-8");
+    findings.push(...scanSource(relPath, text));
+    filesScanned += 1;
   }
 
   return { findings, filesScanned };

@@ -41,10 +41,11 @@ Accent tokens — faithful:
 
 | Token | Current value | Canonical Dawn role/value | Verdict |
 |---|---|---|---|
-| `--primary`, `--ring`, `--sidebar-primary` | `#907aa9` | iris `#907aa9` | ✓ |
+| `--primary`, `--ring`, `--sidebar-primary`, `--sidebar-ring` | `#685e87` | iris `#907aa9` mixed 70% toward text `#575279` | ✓ AA-deepened (text-weighted mix) |
 | `--primary-foreground`, `--sidebar-primary-foreground` | `#faf4ed` | base `#faf4ed` | ✓ |
-| `--destructive` | `#b4637a` | love `#b4637a` | ✓ |
-| `--muted-foreground` | `#797593` | subtle `#797593` | ✓ |
+| `--destructive-foreground` | light `#faf4ed` / dark `#191724` | base (each theme's own) | ✓ |
+| `--destructive` | `#735779` | love `#b4637a` mixed 70% toward text `#575279` | ✓ AA-deepened (text-weighted mix) |
+| `--muted-foreground` | `#656083` | subtle `#797593` mixed 60% toward text `#575279` | ✓ AA-deepened (text-weighted mix) |
 | `--chart-1` | `#56949f` | foam `#56949f` | ✓ |
 | `--chart-2` | `#907aa9` | iris `#907aa9` | ✓ |
 | `--chart-3` | `#d7827e` | rose `#d7827e` | ✓ |
@@ -68,13 +69,14 @@ Neutral tokens — restored to canonical Dawn:
 | `--card` | `rgba(255, 255, 255, 0.55)` (line 14) | surface `#fffaf3` (kept translucent over the warm gradient by design — the glass/gradient treatment is intentionally preserved, only its underlying ink was corrected) | ✓ |
 | `--secondary`, `--muted`, `--accent`, `--sidebar-accent` | `#f2e9e1` | overlay `#f2e9e1` | ✓ |
 | `--border`, `--sidebar-border` | `rgba(87,82,121,0.08)` | text-ink (`#575279`) at 8% — canonical Dawn has no solid highlight-role equivalent for hairline borders, so this stays ink-alpha | ✓ |
-| `--input` | `rgba(87,82,121,0.12)` | text-ink (`#575279`) at 12% — same as above | ✓ |
+| `--input` | `#797593` | subtle `#797593` | ✓ AA-deepened (re-pointed from ink-alpha) |
 
 Not a deviation, but not-yet-audited against canonical Dawn: canonical Dawn does not
 define a distinct highlight-role token in this codebase's variable set, so
 `highlightLow`/`Med`/`High` have no current mapping to compare against; restoration
-should decide whether `--border`/`--input`/`--sidebar-border`/`--sidebar-accent` route
-through them.
+should decide whether `--border`/`--sidebar-border`/`--sidebar-accent` route through
+them. (`--input` is now settled — it routes through `subtle`, not a highlight role, per
+the AA-deepened row above.)
 
 ### Decorative layer (not present in upstream Rose Pine at all)
 
@@ -84,12 +86,12 @@ additions layered on top:
 
 | Element | Location | Description |
 |---|---|---|
-| Glass surface tokens | `index.css:50–56` | `--surface-glass`, `--surface-glass-strong`, `--surface-glass-border` — translucent overlay tokens with no canonical counterpart |
-| Radius scale | `index.css:145–151` | `--radius-sm` … `--radius-4xl`, derived from `--radius` |
-| Body gradient | `index.css:169–177` | Light-mode `html:not(.dark) body` background: three radial gradients (iris/foam/gold tinted) plus a linear gradient warmed to Dawn-neutral stops (`#f2e9e1`/`#e9e0d6`, canonical `base` `#faf4ed` is the first stop) |
-| Dot-grid texture | `index.css:179–190` | Fixed, masked dot-grid overlay via `body::before` |
-| Custom scrollbars | `index.css:192–225` | Thin, ink-alpha-tinted scrollbar styling replacing browser default chrome |
-| `.bg-card` blur/shadow | `index.css:227–239` | Global `backdrop-filter: blur(12px)` + white-alpha border + drop shadow applied to any `.bg-card` element |
+| Glass surface tokens | `index.css:52–58` | `--surface-glass`, `--surface-glass-strong`, `--surface-glass-border` — translucent overlay tokens with no canonical counterpart |
+| Radius scale | `index.css:151–157` | `--radius-sm` … `--radius-4xl`, derived from `--radius` |
+| Body gradient | `index.css:178–185` | Light-mode `html:not(.dark) body` background: three radial gradients (iris 8%/foam 6%/gold 6% tinted — bounded down from 22%/18%/6% so accent inks don't need to deepen further) plus a linear gradient over Dawn-neutral stops (`#faf4ed`/`#f4ede8`/`#f2e9e1`, all canonical) |
+| Dot-grid texture | `index.css:187–198` | Fixed, masked dot-grid overlay via `body::before` |
+| Custom scrollbars | `index.css:200–233` | Thin, ink-alpha-tinted scrollbar styling replacing browser default chrome |
+| `.bg-card` blur/shadow | `index.css:239–246` | Global `backdrop-filter: blur(12px)` + white-alpha border + drop shadow applied to any `.bg-card` element |
 
 ## Tier 2 — component-level deviations
 
@@ -121,13 +123,11 @@ Status indicators across the app route through `STATUS_TONE_CLASSES` and the `St
 tone and class recipe have exactly one source. `palette-hygiene.test.ts` scans the whole
 `src/` tree for off-brand colors and guards this from regressing.
 
-## Known limitation
+## Resolved
 
-Canonical Dawn's `subtle` (`#797593`, held by `--muted-foreground`) on `base` (`#faf4ed`,
-now `--background`) is measured at ≈4.03:1 — under the 4.5:1 WCAG AA threshold for
-normal-size text, and `--muted-foreground` is used at `text-sm`/`text-xs` across ~86
-files, so it does not qualify for the 3:1 large-text exception. The shortfall pre-dates
-restoration (`--muted-foreground` was already canonical Dawn and unchanged by it); fixing
-it would mean darkening `--muted-foreground` off its canonical Dawn value, which is out
-of scope here. Tracked as deferred, not fixed by this catalog or its consuming
-restoration.
+The `--muted-foreground` shortfall this section used to track (canonical Dawn `subtle`
+on `base` measured ≈4.03:1, under the 4.5:1 AA text threshold) is fixed: it and every
+other failing light-mode text/control pair are now deepened per
+[`docs/decisions/2026-09-26---01-aa-contrast-text-and-controls.md`](../../docs/decisions/2026-09-26---01-aa-contrast-text-and-controls.md),
+which also covers why the deepened tokens are still "on-palette" despite no longer being
+exact canonical hexes.

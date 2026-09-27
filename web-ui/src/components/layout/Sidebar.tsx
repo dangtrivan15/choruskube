@@ -85,7 +85,7 @@ function WorkspaceSwitcher({ activeSlug, memberships }: WorkspaceSwitcherProps) 
         aria-haspopup="menu"
         aria-expanded={open}
         title={`Active organization: ${activeSlug} — click to switch`}
-        className="flex w-full items-center justify-between gap-1 rounded px-0 py-0.5 font-mono text-xs text-sidebar-foreground/60 hover:text-sidebar-foreground"
+        className="flex w-full items-center justify-between gap-1 rounded px-0 py-0.5 font-mono text-xs text-muted-foreground hover:text-sidebar-foreground"
       >
         <span data-testid="sidebar-active-org" className="truncate">
           {activeSlug}
@@ -141,7 +141,7 @@ function ShortcutHintKbd({ hint }: { hint: string }) {
       {hint.split(" ").map((k, i) => (
         <kbd
           key={i}
-          className="rounded border border-sidebar-foreground/20 bg-sidebar-accent/50 px-1 py-0.5 font-mono text-[10px] text-sidebar-foreground/60"
+          className="rounded border border-sidebar-foreground/20 bg-sidebar-accent/50 px-1 py-0.5 font-mono text-[10px] text-muted-foreground"
         >
           {k}
         </kbd>
@@ -189,7 +189,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
         {organizationSlug && !showSwitcher && (
           <p
             data-testid="sidebar-active-org"
-            className="mt-0.5 font-mono text-xs text-sidebar-foreground/60 truncate"
+            className="mt-0.5 font-mono text-xs text-muted-foreground truncate"
             title={`Active organization: ${organizationSlug}`}
           >
             {organizationSlug}
@@ -231,7 +231,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
         <div className="mt-auto border-t pt-4">
           <div className="flex items-center justify-between px-3">
             <div className="flex items-center gap-2 min-w-0">
-              <span className="truncate text-sm text-sidebar-foreground/70">{username}</span>
+              <span className="truncate text-sm text-muted-foreground">{username}</span>
               {isAuthEnabled() && role && (
                 <Badge
                   data-testid="sidebar-role-badge"
@@ -244,7 +244,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
             </div>
             <button
               onClick={logout}
-              className="shrink-0 rounded p-1 text-sidebar-foreground/50 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
+              className="shrink-0 rounded p-1 text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
               title="Logout"
             >
               <LogOut className="h-4 w-4" />
@@ -259,7 +259,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
             href="https://choruskube.com/?utm_source=oss&utm_medium=webui&utm_campaign=sidebar-nudge"
             target="_blank"
             rel="noopener noreferrer"
-            className="block text-center text-xs text-sidebar-foreground/70 hover:text-sidebar-foreground"
+            className="block text-center text-xs text-muted-foreground hover:text-sidebar-foreground"
           >
             Need multi-user + K8s? Try ChorusKube Cloud →
           </a>

@@ -15,18 +15,19 @@
     --card-foreground: #575279;
     --popover: #fffaf3;
     --popover-foreground: #575279;
-    --primary: #907aa9;
+    --primary: #685e87;
     --primary-foreground: #faf4ed;
     --secondary: #f2e9e1;
     --secondary-foreground: #575279;
     --muted: #f2e9e1;
-    --muted-foreground: #797593;
+    --muted-foreground: #656083;
     --accent: #f2e9e1;
     --accent-foreground: #575279;
-    --destructive: #b4637a;
+    --destructive: #735779;
+    --destructive-foreground: #faf4ed;
     --border: rgba(87,82,121,0.08);
-    --input: rgba(87,82,121,0.12);
-    --ring: #907aa9;
+    --input: #797593;
+    --ring: #685e87;
     --chart-1: #56949f;
     --chart-2: #907aa9;
     --chart-3: #d7827e;
@@ -36,12 +37,12 @@
     --radius: 0.625rem;
     --sidebar: #fffaf3;
     --sidebar-foreground: #575279;
-    --sidebar-primary: #907aa9;
+    --sidebar-primary: #685e87;
     --sidebar-primary-foreground: #faf4ed;
     --sidebar-accent: #f2e9e1;
     --sidebar-accent-foreground: #575279;
     --sidebar-border: rgba(87,82,121,0.08);
-    --sidebar-ring: #907aa9;
+    --sidebar-ring: #685e87;
     --status-success: #56949f;
     --status-error: #b4637a;
     --status-info: #286983;
@@ -73,8 +74,9 @@
     --accent: #26233a;
     --accent-foreground: #e0def4;
     --destructive: #eb6f92;
+    --destructive-foreground: #191724;
     --border: #403d52;
-    --input: #524f67;
+    --input: #6e6a86;
     --ring: #c4a7e7;
     --chart-1: #9ccfd8;
     --chart-2: #c4a7e7;
@@ -85,7 +87,7 @@
     --sidebar: #1f1d2e;
     --sidebar-foreground: #e0def4;
     --sidebar-primary: #c4a7e7;
-    --sidebar-primary-foreground: #e0def4;
+    --sidebar-primary-foreground: #191724;
     --sidebar-accent: #26233a;
     --sidebar-accent-foreground: #e0def4;
     --sidebar-border: #403d52;
@@ -122,6 +124,7 @@
     --color-input: var(--input);
     --color-border: var(--border);
     --color-destructive: var(--destructive);
+    --color-destructive-foreground: var(--destructive-foreground);
     --color-accent-foreground: var(--accent-foreground);
     --color-accent: var(--accent);
     --color-muted-foreground: var(--muted-foreground);
@@ -156,7 +159,7 @@
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border outline-ring;
     }
   body {
     @apply bg-background text-foreground;
@@ -170,12 +173,14 @@
 }
 
 /* Light-mode: Rosé Pine Dawn gradient canvas */
+/* text-control-contrast.test.ts models this gradient's tints and stops as
+   constants to compute the darkest canvas floor — edit both together. */
 html:not(.dark) body {
   background:
-    radial-gradient(ellipse 70% 50% at 15% 20%, rgba(144,122,169,0.22), transparent 70%),
-    radial-gradient(ellipse 60% 50% at 88% 75%, rgba(86,148,159,0.18), transparent 70%),
+    radial-gradient(ellipse 70% 50% at 15% 20%, rgba(144,122,169,0.08), transparent 70%),
+    radial-gradient(ellipse 60% 50% at 88% 75%, rgba(86,148,159,0.06), transparent 70%),
     radial-gradient(ellipse 50% 40% at 50% 50%, rgba(234,157,52,0.06), transparent 70%),
-    linear-gradient(145deg, #faf4ed 0%, #f2e9e1 45%, #e9e0d6 100%);
+    linear-gradient(145deg, #faf4ed 0%, #f4ede8 45%, #f2e9e1 100%);
   background-attachment: fixed;
 }
 

@@ -1,11 +1,14 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
 import path from "path";
+import { DAWN, mixSrgb } from "./helpers/colorMetrics";
 
 // Guard against silent drift between the light theme and the deviation catalog
 // (web-ui/docs/light-theme-rose-pine-audit.md). Parses the raw :root block rather
 // than importing computed styles so it also catches edits made outside a browser
-// context (e.g. a value changed by hand without running the app).
+// context (e.g. a value changed by hand without running the app). AA-deepened
+// tokens' mix recipes are pinned per
+// docs/decisions/2026-09-26---01-aa-contrast-text-and-controls.md.
 const CSS_PATH = path.resolve(__dirname, "../../index.css");
 
 function readRootBlock(): string {
@@ -43,14 +46,12 @@ describe("light theme accent tokens match canonical Rose Pine Dawn", () => {
   // docs/decisions/2026-08-29---01-original-rose-pine-dawn-light-theme.md.
   // If one of these fails, either the theme drifted or the catalog is stale —
   // update web-ui/docs/light-theme-rose-pine-audit.md alongside the fix.
+  // --primary/--ring/--sidebar-primary/--sidebar-ring, --destructive and
+  // --muted-foreground are pinned as AA-deepened mixes below instead, per
+  // docs/decisions/2026-09-26---01-aa-contrast-text-and-controls.md.
   it.each([
-    ["primary", "#907aa9"], // iris
-    ["ring", "#907aa9"], // iris
-    ["sidebar-primary", "#907aa9"], // iris
     ["primary-foreground", "#faf4ed"], // base
     ["sidebar-primary-foreground", "#faf4ed"], // base
-    ["destructive", "#b4637a"], // love
-    ["muted-foreground", "#797593"], // subtle
     ["chart-1", "#56949f"], // foam
     ["chart-2", "#907aa9"], // iris
     ["chart-3", "#d7827e"], // rose
@@ -64,6 +65,36 @@ describe("light theme accent tokens match canonical Rose Pine Dawn", () => {
     ["status-neutral", "#797593"], // subtle
   ])("--%s equals canonical Dawn %s", (token, canonical) => {
     expect(tokenValue(block, token)).toBe(canonical);
+  });
+});
+
+describe("light theme AA-deepened tokens are on-palette mixes toward Dawn text", () => {
+  const block = readRootBlock();
+
+  // Decision: no light-mode accent but text itself clears 4.5:1 as a canonical
+  // Dawn hex, so each failing one is deepened toward text in 10% steps instead
+  // — see docs/decisions/2026-09-26---01-aa-contrast-text-and-controls.md.
+  it.each([
+    ["muted-foreground", "subtle", 0.6],
+    ["primary", "iris", 0.7],
+    ["ring", "iris", 0.7],
+    ["sidebar-primary", "iris", 0.7],
+    ["sidebar-ring", "iris", 0.7],
+    ["destructive", "love", 0.7],
+  ] as const)("--%s equals text mixed %s%% toward Dawn %s", (token, role, weightOfText) => {
+    expect(Number.isInteger(Math.round(weightOfText * 1000) / 100)).toBe(true);
+    expect(tokenValue(block, token)).toBe(mixSrgb(DAWN.text, DAWN[role], weightOfText));
+  });
+});
+
+describe("light theme re-pointed and new tokens match their canonical or recipe value", () => {
+  const block = readRootBlock();
+
+  it.each([
+    ["input", "#797593"], // canonical subtle
+    ["destructive-foreground", "#faf4ed"], // canonical base
+  ])("--%s equals %s", (token, expected) => {
+    expect(tokenValue(block, token)).toBe(expected);
   });
 });
 
@@ -101,7 +132,9 @@ describe("dark theme accent tokens match canonical Rose Pine main", () => {
     ["ring", "#c4a7e7"], // iris
     ["sidebar-primary", "#c4a7e7"], // iris
     ["primary-foreground", "#191724"], // base
+    ["sidebar-primary-foreground", "#191724"], // base
     ["destructive", "#eb6f92"], // love
+    ["destructive-foreground", "#191724"], // base
     ["muted-foreground", "#908caa"], // subtle
     ["chart-1", "#9ccfd8"], // foam
     ["chart-2", "#c4a7e7"], // iris
@@ -133,6 +166,7 @@ describe("dark theme neutral tokens match canonical Rose Pine main", () => {
     ["accent", "#26233a"], // overlay
     ["sidebar-accent", "#26233a"], // overlay
     ["chart-reference", "#6e6a86"], // muted
+    ["input", "#6e6a86"], // muted
   ])("--%s equals canonical main %s", (token, canonical) => {
     expect(tokenValue(block, token)).toBe(canonical);
   });

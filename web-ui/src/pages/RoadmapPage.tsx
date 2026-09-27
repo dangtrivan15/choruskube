@@ -65,7 +65,7 @@ function MilestoneFilter({ value, onChange }: MilestoneFilterProps) {
         aria-pressed={value === undefined}
         onClick={() => onChange(undefined)}
         className={cn(
-          "inline-flex h-7 shrink-0 items-center rounded-md px-2.5 font-medium transition-colors outline-none select-none focus-visible:ring-3 focus-visible:ring-ring/50",
+          "inline-flex h-7 shrink-0 items-center rounded-md px-2.5 font-medium transition-colors outline-none select-none focus-visible:ring-3 focus-visible:ring-ring",
           value === undefined
             ? "bg-primary text-primary-foreground"
             : "text-muted-foreground hover:text-foreground",
@@ -84,7 +84,7 @@ function MilestoneFilter({ value, onChange }: MilestoneFilterProps) {
             title={m.name}
             onClick={() => onChange(m.id)}
             className={cn(
-              "inline-flex h-7 max-w-32 shrink-0 items-center truncate rounded-md px-2.5 font-medium transition-colors outline-none select-none focus-visible:ring-3 focus-visible:ring-ring/50",
+              "inline-flex h-7 max-w-32 shrink-0 items-center truncate rounded-md px-2.5 font-medium transition-colors outline-none select-none focus-visible:ring-3 focus-visible:ring-ring",
               active
                 ? "bg-primary text-primary-foreground"
                 : "text-muted-foreground hover:text-foreground",

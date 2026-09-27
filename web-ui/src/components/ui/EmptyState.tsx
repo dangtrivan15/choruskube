@@ -13,7 +13,7 @@ export default function EmptyState({ icon, title, description, action }: EmptySt
       {icon && <div className="mb-3 text-muted-foreground/40">{icon}</div>}
       <p className="text-sm font-medium text-muted-foreground">{title}</p>
       {description && (
-        <p className="mt-1 text-xs text-muted-foreground/70">{description}</p>
+        <p className="mt-1 text-xs text-muted-foreground">{description}</p>
       )}
       {action && <div className="mt-4">{action}</div>}
     </div>

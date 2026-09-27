@@ -49,13 +49,13 @@ describe("light :root neutrals equal canonical Rose Pine Dawn", () => {
     ["sidebar-foreground", "#575279"],
     ["sidebar-accent", "#f2e9e1"],
     ["sidebar-accent-foreground", "#575279"],
+    ["input", "#797593"],
   ])("--%s equals canonical Dawn %s", (token, canonical) => {
     expect(tokenValue(root, token)).toBe(canonical);
   });
 
   it.each([
     ["border", "rgba(87,82,121,0.08)"],
-    ["input", "rgba(87,82,121,0.12)"],
     ["sidebar-border", "rgba(87,82,121,0.08)"],
   ])("--%s equals the corrected ink-alpha value %s", (token, canonical) => {
     expect(tokenValue(root, token)).toBe(canonical);

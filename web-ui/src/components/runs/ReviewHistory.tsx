@@ -68,7 +68,7 @@ export default function ReviewHistory({ runId, loopGroup }: ReviewHistoryProps) 
       <button
         type="button"
         onClick={() => setIsExpanded(!isExpanded)}
-        className="flex w-full items-center gap-1.5 text-sm font-medium text-foreground hover:text-foreground/80"
+        className="flex w-full items-center gap-1.5 text-sm font-medium text-foreground hover:text-muted-foreground"
       >
         {isExpanded ? (
           <ChevronDown className="h-4 w-4" />
@@ -129,7 +129,7 @@ export default function ReviewHistory({ runId, loopGroup }: ReviewHistoryProps) 
                     <button
                       type="button"
                       onClick={() => setSelectedReview(review)}
-                      className="text-xs font-medium text-primary hover:text-primary/80"
+                      className="text-xs font-medium text-primary hover:underline"
                     >
                       View full review
                     </button>

@@ -168,7 +168,7 @@ export default function HumanGatePanel({
                     <button
                       type="button"
                       onClick={() => setOutputExpanded(!outputExpanded)}
-                      className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground hover:text-foreground/80"
+                      className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground hover:text-foreground"
                     >
                       {outputExpanded ? (
                         <ChevronDown className="h-4 w-4" />

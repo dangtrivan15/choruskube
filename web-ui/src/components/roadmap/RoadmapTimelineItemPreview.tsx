@@ -34,7 +34,7 @@ export default function RoadmapTimelineItemPreview({ item }: Props) {
       <span className="font-medium">{item.title}</span>
       <span className={colors.text}>{item.stage.replace("_", " ")}</span>
       {story && (
-        <span data-testid="roadmap-timeline-item-preview-parent" className="text-background/70">
+        <span data-testid="roadmap-timeline-item-preview-parent" className="text-background">
           in {story.epicTitle}
         </span>
       )}

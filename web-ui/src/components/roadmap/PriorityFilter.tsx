@@ -42,7 +42,7 @@ export default function PriorityFilter({ value, onChange }: PriorityFilterProps)
             aria-pressed={active}
             onClick={() => onChange(opt.level)}
             className={cn(
-              "inline-flex h-7 items-center rounded-md px-2.5 font-medium transition-colors outline-none select-none focus-visible:ring-3 focus-visible:ring-ring/50",
+              "inline-flex h-7 items-center rounded-md px-2.5 font-medium transition-colors outline-none select-none focus-visible:ring-3 focus-visible:ring-ring",
               active
                 ? "bg-primary text-primary-foreground"
                 : "text-muted-foreground hover:text-foreground",

@@ -30,10 +30,10 @@ const GROUP_CLASS =
   "inline-flex h-8 shrink-0 items-center gap-0.5 rounded-lg border border-border bg-background p-0.5 text-sm";
 
 const VIEW_CLASS =
-  "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2.5 font-medium transition-colors outline-none select-none focus-visible:ring-3 focus-visible:ring-ring/50";
+  "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2.5 font-medium transition-colors outline-none select-none focus-visible:ring-3 focus-visible:ring-ring";
 
 const ACTION_CLASS =
-  "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 text-sm font-medium text-muted-foreground transition-colors outline-none select-none hover:bg-muted hover:text-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
+  "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 text-sm font-medium text-muted-foreground transition-colors outline-none select-none hover:bg-muted hover:text-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring";
 
 /** Explains why the Graph action is inert, on the control itself rather than only in docs. */
 const GRAPH_DISABLED_HINT = "Focus an Epic or Story to open its graph";
