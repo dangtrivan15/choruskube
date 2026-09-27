@@ -1,21 +1,15 @@
 /**
  * Test-only color math shared by chart-series-distinguishable.test.ts, the
  * text/control contrast gate (text-control-contrast.test.ts), the status/badge/
- * chart contrast gate (status-contrast.test.ts), and — via a re-export path
- * safe for ESM — e2e/helpers/contrast.ts.
+ * chart contrast gate (status-contrast.test.ts), and the Playwright helper
+ * e2e/helpers/contrast.ts.
  */
 import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
 
-/**
- * Resolved lazily, inside each reader, rather than at module scope: Playwright
- * loads this file as an ES module (no `__dirname`), and a module-scope
- * `path.resolve(__dirname, ...)` throws before either environment gets to run.
- * `import.meta.url` is read into `base` before `new URL(...)` sees it — written
- * inline as `new URL(x, import.meta.url)`, Vite's static asset-URL transform
- * intercepts the literal pattern and resolves it against the dev-server origin
- * instead of the filesystem, which breaks under Vitest.
- */
+// Playwright imports this as ESM, where a module-scope `__dirname` throws. Keep
+// `import.meta.url` in a local: Vite rewrites a literal `new URL(x, import.meta.url)`
+// to a dev-server URL, which breaks the filesystem read under Vitest.
 function cssPath(): string {
   const base = import.meta.url;
   return fileURLToPath(new URL("../../../index.css", base));
@@ -133,8 +127,6 @@ export const CVD_DELTA_E_MIN = 8;
 
 export const TEXT_CONTRAST_MIN = 4.5;
 export const NON_TEXT_CONTRAST_MIN = 3;
-/** Alias for `CONTRAST_MIN`, named for its use as the mark (non-text) contrast floor. */
-export const MARK_CONTRAST_MIN = CONTRAST_MIN;
 
 function formatHex([r, g, b]: Vec3): string {
   const toByte = (v: number) => Math.round(v).toString(16).padStart(2, "0");
@@ -197,19 +189,7 @@ export function compositeOver(cssColor: string, bgHex: string): string {
   return blendOver(formatHex(rgb), alpha, bgHex);
 }
 
-/** Alias for `parseCssColor`, named for the generic `{ rgb, alpha }` shape it returns. */
-export const parseColor = parseCssColor;
-
-/**
- * Straight sRGB alpha compositing of an opaque `fgHex` at `alpha` over an
- * opaque `bgHex` — the same arithmetic as `blendOver`, exposed under the name
- * `e2e/helpers/contrast.ts` and the status-contrast gate call it by.
- */
-export function composite(fgHex: string, alpha: number, bgHex: string): string {
-  return blendOver(fgHex, alpha, bgHex);
-}
-
-/** Exposes `formatHex` under the name callers outside this module use. */
+/** `[r, g, b]` (0–255, rounded per channel) as `#rrggbb`. */
 export function toHex(rgb: [number, number, number]): string {
   return formatHex(rgb);
 }

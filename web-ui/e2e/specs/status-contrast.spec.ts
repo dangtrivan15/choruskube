@@ -1,104 +1,134 @@
-// Browser-side WCAG AA cross-check for the status ink/tint contrast change
-// (docs/decisions/2026-09-27---01-status-ink-labels-and-contrast-gate.md): the
-// unit gate (status-contrast.test.ts) proves the palette/recipes are correct
-// in the abstract, this spec proves the real rendered DOM matches — real glass
-// cards, the real gradient canvas, a real theme toggle, a real Recharts mount.
+// Browser-side WCAG AA cross-check for status words, badges, counters and chart
+// labels (docs/decisions/2026-09-27---01-status-ink-labels-and-contrast-gate.md):
+// the unit gate (status-contrast.test.ts) proves the palette and recipes in the
+// abstract; this spec proves the rendered DOM matches, in both themes.
+import type { Locator, Page } from "@playwright/test";
 import { test, expect } from "../fixtures";
 import { uniqueName } from "../helpers/api-client";
 import { toggleTheme } from "../helpers/colors";
 import {
   textContrast,
-  effectiveBackground,
+  backgroundAlpha,
   pseudoBackground,
   pseudoWidth,
-  toRgba,
+  resolveHex,
   resolveTint,
+  toRgba,
   TEXT_CONTRAST_MIN,
 } from "../helpers/contrast";
+import { RoadmapTimelinePage } from "../pages/roadmap-timeline.page";
 import type { RunTrendResponse, BottleneckResponse } from "../../src/lib/types";
 
-/** Every check in this file must hold in both themes. */
-async function forBothThemes(page: import("@playwright/test").Page, run: () => Promise<void>) {
-  await run();
+type Theme = "light" | "dark";
+
+/**
+ * Runs `check` in light, then dark, then restores light. The theme is a cookie
+ * that survives navigation, so the starting theme is forced rather than assumed.
+ */
+async function forBothThemes(page: Page, check: (theme: Theme) => Promise<void>) {
+  const html = page.locator("html");
+  if (await html.evaluate((el) => el.classList.contains("dark"))) {
+    await toggleTheme(page);
+  }
+  await expect(html).not.toHaveClass(/dark/);
+  await check("light");
   await toggleTheme(page);
-  await expect(page.locator("html")).toHaveClass(/dark/);
-  await run();
+  await expect(html).toHaveClass(/dark/);
+  await check("dark");
+  await toggleTheme(page);
+  await expect(html).not.toHaveClass(/dark/);
+}
+
+// Every read below is polled: `Badge` carries `transition-all` and theme toggles
+// are not transition-suppressed, so a one-shot read can sample a half-faded color.
+async function expectReadable(locator: Locator) {
+  await expect.poll(() => textContrast(locator)).toBeGreaterThanOrEqual(TEXT_CONTRAST_MIN);
+}
+
+async function expectOpaque(locator: Locator) {
+  await expect.poll(() => backgroundAlpha(locator)).toBe(1);
+}
+
+/** The badge recipe's `::before` dot renders at a real size in the tone's color. */
+async function expectToneDot(locator: Locator, tone: string) {
+  const expected = await resolveHex(locator.page(), `var(--status-${tone})`);
+  await expect.poll(() => pseudoBackground(locator, "::before")).toBe(expected);
+  expect(await pseudoWidth(locator, "::before")).toBeGreaterThan(0);
 }
 
 test.describe("status-contrast: run surfaces", () => {
-  test("run-list badge, run-header badge, DAG status word, and a failed node's error block all clear 4.5:1", async ({
+  test("run header and run-list badges, the DAG status word, and a failed node's error block clear 4.5:1", async ({
     runListPage,
     runMonitorPage,
     api,
   }) => {
-    const template = await api.getTemplateByName("e2e-linear-pipeline");
+    test.slow(); // the failure is driven by a node timeout
+    const template = await api.getTemplateByName("e2e-failure-pipeline");
     const run = await api.startRun({
       graphTemplateId: template.id,
       name: uniqueName("e2e-status-contrast-run"),
     });
-    // step_1 fails via mock-agent.sh's documented failure trigger, matching
-    // failure-handling.spec.ts's own setup for a real (unstubbed) error row.
-    await api.waitForNodeStatus(run.id, "step_1", ["failed"], 60_000);
-    await api.waitForRunStatus(run.id, ["failed"], 60_000);
 
-    await runMonitorPage.goto(run.id);
-    await expect(runMonitorPage.dagNodes.first()).toBeVisible({ timeout: 15_000 });
-    await runMonitorPage.selectNode("step_1");
-    await expect(runMonitorPage.detailNodeError).toBeVisible();
+    try {
+      // The failing node times out, so the node is "failed" (with an error
+      // message) and the run parks in "awaiting_retry" — the warning tone.
+      await api.waitForNodeStatus(run.id, "failing_step", ["failed"], 120_000);
+      await api.waitForRunStatus(run.id, ["awaiting_retry"], 30_000);
 
-    await forBothThemes(runMonitorPage.page, async () => {
-      const theme = (await runMonitorPage.page.locator("html").getAttribute("class"))?.includes("dark")
-        ? (".dark" as const)
-        : (":root" as const);
-
-      // Run header badge.
-      expect(await textContrast(runMonitorPage.runStatus)).toBeGreaterThanOrEqual(TEXT_CONTRAST_MIN);
-      const [, , , headerAlpha] = await toRgba(
-        runMonitorPage.page,
-        await runMonitorPage.runStatus.evaluate((el) => getComputedStyle(el).backgroundColor),
-      );
-      expect(headerAlpha).toBe(1);
-
-      // Failed node's error block.
-      const errorHeading = runMonitorPage.detailNodeError.locator("h4");
-      expect(await textContrast(errorHeading)).toBeGreaterThanOrEqual(TEXT_CONTRAST_MIN);
-      const errorBody = runMonitorPage.detailNodeError.locator("pre");
-      expect(await textContrast(errorBody)).toBeGreaterThanOrEqual(TEXT_CONTRAST_MIN);
-
-      // DAG node status word.
-      expect(await textContrast(runMonitorPage.dagNodes.first().locator("span.capitalize"))).toBeGreaterThanOrEqual(
-        TEXT_CONTRAST_MIN,
+      await runMonitorPage.goto(run.id);
+      await runMonitorPage.selectNode("failing_step");
+      await expect(runMonitorPage.detailNodeError).toBeVisible();
+      const dagStatusWord = runMonitorPage.page.locator(
+        '[data-testid="dag-node"][data-label="failing_step"] span.capitalize',
       );
 
-      void theme; // reserved for a future per-theme tint cross-check below
-    });
+      await forBothThemes(runMonitorPage.page, async () => {
+        await expectReadable(runMonitorPage.runStatus);
+        await expectOpaque(runMonitorPage.runStatus);
+        await expectToneDot(runMonitorPage.runStatus, "warning");
+        await expectReadable(dagStatusWord);
+        await expectReadable(runMonitorPage.detailNodeError.locator("h4"));
+        await expectReadable(runMonitorPage.detailNodeError.locator("pre"));
+      });
 
-    // Run-list badge — gate-vs-browser cross-check against resolveTint().
-    await runListPage.goto();
-    const row = runListPage.runRows.filter({ hasText: run.name ?? "" }).first();
-    const badge = row.getByText(/^failed$/i);
-    if (await badge.count()) {
-      expect(await textContrast(badge)).toBeGreaterThanOrEqual(TEXT_CONTRAST_MIN);
-      const measuredBg = await badge.evaluate((el) => getComputedStyle(el).backgroundColor);
-      const [r, g, b, a] = await toRgba(runListPage.page, measuredBg);
-      expect(a).toBe(1);
-      const expected = resolveTint(":root", "status-error", "tint");
-      const [er, eg, eb] = await toRgba(runListPage.page, expected);
-      expect(Math.abs(r - er)).toBeLessThanOrEqual(1);
-      expect(Math.abs(g - eg)).toBeLessThanOrEqual(1);
-      expect(Math.abs(b - eb)).toBeLessThanOrEqual(1);
+      await runListPage.goto();
+      await runListPage.waitForTableLoad();
+      const listBadge = runListPage.page
+        .locator(`[data-run-id="${run.id}"]`)
+        .getByText("awaiting retry", { exact: true });
+      await expect(listBadge).toBeVisible();
+
+      await forBothThemes(runListPage.page, async (theme) => {
+        await expectReadable(listBadge);
+        await expectToneDot(listBadge, "warning");
+
+        // Gate-vs-browser: the rendered tint equals the one the unit gate computes.
+        const [er, eg, eb] = await toRgba(
+          runListPage.page,
+          resolveTint(theme === "dark" ? ".dark" : ":root", "status-warning", "tint"),
+        );
+        await expect
+          .poll(async () => {
+            const bg = await listBadge.evaluate((el) => getComputedStyle(el).backgroundColor);
+            const [r, g, b, a] = await toRgba(runListPage.page, bg);
+            return a === 1 ? Math.max(Math.abs(r - er), Math.abs(g - eg), Math.abs(b - eb)) : Infinity;
+          })
+          .toBeLessThanOrEqual(1);
+      });
+    } finally {
+      await api.cancelRun(run.id).catch(() => {});
     }
-
-    await api.cancelRun(run.id).catch(() => {});
   });
 });
 
 test.describe("status-contrast: roadmap surfaces", () => {
-  test("priority, level, readiness, and milestone chips clear 4.5:1", async ({
+  test("priority, level, readiness and milestone chips, the timeline preview and the graph legend clear 4.5:1", async ({
     roadmapGraphPage,
     api,
     workerRepo,
+    page,
   }) => {
+    test.slow(); // three pages, each measured in both themes
     const epic = await api.createEpic({
       title: uniqueName("E2E Contrast Epic"),
       description: "desc",
@@ -109,63 +139,69 @@ test.describe("status-contrast: roadmap surfaces", () => {
       name: uniqueName("E2E Contrast Milestone"),
       softwareProjectId: workerRepo.gitRepo.id,
     });
-    await api.assignEpicToMilestone(epic.id, milestone.id);
-
-    const story = await api.createStory(epic.id, { title: "Contrast Story", description: "desc", priority: "medium" });
-    const blockingTask = await api.createTask(story.id, { title: uniqueName("Blocking Task"), description: "desc" });
-    const blockedTask = await api.createTask(story.id, { title: uniqueName("Blocked Task"), description: "desc" });
-    await api.createDependency({
-      blockingItemType: "task",
-      blockingItemId: blockingTask.id,
-      blockedItemType: "task",
-      blockedItemId: blockedTask.id,
-    });
 
     try {
-      await roadmapGraphPage.goto(epic.id);
-      await roadmapGraphPage.selectNode(blockedTask.title);
-
-      await forBothThemes(roadmapGraphPage.page, async () => {
-        expect(await textContrast(roadmapGraphPage.detailPanel.getByTestId("roadmap-detail-priority-badge"))).toBeGreaterThanOrEqual(
-          TEXT_CONTRAST_MIN,
-        );
-        expect(
-          await textContrast(roadmapGraphPage.detailPanel.getByTestId("roadmap-detail-readiness-badge")),
-        ).toBeGreaterThanOrEqual(TEXT_CONTRAST_MIN);
+      await api.assignEpicToMilestone(epic.id, milestone.id);
+      const blockingStory = await api.createStory(epic.id, {
+        title: uniqueName("Contrast Blocking Story"),
+        description: "desc",
+      });
+      const blockedStory = await api.createStory(epic.id, {
+        title: uniqueName("Contrast Blocked Story"),
+        description: "desc",
+        priority: "medium",
+      });
+      await api.createDependency({
+        blockingItemType: "story",
+        blockingItemId: blockingStory.id,
+        blockedItemType: "story",
+        blockedItemId: blockedStory.id,
       });
 
-      // Level chip and Milestone chip, on the Epic detail page.
-      await roadmapGraphPage.page.goto(`/roadmap/epics/${epic.id}`);
-      await expect(roadmapGraphPage.page.getByTestId("milestone-badge")).toBeVisible();
-
-      await forBothThemes(roadmapGraphPage.page, async () => {
-        expect(await textContrast(roadmapGraphPage.page.getByTestId(`level-badge-epic`))).toBeGreaterThanOrEqual(
-          TEXT_CONTRAST_MIN,
-        );
-        expect(await textContrast(roadmapGraphPage.page.getByTestId("milestone-badge"))).toBeGreaterThanOrEqual(
-          TEXT_CONTRAST_MIN,
-        );
-      });
-
-      // Timeline hover preview: stage word + badges.
-      await roadmapGraphPage.page.goto("/roadmap/timeline");
-      const epicLane = roadmapGraphPage.page.locator(`[data-testid="roadmap-timeline-epic-lane"][data-label="${epic.title}"]`);
-      if (await epicLane.count()) {
-        await epicLane.hover();
-        const preview = roadmapGraphPage.page.getByTestId("roadmap-timeline-item-preview");
-        if (await preview.isVisible().catch(() => false)) {
-          expect(await textContrast(preview.locator("span").first())).toBeGreaterThanOrEqual(TEXT_CONTRAST_MIN);
+      // Epic detail: level, priority and milestone chips.
+      await page.goto(`/roadmap/epics/${epic.id}`);
+      const milestoneBadge = page.getByTestId("epic-detail-milestone-badge");
+      await expect(milestoneBadge).toBeVisible({ timeout: 15_000 });
+      await forBothThemes(page, async () => {
+        for (const chip of [
+          page.getByTestId("level-badge-epic"),
+          page.getByTestId("epic-detail-priority-badge"),
+          milestoneBadge,
+        ]) {
+          await expectReadable(chip);
+          await expectOpaque(chip);
         }
-      }
+      });
 
-      // Graph legend labels.
+      // Graph: the blocked Story's detail-panel chips, its node, and the legend.
       await roadmapGraphPage.goto(epic.id);
-      await expect(roadmapGraphPage.legend).toBeVisible();
+      await roadmapGraphPage.selectNode(blockedStory.title);
+      const readinessBadge = roadmapGraphPage.detailPanel.getByTestId("roadmap-detail-readiness-badge");
+      const node = roadmapGraphPage.nodeByLabel(blockedStory.title);
       const legendLabels = roadmapGraphPage.legend.locator("span");
-      const legendCount = await legendLabels.count();
-      for (let i = 0; i < legendCount; i++) {
-        expect(await textContrast(legendLabels.nth(i))).toBeGreaterThanOrEqual(TEXT_CONTRAST_MIN);
-      }
+      await expect(legendLabels).toHaveCount(4);
+      await forBothThemes(roadmapGraphPage.page, async () => {
+        await expectReadable(roadmapGraphPage.detailPanel.getByTestId("roadmap-detail-priority-badge"));
+        await expectReadable(readinessBadge);
+        await expectToneDot(readinessBadge, "warning");
+        await expectReadable(node.locator("span.capitalize"));
+        await expectReadable(node.getByTestId("roadmap-graph-node-blocked-badge"));
+        for (let i = 0; i < 4; i++) {
+          await expectReadable(legendLabels.nth(i));
+        }
+      });
+
+      // Timeline hover preview: inverted tooltip, stage word and readiness chip.
+      const timelinePage = new RoadmapTimelinePage(page);
+      await timelinePage.goto();
+      const marker = timelinePage.markerByLabel(blockedStory.title);
+      await expect(marker).toBeVisible();
+      await forBothThemes(page, async () => {
+        // The theme toggle click moves the pointer off the marker, closing the preview.
+        await timelinePage.hoverToRevealPreview(marker, [blockedStory.title]);
+        await expectReadable(timelinePage.itemPreview.getByTestId("roadmap-timeline-item-preview-stage"));
+        await expectReadable(timelinePage.itemPreview.getByTitle("Blocked by an unfinished dependency"));
+      });
     } finally {
       await api.deleteEpic(epic.id).catch(() => {});
       await api.deleteMilestone(milestone.id).catch(() => {});
@@ -181,16 +217,14 @@ test.describe("status-contrast: analytics chart labels", () => {
     bottlenecks: [{ label: "build", avgDurationSeconds: 45, p50DurationSeconds: 40, p95DurationSeconds: 120, sampleSize: 12 }],
   };
 
-  test("every axis tick, legend label, and tooltip clears 4.5:1; usage-quota chips clear 4.5:1", async ({
-    analyticsPage,
-    page,
-  }) => {
+  test("axis ticks, legend labels, the tooltip and usage-quota chips clear 4.5:1", async ({ analyticsPage, page }) => {
     await page.route(/\/api\/v1\/analytics\/runs\?/, (route) =>
       route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(TREND) }),
     );
     await page.route(/\/api\/v1\/analytics\/bottlenecks\?/, (route) =>
       route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(BOTTLENECKS) }),
     );
+    // 85% and 95% of their limits: one "Warning" and one "Critical" quota chip.
     await page.route(/\/organizations\/[^/]+\/usage/, (route) =>
       route.fulfill({
         status: 200,
@@ -209,47 +243,53 @@ test.describe("status-contrast: analytics chart labels", () => {
     await expect(analyticsPage.runTrendChart.locator('[aria-label="Total legend icon"]')).toBeVisible({
       timeout: 15_000,
     });
+    await expect(analyticsPage.quotaChips).toHaveCount(2);
+    const tickCount = await analyticsPage.axisTickLabels.count();
+    expect(tickCount).toBeGreaterThan(0);
+    const legendTexts = analyticsPage.runTrendChart.locator(".recharts-legend-item-text");
+    const legendCount = await legendTexts.count();
+    expect(legendCount).toBeGreaterThan(0);
 
     await forBothThemes(page, async () => {
-      const tickCount = await analyticsPage.axisTickLabels.count();
-      expect(tickCount).toBeGreaterThan(0);
       for (let i = 0; i < tickCount; i++) {
-        expect(await textContrast(analyticsPage.axisTickLabels.nth(i))).toBeGreaterThanOrEqual(TEXT_CONTRAST_MIN);
+        await expectReadable(analyticsPage.axisTickLabels.nth(i));
       }
-
-      const legendTexts = analyticsPage.runTrendChart.locator(".recharts-legend-item-text");
-      const legendCount = await legendTexts.count();
       for (let i = 0; i < legendCount; i++) {
-        expect(await textContrast(legendTexts.nth(i))).toBeGreaterThanOrEqual(TEXT_CONTRAST_MIN);
+        await expectReadable(legendTexts.nth(i));
       }
 
       await analyticsPage.hoverDataPoint(analyticsPage.runTrendChart);
-      const tooltipContent = analyticsPage.tooltip.locator(".recharts-default-tooltip");
-      const bg = await tooltipContent.evaluate((el) => getComputedStyle(el).backgroundColor);
-      const [, , , a] = await toRgba(page, bg);
-      expect(a).toBe(1);
+      const tooltip = analyticsPage.tooltip.locator(".recharts-default-tooltip");
+      await expectOpaque(tooltip);
+      await expectReadable(tooltip.locator(".recharts-tooltip-label"));
+      const items = tooltip.locator(".recharts-tooltip-item");
+      expect(await items.count()).toBeGreaterThan(0);
+      for (let i = 0; i < (await items.count()); i++) {
+        await expectReadable(items.nth(i));
+      }
 
-      // Both "Warning" (85%) and "Critical" (95%) quota chips render.
-      await expect(analyticsPage.quotaChips).toHaveCount(2);
-      const chipCount = await analyticsPage.quotaChips.count();
-      for (let i = 0; i < chipCount; i++) {
+      for (const [i, tone] of [[0, "warning"], [1, "error"]] as const) {
         const chip = analyticsPage.quotaChips.nth(i);
-        expect(await textContrast(chip)).toBeGreaterThanOrEqual(TEXT_CONTRAST_MIN);
-        const chipBg = await chip.evaluate((el) => getComputedStyle(el).backgroundColor);
-        const [, , , chipAlpha] = await toRgba(page, chipBg);
-        expect(chipAlpha).toBe(1);
-        expect(await pseudoWidth(chip, "::before")).toBeGreaterThan(0);
+        await expectReadable(chip);
+        await expectOpaque(chip);
+        await expectToneDot(chip, tone);
       }
     });
   });
 });
 
 test.describe("status-contrast: layout counters", () => {
-  test("sidebar approvals count and activity-feed unread count clear 4.5:1 with opaque backgrounds", async ({
-    runMonitorPage,
+  test("sidebar approvals count and activity-feed unread count clear 4.5:1 on opaque tints", async ({
     navigationPage,
     api,
   }) => {
+    test.slow(); // waits for a real gate to open
+    const page = navigationPage.page;
+    // The unread count tallies only events that arrive after the app mounts, so
+    // load it before the gate opens and never navigate away.
+    await navigationPage.goto("/runs");
+    await expect(page.getByRole("button", { name: /^Activity feed/ })).toBeVisible({ timeout: 15_000 });
+
     const template = await api.getTemplateByName("e2e-human-gate");
     const run = await api.startRun({
       graphTemplateId: template.id,
@@ -258,19 +298,14 @@ test.describe("status-contrast: layout counters", () => {
 
     try {
       await api.waitForNodeStatus(run.id, "review_gate", ["awaiting_human"], 60_000);
-      await runMonitorPage.goto(run.id);
-
-      const approvalsBadge = navigationPage.approvalsBadge;
-      await expect(approvalsBadge).toBeVisible({ timeout: 15_000 });
-      const unreadBadge = navigationPage.page.getByTestId("activity-feed-unread-count");
+      const unreadBadge = page.getByTestId("activity-feed-unread-count");
+      await expect(navigationPage.approvalsBadge).toBeVisible({ timeout: 15_000 });
       await expect(unreadBadge).toBeVisible({ timeout: 15_000 });
 
-      await forBothThemes(navigationPage.page, async () => {
-        for (const badge of [approvalsBadge, unreadBadge]) {
-          expect(await textContrast(badge)).toBeGreaterThanOrEqual(TEXT_CONTRAST_MIN);
-          const bg = await badge.evaluate((el) => getComputedStyle(el).backgroundColor);
-          const [, , , a] = await toRgba(navigationPage.page, bg);
-          expect(a).toBe(1);
+      await forBothThemes(page, async () => {
+        for (const badge of [navigationPage.approvalsBadge, unreadBadge]) {
+          await expectReadable(badge);
+          await expectOpaque(badge);
         }
       });
     } finally {

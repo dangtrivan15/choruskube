@@ -14,7 +14,9 @@ import {
   contrastRatio,
   deltaE,
   TEXT_CONTRAST_MIN,
-  MARK_CONTRAST_MIN,
+  NON_TEXT_CONTRAST_MIN,
+  NORMAL_DELTA_E_MIN,
+  CVD_DELTA_E_MIN,
 } from "./helpers/colorMetrics";
 import { STATUS_TONE_CLASSES, type StatusTone } from "../statusColors";
 import { badgeVariants } from "@/components/ui/badge";
@@ -213,7 +215,7 @@ describe.each(THEMES)("marks clear 3:1 against background and popover, or are re
   it.each(MARK_TOKENS)("%s", (token) => {
     const bg = contrastRatio(tokens[token], tokens["background"]);
     const pop = contrastRatio(tokens[token], tokens["popover"]);
-    const passes = bg >= MARK_CONTRAST_MIN && pop >= MARK_CONTRAST_MIN;
+    const passes = bg >= NON_TEXT_CONTRAST_MIN && pop >= NON_TEXT_CONTRAST_MIN;
     const relieved = reliefTokens.has(token);
     expect(
       passes || relieved,
@@ -225,7 +227,7 @@ describe.each(THEMES)("marks clear 3:1 against background and popover, or are re
     const actuallyFailing = MARK_TOKENS.filter((token) => {
       const bg = contrastRatio(tokens[token], tokens["background"]);
       const pop = contrastRatio(tokens[token], tokens["popover"]);
-      return bg < MARK_CONTRAST_MIN || pop < MARK_CONTRAST_MIN;
+      return bg < NON_TEXT_CONTRAST_MIN || pop < NON_TEXT_CONTRAST_MIN;
     });
     expect(new Set(reliefTokens)).toEqual(new Set(actuallyFailing));
   });
@@ -238,9 +240,6 @@ describe.each(THEMES)("marks clear 3:1 against background and popover, or are re
 // ---------------------------------------------------------------------------
 // 6. Tone pairs
 // ---------------------------------------------------------------------------
-
-const NORMAL_DELTA_E_MIN = 15;
-const CVD_DELTA_E_MIN = 8;
 
 function tonePairFails(a: string, b: string): boolean {
   const normal = deltaE(a, b);
