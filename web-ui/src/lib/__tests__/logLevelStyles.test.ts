@@ -6,7 +6,8 @@ describe("logLevelStyle", () => {
   it("returns the info treatment", () => {
     const style = logLevelStyle("info");
     expect(style.Icon).toBe(Info);
-    expect(style.text).toBe("text-status-info");
+    expect(style.icon).toBe("text-status-info");
+    expect(style.label).toBe("text-foreground");
     expect(style.weight).toBe("");
     expect(style.border).toBe("border-status-info");
     expect(style.row).toBe("");
@@ -15,19 +16,21 @@ describe("logLevelStyle", () => {
   it("returns the warn treatment", () => {
     const style = logLevelStyle("warn");
     expect(style.Icon).toBe(TriangleAlert);
-    expect(style.text).toBe("text-status-warning");
+    expect(style.icon).toBe("text-status-warning");
+    expect(style.label).toBe("text-foreground font-medium");
     expect(style.weight).toBe("font-medium");
     expect(style.border).toBe("border-status-warning");
-    expect(style.row).toBe("bg-status-warning/10");
+    expect(style.row).toBe("bg-tint-status-warning");
   });
 
   it("returns the error treatment", () => {
     const style = logLevelStyle("error");
     expect(style.Icon).toBe(OctagonAlert);
-    expect(style.text).toBe("text-status-error");
+    expect(style.icon).toBe("text-status-error");
+    expect(style.label).toBe("text-foreground font-semibold");
     expect(style.weight).toBe("font-semibold");
     expect(style.border).toBe("border-status-error");
-    expect(style.row).toBe("bg-status-error/10");
+    expect(style.row).toBe("bg-tint-status-error");
   });
 
   it("is case-insensitive", () => {
@@ -39,14 +42,15 @@ describe("logLevelStyle", () => {
   it("falls back to the neutral treatment for an unknown level", () => {
     const style = logLevelStyle("debug");
     expect(style.Icon).toBe(Minus);
-    expect(style.text).toBe("text-status-neutral");
+    expect(style.icon).toBe("text-status-neutral");
+    expect(style.label).toBe("text-foreground");
     expect(style.weight).toBe("");
     expect(style.border).toBe("border-status-neutral");
     expect(style.row).toBe("");
   });
 
   it("falls back to the neutral treatment for an empty level", () => {
-    expect(logLevelStyle("").text).toBe("text-status-neutral");
+    expect(logLevelStyle("").icon).toBe("text-status-neutral");
   });
 
   it.each(["constructor", "__proto__", "hasOwnProperty"])(
@@ -57,12 +61,18 @@ describe("logLevelStyle", () => {
   );
 
   it("resolves pairwise-distinct colors for info/warn/error", () => {
-    const colors = ["info", "warn", "error"].map((level) => logLevelStyle(level).text);
+    const colors = ["info", "warn", "error"].map((level) => logLevelStyle(level).icon);
     expect(new Set(colors).size).toBe(3);
   });
 
   it("resolves pairwise-distinct icons for info/warn/error", () => {
     const icons = ["info", "warn", "error"].map((level) => logLevelStyle(level).Icon);
     expect(new Set(icons).size).toBe(3);
+  });
+
+  it("no label carries a tone color — only foreground ink plus weight", () => {
+    for (const level of ["info", "warn", "error", "unknown"]) {
+      expect(logLevelStyle(level).label).toMatch(/^text-foreground/);
+    }
   });
 });

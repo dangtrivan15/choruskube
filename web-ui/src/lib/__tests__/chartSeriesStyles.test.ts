@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { CHART_SERIES_STYLES, seriesColor, seriesDashProps } from "../chartSeriesStyles";
+import {
+  CHART_SERIES_STYLES,
+  CHART_TEXT_TOKEN,
+  CHART_SURFACE_TOKEN,
+  seriesColor,
+  seriesDashProps,
+  chartTickProps,
+  chartTooltipProps,
+} from "../chartSeriesStyles";
 
 describe("CHART_SERIES_STYLES", () => {
   it("has exactly the three charts, each with its exact series keys", () => {
@@ -78,5 +86,28 @@ describe("CHART_SERIES_STYLES", () => {
     expect(seriesDashProps(CHART_SERIES_STYLES.runTrend.total)).toEqual({
       strokeDasharray: "6 4",
     });
+  });
+});
+
+describe("chart text/surface tokens and helper props", () => {
+  it("pins CHART_TEXT_TOKEN and CHART_SURFACE_TOKEN", () => {
+    expect(CHART_TEXT_TOKEN).toBe("--foreground");
+    expect(CHART_SURFACE_TOKEN).toBe("--popover");
+  });
+
+  it("chartTickProps(12) returns the given font size with ink fill", () => {
+    expect(chartTickProps(12)).toEqual({ fontSize: 12, fill: "var(--foreground)" });
+  });
+
+  it("chartTickProps(11) carries the given font size through", () => {
+    expect(chartTickProps(11).fontSize).toBe(11);
+  });
+
+  it("chartTooltipProps returns an opaque popover surface with ink item/label text", () => {
+    const props = chartTooltipProps();
+    expect(props.contentStyle.backgroundColor).toBe("var(--popover)");
+    expect(props.contentStyle.border).toBe("1px solid var(--border)");
+    expect(props.itemStyle.color).toBe("var(--foreground)");
+    expect(props.labelStyle.color).toBe("var(--foreground)");
   });
 });

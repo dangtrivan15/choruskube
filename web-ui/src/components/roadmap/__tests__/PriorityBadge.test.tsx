@@ -9,12 +9,15 @@ describe("PriorityBadge", () => {
     ["medium", "Medium", "text-status-warning"],
     ["low", "Low", "text-status-neutral"],
   ] as [Priority, string, string][])(
-    "renders the %s priority with its label and accent color",
+    "renders the %s priority with its label in foreground ink and its icon in the accent color",
     (priority, label, accentClass) => {
       render(<PriorityBadge priority={priority} />);
       const badge = screen.getByTestId(`priority-badge-${priority}`);
       expect(badge).toHaveTextContent(label);
-      expect(badge.className).toContain(accentClass);
+      expect(badge.className).toContain("text-foreground");
+      expect(badge.className).not.toContain(accentClass);
+      const icon = badge.querySelector("svg");
+      expect(icon?.getAttribute("class")).toContain(accentClass);
     },
   );
 

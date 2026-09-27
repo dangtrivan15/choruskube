@@ -12,12 +12,23 @@ export class AnalyticsPage {
   readonly heading: Locator;
   readonly runTrendChart: Locator;
   readonly bottleneckChart: Locator;
+  readonly roadmapThroughputChart: Locator;
+  /** Recharts' floating tooltip content — present only while hovering a data point. */
+  readonly tooltip: Locator;
+  /** Every axis tick label across the whole page (scope to a chart's own container to narrow). */
+  readonly axisTickLabels: Locator;
+  /** Usage-quota "Warning"/"Critical" chips (UsageDashboard.tsx). */
+  readonly quotaChips: Locator;
 
   constructor(page: Page) {
     this.page = page;
     this.heading = page.getByRole("heading", { name: "Analytics" });
     this.runTrendChart = page.getByTestId("run-trend-chart");
     this.bottleneckChart = page.getByTestId("bottleneck-chart");
+    this.roadmapThroughputChart = page.getByTestId("roadmap-throughput-chart");
+    this.tooltip = page.locator(".recharts-tooltip-wrapper");
+    this.axisTickLabels = page.locator(".recharts-cartesian-axis-tick-value");
+    this.quotaChips = page.getByTestId("usage-quota-chip");
   }
 
   async goto() {
@@ -81,6 +92,15 @@ export class AnalyticsPage {
     return this.runTrendChart.locator(".recharts-area").evaluateAll((els) =>
       els.map((el) => Array.from(el.classList).find((c) => c.startsWith("series-")) ?? ""),
     );
+  }
+
+  /** Hovers the middle of a chart's plotting surface to trigger Recharts' tooltip. */
+  async hoverDataPoint(chart: Locator): Promise<void> {
+    const surface = chart.locator(".recharts-surface").first();
+    const box = await surface.boundingBox();
+    if (!box) throw new Error("Chart surface has no bounding box — is it visible?");
+    await this.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await expect(this.tooltip).toBeVisible();
   }
 
   async isDark(): Promise<boolean> {

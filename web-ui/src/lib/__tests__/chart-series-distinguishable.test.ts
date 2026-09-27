@@ -1,10 +1,16 @@
 import { describe, it, expect } from "vitest";
-import { CHART_SERIES_STYLES, type ChartSeriesStyle } from "../chartSeriesStyles";
+import {
+  CHART_SERIES_STYLES,
+  CHART_TEXT_TOKEN,
+  CHART_SURFACE_TOKEN,
+  type ChartSeriesStyle,
+} from "../chartSeriesStyles";
 import {
   readThemeTokens,
   contrastRatio,
   deltaE,
   CONTRAST_MIN,
+  TEXT_CONTRAST_MIN,
   NORMAL_DELTA_E_MIN,
   CVD_DELTA_E_MIN,
 } from "./helpers/colorMetrics";
@@ -28,16 +34,26 @@ describe("color metrics sanity", () => {
   });
 });
 
-// Light --card is translucent rgba(), so the opaque --background stands in as the light chart surface.
+// Charts now render on the opaque --popover surface (CHART_SURFACE_TOKEN) in both themes —
+// see chartTooltipProps()/chartTickProps() in chartSeriesStyles.ts — so series/text contrast
+// is measured against that surface, not against --background/--card.
 const THEMES = [
-  { theme: "light", selector: ":root" as const, surfaceToken: "background" },
-  { theme: "dark", selector: ".dark" as const, surfaceToken: "card" },
+  { theme: "light", selector: ":root" as const },
+  { theme: "dark", selector: ".dark" as const },
 ];
 
-describe.each(THEMES)("chart series distinguishability — $theme", ({ theme, selector, surfaceToken }) => {
+describe.each(THEMES)("chart series distinguishability — $theme", ({ theme, selector }) => {
   const tokens = readThemeTokens(selector);
-  const surface = tokens[surfaceToken];
+  const surface = tokens[CHART_SURFACE_TOKEN.slice(2)];
   const hexOf = (style: ChartSeriesStyle) => tokens[style.token.slice(2)];
+
+  it("chart text clears the AA text floor against the opaque chart surface", () => {
+    const text = tokens[CHART_TEXT_TOKEN.slice(2)];
+    const ratio = contrastRatio(text, surface);
+    expect(ratio, `${theme}: ${CHART_TEXT_TOKEN} vs ${CHART_SURFACE_TOKEN} = ${ratio.toFixed(2)}`).toBeGreaterThanOrEqual(
+      TEXT_CONTRAST_MIN,
+    );
+  });
 
   describe.each(Object.entries(CHART_SERIES_STYLES))("%s", (chartName, seriesRaw) => {
     const series = seriesRaw as Record<string, ChartSeriesStyle>;

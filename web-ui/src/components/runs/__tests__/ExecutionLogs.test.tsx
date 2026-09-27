@@ -94,22 +94,25 @@ describe("ExecutionLogs", () => {
     const rows = screen.getAllByTestId("log-row");
     expect(rows).toHaveLength(3);
 
-    const expectations: Record<string, { border: string; text: string; weight?: string }> = {
-      info: { border: "border-status-info", text: "text-status-info" },
-      warn: { border: "border-status-warning", text: "text-status-warning", weight: "font-medium" },
-      error: { border: "border-status-error", text: "text-status-error", weight: "font-semibold" },
+    const expectations: Record<string, { border: string; icon: string; weight?: string }> = {
+      info: { border: "border-status-info", icon: "text-status-info" },
+      warn: { border: "border-status-warning", icon: "text-status-warning", weight: "font-medium" },
+      error: { border: "border-status-error", icon: "text-status-error", weight: "font-semibold" },
     };
 
     for (const row of rows) {
       const level = row.getAttribute("data-level")!;
-      const { border, text, weight } = expectations[level];
+      const { border, icon, weight } = expectations[level];
       expect(row).toHaveClass(border);
 
       const label = row.querySelector('[data-testid="log-level"]')!;
-      expect(label).toHaveClass(text);
+      expect(label).toHaveClass("text-foreground");
+      expect(label.className).not.toMatch(/text-status-/);
       if (weight) expect(label).toHaveClass(weight);
 
-      expect(row.querySelector("svg[aria-hidden]")).not.toBeNull();
+      const svg = row.querySelector("svg[aria-hidden]");
+      expect(svg).not.toBeNull();
+      expect(svg?.getAttribute("class")).toContain(icon);
     }
   });
 
@@ -125,7 +128,7 @@ describe("ExecutionLogs", () => {
     const row = screen.getByTestId("log-row");
     expect(row).toHaveAttribute("data-level", "debug");
     expect(row).toHaveClass("border-status-neutral");
-    expect(screen.getByTestId("log-level")).toHaveClass("text-status-neutral");
+    expect(screen.getByTestId("log-level")).toHaveClass("text-foreground");
     expect(screen.getByText("Trace point hit")).toBeInTheDocument();
   });
 

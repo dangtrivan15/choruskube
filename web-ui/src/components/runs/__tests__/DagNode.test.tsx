@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import { renderWithProviders } from "@/__tests__/test-utils";
 import type { NodeProps } from "@xyflow/react";
 import DagNode, { formatNodeLabel } from "../DagNode";
@@ -126,14 +126,15 @@ describe("DagNode", () => {
     expect(screen.getByText("awaiting retry")).toBeInTheDocument();
   });
 
-  it("renders paused status with accent color and no pulse animation", () => {
+  it("renders paused status with accent color on the icon and no pulse animation", () => {
     const { container } = renderDagNode({ status: "paused" });
-    // Status text is rendered
-    expect(screen.getByText("paused")).toBeInTheDocument();
-    // Badge/status text should carry the accent color token (not error/neutral)
-    // statusColors.ts returns "bg-status-accent/15 text-status-accent ..." for "paused"
+    // Status word is rendered in ink, not the tone color.
     const statusText = screen.getByText("paused");
-    expect(statusText.className).toMatch(/text-status-accent/);
+    expect(statusText.className).toContain("text-foreground");
+    expect(statusText.className).not.toMatch(/text-status-/);
+    // The status icon carries the accent color token (not error/neutral).
+    const icon = screen.getByTestId("dag-node-status-icon");
+    expect(icon.className).toMatch(/text-status-accent/);
     // Node border/background must NOT carry the running pulse animation
     expect(container.querySelector(".animate-pulse")).toBeNull();
   });
@@ -148,11 +149,14 @@ describe("DagNode", () => {
     expect(screen.getByText("Code Review")).toBeInTheDocument();
   });
 
-  it("renders the five named states with distinct status-text token classes", () => {
+  it("renders the five named states with distinct status-icon token classes, all-ink status words", () => {
     const FIVE_NAMED_STATES = ["completed", "failed", "running", "awaiting_human", "pending"];
     const classes = FIVE_NAMED_STATES.map((status) => {
-      renderDagNode({ status, label: `node-${status}` });
-      return screen.getByText(status.replace(/_/g, " ")).className;
+      const { container } = renderDagNode({ status, label: `node-${status}` });
+      const word = within(container).getByText(status.replace(/_/g, " "));
+      expect(word.className).toContain("text-foreground");
+      expect(word.className).not.toMatch(/text-status-/);
+      return within(container).getByTestId("dag-node-status-icon").className;
     });
     const tokenClasses = classes.map((c) => c.match(/text-status-\S+/)?.[0]);
     expect(tokenClasses.every(Boolean)).toBe(true);

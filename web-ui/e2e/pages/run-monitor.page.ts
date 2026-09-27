@@ -124,12 +124,20 @@ export class RunMonitorPage {
   }
 
   /**
-   * Computed text color of a DAG node's status label — the resolved hex of
+   * Computed text color of a DAG node's status **icon** — the resolved hex of
    * whichever `text-status-*` token `statusColorTokens()` (src/lib/statusColors.ts)
    * assigned this status, read straight from the rendered DOM rather than the
-   * source map so a real browser's CSS cascade is what's asserted on.
+   * source map so a real browser's CSS cascade is what's asserted on. The
+   * status *word* is uniform ink now (see `nodeStatusLabelColor`) — the tone
+   * lives on this icon mark instead.
    */
   async nodeStatusColor(nodeLabel: string): Promise<string> {
+    const node = this.page.locator(`[data-testid="dag-node"][data-label="${nodeLabel}"]`);
+    return node.getByTestId("dag-node-status-icon").evaluate((el) => getComputedStyle(el).color);
+  }
+
+  /** Computed text color of a DAG node's status *word* — expected to resolve to `var(--foreground)` for every status. */
+  async nodeStatusLabelColor(nodeLabel: string): Promise<string> {
     const node = this.page.locator(`[data-testid="dag-node"][data-label="${nodeLabel}"]`);
     return node.locator("span.capitalize").evaluate((el) => getComputedStyle(el).color);
   }
@@ -140,12 +148,19 @@ export class RunMonitorPage {
   }
 
   /**
-   * Computed text color of a severity's label — the resolved hex of whichever
-   * `text-status-*` token `logLevelStyle()` (src/lib/logLevelStyles.ts) assigned
-   * this level, read from the rendered DOM so a real browser's CSS cascade is
-   * what's asserted on. Mirrors `nodeStatusColor`.
+   * Computed text color of a severity row's **glyph** — the resolved hex of
+   * whichever `text-status-*` token `logLevelStyle()` (src/lib/logLevelStyles.ts)
+   * assigned this level, read from the rendered DOM so a real browser's CSS
+   * cascade is what's asserted on. Mirrors `nodeStatusColor`. The level *word*
+   * is uniform ink now (see `logSeverityLabelColor`) — the tone lives on this
+   * glyph mark instead.
    */
   async logSeverityColor(level: string): Promise<string> {
+    return this.logRow(level).first().locator("svg").evaluate((el) => getComputedStyle(el).color);
+  }
+
+  /** Computed text color of a severity row's *word* — expected to resolve to `var(--foreground)` for every level. */
+  async logSeverityLabelColor(level: string): Promise<string> {
     return this.logRow(level).first().getByTestId("log-level").evaluate((el) => getComputedStyle(el).color);
   }
 

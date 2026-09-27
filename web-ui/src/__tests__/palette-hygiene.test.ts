@@ -76,9 +76,6 @@ describe("scanSource self-tests", () => {
 describe("ACCEPTED_COLOR_EXCEPTIONS", () => {
   it("does not flag an exception's own file for its listed pattern", () => {
     expect(scanSource("src/components/Logo.tsx", 'stopColor="#907aa9"')).toEqual([]);
-    expect(
-      scanSource("src/components/layout/ActivityFeedButton.tsx", 'className="text-white"')
-    ).toEqual([]);
   });
 
   it("still flags the same pattern in any other file", () => {

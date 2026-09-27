@@ -110,8 +110,8 @@ describe("ReviewHistory", () => {
     renderWithProviders(<ReviewHistory runId="run-1" loopGroup="lg-1" />);
 
     const badge = screen.getByText("rejected");
-    expect(badge.className).toContain("bg-status-warning/15");
-    expect(badge.className).toContain("text-status-warning");
+    expect(badge.className).toContain("bg-tint-status-warning");
+    expect(badge.className).toContain("text-foreground");
   });
 
   it("uses success badge classes for approved decisions", () => {
@@ -120,8 +120,8 @@ describe("ReviewHistory", () => {
     renderWithProviders(<ReviewHistory runId="run-1" loopGroup="lg-1" />);
 
     const badge = screen.getByText("approved");
-    expect(badge.className).toContain("bg-status-success/15");
-    expect(badge.className).toContain("text-status-success");
+    expect(badge.className).toContain("bg-tint-status-success");
+    expect(badge.className).toContain("text-foreground");
   });
 
   it("does not show decision badge for no_decision", () => {
@@ -145,9 +145,9 @@ describe("ReviewHistory", () => {
     // They should be separate elements
     expect(nodeLabelBadge).not.toBe(decisionBadge);
     // Node label is always neutral
-    expect(nodeLabelBadge.className).toContain("bg-status-neutral/15");
+    expect(nodeLabelBadge.className).toContain("bg-tint-status-neutral");
     // Decision badge uses success for approved
-    expect(decisionBadge.className).toContain("bg-status-success/15");
+    expect(decisionBadge.className).toContain("bg-tint-status-success");
   });
 
   it("falls back to reviewerType when nodeLabel is null", () => {
