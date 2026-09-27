@@ -135,10 +135,11 @@ exact canonical hexes.
 ## Contrast: status indicators, badges, charts
 
 Badges, roadmap/priority/milestone chips, and log severity labels used to render their
-*word* in the tone color over a translucent `bg-status-*/15` tint. Both numbers below are
-computed by `src/lib/__tests__/status-contrast.test.ts`, straight from `index.css`: "before"
-is the tone color against its own translucent tint over `--popover`; "after" is
-`--foreground` against the new opaque `bg-tint-status-*` (15%) tint. All six "after" values
+*word* in the tone color over a translucent `bg-status-*/15` tint. Both columns below are
+computed from `index.css` with `src/lib/__tests__/helpers/colorMetrics.ts`: "before" is the
+tone color against its own 15% tint over `--popover`; "after" is `--foreground` against the
+new opaque `bg-tint-status-*` (15%) tint, which `status-contrast.test.ts` enforces (with the
+25% `bg-tint-strong-*`, whose lowest is light info at 4.88:1). All six "after" values
 clear the 4.5:1 AA text floor in both themes; four of six "before" values failed it in
 light, two of six in dark.
 
@@ -165,9 +166,9 @@ as exact-match data (not a loosened check) in `status-contrast.test.ts`:
   (≈2.05:1/2.16:1), `chart-3` rose (≈2.60:1/2.74:1), `chart-5` gold (≈2.05:1/2.16:1). No
   dark-mode marks fail. Cue: the status word always sits beside the mark.
 - **Tone pairs too close by OKLab ΔE** (normal vision < 15, or simulated protanopia/
-  deuteranopia < 8): nine of the fifteen light pairs (every pairing that includes
-  success, error, info, accent, or neutral except a `warning` pairing) and four of the
-  fifteen dark pairs (success/accent, error/neutral, info/neutral, accent/neutral). Cue:
+  deuteranopia < 8): nine of the fifteen light pairs (every pair without warning except
+  info/accent) and four of the fifteen dark pairs (success/accent, error/neutral,
+  info/neutral, accent/neutral). Cue:
   the same — a status word, never two bare same-shaped dots side by side.
 
 See `docs/decisions/2026-09-27---01-status-ink-labels-and-contrast-gate.md` for the full

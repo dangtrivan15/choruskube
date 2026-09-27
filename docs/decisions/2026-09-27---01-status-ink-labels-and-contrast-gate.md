@@ -100,8 +100,8 @@ surface at the text floor.
    a real Recharts mount — reusing the same compositing math via `e2e/helpers/contrast.ts`.
 
 All three share one WCAG/OKLab math module (`src/lib/__tests__/helpers/colorMetrics.ts`)
-so a contrast/ΔE formula is defined exactly once. That module gained `parseColor`,
-`composite`, `toHex`, `readTintUtilities` (parses the `bg-tint-*` `@utility` rules'
+so a contrast/ΔE formula is defined exactly once. That module gained `toHex`,
+`readTintUtilities` (parses the `bg-tint-*` `@utility` rules'
 percentage and base token straight from `index.css`), `resolveTint` (composites a raw
 token over a theme's tint base at that percentage — the same math the browser renders),
 and canvas/card sampling helpers (`lightCanvasSamples`, `lightCardSamples`). It is now
@@ -135,8 +135,10 @@ fails) — the list can't silently drift out of sync with what the palette actua
 
 `STATUS_TONE_CLASSES`, `priorityMeta.ts`, `roadmapLevel.ts`, `milestoneMeta.ts`,
 `logLevelStyles.ts`, and `timelineStage.ts` all changed their recipe *values* (tint
-instead of translucent `/N`, ink instead of tone on the label) while keeping every
-existing key name a downstream build composing this web-ui's source already depends on.
+instead of translucent `/N`, ink instead of tone on the label). All but one kept every
+existing key name, since a downstream build composing this web-ui's source consumes
+them; `logLevelStyles.ts` replaced its `text` key with `icon`/`label`, because its only
+consumer is `ExecutionLogs.tsx` and a shared key would keep inviting tone on the word.
 Every render site that consumed a tone-colored word (badges, chips, DAG/roadmap graph
 node status words, log severity labels, layout counters, chart labels) now renders that
 word in `text-foreground` and gets its tone cue from an adjacent mark instead — the
