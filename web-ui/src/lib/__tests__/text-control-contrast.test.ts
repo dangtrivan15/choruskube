@@ -12,6 +12,8 @@ import {
   parseCssColor,
   contrastRatio,
   blendOver,
+  compositeOver,
+  DAWN,
   TEXT_CONTRAST_MIN,
   NON_TEXT_CONTRAST_MIN,
 } from "./helpers/colorMetrics";
@@ -19,48 +21,58 @@ import {
 const CSS_PATH = path.resolve(__dirname, "../../index.css");
 const rawCss = readFileSync(CSS_PATH, "utf-8");
 
-function hexOfRgb([r, g, b]: [number, number, number]): string {
-  const byte = (v: number) => Math.round(v).toString(16).padStart(2, "0");
-  return `#${byte(r)}${byte(g)}${byte(b)}`;
-}
-
-/**
- * The darkest (lowest relative-luminance) of a set of opaque hex colors, found
- * by contrast-to-white — monotonic for the near-white candidates used here.
- */
+/** The darkest (lowest relative-luminance, so highest contrast against white) of opaque hexes. */
 function darkestOf(hexes: string[]): string {
   return hexes.reduce((worst, candidate) =>
     contrastRatio(candidate, "#ffffff") > contrastRatio(worst, "#ffffff") ? candidate : worst,
   );
 }
 
-function tint(inkHex: string, alpha: number, bgHex: string): string {
-  return blendOver(inkHex, alpha, bgHex);
+// ---------------------------------------------------------------------------
+// Gradient-constants guard. The canvas floor below is computed from these
+// constants and nowhere else, so the guard that pins them to the real
+// gradient declaration is what keeps the modelled floor honest.
+// ---------------------------------------------------------------------------
+const GRADIENT_TINTS = {
+  iris: "rgba(144,122,169,0.08)",
+  foam: "rgba(86,148,159,0.06)",
+  gold: "rgba(234,157,52,0.06)",
+} as const;
+const GRADIENT_STOPS = ["#faf4ed", "#f4ede8", "#f2e9e1"];
+
+const normalizeCss = (s: string) => s.replace(/\s+/g, "");
+
+/** Every rgba() tint and #rrggbb stop in the light body gradient declaration of `css`. */
+function lightGradientColors(css: string): { tints: Set<string>; stops: Set<string> } {
+  const match = css.match(
+    /html:not\(\.dark\) body\s*{\s*background:\s*([\s\S]*?)\s*background-attachment/,
+  );
+  if (!match) {
+    throw new Error("Could not find the light body gradient declaration in index.css");
+  }
+  const declaration = match[1];
+  return {
+    tints: new Set(Array.from(declaration.matchAll(/rgba\([^)]*\)/g)).map((m) => normalizeCss(m[0]))),
+    stops: new Set(Array.from(declaration.matchAll(/#[0-9a-fA-F]{6}/g)).map((m) => m[0])),
+  };
 }
 
-// ---------------------------------------------------------------------------
-// Gradient-constants guard: the canvas floor below is modelled from these
-// constants, which must equal the real gradient declaration's full set of
-// tints and stops, or an edit to the gradient would silently stop being
-// reflected in the modelled canvas floor.
-// ---------------------------------------------------------------------------
-const GRADIENT_TINTS = ["rgba(144,122,169,0.08)", "rgba(86,148,159,0.06)", "rgba(234,157,52,0.06)"];
-const GRADIENT_STOPS = ["#faf4ed", "#f4ede8", "#f2e9e1"];
+const MODELLED_TINTS = new Set(Object.values(GRADIENT_TINTS).map(normalizeCss));
+const MODELLED_STOPS = new Set(GRADIENT_STOPS);
 
 describe("light gradient tints/stops match the modelled canvas-floor constants", () => {
   it("the html:not(.dark) body background declaration equals the modelled set", () => {
-    const match = rawCss.match(
-      /html:not\(\.dark\) body\s*{\s*background:\s*([\s\S]*?)\s*background-attachment/,
+    const { tints, stops } = lightGradientColors(rawCss);
+    expect(tints).toEqual(MODELLED_TINTS);
+    expect(stops).toEqual(MODELLED_STOPS);
+  });
+
+  it("an extra radial tint in the declaration no longer equals the modelled set", () => {
+    const withExtraTint = rawCss.replace(
+      /(html:not\(\.dark\) body\s*{\s*background:)/,
+      "$1\n    radial-gradient(circle, rgba(87,82,121,0.2), transparent 70%),",
     );
-    if (!match) {
-      throw new Error("Could not find the light body gradient declaration in index.css");
-    }
-    const declaration = match[1];
-    const normalize = (s: string) => s.replace(/\s+/g, "");
-    const rgbaFound = Array.from(declaration.matchAll(/rgba\([^)]*\)/g)).map((m) => normalize(m[0]));
-    const hexFound = Array.from(declaration.matchAll(/#[0-9a-fA-F]{6}/g)).map((m) => m[0]);
-    expect(new Set(rgbaFound)).toEqual(new Set(GRADIENT_TINTS.map(normalize)));
-    expect(new Set(hexFound)).toEqual(new Set(GRADIENT_STOPS));
+    expect(lightGradientColors(withExtraTint).tints).not.toEqual(MODELLED_TINTS);
   });
 });
 
@@ -101,16 +113,15 @@ function buildLightBackgrounds(tokens: Record<string, string>) {
   const overlay = tokens["muted"];
   const sidebar = tokens["sidebar"];
 
+  // Each tint at full strength over the darkest stop: a pessimistic floor.
   const S = darkestOf(GRADIENT_STOPS);
-  const canvasFloorIris = tint("#907aa9", 0.08, S);
-  const canvasFloorFoam = tint("#56949f", 0.06, S);
-  const canvasFloorGold = tint("#ea9d34", 0.06, S);
+  const canvasFloorIris = compositeOver(GRADIENT_TINTS.iris, S);
+  const canvasFloorFoam = compositeOver(GRADIENT_TINTS.foam, S);
+  const canvasFloorGold = compositeOver(GRADIENT_TINTS.gold, S);
   const darkestFloor = darkestOf([canvasFloorIris, canvasFloorFoam, canvasFloorGold]);
 
-  const cardAlpha = parseCssColor(tokens["card"]).alpha;
-  const glassAlpha = parseCssColor(tokens["surface-glass"]).alpha;
-  const cardOnFloor = tint("#ffffff", cardAlpha, darkestFloor);
-  const glassOnFloor = tint("#ffffff", glassAlpha, darkestFloor);
+  const cardOnFloor = compositeOver(tokens["card"], darkestFloor);
+  const glassOnFloor = compositeOver(tokens["surface-glass"], darkestFloor);
 
   return {
     base,
@@ -132,20 +143,19 @@ function buildDarkBackgrounds(tokens: Record<string, string>) {
   const overlay = tokens["muted"];
   const sidebar = tokens["sidebar"];
 
-  const glassParsed = parseCssColor(tokens["surface-glass"]);
-  const glass = tint(hexOfRgb(glassParsed.rgb), glassParsed.alpha, base);
+  const glass = compositeOver(tokens["surface-glass"], base);
 
   // The `--muted` *token* (Rose Pine overlay in dark), not the Rose Pine
   // "muted" role that `--input` takes.
-  const entryFillBase = tint(overlay, 0.5, base);
-  const entryFillSurface = tint(overlay, 0.5, surface);
-  const entryHoverSurface = tint(overlay, 0.7, surface);
+  const entryFillBase = blendOver(overlay, 0.5, base);
+  const entryFillSurface = blendOver(overlay, 0.5, surface);
+  const entryHoverSurface = blendOver(overlay, 0.7, surface);
 
   const input = tokens["input"];
-  const outlineFillBase = tint(input, 0.3, base);
-  const outlineFillSurface = tint(input, 0.3, surface);
-  const outlineHoverBase = tint(input, 0.5, base);
-  const outlineHoverSurface = tint(input, 0.5, surface);
+  const outlineFillBase = blendOver(input, 0.3, base);
+  const outlineFillSurface = blendOver(input, 0.3, surface);
+  const outlineHoverBase = blendOver(input, 0.5, base);
+  const outlineHoverSurface = blendOver(input, 0.5, surface);
 
   return {
     base,
@@ -231,7 +241,7 @@ function buildLightRegistry(tokens: Record<string, string>, bg: LightBg): PairCa
 
   for (const inkName of ["primary", "destructive"]) {
     for (const bgId of ["base", "surface", "cardOnFloor"] as const) {
-      push(inkName, `tint10(${inkName},${bgId})`, tokens[inkName], tint(tokens[inkName], 0.1, bg[bgId]), TEXT_CONTRAST_MIN);
+      push(inkName, `tint10(${inkName},${bgId})`, tokens[inkName], blendOver(tokens[inkName], 0.1, bg[bgId]), TEXT_CONTRAST_MIN);
     }
   }
   for (const bgId of ["canvasFloorIris", "canvasFloorFoam", "canvasFloorGold"] as const) {
@@ -239,7 +249,7 @@ function buildLightRegistry(tokens: Record<string, string>, bg: LightBg): PairCa
       "destructive",
       `tint5(destructive,${bgId})`,
       tokens["destructive"],
-      tint(tokens["destructive"], 0.05, bg[bgId]),
+      blendOver(tokens["destructive"], 0.05, bg[bgId]),
       TEXT_CONTRAST_MIN,
     );
   }
@@ -292,7 +302,7 @@ function buildDarkRegistry(tokens: Record<string, string>, bg: DarkBg): PairCase
 
   for (const inkName of ["primary", "destructive"]) {
     for (const bgId of ["base", "surface"] as const) {
-      push(inkName, `tint10(${inkName},${bgId})`, tokens[inkName], tint(tokens[inkName], 0.1, bg[bgId]), TEXT_CONTRAST_MIN);
+      push(inkName, `tint10(${inkName},${bgId})`, tokens[inkName], blendOver(tokens[inkName], 0.1, bg[bgId]), TEXT_CONTRAST_MIN);
     }
   }
 
@@ -344,4 +354,14 @@ describe.each(THEMES)("text/control contrast registry — $theme", ({ theme, sel
       ).toBeGreaterThanOrEqual(c.min);
     },
   );
+});
+
+describe("the registry catches a regressed ink", () => {
+  it("reverting light --muted-foreground to canonical subtle fails its pair on base", () => {
+    const reverted = { ...readThemeTokens(":root"), "muted-foreground": DAWN.subtle };
+    const failing = buildLightRegistry(reverted, buildLightBackgrounds(reverted))
+      .filter((c) => contrastRatio(c.inkHex, c.bgHex) < c.min)
+      .map((c) => `--${c.ink} on ${c.bg}`);
+    expect(failing).toContain("--muted-foreground on base");
+  });
 });

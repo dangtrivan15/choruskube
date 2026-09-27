@@ -36,10 +36,7 @@ export const ACCEPTED_INK_EXCEPTIONS: AcceptedInkException[] = [
 // Opacity modifier: a plain fraction (`/50`) or a bracketed arbitrary value (`/[.7]`).
 const OPACITY = String.raw`\/(?:\d+|\[[^\]]+\])`;
 
-// Text/inverse inks this task holds to the 4.5:1 text floor. The negative
-// lookbehind lets a match follow any variant chain — bracketed (`[a]:hover:`),
-// slash-named groups (`group-hover/row:`) or a `!` prefix — that a
-// whitespace/quote anchor plus `(?:[a-z0-9-]+:)*` would miss.
+// Text/inverse inks the contrast gate holds to the 4.5:1 text floor.
 const INK_TOKENS =
   "foreground|muted-foreground|primary|primary-foreground|destructive|destructive-foreground|secondary-foreground|accent-foreground|card-foreground|popover-foreground|sidebar-foreground|sidebar-accent-foreground|sidebar-primary-foreground|background";
 
@@ -48,6 +45,9 @@ interface PatternSpec {
   re: RegExp;
 }
 
+// `(?<![\w-])` rather than a whitespace/quote anchor, so a match still fires
+// behind any variant chain: bracketed (`[a]:hover:`), slash-named groups
+// (`group-hover/row:`) or a `!` prefix.
 const PATTERNS: PatternSpec[] = [
   { category: "ink", re: new RegExp(String.raw`(?<![\w-])text-(?:${INK_TOKENS})${OPACITY}`, "g") },
   { category: "focus", re: new RegExp(String.raw`\bfocus-visible:(?:ring|outline|border)-[a-z-]+${OPACITY}`, "g") },
@@ -75,7 +75,6 @@ export function scanInkSource(relPath: string, text: string): InkFinding[] {
       let match: RegExpExecArray | null;
       while ((match = re.exec(line)) !== null) {
         spans.push({ start: match.index, end: match.index + match[0].length, category, match: match[0] });
-        if (match[0].length === 0) re.lastIndex += 1;
       }
     }
 

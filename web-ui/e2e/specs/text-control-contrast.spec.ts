@@ -23,7 +23,7 @@ async function seedTheme(
 
 const MUTED_FOREGROUND_HEX = { light: "#656083", dark: "#908caa" } as const;
 
-test.describe.parallel("text/control contrast — create-git-repo dialog", () => {
+test.describe("text/control contrast — create-git-repo dialog", () => {
   for (const theme of ["light", "dark"] as const) {
     test(`${theme}: primary label, muted/destructive ink, input border and focus ring all clear AA`, async ({
       page,
@@ -49,44 +49,46 @@ test.describe.parallel("text/control contrast — create-git-repo dialog", () =>
       const dialog = page.locator('[data-slot="dialog-content"]');
       const dialogBg = await dialog.evaluate((el) => getComputedStyle(el).backgroundColor);
 
+      // The dialog auto-focuses its first field (Repository URL) on open, so
+      // the resting `--input` border is read from the next, untouched field.
+      // Inputs carry transition-colors: poll until the border has settled.
       const urlInput = page.getByLabel(/repository url/i);
+      const branchInput = page.getByLabel(/default branch/i);
+      const borderOf = (locator: typeof branchInput) =>
+        locator.evaluate((el) => getComputedStyle(el).borderTopColor);
 
-      // Unfocused first — the input hasn't been touched yet, so this is the
-      // resting-state border the gate's `input` rows model.
-      const restingBorder = await urlInput.evaluate((el) => getComputedStyle(el).borderTopColor);
+      // 2. Resting input border vs the dialog background.
+      const inputColor = await resolveColor(page, "var(--input)");
+      await expect.poll(() => borderOf(branchInput)).toBe(inputColor);
       expect(
-        contrastRatioRgb(restingBorder, dialogBg),
+        contrastRatioRgb(await borderOf(branchInput), dialogBg),
         `${theme}: resting input border vs dialog background`,
       ).toBeGreaterThanOrEqual(3);
 
-      // 2. Fill the required field (never submit) so **Create** is enabled.
+      // 3. Fill the required field (never submit) so **Create** is enabled.
       // Nothing is created, so uniqueName() is not needed.
       await urlInput.fill("https://github.com/e2e-test/text-control-contrast");
 
-      // 3. A keyboard-focused input's ring: alpha must be 1 (no half-opacity
-      // regression) and its color must clear the 3:1 non-text floor. Inputs
-      // carry transition-colors, so poll until the transition has settled
-      // (border-color resolves to `--ring`) before reading box-shadow.
-      const expectedRingColor = await resolveColor(page, "var(--ring)");
-      await expect
-        .poll(async () => urlInput.evaluate((el) => getComputedStyle(el).borderColor))
-        .toBe(expectedRingColor);
+      // 4. Tab to the next field, so the ring checked is a keyboard focus ring:
+      // alpha 1 (no half-opacity regression) and ≥ 3:1 against the dialog.
+      await page.keyboard.press("Tab");
+      await expect(branchInput).toBeFocused();
+      const ringTokenColor = await resolveColor(page, "var(--ring)");
+      await expect.poll(() => borderOf(branchInput)).toBe(ringTokenColor);
 
-      const boxShadow = await urlInput.evaluate((el) => getComputedStyle(el).boxShadow);
+      const boxShadow = await branchInput.evaluate((el) => getComputedStyle(el).boxShadow);
       const ringColor = ringColorOf(boxShadow);
       expect(alphaOf(ringColor), `${theme}: focus ring alpha`).toBe(1);
       expect(
         contrastRatioRgb(ringColor, dialogBg),
         `${theme}: focus ring vs dialog background`,
       ).toBeGreaterThanOrEqual(3);
-
-      const focusedBorder = await urlInput.evaluate((el) => getComputedStyle(el).borderTopColor);
       expect(
-        contrastRatioRgb(focusedBorder, dialogBg),
+        contrastRatioRgb(await borderOf(branchInput), dialogBg),
         `${theme}: focused input border vs dialog background`,
       ).toBeGreaterThanOrEqual(3);
 
-      // 4. Create button label on its own fill.
+      // 5. Create button label on its own fill.
       const createButton = page.getByRole("button", { name: /^create$/i });
       await expect(createButton).toBeEnabled();
       const createColor = await createButton.evaluate((el) => getComputedStyle(el).color);
@@ -96,7 +98,7 @@ test.describe.parallel("text/control contrast — create-git-repo dialog", () =>
         `${theme}: Create button label vs its fill`,
       ).toBeGreaterThanOrEqual(4.5);
 
-      // 5. Dialog description (muted helper text) vs the dialog background.
+      // 6. Dialog description (muted helper text) vs the dialog background.
       const description = page.getByText(
         /register a repository with its build and test configuration/i,
       );
@@ -106,7 +108,7 @@ test.describe.parallel("text/control contrast — create-git-repo dialog", () =>
         `${theme}: dialog description vs dialog background`,
       ).toBeGreaterThanOrEqual(4.5);
 
-      // 6. Required-field asterisk (text-destructive) vs the dialog background.
+      // 7. Required-field asterisk (text-destructive) vs the dialog background.
       const asterisk = page.locator('label[for="repo-url"] span.text-destructive');
       const asteriskColor = await asterisk.evaluate((el) => getComputedStyle(el).color);
       expect(
@@ -114,7 +116,7 @@ test.describe.parallel("text/control contrast — create-git-repo dialog", () =>
         `${theme}: required-field asterisk vs dialog background`,
       ).toBeGreaterThanOrEqual(4.5);
 
-      // 7. The muted-foreground token resolves to exactly this theme's
+      // 8. The muted-foreground token resolves to exactly this theme's
       // AA-deepened (light) or unchanged (dark) value — proves the composed
       // stylesheet, not a stale cached one, is what the browser resolved.
       expect(await resolveColor(page, "var(--muted-foreground)")).toBe(

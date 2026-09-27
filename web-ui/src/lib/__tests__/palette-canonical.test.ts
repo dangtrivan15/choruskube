@@ -81,8 +81,9 @@ describe("light theme AA-deepened tokens are on-palette mixes toward Dawn text",
     ["sidebar-primary", "iris", 0.7],
     ["sidebar-ring", "iris", 0.7],
     ["destructive", "love", 0.7],
-  ] as const)("--%s equals text mixed %s%% toward Dawn %s", (token, role, weightOfText) => {
-    expect(Number.isInteger(Math.round(weightOfText * 1000) / 100)).toBe(true);
+  ] as const)("--%s equals Dawn %s deepened toward Dawn text at text weight %s", (token, role, weightOfText) => {
+    // The ladder only takes whole 10% steps.
+    expect(weightOfText * 10).toBeCloseTo(Math.round(weightOfText * 10), 9);
     expect(tokenValue(block, token)).toBe(mixSrgb(DAWN.text, DAWN[role], weightOfText));
   });
 });

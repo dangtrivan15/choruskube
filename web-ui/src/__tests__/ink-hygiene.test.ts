@@ -26,6 +26,12 @@ describe("scanInkSource self-tests", () => {
     expect(scanInkSource("a.tsx", '<a className="[a]:hover:text-primary/80" />')).toEqual([
       expect.objectContaining({ category: "ink", match: "text-primary/80" }),
     ]);
+    expect(scanInkSource("a.tsx", '<a className="group-hover/row:text-foreground/70" />')).toEqual([
+      expect.objectContaining({ category: "ink", match: "text-foreground/70" }),
+    ]);
+    expect(scanInkSource("a.tsx", '<a className="data-[state=open]:!text-primary/80" />')).toEqual([
+      expect.objectContaining({ category: "ink", match: "text-primary/80" }),
+    ]);
     expect(scanInkSource("a.tsx", '<p className="text-muted-foreground/70" />')).toEqual([
       expect.objectContaining({ category: "ink", match: "text-muted-foreground/70" }),
     ]);

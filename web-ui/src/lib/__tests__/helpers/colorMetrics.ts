@@ -120,7 +120,7 @@ export const CVD_DELTA_E_MIN = 8;
 export const TEXT_CONTRAST_MIN = 4.5;
 export const NON_TEXT_CONTRAST_MIN = 3;
 
-function formatHex([r, g, b]: Vec3 | [number, number, number]): string {
+function formatHex([r, g, b]: Vec3): string {
   const toByte = (v: number) => Math.round(v).toString(16).padStart(2, "0");
   return `#${toByte(r)}${toByte(g)}${toByte(b)}`;
 }
@@ -169,6 +169,16 @@ export function blendOver(fgHex: string, alpha: number, bgHex: string): string {
  */
 export function mixSrgb(aHex: string, bHex: string, weightA: number): string {
   return blendOver(aHex, weightA, bHex);
+}
+
+/**
+ * Composites a `#rrggbb`/`rgb()`/`rgba()` layer, at its own alpha, over an
+ * opaque background — so a translucent token is modelled from its declared
+ * value rather than from a copy of its channels or alpha.
+ */
+export function compositeOver(cssColor: string, bgHex: string): string {
+  const { rgb, alpha } = parseCssColor(cssColor);
+  return blendOver(formatHex(rgb), alpha, bgHex);
 }
 
 type RoseRole =
