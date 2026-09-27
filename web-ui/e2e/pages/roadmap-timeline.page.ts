@@ -100,7 +100,7 @@ export class RoadmapTimelinePage {
    * re-issue the hover on failure too, not just the initial visible/contains-text check: the same
    * org-wide refetch that can reposition the marker can just as easily unmount and remount the
    * preview mid-read, so a caller that asserts against it *after* this method already returned
-   * would be reading a element that can vanish out from under it with no retry left to catch it.
+   * would be reading an element that can vanish out from under it with no retry left to catch it.
    */
   async hoverToRevealPreview(
     marker: Locator,
