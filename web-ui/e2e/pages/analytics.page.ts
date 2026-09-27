@@ -99,6 +99,15 @@ export class AnalyticsPage {
    * locator is a strict-mode violation whenever more than one chart is mounted; the lookup must
    * be scoped to the chart just hovered.
    *
+   * The plotting surface locator is scoped to `.recharts-wrapper`'s direct child: each Legend
+   * item icon is *also* an `.recharts-surface` (Recharts renders legend icons with the same
+   * `<Surface>` primitive as the main plot) and those icons mount, as siblings of the real
+   * plotting surface, before it — so an unscoped `.recharts-surface` `.first()` silently
+   * resolves to a 24×24 legend swatch instead of the chart, and hovering its center never lands
+   * inside the plot area, leaving the tooltip permanently hidden. Legend icons sit several
+   * levels deeper (`.recharts-wrapper > .recharts-legend-wrapper > … > svg`), so the direct-child
+   * combinator excludes them unambiguously.
+   *
    * `scrollIntoViewIfNeeded` runs before the bounding box is read: `page.mouse.move` dispatches
    * at raw viewport coordinates and does not auto-scroll like `locator.hover()` does, so a chart
    * that starts below the fold (Run Trend sits below the Resource Usage/overview cards, which
@@ -106,7 +115,7 @@ export class AnalyticsPage {
    * the visible viewport — the move lands nowhere and the tooltip never opens.
    */
   async hoverDataPoint(chart: Locator): Promise<Locator> {
-    const surface = chart.locator(".recharts-surface").first();
+    const surface = chart.locator(".recharts-wrapper > .recharts-surface").first();
     await surface.scrollIntoViewIfNeeded();
     const box = await surface.boundingBox();
     if (!box) throw new Error("Chart surface has no bounding box — is it visible?");
