@@ -101,6 +101,12 @@ export class RoadmapTimelinePage {
    * org-wide refetch that can reposition the marker can just as easily unmount and remount the
    * preview mid-read, so a caller that asserts against it *after* this method already returned
    * would be reading an element that can vanish out from under it with no retry left to catch it.
+   *
+   * Each retry moves the pointer off the marker first. The browser only fires a fresh
+   * `mouseenter` (what the Tooltip opens on) when the hovered element actually changes — hovering
+   * the same still-hovered marker again is a no-op at the DOM level, so a retry that skipped this
+   * would keep reading whatever content mounted on the *first* attempt instead of ever
+   * re-triggering the open.
    */
   async hoverToRevealPreview(
     marker: Locator,
@@ -108,6 +114,7 @@ export class RoadmapTimelinePage {
     afterOpen?: () => Promise<void>,
   ): Promise<void> {
     await expect(async () => {
+      await this.page.mouse.move(0, 0);
       await marker.hover();
       await expect(this.itemPreview).toBeVisible({ timeout: 2_000 });
       for (const text of expectedTexts) {

@@ -98,9 +98,16 @@ export class AnalyticsPage {
    * style until hovered, not absent from the DOM — so a page-wide `.recharts-tooltip-wrapper`
    * locator is a strict-mode violation whenever more than one chart is mounted; the lookup must
    * be scoped to the chart just hovered.
+   *
+   * `scrollIntoViewIfNeeded` runs before the bounding box is read: `page.mouse.move` dispatches
+   * at raw viewport coordinates and does not auto-scroll like `locator.hover()` does, so a chart
+   * that starts below the fold (Run Trend sits below the Resource Usage/overview cards, which
+   * pushes it past the default 720px viewport height) would otherwise get a center point beyond
+   * the visible viewport — the move lands nowhere and the tooltip never opens.
    */
   async hoverDataPoint(chart: Locator): Promise<Locator> {
     const surface = chart.locator(".recharts-surface").first();
+    await surface.scrollIntoViewIfNeeded();
     const box = await surface.boundingBox();
     if (!box) throw new Error("Chart surface has no bounding box — is it visible?");
     await this.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
