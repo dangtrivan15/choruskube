@@ -157,6 +157,19 @@
     --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/* Opaque status/chart tints: sRGB `color-mix` over `--popover` (always opaque
+   in both themes), never a translucent alpha-modifier background, so a
+   badge/callout tint reads the same regardless of what glass or gradient
+   sits behind it. The contrast gate (status-contrast.test.ts) models this as
+   straight sRGB alpha compositing — mixing in any other color space would
+   make its math wrong. */
+@utility bg-tint-* {
+  background-color: color-mix(in srgb, --value(--color-*) 15%, var(--popover));
+}
+@utility bg-tint-strong-* {
+  background-color: color-mix(in srgb, --value(--color-*) 25%, var(--popover));
+}
+
 @layer base {
   * {
     @apply border-border outline-ring;

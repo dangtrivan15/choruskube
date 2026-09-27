@@ -1,15 +1,29 @@
 /**
- * Test-only color math shared by chart-series-distinguishable.test.ts and the
- * text/control contrast gate (text-control-contrast.test.ts).
+ * Test-only color math shared by chart-series-distinguishable.test.ts, the
+ * text/control contrast gate (text-control-contrast.test.ts), the status/badge/
+ * chart contrast gate (status-contrast.test.ts), and — via a re-export path
+ * safe for ESM — e2e/helpers/contrast.ts.
  */
 import { readFileSync } from "fs";
-import path from "path";
+import { fileURLToPath } from "url";
 
-const CSS_PATH = path.resolve(__dirname, "../../../index.css");
+/**
+ * Resolved lazily, inside each reader, rather than at module scope: Playwright
+ * loads this file as an ES module (no `__dirname`), and a module-scope
+ * `path.resolve(__dirname, ...)` throws before either environment gets to run.
+ * `import.meta.url` is read into `base` before `new URL(...)` sees it — written
+ * inline as `new URL(x, import.meta.url)`, Vite's static asset-URL transform
+ * intercepts the literal pattern and resolves it against the dev-server origin
+ * instead of the filesystem, which breaks under Vitest.
+ */
+function cssPath(): string {
+  const base = import.meta.url;
+  return fileURLToPath(new URL("../../../index.css", base));
+}
 
 /** A theme block's (`:root` or `.dark`) custom-property values from index.css, keyed by name without the leading `--`. */
 export function readThemeTokens(selector: ":root" | ".dark"): Record<string, string> {
-  const css = readFileSync(CSS_PATH, "utf-8");
+  const css = readFileSync(cssPath(), "utf-8");
   const pattern = selector === ":root" ? /:root\s*{([^}]*)}/ : /\.dark\s*{([^}]*)}/;
   const match = css.match(pattern);
   if (!match) {
@@ -119,6 +133,8 @@ export const CVD_DELTA_E_MIN = 8;
 
 export const TEXT_CONTRAST_MIN = 4.5;
 export const NON_TEXT_CONTRAST_MIN = 3;
+/** Alias for `CONTRAST_MIN`, named for its use as the mark (non-text) contrast floor. */
+export const MARK_CONTRAST_MIN = CONTRAST_MIN;
 
 function formatHex([r, g, b]: Vec3): string {
   const toByte = (v: number) => Math.round(v).toString(16).padStart(2, "0");
@@ -181,6 +197,23 @@ export function compositeOver(cssColor: string, bgHex: string): string {
   return blendOver(formatHex(rgb), alpha, bgHex);
 }
 
+/** Alias for `parseCssColor`, named for the generic `{ rgb, alpha }` shape it returns. */
+export const parseColor = parseCssColor;
+
+/**
+ * Straight sRGB alpha compositing of an opaque `fgHex` at `alpha` over an
+ * opaque `bgHex` — the same arithmetic as `blendOver`, exposed under the name
+ * `e2e/helpers/contrast.ts` and the status-contrast gate call it by.
+ */
+export function composite(fgHex: string, alpha: number, bgHex: string): string {
+  return blendOver(fgHex, alpha, bgHex);
+}
+
+/** Exposes `formatHex` under the name callers outside this module use. */
+export function toHex(rgb: [number, number, number]): string {
+  return formatHex(rgb);
+}
+
 type RoseRole =
   | "base"
   | "surface"
@@ -240,3 +273,99 @@ export const MAIN: Record<RoseRole, string> = {
   highlightMed: "#403d52",
   highlightHigh: "#524f67",
 };
+
+interface TintUtilityRule {
+  strength: number;
+  base: string;
+}
+
+/** Parses one `@utility bg-tint(-strong)?-*` rule's mix percentage and base var name out of `css`. */
+function parseTintUtilityRule(css: string, literalName: string): TintUtilityRule {
+  const pattern = new RegExp(
+    `@utility ${literalName}\\s*\\{\\s*background-color:\\s*color-mix\\(in srgb,\\s*--value\\(--color-\\*\\)\\s*(\\d+(?:\\.\\d+)?)%,\\s*var\\((--[a-z0-9-]+)\\)\\);?\\s*\\}`,
+  );
+  const match = css.match(pattern);
+  if (!match) {
+    throw new Error(`Could not find an "@utility ${literalName}" rule in index.css`);
+  }
+  return { strength: Number(match[1]), base: match[2] };
+}
+
+/**
+ * Reads the `bg-tint-*` / `bg-tint-strong-*` `@utility` rules from index.css and
+ * returns their mix percentages and shared base surface token. Throws if either
+ * rule is missing, so a renamed/removed utility fails the gate instead of being
+ * silently skipped.
+ */
+export function readTintUtilities(): { tint: number; tintStrong: number; base: string } {
+  const css = readFileSync(cssPath(), "utf-8");
+  const tint = parseTintUtilityRule(css, "bg-tint-\\*");
+  const tintStrong = parseTintUtilityRule(css, "bg-tint-strong-\\*");
+  if (tint.base !== tintStrong.base) {
+    throw new Error(
+      `bg-tint-* mixes over ${tint.base} but bg-tint-strong-* mixes over ${tintStrong.base} — they must share a base surface`,
+    );
+  }
+  return { tint: tint.strength, tintStrong: tintStrong.strength, base: tint.base };
+}
+
+/**
+ * Composites `token`'s raw color (e.g. `status-success`, `chart-1`, `primary`,
+ * `destructive`) over `theme`'s `--popover` at the `bg-tint-*`/`bg-tint-strong-*`
+ * percentage read from index.css — the same math `bg-tint-<token>` renders in
+ * the browser, so a gate comparing against this stays honest if the utility's
+ * percentage or base ever changes.
+ */
+export function resolveTint(
+  theme: ":root" | ".dark",
+  token: string,
+  strength: "tint" | "tintStrong",
+): string {
+  const tokens = readThemeTokens(theme);
+  const utilities = readTintUtilities();
+  const percent = strength === "tint" ? utilities.tint : utilities.tintStrong;
+  const baseName = utilities.base.replace(/^--/, "");
+  const baseColor = tokens[baseName];
+  const rawTokenValue = tokens[token];
+  if (rawTokenValue === undefined) {
+    throw new Error(`Unknown token --${token} in ${theme}`);
+  }
+  if (baseColor === undefined) {
+    throw new Error(`Unknown base surface token ${utilities.base} in ${theme}`);
+  }
+  return blendOver(rawTokenValue, percent / 100, baseColor);
+}
+
+/**
+ * Every `#hex` gradient stop in the light-mode body background, plus each
+ * stop composited with each `rgba()` radial overlay at its declared alpha.
+ * Overlays are never stacked onto each other: their non-transparent regions
+ * don't overlap at their real positions/sizes, so stacking would model a
+ * color the page never actually renders.
+ */
+export function lightCanvasSamples(): string[] {
+  const css = readFileSync(cssPath(), "utf-8");
+  const match = css.match(
+    /html:not\(\.dark\) body\s*\{\s*background:\s*([\s\S]*?)\s*background-attachment/,
+  );
+  if (!match) {
+    throw new Error("Could not find the light body gradient declaration in index.css");
+  }
+  const declaration = match[1];
+  const stops = Array.from(declaration.matchAll(/#[0-9a-fA-F]{6}/g)).map((m) => m[0]);
+  const overlays = Array.from(declaration.matchAll(/rgba\([^)]*\)/g)).map((m) => m[0]);
+  const samples = new Set<string>(stops);
+  for (const stop of stops) {
+    for (const overlay of overlays) {
+      samples.add(compositeOver(overlay, stop));
+    }
+  }
+  return Array.from(samples);
+}
+
+/** Every `lightCanvasSamples()` result, plus `--background`, with `--card` composited on top. */
+export function lightCardSamples(): string[] {
+  const tokens = readThemeTokens(":root");
+  const canvases = [...lightCanvasSamples(), tokens["background"]];
+  return canvases.map((canvas) => compositeOver(tokens["card"], canvas));
+}

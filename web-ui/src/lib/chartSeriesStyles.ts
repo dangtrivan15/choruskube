@@ -35,6 +35,33 @@ export function seriesColor(style: ChartSeriesStyle): string {
   return `var(${style.token})`;
 }
 
+/** Raw CSS custom-property names for chart text and the chart's opaque surface — shared by every axis/tooltip/legend. */
+export const CHART_TEXT_TOKEN = "--foreground";
+export const CHART_SURFACE_TOKEN = "--popover";
+
+/** Recharts `tick` prop for an `<XAxis>`/`<YAxis>` — ink text at any font size, instead of a fixed gray. */
+export function chartTickProps(fontSize: number): { fontSize: number; fill: string } {
+  return { fontSize, fill: `var(${CHART_TEXT_TOKEN})` };
+}
+
+/** Recharts `<Tooltip>` style props — opaque themed surface with ink text, never the library's default light-only card. */
+export function chartTooltipProps(): {
+  contentStyle: { backgroundColor: string; border: string; borderRadius: string; fontSize: string };
+  itemStyle: { color: string };
+  labelStyle: { color: string };
+} {
+  return {
+    contentStyle: {
+      backgroundColor: `var(${CHART_SURFACE_TOKEN})`,
+      border: "1px solid var(--border)",
+      borderRadius: "0.5rem",
+      fontSize: "0.875rem",
+    },
+    itemStyle: { color: `var(${CHART_TEXT_TOKEN})` },
+    labelStyle: { color: `var(${CHART_TEXT_TOKEN})` },
+  };
+}
+
 /**
  * Omits the key for a solid series: Recharts' legend icon tests `'strokeDasharray' in payload`,
  * so an explicit `undefined` would render a literal `stroke-dasharray="undefined"`.

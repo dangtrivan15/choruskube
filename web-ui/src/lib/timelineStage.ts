@@ -17,5 +17,5 @@ export const STAGE_TOKEN_MAP: Record<string, string> = {
 
 export function stageColors(stage: string) {
   const tokens = statusColorTokens(STAGE_TOKEN_MAP[stage] ?? stage);
-  return { bg: `${tokens.bg}/10`, border: `${tokens.border}/60`, text: tokens.text };
+  return { bg: tokens.tint, border: tokens.borderSoft, text: tokens.text };
 }
