@@ -1,5 +1,6 @@
 import { Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { STATUS_TONE_CLASSES } from "@/lib/statusColors";
 import type { Readiness } from "@/lib/types";
 
 interface ReadinessBadgeProps {
@@ -41,8 +42,9 @@ export default function ReadinessBadge({
       data-testid={dataTestId}
       title="Blocked by an unfinished dependency"
       className={cn(
-        "inline-flex items-center font-medium text-status-warning bg-status-warning/15 rounded-full",
-        compact ? "gap-0.5 px-1.5 py-0.5 text-[10px]" : "gap-1 border border-status-warning/20 px-2 py-0.5 text-xs",
+        "inline-flex items-center rounded-full font-medium",
+        STATUS_TONE_CLASSES.warning.badge,
+        compact ? "gap-0.5 px-1.5 py-0.5 text-[10px]" : "gap-1 border px-2 py-0.5 text-xs",
       )}
     >
       <Lock className={compact ? "size-2.5" : "size-3"} />

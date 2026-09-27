@@ -22,14 +22,13 @@ export default function LevelBadge({ level, className }: Props) {
     <span
       data-testid={`level-badge-${level}`}
       className={cn(
-        "inline-flex w-fit items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium",
-        meta.textClass,
+        "inline-flex w-fit items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium text-foreground",
         meta.bgClass,
         meta.borderClass,
         className,
       )}
     >
-      <Icon className="size-3.5 shrink-0" />
+      <Icon className={cn("size-3.5 shrink-0", meta.textClass)} />
       {meta.label}
     </span>
   );

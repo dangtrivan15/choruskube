@@ -1,6 +1,8 @@
 import { useCurrentOrg } from "@/hooks/useCurrentOrg";
 import { useUsageSummary } from "@/hooks/useUsage";
 import { Skeleton } from "@/components/ui/skeleton";
+import { STATUS_TONE_CLASSES } from "@/lib/statusColors";
+import StatusCallout from "@/components/ui/StatusCallout";
 
 function percentage(current: number, limit: number): number {
   if (limit <= 0) return 0;
@@ -15,9 +17,9 @@ function barColor(pct: number): string {
 
 function badgeClass(pct: number): string {
   if (pct >= 90) {
-    return "border border-status-error/20 bg-status-error/15 text-status-error";
+    return STATUS_TONE_CLASSES.error.badge;
   }
-  return "border border-status-warning/20 bg-status-warning/15 text-status-warning";
+  return STATUS_TONE_CLASSES.warning.badge;
 }
 
 function parseQuantity(val: string): number {
@@ -42,7 +44,10 @@ function QuotaBar({ title, current, limit, subtitle }: QuotaBarProps) {
       <div className="flex items-center justify-between">
         <p className="text-sm font-medium text-muted-foreground">{title}</p>
         {!isUnlimited && pct >= 80 && (
-          <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${badgeClass(pct)}`}>
+          <span
+            data-testid="usage-quota-chip"
+            className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium ${badgeClass(pct)}`}
+          >
             {pct >= 90 ? "Critical" : "Warning"}
           </span>
         )}
@@ -143,13 +148,12 @@ export default function UsageDashboard() {
             />
           </div>
         ) : (
-          <div className="rounded-lg border border-status-error/20 bg-status-error/5 p-4">
-            <p className="text-sm font-medium text-status-error">Unable to reach cluster metrics</p>
-            <p className="mt-1 text-xs text-muted-foreground">
+          <StatusCallout tone="error" title="Unable to reach cluster metrics">
+            <p className="text-xs text-foreground">
               The API server cannot read node metrics. Check that the metrics-server is running and
               RBAC grants the API server list access to nodes and metrics.k8s.io resources.
             </p>
-          </div>
+          </StatusCallout>
         )}
       </div>
     </>

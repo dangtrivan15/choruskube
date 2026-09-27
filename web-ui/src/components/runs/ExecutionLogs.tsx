@@ -49,7 +49,7 @@ export default function ExecutionLogs({
       className="max-h-80 overflow-y-auto rounded-md border bg-muted/30 p-3 font-mono text-xs"
     >
       {logs.map((log) => {
-        const { Icon, text, weight, border, row } = logLevelStyle(log.level);
+        const { Icon, icon, label, border, row } = logLevelStyle(log.level);
         return (
           <div
             key={log.id}
@@ -60,10 +60,10 @@ export default function ExecutionLogs({
             <span className="shrink-0 text-muted-foreground">
               {format(new Date(log.timestamp), "HH:mm:ss.SSS")}
             </span>
-            <Icon aria-hidden className={cn("mt-px h-3.5 w-3.5 shrink-0", text)} />
+            <Icon aria-hidden className={cn("mt-px h-3.5 w-3.5 shrink-0", icon)} />
             <span
               data-testid="log-level"
-              className={cn("shrink-0 w-12 text-right uppercase", text, weight)}
+              className={cn("shrink-0 w-12 text-right uppercase", label)}
             >
               {log.level}
             </span>

@@ -1,5 +1,6 @@
 import type { NodeAnalytics } from "@/lib/types";
 import TruncatedText from "@/components/ui/TruncatedText";
+import StatusDot from "@/components/ui/StatusDot";
 
 interface NodeTableProps {
   nodes: NodeAnalytics[];
@@ -21,8 +22,18 @@ export default function NodeTable({ nodes }: NodeTableProps) {
           <tr className="border-b text-left text-muted-foreground">
             <th className="pb-2 pr-4 font-medium">Node</th>
             <th className="pb-2 pr-4 text-right font-medium">Executions</th>
-            <th className="pb-2 pr-4 text-right font-medium">Completed</th>
-            <th className="pb-2 pr-4 text-right font-medium">Failed</th>
+            <th className="pb-2 pr-4 text-right font-medium">
+              <span className="inline-flex items-center gap-1">
+                <StatusDot tone="success" />
+                Completed
+              </span>
+            </th>
+            <th className="pb-2 pr-4 text-right font-medium">
+              <span className="inline-flex items-center gap-1">
+                <StatusDot tone="error" />
+                Failed
+              </span>
+            </th>
             <th className="pb-2 text-right font-medium">Success Rate</th>
           </tr>
         </thead>
@@ -33,8 +44,8 @@ export default function NodeTable({ nodes }: NodeTableProps) {
                 <TruncatedText>{n.label}</TruncatedText>
               </td>
               <td className="py-2 pr-4 text-right tabular-nums">{n.executionCount}</td>
-              <td className="py-2 pr-4 text-right tabular-nums text-status-success">{n.completedCount}</td>
-              <td className="py-2 pr-4 text-right tabular-nums text-status-error">{n.failedCount}</td>
+              <td className="py-2 pr-4 text-right tabular-nums text-foreground">{n.completedCount}</td>
+              <td className="py-2 pr-4 text-right tabular-nums text-foreground">{n.failedCount}</td>
               <td className="py-2 text-right tabular-nums">{n.successRate.toFixed(1)}%</td>
             </tr>
           ))}

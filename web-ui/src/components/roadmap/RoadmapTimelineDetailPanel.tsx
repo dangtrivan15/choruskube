@@ -1,10 +1,12 @@
 import { Link } from "react-router";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { stageColors } from "@/lib/timelineStage";
+import { STAGE_TOKEN_MAP } from "@/lib/timelineStage";
+import { statusTone } from "@/lib/statusColors";
 import ReadinessBadge from "@/components/roadmap/ReadinessBadge";
 import StalledBadge from "@/components/roadmap/StalledBadge";
 import BlockingChainSection from "@/components/roadmap/BlockingChainSection";
+import StatusDot from "@/components/ui/StatusDot";
 import { useBlockingChain } from "@/hooks/useBlockingChain";
 import type { TimelineEpicSummary, TimelineStorySummary } from "@/lib/types";
 
@@ -48,7 +50,7 @@ function EpicStoryRollup({ epic }: { epic: TimelineEpicSummary }) {
  */
 export default function RoadmapTimelineDetailPanel({ epic, story, onClose }: Props) {
   const item = story ?? epic;
-  const colors = stageColors(item.stage);
+  const tone = statusTone(STAGE_TOKEN_MAP[item.stage] ?? item.stage);
 
   // Hooks must run unconditionally on every render — `enabled` is what actually gates the
   // network call, so this is harmlessly inert (query stays disabled) when nothing is focused as a
@@ -63,7 +65,8 @@ export default function RoadmapTimelineDetailPanel({ epic, story, onClose }: Pro
             {item.title}
           </h2>
           <div data-testid="roadmap-timeline-detail-stage" className="flex flex-wrap items-center gap-2">
-            <span className={`text-xs font-medium uppercase tracking-wide ${colors.text}`}>
+            <span className="inline-flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-foreground">
+              <StatusDot tone={tone} />
               {item.stage.replace("_", " ")}
             </span>
             {story && <ReadinessBadge readiness={story.readiness} />}

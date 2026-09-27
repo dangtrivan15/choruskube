@@ -9,7 +9,13 @@ import {
   Legend,
 } from "recharts";
 import type { RunTrendPoint } from "@/lib/types";
-import { CHART_SERIES_STYLES, seriesColor, seriesDashProps } from "@/lib/chartSeriesStyles";
+import {
+  CHART_SERIES_STYLES,
+  seriesColor,
+  seriesDashProps,
+  chartTickProps,
+  chartTooltipProps,
+} from "@/lib/chartSeriesStyles";
 
 interface RunTrendChartProps {
   points: RunTrendPoint[];
@@ -33,20 +39,11 @@ export default function RunTrendChart({ points }: RunTrendChartProps) {
           <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
           <XAxis
             dataKey="date"
-            tick={{ fontSize: 12 }}
+            tick={chartTickProps(12)}
             tickFormatter={(v: string) => v.slice(5)}
-            className="text-muted-foreground"
           />
-          <YAxis allowDecimals={false} tick={{ fontSize: 12 }} className="text-muted-foreground" />
-          <Tooltip
-            contentStyle={{
-              backgroundColor: "var(--card)",
-              border: "1px solid var(--border)",
-              borderRadius: "0.5rem",
-              fontSize: "0.875rem",
-            }}
-            itemStyle={{ color: "var(--foreground)" }}
-          />
+          <YAxis allowDecimals={false} tick={chartTickProps(12)} />
+          <Tooltip {...chartTooltipProps()} />
           {/* iconSize 24: Recharts scales its 32-unit legend icon viewBox to iconSize,
               so the default 14px shrinks Failed's dotted pattern below legibility. */}
           <Legend

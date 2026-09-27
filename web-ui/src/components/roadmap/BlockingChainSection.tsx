@@ -1,5 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { STATUS_TONE_CLASSES } from "@/lib/statusColors";
 import type { BlockingChainNode, BlockingChainResponse } from "@/lib/types";
 
 interface Props {
@@ -24,9 +25,8 @@ function nodeStatusBadge(status: BlockingChainNode["status"]) {
   }
   return (
     <Badge
-      variant="outline"
       data-testid="roadmap-blocking-chain-node-status-pending"
-      className="border-status-warning/20 bg-status-warning/15 text-status-warning"
+      className={STATUS_TONE_CLASSES.warning.badge}
     >
       {status.replace("_", " ")}
     </Badge>

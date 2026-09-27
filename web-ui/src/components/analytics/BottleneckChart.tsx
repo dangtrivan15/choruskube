@@ -9,7 +9,7 @@ import {
   Legend,
 } from "recharts";
 import type { BottleneckNode } from "@/lib/types";
-import { CHART_SERIES_STYLES, seriesColor } from "@/lib/chartSeriesStyles";
+import { CHART_SERIES_STYLES, seriesColor, chartTickProps, chartTooltipProps } from "@/lib/chartSeriesStyles";
 
 interface BottleneckChartProps {
   bottlenecks: BottleneckNode[];
@@ -42,27 +42,10 @@ export default function BottleneckChart({ bottlenecks }: BottleneckChartProps) {
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={data} layout="vertical" margin={{ top: 4, right: 8, left: 4, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" className="stroke-border" horizontal={false} />
-          <XAxis
-            type="number"
-            tick={{ fontSize: 12 }}
-            tickFormatter={formatDuration}
-            className="text-muted-foreground"
-          />
-          <YAxis
-            type="category"
-            dataKey="label"
-            tick={{ fontSize: 11 }}
-            width={96}
-            className="text-muted-foreground"
-          />
+          <XAxis type="number" tick={chartTickProps(12)} tickFormatter={formatDuration} />
+          <YAxis type="category" dataKey="label" tick={chartTickProps(11)} width={96} />
           <Tooltip
-            contentStyle={{
-              backgroundColor: "var(--card)",
-              border: "1px solid var(--border)",
-              borderRadius: "0.5rem",
-              fontSize: "0.875rem",
-            }}
-            itemStyle={{ color: "var(--foreground)" }}
+            {...chartTooltipProps()}
             formatter={(value: unknown) => formatDuration(Number(value))}
           />
           <Legend wrapperStyle={{ fontSize: "0.75rem" }} labelStyle={{ color: "var(--foreground)" }} />

@@ -86,7 +86,7 @@ export default function AnalyticsPage() {
       </div>
 
       {/* Run Trend Chart */}
-      <div className="rounded-lg border bg-card p-4">
+      <div className="rounded-lg border bg-popover p-4 shadow-sm">
         <h2 className="mb-4 text-sm font-medium text-muted-foreground">Run Trend</h2>
         {trendLoading ? (
           <Skeleton className="h-64 w-full" />
@@ -119,7 +119,7 @@ export default function AnalyticsPage() {
           at the column's 1fr share instead of being inflated by the chart's
           own min-content width.
         */}
-        <div className="min-w-0 rounded-lg border bg-card p-4">
+        <div className="min-w-0 rounded-lg border bg-popover p-4 shadow-sm">
           <h2 className="mb-4 text-sm font-medium text-muted-foreground">Bottlenecks</h2>
           {bottlenecksLoading ? (
             <Skeleton className="h-72 w-full" />
@@ -140,7 +140,7 @@ export default function AnalyticsPage() {
       </div>
 
       {/* Roadmap Analytics */}
-      <div className="rounded-lg border bg-card p-4">
+      <div className="rounded-lg border bg-popover p-4 shadow-sm">
         <h2 className="mb-4 text-sm font-medium text-muted-foreground">Roadmap</h2>
         <div className="grid gap-6 lg:grid-cols-2">
           {/* Status Counts */}

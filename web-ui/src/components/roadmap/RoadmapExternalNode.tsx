@@ -48,7 +48,7 @@ function RoadmapExternalNode({ data }: NodeProps<RoadmapExternalNodeType>) {
         data-testid="roadmap-external-node"
         data-label={data.title}
         title={`Connected to "${data.title}" in ${data.epicTitle} — open that Epic's graph`}
-        className="nodrag flex w-[160px] items-center gap-1.5 rounded-md border border-dashed border-status-accent/60 bg-status-accent/10 px-2 py-1.5 text-xs text-status-accent shadow-sm hover:bg-status-accent/20"
+        className="nodrag flex w-[160px] items-center gap-1.5 rounded-md border border-dashed border-status-accent/60 bg-tint-status-accent px-2 py-1.5 text-xs text-foreground shadow-sm hover:bg-tint-strong-status-accent"
         onClick={(event) => event.stopPropagation()}
       >
         <ExternalLink className="size-3 shrink-0" />

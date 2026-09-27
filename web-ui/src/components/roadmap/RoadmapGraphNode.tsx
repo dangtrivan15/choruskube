@@ -2,7 +2,7 @@ import { memo } from "react";
 import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
 import { ChevronDown, ChevronRight, Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { statusColorTokens } from "@/lib/statusColors";
+import { statusColorTokens, STATUS_TONE_CLASSES } from "@/lib/statusColors";
 import { roadmapLevelMeta } from "@/lib/roadmapLevel";
 import PriorityBadge from "@/components/roadmap/PriorityBadge";
 import type { Readiness } from "@/lib/types";
@@ -58,8 +58,8 @@ const STATUS_TOKEN_MAP: Record<string, string> = {
 function getStatusColors(status: string) {
   const tokens = statusColorTokens(STATUS_TOKEN_MAP[status] ?? status);
   return {
-    bg: `${tokens.bg}/10`,
-    border: `${tokens.border}/60`,
+    bg: tokens.tint,
+    border: tokens.borderSoft,
     text: tokens.text,
   };
 }
@@ -96,7 +96,7 @@ function RoadmapGraphNode({ id, data, selected }: NodeProps<RoadmapGraphNodeType
         )}
       >
         <div className="flex items-center gap-2">
-          <span className={cn("shrink-0", colors.text)}>
+          <span className={cn("shrink-0", colors.text)} data-testid="roadmap-graph-node-status-icon">
             <ItemTypeIcon className="size-5" />
           </span>
           <span className="truncate text-sm font-medium">{data.label}</span>
@@ -121,7 +121,7 @@ function RoadmapGraphNode({ id, data, selected }: NodeProps<RoadmapGraphNodeType
         </div>
 
         <div className="mt-1 flex items-center justify-between gap-2">
-          <span className={cn("text-xs font-medium capitalize", colors.text)}>
+          <span className="text-xs font-medium capitalize text-foreground">
             {data.status.replace(/_/g, " ")}
           </span>
           <div className="flex shrink-0 items-center gap-1">
@@ -130,7 +130,10 @@ function RoadmapGraphNode({ id, data, selected }: NodeProps<RoadmapGraphNodeType
               <span
                 data-testid="roadmap-graph-node-blocked-badge"
                 title="Blocked by an unfinished dependency"
-                className="inline-flex items-center gap-0.5 rounded-full bg-status-warning/15 px-1.5 py-0.5 text-[10px] font-medium text-status-warning"
+                className={cn(
+                  "inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium",
+                  STATUS_TONE_CLASSES.warning.badge,
+                )}
               >
                 <Lock className="size-2.5" />
                 Blocked

@@ -24,7 +24,7 @@ export default function MilestoneProgressBar({
     <div
       data-testid={dataTestId}
       title={`${progress.doneTasks}/${progress.totalTasks} tasks done`}
-      className="flex h-2 w-full min-w-16 overflow-hidden rounded-full bg-status-neutral/15"
+      className="flex h-2 w-full min-w-16 overflow-hidden rounded-full bg-tint-status-neutral"
     >
       <div className="h-full bg-status-success" style={{ width: `${segments.done}%` }} />
       <div className="h-full bg-status-info" style={{ width: `${segments.inProgress}%` }} />

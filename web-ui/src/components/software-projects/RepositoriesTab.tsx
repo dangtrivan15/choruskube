@@ -13,6 +13,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { STATUS_TONE_CLASSES } from "@/lib/statusColors";
 import TruncatedText from "@/components/ui/TruncatedText";
 import Pagination from "@/components/ui/Pagination";
 import {
@@ -102,7 +103,7 @@ export default function RepositoriesTab() {
               </TableCell>
               <TableCell className="hidden md:table-cell">
                 {r.enableDocker ? (
-                  <Badge variant="outline" className="border-status-info/40 text-status-info">On</Badge>
+                  <Badge className={STATUS_TONE_CLASSES.info.badge}>On</Badge>
                 ) : (
                   <Badge variant="secondary">Off</Badge>
                 )}

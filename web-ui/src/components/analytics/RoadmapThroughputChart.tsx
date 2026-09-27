@@ -8,7 +8,7 @@ import {
   Tooltip,
 } from "recharts";
 import type { RoadmapThroughputPoint } from "@/lib/types";
-import { CHART_SERIES_STYLES, seriesColor } from "@/lib/chartSeriesStyles";
+import { CHART_SERIES_STYLES, seriesColor, chartTickProps, chartTooltipProps } from "@/lib/chartSeriesStyles";
 
 interface RoadmapThroughputChartProps {
   points: RoadmapThroughputPoint[];
@@ -34,20 +34,11 @@ export default function RoadmapThroughputChart({ points }: RoadmapThroughputChar
           <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
           <XAxis
             dataKey="date"
-            tick={{ fontSize: 12 }}
+            tick={chartTickProps(12)}
             tickFormatter={(v: string) => v.slice(5)}
-            className="text-muted-foreground"
           />
-          <YAxis allowDecimals={false} tick={{ fontSize: 12 }} className="text-muted-foreground" />
-          <Tooltip
-            contentStyle={{
-              backgroundColor: "var(--card)",
-              border: "1px solid var(--border)",
-              borderRadius: "0.5rem",
-              fontSize: "0.875rem",
-            }}
-            itemStyle={{ color: "var(--foreground)" }}
-          />
+          <YAxis allowDecimals={false} tick={chartTickProps(12)} />
+          <Tooltip {...chartTooltipProps()} />
           <Bar dataKey="count" name={done.label} className="series-done" fill={seriesColor(done)} radius={[4, 4, 0, 0]} />
         </BarChart>
       </ResponsiveContainer>

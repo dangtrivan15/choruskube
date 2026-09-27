@@ -1,7 +1,9 @@
-import { stageColors } from "@/lib/timelineStage";
+import { STAGE_TOKEN_MAP } from "@/lib/timelineStage";
+import { statusTone } from "@/lib/statusColors";
 import type { TimelineEpicLaneNodeData, TimelineStoryNodeData } from "@/lib/timelineLayout";
 import ReadinessBadge from "@/components/roadmap/ReadinessBadge";
 import StalledBadge from "@/components/roadmap/StalledBadge";
+import StatusDot from "@/components/ui/StatusDot";
 
 interface Props {
   item: TimelineEpicLaneNodeData | TimelineStoryNodeData;
@@ -26,13 +28,16 @@ function isStory(item: TimelineEpicLaneNodeData | TimelineStoryNodeData): item i
  * entirely rather than showing a misleading "this Epic is blocked" pill.
  */
 export default function RoadmapTimelineItemPreview({ item }: Props) {
-  const colors = stageColors(item.stage);
+  const tone = statusTone(STAGE_TOKEN_MAP[item.stage] ?? item.stage);
   const story = isStory(item) ? item : null;
 
   return (
     <div data-testid="roadmap-timeline-item-preview" className="flex flex-col gap-1">
       <span className="font-medium">{item.title}</span>
-      <span className={colors.text}>{item.stage.replace("_", " ")}</span>
+      <span className="inline-flex items-center gap-1">
+        <StatusDot tone={tone} />
+        {item.stage.replace("_", " ")}
+      </span>
       {story && (
         <span data-testid="roadmap-timeline-item-preview-parent" className="text-background">
           in {story.epicTitle}

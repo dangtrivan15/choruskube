@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import ErrorAlert from "@/components/ui/ErrorAlert";
+import StatusCallout from "@/components/ui/StatusCallout";
 import {
   useAutopilot,
   useUpdateAutopilot,
@@ -171,14 +172,14 @@ export default function AutopilotPage() {
       </PageHeader>
 
       {status.disengagedReason && (
-        <div
-          data-testid="autopilot-disengaged-banner"
+        <StatusCallout
+          tone="warning"
           role="alert"
-          className="flex items-start gap-2 rounded-lg border border-status-warning/50 bg-status-warning/10 p-4 text-sm text-status-warning"
+          data-testid="autopilot-disengaged-banner"
+          icon={AlertTriangle}
         >
-          <AlertTriangle className="size-4 shrink-0 translate-y-0.5" />
           <span>Autopilot disengaged itself: {status.disengagedReason}</span>
-        </div>
+        </StatusCallout>
       )}
 
       <Card>

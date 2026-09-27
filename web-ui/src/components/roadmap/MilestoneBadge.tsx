@@ -40,8 +40,7 @@ export default function MilestoneBadge({
       data-testid={dataTestId ?? "milestone-badge"}
       title={milestone.name}
       className={cn(
-        "inline-flex w-fit min-w-0 items-center font-medium rounded-full",
-        meta.textClass,
+        "inline-flex w-fit min-w-0 items-center rounded-full font-medium text-foreground",
         meta.bgClass,
         compact
           ? "gap-0.5 px-1.5 py-0.5 text-[10px]"
@@ -49,7 +48,8 @@ export default function MilestoneBadge({
         className,
       )}
     >
-      <Icon className={compact ? "size-2.5 shrink-0" : "size-3 shrink-0"} />
+      <span className={cn("size-1.5 shrink-0 rounded-full", meta.dotClass)} aria-hidden="true" />
+      <Icon className={cn(compact ? "size-2.5 shrink-0" : "size-3 shrink-0", meta.textClass)} />
       <span className="min-w-0 truncate">{milestone.name}</span>
     </span>
   );
