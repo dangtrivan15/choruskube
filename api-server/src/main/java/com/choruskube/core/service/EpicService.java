@@ -45,7 +45,11 @@ public interface EpicService {
 
     void delete(UUID id);
 
-    List<EpicResponse> listBySoftwareProjectId(UUID softwareProjectId);
+    /**
+     * Lists a project's Epics on behalf of an agent pod. Cross-Epic blockers behind {@code
+     * readyItemCount} are authorized against {@code runId}, since the caller has no tenant context.
+     */
+    List<EpicResponse> listInternal(UUID softwareProjectId, UUID runId);
 
     /** Updates an Epic on behalf of an agent pod (PATCH semantics). */
     EpicResponse updateInternal(UUID epicId, UUID runSoftwareProjectId, UUID runId, InternalUpdateEpicRequest req);

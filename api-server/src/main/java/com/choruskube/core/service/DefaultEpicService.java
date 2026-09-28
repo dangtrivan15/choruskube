@@ -154,14 +154,14 @@ public class DefaultEpicService implements EpicService {
             // Pre-feature path, unchanged: SQL-level pagination. readyItemCount is still populated
             // on every returned EpicResponse, but pagination itself stays DB-side.
             Page<Epic> page = repo.findAll(spec, pageable);
-            List<EpicResponse> content = toResponses(page.getContent());
+            List<EpicResponse> content = toResponses(page.getContent(), ReadinessAuthMode.PUBLIC, null);
             return new PageImpl<>(content, pageable, page.getTotalElements());
         }
         // Readiness filter active: readyItemCount is not a stored column, so filtering requires
         // loading every Epic matching the non-readiness filters, computing readiness for all of
         // them, filtering, then paginating the result in memory.
         List<Epic> matching = repo.findAll(spec, pageable.getSort());
-        List<EpicResponse> responses = toResponses(matching);
+        List<EpicResponse> responses = toResponses(matching, ReadinessAuthMode.PUBLIC, null);
         List<EpicResponse> filtered = readiness == Readiness.READY
                 ? responses.stream().filter(r -> r.readyItemCount() > 0).toList()
                 // Only READY is a meaningful filter value today — any other non-null
@@ -255,10 +255,10 @@ public class DefaultEpicService implements EpicService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<EpicResponse> listBySoftwareProjectId(UUID softwareProjectId) {
+    public List<EpicResponse> listInternal(UUID softwareProjectId, UUID runId) {
         List<Epic> epics = repo.findBySoftwareProjectIdOrderByCreatedAtDesc(softwareProjectId);
         if (epics.isEmpty()) return List.of();
-        return toResponses(epics);
+        return toResponses(epics, ReadinessAuthMode.INTERNAL_RUN, runId);
     }
 
     @Override
@@ -436,7 +436,7 @@ public class DefaultEpicService implements EpicService {
      * would never be populated on the list endpoint (only on the single-Epic {@link #toResponse}
      * path).
      */
-    private List<EpicResponse> toResponses(List<Epic> epics) {
+    private List<EpicResponse> toResponses(List<Epic> epics, ReadinessAuthMode mode, UUID contextId) {
         Set<UUID> projectIds = epics.stream()
                 .map(Epic::getSoftwareProjectId)
                 .filter(Objects::nonNull)
@@ -455,7 +455,7 @@ public class DefaultEpicService implements EpicService {
                         .collect(Collectors.toMap(Milestone::getId, m -> new MilestoneRef(m.getId(), m.getName())));
 
         Map<UUID, RollupCalculator.Rollup> rollupsByEpicId = computeRollups(epics);
-        Map<UUID, Long> readyItemCountsByEpicId = computeReadyItemCounts(epics);
+        Map<UUID, Long> readyItemCountsByEpicId = computeReadyItemCounts(epics, mode, contextId);
 
         List<EpicResponse> out = new ArrayList<>(epics.size());
         for (Epic e : epics) {
@@ -478,31 +478,27 @@ public class DefaultEpicService implements EpicService {
      * per-Epic {@link EpicReadinessAssembler#loadEpicCandidates}/{@link
      * EpicReadinessAssembler#assemble} pair the Story/Task list endpoints already use — not the
      * batched {@link #computeRollups} pattern — so this count stays exactly consistent with the
-     * per-item {@code readiness} the Story/Task lists render. Called with {@code
-     * internal=false, runId=null} since every caller of {@link #list}/{@link #toResponses} is on
-     * the public (request-scoped) path, never the internal run-scoped one.
+     * per-item {@code readiness} the Story/Task lists render. {@code mode} must match the caller:
+     * {@link ReadinessAuthMode#PUBLIC} reads a request-scoped tenant context that an agent call
+     * does not have, so {@link #listInternal} passes {@link ReadinessAuthMode#INTERNAL_RUN}.
      *
      * <p>What counts is decided by {@link EpicReadinessAssembler#isStartable}, shared with the
      * Autopilot's ready frontier: backlog Tasks that are READY. Stories and the Epic itself are
      * containers and never counted, so this figure and {@code progress.totalTasks} are two
      * statements about the same tier.
      */
-    private Map<UUID, Long> computeReadyItemCounts(List<Epic> epics) {
+    private Map<UUID, Long> computeReadyItemCounts(List<Epic> epics, ReadinessAuthMode mode, UUID contextId) {
         Map<UUID, Long> result = new HashMap<>();
         for (Epic e : epics) {
-            result.put(e.getId(), computeReadyItemCount(e.getId()));
+            result.put(e.getId(), computeReadyItemCount(e.getId(), mode, contextId));
         }
         return result;
     }
 
-    private long computeReadyItemCount(UUID epicId) {
+    private long computeReadyItemCount(UUID epicId, ReadinessAuthMode mode, UUID contextId) {
         EpicReadinessAssembler.EpicCandidates candidates = readinessAssembler.loadEpicCandidates(epicId);
         EpicReadinessAssembler.Assembly assembly = readinessAssembler.assemble(
-                candidates.candidateIds(),
-                candidates.statusById(),
-                candidates.parentOf(),
-                ReadinessAuthMode.PUBLIC,
-                null);
+                candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), mode, contextId);
         // Walks the Tasks rather than the readiness map, because the map also holds an entry for
         // every Story and for the Epic itself — containers, which EpicReadinessAssembler#isStartable
         // excludes by construction.
@@ -634,9 +630,9 @@ public class DefaultEpicService implements EpicService {
         // readyItemCount is deliberately NOT computed here (left 0): this single-Epic path is
         // shared by create/update/updateStage/get AND the internal (getInternal/updateInternal)
         // callers, which authorize cross-Epic external blockers differently (assertSameOrg, no
-        // request-scoped TenantContext) than the public path computeReadyItemCounts always uses
-        // (checkOrgAccess) — computing it here would authorize with the wrong mechanism on the
-        // internal path and double the external-blocker resolution work (and its authorization
+        // request-scoped TenantContext) than the public path (checkOrgAccess), and this path is
+        // not told which caller it serves — computing it here would authorize with the wrong
+        // mechanism on the internal path and double the external-blocker resolution work (and its authorization
         // calls) for callers like DefaultRoadmapGraphService that already do their own. Only the
         // list page populates it — no UI reachable through this single-Epic path
         // renders readyItemCount today.

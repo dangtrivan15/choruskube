@@ -761,7 +761,7 @@ public class InternalRunService {
         WorkflowRun run =
                 runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
         UUID softwareProjectId = resolveSoftwareProjectIdFromRun(run);
-        return epicService.listBySoftwareProjectId(softwareProjectId);
+        return epicService.listInternal(softwareProjectId, runId);
     }
 
     /**

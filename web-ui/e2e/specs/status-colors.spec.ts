@@ -227,14 +227,15 @@ test.describe("Toast colors", () => {
           .locator('[data-sonner-toast][data-type="success"]')
           .filter({ hasText: "Epic created" });
         await expect(toastEl).toBeVisible();
-        await toastEl.hover();
-
-        const icon = toastEl.locator("[data-icon]").first();
-        const iconColor = await icon.evaluate((el) => getComputedStyle(el).color);
+        // One immediate read, no hover: other workers' roadmap events stack toasts in front of
+        // this one, so a hover waits on an animating stack until the toast auto-dismisses.
+        const { iconColor, bg } = await toastEl.evaluate((el) => {
+          const icon = el.querySelector("[data-icon]");
+          if (!icon) throw new Error("toast has no [data-icon]");
+          return { iconColor: getComputedStyle(icon).color, bg: getComputedStyle(el).backgroundColor };
+        });
         expect(iconColor).toBe(await resolveColor(roadmapPage.page, "var(--status-success)"));
         iconColors.push(iconColor);
-
-        const bg = await toastEl.evaluate((el) => getComputedStyle(el).backgroundColor);
         expect(alphaOf(bg)).toBe(1);
 
         if (i === 0) {
