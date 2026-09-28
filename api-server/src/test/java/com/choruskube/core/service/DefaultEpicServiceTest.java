@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
@@ -54,6 +56,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.annotation.Transactional;
 
 @Transactional
@@ -103,6 +106,9 @@ public class DefaultEpicServiceTest extends BaseTest {
 
     @MockitoBean
     private AuditSink auditSink;
+
+    @MockitoSpyBean
+    private AuthorizationService authService;
 
     @Test
     void create_withGitRepoTarget_returnsSoftwareProjectRef_withType_git_repo() {
@@ -159,12 +165,43 @@ public class DefaultEpicServiceTest extends BaseTest {
     }
 
     @Test
-    void listBySoftwareProjectId_returnsEpicsForGivenProject() {
+    void listInternal_returnsEpicsForGivenProject() {
         GitRepo r = makeRepo("https://github.com/test/list-by-id.git");
         EpicResponse created = service.create(new EpicRequest("T", "D", null, r.getId()), null);
 
-        List<EpicResponse> result = service.listBySoftwareProjectId(r.getId());
+        List<EpicResponse> result = service.listInternal(r.getId(), UUID.randomUUID());
         assertThat(result).extracting(EpicResponse::id).contains(created.id());
+    }
+
+    @Test
+    void listInternal_crossEpicBlocker_authorizesAgainstRunNotTenantContext() {
+        // An agent call carries no request-scoped tenant context, so a multi-tenant checkOrgAccess
+        // throws there. One cross-Epic edge must not turn the whole project listing into a 403.
+        GitRepo r = makeRepo("https://github.com/test/list-internal-cross-epic.git");
+        EpicResponse epic = service.create(new EpicRequest("Dependent", "D", null, r.getId()), null);
+        var dependent = storyService.create(epic.id(), new StoryRequest("Dependent", "D"));
+        taskService.create(dependent.id(), new TaskRequest("T", "D"));
+        EpicResponse otherEpic = service.create(new EpicRequest("Other", "D", null, r.getId()), null);
+        var external = storyService.create(otherEpic.id(), new StoryRequest("External", "D"));
+        taskService.create(external.id(), new TaskRequest("T", "D"));
+        dependencyService.create(new CreateDependencyRequest("story", external.id(), "story", dependent.id()));
+        clearInvocations(authService);
+        doThrow(new ForbiddenException("No request-scoped tenant context"))
+                .when(authService)
+                .checkOrgAccess(any(), any());
+        UUID runId = UUID.randomUUID();
+
+        List<EpicResponse> result = service.listInternal(r.getId(), runId);
+
+        assertThat(result).extracting(EpicResponse::id).containsExactlyInAnyOrder(epic.id(), otherEpic.id());
+        assertThat(result.stream()
+                        .filter(e -> e.id().equals(epic.id()))
+                        .findFirst()
+                        .orElseThrow()
+                        .readyItemCount())
+                .isZero();
+        verify(authService).assertSameOrg("story", external.id(), "workflow_run", runId);
+        verify(authService, never()).checkOrgAccess(any(), any());
     }
 
     @Test

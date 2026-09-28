@@ -219,12 +219,12 @@ class InternalRunServiceEpicTest {
 
         var e1 = epicResponseFor(PROJECT_ID);
         var e2 = epicResponseFor(PROJECT_ID);
-        when(epicService.listBySoftwareProjectId(PROJECT_ID)).thenReturn(List.of(e1, e2));
+        when(epicService.listInternal(PROJECT_ID, runId)).thenReturn(List.of(e1, e2));
 
         List<EpicResponse> result = service.listEpics(runId);
 
         assertThat(result).extracting(EpicResponse::id).containsExactly(e1.id(), e2.id());
-        verify(epicService).listBySoftwareProjectId(PROJECT_ID);
+        verify(epicService).listInternal(PROJECT_ID, runId);
     }
 
     // ── updateEpic: delegation ─────────────────────────────────────────
