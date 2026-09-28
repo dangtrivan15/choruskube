@@ -10,13 +10,15 @@ import { Info, TriangleAlert, OctagonAlert, Minus } from "lucide-react";
 export interface LogLevelStyle {
   /** Leading severity icon. */
   Icon: LucideIcon;
-  /** Text color class, shared by the icon and the label. */
-  text: string;
+  /** Icon-only tone color — apply to the glyph, never to the level word. */
+  icon: string;
+  /** Label class — ink (`text-foreground`) plus the level's font-weight. */
+  label: string;
   /** Font-weight class for the label only. */
   weight: string;
   /** Left accent border class for the row. */
   border: string;
-  /** Row background tint class — empty for levels that shouldn't tint. */
+  /** Opaque row tint class (`bg-tint-status-*`) — empty for levels that shouldn't tint. */
   row: string;
 }
 
@@ -29,7 +31,8 @@ export function logLevelStyle(level: string): LogLevelStyle {
     case "info":
       return {
         Icon: Info,
-        text: "text-status-info",
+        icon: "text-status-info",
+        label: "text-foreground",
         weight: "",
         border: "border-status-info",
         row: "",
@@ -37,23 +40,26 @@ export function logLevelStyle(level: string): LogLevelStyle {
     case "warn":
       return {
         Icon: TriangleAlert,
-        text: "text-status-warning",
+        icon: "text-status-warning",
+        label: "text-foreground font-medium",
         weight: "font-medium",
         border: "border-status-warning",
-        row: "bg-status-warning/10",
+        row: "bg-tint-status-warning",
       };
     case "error":
       return {
         Icon: OctagonAlert,
-        text: "text-status-error",
+        icon: "text-status-error",
+        label: "text-foreground font-semibold",
         weight: "font-semibold",
         border: "border-status-error",
-        row: "bg-status-error/10",
+        row: "bg-tint-status-error",
       };
     default:
       return {
         Icon: Minus,
-        text: "text-status-neutral",
+        icon: "text-status-neutral",
+        label: "text-foreground",
         weight: "",
         border: "border-status-neutral",
         row: "",

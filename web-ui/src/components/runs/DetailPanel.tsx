@@ -6,7 +6,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import MarkdownViewer from "@/components/ui/MarkdownViewer";
-import { statusBadgeClass } from "@/lib/statusColors";
+import { statusBadgeClass, STATUS_TONE_CLASSES } from "@/lib/statusColors";
+import { cn } from "@/lib/utils";
 import { useRetryNode } from "@/hooks/useRuns";
 import Authorized from "@/components/Authorized";
 import ExecutionLogs from "./ExecutionLogs";
@@ -111,11 +112,11 @@ function findTriggerDecision(run: RunResponse, nodeId: string): string | null {
 function StatusIcon({ status }: { status: string }) {
   switch (status) {
     case "completed":
-      return <CheckCircle className="h-4 w-4 text-status-success" />;
+      return <CheckCircle className={cn("h-4 w-4", STATUS_TONE_CLASSES.success.text)} />;
     case "failed":
-      return <AlertCircle className="h-4 w-4 text-status-error" />;
+      return <AlertCircle className={cn("h-4 w-4", STATUS_TONE_CLASSES.error.text)} />;
     case "running":
-      return <Clock className="h-4 w-4 animate-pulse text-status-info" />;
+      return <Clock className={cn("h-4 w-4 animate-pulse", STATUS_TONE_CLASSES.info.text)} />;
     default:
       return <Info className="h-4 w-4 text-muted-foreground" />;
   }
@@ -290,10 +291,10 @@ function CompletedPanel({
       {/* Result or Error */}
       {exec.status === "failed" && exec.errorMessage && (
         <div className="space-y-1.5" data-testid="detail-node-error">
-          <h4 className="text-xs font-medium uppercase tracking-wide text-status-error">
+          <h4 className="text-xs font-medium uppercase tracking-wide text-foreground">
             Error
           </h4>
-          <pre className="max-h-32 overflow-auto rounded-md border border-status-error/30 bg-status-error/10 p-3 text-xs whitespace-pre-wrap text-status-error">
+          <pre className="max-h-32 overflow-auto rounded-md border border-status-error/40 bg-tint-status-error p-3 text-xs whitespace-pre-wrap text-foreground">
             {exec.errorMessage}
           </pre>
         </div>

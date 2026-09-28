@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { cn } from "../utils";
+import { badgeVariants } from "@/components/ui/badge";
 import {
   statusBadgeClass,
   statusColorTokens,
@@ -11,57 +13,39 @@ import {
 
 describe("statusBadgeClass", () => {
   it("returns success classes for completed", () => {
-    expect(statusBadgeClass("completed")).toBe(
-      "bg-status-success/15 text-status-success border-status-success/20"
-    );
+    expect(statusBadgeClass("completed")).toBe(STATUS_TONE_CLASSES.success.badge);
   });
 
   it("returns error classes for failed", () => {
-    expect(statusBadgeClass("failed")).toBe(
-      "bg-status-error/15 text-status-error border-status-error/20"
-    );
+    expect(statusBadgeClass("failed")).toBe(STATUS_TONE_CLASSES.error.badge);
   });
 
   it("returns info classes for running", () => {
-    expect(statusBadgeClass("running")).toBe(
-      "bg-status-info/15 text-status-info border-status-info/20"
-    );
+    expect(statusBadgeClass("running")).toBe(STATUS_TONE_CLASSES.info.badge);
   });
 
   it("returns warning classes for awaiting_human", () => {
-    expect(statusBadgeClass("awaiting_human")).toBe(
-      "bg-status-warning/15 text-status-warning border-status-warning/20"
-    );
+    expect(statusBadgeClass("awaiting_human")).toBe(STATUS_TONE_CLASSES.warning.badge);
   });
 
   it("returns warning classes for awaiting_retry", () => {
-    expect(statusBadgeClass("awaiting_retry")).toBe(
-      "bg-status-warning/15 text-status-warning border-status-warning/20"
-    );
+    expect(statusBadgeClass("awaiting_retry")).toBe(STATUS_TONE_CLASSES.warning.badge);
   });
 
   it("returns accent classes for paused", () => {
-    expect(statusBadgeClass("paused")).toBe(
-      "bg-status-accent/15 text-status-accent border-status-accent/20"
-    );
+    expect(statusBadgeClass("paused")).toBe(STATUS_TONE_CLASSES.accent.badge);
   });
 
   it("returns neutral classes for cancelled (no line-through — that is a component concern)", () => {
-    expect(statusBadgeClass("cancelled")).toBe(
-      "bg-status-neutral/15 text-status-neutral border-status-neutral/20"
-    );
+    expect(statusBadgeClass("cancelled")).toBe(STATUS_TONE_CLASSES.neutral.badge);
   });
 
   it("returns neutral classes for pending", () => {
-    expect(statusBadgeClass("pending")).toBe(
-      "bg-status-neutral/15 text-status-neutral border-status-neutral/20"
-    );
+    expect(statusBadgeClass("pending")).toBe(STATUS_TONE_CLASSES.neutral.badge);
   });
 
   it("returns neutral fallback for unknown statuses", () => {
-    expect(statusBadgeClass("some_future_status")).toBe(
-      "bg-status-neutral/15 text-status-neutral border-status-neutral/20"
-    );
+    expect(statusBadgeClass("some_future_status")).toBe(STATUS_TONE_CLASSES.neutral.badge);
   });
 });
 
@@ -71,6 +55,9 @@ describe("statusColorTokens", () => {
     expect(tokens.bg).toBe("bg-status-success");
     expect(tokens.border).toBe("border-status-success");
     expect(tokens.text).toBe("text-status-success");
+    expect(tokens.tint).toBe("bg-tint-status-success");
+    expect(tokens.tintStrong).toBe("bg-tint-strong-status-success");
+    expect(tokens.borderSoft).toBe("border-status-success/60");
   });
 
   it("returns error tokens for failed", () => {
@@ -179,9 +166,19 @@ describe("STATUS_TONE_CLASSES", () => {
     neutral: ["success", "error", "info", "warning", "accent"],
   };
 
-  it.each(TONES)("%s has all six recipes, each referencing only its own tone", (tone) => {
+  it.each(TONES)("%s has all nine recipes, each referencing only its own tone", (tone) => {
     const recipes = STATUS_TONE_CLASSES[tone];
-    for (const key of ["badge", "bg", "border", "text", "dot", "callout"] as const) {
+    for (const key of [
+      "badge",
+      "bg",
+      "border",
+      "text",
+      "dot",
+      "callout",
+      "tint",
+      "tintStrong",
+      "borderSoft",
+    ] as const) {
       expect(recipes[key]).toContain(`status-${tone}`);
       for (const other of OTHER_TONES[tone]) {
         expect(recipes[key]).not.toContain(`status-${other}`);
@@ -193,6 +190,21 @@ describe("STATUS_TONE_CLASSES", () => {
     const { callout } = STATUS_TONE_CLASSES[tone];
     expect(callout).toContain("text-foreground");
     expect(callout).not.toMatch(/text-status-/);
+  });
+
+  it.each(TONES)("%s's badge uses foreground text and an opaque tint, never a translucent bg", (tone) => {
+    const { badge } = STATUS_TONE_CLASSES[tone];
+    expect(badge).toContain("text-foreground");
+    expect(badge).not.toMatch(/text-status-/);
+    expect(badge).toContain(`bg-tint-status-${tone}`);
+    expect(badge).not.toMatch(/bg-status-[a-z]+\/\d+/);
+  });
+
+  it.each(TONES)("%s's badge carries a leading hue dot via ::before", (tone) => {
+    const { badge } = STATUS_TONE_CLASSES[tone];
+    expect(badge).toContain("before:inline-block");
+    expect(badge).toContain(`before:bg-status-${tone}`);
+    expect(badge).toContain("before:content-['']");
   });
 });
 
@@ -259,5 +271,15 @@ describe("statusBadgeClass matches the tone table for every run status", () => {
 
   it.each(STATUSES)("%s", (status) => {
     expect(statusBadgeClass(status)).toBe(STATUS_TONE_CLASSES[statusTone(status)].badge);
+  });
+});
+
+describe("Badge default-variant merge", () => {
+  it("cn(badgeVariants(), tone.badge) drops the default variant's own bg/border in favor of the tone", () => {
+    const merged = cn(badgeVariants(), STATUS_TONE_CLASSES.error.badge);
+    expect(merged).not.toContain("bg-tint-primary");
+    expect(merged).not.toContain("border-primary/40");
+    expect(merged).toContain("bg-tint-status-error");
+    expect(merged).toContain("border-status-error/40");
   });
 });

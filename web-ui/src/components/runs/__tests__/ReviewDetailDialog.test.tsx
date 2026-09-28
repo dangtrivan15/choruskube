@@ -146,20 +146,20 @@ describe("ReviewDetailDialog", () => {
   describe("decisionBadgeClass", () => {
     it("returns success classes for approved", () => {
       const cls = decisionBadgeClass("approved");
-      expect(cls).toContain("bg-status-success/15");
-      expect(cls).toContain("text-status-success");
+      expect(cls).toContain("bg-tint-status-success");
+      expect(cls).toContain("text-foreground");
     });
 
     it("returns warning classes for rejected", () => {
       const cls = decisionBadgeClass("rejected");
-      expect(cls).toContain("bg-status-warning/15");
-      expect(cls).toContain("text-status-warning");
+      expect(cls).toContain("bg-tint-status-warning");
+      expect(cls).toContain("text-foreground");
     });
 
     it("returns neutral classes for unknown decisions", () => {
       const cls = decisionBadgeClass("some_unknown");
-      expect(cls).toContain("bg-status-neutral/15");
-      expect(cls).toContain("text-status-neutral");
+      expect(cls).toContain("bg-tint-status-neutral");
+      expect(cls).toContain("text-foreground");
     });
   });
 });

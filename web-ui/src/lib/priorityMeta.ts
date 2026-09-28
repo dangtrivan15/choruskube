@@ -22,11 +22,11 @@ export interface PriorityInfo {
   label: string;
   /** Priority icon. */
   Icon: LucideIcon;
-  /** Text/icon accent class. */
+  /** Icon-only accent class — never apply to a text word. */
   textClass: string;
-  /** Background accent class (paired with `/15` opacity by convention — see ReadinessBadge). */
+  /** Opaque tint class (`bg-tint-status-*`) — backdrop-independent, unlike a translucent `/N` modifier. */
   bgClass: string;
-  /** Border accent class (paired with `/20` opacity by convention). */
+  /** Border accent class (paired with `/40` opacity). */
   borderClass: string;
   /** Numeric sort rank: high=3, medium=2, low=1. Higher is more urgent. */
   order: number;
@@ -37,24 +37,24 @@ const PRIORITY_INFO: Record<Priority, PriorityInfo> = {
     label: "High",
     Icon: ChevronsUp,
     textClass: "text-status-error",
-    bgClass: "bg-status-error/15",
-    borderClass: "border-status-error/20",
+    bgClass: "bg-tint-status-error",
+    borderClass: "border-status-error/40",
     order: 3,
   },
   medium: {
     label: "Medium",
     Icon: Equal,
     textClass: "text-status-warning",
-    bgClass: "bg-status-warning/15",
-    borderClass: "border-status-warning/20",
+    bgClass: "bg-tint-status-warning",
+    borderClass: "border-status-warning/40",
     order: 2,
   },
   low: {
     label: "Low",
     Icon: ChevronsDown,
     textClass: "text-status-neutral",
-    bgClass: "bg-status-neutral/15",
-    borderClass: "border-status-neutral/20",
+    bgClass: "bg-tint-status-neutral",
+    borderClass: "border-status-neutral/40",
     order: 1,
   },
 };

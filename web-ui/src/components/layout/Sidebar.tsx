@@ -217,7 +217,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
             <Icon className="h-4 w-4" />
             {label}
             {showBadge && pendingCount > 0 && (
-              <span data-testid="nav-approvals-badge" className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-status-warning px-1.5 text-xs font-semibold text-background">
+              <span data-testid="nav-approvals-badge" className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full border border-status-warning/40 bg-tint-status-warning px-1.5 text-xs font-semibold text-foreground">
                 {pendingCount}
               </span>
             )}

@@ -39,6 +39,13 @@ test.describe("Run Monitor status colors", () => {
 
     expect(new Set([completedColor, runningColor, pendingColor]).size).toBe(3);
 
+    // The status *word* is uniform ink for every status, in both themes — the
+    // tone lives on the icon (above), not the word.
+    const foreground = await runMonitorPage.page.evaluate(() => getComputedStyle(document.body).color);
+    for (const node of ["start", "branch_b", "merge"]) {
+      expect(await runMonitorPage.nodeStatusLabelColor(node)).toBe(foreground);
+    }
+
     await toggleTheme(runMonitorPage.page);
     await expect(runMonitorPage.page.locator("html")).toHaveClass(/dark/);
 
@@ -51,6 +58,11 @@ test.describe("Run Monitor status colors", () => {
     expect(darkCompletedColor).not.toBe(completedColor);
     expect(darkRunningColor).not.toBe(runningColor);
     expect(darkPendingColor).not.toBe(pendingColor);
+
+    const darkForeground = await runMonitorPage.page.evaluate(() => getComputedStyle(document.body).color);
+    for (const node of ["start", "branch_b", "merge"]) {
+      expect(await runMonitorPage.nodeStatusLabelColor(node)).toBe(darkForeground);
+    }
   });
 
   test("awaiting_human renders a color distinct from a completed node's, in both themes", async ({

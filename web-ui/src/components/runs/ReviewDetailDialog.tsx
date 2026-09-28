@@ -11,22 +11,23 @@ import {
 import { cn } from "@/lib/utils";
 import MarkdownViewer from "@/components/ui/MarkdownViewer";
 import type { ReviewHistoryResponse } from "@/lib/types";
+import { STATUS_TONE_CLASSES } from "@/lib/statusColors";
 
 /**
- * Returns the Tailwind badge classes for a review decision.
+ * Returns the badge recipe for a review decision.
  *
- * - approved  -> green  (success)
- * - rejected  -> amber  (normal workflow event, matches awaiting_human palette)
- * - otherwise -> gray   (unknown / fallback)
+ * - approved  -> success
+ * - rejected  -> warning (normal workflow event, matches awaiting_human palette)
+ * - otherwise -> neutral (unknown / fallback)
  */
 export function decisionBadgeClass(decision: string): string {
   switch (decision) {
     case "approved":
-      return "bg-status-success/15 text-status-success";
+      return STATUS_TONE_CLASSES.success.badge;
     case "rejected":
-      return "bg-status-warning/15 text-status-warning";
+      return STATUS_TONE_CLASSES.warning.badge;
     default:
-      return "bg-status-neutral/15 text-status-neutral";
+      return STATUS_TONE_CLASSES.neutral.badge;
   }
 }
 
@@ -56,7 +57,7 @@ export default function ReviewDetailDialog({
           </DialogTitle>
           <DialogDescription>
             <span className="flex flex-wrap items-center gap-2">
-              <Badge className="bg-status-neutral/15 text-status-neutral">
+              <Badge className={STATUS_TONE_CLASSES.neutral.badge}>
                 {nodeLabel}
               </Badge>
               {showDecision && (

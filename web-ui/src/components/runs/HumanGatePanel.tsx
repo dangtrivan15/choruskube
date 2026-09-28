@@ -18,6 +18,7 @@ import EscalationGatePanel from "./EscalationGatePanel";
 import TriggerBanner from "./TriggerBanner";
 import { parseGateTrigger, isEscalationGate } from "@/lib/decisions";
 import type { ResolvedArtifactGroup, RoadmapCandidatesDocument, EscalationContext } from "@/lib/types";
+import { STATUS_TONE_CLASSES } from "@/lib/statusColors";
 
 interface PredecessorOutput {
   nodeLabel: string;
@@ -126,7 +127,7 @@ export default function HumanGatePanel({
         <h3 className="text-sm font-semibold">{nodeLabel}</h3>
         <div className="mt-1 flex items-center gap-2">
           <Badge variant="outline">Iteration {iteration}</Badge>
-          <Badge className="bg-status-warning/15 text-status-warning">
+          <Badge className={STATUS_TONE_CLASSES.warning.badge}>
             Awaiting Review
           </Badge>
         </div>

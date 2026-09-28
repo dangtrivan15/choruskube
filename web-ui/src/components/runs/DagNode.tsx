@@ -22,18 +22,18 @@ export interface DagNodeData {
 export type DagNodeType = Node<DagNodeData, "dag">;
 
 /**
- * Append DagNode-specific opacity values to the base semantic tokens.
+ * Append DagNode-specific active-state variants to the base semantic tokens.
  *
  * `bgActive` / `borderActive` are higher-saturation variants used to make a
  * running / awaiting-human node visually pop next to its
- * completed neighbours (which sit at the calm /10 + /60 baseline).
+ * completed neighbours (which sit at the calm tint + soft-border baseline).
  */
 function getStatusColors(status: string) {
   const tokens = statusColorTokens(status);
   return {
-    bg: `${tokens.bg}/10`,
-    bgActive: `${tokens.bg}/25`,
-    border: `${tokens.border}/60`,
+    bg: tokens.tint,
+    bgActive: tokens.tintStrong,
+    border: tokens.borderSoft,
     borderActive: tokens.border,
     text: tokens.text,
   };
@@ -118,14 +118,14 @@ function DagNode({ data, selected }: NodeProps<DagNodeType>) {
         )}
 
         <div className="flex items-center gap-2">
-          <span className={cn("shrink-0", colors.text)}>
+          <span className={cn("shrink-0", colors.text)} data-testid="dag-node-status-icon">
             <ExecutorIcon type={data.executorType} />
           </span>
           <span className="truncate text-sm font-medium">{formatNodeLabel(data.label)}</span>
         </div>
 
         <div className="mt-1 flex items-center justify-between gap-2">
-          <span className={cn("text-xs font-medium capitalize", colors.text)}>
+          <span className="text-xs font-medium capitalize text-foreground">
             {data.status.replace(/_/g, " ")}
           </span>
           {data.iteration > 1 && (

@@ -35,11 +35,6 @@ export const ACCEPTED_COLOR_EXCEPTIONS: AcceptedColorException[] = [
     pattern: "#907aa9|#56949f|#faf4ed",
     reason: "Frozen brand-mark hex values.",
   },
-  {
-    file: "src/components/layout/ActivityFeedButton.tsx",
-    pattern: "text-white",
-    reason: "Unread-count badge text, pending a foreground token.",
-  },
 ];
 
 const PALETTE_RE =

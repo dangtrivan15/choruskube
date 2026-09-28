@@ -22,11 +22,11 @@ export interface RoadmapLevelInfo {
   pluralLabel: string;
   /** Level icon, reusing the vocabulary the roadmap graph already established. */
   Icon: LucideIcon;
-  /** Text/icon accent class. */
+  /** Icon-only accent class — never apply to a text word. */
   textClass: string;
-  /** Background accent class (paired with `/10` opacity by convention — see statusColorTokens). */
+  /** Opaque tint class (`bg-tint-chart-*`) — backdrop-independent, unlike a translucent `/N` modifier. */
   bgClass: string;
-  /** Border accent class (paired with `/30` opacity by convention). */
+  /** Border accent class (paired with `/40` opacity). */
   borderClass: string;
 }
 
@@ -46,24 +46,24 @@ const LEVEL_INFO: Record<RoadmapLevel, RoadmapLevelInfo> = {
     pluralLabel: "Epics",
     Icon: Milestone,
     textClass: "text-chart-2",
-    bgClass: "bg-chart-2/10",
-    borderClass: "border-chart-2/30",
+    bgClass: "bg-tint-chart-2",
+    borderClass: "border-chart-2/40",
   },
   story: {
     label: "Story",
     pluralLabel: "Stories",
     Icon: BookOpen,
     textClass: "text-chart-3",
-    bgClass: "bg-chart-3/10",
-    borderClass: "border-chart-3/30",
+    bgClass: "bg-tint-chart-3",
+    borderClass: "border-chart-3/40",
   },
   task: {
     label: "Task",
     pluralLabel: "Tasks",
     Icon: ListTodo,
     textClass: "text-chart-1",
-    bgClass: "bg-chart-1/10",
-    borderClass: "border-chart-1/30",
+    bgClass: "bg-tint-chart-1",
+    borderClass: "border-chart-1/40",
   },
 };
 

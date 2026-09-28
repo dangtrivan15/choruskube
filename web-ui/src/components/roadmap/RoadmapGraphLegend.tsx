@@ -39,19 +39,19 @@ export default function RoadmapGraphLegend() {
     >
       <div className="flex items-center gap-2" data-testid="roadmap-graph-legend-hierarchy">
         <EdgeSwatch style={ROADMAP_EDGE_STYLES.hierarchy} opacity={0.5} />
-        <span className="text-muted-foreground">{ROADMAP_EDGE_STYLES.hierarchy.label}</span>
+        <span className="text-foreground">{ROADMAP_EDGE_STYLES.hierarchy.label}</span>
       </div>
       <div className="flex items-center gap-2" data-testid="roadmap-graph-legend-dependency">
         <EdgeSwatch style={ROADMAP_EDGE_STYLES.dependency} />
-        <span className="text-muted-foreground">{ROADMAP_EDGE_STYLES.dependency.label}</span>
+        <span className="text-foreground">{ROADMAP_EDGE_STYLES.dependency.label}</span>
       </div>
       <div className="flex items-center gap-2" data-testid="roadmap-graph-legend-epic-dependency">
         <EdgeSwatch style={ROADMAP_EDGE_STYLES.epicDependency} />
-        <span className="text-muted-foreground">{ROADMAP_EDGE_STYLES.epicDependency.label}</span>
+        <span className="text-foreground">{ROADMAP_EDGE_STYLES.epicDependency.label}</span>
       </div>
       <div className="flex items-center gap-2" data-testid="roadmap-graph-legend-cross-epic">
         <EdgeSwatch style={ROADMAP_EDGE_STYLES.crossEpic} />
-        <span className="text-muted-foreground">{ROADMAP_EDGE_STYLES.crossEpic.label}</span>
+        <span className="text-foreground">{ROADMAP_EDGE_STYLES.crossEpic.label}</span>
       </div>
     </div>
   );

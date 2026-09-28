@@ -8,6 +8,7 @@
 // per-theme contrast/separation gate this spec cannot express statically.
 import { test, expect } from "../fixtures";
 import type { RunTrendResponse, BottleneckResponse } from "../../src/lib/types";
+import { resolveColor, alphaOf } from "../helpers/colors";
 
 // Four consecutive days, including a day where total === completed (the case
 // that used to hide Total entirely behind Completed) and a day with failures.
@@ -173,6 +174,22 @@ test.describe("Analytics chart series colors", () => {
 
     const before = await measure();
     assertMeasurement(before);
+
+    // Axis tick labels are ink, not the library's fixed gray, in both themes.
+    const inkResolved = await resolveColor(page, "var(--foreground)");
+    const tickCount = await analyticsPage.axisTickLabels.count();
+    expect(tickCount).toBeGreaterThan(0);
+    for (let i = 0; i < tickCount; i++) {
+      const fill = await analyticsPage.axisTickLabels.nth(i).evaluate((el) => getComputedStyle(el).fill);
+      expect(fill).toBe(inkResolved);
+    }
+
+    // Tooltip surface is opaque, not the translucent glass card.
+    const tooltip = await analyticsPage.hoverDataPoint(analyticsPage.runTrendChart);
+    const tooltipBg = await tooltip
+      .locator(".recharts-default-tooltip")
+      .evaluate((el) => getComputedStyle(el).backgroundColor);
+    expect(alphaOf(tooltipBg)).toBe(1);
 
     // Paint order is theme-independent — assert once. SVG paints later
     // siblings on top, so Total (last) covers a coincident Completed line.

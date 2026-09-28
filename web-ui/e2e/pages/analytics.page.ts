@@ -12,12 +12,20 @@ export class AnalyticsPage {
   readonly heading: Locator;
   readonly runTrendChart: Locator;
   readonly bottleneckChart: Locator;
+  readonly roadmapThroughputChart: Locator;
+  /** Every axis tick label across the whole page (scope to a chart's own container to narrow). */
+  readonly axisTickLabels: Locator;
+  /** Usage-quota "Warning"/"Critical" chips (UsageDashboard.tsx). */
+  readonly quotaChips: Locator;
 
   constructor(page: Page) {
     this.page = page;
     this.heading = page.getByRole("heading", { name: "Analytics" });
     this.runTrendChart = page.getByTestId("run-trend-chart");
     this.bottleneckChart = page.getByTestId("bottleneck-chart");
+    this.roadmapThroughputChart = page.getByTestId("roadmap-throughput-chart");
+    this.axisTickLabels = page.locator(".recharts-cartesian-axis-tick-value");
+    this.quotaChips = page.getByTestId("usage-quota-chip");
   }
 
   async goto() {
@@ -81,6 +89,40 @@ export class AnalyticsPage {
     return this.runTrendChart.locator(".recharts-area").evaluateAll((els) =>
       els.map((el) => Array.from(el.classList).find((c) => c.startsWith("series-")) ?? ""),
     );
+  }
+
+  /**
+   * Hovers the middle of a chart's plotting surface to trigger Recharts' tooltip, and returns
+   * that chart's tooltip wrapper. Every chart on the page (Run Trend, Bottlenecks, Roadmap
+   * Throughput) renders its own `.recharts-tooltip-wrapper` at all times — hidden via inline
+   * style until hovered, not absent from the DOM — so a page-wide `.recharts-tooltip-wrapper`
+   * locator is a strict-mode violation whenever more than one chart is mounted; the lookup must
+   * be scoped to the chart just hovered.
+   *
+   * The plotting surface locator is scoped to `.recharts-wrapper`'s direct child: each Legend
+   * item icon is *also* an `.recharts-surface` (Recharts renders legend icons with the same
+   * `<Surface>` primitive as the main plot) and those icons mount, as siblings of the real
+   * plotting surface, before it — so an unscoped `.recharts-surface` `.first()` silently
+   * resolves to a 24×24 legend swatch instead of the chart, and hovering its center never lands
+   * inside the plot area, leaving the tooltip permanently hidden. Legend icons sit several
+   * levels deeper (`.recharts-wrapper > .recharts-legend-wrapper > … > svg`), so the direct-child
+   * combinator excludes them unambiguously.
+   *
+   * `scrollIntoViewIfNeeded` runs before the bounding box is read: `page.mouse.move` dispatches
+   * at raw viewport coordinates and does not auto-scroll like `locator.hover()` does, so a chart
+   * that starts below the fold (Run Trend sits below the Resource Usage/overview cards, which
+   * pushes it past the default 720px viewport height) would otherwise get a center point beyond
+   * the visible viewport — the move lands nowhere and the tooltip never opens.
+   */
+  async hoverDataPoint(chart: Locator): Promise<Locator> {
+    const surface = chart.locator(".recharts-wrapper > .recharts-surface").first();
+    await surface.scrollIntoViewIfNeeded();
+    const box = await surface.boundingBox();
+    if (!box) throw new Error("Chart surface has no bounding box — is it visible?");
+    await this.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    const tooltip = chart.locator(".recharts-tooltip-wrapper");
+    await expect(tooltip).toBeVisible();
+    return tooltip;
   }
 
   async isDark(): Promise<boolean> {

@@ -5,12 +5,14 @@ export interface MilestoneInfo {
   /** Milestone display icon — shared across every Milestone (there is no per-kind icon, unlike
    * Priority/RoadmapLevel: a Milestone is a free-form user-created label, not a fixed enum). */
   Icon: LucideIcon;
-  /** Text/icon accent class. */
+  /** Icon-only accent class — never apply to a text word. */
   textClass: string;
-  /** Background accent class (paired with `/15` opacity by convention — see `PriorityBadge`). */
+  /** Opaque tint class (`bg-tint-chart-*`) — backdrop-independent, unlike a translucent `/N` modifier. */
   bgClass: string;
-  /** Border accent class (paired with `/20` opacity by convention). */
+  /** Border accent class (paired with `/40` opacity). */
   borderClass: string;
+  /** Solid-fill class for a small leading hue dot beside the (ink) label. */
+  dotClass: string;
 }
 
 /**
@@ -23,11 +25,11 @@ export interface MilestoneInfo {
  * meaning in any one color.
  */
 const PALETTE: Omit<MilestoneInfo, "Icon">[] = [
-  { textClass: "text-chart-1", bgClass: "bg-chart-1/15", borderClass: "border-chart-1/20" },
-  { textClass: "text-chart-2", bgClass: "bg-chart-2/15", borderClass: "border-chart-2/20" },
-  { textClass: "text-chart-3", bgClass: "bg-chart-3/15", borderClass: "border-chart-3/20" },
-  { textClass: "text-chart-4", bgClass: "bg-chart-4/15", borderClass: "border-chart-4/20" },
-  { textClass: "text-chart-5", bgClass: "bg-chart-5/15", borderClass: "border-chart-5/20" },
+  { textClass: "text-chart-1", bgClass: "bg-tint-chart-1", borderClass: "border-chart-1/40", dotClass: "bg-chart-1" },
+  { textClass: "text-chart-2", bgClass: "bg-tint-chart-2", borderClass: "border-chart-2/40", dotClass: "bg-chart-2" },
+  { textClass: "text-chart-3", bgClass: "bg-tint-chart-3", borderClass: "border-chart-3/40", dotClass: "bg-chart-3" },
+  { textClass: "text-chart-4", bgClass: "bg-tint-chart-4", borderClass: "border-chart-4/40", dotClass: "bg-chart-4" },
+  { textClass: "text-chart-5", bgClass: "bg-tint-chart-5", borderClass: "border-chart-5/40", dotClass: "bg-chart-5" },
 ];
 
 /** Small, non-cryptographic string hash (djb2) — deterministic across renders/reloads. */

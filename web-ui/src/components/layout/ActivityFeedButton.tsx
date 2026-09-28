@@ -21,7 +21,10 @@ export default function ActivityFeedButton({ onClick }: ActivityFeedButtonProps)
     >
       <Bell className="h-4 w-4" />
       {unreadCount > 0 && (
-        <span className="absolute -right-0.5 -top-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold text-white">
+        <span
+          data-testid="activity-feed-unread-count"
+          className="absolute -right-0.5 -top-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-status-error/40 bg-tint-status-error px-1 text-[10px] font-bold text-foreground"
+        >
           {unreadCount > 99 ? "99+" : unreadCount}
         </span>
       )}

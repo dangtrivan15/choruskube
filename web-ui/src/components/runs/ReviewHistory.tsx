@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import ReviewDetailDialog, { decisionBadgeClass } from "./ReviewDetailDialog";
 import type { ReviewHistoryResponse } from "@/lib/types";
+import { STATUS_TONE_CLASSES } from "@/lib/statusColors";
 
 /** Character threshold above which we show a "View full review" button. */
 const CONTENT_TRUNCATION_THRESHOLD = 150;
@@ -105,7 +106,7 @@ export default function ReviewHistory({ runId, loopGroup }: ReviewHistoryProps) 
                       Iteration {review.iteration}
                     </span>
                     {/* Node label badge (always gray for identification) */}
-                    <Badge className="bg-status-neutral/15 text-status-neutral">
+                    <Badge className={STATUS_TONE_CLASSES.neutral.badge}>
                       {nodeLabel}
                     </Badge>
                     {/* Decision badge (colored — only when meaningful) */}

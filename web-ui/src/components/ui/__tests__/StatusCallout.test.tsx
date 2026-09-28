@@ -35,7 +35,7 @@ describe("StatusCallout", () => {
     const root = container.querySelector('[data-testid="callout"]');
     expect(root).toHaveAttribute("data-tone", "info");
     expect(root?.className).toContain("border-status-info/40");
-    expect(root?.className).toContain("bg-status-info/10");
+    expect(root?.className).toContain("bg-tint-status-info");
     expect(root?.className).not.toMatch(/\btext-status-/);
   });
 

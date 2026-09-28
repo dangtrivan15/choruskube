@@ -51,6 +51,13 @@ test.describe("Log severity styling", () => {
     const errorColor = await runMonitorPage.logSeverityColor("error");
     expect(new Set([infoColor, warnColor, errorColor]).size).toBe(3);
 
+    // The level word itself is uniform ink across all three severities — the
+    // tone lives on the glyph (above), not the word.
+    const foreground = await runMonitorPage.page.evaluate(() => getComputedStyle(document.body).color);
+    for (const level of ["info", "warn", "error"]) {
+      expect(await runMonitorPage.logSeverityLabelColor(level)).toBe(foreground);
+    }
+
     await toggleTheme(runMonitorPage.page);
     await expect(runMonitorPage.page.locator("html")).toHaveClass(/dark/);
 

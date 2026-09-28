@@ -1,4 +1,4 @@
-import { statusColorTokens } from "@/lib/statusColors";
+import { statusColorTokens, statusTone, type StatusTone } from "@/lib/statusColors";
 
 /**
  * Roadmap board stages (backlog/in_progress/rolled_out) don't share a vocabulary with the
@@ -15,7 +15,11 @@ export const STAGE_TOKEN_MAP: Record<string, string> = {
   rolled_out: "completed",
 };
 
+export function stageTone(stage: string): StatusTone {
+  return statusTone(STAGE_TOKEN_MAP[stage] ?? stage);
+}
+
 export function stageColors(stage: string) {
   const tokens = statusColorTokens(STAGE_TOKEN_MAP[stage] ?? stage);
-  return { bg: `${tokens.bg}/10`, border: `${tokens.border}/60`, text: tokens.text };
+  return { bg: tokens.tint, border: tokens.borderSoft, text: tokens.text };
 }

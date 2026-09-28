@@ -157,6 +157,15 @@
     --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/* Mixed over the opaque --popover so a tint reads the same over any glass or gradient.
+   status-contrast.test.ts parses these two rules to compute tint contrast. */
+@utility bg-tint-* {
+  background-color: color-mix(in srgb, --value(--color-*) 15%, var(--popover));
+}
+@utility bg-tint-strong-* {
+  background-color: color-mix(in srgb, --value(--color-*) 25%, var(--popover));
+}
+
 @layer base {
   * {
     @apply border-border outline-ring;

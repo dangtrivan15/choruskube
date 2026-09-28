@@ -46,8 +46,7 @@ export default function PriorityBadge({
       data-testid={dataTestId ?? `priority-badge-${priority}`}
       title={`${meta.label} priority`}
       className={cn(
-        "inline-flex w-fit items-center font-medium rounded-full",
-        meta.textClass,
+        "inline-flex w-fit items-center rounded-full font-medium text-foreground",
         meta.bgClass,
         compact
           ? "gap-0.5 px-1.5 py-0.5 text-[10px]"
@@ -55,7 +54,7 @@ export default function PriorityBadge({
         className,
       )}
     >
-      <Icon className={compact ? "size-2.5" : "size-3"} />
+      <Icon className={cn(compact ? "size-2.5" : "size-3", meta.textClass)} />
       {meta.label}
     </span>
   );

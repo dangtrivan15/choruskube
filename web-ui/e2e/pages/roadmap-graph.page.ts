@@ -160,10 +160,19 @@ export class RoadmapGraphPage {
   }
 
   /**
-   * Computed text color of a roadmap graph node's status label — mirrors
-   * RunMonitorPage.nodeStatusColor's rationale (real DOM, real cascade).
+   * Computed text color of a roadmap graph node's status **icon** — mirrors
+   * RunMonitorPage.nodeStatusColor's rationale (real DOM, real cascade). The
+   * status *word* is uniform ink now (see `nodeStatusLabelColor`) — the tone
+   * lives on this icon mark instead.
    */
   async nodeStatusColor(label: string): Promise<string> {
+    return this.nodeByLabel(label)
+      .getByTestId("roadmap-graph-node-status-icon")
+      .evaluate((el) => getComputedStyle(el).color);
+  }
+
+  /** Computed text color of a roadmap graph node's status *word* — expected to resolve to `var(--foreground)` for every status. */
+  async nodeStatusLabelColor(label: string): Promise<string> {
     return this.nodeByLabel(label)
       .locator("span.capitalize")
       .evaluate((el) => getComputedStyle(el).color);

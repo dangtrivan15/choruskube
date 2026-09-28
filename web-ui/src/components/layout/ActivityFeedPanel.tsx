@@ -5,6 +5,7 @@ import { useActivityFeed } from "@/hooks/useActivityFeed";
 import { useMobileBreakpoint } from "@/hooks/useMobileBreakpoint";
 import type { ActivityFeedEntry } from "@/lib/types";
 import { formatDistanceToNow } from "date-fns";
+import { STATUS_TONE_CLASSES } from "@/lib/statusColors";
 
 interface ActivityFeedPanelProps {
   open: boolean;
@@ -16,13 +17,6 @@ const variantIcon: Record<ActivityFeedEntry["variant"], typeof Info> = {
   success: CheckCircle,
   warning: AlertTriangle,
   error: XCircle,
-};
-
-const variantColor: Record<ActivityFeedEntry["variant"], string> = {
-  info: "text-status-info",
-  success: "text-status-success",
-  warning: "text-status-warning",
-  error: "text-status-error",
 };
 
 export default function ActivityFeedPanel({ open, onClose }: ActivityFeedPanelProps) {
@@ -124,7 +118,7 @@ export default function ActivityFeedPanel({ open, onClose }: ActivityFeedPanelPr
               const Icon = variantIcon[entry.variant];
               return (
                 <li key={entry.id} className="flex gap-3 px-4 py-3">
-                  <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${variantColor[entry.variant]}`} />
+                  <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${STATUS_TONE_CLASSES[entry.variant].text}`} />
                   <div className="min-w-0 flex-1">
                     <p className="text-sm leading-snug">
                       {entry.actionUrl ? (

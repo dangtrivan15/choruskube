@@ -17,12 +17,16 @@ describe("analytics charts reference tokens directly, not through hsl()", () => 
     "src/components/analytics/BottleneckChart.tsx",
   ];
   const CHART_PATHS = [...LEGEND_CHART_PATHS, "src/components/analytics/RoadmapThroughputChart.tsx"];
+  /** BottleneckChart's Y axis keeps its pre-existing 11px tick to fit long node labels; every other axis is 12px. */
+  const AXIS_FONT_SIZES: Record<string, number[]> = {
+    "src/components/analytics/RunTrendChart.tsx": [12, 12],
+    "src/components/analytics/BottleneckChart.tsx": [12, 11],
+    "src/components/analytics/RoadmapThroughputChart.tsx": [12, 12],
+  };
 
-  it.each(CHART_PATHS)("%s has no hsl(var(--...)) wrapper and still uses var(--card)/var(--border)", (relPath) => {
+  it.each(CHART_PATHS)("%s has no hsl(var(--...)) wrapper", (relPath) => {
     const source = read(relPath);
     expect(source).not.toContain("hsl(var(--");
-    expect(source).toContain("var(--card)");
-    expect(source).toContain("var(--border)");
   });
 
   it.each(CHART_PATHS)("%s reads its series styles from the chart-series registry", (relPath) => {
@@ -34,12 +38,42 @@ describe("analytics charts reference tokens directly, not through hsl()", () => 
     expect(source).not.toMatch(/\b(stroke|fill)=\{?\s*["'`]var\(--/);
   });
 
-  it.each(CHART_PATHS)("%s pins its tooltip item text to the foreground ink", (relPath) => {
-    expect(read(relPath)).toMatch(/itemStyle=\{\{\s*color:\s*"var\(--foreground\)"\s*\}\}/);
+  /** Every self-closing `<Tag …/>` element of `tag` in `source`, props included (props may hold `=>`). */
+  function jsxTags(source: string, tag: string): string[] {
+    return source.match(new RegExp(`<${tag}\\b[\\s\\S]*?\\/>`, "g")) ?? [];
+  }
+
+  it.each(CHART_PATHS)("%s styles every tooltip through chartTooltipProps() alone", (relPath) => {
+    const tooltips = jsxTags(read(relPath), "Tooltip");
+    expect(tooltips).toHaveLength(1);
+    for (const tooltip of tooltips) {
+      expect(tooltip).toMatch(/^<Tooltip\s+\{\.\.\.chartTooltipProps\(\)\}/);
+      // A style prop after the spread would silently override the opaque surface or ink text.
+      expect(tooltip).not.toMatch(/\b(?:contentStyle|itemStyle|labelStyle|wrapperStyle)=/);
+    }
+  });
+
+  it.each(CHART_PATHS)("%s pins every axis tick to chartTickProps() at its expected font size", (relPath) => {
+    const source = read(relPath);
+    const axes = [...jsxTags(source, "XAxis"), ...jsxTags(source, "YAxis")];
+    const sizes = axes.map((axis) => axis.match(/\btick=\{chartTickProps\((\d+)\)\}/)?.[1]);
+    expect(sizes).toEqual(AXIS_FONT_SIZES[relPath].map(String));
   });
 
   it.each(LEGEND_CHART_PATHS)("%s pins its legend label text to the foreground ink", (relPath) => {
     expect(read(relPath)).toMatch(/labelStyle=\{\{\s*color:\s*"var\(--foreground\)"\s*\}\}/);
+  });
+});
+
+describe("AnalyticsPage.tsx chart card containers use the opaque popover surface", () => {
+  it("Run Trend, Bottlenecks, and Roadmap chart containers use bg-popover, not bg-card", () => {
+    const source = read("src/pages/AnalyticsPage.tsx");
+    const matches = source.match(/className="[^"]*rounded-lg border[^"]*"/g) ?? [];
+    const popoverContainers = matches.filter((m) => m.includes("bg-popover"));
+    expect(popoverContainers.length).toBeGreaterThanOrEqual(3);
+    for (const container of popoverContainers) {
+      expect(container).toContain("shadow-sm");
+    }
   });
 });
 
