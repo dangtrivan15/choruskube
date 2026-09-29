@@ -13,21 +13,14 @@ vi.mock("@/config", () => ({
 import { setCookie } from "@/lib/theme";
 
 describe("setCookie root-domain scope", () => {
-  let cookieSpy: ReturnType<typeof vi.fn>;
-  let originalCookieDescriptor: PropertyDescriptor | undefined;
+  let cookieSpy: ReturnType<typeof vi.fn<(value: string) => void>>;
 
   afterEach(() => {
-    if (originalCookieDescriptor) {
-      Object.defineProperty(document, "cookie", originalCookieDescriptor);
-    }
+    delete (document as unknown as Record<string, unknown>).cookie;
     configState.appHost = undefined;
   });
 
   function stubCookieSetter() {
-    originalCookieDescriptor = Object.getOwnPropertyDescriptor(
-      Document.prototype,
-      "cookie",
-    );
     cookieSpy = vi.fn();
     Object.defineProperty(document, "cookie", {
       configurable: true,
@@ -44,7 +37,7 @@ describe("setCookie root-domain scope", () => {
 
       setCookie("theme", "dark");
 
-      expect(cookieSpy).toHaveBeenCalledWith(
+      expect(cookieSpy).toHaveBeenCalledExactlyOnceWith(
         "theme=dark;path=/;max-age=31536000;SameSite=Lax;domain=.example.com;Secure",
       );
     },
@@ -56,7 +49,7 @@ describe("setCookie root-domain scope", () => {
 
     setCookie("theme", "dark");
 
-    expect(cookieSpy).toHaveBeenCalledWith(
+    expect(cookieSpy).toHaveBeenCalledExactlyOnceWith(
       "theme=dark;path=/;max-age=31536000;SameSite=Lax;domain=.b.example.com;Secure",
     );
   });
@@ -69,7 +62,7 @@ describe("setCookie root-domain scope", () => {
 
       setCookie("theme", "dark");
 
-      expect(cookieSpy).toHaveBeenCalledWith(
+      expect(cookieSpy).toHaveBeenCalledExactlyOnceWith(
         "theme=dark;path=/;max-age=31536000;SameSite=Lax",
       );
     },
