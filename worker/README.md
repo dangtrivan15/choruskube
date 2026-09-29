@@ -110,7 +110,7 @@ service account, or credential itself — see
 |----------|---------|---------|
 | `K8S_NAMESPACE` | `choruskube` | The single namespace every agent Job launches into and is torn down within. |
 | `K8S_AGENT_SERVICE_ACCOUNT` | `choruskube-agent` | Service account the agent Job's pod runs as. |
-| `K8S_AGENT_POD_TEMPLATE_NAME` | `choruskube-agent-pod-template` | Pod template the Job's pod is built from. |
+| `K8S_AGENT_POD_TEMPLATE_NAME` | `choruskube-agent-pod-template` | ConfigMap holding the operator's agent pod template — see [Kubernetes agent pod template](#kubernetes-agent-pod-template) for which fields apply. |
 | `K8S_TEMPLATE_NAMESPACE` | `choruskube` | Namespace the pod template above is read from. |
 | `K8S_AGENT_CPU_REQUEST` | `200m` | Default agent-container CPU request; a node execution's own sizing overrides it. |
 | `K8S_AGENT_MEMORY_REQUEST` | `1Gi` | Default agent-container memory request; overridable per node. |
@@ -124,6 +124,23 @@ service account, or credential itself — see
 | `DOCKER_HOST` | Docker SDK's own environment-based default | Daemon socket, e.g. `unix:///var/run/docker.sock`. |
 | `DOCKER_NETWORK` | `choruskube` | Docker network agent containers and DinD sidecars attach to. |
 | `DOCKER_STAGING_DIR` | `/tmp/choruskube-agent-staging` | Base directory for per-execution config/credential staging. In Docker-out-of-Docker deployments this path must be bind-mounted identically on both sides — the Worker's own filesystem and the host daemon it talks to. |
+
+### Kubernetes agent pod template
+
+The Kubernetes executor builds each agent pod itself and takes only named fields from the
+operator's `PodTemplate` (stored under the wrapper ConfigMap's `template.yaml` key); everything
+else in the template is ignored.
+
+| Template fields | Applied to |
+|-----------------|------------|
+| `nodeSelector`, `affinity`, `tolerations`, `topologySpreadConstraints`, `priorityClassName` | Every agent pod. |
+| `runtimeClassName`, `hostUsers`, the `dind` init container, the `agent` container's `env` and `volumeMounts`, the pod's `volumes` | Only pods for nodes that request Docker. |
+
+Scheduling fields reach every pod because they decide which nodes may run an agent at all; the
+Docker parts stay on Docker nodes because no other agent needs the sidecar or its runtime. A field
+the template sets replaces the executor's own value outright rather than merging with it, so the
+pod gets exactly what the template says. The Worker refuses to start when the template is missing
+or malformed, and reads it once per process — restart the Worker after editing it.
 
 ## Build and test
 

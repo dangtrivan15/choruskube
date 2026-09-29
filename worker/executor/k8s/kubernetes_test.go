@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -376,6 +377,12 @@ template:
       - name: docker-certs
         emptyDir: {}
 `
+	createTemplateWrapper(t, fakeClient, templateNamespace, templateName, templateYAML)
+}
+
+// createTemplateWrapper stores templateYAML under the wrapper ConfigMap's "template.yaml" key.
+func createTemplateWrapper(t *testing.T, fakeClient kubernetes.Interface, templateNamespace, templateName, templateYAML string) {
+	t.Helper()
 	_, err := fakeClient.CoreV1().ConfigMaps(templateNamespace).Create(context.Background(), &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Name: templateName, Namespace: templateNamespace},
 		Data:       map[string]string{"template.yaml": templateYAML},
@@ -383,8 +390,8 @@ template:
 	require.NoError(t, err)
 }
 
-// The Worker is the sole consumer of the DinD PodTemplate, so a missing/malformed template is
-// its misconfiguration to catch — at startup, via ValidatePodTemplate, not at the first DinD launch.
+// The Worker is the sole consumer of the agent PodTemplate, so a missing/malformed template is
+// its misconfiguration to catch — at startup, via ValidatePodTemplate, not at the first launch.
 func TestKubernetesExecutor_ValidatePodTemplate(t *testing.T) {
 	templateNamespace := "choruskube"
 	templateName := "choruskube-agent-pod-template"
@@ -613,6 +620,272 @@ func TestKubernetesExecutor_WithNamespace_LaunchesInCopyNamespaceAndSharesTempla
 		}
 	}
 	assert.Equal(t, 1, templateGets, "pod-template cache must be shared: exactly one template ConfigMap GET across both instances")
+}
+
+// schedulingTemplateYAML is a complete agent PodTemplate -- usable by DinD launches too -- that sets
+// every scheduling field applyTemplateScheduling copies. assertTemplateScheduling mirrors its values.
+const schedulingTemplateYAML = `
+apiVersion: v1
+kind: PodTemplate
+metadata:
+  name: choruskube-agent-pod-template
+template:
+  spec:
+    runtimeClassName: sysbox-runc
+    nodeSelector:
+      example.com/pool: agents
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+            - matchExpressions:
+                - key: kubernetes.io/arch
+                  operator: In
+                  values: [amd64]
+    tolerations:
+      - key: example.com/dedicated
+        operator: Equal
+        value: agents
+        effect: NoSchedule
+      - key: node.kubernetes.io/unreachable
+        operator: Exists
+        effect: NoExecute
+        tolerationSeconds: 300
+    topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: choruskube-agent
+    priorityClassName: agent-batch
+    initContainers:
+      - name: dind
+        image: docker:29-dind
+    containers:
+      - name: agent
+        image: placeholder
+`
+
+func assertTemplateScheduling(t *testing.T, podSpec corev1.PodSpec) {
+	t.Helper()
+	assert.Equal(t, map[string]string{"example.com/pool": "agents"}, podSpec.NodeSelector)
+
+	require.NotNil(t, podSpec.Affinity)
+	require.NotNil(t, podSpec.Affinity.NodeAffinity)
+	required := podSpec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+	require.NotNil(t, required)
+	assert.Equal(t, []corev1.NodeSelectorTerm{{
+		MatchExpressions: []corev1.NodeSelectorRequirement{
+			{Key: "kubernetes.io/arch", Operator: corev1.NodeSelectorOpIn, Values: []string{"amd64"}},
+		},
+	}}, required.NodeSelectorTerms)
+
+	assert.Equal(t, []corev1.Toleration{
+		{Key: "example.com/dedicated", Operator: corev1.TolerationOpEqual, Value: "agents", Effect: corev1.TaintEffectNoSchedule},
+		{Key: "node.kubernetes.io/unreachable", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoExecute, TolerationSeconds: int64Ptr(300)},
+	}, podSpec.Tolerations)
+
+	assert.Equal(t, []corev1.TopologySpreadConstraint{{
+		MaxSkew:           1,
+		TopologyKey:       "kubernetes.io/hostname",
+		WhenUnsatisfiable: corev1.ScheduleAnyway,
+		LabelSelector:     &metav1.LabelSelector{MatchLabels: map[string]string{"app": "choruskube-agent"}},
+	}}, podSpec.TopologySpreadConstraints)
+
+	assert.Equal(t, "agent-batch", podSpec.PriorityClassName)
+}
+
+func assertNoScheduling(t *testing.T, podSpec corev1.PodSpec) {
+	t.Helper()
+	assert.Empty(t, podSpec.NodeSelector)
+	assert.Nil(t, podSpec.Affinity)
+	assert.Empty(t, podSpec.Tolerations)
+	assert.Empty(t, podSpec.TopologySpreadConstraints)
+	assert.Empty(t, podSpec.PriorityClassName)
+}
+
+// Scheduling decides which nodes may run an agent at all, so the template's scheduling fields reach
+// every agent pod -- while its DinD parts (sidecar, runtimeClassName) stay on DinD launches only.
+func TestKubernetesExecutor_Execute_TemplateScheduling_AppliesToEveryAgentPod(t *testing.T) {
+	templateNamespace := "choruskube"
+	templateName := "choruskube-agent-pod-template"
+
+	for _, enableDocker := range []bool{false, true} {
+		t.Run(fmt.Sprintf("enableDocker=%t", enableDocker), func(t *testing.T) {
+			fakeClient := fake.NewSimpleClientset()
+			createTemplateWrapper(t, fakeClient, templateNamespace, templateName, schedulingTemplateYAML)
+			exec := NewKubernetesExecutor(fakeClient, Config{
+				Namespace:            testNamespace,
+				AgentServiceAccount:  "choruskube-agent",
+				AgentPodTemplateName: templateName,
+				TemplateNamespace:    templateNamespace,
+			})
+
+			params := newTestParams()
+			params.EnableDocker = enableDocker
+			result, err := exec.Execute(context.Background(), params)
+			require.NoError(t, err)
+
+			job, err := fakeClient.BatchV1().Jobs(testNamespace).Get(context.Background(), result.PodName, metav1.GetOptions{})
+			require.NoError(t, err)
+			podSpec := job.Spec.Template.Spec
+			assertTemplateScheduling(t, podSpec)
+
+			if enableDocker {
+				require.NotNil(t, podSpec.RuntimeClassName)
+				assert.Len(t, podSpec.InitContainers, 1)
+			} else {
+				assert.Nil(t, podSpec.RuntimeClassName, "runtimeClassName is a DinD-only splice")
+				assert.Empty(t, podSpec.InitContainers, "the dind sidecar is a DinD-only splice")
+			}
+		})
+	}
+}
+
+func TestKubernetesExecutor_Execute_TemplateScheduling_LeavesPodUnsteeredWhenNothingToCopy(t *testing.T) {
+	templateNamespace := "choruskube"
+	templateName := "choruskube-agent-pod-template"
+
+	t.Run("no template configured", func(t *testing.T) {
+		fakeClient := fake.NewSimpleClientset()
+		exec := NewKubernetesExecutor(fakeClient, Config{Namespace: testNamespace, AgentServiceAccount: "choruskube-agent"})
+
+		result, err := exec.Execute(context.Background(), newTestParams())
+		require.NoError(t, err)
+
+		job, err := fakeClient.BatchV1().Jobs(testNamespace).Get(context.Background(), result.PodName, metav1.GetOptions{})
+		require.NoError(t, err)
+		assertNoScheduling(t, job.Spec.Template.Spec)
+		for _, a := range fakeClient.Actions() {
+			assert.False(t, a.GetVerb() == "get" && a.GetResource().Resource == "configmaps",
+				"with no template configured, a launch must not read one")
+		}
+	})
+
+	t.Run("template sets no scheduling fields", func(t *testing.T) {
+		fakeClient := fake.NewSimpleClientset()
+		setupDindTemplate(t, fakeClient, templateNamespace, templateName)
+		exec := NewKubernetesExecutor(fakeClient, Config{
+			Namespace:            testNamespace,
+			AgentServiceAccount:  "choruskube-agent",
+			AgentPodTemplateName: templateName,
+			TemplateNamespace:    templateNamespace,
+		})
+
+		result, err := exec.Execute(context.Background(), newTestParams())
+		require.NoError(t, err)
+
+		job, err := fakeClient.BatchV1().Jobs(testNamespace).Get(context.Background(), result.PodName, metav1.GetOptions{})
+		require.NoError(t, err)
+		assertNoScheduling(t, job.Spec.Template.Spec)
+	})
+}
+
+// A configured template that cannot be read fails every launch, not only DinD ones: launching
+// unsteered would silently place the agent on nodes the operator meant to exclude.
+func TestKubernetesExecutor_Execute_MissingTemplate_FailsNonDindLaunch(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	exec := NewKubernetesExecutor(fakeClient, Config{
+		Namespace:            testNamespace,
+		AgentServiceAccount:  "choruskube-agent",
+		AgentPodTemplateName: "does-not-exist",
+		TemplateNamespace:    "choruskube",
+	})
+
+	params := newTestParams()
+	_, err := exec.Execute(context.Background(), params)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+
+	jobs, err := fakeClient.BatchV1().Jobs(testNamespace).List(context.Background(), metav1.ListOptions{})
+	require.NoError(t, err)
+	assert.Empty(t, jobs.Items, "no Job may launch when the configured template is unreadable")
+	execIDShort := params.NodeExecutionID.String()[:8]
+	_, cmErr := fakeClient.CoreV1().ConfigMaps(testNamespace).Get(context.Background(), "config-"+execIDShort, metav1.GetOptions{})
+	assert.Error(t, cmErr, "configmap should have been cleaned up after the failed Execute")
+}
+
+// Same rule as runtimeClassName/hostUsers: a field the template sets replaces the inline value
+// whole (never merged); a field it leaves unset keeps the inline value.
+func TestKubernetesExecutor_ApplyTemplateScheduling_TemplateReplacesSetFieldsKeepsUnset(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	templateNamespace := "choruskube"
+	templateName := "choruskube-agent-pod-template"
+	createTemplateWrapper(t, fakeClient, templateNamespace, templateName, `
+apiVersion: v1
+kind: PodTemplate
+template:
+  spec:
+    nodeSelector:
+      example.com/pool: agents
+    tolerations:
+      - key: example.com/dedicated
+        operator: Exists
+    containers:
+      - name: agent
+        image: placeholder
+`)
+	exec := NewKubernetesExecutor(fakeClient, Config{
+		Namespace:            testNamespace,
+		AgentPodTemplateName: templateName,
+		TemplateNamespace:    templateNamespace,
+	})
+
+	inlineAffinity := &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{
+		RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+			MatchExpressions: []corev1.NodeSelectorRequirement{{Key: "example.com/inline", Operator: corev1.NodeSelectorOpExists}},
+		}}},
+	}}
+	inlineSpread := []corev1.TopologySpreadConstraint{{
+		MaxSkew: 2, TopologyKey: "topology.kubernetes.io/zone", WhenUnsatisfiable: corev1.DoNotSchedule,
+	}}
+	job := &batchv1.Job{Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+		NodeSelector:              map[string]string{"example.com/inline": "yes"},
+		Tolerations:               []corev1.Toleration{{Key: "example.com/inline", Operator: corev1.TolerationOpExists}},
+		Affinity:                  inlineAffinity,
+		TopologySpreadConstraints: inlineSpread,
+		PriorityClassName:         "inline-priority",
+	}}}}
+
+	require.NoError(t, exec.applyTemplateScheduling(context.Background(), job))
+	podSpec := job.Spec.Template.Spec
+
+	// Set by the template: replaced whole, with no inline entry merged in.
+	assert.Equal(t, map[string]string{"example.com/pool": "agents"}, podSpec.NodeSelector)
+	assert.Equal(t, []corev1.Toleration{{Key: "example.com/dedicated", Operator: corev1.TolerationOpExists}}, podSpec.Tolerations)
+	// Unset in the template: the inline value survives.
+	assert.Same(t, inlineAffinity, podSpec.Affinity)
+	assert.Equal(t, inlineSpread, podSpec.TopologySpreadConstraints)
+	assert.Equal(t, "inline-priority", podSpec.PriorityClassName)
+}
+
+// The template is cached for the life of the process, so a launch that edits its own pod in place
+// must not reach the cache -- every later launch would inherit the edit.
+func TestKubernetesExecutor_ApplyTemplateScheduling_DoesNotAliasCachedTemplate(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	templateNamespace := "choruskube"
+	templateName := "choruskube-agent-pod-template"
+	createTemplateWrapper(t, fakeClient, templateNamespace, templateName, schedulingTemplateYAML)
+	exec := NewKubernetesExecutor(fakeClient, Config{
+		Namespace:            testNamespace,
+		AgentPodTemplateName: templateName,
+		TemplateNamespace:    templateNamespace,
+	})
+
+	first := &batchv1.Job{}
+	require.NoError(t, exec.applyTemplateScheduling(context.Background(), first))
+	edited := &first.Spec.Template.Spec
+	edited.NodeSelector["example.com/pool"] = "mutated"
+	edited.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchExpressions[0].Values[0] = "mutated"
+	edited.Tolerations[0].Value = "mutated"
+	*edited.Tolerations[1].TolerationSeconds = 1
+	edited.TopologySpreadConstraints[0].LabelSelector.MatchLabels["app"] = "mutated"
+	edited.PriorityClassName = "mutated"
+
+	second := &batchv1.Job{}
+	require.NoError(t, exec.applyTemplateScheduling(context.Background(), second))
+	assertTemplateScheduling(t, second.Spec.Template.Spec)
 }
 
 func TestKubernetesExecutor_Cleanup_DeletesJobAndChildren(t *testing.T) {

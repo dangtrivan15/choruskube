@@ -68,7 +68,7 @@ func main() {
 			},
 		})
 		// Fail fast at boot on a missing/malformed agent pod template rather than at the first
-		// DinD node launch: the Worker is the sole consumer, so this is where that misconfiguration
+		// agent launch: the Worker is the sole consumer, so this is where that misconfiguration
 		// surfaces.
 		if err := k8sExec.ValidatePodTemplate(ctx); err != nil {
 			log.Fatalf("agent pod template: %v", err)

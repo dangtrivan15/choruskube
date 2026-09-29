@@ -67,8 +67,9 @@ type Config struct {
 	AgentServiceAccount string
 
 	// AgentPodTemplateName names the wrapper ConfigMap (in TemplateNamespace) holding the
-	// DinD PodTemplate spliced into a Job's pod when a launch sets EnableDocker. Required
-	// only by launches that actually request Docker.
+	// operator's agent PodTemplate: its scheduling fields apply to every agent pod
+	// (applyTemplateScheduling), its DinD parts only when a launch sets EnableDocker
+	// (addDindSupport). Empty launches unsteered pods and fails any launch requesting Docker.
 	AgentPodTemplateName string
 
 	// TemplateNamespace is the namespace holding the AgentPodTemplateName wrapper
@@ -81,7 +82,7 @@ type Config struct {
 	AgentResources coreexec.AgentResources
 }
 
-// podTemplateStore is the DinD PodTemplate cache and its lock, shared by pointer across
+// podTemplateStore is the agent PodTemplate cache and its lock, shared by pointer across
 // KubernetesExecutor copies so they coordinate one cache.
 type podTemplateStore struct {
 	mu    sync.Mutex
@@ -95,7 +96,7 @@ type KubernetesExecutor struct {
 	config Config
 
 	// templates is shared by pointer across WithNamespace copies so per-org instances coordinate
-	// one DinD PodTemplate cache.
+	// one agent PodTemplate cache.
 	templates *podTemplateStore
 }
 
@@ -216,6 +217,10 @@ func (k *KubernetesExecutor) Execute(ctx context.Context, params coreexec.Execut
 		return coreexec.ExecutionResult{}, err
 	}
 
+	if err := k.applyTemplateScheduling(ctx, job); err != nil {
+		return coreexec.ExecutionResult{}, fmt.Errorf("apply pod template scheduling: %w", err)
+	}
+
 	if params.EnableDocker {
 		if err := k.addDindSupport(ctx, job, params.DindImage); err != nil {
 			return coreexec.ExecutionResult{}, fmt.Errorf("add dind support: %w", err)
@@ -259,8 +264,9 @@ func (k *KubernetesExecutor) Execute(ctx context.Context, params coreexec.Execut
 }
 
 // buildJob assembles the inline Job spec: the "agent" container, base volumes, and -- when a
-// registry credential is present -- the regcred volume/mounts and DOCKER_CONFIG env. DinD and
-// resource-pinning are spliced on afterward by addDindSupport/pinAgentContainerResources.
+// registry credential is present -- the regcred volume/mounts and DOCKER_CONFIG env. Resource
+// pinning, template scheduling and DinD are spliced on afterward by pinAgentContainerResources,
+// applyTemplateScheduling and addDindSupport.
 func (k *KubernetesExecutor) buildJob(
 	jobName, ns, serviceAccount, secretName, cmName, regcredName string,
 	params coreexec.ExecutionParams,
@@ -580,6 +586,45 @@ func resolveResource(override *coreexec.AgentResources, field func(coreexec.Agen
 	return def
 }
 
+// --- Template scheduling ---
+
+// applyTemplateScheduling copies the operator-supplied PodTemplate's scheduling fields --
+// nodeSelector, affinity, tolerations, topologySpreadConstraints, priorityClassName -- onto every
+// agent pod, DinD or not. As with runtimeClassName/hostUsers in addDindSupport, a field the
+// template sets (non-empty) replaces the inline value whole, never merged; a field it leaves unset
+// keeps the inline value. No-op when Config.AgentPodTemplateName is empty; a configured template
+// that cannot be loaded fails the launch rather than letting it run unsteered.
+func (k *KubernetesExecutor) applyTemplateScheduling(ctx context.Context, job *batchv1.Job) error {
+	if k.config.AgentPodTemplateName == "" {
+		return nil
+	}
+	tmpl, err := k.loadPodTemplate(ctx)
+	if err != nil {
+		return err
+	}
+	// The cached template outlives this Job: sharing its maps/slices/pointers would let an in-place
+	// edit of one launch's pod rewrite the template for every later launch.
+	src := tmpl.Template.Spec.DeepCopy()
+	podSpec := &job.Spec.Template.Spec
+
+	if len(src.NodeSelector) > 0 {
+		podSpec.NodeSelector = src.NodeSelector
+	}
+	if src.Affinity != nil {
+		podSpec.Affinity = src.Affinity
+	}
+	if len(src.Tolerations) > 0 {
+		podSpec.Tolerations = src.Tolerations
+	}
+	if len(src.TopologySpreadConstraints) > 0 {
+		podSpec.TopologySpreadConstraints = src.TopologySpreadConstraints
+	}
+	if src.PriorityClassName != "" {
+		podSpec.PriorityClassName = src.PriorityClassName
+	}
+	return nil
+}
+
 // --- DinD support ---
 
 // addDindSupport splices the operator-supplied PodTemplate (loadPodTemplate) onto the inline Job:
@@ -639,17 +684,17 @@ func (k *KubernetesExecutor) addDindSupport(ctx context.Context, job *batchv1.Jo
 	return nil
 }
 
-// ValidatePodTemplate loads and parses the DinD PodTemplate once (also warming the cache),
+// ValidatePodTemplate loads and parses the agent PodTemplate once (also warming the cache),
 // erroring if its wrapper ConfigMap is missing or malformed. Call it at startup so a missing-
-// template misconfiguration fails fast rather than at the first DinD launch.
+// template misconfiguration fails fast rather than at the first launch.
 func (k *KubernetesExecutor) ValidatePodTemplate(ctx context.Context) error {
 	_, err := k.loadPodTemplate(ctx)
 	return err
 }
 
-// loadPodTemplate fetches the DinD PodTemplate from its wrapper ConfigMap
-// (Config.AgentPodTemplateName in Config.TemplateNamespace, "template.yaml" key), caching it
-// across repeat DinD launches.
+// loadPodTemplate fetches the agent PodTemplate from its wrapper ConfigMap
+// (Config.AgentPodTemplateName in Config.TemplateNamespace, "template.yaml" key), caching it for
+// the life of the process: an edit to the template takes effect only after a Worker restart.
 func (k *KubernetesExecutor) loadPodTemplate(ctx context.Context) (*corev1.PodTemplate, error) {
 	name := k.config.AgentPodTemplateName
 
