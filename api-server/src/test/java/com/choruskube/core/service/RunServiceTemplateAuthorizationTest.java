@@ -98,7 +98,8 @@ class RunServiceTemplateAuthorizationTest {
                 null, // roadmapCandidateMaterializer
                 null, // roadmapCandidatesArtifactResolver
                 null, // nodeExecutionClaimService
-                null); // escalationContextResolver
+                null, // escalationContextResolver
+                null); // roadmapProposalValidator - unused (approve-time validation not exercised)
     }
 
     @Test

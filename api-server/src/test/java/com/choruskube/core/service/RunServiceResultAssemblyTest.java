@@ -117,7 +117,8 @@ class RunServiceResultAssemblyTest {
                 null,
                 null,
                 nodeExecutionClaimService,
-                null); // escalationContextResolver - unused (escalation not exercised)
+                null, // escalationContextResolver - unused (escalation not exercised)
+                null); // roadmapProposalValidator - unused (approve-time validation not exercised)
     }
 
     private NodeExecution stubExec() {

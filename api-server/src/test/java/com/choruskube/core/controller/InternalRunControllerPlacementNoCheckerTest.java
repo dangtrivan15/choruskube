@@ -24,7 +24,8 @@ class InternalRunControllerPlacementNoCheckerTest {
                 null, // runPullRequestService
                 null, // artifactResolutionService
                 null, // branchCleanupService
-                Optional.empty()); // placementChecker
+                Optional.empty(), // placementChecker
+                null); // roadmapProposalService
 
         NodePlacementChecker.PlacementDecision decision =
                 controller.placementCheck(UUID.randomUUID(), UUID.randomUUID());

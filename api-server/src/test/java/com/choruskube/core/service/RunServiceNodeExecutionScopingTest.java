@@ -104,7 +104,8 @@ class RunServiceNodeExecutionScopingTest {
                 null, // roadmapCandidateMaterializer
                 null, // roadmapCandidatesArtifactResolver
                 claimService,
-                null); // escalationContextResolver
+                null, // escalationContextResolver
+                null); // roadmapProposalValidator - unused (approve-time validation not exercised)
     }
 
     private WorkflowRun stubRun(WorkflowRunStatus status) {

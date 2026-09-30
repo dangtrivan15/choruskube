@@ -855,8 +855,24 @@ public class InternalRunService {
 
         WorkflowRun run =
                 runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
+        UUID epicId = resolveTriggeringEpicId(runId)
+                .orElseThrow(() -> new NotFoundException("Run " + runId + " was not started from a Task"));
+        UUID softwareProjectId = resolveSoftwareProjectIdFromRun(run);
+        return roadmapGraphService.getGraph(epicId, runId, softwareProjectId);
+    }
+
+    /**
+     * Resolves the Epic that owns the run's triggering Task, following {@code run.task_id ->
+     * Task.story_id -> Story.epic_id}. Empty when the run was not started from a Task. Shared by
+     * {@link #getGraphForTriggeringTask} and {@code RoadmapProposalValidator}'s scope rules, so
+     * both agree on which Epic a task-triggered extension may anchor into.
+     */
+    @Transactional(readOnly = true)
+    public Optional<UUID> resolveTriggeringEpicId(UUID runId) {
+        WorkflowRun run =
+                runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
         if (run.getTaskId() == null) {
-            throw new NotFoundException("Run " + runId + " was not started from a Task");
+            return Optional.empty();
         }
         Task task = taskRepo.findById(run.getTaskId())
                 .orElseThrow(() -> new NotFoundException("Task not found: " + run.getTaskId()));
@@ -865,8 +881,7 @@ public class InternalRunService {
                 .orElseThrow(() -> new NotFoundException("Story not found for task " + task.getId()));
         Epic epic = epicRepo.findById(story.getEpicId())
                 .orElseThrow(() -> new NotFoundException("Epic not found for story " + story.getId()));
-        UUID softwareProjectId = resolveSoftwareProjectIdFromRun(run);
-        return roadmapGraphService.getGraph(epic.getId(), runId, softwareProjectId);
+        return Optional.of(epic.getId());
     }
 
     /**
@@ -896,6 +911,20 @@ public class InternalRunService {
         WorkflowRun run =
                 runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
         return resolveSoftwareProjectIdFromRun(run);
+    }
+
+    /**
+     * Resolves a software project's {@code GitRepo}s ({@code SoftwareProject#resolveRepos()}) —
+     * exactly one for a plain {@code GitRepo} project, possibly several for a {@code RepoGroup}.
+     * Used by {@link RoadmapProposalValidator} to check a new Task's {@code repoId} without giving
+     * it its own {@code SoftwareProjectRepository} dependency.
+     */
+    @Transactional(readOnly = true)
+    public List<GitRepo> resolveRepos(UUID softwareProjectId) {
+        SoftwareProject project = softwareProjectRepo
+                .findById(softwareProjectId)
+                .orElseThrow(() -> new NotFoundException("Software project not found: " + softwareProjectId));
+        return project.resolveRepos();
     }
 
     /**

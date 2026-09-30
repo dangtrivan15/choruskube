@@ -116,7 +116,8 @@ class RunServiceCandidateBreakdownTest {
                 roadmapCandidateMaterializer,
                 roadmapCandidatesArtifactResolver,
                 null, // nodeExecutionClaimService — unused (signalHumanDecision not exercised)
-                null); // escalationContextResolver — unused; see RunServiceEscalationContextTest
+                null, // escalationContextResolver — unused; see RunServiceEscalationContextTest
+                null); // roadmapProposalValidator — unused (approve-time validation not exercised)
     }
 
     private WorkflowRun stubRun() {
@@ -143,7 +144,7 @@ class RunServiceCandidateBreakdownTest {
         return new RoadmapCandidatesDocument(
                 null,
                 List.of(new CandidateEpicProposal(
-                        "Bulk Import", "desc", "why", List.of("repo-a"), "High", List.of(), null, null)),
+                        "Bulk Import", "desc", "why", List.of("repo-a"), "High", List.of(), null, null, null)),
                 null);
     }
 

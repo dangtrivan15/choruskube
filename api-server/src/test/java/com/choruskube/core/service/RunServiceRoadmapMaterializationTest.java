@@ -10,9 +10,11 @@ import com.choruskube.core.dto.CandidateTaskProposal;
 import com.choruskube.core.dto.MaterializationSummary;
 import com.choruskube.core.dto.RoadmapCandidatesDocument;
 import com.choruskube.core.dto.SignalRequest;
+import com.choruskube.core.exception.ValidationException;
 import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.NodeExecutionStatus;
+import com.choruskube.core.model.enums.RoadmapMaterializeMode;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -84,6 +86,9 @@ class RunServiceRoadmapMaterializationTest {
     @Mock
     private WorkflowClientRegistry workflowClients;
 
+    @Mock
+    private RoadmapProposalValidator roadmapProposalValidator;
+
     private RunService service;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final UUID runId = UUID.randomUUID();
@@ -93,6 +98,12 @@ class RunServiceRoadmapMaterializationTest {
     @BeforeEach
     void setUp() {
         lenient().when(workflowClients.clientFor(any())).thenReturn(workflowClient);
+        lenient()
+                .when(roadmapProposalValidator.validate(any(), any(), any(), any()))
+                .thenReturn(List.of());
+        lenient()
+                .when(roadmapProposalValidator.summarize(any()))
+                .thenReturn(new RoadmapProposalValidator.Summary(1, 1, 1, 0, 0));
         service = new RunService(
                 runRepo,
                 execRepo,
@@ -127,7 +138,8 @@ class RunServiceRoadmapMaterializationTest {
                 roadmapCandidateMaterializer,
                 roadmapCandidatesArtifactResolver,
                 nodeExecutionClaimService,
-                null); // escalationContextResolver - unused (escalation not exercised)
+                null, // escalationContextResolver - unused (escalation not exercised)
+                roadmapProposalValidator);
     }
 
     private NodeExecution stubExec() {
@@ -178,9 +190,11 @@ class RunServiceRoadmapMaterializationTest {
                         List.of(new CandidateStoryProposal(
                                 "Story 1",
                                 "s-desc",
-                                List.of(new CandidateTaskProposal("Task 1", "t-desc", null, null)),
+                                List.of(new CandidateTaskProposal("Task 1", "t-desc", null, null, null, null)),
+                                null,
                                 null,
                                 null)),
+                        null,
                         null,
                         null)),
                 null);
@@ -191,12 +205,14 @@ class RunServiceRoadmapMaterializationTest {
         stubExec();
         stubRun(MATERIALIZE_GATE_CONFIG);
         RoadmapCandidatesDocument edited = sampleCandidates();
-        when(roadmapCandidateMaterializer.materialize(eq(runId), eq(edited)))
-                .thenReturn(new MaterializationSummary(List.of(UUID.randomUUID()), List.of(), 0, List.of()));
+        when(roadmapCandidateMaterializer.materialize(
+                        eq(runId), eq(edited), eq(RoadmapMaterializeMode.roadmap_candidates)))
+                .thenReturn(new MaterializationSummary(
+                        List.of(UUID.randomUUID()), List.of(), List.of(), List.of(), 0, List.of()));
 
         service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, edited));
 
-        verify(roadmapCandidateMaterializer).materialize(runId, edited);
+        verify(roadmapCandidateMaterializer).materialize(runId, edited, RoadmapMaterializeMode.roadmap_candidates);
         verifyNoInteractions(roadmapCandidatesArtifactResolver);
     }
 
@@ -206,13 +222,15 @@ class RunServiceRoadmapMaterializationTest {
         stubRun(MATERIALIZE_GATE_CONFIG);
         RoadmapCandidatesDocument fromArtifact = sampleCandidates();
         when(roadmapCandidatesArtifactResolver.resolve(runId, templateNodeId)).thenReturn(fromArtifact);
-        when(roadmapCandidateMaterializer.materialize(runId, fromArtifact))
-                .thenReturn(new MaterializationSummary(List.of(UUID.randomUUID()), List.of(), 0, List.of()));
+        when(roadmapCandidateMaterializer.materialize(runId, fromArtifact, RoadmapMaterializeMode.roadmap_candidates))
+                .thenReturn(new MaterializationSummary(
+                        List.of(UUID.randomUUID()), List.of(), List.of(), List.of(), 0, List.of()));
 
         service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, null));
 
         verify(roadmapCandidatesArtifactResolver).resolve(runId, templateNodeId);
-        verify(roadmapCandidateMaterializer).materialize(runId, fromArtifact);
+        verify(roadmapCandidateMaterializer)
+                .materialize(runId, fromArtifact, RoadmapMaterializeMode.roadmap_candidates);
     }
 
     @Test
@@ -220,22 +238,25 @@ class RunServiceRoadmapMaterializationTest {
         stubExec();
         stubRun(MATERIALIZE_GATE_CONFIG);
         CandidateEpicProposal good = sampleCandidates().epics().get(0);
-        CandidateEpicProposal malformed = new CandidateEpicProposal(null, null, null, null, null, null, null, null);
+        CandidateEpicProposal malformed =
+                new CandidateEpicProposal(null, null, null, null, null, null, null, null, UUID.randomUUID());
         RoadmapCandidatesDocument edited = new RoadmapCandidatesDocument(null, List.of(good, malformed), null);
 
         // The materializer itself owns per-candidate best-effort behavior (see
         // DefaultRoadmapCandidateMaterializer) — RunService just needs to pass the full
         // document through and surface whatever summary comes back, unconditionally.
-        when(roadmapCandidateMaterializer.materialize(runId, edited))
+        when(roadmapCandidateMaterializer.materialize(runId, edited, RoadmapMaterializeMode.roadmap_candidates))
                 .thenReturn(new MaterializationSummary(
                         List.of(UUID.randomUUID()),
+                        List.of(),
+                        List.of(),
                         List.of(),
                         0,
                         List.of("Failed to materialize candidate Epic 'null': boom")));
 
         service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, edited));
 
-        verify(roadmapCandidateMaterializer).materialize(runId, edited);
+        verify(roadmapCandidateMaterializer).materialize(runId, edited, RoadmapMaterializeMode.roadmap_candidates);
     }
 
     @Test
@@ -245,13 +266,68 @@ class RunServiceRoadmapMaterializationTest {
         // The reviewer explicitly cleared every candidate (an empty, non-null document) rather than
         // submitting no edits at all — this must NOT fall back to the original analyzer artifact.
         RoadmapCandidatesDocument empty = new RoadmapCandidatesDocument(List.of(), List.of(), List.of());
-        when(roadmapCandidateMaterializer.materialize(runId, empty))
-                .thenReturn(new MaterializationSummary(List.of(), List.of(), 0, List.of()));
+        when(roadmapCandidateMaterializer.materialize(runId, empty, RoadmapMaterializeMode.roadmap_candidates))
+                .thenReturn(new MaterializationSummary(List.of(), List.of(), List.of(), List.of(), 0, List.of()));
 
         service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, empty));
 
-        verify(roadmapCandidateMaterializer).materialize(runId, empty);
+        verify(roadmapCandidateMaterializer).materialize(runId, empty, RoadmapMaterializeMode.roadmap_candidates);
         verifyNoInteractions(roadmapCandidatesArtifactResolver);
+    }
+
+    @Test
+    void approvedDecisionOnMaterializeNode_structuralViolation_throwsAndReleasesClaim() {
+        stubExec();
+        stubRun(MATERIALIZE_GATE_CONFIG);
+        RoadmapCandidatesDocument edited = sampleCandidates();
+        when(roadmapProposalValidator.validate(
+                        runId,
+                        edited,
+                        RoadmapMaterializeMode.roadmap_candidates,
+                        RoadmapProposalValidator.Strictness.GATE))
+                .thenReturn(List.of("epics[0]: a new epic needs at least one story"));
+
+        assertThatThrownBy(() -> service.signalHumanDecision(
+                        runId, nodeExecId, new SignalRequest("approved", null, null, edited)))
+                .isInstanceOf(ValidationException.class);
+
+        verifyNoInteractions(roadmapCandidateMaterializer);
+        verify(nodeExecutionClaimService)
+                .compareAndSetStatus(nodeExecId, NodeExecutionStatus.running, NodeExecutionStatus.awaiting_human);
+    }
+
+    @Test
+    void approvedDecisionOnExtensionGate_nothingToCreate_skipsMaterializerAndNotesNothingToCreate() {
+        stubExec();
+        stubRun("{\"terminal_decisions\":[\"approved\"],\"materialize\":\"roadmap_extension\"}");
+        RoadmapCandidatesDocument empty = new RoadmapCandidatesDocument(List.of(), List.of(), List.of());
+        when(roadmapProposalValidator.summarize(empty)).thenReturn(new RoadmapProposalValidator.Summary(0, 0, 0, 0, 0));
+
+        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, empty));
+
+        verifyNoInteractions(roadmapCandidateMaterializer);
+        org.mockito.ArgumentCaptor<Object> payloadCaptor = org.mockito.ArgumentCaptor.forClass(Object.class);
+        verify(workflowStub).signal(eq("human-decision-" + nodeExecId), payloadCaptor.capture());
+        assertThat(payloadCaptor.getValue().toString()).contains("Roadmap proposal: nothing to create");
+    }
+
+    @Test
+    void approvedDecisionOnExtensionGate_createsItems_notesExtensionApproved() {
+        stubExec();
+        stubRun("{\"terminal_decisions\":[\"approved\"],\"materialize\":\"roadmap_extension\"}");
+        RoadmapCandidatesDocument edited = sampleCandidates();
+        when(roadmapProposalValidator.summarize(edited))
+                .thenReturn(new RoadmapProposalValidator.Summary(0, 1, 1, 1, 0));
+        when(roadmapCandidateMaterializer.materialize(runId, edited, RoadmapMaterializeMode.roadmap_extension))
+                .thenReturn(new MaterializationSummary(
+                        List.of(), List.of(UUID.randomUUID()), List.of(UUID.randomUUID()), List.of(), 0, List.of()));
+
+        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, edited));
+
+        org.mockito.ArgumentCaptor<Object> payloadCaptor = org.mockito.ArgumentCaptor.forClass(Object.class);
+        verify(workflowStub).signal(eq("human-decision-" + nodeExecId), payloadCaptor.capture());
+        assertThat(payloadCaptor.getValue().toString())
+                .contains("Roadmap extension approved: created 1 Stories, 1 Tasks and 0 dependency edges");
     }
 
     @Test

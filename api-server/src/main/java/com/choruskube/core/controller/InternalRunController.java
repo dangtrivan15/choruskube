@@ -4,6 +4,7 @@ import com.choruskube.core.credential.GitHubCredentialResolver;
 import com.choruskube.core.dto.*;
 import com.choruskube.core.service.ArtifactResolutionService;
 import com.choruskube.core.service.BranchCleanupService;
+import com.choruskube.core.service.InternalRoadmapProposalService;
 import com.choruskube.core.service.InternalRunService;
 import com.choruskube.core.service.NodePlacementChecker;
 import com.choruskube.core.service.RunPullRequestService;
@@ -26,6 +27,7 @@ public class InternalRunController {
     private final ArtifactResolutionService artifactResolutionService;
     private final BranchCleanupService branchCleanupService;
     private final Optional<NodePlacementChecker> placementChecker;
+    private final InternalRoadmapProposalService roadmapProposalService;
 
     public InternalRunController(
             InternalRunService service,
@@ -33,13 +35,15 @@ public class InternalRunController {
             RunPullRequestService runPullRequestService,
             ArtifactResolutionService artifactResolutionService,
             BranchCleanupService branchCleanupService,
-            Optional<NodePlacementChecker> placementChecker) {
+            Optional<NodePlacementChecker> placementChecker,
+            InternalRoadmapProposalService roadmapProposalService) {
         this.service = service;
         this.gitHubCredentialResolver = gitHubCredentialResolver;
         this.runPullRequestService = runPullRequestService;
         this.artifactResolutionService = artifactResolutionService;
         this.branchCleanupService = branchCleanupService;
         this.placementChecker = placementChecker;
+        this.roadmapProposalService = roadmapProposalService;
     }
 
     @PostMapping("/{runId}/node-executions")
@@ -168,7 +172,10 @@ public class InternalRunController {
      * The create/list/update paths below are kept unchanged because the
      * agent-images/claude-code/create-proposal, list-proposals, and update-proposal CLI
      * scripts depend on these exact paths. Removing or renaming them would break deployed agent
-     * images still running an older image during a rolling upgrade.
+     * images still running an older image during a rolling upgrade. {@code nodeExecId} is not
+     * decorative on any of them: {@link InternalRoadmapProposalService#requireCallerInRun} verifies
+     * it belongs to {@code runId} before anything else runs, and the six write routes below are
+     * additionally refused when that run's workflow reviews roadmap changes at a gate.
      */
     @PostMapping("/{runId}/node-executions/{nodeExecId}/feature-proposals")
     @ResponseStatus(HttpStatus.CREATED)
@@ -176,11 +183,13 @@ public class InternalRunController {
             @PathVariable UUID runId,
             @PathVariable UUID nodeExecId,
             @Valid @RequestBody InternalCreateEpicRequest request) {
+        roadmapProposalService.assertAgentRoadmapWriteAllowed(runId, nodeExecId);
         return service.createEpic(runId, request);
     }
 
     @GetMapping("/{runId}/node-executions/{nodeExecId}/feature-proposals")
     public List<EpicResponse> listFeatureProposals(@PathVariable UUID runId, @PathVariable UUID nodeExecId) {
+        roadmapProposalService.requireCallerInRun(runId, nodeExecId);
         return service.listEpics(runId);
     }
 
@@ -190,6 +199,7 @@ public class InternalRunController {
             @PathVariable UUID nodeExecId,
             @PathVariable UUID proposalId,
             @Valid @RequestBody InternalUpdateEpicRequest request) {
+        roadmapProposalService.assertAgentRoadmapWriteAllowed(runId, nodeExecId);
         return service.updateEpic(runId, proposalId, request);
     }
 
@@ -200,6 +210,7 @@ public class InternalRunController {
             @PathVariable UUID nodeExecId,
             @PathVariable UUID epicId,
             @Valid @RequestBody InternalCreateStoryRequest request) {
+        roadmapProposalService.assertAgentRoadmapWriteAllowed(runId, nodeExecId);
         return service.createStory(runId, epicId, request);
     }
 
@@ -211,6 +222,7 @@ public class InternalRunController {
             @PathVariable UUID epicId,
             @PathVariable UUID storyId,
             @Valid @RequestBody InternalCreateTaskRequest request) {
+        roadmapProposalService.assertAgentRoadmapWriteAllowed(runId, nodeExecId);
         return service.createTask(runId, epicId, storyId, request);
     }
 
@@ -225,6 +237,7 @@ public class InternalRunController {
             @PathVariable UUID runId,
             @PathVariable UUID nodeExecId,
             @Valid @RequestBody InternalCreateDependencyRequest request) {
+        roadmapProposalService.assertAgentRoadmapWriteAllowed(runId, nodeExecId);
         return service.createDependency(runId, request);
     }
 
@@ -237,7 +250,21 @@ public class InternalRunController {
             @PathVariable UUID runId,
             @PathVariable UUID nodeExecId,
             @Valid @RequestBody InternalCreateMilestoneRequest request) {
+        roadmapProposalService.assertAgentRoadmapWriteAllowed(runId, nodeExecId);
         return service.createMilestone(runId, request);
+    }
+
+    /**
+     * Validates a proposal document against this run's roadmap rules at agent strictness, without
+     * installing it — {@code propose-roadmap} writes the artifact only after this returns 200.
+     * {@code @Valid} is deliberately omitted: an invalid document must still reach the validator so
+     * its bean-validation violations land in the same {@code errors[]} list as every other
+     * violation, rather than short-circuiting to Spring's generic 400.
+     */
+    @PostMapping("/{runId}/node-executions/{nodeExecId}/roadmap-proposal/validate")
+    public RoadmapProposalValidationResponse validateRoadmapProposal(
+            @PathVariable UUID runId, @PathVariable UUID nodeExecId, @RequestBody RoadmapCandidatesDocument request) {
+        return roadmapProposalService.validate(runId, nodeExecId, request);
     }
 
     /**

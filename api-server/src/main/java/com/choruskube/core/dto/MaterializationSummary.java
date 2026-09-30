@@ -12,7 +12,12 @@ import java.util.UUID;
  * created OR reused (find-or-create by name) during this materialization.
  */
 public record MaterializationSummary(
-        List<UUID> createdEpicIds, List<UUID> createdMilestoneIds, int createdDependencyCount, List<String> errors) {
+        List<UUID> createdEpicIds,
+        List<UUID> createdStoryIds,
+        List<UUID> createdTaskIds,
+        List<UUID> createdMilestoneIds,
+        int createdDependencyCount,
+        List<String> errors) {
 
     public int materializedCount() {
         return createdEpicIds.size();
