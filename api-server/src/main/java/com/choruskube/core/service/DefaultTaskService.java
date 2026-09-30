@@ -113,8 +113,8 @@ public class DefaultTaskService implements TaskService {
     private final ScopeProvider scopeProvider;
     private final RunPullRequestRepository prRepo;
     // Needed for one thing only: refreshing a Task's in-memory state after its row lock is taken
-    // (see startCore) — Spring Data has no refresh, and a locking finder alone returns the
-    // already-loaded instance with its pre-lock state.
+    // (see startCore, completeCore) — Spring Data has no refresh, and a locking finder alone
+    // returns the already-loaded instance with its pre-lock state.
     private final EntityManager entityManager;
     private final SoftwareProjectRefResolver softwareProjectRefResolver;
     private final GitHubAppService gitHubAppService;
@@ -606,11 +606,19 @@ public class DefaultTaskService implements TaskService {
      * stale/racing caller).
      */
     private TaskResponse completeCore(Task task, UUID outcomeRunId) {
-        if (task.getStatus() != WorkItemStatus.in_progress) {
+        // Same race startCore guards against: complete() (manual), closeForMergedPullRequests()
+        // (PR-merge reconciler tick) and updateStatus(Internal)() (agent) all reach this with no
+        // shared lease, so two callers could otherwise both read in_progress, both pass the guard
+        // below, and both fire closeLinkedGithubIssue's GitHub call concurrently.
+        UUID id = task.getId();
+        Task locked = repo.findWithLockById(id).orElseThrow(() -> new NotFoundException("Task not found: " + id));
+        entityManager.refresh(locked);
+
+        if (locked.getStatus() != WorkItemStatus.in_progress) {
             throw new ConflictException("Can only complete tasks that are in progress");
         }
         WorkflowRun mostRecent =
-                mostRecentRun(task.getId()).orElseThrow(() -> new ConflictException("Task has no linked workflow run"));
+                mostRecentRun(id).orElseThrow(() -> new ConflictException("Task has no linked workflow run"));
         if (!TERMINAL_STATUSES.contains(mostRecent.getStatus())) {
             throw new ConflictException(
                     "Cannot complete: most recent run is still active (status: " + mostRecent.getStatus() + ")");
@@ -621,12 +629,12 @@ public class DefaultTaskService implements TaskService {
         }
         requireMostRecentRunPullRequestsMerged(mostRecent);
 
-        task.setStatus(WorkItemStatus.done);
-        task = repo.save(task);
-        TaskResponse response = toResponse(task);
+        locked.setStatus(WorkItemStatus.done);
+        Task saved = repo.save(locked);
+        TaskResponse response = toResponse(saved);
         eventPublisher.publishRoadmapItemChanged(
-                "task", task.getId(), task.getStatus().name());
-        closeLinkedGithubIssue(task);
+                "task", saved.getId(), saved.getStatus().name());
+        closeLinkedGithubIssue(saved);
         return response;
     }
 
