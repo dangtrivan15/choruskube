@@ -1,5 +1,7 @@
 package com.choruskube.core.controller;
 
+import static org.hamcrest.Matchers.hasItem;
+import static org.hamcrest.Matchers.startsWith;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -197,7 +199,37 @@ class InternalRoadmapProposalControllerTest extends BaseTest {
                         .header("Authorization", "Bearer " + JOB_SECRET))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.valid").value(false))
-                .andExpect(jsonPath("$.errors").isArray());
+                .andExpect(jsonPath("$.errors.length()").value(2))
+                .andExpect(jsonPath("$.errors", hasItem("epics[0]: a new epic needs at least one story")))
+                .andExpect(jsonPath(
+                        "$.errors", hasItem("epics[0].titleProvidedOrExisting: title is required for a new item")));
+    }
+
+    @Test
+    void validate_nonUuidExistingId_returns400NamingTheField() throws Exception {
+        GraphTemplate template = makeTemplate("roadmap-proposal-test-gated-type-error");
+        NodeDefinition analyzerDef = makeNodeDef("analyzer", ExecutorType.ai);
+        NodeDefinition gateDef = makeNodeDef("gate", ExecutorType.human);
+        TemplateNode analyzer = makeNode(template, analyzerDef, "analyzer", true, "{}", null);
+        makeNode(
+                template,
+                gateDef,
+                "gate",
+                false,
+                "{\"terminal_decisions\":[\"approved\"],\"materialize\":\"roadmap_candidates\"}",
+                "[{\"template_node_label\":\"analyzer\",\"artifacts\":[{\"name\":\"roadmap_candidates.json\"}]}]");
+        WorkflowRun run = makeRun(template);
+        NodeExecution exec = makeExec(run, analyzer, JOB_SECRET);
+
+        mockMvc.perform(post("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId()
+                                + "/roadmap-proposal/validate")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"epics\":[{\"existingId\":\"<Epic id>\",\"stories\":[]}]}")
+                        .header("Authorization", "Bearer " + JOB_SECRET))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.valid").value(false))
+                .andExpect(jsonPath("$.errors.length()").value(1))
+                .andExpect(jsonPath("$.errors[0]", startsWith("epics[0].existingId: ")));
     }
 
     @Test

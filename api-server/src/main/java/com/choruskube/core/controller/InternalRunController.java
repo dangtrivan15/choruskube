@@ -8,6 +8,7 @@ import com.choruskube.core.service.InternalRoadmapProposalService;
 import com.choruskube.core.service.InternalRunService;
 import com.choruskube.core.service.NodePlacementChecker;
 import com.choruskube.core.service.RunPullRequestService;
+import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.validation.Valid;
 import java.util.List;
 import java.util.Map;
@@ -257,13 +258,13 @@ public class InternalRunController {
     /**
      * Validates a proposal document against this run's roadmap rules at agent strictness, without
      * installing it — {@code propose-roadmap} writes the artifact only after this returns 200.
-     * {@code @Valid} is deliberately omitted: an invalid document must still reach the validator so
-     * its bean-validation violations land in the same {@code errors[]} list as every other
-     * violation, rather than short-circuiting to Spring's generic 400.
+     * The body is taken as raw JSON, neither {@code @Valid} nor bound to the typed record, so bean
+     * violations and type errors alike land in the validator's {@code errors[]} list rather than
+     * short-circuiting to Spring's generic 400.
      */
     @PostMapping("/{runId}/node-executions/{nodeExecId}/roadmap-proposal/validate")
     public RoadmapProposalValidationResponse validateRoadmapProposal(
-            @PathVariable UUID runId, @PathVariable UUID nodeExecId, @RequestBody RoadmapCandidatesDocument request) {
+            @PathVariable UUID runId, @PathVariable UUID nodeExecId, @RequestBody JsonNode request) {
         return roadmapProposalService.validate(runId, nodeExecId, request);
     }
 

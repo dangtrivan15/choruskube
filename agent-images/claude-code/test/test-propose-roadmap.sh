@@ -37,6 +37,7 @@ cat >"$FAKE_BIN/curl" <<STUB
 #!/bin/bash
 printf '%s\n' "\$*" >>"$ARGV_LOG"
 printf '%s\n%s' "\${CURL_STUB_BODY:-{\}}" "\${CURL_STUB_HTTP_CODE:-200}"
+exit "\${CURL_STUB_EXIT:-0}"
 STUB
 chmod +x "$FAKE_BIN/curl"
 
@@ -84,7 +85,7 @@ CURL_STUB_BODY='{"mode":"ROADMAP_EXTENSION","gateLabel":"final_approval","newEpi
 diff -q "$GOOD_JSON" "$RL_OUT/roadmap_candidates.json" >/dev/null 2>&1 \
     && ok "200: installed file is byte-identical" || fail "200: installed file is byte-identical"
 grep -qF -- "-X POST" "$ARGV_LOG" && ok "200: uses POST" || fail "200: uses POST (argv: $(cat "$ARGV_LOG"))"
-grep -qE "node-executions/node-1/roadmap-proposal/validate" "$ARGV_LOG" \
+grep -qF "http://api.example/internal/runs/run-1/node-executions/node-1/roadmap-proposal/validate" "$ARGV_LOG" \
     && ok "200: posts to the exact path" || fail "200: posts to the exact path (argv: $(cat "$ARGV_LOG"))"
 grep -qF "Authorization: Bearer test-secret" "$ARGV_LOG" \
     && ok "200: Bearer header present" || fail "200: Bearer header present (argv: $(cat "$ARGV_LOG"))"
@@ -110,6 +111,19 @@ echo "$OUT" | grep -qF "  - b" && ok "400: prints second error" || fail "400: pr
 grep -qF "previously" "$RL_OUT/roadmap_candidates.json" \
     && ok "400: leaves an existing installed file untouched" || fail "400: leaves an existing installed file untouched"
 
+# --- Test 6b: a 400 without an errors[] array (e.g. a framework ProblemDetail) still prints the body ---
+CURL_STUB_HTTP_CODE=400 CURL_STUB_BODY='{"title":"Bad Request","status":400,"detail":"Failed to read request"}' \
+    run_propose_roadmap --file "$GOOD_JSON"
+[ "$RC" -eq 1 ] && ok "400 ProblemDetail: exits 1" || fail "400 ProblemDetail: exits 1 (got $RC: $OUT)"
+echo "$OUT" | grep -qF "Failed to read request" \
+    && ok "400 ProblemDetail: prints the body" || fail "400 ProblemDetail: prints the body (got: $OUT)"
+
+# --- Test 6c: a non-JSON 400 body still exits 1 and prints the body ---
+CURL_STUB_HTTP_CODE=400 CURL_STUB_BODY='Bad Request' \
+    run_propose_roadmap --file "$GOOD_JSON"
+[ "$RC" -eq 1 ] && ok "400 plain body: exits 1" || fail "400 plain body: exits 1 (got $RC: $OUT)"
+echo "$OUT" | grep -qF "  Bad Request" && ok "400 plain body: prints the body" || fail "400 plain body: prints the body (got: $OUT)"
+
 # --- Test 7: 409 exits 1 with the message including HTTP 409 ---
 CURL_STUB_HTTP_CODE=409 CURL_STUB_BODY='This workflow has no roadmap review gate' \
     run_propose_roadmap --file "$GOOD_JSON"
@@ -134,6 +148,20 @@ set -e
 [ -f "$RL_OUT/roadmap_candidates.json" ] && ok "stdin '-': installs the file" || fail "stdin '-': installs the file"
 diff -q "$GOOD_JSON" "$RL_OUT/roadmap_candidates.json" >/dev/null 2>&1 \
     && ok "stdin '-': installed file is byte-identical" || fail "stdin '-': installed file is byte-identical"
+
+# --- Test 9: a missing file exits 1 with no HTTP call ---
+run_propose_roadmap --file "$TESTDIR/does-not-exist.json"
+[ "$RC" -eq 1 ] && ok "missing file: exits 1" || fail "missing file: exits 1 (got $RC)"
+echo "$OUT" | grep -qF "does not exist" && ok "missing file: clear diagnostic" || fail "missing file: clear diagnostic (got: $OUT)"
+[ ! -s "$ARGV_LOG" ] && ok "missing file: makes no HTTP call" || fail "missing file: makes no HTTP call"
+
+# --- Test 10: an unreachable API server exits 1 with a diagnostic, installing nothing ---
+rm -rf "$RL_OUT"
+CURL_STUB_EXIT=7 CURL_STUB_BODY='' CURL_STUB_HTTP_CODE=000 run_propose_roadmap --file "$GOOD_JSON"
+[ "$RC" -eq 1 ] && ok "curl failure: exits 1" || fail "curl failure: exits 1 (got $RC: $OUT)"
+echo "$OUT" | grep -qF "Could not reach the API server" \
+    && ok "curl failure: clear diagnostic" || fail "curl failure: clear diagnostic (got: $OUT)"
+[ ! -e "$RL_OUT/roadmap_candidates.json" ] && ok "curl failure: installs nothing" || fail "curl failure: installs nothing"
 
 # --- Summary ---
 echo ""

@@ -234,9 +234,13 @@ grep -q "propose-roadmap" "$ENTRYPOINT" \
   && ok "Triggering Task narration points at propose-roadmap" || fail "Triggering Task narration points at propose-roadmap"
 # Companion structural assertion: the ids/propose-roadmap addition landed inside the
 # same TASK_ID-guarded block as the rest of the Triggering Task narration, not after it.
-awk '/if \[ -n "\$TASK_ID" \]/{flag=1} flag && /^fi$/{print; exit} flag' "$ENTRYPOINT" \
-  | grep -q "propose-roadmap" \
+TASK_BLOCK=$(awk '/if \[ -n "\$TASK_ID" \]/{flag=1} flag && /^fi$/{print; exit} flag' "$ENTRYPOINT")
+echo "$TASK_BLOCK" | grep -q "propose-roadmap" \
   && ok "propose-roadmap pointer stays inside the TASK_ID guard" || fail "propose-roadmap pointer stays inside the TASK_ID guard"
+echo "$TASK_BLOCK" | grep -qF 'Story id: ${STORY_ID}' \
+  && ok "Triggering Task ids include the Story id" || fail "Triggering Task ids include the Story id"
+echo "$TASK_BLOCK" | grep -qF 'Epic id: ${EPIC_ID}' \
+  && ok "Triggering Task ids include the Epic id" || fail "Triggering Task ids include the Epic id"
 
 # --- Test 15: --effort reaches run_claude()'s argv construction (structural) ---
 # Mirrors the existing --max-turns assertion style (Test 2): grep the actual

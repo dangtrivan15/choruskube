@@ -11,6 +11,11 @@
 # Task needs "repoId") vary with the workflow's gate and are enforced
 # server-side — this script only sends the document and reports the result.
 #
+#   {"epics": [{"existingId": "<Epic id>", "key": "run-epic", "stories": [
+#       {"title": "...", "description": "...", "key": "s1", "tasks": [
+#           {"title": "...", "description": "...", "key": "t1"}]}]}],
+#    "dependencies": [{"blocking": "<key>", "blocked": "<key>"}]}
+#
 # On success the document is installed as /workspace/out/roadmap_candidates.json,
 # the artifact the gate's human reviewer edits and approves. Re-running this
 # command replaces the installed proposal; deleting the file withdraws it.
@@ -93,6 +98,11 @@ else
     FILE="$FILE_ARG"
 fi
 
+if [ ! -r "$FILE" ]; then
+    echo "ERROR: $FILE_ARG does not exist or is not readable" >&2
+    exit 1
+fi
+
 if ! jq -e . "$FILE" >/dev/null 2>&1; then
     echo "ERROR: $FILE_ARG is not valid JSON" >&2
     exit 1
@@ -102,7 +112,10 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer ${JOB_SECRET:-}" \
     --data-binary @"$FILE" \
-    "$API_SERVER_URL/internal/runs/$RUN_ID/node-executions/$NODE_EXECUTION_ID/roadmap-proposal/validate")
+    "$API_SERVER_URL/internal/runs/$RUN_ID/node-executions/$NODE_EXECUTION_ID/roadmap-proposal/validate") || {
+    echo "ERROR: Could not reach the API server (curl exit $?)" >&2
+    exit 1
+}
 HTTP_CODE=$(echo "$RESPONSE" | tail -1)
 BODY_RESPONSE=$(echo "$RESPONSE" | sed '$d')
 
@@ -111,19 +124,25 @@ if [ "$HTTP_CODE" = "200" ]; then
         echo "$BODY_RESPONSE"
         echo "Proposal is valid (not installed: --check)" >&2
     else
+        GATE_LABEL=$(printf '%s' "$BODY_RESPONSE" | jq -r '.gateLabel // "unknown"' 2>/dev/null || echo unknown)
         mkdir -p /workspace/out
         cp "$FILE" /workspace/out/roadmap_candidates.json.tmp
         mv /workspace/out/roadmap_candidates.json.tmp /workspace/out/roadmap_candidates.json
         echo "$BODY_RESPONSE"
-        GATE_LABEL=$(echo "$BODY_RESPONSE" | jq -r '.gateLabel')
         echo "Installed roadmap proposal for review at the '$GATE_LABEL' gate" >&2
     fi
     exit 0
 elif [ "$HTTP_CODE" = "400" ]; then
     echo "ERROR: roadmap proposal rejected:" >&2
-    echo "$BODY_RESPONSE" | jq -r '.errors[]' | while IFS= read -r e; do
-        echo "  - $e" >&2
-    done
+    # A 400 that isn't the validator's {errors: [...]} (e.g. a proxy's page) still has to reach
+    # the agent: under pipefail a failed jq would otherwise exit before printing any reason.
+    if ERRORS=$(printf '%s' "$BODY_RESPONSE" | jq -er '.errors | arrays | .[] | tostring' 2>/dev/null); then
+        while IFS= read -r e; do
+            echo "  - $e" >&2
+        done <<<"$ERRORS"
+    else
+        echo "  $BODY_RESPONSE" >&2
+    fi
     exit 1
 else
     echo "ERROR: Failed to validate roadmap proposal (HTTP $HTTP_CODE): $BODY_RESPONSE" >&2

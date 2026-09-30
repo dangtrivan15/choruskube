@@ -707,9 +707,6 @@ JSON
     # a deliberately-invalid document, then installs a valid one.
     echo "Mock agent: roadmap_extension scenario"
 
-    # An unresolved {run.anchor_epic_id} template placeholder blanks this argument
-    # rather than failing the run, so a spec that forgot to set the input surfaces
-    # here as a clear error instead of a mysterious 404 three steps down.
     ANCHOR="${EPIC_ID_ARG:-}"
     if [ -z "$ANCHOR" ]; then
       echo "ERROR: roadmap_extension needs --epic-id" >&2
@@ -738,8 +735,8 @@ JSON
 
     # (3) Discover a Story and a Task under the anchor Epic to reference by existingId.
     GRAPH=$(get-roadmap-graph --epic-id "$ANCHOR")
-    STORY=$(echo "$GRAPH" | jq -r '.stories[0].id')
-    TASK=$(echo "$GRAPH" | jq -r '.tasks[0].id')
+    STORY=$(echo "$GRAPH" | jq -er '.stories[0].id')
+    TASK=$(echo "$GRAPH" | jq -er --arg s "$STORY" '[.tasks[] | select(.storyId == $s)][0].id')
     echo "Discovered anchor Story $STORY and anchor Task $TASK under Epic $ANCHOR"
 
     WORKDIR=$(mktemp -d)
