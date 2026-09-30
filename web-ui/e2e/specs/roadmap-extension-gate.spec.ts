@@ -43,7 +43,7 @@ async function seedAnchor(
     description: "Anchor Story for roadmap-extension-gate E2E coverage.",
   });
   const task = await api.createTask(story.id, {
-    title: "E2E Extension Anchor Task",
+    title: uniqueName("E2E Extension Anchor Task"),
     description: "Anchor Task for roadmap-extension-gate E2E coverage.",
   });
   return { epic, story, task };

@@ -20,6 +20,7 @@ import org.hibernate.Hibernate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -973,14 +974,25 @@ public class InternalRunService {
      * findOrCreate} here would 403 under a Keycloak-enabled deployment. No cross-item ownership
      * check is needed beyond that guard (unlike {@link #createDependency}): a Milestone is scoped
      * directly under {@code softwareProjectId}, never referencing an existing item by id.
+     *
+     * <p>Deliberately NOT {@code @Transactional}: {@code findOrCreateInternal}'s find-then-save is
+     * not atomic (only the unique-name index backstops it), so two node executions racing the same
+     * Milestone name need the retry below to run through the Spring proxy as a genuinely fresh
+     * transaction — same reasoning as {@code DefaultRoadmapCandidateMaterializer}'s equivalent
+     * retry. Wrapping this method would join that transaction (propagation REQUIRED) and mark it
+     * rollback-only on the first attempt's exception, defeating the retry.
      */
-    @Transactional
     public MilestoneResponse createMilestone(UUID runId, InternalCreateMilestoneRequest req) {
         WorkflowRun run =
                 runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
         UUID softwareProjectId = resolveSoftwareProjectIdFromRun(run);
-        return milestoneService.findOrCreateInternal(
-                softwareProjectId, req.name(), req.description(), req.targetDate(), runId);
+        try {
+            return milestoneService.findOrCreateInternal(
+                    softwareProjectId, req.name(), req.description(), req.targetDate(), runId);
+        } catch (DataIntegrityViolationException raceLoss) {
+            return milestoneService.findOrCreateInternal(
+                    softwareProjectId, req.name(), req.description(), req.targetDate(), runId);
+        }
     }
 
     private BlockableItemType parseBlockableItemType(String raw) {
