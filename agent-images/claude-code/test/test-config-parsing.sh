@@ -223,6 +223,21 @@ grep -qE 'if \[ -n "\$TASK_ID" \]' "$ENTRYPOINT" \
 grep -q "authoritative starting context" "$ENTRYPOINT" \
   && ok "Triggering Task narration encourages discovery via get-roadmap-graph" || fail "Triggering Task narration encourages discovery via get-roadmap-graph"
 
+# --- Test 14c: Triggering Task narration includes ids and a propose-roadmap pointer ---
+# Mirrors Test 12/14/14b's grep-on-script-content style. The ids line lets the model
+# quote a Task/Story/Epic id verbatim instead of paraphrasing a title back at a tool
+# that expects a UUID; the propose-roadmap pointer is what stops deferred work from
+# becoming a direct, unreviewed roadmap write.
+grep -q 'Task id: \${TASK_ID}' "$ENTRYPOINT" \
+  && ok "Triggering Task narration includes Task/Story/Epic ids" || fail "Triggering Task narration includes Task/Story/Epic ids"
+grep -q "propose-roadmap" "$ENTRYPOINT" \
+  && ok "Triggering Task narration points at propose-roadmap" || fail "Triggering Task narration points at propose-roadmap"
+# Companion structural assertion: the ids/propose-roadmap addition landed inside the
+# same TASK_ID-guarded block as the rest of the Triggering Task narration, not after it.
+awk '/if \[ -n "\$TASK_ID" \]/{flag=1} flag && /^fi$/{print; exit} flag' "$ENTRYPOINT" \
+  | grep -q "propose-roadmap" \
+  && ok "propose-roadmap pointer stays inside the TASK_ID guard" || fail "propose-roadmap pointer stays inside the TASK_ID guard"
+
 # --- Test 15: --effort reaches run_claude()'s argv construction (structural) ---
 # Mirrors the existing --max-turns assertion style (Test 2): grep the actual
 # entrypoint.sh text rather than a hand-copied fragment, so the assertion tracks

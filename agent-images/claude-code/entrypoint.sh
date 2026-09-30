@@ -232,10 +232,15 @@ if [ -n "$TASK_ID" ]; then
 This run was started from Task: ${TASK_TITLE}${STORY_TITLE:+
 Story: ${STORY_TITLE}}${EPIC_TITLE:+
 Epic: ${EPIC_TITLE}}
+Task id: ${TASK_ID}${STORY_ID:+ | Story id: ${STORY_ID}}${EPIC_ID:+ | Epic id: ${EPIC_ID}}
 
 You can call \`get-roadmap-graph\` without passing --epic-id — it defaults to this
 run's Epic automatically. Do not mark this Task done: it closes by itself once this
 run's pull requests are merged.
+
+Follow-up work this run defers belongs under this Epic: propose it with
+\`propose-roadmap\` (see its --help for the document shape). Never create roadmap
+items directly — the workflow's reviewer creates them on approval.
 
 Treat any parent Story/Epic summaries already provided to you — in the feature
 request or the drafted spec — as authoritative starting context, and use

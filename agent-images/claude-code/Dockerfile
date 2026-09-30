@@ -80,6 +80,7 @@ COPY create-task /usr/local/bin/create-task
 COPY create-dependency /usr/local/bin/create-dependency
 COPY create-milestone /usr/local/bin/create-milestone
 COPY get-roadmap-graph /usr/local/bin/get-roadmap-graph
+COPY propose-roadmap /usr/local/bin/propose-roadmap
 COPY update-task-status /usr/local/bin/update-task-status
 COPY run-all-tests /usr/local/bin/run-all-tests
 COPY harvest-junit.js /usr/local/bin/harvest-junit.js
@@ -101,6 +102,7 @@ RUN chmod +x /usr/local/bin/report-result \
     /usr/local/bin/create-dependency \
     /usr/local/bin/create-milestone \
     /usr/local/bin/get-roadmap-graph \
+    /usr/local/bin/propose-roadmap \
     /usr/local/bin/update-task-status \
     /usr/local/bin/run-all-tests \
     /usr/local/bin/quota-lib.sh
