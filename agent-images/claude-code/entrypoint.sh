@@ -240,7 +240,10 @@ run's pull requests are merged.
 
 Follow-up work this run defers belongs under this Epic: propose it with
 \`propose-roadmap\` (see its --help for the document shape). Never create roadmap
-items directly — the workflow's reviewer creates them on approval.
+items directly — the workflow's reviewer creates them on approval. Prefer this over
+filing a GitHub issue directly for work in scope here: a proposal's Task gets a
+matching issue the server closes automatically when the Task is done, while an
+issue you file yourself is untracked and never closes on its own.
 
 Treat any parent Story/Epic summaries already provided to you — in the feature
 request or the drafted spec — as authoritative starting context, and use

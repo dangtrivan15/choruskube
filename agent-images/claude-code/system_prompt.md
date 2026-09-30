@@ -82,7 +82,9 @@ The following helper scripts are available on the PATH:
   existing items referenced by "existingId"; and dependencies between "key"s. A new
   Task in a multi-repo project needs "repoId"; the server files it a matching GitHub
   issue on approval and closes it when the Task is done. `--check` validates without
-  installing. Fails (HTTP 409) when the workflow has no roadmap review gate.
+  installing. Fails (HTTP 409) when the workflow has no roadmap review gate. Where it
+  succeeds, prefer it over filing a GitHub issue directly for deferred work: the issue
+  it creates is tracked and closes itself when the Task is done, unlike one you file.
 - `create-proposal --title TITLE --description DESC [--motivation MOT] [--priority LEVEL] [--milestone-id UUID]` —
   Create an Epic (the top level of the Epic -> Story -> Task roadmap hierarchy) for the
   current run's software project. `--priority` is one of `low`/`medium`/`high` (defaults
