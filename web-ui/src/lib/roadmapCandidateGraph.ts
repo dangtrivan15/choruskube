@@ -4,7 +4,9 @@ import type { RoadmapItemType } from "@/components/roadmap/RoadmapGraphNode";
 /** A candidate item as a graph node. `id` is a synthetic, stable-within-a-render
  * identifier (candidate items have no DB id pre-materialization); `key` is the
  * artifact-local key a dependency can reference, or null when the item is
- * unkeyed and therefore cannot be a dependency endpoint. */
+ * unkeyed and therefore cannot be a dependency endpoint. `existing` mirrors the
+ * document's `existingId` anchor (roadmap-extension proposals): true means
+ * nothing is created for this node — it already exists in the run's project. */
 export interface CandidateGraphNode {
   id: string;
   parentId: string | null;
@@ -12,6 +14,7 @@ export interface CandidateGraphNode {
   label: string;
   key: string | null;
   priority: string | null;
+  existing: boolean;
 }
 
 /** A resolved candidate dependency: `blocking`/`blocked` are the artifact-local
@@ -135,6 +138,7 @@ export function candidateDocToGraph(doc: RoadmapCandidatesDocument): CandidateGr
       label: epicItem.title,
       key: epicItem.key ?? null,
       priority: epicItem.priority ?? null,
+      existing: epicItem.existingId != null,
     });
     epicItem.stories.forEach((storyItem, storyIdx) => {
       const storyId = `${epicId}s${storyIdx}`;
@@ -145,6 +149,7 @@ export function candidateDocToGraph(doc: RoadmapCandidatesDocument): CandidateGr
         label: storyItem.title,
         key: storyItem.key ?? null,
         priority: storyItem.priority ?? null,
+        existing: storyItem.existingId != null,
       });
       storyItem.tasks.forEach((taskItem, taskIdx) => {
         register({
@@ -154,6 +159,7 @@ export function candidateDocToGraph(doc: RoadmapCandidatesDocument): CandidateGr
           label: taskItem.title,
           key: taskItem.key ?? null,
           priority: taskItem.priority ?? null,
+          existing: taskItem.existingId != null,
         });
       });
     });

@@ -383,4 +383,173 @@ describe("RoadmapCandidateBreakdown", () => {
       expect(dependencyList.querySelectorAll("button, input, textarea")).toHaveLength(0);
     });
   });
+
+  describe("existing (anchor) items", () => {
+    it("renders an anchored Epic's title as read-only text with the existing badge, and suppresses its edit controls", () => {
+      const onChange = vi.fn();
+      const value = makeDocument({
+        epics: [makeEpic({ existingId: "epic-uuid-1" })],
+      });
+      renderWithProviders(<RoadmapCandidateBreakdown value={value} onChange={onChange} />);
+
+      expect(screen.queryByDisplayValue("Add dark mode")).not.toBeInTheDocument();
+      expect(screen.getByText("Add dark mode")).toBeInTheDocument();
+      expect(screen.getByTestId("candidate-existing-badge")).toHaveTextContent("Existing epic");
+      expect(screen.queryByTestId("candidate-epic-description-0")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("candidate-epic-motivation-0")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("candidate-epic-priority-badge-0")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("candidate-epic-milestone-select-0")).not.toBeInTheDocument();
+      expect(screen.getByTestId("candidate-epic-remove-0")).toHaveAttribute(
+        "aria-label",
+        "Remove epic from proposal",
+      );
+    });
+
+    it("renders an anchored Story's title as read-only text with the existing badge, and suppresses its edit controls", () => {
+      const onChange = vi.fn();
+      const value = makeDocument({
+        epics: [
+          makeEpic({
+            stories: [
+              {
+                title: "Theme toggle",
+                description: "",
+                existingId: "story-uuid-1",
+                tasks: [],
+              },
+            ],
+          }),
+        ],
+      });
+      renderWithProviders(<RoadmapCandidateBreakdown value={value} onChange={onChange} />);
+
+      expect(screen.queryByDisplayValue("Theme toggle")).not.toBeInTheDocument();
+      expect(screen.getByText("Theme toggle")).toBeInTheDocument();
+      expect(screen.getAllByTestId("candidate-existing-badge")).toHaveLength(1);
+      expect(screen.queryByTestId("candidate-story-description-0-0")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("candidate-story-priority-badge-0-0")).not.toBeInTheDocument();
+      expect(screen.getByTestId("candidate-story-remove-0-0")).toHaveAttribute(
+        "aria-label",
+        "Remove story from proposal",
+      );
+    });
+
+    it("keeps Add Story / Add Task available under an existing Epic/Story", () => {
+      const onChange = vi.fn();
+      const value = makeDocument({
+        epics: [
+          makeEpic({
+            existingId: "epic-uuid-1",
+            stories: [
+              {
+                title: "Theme toggle",
+                description: "",
+                existingId: "story-uuid-1",
+                tasks: [],
+              },
+            ],
+          }),
+        ],
+      });
+      renderWithProviders(<RoadmapCandidateBreakdown value={value} onChange={onChange} />);
+
+      expect(screen.getByTestId("candidate-add-story-0")).toBeEnabled();
+      expect(screen.getByTestId("candidate-add-task-0-0")).toBeEnabled();
+    });
+
+    it("adds a new Story under an existing Epic, keeping the Epic's existingId", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      const value = makeDocument({ epics: [makeEpic({ existingId: "epic-uuid-1" })] });
+      renderWithProviders(<RoadmapCandidateBreakdown value={value} onChange={onChange} />);
+
+      await user.click(screen.getByTestId("candidate-add-story-0"));
+
+      const calls = onChange.mock.calls;
+      const lastCall = calls[calls.length - 1][0] as RoadmapCandidatesDocument;
+      expect(lastCall.epics[0].existingId).toBe("epic-uuid-1");
+      expect(lastCall.epics[0].stories).toHaveLength(2);
+      expect(lastCall.epics[0].stories[1]).toEqual({ title: "", description: "", tasks: [] });
+    });
+
+    it("shows 'Not found in this project' for an anchor with a blank title", () => {
+      const onChange = vi.fn();
+      const value = makeDocument({ epics: [makeEpic({ title: "", existingId: "epic-uuid-1" })] });
+      renderWithProviders(<RoadmapCandidateBreakdown value={value} onChange={onChange} />);
+
+      expect(screen.getByTestId("candidate-existing-missing")).toHaveTextContent(
+        "Not found in this project",
+      );
+    });
+
+    it("switches the heading to 'Proposed Roadmap Extension' when any top-level entry is an anchor", () => {
+      const onChange = vi.fn();
+      const value = makeDocument({ epics: [makeEpic({ existingId: "epic-uuid-1" })] });
+      renderWithProviders(<RoadmapCandidateBreakdown value={value} onChange={onChange} />);
+
+      expect(screen.getByText("Proposed Roadmap Extension (1)")).toBeInTheDocument();
+    });
+
+    it("keeps the 'Proposed Roadmap Breakdown' heading when no top-level entry is an anchor", () => {
+      const onChange = vi.fn();
+      renderWithProviders(<RoadmapCandidateBreakdown value={makeDocument()} onChange={onChange} />);
+
+      expect(screen.getByText("Proposed Roadmap Breakdown (1)")).toBeInTheDocument();
+    });
+
+    it("removing an anchored Epic drops its subtree's dependencies but leaves an edge between two surviving keys", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      const anchorEpic = makeEpic({
+        title: "Anchor Epic",
+        key: "epic-anchor",
+        existingId: "epic-uuid-1",
+        stories: [
+          {
+            title: "Anchor Story",
+            description: "",
+            key: "story-anchor",
+            existingId: "story-uuid-1",
+            tasks: [
+              {
+                title: "Anchor Task",
+                description: "",
+                key: "task-anchor",
+                existingId: "task-uuid-1",
+              },
+            ],
+          },
+        ],
+      });
+      const survivorEpic = makeEpic({
+        title: "Survivor Epic",
+        key: "epic-survivor",
+        stories: [
+          {
+            title: "Survivor Story",
+            description: "",
+            key: "story-survivor",
+            tasks: [{ title: "Survivor Task", description: "", key: "task-survivor" }],
+          },
+        ],
+      });
+      const value = makeDocument({
+        epics: [anchorEpic, survivorEpic],
+        dependencies: [
+          { blocking: "task-anchor", blocked: "story-survivor" },
+          { blocking: "story-survivor", blocked: "task-survivor" },
+        ],
+      });
+      renderWithProviders(<RoadmapCandidateBreakdown value={value} onChange={onChange} />);
+
+      await user.click(screen.getByTestId("candidate-epic-remove-0"));
+
+      expect(onChange).toHaveBeenCalledWith(
+        expect.objectContaining({
+          epics: [survivorEpic],
+          dependencies: [{ blocking: "story-survivor", blocked: "task-survivor" }],
+        }),
+      );
+    });
+  });
 });

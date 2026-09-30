@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { api, ApiError, artifactUrl, encodeArtifactPath } from "@/lib/api";
+import { api, apiErrorMessage, ApiError, artifactUrl, encodeArtifactPath } from "@/lib/api";
 import { getImpersonation } from "@/lib/impersonation";
 
 vi.mock("@/lib/impersonation", () => ({ getImpersonation: vi.fn() }));
@@ -56,6 +56,39 @@ describe("api", () => {
       expect(err.status).toBe(404);
       expect(err.body).toEqual({ message: "not found" });
       expect(err.message).toBe("API error 404");
+    });
+  });
+
+  describe("apiErrorMessage", () => {
+    it("returns the plain-string body", () => {
+      expect(apiErrorMessage(new ApiError(409, "Organization has running agent jobs"), "fallback")).toBe(
+        "Organization has running agent jobs",
+      );
+    });
+
+    it("returns the message field of a JSON body", () => {
+      expect(apiErrorMessage(new ApiError(429, { message: "limit reached" }), "fallback")).toBe(
+        "limit reached",
+      );
+    });
+
+    it("joins a validation body's errors[] with '; '", () => {
+      const err = new ApiError(400, {
+        valid: false,
+        errors: ["anchor epic is not found in this run's software project", "a new story needs at least one task"],
+      });
+      expect(apiErrorMessage(err, "fallback")).toBe(
+        "anchor epic is not found in this run's software project; a new story needs at least one task",
+      );
+    });
+
+    it("falls back when errors[] is empty", () => {
+      const err = new ApiError(400, { valid: true, errors: [] });
+      expect(apiErrorMessage(err, "fallback")).toBe("fallback");
+    });
+
+    it("falls back for a non-ApiError", () => {
+      expect(apiErrorMessage(new Error("network down"), "fallback")).toBe("fallback");
     });
   });
 

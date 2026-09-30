@@ -42,6 +42,27 @@ const richDoc: RoadmapCandidatesDocument = {
       ],
     }),
     epic({ title: "Epic B", key: "epB" }),
+    epic({
+      title: "Anchor Epic",
+      key: "epAnchor",
+      existingId: "11111111-1111-1111-1111-111111111111",
+      stories: [
+        {
+          title: "Anchor Story",
+          description: "",
+          key: "stAnchor",
+          existingId: "22222222-2222-2222-2222-222222222222",
+          tasks: [
+            {
+              title: "Anchor Task",
+              description: "",
+              key: "tkAnchor",
+              existingId: "33333333-3333-3333-3333-333333333333",
+            },
+          ],
+        },
+      ],
+    }),
   ],
   dependencies: [
     { blocking: "tkA1a", blocked: "epB" }, // resolvable
@@ -106,7 +127,7 @@ describe("wouldCreateCandidateCycle", () => {
 describe("candidateDocToGraph", () => {
   it("emits one node per Epic/Story/Task with the right parent and label", () => {
     const { nodes } = candidateDocToGraph(richDoc);
-    expect(nodes).toHaveLength(5); // 2 epics + 1 story + 2 tasks
+    expect(nodes).toHaveLength(8); // 3 epics + 2 stories + 3 tasks
 
     const epicA = nodes.find((n) => n.label === "Epic A")!;
     expect(epicA.itemType).toBe("epic");
@@ -125,6 +146,15 @@ describe("candidateDocToGraph", () => {
     const { nodes } = candidateDocToGraph(richDoc);
     expect(nodes.find((n) => n.label === "Task A1a")!.key).toBe("tkA1a");
     expect(nodes.find((n) => n.label === "Task A1b")!.key).toBeNull();
+  });
+
+  it("carries the existing flag, true only for anchored items", () => {
+    const { nodes } = candidateDocToGraph(richDoc);
+    expect(nodes.find((n) => n.label === "Anchor Epic")!.existing).toBe(true);
+    expect(nodes.find((n) => n.label === "Anchor Story")!.existing).toBe(true);
+    expect(nodes.find((n) => n.label === "Anchor Task")!.existing).toBe(true);
+    expect(nodes.find((n) => n.label === "Epic A")!.existing).toBe(false);
+    expect(nodes.find((n) => n.label === "Task A1b")!.existing).toBe(false);
   });
 
   it("resolves dependency keys to node ids and drops edges referencing unknown keys", () => {
@@ -164,5 +194,11 @@ describe("connectCandidateNodes", () => {
     const result = connectCandidateNodes(model, richDoc, idFor("epB"), idFor("tkA1a"));
     expect(result.doc).toBeUndefined();
     expect(result.error).toBe("cycle");
+  });
+
+  it("allows a connection between a keyed existing item and a new item", () => {
+    const result = connectCandidateNodes(model, richDoc, idFor("tkAnchor"), idFor("epB"));
+    expect(result.error).toBeUndefined();
+    expect(result.doc?.dependencies).toContainEqual({ blocking: "tkAnchor", blocked: "epB" });
   });
 });

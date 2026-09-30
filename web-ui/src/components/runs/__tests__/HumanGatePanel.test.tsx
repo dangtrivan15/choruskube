@@ -428,6 +428,47 @@ describe("HumanGatePanel", () => {
       );
     });
 
+    it("preserves existingId on an anchored Epic in the approve payload's editedCandidates", async () => {
+      const user = userEvent.setup();
+      const extensionBreakdown = {
+        milestones: [],
+        epics: [
+          {
+            title: "Add dark mode",
+            description: "Support a dark theme across the app",
+            motivation: "Users have asked for this repeatedly",
+            repos: ["repo-a", "repo-b"],
+            priority: "High",
+            existingId: "epic-uuid-1",
+            stories: [
+              {
+                title: "Theme toggle",
+                description: "Add a toggle in settings",
+                tasks: [{ title: "Build toggle component", description: "New UI component" }],
+              },
+            ],
+          },
+        ],
+        dependencies: [],
+      };
+      renderWithProviders(
+        <HumanGatePanel {...defaultProps} candidateBreakdown={extensionBreakdown} />
+      );
+
+      await user.click(screen.getByText("Approve"));
+
+      expect(mockMutate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          nodeExecId: "exec-1",
+          decision: "approved",
+          editedCandidates: expect.objectContaining({
+            epics: [expect.objectContaining({ existingId: "epic-uuid-1" })],
+          }),
+        }),
+        expect.objectContaining({ onSuccess: expect.any(Function) })
+      );
+    });
+
     it("does not include editedCandidates in the signal payload when candidateBreakdown was absent", async () => {
       const user = userEvent.setup();
       renderWithProviders(<HumanGatePanel {...defaultProps} />);
