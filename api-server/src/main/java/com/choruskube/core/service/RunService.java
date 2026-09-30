@@ -610,7 +610,7 @@ public class RunService {
                         + summary.createdMilestoneIds().size() + " Milestones, "
                         + summary.createdDependencyCount() + " dependency edges, "
                         + summary.skippedCount() + " skipped)"
-                : "Roadmap extension approved: created "
+                : "Roadmap extension approved: created " + summary.materializedCount() + " Epics, "
                         + summary.createdStoryIds().size() + " Stories, "
                         + summary.createdTaskIds().size() + " Tasks and " + summary.createdDependencyCount()
                         + " dependency edges (" + summary.skippedCount() + " skipped)";

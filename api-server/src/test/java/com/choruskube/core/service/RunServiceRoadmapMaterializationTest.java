@@ -327,7 +327,7 @@ class RunServiceRoadmapMaterializationTest {
         org.mockito.ArgumentCaptor<Object> payloadCaptor = org.mockito.ArgumentCaptor.forClass(Object.class);
         verify(workflowStub).signal(eq("human-decision-" + nodeExecId), payloadCaptor.capture());
         assertThat(payloadCaptor.getValue().toString())
-                .contains("Roadmap extension approved: created 1 Stories, 1 Tasks and 0 dependency edges");
+                .contains("Roadmap extension approved: created 0 Epics, 1 Stories, 1 Tasks and 0 dependency edges");
     }
 
     @Test

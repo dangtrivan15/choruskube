@@ -129,6 +129,15 @@ public class RoadmapProposalValidator {
             }
         }
 
+        // roadmap_candidates creates wholly new Epic trees only — an existingId anchor is the one
+        // mechanism for extending what already exists, and that mechanism belongs to
+        // roadmap_extension alone. Without this check a candidates document could silently attach
+        // new children under any Epic in the project, the exact write roadmap_extension's own
+        // triggering-Epic scope check exists to prevent.
+        if (mode == RoadmapMaterializeMode.roadmap_candidates && hasAnyAnchor(epics)) {
+            errors.add("existingId anchors are not allowed in roadmap_candidates mode");
+        }
+
         Map<String, KeyScope> keyScopes = new HashMap<>();
 
         for (int i = 0; i < epics.size(); i++) {

@@ -246,7 +246,8 @@ class RoadmapExtensionMaterializationIntegrationTest extends BaseTest {
             assertThat(linkage.getState()).isEqualTo(GithubIssueState.open);
         });
         assertThat(signalPayload(exec.getId()))
-                .contains("Roadmap extension approved: created 0 Stories, 1 Tasks and 1 dependency edges (0 skipped)");
+                .contains(
+                        "Roadmap extension approved: created 0 Epics, 0 Stories, 1 Tasks and 1 dependency edges (0 skipped)");
     }
 
     @Test
@@ -288,7 +289,7 @@ class RoadmapExtensionMaterializationIntegrationTest extends BaseTest {
                 .orElseThrow();
         assertThat(taskGithubIssueRepo.findByTaskId(followUp.getId())).isEmpty();
         assertThat(signalPayload(exec.getId()))
-                .contains("created 0 Stories, 1 Tasks and 0 dependency edges (1 skipped)")
+                .contains("created 0 Epics, 0 Stories, 1 Tasks and 0 dependency edges (1 skipped)")
                 .contains("Skipped: Failed to file GitHub issue for Task 'Follow-up'");
     }
 

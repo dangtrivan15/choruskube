@@ -359,6 +359,36 @@ class RoadmapProposalValidatorTest extends BaseTest {
         assertThat(errors).anyMatch(e -> e.contains("existing epic " + epicP.getId() + " is listed more than once"));
     }
 
+    @Test
+    void existingIdAnchor_isRejected_inCandidatesMode() {
+        UUID runId = runUnderP_noTask();
+        CandidateEpicProposal anchoredEpic =
+                anchorEpic(epicP.getId(), "e", List.of(newStory("s", List.of(newTask("t")))));
+
+        var errors = validator.validate(
+                runId,
+                doc(List.of(anchoredEpic), null),
+                RoadmapMaterializeMode.roadmap_candidates,
+                RoadmapProposalValidator.Strictness.GATE);
+
+        assertThat(errors).contains("existingId anchors are not allowed in roadmap_candidates mode");
+    }
+
+    @Test
+    void existingIdAnchor_onDescendant_isRejected_inCandidatesMode() {
+        UUID runId = runUnderP_noTask();
+        // The epic itself is new; only its story is anchored. hasAnyAnchor still catches it.
+        CandidateEpicProposal candidate = newEpic("e", List.of(anchorStory(storyP.getId(), "s", List.of())));
+
+        var errors = validator.validate(
+                runId,
+                doc(List.of(candidate), null),
+                RoadmapMaterializeMode.roadmap_candidates,
+                RoadmapProposalValidator.Strictness.GATE);
+
+        assertThat(errors).contains("existingId anchors are not allowed in roadmap_candidates mode");
+    }
+
     // -----------------------------------------------------------------------
     // (d) addressable invariant
     // -----------------------------------------------------------------------
