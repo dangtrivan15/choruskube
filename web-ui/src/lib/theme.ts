@@ -84,6 +84,10 @@ function rootDomain(): string {
  * When appHost is configured, infers the root domain and sets domain + Secure
  * so the cookie is shared across subdomains (e.g. app.choruskube.com ↔ auth.choruskube.com).
  * Silently no-ops if cookies are blocked.
+ *
+ * This name, path=/, and rootDomain()'s derivation are a contract any writer on a
+ * sibling host of the same root domain must reproduce exactly — a mismatch adds a
+ * second "theme" cookie instead of replacing this one, so surfaces disagree on theme.
  */
 export function setCookie(name: string, value: string): void {
   try {
