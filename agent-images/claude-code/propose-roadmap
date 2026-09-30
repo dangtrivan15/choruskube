@@ -58,12 +58,21 @@ if [ -z "${RUN_ID:-}" ] || [ -z "${NODE_EXECUTION_ID:-}" ]; then
     exit 1
 fi
 
+if [ -z "${JOB_SECRET:-}" ]; then
+    echo "ERROR: JOB_SECRET not set. This script must be run inside an agent pod." >&2
+    exit 1
+fi
+
 FILE_ARG=""
 CHECK_ONLY="false"
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --file)
+            if [ $# -lt 2 ]; then
+                echo "ERROR: --file requires a value." >&2
+                exit 1
+            fi
             FILE_ARG="$2"
             shift 2
             ;;
@@ -108,9 +117,9 @@ if ! jq -e . "$FILE" >/dev/null 2>&1; then
     exit 1
 fi
 
-RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+RESPONSE=$(curl -s --max-time 30 -w "\n%{http_code}" -X POST \
     -H "Content-Type: application/json" \
-    -H "Authorization: Bearer ${JOB_SECRET:-}" \
+    -H "Authorization: Bearer ${JOB_SECRET}" \
     --data-binary @"$FILE" \
     "$API_SERVER_URL/internal/runs/$RUN_ID/node-executions/$NODE_EXECUTION_ID/roadmap-proposal/validate") || {
     echo "ERROR: Could not reach the API server (curl exit $?)" >&2

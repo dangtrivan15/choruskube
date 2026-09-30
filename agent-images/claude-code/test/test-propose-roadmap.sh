@@ -66,6 +66,30 @@ run_propose_roadmap
 echo "$OUT" | grep -qF -- "--file" && ok "missing --file: mentions --file" || fail "missing --file: mentions --file (got: $OUT)"
 [ ! -s "$ARGV_LOG" ] && ok "missing --file: makes no HTTP call" || fail "missing --file: makes no HTTP call"
 
+# --- Test 2b: --file with no value exits 1 with a clear diagnostic, not a raw bash error ---
+run_propose_roadmap --file
+[ "$RC" -eq 1 ] && ok "--file with no value: exits 1" || fail "--file with no value: exits 1 (got $RC)"
+echo "$OUT" | grep -qF "requires a value" \
+    && ok "--file with no value: clear diagnostic" || fail "--file with no value: clear diagnostic (got: $OUT)"
+[ ! -s "$ARGV_LOG" ] && ok "--file with no value: makes no HTTP call" || fail "--file with no value: makes no HTTP call"
+
+# --- Test 2c: missing JOB_SECRET exits 1 before any HTTP call ---
+NO_SECRET_JSON="$TESTDIR/no-secret.json"
+printf '{}' > "$NO_SECRET_JSON"
+: >"$ARGV_LOG"
+set +e
+OUT=$(env -u JOB_SECRET PATH="$FAKE_BIN:$PATH" \
+    API_SERVER_URL="http://api.example" \
+    RUN_ID="run-1" \
+    NODE_EXECUTION_ID="node-1" \
+    bash "$RL_SCRIPT" --file "$NO_SECRET_JSON" 2>&1)
+RC=$?
+set -e
+[ "$RC" -eq 1 ] && ok "missing JOB_SECRET: exits 1" || fail "missing JOB_SECRET: exits 1 (got $RC: $OUT)"
+echo "$OUT" | grep -qF "JOB_SECRET not set" \
+    && ok "missing JOB_SECRET: clear diagnostic" || fail "missing JOB_SECRET: clear diagnostic (got: $OUT)"
+[ ! -s "$ARGV_LOG" ] && ok "missing JOB_SECRET: makes no HTTP call" || fail "missing JOB_SECRET: makes no HTTP call"
+
 # --- Test 3: invalid JSON exits 1 with no stub call recorded ---
 BAD_JSON="$TESTDIR/bad.json"
 echo "not json" > "$BAD_JSON"
