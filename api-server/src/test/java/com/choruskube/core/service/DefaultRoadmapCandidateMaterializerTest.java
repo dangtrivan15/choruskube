@@ -278,6 +278,61 @@ class DefaultRoadmapCandidateMaterializerTest {
     }
 
     @Test
+    void milestone_findOrCreateRaceLoss_retriedAndEpicStillGetsMilestoneId() {
+        UUID epicId = UUID.randomUUID();
+        UUID milestoneId = UUID.randomUUID();
+        when(internalRunService.resolveSoftwareProjectId(runId)).thenReturn(softwareProjectId);
+        // Simulates two concurrent gate approvals racing findOrCreate's find-then-save for the same
+        // project/name: this call's own save loses the unique-name race and throws, then a retry
+        // (a fresh call through the same mock, standing in for a fresh transaction) finds the
+        // winner's now-committed row.
+        when(milestoneService.findOrCreate(softwareProjectId, "Q3 Launch", "release", null))
+                .thenThrow(new org.springframework.dao.DataIntegrityViolationException("duplicate key value"))
+                .thenReturn(milestoneResponse(milestoneId, "Q3 Launch"));
+        when(internalRunService.createEpic(eq(runId), any())).thenReturn(epicResponse(epicId));
+
+        CandidateMilestone milestone = new CandidateMilestone("m1", "Q3 Launch", "release", null);
+        CandidateEpicProposal candidate = epic("Bulk Import", null, List.of(), null, "m1");
+
+        MaterializationSummary summary =
+                materialize(materializer, runId, document(List.of(milestone), List.of(candidate), null));
+
+        // The race is invisible to the caller: no error recorded, the Milestone counts as created
+        // once, and the Epic still carries its milestoneId rather than materializing with null.
+        assertThat(summary.errors()).isEmpty();
+        assertThat(summary.createdMilestoneIds()).containsExactly(milestoneId);
+        verify(milestoneService, times(2)).findOrCreate(eq(softwareProjectId), eq("Q3 Launch"), eq("release"), any());
+        verify(internalRunService)
+                .createEpic(
+                        eq(runId),
+                        eq(new InternalCreateEpicRequest("Bulk Import", "d", "m", Priority.medium, milestoneId)));
+    }
+
+    @Test
+    void milestone_findOrCreateRaceLossTwice_recordedAsError_doesNotAbortBatch() {
+        when(internalRunService.resolveSoftwareProjectId(runId)).thenReturn(softwareProjectId);
+        // Both attempts lose the race (or hit a genuine, persistent constraint failure): the retry
+        // budget is exhausted and the failure degrades to the same best-effort error recording as
+        // every other candidate-materialization failure, rather than retrying forever.
+        when(milestoneService.findOrCreate(softwareProjectId, "Q3 Launch", "release", null))
+                .thenThrow(new org.springframework.dao.DataIntegrityViolationException("duplicate key value"));
+        when(internalRunService.createEpic(eq(runId), any())).thenReturn(epicResponse(UUID.randomUUID()));
+
+        CandidateMilestone milestone = new CandidateMilestone("m1", "Q3 Launch", "release", null);
+        CandidateEpicProposal candidate = epic("Bulk Import", null, List.of(), null, "m1");
+
+        MaterializationSummary summary =
+                materialize(materializer, runId, document(List.of(milestone), List.of(candidate), null));
+
+        assertThat(summary.errors()).hasSize(1);
+        assertThat(summary.errors().get(0)).contains("Q3 Launch");
+        assertThat(summary.createdMilestoneIds()).isEmpty();
+        verify(milestoneService, times(2)).findOrCreate(eq(softwareProjectId), eq("Q3 Launch"), eq("release"), any());
+        // Best-effort: the Epic itself still materializes, just without the (dropped) milestoneId.
+        verify(internalRunService).createEpic(eq(runId), argThat(req -> req != null && req.milestoneId() == null));
+    }
+
+    @Test
     void dependencyEdge_created_countedInSummary() {
         UUID epicAId = UUID.randomUUID();
         UUID epicBId = UUID.randomUUID();

@@ -32,6 +32,7 @@ import java.util.Map;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
 /**
@@ -159,20 +160,47 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
             return;
         }
         for (CandidateMilestone candidate : milestones) {
-            try {
-                MilestoneResponse milestone = milestoneService.findOrCreate(
-                        softwareProjectId, candidate.name(), candidate.description(), candidate.targetDate());
+            MilestoneResponse milestone = findOrCreateMilestoneWithRetry(softwareProjectId, candidate, errors);
+            if (milestone != null) {
                 createdMilestoneIds.add(milestone.id());
                 if (candidate.key() != null) {
                     milestoneIdByKey.put(candidate.key(), milestone.id());
                 }
-            } catch (Exception e) {
-                String name = candidate != null ? candidate.name() : "<null>";
-                String message = "Failed to materialize candidate Milestone '" + name + "': " + e.getMessage();
-                logger.warn(message, e);
-                errors.add(message);
             }
         }
+    }
+
+    /**
+     * {@link MilestoneService#findOrCreate}'s find-then-save isn't atomic, so two concurrent gate
+     * approvals materializing the same software project can both miss the find and race the save;
+     * the loser gets a {@link DataIntegrityViolationException} from the unique-name index. Each
+     * call here is its own transaction (this class has no {@code @Transactional} of its own), so a
+     * retry runs fresh and finds the winner's now-committed row instead of this Epic silently
+     * losing its Milestone association.
+     */
+    private MilestoneResponse findOrCreateMilestoneWithRetry(
+            UUID softwareProjectId, CandidateMilestone candidate, List<String> errors) {
+        for (int attempt = 1; attempt <= 2; attempt++) {
+            try {
+                return milestoneService.findOrCreate(
+                        softwareProjectId, candidate.name(), candidate.description(), candidate.targetDate());
+            } catch (DataIntegrityViolationException raceLoss) {
+                if (attempt == 2) {
+                    recordMilestoneError(candidate, raceLoss, errors);
+                }
+            } catch (Exception e) {
+                recordMilestoneError(candidate, e, errors);
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private void recordMilestoneError(CandidateMilestone candidate, Exception e, List<String> errors) {
+        String name = candidate != null ? candidate.name() : "<null>";
+        String message = "Failed to materialize candidate Milestone '" + name + "': " + e.getMessage();
+        logger.warn(message, e);
+        errors.add(message);
     }
 
     /**
