@@ -55,9 +55,8 @@ function emptyStory(): CandidateStoryProposal {
   return { title: "", description: "", tasks: [] };
 }
 
-/** Whether an entry is an anchor to an already-materialized item — display-only,
- * per Decision 2 in the roadmap-extension-proposals design: nothing is created for
- * it and its own fields (besides key/children) are ignored. */
+/** Whether an entry is an anchor to an already-materialized item — display-only:
+ * nothing is created for it and its own fields (besides key/children) are ignored. */
 function isExisting(item: { existingId?: string | null }): boolean {
   return item.existingId != null;
 }
@@ -212,8 +211,8 @@ export default function RoadmapCandidateBreakdown({ value, onChange }: RoadmapCa
 
   if (epics.length === 0 && milestones.length === 0 && dependencies.length === 0) return null;
 
-  // A top-level entry anchored to an existing Epic (Decision 4) means this document extends
-  // the run's own roadmap rather than proposing an entirely new one — the heading says so.
+  // A top-level entry anchored to an existing Epic means this document extends an
+  // existing roadmap rather than proposing an entirely new one — the heading says so.
   const isExtension = epics.some((epic) => isExisting(epic));
 
   return (
