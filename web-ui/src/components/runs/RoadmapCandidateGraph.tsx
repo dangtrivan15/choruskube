@@ -94,11 +94,10 @@ export default function RoadmapCandidateGraph({ value, onChange }: Props) {
         type: "roadmap",
         position: { x: pos.x, y: pos.y },
         // Candidates have no lifecycle status yet — "backlog" reads as "not started"
-        // and maps to the node's neutral color token. An anchored ("existing") node
-        // has no muted/outline node variant to reuse, so the "Existing" caption is
-        // plain label text rather than a new colour token or node style.
+        // and maps to the node's neutral color token. The node truncates its label, so
+        // an anchor's "Existing" caption leads it — a trailing one is cut off for most titles.
         data: {
-          label: n.existing ? `${n.label} · Existing` : n.label,
+          label: n.existing ? `Existing · ${n.label || "Not found in this project"}` : n.label,
           itemType: n.itemType,
           status: "backlog",
           priority: n.priority,

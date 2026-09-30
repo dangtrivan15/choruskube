@@ -132,6 +132,67 @@ describe("RoadmapCandidateBreakdown", () => {
     expect(lastCall.epics[0].stories).toHaveLength(0);
   });
 
+  it("removing a story drops dependencies naming the story or its tasks, keeping the rest", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const value = makeDocument({
+      epics: [
+        makeEpic({
+          key: "e1",
+          stories: [
+            { title: "S1", description: "", key: "s1", tasks: [{ title: "T1", description: "", key: "t1" }] },
+            { title: "S2", description: "", key: "s2", tasks: [{ title: "T2", description: "", key: "t2" }] },
+          ],
+        }),
+      ],
+      dependencies: [
+        { blocking: "s1", blocked: "t2" },
+        { blocking: "t2", blocked: "t1" },
+        { blocking: "e1", blocked: "t2" },
+      ],
+    });
+    renderWithProviders(<RoadmapCandidateBreakdown value={value} onChange={onChange} />);
+
+    await user.click(screen.getByTestId("candidate-story-remove-0-0"));
+
+    const lastCall = onChange.mock.calls[onChange.mock.calls.length - 1][0] as RoadmapCandidatesDocument;
+    expect(lastCall.epics[0].stories.map((st) => st.key)).toEqual(["s2"]);
+    expect(lastCall.dependencies).toEqual([{ blocking: "e1", blocked: "t2" }]);
+  });
+
+  it("removing a task drops only dependencies naming that task", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const value = makeDocument({
+      epics: [
+        makeEpic({
+          stories: [
+            {
+              title: "S1",
+              description: "",
+              key: "s1",
+              tasks: [
+                { title: "T1", description: "", key: "t1" },
+                { title: "T2", description: "", key: "t2" },
+              ],
+            },
+          ],
+        }),
+      ],
+      dependencies: [
+        { blocking: "t1", blocked: "t2" },
+        { blocking: "s1", blocked: "t2" },
+      ],
+    });
+    renderWithProviders(<RoadmapCandidateBreakdown value={value} onChange={onChange} />);
+
+    await user.click(screen.getByTestId("candidate-task-remove-0-0-0"));
+
+    const lastCall = onChange.mock.calls[onChange.mock.calls.length - 1][0] as RoadmapCandidatesDocument;
+    expect(lastCall.epics[0].stories[0].tasks.map((t) => t.key)).toEqual(["t2"]);
+    expect(lastCall.dependencies).toEqual([{ blocking: "s1", blocked: "t2" }]);
+  });
+
   it("adds a task when Add Task is clicked", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
@@ -537,6 +598,8 @@ describe("RoadmapCandidateBreakdown", () => {
         epics: [anchorEpic, survivorEpic],
         dependencies: [
           { blocking: "task-anchor", blocked: "story-survivor" },
+          { blocking: "epic-anchor", blocked: "epic-survivor" },
+          { blocking: "task-survivor", blocked: "story-anchor" },
           { blocking: "story-survivor", blocked: "task-survivor" },
         ],
       });

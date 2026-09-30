@@ -114,11 +114,11 @@ structure (unique keys, consistent anchor nesting, no dangling dependency keys),
 addressable invariant (every new Epic needs at least one Story, every new Story at
 least one Task), and the active gate's scope rules.
 
-Because a gate like this makes roadmap creation the reviewer's decision, the same
-run's direct roadmap-write routes (`create-proposal`, `create-story`, `create-task`,
-`create-dependency`, `create-milestone`, and their update/list siblings) are refused
-for any run whose workflow declares a roadmap gate, with a message pointing at
-`propose-roadmap` instead. Every agent-facing roadmap route also verifies the calling
+Because a gate like this makes roadmap creation the reviewer's decision, the direct
+roadmap-write routes (`create-proposal`, `update-proposal`, `create-story`,
+`create-task`, `create-dependency`, `create-milestone`) are refused for any run whose
+workflow declares a roadmap gate, with a message pointing at `propose-roadmap`
+instead; the read routes stay available. Every agent-facing roadmap route also verifies the calling
 node execution belongs to the run named in its path, so a caller cannot escape a
 run's rule by naming a different run's id.
 

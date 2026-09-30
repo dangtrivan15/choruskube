@@ -138,7 +138,11 @@ test.describe("Roadmap extension gate (Feature Development's Final Approval, mir
 
     // Removing the anchor Epic entry also drops the dependency edges nested under it
     // (RoadmapCandidateBreakdown's pruneDependencies) — nothing is left to materialize.
+    // Asserted here because the server skips dangling edges at approve time, so a pruning
+    // regression would not show up in the run's outcome.
+    await expect(card.getByTestId("candidate-dependencies")).toBeVisible();
     await gatePage.removeEpic(card, 0);
+    await expect(card.getByTestId("candidate-dependencies")).toHaveCount(0);
     await gatePage.approve(card);
 
     const finished = await api.waitForRunStatus(run.id, ["completed"], 60_000);
@@ -155,7 +159,7 @@ test.describe("Roadmap extension gate (Feature Development's Final Approval, mir
     api,
     workerRepo,
   }) => {
-    const { epic } = await seedAnchor(api, workerRepo);
+    const { epic, story, task } = await seedAnchor(api, workerRepo);
     const { run, runName } = await startExtensionRun(api, workerRepo, epic.id, "false", "rx-invalid");
 
     const gatePage = new RoadmapCandidateGatePage(page);
@@ -177,6 +181,9 @@ test.describe("Roadmap extension gate (Feature Development's Final Approval, mir
     // Approve-time validation failure releases the gate's claim — nothing is materialized
     // and the node stays awaiting a decision.
     await api.waitForNodeStatus(run.id, "final_approval", ["awaiting_human"], 15_000, 1_000);
+    const untouched = await api.getGraph(epic.id);
+    expect(untouched.stories.map((s) => s.id)).toEqual([story.id]);
+    expect(untouched.tasks.map((t) => t.id)).toEqual([task.id]);
 
     await gatePage.removeStory(card, 0, 2);
     await gatePage.approve(card);

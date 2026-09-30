@@ -253,6 +253,8 @@ export interface CandidateTaskProposal {
   key?: string | null;
   priority?: string | null;
   existingId?: string | null;
+  /** Which of the run's repos a new Task targets (multi-repo projects); agent-authored, round-tripped untouched. */
+  repoId?: string | null;
 }
 
 /**
