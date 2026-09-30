@@ -264,8 +264,15 @@ class DefaultRoadmapCandidateMaterializerTest {
         MaterializationSummary summary =
                 materialize(materializer, runId, document(List.of(milestone), List.of(candidateA, candidateB), null));
 
+        // findOrCreate is the dedup point (a Mockito stub, not a real DB), so this only verifies
+        // the materializer calls findOrCreate once per candidate Milestone declaration, not once
+        // per referencing Epic — the real dedup-by-name guarantee lives in
+        // DefaultMilestoneServiceTest / the find-or-create service itself.
         verify(milestoneService, times(1)).findOrCreate(eq(softwareProjectId), eq("Q3 Launch"), any(), any());
         assertThat(summary.createdMilestoneIds()).containsExactly(milestoneId);
+        // Epic-side reuse: BOTH referencing Epics are created carrying the shared milestoneId, not
+        // just the single findOrCreate call above — otherwise a regression that dropped the
+        // milestone on the second Epic would still pass the count/times assertions.
         verify(internalRunService, times(2))
                 .createEpic(eq(runId), argThat(req -> req != null && milestoneId.equals(req.milestoneId())));
     }
@@ -339,6 +346,8 @@ class DefaultRoadmapCandidateMaterializerTest {
         CandidateEpicProposal failing = epic("Bad", null, List.of(), null, null);
         CandidateEpicProposal good = epic("Good", null, List.of(), null, null);
 
+        // Both candidates have a null priority string, which parses to the Priority.medium default,
+        // so the materializer forwards the 5-arg request carrying Priority.medium.
         when(internalRunService.createEpic(
                         eq(runId), eq(new InternalCreateEpicRequest("Bad", "d", "m", Priority.medium, null))))
                 .thenThrow(new RuntimeException("boom"));
@@ -355,6 +364,11 @@ class DefaultRoadmapCandidateMaterializerTest {
 
     @Test
     void nullEpicCandidate_recordedInErrors_doesNotAbortBatch() {
+        // Regression test: SignalRequest.editedCandidates carries `@Valid` on the epics list, but
+        // Bean Validation's cascade skips (does not reject) a `null` element inside a collection —
+        // so a document like {"epics":[null,{...}]} reaches the materializer un-guarded. A null
+        // candidate must be caught and recorded like any other per-candidate failure,
+        // not thrown as an uncaught NPE that aborts the whole batch.
         UUID goodEpicId = UUID.randomUUID();
         CandidateEpicProposal good = epic("Good", null, List.of(), null, null);
         when(internalRunService.createEpic(
@@ -394,6 +408,9 @@ class DefaultRoadmapCandidateMaterializerTest {
 
         MaterializationSummary summary = materialize(materializer, runId, document(null, List.of(candidate), null));
 
+        // The Epic row was actually committed by createEpic() before the Story failure, so it must
+        // be recorded as created — otherwise the summary would tell the reviewer this candidate was
+        // entirely skipped while an orphaned, untracked Epic silently exists in the database.
         assertThat(summary.createdEpicIds()).containsExactly(epicId);
         assertThat(summary.errors()).hasSize(1);
         assertThat(summary.errors().get(0))
@@ -454,6 +471,11 @@ class DefaultRoadmapCandidateMaterializerTest {
         assertMaterializedEpicPriority("urgent", Priority.medium);
     }
 
+    /**
+     * Materializes a single story-less candidate whose {@code priority} string is {@code
+     * candidatePriority}, and asserts the Epic forwarded to {@link InternalRunService#createEpic}
+     * carries {@code expected} as its parsed {@link Priority}.
+     */
     private void assertMaterializedEpicPriority(String candidatePriority, Priority expected) {
         UUID epicId = UUID.randomUUID();
         when(internalRunService.createEpic(eq(runId), any())).thenReturn(epicResponse(epicId));
@@ -618,6 +640,77 @@ class DefaultRoadmapCandidateMaterializerTest {
         assertThat(summary.errors()).hasSize(1);
         assertThat(summary.errors().get(0)).contains("Task 1");
         verifyNoInteractions(taskGithubIssueRepository);
+    }
+
+    @Test
+    void extensionMode_multiRepoProject_filesIssueInTheTasksRepoId() {
+        UUID epicId = UUID.randomUUID();
+        UUID storyId = UUID.randomUUID();
+        UUID taskId = UUID.randomUUID();
+        GitRepo backend = repo("https://github.com/acme/backend");
+        GitRepo frontend = repo("https://github.com/acme/frontend");
+        stubOneNewTask(epicId, storyId, taskId);
+        when(internalRunService.resolveSoftwareProjectId(runId)).thenReturn(softwareProjectId);
+        when(internalRunService.resolveRepos(softwareProjectId)).thenReturn(List.of(backend, frontend));
+        when(gitHubCredentialResolver.getTokenForRepo(frontend.getId())).thenReturn("tok");
+        when(gitHubAppService.createIssue(eq("tok"), eq("acme/frontend"), eq("Task 1"), eq("t-desc")))
+                .thenReturn(new GitHubAppService.CreatedIssue(7, "https://github.com/acme/frontend/issues/7"));
+
+        CandidateEpicProposal candidate = epic(
+                "Bulk Import",
+                null,
+                List.of(story("Story 1", List.of(task("Task 1", null, null, frontend.getId())), null, null)),
+                null,
+                null);
+
+        MaterializationSummary summary = materializer.materialize(
+                runId, document(null, List.of(candidate), null), RoadmapMaterializeMode.roadmap_extension);
+
+        assertThat(summary.errors()).isEmpty();
+        ArgumentCaptor<com.choruskube.core.model.TaskGithubIssue> captor =
+                ArgumentCaptor.forClass(com.choruskube.core.model.TaskGithubIssue.class);
+        verify(taskGithubIssueRepository).save(captor.capture());
+        assertThat(captor.getValue().getGitRepoId()).isEqualTo(frontend.getId());
+        assertThat(captor.getValue().getIssueUrl()).isEqualTo("https://github.com/acme/frontend/issues/7");
+    }
+
+    @Test
+    void extensionMode_multiRepoProject_noRepoId_taskStaysCreated_noIssueFiled() {
+        UUID epicId = UUID.randomUUID();
+        UUID storyId = UUID.randomUUID();
+        UUID taskId = UUID.randomUUID();
+        stubOneNewTask(epicId, storyId, taskId);
+        when(internalRunService.resolveSoftwareProjectId(runId)).thenReturn(softwareProjectId);
+        when(internalRunService.resolveRepos(softwareProjectId))
+                .thenReturn(List.of(repo("https://github.com/acme/backend"), repo("https://github.com/acme/frontend")));
+
+        CandidateEpicProposal candidate = epic(
+                "Bulk Import",
+                null,
+                List.of(story("Story 1", List.of(task("Task 1", null, null)), null, null)),
+                null,
+                null);
+
+        MaterializationSummary summary = materializer.materialize(
+                runId, document(null, List.of(candidate), null), RoadmapMaterializeMode.roadmap_extension);
+
+        assertThat(summary.createdTaskIds()).containsExactly(taskId);
+        assertThat(summary.errors()).singleElement().asString().contains("no repoId was given");
+        verifyNoInteractions(gitHubAppService, taskGithubIssueRepository);
+    }
+
+    private void stubOneNewTask(UUID epicId, UUID storyId, UUID taskId) {
+        when(internalRunService.createEpic(eq(runId), any())).thenReturn(epicResponse(epicId));
+        when(internalRunService.createStory(eq(runId), eq(epicId), any())).thenReturn(storyResponse(storyId, epicId));
+        when(internalRunService.createTask(eq(runId), eq(epicId), eq(storyId), any()))
+                .thenReturn(taskResponse(taskId, storyId, "Task 1", "t-desc"));
+    }
+
+    private static GitRepo repo(String url) {
+        GitRepo repo = new GitRepo();
+        repo.setId(UUID.randomUUID());
+        repo.setUrl(url);
+        return repo;
     }
 
     @Test

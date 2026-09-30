@@ -110,6 +110,17 @@ public class RoadmapProposalValidator {
                 ? internalRunService.resolveTriggeringEpicId(runId).orElse(null)
                 : null;
 
+        // (g) needs the project's repos; null when unresolvable, which skips the rule — the
+        // project-resolution failure above already reports why nothing can be applied.
+        List<GitRepo> projectRepos = null;
+        if (mode == RoadmapMaterializeMode.roadmap_extension && projectId != null) {
+            try {
+                projectRepos = internalRunService.resolveRepos(projectId);
+            } catch (NotFoundException e) {
+                projectRepos = null;
+            }
+        }
+
         // (e), first sub-bullet: milestones are forbidden in extension mode, unconditionally.
         if (mode == RoadmapMaterializeMode.roadmap_extension) {
             boolean anyEpicMilestone = epics.stream().anyMatch(e -> e != null && e.milestone() != null);
@@ -232,8 +243,8 @@ public class RoadmapProposalValidator {
                     } else {
                         hasNewDescendant = true;
                         taskInScope = true;
-                        if (mode == RoadmapMaterializeMode.roadmap_extension && projectId != null) {
-                            validateRepoId(task, taskPath, projectId, errors);
+                        if (projectRepos != null) {
+                            validateRepoId(task, taskPath, projectRepos, errors);
                         }
                     }
                     if (task.key() != null) {
@@ -393,24 +404,16 @@ public class RoadmapProposalValidator {
         return new Summary(newEpics, newStories, newTasks, existingItems, dependencies);
     }
 
-    private void validateRepoId(CandidateTaskProposal task, String taskPath, UUID projectId, List<String> errors) {
-        List<GitRepo> repos;
-        try {
-            repos = internalRunService.resolveRepos(projectId);
-        } catch (Exception e) {
+    private void validateRepoId(CandidateTaskProposal task, String taskPath, List<GitRepo> repos, List<String> errors) {
+        if (task.repoId() != null) {
+            if (repos.stream().noneMatch(r -> r.getId().equals(task.repoId()))) {
+                errors.add(taskPath + ": repoId " + task.repoId() + " is not part of this run's software project");
+            }
             return;
         }
-        if (repos.size() == 1) {
-            return;
-        }
-        if (task.repoId() == null) {
+        if (repos.size() > 1) {
             errors.add(taskPath
                     + ": a repoId is required for a new task when the run's project spans more than one repository");
-            return;
-        }
-        boolean partOfProject = repos.stream().anyMatch(r -> r.getId().equals(task.repoId()));
-        if (!partOfProject) {
-            errors.add(taskPath + ": repoId " + task.repoId() + " is not part of this run's software project");
         }
     }
 

@@ -16,6 +16,7 @@ import jakarta.annotation.Nullable;
 import java.time.Instant;
 import java.util.*;
 import java.util.Optional;
+import org.hibernate.Hibernate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -924,7 +925,12 @@ public class InternalRunService {
         SoftwareProject project = softwareProjectRepo
                 .findById(softwareProjectId)
                 .orElseThrow(() -> new NotFoundException("Software project not found: " + softwareProjectId));
-        return project.resolveRepos();
+        // A RepoGroup's members hold lazy GitRepo proxies, and callers read their URL after this
+        // transaction has closed — unproxied here, or every multi-repo caller hits
+        // LazyInitializationException.
+        return project.resolveRepos().stream()
+                .map(repo -> (GitRepo) Hibernate.unproxy(repo))
+                .toList();
     }
 
     /**

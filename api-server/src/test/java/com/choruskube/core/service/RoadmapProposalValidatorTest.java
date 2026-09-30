@@ -292,6 +292,44 @@ class RoadmapProposalValidatorTest extends BaseTest {
     }
 
     @Test
+    void foreignStoryAnchor_underRunsEpic_isNotFound() {
+        // A Story has no project of its own: the lookup must resolve it through its parent Epic,
+        // or a foreign project's Story could be anchored (and its title surfaced) here.
+        UUID runId = runUnderP_withTask();
+        CandidateEpicProposal candidate =
+                anchorEpic(epicP.getId(), "e", List.of(anchorStory(storyQ.getId(), "s", List.of(newTask("t")))));
+
+        var errors = validator.validate(
+                runId,
+                doc(List.of(candidate), null),
+                RoadmapMaterializeMode.roadmap_extension,
+                RoadmapProposalValidator.Strictness.GATE);
+
+        assertThat(errors)
+                .containsExactly("epics[0].stories[0]: existing story " + storyQ.getId()
+                        + " not found in this run's software project");
+    }
+
+    @Test
+    void taskAnchorUnderWrongStoryAnchor_isRejected() {
+        UUID runId = runUnderP_noTask();
+        CandidateEpicProposal candidate = anchorEpic(
+                epicP.getId(),
+                "e",
+                List.of(anchorStory(storyP.getId(), "s", List.of(anchorTask(taskP2.getId(), "t")))));
+
+        var errors = validator.validate(
+                runId,
+                doc(List.of(candidate), null),
+                RoadmapMaterializeMode.roadmap_extension,
+                RoadmapProposalValidator.Strictness.GATE);
+
+        assertThat(errors)
+                .containsExactly("epics[0].stories[0].tasks[0]: task " + taskP2.getId() + " does not belong to story "
+                        + storyP.getId());
+    }
+
+    @Test
     void taskAnchorUnderNewStory_isRejected() {
         UUID runId = runUnderP_noTask();
         CandidateEpicProposal candidate =
@@ -550,6 +588,23 @@ class RoadmapProposalValidatorTest extends BaseTest {
                 RoadmapProposalValidator.Strictness.GATE);
 
         assertThat(errors).isEmpty();
+    }
+
+    @Test
+    void singleRepoProject_rejectsTaskWithForeignRepoId() {
+        UUID runId = runUnderP_withTask();
+        CandidateEpicProposal candidate =
+                anchorEpic(epicP.getId(), "e", List.of(newStory("s", List.of(newTask("t", projectQ.getId())))));
+
+        var errors = validator.validate(
+                runId,
+                doc(List.of(candidate), null),
+                RoadmapMaterializeMode.roadmap_extension,
+                RoadmapProposalValidator.Strictness.GATE);
+
+        assertThat(errors)
+                .containsExactly("epics[0].stories[0].tasks[0]: repoId " + projectQ.getId()
+                        + " is not part of this run's software project");
     }
 
     @Test

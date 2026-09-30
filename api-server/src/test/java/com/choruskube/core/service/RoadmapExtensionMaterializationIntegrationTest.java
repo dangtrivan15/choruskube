@@ -12,6 +12,7 @@ import com.choruskube.core.dto.CandidateStoryProposal;
 import com.choruskube.core.dto.CandidateTaskProposal;
 import com.choruskube.core.dto.RoadmapCandidatesDocument;
 import com.choruskube.core.dto.SignalRequest;
+import com.choruskube.core.exception.GitHubApiException;
 import com.choruskube.core.exception.ValidationException;
 import com.choruskube.core.model.Epic;
 import com.choruskube.core.model.GitRepo;
@@ -21,14 +22,18 @@ import com.choruskube.core.model.Story;
 import com.choruskube.core.model.Task;
 import com.choruskube.core.model.TemplateNode;
 import com.choruskube.core.model.WorkflowRun;
+import com.choruskube.core.model.enums.BlockableItemType;
+import com.choruskube.core.model.enums.GithubIssueState;
 import com.choruskube.core.model.enums.NodeExecutionStatus;
 import com.choruskube.core.repository.EpicRepository;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.NodeExecutionRepository;
 import com.choruskube.core.repository.StoryRepository;
+import com.choruskube.core.repository.TaskGithubIssueRepository;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.TemplateNodeRepository;
+import com.choruskube.core.repository.WorkItemDependencyRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowStub;
@@ -89,6 +94,12 @@ class RoadmapExtensionMaterializationIntegrationTest extends BaseTest {
 
     @Autowired
     private TaskRepository taskRepo;
+
+    @Autowired
+    private TaskGithubIssueRepository taskGithubIssueRepo;
+
+    @Autowired
+    private WorkItemDependencyRepository dependencyRepo;
 
     private WorkflowStub mockStub;
     private GitRepo project;
@@ -222,7 +233,63 @@ class RoadmapExtensionMaterializationIntegrationTest extends BaseTest {
                 .filter(t -> t.getStoryId().equals(runsStory.getId()))
                 .toList();
         assertThat(tasks).hasSize(2); // runsTask + Follow-up
-        assertThat(signalPayload(exec.getId())).contains("Roadmap extension approved");
+        Task followUp = tasks.stream()
+                .filter(t -> "Follow-up".equals(t.getTitle()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(dependencyRepo.findByBlockingItemTypeAndBlockingItemIdAndBlockedItemTypeAndBlockedItemId(
+                        BlockableItemType.task, runsTask.getId(), BlockableItemType.task, followUp.getId()))
+                .isPresent();
+        assertThat(taskGithubIssueRepo.findByTaskId(followUp.getId())).hasValueSatisfying(linkage -> {
+            assertThat(linkage.getGitRepoId()).isEqualTo(project.getId());
+            assertThat(linkage.getIssueNumber()).isEqualTo(1);
+            assertThat(linkage.getState()).isEqualTo(GithubIssueState.open);
+        });
+        assertThat(signalPayload(exec.getId()))
+                .contains("Roadmap extension approved: created 0 Stories, 1 Tasks and 1 dependency edges (0 skipped)");
+    }
+
+    @Test
+    void approve_issueFilingFails_taskStillCreated_noLinkage_failureInResultNote() {
+        Mockito.when(gitHubAppService.createIssue(
+                        ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any()))
+                .thenThrow(new GitHubApiException(503, "acme/extension-materialization-test", 0));
+        GraphTemplate v43 = templateRepo
+                .findFirstByGraphIdOrderByVersionDesc(GraphIds.FEATURE_DEVELOPMENT)
+                .orElseThrow();
+        WorkflowRun run = makeTaskTriggeredRun(v43, project.getId(), runsTask.getId());
+        NodeExecution exec = makeAwaitingHumanExec(run, finalApproval);
+
+        RoadmapCandidatesDocument edited = new RoadmapCandidatesDocument(
+                null,
+                List.of(new CandidateEpicProposal(
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        List.of(new CandidateStoryProposal(
+                                null,
+                                null,
+                                List.of(new CandidateTaskProposal("Follow-up", "d", null, null, null, null)),
+                                null,
+                                null,
+                                runsStory.getId())),
+                        null,
+                        null,
+                        runsEpic.getId())),
+                null);
+
+        runService.signalHumanDecision(run.getId(), exec.getId(), new SignalRequest("approved", null, null, edited));
+
+        Task followUp = taskRepo.findAll().stream()
+                .filter(t -> t.getStoryId().equals(runsStory.getId()) && "Follow-up".equals(t.getTitle()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(taskGithubIssueRepo.findByTaskId(followUp.getId())).isEmpty();
+        assertThat(signalPayload(exec.getId()))
+                .contains("created 0 Stories, 1 Tasks and 0 dependency edges (1 skipped)")
+                .contains("Skipped: Failed to file GitHub issue for Task 'Follow-up'");
     }
 
     @Test
