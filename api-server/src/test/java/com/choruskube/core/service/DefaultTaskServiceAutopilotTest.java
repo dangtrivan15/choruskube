@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.choruskube.core.BaseTest;
 import com.choruskube.core.CommittedFixtureCleaner;
+import com.choruskube.core.credential.GitHubCredentialResolver;
 import com.choruskube.core.dto.CreateDependencyRequest;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
@@ -14,9 +15,13 @@ import com.choruskube.core.dto.TaskRequest;
 import com.choruskube.core.dto.TaskResponse;
 import com.choruskube.core.exception.ConflictException;
 import com.choruskube.core.model.GitRepo;
+import com.choruskube.core.model.TaskGithubIssue;
 import com.choruskube.core.model.WorkflowRun;
+import com.choruskube.core.model.enums.GithubIssueState;
+import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.AutopilotRepository;
 import com.choruskube.core.repository.GitRepoRepository;
+import com.choruskube.core.repository.TaskGithubIssueRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.util.RepoNameUtil;
 import io.temporal.client.WorkflowClient;
@@ -86,6 +91,9 @@ public class DefaultTaskServiceAutopilotTest extends BaseTest {
     @Autowired
     private JdbcTemplate jdbc;
 
+    @Autowired
+    private TaskGithubIssueRepository taskGithubIssueRepository;
+
     private CommittedFixtureCleaner cleaner;
 
     @MockitoBean
@@ -96,6 +104,12 @@ public class DefaultTaskServiceAutopilotTest extends BaseTest {
 
     @MockitoBean
     private RunEventPublisher runEventPublisher;
+
+    @MockitoBean
+    private GitHubAppService gitHubAppService;
+
+    @MockitoBean
+    private GitHubCredentialResolver gitHubCredentialResolver;
 
     @BeforeEach
     void setUp() {
@@ -231,6 +245,58 @@ public class DefaultTaskServiceAutopilotTest extends BaseTest {
         assertThat(runRepo.findByTaskIdOrderByCreatedAtDesc(task.id(), PageRequest.of(0, 10))
                         .getTotalElements())
                 .isEqualTo(1L);
+    }
+
+    /**
+     * {@code completeCore} locks the Task row the same way {@code startCore} does, closing the
+     * identical race for its own external side effect: two callers racing past an unlocked
+     * {@code in_progress} check would otherwise both call GitHub to close the same linked issue.
+     */
+    @Test
+    void concurrentComplete_closesLinkedGithubIssueExactlyOnce() throws Exception {
+        GitRepo r = makeRepo("complete-race");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("Contended", "D"));
+        TaskResponse started = service.start(task.id());
+        WorkflowRun run = runRepo.findById(started.latestRunId()).orElseThrow();
+        run.setStatus(WorkflowRunStatus.completed);
+        runRepo.saveAndFlush(run);
+        makeLinkage(task.id(), r.getId(), 42, GithubIssueState.open);
+        Mockito.when(gitHubCredentialResolver.getTokenForRepo(r.getId())).thenReturn("tok");
+
+        CyclicBarrier startLine = new CyclicBarrier(2);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        List<Throwable> outcomes;
+        try {
+            List<Future<Throwable>> futures = pool.invokeAll(List.of(
+                    attempt(startLine, () -> service.complete(task.id())),
+                    attempt(startLine, () -> service.complete(task.id()))));
+            outcomes = new ArrayList<>();
+            for (Future<Throwable> f : futures) {
+                outcomes.add(f.get(30, TimeUnit.SECONDS));
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+
+        assertThat(outcomes.stream().filter(Objects::isNull).count())
+                .as("exactly one completer should win")
+                .isEqualTo(1);
+        assertThat(outcomes.stream().filter(Objects::nonNull).toList())
+                .as("the loser is rejected by the status guard, not by a database error")
+                .allMatch(ConflictException.class::isInstance);
+        Mockito.verify(gitHubAppService, Mockito.times(1))
+                .closeIssue(Mockito.anyString(), Mockito.anyString(), Mockito.eq(42));
+    }
+
+    private TaskGithubIssue makeLinkage(UUID taskId, UUID gitRepoId, int issueNumber, GithubIssueState state) {
+        TaskGithubIssue issue = new TaskGithubIssue();
+        issue.setTaskId(taskId);
+        issue.setGitRepoId(gitRepoId);
+        issue.setIssueNumber(issueNumber);
+        issue.setIssueUrl("https://github.com/acme/repo/issues/" + issueNumber);
+        issue.setState(state);
+        return taskGithubIssueRepository.saveAndFlush(issue);
     }
 
     private static Callable<Throwable> attempt(CyclicBarrier startLine, Runnable action) {
