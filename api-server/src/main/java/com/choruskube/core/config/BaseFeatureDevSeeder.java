@@ -35,9 +35,9 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
     // and executor changes here never retroactively mutate prior versions. To ship a
     // change, edit the constants in this file (prompt, executor, schema), increment
     // CURRENT_VERSION, and the next boot creates the new snapshot.
-    // v43: Implement may propose a roadmap extension (roadmap_candidates.json, optional output +
-    // self-input); Final Approval declares materialize: roadmap_extension and the optional input.
-    static final int CURRENT_VERSION = 43;
+    // v44: Draft Spec & Plan asks whether the run could finish an item itself before tagging it
+    // Future work in its Caveats section.
+    static final int CURRENT_VERSION = 44;
 
     private static final String TEMPLATE_NAME = "Feature Development";
 
@@ -233,6 +233,12 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             "Needs human decision" is an alarm bell — use it sparingly, only when
             the choice genuinely cannot be defaulted. Most caveats are Accepted or
             Future work.
+
+            Before tagging something Future work, ask whether this run could simply
+            finish it. If it is small and completes this change, plan it in Part 2 —
+            it is design, not a caveat. If it is out of reach only because it needs
+            a setting or access you lack, it is a step for the human: name exactly
+            what to change rather than deferring it.
 
             The "Out of scope" content traditionally listed separately belongs here
             with disposition "Accepted".

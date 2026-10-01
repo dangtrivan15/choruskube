@@ -820,13 +820,13 @@ class V1TemplateSeederTest extends BaseTest {
     }
 
     @Test
-    void currentVersionIsBumpedForRoadmapExtensionProposals() {
-        // v43: Implement may propose a roadmap extension; Final Approval declares
-        // materialize: roadmap_extension. This is the rolling version tripwire: rewrite it and
-        // bump the literal whenever CURRENT_VERSION changes, so a template edit that forgets the
-        // bump cannot ship silently.
-        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(43);
-        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 43))
+    void currentVersionIsBumpedForFinishBeforeDeferring() {
+        // v44: Draft Spec & Plan asks whether the run could finish an item itself before tagging
+        // it Future work. This is the rolling version tripwire: rewrite it and bump the literal
+        // whenever CURRENT_VERSION changes, so a template edit that forgets the bump cannot ship
+        // silently.
+        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(44);
+        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 44))
                 .isPresent();
     }
 

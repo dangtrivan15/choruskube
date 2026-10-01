@@ -71,6 +71,15 @@ class FeatureDevPromptConventionsTest {
         assertThat(promptField("SPEC_AND_PLAN_PROMPT")).contains("per-repo").contains("privacy");
     }
 
+    @Test
+    void specPromptAsksWhetherTheRunCouldFinishAnItemBeforeDeferringIt() throws Exception {
+        String collapsed = promptField("SPEC_AND_PLAN_PROMPT").replaceAll("\\s+", " ");
+        assertThat(collapsed)
+                .as("deferral is decided when the spec is drafted; without this, finishable work is deferred")
+                .contains("ask whether this run could simply finish it")
+                .contains("name exactly what to change rather than deferring it");
+    }
+
     /**
      * BaseFeatureDevSeeder is exempt from scripts/check-comment-refs.sh as a whole file, because
      * its prompt strings define the spec format the ordinals belong to. This test is the only
