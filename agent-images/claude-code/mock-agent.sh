@@ -62,6 +62,15 @@
 #                          declarative roadmap_candidates.json artifact expresses, but
 #                          called live against the real API server, no JSON artifact
 #                          or human gate involved.
+#   roadmap_extension      Drives the propose-roadmap CLI contract end to end for a
+#                          gated (roadmap_extension mode) run: confirms direct writes
+#                          are refused and reads still work, discovers this run's
+#                          Epic's Story/Task ids via get-roadmap-graph, confirms a
+#                          deliberately-invalid document is rejected by
+#                          propose-roadmap --check, then installs a valid document
+#                          mixing existing-item anchors and new Stories/Tasks (plus,
+#                          optionally, a wholly new top-level Epic) under it. Requires
+#                          --epic-id; --new-epic is optional (default false)
 #   single_repo_claude_md  Verify SYSTEM_PROMPT is exported (tests the export fix)
 #   dind_isolation   Verify DinD isolation: DOCKER_HOST set, no ChorusKube services visible
 #   dind_network_connectivity  Verify API server is reachable from DinD agent
@@ -97,9 +106,12 @@
 #   --escalate-decision <value>  Decision value to submit for 'gate_approve' once
 #                             --escalate-after's threshold is reached. Required if
 #                             --escalate-after is passed.
-#   --epic-id <uuid>          Epic UUID for 'roadmap_status_update'
+#   --epic-id <uuid>          Epic UUID for 'roadmap_status_update' / 'roadmap_extension'
 #   --task-id <uuid>          Task UUID for 'roadmap_status_update' (must already be
 #                             in_progress — e.g. this run was started via Task-start)
+#   --new-epic <true|false>   'roadmap_extension' only: also propose a wholly new
+#                             top-level Epic alongside the extension of --epic-id
+#                             (default: false)
 #   --count <n>               Number of files to write for 'many_artifacts' (default: 40)
 #   --expect-input <relpath>  Assert $WORKSPACE_IN/<relpath> (default base /workspace/in)
 #                             exists and is non-empty before the scenario runs; exit 1 with
@@ -120,6 +132,7 @@ ESCALATE_AFTER=""
 ESCALATE_DECISION=""
 EPIC_ID_ARG=""
 TASK_ID_ARG=""
+NEW_EPIC_ARG=""
 ARTIFACT_COUNT=40
 EXPECT_INPUTS=()
 
@@ -157,6 +170,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --task-id)
       TASK_ID_ARG="$2"
+      shift 2
+      ;;
+    --new-epic)
+      NEW_EPIC_ARG="$2"
       shift 2
       ;;
     --count)
@@ -682,6 +699,152 @@ JSON
     exit 0
     ;;
 
+  roadmap_extension)
+    # Drives propose-roadmap's real CLI contract against a gated (roadmap_extension
+    # mode) run: unlike roadmap_imperative_links above, direct writes are refused
+    # here, so this confirms the refusal, confirms reads still work, discovers this
+    # run's own Epic's Story/Task ids to anchor into, exercises the reject path with
+    # a deliberately-invalid document, then installs a valid one.
+    echo "Mock agent: roadmap_extension scenario"
+
+    ANCHOR="${EPIC_ID_ARG:-}"
+    if [ -z "$ANCHOR" ]; then
+      echo "ERROR: roadmap_extension needs --epic-id" >&2
+      exit 1
+    fi
+    NEW_EPIC="${NEW_EPIC_ARG:-false}"
+
+    # (1) Direct writes are refused for a gated run — propose-roadmap is the only
+    # path left, and the refusal names it.
+    set +e
+    CREATE_OUTPUT=$(create-proposal --title "Should be refused" --description "Direct write must be rejected in a gated run." 2>&1)
+    CREATE_RC=$?
+    set -e
+    if [ "$CREATE_RC" -eq 0 ]; then
+      echo "ERROR: create-proposal unexpectedly succeeded in a gated run" >&2
+      exit 1
+    fi
+    echo "$CREATE_OUTPUT" | grep -q "propose-roadmap" \
+      || { echo "ERROR: create-proposal's refusal did not mention propose-roadmap: $CREATE_OUTPUT" >&2; exit 1; }
+    echo "Confirmed: create-proposal is refused, and points at propose-roadmap"
+
+    # (2) Reads stay available in a gated run.
+    list-proposals | jq -e --arg id "$ANCHOR" 'any(.[]; .id == $id)' >/dev/null \
+      || { echo "ERROR: list-proposals did not include this run's anchor Epic $ANCHOR" >&2; exit 1; }
+    echo "Confirmed: list-proposals still reads, and includes anchor Epic $ANCHOR"
+
+    # (3) Discover a Story and a Task under the anchor Epic to reference by existingId.
+    GRAPH=$(get-roadmap-graph --epic-id "$ANCHOR")
+    STORY=$(echo "$GRAPH" | jq -er '.stories[0].id')
+    TASK=$(echo "$GRAPH" | jq -er --arg s "$STORY" '[.tasks[] | select(.storyId == $s)][0].id')
+    echo "Discovered anchor Story $STORY and anchor Task $TASK under Epic $ANCHOR"
+
+    WORKDIR=$(mktemp -d)
+
+    # (4) A deliberately-invalid document: a new Story with no Tasks violates the
+    # addressable invariant. propose-roadmap --check must reject it and must not
+    # install anything.
+    jq -n --arg anchor "$ANCHOR" \
+      '{
+        epics: [
+          {
+            existingId: $anchor,
+            stories: [
+              {
+                title: "Mock Bad Story With No Tasks",
+                description: "Deliberately invalid: a new story needs at least one task.",
+                key: "bad-story"
+              }
+            ]
+          }
+        ]
+      }' > "$WORKDIR/bad.json"
+    if BAD_OUTPUT=$(propose-roadmap --check --file "$WORKDIR/bad.json" 2>&1); then
+      echo "ERROR: propose-roadmap --check unexpectedly accepted an invalid document" >&2
+      echo "$BAD_OUTPUT" >&2
+      exit 1
+    fi
+    echo "Confirmed: propose-roadmap --check rejects an invalid document"
+
+    # (5) A valid document: existing Story/Task anchors get a new sibling Task and a
+    # new sibling Story, linked by dependencies, plus — when --new-epic is true — a
+    # wholly new top-level Epic unrelated to the anchor. Built with jq rather than a
+    # hand-written heredoc so the optional new-Epic entry doesn't need fragile
+    # string-splicing of the surrounding JSON array.
+    ANCHOR_EPIC=$(jq -n \
+      --arg anchor "$ANCHOR" --arg story "$STORY" --arg task "$TASK" \
+      '{
+        existingId: $anchor,
+        stories: [
+          {
+            existingId: $story,
+            tasks: [
+              { existingId: $task, key: "existing-task" },
+              {
+                title: "Mock Follow-up Task",
+                description: "A follow-up Task proposed by the roadmap_extension mock-agent scenario.",
+                key: "follow-up",
+                priority: "High"
+              }
+            ]
+          },
+          {
+            title: "Mock Deferred Story",
+            description: "A deferred Story proposed by the roadmap_extension mock-agent scenario.",
+            key: "deferred-story",
+            tasks: [
+              {
+                title: "Mock Deferred Task",
+                description: "A deferred Task proposed by the roadmap_extension mock-agent scenario.",
+                key: "deferred-task"
+              }
+            ]
+          }
+        ]
+      }')
+
+    EPICS_JSON="[$ANCHOR_EPIC]"
+    if [ "$NEW_EPIC" = "true" ]; then
+      NEW_INITIATIVE_EPIC=$(jq -n --arg anchor "$ANCHOR" \
+        '{
+          title: ("Mock New Initiative Epic " + $anchor),
+          description: "A wholly new, unrelated Epic proposed by the roadmap_extension mock-agent scenario.",
+          key: "new-epic",
+          stories: [
+            {
+              title: "Mock New Initiative Story",
+              description: "Story under the new-initiative Epic.",
+              key: "new-epic-story",
+              tasks: [
+                {
+                  title: "Mock New Initiative Task",
+                  description: "Task under the new-initiative Story.",
+                  key: "new-epic-task"
+                }
+              ]
+            }
+          ]
+        }')
+      EPICS_JSON=$(jq -n --argjson a "$ANCHOR_EPIC" --argjson b "$NEW_INITIATIVE_EPIC" '[$a, $b]')
+    fi
+
+    jq -n --argjson epics "$EPICS_JSON" \
+      '{
+        epics: $epics,
+        dependencies: [
+          { blocking: "existing-task", blocked: "follow-up" },
+          { blocking: "follow-up", blocked: "deferred-task" }
+        ]
+      }' > "$WORKDIR/good.json"
+
+    propose-roadmap --file "$WORKDIR/good.json"
+    echo "Installed a valid roadmap extension proposal (new-epic=$NEW_EPIC)"
+
+    write_artifact "result.txt" "roadmap_extension: proposal installed"
+    echo "Mock agent: roadmap_extension completed"
+    exit 0
+    ;;
+
   single_repo_claude_md)
     echo "Mock agent: single_repo_claude_md scenario"
     # Verify SYSTEM_PROMPT is exported by entrypoint.sh and visible here.
@@ -826,13 +989,13 @@ JSON
   "")
     echo "ERROR: No scenario specified" >&2
     echo "Usage: mock-agent.sh <scenario> [options]" >&2
-    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, multi_repo_pr, check_prs_gate, roadmap_status_update, roadmap_status_update_env_default, roadmap_status_update_missing_task_id, roadmap_candidates, roadmap_imperative_links, single_repo_claude_md, dind_isolation, dind_network_connectivity, many_artifacts, rate_limited" >&2
+    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, multi_repo_pr, check_prs_gate, roadmap_status_update, roadmap_status_update_env_default, roadmap_status_update_missing_task_id, roadmap_candidates, roadmap_imperative_links, roadmap_extension, single_repo_claude_md, dind_isolation, dind_network_connectivity, many_artifacts, rate_limited" >&2
     exit 1
     ;;
 
   *)
     echo "ERROR: Unknown scenario '$SCENARIO'" >&2
-    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, multi_repo_pr, check_prs_gate, roadmap_status_update, roadmap_status_update_env_default, roadmap_status_update_missing_task_id, roadmap_candidates, roadmap_imperative_links, single_repo_claude_md, dind_isolation, dind_network_connectivity, many_artifacts, rate_limited" >&2
+    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, multi_repo_pr, check_prs_gate, roadmap_status_update, roadmap_status_update_env_default, roadmap_status_update_missing_task_id, roadmap_candidates, roadmap_imperative_links, roadmap_extension, single_repo_claude_md, dind_isolation, dind_network_connectivity, many_artifacts, rate_limited" >&2
     exit 1
     ;;
 esac

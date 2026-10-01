@@ -8,22 +8,27 @@ import com.choruskube.core.dto.CandidateTaskProposal;
 import com.choruskube.core.dto.ResolvedArtifactEntry;
 import com.choruskube.core.dto.ResolvedArtifactGroup;
 import com.choruskube.core.dto.RoadmapCandidatesDocument;
+import com.choruskube.core.model.Epic;
+import com.choruskube.core.model.Story;
+import com.choruskube.core.model.Task;
+import com.choruskube.core.model.enums.Priority;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Validator;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 /**
@@ -62,16 +67,22 @@ public class RoadmapCandidatesArtifactResolver {
     private final ArtifactService artifactService;
     private final ObjectMapper objectMapper;
     private final Validator validator;
+    private final RoadmapAnchorLookup anchorLookup;
+    private final InternalRunService internalRunService;
 
     public RoadmapCandidatesArtifactResolver(
             ArtifactResolutionService artifactResolutionService,
             ArtifactService artifactService,
             ObjectMapper objectMapper,
-            Validator validator) {
+            Validator validator,
+            RoadmapAnchorLookup anchorLookup,
+            @Lazy InternalRunService internalRunService) {
         this.artifactResolutionService = artifactResolutionService;
         this.artifactService = artifactService;
         this.objectMapper = objectMapper;
         this.validator = validator;
+        this.anchorLookup = anchorLookup;
+        this.internalRunService = internalRunService;
     }
 
     /** Resolves the node's required artifacts fresh, then delegates to {@link #resolve(UUID, List)}. */
@@ -108,7 +119,7 @@ public class RoadmapCandidatesArtifactResolver {
                             violations.size());
                     return null;
                 }
-                return validateReferencesAndCycles(runId, document);
+                return fillExisting(runId, validateReferencesAndCycles(runId, document));
             } catch (Exception e) {
                 logger.warn("Failed to resolve {} for run {}: {}", ARTIFACT_FILENAME, runId, e.getMessage());
                 return null;
@@ -192,7 +203,8 @@ public class RoadmapCandidatesArtifactResolver {
                         e.priority(),
                         e.stories(),
                         e.key(),
-                        null));
+                        null,
+                        e.existingId()));
             } else {
                 fixedEpics.add(e);
             }
@@ -213,7 +225,7 @@ public class RoadmapCandidatesArtifactResolver {
                 logger.warn("Dropping self-referential dependency edge for run {}: '{}'", runId, dep.blocking());
                 continue;
             }
-            if (wouldCreateCycle(declaredEdges, dep.blocking(), dep.blocked())) {
+            if (CandidateDependencyCycles.wouldCreateCycle(declaredEdges, dep.blocking(), dep.blocked())) {
                 logger.warn(
                         "Dropping cyclic dependency edge for run {}: '{}' -> '{}'",
                         runId,
@@ -236,29 +248,137 @@ public class RoadmapCandidatesArtifactResolver {
     }
 
     /**
-     * {@code true} iff adding the edge {@code blocking -> blocked} to the already-accepted {@code
-     * declaredEdges} graph would close a cycle — i.e. {@code blocked} can already reach {@code
-     * blocking} by following accepted edges forward. Plain DFS over candidate-local keys (the
-     * artifact is small; no need for the materialized-graph traversal machinery {@code
-     * TransitiveReadinessResolver} uses over real item ids).
+     * Fills every {@code existingId} anchor's display fields with its live title/description (and,
+     * for an Epic, motivation and priority) — project-checked, through {@link RoadmapAnchorLookup},
+     * so an anchor outside the run's own project is blanked rather than shown. Never throws: a
+     * document with no anchor is returned unchanged with no project resolution and no lookup at
+     * all, which keeps a legacy or Roadmap Provisioner document (and the many tests that build this
+     * resolver with bare mocks) on the pre-existing path.
      */
-    private static boolean wouldCreateCycle(Map<String, Set<String>> declaredEdges, String blocking, String blocked) {
-        Deque<String> stack = new ArrayDeque<>();
-        Set<String> visited = new HashSet<>();
-        stack.push(blocked);
-        while (!stack.isEmpty()) {
-            String current = stack.pop();
-            if (current.equals(blocking)) {
-                return true;
-            }
-            if (!visited.add(current)) {
+    RoadmapCandidatesDocument fillExisting(UUID runId, RoadmapCandidatesDocument document) {
+        if (document == null || !hasAnyAnchor(document.epics())) {
+            return document;
+        }
+        UUID projectId;
+        try {
+            projectId = internalRunService.resolveSoftwareProjectId(runId);
+        } catch (Exception e) {
+            logger.warn(
+                    "Could not resolve software project for run {} while filling anchors: {}", runId, e.getMessage());
+            projectId = null;
+        }
+        List<CandidateEpicProposal> filledEpics = new ArrayList<>();
+        for (CandidateEpicProposal epic :
+                document.epics() != null ? document.epics() : List.<CandidateEpicProposal>of()) {
+            filledEpics.add(fillEpic(epic, projectId));
+        }
+        return new RoadmapCandidatesDocument(document.milestones(), filledEpics, document.dependencies());
+    }
+
+    private CandidateEpicProposal fillEpic(CandidateEpicProposal epic, UUID projectId) {
+        List<CandidateStoryProposal> filledStories = new ArrayList<>();
+        for (CandidateStoryProposal story :
+                epic.stories() != null ? epic.stories() : List.<CandidateStoryProposal>of()) {
+            filledStories.add(fillStory(story, projectId));
+        }
+        if (epic.existingId() == null) {
+            return new CandidateEpicProposal(
+                    epic.title(),
+                    epic.description(),
+                    epic.motivation(),
+                    epic.repos(),
+                    epic.priority(),
+                    filledStories,
+                    epic.key(),
+                    epic.milestone(),
+                    null);
+        }
+        Optional<Epic> found = projectId != null ? anchorLookup.epic(epic.existingId(), projectId) : Optional.empty();
+        if (found.isEmpty()) {
+            return new CandidateEpicProposal(
+                    "", "", null, epic.repos(), null, filledStories, epic.key(), epic.milestone(), epic.existingId());
+        }
+        Epic live = found.get();
+        return new CandidateEpicProposal(
+                live.getTitle(),
+                live.getDescription(),
+                live.getMotivation(),
+                epic.repos(),
+                displayPriority(live.getPriority()),
+                filledStories,
+                epic.key(),
+                epic.milestone(),
+                epic.existingId());
+    }
+
+    private CandidateStoryProposal fillStory(CandidateStoryProposal story, UUID projectId) {
+        List<CandidateTaskProposal> filledTasks = new ArrayList<>();
+        for (CandidateTaskProposal task : story.tasks() != null ? story.tasks() : List.<CandidateTaskProposal>of()) {
+            filledTasks.add(fillTask(task, projectId));
+        }
+        if (story.existingId() == null) {
+            return new CandidateStoryProposal(
+                    story.title(), story.description(), filledTasks, story.key(), story.priority(), null);
+        }
+        Optional<Story> found =
+                projectId != null ? anchorLookup.story(story.existingId(), projectId) : Optional.empty();
+        if (found.isEmpty()) {
+            return new CandidateStoryProposal("", "", filledTasks, story.key(), story.priority(), story.existingId());
+        }
+        Story live = found.get();
+        return new CandidateStoryProposal(
+                live.getTitle(), live.getDescription(), filledTasks, story.key(), story.priority(), story.existingId());
+    }
+
+    private CandidateTaskProposal fillTask(CandidateTaskProposal task, UUID projectId) {
+        if (task.existingId() == null) {
+            return task;
+        }
+        Optional<Task> found = projectId != null ? anchorLookup.task(task.existingId(), projectId) : Optional.empty();
+        if (found.isEmpty()) {
+            return new CandidateTaskProposal("", "", task.key(), task.priority(), task.existingId(), task.repoId());
+        }
+        Task live = found.get();
+        return new CandidateTaskProposal(
+                live.getTitle(), live.getDescription(), task.key(), task.priority(), task.existingId(), task.repoId());
+    }
+
+    private boolean hasAnyAnchor(List<CandidateEpicProposal> epics) {
+        if (epics == null) {
+            return false;
+        }
+        for (CandidateEpicProposal epic : epics) {
+            if (epic == null) {
                 continue;
             }
-            Set<String> next = declaredEdges.get(current);
-            if (next != null) {
-                stack.addAll(next);
+            if (epic.existingId() != null) {
+                return true;
+            }
+            for (CandidateStoryProposal story :
+                    epic.stories() != null ? epic.stories() : List.<CandidateStoryProposal>of()) {
+                if (story == null) {
+                    continue;
+                }
+                if (story.existingId() != null) {
+                    return true;
+                }
+                for (CandidateTaskProposal task :
+                        story.tasks() != null ? story.tasks() : List.<CandidateTaskProposal>of()) {
+                    if (task != null && task.existingId() != null) {
+                        return true;
+                    }
+                }
             }
         }
         return false;
+    }
+
+    /** Capitalizes a {@link Priority}'s lower-case enum name to match the candidate DTO's free-text convention. */
+    private static String displayPriority(Priority priority) {
+        if (priority == null) {
+            return null;
+        }
+        String name = priority.name();
+        return name.substring(0, 1).toUpperCase(Locale.ROOT) + name.substring(1);
     }
 }

@@ -820,13 +820,62 @@ class V1TemplateSeederTest extends BaseTest {
     }
 
     @Test
-    void currentVersionIsBumpedForDraftSpecTimeout() {
-        // v42: Draft Spec & Plan's budget rises from 1800s to 3600s. This is the rolling
-        // version tripwire: rewrite it and bump the literal whenever CURRENT_VERSION
-        // changes, so a template edit that forgets the bump cannot ship silently.
-        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(42);
-        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 42))
+    void currentVersionIsBumpedForRoadmapExtensionProposals() {
+        // v43: Implement may propose a roadmap extension; Final Approval declares
+        // materialize: roadmap_extension. This is the rolling version tripwire: rewrite it and
+        // bump the literal whenever CURRENT_VERSION changes, so a template edit that forgets the
+        // bump cannot ship silently.
+        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(43);
+        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 43))
                 .isPresent();
+    }
+
+    @Test
+    void finalApprovalDeclaresRoadmapExtensionMaterializeAndOptionalProposalInput() {
+        var template = templateRepo
+                .findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION)
+                .orElseThrow();
+        var finalApproval = templateNodeRepo.findByGraphTemplateId(template.getId()).stream()
+                .filter(n -> "final_approval".equals(n.getLabel()))
+                .findFirst()
+                .orElseThrow();
+
+        // jsonb round-trips through Postgres's own canonical formatting (a space after each colon),
+        // not the literal bytes the seeder wrote — assertions match that shape.
+        assertThat(finalApproval.getConfigOverrides()).contains("\"materialize\": \"roadmap_extension\"");
+        assertThat(finalApproval.getRequiredInputArtifacts())
+                .contains("\"template_node_label\": \"implement\"")
+                .contains("\"roadmap_candidates.json\"")
+                .contains("\"required\": false");
+    }
+
+    @Test
+    void implementDeclaresOptionalRoadmapOutputAndOptionalSelfInput() {
+        var template = templateRepo
+                .findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION)
+                .orElseThrow();
+        var implementNode = templateNodeRepo.findByGraphTemplateId(template.getId()).stream()
+                .filter(n -> "implement".equals(n.getLabel()))
+                .findFirst()
+                .orElseThrow();
+        var implementDef =
+                nodeDefRepo.findById(implementNode.getNodeDefinitionId()).orElseThrow();
+
+        assertThat(implementDef.getOutputSpec())
+                .contains("\"roadmap_candidates.json\"")
+                .contains("\"required\": false");
+        assertThat(implementNode.getRequiredInputArtifacts())
+                .contains("\"template_node_label\": \"implement\"")
+                .contains("\"roadmap_candidates.json\"");
+    }
+
+    @Test
+    void nodeAndEdgeCountsUnchangedAtV43() {
+        var template = templateRepo
+                .findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION)
+                .orElseThrow();
+        assertThat(templateNodeRepo.findByGraphTemplateId(template.getId())).hasSize(8);
+        assertThat(edgeRepo.findByGraphTemplateId(template.getId())).hasSize(12);
     }
 
     @Test

@@ -69,6 +69,39 @@ export class RoadmapCandidateGatePage {
     return card.getByTestId(`candidate-epic-title-${epicIdx}`);
   }
 
+  /**
+   * "Proposed Roadmap Extension (n)" / "Proposed Roadmap Breakdown (n)" — see
+   * RoadmapCandidateBreakdown.tsx. Named `breakdownHeading` (not `heading`) to avoid
+   * colliding with the `heading` field above, which is the Approvals page's own h1.
+   */
+  breakdownHeading(card: Locator): Locator {
+    return this.breakdown(card).locator("h4");
+  }
+
+  /** Every "Existing epic/story/task" badge in the card (same testid at all three levels). */
+  existingBadges(card: Locator): Locator {
+    return card.getByTestId("candidate-existing-badge");
+  }
+
+  /**
+   * The read-only title text of an *existing* (anchored) Epic — same testid as
+   * `epicTitleInput` above, since RoadmapCandidateBreakdown renders a `<p>` in place of
+   * the `<Input>` once the entry carries `existingId`.
+   */
+  existingTitle(card: Locator, epicIdx = 0): Locator {
+    return card.getByTestId(`candidate-epic-title-${epicIdx}`);
+  }
+
+  /** A Story's title field, existing or newly added — same testid either way. */
+  storyTitleInput(card: Locator, epicIdx = 0, storyIdx = 0): Locator {
+    return card.getByTestId(`candidate-story-title-${epicIdx}-${storyIdx}`);
+  }
+
+  /** Fills the title of a Story just added via `addStory` (appended at the end of the list). */
+  async fillNewStoryTitle(card: Locator, title: string, epicIdx = 0, storyIdx = 0) {
+    await this.storyTitleInput(card, epicIdx, storyIdx).fill(title);
+  }
+
   epicDescriptionInput(card: Locator, epicIdx = 0): Locator {
     return card.getByTestId(`candidate-epic-description-${epicIdx}`);
   }

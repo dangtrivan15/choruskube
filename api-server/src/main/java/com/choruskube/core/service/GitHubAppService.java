@@ -22,6 +22,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.Date;
+import java.util.Map;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -113,6 +114,81 @@ public class GitHubAppService {
                 Thread.currentThread().interrupt();
             }
             throw new RuntimeException("Failed to read " + ownerRepo + "#" + prNumber + ": " + e.getMessage(), e);
+        }
+    }
+
+    /** A newly-filed issue's identity, as returned by {@link #createIssue}. */
+    public record CreatedIssue(int number, String htmlUrl) {}
+
+    /**
+     * Files a new issue — used by roadmap-extension materialization to give a newly-created Task a
+     * matching GitHub issue. Same idiom as {@link #fetchPullRequest}: a non-2xx status throws
+     * {@link GitHubApiException}, an I/O or interrupt failure wraps in {@link RuntimeException}.
+     */
+    public CreatedIssue createIssue(String token, String ownerRepo, String title, String body) {
+        String payload;
+        try {
+            payload = objectMapper.writeValueAsString(Map.of("title", title, "body", body != null ? body : ""));
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to serialize GitHub issue payload for " + ownerRepo, e);
+        }
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(githubApiUrl + "/repos/" + ownerRepo + "/issues"))
+                .header("Authorization", "Bearer " + token)
+                .header("Accept", "application/vnd.github+json")
+                .header("Content-Type", "application/json")
+                .header("X-GitHub-Api-Version", "2022-11-28")
+                .timeout(Duration.ofSeconds(10))
+                .POST(HttpRequest.BodyPublishers.ofString(payload))
+                .build();
+        try {
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() / 100 != 2) {
+                throw new GitHubApiException(response.statusCode(), ownerRepo, rateLimitHints(response.headers()));
+            }
+            JsonNode body2 = objectMapper.readTree(response.body());
+            return new CreatedIssue(
+                    body2.get("number").asInt(), body2.get("html_url").asText());
+        } catch (IOException | InterruptedException e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            throw new RuntimeException("Failed to create issue for " + ownerRepo + ": " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Closes an issue — used to auto-close the issue linked to a Task that reached {@code done}.
+     * Same idiom as {@link #fetchPullRequest}: a non-2xx status throws {@link GitHubApiException},
+     * an I/O or interrupt failure wraps in {@link RuntimeException}.
+     */
+    public void closeIssue(String token, String ownerRepo, int issueNumber) {
+        String payload;
+        try {
+            payload = objectMapper.writeValueAsString(Map.of("state", "closed"));
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to serialize GitHub issue payload for " + ownerRepo, e);
+        }
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(githubApiUrl + "/repos/" + ownerRepo + "/issues/" + issueNumber))
+                .header("Authorization", "Bearer " + token)
+                .header("Accept", "application/vnd.github+json")
+                .header("Content-Type", "application/json")
+                .header("X-GitHub-Api-Version", "2022-11-28")
+                .timeout(Duration.ofSeconds(10))
+                .method("PATCH", HttpRequest.BodyPublishers.ofString(payload))
+                .build();
+        try {
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() / 100 != 2) {
+                throw new GitHubApiException(response.statusCode(), ownerRepo, rateLimitHints(response.headers()));
+            }
+        } catch (IOException | InterruptedException e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            throw new RuntimeException(
+                    "Failed to close issue #" + issueNumber + " for " + ownerRepo + ": " + e.getMessage(), e);
         }
     }
 

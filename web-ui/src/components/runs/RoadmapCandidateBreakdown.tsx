@@ -2,6 +2,7 @@ import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -52,6 +53,35 @@ function emptyTask(): CandidateTaskProposal {
 
 function emptyStory(): CandidateStoryProposal {
   return { title: "", description: "", tasks: [] };
+}
+
+/** Whether an entry is an anchor to an already-materialized item — display-only:
+ * nothing is created for it and its own fields (besides key/children) are ignored. */
+function isExisting(item: { existingId?: string | null }): boolean {
+  return item.existingId != null;
+}
+
+function keysOfTask(task: CandidateTaskProposal): string[] {
+  return task.key ? [task.key] : [];
+}
+
+function keysOfStory(story: CandidateStoryProposal): string[] {
+  return [...(story.key ? [story.key] : []), ...story.tasks.flatMap(keysOfTask)];
+}
+
+function keysOfEpic(epic: CandidateEpicProposal): string[] {
+  return [...(epic.key ? [epic.key] : []), ...epic.stories.flatMap(keysOfStory)];
+}
+
+/**
+ * Drops every dependency whose `blocking`/`blocked` key names an item inside a
+ * just-removed subtree — the cards view shows dependencies read-only, so without
+ * this a removal would leave edges the reviewer has no way to delete.
+ */
+function pruneDependencies(deps: CandidateDependency[], removedKeys: string[]): CandidateDependency[] {
+  if (removedKeys.length === 0) return deps;
+  const removed = new Set(removedKeys);
+  return deps.filter((d) => !removed.has(d.blocking) && !removed.has(d.blocked));
 }
 
 /**
@@ -117,7 +147,11 @@ export default function RoadmapCandidateBreakdown({ value, onChange }: RoadmapCa
   }
 
   function removeEpic(epicIdx: number) {
-    onChange({ ...value, epics: epics.filter((_, i) => i !== epicIdx) });
+    onChange({
+      ...value,
+      epics: epics.filter((_, i) => i !== epicIdx),
+      dependencies: pruneDependencies(dependencies, keysOfEpic(epics[epicIdx])),
+    });
   }
 
   function addStory(epicIdx: number) {
@@ -128,7 +162,13 @@ export default function RoadmapCandidateBreakdown({ value, onChange }: RoadmapCa
 
   function removeStory(epicIdx: number, storyIdx: number) {
     const epic = epics[epicIdx];
-    updateEpic(epicIdx, { stories: epic.stories.filter((_, i) => i !== storyIdx) });
+    onChange({
+      ...value,
+      epics: epics.map((e, i) =>
+        i === epicIdx ? { ...e, stories: e.stories.filter((_, si) => si !== storyIdx) } : e,
+      ),
+      dependencies: pruneDependencies(dependencies, keysOfStory(epic.stories[storyIdx])),
+    });
   }
 
   function updateStory(epicIdx: number, storyIdx: number, patch: Partial<CandidateStoryProposal>) {
@@ -146,7 +186,20 @@ export default function RoadmapCandidateBreakdown({ value, onChange }: RoadmapCa
 
   function removeTask(epicIdx: number, storyIdx: number, taskIdx: number) {
     const story = epics[epicIdx].stories[storyIdx];
-    updateStory(epicIdx, storyIdx, { tasks: story.tasks.filter((_, i) => i !== taskIdx) });
+    onChange({
+      ...value,
+      epics: epics.map((e, i) =>
+        i === epicIdx
+          ? {
+              ...e,
+              stories: e.stories.map((s, si) =>
+                si === storyIdx ? { ...s, tasks: s.tasks.filter((_, ti) => ti !== taskIdx) } : s,
+              ),
+            }
+          : e,
+      ),
+      dependencies: pruneDependencies(dependencies, keysOfTask(story.tasks[taskIdx])),
+    });
   }
 
   function updateTask(epicIdx: number, storyIdx: number, taskIdx: number, patch: Partial<CandidateTaskProposal>) {
@@ -158,10 +211,14 @@ export default function RoadmapCandidateBreakdown({ value, onChange }: RoadmapCa
 
   if (epics.length === 0 && milestones.length === 0 && dependencies.length === 0) return null;
 
+  // A top-level entry anchored to an existing Epic means this document extends an
+  // existing roadmap rather than proposing an entirely new one — the heading says so.
+  const isExtension = epics.some((epic) => isExisting(epic));
+
   return (
     <div data-testid="roadmap-candidate-breakdown" className="space-y-3">
       <h4 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-        Proposed Roadmap Breakdown ({epics.length})
+        {isExtension ? "Proposed Roadmap Extension" : "Proposed Roadmap Breakdown"} ({epics.length})
       </h4>
       {epics.length > MAX_EPICS && (
         <p
@@ -202,90 +259,113 @@ export default function RoadmapCandidateBreakdown({ value, onChange }: RoadmapCa
         <Card key={epicIdx} data-testid={`candidate-epic-${epicIdx}`}>
           <CardHeader className="flex-row items-start justify-between gap-2">
             <div className="flex-1 space-y-2">
-              <label
-                htmlFor={`candidate-epic-title-${epicIdx}`}
-                className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
-              >
-                Epic Title
-              </label>
-              <Input
-                id={`candidate-epic-title-${epicIdx}`}
-                data-testid={`candidate-epic-title-${epicIdx}`}
-                value={epic.title}
-                onChange={(e) => updateEpic(epicIdx, { title: e.target.value })}
-              />
+              <div className="flex items-center gap-2">
+                <label
+                  htmlFor={isExisting(epic) ? undefined : `candidate-epic-title-${epicIdx}`}
+                  className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
+                >
+                  Epic Title
+                </label>
+                {isExisting(epic) && (
+                  <Badge variant="secondary" data-testid="candidate-existing-badge">
+                    Existing epic
+                  </Badge>
+                )}
+              </div>
+              {isExisting(epic) ? (
+                epic.title && epic.title.trim() !== "" ? (
+                  <p data-testid={`candidate-epic-title-${epicIdx}`} className="text-sm font-medium">
+                    {epic.title}
+                  </p>
+                ) : (
+                  <p data-testid="candidate-existing-missing" className="text-sm text-destructive">
+                    Not found in this project
+                  </p>
+                )
+              ) : (
+                <Input
+                  id={`candidate-epic-title-${epicIdx}`}
+                  data-testid={`candidate-epic-title-${epicIdx}`}
+                  value={epic.title}
+                  onChange={(e) => updateEpic(epicIdx, { title: e.target.value })}
+                />
+              )}
             </div>
             <Button
               type="button"
               variant="destructive"
               size="icon-sm"
               data-testid={`candidate-epic-remove-${epicIdx}`}
-              aria-label="Remove epic"
+              aria-label={isExisting(epic) ? "Remove epic from proposal" : "Remove epic"}
               onClick={() => removeEpic(epicIdx)}
             >
               <Trash2 className="h-4 w-4" />
             </Button>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="space-y-1.5">
-              <label
-                htmlFor={`candidate-epic-description-${epicIdx}`}
-                className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
-              >
-                Description
-              </label>
-              <Textarea
-                id={`candidate-epic-description-${epicIdx}`}
-                data-testid={`candidate-epic-description-${epicIdx}`}
-                value={epic.description}
-                onChange={(e) => updateEpic(epicIdx, { description: e.target.value })}
-              />
-            </div>
+            {!isExisting(epic) && (
+              <>
+                <div className="space-y-1.5">
+                  <label
+                    htmlFor={`candidate-epic-description-${epicIdx}`}
+                    className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
+                  >
+                    Description
+                  </label>
+                  <Textarea
+                    id={`candidate-epic-description-${epicIdx}`}
+                    data-testid={`candidate-epic-description-${epicIdx}`}
+                    value={epic.description}
+                    onChange={(e) => updateEpic(epicIdx, { description: e.target.value })}
+                  />
+                </div>
 
-            <div className="space-y-1.5">
-              <label
-                htmlFor={`candidate-epic-motivation-${epicIdx}`}
-                className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
-              >
-                Motivation
-              </label>
-              <Textarea
-                id={`candidate-epic-motivation-${epicIdx}`}
-                data-testid={`candidate-epic-motivation-${epicIdx}`}
-                value={epic.motivation}
-                onChange={(e) => updateEpic(epicIdx, { motivation: e.target.value })}
-              />
-            </div>
+                <div className="space-y-1.5">
+                  <label
+                    htmlFor={`candidate-epic-motivation-${epicIdx}`}
+                    className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
+                  >
+                    Motivation
+                  </label>
+                  <Textarea
+                    id={`candidate-epic-motivation-${epicIdx}`}
+                    data-testid={`candidate-epic-motivation-${epicIdx}`}
+                    value={epic.motivation}
+                    onChange={(e) => updateEpic(epicIdx, { motivation: e.target.value })}
+                  />
+                </div>
 
-            <div className="flex flex-wrap items-center gap-4">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  Priority
-                </span>
-                <PriorityBadge
-                  priority={normalizePriority(epic.priority)}
-                  size="compact"
-                  data-testid={`candidate-epic-priority-badge-${epicIdx}`}
-                />
-                <PrioritySelect
-                  value={normalizePriority(epic.priority)}
-                  size="sm"
-                  onChange={(p) => updateEpic(epicIdx, { priority: p })}
-                  testId={`candidate-epic-priority-select-${epicIdx}`}
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  Milestone
-                </span>
-                <CandidateMilestoneAssignmentSelect
-                  milestones={milestones}
-                  value={epic.milestone}
-                  onChange={(key) => updateEpic(epicIdx, { milestone: key })}
-                  testId={`candidate-epic-milestone-select-${epicIdx}`}
-                />
-              </div>
-            </div>
+                <div className="flex flex-wrap items-center gap-4">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      Priority
+                    </span>
+                    <PriorityBadge
+                      priority={normalizePriority(epic.priority)}
+                      size="compact"
+                      data-testid={`candidate-epic-priority-badge-${epicIdx}`}
+                    />
+                    <PrioritySelect
+                      value={normalizePriority(epic.priority)}
+                      size="sm"
+                      onChange={(p) => updateEpic(epicIdx, { priority: p })}
+                      testId={`candidate-epic-priority-select-${epicIdx}`}
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      Milestone
+                    </span>
+                    <CandidateMilestoneAssignmentSelect
+                      milestones={milestones}
+                      value={epic.milestone}
+                      onChange={(key) => updateEpic(epicIdx, { milestone: key })}
+                      testId={`candidate-epic-milestone-select-${epicIdx}`}
+                    />
+                  </div>
+                </div>
+              </>
+            )}
 
             {epic.repos && epic.repos.length > 0 && (
               <div
@@ -324,62 +404,88 @@ export default function RoadmapCandidateBreakdown({ value, onChange }: RoadmapCa
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 space-y-1.5">
-                      <label
-                        htmlFor={`candidate-story-title-${epicIdx}-${storyIdx}`}
-                        className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
-                      >
-                        Story Title
-                      </label>
-                      <Input
-                        id={`candidate-story-title-${epicIdx}-${storyIdx}`}
-                        data-testid={`candidate-story-title-${epicIdx}-${storyIdx}`}
-                        value={story.title}
-                        onChange={(e) => updateStory(epicIdx, storyIdx, { title: e.target.value })}
-                      />
+                      <div className="flex items-center gap-2">
+                        <label
+                          htmlFor={isExisting(story) ? undefined : `candidate-story-title-${epicIdx}-${storyIdx}`}
+                          className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
+                        >
+                          Story Title
+                        </label>
+                        {isExisting(story) && (
+                          <Badge variant="secondary" data-testid="candidate-existing-badge">
+                            Existing story
+                          </Badge>
+                        )}
+                      </div>
+                      {isExisting(story) ? (
+                        story.title && story.title.trim() !== "" ? (
+                          <p
+                            data-testid={`candidate-story-title-${epicIdx}-${storyIdx}`}
+                            className="text-sm font-medium"
+                          >
+                            {story.title}
+                          </p>
+                        ) : (
+                          <p data-testid="candidate-existing-missing" className="text-sm text-destructive">
+                            Not found in this project
+                          </p>
+                        )
+                      ) : (
+                        <Input
+                          id={`candidate-story-title-${epicIdx}-${storyIdx}`}
+                          data-testid={`candidate-story-title-${epicIdx}-${storyIdx}`}
+                          value={story.title}
+                          onChange={(e) => updateStory(epicIdx, storyIdx, { title: e.target.value })}
+                        />
+                      )}
                     </div>
                     <Button
                       type="button"
                       variant="ghost"
                       size="icon-sm"
                       data-testid={`candidate-story-remove-${epicIdx}-${storyIdx}`}
-                      aria-label="Remove story"
+                      aria-label={isExisting(story) ? "Remove story from proposal" : "Remove story"}
                       onClick={() => removeStory(epicIdx, storyIdx)}
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>
                   </div>
 
-                  <div className="space-y-1.5">
-                    <label
-                      htmlFor={`candidate-story-description-${epicIdx}-${storyIdx}`}
-                      className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
-                    >
-                      Description
-                    </label>
-                    <Textarea
-                      id={`candidate-story-description-${epicIdx}-${storyIdx}`}
-                      data-testid={`candidate-story-description-${epicIdx}-${storyIdx}`}
-                      value={story.description}
-                      onChange={(e) => updateStory(epicIdx, storyIdx, { description: e.target.value })}
-                    />
-                  </div>
+                  {!isExisting(story) && (
+                    <>
+                      <div className="space-y-1.5">
+                        <label
+                          htmlFor={`candidate-story-description-${epicIdx}-${storyIdx}`}
+                          className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
+                        >
+                          Description
+                        </label>
+                        <Textarea
+                          id={`candidate-story-description-${epicIdx}-${storyIdx}`}
+                          data-testid={`candidate-story-description-${epicIdx}-${storyIdx}`}
+                          value={story.description}
+                          onChange={(e) => updateStory(epicIdx, storyIdx, { description: e.target.value })}
+                        />
+                      </div>
 
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                      Priority
-                    </span>
-                    <PriorityBadge
-                      priority={normalizePriority(story.priority)}
-                      size="compact"
-                      data-testid={`candidate-story-priority-badge-${epicIdx}-${storyIdx}`}
-                    />
-                    <PrioritySelect
-                      value={normalizePriority(story.priority)}
-                      size="sm"
-                      onChange={(p) => updateStory(epicIdx, storyIdx, { priority: p })}
-                      testId={`candidate-story-priority-select-${epicIdx}-${storyIdx}`}
-                    />
-                  </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                          Priority
+                        </span>
+                        <PriorityBadge
+                          priority={normalizePriority(story.priority)}
+                          size="compact"
+                          data-testid={`candidate-story-priority-badge-${epicIdx}-${storyIdx}`}
+                        />
+                        <PrioritySelect
+                          value={normalizePriority(story.priority)}
+                          size="sm"
+                          onChange={(p) => updateStory(epicIdx, storyIdx, { priority: p })}
+                          testId={`candidate-story-priority-select-${epicIdx}-${storyIdx}`}
+                        />
+                      </div>
+                    </>
+                  )}
 
                   <div className="space-y-2 pl-3">
                     <div className="flex items-center justify-between">
@@ -407,64 +513,97 @@ export default function RoadmapCandidateBreakdown({ value, onChange }: RoadmapCa
                       >
                         <div className="flex items-start justify-between gap-2">
                           <div className="flex-1 space-y-1.5">
-                            <label
-                              htmlFor={`candidate-task-title-${epicIdx}-${storyIdx}-${taskIdx}`}
-                              className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
-                            >
-                              Task Title
-                            </label>
-                            <Input
-                              id={`candidate-task-title-${epicIdx}-${storyIdx}-${taskIdx}`}
-                              data-testid={`candidate-task-title-${epicIdx}-${storyIdx}-${taskIdx}`}
-                              value={task.title}
-                              onChange={(e) =>
-                                updateTask(epicIdx, storyIdx, taskIdx, { title: e.target.value })
-                              }
-                            />
+                            <div className="flex items-center gap-2">
+                              <label
+                                htmlFor={
+                                  isExisting(task)
+                                    ? undefined
+                                    : `candidate-task-title-${epicIdx}-${storyIdx}-${taskIdx}`
+                                }
+                                className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
+                              >
+                                Task Title
+                              </label>
+                              {isExisting(task) && (
+                                <Badge variant="secondary" data-testid="candidate-existing-badge">
+                                  Existing task
+                                </Badge>
+                              )}
+                            </div>
+                            {isExisting(task) ? (
+                              task.title && task.title.trim() !== "" ? (
+                                <p
+                                  data-testid={`candidate-task-title-${epicIdx}-${storyIdx}-${taskIdx}`}
+                                  className="text-sm font-medium"
+                                >
+                                  {task.title}
+                                </p>
+                              ) : (
+                                <p
+                                  data-testid="candidate-existing-missing"
+                                  className="text-sm text-destructive"
+                                >
+                                  Not found in this project
+                                </p>
+                              )
+                            ) : (
+                              <Input
+                                id={`candidate-task-title-${epicIdx}-${storyIdx}-${taskIdx}`}
+                                data-testid={`candidate-task-title-${epicIdx}-${storyIdx}-${taskIdx}`}
+                                value={task.title}
+                                onChange={(e) =>
+                                  updateTask(epicIdx, storyIdx, taskIdx, { title: e.target.value })
+                                }
+                              />
+                            )}
                           </div>
                           <Button
                             type="button"
                             variant="ghost"
                             size="icon-sm"
                             data-testid={`candidate-task-remove-${epicIdx}-${storyIdx}-${taskIdx}`}
-                            aria-label="Remove task"
+                            aria-label={isExisting(task) ? "Remove task from proposal" : "Remove task"}
                             onClick={() => removeTask(epicIdx, storyIdx, taskIdx)}
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
                         </div>
-                        <div className="space-y-1.5">
-                          <label
-                            htmlFor={`candidate-task-description-${epicIdx}-${storyIdx}-${taskIdx}`}
-                            className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
-                          >
-                            Description
-                          </label>
-                          <Textarea
-                            id={`candidate-task-description-${epicIdx}-${storyIdx}-${taskIdx}`}
-                            data-testid={`candidate-task-description-${epicIdx}-${storyIdx}-${taskIdx}`}
-                            value={task.description}
-                            onChange={(e) =>
-                              updateTask(epicIdx, storyIdx, taskIdx, { description: e.target.value })
-                            }
-                          />
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                            Priority
-                          </span>
-                          <PriorityBadge
-                            priority={normalizePriority(task.priority)}
-                            size="compact"
-                            data-testid={`candidate-task-priority-badge-${epicIdx}-${storyIdx}-${taskIdx}`}
-                          />
-                          <PrioritySelect
-                            value={normalizePriority(task.priority)}
-                            size="sm"
-                            onChange={(p) => updateTask(epicIdx, storyIdx, taskIdx, { priority: p })}
-                            testId={`candidate-task-priority-select-${epicIdx}-${storyIdx}-${taskIdx}`}
-                          />
-                        </div>
+                        {!isExisting(task) && (
+                          <>
+                            <div className="space-y-1.5">
+                              <label
+                                htmlFor={`candidate-task-description-${epicIdx}-${storyIdx}-${taskIdx}`}
+                                className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
+                              >
+                                Description
+                              </label>
+                              <Textarea
+                                id={`candidate-task-description-${epicIdx}-${storyIdx}-${taskIdx}`}
+                                data-testid={`candidate-task-description-${epicIdx}-${storyIdx}-${taskIdx}`}
+                                value={task.description}
+                                onChange={(e) =>
+                                  updateTask(epicIdx, storyIdx, taskIdx, { description: e.target.value })
+                                }
+                              />
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                Priority
+                              </span>
+                              <PriorityBadge
+                                priority={normalizePriority(task.priority)}
+                                size="compact"
+                                data-testid={`candidate-task-priority-badge-${epicIdx}-${storyIdx}-${taskIdx}`}
+                              />
+                              <PrioritySelect
+                                value={normalizePriority(task.priority)}
+                                size="sm"
+                                onChange={(p) => updateTask(epicIdx, storyIdx, taskIdx, { priority: p })}
+                                testId={`candidate-task-priority-select-${epicIdx}-${storyIdx}-${taskIdx}`}
+                              />
+                            </div>
+                          </>
+                        )}
                       </div>
                     ))}
                   </div>

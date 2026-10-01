@@ -97,6 +97,34 @@ class FeatureDevPromptConventionsTest {
     }
 
     @Test
+    void implementPromptDocumentsTheRoadmapProposalContract() throws Exception {
+        String p = promptField("IMPLEMENT_PROMPT");
+        assertThat(p)
+                .contains("propose-roadmap")
+                .contains("existingId")
+                .contains("roadmap_candidates.json")
+                .contains("Do not anchor a new Story or Task under any other existing Epic")
+                .contains("/workspace/in/implement/roadmap_candidates.json");
+    }
+
+    @Test
+    void implementPromptNoLongerOffersARoadmapItemAsAFutureWorkHome() throws Exception {
+        String collapsed = promptField("IMPLEMENT_PROMPT").replaceAll("\\s+", " ");
+        assertThat(collapsed).doesNotContain("A roadmap item is an acceptable home");
+    }
+
+    @Test
+    void proposingDeferredWorkSectionHasNoUnknownPlaceholders() throws Exception {
+        String p = promptField("IMPLEMENT_PROMPT");
+        int start = p.indexOf("## Proposing deferred work to the roadmap");
+        int end = p.indexOf("## Opening and updating pull requests");
+        assertThat(start).isGreaterThanOrEqualTo(0);
+        assertThat(end).isGreaterThan(start);
+        String section = p.substring(start, end);
+        assertThat(section).doesNotContainPattern("\\{[a-zA-Z_][a-zA-Z0-9_.]*\\}");
+    }
+
+    @Test
     void noPromptCitesAPastRunsSpec() throws Exception {
         for (String name :
                 new String[] {"SPEC_AND_PLAN_PROMPT", "SPEC_REVIEW_PROMPT", "IMPLEMENT_PROMPT", "CODE_REVIEW_PROMPT"}) {

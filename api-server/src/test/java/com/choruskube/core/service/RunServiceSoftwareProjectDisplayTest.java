@@ -123,7 +123,8 @@ class RunServiceSoftwareProjectDisplayTest {
                 null,
                 null,
                 null, // nodeExecutionClaimService — unused (signalHumanDecision not exercised)
-                null); // escalationContextResolver — unused (escalation not exercised)
+                null, // escalationContextResolver — unused (escalation not exercised)
+                null); // roadmapProposalValidator - unused (approve-time validation not exercised)
     }
 
     // -------------------------------------------------------------------------

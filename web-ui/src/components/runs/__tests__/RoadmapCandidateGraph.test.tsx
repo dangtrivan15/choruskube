@@ -131,6 +131,18 @@ describe("RoadmapCandidateGraph", () => {
     expect(screen.getByTestId("mock-edge-dep:0")).toBeInTheDocument();
   });
 
+  it("leads an anchored node's label with its Existing caption, and names a missing anchor", async () => {
+    const doc = makeDoc();
+    doc.epics[0] = { ...doc.epics[0], title: "Add dark mode to the settings page", existingId: "epic-1" };
+    doc.epics[0].stories[0] = { ...doc.epics[0].stories[0], title: "", existingId: "story-1" };
+    renderWithProviders(<RoadmapCandidateGraph value={doc} onChange={vi.fn()} />);
+    await waitForElkReady();
+
+    expect(screen.getByText("Existing · Add dark mode to the settings page")).toBeInTheDocument();
+    expect(screen.getByText("Existing · Not found in this project")).toBeInTheDocument();
+    expect(screen.getByText("Epic B")).toBeInTheDocument();
+  });
+
   it("adds a dependency when two nodes are connected on the canvas", async () => {
     const onChange = vi.fn();
     const doc = makeDoc();

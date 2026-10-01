@@ -360,6 +360,78 @@ class GraphValidationServiceTest {
         assertThat(result.errors()).isEmpty();
     }
 
+    @Test
+    void unknownMaterializeModeIsRejected() {
+        UUID analyzer = UUID.randomUUID();
+        UUID gate = UUID.randomUUID();
+
+        var gateNode = makeNode(gate, "gate", false);
+        gateNode.setConfigOverrides("{\"terminal_decisions\":[\"approved\"],\"materialize\":\"bogus_mode\"}");
+        gateNode.setRequiredInputArtifacts(
+                "[{\"template_node_label\":\"analyzer\",\"artifacts\":[{\"name\":\"roadmap_candidates.json\"}]}]");
+        var nodes = List.of(makeNode(analyzer, "analyzer", true), gateNode);
+        var edges = List.of(makeEdge(analyzer, gate, null), makeEdge(gate, analyzer, "rejected"));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isFalse();
+        assertThat(result.errors()).anyMatch(e -> e.contains("gate") && e.contains("unknown materialize mode"));
+    }
+
+    @Test
+    void multipleRoadmapGatesAreRejected() {
+        UUID analyzer = UUID.randomUUID();
+        UUID gate1 = UUID.randomUUID();
+        UUID gate2 = UUID.randomUUID();
+
+        var gateNode1 = makeNode(gate1, "gate1", false);
+        gateNode1.setConfigOverrides("{\"terminal_decisions\":[\"approved\"],\"materialize\":\"roadmap_candidates\"}");
+        gateNode1.setRequiredInputArtifacts(
+                "[{\"template_node_label\":\"analyzer\",\"artifacts\":[{\"name\":\"roadmap_candidates.json\"}]}]");
+        var gateNode2 = makeNode(gate2, "gate2", false);
+        gateNode2.setConfigOverrides("{\"terminal_decisions\":[\"approved\"],\"materialize\":\"roadmap_extension\"}");
+        gateNode2.setRequiredInputArtifacts(
+                "[{\"template_node_label\":\"analyzer\",\"artifacts\":[{\"name\":\"roadmap_candidates.json\"}]}]");
+        var nodes = List.of(makeNode(analyzer, "analyzer", true), gateNode1, gateNode2);
+        var edges = List.of(makeEdge(analyzer, gate1, null), makeEdge(analyzer, gate2, null));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isFalse();
+        assertThat(result.errors()).anyMatch(e -> e.contains("Multiple roadmap gates"));
+    }
+
+    @Test
+    void roadmapGateWithoutArtifactDeclarationIsRejected() {
+        UUID analyzer = UUID.randomUUID();
+        UUID gate = UUID.randomUUID();
+
+        var gateNode = makeNode(gate, "gate", false);
+        gateNode.setConfigOverrides("{\"terminal_decisions\":[\"approved\"],\"materialize\":\"roadmap_candidates\"}");
+        var nodes = List.of(makeNode(analyzer, "analyzer", true), gateNode);
+        var edges = List.of(makeEdge(analyzer, gate, null), makeEdge(gate, analyzer, "rejected"));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isFalse();
+        assertThat(result.errors())
+                .anyMatch(e -> e.contains("gate") && e.contains("no roadmap_candidates.json input artifact"));
+    }
+
+    @Test
+    void roadmapGateDeclaringArtifactIsValid() {
+        UUID analyzer = UUID.randomUUID();
+        UUID gate = UUID.randomUUID();
+
+        var gateNode = makeNode(gate, "gate", false);
+        gateNode.setConfigOverrides("{\"terminal_decisions\":[\"approved\"],\"materialize\":\"roadmap_extension\"}");
+        gateNode.setRequiredInputArtifacts(
+                "[{\"template_node_label\":\"analyzer\",\"artifacts\":[{\"name\":\"summary.md\"},{\"name\":\"roadmap_candidates.json\"}]}]");
+        var nodes = List.of(makeNode(analyzer, "analyzer", true), gateNode);
+        var edges = List.of(makeEdge(analyzer, gate, null), makeEdge(gate, analyzer, "rejected"));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isTrue();
+        assertThat(result.errors()).isEmpty();
+    }
+
     private TemplateNode makeNode(UUID id, String label, boolean entrypoint) {
         var node = new TemplateNode();
         node.setId(id);

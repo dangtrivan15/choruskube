@@ -91,6 +91,54 @@ system prompt for a task-triggered run points every AI node at the roadmap CLI
 (`get-roadmap-graph`, which resolves this run's Epic server-side with no flags needed) as
 the source of truth for current state.
 
+## Roadmap proposals and gates
+
+Some workflow templates include a **human-approval gate configured to review roadmap
+changes** — Feature Development's Final Approval, and the Roadmap Provisioner's own
+gate. A gate like this declares a `materialize` mode in its config:
+
+- `roadmap_candidates` — the Roadmap Provisioner's mode: the proposal document
+  describes wholly new Epic → Story → Task trees.
+- `roadmap_extension` — Feature Development's mode: the proposal may extend the
+  run's own Epic (when the run was started from a Task) with new Stories and Tasks,
+  or introduce a genuinely separate new Epic, but may not attach new items under any
+  other existing Epic.
+
+An agent node writes the proposal as an artifact, `roadmap_candidates.json`: a nested
+Epic → Story → Task document, plus key-based dependencies between entries. Any Epic,
+Story or Task entry may instead carry an `existingId`, turning it into an **anchor** —
+an already-materialized item that nothing is created for, but that can hold new
+children or serve as a dependency endpoint. The agent validates its own proposal
+before installing it (`propose-roadmap`), against a server-side validator that checks
+structure (unique keys, consistent anchor nesting, no dangling dependency keys), the
+addressable invariant (every new Epic needs at least one Story, every new Story at
+least one Task), and the active gate's scope rules.
+
+Because a gate like this makes roadmap creation the reviewer's decision, the direct
+roadmap-write routes (`create-proposal`, `update-proposal`, `create-story`,
+`create-task`, `create-dependency`, `create-milestone`) are refused for any run whose
+workflow declares a roadmap gate, with a message pointing at `propose-roadmap`
+instead; the read routes stay available. Every agent-facing roadmap route also verifies the calling
+node execution belongs to the run named in its path, so a caller cannot escape a
+run's rule by naming a different run's id.
+
+When the gate awaits a decision, the reviewer sees the proposal as an editable tree:
+anchors render read-only with their live titles, filled in only when the anchor
+resolves inside the run's own software project (project membership is the tenancy
+boundary; a foreign or missing anchor cannot be told apart from the reviewer's view).
+The reviewer can add new Stories/Tasks under an anchor, edit or remove new items, or
+drop an anchor (which never deletes the item it points at). Approving re-validates
+the edited document against the gate's rules before creating anything: a structural
+violation (for example, a Story a reviewer added with no Task) is rejected with the
+reasons, and the gate stays open for another edit. Nothing is created on a rejected
+approval.
+
+A Task created this way in `roadmap_extension` mode also gets a matching GitHub issue,
+filed by the server (not the agent) right after the Task is created, and closed
+automatically once the Task reaches `done`. Issue filing and closing are both
+best-effort: a failure is recorded alongside the gate's result rather than blocking
+Task creation or completion.
+
 ## AI nodes and artifacts
 
 An AI node runs Claude Code inside the agent container against the target repo.

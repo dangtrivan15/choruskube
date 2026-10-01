@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.choruskube.core.BaseTest;
+import com.choruskube.core.credential.GitHubCredentialResolver;
 import com.choruskube.core.dto.CreateDependencyRequest;
 import com.choruskube.core.dto.DependencyEdgeResponse;
 import com.choruskube.core.dto.EpicRequest;
@@ -18,13 +19,16 @@ import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.RunPullRequest;
 import com.choruskube.core.model.Task;
+import com.choruskube.core.model.TaskGithubIssue;
 import com.choruskube.core.model.WorkflowRun;
+import com.choruskube.core.model.enums.GithubIssueState;
 import com.choruskube.core.model.enums.Readiness;
 import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.AutopilotRepository;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.RunPullRequestRepository;
+import com.choruskube.core.repository.TaskGithubIssueRepository;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkItemDependencyRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
@@ -84,6 +88,9 @@ public class DefaultTaskServiceTest extends BaseTest {
     @Autowired
     private AutopilotRepository autopilotRepo;
 
+    @Autowired
+    private TaskGithubIssueRepository taskGithubIssueRepository;
+
     @MockitoBean
     private WorkflowServiceStubs workflowServiceStubs;
 
@@ -92,6 +99,12 @@ public class DefaultTaskServiceTest extends BaseTest {
 
     @MockitoBean
     private RunEventPublisher runEventPublisher;
+
+    @MockitoBean
+    private GitHubAppService gitHubAppService;
+
+    @MockitoBean
+    private GitHubCredentialResolver gitHubCredentialResolver;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -524,6 +537,88 @@ public class DefaultTaskServiceTest extends BaseTest {
         TaskResponse closed = service.closeForMergedPullRequests(task.id());
 
         assertThat(closed.status()).isEqualTo("done");
+    }
+
+    // ── GitHub issue linkage: completeCore closes a linked open issue ──────────────────
+
+    @Test
+    void complete_withOpenLinkedIssue_closesIssueAndUpdatesRow() {
+        GitRepo r = makeRepo("https://github.com/acme/task-issue-linked.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
+        TaskResponse started = service.start(task.id());
+        markRunTerminal(started.latestRunId(), WorkflowRunStatus.completed);
+        TaskGithubIssue linkage = makeLinkage(task.id(), r.getId(), 7, GithubIssueState.open);
+        Mockito.when(gitHubCredentialResolver.getTokenForRepo(r.getId())).thenReturn("tok");
+
+        TaskResponse completed = service.complete(task.id());
+
+        assertThat(completed.status()).isEqualTo("done");
+        Mockito.verify(gitHubAppService).closeIssue("tok", "acme/task-issue-linked", 7);
+        TaskGithubIssue reloaded =
+                taskGithubIssueRepository.findById(linkage.getId()).orElseThrow();
+        assertThat(reloaded.getState()).isEqualTo(GithubIssueState.closed);
+        assertThat(reloaded.getClosedAt()).isNotNull();
+    }
+
+    @Test
+    void complete_withNoLinkedIssue_doesNotCallGitHub() {
+        GitRepo r = makeRepo("https://github.com/acme/task-issue-none.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
+        TaskResponse started = service.start(task.id());
+        markRunTerminal(started.latestRunId(), WorkflowRunStatus.completed);
+
+        TaskResponse completed = service.complete(task.id());
+
+        assertThat(completed.status()).isEqualTo("done");
+        Mockito.verifyNoInteractions(gitHubAppService);
+    }
+
+    @Test
+    void complete_withAlreadyClosedLinkedIssue_doesNotCallGitHubAgain() {
+        GitRepo r = makeRepo("https://github.com/acme/task-issue-already-closed.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
+        TaskResponse started = service.start(task.id());
+        markRunTerminal(started.latestRunId(), WorkflowRunStatus.completed);
+        makeLinkage(task.id(), r.getId(), 9, GithubIssueState.closed);
+
+        TaskResponse completed = service.complete(task.id());
+
+        assertThat(completed.status()).isEqualTo("done");
+        Mockito.verifyNoInteractions(gitHubAppService);
+    }
+
+    @Test
+    void complete_closeIssueThrows_taskStillCompletes() {
+        GitRepo r = makeRepo("https://github.com/acme/task-issue-close-fails.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
+        TaskResponse started = service.start(task.id());
+        markRunTerminal(started.latestRunId(), WorkflowRunStatus.completed);
+        TaskGithubIssue linkage = makeLinkage(task.id(), r.getId(), 11, GithubIssueState.open);
+        Mockito.when(gitHubCredentialResolver.getTokenForRepo(r.getId())).thenReturn("tok");
+        Mockito.doThrow(new RuntimeException("github is down"))
+                .when(gitHubAppService)
+                .closeIssue(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt());
+
+        TaskResponse completed = service.complete(task.id());
+
+        assertThat(completed.status()).isEqualTo("done");
+        TaskGithubIssue reloaded =
+                taskGithubIssueRepository.findById(linkage.getId()).orElseThrow();
+        assertThat(reloaded.getState()).isEqualTo(GithubIssueState.open);
+    }
+
+    private TaskGithubIssue makeLinkage(UUID taskId, UUID gitRepoId, int issueNumber, GithubIssueState state) {
+        TaskGithubIssue issue = new TaskGithubIssue();
+        issue.setTaskId(taskId);
+        issue.setGitRepoId(gitRepoId);
+        issue.setIssueNumber(issueNumber);
+        issue.setIssueUrl("https://github.com/acme/repo/issues/" + issueNumber);
+        issue.setState(state);
+        return taskGithubIssueRepository.saveAndFlush(issue);
     }
 
     @Test

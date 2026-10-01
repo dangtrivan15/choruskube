@@ -1,0 +1,159 @@
+#!/bin/bash
+# propose-roadmap — validate a roadmap proposal document and install it for
+# this workflow's human review gate.
+#
+# Usage: propose-roadmap --file PATH|- [--check]
+#
+# The document is the roadmap_candidates.json shape: a nested Epic -> Story ->
+# Task tree (new items need a title; existing items are referenced by
+# "existingId" instead) plus key-based "dependencies" between them. Rules
+# (which items may anchor where, whether new Epics are allowed, whether a new
+# Task needs "repoId") vary with the workflow's gate and are enforced
+# server-side — this script only sends the document and reports the result.
+#
+#   {"epics": [{"existingId": "<Epic id>", "key": "run-epic", "stories": [
+#       {"title": "...", "description": "...", "key": "s1", "tasks": [
+#           {"title": "...", "description": "...", "key": "t1"}]}]}],
+#    "dependencies": [{"blocking": "<key>", "blocked": "<key>"}]}
+#
+# On success the document is installed as /workspace/out/roadmap_candidates.json,
+# the artifact the gate's human reviewer edits and approves. Re-running this
+# command replaces the installed proposal; deleting the file withdraws it.
+# This never creates roadmap items directly — only gate approval does.
+#
+# Options:
+#   --file PATH    Path to the proposal document, or "-" to read it from
+#                  stdin (required)
+#   --check        Validate only; do not install the document
+#   -h, --help     Show this help message
+#
+# Environment:
+#   API_SERVER_URL      — Base URL of the ChorusKube API server
+#   RUN_ID               — Workflow run UUID
+#   NODE_EXECUTION_ID    — Node execution UUID
+#   JOB_SECRET           — Bearer token for authentication
+#
+# Examples:
+#   propose-roadmap --file roadmap_candidates.json
+#   propose-roadmap --check --file roadmap_candidates.json
+#   cat roadmap_candidates.json | propose-roadmap --file -
+#
+# Exit codes:
+#   0  Document is valid (and, unless --check, installed)
+#   1  Missing arguments/environment, invalid JSON, rejected proposal, or API error
+set -euo pipefail
+
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+    sed -n '2,/^set -euo pipefail$/{ /^set -euo pipefail$/d; s/^# \?//; p }' "$0"
+    exit 0
+fi
+
+if [ -z "${API_SERVER_URL:-}" ]; then
+    echo "ERROR: API_SERVER_URL not set. This script must be run inside an agent pod." >&2
+    exit 1
+fi
+
+if [ -z "${RUN_ID:-}" ] || [ -z "${NODE_EXECUTION_ID:-}" ]; then
+    echo "ERROR: RUN_ID and NODE_EXECUTION_ID must be set." >&2
+    exit 1
+fi
+
+if [ -z "${JOB_SECRET:-}" ]; then
+    echo "ERROR: JOB_SECRET not set. This script must be run inside an agent pod." >&2
+    exit 1
+fi
+
+FILE_ARG=""
+CHECK_ONLY="false"
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --file)
+            if [ $# -lt 2 ]; then
+                echo "ERROR: --file requires a value." >&2
+                exit 1
+            fi
+            FILE_ARG="$2"
+            shift 2
+            ;;
+        --check)
+            CHECK_ONLY="true"
+            shift
+            ;;
+        *)
+            echo "ERROR: Unknown argument: $1" >&2
+            echo "Usage: propose-roadmap --file PATH|- [--check]" >&2
+            exit 1
+            ;;
+    esac
+done
+
+if [ -z "$FILE_ARG" ]; then
+    echo "ERROR: --file is required." >&2
+    echo "Usage: propose-roadmap --file PATH|- [--check]" >&2
+    exit 1
+fi
+
+# "-" reads the document from stdin. It's spooled to a real file rather than
+# piped straight into curl so both the JSON check below and the upload itself
+# read the same bytes without buffering stdin twice.
+STDIN_TMP=""
+if [ "$FILE_ARG" = "-" ]; then
+    STDIN_TMP=$(mktemp)
+    trap 'rm -f "$STDIN_TMP"' EXIT
+    cat > "$STDIN_TMP"
+    FILE="$STDIN_TMP"
+else
+    FILE="$FILE_ARG"
+fi
+
+if [ ! -r "$FILE" ]; then
+    echo "ERROR: $FILE_ARG does not exist or is not readable" >&2
+    exit 1
+fi
+
+if ! jq -e . "$FILE" >/dev/null 2>&1; then
+    echo "ERROR: $FILE_ARG is not valid JSON" >&2
+    exit 1
+fi
+
+RESPONSE=$(curl -s --max-time 30 -w "\n%{http_code}" -X POST \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer ${JOB_SECRET}" \
+    --data-binary @"$FILE" \
+    "$API_SERVER_URL/internal/runs/$RUN_ID/node-executions/$NODE_EXECUTION_ID/roadmap-proposal/validate") || {
+    echo "ERROR: Could not reach the API server (curl exit $?)" >&2
+    exit 1
+}
+HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+BODY_RESPONSE=$(echo "$RESPONSE" | sed '$d')
+
+if [ "$HTTP_CODE" = "200" ]; then
+    if [ "$CHECK_ONLY" = "true" ]; then
+        echo "$BODY_RESPONSE"
+        echo "Proposal is valid (not installed: --check)" >&2
+    else
+        GATE_LABEL=$(printf '%s' "$BODY_RESPONSE" | jq -r '.gateLabel // "unknown"' 2>/dev/null || echo unknown)
+        mkdir -p /workspace/out
+        cp "$FILE" /workspace/out/roadmap_candidates.json.tmp
+        mv /workspace/out/roadmap_candidates.json.tmp /workspace/out/roadmap_candidates.json
+        echo "$BODY_RESPONSE"
+        echo "Installed roadmap proposal for review at the '$GATE_LABEL' gate" >&2
+    fi
+    exit 0
+elif [ "$HTTP_CODE" = "400" ]; then
+    echo "ERROR: roadmap proposal rejected:" >&2
+    # A 400 that isn't the validator's {errors: [...]} (e.g. a proxy's page) still has to reach
+    # the agent: under pipefail a failed jq would otherwise exit before printing any reason.
+    if ERRORS=$(printf '%s' "$BODY_RESPONSE" | jq -er '.errors | arrays | .[] | tostring' 2>/dev/null); then
+        while IFS= read -r e; do
+            echo "  - $e" >&2
+        done <<<"$ERRORS"
+    else
+        echo "  $BODY_RESPONSE" >&2
+    fi
+    exit 1
+else
+    echo "ERROR: Failed to validate roadmap proposal (HTTP $HTTP_CODE): $BODY_RESPONSE" >&2
+    exit 1
+fi

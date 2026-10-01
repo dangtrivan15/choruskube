@@ -34,6 +34,16 @@ public class EnvGitHubCredentialResolver implements GitHubCredentialResolver {
 
     @Override
     public String getTokenForRun(UUID runId) {
+        return resolveToken();
+    }
+
+    /** Single-tenant: one credential for everything, so the repo id is unused — same as {@link #getTokenForRun}. */
+    @Override
+    public String getTokenForRepo(UUID gitRepoId) {
+        return resolveToken();
+    }
+
+    private String resolveToken() {
         boolean appConfigured = !isBlank(appId) && !isBlank(installationId) && !isBlank(privateKeyPath);
         if (appConfigured) {
             try {

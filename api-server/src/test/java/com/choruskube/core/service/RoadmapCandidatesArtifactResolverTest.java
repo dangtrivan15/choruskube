@@ -5,10 +5,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.choruskube.core.dto.ResolvedArtifactEntry;
 import com.choruskube.core.dto.ResolvedArtifactGroup;
 import com.choruskube.core.dto.RoadmapCandidatesDocument;
+import com.choruskube.core.model.Epic;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import jakarta.validation.Validation;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -26,21 +28,28 @@ class RoadmapCandidatesArtifactResolverTest {
 
     private ArtifactResolutionService artifactResolutionService;
     private ArtifactService artifactService;
+    private RoadmapAnchorLookup anchorLookup;
+    private InternalRunService internalRunService;
     private RoadmapCandidatesArtifactResolver resolver;
 
     private final UUID runId = UUID.randomUUID();
     private final UUID templateNodeId = UUID.randomUUID();
     private final UUID analyzerExecId = UUID.randomUUID();
+    private final UUID projectId = UUID.randomUUID();
 
     @BeforeEach
     void setUp() {
         artifactResolutionService = Mockito.mock(ArtifactResolutionService.class);
         artifactService = Mockito.mock(ArtifactService.class);
+        anchorLookup = Mockito.mock(RoadmapAnchorLookup.class);
+        internalRunService = Mockito.mock(InternalRunService.class);
         resolver = new RoadmapCandidatesArtifactResolver(
                 artifactResolutionService,
                 artifactService,
                 new ObjectMapper().registerModule(new JavaTimeModule()),
-                Validation.buildDefaultValidatorFactory().getValidator());
+                Validation.buildDefaultValidatorFactory().getValidator(),
+                anchorLookup,
+                internalRunService);
     }
 
     private List<ResolvedArtifactGroup> requiredArtifacts() {
@@ -290,5 +299,56 @@ class RoadmapCandidatesArtifactResolverTest {
         assertThat(result).isNotNull();
         assertThat(result.epics()).hasSize(1);
         assertThat(result.dependencies()).isEmpty();
+    }
+
+    @Test
+    void documentWithNoAnchors_neverResolvesProjectOrLooksUpAnchors() {
+        stubArtifactContent("""
+                {"epics":[{"title":"Epic A","description":"d","motivation":"m","stories":[]}]}
+                """);
+
+        RoadmapCandidatesDocument result = resolver.resolve(runId, templateNodeId);
+
+        assertThat(result).isNotNull();
+        Mockito.verifyNoInteractions(internalRunService, anchorLookup);
+    }
+
+    @Test
+    void anchorInProject_fillsLiveTitleAndDescription() {
+        UUID anchorId = UUID.randomUUID();
+        stubArtifactContent("""
+                {"epics":[{"existingId":"%s","stories":[]}]}
+                """.formatted(anchorId));
+        Mockito.when(internalRunService.resolveSoftwareProjectId(runId)).thenReturn(projectId);
+        Epic liveEpic = new Epic();
+        liveEpic.setId(anchorId);
+        liveEpic.setTitle("Live Title");
+        liveEpic.setDescription("Live Description");
+        Mockito.when(anchorLookup.epic(anchorId, projectId)).thenReturn(Optional.of(liveEpic));
+
+        RoadmapCandidatesDocument result = resolver.resolve(runId, templateNodeId);
+
+        assertThat(result).isNotNull();
+        assertThat(result.epics()).hasSize(1);
+        assertThat(result.epics().get(0).title()).isEqualTo("Live Title");
+        assertThat(result.epics().get(0).description()).isEqualTo("Live Description");
+        assertThat(result.epics().get(0).existingId()).isEqualTo(anchorId);
+    }
+
+    @Test
+    void foreignOrMissingAnchor_isBlanked() {
+        UUID anchorId = UUID.randomUUID();
+        stubArtifactContent("""
+                {"epics":[{"existingId":"%s","stories":[]}]}
+                """.formatted(anchorId));
+        Mockito.when(internalRunService.resolveSoftwareProjectId(runId)).thenReturn(projectId);
+        Mockito.when(anchorLookup.epic(anchorId, projectId)).thenReturn(Optional.empty());
+
+        RoadmapCandidatesDocument result = resolver.resolve(runId, templateNodeId);
+
+        assertThat(result).isNotNull();
+        assertThat(result.epics()).hasSize(1);
+        assertThat(result.epics().get(0).title()).isEmpty();
+        assertThat(result.epics().get(0).description()).isEmpty();
     }
 }

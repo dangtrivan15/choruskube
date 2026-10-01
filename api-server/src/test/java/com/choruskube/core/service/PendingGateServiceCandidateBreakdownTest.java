@@ -55,7 +55,9 @@ class PendingGateServiceCandidateBreakdownTest {
                 artifactResolutionService,
                 artifactService,
                 objectMapper,
-                Validation.buildDefaultValidatorFactory().getValidator());
+                Validation.buildDefaultValidatorFactory().getValidator(),
+                Mockito.mock(RoadmapAnchorLookup.class),
+                Mockito.mock(InternalRunService.class));
 
         service = new PendingGateService(
                 execRepo,

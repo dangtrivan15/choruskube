@@ -3,6 +3,7 @@ package com.choruskube.core.service;
 import com.choruskube.core.dto.ValidationResponse;
 import com.choruskube.core.model.TemplateEdge;
 import com.choruskube.core.model.TemplateNode;
+import com.choruskube.core.model.enums.RoadmapMaterializeMode;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.*;
@@ -59,6 +60,38 @@ public class GraphValidationService {
                 UUID hubId =
                         routingHubs.contains(edge.getSourceNodeId()) ? edge.getSourceNodeId() : edge.getTargetNodeId();
                 errors.add("Node '" + nodeLabels.get(hubId) + "' is a routing_hub and must have no edges");
+            }
+        }
+
+        // A roadmap gate is a node whose config declares `materialize`. RunService materializes
+        // whatever artifact this template names, so an unknown mode or a missing artifact
+        // declaration would silently never resolve a document, and more than one such node in a
+        // graph makes "the run's roadmap gate" ambiguous for the write-refusal and validate-route
+        // lookups that key off it.
+        List<TemplateNode> roadmapGates = new ArrayList<>();
+        for (TemplateNode node : nodes) {
+            Optional<String> materializeValue = readMaterializeValue(node);
+            if (materializeValue.isEmpty()) {
+                continue;
+            }
+            if (RoadmapMaterializeMode.fromConfigValue(materializeValue.get()).isEmpty()) {
+                errors.add("Node '" + node.getLabel() + "' has unknown materialize mode '" + materializeValue.get()
+                        + "' (expected roadmap_candidates or roadmap_extension)");
+                continue;
+            }
+            roadmapGates.add(node);
+        }
+        if (roadmapGates.size() > 1) {
+            String names = roadmapGates.stream()
+                    .map(TemplateNode::getLabel)
+                    .reduce((a, b) -> a + ", " + b)
+                    .orElse("");
+            errors.add("Multiple roadmap gates defined (" + names + "); at most one node may declare materialize");
+        }
+        for (TemplateNode node : roadmapGates) {
+            if (!declaresRoadmapCandidatesArtifact(node)) {
+                errors.add("Node '" + node.getLabel()
+                        + "' declares materialize but no roadmap_candidates.json input artifact");
             }
         }
 
@@ -182,6 +215,61 @@ public class GraphValidationService {
         } catch (Exception e) {
             errors.add("Node '" + node.getLabel() + "': invalid config_overrides JSON");
         }
+    }
+
+    /**
+     * The raw string value of a node's {@code config_overrides.materialize}, or empty if the node
+     * has no such key (not a roadmap gate at all) or its config JSON is malformed (already reported
+     * by {@link #validateConfigOverrides}).
+     */
+    private Optional<String> readMaterializeValue(TemplateNode node) {
+        String overridesStr = node.getConfigOverrides();
+        if (overridesStr == null || overridesStr.isBlank()) {
+            return Optional.empty();
+        }
+        try {
+            JsonNode overrides = objectMapper.readTree(overridesStr);
+            if (overrides.has(RoadmapMaterializeMode.CONFIG_KEY)) {
+                return Optional.of(
+                        overrides.get(RoadmapMaterializeMode.CONFIG_KEY).asText(""));
+            }
+        } catch (Exception e) {
+            // Malformed config_overrides JSON is already surfaced by validateConfigOverrides.
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Whether the node's {@code requiredInputArtifacts} JSON declares an artifact literally named
+     * {@code roadmap_candidates.json} in any of its groups — parsed, not substring-matched, so a
+     * group whose description happens to mention the filename doesn't count.
+     */
+    private boolean declaresRoadmapCandidatesArtifact(TemplateNode node) {
+        String raw = node.getRequiredInputArtifacts();
+        if (raw == null || raw.isBlank()) {
+            return false;
+        }
+        try {
+            JsonNode groups = objectMapper.readTree(raw);
+            if (!groups.isArray()) {
+                return false;
+            }
+            for (JsonNode group : groups) {
+                JsonNode artifacts = group.get("artifacts");
+                if (artifacts == null || !artifacts.isArray()) {
+                    continue;
+                }
+                for (JsonNode artifact : artifacts) {
+                    JsonNode name = artifact.get("name");
+                    if (name != null && "roadmap_candidates.json".equals(name.asText())) {
+                        return true;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            return false;
+        }
+        return false;
     }
 
     private Set<UUID> findReachableFrom(UUID start, Map<UUID, List<UUID>> outgoing) {

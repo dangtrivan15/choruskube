@@ -35,7 +35,9 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
     // and executor changes here never retroactively mutate prior versions. To ship a
     // change, edit the constants in this file (prompt, executor, schema), increment
     // CURRENT_VERSION, and the next boot creates the new snapshot.
-    static final int CURRENT_VERSION = 42;
+    // v43: Implement may propose a roadmap extension (roadmap_candidates.json, optional output +
+    // self-input); Final Approval declares materialize: roadmap_extension and the optional input.
+    static final int CURRENT_VERSION = 43;
 
     private static final String TEMPLATE_NAME = "Feature Development";
 
@@ -572,8 +574,9 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                                      (create the label with `gh label create --force` if the repo
                                      lacks it) and link the run's PR for that repo, opened below,
                                      so the item stays findable and tied to what deferred it. A
-                                     roadmap item is an acceptable home instead; either way do
-                                     not create a new docs/ surface for them
+                                     proposed roadmap extension (see "Proposing deferred work to
+                                     the roadmap" below) is an acceptable home instead; either way
+                                     do not create a new docs/ surface for them
               - §1, §5, §6, §8 and Part 2 -> discard; they are execution scaffolding
             Graduate a decision only when something in this repo cites it. Do not bulk-copy
             the spec.
@@ -600,6 +603,46 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             decision reverses or replaces. If one exists, do not edit it. Add your entry as
             normal, name in it which entry it supersedes, and change the old entry's status
             to `superseded by <your entry>`.
+
+            ## Proposing deferred work to the roadmap
+
+            Deferred work can become roadmap items only through a proposal that the Final
+            Approval reviewer approves. Never create roadmap items yourself: in this workflow
+            the server rejects create-proposal, update-proposal, create-story, create-task,
+            create-dependency and create-milestone.
+
+            After every repo's implementation is done, write ONE proposal for the whole run in
+            the roadmap_candidates.json shape:
+              {"epics": [...], "dependencies": [{"blocking": "<key>", "blocked": "<key>"}]}
+            - An entry carrying "existingId" is an item that already exists: nothing is created
+              for it and its other fields are ignored. Any other entry is new and needs a title
+              and a description; "priority" is High, Medium or Low.
+            - If this run was started from a Task (see "Triggering Task" in your system prompt,
+              or run get-roadmap-graph), prefer extending that Task's Epic. The top-level entry
+              that holds new items is {"existingId": "<Epic id>", "stories": [...]}: add new
+              Stories there, or new Tasks under one of its existing Stories via
+              {"existingId": "<Story id>", "tasks": [...]}. Only when the deferred work is a
+              genuinely separate initiative, not a follow-up to this run's own change, propose a
+              wholly new top-level Epic instead (a title, at least one Story and at least one
+              Task). Do not anchor a new Story or Task under any other existing Epic.
+            - If this run was not started from a Task, a new Epic is allowed, but every new
+              Epic needs at least one Story and every new Story at least one Task.
+            - Give an entry a "key" to use it in "dependencies". When a follow-up builds on
+              this run's change, list this run's Task as {"existingId": "<Task id>", "key": "..."}
+              under its Story and make it the blocking side.
+            - No milestones.
+            - A new Task in a multi-repo project needs "repoId" naming which of this run's repos
+              it is about; a single-repo project fills it in for you. The server files a matching
+              GitHub issue for every new Task automatically and closes it when the Task is done —
+              prefer this over creating a GitHub issue yourself for anything in scope above. A
+              direct GitHub issue is still the right tool for work that must survive even if this
+              run is abandoned.
+
+            Install it with `propose-roadmap --file <path>`. The server validates it and the
+            tool writes /workspace/out/roadmap_candidates.json. Fix every reported error and
+            re-run until it succeeds; re-running replaces the proposal, and deleting that file
+            withdraws it. If /workspace/in/implement/roadmap_candidates.json exists, it is your
+            previous attempt's proposal: re-submit it (amended as needed), or it is dropped.
 
             ## Opening and updating pull requests
 
@@ -677,7 +720,9 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                  infrastructure detail, with any Caveat that exists only
                  because a non-public repo is involved dropped entirely rather
                  than reworded into a hint that one exists. If §7 is empty, or
-                 nothing survives the filter, omit this section entirely.
+                 nothing survives the filter, omit this section entirely. Mark
+                 each Future-work Caveat you proposed to the roadmap this run
+                 as `proposed to the roadmap (pending Final Approval)`.
 
                  **d. ❓ Open Decisions for Reviewer** — ONLY include this
                  section if at least one Caveat is still tagged "Needs human
@@ -1092,7 +1137,8 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
         NodeDefinition implement = createNodeDef("Implement", ExecutorType.ai, IMPLEMENT_PROMPT, 10800);
         implement.setModel(ModelIds.MODEL_SONNET);
         implement.setOutputSpec(
-                "{\"files\":[{\"name\":\"summary.md\",\"required\":true,\"description\":\"Implementation summary describing changes made\"}]}");
+                "{\"files\":[{\"name\":\"summary.md\",\"required\":true,\"description\":\"Implementation summary describing changes made\"},"
+                        + "{\"name\":\"roadmap_candidates.json\",\"required\":false,\"description\":\"Proposed roadmap extension for Final Approval (only when deferred work is proposed)\"}]}");
         nodeDefRepo.save(implement);
         defs.put("Implement", implement);
 
@@ -1192,7 +1238,8 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                 "implement",
                 false,
                 "{\"loop_group\": \"impl-review\", \"needs_branch\": \"true\", \"effort\": \"high\", \"needs_pr\": \"true\"}",
-                "[{\"template_node_label\":\"spec_review\",\"artifacts\":[{\"name\":\"spec_and_plan.md\",\"description\":\"The approved spec to implement\",\"required\":true}]}]");
+                "[{\"template_node_label\":\"spec_review\",\"artifacts\":[{\"name\":\"spec_and_plan.md\",\"description\":\"The approved spec to implement\",\"required\":true}]},"
+                        + "{\"template_node_label\":\"implement\",\"artifacts\":[{\"name\":\"roadmap_candidates.json\",\"description\":\"Prior iteration's roadmap proposal (only present if iteration > 1 and one was proposed)\",\"required\":false}]}]");
         // Test runs run-all-tests (a script in the agent image) which iterates each
         // repo's test_command from /workspace/config.json. Single-repo runs read the
         // top-level test_command instead. Exit code 0 → "passed", non-zero → "failed".
@@ -1227,8 +1274,8 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                 nodeDefs.get("Final Approval"),
                 "final_approval",
                 false,
-                "{\"loop_group\": \"impl-review\", \"terminal_decisions\": [\"approved\"]}",
-                "[{\"template_node_label\":\"implement\",\"artifacts\":[{\"name\":\"summary.md\",\"description\":\"Implementation summary describing changes made\",\"required\":true}]},{\"template_node_label\":\"code_review\",\"artifacts\":[{\"name\":\"review.md\",\"description\":\"Code review findings and approve/reject recommendation\",\"required\":true}]}]");
+                "{\"loop_group\": \"impl-review\", \"terminal_decisions\": [\"approved\"], \"materialize\": \"roadmap_extension\"}",
+                "[{\"template_node_label\":\"implement\",\"artifacts\":[{\"name\":\"summary.md\",\"description\":\"Implementation summary describing changes made\",\"required\":true},{\"name\":\"roadmap_candidates.json\",\"description\":\"Proposed roadmap extension (optional)\",\"required\":false}]},{\"template_node_label\":\"code_review\",\"artifacts\":[{\"name\":\"review.md\",\"description\":\"Code review findings and approve/reject recommendation\",\"required\":true}]}]");
 
         // Create edges. v37: the graph is happy-path-only. Review nodes still self-loop on
         // `revised` (find AND fix in one session), but every human-escalation edge is gone —

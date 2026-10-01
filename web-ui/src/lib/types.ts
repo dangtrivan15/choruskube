@@ -242,20 +242,26 @@ export interface PendingGatePredecessorOutput {
  * `CandidateDependency` may reference; it is never persisted. `priority`
  * (free-text `High`/`Medium`/`Low`) is reviewer-editable via a
  * `PriorityBadge`/select pair, defaulting to Medium when blank/unrecognized —
- * same as Epic/Story priority.
+ * same as Epic/Story priority. `existingId` turns this entry into an anchor to
+ * an already-materialized Task (roadmap-extension proposals): display-only,
+ * its other fields are ignored, and the server blanks `title` when the id
+ * does not resolve inside the run's own project.
  */
 export interface CandidateTaskProposal {
   title: string;
   description: string;
   key?: string | null;
   priority?: string | null;
+  existingId?: string | null;
+  /** Which of the run's repos a new Task targets (multi-repo projects); agent-authored, round-tripped untouched. */
+  repoId?: string | null;
 }
 
 /**
  * A candidate Story within a `CandidateEpicProposal` — matches the backend
  * CandidateStoryProposal record. `title`/`description` are reviewer-editable;
  * `tasks` is capped at 8 entries server-side (mirrored as a soft UI limit).
- * `key`/`priority` mirror `CandidateTaskProposal`'s.
+ * `key`/`priority`/`existingId` mirror `CandidateTaskProposal`'s.
  */
 export interface CandidateStoryProposal {
   title: string;
@@ -263,6 +269,7 @@ export interface CandidateStoryProposal {
   tasks: CandidateTaskProposal[];
   key?: string | null;
   priority?: string | null;
+  existingId?: string | null;
 }
 
 /**
@@ -280,6 +287,10 @@ export interface CandidateStoryProposal {
  * reviewer-editable, unlike `repos`. `milestone` is an optional reference to a
  * `CandidateMilestone.key` — also reviewer-editable via a
  * select — resolving to the Milestone the materialized Epic is assigned to.
+ * `existingId` turns this entry into an anchor to an already-materialized Epic
+ * (roadmap-extension proposals): display-only, its other fields (besides `key`
+ * and nested `stories`) are ignored, and the server blanks `title` when the id
+ * does not resolve inside the run's own project.
  */
 export interface CandidateEpicProposal {
   title: string;
@@ -290,6 +301,7 @@ export interface CandidateEpicProposal {
   stories: CandidateStoryProposal[];
   key?: string | null;
   milestone?: string | null;
+  existingId?: string | null;
 }
 
 /**

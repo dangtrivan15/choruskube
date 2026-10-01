@@ -10,6 +10,7 @@ import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.exception.ValidationException;
 import com.choruskube.core.model.*;
 import com.choruskube.core.model.enums.NodeExecutionStatus;
+import com.choruskube.core.model.enums.RoadmapMaterializeMode;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.observability.AuditSink;
 import com.choruskube.core.observability.UsageSink;
@@ -82,11 +83,7 @@ public class RunService {
     private final RoadmapCandidatesArtifactResolver roadmapCandidatesArtifactResolver;
     private final NodeExecutionClaimService nodeExecutionClaimService;
     private final EscalationContextResolver escalationContextResolver;
-
-    /** Config key on a gate's {@code config_overrides} that opts it into materialization. */
-    static final String MATERIALIZE_CONFIG_KEY = "materialize";
-
-    static final String MATERIALIZE_ROADMAP_CANDIDATES = "roadmap_candidates";
+    private final RoadmapProposalValidator roadmapProposalValidator;
 
     @Value("${temporal.task-queue}")
     private String taskQueue;
@@ -125,7 +122,8 @@ public class RunService {
             @Lazy RoadmapCandidateMaterializer roadmapCandidateMaterializer,
             RoadmapCandidatesArtifactResolver roadmapCandidatesArtifactResolver,
             NodeExecutionClaimService nodeExecutionClaimService,
-            EscalationContextResolver escalationContextResolver) {
+            EscalationContextResolver escalationContextResolver,
+            @Lazy RoadmapProposalValidator roadmapProposalValidator) {
         this.runRepo = runRepo;
         this.execRepo = execRepo;
         this.edgeRepo = edgeRepo;
@@ -160,6 +158,7 @@ public class RunService {
         this.roadmapCandidatesArtifactResolver = roadmapCandidatesArtifactResolver;
         this.nodeExecutionClaimService = nodeExecutionClaimService;
         this.escalationContextResolver = escalationContextResolver;
+        this.roadmapProposalValidator = roadmapProposalValidator;
     }
 
     @Transactional
@@ -489,35 +488,27 @@ public class RunService {
             }
 
             // Deterministic materialization: on approval of a gate configured for it,
-            // turn the reviewed (possibly reviewer-edited) Roadmap Provisioner candidate breakdown
+            // turn the reviewed (possibly reviewer-edited) roadmap candidate document
             // directly into Epic/Story/Task rows — through the same write path a human uses — in
             // the same request that handles the decision signal, rather than via a second AI
             // agent.
-            if ("approved".equalsIgnoreCase(validatedDecision)
-                    && isMaterializeNode(snapshot, exec.getTemplateNodeId())) {
-                // A present-but-empty editedCandidates means the reviewer deliberately cleared the
-                // breakdown (e.g. rejecting every candidate while still approving the gate for some
-                // other reason) and must NOT fall back to the original analyzer artifact — only a
-                // genuinely absent field (no edits submitted at all) does that.
-                RoadmapCandidatesDocument source = request.editedCandidates() != null
-                        ? request.editedCandidates()
-                        : roadmapCandidatesArtifactResolver.resolve(runId, exec.getTemplateNodeId());
-                String materializeNote;
-                if (source != null) {
-                    MaterializationSummary summary = roadmapCandidateMaterializer.materialize(runId, source);
-                    materializeNote = "Materialized " + summary.materializedCount() + " Epics ("
-                            + summary.createdMilestoneIds().size() + " Milestones, "
-                            + summary.createdDependencyCount() + " dependency edges, "
-                            + summary.skippedCount() + " skipped)";
-                } else {
-                    // The artifact resolver degrades to null (never throws) when the candidate
-                    // breakdown is missing or malformed — surface that instead of silently
-                    // approving the gate with no materialization and no trace of why.
-                    materializeNote = "Materialization skipped: no candidate breakdown was found for this run";
+            if ("approved".equalsIgnoreCase(validatedDecision)) {
+                Optional<RoadmapMaterializeMode> mode = materializeMode(snapshot, exec.getTemplateNodeId());
+                if (mode.isPresent()) {
+                    // A present-but-empty editedCandidates means the reviewer deliberately cleared
+                    // the breakdown (e.g. rejecting every candidate while still approving the gate
+                    // for some other reason) and must NOT fall back to the original analyzer
+                    // artifact — only a genuinely absent field (no edits submitted at all) does that.
+                    RoadmapCandidatesDocument source = request.editedCandidates() != null
+                            ? request.editedCandidates()
+                            : roadmapCandidatesArtifactResolver.resolve(runId, exec.getTemplateNodeId());
+                    String materializeNote = buildMaterializeNote(runId, mode.get(), source);
+                    if (materializeNote != null) {
+                        assembledResult = (assembledResult != null && !assembledResult.isBlank())
+                                ? assembledResult + "\n\n" + materializeNote
+                                : materializeNote;
+                    }
                 }
-                assembledResult = (assembledResult != null && !assembledResult.isBlank())
-                        ? assembledResult + "\n\n" + materializeNote
-                        : materializeNote;
             }
 
             WorkflowStub stub = workflowClients
@@ -570,13 +561,63 @@ public class RunService {
         }
     }
 
-    private boolean isMaterializeNode(JsonNode snapshot, UUID templateNodeId) {
+    Optional<RoadmapMaterializeMode> materializeMode(JsonNode snapshot, UUID templateNodeId) {
         JsonNode nodeConfigOverrides =
                 decisionOptionsResolver.findNodeConfigOverrides(snapshot.get("nodes"), templateNodeId);
-        return nodeConfigOverrides != null
-                && nodeConfigOverrides.has(MATERIALIZE_CONFIG_KEY)
-                && MATERIALIZE_ROADMAP_CANDIDATES.equals(
-                        nodeConfigOverrides.get(MATERIALIZE_CONFIG_KEY).asText());
+        return RoadmapMaterializeMode.fromConfigOverrides(nodeConfigOverrides);
+    }
+
+    /**
+     * Builds the gate's materialization result note for an approved roadmap gate — and, unless the
+     * reviewed document is empty of anything to create, performs the materialization itself.
+     * Returns {@code null} only for {@code roadmap_extension} with no submitted document: there is
+     * nothing to validate or note without one, unlike {@code roadmap_candidates}' "skipped" note,
+     * which is the pre-existing behaviour for that mode.
+     */
+    private String buildMaterializeNote(UUID runId, RoadmapMaterializeMode mode, RoadmapCandidatesDocument source) {
+        if (source == null) {
+            return mode == RoadmapMaterializeMode.roadmap_candidates
+                    ? "Materialization skipped: no candidate breakdown was found for this run"
+                    : null;
+        }
+
+        // A structural violation in the (possibly reviewer-edited) document blocks approval
+        // outright rather than silently creating a partial tree. The caller's surrounding catch
+        // releases the node's claim.
+        List<String> violations =
+                roadmapProposalValidator.validate(runId, source, mode, RoadmapProposalValidator.Strictness.GATE);
+        if (!violations.isEmpty()) {
+            throw new ValidationException(violations);
+        }
+
+        if (mode == RoadmapMaterializeMode.roadmap_extension) {
+            RoadmapProposalValidator.Summary preview = roadmapProposalValidator.summarize(source);
+            if (preview.newEpics() == 0
+                    && preview.newStories() == 0
+                    && preview.newTasks() == 0
+                    && preview.dependencies() == 0) {
+                // Whether the reviewer or the agent emptied the document cannot be told apart
+                // here, so the note deliberately does not say which.
+                return "Roadmap proposal: nothing to create";
+            }
+        }
+
+        MaterializationSummary summary = roadmapCandidateMaterializer.materialize(runId, source, mode);
+        String note = mode == RoadmapMaterializeMode.roadmap_candidates
+                ? "Materialized " + summary.materializedCount() + " Epics ("
+                        + summary.createdStoryIds().size() + " Stories, "
+                        + summary.createdTaskIds().size() + " Tasks, "
+                        + summary.createdMilestoneIds().size() + " Milestones, "
+                        + summary.createdDependencyCount() + " dependency edges, "
+                        + summary.skippedCount() + " skipped)"
+                : "Roadmap extension approved: created " + summary.materializedCount() + " Epics, "
+                        + summary.createdStoryIds().size() + " Stories, "
+                        + summary.createdTaskIds().size() + " Tasks and " + summary.createdDependencyCount()
+                        + " dependency edges (" + summary.skippedCount() + " skipped)";
+        if (!summary.errors().isEmpty()) {
+            note += "\nSkipped: " + summary.errors().stream().limit(5).collect(Collectors.joining("; "));
+        }
+        return note;
     }
 
     public List<ExecutionLogResponse> getExecutionLogs(UUID nodeExecId) {

@@ -116,7 +116,8 @@ class RunServiceEscalationContextTest {
                 null, // roadmapCandidateMaterializer — unused (not exercised)
                 roadmapCandidatesArtifactResolver,
                 null, // nodeExecutionClaimService — unused (signalHumanDecision not exercised)
-                escalationContextResolver);
+                escalationContextResolver,
+                null); // roadmapProposalValidator - unused (approve-time validation not exercised)
     }
 
     private WorkflowRun stubRun() {

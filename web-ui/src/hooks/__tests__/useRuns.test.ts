@@ -2,28 +2,25 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 import { createTestHookWrapper } from "@/__tests__/test-utils";
 
-// Mock the api module
-vi.mock("@/lib/api", () => ({
-  api: {
-    get: vi.fn(),
-    getPage: vi.fn(),
-    getText: vi.fn(),
-    post: vi.fn(),
-    postForm: vi.fn(),
-    put: vi.fn(),
-    patch: vi.fn(),
-    delete: vi.fn(),
-  },
-  ApiError: class ApiError extends Error {
-    status: number;
-    body: unknown;
-    constructor(status: number, body: unknown) {
-      super(`API error ${status}`);
-      this.status = status;
-      this.body = body;
-    }
-  },
-}));
+// Mock the api module's HTTP methods only — keep the real `ApiError`/`apiErrorMessage` so
+// tests that assert a toast's exact text exercise the same message-extraction logic as
+// production, rather than re-deriving it (or stubbing it away) per test file.
+vi.mock("@/lib/api", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
+  return {
+    ...actual,
+    api: {
+      get: vi.fn(),
+      getPage: vi.fn(),
+      getText: vi.fn(),
+      post: vi.fn(),
+      postForm: vi.fn(),
+      put: vi.fn(),
+      patch: vi.fn(),
+      delete: vi.fn(),
+    },
+  };
+});
 
 vi.mock("@/lib/toast-messages", () => ({
   showMutationToast: vi.fn((message: string, variant: string) => ({
@@ -527,6 +524,27 @@ describe("useRuns hooks", () => {
       });
       const body = mockApi.post.mock.calls[0][1] as Record<string, unknown>;
       expect(Object.prototype.hasOwnProperty.call(body, "editedCandidates")).toBe(false);
+    });
+
+    it("shows the server's errors[] reasons in the decision-failure toast", async () => {
+      const { wrapper } = createTestHookWrapper();
+      const { ApiError: MockApiError } = await import("@/lib/api");
+      mockApi.post.mockRejectedValueOnce(
+        new MockApiError(400, {
+          valid: false,
+          errors: ["anchor epic is not found in this run's software project", "a new story needs at least one task"],
+        }),
+      );
+
+      const { result } = renderHook(() => useSignalNode("run-1"), { wrapper });
+
+      result.current.mutate({ nodeExecId: "exec-1", decision: "approved", feedback: "" });
+
+      await waitFor(() => expect(result.current.isError).toBe(true));
+      expect(showMutationToast).toHaveBeenCalledWith(
+        "anchor epic is not found in this run's software project; a new story needs at least one task",
+        "error",
+      );
     });
   });
 

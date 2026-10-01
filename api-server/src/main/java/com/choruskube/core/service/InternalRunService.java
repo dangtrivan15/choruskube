@@ -16,9 +16,11 @@ import jakarta.annotation.Nullable;
 import java.time.Instant;
 import java.util.*;
 import java.util.Optional;
+import org.hibernate.Hibernate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -855,8 +857,24 @@ public class InternalRunService {
 
         WorkflowRun run =
                 runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
+        UUID epicId = resolveTriggeringEpicId(runId)
+                .orElseThrow(() -> new NotFoundException("Run " + runId + " was not started from a Task"));
+        UUID softwareProjectId = resolveSoftwareProjectIdFromRun(run);
+        return roadmapGraphService.getGraph(epicId, runId, softwareProjectId);
+    }
+
+    /**
+     * Resolves the Epic that owns the run's triggering Task, following {@code run.task_id ->
+     * Task.story_id -> Story.epic_id}. Empty when the run was not started from a Task. Shared by
+     * {@link #getGraphForTriggeringTask} and {@code RoadmapProposalValidator}'s scope rules, so
+     * both agree on which Epic a task-triggered extension may anchor into.
+     */
+    @Transactional(readOnly = true)
+    public Optional<UUID> resolveTriggeringEpicId(UUID runId) {
+        WorkflowRun run =
+                runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
         if (run.getTaskId() == null) {
-            throw new NotFoundException("Run " + runId + " was not started from a Task");
+            return Optional.empty();
         }
         Task task = taskRepo.findById(run.getTaskId())
                 .orElseThrow(() -> new NotFoundException("Task not found: " + run.getTaskId()));
@@ -865,8 +883,7 @@ public class InternalRunService {
                 .orElseThrow(() -> new NotFoundException("Story not found for task " + task.getId()));
         Epic epic = epicRepo.findById(story.getEpicId())
                 .orElseThrow(() -> new NotFoundException("Epic not found for story " + story.getId()));
-        UUID softwareProjectId = resolveSoftwareProjectIdFromRun(run);
-        return roadmapGraphService.getGraph(epic.getId(), runId, softwareProjectId);
+        return Optional.of(epic.getId());
     }
 
     /**
@@ -896,6 +913,25 @@ public class InternalRunService {
         WorkflowRun run =
                 runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
         return resolveSoftwareProjectIdFromRun(run);
+    }
+
+    /**
+     * Resolves a software project's {@code GitRepo}s ({@code SoftwareProject#resolveRepos()}) —
+     * exactly one for a plain {@code GitRepo} project, possibly several for a {@code RepoGroup}.
+     * Used by {@link RoadmapProposalValidator} to check a new Task's {@code repoId} without giving
+     * it its own {@code SoftwareProjectRepository} dependency.
+     */
+    @Transactional(readOnly = true)
+    public List<GitRepo> resolveRepos(UUID softwareProjectId) {
+        SoftwareProject project = softwareProjectRepo
+                .findById(softwareProjectId)
+                .orElseThrow(() -> new NotFoundException("Software project not found: " + softwareProjectId));
+        // A RepoGroup's members hold lazy GitRepo proxies, and callers read their URL after this
+        // transaction has closed — unproxied here, or every multi-repo caller hits
+        // LazyInitializationException.
+        return project.resolveRepos().stream()
+                .map(repo -> (GitRepo) Hibernate.unproxy(repo))
+                .toList();
     }
 
     /**
@@ -938,14 +974,25 @@ public class InternalRunService {
      * findOrCreate} here would 403 under a Keycloak-enabled deployment. No cross-item ownership
      * check is needed beyond that guard (unlike {@link #createDependency}): a Milestone is scoped
      * directly under {@code softwareProjectId}, never referencing an existing item by id.
+     *
+     * <p>Deliberately NOT {@code @Transactional}: {@code findOrCreateInternal}'s find-then-save is
+     * not atomic (only the unique-name index backstops it), so two node executions racing the same
+     * Milestone name need the retry below to run through the Spring proxy as a genuinely fresh
+     * transaction — same reasoning as {@code DefaultRoadmapCandidateMaterializer}'s equivalent
+     * retry. Wrapping this method would join that transaction (propagation REQUIRED) and mark it
+     * rollback-only on the first attempt's exception, defeating the retry.
      */
-    @Transactional
     public MilestoneResponse createMilestone(UUID runId, InternalCreateMilestoneRequest req) {
         WorkflowRun run =
                 runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
         UUID softwareProjectId = resolveSoftwareProjectIdFromRun(run);
-        return milestoneService.findOrCreateInternal(
-                softwareProjectId, req.name(), req.description(), req.targetDate(), runId);
+        try {
+            return milestoneService.findOrCreateInternal(
+                    softwareProjectId, req.name(), req.description(), req.targetDate(), runId);
+        } catch (DataIntegrityViolationException raceLoss) {
+            return milestoneService.findOrCreateInternal(
+                    softwareProjectId, req.name(), req.description(), req.targetDate(), runId);
+        }
     }
 
     private BlockableItemType parseBlockableItemType(String raw) {

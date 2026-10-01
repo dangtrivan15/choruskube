@@ -75,6 +75,16 @@ The following helper scripts are available on the PATH:
 - `list-decisions` — Print the valid routing decisions for this node execution
   (one per line). Useful as a runtime fallback or for verification — the same
   list is appended to your system prompt at agent startup.
+- `propose-roadmap --file PATH [--check]` — Validate a roadmap proposal against
+  this run's rules and install it as /workspace/out/roadmap_candidates.json for the
+  workflow's human review gate. The gate creates the items only on approval. The
+  proposal uses the roadmap_candidates.json shape: new Epics, Stories and Tasks;
+  existing items referenced by "existingId"; and dependencies between "key"s. A new
+  Task in a multi-repo project needs "repoId"; the server files it a matching GitHub
+  issue on approval and closes it when the Task is done. `--check` validates without
+  installing. Fails (HTTP 409) when the workflow has no roadmap review gate. Where it
+  succeeds, prefer it over filing a GitHub issue directly for deferred work: the issue
+  it creates is tracked and closes itself when the Task is done, unlike one you file.
 - `create-proposal --title TITLE --description DESC [--motivation MOT] [--priority LEVEL] [--milestone-id UUID]` —
   Create an Epic (the top level of the Epic -> Story -> Task roadmap hierarchy) for the
   current run's software project. `--priority` is one of `low`/`medium`/`high` (defaults
@@ -103,6 +113,11 @@ The following helper scripts are available on the PATH:
   Create a Milestone (a named release grouping with an optional target date) for the
   current run's software project. Assign an Epic to it with `create-proposal
   --milestone-id` or `update-proposal --milestone-id`.
+
+  In a workflow that reviews roadmap changes at a human gate (Feature Development,
+  Roadmap Provisioner), create-proposal, update-proposal, create-story, create-task,
+  create-dependency and create-milestone are rejected with HTTP 403 — use
+  `propose-roadmap` there. Never leave an Epic without a Story and a Task.
 - `get-roadmap-graph [--epic-id UUID]` — Fetch an Epic's full Story/Task tree in one call,
   including each item's dependency-derived readiness (READY/BLOCKED) and each Task's
   recent run history. `--epic-id` is optional for a Task-triggered run — when omitted,

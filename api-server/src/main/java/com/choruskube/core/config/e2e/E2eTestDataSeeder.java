@@ -89,12 +89,18 @@ public class E2eTestDataSeeder implements ApplicationRunner {
     // dependencies/priorities/milestones feature's testing strategy a template to start a
     // run against — no template exercised that write surface before this one.
     private static final String GRAPH_ID_ROADMAP_IMPERATIVE_LINKS = "e2e-roadmap-imperative-links";
+    // roadmap_extension_gate: mirrors Feature Development's v43 Final Approval roadmap
+    // configuration (materialize: roadmap_extension) with a mock producer in place of Implement,
+    // so roadmap-extension-gate.spec.ts can drive the anchor/extension/new-Epic flows without a
+    // live Claude call. The anchor Epic is a run input (anchor_epic_id), not guessed by the mock,
+    // so parallel workers never collide over which Epic a given run extends.
+    private static final String GRAPH_ID_ROADMAP_EXTENSION_GATE = "e2e-roadmap-extension-gate";
 
-    // Bumped to 6 so the new roadmap_imperative_links template gets seeded — run()
+    // Bumped to 7 so the new roadmap_extension_gate template gets seeded — run()
     // early-returns when a template at the current VERSION already exists, so an edit
     // without a bump is a no-op against any environment whose database survived the
     // previous boot.
-    private static final int VERSION = 6;
+    private static final int VERSION = 7;
 
     private static final String E2E_REPO_URL = "https://github.com/e2e-test/mock-repo";
     private static final String E2E_SECONDARY_REPO_URL = "https://github.com/e2e-test/mock-frontend";
@@ -188,6 +194,8 @@ public class E2eTestDataSeeder implements ApplicationRunner {
 
         seedRoadmapCandidateGate(mockSuccess, mockGate);
 
+        seedRoadmapExtensionGate(mockSuccess, mockGate);
+
         seedManyArtifacts(mockSuccess);
 
         seedSupervisorTemplate(mockSuccess, mockGate);
@@ -196,7 +204,7 @@ public class E2eTestDataSeeder implements ApplicationRunner {
 
         seedRoadmapImperativeLinks(mockSuccess);
 
-        log.info("E2eTestDataSeeder: seeded 3 git repos, 1 repo group, 11 node definitions, and 15 E2E templates");
+        log.info("E2eTestDataSeeder: seeded 3 git repos, 1 repo group, 11 node definitions, and 16 E2E templates");
     }
 
     private void seedDemoRepoGroup() {
@@ -558,6 +566,40 @@ public class E2eTestDataSeeder implements ApplicationRunner {
         createEdge(t, gate, analyzer, "rejected");
         // Human Gate "approved" has no outgoing edge — it's a terminal_decisions entry
         // instead, so the run completes right here, same as production v13.
+    }
+
+    // --- Roadmap Extension Gate: mirrors Feature Development v43's Final Approval ---
+    //
+    // The mock "draft_extension" node stands in for Implement: it runs mock-agent.sh's
+    // "roadmap_extension" scenario, which anchors {run.anchor_epic_id} and optionally adds a
+    // wholly new top-level Epic when {run.include_new_epic} is "true". "final_approval" mirrors
+    // production's materialize: roadmap_extension config exactly, so the real gate-approval path
+    // (validation, anchor-aware materialization, GitHub issue linkage) is exercised end to end.
+    private void seedRoadmapExtensionGate(NodeDefinition mockSuccess, NodeDefinition mockGate) {
+        GraphTemplate t = createTemplate(
+                GRAPH_ID_ROADMAP_EXTENSION_GATE,
+                "e2e-roadmap-extension-gate",
+                "E2E test: mirrors Feature Development's Final Approval roadmap-extension gate configuration");
+
+        TemplateNode draftExtension = createNode(
+                t,
+                mockSuccess,
+                "draft_extension",
+                true,
+                cmd("roadmap_extension --epic-id {run.anchor_epic_id} --new-epic {run.include_new_epic}"));
+        TemplateNode gate = createNode(
+                t,
+                mockGate,
+                "final_approval",
+                false,
+                "{\"terminal_decisions\":[\"approved\"],\"materialize\":\"roadmap_extension\"}",
+                "[{\"template_node_label\":\"draft_extension\",\"artifacts\":[{\"name\":\"result.txt\",\"description\":\"Mock extension result\"},"
+                        + "{\"name\":\"roadmap_candidates.json\",\"description\":\"Proposed roadmap extension\",\"required\":false}]}]");
+
+        createEdge(t, draftExtension, gate, null);
+        createEdge(t, gate, draftExtension, "rejected");
+        // Human Gate "approved" has no outgoing edge — it's a terminal_decisions entry instead,
+        // same as the roadmap-candidate-gate template above.
     }
 
     // --- Roadmap Imperative Links: single node driving the imperative agent write surface ---
