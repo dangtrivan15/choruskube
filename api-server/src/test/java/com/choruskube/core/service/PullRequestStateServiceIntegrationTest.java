@@ -10,14 +10,22 @@ import com.choruskube.core.BaseTest;
 import com.choruskube.core.credential.GitHubCredentialResolver;
 import com.choruskube.core.exception.GitHubApiException;
 import com.choruskube.core.model.Autopilot;
+import com.choruskube.core.model.Epic;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.GraphTemplate;
 import com.choruskube.core.model.RunPullRequest;
+import com.choruskube.core.model.Story;
+import com.choruskube.core.model.Task;
 import com.choruskube.core.model.WorkflowRun;
+import com.choruskube.core.model.enums.WorkItemStatus;
+import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.AutopilotRepository;
+import com.choruskube.core.repository.EpicRepository;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.RunPullRequestRepository;
+import com.choruskube.core.repository.StoryRepository;
+import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import java.time.Duration;
 import java.time.Instant;
@@ -54,6 +62,9 @@ public class PullRequestStateServiceIntegrationTest extends BaseTest {
 
     private static final int PR_NUMBER = 42;
 
+    /** Wide enough that rows other test classes committed to the shared database cannot crowd this one out. */
+    private static final int WIDE_BATCH = 1000;
+
     @Autowired
     private PullRequestStateService pullRequestStateService;
 
@@ -86,7 +97,18 @@ public class PullRequestStateServiceIntegrationTest extends BaseTest {
     @MockitoBean
     private RunEventPublisher runEventPublisher;
 
+    @Autowired
+    private EpicRepository epicRepo;
+
+    @Autowired
+    private StoryRepository storyRepo;
+
+    @Autowired
+    private TaskRepository taskRepo;
+
     private String ownerRepo;
+    private UUID gitRepoId;
+    private UUID graphTemplateId;
 
     @BeforeEach
     void registerAPullRequestToRefresh() {
@@ -96,13 +118,13 @@ public class PullRequestStateServiceIntegrationTest extends BaseTest {
         template.setName("PR Strictness Template");
         template.setGraphId("pr-strictness-template-" + UUID.randomUUID());
         template.setVersion(1);
-        UUID graphTemplateId = graphTemplateRepo.save(template).getId();
+        graphTemplateId = graphTemplateRepo.save(template).getId();
 
         ownerRepo = "org/backend-api-" + UUID.randomUUID().toString().substring(0, 8);
         GitRepo gitRepo = new GitRepo();
         gitRepo.setName(ownerRepo);
         gitRepo.setUrl("https://github.com/" + ownerRepo + ".git");
-        UUID gitRepoId = gitRepoRepo.save(gitRepo).getId();
+        gitRepoId = gitRepoRepo.save(gitRepo).getId();
 
         WorkflowRun run = new WorkflowRun();
         run.setGraphTemplateId(graphTemplateId);
@@ -190,6 +212,78 @@ public class PullRequestStateServiceIntegrationTest extends BaseTest {
         assertThat(autopilotRepo.count())
                 .as("an installation that never opted in must not be handed a disengaged Autopilot")
                 .isEqualTo(before);
+    }
+
+    /**
+     * A human merges before approving the run's last gate: the tick that sees the merge finds the
+     * run still active, so closing is refused. Nothing re-reads a merged row, so without a later
+     * check the Task would stay in progress for good.
+     */
+    @Test
+    void aRunThatFinishesAfterItsLastMergeWasSeen_closesItsTaskOnALaterTick() {
+        UUID taskId = inProgressTask();
+        WorkflowRun run = runFor(taskId, WorkflowRunStatus.awaiting_human);
+        registerPullRequest(run.getId(), 43);
+        when(gitHubAppService.fetchPullRequest(anyString(), anyString(), anyInt()))
+                .thenReturn(new GitHubAppService.PullRequestSnapshot("closed", Instant.now()));
+
+        pullRequestStateService.refreshBatch(WIDE_BATCH);
+        assertThat(taskRepo.findById(taskId).orElseThrow().getStatus())
+                .as("the run is still active when the merge is seen")
+                .isEqualTo(WorkItemStatus.in_progress);
+
+        run.setStatus(WorkflowRunStatus.completed);
+        runRepo.saveAndFlush(run);
+        pullRequestStateService.refreshBatch(WIDE_BATCH);
+
+        assertThat(taskRepo.findById(taskId).orElseThrow().getStatus()).isEqualTo(WorkItemStatus.done);
+    }
+
+    @Test
+    void aFinishedRunThatOpenedNoPullRequest_leavesItsTaskOpen() {
+        UUID taskId = inProgressTask();
+        runFor(taskId, WorkflowRunStatus.completed);
+
+        pullRequestStateService.refreshBatch(10);
+
+        assertThat(taskRepo.findById(taskId).orElseThrow().getStatus())
+                .as("nothing was merged, so nothing says the work landed")
+                .isEqualTo(WorkItemStatus.in_progress);
+    }
+
+    private UUID inProgressTask() {
+        Epic epic = new Epic();
+        epic.setTitle("PR closure epic");
+        epic.setDescription("d");
+        epic.setSoftwareProjectId(gitRepoId);
+        Story story = new Story();
+        story.setEpicId(epicRepo.saveAndFlush(epic).getId());
+        story.setTitle("PR closure story");
+        story.setDescription("d");
+        Task task = new Task();
+        task.setStoryId(storyRepo.saveAndFlush(story).getId());
+        task.setSoftwareProjectId(gitRepoId);
+        task.setTitle("PR closure task");
+        task.setDescription("d");
+        task.setStatus(WorkItemStatus.in_progress);
+        return taskRepo.saveAndFlush(task).getId();
+    }
+
+    private WorkflowRun runFor(UUID taskId, WorkflowRunStatus status) {
+        WorkflowRun run = new WorkflowRun();
+        run.setGraphTemplateId(graphTemplateId);
+        run.setTaskId(taskId);
+        run.setStatus(status);
+        return runRepo.saveAndFlush(run);
+    }
+
+    private void registerPullRequest(UUID runId, int number) {
+        RunPullRequest pr = new RunPullRequest();
+        pr.setWorkflowRunId(runId);
+        pr.setGitRepoId(gitRepoId);
+        pr.setPrUrl("https://github.com/" + ownerRepo + "/pull/" + number);
+        pr.setPrNumber(number);
+        prRepo.saveAndFlush(pr);
     }
 
     /** Engages through the real path, which is also what creates the row. */

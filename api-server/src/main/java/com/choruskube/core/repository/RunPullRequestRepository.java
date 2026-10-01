@@ -2,7 +2,9 @@ package com.choruskube.core.repository;
 
 import com.choruskube.core.model.RunPullRequest;
 import com.choruskube.core.model.enums.WorkItemStatus;
+import com.choruskube.core.model.enums.WorkflowRunStatus;
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -99,4 +101,25 @@ public interface RunPullRequestRepository extends JpaRepository<RunPullRequest, 
               AND t.status <> :done
             """)
     long countTasksBlockedByUnreadablePullRequests(UUID autopilotId, WorkItemStatus done);
+
+    /**
+     * Finished runs whose pull requests have all merged but whose Task is still open — the Task's
+     * most recent run only, matching what closing it checks.
+     *
+     * <p>A run that finishes after its last merge was seen lands here: that tick's closure was
+     * refused because the run was still active, and a merged row never re-enters {@link
+     * #findUnmergedBatch}. <strong>At least one pull request is required</strong>, because a run
+     * that opened none has nothing whose merge says the work landed.
+     */
+    @Query("""
+            SELECT r.id FROM WorkflowRun r, Task t
+            WHERE r.taskId = t.id AND t.status = :inProgress AND r.status IN :terminal
+              AND EXISTS (SELECT p.id FROM RunPullRequest p WHERE p.workflowRunId = r.id)
+              AND NOT EXISTS (SELECT p.id FROM RunPullRequest p
+                              WHERE p.workflowRunId = r.id AND p.mergedAt IS NULL)
+              AND NOT EXISTS (SELECT n.id FROM WorkflowRun n WHERE n.taskId = t.id AND n.createdAt > r.createdAt)
+            ORDER BY r.id ASC
+            """)
+    List<UUID> findSettledRunsWithOpenTask(
+            WorkItemStatus inProgress, Collection<WorkflowRunStatus> terminal, Pageable pageable);
 }

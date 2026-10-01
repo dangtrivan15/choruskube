@@ -9,6 +9,8 @@ import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.RunPullRequest;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.PullRequestState;
+import com.choruskube.core.model.enums.WorkItemStatus;
+import com.choruskube.core.model.enums.WorkflowRunStatusGroups;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.RunPullRequestRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
@@ -93,7 +95,7 @@ public class PullRequestStateService {
 
     /**
      * One tick: refresh a batch of unmerged PRs, then try to close the Tasks behind any that just
-     * merged.
+     * merged, and behind any finished run whose pull requests all merged before it finished.
      *
      * <p>A failure classified {@link FaultResponse#QUARANTINE} is flagged on its own row and goes no
      * further; the Autopilot is told about it through the status panel, not stopped by it.
@@ -161,6 +163,7 @@ public class PullRequestStateService {
         for (UUID runId : newlyMergedRunIds) {
             closeTaskIfSettled(runId);
         }
+        closeTasksOfRunsThatSettledLate(newlyMergedRunIds, batchSize);
         reasonByGitRepoId.forEach(this::disengageOwnerOf);
         return newlyMerged;
     }
@@ -436,6 +439,26 @@ public class PullRequestStateService {
             return credentialResolver.getTokenForRun(runId);
         } catch (RuntimeException e) {
             throw new GitHubCredentialUnavailableException(ownerRepo, e);
+        }
+    }
+
+    /**
+     * A run that was still active when its last merge was seen had its closure refused, and its rows
+     * never return to the unmerged scan — this is the only later look it gets. Contained, so a
+     * failed lookup cannot cost this tick its Autopilot stops.
+     */
+    private void closeTasksOfRunsThatSettledLate(Set<UUID> alreadyTried, int batchSize) {
+        try {
+            for (UUID runId : prRepo.findSettledRunsWithOpenTask(
+                    WorkItemStatus.in_progress, WorkflowRunStatusGroups.TERMINAL, PageRequest.of(0, batchSize))) {
+                if (!alreadyTried.contains(runId)) {
+                    closeTaskIfSettled(runId);
+                }
+            }
+        } catch (Exception e) {
+            log.warn(
+                    "Looking for runs that settled after their last merge failed; will retry next tick: {}",
+                    e.getMessage());
         }
     }
 

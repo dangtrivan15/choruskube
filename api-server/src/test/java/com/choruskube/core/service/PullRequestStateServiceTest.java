@@ -127,6 +127,36 @@ class PullRequestStateServiceTest {
         verify(taskService, never()).closeForMergedPullRequests(any());
     }
 
+    @Test
+    void refreshBatch_aRunThatSettledAfterItsLastMerge_closesItsTaskWithNoNewMerge() {
+        RunPullRequest alreadyMerged = pr(7);
+        alreadyMerged.setMergedAt(Instant.parse("2026-08-16T10:00:00Z"));
+        stubBatch();
+        stubRepoAndRun();
+        when(prRepo.findSettledRunsWithOpenTask(any(), any(), any(Pageable.class)))
+                .thenReturn(List.of(runId));
+        when(prRepo.findByWorkflowRunId(runId)).thenReturn(List.of(alreadyMerged));
+
+        int merged = newService().refreshBatch(10);
+
+        assertThat(merged).isZero();
+        verify(taskService).closeForMergedPullRequests(taskId);
+    }
+
+    @Test
+    void refreshBatch_theLateSettlementLookupFailing_stillDisengages() {
+        stubBatch(pr(42));
+        stubRepoAndRun();
+        when(gitHubAppService.fetchPullRequest(anyString(), anyString(), anyInt()))
+                .thenThrow(new GitHubApiException(401, "org/backend-api", 42));
+        when(prRepo.findSettledRunsWithOpenTask(any(), any(), any(Pageable.class)))
+                .thenThrow(new IllegalStateException("connection reset"));
+
+        newService().refreshBatch(10);
+
+        verify(safetyValve).disengageForExternalFailure(eq("git_repo"), eq(gitRepoId), any());
+    }
+
     // -----------------------------------------------------------------------------------
     // The strictness rule: if we can no longer tell what is merged, stop automating
     // -----------------------------------------------------------------------------------
