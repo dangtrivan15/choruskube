@@ -8,7 +8,6 @@ A **Git Repo** is the primary unit of repository configuration in ChorusKube. Ea
 
 - Points to a GitHub repository (owner/name)
 - Gets its own **Kubernetes namespace** with provisioned RBAC and network policies
-- Has an optional Docker registry mirror configuration for faster image pulls
 - Tracks a **provisioning status** — repos must be fully provisioned before they can be used in a run
 
 ### Namespace and RBAC per Repo
