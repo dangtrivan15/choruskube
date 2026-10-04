@@ -589,8 +589,9 @@ func resolveResource(override *coreexec.AgentResources, field func(coreexec.Agen
 // --- Template scheduling ---
 
 // applyTemplateScheduling copies the operator-supplied PodTemplate's scheduling fields --
-// nodeSelector, affinity, tolerations, topologySpreadConstraints, priorityClassName -- onto every
-// agent pod, DinD or not. As with runtimeClassName/hostUsers in addDindSupport, a field the
+// nodeSelector, affinity, tolerations, topologySpreadConstraints, priorityClassName -- and its
+// hostAliases (how an agent resolves names, e.g. a registry reached the way outsiders reach it)
+// onto every agent pod, DinD or not. As with runtimeClassName/hostUsers in addDindSupport, a field the
 // template sets (non-empty) replaces the inline value whole, never merged; a field it leaves unset
 // keeps the inline value. No-op when Config.AgentPodTemplateName is empty; a configured template
 // that cannot be loaded fails the launch rather than letting it run unsteered.
@@ -621,6 +622,9 @@ func (k *KubernetesExecutor) applyTemplateScheduling(ctx context.Context, job *b
 	}
 	if src.PriorityClassName != "" {
 		podSpec.PriorityClassName = src.PriorityClassName
+	}
+	if len(src.HostAliases) > 0 {
+		podSpec.HostAliases = src.HostAliases
 	}
 	return nil
 }
