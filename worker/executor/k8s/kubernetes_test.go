@@ -1320,35 +1320,3 @@ func hasEnv(env []corev1.EnvVar, name, value string) bool {
 	}
 	return false
 }
-
-func TestKubernetesExecutor_ApplyTemplateScheduling_CopiesHostAliases(t *testing.T) {
-	fakeClient := fake.NewSimpleClientset()
-	templateNamespace := "choruskube"
-	templateName := "choruskube-agent-pod-template"
-	createTemplateWrapper(t, fakeClient, templateNamespace, templateName, `
-apiVersion: v1
-kind: PodTemplate
-template:
-  spec:
-    hostAliases:
-      - ip: 10.0.0.80
-        hostnames: [registry.example.com]
-    containers:
-      - name: agent
-        image: placeholder
-`)
-	exec := NewKubernetesExecutor(fakeClient, Config{
-		Namespace:            testNamespace,
-		AgentPodTemplateName: templateName,
-		TemplateNamespace:    templateNamespace,
-	})
-	job := &batchv1.Job{Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
-		HostAliases: []corev1.HostAlias{{IP: "10.9.9.9", Hostnames: []string{"inline.example.com"}}},
-	}}}}
-
-	require.NoError(t, exec.applyTemplateScheduling(context.Background(), job))
-
-	// Set by the template: replaced whole, like the scheduling fields.
-	assert.Equal(t, []corev1.HostAlias{{IP: "10.0.0.80", Hostnames: []string{"registry.example.com"}}},
-		job.Spec.Template.Spec.HostAliases)
-}

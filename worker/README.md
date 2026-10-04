@@ -133,11 +133,9 @@ else in the template is ignored.
 
 | Template fields | Applied to |
 |-----------------|------------|
-| `nodeSelector`, `affinity`, `tolerations`, `topologySpreadConstraints`, `priorityClassName`, `hostAliases` | Every agent pod. |
+| `nodeSelector`, `affinity`, `tolerations`, `topologySpreadConstraints`, `priorityClassName` | Every agent pod. |
 | `runtimeClassName`, `hostUsers`, the `dind` init container, the `agent` container's `env` and `volumeMounts`, the pod's `volumes` | Only pods for nodes that request Docker. |
 
-`hostAliases` lets an operator decide how agents resolve a name, for example a registry that
-agents should reach through the same public entry as any outsider rather than an in-cluster one.
 Scheduling fields reach every pod because they decide which nodes may run an agent at all; the
 Docker parts stay on Docker nodes because no other agent needs the sidecar or its runtime. A field
 the template sets replaces the executor's own value outright rather than merging with it, so the
