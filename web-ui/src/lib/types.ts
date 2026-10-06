@@ -348,6 +348,21 @@ export interface RoadmapCandidatesDocument {
 }
 
 /**
+ * `POST /roadmap/import` on a valid document: what it describes and, unless it was a dry run,
+ * the Epics it created. An invalid document is a 400 `{ valid: false, errors }` instead.
+ */
+export interface RoadmapImportResponse {
+  dryRun: boolean;
+  milestones: number;
+  newEpics: number;
+  newStories: number;
+  newTasks: number;
+  existingItems: number;
+  dependencies: number;
+  createdEpicIds: string[];
+}
+
+/**
  * Why a Supervisor gate is open and who opened it, mirroring the api-server's
  * EscalationContext record (Jackson camelCase). `category` and `summary` are
  * parsed from the escalating node's `escalation.md` front matter server-side
