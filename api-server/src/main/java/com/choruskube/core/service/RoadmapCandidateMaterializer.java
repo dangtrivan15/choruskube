@@ -25,4 +25,11 @@ public interface RoadmapCandidateMaterializer {
      * @return a summary of what was created and what was skipped
      */
     MaterializationSummary materialize(UUID runId, RoadmapCandidatesDocument document, RoadmapMaterializeMode mode);
+
+    /**
+     * Materializes {@code document} through {@code writer}, which decides the target project and
+     * the authority each row is created under. Never files GitHub issues — that belongs to a
+     * {@code roadmap_extension} gate alone.
+     */
+    MaterializationSummary materialize(RoadmapItemWriter writer, RoadmapCandidatesDocument document);
 }

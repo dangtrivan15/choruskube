@@ -789,4 +789,41 @@ class DefaultRoadmapCandidateMaterializerTest {
 
         verifyNoInteractions(gitHubAppService, gitHubCredentialResolver, taskGithubIssueRepository);
     }
+
+    @Test
+    void writerEntry_writesOnlyThroughTheWriter_andNeverFilesGithubIssues() {
+        RoadmapItemWriter writer = Mockito.mock(RoadmapItemWriter.class);
+        UUID epicId = UUID.randomUUID();
+        UUID storyId = UUID.randomUUID();
+        UUID taskId = UUID.randomUUID();
+        UUID milestoneId = UUID.randomUUID();
+        when(writer.softwareProjectId()).thenReturn(softwareProjectId);
+        when(milestoneService.findOrCreate(eq(softwareProjectId), eq("Q4"), any(), any()))
+                .thenReturn(milestoneResponse(milestoneId, "Q4"));
+        when(writer.createEpic(any())).thenReturn(epicResponse(epicId));
+        when(writer.createStory(eq(epicId), any())).thenReturn(storyResponse(storyId, epicId));
+        when(writer.createTask(eq(epicId), eq(storyId), any())).thenReturn(taskResponse(taskId, storyId, "T", "d"));
+
+        MaterializationSummary summary = materializer.materialize(
+                writer,
+                document(
+                        List.of(new CandidateMilestone("m1", "Q4", null, null)),
+                        List.of(epic(
+                                "E",
+                                "High",
+                                List.of(story("S", List.of(task("T", "t", null)), null, null)),
+                                "e",
+                                "m1")),
+                        List.of(new CandidateDependency("e", "t"))));
+
+        assertThat(summary.errors()).isEmpty();
+        assertThat(summary.createdEpicIds()).containsExactly(epicId);
+        assertThat(summary.createdTaskIds()).containsExactly(taskId);
+        assertThat(summary.createdDependencyCount()).isEqualTo(1);
+        ArgumentCaptor<InternalCreateEpicRequest> epicReq = ArgumentCaptor.forClass(InternalCreateEpicRequest.class);
+        verify(writer).createEpic(epicReq.capture());
+        assertThat(epicReq.getValue().milestoneId()).isEqualTo(milestoneId);
+        verify(writer).createDependency(new InternalCreateDependencyRequest("epic", epicId, "task", taskId));
+        verifyNoInteractions(internalRunService, gitHubAppService, taskGithubIssueRepository);
+    }
 }
