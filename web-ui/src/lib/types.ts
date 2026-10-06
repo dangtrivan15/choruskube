@@ -918,6 +918,27 @@ export interface CreateDependencyRequest {
 }
 
 /**
+ * Matches the backend EpicDependencyResponse record — one edge with the Epic
+ * itself as an endpoint (GET /api/v1/epics/{id}/dependencies). `itemType`,
+ * `itemId` and `title` describe the other endpoint; `epicId`/`epicTitle` its
+ * owning Epic (the item itself when it is an Epic).
+ */
+export interface EpicDependencyResponse {
+  edgeId: string;
+  /**
+   * The requested Epic's OWN role: `BLOCKED` = the other item blocks it. The
+   * reverse subject of `ExternalBlockerRef.direction`, which names the outside
+   * item's role.
+   */
+  direction: "BLOCKING" | "BLOCKED";
+  itemType: BlockableItemType;
+  itemId: string;
+  title: string;
+  epicId: string;
+  epicTitle: string;
+}
+
+/**
  * Matches the backend BlockingChainNode record — one node in a blocking-chain
  * tree: an item that (transitively) blocks its parent, plus its own upstream
  * blockers, recursively.

@@ -2,15 +2,22 @@ package com.choruskube.core.service;
 
 import com.choruskube.core.dto.CreateDependencyRequest;
 import com.choruskube.core.dto.DependencyEdgeResponse;
+import com.choruskube.core.dto.EpicDependencyResponse;
 import com.choruskube.core.exception.BadRequestException;
 import com.choruskube.core.exception.DependencyCycleException;
 import com.choruskube.core.exception.NotFoundException;
+import com.choruskube.core.model.Epic;
+import com.choruskube.core.model.Story;
+import com.choruskube.core.model.Task;
 import com.choruskube.core.model.WorkItemDependency;
 import com.choruskube.core.model.enums.BlockableItemType;
+import com.choruskube.core.model.enums.BlockerDirection;
 import com.choruskube.core.repository.EpicRepository;
 import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkItemDependencyRepository;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -147,6 +154,80 @@ public class DefaultWorkItemDependencyService implements WorkItemDependencyServi
         DependencyEdgeResponse response = toResponse(edge);
         repo.delete(edge);
         eventPublisher.publishDependencyChanged(response, "deleted");
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<EpicDependencyResponse> listForEpic(UUID epicId) {
+        assertItemExists(BlockableItemType.epic, epicId);
+        authService.checkOrgAccess(BlockableItemType.epic.name(), epicId);
+
+        List<UUID> ids = List.of(epicId);
+        List<EpicDependencyResponse> result = new ArrayList<>();
+        for (WorkItemDependency edge : repo.findByBlockingItemIdInOrBlockedItemIdIn(ids, ids)) {
+            boolean epicBlocks = isEpic(edge.getBlockingItemType(), edge.getBlockingItemId(), epicId);
+            boolean epicBlocked = isEpic(edge.getBlockedItemType(), edge.getBlockedItemId(), epicId);
+            // The finder matches ids regardless of type, so a row can reach here with the Epic on
+            // neither side.
+            if (epicBlocks == epicBlocked) {
+                continue;
+            }
+            result.add(
+                    epicBlocks
+                            ? describe(
+                                    edge.getId(),
+                                    BlockerDirection.BLOCKING,
+                                    edge.getBlockedItemType(),
+                                    edge.getBlockedItemId())
+                            : describe(
+                                    edge.getId(),
+                                    BlockerDirection.BLOCKED,
+                                    edge.getBlockingItemType(),
+                                    edge.getBlockingItemId()));
+        }
+        result.sort(Comparator.comparing(EpicDependencyResponse::direction)
+                .thenComparing(EpicDependencyResponse::epicTitle, String.CASE_INSENSITIVE_ORDER)
+                .thenComparing(EpicDependencyResponse::title, String.CASE_INSENSITIVE_ORDER)
+                .thenComparing(EpicDependencyResponse::edgeId));
+        return result;
+    }
+
+    private static boolean isEpic(BlockableItemType type, UUID id, UUID epicId) {
+        return type == BlockableItemType.epic && id.equals(epicId);
+    }
+
+    /** Resolves the endpoint at the far side of an edge from the Epic being listed. */
+    private EpicDependencyResponse describe(UUID edgeId, BlockerDirection direction, BlockableItemType type, UUID id) {
+        // Checked per endpoint, not only through the listed Epic: an edge written around create()'s
+        // guard would otherwise expose another org's item title.
+        authService.checkOrgAccess(type.name(), id);
+        return switch (type) {
+            case epic -> {
+                Epic epic = findEpic(id);
+                yield new EpicDependencyResponse(
+                        edgeId, direction, type.name(), id, epic.getTitle(), epic.getId(), epic.getTitle());
+            }
+            case story -> {
+                Story story = findStory(id);
+                Epic epic = findEpic(story.getEpicId());
+                yield new EpicDependencyResponse(
+                        edgeId, direction, type.name(), id, story.getTitle(), epic.getId(), epic.getTitle());
+            }
+            case task -> {
+                Task task = taskRepo.findById(id).orElseThrow(() -> new NotFoundException("Task not found: " + id));
+                Epic epic = findEpic(findStory(task.getStoryId()).getEpicId());
+                yield new EpicDependencyResponse(
+                        edgeId, direction, type.name(), id, task.getTitle(), epic.getId(), epic.getTitle());
+            }
+        };
+    }
+
+    private Epic findEpic(UUID id) {
+        return epicRepo.findById(id).orElseThrow(() -> new NotFoundException("Epic not found: " + id));
+    }
+
+    private Story findStory(UUID id) {
+        return storyRepo.findById(id).orElseThrow(() -> new NotFoundException("Story not found: " + id));
     }
 
     @Override

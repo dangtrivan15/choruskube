@@ -2,7 +2,9 @@ package com.choruskube.core.service;
 
 import com.choruskube.core.dto.CreateDependencyRequest;
 import com.choruskube.core.dto.DependencyEdgeResponse;
+import com.choruskube.core.dto.EpicDependencyResponse;
 import com.choruskube.core.model.enums.BlockableItemType;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -23,6 +25,13 @@ public interface WorkItemDependencyService {
     DependencyEdgeResponse createForRun(CreateDependencyRequest request, UUID runId);
 
     void delete(UUID id);
+
+    /**
+     * Every edge with the Epic itself as an endpoint — edges on its Stories/Tasks are excluded —
+     * each resolved to the other endpoint's title and owning Epic. Throws {@code
+     * NotFoundException} for an unknown Epic.
+     */
+    List<EpicDependencyResponse> listForEpic(UUID epicId);
 
     /**
      * Removes every dependency edge referencing the given item, on either side. Used by {@link
