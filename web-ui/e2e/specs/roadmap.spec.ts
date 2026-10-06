@@ -7,15 +7,23 @@ import type { RoadmapPage } from "../pages/roadmap.page";
  * it on page 1 is also `tier`. Deliberately not "is row 0" — another spec's fixture, or an
  * unculled Epic from an earlier failed attempt at this very test, may share the tier, and a
  * tie within a tier is not a sort bug. A row of any *other* tier ahead of ours would be.
+ *
+ * Wrapped in `toPass()`: `useEpics` sets `placeholderData: (prev) => prev`, so right after
+ * `selectSort` the list still renders the *previous* sort's order for one render — reading
+ * it with a one-shot `allTextContents()` races that placeholder frame instead of the
+ * resorted response. Retrying until the rows actually reflect `tier` avoids asserting
+ * against that transient, pre-refetch frame.
  */
 async function assertSortedToFrontOfTier(roadmapPage: RoadmapPage, epicTitle: string, tier: "High" | "Low") {
-  const rowTexts = await roadmapPage.epicItems.allTextContents();
-  const tiers = await roadmapPage.epicPriorityTiers();
-  const targetIndex = rowTexts.findIndex((text) => text.includes(epicTitle));
-  expect(targetIndex, `${epicTitle} should be visible on page 1`).toBeGreaterThanOrEqual(0);
-  for (let i = 0; i < targetIndex; i++) {
-    expect(tiers[i], `row ${i} ("${rowTexts[i]}") outranks ${epicTitle} under a ${tier} sort`).toContain(tier);
-  }
+  await expect(async () => {
+    const rowTexts = await roadmapPage.epicItems.allTextContents();
+    const tiers = await roadmapPage.epicPriorityTiers();
+    const targetIndex = rowTexts.findIndex((text) => text.includes(epicTitle));
+    expect(targetIndex, `${epicTitle} should be visible on page 1`).toBeGreaterThanOrEqual(0);
+    for (let i = 0; i < targetIndex; i++) {
+      expect(tiers[i], `row ${i} ("${rowTexts[i]}") outranks ${epicTitle} under a ${tier} sort`).toContain(tier);
+    }
+  }).toPass();
 }
 
 test.describe("Roadmap drill-down", () => {
