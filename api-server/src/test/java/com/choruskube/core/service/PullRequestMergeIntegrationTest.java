@@ -19,6 +19,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.choruskube.core.BaseTest;
+import com.choruskube.core.CommittedFixtureCleaner;
 import com.choruskube.core.config.GraphIds;
 import com.choruskube.core.credential.GitHubCredentialResolver;
 import com.choruskube.core.exception.GitHubMergeRefusedException;
@@ -46,12 +47,14 @@ import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.UUID;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
@@ -61,6 +64,12 @@ import org.springframework.test.web.servlet.ResultActions;
  * real database — only GitHub, the credential seam, the audit sink and Temporal are stubbed. Not
  * {@code @Transactional}: the merge outcome is recorded in its own transaction, and what these
  * tests prove is what a separate request observes afterwards.
+ *
+ * <p>Because it commits, every row it creates is removed by hand in {@code @AfterEach} via {@link
+ * CommittedFixtureCleaner} — otherwise {@code rereviewDecision_neverTouchesGitHubOrTheCredential}
+ * leaves its pull requests permanently unmerged and due, and the next class to scan for unmerged
+ * rows against the shared container (such as {@code PullRequestStateServiceIntegrationTest})
+ * reads them too.
  */
 @AutoConfigureMockMvc
 class PullRequestMergeIntegrationTest extends BaseTest {
@@ -103,6 +112,10 @@ class PullRequestMergeIntegrationTest extends BaseTest {
     @Autowired
     private RunPullRequestRepository prRepo;
 
+    @Autowired
+    private JdbcTemplate jdbc;
+
+    private CommittedFixtureCleaner cleaner;
     private WorkflowStub stub;
     private UUID runId;
     private UUID gateExecId;
@@ -113,12 +126,15 @@ class PullRequestMergeIntegrationTest extends BaseTest {
 
     @BeforeEach
     void setUp() {
+        cleaner = new CommittedFixtureCleaner(jdbc);
         stub = mock(WorkflowStub.class);
         when(workflowClient.newUntypedWorkflowStub(anyString())).thenReturn(stub);
         when(credentialResolver.getTokenForRun(any())).thenReturn(TOKEN);
 
         GitRepo repoA = saveRepo("merge-it-a");
         GitRepo repoB = saveRepo("merge-it-b");
+        cleaner.trackSoftwareProject(repoA.getId());
+        cleaner.trackSoftwareProject(repoB.getId());
         ownerA = RepoNameUtil.deriveOwnerRepoName(repoA.getUrl());
         ownerB = RepoNameUtil.deriveOwnerRepoName(repoB.getUrl());
 
@@ -136,7 +152,7 @@ class PullRequestMergeIntegrationTest extends BaseTest {
         run.setStatus(WorkflowRunStatus.running);
         run.setExternalRunId("merge-it-" + UUID.randomUUID());
         run.setInputs("{\"software_project_id\":\"" + repoA.getId() + "\"}");
-        runId = runRepo.save(run).getId();
+        runId = cleaner.trackWorkflowRun(runRepo.save(run).getId());
 
         NodeExecution exec = new NodeExecution();
         exec.setWorkflowRunId(runId);
@@ -252,6 +268,11 @@ class PullRequestMergeIntegrationTest extends BaseTest {
 
         verifyNoInteractions(gitHubAppService, credentialResolver);
         assertThat(prRepo.findById(prA.getId()).orElseThrow().getMergedAt()).isNull();
+    }
+
+    @AfterEach
+    void removeEverythingThisTestCommitted() {
+        cleaner.deleteAll();
     }
 
     // --- helpers ---
