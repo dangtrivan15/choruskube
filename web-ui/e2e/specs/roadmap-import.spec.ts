@@ -36,7 +36,8 @@ test.describe("Roadmap JSON import", () => {
           key: "new",
           title: epicTitle,
           description: "Imported from JSON",
-          priority: "High",
+          // No priority: roadmap.spec.ts's priority sort needs its own Epics to be the only
+          // non-medium ones org-wide, and this Epic is never deleted.
           milestone: "m",
           stories: [
             {
