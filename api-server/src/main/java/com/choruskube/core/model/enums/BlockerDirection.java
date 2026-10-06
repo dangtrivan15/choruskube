@@ -1,11 +1,14 @@
 package com.choruskube.core.model.enums;
 
 /**
- * The role the OUT-OF-Epic item plays relative to the in-Epic item it connects to on an {@link
- * com.choruskube.core.dto.ExternalBlockerRef}: {@code BLOCKING} if the external item blocks the in-Epic item, {@code
- * BLOCKED} if the in-Epic item blocks the external item. Derived at read time from which side
- * ({@code blockingItemId} vs {@code blockedItemId}) of the underlying {@code work_item_dependency}
- * row the in-Epic item occupies — never persisted.
+ * The role one endpoint of a {@code work_item_dependency} row plays, derived at read time from
+ * which side ({@code blockingItemId} vs {@code blockedItemId}) it occupies — never persisted.
+ *
+ * <p>Whose role it is depends on the carrying record. On a {@link
+ * com.choruskube.core.dto.ExternalBlockerRef} it is the OUT-OF-Epic item's: {@code BLOCKING} if
+ * the external item blocks the in-Epic item. On a {@link
+ * com.choruskube.core.dto.EpicDependencyResponse} it is the requested Epic's own: {@code BLOCKED}
+ * if the other item blocks that Epic.
  */
 public enum BlockerDirection {
     BLOCKING,

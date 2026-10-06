@@ -1,5 +1,6 @@
 package com.choruskube.core.controller;
 
+import com.choruskube.core.dto.EpicDependencyResponse;
 import com.choruskube.core.dto.EpicMilestoneUpdateRequest;
 import com.choruskube.core.dto.EpicPriorityUpdateRequest;
 import com.choruskube.core.dto.EpicRequest;
@@ -10,7 +11,9 @@ import com.choruskube.core.dto.EpicUpdateRequest;
 import com.choruskube.core.model.enums.Priority;
 import com.choruskube.core.model.enums.Readiness;
 import com.choruskube.core.service.EpicService;
+import com.choruskube.core.service.WorkItemDependencyService;
 import jakarta.validation.Valid;
+import java.util.List;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -35,9 +38,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class EpicController {
 
     private final EpicService service;
+    private final WorkItemDependencyService dependencyService;
 
-    public EpicController(EpicService service) {
+    public EpicController(EpicService service, WorkItemDependencyService dependencyService) {
         this.service = service;
+        this.dependencyService = dependencyService;
     }
 
     @PreAuthorize("@orgSecurity.canOperate()")
@@ -61,6 +66,12 @@ public class EpicController {
     @GetMapping("/{id}")
     public EpicResponse get(@PathVariable UUID id) {
         return service.get(id);
+    }
+
+    @PreAuthorize("@orgSecurity.canRead()")
+    @GetMapping("/{id}/dependencies")
+    public List<EpicDependencyResponse> dependencies(@PathVariable UUID id) {
+        return dependencyService.listForEpic(id);
     }
 
     @PreAuthorize("@orgSecurity.canAdmin()")

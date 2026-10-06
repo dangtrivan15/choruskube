@@ -41,6 +41,7 @@ import TargetDateField from "@/components/roadmap/TargetDateField";
 import LevelBadge from "@/components/roadmap/LevelBadge";
 import StageBadge from "@/components/roadmap/StageBadge";
 import RollOutPrompt from "@/components/roadmap/RollOutPrompt";
+import EpicDependenciesSection from "@/components/roadmap/EpicDependenciesSection";
 import PageHeader from "@/components/layout/PageHeader";
 import { useNavigate } from "react-router";
 
@@ -207,6 +208,9 @@ export default function EpicDetailPage() {
           </div>
         </div>
       </div>
+
+      {/* Keyed so a pick half-made on one Epic is not carried to the next when navigating between them. */}
+      <EpicDependenciesSection key={epic.id} epicId={epic.id} />
 
       <div data-testid="epic-detail-description">
         <h3 className="text-sm font-medium text-muted-foreground mb-2">Description</h3>

@@ -1,7 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 import { createTestHookWrapper } from "@/__tests__/test-utils";
-import type { CreateDependencyRequest, DependencyEdgeResponse } from "@/lib/types";
+import type {
+  CreateDependencyRequest,
+  DependencyEdgeResponse,
+  EpicDependencyResponse,
+} from "@/lib/types";
 
 vi.mock("@/lib/api", () => ({
   api: {
@@ -34,9 +38,14 @@ vi.mock("@/lib/toast-messages", () => ({
 
 import { api } from "@/lib/api";
 import { showMutationToast } from "@/lib/toast-messages";
-import { useCreateDependency, useDeleteDependency } from "@/hooks/useDependencies";
+import {
+  useCreateDependency,
+  useDeleteDependency,
+  useEpicDependencies,
+} from "@/hooks/useDependencies";
 
 const mockApi = api as unknown as {
+  get: ReturnType<typeof vi.fn>;
   post: ReturnType<typeof vi.fn>;
   delete: ReturnType<typeof vi.fn>;
 };
@@ -74,6 +83,27 @@ describe("useCreateDependency", () => {
 
     expect(mockApi.post).toHaveBeenCalledWith("/dependencies", createRequest);
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["epics", "epic-1", "graph"] });
+  });
+
+  it("also refreshes an Epic named as an endpoint, so the far side's lists update", async () => {
+    mockApi.post.mockResolvedValue(edge);
+    const { wrapper, queryClient } = createTestHookWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    const { result } = renderHook(() => useCreateDependency("epic-1"), { wrapper });
+    result.current.mutate({
+      blockingItemType: "epic",
+      blockingItemId: "epic-2",
+      blockedItemType: "epic",
+      blockedItemId: "epic-1",
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    for (const id of ["epic-1", "epic-2"]) {
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["epics", id, "graph"] });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["epics", id, "dependencies"] });
+    }
   });
 
   it("does not invalidate the graph query when the mutation fails", async () => {
@@ -128,12 +158,28 @@ describe("useDeleteDependency", () => {
     const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
 
     const { result } = renderHook(() => useDeleteDependency("epic-1"), { wrapper });
-    result.current.mutate("dep-1");
+    result.current.mutate({ id: "dep-1" });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
     expect(mockApi.delete).toHaveBeenCalledWith("/dependencies/dep-1");
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["epics", "epic-1", "graph"] });
+  });
+
+  it("refreshes the Epic at the far end of the edge when one is given", async () => {
+    mockApi.delete.mockResolvedValue(undefined);
+    const { wrapper, queryClient } = createTestHookWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    const { result } = renderHook(() => useDeleteDependency("epic-1"), { wrapper });
+    result.current.mutate({ id: "dep-1", otherEpicId: "epic-2" });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    for (const id of ["epic-1", "epic-2"]) {
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["epics", id, "graph"] });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["epics", id, "dependencies"] });
+    }
   });
 
   it("does not invalidate the graph query when the mutation fails", async () => {
@@ -142,10 +188,42 @@ describe("useDeleteDependency", () => {
     const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
 
     const { result } = renderHook(() => useDeleteDependency("epic-1"), { wrapper });
-    result.current.mutate("dep-1");
+    result.current.mutate({ id: "dep-1" });
 
     await waitFor(() => expect(result.current.isError).toBe(true));
 
     expect(invalidateSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("useEpicDependencies", () => {
+  it("fetches the Epic's own dependency edges", async () => {
+    const rows: EpicDependencyResponse[] = [
+      {
+        edgeId: "dep-1",
+        direction: "BLOCKED",
+        itemType: "epic",
+        itemId: "epic-2",
+        title: "Auth Overhaul",
+        epicId: "epic-2",
+        epicTitle: "Auth Overhaul",
+      },
+    ];
+    mockApi.get.mockResolvedValue(rows);
+    const { wrapper } = createTestHookWrapper();
+
+    const { result } = renderHook(() => useEpicDependencies("epic-1"), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockApi.get).toHaveBeenCalledWith("/epics/epic-1/dependencies");
+    expect(result.current.data).toEqual(rows);
+  });
+
+  it("does not fetch without an Epic id", () => {
+    const { wrapper } = createTestHookWrapper();
+
+    renderHook(() => useEpicDependencies(undefined), { wrapper });
+
+    expect(mockApi.get).not.toHaveBeenCalled();
   });
 });
