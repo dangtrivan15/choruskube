@@ -617,4 +617,62 @@ describe("HumanGatePanel", () => {
       );
     });
   });
+
+  describe("merge-on-approval notice", () => {
+    const pr = {
+      id: "pr-1",
+      workflowRunId: "run-1",
+      gitRepoId: "repo-1",
+      nodeExecutionId: null,
+      prUrl: "https://github.com/org/repo/pull/1",
+      prNumber: 1,
+      title: "feat: x",
+      repoName: "repo",
+      repoUrl: "https://github.com/org/repo",
+      createdAt: new Date().toISOString(),
+      state: "open" as const,
+      mergedAt: null,
+    };
+
+    it("renders the notice with one item per PR when mergeOnApproval is set", () => {
+      renderWithProviders(
+        <HumanGatePanel
+          {...defaultProps}
+          mergeOnApproval={{ method: "squash", pullRequests: [pr] }}
+        />
+      );
+
+      expect(screen.getByTestId("merge-on-approval-notice")).toBeInTheDocument();
+      expect(screen.getByText(/repo #1/)).toBeInTheDocument();
+    });
+
+    it("renders no notice when mergeOnApproval is null", () => {
+      renderWithProviders(<HumanGatePanel {...defaultProps} mergeOnApproval={null} />);
+
+      expect(screen.queryByTestId("merge-on-approval-notice")).not.toBeInTheDocument();
+    });
+
+    it("renders no notice when the pull request list is empty", () => {
+      renderWithProviders(
+        <HumanGatePanel
+          {...defaultProps}
+          mergeOnApproval={{ method: "squash", pullRequests: [] }}
+        />
+      );
+
+      expect(screen.queryByTestId("merge-on-approval-notice")).not.toBeInTheDocument();
+    });
+
+    it("renders no notice on an escalation gate even when mergeOnApproval is set", () => {
+      renderWithProviders(
+        <HumanGatePanel
+          {...defaultProps}
+          decisionOptions={["route:implement", "route:supervisor"]}
+          mergeOnApproval={{ method: "squash", pullRequests: [pr] }}
+        />
+      );
+
+      expect(screen.queryByTestId("merge-on-approval-notice")).not.toBeInTheDocument();
+    });
+  });
 });

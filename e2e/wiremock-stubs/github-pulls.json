@@ -1,0 +1,64 @@
+{
+  "mappings": [
+    {
+      "priority": 1,
+      "request": {
+        "method": "GET",
+        "urlPathPattern": "/repos/[^/]+/mock-repo/pulls/7001",
+        "headers": {
+          "Authorization": { "contains": "Bearer " }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "body": "{\"state\":\"open\",\"merged\":false,\"merged_at\":null,\"draft\":false,\"mergeable\":true,\"head\":{\"sha\":\"e2e0000000000000000000000000000000007001\"},\"base\":{\"ref\":\"main\"}}"
+      }
+    },
+    {
+      "priority": 1,
+      "request": {
+        "method": "GET",
+        "urlPathPattern": "/repos/[^/]+/mock-frontend/pulls/7001",
+        "headers": {
+          "Authorization": { "contains": "Bearer " }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "body": "{\"state\":\"closed\",\"merged\":true,\"merged_at\":\"2026-01-01T00:00:00Z\",\"draft\":false,\"mergeable\":null,\"head\":{\"sha\":\"e2e1111111111111111111111111111111117001\"},\"base\":{\"ref\":\"main\"}}"
+      }
+    },
+    {
+      "priority": 1,
+      "request": {
+        "method": "GET",
+        "urlPathPattern": "/repos/[^/]+/[^/]+/pulls/7405",
+        "headers": {
+          "Authorization": { "contains": "Bearer " }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "body": "{\"state\":\"open\",\"merged\":false,\"merged_at\":null,\"draft\":false,\"mergeable\":true,\"head\":{\"sha\":\"e2e4444444444444444444444444444444447405\"},\"base\":{\"ref\":\"main\"}}"
+      }
+    },
+    {
+      "priority": 10,
+      "request": {
+        "method": "GET",
+        "urlPathPattern": "/repos/[^/]+/[^/]+/pulls/[0-9]+",
+        "headers": {
+          "Authorization": { "contains": "Bearer " }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "body": "{\"state\":\"open\",\"merged\":false,\"merged_at\":null,\"draft\":false,\"mergeable\":null,\"head\":{\"sha\":\"e2e9999999999999999999999999999999999999\"},\"base\":{\"ref\":\"main\"}}"
+      }
+    }
+  ]
+}

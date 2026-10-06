@@ -139,6 +139,38 @@ automatically once the Task reaches `done`. Issue filing and closing are both
 best-effort: a failure is recorded alongside the gate's result rather than blocking
 Task creation or completion.
 
+## Merging pull requests on approval
+
+A human gate can declare `merge_pull_requests: <merge|squash|rebase>` in its config —
+Feature Development's Final Approval declares `squash`. The method only takes effect
+on the `approved` decision; graph validation rejects the key on a node with no such
+decision, and an unknown method.
+
+On `approved`, the approval request merges the run's registered pull requests
+synchronously, before any decision state is persisted: validate the decision, validate
+any roadmap proposal (no writes), merge the pull requests, record the merge outcome,
+create the roadmap items, then signal the workflow — merging runs before the
+non-retriable roadmap write because the merge step is retry-safe and that one isn't.
+
+Merging is **inspect, then merge**. A row the database already records as merged is
+skipped with no GitHub call; every other row is read from GitHub first — already
+merged or closed-without-merging rows are skipped, a draft or conflicting row refuses
+the whole approval before anything is merged. Only then are the remaining rows merged,
+in registration order, each pinned to the head commit seen during inspection, stopping
+at the first refusal. GitHub's own merged/closed state is the idempotency key, so a
+retry after a partial failure merges only what still needs it, and a retry once every
+row is already merged touches neither GitHub nor a credential.
+
+A merge failure raises a 409 summarizing what merged, what blocked and why, and that
+the gate is still open; the node's claim is released so the request is retryable, and
+nothing about the decision is persisted. A merge that actually happened is always
+audited — even when that same attempt is then refused on a later pull request — since
+a merge is irreversible and is attributed to whoever's attempt performed it.
+
+Pull request rows, Task closure and run-branch cleanup are unchanged: a merge
+timestamp written by approval takes a row out of the reconciler's unmerged scan the
+same way a reconciler-observed merge would.
+
 ## AI nodes and artifacts
 
 An AI node runs Claude Code inside the agent container against the target repo.

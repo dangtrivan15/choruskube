@@ -70,6 +70,12 @@ root):
 | `GITHUB_PAT` | A GitHub Personal Access Token. |
 | `GITHUB_APP_ID` / `GITHUB_APP_INSTALLATION_ID` / `GITHUB_APP_PRIVATE_KEY_PATH` | A GitHub App credential. The App takes precedence over `GITHUB_PAT` when both are set. Place the App private-key `.pem` under `./.secrets/` and point the path at `/run/secrets/<file>.pem`. |
 
+Approving Feature Development's Final Approval merges the run's registered pull
+requests, so the credential needs write access to repository contents and pull
+requests — not just the read/push access that opening a PR already needs — plus
+`workflow` scope (App: *Workflows* read/write) if a run's PRs may change
+`.github/workflows/`.
+
 Without any of these the stack still boots and serves the full API — only the
 steps that need them (AI nodes, repo pushes) are skipped; everything else,
 including script and human-gate nodes, runs.

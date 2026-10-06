@@ -95,12 +95,20 @@ public class E2eTestDataSeeder implements ApplicationRunner {
     // live Claude call. The anchor Epic is a run input (anchor_epic_id), not guessed by the mock,
     // so parallel workers never collide over which Epic a given run extends.
     private static final String GRAPH_ID_ROADMAP_EXTENSION_GATE = "e2e-roadmap-extension-gate";
+    // merge_on_approval / merge_on_approval_blocked: mirror Feature Development v45's Final
+    // Approval merge_pull_requests: squash configuration, driven through a mock PR-registering
+    // producer instead of real agent work, so merge-on-final-approval.spec.ts can drive the
+    // happy/idempotent and refused merge paths end to end against the WireMock PR stubs without a
+    // live Claude call. "blocked" registers the fixture PR number WireMock always refuses (7405);
+    // the happy-path template registers 7001, which WireMock always merges for mock-repo.
+    private static final String GRAPH_ID_MERGE_ON_APPROVAL = "e2e-merge-on-approval";
+    private static final String GRAPH_ID_MERGE_ON_APPROVAL_BLOCKED = "e2e-merge-on-approval-blocked";
 
-    // Bumped to 7 so the new roadmap_extension_gate template gets seeded — run()
+    // Bumped to 8 so the two new merge_on_approval templates get seeded — run()
     // early-returns when a template at the current VERSION already exists, so an edit
     // without a bump is a no-op against any environment whose database survived the
     // previous boot.
-    private static final int VERSION = 7;
+    private static final int VERSION = 8;
 
     private static final String E2E_REPO_URL = "https://github.com/e2e-test/mock-repo";
     private static final String E2E_SECONDARY_REPO_URL = "https://github.com/e2e-test/mock-frontend";
@@ -196,6 +204,8 @@ public class E2eTestDataSeeder implements ApplicationRunner {
 
         seedRoadmapExtensionGate(mockSuccess, mockGate);
 
+        seedMergeOnApprovalGates(mockSuccess, mockGate);
+
         seedManyArtifacts(mockSuccess);
 
         seedSupervisorTemplate(mockSuccess, mockGate);
@@ -204,7 +214,7 @@ public class E2eTestDataSeeder implements ApplicationRunner {
 
         seedRoadmapImperativeLinks(mockSuccess);
 
-        log.info("E2eTestDataSeeder: seeded 3 git repos, 1 repo group, 11 node definitions, and 16 E2E templates");
+        log.info("E2eTestDataSeeder: seeded 3 git repos, 1 repo group, 11 node definitions, and 18 E2E templates");
     }
 
     private void seedDemoRepoGroup() {
@@ -568,13 +578,15 @@ public class E2eTestDataSeeder implements ApplicationRunner {
         // instead, so the run completes right here, same as production v13.
     }
 
-    // --- Roadmap Extension Gate: mirrors Feature Development v43's Final Approval ---
+    // --- Roadmap Extension Gate: mirrors Feature Development v45's Final Approval ---
     //
     // The mock "draft_extension" node stands in for Implement: it runs mock-agent.sh's
     // "roadmap_extension" scenario, which anchors {run.anchor_epic_id} and optionally adds a
     // wholly new top-level Epic when {run.include_new_epic} is "true". "final_approval" mirrors
-    // production's materialize: roadmap_extension config exactly, so the real gate-approval path
-    // (validation, anchor-aware materialization, GitHub issue linkage) is exercised end to end.
+    // production's materialize: roadmap_extension config exactly, plus merge_pull_requests: squash
+    // with zero PR rows registered, so the no-PR path (no credential, no GitHub call, approval
+    // still succeeds) is exercised on the same gate shape production uses, alongside the real
+    // gate-approval path (validation, anchor-aware materialization, GitHub issue linkage).
     private void seedRoadmapExtensionGate(NodeDefinition mockSuccess, NodeDefinition mockGate) {
         GraphTemplate t = createTemplate(
                 GRAPH_ID_ROADMAP_EXTENSION_GATE,
@@ -592,7 +604,7 @@ public class E2eTestDataSeeder implements ApplicationRunner {
                 mockGate,
                 "final_approval",
                 false,
-                "{\"terminal_decisions\":[\"approved\"],\"materialize\":\"roadmap_extension\"}",
+                "{\"terminal_decisions\":[\"approved\"],\"materialize\":\"roadmap_extension\",\"merge_pull_requests\":\"squash\"}",
                 "[{\"template_node_label\":\"draft_extension\",\"artifacts\":[{\"name\":\"result.txt\",\"description\":\"Mock extension result\"},"
                         + "{\"name\":\"roadmap_candidates.json\",\"description\":\"Proposed roadmap extension\",\"required\":false}]}]");
 
@@ -600,6 +612,53 @@ public class E2eTestDataSeeder implements ApplicationRunner {
         createEdge(t, gate, draftExtension, "rejected");
         // Human Gate "approved" has no outgoing edge — it's a terminal_decisions entry instead,
         // same as the roadmap-candidate-gate template above.
+    }
+
+    // --- Merge on Approval: open_prs -> final_approval (merge_pull_requests: squash) ---
+    //
+    // "open_prs" stands in for Implement: it runs mock-agent.sh's "multi_repo_pr" scenario pinned
+    // to a fixed PR number via --pr-number, so the gate always merges a known WireMock fixture
+    // rather than a random PR number the stubs don't recognise. No needs_branch — the scenario
+    // only registers PRs and writes result.txt, it never pushes a branch. "final_approval" mirrors
+    // production's merge_pull_requests: squash config exactly (no materialize here, since this
+    // template's own purpose is the merge path, not roadmap materialization — that combination is
+    // covered by e2e-roadmap-extension-gate above).
+    private void seedMergeOnApprovalGates(NodeDefinition mockSuccess, NodeDefinition mockGate) {
+        seedMergeOnApprovalGate(mockSuccess, mockGate, GRAPH_ID_MERGE_ON_APPROVAL, "e2e-merge-on-approval", 7001);
+        seedMergeOnApprovalGate(
+                mockSuccess, mockGate, GRAPH_ID_MERGE_ON_APPROVAL_BLOCKED, "e2e-merge-on-approval-blocked", 7405);
+    }
+
+    private void seedMergeOnApprovalGate(
+            NodeDefinition mockSuccess, NodeDefinition mockGate, String graphId, String name, int prNumber) {
+        String inputSchema =
+                "[{\"name\":\"software_project_id\",\"label\":\"Software Project\",\"type\":\"software_project_id\",\"required\":true}]";
+
+        GraphTemplate t = new GraphTemplate();
+        t.setGraphId(graphId);
+        t.setVersion(VERSION);
+        t.setName(name);
+        t.setDescription(
+                "E2E test: mirrors Feature Development's Final Approval merge_pull_requests gate configuration "
+                        + "(fixture PR " + prNumber + ")");
+        t.setInputSchema(inputSchema);
+        t.setSystem(false);
+        t = templateRepo.save(t);
+
+        TemplateNode openPrs =
+                createNode(t, mockSuccess, "open_prs", true, cmd("multi_repo_pr --pr-number " + prNumber));
+        TemplateNode gate = createNode(
+                t,
+                mockGate,
+                "final_approval",
+                false,
+                "{\"terminal_decisions\":[\"approved\"],\"merge_pull_requests\":\"squash\"}",
+                "[{\"template_node_label\":\"open_prs\",\"artifacts\":[{\"name\":\"result.txt\",\"description\":\"Mock PR registration result\"}]}]");
+
+        createEdge(t, openPrs, gate, null);
+        createEdge(t, gate, openPrs, "rejected");
+        // Human Gate "approved" has no outgoing edge — it's a terminal_decisions entry instead,
+        // same as the roadmap-extension-gate template above.
     }
 
     // --- Roadmap Imperative Links: single node driving the imperative agent write surface ---

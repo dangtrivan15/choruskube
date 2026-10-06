@@ -33,6 +33,7 @@ public interface AuditSink {
     String NODE_DEF_CREATED = "node_def_created";
     String NODE_DEF_UPDATED = "node_def_updated";
     String NODE_DEF_DELETED = "node_def_deleted";
+    String PULL_REQUESTS_MERGED = "pull_requests_merged";
 
     /** Record an audit event. Org/actor/impersonation are supplied by the implementation. */
     void record(String action, String resourceType, UUID resourceId, String detail);

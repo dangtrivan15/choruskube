@@ -61,7 +61,13 @@ See [Analytics](analytics) for interpretation guidance.
 ## Pull Request Tracking
 
 When an AI agent opens a Pull Request, the PR URL is captured and displayed in the **Run Monitor**
-alongside the node that created it. All PR links are accessible from the run detail view.
+alongside the node that created it. All PR links are accessible from the run detail view, each
+showing a Merged / Open / Closed state badge.
+
+Approving a human gate configured to merge pull requests (Feature Development's Final Approval)
+merges every registered PR before the run completes. If GitHub refuses a merge — a draft PR,
+conflicts, a missing approving review — the reason is shown and the gate stays open; PRs already
+merged are skipped on a retry.
 
 ## Roadmap
 

@@ -73,7 +73,8 @@ class RunServicePlacementTest {
                 null, // roadmapCandidatesArtifactResolver
                 null, // nodeExecutionClaimService
                 null, // escalationContextResolver
-                null); // roadmapProposalValidator
+                null, // roadmapProposalValidator
+                null); // pullRequestMergeService - unused (merge not exercised)
     }
 
     /**

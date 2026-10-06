@@ -1,6 +1,7 @@
 package com.choruskube.core.service;
 
 import com.choruskube.core.exception.GitHubApiException;
+import com.choruskube.core.exception.GitHubMergeRefusedException;
 import com.choruskube.core.exception.GitHubRateLimitHints;
 import com.choruskube.core.exception.GitHubTokenMintException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -22,6 +23,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.Date;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -115,6 +117,143 @@ public class GitHubAppService {
             }
             throw new RuntimeException("Failed to read " + ownerRepo + "#" + prNumber + ": " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * A pull request's full state for the merge path — enough to classify a row before merging.
+     * Unlike {@link PullRequestSnapshot}, which the reconciler reads on every tick, this carries the
+     * fields only {@code PullRequestMergeService} needs: a draft flag, mergeability, and the
+     * head/base refs a merge call pins to.
+     */
+    public record PullRequestDetail(
+            String state,
+            boolean merged,
+            Instant mergedAt,
+            boolean draft,
+            Boolean mergeable,
+            String headSha,
+            String baseRef) {}
+
+    /**
+     * Reads a pull request's full detail for the merge path. Same idiom as {@link
+     * #fetchPullRequest}: a non-200 status throws {@link GitHubApiException} with the status as a
+     * field, and an I/O or interrupt failure wraps in {@link RuntimeException}. The response body is
+     * never kept beyond the fields parsed here.
+     */
+    public PullRequestDetail fetchPullRequestDetail(String token, String ownerRepo, int prNumber) {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(githubApiUrl + "/repos/" + ownerRepo + "/pulls/" + prNumber))
+                .header("Authorization", "Bearer " + token)
+                .header("Accept", "application/vnd.github+json")
+                .header("X-GitHub-Api-Version", "2022-11-28")
+                .timeout(Duration.ofSeconds(10))
+                .GET()
+                .build();
+        try {
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() != 200) {
+                throw new GitHubApiException(
+                        response.statusCode(), ownerRepo, prNumber, rateLimitHints(response.headers()));
+            }
+            return parsePullRequestDetail(response.body());
+        } catch (IOException | InterruptedException e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            throw new RuntimeException("Failed to read " + ownerRepo + "#" + prNumber + ": " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Merges a pull request — {@code PUT /repos/{ownerRepo}/pulls/{n}/merge} — pinned to the head
+     * SHA seen during inspection (omitted from the body when null) so a commit pushed after
+     * inspection but before this call refuses rather than silently merging something nobody read.
+     *
+     * @return the merge commit SHA GitHub returns
+     * @throws GitHubMergeRefusedException on 405, 409 or 422 — GitHub refused to merge, carrying its
+     *     own reason (the {@code message} field only, capped at 300 characters and with the token
+     *     scrubbed)
+     * @throws GitHubApiException on any other non-2xx status
+     * @throws RuntimeException if the call never produced a status at all
+     */
+    public String mergePullRequest(
+            String token, String ownerRepo, int prNumber, String mergeMethod, String expectedHeadSha) {
+        Map<String, Object> bodyMap = new LinkedHashMap<>();
+        bodyMap.put("merge_method", mergeMethod);
+        if (expectedHeadSha != null) {
+            bodyMap.put("sha", expectedHeadSha);
+        }
+        String payload;
+        try {
+            payload = objectMapper.writeValueAsString(bodyMap);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to serialize GitHub merge payload for " + ownerRepo + "#" + prNumber, e);
+        }
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(githubApiUrl + "/repos/" + ownerRepo + "/pulls/" + prNumber + "/merge"))
+                .header("Authorization", "Bearer " + token)
+                .header("Accept", "application/vnd.github+json")
+                .header("Content-Type", "application/json")
+                .header("X-GitHub-Api-Version", "2022-11-28")
+                .timeout(Duration.ofSeconds(30))
+                .method("PUT", HttpRequest.BodyPublishers.ofString(payload))
+                .build();
+        try {
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            int status = response.statusCode();
+            if (status == 200) {
+                try {
+                    JsonNode responseBody = objectMapper.readTree(response.body());
+                    return responseBody.path("sha").asText(null);
+                } catch (Exception e) {
+                    throw new RuntimeException(
+                            "Failed to parse GitHub merge response for " + ownerRepo + "#" + prNumber, e);
+                }
+            }
+            if (status == 405 || status == 409 || status == 422) {
+                throw new GitHubMergeRefusedException(
+                        status,
+                        ownerRepo,
+                        prNumber,
+                        extractMergeRefusalReason(response.body(), status, token),
+                        rateLimitHints(response.headers()));
+            }
+            throw new GitHubApiException(status, ownerRepo, prNumber, rateLimitHints(response.headers()));
+        } catch (IOException | InterruptedException e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            throw new RuntimeException("Failed to merge " + ownerRepo + "#" + prNumber + ": " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * GitHub's {@code message} field only, capped and with the token scrubbed — everything else in
+     * a merge-refusal body is deliberately discarded, for the same reason {@link #fetchPullRequest}
+     * never keeps a response body: GitHub can echo the request, {@code Authorization} header
+     * included, and this text reaches a 409 response and the audit log.
+     */
+    private String extractMergeRefusalReason(String body, int status, String token) {
+        String message = null;
+        try {
+            JsonNode node = objectMapper.readTree(body);
+            JsonNode messageNode = node.get("message");
+            if (messageNode != null && !messageNode.isNull()) {
+                message = messageNode.asText();
+            }
+        } catch (Exception e) {
+            // Falls through to the fixed fallback below — the body wasn't parsable JSON.
+        }
+        if (message == null || message.isBlank()) {
+            return "GitHub refused the merge (HTTP " + status + ")";
+        }
+        if (message.length() > 300) {
+            message = message.substring(0, 300);
+        }
+        if (token != null && !token.isBlank()) {
+            message = message.replace(token, "***");
+        }
+        return message;
     }
 
     /** A newly-filed issue's identity, as returned by {@link #createIssue}. */
@@ -316,6 +455,27 @@ public class GitHubAppService {
             // not leaving around to be copied onto a field that carries something sensitive. The
             // cause is chained, so the detail is still available to a debugger and to logs.
             throw new RuntimeException("Failed to parse GitHub pull request payload", e);
+        }
+    }
+
+    PullRequestDetail parsePullRequestDetail(String json) {
+        try {
+            JsonNode node = objectMapper.readTree(json);
+            JsonNode mergedAtNode = node.get("merged_at");
+            JsonNode mergeableNode = node.get("mergeable");
+            JsonNode headNode = node.get("head");
+            JsonNode baseNode = node.get("base");
+            return new PullRequestDetail(
+                    node.path("state").asText(null),
+                    node.path("merged").asBoolean(false),
+                    mergedAtNode == null || mergedAtNode.isNull() ? null : Instant.parse(mergedAtNode.asText()),
+                    node.path("draft").asBoolean(false),
+                    mergeableNode == null || mergeableNode.isNull() ? null : mergeableNode.asBoolean(),
+                    headNode == null ? null : headNode.path("sha").asText(null),
+                    baseNode == null ? null : baseNode.path("ref").asText(null));
+        } catch (Exception e) {
+            // Deliberately does not interpolate the exception's message: see parsePullRequest.
+            throw new RuntimeException("Failed to parse GitHub pull request detail payload", e);
         }
     }
 

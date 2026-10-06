@@ -105,7 +105,8 @@ class RunServiceNodeExecutionScopingTest {
                 null, // roadmapCandidatesArtifactResolver
                 claimService,
                 null, // escalationContextResolver
-                null); // roadmapProposalValidator - unused (approve-time validation not exercised)
+                null, // roadmapProposalValidator - unused (approve-time validation not exercised)
+                null); // pullRequestMergeService - unused (merge not exercised)
     }
 
     private WorkflowRun stubRun(WorkflowRunStatus status) {

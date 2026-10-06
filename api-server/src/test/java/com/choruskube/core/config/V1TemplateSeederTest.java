@@ -820,14 +820,46 @@ class V1TemplateSeederTest extends BaseTest {
     }
 
     @Test
-    void currentVersionIsBumpedForFinishBeforeDeferring() {
-        // v44: Draft Spec & Plan asks whether the run could finish an item itself before tagging
-        // it Future work. This is the rolling version tripwire: rewrite it and bump the literal
-        // whenever CURRENT_VERSION changes, so a template edit that forgets the bump cannot ship
-        // silently.
-        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(44);
-        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 44))
+    void currentVersionIsBumpedForMergeOnFinalApproval() {
+        // v45: Final Approval merges the run's registered pull requests on approval
+        // (merge_pull_requests: squash). This is the rolling version tripwire: rewrite it and
+        // bump the literal whenever CURRENT_VERSION changes, so a template edit that forgets the
+        // bump cannot ship silently.
+        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(45);
+        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 45))
                 .isPresent();
+    }
+
+    @Test
+    void finalApprovalDeclaresMergePullRequestsSquash() {
+        var template = templateRepo
+                .findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION)
+                .orElseThrow();
+        var finalApproval = templateNodeRepo.findByGraphTemplateId(template.getId()).stream()
+                .filter(n -> "final_approval".equals(n.getLabel()))
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(finalApproval.getConfigOverrides()).contains("\"merge_pull_requests\": \"squash\"");
+    }
+
+    @Test
+    void implementPromptNoLongerTellsAgentsAHumanMerges() {
+        var template = templateRepo
+                .findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION)
+                .orElseThrow();
+        var implementNode = templateNodeRepo.findByGraphTemplateId(template.getId()).stream()
+                .filter(n -> "implement".equals(n.getLabel()))
+                .findFirst()
+                .orElseThrow();
+        var implementDef =
+                nodeDefRepo.findById(implementNode.getNodeDefinitionId()).orElseThrow();
+        var prompt = implementDef.getPromptTemplate();
+
+        assertThat(prompt)
+                .contains("approving Final Approval merges every")
+                .contains("registered PR, so a PR you do not register is never merged.")
+                .doesNotContain("a human will review and merge");
     }
 
     @Test

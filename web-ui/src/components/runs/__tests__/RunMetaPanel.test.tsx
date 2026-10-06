@@ -87,6 +87,8 @@ describe("RunMetaPanel", () => {
         repoName: "my-repo",
         repoUrl: "https://github.com/org/repo",
         createdAt: "2024-01-01T00:00:00Z",
+        state: null,
+        mergedAt: null,
       },
     ];
     renderWithProviders(

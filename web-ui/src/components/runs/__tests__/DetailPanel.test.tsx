@@ -119,6 +119,49 @@ describe("DetailPanel", () => {
     expect(screen.getByText("Awaiting Review")).toBeInTheDocument();
   });
 
+  it("renders the merge-on-approval notice when the snapshot node declares merge_pull_requests", () => {
+    const run = makeRun({
+      graphSnapshot: {
+        nodes: [
+          {
+            template_node_id: "node-1",
+            label: "final_approval",
+            executor_type: "human",
+            is_entrypoint: false,
+            config_overrides: { merge_pull_requests: "squash" },
+          },
+        ],
+        edges: [],
+      },
+      pullRequests: [
+        {
+          id: "pr-1",
+          workflowRunId: "run-1",
+          gitRepoId: "repo-1",
+          nodeExecutionId: null,
+          prUrl: "https://github.com/org/repo/pull/1",
+          prNumber: 1,
+          title: "feat: x",
+          repoName: "repo",
+          repoUrl: "https://github.com/org/repo",
+          createdAt: "2026-01-01T00:00:00Z",
+          state: "open",
+          mergedAt: null,
+        },
+      ],
+    });
+    renderWithProviders(<DetailPanel run={run} nodeId="node-1" />);
+
+    expect(screen.getByTestId("merge-on-approval-notice")).toBeInTheDocument();
+  });
+
+  it("renders no merge-on-approval notice for a gate without the key", () => {
+    const run = makeRun();
+    renderWithProviders(<DetailPanel run={run} nodeId="node-1" />);
+
+    expect(screen.queryByTestId("merge-on-approval-notice")).not.toBeInTheDocument();
+  });
+
   it("passes requiredArtifacts to HumanGatePanel when non-null and status is awaiting_human", () => {
     const requiredArtifacts = [
       {

@@ -3,6 +3,7 @@ package com.choruskube.core.service;
 import com.choruskube.core.dto.ValidationResponse;
 import com.choruskube.core.model.TemplateEdge;
 import com.choruskube.core.model.TemplateNode;
+import com.choruskube.core.model.enums.PullRequestMergeMethod;
 import com.choruskube.core.model.enums.RoadmapMaterializeMode;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -143,6 +144,29 @@ public class GraphValidationService {
             }
         }
 
+        // A merge-configured gate (config_overrides.merge_pull_requests) only fires its merge on
+        // the `approved` decision — see PullRequestMergeMethod — so a node that declares the key
+        // but can never produce that decision would silently never merge anything.
+        List<TemplateNode> mergeGates = new ArrayList<>();
+        for (TemplateNode node : nodes) {
+            Optional<String> mergeValue = readConfigStringValue(node, PullRequestMergeMethod.CONFIG_KEY);
+            if (mergeValue.isEmpty()) {
+                continue;
+            }
+            if (PullRequestMergeMethod.fromConfigValue(mergeValue.get()).isEmpty()) {
+                errors.add("Node '" + node.getLabel() + "' has unknown merge_pull_requests method '" + mergeValue.get()
+                        + "' (expected merge, squash or rebase)");
+                continue;
+            }
+            mergeGates.add(node);
+        }
+        for (TemplateNode node : mergeGates) {
+            if (!declaresApprovedDecision(node, edges)) {
+                errors.add("Node '" + node.getLabel() + "' declares merge_pull_requests but has no 'approved' "
+                        + "decision");
+            }
+        }
+
         for (TemplateNode node : nodes) {
             validateConfigOverrides(node, errors);
         }
@@ -223,20 +247,59 @@ public class GraphValidationService {
      * by {@link #validateConfigOverrides}).
      */
     private Optional<String> readMaterializeValue(TemplateNode node) {
+        return readConfigStringValue(node, RoadmapMaterializeMode.CONFIG_KEY);
+    }
+
+    /**
+     * The raw string value of a node's {@code config_overrides.<key>}, or empty if the node has no
+     * such key or its config JSON is malformed (already reported by {@link
+     * #validateConfigOverrides}).
+     */
+    private Optional<String> readConfigStringValue(TemplateNode node, String key) {
         String overridesStr = node.getConfigOverrides();
         if (overridesStr == null || overridesStr.isBlank()) {
             return Optional.empty();
         }
         try {
             JsonNode overrides = objectMapper.readTree(overridesStr);
-            if (overrides.has(RoadmapMaterializeMode.CONFIG_KEY)) {
-                return Optional.of(
-                        overrides.get(RoadmapMaterializeMode.CONFIG_KEY).asText(""));
+            if (overrides.has(key)) {
+                return Optional.of(overrides.get(key).asText(""));
             }
         } catch (Exception e) {
             // Malformed config_overrides JSON is already surfaced by validateConfigOverrides.
         }
         return Optional.empty();
+    }
+
+    /**
+     * Whether {@code approved} is reachable as a decision from this node — either declared in its
+     * {@code terminal_decisions} array, or as an outgoing edge's condition — compared
+     * case-insensitively, matching how {@code DecisionOptionsResolver} resolves valid decisions at
+     * signal time.
+     */
+    private boolean declaresApprovedDecision(TemplateNode node, List<TemplateEdge> edges) {
+        String overridesStr = node.getConfigOverrides();
+        if (overridesStr != null && !overridesStr.isBlank()) {
+            try {
+                JsonNode overrides = objectMapper.readTree(overridesStr);
+                JsonNode terminalDecisions = overrides.get("terminal_decisions");
+                if (terminalDecisions != null && terminalDecisions.isArray()) {
+                    for (JsonNode decision : terminalDecisions) {
+                        if ("approved".equalsIgnoreCase(decision.asText(""))) {
+                            return true;
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                // Malformed config_overrides JSON is already surfaced by validateConfigOverrides.
+            }
+        }
+        for (TemplateEdge edge : edges) {
+            if (edge.getSourceNodeId().equals(node.getId()) && "approved".equalsIgnoreCase(edge.getCondition())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

@@ -3,6 +3,7 @@ package com.choruskube.core.service;
 import static org.assertj.core.api.Assertions.*;
 
 import com.choruskube.core.exception.GitHubApiException;
+import com.choruskube.core.exception.GitHubMergeRefusedException;
 import com.choruskube.core.exception.GitHubRateLimitHints;
 import com.choruskube.core.exception.GitHubTokenMintException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -81,6 +82,152 @@ class GitHubAppServiceTest {
         var snapshot = service.parsePullRequest("{\"state\":\"open\"}");
 
         assertThat(snapshot.mergedAt()).isNull();
+    }
+
+    // -----------------------------------------------------------------------------------
+    // fetchPullRequestDetail / mergePullRequest — the merge-path primitives
+    // -----------------------------------------------------------------------------------
+
+    @Test
+    void fetchPullRequestDetail_ok_parsesEveryField() throws Exception {
+        String body = "{\"state\":\"open\",\"merged\":false,\"merged_at\":null,\"draft\":false,"
+                + "\"mergeable\":true,\"head\":{\"sha\":\"abc123\"},\"base\":{\"ref\":\"main\"}}";
+        try (Stub github = Stub.serving(200, body)) {
+            var detail = github.service().fetchPullRequestDetail("t0ken", "org/backend-api", 42);
+
+            assertThat(detail.state()).isEqualTo("open");
+            assertThat(detail.merged()).isFalse();
+            assertThat(detail.mergedAt()).isNull();
+            assertThat(detail.draft()).isFalse();
+            assertThat(detail.mergeable()).isTrue();
+            assertThat(detail.headSha()).isEqualTo("abc123");
+            assertThat(detail.baseRef()).isEqualTo("main");
+        }
+    }
+
+    @Test
+    void fetchPullRequestDetail_mergeableNull_staysNull() throws Exception {
+        String body = "{\"state\":\"closed\",\"merged\":true,\"merged_at\":\"2026-08-16T10:00:00Z\","
+                + "\"draft\":false,\"mergeable\":null,\"head\":{\"sha\":\"abc\"},\"base\":{\"ref\":\"main\"}}";
+        try (Stub github = Stub.serving(200, body)) {
+            var detail = github.service().fetchPullRequestDetail("t0ken", "org/backend-api", 42);
+
+            assertThat(detail.mergeable()).isNull();
+            assertThat(detail.merged()).isTrue();
+            assertThat(detail.mergedAt()).isEqualTo(Instant.parse("2026-08-16T10:00:00Z"));
+        }
+    }
+
+    @Test
+    void fetchPullRequestDetail_404_throwsGitHubApiExceptionWithStatus() throws Exception {
+        try (Stub github = Stub.serving(404, "{\"message\":\"Not Found\"}")) {
+            GitHubAppService service = github.service();
+
+            assertThatThrownBy(() -> service.fetchPullRequestDetail("t0ken", "org/backend-api", 42))
+                    .isInstanceOf(GitHubApiException.class)
+                    .satisfies(thrown -> assertThat(((GitHubApiException) thrown).getStatus())
+                            .isEqualTo(404));
+        }
+    }
+
+    @Test
+    void mergePullRequest_ok_sendsMethodPathHeadersAndBody_returnsMergeSha() throws Exception {
+        try (Stub github = Stub.serving(200, "{\"sha\":\"mergedsha123\",\"merged\":true}")) {
+            String sha = github.service().mergePullRequest("t0ken", "org/backend-api", 7, "squash", "headsha456");
+
+            assertThat(sha).isEqualTo("mergedsha123");
+            assertThat(github.captured().method).isEqualTo("PUT");
+            assertThat(github.captured().path).isEqualTo("/repos/org/backend-api/pulls/7/merge");
+            assertThat(github.captured().authorization).isEqualTo("Bearer t0ken");
+            assertThat(github.captured().body)
+                    .contains("\"merge_method\":\"squash\"")
+                    .contains("\"sha\":\"headsha456\"");
+        }
+    }
+
+    @Test
+    void mergePullRequest_nullExpectedSha_omitsShaFromBody() throws Exception {
+        try (Stub github = Stub.serving(200, "{\"sha\":\"x\",\"merged\":true}")) {
+            github.service().mergePullRequest("t0ken", "org/backend-api", 7, "squash", null);
+
+            assertThat(github.captured().body).doesNotContain("\"sha\"");
+        }
+    }
+
+    @Test
+    void mergePullRequest_refused405_throwsWithReason() throws Exception {
+        try (Stub github = Stub.serving(405, "{\"message\":\"At least 1 approving review is required\"}")) {
+            GitHubAppService service = github.service();
+
+            assertThatThrownBy(() -> service.mergePullRequest("t0ken", "org/backend-api", 7, "squash", "sha"))
+                    .isInstanceOf(GitHubMergeRefusedException.class)
+                    .satisfies(thrown -> assertThat(((GitHubMergeRefusedException) thrown).getReason())
+                            .isEqualTo("At least 1 approving review is required"));
+        }
+    }
+
+    @Test
+    void mergePullRequest_refused409AndRefused422_alsoThrowGitHubMergeRefusedException() throws Exception {
+        try (Stub github = Stub.serving(409, "{\"message\":\"head changed\"}")) {
+            GitHubAppService service = github.service();
+            assertThatThrownBy(() -> service.mergePullRequest("t0ken", "org/backend-api", 7, "squash", "sha"))
+                    .isInstanceOf(GitHubMergeRefusedException.class);
+        }
+        try (Stub github = Stub.serving(422, "{\"message\":\"unprocessable\"}")) {
+            GitHubAppService service = github.service();
+            assertThatThrownBy(() -> service.mergePullRequest("t0ken", "org/backend-api", 7, "squash", "sha"))
+                    .isInstanceOf(GitHubMergeRefusedException.class);
+        }
+    }
+
+    @Test
+    void mergePullRequest_reasonContainingTheToken_isScrubbed() throws Exception {
+        String token = "ghs_supersecrettoken12345";
+        String body = "{\"message\":\"Bad credentials: " + token + "\"}";
+        try (Stub github = Stub.serving(405, body)) {
+            GitHubAppService service = github.service();
+
+            assertThatThrownBy(() -> service.mergePullRequest(token, "org/backend-api", 7, "squash", "sha"))
+                    .satisfies(thrown -> assertThat(((GitHubMergeRefusedException) thrown).getReason())
+                            .doesNotContain(token)
+                            .contains("***"));
+        }
+    }
+
+    @Test
+    void mergePullRequest_overLongMessage_isTruncatedTo300Chars() throws Exception {
+        String longMessage = "x".repeat(400);
+        try (Stub github = Stub.serving(405, "{\"message\":\"" + longMessage + "\"}")) {
+            GitHubAppService service = github.service();
+
+            assertThatThrownBy(() -> service.mergePullRequest("t0ken", "org/backend-api", 7, "squash", "sha"))
+                    .satisfies(thrown -> assertThat(((GitHubMergeRefusedException) thrown).getReason())
+                            .hasSize(300));
+        }
+    }
+
+    @Test
+    void mergePullRequest_bodyWithoutJson_fallsBackToAFixedMessage() throws Exception {
+        try (Stub github = Stub.serving(405, "not json at all")) {
+            GitHubAppService service = github.service();
+
+            assertThatThrownBy(() -> service.mergePullRequest("t0ken", "org/backend-api", 7, "squash", "sha"))
+                    .satisfies(thrown -> assertThat(((GitHubMergeRefusedException) thrown).getReason())
+                            .isEqualTo("GitHub refused the merge (HTTP 405)"));
+        }
+    }
+
+    @Test
+    void mergePullRequest_500_throwsPlainGitHubApiException() throws Exception {
+        try (Stub github = Stub.serving(500, "unavailable")) {
+            GitHubAppService service = github.service();
+
+            assertThatThrownBy(() -> service.mergePullRequest("t0ken", "org/backend-api", 7, "squash", "sha"))
+                    .isInstanceOf(GitHubApiException.class)
+                    .isNotInstanceOf(GitHubMergeRefusedException.class)
+                    .satisfies(thrown -> assertThat(((GitHubApiException) thrown).getStatus())
+                            .isEqualTo(500));
+        }
     }
 
     // -----------------------------------------------------------------------------------
@@ -395,6 +542,7 @@ class GitHubAppServiceTest {
         volatile String method;
         volatile String path;
         volatile String authorization;
+        volatile String body;
     }
 
     /** A GitHub that answers with one canned response, on a port the OS picks. */
@@ -412,6 +560,7 @@ class GitHubAppServiceTest {
                 captured.method = exchange.getRequestMethod();
                 captured.path = exchange.getRequestURI().toString();
                 captured.authorization = exchange.getRequestHeaders().getFirst("Authorization");
+                captured.body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
                 headers.forEach((name, value) -> exchange.getResponseHeaders().add(name, value));
                 exchange.sendResponseHeaders(status, bytes.length);
                 try (OutputStream out = exchange.getResponseBody()) {

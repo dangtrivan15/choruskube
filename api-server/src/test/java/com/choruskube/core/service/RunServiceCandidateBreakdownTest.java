@@ -117,7 +117,8 @@ class RunServiceCandidateBreakdownTest {
                 roadmapCandidatesArtifactResolver,
                 null, // nodeExecutionClaimService — unused (signalHumanDecision not exercised)
                 null, // escalationContextResolver — unused; see RunServiceEscalationContextTest
-                null); // roadmapProposalValidator — unused (approve-time validation not exercised)
+                null, // roadmapProposalValidator — unused (approve-time validation not exercised)
+                null); // pullRequestMergeService - unused (merge not exercised)
     }
 
     private WorkflowRun stubRun() {

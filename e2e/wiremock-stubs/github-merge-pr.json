@@ -1,0 +1,34 @@
+{
+  "mappings": [
+    {
+      "priority": 1,
+      "request": {
+        "method": "PUT",
+        "urlPathPattern": "/repos/[^/]+/mock-repo/pulls/7001/merge",
+        "headers": {
+          "Authorization": { "contains": "Bearer " }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "body": "{\"sha\":\"e2e2222222222222222222222222222222227001\",\"merged\":true,\"message\":\"Pull Request successfully merged\"}"
+      }
+    },
+    {
+      "priority": 1,
+      "request": {
+        "method": "PUT",
+        "urlPathPattern": "/repos/[^/]+/[^/]+/pulls/7405/merge",
+        "headers": {
+          "Authorization": { "contains": "Bearer " }
+        }
+      },
+      "response": {
+        "status": 405,
+        "headers": { "Content-Type": "application/json" },
+        "body": "{\"message\":\"At least 1 approving review is required by reviewers with write access.\"}"
+      }
+    }
+  ]
+}
