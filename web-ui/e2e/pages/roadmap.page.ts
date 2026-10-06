@@ -258,6 +258,16 @@ export class RoadmapPage {
     return this.epicItems.filter({ hasText: title }).getByTestId("epic-priority-badge");
   }
 
+  /**
+   * Priority badge text ("High"/"Medium"/"Low") for every currently-rendered Epic row, in
+   * DOM order — lets a sort assertion check tier placement without requiring exclusive
+   * occupancy of a tier, which another spec's never-deleted fixture (or an unculled Epic
+   * from an earlier failed attempt at the same test) can violate.
+   */
+  async epicPriorityTiers(): Promise<string[]> {
+    return this.epicItems.getByTestId("epic-priority-badge").allInnerTexts();
+  }
+
   /** The priority badge on the Story row (Epic detail page) titled `title`. */
   storyItemPriorityBadge(title: string): Locator {
     return this.storyItems.filter({ hasText: title }).getByTestId("story-item-priority-badge");
