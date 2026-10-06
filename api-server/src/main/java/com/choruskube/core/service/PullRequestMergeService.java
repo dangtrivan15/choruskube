@@ -452,10 +452,8 @@ public class PullRequestMergeService {
             }
             auditSink.record(
                     AuditSink.PULL_REQUESTS_MERGED, "workflow_run", runId, objectMapper.writeValueAsString(json));
-        } catch (RuntimeException e) {
-            log.error("Could not record pull-requests-merged audit event for run {}: {}", runId, e.getMessage(), e);
         } catch (Exception e) {
-            log.error("Could not serialize pull-requests-merged audit event for run {}: {}", runId, e.getMessage(), e);
+            log.error("Could not record pull-requests-merged audit event for run {}: {}", runId, e.getMessage(), e);
         }
     }
 }

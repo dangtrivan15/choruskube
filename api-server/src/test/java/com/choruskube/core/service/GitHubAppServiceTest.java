@@ -195,6 +195,22 @@ class GitHubAppServiceTest {
     }
 
     @Test
+    void mergePullRequest_tokenStraddlingTheLengthCap_leaksNoPrefixOfIt() throws Exception {
+        String token = "ghs_supersecrettoken12345";
+        // The token starts 10 characters before the 300-character cap, so capping first would
+        // keep "ghs_supers" — a prefix the whole-token replace can no longer match.
+        String body = "{\"message\":\"" + "x".repeat(290) + token + "\"}";
+        try (Stub github = Stub.serving(405, body)) {
+            GitHubAppService service = github.service();
+
+            assertThatThrownBy(() -> service.mergePullRequest(token, "org/backend-api", 7, "squash", "sha"))
+                    .satisfies(thrown -> assertThat(((GitHubMergeRefusedException) thrown).getReason())
+                            .doesNotContain(token.substring(0, 8))
+                            .endsWith("***"));
+        }
+    }
+
+    @Test
     void mergePullRequest_overLongMessage_isTruncatedTo300Chars() throws Exception {
         String longMessage = "x".repeat(400);
         try (Stub github = Stub.serving(405, "{\"message\":\"" + longMessage + "\"}")) {

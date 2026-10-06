@@ -9,7 +9,7 @@ current
 Approving a Feature Development run's Final Approval gate ended the run but left every
 registered pull request for a human to merge by hand. The approval request already
 performs one non-idempotent side effect on `approved` — materializing a roadmap
-proposal — inside the same claim/signal transaction described in
+proposal — inside the same claim/signal window described in
 [2026-09-30---01](2026-09-30---01-roadmap-extension-proposals.md); merging needed to
 fit the same shape without letting a merge failure leave roadmap items duplicated, or
 a decision persisted while pull requests sit unmerged.
@@ -43,6 +43,15 @@ already records as merged needs no read at all — a merge cannot be undone, so 
 row's answer can never change. This means a retry after every row is already merged
 touches neither the host nor a credential, which keeps approving an already-materialized
 run safe even when no credential is configured at all.
+
+**Merging runs after the roadmap proposal is validated and before it is
+materialized.** Materialization writes rows and is not idempotent, so if it ran first,
+a merge failure followed by a retry would create the roadmap items twice; if the
+proposal were validated only after merging, a rejected proposal would leave pull
+requests merged while the gate is still open. Splitting validation from the write puts
+every step that is likely to fail, or that is visible outside the system, ahead of the
+first write a retry cannot safely repeat. The pre-existing window remains: a retry
+after materialization succeeded but the workflow signal failed can materialize again.
 
 **A closed-but-unmerged pull request is skipped with a note, not treated as a
 blocker.** A human closed it deliberately; refusing approval until it is reopened

@@ -37,6 +37,7 @@ test.describe("Merge on Final Approval", () => {
 
     const template = await api.getTemplateByName("e2e-merge-on-approval");
     const runName = uniqueName("merge-on-approval-run");
+    let runId: string | null = null;
 
     try {
       const run = await api.startRun({
@@ -44,6 +45,7 @@ test.describe("Merge on Final Approval", () => {
         inputs: { software_project_id: group.id },
         name: runName,
       });
+      runId = run.id;
 
       await api.waitForNodeStatus(run.id, "final_approval", ["awaiting_human"], 60_000);
 
@@ -75,7 +77,12 @@ test.describe("Merge on Final Approval", () => {
       const texts = await runMonitorPage.pullRequestStates.allTextContents();
       expect(texts.every((t) => t.includes("Merged"))).toBe(true);
     } finally {
-      // The run already completed, so no cancel is needed — only the group remains.
+      // A failure before completion would otherwise leave the run live for other workers' specs.
+      try {
+        if (runId) await api.cancelRun(runId);
+      } catch {
+        // best-effort cleanup — cancelling an already-completed run is refused
+      }
       try {
         await api.deleteRepoGroup(group.id);
       } catch {
@@ -136,7 +143,8 @@ test.describe("Merge on Final Approval", () => {
       const pullRequests = (
         stillRunning as unknown as { pullRequests: RunPullRequestResponse[] }
       ).pullRequests;
-      expect(pullRequests.every((pr) => pr.mergedAt == null)).toBe(true);
+      expect(pullRequests).toHaveLength(1);
+      expect(pullRequests[0].mergedAt).toBeNull();
 
       await expect(runMonitorPage.gateApproveButton).toBeVisible();
     } finally {

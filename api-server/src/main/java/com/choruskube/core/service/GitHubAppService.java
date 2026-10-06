@@ -247,11 +247,12 @@ public class GitHubAppService {
         if (message == null || message.isBlank()) {
             return "GitHub refused the merge (HTTP " + status + ")";
         }
-        if (message.length() > 300) {
-            message = message.substring(0, 300);
-        }
+        // Scrub before capping: a cap that cuts through the token leaves a prefix no replace matches.
         if (token != null && !token.isBlank()) {
             message = message.replace(token, "***");
+        }
+        if (message.length() > 300) {
+            message = message.substring(0, 300);
         }
         return message;
     }

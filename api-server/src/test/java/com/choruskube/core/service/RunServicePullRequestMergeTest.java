@@ -4,12 +4,16 @@ import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 import com.choruskube.core.config.WorkflowClientRegistry;
+import com.choruskube.core.dto.MaterializationSummary;
+import com.choruskube.core.dto.RoadmapCandidatesDocument;
 import com.choruskube.core.dto.SignalRequest;
 import com.choruskube.core.exception.PullRequestMergeException;
+import com.choruskube.core.exception.ValidationException;
 import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.NodeExecutionStatus;
 import com.choruskube.core.model.enums.PullRequestMergeMethod;
+import com.choruskube.core.model.enums.RoadmapMaterializeMode;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -97,6 +101,10 @@ class RunServicePullRequestMergeTest {
 
     private static final String MERGE_GATE_CONFIG =
             "{\"terminal_decisions\":[\"approved\"],\"merge_pull_requests\":\"squash\"}";
+
+    /** Feature Development's Final Approval shape: a roadmap gate that also merges. */
+    private static final String MERGE_AND_MATERIALIZE_GATE_CONFIG = "{\"terminal_decisions\":[\"approved\"],"
+            + "\"materialize\":\"roadmap_extension\",\"merge_pull_requests\":\"squash\"}";
 
     @BeforeEach
     void setUp() {
@@ -254,5 +262,70 @@ class RunServicePullRequestMergeTest {
         service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, null));
 
         verifyNoInteractions(pullRequestMergeService);
+    }
+
+    @Test
+    void invalidRoadmapProposal_isRejectedBeforeAnythingIsMerged() {
+        stubExec();
+        stubRun(MERGE_AND_MATERIALIZE_GATE_CONFIG);
+        RoadmapCandidatesDocument edited = new RoadmapCandidatesDocument(List.of(), List.of(), List.of());
+        when(roadmapProposalValidator.validate(any(), any(), any(), any())).thenReturn(List.of("bad anchor"));
+
+        assertThatThrownBy(() -> service.signalHumanDecision(
+                        runId, nodeExecId, new SignalRequest("approved", null, null, edited)))
+                .isInstanceOf(ValidationException.class);
+
+        verifyNoInteractions(pullRequestMergeService, roadmapCandidateMaterializer, workflowStub);
+        verify(nodeExecutionClaimService)
+                .compareAndSetStatus(nodeExecId, NodeExecutionStatus.running, NodeExecutionStatus.awaiting_human);
+    }
+
+    @Test
+    void mergeAndMaterializeGate_mergesThenRecordsThenMaterializesThenSignals() {
+        stubExec();
+        stubRun(MERGE_AND_MATERIALIZE_GATE_CONFIG);
+        RoadmapCandidatesDocument edited = new RoadmapCandidatesDocument(List.of(), List.of(), List.of());
+        when(roadmapProposalValidator.validate(any(), any(), any(), any())).thenReturn(List.of());
+        when(roadmapProposalValidator.summarize(edited))
+                .thenReturn(new RoadmapProposalValidator.Summary(0, 0, 1, 0, 0));
+        var outcome = sampleOutcome();
+        when(pullRequestMergeService.mergeAll(runId, PullRequestMergeMethod.squash))
+                .thenReturn(outcome);
+        when(roadmapCandidateMaterializer.materialize(runId, edited, RoadmapMaterializeMode.roadmap_extension))
+                .thenReturn(new MaterializationSummary(
+                        List.of(), List.of(), List.of(UUID.randomUUID()), List.of(), 0, List.of()));
+
+        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, edited));
+
+        // Materialization is the one non-idempotent write: it must follow every merge, so a merge
+        // failure followed by a retry can never create the roadmap items twice.
+        InOrder inOrder =
+                inOrder(roadmapProposalValidator, pullRequestMergeService, roadmapCandidateMaterializer, workflowStub);
+        inOrder.verify(roadmapProposalValidator).validate(any(), any(), any(), any());
+        inOrder.verify(pullRequestMergeService).mergeAll(runId, PullRequestMergeMethod.squash);
+        inOrder.verify(pullRequestMergeService).recordOutcome(runId, outcome);
+        inOrder.verify(roadmapCandidateMaterializer)
+                .materialize(runId, edited, RoadmapMaterializeMode.roadmap_extension);
+        inOrder.verify(workflowStub).signal(eq("human-decision-" + nodeExecId), any());
+    }
+
+    @Test
+    void signalFailureAfterMerging_releasesTheClaim() {
+        stubExec();
+        stubRun(MERGE_GATE_CONFIG);
+        var outcome = sampleOutcome();
+        when(pullRequestMergeService.mergeAll(runId, PullRequestMergeMethod.squash))
+                .thenReturn(outcome);
+        doThrow(new RuntimeException("temporal unavailable"))
+                .when(workflowStub)
+                .signal(eq("human-decision-" + nodeExecId), any());
+
+        assertThatThrownBy(() ->
+                        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, null)))
+                .hasMessageContaining("temporal unavailable");
+
+        verify(pullRequestMergeService).recordOutcome(runId, outcome);
+        verify(nodeExecutionClaimService)
+                .compareAndSetStatus(nodeExecId, NodeExecutionStatus.running, NodeExecutionStatus.awaiting_human);
     }
 }

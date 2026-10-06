@@ -472,13 +472,10 @@ public class RunService {
         // From here on, any failure (bad decision string, merge refusal, materialization error,
         // Temporal signal failure) must release the claim back to awaiting_human so the request
         // stays retryable — e.g. a typo'd decision string is a routine, expected error today and
-        // must not permanently strand the gate. Merging a gate's registered pull requests runs in
-        // this same window, before anything about the decision is persisted: it is idempotent
-        // (GitHub's own merged/closed state is the idempotency key), so a retry after a failure
-        // here is simply "click Approve again" rather than a recovery procedure — only the audit
-        // entry naming what an attempt did merge survives a failure, because a merge itself cannot
-        // be undone. This only reopens a (much narrower, pre-existing) window where a retry after
-        // materialization already succeeded but the signal itself then failed could re-materialize;
+        // must not permanently strand the gate. Merging is safe to repeat here because it skips
+        // whatever GitHub already reports merged. This only reopens a (much narrower, pre-existing)
+        // window where a retry after materialization already succeeded but the signal itself then
+        // failed could re-materialize;
         // the case this guard exists for — two concurrent/duplicate submissions racing each other —
         // is fully closed by the claim above.
         try {

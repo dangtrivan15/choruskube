@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "@/__tests__/test-utils";
 import HumanGatePanel from "../HumanGatePanel";
@@ -644,6 +644,30 @@ describe("HumanGatePanel", () => {
 
       expect(screen.getByTestId("merge-on-approval-notice")).toBeInTheDocument();
       expect(screen.getByText(/repo #1/)).toBeInTheDocument();
+    });
+
+    it("words each item by what approving will do to that PR", () => {
+      renderWithProviders(
+        <HumanGatePanel
+          {...defaultProps}
+          mergeOnApproval={{
+            method: "squash",
+            pullRequests: [
+              { ...pr, id: "pr-open", prNumber: 1 },
+              { ...pr, id: "pr-merged", prNumber: 2, state: "closed", mergedAt: "2026-01-01T00:00:00Z" },
+              { ...pr, id: "pr-closed", prNumber: 3, state: "closed" },
+            ],
+          }}
+        />
+      );
+
+      const items = within(screen.getByTestId("merge-on-approval-notice")).getAllByRole("listitem");
+      expect(items.map((li) => li.textContent)).toEqual([
+        "repo #1 — will be merged",
+        "repo #2 — already merged",
+        "repo #3 — closed — will be skipped",
+      ]);
+      expect(screen.getByText(/\(squash\)/)).toBeInTheDocument();
     });
 
     it("renders no notice when mergeOnApproval is null", () => {

@@ -147,7 +147,6 @@ public class GraphValidationService {
         // A merge-configured gate (config_overrides.merge_pull_requests) only fires its merge on
         // the `approved` decision — see PullRequestMergeMethod — so a node that declares the key
         // but can never produce that decision would silently never merge anything.
-        List<TemplateNode> mergeGates = new ArrayList<>();
         for (TemplateNode node : nodes) {
             Optional<String> mergeValue = readConfigStringValue(node, PullRequestMergeMethod.CONFIG_KEY);
             if (mergeValue.isEmpty()) {
@@ -156,12 +155,7 @@ public class GraphValidationService {
             if (PullRequestMergeMethod.fromConfigValue(mergeValue.get()).isEmpty()) {
                 errors.add("Node '" + node.getLabel() + "' has unknown merge_pull_requests method '" + mergeValue.get()
                         + "' (expected merge, squash or rebase)");
-                continue;
-            }
-            mergeGates.add(node);
-        }
-        for (TemplateNode node : mergeGates) {
-            if (!declaresApprovedDecision(node, edges)) {
+            } else if (!declaresApprovedDecision(node, edges)) {
                 errors.add("Node '" + node.getLabel() + "' declares merge_pull_requests but has no 'approved' "
                         + "decision");
             }

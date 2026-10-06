@@ -72,9 +72,9 @@ root):
 
 Approving Feature Development's Final Approval merges the run's registered pull
 requests, so the credential needs write access to repository contents and pull
-requests — not just the read/push access that opening a PR already needs — plus
-`workflow` scope (App: *Workflows* read/write) if a run's PRs may change
-`.github/workflows/`.
+requests (App: *Contents* and *Pull requests* read/write; classic PAT: `repo`) —
+the same access agents already use to push branches and open PRs — plus *Workflows*
+read/write (classic PAT: `workflow`) if a run's PRs may change `.github/workflows/`.
 
 Without any of these the stack still boots and serves the full API — only the
 steps that need them (AI nodes, repo pushes) are skipped; everything else,

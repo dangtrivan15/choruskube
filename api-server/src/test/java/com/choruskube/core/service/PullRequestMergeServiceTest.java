@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -24,6 +25,7 @@ import com.choruskube.core.model.enums.PullRequestState;
 import com.choruskube.core.observability.AuditSink;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.RunPullRequestRepository;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Clock;
 import java.time.Instant;
@@ -33,6 +35,8 @@ import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -186,7 +190,48 @@ class PullRequestMergeServiceTest {
     }
 
     @Test
-    void mergesInRegistrationOrder_stopsAtFirstRefusal_andAuditsOnlyTheMergedOne() {
+    void mergesInRegistrationOrder_stopsAtFirstRefusal_andAuditsOnlyTheMergedOne() throws Exception {
+        RunPullRequest first = pr(1, Instant.parse("2026-01-01T00:00:00Z"));
+        RunPullRequest second = pr(2, Instant.parse("2026-01-02T00:00:00Z"));
+        RunPullRequest third = pr(3, Instant.parse("2026-01-03T00:00:00Z"));
+        // The repository makes no ordering promise, so registration order must come from createdAt.
+        when(prRepo.findByWorkflowRunId(runId)).thenReturn(List.of(third, second, first));
+        stubRepo();
+        when(credentialResolver.getTokenForRun(runId)).thenReturn("token");
+        when(gitHubAppService.fetchPullRequestDetail("token", "org/repo", 1))
+                .thenReturn(detail("open", false, false, true, "sha1", "main"));
+        when(gitHubAppService.fetchPullRequestDetail("token", "org/repo", 2))
+                .thenReturn(detail("open", false, false, true, "sha2", "main"));
+        when(gitHubAppService.fetchPullRequestDetail("token", "org/repo", 3))
+                .thenReturn(detail("open", false, false, true, "sha3", "main"));
+        when(gitHubAppService.mergePullRequest("token", "org/repo", 1, "squash", "sha1"))
+                .thenReturn("mergesha1");
+        GitHubMergeRefusedException refusal = new GitHubMergeRefusedException(
+                405, "org/repo", 2, "At least 1 approving review is required", GitHubRateLimitHints.NONE);
+        when(gitHubAppService.mergePullRequest("token", "org/repo", 2, "squash", "sha2"))
+                .thenThrow(refusal);
+
+        assertThatThrownBy(() -> service().mergeAll(runId, PullRequestMergeMethod.squash))
+                .isInstanceOf(PullRequestMergeException.class)
+                .hasMessageContaining("Merged: org/repo#1.")
+                .hasMessageContaining("Could not merge org/repo#2")
+                .hasMessageContaining("At least 1 approving review is required");
+
+        InOrder merges = inOrder(gitHubAppService);
+        merges.verify(gitHubAppService).mergePullRequest("token", "org/repo", 1, "squash", "sha1");
+        merges.verify(gitHubAppService).mergePullRequest("token", "org/repo", 2, "squash", "sha2");
+        verify(gitHubAppService, never()).mergePullRequest(any(), any(), eq(3), any(), any());
+
+        JsonNode audit = objectMapper.readTree(capturedAuditDetail());
+        assertThat(audit.get("method").asText()).isEqualTo("squash");
+        assertThat(audit.get("refusedPullRequest").asText()).isEqualTo(second.getPrUrl());
+        assertThat(audit.get("pullRequests")).hasSize(1);
+        assertThat(audit.get("pullRequests").get(0).get("prUrl").asText()).isEqualTo(first.getPrUrl());
+        assertThat(audit.get("pullRequests").get(0).get("mergeSha").asText()).isEqualTo("mergesha1");
+    }
+
+    @Test
+    void successfulAttempt_auditsEveryPrItMergedWithNoRefusal() throws Exception {
         RunPullRequest first = pr(1, Instant.parse("2026-01-01T00:00:00Z"));
         RunPullRequest second = pr(2, Instant.parse("2026-01-02T00:00:00Z"));
         when(prRepo.findByWorkflowRunId(runId)).thenReturn(List.of(first, second));
@@ -194,25 +239,74 @@ class PullRequestMergeServiceTest {
         when(credentialResolver.getTokenForRun(runId)).thenReturn("token");
         when(gitHubAppService.fetchPullRequestDetail("token", "org/repo", 1))
                 .thenReturn(detail("open", false, false, true, "sha1", "main"));
+        // Already merged on GitHub: skipped, so it must not appear in this attempt's audit event.
         when(gitHubAppService.fetchPullRequestDetail("token", "org/repo", 2))
-                .thenReturn(detail("open", false, false, true, "sha2", "main"));
+                .thenReturn(detail("closed", true, false, null, "sha2", "main"));
         when(gitHubAppService.mergePullRequest("token", "org/repo", 1, "squash", "sha1"))
                 .thenReturn("mergesha1");
-        GitHubMergeRefusedException refusal = new GitHubMergeRefusedException(
-                405, "org/repo", 2, "At least 1 approving review is required", GitHubRateLimitHints.NONE);
-        when(gitHubAppService.mergePullRequest("token", "org/repo", 2, "squash", "sha2"))
-                .thenThrow(refusal);
-        // Re-read after the failed merge still shows it open, so the refusal reason stands.
+
+        service().mergeAll(runId, PullRequestMergeMethod.squash);
+
+        JsonNode audit = objectMapper.readTree(capturedAuditDetail());
+        assertThat(audit.get("refusedPullRequest").isNull()).isTrue();
+        assertThat(audit.get("pullRequests")).hasSize(1);
+        assertThat(audit.get("pullRequests").get(0).get("number").asInt()).isEqualTo(1);
+    }
+
+    @Test
+    void unknownMergeability_stillAttemptsTheMerge() {
+        RunPullRequest pr = pr(1, Instant.parse("2026-01-01T00:00:00Z"));
+        when(prRepo.findByWorkflowRunId(runId)).thenReturn(List.of(pr));
+        stubRepo();
+        when(credentialResolver.getTokenForRun(runId)).thenReturn("token");
+        // GitHub computes mergeability lazily and answers null until it has; that is not a conflict.
+        when(gitHubAppService.fetchPullRequestDetail("token", "org/repo", 1))
+                .thenReturn(detail("open", false, false, null, "sha1", "main"));
+        when(gitHubAppService.mergePullRequest("token", "org/repo", 1, "squash", "sha1"))
+                .thenReturn("mergesha1");
+
+        var outcome = service().mergeAll(runId, PullRequestMergeMethod.squash);
+
+        assertThat(outcome.results().get(0).kind()).isEqualTo(PullRequestMergeService.Kind.MERGED);
+        assertThat(outcome.results().get(0).mergeSha()).isEqualTo("mergesha1");
+    }
+
+    @Test
+    void readFailures_areClassifiedPerStatus_andBlockBeforeAnyMerge() {
+        RunPullRequest forbidden = pr(1, Instant.parse("2026-01-01T00:00:00Z"));
+        RunPullRequest missing = pr(2, Instant.parse("2026-01-02T00:00:00Z"));
+        RunPullRequest noResponse = pr(3, Instant.parse("2026-01-03T00:00:00Z"));
+        when(prRepo.findByWorkflowRunId(runId)).thenReturn(List.of(forbidden, missing, noResponse));
+        stubRepo();
+        when(credentialResolver.getTokenForRun(runId)).thenReturn("token");
+        when(gitHubAppService.fetchPullRequestDetail("token", "org/repo", 1))
+                .thenThrow(new GitHubApiException(403, "org/repo", 1, GitHubRateLimitHints.NONE));
         when(gitHubAppService.fetchPullRequestDetail("token", "org/repo", 2))
-                .thenReturn(detail("open", false, false, true, "sha2", "main"));
+                .thenThrow(new GitHubApiException(404, "org/repo", 2, GitHubRateLimitHints.NONE));
+        when(gitHubAppService.fetchPullRequestDetail("token", "org/repo", 3))
+                .thenThrow(new RuntimeException("connect timed out"));
 
         assertThatThrownBy(() -> service().mergeAll(runId, PullRequestMergeMethod.squash))
                 .isInstanceOf(PullRequestMergeException.class)
-                .hasMessageContaining("Merged: org/repo#1")
-                .hasMessageContaining("Could not merge org/repo#2")
-                .hasMessageContaining("At least 1 approving review is required");
+                .hasMessageContaining("nothing was merged")
+                .hasMessageContaining("the GitHub credential cannot access org/repo")
+                .hasMessageContaining("org/repo#2 not found (or not visible to the credential)")
+                .hasMessageContaining("GitHub did not respond for org/repo#3 — retry");
+        verify(gitHubAppService, never()).mergePullRequest(any(), any(), anyInt(), any(), any());
+    }
 
-        verify(auditSink).record(eq(AuditSink.PULL_REQUESTS_MERGED), eq("workflow_run"), eq(runId), any());
+    @Test
+    void credentialFailureWithoutOperatorFacingText_pointsAtServerLogs() {
+        RunPullRequest pr = pr(1, Instant.parse("2026-01-01T00:00:00Z"));
+        when(prRepo.findByWorkflowRunId(runId)).thenReturn(List.of(pr));
+        stubRepo();
+        // An arbitrary resolver failure may quote its upstream verbatim, so its text is withheld.
+        when(credentialResolver.getTokenForRun(runId)).thenThrow(new RuntimeException("upstream said: secret-ish"));
+
+        assertThatThrownBy(() -> service().mergeAll(runId, PullRequestMergeMethod.squash))
+                .isInstanceOf(PullRequestMergeException.class)
+                .hasMessageContaining("no usable GitHub credential — see server logs")
+                .hasMessageNotContaining("secret-ish");
     }
 
     @Test
@@ -425,6 +519,12 @@ class PullRequestMergeServiceTest {
     }
 
     // --- helpers ---
+
+    private String capturedAuditDetail() {
+        ArgumentCaptor<String> detail = ArgumentCaptor.forClass(String.class);
+        verify(auditSink).record(eq(AuditSink.PULL_REQUESTS_MERGED), eq("workflow_run"), eq(runId), detail.capture());
+        return detail.getValue();
+    }
 
     private RunPullRequest pr(int number, Instant createdAt) {
         RunPullRequest row = new RunPullRequest();
