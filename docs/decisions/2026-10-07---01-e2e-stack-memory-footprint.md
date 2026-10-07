@@ -1,4 +1,4 @@
-# The e2e stack runs Temporal's dev server and packages a host-built api-server jar
+# The e2e stack packages a host-built api-server jar and staggers its memory peaks
 
 ## Status
 
@@ -22,22 +22,15 @@ own cut:
 
 ## Decision
 
-1. **Temporal runs its single-binary dev server** (`temporalio/temporal`, `server start-dev`,
-   SQLite file) instead of `temporalio/auto-setup` on the shared PostgreSQL, capped at 192m with
-   `GOMEMLIMIT`. It is the same server and gRPC API, not a mock: every call our code makes — workflow
-   start, per-execution signals, terminate, activity heartbeats and Heartbeat/StartToClose timeouts,
-   timers, async completion and heartbeat by ID — was exercised against it.
-   What changes is Temporal's own persistence (SQLite, one history shard), which no code of ours
-   touches. Measured ~50–70MiB idle and ≤~110MiB after 1000 workflows; `auto-setup` was capped at
-   768m. It also moves e2e from the deprecated `auto-setup` image's server 1.25 to a current server.
-2. **The api-server jar is built on the host and only packaged in Docker** (`api-server/Dockerfile.e2e`,
+1. **The api-server jar is built on the host and only packaged in Docker** (`api-server/Dockerfile.e2e`,
    built by `scripts/e2e-up.sh` before `compose up`). This removes the in-Docker Gradle build from
    the concurrent image builds. The published image still builds from `api-server/Dockerfile`; the
    e2e image shares its runtime stage, so the cost is that e2e no longer exercises the Dockerfile's
    build stages — image publishing does.
-3. **`:web-ui:test` runs after `:api-server:test`** (`mustRunAfter`): the two largest unit-stage
-   consumers no longer overlap. Costs a minute or two of wall time.
-4. **The Gradle daemon returns idle heap** (`-XX:G1PeriodicGCInterval=15000` in
+2. **`:web-ui:test` runs after `:api-server:test`** (`mustRunAfter`): the two largest unit-stage
+   consumers no longer overlap. Costs a minute or two of wall time; `org.gradle.continue` keeps an api-server failure from
+   skipping the web-ui suite.
+3. **The Gradle daemon returns idle heap** (`-XX:G1PeriodicGCInterval=15000` in
    `org.gradle.jvmargs`), so it does not hold its build peak through the stack and Playwright phases.
 
 ## Rejected
@@ -46,10 +39,16 @@ own cut:
   a second Gradle JVM inside Docker (still ~1G there) and makes the stack step slower.
 - **Temporal's time-skipping test server.** It does not implement the full frontend API
   (`DescribeTaskQueue` is missing), and a long-timer history poll crashed the Go SDK client.
+- **Temporal's single-binary dev server** (`temporalio/temporal`, `server start-dev`, SQLite file,
+  192m cap, `GOMEMLIMIT=96MiB`) in place of `auto-setup`. It is the same server and gRPC API and passed
+  a 1000-workflow probe of every call our code makes, but under the full suite's concurrent load its
+  persistence calls hit `context deadline exceeded`, and runs stopped advancing (nodes never reached
+  running; ~10 Playwright failures). Not retried here: the probe was sequential, and whether the cause
+  is the memory limit or SQLite write throughput is unmeasured. Estimated saving was 150–400MiB.
 - **Tuning `auto-setup` / `temporalio/server` on PostgreSQL.** More moving parts (schema job, pools,
-  shard count) for a saving the dev server already beats.
+  shard count) for an unmeasured saving.
 
 ## Not verified until a full `test -Pe2e` run
 
-The dev server under the complete Playwright suite, and the per-phase peak reductions themselves:
+The per-phase peak reductions themselves:
 the figures above are from component measurements, not a whole-suite run.
