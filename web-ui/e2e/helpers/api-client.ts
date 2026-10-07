@@ -16,6 +16,7 @@ import type {
   MilestoneRef,
   Readiness,
   AutopilotStatus,
+  EpicDependencyResponse,
 } from "../../src/lib/types";
 
 // E2e-mode defaults (2xxxx range). Local-mode runs on 1xxxx — override via
@@ -590,6 +591,11 @@ export class TestApiClient {
 
   async deleteDependency(id: string): Promise<void> {
     return this.delete(`/api/v1/dependencies/${id}`);
+  }
+
+  /** Edges with the Epic itself as an endpoint, from that Epic's side (mirrors useEpicDependencies). */
+  async listEpicDependencies(epicId: string): Promise<EpicDependencyResponse[]> {
+    return this.get(`/api/v1/epics/${epicId}/dependencies`);
   }
 
   // ── Milestones ───────────────────────────────────────────────────

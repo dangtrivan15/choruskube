@@ -350,6 +350,21 @@ export interface RoadmapCandidatesDocument {
 }
 
 /**
+ * `POST /roadmap/import` on a valid document: what it describes and, unless it was a dry run,
+ * the Epics it created. An invalid document is a 400 `{ valid: false, errors }` instead.
+ */
+export interface RoadmapImportResponse {
+  dryRun: boolean;
+  milestones: number;
+  newEpics: number;
+  newStories: number;
+  newTasks: number;
+  existingItems: number;
+  dependencies: number;
+  createdEpicIds: string[];
+}
+
+/**
  * Why a Supervisor gate is open and who opened it, mirroring the api-server's
  * EscalationContext record (Jackson camelCase). `category` and `summary` are
  * parsed from the escalating node's `escalation.md` front matter server-side
@@ -902,6 +917,27 @@ export interface CreateDependencyRequest {
   blockingItemId: string;
   blockedItemType: BlockableItemType;
   blockedItemId: string;
+}
+
+/**
+ * Matches the backend EpicDependencyResponse record — one edge with the Epic
+ * itself as an endpoint (GET /api/v1/epics/{id}/dependencies). `itemType`,
+ * `itemId` and `title` describe the other endpoint; `epicId`/`epicTitle` its
+ * owning Epic (the item itself when it is an Epic).
+ */
+export interface EpicDependencyResponse {
+  edgeId: string;
+  /**
+   * The requested Epic's OWN role: `BLOCKED` = the other item blocks it. The
+   * reverse subject of `ExternalBlockerRef.direction`, which names the outside
+   * item's role.
+   */
+  direction: "BLOCKING" | "BLOCKED";
+  itemType: BlockableItemType;
+  itemId: string;
+  title: string;
+  epicId: string;
+  epicTitle: string;
 }
 
 /**

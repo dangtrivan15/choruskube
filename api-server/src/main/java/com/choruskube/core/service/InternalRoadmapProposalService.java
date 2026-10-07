@@ -9,8 +9,6 @@ import com.choruskube.core.exception.ValidationException;
 import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.repository.NodeExecutionRepository;
 import com.choruskube.core.util.NodeExecutionUtil;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
@@ -80,7 +78,7 @@ public class InternalRoadmapProposalService {
                 .orElseThrow(() -> new ConflictException(
                         "This workflow has no roadmap review gate, so a proposal would never be reviewed. File a"
                                 + " GitHub issue for deferred work instead."));
-        RoadmapCandidatesDocument doc = bind(body);
+        RoadmapCandidatesDocument doc = RoadmapDocumentBinding.bind(objectMapper, body);
 
         List<String> violations =
                 validator.validate(runId, doc, gate.mode(), RoadmapProposalValidator.Strictness.AGENT);
@@ -97,36 +95,5 @@ public class InternalRoadmapProposalService {
                 summary.newTasks(),
                 summary.existingItems(),
                 summary.dependencies());
-    }
-
-    /**
-     * Binds the raw body here rather than through {@code @RequestBody}, so a type error — a
-     * non-UUID {@code existingId}/{@code repoId}, a bare array — reaches the agent as a
-     * path-prefixed {@code errors[]} entry instead of a 400 that names no field.
-     */
-    private RoadmapCandidatesDocument bind(JsonNode body) {
-        try {
-            return objectMapper.treeToValue(body, RoadmapCandidatesDocument.class);
-        } catch (JsonMappingException e) {
-            throw new ValidationException(List.of(jsonPath(e) + ": " + e.getOriginalMessage()));
-        } catch (JsonProcessingException e) {
-            throw new ValidationException(List.of("document: " + e.getOriginalMessage()));
-        }
-    }
-
-    /** {@code epics[0].stories[1].existingId}-style path, matching the validator's own prefixes. */
-    private static String jsonPath(JsonMappingException e) {
-        StringBuilder path = new StringBuilder();
-        for (JsonMappingException.Reference ref : e.getPath()) {
-            if (ref.getFieldName() != null) {
-                if (!path.isEmpty()) {
-                    path.append('.');
-                }
-                path.append(ref.getFieldName());
-            } else if (ref.getIndex() >= 0) {
-                path.append('[').append(ref.getIndex()).append(']');
-            }
-        }
-        return path.isEmpty() ? "document" : path.toString();
     }
 }

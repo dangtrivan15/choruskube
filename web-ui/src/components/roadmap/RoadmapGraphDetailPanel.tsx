@@ -210,7 +210,7 @@ function BlockingDependenciesSection({
                   type="button"
                   aria-label="Remove dependency"
                   data-testid="roadmap-blocking-dependency-remove"
-                  onClick={() => deleteDependency.mutate(edge.id)}
+                  onClick={() => deleteDependency.mutate({ id: edge.id })}
                   disabled={deleteDependency.isPending}
                   className="ml-1 text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:pointer-events-none"
                 >

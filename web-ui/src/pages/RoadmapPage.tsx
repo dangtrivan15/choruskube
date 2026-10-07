@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router";
 import { formatDistanceToNow } from "date-fns";
-import { Plus, GitBranch, Layers, Network, Milestone as MilestoneIcon } from "lucide-react";
+import { Plus, FileUp, GitBranch, Layers, Network, Milestone as MilestoneIcon } from "lucide-react";
 import Authorized from "@/components/Authorized";
 import { useEpics } from "@/hooks/useEpics";
 import { useMilestones } from "@/hooks/useMilestones";
@@ -14,6 +14,7 @@ import Pagination from "@/components/ui/Pagination";
 import SortDropdown from "@/components/ui/SortDropdown";
 import { cn } from "@/lib/utils";
 import CreateEpicDialog from "@/components/roadmap/CreateEpicDialog";
+import ImportRoadmapDialog from "@/components/roadmap/ImportRoadmapDialog";
 import RoadmapReadyToggle from "@/components/roadmap/RoadmapReadyToggle";
 import PriorityFilter from "@/components/roadmap/PriorityFilter";
 import RoadmapViewControls from "@/components/roadmap/RoadmapViewControls";
@@ -108,6 +109,7 @@ export default function RoadmapPage() {
   const [page, setPage] = useState(0);
   const [sort, setSort] = useState<SortParam | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [readyOnly, setReadyOnly] = useState(false);
   const [priority, setPriority] = useState<Priority | undefined>(undefined);
   const [milestoneFilter, setMilestoneFilter] = useState<string | undefined>(undefined);
@@ -135,6 +137,10 @@ export default function RoadmapPage() {
         <MilestoneFilter value={milestoneFilter} onChange={setMilestoneFilter} />
         <SortDropdown options={SORT_OPTIONS} currentSort={sort} onSort={setSort} />
         <Authorized require="canOperate">
+          <Button data-testid="import-roadmap-button" size="sm" variant="outline" onClick={() => setImportOpen(true)}>
+            <FileUp className="size-4" />
+            Import JSON
+          </Button>
           <Button data-testid="new-epic-button" size="sm" onClick={() => setCreateOpen(true)}>
             <Plus className="size-4" />
             New Epic
@@ -219,6 +225,7 @@ export default function RoadmapPage() {
       )}
 
       <CreateEpicDialog open={createOpen} onOpenChange={setCreateOpen} />
+      <ImportRoadmapDialog open={importOpen} onOpenChange={setImportOpen} />
     </div>
   );
 }

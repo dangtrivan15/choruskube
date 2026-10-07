@@ -66,6 +66,12 @@ vi.mock("@/hooks/useStories", () => ({
   }),
 }));
 
+vi.mock("@/components/roadmap/EpicDependenciesSection", () => ({
+  default: ({ epicId }: { epicId: string }) => (
+    <div data-testid="epic-dependencies-section" data-epic-id={epicId} />
+  ),
+}));
+
 vi.mock("@/hooks/useRoadmapSubscription", () => ({
   useRoadmapSubscription: vi.fn(),
 }));
@@ -146,6 +152,13 @@ describe("EpicDetailPage", () => {
     expect(screen.getByTestId("epic-detail-title")).toHaveTextContent("Add dark mode");
     expect(screen.getByTestId("epic-detail-stage")).toHaveTextContent("backlog");
     expect(screen.getByTestId("epic-detail-progress")).toHaveTextContent("1/2 tasks done");
+  });
+
+  it("renders the Epic's dependencies section for this Epic", () => {
+    mockUseEpic.mockReturnValue({ data: makeEpic(), isLoading: false });
+    mockUseStories.mockReturnValue({ data: [], isLoading: false });
+    renderWithProviders(<EpicDetailPage />);
+    expect(screen.getByTestId("epic-dependencies-section")).toHaveAttribute("data-epic-id", "epic-1");
   });
 
   it("renders the Epic LevelBadge", () => {

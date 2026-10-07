@@ -41,9 +41,9 @@ import org.springframework.stereotype.Service;
  * <ol>
  *   <li>Milestones: find-or-create by name via {@link MilestoneService#findOrCreate}, mapping
  *       {@code key -> milestoneId};
- *   <li>Epics, then their Stories, then their Tasks, via {@link InternalRunService}'s existing
- *       agent-facing write path — the materializer's only injected dependency for item creation
- *       itself, wrapping each top-level candidate in its own try/catch so one failure doesn't stop
+ *   <li>Epics, then their Stories, then their Tasks, via the {@link RoadmapItemWriter} — {@link
+ *       InternalRunService}'s agent-facing write path for a gate, the public services for an
+ *       import — wrapping each top-level candidate in its own try/catch so one failure doesn't stop
  *       the rest of the batch. An {@code existingId} anchor is never created: its key (if any) is
  *       recorded directly against the anchor's id, and its children (if any) attach under it.
  *       Each created item's {@code key} (if any) is recorded in a {@code key -> (BlockableItemType,
@@ -52,12 +52,15 @@ import org.springframework.stereotype.Service;
  *       issue is filed and the linkage persisted — best-effort: a failure here is recorded in
  *       {@code errors} but never un-creates the Task;
  *   <li>Dependency edges: each {@link CandidateDependency} resolves its {@code blocking}/{@code
- *       blocked} keys against the same map and calls {@link InternalRunService#createDependency} —
- *       the project-checked agent path, needed now that a key may resolve to an anchor (an item
- *       outside this batch) rather than only to something just created in it — on a cycle or any
- *       other validation error the edge is skipped and recorded in {@code errors} rather than
- *       aborting the batch.
+ *       blocked} keys against the same map and calls the writer's {@code createDependency} — a
+ *       project/org-checked path, needed because a key may resolve to an anchor (an item outside
+ *       this batch) rather than only to something just created in it — on a cycle or any other
+ *       validation error the edge is skipped and recorded in {@code errors} rather than aborting
+ *       the batch.
  * </ol>
+ *
+ * <p>Best-effort applies per call, not per caller: a caller holding one transaction around the
+ * whole materialization (an import) sees every error in the summary and rolls back all of it.
  *
  * <p>{@code title}/{@code description}/{@code motivation} are forwarded to {@code
  * InternalCreateEpicRequest} as-is, and each item's free-text {@code priority} — a
@@ -99,6 +102,46 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
     @Override
     public MaterializationSummary materialize(
             UUID runId, RoadmapCandidatesDocument document, RoadmapMaterializeMode mode) {
+        return materialize(
+                new RunWriter(internalRunService, runId), document, mode == RoadmapMaterializeMode.roadmap_extension);
+    }
+
+    @Override
+    public MaterializationSummary materialize(RoadmapItemWriter writer, RoadmapCandidatesDocument document) {
+        return materialize(writer, document, false);
+    }
+
+    /** The gate path: JOB_SECRET-safe writes, each scoped to the run's own project and org. */
+    private record RunWriter(InternalRunService runs, UUID runId) implements RoadmapItemWriter {
+
+        @Override
+        public UUID softwareProjectId() {
+            return runs.resolveSoftwareProjectId(runId);
+        }
+
+        @Override
+        public EpicResponse createEpic(InternalCreateEpicRequest request) {
+            return runs.createEpic(runId, request);
+        }
+
+        @Override
+        public StoryResponse createStory(UUID epicId, InternalCreateStoryRequest request) {
+            return runs.createStory(runId, epicId, request);
+        }
+
+        @Override
+        public TaskResponse createTask(UUID epicId, UUID storyId, InternalCreateTaskRequest request) {
+            return runs.createTask(runId, epicId, storyId, request);
+        }
+
+        @Override
+        public void createDependency(InternalCreateDependencyRequest request) {
+            runs.createDependency(runId, request);
+        }
+    }
+
+    private MaterializationSummary materialize(
+            RoadmapItemWriter writer, RoadmapCandidatesDocument document, boolean fileGithubIssues) {
         List<UUID> createdEpicIds = new ArrayList<>();
         List<UUID> createdStoryIds = new ArrayList<>();
         List<UUID> createdTaskIds = new ArrayList<>();
@@ -111,16 +154,16 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
         }
 
         Map<String, UUID> milestoneIdByKey = new HashMap<>();
-        materializeMilestones(runId, document.milestones(), createdMilestoneIds, milestoneIdByKey, errors);
+        materializeMilestones(writer, document.milestones(), createdMilestoneIds, milestoneIdByKey, errors);
 
         Map<String, ItemRef> itemByKey = new HashMap<>();
         List<CandidateEpicProposal> epics = document.epics();
         if (epics != null) {
             for (CandidateEpicProposal candidate : epics) {
                 materializeEpic(
-                        runId,
+                        writer,
                         candidate,
-                        mode,
+                        fileGithubIssues,
                         createdEpicIds,
                         createdStoryIds,
                         createdTaskIds,
@@ -130,7 +173,7 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
             }
         }
 
-        int createdDependencyCount = materializeDependencies(runId, document.dependencies(), itemByKey, errors);
+        int createdDependencyCount = materializeDependencies(writer, document.dependencies(), itemByKey, errors);
 
         return new MaterializationSummary(
                 createdEpicIds, createdStoryIds, createdTaskIds, createdMilestoneIds, createdDependencyCount, errors);
@@ -142,7 +185,7 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
      * batch — Epics/Stories/Tasks are still worth materializing even if every Milestone failed.
      */
     private void materializeMilestones(
-            UUID runId,
+            RoadmapItemWriter writer,
             List<CandidateMilestone> milestones,
             List<UUID> createdMilestoneIds,
             Map<String, UUID> milestoneIdByKey,
@@ -152,7 +195,7 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
         }
         UUID softwareProjectId;
         try {
-            softwareProjectId = internalRunService.resolveSoftwareProjectId(runId);
+            softwareProjectId = writer.softwareProjectId();
         } catch (Exception e) {
             String message = "Failed to resolve software project for Milestone materialization: " + e.getMessage();
             logger.warn(message, e);
@@ -214,9 +257,9 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
      * Epic silently exists in the database with no trace of the decision that created it.
      */
     private void materializeEpic(
-            UUID runId,
+            RoadmapItemWriter writer,
             CandidateEpicProposal candidate,
-            RoadmapMaterializeMode mode,
+            boolean fileGithubIssues,
             List<UUID> createdEpicIds,
             List<UUID> createdStoryIds,
             List<UUID> createdTaskIds,
@@ -238,14 +281,12 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
             EpicResponse epic;
             try {
                 UUID milestoneId = candidate.milestone() != null ? milestoneIdByKey.get(candidate.milestone()) : null;
-                epic = internalRunService.createEpic(
-                        runId,
-                        new InternalCreateEpicRequest(
-                                candidate.title(),
-                                orEmpty(candidate.description()),
-                                candidate.motivation(),
-                                parsePriority(candidate.priority()),
-                                milestoneId));
+                epic = writer.createEpic(new InternalCreateEpicRequest(
+                        candidate.title(),
+                        orEmpty(candidate.description()),
+                        candidate.motivation(),
+                        parsePriority(candidate.priority()),
+                        milestoneId));
             } catch (Exception e) {
                 String title = candidate != null ? candidate.title() : "<null>";
                 String message = "Failed to materialize candidate Epic '" + title + "': " + e.getMessage();
@@ -264,7 +305,15 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
         if (stories != null) {
             for (CandidateStoryProposal story : stories) {
                 try {
-                    materializeStory(runId, epicId, story, mode, createdStoryIds, createdTaskIds, errors, itemByKey);
+                    materializeStory(
+                            writer,
+                            epicId,
+                            story,
+                            fileGithubIssues,
+                            createdStoryIds,
+                            createdTaskIds,
+                            errors,
+                            itemByKey);
                 } catch (Exception e) {
                     String storyTitle = story != null ? story.title() : "<null>";
                     String epicLabel = candidate.title() != null ? candidate.title() : String.valueOf(epicId);
@@ -278,10 +327,10 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
     }
 
     private void materializeStory(
-            UUID runId,
+            RoadmapItemWriter writer,
             UUID epicId,
             CandidateStoryProposal story,
-            RoadmapMaterializeMode mode,
+            boolean fileGithubIssues,
             List<UUID> createdStoryIds,
             List<UUID> createdTaskIds,
             List<String> errors,
@@ -290,8 +339,7 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
         if (story.existingId() != null) {
             storyId = story.existingId();
         } else {
-            StoryResponse createdStory = internalRunService.createStory(
-                    runId,
+            StoryResponse createdStory = writer.createStory(
                     epicId,
                     new InternalCreateStoryRequest(
                             story.title(), orEmpty(story.description()), parsePriority(story.priority())));
@@ -305,17 +353,17 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
         List<CandidateTaskProposal> tasks = story.tasks();
         if (tasks != null) {
             for (CandidateTaskProposal task : tasks) {
-                materializeTask(runId, epicId, storyId, task, mode, createdTaskIds, errors, itemByKey);
+                materializeTask(writer, epicId, storyId, task, fileGithubIssues, createdTaskIds, errors, itemByKey);
             }
         }
     }
 
     private void materializeTask(
-            UUID runId,
+            RoadmapItemWriter writer,
             UUID epicId,
             UUID storyId,
             CandidateTaskProposal task,
-            RoadmapMaterializeMode mode,
+            boolean fileGithubIssues,
             List<UUID> createdTaskIds,
             List<String> errors,
             Map<String, ItemRef> itemByKey) {
@@ -325,8 +373,7 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
             }
             return;
         }
-        TaskResponse createdTask = internalRunService.createTask(
-                runId,
+        TaskResponse createdTask = writer.createTask(
                 epicId,
                 storyId,
                 new InternalCreateTaskRequest(
@@ -335,8 +382,8 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
         if (task.key() != null) {
             itemByKey.put(task.key(), new ItemRef(BlockableItemType.task, createdTask.id()));
         }
-        if (mode == RoadmapMaterializeMode.roadmap_extension) {
-            fileGithubIssue(runId, createdTask, task.repoId(), errors);
+        if (fileGithubIssues) {
+            fileGithubIssue(writer, createdTask, task.repoId(), errors);
         }
     }
 
@@ -345,9 +392,10 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
      * same as every other per-item step here: a failure is recorded in {@code errors} and the Task
      * itself, already created and committed, stays created.
      */
-    private void fileGithubIssue(UUID runId, TaskResponse createdTask, UUID candidateRepoId, List<String> errors) {
+    private void fileGithubIssue(
+            RoadmapItemWriter writer, TaskResponse createdTask, UUID candidateRepoId, List<String> errors) {
         try {
-            UUID projectId = internalRunService.resolveSoftwareProjectId(runId);
+            UUID projectId = writer.softwareProjectId();
             List<GitRepo> repos = internalRunService.resolveRepos(projectId);
             GitRepo repo = resolveRepoForTask(repos, candidateRepoId);
             String ownerRepo = RepoNameUtil.deriveOwnerRepoName(repo.getUrl());
@@ -394,7 +442,10 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
      * either way.
      */
     private int materializeDependencies(
-            UUID runId, List<CandidateDependency> dependencies, Map<String, ItemRef> itemByKey, List<String> errors) {
+            RoadmapItemWriter writer,
+            List<CandidateDependency> dependencies,
+            Map<String, ItemRef> itemByKey,
+            List<String> errors) {
         if (dependencies == null) {
             return 0;
         }
@@ -408,13 +459,8 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
                 continue;
             }
             try {
-                internalRunService.createDependency(
-                        runId,
-                        new InternalCreateDependencyRequest(
-                                blocking.type().name(),
-                                blocking.id(),
-                                blocked.type().name(),
-                                blocked.id()));
+                writer.createDependency(new InternalCreateDependencyRequest(
+                        blocking.type().name(), blocking.id(), blocked.type().name(), blocked.id()));
                 created++;
             } catch (Exception e) {
                 String message = "Failed to materialize dependency edge '" + dep.blocking() + "' -> '" + dep.blocked()

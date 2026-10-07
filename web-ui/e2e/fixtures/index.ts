@@ -16,6 +16,7 @@ import { RoadmapBoardPage } from "../pages/roadmap-board.page";
 import { TaskBoardPage } from "../pages/task-board.page";
 import { StoryBoardPage } from "../pages/story-board.page";
 import { RoadmapGraphPage } from "../pages/roadmap-graph.page";
+import { EpicDetailPage } from "../pages/epic-detail.page";
 import { ApprovalsPage } from "../pages/approvals.page";
 import { DocsPage } from "../pages/docs.page";
 import { AutopilotPage } from "../pages/autopilot.page";
@@ -32,6 +33,7 @@ export interface TestFixtures {
   taskBoardPage: TaskBoardPage;
   storyBoardPage: StoryBoardPage;
   roadmapGraphPage: RoadmapGraphPage;
+  epicDetailPage: EpicDetailPage;
   approvalsPage: ApprovalsPage;
   docsPage: DocsPage;
   autopilotPage: AutopilotPage;
@@ -143,6 +145,10 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
 
   roadmapGraphPage: async ({ page }, use) => {
     await use(new RoadmapGraphPage(page));
+  },
+
+  epicDetailPage: async ({ page }, use) => {
+    await use(new EpicDetailPage(page));
   },
 
   approvalsPage: async ({ page }, use) => {

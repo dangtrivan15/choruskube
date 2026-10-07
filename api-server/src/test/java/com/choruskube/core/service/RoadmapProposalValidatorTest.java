@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.choruskube.core.BaseTest;
 import com.choruskube.core.dto.CandidateDependency;
 import com.choruskube.core.dto.CandidateEpicProposal;
+import com.choruskube.core.dto.CandidateMilestone;
 import com.choruskube.core.dto.CandidateStoryProposal;
 import com.choruskube.core.dto.CandidateTaskProposal;
 import com.choruskube.core.dto.RepoGroupRequest;
@@ -716,5 +717,59 @@ class RoadmapProposalValidatorTest extends BaseTest {
         assertThat(summary.newTasks()).isEqualTo(2);
         assertThat(summary.existingItems()).isEqualTo(1);
         assertThat(summary.dependencies()).isEqualTo(1);
+    }
+
+    // -----------------------------------------------------------------------
+    // validateImport — a person importing straight into a project
+    // -----------------------------------------------------------------------
+
+    @Test
+    void import_anchorsAnywhereInProject_andMilestonesAreAllowed() {
+        RoadmapCandidatesDocument d = new RoadmapCandidatesDocument(
+                List.of(new CandidateMilestone("m1", "Q4", null, null)),
+                List.of(
+                        new CandidateEpicProposal(
+                                "New Epic",
+                                "d",
+                                null,
+                                null,
+                                null,
+                                List.of(newStory("s", List.of(newTask("t")))),
+                                "new",
+                                "m1",
+                                null),
+                        anchorEpic(epicP.getId(), "p", List.of(newStory("s2", List.of(newTask("t2"))))),
+                        anchorEpic(epicP2.getId(), "p2", List.of())),
+                List.of(new CandidateDependency("p2", "new"), new CandidateDependency("p", "t")));
+
+        assertThat(validator.validateImport(projectP.getId(), d)).isEmpty();
+    }
+
+    @Test
+    void import_anchorInAnotherProject_isNotFoundInThisProject() {
+        RoadmapCandidatesDocument d = doc(List.of(anchorEpic(epicQ.getId(), "q", List.of())), List.of());
+
+        assertThat(validator.validateImport(projectP.getId(), d))
+                .containsExactly("epics[0]: existing epic " + epicQ.getId() + " not found in this software project");
+    }
+
+    @Test
+    void import_isAgentStrict_unknownKeysAndCyclesRejected() {
+        RoadmapCandidatesDocument d = doc(
+                List.of(newEpic("a", List.of(newStory("s", List.of(newTask("t")))))),
+                List.of(
+                        new CandidateDependency("a", "missing"),
+                        new CandidateDependency("a", "t"),
+                        new CandidateDependency("t", "a")));
+
+        assertThat(validator.validateImport(projectP.getId(), d))
+                .containsExactly("dependencies[0]: unknown key 'missing'", "dependencies[2]: would create a cycle");
+    }
+
+    @Test
+    void import_emptyOrNullDocument_hasNothingToImport() {
+        assertThat(validator.validateImport(projectP.getId(), doc(List.of(), List.of())))
+                .containsExactly("document: nothing to import — add at least one epic or milestone");
+        assertThat(validator.validateImport(projectP.getId(), null)).containsExactly("document: nothing to import");
     }
 }
