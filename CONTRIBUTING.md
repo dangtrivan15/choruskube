@@ -46,7 +46,7 @@ all three, since the root runs them in parallel. See
 full regression:
 
 ```bash
-./gradlew test         # unit suites only — api-server + orchestrator + web-ui, in parallel
+./gradlew test         # unit suites only — api-server, orchestrator, worker in parallel; web-ui after api-server
 ./gradlew test -Pe2e   # the above, then the whole stack chain
 ```
 
@@ -63,12 +63,19 @@ its slowest suite rather than the sum of all three. That comes from
 `org.gradle.parallel=true` in the root `gradle.properties`; drop it and the stage
 silently serializes while still passing.
 
+One pair is deliberately ordered: `:web-ui:test` runs after `:api-server:test`
+(`mustRunAfter` in `web-ui/build.gradle.kts`). vitest's workers and the api-server test
+JVM's heap are the two largest memory consumers in the stage, and on a memory-capped
+test runner their peaks stacked in one container. The order costs a minute or two of
+wall time; the Go suites still overlap both. See
+[docs/decisions/2026-10-07---01-e2e-stack-memory-footprint.md](docs/decisions/2026-10-07---01-e2e-stack-memory-footprint.md).
+
 With `-Pe2e`, Gradle then runs the end-to-end chain as separate tasks:
 
 | Task | What it does |
 |------|--------------|
 | `e2eImages` | Build the agent and application images |
-| `e2eStackUp` | `docker compose up`, then wait for health |
+| `e2eStackUp` | Build the api-server jar on the host, `docker compose up`, then wait for health |
 | `e2eSmoke` | API smoke checks against the live stack |
 | `e2eSeed` | Load WireMock stubs and seed test data |
 | `e2ePlaywright` | Drive the Playwright suite end-to-end |

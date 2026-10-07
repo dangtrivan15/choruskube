@@ -155,12 +155,9 @@ services:
     image: choruskube-e2e-api-server:local
     build:
       context: ./api-server
-      dockerfile: Dockerfile
-      args:
-        # Build stage base. Defaults to the stock Gradle+JDK toolchain; CI sets E2E_DEV_BASE to a
-        # warm build image (baked Gradle wrapper dist + module cache) so a from-scratch build
-        # reuses them instead of a cold download. Unset (local dev, forks) => stock, unchanged.
-        BUILD_BASE: ${E2E_DEV_BASE:-gradle:9.2.1-jdk25-alpine}
+      # Packages the bootJar scripts/e2e-up.sh builds on the host. A Gradle build inside Docker here
+      # would run concurrently with the other image builds and spike the daemon's memory.
+      dockerfile: Dockerfile.e2e
     dns_search: .
     mem_limit: 1536m
     environment:

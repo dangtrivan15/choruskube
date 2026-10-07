@@ -8,7 +8,7 @@ This is the **open-source core** of ChorusKube. It runs **single-tenant** with n
 
 ## Quick Reference: Build & Test Commands
 
-`./gradlew test` at the repo root runs the three unit suites in parallel; `-Pe2e` adds the full stack chain (`e2eImages` → `e2eStackUp` → `e2eSmoke` → `e2eSeed` → `e2ePlaywright`, teardown as a finalizer). A bare `./gradlew test` no longer boots the stack. Every build prints a per-task timing table on success and failure; `-Dtest.reports.dir=<abs path>` collects all suites' reports under one repo-named tree. Per-component commands below remain the fast-iteration path — see [CONTRIBUTING.md](CONTRIBUTING.md#components-and-per-component-commands).
+`./gradlew test` at the repo root runs the unit suites in parallel (web-ui's after api-server's, for memory); `-Pe2e` adds the full stack chain (`e2eImages` → `e2eStackUp` → `e2eSmoke` → `e2eSeed` → `e2ePlaywright`, teardown as a finalizer). A bare `./gradlew test` no longer boots the stack. Every build prints a per-task timing table on success and failure; `-Dtest.reports.dir=<abs path>` collects all suites' reports under one repo-named tree. Per-component commands below remain the fast-iteration path — see [CONTRIBUTING.md](CONTRIBUTING.md#components-and-per-component-commands).
 
 | Component    | Build (from its dir)        | Test                | Lint / Format                  |
 |--------------|-----------------------------|---------------------|--------------------------------|

@@ -24,6 +24,9 @@ tasks.register<Exec>("typecheck") {
 
 tasks.register<Exec>("test") {
     dependsOn("npmInstall", "typecheck")
+    // Overlapping vitest with the api-server test JVM stacks both memory peaks in one container,
+    // which can OOM-kill a memory-capped test run.
+    mustRunAfter(":api-server:test")
     workingDir = projectDir
     val args = mutableListOf("npx", "vitest", "run", "--coverage")
     reportsRoot.orNull?.let { args += "--coverage.reportsDirectory=$it/web-ui" }

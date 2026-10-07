@@ -46,6 +46,12 @@ if [ "$DO_IMAGES" = "1" ]; then
 fi
 
 if [ "$DO_STACK" = "1" ]; then
+  echo "--- Building api-server bootJar on the host ---"
+  # Dockerfile.e2e copies build/libs/*-boot.jar; a stale second jar there would fail that COPY.
+  # --no-daemon: a daemon spawned here would stay resident for the whole run.
+  rm -f "${REPO_ROOT}"/api-server/build/libs/*-boot.jar
+  ( cd "$REPO_ROOT" && ./gradlew :api-server:bootJar --no-daemon -q )
+
   echo "--- Starting stack (building images) ---"
   compose_e2e up -d --build
 
