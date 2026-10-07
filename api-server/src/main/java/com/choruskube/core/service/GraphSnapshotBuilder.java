@@ -3,6 +3,7 @@ package com.choruskube.core.service;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.GraphTemplate;
 import com.choruskube.core.model.NodeDefinition;
+import com.choruskube.core.model.RuntimeRequirements;
 import com.choruskube.core.model.SoftwareProject;
 import com.choruskube.core.model.TemplateEdge;
 import com.choruskube.core.model.TemplateNode;
@@ -205,11 +206,13 @@ public class GraphSnapshotBuilder {
         snapshot.set("edges", edgesArray);
         snapshot.put("enable_docker", enableDocker);
 
-        String dindImage = project != null
-                ? project.getRuntimeRequirements().dindImage()
-                : (gitRepo != null ? gitRepo.getDindImage() : null);
-        if (dindImage != null && !dindImage.isBlank()) {
-            snapshot.put("dind_image", dindImage);
+        RuntimeRequirements runtime = project != null
+                ? project.getRuntimeRequirements()
+                : (gitRepo != null ? gitRepo.getRuntimeRequirements() : null);
+        if (runtime != null) {
+            putIfPresent(snapshot, "dind_image", runtime.dindImage());
+            putIfPresent(snapshot, "agent_memory_request", runtime.agentMemoryRequest());
+            putIfPresent(snapshot, "dind_memory_request", runtime.dindMemoryRequest());
         }
 
         // Inject repo fields into inputs so {run.*} template variables still resolve
@@ -326,5 +329,12 @@ public class GraphSnapshotBuilder {
 
     private String deriveRepoName(String url) {
         return com.choruskube.core.util.RepoNameUtil.deriveRepoName(url);
+    }
+
+    // A missing key, not the string "null", is what tells the Worker to keep its own default.
+    private static void putIfPresent(ObjectNode snapshot, String field, String value) {
+        if (value != null && !value.isBlank()) {
+            snapshot.put(field, value);
+        }
     }
 }

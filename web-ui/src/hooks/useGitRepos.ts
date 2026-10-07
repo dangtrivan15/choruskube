@@ -28,6 +28,8 @@ export function useCreateGitRepo() {
       secrets?: string;
       enableDocker?: boolean;
       dindImage?: string;
+      agentMemoryRequest?: string | null;
+      dindMemoryRequest?: string | null;
     }) => api.post<GitRepoResponse>("/git-repos", body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["git-repos"] });
@@ -56,6 +58,8 @@ export function useUpdateGitRepo() {
         secrets?: string;
         enableDocker?: boolean;
         dindImage?: string;
+        agentMemoryRequest?: string | null;
+        dindMemoryRequest?: string | null;
       };
     }) => api.put<GitRepoResponse>(`/git-repos/${id}`, body),
     onSuccess: () => {

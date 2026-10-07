@@ -30,6 +30,8 @@ function makeGitRepo(overrides: Partial<GitRepoResponse> = {}): GitRepoResponse 
     secrets: [],
     enableDocker: false,
     dindImage: null,
+    agentMemoryRequest: null,
+    dindMemoryRequest: null,
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
     ...overrides,
@@ -89,6 +91,33 @@ describe("EditGitRepoDialog", () => {
           enableDocker: true,
           dindImage: "registry.example/dind:custom",
         }),
+      }),
+      expect.anything()
+    );
+  });
+
+  it("seeds the memory requests from the repo and sends null once they are cleared", async () => {
+    renderWithProviders(
+      <EditGitRepoDialog
+        gitRepo={makeGitRepo({ enableDocker: true, agentMemoryRequest: "4Gi", dindMemoryRequest: "3Gi" })}
+        open={true}
+        onOpenChange={vi.fn()}
+      />
+    );
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/Agent memory request/i)).toHaveValue("4Gi");
+    });
+    expect(screen.getByLabelText(/Dind memory request/i)).toHaveValue("3Gi");
+
+    await user.clear(screen.getByLabelText(/Agent memory request/i));
+    await user.clear(screen.getByLabelText(/Dind memory request/i));
+    await user.click(screen.getByRole("button", { name: /Save/i }));
+
+    expect(mockMutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.objectContaining({ agentMemoryRequest: null, dindMemoryRequest: null }),
       }),
       expect.anything()
     );

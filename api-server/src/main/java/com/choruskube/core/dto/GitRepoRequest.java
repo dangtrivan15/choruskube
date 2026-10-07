@@ -9,4 +9,6 @@ public record GitRepoRequest(
         String agentImage,
         String secrets,
         Boolean enableDocker,
-        String dindImage) {}
+        String dindImage,
+        String agentMemoryRequest,
+        String dindMemoryRequest) {}

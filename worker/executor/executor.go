@@ -63,6 +63,10 @@ type ExecutionParams struct {
 	// AgentResources overrides the executor's default agent-container CPU/memory for this one
 	// execution. Nil uses the deployment default (the K8s executor's Config).
 	AgentResources *AgentResources
+	// DindMemoryRequest overrides the dind sidecar's memory request (a Kubernetes quantity) for
+	// this one execution; its limit stays the template's. Empty keeps the template's request. The
+	// Docker executor ignores this.
+	DindMemoryRequest string
 }
 
 // AgentResources sets the agent container's CPU/memory requests and limits. Values are

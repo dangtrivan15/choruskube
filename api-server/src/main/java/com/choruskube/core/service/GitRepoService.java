@@ -13,6 +13,7 @@ import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.RepoGroupMemberRepository;
 import com.choruskube.core.repository.TombstonedGitRepoRef;
 import com.choruskube.core.scope.ScopeProvider;
+import com.choruskube.core.util.MemoryQuantity;
 import com.choruskube.core.util.RepoNameUtil;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -230,6 +231,8 @@ public class GitRepoService {
         entity.setSecrets(request.secrets() != null ? request.secrets() : "[]");
         entity.setEnableDocker(request.enableDocker() != null ? request.enableDocker() : false);
         entity.setDindImage(request.dindImage());
+        entity.setAgentMemoryRequest(MemoryQuantity.normalize("agentMemoryRequest", request.agentMemoryRequest()));
+        entity.setDindMemoryRequest(MemoryQuantity.normalize("dindMemoryRequest", request.dindMemoryRequest()));
         return entity;
     }
 
@@ -254,6 +257,8 @@ public class GitRepoService {
                 entity.getTestCommand(),
                 entity.getAgentImage(),
                 entity.getDindImage(),
+                entity.getAgentMemoryRequest(),
+                entity.getDindMemoryRequest(),
                 secretsNode,
                 entity.isEnableDocker(),
                 entity.getCreatedAt(),

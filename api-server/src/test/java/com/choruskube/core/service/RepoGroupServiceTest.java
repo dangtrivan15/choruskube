@@ -47,7 +47,7 @@ class RepoGroupServiceTest extends BaseTest {
         GitRepo r2 = saveRepo("r2");
 
         RepoGroup created = service.create(new RepoGroupRequest(
-                "proj-a", "registry/agent:v1", "desc", List.of(r1.getId(), r2.getId()), null, null));
+                "proj-a", "registry/agent:v1", "desc", List.of(r1.getId(), r2.getId()), null, null, null, null));
 
         RepoGroup loaded = repoGroups.findById(created.getId()).orElseThrow();
         assertThat(loaded.getName()).isEqualTo("proj-a");
@@ -55,11 +55,41 @@ class RepoGroupServiceTest extends BaseTest {
     }
 
     @Test
+    void create_and_update_persist_memory_requests() {
+        GitRepo member = saveRepo("sized");
+
+        RepoGroup created = service.create(
+                new RepoGroupRequest("proj-sized", null, null, List.of(member.getId()), true, null, "4Gi", "4Gi"));
+        assertThat(created.getAgentMemoryRequest()).isEqualTo("4Gi");
+        assertThat(created.getRuntimeRequirements().dindMemoryRequest()).isEqualTo("4Gi");
+
+        service.update(
+                created.getId(),
+                new RepoGroupRequest("proj-sized", null, null, List.of(member.getId()), true, null, "1536Mi", null));
+        entityManager.flush();
+        entityManager.clear();
+
+        RepoGroup loaded = repoGroups.findById(created.getId()).orElseThrow();
+        assertThat(loaded.getAgentMemoryRequest()).isEqualTo("1536Mi");
+        assertThat(loaded.getDindMemoryRequest()).isNull();
+    }
+
+    @Test
+    void create_rejects_a_malformed_memory_request() {
+        GitRepo member = saveRepo("bad-size");
+
+        assertThatThrownBy(() -> service.create(new RepoGroupRequest(
+                        "proj-bad-size", null, null, List.of(member.getId()), true, null, null, "lots")))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("dindMemoryRequest");
+    }
+
+    @Test
     void create_allows_any_member_under_always_allow_strategy() {
         GitRepo member = saveRepo("member");
 
-        RepoGroup created =
-                service.create(new RepoGroupRequest("proj-x", null, null, List.of(member.getId()), null, null));
+        RepoGroup created = service.create(
+                new RepoGroupRequest("proj-x", null, null, List.of(member.getId()), null, null, null, null));
 
         assertThat(created.resolveRepos()).extracting(GitRepo::getName).containsExactly("member");
     }
@@ -70,7 +100,7 @@ class RepoGroupServiceTest extends BaseTest {
         GitRepo other = saveRepo("other");
 
         assertThatThrownBy(() -> service.create(
-                        new RepoGroupRequest("name-clash", null, null, List.of(other.getId()), null, null)))
+                        new RepoGroupRequest("name-clash", null, null, List.of(other.getId()), null, null, null, null)))
                 .isInstanceOf(BadRequestException.class)
                 .hasMessageContaining("name");
     }
@@ -81,8 +111,8 @@ class RepoGroupServiceTest extends BaseTest {
         GitRepo r2 = saveRepo("r2");
         GitRepo r3 = saveRepo("r3");
 
-        RepoGroup group =
-                service.create(new RepoGroupRequest("proj-b", null, null, List.of(r1.getId(), r2.getId()), null, null));
+        RepoGroup group = service.create(
+                new RepoGroupRequest("proj-b", null, null, List.of(r1.getId(), r2.getId()), null, null, null, null));
 
         entityManager.flush();
         entityManager.clear();
@@ -99,7 +129,8 @@ class RepoGroupServiceTest extends BaseTest {
     @Test
     void delete_archives_group_and_keeps_the_row() {
         GitRepo r1 = saveRepo("r1");
-        RepoGroup group = service.create(new RepoGroupRequest("proj-c", null, null, List.of(r1.getId()), null, null));
+        RepoGroup group =
+                service.create(new RepoGroupRequest("proj-c", null, null, List.of(r1.getId()), null, null, null, null));
 
         service.delete(group.getId());
 

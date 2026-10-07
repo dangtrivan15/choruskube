@@ -379,6 +379,62 @@ func TestExecuteAINodeFromSnapshot_CallsExecutor_ForwardsDindImage(t *testing.T)
 	assert.Equal(t, "registry.example/custom-dind:v2", executedParams.DindImage)
 }
 
+// The project's memory requests reach the executor as request-only overrides: the agent's through
+// AgentResources (limits left empty so the deployment default applies), the sidecar's through
+// DindMemoryRequest. No request set -> no override at all, so the deployment default sizes the pod.
+func TestExecuteAINodeFromSnapshot_CallsExecutor_ForwardsMemoryRequests(t *testing.T) {
+	cases := []struct {
+		name      string
+		prep      workload.PrepareResponse
+		wantAgent *executor.AgentResources
+		wantDind  string
+	}{
+		{
+			name:      "both set",
+			prep:      workload.PrepareResponse{Image: "a", AgentMemoryRequest: "1792Mi", DindMemoryRequest: "256Mi"},
+			wantAgent: &executor.AgentResources{MemoryRequest: "1792Mi"},
+			wantDind:  "256Mi",
+		},
+		{
+			name:      "neither set",
+			prep:      workload.PrepareResponse{Image: "a"},
+			wantAgent: nil,
+			wantDind:  "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var executedParams executor.ExecutionParams
+			mockExec := &mockExecutor{
+				executeFn: func(ctx context.Context, params executor.ExecutionParams) (executor.ExecutionResult, error) {
+					executedParams = params
+					return executor.ExecutionResult{PodName: "agent-abc", JobSecretHash: "hash123"}, nil
+				},
+			}
+			prep := tc.prep
+			mockClient := &mockWorkloadClient{
+				prepareFn: func(ctx context.Context, p workload.PrepareParams) (*workload.PrepareResponse, error) {
+					return &prep, nil
+				},
+				completeFn: func(ctx context.Context, p workload.CompleteParams) error { return nil },
+			}
+
+			acts := NewWithExecutor(mockClient, mockExec, callback.NewHashCache())
+			acts.CallbackURL = "http://worker:9090/api/v1/callback"
+			acts.APIServerURL = "http://api-server.invalid"
+
+			_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+				Identity: Identity{NodeExecutionID: uuid.New(), RunID: stubbedRun(t), TemplateNodeID: uuid.New()},
+				Node:     Node{ExecutorType: "ai", PromptTemplate: "irrelevant"},
+			})
+			assert.ErrorIs(t, err, temporalactivity.ErrResultPending)
+
+			assert.Equal(t, tc.wantAgent, executedParams.AgentResources)
+			assert.Equal(t, tc.wantDind, executedParams.DindMemoryRequest)
+		})
+	}
+}
+
 // TestExecuteAINodeFromSnapshot_CallsExecutor_PrepareErrorPropagates verifies a prepare failure
 // is returned as an ordinary error, not masked as ErrResultPending — and that it short-circuits
 // before ever reaching the executor.

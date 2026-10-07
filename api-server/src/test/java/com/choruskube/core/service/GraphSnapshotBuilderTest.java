@@ -165,6 +165,34 @@ public class GraphSnapshotBuilderTest extends BaseTest {
         JsonNode snapshotJson = objectMapper.readTree(snapshot);
 
         assertThat(snapshotJson.has("dind_image")).isFalse();
+        assertThat(snapshotJson.has("agent_memory_request")).isFalse();
+        assertThat(snapshotJson.has("dind_memory_request")).isFalse();
+    }
+
+    @Test
+    void buildSnapshotForRunIncludesMemoryRequestsWhenGitRepoHasThem() throws Exception {
+        var baseTemplate = templateRepo
+                .findFirstByGraphIdOrderByVersionDesc(GraphIds.FEATURE_DEVELOPMENT)
+                .orElseThrow();
+
+        GitRepo gitRepo = new GitRepo();
+        gitRepo.setUrl("https://github.com/memory-request-test/repo");
+        gitRepo.setName(RepoNameUtil.deriveOwnerRepoName("https://github.com/memory-request-test/repo"));
+        gitRepo.setSecrets("[]");
+        gitRepo.setEnableDocker(true);
+        gitRepo.setAgentMemoryRequest("1792Mi");
+        gitRepo.setDindMemoryRequest("256Mi");
+        gitRepo = gitRepoRepo.save(gitRepo);
+
+        WorkflowRun run = new WorkflowRun();
+        run.setGraphTemplateId(baseTemplate.getId());
+        run.setInputs("{\"feature_request\":\"test\",\"software_project_id\":\"" + gitRepo.getId() + "\"}");
+        run = runRepo.save(run);
+
+        JsonNode snapshotJson = objectMapper.readTree(snapshotBuilder.buildSnapshotForRun(run));
+
+        assertThat(snapshotJson.get("agent_memory_request").asText()).isEqualTo("1792Mi");
+        assertThat(snapshotJson.get("dind_memory_request").asText()).isEqualTo("256Mi");
     }
 
     @Test

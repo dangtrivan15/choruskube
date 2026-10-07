@@ -97,7 +97,14 @@ class RepoGroupControllerTest extends BaseTest {
 
         String groupName = "my-group-" + UUID.randomUUID().toString().substring(0, 8);
         RepoGroupRequest body = new RepoGroupRequest(
-                groupName, "registry/agent:v1", "two-repo project", List.of(r1.getId(), r2.getId()), null, null);
+                groupName,
+                "registry/agent:v1",
+                "two-repo project",
+                List.of(r1.getId(), r2.getId()),
+                null,
+                null,
+                null,
+                null);
 
         mockMvc.perform(post("/api/v1/repo-groups")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -105,6 +112,28 @@ class RepoGroupControllerTest extends BaseTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.name").value(groupName))
                 .andExpect(jsonPath("$.members.length()").value(2));
+    }
+
+    @Test
+    void create_returns_memory_requests_and_rejects_a_malformed_one_with_400() throws Exception {
+        GitRepo r1 = saveRepo("mem-r1");
+        String groupName = "g-mem-" + UUID.randomUUID().toString().substring(0, 8);
+        RepoGroupRequest body =
+                new RepoGroupRequest(groupName, null, null, List.of(r1.getId()), true, null, "1536Mi", "256Mi");
+
+        mockMvc.perform(post("/api/v1/repo-groups")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.agentMemoryRequest").value("1536Mi"))
+                .andExpect(jsonPath("$.dindMemoryRequest").value("256Mi"));
+
+        RepoGroupRequest bad =
+                new RepoGroupRequest(groupName + "-bad", null, null, List.of(r1.getId()), true, null, "4GB", null);
+        mockMvc.perform(post("/api/v1/repo-groups")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(bad)))
+                .andExpect(status().isBadRequest());
     }
 
     @Test
@@ -117,7 +146,9 @@ class RepoGroupControllerTest extends BaseTest {
                 "with dind",
                 List.of(r1.getId()),
                 null,
-                "registry.example/grp-dind:latest");
+                "registry.example/grp-dind:latest",
+                null,
+                null);
 
         String created = mockMvc.perform(post("/api/v1/repo-groups")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -141,8 +172,8 @@ class RepoGroupControllerTest extends BaseTest {
         // returns true proves the flag is self-composed and stored, not inferred from members.
         GitRepo r1 = saveRepo("docker-r1");
         String groupName = "g-docker-" + UUID.randomUUID().toString().substring(0, 8);
-        RepoGroupRequest body =
-                new RepoGroupRequest(groupName, "registry/agent:v1", "with docker", List.of(r1.getId()), true, null);
+        RepoGroupRequest body = new RepoGroupRequest(
+                groupName, "registry/agent:v1", "with docker", List.of(r1.getId()), true, null, null, null);
 
         String created = mockMvc.perform(post("/api/v1/repo-groups")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -164,7 +195,8 @@ class RepoGroupControllerTest extends BaseTest {
     void delete_repo_that_is_a_group_member_is_409() throws Exception {
         GitRepo r1 = saveRepo("r1");
         String groupName = "g-" + UUID.randomUUID().toString().substring(0, 8);
-        repoGroupService.create(new RepoGroupRequest(groupName, null, null, List.of(r1.getId()), null, null));
+        repoGroupService.create(
+                new RepoGroupRequest(groupName, null, null, List.of(r1.getId()), null, null, null, null));
         // Force the membership row to be flushed before MockMvc opens its own transaction.
         entityManager.flush();
 
@@ -191,6 +223,8 @@ class RepoGroupControllerTest extends BaseTest {
                 null,
                 List.of(foreignRepo.getId()),
                 null,
+                null,
+                null,
                 null));
         entityManager.flush();
         UUID foreignGroupId = foreignGroup.getId();
@@ -214,6 +248,8 @@ class RepoGroupControllerTest extends BaseTest {
                 null,
                 null,
                 List.of(r1.getId(), r2.getId()),
+                null,
+                null,
                 null,
                 null));
         entityManager.flush();
@@ -251,6 +287,8 @@ class RepoGroupControllerTest extends BaseTest {
                 null,
                 List.of(r1.getId()),
                 null,
+                null,
+                null,
                 null));
         entityManager.flush();
 
@@ -273,6 +311,8 @@ class RepoGroupControllerTest extends BaseTest {
                 null,
                 null,
                 List.of(r1.getId()),
+                null,
+                null,
                 null,
                 null));
         entityManager.flush();
@@ -307,12 +347,14 @@ class RepoGroupControllerTest extends BaseTest {
                 "old desc",
                 List.of(r1.getId(), r2.getId()),
                 null,
+                null,
+                null,
                 null));
         entityManager.flush();
 
         String newName = "g-upd-renamed-" + UUID.randomUUID().toString().substring(0, 8);
-        RepoGroupRequest body =
-                new RepoGroupRequest(newName, "img:2", "new desc", List.of(r2.getId(), r3.getId()), null, null);
+        RepoGroupRequest body = new RepoGroupRequest(
+                newName, "img:2", "new desc", List.of(r2.getId(), r3.getId()), null, null, null, null);
 
         mockMvc.perform(put("/api/v1/repo-groups/{id}", group.getId())
                         .contentType(MediaType.APPLICATION_JSON)
@@ -328,17 +370,21 @@ class RepoGroupControllerTest extends BaseTest {
     void update_with_duplicate_name_is_400() throws Exception {
         GitRepo r1 = saveRepo("dup-r1");
         String takenName = "g-taken-" + UUID.randomUUID().toString().substring(0, 8);
-        repoGroupService.create(new RepoGroupRequest(takenName, null, null, List.of(r1.getId()), null, null));
+        repoGroupService.create(
+                new RepoGroupRequest(takenName, null, null, List.of(r1.getId()), null, null, null, null));
         RepoGroup group = repoGroupService.create(new RepoGroupRequest(
                 "g-other-" + UUID.randomUUID().toString().substring(0, 8),
                 null,
                 null,
                 List.of(r1.getId()),
                 null,
+                null,
+                null,
                 null));
         entityManager.flush();
 
-        RepoGroupRequest body = new RepoGroupRequest(takenName, null, null, List.of(r1.getId()), null, null);
+        RepoGroupRequest body =
+                new RepoGroupRequest(takenName, null, null, List.of(r1.getId()), null, null, null, null);
         mockMvc.perform(put("/api/v1/repo-groups/{id}", group.getId())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(body)))
@@ -359,6 +405,8 @@ class RepoGroupControllerTest extends BaseTest {
                 null,
                 List.of(foreignRepo.getId()),
                 null,
+                null,
+                null,
                 null));
         entityManager.flush();
         UUID foreignGroupId = foreignGroup.getId();
@@ -367,7 +415,8 @@ class RepoGroupControllerTest extends BaseTest {
                 .when(authService)
                 .checkOrgAccess(eq("repo_group"), eq(foreignGroupId));
 
-        RepoGroupRequest body = new RepoGroupRequest("anything", null, null, List.of(foreignRepo.getId()), null, null);
+        RepoGroupRequest body =
+                new RepoGroupRequest("anything", null, null, List.of(foreignRepo.getId()), null, null, null, null);
         mockMvc.perform(put("/api/v1/repo-groups/{id}", foreignGroupId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(body)))
@@ -382,6 +431,8 @@ class RepoGroupControllerTest extends BaseTest {
                 null,
                 null,
                 List.of(r1.getId()),
+                null,
+                null,
                 null,
                 null));
         entityManager.flush();

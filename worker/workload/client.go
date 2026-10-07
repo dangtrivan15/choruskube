@@ -221,12 +221,16 @@ type PrepareResponse struct {
 	EnableDocker bool   `json:"enableDocker"`
 	// DindImage is the per-project custom dind sidecar image ref resolved server-side. Empty
 	// means no override -- the executor falls back to its own configured default.
-	DindImage        string               `json:"dindImage"`
-	ClaudeOAuthToken string               `json:"claudeOAuthToken"`
-	GitHubTokenURL   string               `json:"githubTokenUrl"`
-	Registry         *RegistryCredentials `json:"registryCredentials"`
-	Namespace        string               `json:"namespace"`
-	ServiceAccount   string               `json:"serviceAccount"`
+	DindImage string `json:"dindImage"`
+	// AgentMemoryRequest / DindMemoryRequest are the project's memory requests (Kubernetes
+	// quantities). Empty means no override -- the deployment default sizes that container.
+	AgentMemoryRequest string               `json:"agentMemoryRequest"`
+	DindMemoryRequest  string               `json:"dindMemoryRequest"`
+	ClaudeOAuthToken   string               `json:"claudeOAuthToken"`
+	GitHubTokenURL     string               `json:"githubTokenUrl"`
+	Registry           *RegistryCredentials `json:"registryCredentials"`
+	Namespace          string               `json:"namespace"`
+	ServiceAccount     string               `json:"serviceAccount"`
 }
 
 // PrepareParams contains everything needed to resolve a workload's launch inputs via the API

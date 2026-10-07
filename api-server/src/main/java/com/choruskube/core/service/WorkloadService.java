@@ -100,6 +100,8 @@ public class WorkloadService {
                 params.image(),
                 params.enableDocker(),
                 params.dindImage(),
+                params.agentMemoryRequest(),
+                params.dindMemoryRequest(),
                 claudeOAuthToken,
                 githubTokenUrl,
                 resolveRegistryCredentialsOrNull(runId),
@@ -205,8 +207,9 @@ public class WorkloadService {
 
         boolean enableDocker = snapshot.path("enable_docker").asBoolean(false);
 
-        JsonNode dindNode = snapshot.path("dind_image");
-        String dindImage = dindNode.isMissingNode() || dindNode.isNull() ? null : dindNode.asText();
+        String dindImage = textOrNull(snapshot, "dind_image");
+        String agentMemoryRequest = textOrNull(snapshot, "agent_memory_request");
+        String dindMemoryRequest = textOrNull(snapshot, "dind_memory_request");
 
         List<CredentialSpec> nodeCredentials = List.of();
         if (targetNode.has("secrets") && targetNode.get("secrets").isArray()) {
@@ -231,7 +234,14 @@ public class WorkloadService {
                 req.configJson(),
                 enableDocker,
                 dindImage,
+                agentMemoryRequest,
+                dindMemoryRequest,
                 nodeCredentials,
                 identity);
+    }
+
+    private static String textOrNull(JsonNode snapshot, String field) {
+        JsonNode node = snapshot.path(field);
+        return node.isMissingNode() || node.isNull() ? null : node.asText();
     }
 }

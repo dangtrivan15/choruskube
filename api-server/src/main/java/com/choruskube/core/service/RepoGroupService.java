@@ -9,6 +9,7 @@ import com.choruskube.core.model.RepoGroup;
 import com.choruskube.core.model.RepoGroupMember;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.RepoGroupRepository;
+import com.choruskube.core.util.MemoryQuantity;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.time.Instant;
@@ -64,6 +65,7 @@ public class RepoGroupService {
         group.setDescription(request.description());
         group.setEnableDocker(request.enableDocker() != null ? request.enableDocker() : false);
         group.setDindImage(request.dindImage());
+        applyMemoryRequests(group, request);
         groups.save(group);
         applyMembers(group, request.memberRepoIds());
         return group;
@@ -93,6 +95,7 @@ public class RepoGroupService {
         group.setDescription(request.description());
         group.setEnableDocker(request.enableDocker() != null ? request.enableDocker() : false);
         group.setDindImage(request.dindImage());
+        applyMemoryRequests(group, request);
         return group;
     }
 
@@ -106,6 +109,11 @@ public class RepoGroupService {
         group.getMembers().clear();
         group.setDeletedAt(Instant.now());
         groups.save(group);
+    }
+
+    private static void applyMemoryRequests(RepoGroup group, RepoGroupRequest request) {
+        group.setAgentMemoryRequest(MemoryQuantity.normalize("agentMemoryRequest", request.agentMemoryRequest()));
+        group.setDindMemoryRequest(MemoryQuantity.normalize("dindMemoryRequest", request.dindMemoryRequest()));
     }
 
     private void applyMembers(RepoGroup group, List<UUID> memberRepoIds) {

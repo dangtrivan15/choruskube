@@ -199,6 +199,9 @@ export interface GitRepoResponse {
   secrets: unknown[];
   enableDocker: boolean;
   dindImage: string | null;
+  /** Kubernetes quantity (e.g. "1792Mi"); null = the deployment default. Sets the request only. */
+  agentMemoryRequest: string | null;
+  dindMemoryRequest: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -1283,6 +1286,8 @@ export interface RuntimeRequirements {
   agentImage: string | null;
   enableDocker: boolean;
   dindImage?: string | null;
+  agentMemoryRequest?: string | null;
+  dindMemoryRequest?: string | null;
 }
 
 export interface SoftwareProject {
@@ -1308,6 +1313,8 @@ export interface RepoGroup {
   agentImage: string | null;
   enableDocker?: boolean;
   dindImage?: string | null;
+  agentMemoryRequest?: string | null;
+  dindMemoryRequest?: string | null;
   description: string | null;
   runtimeRequirements: RuntimeRequirements;
   members: RepoGroupMember[];
@@ -1320,6 +1327,8 @@ export interface RepoGroupRequest {
   agentImage?: string | null;
   enableDocker?: boolean;
   dindImage?: string;
+  agentMemoryRequest?: string | null;
+  dindMemoryRequest?: string | null;
   description?: string | null;
   memberRepoIds: string[];
 }

@@ -175,7 +175,7 @@ class MappableCreatedPublicationTest extends BaseTest {
     @Test
     void gitRepoCreate_publishesMappableCreated_withSoftwareProjectType_andNoParent() {
         var resp = gitRepoService.create(new GitRepoRequest(
-                "https://github.com/test/event-pub-test.git", "main", null, null, "[]", false, null));
+                "https://github.com/test/event-pub-test.git", "main", null, null, "[]", false, null, null, null));
 
         List<MappableCreated> events = collector.getCaptured();
         assertThat(events)
@@ -320,6 +320,8 @@ class MappableCreatedPublicationTest extends BaseTest {
                 "Test group for event publication",
                 List.of(repo.getId()),
                 null,
+                null,
+                null,
                 null));
 
         List<MappableCreated> events = collector.getCaptured();
@@ -399,6 +401,8 @@ class MappableCreatedPublicationTest extends BaseTest {
                 "registry/agent:latest",
                 "Test group — seeder path, must emit no event",
                 List.of(repo.getId()),
+                null,
+                null,
                 null,
                 null));
 

@@ -104,6 +104,8 @@ describe("EditRepoGroupDialog", () => {
         name: "renamed",
         agentImage: "img:1",
         enableDocker: false,
+        agentMemoryRequest: null,
+        dindMemoryRequest: null,
         description: "desc",
         memberRepoIds: ["r1", "r2", "r3"],
       });

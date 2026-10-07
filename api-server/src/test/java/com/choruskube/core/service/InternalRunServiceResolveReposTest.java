@@ -50,7 +50,14 @@ class InternalRunServiceResolveReposTest extends BaseTest {
         GitRepo b = saveRepo("https://github.com/acme/resolve-repos-b-" + UUID.randomUUID());
         groupId = repoGroupService
                 .createInternal(new RepoGroupRequest(
-                        "resolve-repos-" + UUID.randomUUID(), null, null, List.of(a.getId(), b.getId()), null, null))
+                        "resolve-repos-" + UUID.randomUUID(),
+                        null,
+                        null,
+                        List.of(a.getId(), b.getId()),
+                        null,
+                        null,
+                        null,
+                        null))
                 .getId();
 
         List<GitRepo> repos = internalRunService.resolveRepos(groupId);

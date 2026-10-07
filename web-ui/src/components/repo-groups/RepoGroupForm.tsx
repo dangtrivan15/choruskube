@@ -27,8 +27,9 @@ interface RepoGroupFormProps {
  * in, not the order they appear in {@code availableRepos}. Toggling a member
  * off and re-on appends it at the end so re-clicks "move" the position.
  *
- * Empty optional fields ({@code agentImage}, {@code description}) are sent as
- * {@code null}, matching the {@code RepoGroupRequest} optional+nullable shape.
+ * Empty optional fields ({@code agentImage}, {@code description}, the memory
+ * requests) are sent as {@code null}, matching the {@code RepoGroupRequest}
+ * optional+nullable shape.
  */
 export default function RepoGroupForm({
   initial,
@@ -42,6 +43,8 @@ export default function RepoGroupForm({
   const [agentImage, setAgentImage] = useState(initial?.agentImage ?? "");
   const [enableDocker, setEnableDocker] = useState(initial?.enableDocker ?? false);
   const [dindImage, setDindImage] = useState(initial?.dindImage ?? "");
+  const [agentMemoryRequest, setAgentMemoryRequest] = useState(initial?.agentMemoryRequest ?? "");
+  const [dindMemoryRequest, setDindMemoryRequest] = useState(initial?.dindMemoryRequest ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
   const [selected, setSelected] = useState<string[]>(initial?.memberRepoIds ?? []);
 
@@ -61,6 +64,8 @@ export default function RepoGroupForm({
       agentImage: agentImage.trim() ? agentImage.trim() : null,
       enableDocker,
       dindImage: enableDocker ? dindImage.trim() || undefined : undefined,
+      agentMemoryRequest: agentMemoryRequest.trim() || null,
+      dindMemoryRequest: enableDocker ? dindMemoryRequest.trim() || null : null,
       description: description.trim() ? description.trim() : null,
       memberRepoIds: selected,
     });
@@ -93,6 +98,21 @@ export default function RepoGroupForm({
           />
         </div>
 
+        <div className="flex flex-col gap-1">
+          <label htmlFor="repo-group-agent-memory" className="text-sm font-medium">
+            Agent memory request
+          </label>
+          <Input
+            id="repo-group-agent-memory"
+            value={agentMemoryRequest}
+            onChange={(e) => setAgentMemoryRequest(e.target.value)}
+            placeholder="deployment default"
+          />
+          <p className="text-xs text-muted-foreground">
+            Memory reserved for the agent container, e.g. 1792Mi. The limit stays the deployment's.
+          </p>
+        </div>
+
         <div className="flex items-center gap-2">
           <input
             id="repo-group-docker"
@@ -120,6 +140,20 @@ export default function RepoGroupForm({
             <p className="text-xs text-muted-foreground">
               Overrides the default Docker-in-Docker image for runs of this group.
             </p>
+          </div>
+        )}
+
+        {enableDocker && (
+          <div className="flex flex-col gap-1">
+            <label htmlFor="repo-group-dind-memory" className="text-sm font-medium">
+              Dind memory request
+            </label>
+            <Input
+              id="repo-group-dind-memory"
+              value={dindMemoryRequest}
+              onChange={(e) => setDindMemoryRequest(e.target.value)}
+              placeholder="deployment default"
+            />
           </div>
         )}
 

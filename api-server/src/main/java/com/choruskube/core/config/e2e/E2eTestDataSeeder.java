@@ -235,6 +235,8 @@ public class E2eTestDataSeeder implements ApplicationRunner {
                 "Demo two-repo project for E2E SoftwareProject hierarchy coverage",
                 java.util.List.of(r1, r2),
                 false,
+                null,
+                null,
                 null));
     }
 

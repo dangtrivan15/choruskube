@@ -54,7 +54,16 @@ class WorkerWorkloadControllerTest {
     @Test
     void prepareAuthorizesTheRunThenDelegates() throws Exception {
         var response = new PrepareWorkloadResponse(
-                "agent:latest", false, null, "oauth-token", "http://api/github-token", null, null, "choruskube-agent");
+                "agent:latest",
+                true,
+                null,
+                "1792Mi",
+                "256Mi",
+                "oauth-token",
+                "http://api/github-token",
+                null,
+                null,
+                "choruskube-agent");
         when(workloadService.prepareWorkload(eq(runId), eq(nodeExecId), any())).thenReturn(response);
 
         mvc.perform(post(path("/prepare"))
@@ -63,6 +72,9 @@ class WorkerWorkloadControllerTest {
                         .content("{\"templateNodeId\":null,\"configJson\":{}}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.image").value("agent:latest"))
+                // The Worker decodes these by name (worker/workload/client.go PrepareResponse).
+                .andExpect(jsonPath("$.agentMemoryRequest").value("1792Mi"))
+                .andExpect(jsonPath("$.dindMemoryRequest").value("256Mi"))
                 .andExpect(jsonPath("$.serviceAccount").value("choruskube-agent"));
 
         verify(authorizer).requireMayActOn("ckw_abc", runId);

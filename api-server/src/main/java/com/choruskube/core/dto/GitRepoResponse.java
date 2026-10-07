@@ -11,6 +11,8 @@ public record GitRepoResponse(
         String testCommand,
         String agentImage,
         String dindImage,
+        String agentMemoryRequest,
+        String dindMemoryRequest,
         JsonNode secrets,
         boolean enableDocker,
         Instant createdAt,

@@ -162,4 +162,43 @@ describe("RepoGroupForm", () => {
     expect(screen.getByLabelText(/enable docker-in-docker/i)).toBeChecked();
     expect(screen.getByLabelText(/custom dind image/i)).toHaveValue("seeded/dind:tag");
   });
+
+  it("submits the agent memory request, and the dind one only while Docker is enabled", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+
+    renderWithProviders(<RepoGroupForm availableRepos={availableRepos} onSubmit={onSubmit} />);
+
+    await user.type(screen.getByLabelText(/^name/i), "g");
+    await user.click(screen.getByLabelText(/r1/i));
+    await user.type(screen.getByLabelText(/agent memory request/i), "4Gi");
+    expect(screen.queryByLabelText(/dind memory request/i)).not.toBeInTheDocument();
+    await user.click(screen.getByLabelText(/enable docker-in-docker/i));
+    await user.type(screen.getByLabelText(/dind memory request/i), "3Gi");
+    await user.click(screen.getByRole("button", { name: /save/i }));
+
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ agentMemoryRequest: "4Gi", dindMemoryRequest: "3Gi" }),
+    );
+  });
+
+  it("seeds the memory requests from `initial` and sends null for an empty one", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+
+    renderWithProviders(
+      <RepoGroupForm
+        initial={{ name: "preset", memberRepoIds: ["r1"], agentMemoryRequest: "1536Mi" }}
+        availableRepos={availableRepos}
+        onSubmit={onSubmit}
+      />,
+    );
+
+    expect(screen.getByLabelText(/agent memory request/i)).toHaveValue("1536Mi");
+    await user.click(screen.getByRole("button", { name: /save/i }));
+
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ agentMemoryRequest: "1536Mi", dindMemoryRequest: null }),
+    );
+  });
 });

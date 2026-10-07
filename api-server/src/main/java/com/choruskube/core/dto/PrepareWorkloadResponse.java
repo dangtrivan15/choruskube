@@ -5,6 +5,8 @@ public record PrepareWorkloadResponse(
         String image,
         boolean enableDocker,
         String dindImage,
+        String agentMemoryRequest,
+        String dindMemoryRequest,
         String claudeOAuthToken,
         String githubTokenUrl,
         RegistryCredentialsDto registryCredentials,

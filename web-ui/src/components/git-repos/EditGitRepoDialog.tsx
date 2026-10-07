@@ -25,6 +25,8 @@ export default function EditGitRepoDialog({ gitRepo, open, onOpenChange }: Props
   const [agentImage, setAgentImage] = useState("");
   const [enableDocker, setEnableDocker] = useState(false);
   const [dindImage, setDindImage] = useState("");
+  const [agentMemoryRequest, setAgentMemoryRequest] = useState("");
+  const [dindMemoryRequest, setDindMemoryRequest] = useState("");
 
   const updateGitRepo = useUpdateGitRepo();
 
@@ -36,6 +38,8 @@ export default function EditGitRepoDialog({ gitRepo, open, onOpenChange }: Props
       setAgentImage(gitRepo.agentImage ?? "");
       setEnableDocker(gitRepo.enableDocker);
       setDindImage(gitRepo.dindImage ?? "");
+      setAgentMemoryRequest(gitRepo.agentMemoryRequest ?? "");
+      setDindMemoryRequest(gitRepo.dindMemoryRequest ?? "");
     }
   }, [gitRepo]);
 
@@ -52,6 +56,8 @@ export default function EditGitRepoDialog({ gitRepo, open, onOpenChange }: Props
           agentImage: agentImage.trim() || undefined,
           enableDocker,
           dindImage: dindImage.trim() || undefined,
+          agentMemoryRequest: agentMemoryRequest.trim() || null,
+          dindMemoryRequest: enableDocker ? dindMemoryRequest.trim() || null : null,
         },
       },
       { onSuccess: () => onOpenChange(false) }
@@ -111,6 +117,21 @@ export default function EditGitRepoDialog({ gitRepo, open, onOpenChange }: Props
             />
           </div>
 
+          <div className="flex flex-col gap-1">
+            <label htmlFor="edit-repo-agent-memory" className="text-sm font-medium">
+              Agent memory request
+            </label>
+            <Input
+              id="edit-repo-agent-memory"
+              value={agentMemoryRequest}
+              onChange={(e) => setAgentMemoryRequest(e.target.value)}
+              placeholder="deployment default"
+            />
+            <p className="text-xs text-muted-foreground">
+              Memory reserved for the agent container, e.g. 1792Mi. The limit stays the deployment's.
+            </p>
+          </div>
+
           <div className="flex items-center gap-2">
             <input
               id="edit-repo-docker"
@@ -134,6 +155,20 @@ export default function EditGitRepoDialog({ gitRepo, open, onOpenChange }: Props
                 value={dindImage}
                 onChange={(e) => setDindImage(e.target.value)}
                 placeholder="dind:latest"
+              />
+            </div>
+          )}
+
+          {enableDocker && (
+            <div className="flex flex-col gap-1">
+              <label htmlFor="edit-repo-dind-memory" className="text-sm font-medium">
+                Dind memory request
+              </label>
+              <Input
+                id="edit-repo-dind-memory"
+                value={dindMemoryRequest}
+                onChange={(e) => setDindMemoryRequest(e.target.value)}
+                placeholder="deployment default"
               />
             </div>
           )}
