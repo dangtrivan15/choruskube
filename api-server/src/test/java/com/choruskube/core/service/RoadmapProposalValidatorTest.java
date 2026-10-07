@@ -643,7 +643,14 @@ class RoadmapProposalValidatorTest extends BaseTest {
         GitRepo repo1 = makeRepo("https://github.com/acme/multi-repo-a.git");
         GitRepo repo2 = makeRepo("https://github.com/acme/multi-repo-b.git");
         RepoGroup group = repoGroupService.createInternal(new RepoGroupRequest(
-                "multi-repo-" + UUID.randomUUID(), null, null, List.of(repo1.getId(), repo2.getId()), null, null));
+                "multi-repo-" + UUID.randomUUID(),
+                null,
+                null,
+                List.of(repo1.getId(), repo2.getId()),
+                null,
+                null,
+                null,
+                null));
         Epic groupEpic = makeEpic(group.getId(), "Group Epic");
         Story groupStory = makeStory(groupEpic.getId(), "Group Story");
         Task groupTask = makeTask(groupStory.getId(), group.getId(), "Group Task");

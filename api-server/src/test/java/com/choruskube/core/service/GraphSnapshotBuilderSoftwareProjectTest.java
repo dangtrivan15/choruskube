@@ -79,7 +79,7 @@ class GraphSnapshotBuilderSoftwareProjectTest extends BaseTest {
         GitRepo r2 = createGitRepoWithName("r2", "https://github.com/test/r2", null, false);
 
         RepoGroup group = repoGroupService.create(new RepoGroupRequest(
-                "g", "registry/group-agent:v1", null, List.of(r1.getId(), r2.getId()), true, null));
+                "g", "registry/group-agent:v1", null, List.of(r1.getId(), r2.getId()), true, null, null, null));
 
         GraphTemplate template = createTemplateWithSoftwareProjectSchema();
 
@@ -114,7 +114,9 @@ class GraphSnapshotBuilderSoftwareProjectTest extends BaseTest {
                 null,
                 List.of(r1.getId(), r2.getId()),
                 null,
-                "registry.example/grp-dind:latest"));
+                "registry.example/grp-dind:latest",
+                null,
+                null));
 
         GraphTemplate template = createTemplateWithSoftwareProjectSchema();
 
@@ -127,6 +129,25 @@ class GraphSnapshotBuilderSoftwareProjectTest extends BaseTest {
         JsonNode snapshotJson = objectMapper.readTree(snapshot);
 
         assertThat(snapshotJson.get("dind_image").asText()).isEqualTo("registry.example/grp-dind:latest");
+    }
+
+    @Test
+    void snapshot_for_repo_group_includes_memory_requests_when_set() throws Exception {
+        String suffix = UUID.randomUUID().toString().substring(0, 8);
+        GitRepo r1 = createGitRepoWithName("rm1-" + suffix, "https://github.com/test/rm1-" + suffix, null, true);
+
+        RepoGroup group = repoGroupService.create(
+                new RepoGroupRequest("gm-" + suffix, null, null, List.of(r1.getId()), true, null, "4Gi", "3Gi"));
+
+        WorkflowRun run = new WorkflowRun();
+        run.setGraphTemplateId(createTemplateWithSoftwareProjectSchema().getId());
+        run.setInputs("{\"software_project_id\":\"" + group.getId() + "\",\"feature_request\":\"test\"}");
+        run = runRepo.save(run);
+
+        JsonNode snapshotJson = objectMapper.readTree(snapshotBuilder.buildSnapshotForRun(run));
+
+        assertThat(snapshotJson.get("agent_memory_request").asText()).isEqualTo("4Gi");
+        assertThat(snapshotJson.get("dind_memory_request").asText()).isEqualTo("3Gi");
     }
 
     private GraphTemplate createTemplateWithSoftwareProjectSchema() {

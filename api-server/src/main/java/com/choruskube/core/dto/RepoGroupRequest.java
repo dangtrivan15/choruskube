@@ -11,4 +11,6 @@ public record RepoGroupRequest(
         String description,
         @NotEmpty List<UUID> memberRepoIds,
         Boolean enableDocker,
-        String dindImage) {}
+        String dindImage,
+        String agentMemoryRequest,
+        String dindMemoryRequest) {}

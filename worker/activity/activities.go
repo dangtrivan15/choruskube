@@ -419,6 +419,12 @@ func (a *Activities) executeLocally(ctx context.Context, runID uuid.UUID, params
 			ServiceAccount: prep.ServiceAccount,
 		},
 	}
+	// Request only: the limit stays the deployment's, so a burst past the project's measured
+	// peak borrows headroom instead of being OOM-killed at the request.
+	if prep.AgentMemoryRequest != "" {
+		execParams.AgentResources = &executor.AgentResources{MemoryRequest: prep.AgentMemoryRequest}
+	}
+	execParams.DindMemoryRequest = prep.DindMemoryRequest
 	if prep.Registry != nil {
 		execParams.Credentials.Registry = &executor.RegistryCredentials{
 			Host:     prep.Registry.Host,

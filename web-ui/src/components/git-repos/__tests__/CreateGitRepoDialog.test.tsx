@@ -111,4 +111,36 @@ describe("CreateGitRepoDialog", () => {
       expect.anything()
     );
   });
+
+  it("sends the memory requests, the dind one only while Docker is enabled", async () => {
+    mockUseGitHubCredential.mockReturnValue({ data: { id: "cred-1", credentialType: "pat" } });
+    renderWithProviders(<CreateGitRepoDialog open={true} onOpenChange={vi.fn()} />);
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+
+    await user.type(screen.getByLabelText(/Repository URL/i), "https://github.com/org/repo");
+    await user.type(screen.getByLabelText(/Agent memory request/i), "1792Mi");
+    expect(screen.queryByLabelText(/Dind memory request/i)).not.toBeInTheDocument();
+    await user.click(screen.getByLabelText(/Enable Docker-in-Docker/i));
+    await user.type(screen.getByLabelText(/Dind memory request/i), "256Mi");
+    await user.click(screen.getByRole("button", { name: /Create/i }));
+
+    expect(mockMutate).toHaveBeenCalledWith(
+      expect.objectContaining({ agentMemoryRequest: "1792Mi", dindMemoryRequest: "256Mi" }),
+      expect.anything()
+    );
+  });
+
+  it("sends null memory requests when they are left empty", async () => {
+    mockUseGitHubCredential.mockReturnValue({ data: { id: "cred-1", credentialType: "pat" } });
+    renderWithProviders(<CreateGitRepoDialog open={true} onOpenChange={vi.fn()} />);
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+
+    await user.type(screen.getByLabelText(/Repository URL/i), "https://github.com/org/repo");
+    await user.click(screen.getByRole("button", { name: /Create/i }));
+
+    expect(mockMutate).toHaveBeenCalledWith(
+      expect.objectContaining({ agentMemoryRequest: null, dindMemoryRequest: null }),
+      expect.anything()
+    );
+  });
 });

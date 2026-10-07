@@ -26,6 +26,8 @@ export default function CreateGitRepoDialog({ open, onOpenChange }: Props) {
   const [agentImage, setAgentImage] = useState("");
   const [enableDocker, setEnableDocker] = useState(false);
   const [dindImage, setDindImage] = useState("");
+  const [agentMemoryRequest, setAgentMemoryRequest] = useState("");
+  const [dindMemoryRequest, setDindMemoryRequest] = useState("");
 
   const { organizationId } = useAuth();
   const { data: gitHubCredential } = useGitHubCredential(organizationId ?? "");
@@ -44,6 +46,8 @@ export default function CreateGitRepoDialog({ open, onOpenChange }: Props) {
         agentImage: agentImage.trim() || undefined,
         enableDocker,
         dindImage: dindImage.trim() || undefined,
+        agentMemoryRequest: agentMemoryRequest.trim() || null,
+        dindMemoryRequest: enableDocker ? dindMemoryRequest.trim() || null : null,
       },
       {
         onSuccess: () => {
@@ -61,6 +65,8 @@ export default function CreateGitRepoDialog({ open, onOpenChange }: Props) {
     setAgentImage("");
     setEnableDocker(false);
     setDindImage("");
+    setAgentMemoryRequest("");
+    setDindMemoryRequest("");
     createGitRepo.reset();
   }
 
@@ -135,6 +141,21 @@ export default function CreateGitRepoDialog({ open, onOpenChange }: Props) {
             />
           </div>
 
+          <div className="flex flex-col gap-1">
+            <label htmlFor="repo-agent-memory" className="text-sm font-medium">
+              Agent memory request
+            </label>
+            <Input
+              id="repo-agent-memory"
+              value={agentMemoryRequest}
+              onChange={(e) => setAgentMemoryRequest(e.target.value)}
+              placeholder="deployment default"
+            />
+            <p className="text-xs text-muted-foreground">
+              Memory reserved for the agent container, e.g. 1792Mi. The limit stays the deployment's.
+            </p>
+          </div>
+
           <div className="flex items-center gap-2">
             <input
               id="repo-docker"
@@ -158,6 +179,20 @@ export default function CreateGitRepoDialog({ open, onOpenChange }: Props) {
                 value={dindImage}
                 onChange={(e) => setDindImage(e.target.value)}
                 placeholder="dind:latest"
+              />
+            </div>
+          )}
+
+          {enableDocker && (
+            <div className="flex flex-col gap-1">
+              <label htmlFor="repo-dind-memory" className="text-sm font-medium">
+                Dind memory request
+              </label>
+              <Input
+                id="repo-dind-memory"
+                value={dindMemoryRequest}
+                onChange={(e) => setDindMemoryRequest(e.target.value)}
+                placeholder="deployment default"
               />
             </div>
           )}

@@ -128,6 +128,8 @@ public class RepoGroupController {
                 g.getName(),
                 g.getAgentImage(),
                 g.getDindImage(),
+                g.getAgentMemoryRequest(),
+                g.getDindMemoryRequest(),
                 g.isEnableDocker(),
                 g.getDescription(),
                 g.getRuntimeRequirements(),

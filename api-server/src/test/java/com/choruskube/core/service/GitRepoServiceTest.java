@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verify;
 
 import com.choruskube.core.BaseTest;
 import com.choruskube.core.dto.GitRepoRequest;
+import com.choruskube.core.exception.BadRequestException;
 import com.choruskube.core.exception.ConflictException;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.GitRepo;
@@ -59,7 +60,9 @@ class GitRepoServiceTest extends BaseTest {
                 "agent:latest",
                 "[{\"name\":\"GH_TOKEN\",\"secretName\":\"gh-token\"}]",
                 true,
-                "registry.example/foo-dind:latest");
+                "registry.example/foo-dind:latest",
+                null,
+                null);
     }
 
     @Test
@@ -79,6 +82,43 @@ class GitRepoServiceTest extends BaseTest {
     }
 
     @Test
+    void createPersistsMemoryRequestsAndReturnsThem() {
+        var created = service.create(new GitRepoRequest(
+                "https://github.com/test/sized-repo", "main", null, null, "[]", true, null, "1792Mi", "512Mi"));
+
+        assertThat(created.agentMemoryRequest()).isEqualTo("1792Mi");
+        assertThat(created.dindMemoryRequest()).isEqualTo("512Mi");
+        entityManager.flush();
+        entityManager.clear();
+        GitRepo reloaded = repo.findById(created.id()).orElseThrow();
+        assertThat(reloaded.getAgentMemoryRequest()).isEqualTo("1792Mi");
+        assertThat(reloaded.getDindMemoryRequest()).isEqualTo("512Mi");
+    }
+
+    @Test
+    void createRejectsAMalformedMemoryRequest() {
+        assertThatThrownBy(() -> service.create(new GitRepoRequest(
+                        "https://github.com/test/bad-size", "main", null, null, "[]", false, null, "4GB", null)))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("agentMemoryRequest");
+        assertThat(repo.findAll()).noneMatch(r -> r.getUrl().equals("https://github.com/test/bad-size"));
+    }
+
+    @Test
+    void updateClearsMemoryRequestsWhenBlank() {
+        var created = service.create(new GitRepoRequest(
+                "https://github.com/test/clear-size", "main", null, null, "[]", true, null, "2Gi", "1Gi"));
+
+        var updated = service.update(
+                created.id(),
+                new GitRepoRequest(
+                        "https://github.com/test/clear-size", "main", null, null, "[]", true, null, "", null));
+
+        assertThat(updated.agentMemoryRequest()).isNull();
+        assertThat(updated.dindMemoryRequest()).isNull();
+    }
+
+    @Test
     void createDuplicateUrlThrowsConflict() {
         service.create(sampleRequest());
         assertThatThrownBy(() -> service.create(sampleRequest())).isInstanceOf(ConflictException.class);
@@ -93,7 +133,8 @@ class GitRepoServiceTest extends BaseTest {
         repoA.setName(RepoNameUtil.deriveOwnerRepoName(sharedUrl));
         repo.save(repoA);
 
-        assertThatThrownBy(() -> service.create(new GitRepoRequest(sharedUrl, "main", null, null, "[]", false, null)))
+        assertThatThrownBy(() -> service.create(
+                        new GitRepoRequest(sharedUrl, "main", null, null, "[]", false, null, null, null)))
                 .isInstanceOf(ConflictException.class)
                 .hasMessageContaining(sharedUrl);
     }
@@ -102,7 +143,15 @@ class GitRepoServiceTest extends BaseTest {
     void updateChangesFields() {
         var created = service.create(sampleRequest());
         var updateReq = new GitRepoRequest(
-                "https://github.com/test/repo", "develop", "./gradlew test", "new-agent:v2", "[]", false, null);
+                "https://github.com/test/repo",
+                "develop",
+                "./gradlew test",
+                "new-agent:v2",
+                "[]",
+                false,
+                null,
+                null,
+                null);
         var updated = service.update(created.id(), updateReq);
         assertThat(updated.defaultBranch()).isEqualTo("develop");
         assertThat(updated.testCommand()).isEqualTo("./gradlew test");
@@ -113,7 +162,7 @@ class GitRepoServiceTest extends BaseTest {
     void updateWithEnableDockerChangeDoesNotTriggerReprovisioning() {
         var created = service.create(sampleRequest()); // enableDocker=true
         var updateReq = new GitRepoRequest(
-                "https://github.com/test/repo", "main", "npm test", "agent:latest", "[]", false, null);
+                "https://github.com/test/repo", "main", "npm test", "agent:latest", "[]", false, null, null, null);
         var updated = service.update(created.id(), updateReq);
         assertThat(updated.enableDocker()).isFalse();
         // Docker toggle no longer triggers reprovisioning — Docker resources always exist
@@ -132,7 +181,8 @@ class GitRepoServiceTest extends BaseTest {
     void listReturnsPaginatedResults() {
         long baseline = repo.count();
         service.create(sampleRequest());
-        service.create(new GitRepoRequest("https://github.com/test/other", null, null, null, null, null, null));
+        service.create(
+                new GitRepoRequest("https://github.com/test/other", null, null, null, null, null, null, null, null));
         var page = service.list(Pageable.ofSize(10));
         assertThat(page.getTotalElements()).isEqualTo(baseline + 2);
     }
@@ -169,8 +219,8 @@ class GitRepoServiceTest extends BaseTest {
     @Test
     void delete_listExcludesTombstonedRows() {
         var kept = service.create(sampleRequest());
-        var doomed = service.create(
-                new GitRepoRequest("https://github.com/test/doomed", "main", null, null, null, false, null));
+        var doomed = service.create(new GitRepoRequest(
+                "https://github.com/test/doomed", "main", null, null, null, false, null, null, null));
 
         service.delete(doomed.id());
 
@@ -249,9 +299,12 @@ class GitRepoServiceTest extends BaseTest {
 
     @Test
     void reconcileTombstonedBatch_cleansUpAndReturnsCount() {
-        var r1 = service.create(new GitRepoRequest("https://github.com/test/a", "main", null, null, null, false, null));
-        var r2 = service.create(new GitRepoRequest("https://github.com/test/b", "main", null, null, null, false, null));
-        var r3 = service.create(new GitRepoRequest("https://github.com/test/c", "main", null, null, null, false, null));
+        var r1 = service.create(
+                new GitRepoRequest("https://github.com/test/a", "main", null, null, null, false, null, null, null));
+        var r2 = service.create(
+                new GitRepoRequest("https://github.com/test/b", "main", null, null, null, false, null, null, null));
+        var r3 = service.create(
+                new GitRepoRequest("https://github.com/test/c", "main", null, null, null, false, null, null, null));
         service.delete(r1.id());
         service.delete(r2.id());
         service.delete(r3.id());
@@ -267,8 +320,8 @@ class GitRepoServiceTest extends BaseTest {
     @Test
     void reconcileTombstonedBatch_respectsBatchSize() {
         for (int i = 0; i < 5; i++) {
-            var c = service.create(
-                    new GitRepoRequest("https://github.com/test/batch-" + i, "main", null, null, null, false, null));
+            var c = service.create(new GitRepoRequest(
+                    "https://github.com/test/batch-" + i, "main", null, null, null, false, null, null, null));
             service.delete(c.id());
         }
 

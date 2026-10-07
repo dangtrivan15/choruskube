@@ -152,12 +152,14 @@ func TestNewClientRejectsANilCredential(t *testing.T) {
 
 func TestPrepareWorkload(t *testing.T) {
 	resp := PrepareResponse{
-		Image:            "ghcr.io/test/agent:latest",
-		EnableDocker:     true,
-		DindImage:        "registry.example/custom-dind:v2",
-		ClaudeOAuthToken: "tok_test",
-		Namespace:        "org-ns",
-		ServiceAccount:   "choruskube-agent",
+		Image:              "ghcr.io/test/agent:latest",
+		EnableDocker:       true,
+		DindImage:          "registry.example/custom-dind:v2",
+		AgentMemoryRequest: "1792Mi",
+		DindMemoryRequest:  "256Mi",
+		ClaudeOAuthToken:   "tok_test",
+		Namespace:          "org-ns",
+		ServiceAccount:     "choruskube-agent",
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPost, r.Method)
@@ -181,7 +183,25 @@ func TestPrepareWorkload(t *testing.T) {
 	assert.Equal(t, "ghcr.io/test/agent:latest", got.Image)
 	assert.True(t, got.EnableDocker)
 	assert.Equal(t, "registry.example/custom-dind:v2", got.DindImage)
+	assert.Equal(t, "1792Mi", got.AgentMemoryRequest)
+	assert.Equal(t, "256Mi", got.DindMemoryRequest)
 	assert.Equal(t, "org-ns", got.Namespace)
+}
+
+// The api-server's PrepareWorkloadResponse record names these fields; a rename on either side
+// would silently drop the per-project sizing, so pin the wire names.
+func TestPrepareWorkload_DecodesMemoryRequestsByWireName(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"image":"a","agentMemoryRequest":"4Gi","dindMemoryRequest":"3Gi"}`))
+	}))
+	defer server.Close()
+
+	got, err := NewClient(server.URL, func() string { return "c" }, nil).PrepareWorkload(context.Background(), PrepareParams{
+		RunID: uuid.New(), NodeExecID: uuid.New(), TemplateNodeID: uuid.New(),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "4Gi", got.AgentMemoryRequest)
+	assert.Equal(t, "3Gi", got.DindMemoryRequest)
 }
 
 func TestCompleteWorkload(t *testing.T) {

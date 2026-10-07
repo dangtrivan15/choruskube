@@ -34,9 +34,15 @@ public class GitRepo extends SoftwareProject {
     @Column(name = "dind_image")
     private String dindImage;
 
+    @Column(name = "agent_memory_request")
+    private String agentMemoryRequest;
+
+    @Column(name = "dind_memory_request")
+    private String dindMemoryRequest;
+
     @Override
     public RuntimeRequirements getRuntimeRequirements() {
-        return new RuntimeRequirements(getAgentImage(), enableDocker, dindImage);
+        return new RuntimeRequirements(getAgentImage(), enableDocker, dindImage, agentMemoryRequest, dindMemoryRequest);
     }
 
     @Override
@@ -90,5 +96,21 @@ public class GitRepo extends SoftwareProject {
 
     public void setDindImage(String dindImage) {
         this.dindImage = dindImage;
+    }
+
+    public String getAgentMemoryRequest() {
+        return agentMemoryRequest;
+    }
+
+    public void setAgentMemoryRequest(String agentMemoryRequest) {
+        this.agentMemoryRequest = agentMemoryRequest;
+    }
+
+    public String getDindMemoryRequest() {
+        return dindMemoryRequest;
+    }
+
+    public void setDindMemoryRequest(String dindMemoryRequest) {
+        this.dindMemoryRequest = dindMemoryRequest;
     }
 }

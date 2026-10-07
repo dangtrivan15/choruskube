@@ -55,7 +55,8 @@ class SoftwareProjectControllerTest extends BaseTest {
         solo.setDefaultBranch("main");
         gitRepoRepo.saveAndFlush(solo);
 
-        repoGroupService.create(new RepoGroupRequest(groupName, null, null, List.of(solo.getId()), null, null));
+        repoGroupService.create(
+                new RepoGroupRequest(groupName, null, null, List.of(solo.getId()), null, null, null, null));
 
         mockMvc.perform(get("/api/v1/software-projects"))
                 .andExpect(status().isOk())

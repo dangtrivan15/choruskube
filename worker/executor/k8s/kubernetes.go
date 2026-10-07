@@ -78,7 +78,7 @@ type Config struct {
 
 	// AgentResources is the default agent-container CPU/memory, overridable per-execution via
 	// ExecutionParams.AgentResources. All fields empty runs the agent as BestEffort. The dind
-	// sidecar keeps the template's resources; this package never overrides them.
+	// sidecar keeps the template's resources except a per-execution ExecutionParams.DindMemoryRequest.
 	AgentResources coreexec.AgentResources
 }
 
@@ -222,7 +222,7 @@ func (k *KubernetesExecutor) Execute(ctx context.Context, params coreexec.Execut
 	}
 
 	if params.EnableDocker {
-		if err := k.addDindSupport(ctx, job, params.DindImage); err != nil {
+		if err := k.addDindSupport(ctx, job, params.DindImage, params.DindMemoryRequest); err != nil {
 			return coreexec.ExecutionResult{}, fmt.Errorf("add dind support: %w", err)
 		}
 	}
@@ -556,6 +556,23 @@ func (k *KubernetesExecutor) pinAgentContainerResources(job *batchv1.Job, overri
 		}
 	}
 
+	// Values can come from a per-project setting, so a bad one fails this launch, never the process.
+	parsed := map[string]resource.Quantity{}
+	for name, val := range map[string]string{
+		"cpu request": cpuRequest, "memory request": memoryRequest, "cpu limit": cpuLimit, "memory limit": memoryLimit,
+	} {
+		q, err := resource.ParseQuantity(val)
+		if err != nil {
+			return fmt.Errorf("agent %s %q: %w", name, val, err)
+		}
+		parsed[name] = q
+	}
+	for _, kind := range []string{"cpu", "memory"} {
+		if err := requestWithinLimit("agent "+kind, parsed[kind+" request"], parsed[kind+" limit"]); err != nil {
+			return err
+		}
+	}
+
 	containers := job.Spec.Template.Spec.Containers
 	for i := range containers {
 		if containers[i].Name != agentContainerName {
@@ -563,17 +580,26 @@ func (k *KubernetesExecutor) pinAgentContainerResources(job *batchv1.Job, overri
 		}
 		containers[i].Resources = corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse(cpuRequest),
-				corev1.ResourceMemory: resource.MustParse(memoryRequest),
+				corev1.ResourceCPU:    parsed["cpu request"],
+				corev1.ResourceMemory: parsed["memory request"],
 			},
 			Limits: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse(cpuLimit),
-				corev1.ResourceMemory: resource.MustParse(memoryLimit),
+				corev1.ResourceCPU:    parsed["cpu limit"],
+				corev1.ResourceMemory: parsed["memory limit"],
 			},
 		}
 		return nil
 	}
 	return fmt.Errorf("agent container not found in job %s", job.Name)
+}
+
+// requestWithinLimit fails a request above its limit before any object is created; the API server
+// would reject the Job anyway, but with a validation error that hides which setting caused it.
+func requestWithinLimit(what string, request, limit resource.Quantity) error {
+	if request.Cmp(limit) > 0 {
+		return fmt.Errorf("%s request %s exceeds its limit %s", what, request.String(), limit.String())
+	}
+	return nil
 }
 
 // resolveResource returns the override's field when set and non-empty, else the deployment default.
@@ -630,8 +656,8 @@ func (k *KubernetesExecutor) applyTemplateScheduling(ctx context.Context, job *b
 // addDindSupport splices the operator-supplied PodTemplate (loadPodTemplate) onto the inline Job:
 // pod-level runtimeClassName/hostUsers, the "dind" init container (deep-copied so the cached
 // template is never mutated), and the template agent's env/volumeMounts/volumes. dindImageOverride
-// replaces the template's dind image when non-empty.
-func (k *KubernetesExecutor) addDindSupport(ctx context.Context, job *batchv1.Job, dindImageOverride string) error {
+// replaces the template's dind image and dindMemoryRequest its memory request, each when non-empty.
+func (k *KubernetesExecutor) addDindSupport(ctx context.Context, job *batchv1.Job, dindImageOverride, dindMemoryRequest string) error {
 	tmpl, err := k.loadPodTemplate(ctx)
 	if err != nil {
 		return err
@@ -659,6 +685,21 @@ func (k *KubernetesExecutor) addDindSupport(ctx context.Context, job *batchv1.Jo
 	dind := templateDind.DeepCopy()
 	if dindImageOverride != "" {
 		dind.Image = dindImageOverride
+	}
+	if dindMemoryRequest != "" {
+		q, err := resource.ParseQuantity(dindMemoryRequest)
+		if err != nil {
+			return fmt.Errorf("dind memory request %q: %w", dindMemoryRequest, err)
+		}
+		if limit, ok := dind.Resources.Limits[corev1.ResourceMemory]; ok {
+			if err := requestWithinLimit("dind memory", q, limit); err != nil {
+				return err
+			}
+		}
+		if dind.Resources.Requests == nil {
+			dind.Resources.Requests = corev1.ResourceList{}
+		}
+		dind.Resources.Requests[corev1.ResourceMemory] = q
 	}
 	podSpec.InitContainers = append(podSpec.InitContainers, *dind)
 

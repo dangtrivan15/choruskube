@@ -724,7 +724,9 @@ class WorkloadServiceTest {
                   "edges": [],
                   "inputs": {},
                   "enable_docker": true,
-                  "dind_image": "registry.example/foo-dind:latest"
+                  "dind_image": "registry.example/foo-dind:latest",
+                  "agent_memory_request": "1792Mi",
+                  "dind_memory_request": "512Mi"
                 }
                 """.formatted(templateNodeId);
 
@@ -737,6 +739,8 @@ class WorkloadServiceTest {
         var response = service.prepareWorkload(runId, nodeExecId, request);
 
         assertEquals("registry.example/foo-dind:latest", response.dindImage());
+        assertEquals("1792Mi", response.agentMemoryRequest());
+        assertEquals("512Mi", response.dindMemoryRequest());
     }
 
     @Test
@@ -780,6 +784,8 @@ class WorkloadServiceTest {
         var response = service.prepareWorkload(runId, nodeExecId, new CreateWorkloadRequest(templateNodeId, Map.of()));
 
         assertNull(response.dindImage());
+        assertNull(response.agentMemoryRequest());
+        assertNull(response.dindMemoryRequest());
     }
 
     @Test

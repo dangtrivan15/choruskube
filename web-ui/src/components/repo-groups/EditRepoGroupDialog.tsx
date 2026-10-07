@@ -68,6 +68,8 @@ export default function EditRepoGroupDialog({
               agentImage: group.agentImage ?? "",
               enableDocker: group.enableDocker ?? false,
               dindImage: group.dindImage ?? "",
+              agentMemoryRequest: group.agentMemoryRequest ?? "",
+              dindMemoryRequest: group.dindMemoryRequest ?? "",
               description: group.description ?? "",
               memberRepoIds: group.members
                 .slice()

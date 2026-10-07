@@ -12,5 +12,7 @@ public record ExecutionParams(
         Map<String, Object> configJson,
         boolean enableDocker,
         String dindImage,
+        String agentMemoryRequest,
+        String dindMemoryRequest,
         List<CredentialSpec> nodeCredentials,
         IdentitySpec identity) {}
