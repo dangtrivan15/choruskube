@@ -1,0 +1,8 @@
+# E2E-only packaging of a bootJar that scripts/e2e-up.sh builds on the host, so the e2e stack never
+# runs a Gradle build inside Docker. Published images build from Dockerfile: keep this runtime stage
+# identical to its final stage, or e2e tests a different runtime than the one that ships.
+FROM eclipse-temurin:25-jre-alpine
+WORKDIR /app
+COPY build/libs/*-boot.jar app.jar
+EXPOSE 8080
+ENTRYPOINT ["java", "-jar", "app.jar"]

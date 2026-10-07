@@ -55,26 +55,21 @@ services:
       timeout: 3s
       retries: 10
 
+  # Temporal's single-binary dev server: the same server and gRPC API, persisting to a SQLite file
+  # instead of PostgreSQL. It registers the `default` namespace itself. In-memory mode (no
+  # --db-filename) grows with workflow history, so keep the file. --ip 0.0.0.0 is what lets other
+  # containers reach it; the default binds localhost only.
   temporal:
-    image: temporalio/auto-setup:1.25
+    image: temporalio/temporal:1.5.1
     dns_search: .
-    mem_limit: 768m
+    mem_limit: 192m
+    command: ["server", "start-dev", "--ip", "0.0.0.0", "--headless", "--db-filename", "/tmp/temporal.db"]
     environment:
-      - DB=postgres12
-      - DB_PORT=5432
-      - POSTGRES_SEEDS=postgres
-      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/docker.yaml
-      - POSTGRES_USER=choruskube
-      - POSTGRES_PWD=choruskube
-      - DEFAULT_NAMESPACE=default
-      - BIND_ON_IP=0.0.0.0
+      GOMEMLIMIT: 96MiB
     ports:
       - "27233:7233"
     networks:
       - choruskube-e2e
-    depends_on:
-      postgres:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "localhost:7233"]
       interval: 10s
@@ -155,12 +150,9 @@ services:
     image: choruskube-e2e-api-server:local
     build:
       context: ./api-server
-      dockerfile: Dockerfile
-      args:
-        # Build stage base. Defaults to the stock Gradle+JDK toolchain; CI sets E2E_DEV_BASE to a
-        # warm build image (baked Gradle wrapper dist + module cache) so a from-scratch build
-        # reuses them instead of a cold download. Unset (local dev, forks) => stock, unchanged.
-        BUILD_BASE: ${E2E_DEV_BASE:-gradle:9.2.1-jdk25-alpine}
+      # Packages the bootJar scripts/e2e-up.sh builds on the host. A Gradle build inside Docker here
+      # would run concurrently with the other image builds and spike the daemon's memory.
+      dockerfile: Dockerfile.e2e
     dns_search: .
     mem_limit: 1536m
     environment:
