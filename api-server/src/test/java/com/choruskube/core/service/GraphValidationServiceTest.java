@@ -432,6 +432,68 @@ class GraphValidationServiceTest {
         assertThat(result.errors()).isEmpty();
     }
 
+    @Test
+    void unknownMergePullRequestsMethodIsRejected() {
+        UUID entry = UUID.randomUUID();
+        UUID gate = UUID.randomUUID();
+
+        var gateNode = makeNode(gate, "gate", false);
+        gateNode.setConfigOverrides("{\"terminal_decisions\":[\"approved\"],\"merge_pull_requests\":\"bogus\"}");
+        var nodes = List.of(makeNode(entry, "entry", true), gateNode);
+        var edges = List.of(makeEdge(entry, gate, null));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isFalse();
+        assertThat(result.errors())
+                .anyMatch(e -> e.contains("gate") && e.contains("unknown merge_pull_requests method"));
+    }
+
+    @Test
+    void mergeGateWithoutApprovedDecisionIsRejected() {
+        UUID entry = UUID.randomUUID();
+        UUID gate = UUID.randomUUID();
+
+        var gateNode = makeNode(gate, "gate", false);
+        gateNode.setConfigOverrides("{\"terminal_decisions\":[\"rejected\"],\"merge_pull_requests\":\"squash\"}");
+        var nodes = List.of(makeNode(entry, "entry", true), gateNode);
+        var edges = List.of(makeEdge(entry, gate, null));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isFalse();
+        assertThat(result.errors()).anyMatch(e -> e.contains("gate") && e.contains("no 'approved' decision"));
+    }
+
+    @Test
+    void mergeGateWithSquashAndApprovedTerminalDecisionIsValid() {
+        UUID entry = UUID.randomUUID();
+        UUID gate = UUID.randomUUID();
+
+        var gateNode = makeNode(gate, "gate", false);
+        gateNode.setConfigOverrides("{\"terminal_decisions\":[\"approved\"],\"merge_pull_requests\":\"squash\"}");
+        var nodes = List.of(makeNode(entry, "entry", true), gateNode);
+        var edges = List.of(makeEdge(entry, gate, null));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isTrue();
+        assertThat(result.errors()).isEmpty();
+    }
+
+    @Test
+    void mergeGateWithApprovedOnlyAsEdgeConditionIsValid() {
+        UUID entry = UUID.randomUUID();
+        UUID gate = UUID.randomUUID();
+        UUID done = UUID.randomUUID();
+
+        var gateNode = makeNode(gate, "gate", false);
+        gateNode.setConfigOverrides("{\"merge_pull_requests\":\"squash\"}");
+        var nodes = List.of(makeNode(entry, "entry", true), gateNode, makeNode(done, "done", false));
+        var edges = List.of(makeEdge(entry, gate, null), makeEdge(gate, done, "approved"));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isTrue();
+        assertThat(result.errors()).isEmpty();
+    }
+
     private TemplateNode makeNode(UUID id, String label, boolean entrypoint) {
         var node = new TemplateNode();
         node.setId(id);

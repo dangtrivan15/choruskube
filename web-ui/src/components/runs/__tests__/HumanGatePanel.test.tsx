@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "@/__tests__/test-utils";
 import HumanGatePanel from "../HumanGatePanel";
@@ -615,6 +615,88 @@ describe("HumanGatePanel", () => {
         }),
         expect.any(Object),
       );
+    });
+  });
+
+  describe("merge-on-approval notice", () => {
+    const pr = {
+      id: "pr-1",
+      workflowRunId: "run-1",
+      gitRepoId: "repo-1",
+      nodeExecutionId: null,
+      prUrl: "https://github.com/org/repo/pull/1",
+      prNumber: 1,
+      title: "feat: x",
+      repoName: "repo",
+      repoUrl: "https://github.com/org/repo",
+      createdAt: new Date().toISOString(),
+      state: "open" as const,
+      mergedAt: null,
+    };
+
+    it("renders the notice with one item per PR when mergeOnApproval is set", () => {
+      renderWithProviders(
+        <HumanGatePanel
+          {...defaultProps}
+          mergeOnApproval={{ method: "squash", pullRequests: [pr] }}
+        />
+      );
+
+      expect(screen.getByTestId("merge-on-approval-notice")).toBeInTheDocument();
+      expect(screen.getByText(/repo #1/)).toBeInTheDocument();
+    });
+
+    it("words each item by what approving will do to that PR", () => {
+      renderWithProviders(
+        <HumanGatePanel
+          {...defaultProps}
+          mergeOnApproval={{
+            method: "squash",
+            pullRequests: [
+              { ...pr, id: "pr-open", prNumber: 1 },
+              { ...pr, id: "pr-merged", prNumber: 2, state: "closed", mergedAt: "2026-01-01T00:00:00Z" },
+              { ...pr, id: "pr-closed", prNumber: 3, state: "closed" },
+            ],
+          }}
+        />
+      );
+
+      const items = within(screen.getByTestId("merge-on-approval-notice")).getAllByRole("listitem");
+      expect(items.map((li) => li.textContent)).toEqual([
+        "repo #1 — will be merged",
+        "repo #2 — already merged",
+        "repo #3 — closed — will be skipped",
+      ]);
+      expect(screen.getByText(/\(squash\)/)).toBeInTheDocument();
+    });
+
+    it("renders no notice when mergeOnApproval is null", () => {
+      renderWithProviders(<HumanGatePanel {...defaultProps} mergeOnApproval={null} />);
+
+      expect(screen.queryByTestId("merge-on-approval-notice")).not.toBeInTheDocument();
+    });
+
+    it("renders no notice when the pull request list is empty", () => {
+      renderWithProviders(
+        <HumanGatePanel
+          {...defaultProps}
+          mergeOnApproval={{ method: "squash", pullRequests: [] }}
+        />
+      );
+
+      expect(screen.queryByTestId("merge-on-approval-notice")).not.toBeInTheDocument();
+    });
+
+    it("renders no notice on an escalation gate even when mergeOnApproval is set", () => {
+      renderWithProviders(
+        <HumanGatePanel
+          {...defaultProps}
+          decisionOptions={["route:implement", "route:supervisor"]}
+          mergeOnApproval={{ method: "squash", pullRequests: [pr] }}
+        />
+      );
+
+      expect(screen.queryByTestId("merge-on-approval-notice")).not.toBeInTheDocument();
     });
   });
 });

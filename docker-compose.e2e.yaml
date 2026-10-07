@@ -218,8 +218,10 @@ services:
       # WireMock intercepts all Anthropic calls so no real Claude API is hit.
       CLAUDE_CODE_OAUTH_TOKEN: e2e-dummy-claude-token-not-real
       GITHUB_CREDENTIAL_ENCRYPTION_KEY: bMbAenxH2uTi5t+N0pN7CUxZ3g94FxCIVZniqRy2SdM=
-      # GitHub credentials — blank; WireMock stubs the GitHub API.
-      GITHUB_PAT: ""
+      # GitHub credentials — a dummy PAT routes every GitHub call to the WireMock stubs below
+      # instead of failing before it can reach them; GITHUB_APP_* stay blank (PAT takes
+      # precedence in EnvGitHubCredentialResolver).
+      GITHUB_PAT: "e2e-dummy-github-pat-not-real"
       GITHUB_APP_ID: ""
       GITHUB_APP_INSTALLATION_ID: ""
       GITHUB_APP_PRIVATE_KEY_PATH: ""

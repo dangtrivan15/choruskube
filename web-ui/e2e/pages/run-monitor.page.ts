@@ -37,6 +37,10 @@ export class RunMonitorPage {
   readonly gateRejectButton: Locator;
   readonly gateRereviewButton: Locator;
   readonly gateRedraftButton: Locator;
+  /** Pre-approval callout on a merge-configured gate, listing the PRs approval will merge. */
+  readonly mergeNotice: Locator;
+  /** Merged/Open/Closed badge on a pull-request link — one per PR shown. */
+  readonly pullRequestStates: Locator;
 
   // Execution logs
   readonly executionLogs: Locator;
@@ -80,6 +84,8 @@ export class RunMonitorPage {
     // v23 spec gate actions — see DecisionButtons.tsx for the mapping
     this.gateRereviewButton = page.getByTestId("gate-rereview-button");
     this.gateRedraftButton = page.getByTestId("gate-redraft-button");
+    this.mergeNotice = page.getByTestId("merge-on-approval-notice");
+    this.pullRequestStates = page.getByTestId("pull-request-state");
 
     this.executionLogs = page.getByTestId("execution-logs");
 

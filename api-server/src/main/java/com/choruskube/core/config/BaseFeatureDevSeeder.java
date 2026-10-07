@@ -37,7 +37,9 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
     // CURRENT_VERSION, and the next boot creates the new snapshot.
     // v44: Draft Spec & Plan asks whether the run could finish an item itself before tagging it
     // Future work in its Caveats section.
-    static final int CURRENT_VERSION = 44;
+    // v45: Final Approval merges the run's registered pull requests on approval
+    // (merge_pull_requests: squash).
+    static final int CURRENT_VERSION = 45;
 
     private static final String TEMPLATE_NAME = "Feature Development";
 
@@ -785,7 +787,8 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
 
             Code Review runs next and will keep these PRs current as it fixes
             issues; it also opens a PR itself for any repo you didn't touch. Do
-            not merge PRs — a human will review and merge after Final Approval.
+            not merge PRs yourself — approving Final Approval merges every
+            registered PR, so a PR you do not register is never merged.
 
             Before finishing, verify the implementation in each affected repo:
             - All plan steps for that repo are addressed
@@ -1280,7 +1283,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                 nodeDefs.get("Final Approval"),
                 "final_approval",
                 false,
-                "{\"loop_group\": \"impl-review\", \"terminal_decisions\": [\"approved\"], \"materialize\": \"roadmap_extension\"}",
+                "{\"loop_group\": \"impl-review\", \"terminal_decisions\": [\"approved\"], \"materialize\": \"roadmap_extension\", \"merge_pull_requests\": \"squash\"}",
                 "[{\"template_node_label\":\"implement\",\"artifacts\":[{\"name\":\"summary.md\",\"description\":\"Implementation summary describing changes made\",\"required\":true},{\"name\":\"roadmap_candidates.json\",\"description\":\"Proposed roadmap extension (optional)\",\"required\":false}]},{\"template_node_label\":\"code_review\",\"artifacts\":[{\"name\":\"review.md\",\"description\":\"Code review findings and approve/reject recommendation\",\"required\":true}]}]");
 
         // Create edges. v37: the graph is happy-path-only. Review nodes still self-loop on

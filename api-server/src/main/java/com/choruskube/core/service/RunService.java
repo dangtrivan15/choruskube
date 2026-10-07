@@ -10,6 +10,7 @@ import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.exception.ValidationException;
 import com.choruskube.core.model.*;
 import com.choruskube.core.model.enums.NodeExecutionStatus;
+import com.choruskube.core.model.enums.PullRequestMergeMethod;
 import com.choruskube.core.model.enums.RoadmapMaterializeMode;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.observability.AuditSink;
@@ -84,6 +85,7 @@ public class RunService {
     private final NodeExecutionClaimService nodeExecutionClaimService;
     private final EscalationContextResolver escalationContextResolver;
     private final RoadmapProposalValidator roadmapProposalValidator;
+    private final PullRequestMergeService pullRequestMergeService;
 
     @Value("${temporal.task-queue}")
     private String taskQueue;
@@ -123,7 +125,8 @@ public class RunService {
             RoadmapCandidatesArtifactResolver roadmapCandidatesArtifactResolver,
             NodeExecutionClaimService nodeExecutionClaimService,
             EscalationContextResolver escalationContextResolver,
-            @Lazy RoadmapProposalValidator roadmapProposalValidator) {
+            @Lazy RoadmapProposalValidator roadmapProposalValidator,
+            PullRequestMergeService pullRequestMergeService) {
         this.runRepo = runRepo;
         this.execRepo = execRepo;
         this.edgeRepo = edgeRepo;
@@ -159,6 +162,7 @@ public class RunService {
         this.nodeExecutionClaimService = nodeExecutionClaimService;
         this.escalationContextResolver = escalationContextResolver;
         this.roadmapProposalValidator = roadmapProposalValidator;
+        this.pullRequestMergeService = pullRequestMergeService;
     }
 
     @Transactional
@@ -465,13 +469,15 @@ public class RunService {
                     + "(already decided, or a concurrent request already claimed it)");
         }
 
-        // From here on, any failure (bad decision string, materialization error, Temporal signal
-        // failure) must release the claim back to awaiting_human so the request stays retryable —
-        // e.g. a typo'd decision string is a routine, expected error today and must not
-        // permanently strand the gate. This only reopens a (much narrower, pre-existing) window
-        // where a retry after materialization already succeeded but the signal itself then failed
-        // could re-materialize; the case this guard exists for — two concurrent/duplicate
-        // submissions racing each other — is fully closed by the claim above.
+        // From here on, any failure (bad decision string, merge refusal, materialization error,
+        // Temporal signal failure) must release the claim back to awaiting_human so the request
+        // stays retryable — e.g. a typo'd decision string is a routine, expected error today and
+        // must not permanently strand the gate. Merging is safe to repeat here because it skips
+        // whatever GitHub already reports merged. This only reopens a (much narrower, pre-existing)
+        // window where a retry after materialization already succeeded but the signal itself then
+        // failed could re-materialize;
+        // the case this guard exists for — two concurrent/duplicate submissions racing each other —
+        // is fully closed by the claim above.
         try {
             JsonNode snapshot = readSnapshot(run);
 
@@ -494,6 +500,14 @@ public class RunService {
             // agent.
             if ("approved".equalsIgnoreCase(validatedDecision)) {
                 Optional<RoadmapMaterializeMode> mode = materializeMode(snapshot, exec.getTemplateNodeId());
+                Optional<PullRequestMergeMethod> mergeMethod =
+                        PullRequestMergeMethod.fromConfigOverrides(decisionOptionsResolver.findNodeConfigOverrides(
+                                snapshot.get("nodes"), exec.getTemplateNodeId()));
+
+                // Validate before merging anything: a rejected roadmap proposal must never leave
+                // pull requests merged while the gate is still open. Materialization itself (a
+                // non-idempotent write) still waits until after the merge below.
+                MaterializationPlan plan = null;
                 if (mode.isPresent()) {
                     // A present-but-empty editedCandidates means the reviewer deliberately cleared
                     // the breakdown (e.g. rejecting every candidate while still approving the gate
@@ -502,12 +516,20 @@ public class RunService {
                     RoadmapCandidatesDocument source = request.editedCandidates() != null
                             ? request.editedCandidates()
                             : roadmapCandidatesArtifactResolver.resolve(runId, exec.getTemplateNodeId());
-                    String materializeNote = buildMaterializeNote(runId, mode.get(), source);
-                    if (materializeNote != null) {
-                        assembledResult = (assembledResult != null && !assembledResult.isBlank())
-                                ? assembledResult + "\n\n" + materializeNote
-                                : materializeNote;
-                    }
+                    plan = prepareMaterialization(runId, mode.get(), source);
+                }
+
+                if (mergeMethod.isPresent()) {
+                    PullRequestMergeService.MergeOutcome outcome =
+                            pullRequestMergeService.mergeAll(runId, mergeMethod.get());
+                    pullRequestMergeService.recordOutcome(runId, outcome);
+                    assembledResult = appendNote(assembledResult, pullRequestMergeService.note(outcome));
+                }
+
+                if (plan != null && plan.runnable()) {
+                    assembledResult = appendNote(assembledResult, materializeAndNote(runId, plan));
+                } else if (plan != null) {
+                    assembledResult = appendNote(assembledResult, plan.fixedNote());
                 }
             }
 
@@ -568,17 +590,40 @@ public class RunService {
     }
 
     /**
-     * Builds the gate's materialization result note for an approved roadmap gate — and, unless the
-     * reviewed document is empty of anything to create, performs the materialization itself.
-     * Returns {@code null} only for {@code roadmap_extension} with no submitted document: there is
-     * nothing to validate or note without one, unlike {@code roadmap_candidates}' "skipped" note,
-     * which is the pre-existing behaviour for that mode.
+     * A validated-but-not-yet-performed materialization. {@code runnable()} tells the caller
+     * whether to call {@link #materializeAndNote} at all: a plan built from a null source, or one
+     * whose reviewed document creates nothing, resolves to {@link #fixedNote} instead, and
+     * materialization never runs for it — so merging (a step that must run first; see {@link
+     * #signalHumanDecision}) can never be followed by a roadmap write that turns out unnecessary.
      */
-    private String buildMaterializeNote(UUID runId, RoadmapMaterializeMode mode, RoadmapCandidatesDocument source) {
+    private record MaterializationPlan(
+            boolean runnable, String fixedNote, RoadmapMaterializeMode mode, RoadmapCandidatesDocument source) {
+        static MaterializationPlan fixedNote(String note) {
+            return new MaterializationPlan(false, note, null, null);
+        }
+
+        static MaterializationPlan runnable(RoadmapMaterializeMode mode, RoadmapCandidatesDocument source) {
+            return new MaterializationPlan(true, null, mode, source);
+        }
+    }
+
+    /**
+     * Validates an approved roadmap gate's reviewed document and decides whether materialization
+     * has anything to do — without writing anything. Split from the write itself ({@link
+     * #materializeAndNote}) so the roadmap proposal is confirmed valid before pull requests are
+     * merged, while the non-idempotent write still waits until after the merge: a retry after a
+     * merge failure must never risk creating the roadmap items twice.
+     */
+    private MaterializationPlan prepareMaterialization(
+            UUID runId, RoadmapMaterializeMode mode, RoadmapCandidatesDocument source) {
         if (source == null) {
-            return mode == RoadmapMaterializeMode.roadmap_candidates
-                    ? "Materialization skipped: no candidate breakdown was found for this run"
-                    : null;
+            // null only for roadmap_extension with no submitted document: there is nothing to
+            // validate or note without one, unlike roadmap_candidates' "skipped" note below, which
+            // is the pre-existing behaviour for that mode.
+            return MaterializationPlan.fixedNote(
+                    mode == RoadmapMaterializeMode.roadmap_candidates
+                            ? "Materialization skipped: no candidate breakdown was found for this run"
+                            : null);
         }
 
         // A structural violation in the (possibly reviewer-edited) document blocks approval
@@ -598,12 +643,17 @@ public class RunService {
                     && preview.dependencies() == 0) {
                 // Whether the reviewer or the agent emptied the document cannot be told apart
                 // here, so the note deliberately does not say which.
-                return "Roadmap proposal: nothing to create";
+                return MaterializationPlan.fixedNote("Roadmap proposal: nothing to create");
             }
         }
 
-        MaterializationSummary summary = roadmapCandidateMaterializer.materialize(runId, source, mode);
-        String note = mode == RoadmapMaterializeMode.roadmap_candidates
+        return MaterializationPlan.runnable(mode, source);
+    }
+
+    /** Performs a runnable plan's materialization and builds its result note. Not idempotent. */
+    private String materializeAndNote(UUID runId, MaterializationPlan plan) {
+        MaterializationSummary summary = roadmapCandidateMaterializer.materialize(runId, plan.source(), plan.mode());
+        String note = plan.mode() == RoadmapMaterializeMode.roadmap_candidates
                 ? "Materialized " + summary.materializedCount() + " Epics ("
                         + summary.createdStoryIds().size() + " Stories, "
                         + summary.createdTaskIds().size() + " Tasks, "
@@ -618,6 +668,14 @@ public class RunService {
             note += "\nSkipped: " + summary.errors().stream().limit(5).collect(Collectors.joining("; "));
         }
         return note;
+    }
+
+    /** Appends {@code note} to {@code existing} with a blank line, or returns {@code existing} unchanged if null. */
+    private static String appendNote(String existing, String note) {
+        if (note == null) {
+            return existing;
+        }
+        return existing != null && !existing.isBlank() ? existing + "\n\n" + note : note;
     }
 
     public List<ExecutionLogResponse> getExecutionLogs(UUID nodeExecId) {

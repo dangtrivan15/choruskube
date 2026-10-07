@@ -38,6 +38,8 @@ export interface RunPullRequestResponse {
   repoName: string | null;
   repoUrl: string;
   createdAt: string;
+  state: "open" | "closed" | null;
+  mergedAt: string | null;
 }
 
 export interface RunTaskSummary {

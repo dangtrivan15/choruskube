@@ -12,6 +12,7 @@ import { useRetryNode } from "@/hooks/useRuns";
 import Authorized from "@/components/Authorized";
 import ExecutionLogs from "./ExecutionLogs";
 import HumanGatePanel from "./HumanGatePanel";
+import { mergeMethodOf } from "@/lib/mergeOnApproval";
 import ArtifactBrowser from "./ArtifactBrowser";
 import ResultViewerDialog from "./ResultViewerDialog";
 import PredecessorOutputDialog from "./PredecessorOutputDialog";
@@ -363,6 +364,7 @@ export default function DetailPanel({ run, nodeId, onBackToRunMeta }: DetailPane
 
   const status = latestExec?.status ?? "pending";
   const loopGroup = parseLoopGroup(snapshotNode);
+  const mergeMethod = mergeMethodOf(snapshotNode);
 
   return (
     <div data-testid="detail-panel" className="flex h-full flex-col overflow-hidden">
@@ -418,6 +420,11 @@ export default function DetailPanel({ run, nodeId, onBackToRunMeta }: DetailPane
             triggerDecision={findTriggerDecision(run, nodeId)}
             decisionOptions={findDecisionOptions(run, nodeId)}
             escalation={latestExec.escalation}
+            mergeOnApproval={
+              mergeMethod != null
+                ? { method: mergeMethod, pullRequests: run.pullRequests ?? [] }
+                : null
+            }
           />
         )}
 

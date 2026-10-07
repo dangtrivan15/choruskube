@@ -14,10 +14,13 @@ package com.choruskube.core.exception;
  * status, the {@code owner/repo} slug and the pull request number are all a human needs to act, and
  * none of them is a secret.
  *
- * <p>No {@code GlobalExceptionHandler} mapping, deliberately: nothing throws this on a request
- * thread. It is raised inside a scheduled reconciler that handles it, and the handler's generic
- * {@code RuntimeException} → 500 is the right answer for the case where one ever escapes to a
- * controller.
+ * <p>No {@code GlobalExceptionHandler} mapping, deliberately. It is raised inside a scheduled
+ * reconciler that handles it, and — since pull request merging was added — also inside {@code
+ * PullRequestMergeService} on the approval request thread, which always wraps the failure into
+ * {@link PullRequestMergeException} before it can reach a controller. The handler's generic
+ * {@code RuntimeException} → 500 is still the right answer for the case where one somehow escapes
+ * anyway. {@link GitHubMergeRefusedException#getReason()} is the one sanctioned extract from this
+ * hierarchy: GitHub's {@code message} field, already capped and scrubbed of the token.
  */
 public class GitHubApiException extends RuntimeException implements GitHubRateLimited {
 

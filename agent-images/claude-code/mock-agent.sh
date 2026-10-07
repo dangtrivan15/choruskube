@@ -120,6 +120,11 @@
 #                             downloads — "<source_node_label>/<filename>". Applies to every
 #                             scenario, so any template declaring requiredInputArtifacts can
 #                             prove the declaration actually reached disk.
+#   --pr-number <n>           'multi_repo_pr' only: register every repo's PR under this fixed
+#                             number instead of a random one, so a template can pin which
+#                             WireMock PR-read/merge stub fixture (keyed by PR number) its run
+#                             exercises. Default: unset — multi_repo_pr's existing random
+#                             1-1000 behavior is unchanged when this flag is absent.
 set -euo pipefail
 
 # --- Defaults ---
@@ -135,6 +140,7 @@ TASK_ID_ARG=""
 NEW_EPIC_ARG=""
 ARTIFACT_COUNT=40
 EXPECT_INPUTS=()
+PR_NUMBER=""
 
 # --- Parse arguments ---
 shift || true
@@ -182,6 +188,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --expect-input)
       EXPECT_INPUTS+=("$2")
+      shift 2
+      ;;
+    --pr-number)
+      PR_NUMBER="$2"
       shift 2
       ;;
     *)
@@ -371,7 +381,7 @@ case "$SCENARIO" in
         repo_name=$(echo "$repo" | jq -r '.name')
         repo_url=$(echo "$repo" | jq -r '.url')
 
-        pr_number=$((RANDOM % 1000 + 1))
+        pr_number="${PR_NUMBER:-$((RANDOM % 1000 + 1))}"
         pr_url="${repo_url}/pull/${pr_number}"
 
         register-pr \

@@ -16,6 +16,8 @@ function makePr(overrides: Partial<RunPullRequestResponse> = {}): RunPullRequest
     repoName: "backend-api",
     repoUrl: "https://github.com/org/repo",
     createdAt: new Date().toISOString(),
+    state: null,
+    mergedAt: null,
     ...overrides,
   };
 }
@@ -136,5 +138,41 @@ describe("PullRequestLinks", () => {
     const hidden = container.querySelectorAll('[aria-hidden="true"]');
     // 1 header icon + 1 ExternalLink icon for the single PR = 2.
     expect(hidden.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("shows a Merged badge when mergedAt is set", () => {
+    const pr = makePr({ mergedAt: "2026-01-01T00:00:00Z", state: "closed" });
+    renderWithProviders(<PullRequestLinks pullRequests={[pr]} />);
+
+    expect(screen.getByTestId("pull-request-state")).toHaveTextContent("Merged");
+  });
+
+  it("shows an Open badge when state is open and not merged", () => {
+    const pr = makePr({ state: "open", mergedAt: null });
+    renderWithProviders(<PullRequestLinks pullRequests={[pr]} />);
+
+    expect(screen.getByTestId("pull-request-state")).toHaveTextContent("Open");
+  });
+
+  it("shows a Closed badge when state is closed and not merged", () => {
+    const pr = makePr({ state: "closed", mergedAt: null });
+    renderWithProviders(<PullRequestLinks pullRequests={[pr]} />);
+
+    expect(screen.getByTestId("pull-request-state")).toHaveTextContent("Closed");
+  });
+
+  it("renders no state badge when state and mergedAt are both null", () => {
+    const pr = makePr({ state: null, mergedAt: null });
+    renderWithProviders(<PullRequestLinks pullRequests={[pr]} />);
+
+    expect(screen.queryByTestId("pull-request-state")).not.toBeInTheDocument();
+  });
+
+  it("includes the status in the link's aria-label when known", () => {
+    const pr = makePr({ title: "feat: add user auth", state: "open", mergedAt: null });
+    renderWithProviders(<PullRequestLinks pullRequests={[pr]} />);
+
+    const link = screen.getByRole("link", { name: /add user auth/i });
+    expect(link).toHaveAttribute("aria-label", "Open feat: add user auth on GitHub (open)");
   });
 });

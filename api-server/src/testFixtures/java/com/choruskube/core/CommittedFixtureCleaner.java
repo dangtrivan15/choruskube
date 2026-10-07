@@ -25,6 +25,11 @@ import org.springframework.jdbc.core.JdbcTemplate;
  *       must go before the Epic delete cascades away their Tasks.
  *   <li>{@code repo_group_member.git_repo_id} likewise, so membership rows must go before the
  *       {@code software_project} rows on either end of them.
+ *   <li>A run tracked directly (one with no {@code task_id} at all, e.g. a MockMvc flow that
+ *       posts straight to a gate) must be deleted before the {@code software_project} rows its
+ *       {@code run_pull_request} children point at — its own cascade reaches {@code
+ *       node_execution}/{@code run_pull_request} first, so by the time the project goes, nothing
+ *       still references it.
  * </ul>
  *
  * Everything else cascades: Epic → Story → Task, {@code software_project} → {@code git_repo} /
@@ -34,6 +39,7 @@ public final class CommittedFixtureCleaner {
 
     private final JdbcTemplate jdbc;
     private final List<UUID> epicIds = new ArrayList<>();
+    private final List<UUID> workflowRunIds = new ArrayList<>();
     private final List<UUID> softwareProjectIds = new ArrayList<>();
     private final List<UUID> autopilotIds = new ArrayList<>();
 
@@ -50,6 +56,16 @@ public final class CommittedFixtureCleaner {
     /** Registers a GitRepo or RepoGroup by its {@code software_project} id. */
     public UUID trackSoftwareProject(UUID id) {
         softwareProjectIds.add(id);
+        return id;
+    }
+
+    /**
+     * Registers a {@code workflow_run} created without a {@code task_id} — the Epic cascade above
+     * never reaches it, so it would otherwise survive with its {@code run_pull_request} rows still
+     * due, pulling every later test's unmerged scan onto a repository it has no stake in.
+     */
+    public UUID trackWorkflowRun(UUID id) {
+        workflowRunIds.add(id);
         return id;
     }
 
@@ -76,6 +92,13 @@ public final class CommittedFixtureCleaner {
             jdbc.update(
                     "DELETE FROM autopilot WHERE id IN (" + placeholders(autopilotIds) + ")", autopilotIds.toArray());
         }
+        if (!workflowRunIds.isEmpty()) {
+            // Before the software_project delete below: this cascade is what clears the
+            // run_pull_request rows pointing at those projects.
+            jdbc.update(
+                    "DELETE FROM workflow_run WHERE id IN (" + placeholders(workflowRunIds) + ")",
+                    workflowRunIds.toArray());
+        }
         if (!softwareProjectIds.isEmpty()) {
             Object[] projects = softwareProjectIds.toArray();
             String in = placeholders(softwareProjectIds);
@@ -85,6 +108,7 @@ public final class CommittedFixtureCleaner {
             jdbc.update("DELETE FROM software_project WHERE id IN (" + in + ")", projects);
         }
         epicIds.clear();
+        workflowRunIds.clear();
         autopilotIds.clear();
         softwareProjectIds.clear();
     }

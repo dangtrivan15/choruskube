@@ -16,8 +16,15 @@ import DecisionButtons, { LEGACY_DECISION_OPTIONS } from "./DecisionButtons";
 import RoadmapCandidateReview from "./RoadmapCandidateReview";
 import EscalationGatePanel from "./EscalationGatePanel";
 import TriggerBanner from "./TriggerBanner";
+import MergeOnApprovalNotice from "./MergeOnApprovalNotice";
 import { parseGateTrigger, isEscalationGate } from "@/lib/decisions";
-import type { ResolvedArtifactGroup, RoadmapCandidatesDocument, EscalationContext } from "@/lib/types";
+import type {
+  ResolvedArtifactGroup,
+  RoadmapCandidatesDocument,
+  EscalationContext,
+  RunPullRequestResponse,
+} from "@/lib/types";
+import type { MergeMethod } from "@/lib/mergeOnApproval";
 import { STATUS_TONE_CLASSES } from "@/lib/statusColors";
 
 interface PredecessorOutput {
@@ -58,6 +65,8 @@ interface HumanGatePanelProps {
    * `escalation.md`); the panel must stay routable regardless.
    */
   escalation?: EscalationContext | null;
+  /** Set when the snapshot node declares `merge_pull_requests`; renders the merge notice. */
+  mergeOnApproval?: { method: MergeMethod; pullRequests: RunPullRequestResponse[] } | null;
 }
 
 export default function HumanGatePanel({
@@ -73,6 +82,7 @@ export default function HumanGatePanel({
   triggerDecision,
   decisionOptions,
   escalation,
+  mergeOnApproval,
 }: HumanGatePanelProps) {
   const [feedback, setFeedback] = useState("");
   const [outputExpanded, setOutputExpanded] = useState(true);
@@ -284,6 +294,13 @@ export default function HumanGatePanel({
               </div>
 
               <FileUploadZone onFilesChange={setAttachmentFiles} disabled={signalMutation.isPending} />
+
+              {mergeOnApproval && (
+                <MergeOnApprovalNotice
+                  method={mergeOnApproval.method}
+                  pullRequests={mergeOnApproval.pullRequests}
+                />
+              )}
 
               <DecisionButtons
                 options={options}

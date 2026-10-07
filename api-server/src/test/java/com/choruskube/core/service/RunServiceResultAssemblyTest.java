@@ -118,7 +118,8 @@ class RunServiceResultAssemblyTest {
                 null,
                 nodeExecutionClaimService,
                 null, // escalationContextResolver - unused (escalation not exercised)
-                null); // roadmapProposalValidator - unused (approve-time validation not exercised)
+                null, // roadmapProposalValidator - unused (approve-time validation not exercised)
+                null); // pullRequestMergeService - unused (merge not exercised)
     }
 
     private NodeExecution stubExec() {

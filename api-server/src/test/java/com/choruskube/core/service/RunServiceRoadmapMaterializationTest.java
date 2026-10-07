@@ -139,7 +139,8 @@ class RunServiceRoadmapMaterializationTest {
                 roadmapCandidatesArtifactResolver,
                 nodeExecutionClaimService,
                 null, // escalationContextResolver - unused (escalation not exercised)
-                roadmapProposalValidator);
+                roadmapProposalValidator,
+                null); // pullRequestMergeService - unused (merge not exercised)
     }
 
     private NodeExecution stubExec() {
