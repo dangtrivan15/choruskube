@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/big"
 	"strings"
 	"sync"
 
@@ -143,6 +144,29 @@ func (k *KubernetesExecutor) Execute(ctx context.Context, params coreexec.Execut
 
 	labels := execLabels(params)
 
+	serviceAccount := params.Identity.ServiceAccount
+	if serviceAccount == "" {
+		serviceAccount = k.config.AgentServiceAccount
+	}
+
+	// The Job is built and sized before anything is created, so a refused request or template
+	// leaves no JOB_SECRET Secret behind for a failed unwind to orphan.
+	job := k.buildJob(jobName, ns, serviceAccount, secretName, cmName, regcredName, params)
+
+	if err := k.pinAgentContainerResources(job, params.AgentResources, params.MemoryCeilingExempt); err != nil {
+		return coreexec.ExecutionResult{}, err
+	}
+
+	if err := k.applyTemplateScheduling(ctx, job); err != nil {
+		return coreexec.ExecutionResult{}, fmt.Errorf("apply pod template scheduling: %w", err)
+	}
+
+	if params.EnableDocker {
+		if err := k.addDindSupport(ctx, job, params.DindImage, params.DindMemoryRequest, params.MemoryCeilingExempt); err != nil {
+			return coreexec.ExecutionResult{}, fmt.Errorf("add dind support: %w", err)
+		}
+	}
+
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Name: cmName, Namespace: ns, Labels: labels},
 		Data:       map[string]string{"config.json": string(configBytes)},
@@ -205,27 +229,6 @@ func (k *KubernetesExecutor) Execute(ctx context.Context, params coreexec.Execut
 				_ = k.client.CoreV1().Secrets(ns).Delete(context.WithoutCancel(ctx), regcredName, metav1.DeleteOptions{})
 			}
 		}()
-	}
-
-	serviceAccount := params.Identity.ServiceAccount
-	if serviceAccount == "" {
-		serviceAccount = k.config.AgentServiceAccount
-	}
-
-	job := k.buildJob(jobName, ns, serviceAccount, secretName, cmName, regcredName, params)
-
-	if err := k.pinAgentContainerResources(job, params.AgentResources, params.MemoryCeilingExempt); err != nil {
-		return coreexec.ExecutionResult{}, err
-	}
-
-	if err := k.applyTemplateScheduling(ctx, job); err != nil {
-		return coreexec.ExecutionResult{}, fmt.Errorf("apply pod template scheduling: %w", err)
-	}
-
-	if params.EnableDocker {
-		if err := k.addDindSupport(ctx, job, params.DindImage, params.DindMemoryRequest, params.MemoryCeilingExempt); err != nil {
-			return coreexec.ExecutionResult{}, fmt.Errorf("add dind support: %w", err)
-		}
 	}
 
 	createdJob, err := k.client.BatchV1().Jobs(ns).Create(ctx, job, metav1.CreateOptions{})
@@ -630,11 +633,11 @@ const memoryLimitHeadroomPercent = 140
 
 // derivedMemoryLimit is memoryLimitHeadroomPercent of request, rounded up to a whole Mi.
 func derivedMemoryLimit(request resource.Quantity) resource.Quantity {
-	const mi = 1 << 20
-	// Scaled in Mi, not bytes: a mistyped huge request must not overflow int64 into a tiny limit.
-	requestMi := (request.Value() + mi - 1) / mi
-	scaledMi := (requestMi*memoryLimitHeadroomPercent + 99) / 100
-	return *resource.NewQuantity(scaledMi*mi, resource.BinarySI)
+	// big.Int, not int64: a mistyped huge request must not overflow into a tiny limit.
+	scaled := new(big.Int).Mul(big.NewInt(request.Value()), big.NewInt(memoryLimitHeadroomPercent))
+	perMi := big.NewInt(100 << 20)
+	limitMi := scaled.Add(scaled, new(big.Int).Sub(perMi, big.NewInt(1))).Div(scaled, perMi)
+	return resource.MustParse(limitMi.String() + "Mi")
 }
 
 // resolveResource returns the override's field when set and non-empty, else the deployment default.

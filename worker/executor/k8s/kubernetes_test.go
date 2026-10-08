@@ -288,9 +288,10 @@ func TestKubernetesExecutor_Execute_ExemptMemoryRequest_DerivesLimit(t *testing.
 	for _, tc := range []struct{ request, wantLimit string }{
 		{"512Mi", "717Mi"}, // below the 1Gi default; rounded up to a whole Mi
 		{"1792Mi", "2509Mi"},
-		{"8Gi", "11469Mi"}, // above the default
-		{"5Gi", "7Gi"},     // an exact result is not rounded up a further Mi
-		{"100Pi", "140Pi"}, // scaling a huge request does not overflow into a tiny limit
+		{"8Gi", "11469Mi"},  // above the default
+		{"5Gi", "7Gi"},      // an exact result is not rounded up a further Mi
+		{"1500M", "2003Mi"}, // a decimal request rounds once: 2002.7Mi, not 1431Mi x 1.4
+		{"100Pi", "140Pi"},  // scaling a huge request does not overflow into a tiny limit
 	} {
 		t.Run(tc.request, func(t *testing.T) {
 			fakeClient := fake.NewSimpleClientset()
@@ -343,9 +344,7 @@ func TestKubernetesExecutor_Execute_CappedMemoryRequest_CeilingIsDeploymentDefau
 			if tc.wantErr != "" {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tc.wantErr)
-				jobs, listErr := fakeClient.BatchV1().Jobs(testNamespace).List(context.Background(), metav1.ListOptions{})
-				require.NoError(t, listErr)
-				assert.Empty(t, jobs.Items, "a refused request must not create a Job")
+				assertNothingCreated(t, fakeClient)
 				return
 			}
 			require.NoError(t, err)
@@ -429,6 +428,17 @@ func TestKubernetesExecutor_Execute_OwnerReferencesLinkConfigMapAndSecretToJob(t
 	require.NoError(t, err)
 	require.Len(t, secret.OwnerReferences, 1)
 	assert.Equal(t, result.PodName, secret.OwnerReferences[0].Name)
+}
+
+// assertNothingCreated proves a refused launch was refused before its first Create: an unwind
+// that only deletes afterwards can fail and orphan the JOB_SECRET Secret.
+func assertNothingCreated(t *testing.T, fakeClient *fake.Clientset) {
+	t.Helper()
+	for _, a := range fakeClient.Actions() {
+		if a.GetNamespace() == testNamespace { // the template wrapper lives elsewhere, created by setup
+			assert.NotEqual(t, "create", a.GetVerb(), "created %s before refusing", a.GetResource().Resource)
+		}
+	}
 }
 
 // setupDindTemplate creates the wrapper ConfigMap addDindSupport reads its DinD PodTemplate
@@ -706,6 +716,7 @@ func TestKubernetesExecutor_Execute_DinD_MemoryRequestLimit(t *testing.T) {
 			if tc.wantErr != "" {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tc.wantErr)
+				assertNothingCreated(t, fakeClient)
 				return
 			}
 			require.NoError(t, err)
