@@ -36,6 +36,12 @@ describe("firstLinePreview", () => {
       "Add dark mode with theme.css",
     );
     expect(firstLinePreview("Add _dark_ mode")).toBe("Add dark mode");
+    expect(firstLinePreview("__Add__ dark *mode*.")).toBe("Add dark mode.");
+  });
+
+  it("keeps intra-word underscores, so identifiers survive the preview", () => {
+    expect(firstLinePreview("Add `git_repo_id` to run_inputs")).toBe("Add git_repo_id to run_inputs");
+    expect(firstLinePreview("Rename **snake_case** fields")).toBe("Rename snake_case fields");
   });
 
   it("returns only the first line of a multi-line string", () => {

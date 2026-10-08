@@ -1,6 +1,6 @@
 import { classifyActiveNodes } from "@/lib/runFocus";
 import { formatNodeLabel } from "./DagNode";
-import type { RunResponse } from "@/lib/types";
+import type { RunResponse, SnapshotNode } from "@/lib/types";
 
 interface NodeDetailEmptyStateProps {
   run: RunResponse;
@@ -26,50 +26,38 @@ export default function NodeDetailEmptyState({ run, onSelectNode }: NodeDetailEm
   return (
     <div data-testid="node-detail-empty" className="space-y-4 p-4 text-sm">
       <p className="text-muted-foreground">Select a node in the graph to see its details.</p>
-      {attention.length > 0 && (
-        <div className="space-y-1.5">
-          <h4 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Needs attention
-          </h4>
-          <ul className="space-y-1">
-            {attention.map((node) => (
-              <li key={node.template_node_id}>
-                <button
-                  type="button"
-                  data-testid="node-detail-empty-item"
-                  data-node-id={node.template_node_id}
-                  className="w-full rounded-md border px-2.5 py-1.5 text-left hover:bg-muted"
-                  onClick={() => onSelectNode(node.template_node_id)}
-                >
-                  {formatNodeLabel(node.label)}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {running.length > 0 && (
-        <div className="space-y-1.5">
-          <h4 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Running
-          </h4>
-          <ul className="space-y-1">
-            {running.map((node) => (
-              <li key={node.template_node_id}>
-                <button
-                  type="button"
-                  data-testid="node-detail-empty-item"
-                  data-node-id={node.template_node_id}
-                  className="w-full rounded-md border px-2.5 py-1.5 text-left hover:bg-muted"
-                  onClick={() => onSelectNode(node.template_node_id)}
-                >
-                  {formatNodeLabel(node.label)}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      <NodeShortcutSection title="Needs attention" nodes={attention} onSelectNode={onSelectNode} />
+      <NodeShortcutSection title="Running" nodes={running} onSelectNode={onSelectNode} />
+    </div>
+  );
+}
+
+interface NodeShortcutSectionProps {
+  title: string;
+  nodes: SnapshotNode[];
+  onSelectNode: (nodeId: string) => void;
+}
+
+function NodeShortcutSection({ title, nodes, onSelectNode }: NodeShortcutSectionProps) {
+  if (nodes.length === 0) return null;
+  return (
+    <div className="space-y-1.5">
+      <h4 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{title}</h4>
+      <ul className="space-y-1">
+        {nodes.map((node) => (
+          <li key={node.template_node_id}>
+            <button
+              type="button"
+              data-testid="node-detail-empty-item"
+              data-node-id={node.template_node_id}
+              className="w-full rounded-md border px-2.5 py-1.5 text-left hover:bg-muted"
+              onClick={() => onSelectNode(node.template_node_id)}
+            >
+              {formatNodeLabel(node.label)}
+            </button>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

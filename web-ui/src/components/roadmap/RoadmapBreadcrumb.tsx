@@ -70,22 +70,21 @@ export default function RoadmapBreadcrumb({ task, variant, className }: RoadmapB
         {segments.map((segment) => {
           const meta = roadmapLevelMeta(segment.level);
           return (
-            <div key={segment.level} className="flex items-start gap-2">
-              <meta.Icon className={cn("mt-0.5 size-3.5 shrink-0", meta.textClass)} aria-hidden="true" />
-              <div className="min-w-0">
-                <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  {meta.label}
-                </dt>
-                <dd className="mt-0.5">
-                  <Link
-                    to={segment.href}
-                    data-testid={segment.testId}
-                    className="break-words font-medium text-primary hover:underline"
-                  >
-                    {segment.title}
-                  </Link>
-                </dd>
-              </div>
+            // `dt`/`dd` must be direct children of this wrapper for the term/value pairing to hold.
+            <div key={segment.level} className="min-w-0">
+              <dt className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                <meta.Icon className={cn("size-3.5 shrink-0", meta.textClass)} aria-hidden="true" />
+                {meta.label}
+              </dt>
+              <dd className="mt-0.5">
+                <Link
+                  to={segment.href}
+                  data-testid={segment.testId}
+                  className="break-words font-medium text-primary hover:underline"
+                >
+                  {segment.title}
+                </Link>
+              </dd>
             </div>
           );
         })}

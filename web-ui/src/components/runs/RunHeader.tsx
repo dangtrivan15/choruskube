@@ -34,10 +34,7 @@ export default function RunHeader({ run, compact = false }: RunHeaderProps) {
 
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState("");
-  // Set the instant "Rename" is chosen; read and cleared by the menu's `finalFocus` override
-  // below. The menu would otherwise return focus to its trigger once it finishes closing,
-  // which races the rename input's own `autoFocus` and (on a phone) dismisses the keyboard
-  // the moment it appears.
+  // Set when "Rename" is chosen; consumed by the menu's `finalFocus` override below.
   const pendingRenameRef = useRef(false);
 
   const isTerminal = ["completed", "failed", "cancelled"].includes(run.status);
@@ -119,10 +116,8 @@ export default function RunHeader({ run, compact = false }: RunHeaderProps) {
               </DropdownMenuTrigger>
               <DropdownMenuContent
                 align="end"
-                // The menu's default final-focus target is its trigger — which would blur the
-                // rename input's `autoFocus` and (on a phone) dismiss the keyboard the instant it
-                // appears. `pendingRenameRef` is set (and consumed) by the Rename item below, in
-                // the same synchronous click that already moved focus into the input.
+                // Returning focus to the trigger after Rename would blur the rename input and, on a
+                // phone, dismiss the keyboard the instant it appears.
                 finalFocus={() => {
                   if (pendingRenameRef.current) {
                     pendingRenameRef.current = false;

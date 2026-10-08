@@ -5,8 +5,15 @@
  */
 const LEADING_MARKERS = /^(#{1,6}\s+|>\s*|[-*+]\s+|\d+[.)]\s+)+/;
 
-/** Inline emphasis/code markers stripped from anywhere in the line — `**bold**`, `_em_`, `` `code` ``. */
-const INLINE_MARKERS = /[*_`]+/g;
+/** Code-span backticks, stripped wherever they appear. */
+const CODE_MARKERS = /`+/g;
+
+/**
+ * Emphasis runs (`**bold**`, `_em_`) only where they open or close a word. An intra-word `_`
+ * is part of an identifier (`git_repo_id`), and stripping it would misquote the request.
+ * Captures the preceding character instead of using a lookbehind, which older Safari rejects.
+ */
+const EMPHASIS_MARKERS = /(^|[^\p{L}\p{N}*_])[*_]+|[*_]+(?=[^\p{L}\p{N}]|$)/gu;
 
 /**
  * The first non-blank line of a markdown string, with leading block markers and inline
@@ -21,6 +28,7 @@ export function firstLinePreview(markdown: string | null): string {
   return line
     .trim()
     .replace(LEADING_MARKERS, "")
-    .replace(INLINE_MARKERS, "")
+    .replace(CODE_MARKERS, "")
+    .replace(EMPHASIS_MARKERS, "$1")
     .trim();
 }

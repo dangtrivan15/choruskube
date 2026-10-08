@@ -7,8 +7,8 @@ export const DOCKED_PANEL_QUERY = "(min-width: 1024px)";
 
 /**
  * Generic media-query hook backing `useMobileBreakpoint` and the docked-panel
- * tier query. Reads the current match during render (so a changed `query`
- * takes effect immediately) and subscribes to further changes.
+ * tier query. Reads the match synchronously on first render, so a page never
+ * mounts in the wrong tier, then follows `change` events.
  */
 export function useMediaQuery(query: string): boolean {
   const [matches, setMatches] = useState(() => {

@@ -76,9 +76,8 @@ export default function RunMonitorPage() {
     if (autoFocusedRunIdRef.current === run.id) return;
     autoFocusedRunIdRef.current = run.id;
     if (isDocked && selectedNodeId === null && focusNodeId) select(focusNodeId);
-    // `select` is re-created every render (it closes over `searchParams`), so it is
-    // deliberately not a dependency — including it would make this effect fire (and
-    // re-arm the "once per run id" guard moot point aside) on every selection change.
+    // `select` is re-created every render (it closes over `searchParams`); the ref guard, not
+    // the dependency list, is what keeps this to once per run id.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [run?.id, isDocked, selectedNodeId, focusNodeId]);
 

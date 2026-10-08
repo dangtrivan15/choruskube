@@ -49,6 +49,10 @@ function taskStatusChip(status: "backlog" | "in_progress" | "done") {
   }
 }
 
+function hasRunMetadata(run: RunResponse): boolean {
+  return !!run.promptText || !!run.softwareProject || !!run.task || (run.pullRequests?.length ?? 0) > 0;
+}
+
 function attentionButtonLabel(attentionNode: AttentionNodeRef): string {
   const label = formatNodeLabel(attentionNode.label);
   return attentionNode.kind === "awaiting_human" ? `Review ${label}` : `Failed: ${label}`;
@@ -66,11 +70,7 @@ export function RunSummaryStrip({ run, attentionNode, onSelectNode }: RunSummary
   const [expanded, setExpanded] = useState(readStoredExpanded);
   const [promptDialogOpen, setPromptDialogOpen] = useState(false);
 
-  const hasMetadata =
-    !!run.promptText ||
-    !!run.softwareProject ||
-    !!run.task ||
-    (run.pullRequests?.length ?? 0) > 0;
+  const hasMetadata = hasRunMetadata(run);
   const hasAttentionButton = !!attentionNode && !!onSelectNode;
 
   if (!hasMetadata && !hasAttentionButton) return null;
@@ -188,10 +188,11 @@ export function RunSummaryMobileBar({ run, attentionNode, onOpenInfo, onSelectNo
           data-testid="run-attention-button"
           variant="outline"
           size="sm"
+          className="min-w-0 max-w-[50%] shrink"
           aria-label={attentionButtonLabel(attentionNode)}
           onClick={() => onSelectNode(attentionNode.templateNodeId)}
         >
-          <span className="min-w-0 max-w-[50%] truncate">{attentionButtonLabel(attentionNode)}</span>
+          <span className="min-w-0 truncate">{attentionButtonLabel(attentionNode)}</span>
         </Button>
       )}
     </div>
@@ -206,11 +207,7 @@ interface RunSummaryDetailsProps {
 export function RunSummaryDetails({ run }: RunSummaryDetailsProps) {
   const [promptDialogOpen, setPromptDialogOpen] = useState(false);
 
-  const hasMetadata =
-    !!run.promptText ||
-    !!run.softwareProject ||
-    !!run.task ||
-    (run.pullRequests?.length ?? 0) > 0;
+  const hasMetadata = hasRunMetadata(run);
 
   return (
     <div data-testid="run-summary" data-variant="details" className="space-y-4 p-4">
