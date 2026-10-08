@@ -140,6 +140,7 @@ class RunServiceRoadmapMaterializationTest {
                 nodeExecutionClaimService,
                 null, // escalationContextResolver - unused (escalation not exercised)
                 roadmapProposalValidator,
+                null,
                 null); // pullRequestMergeService - unused (merge not exercised)
     }
 

@@ -147,6 +147,7 @@ class InternalRunScopingTest {
                 null, // dependencyRepo
                 null, // artifactService
                 null, // workItemDependencyService
+                null,
                 null); // milestoneService
     }
 }

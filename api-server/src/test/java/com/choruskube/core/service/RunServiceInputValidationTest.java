@@ -53,6 +53,7 @@ class RunServiceInputValidationTest {
                 null, // nodeExecutionClaimService — unused (signalHumanDecision not exercised)
                 null, // escalationContextResolver — unused (escalation not exercised)
                 null, // roadmapProposalValidator - unused (approve-time validation not exercised)
+                null,
                 null); // pullRequestMergeService - unused (merge not exercised)
     }
 

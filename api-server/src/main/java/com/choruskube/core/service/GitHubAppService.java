@@ -341,8 +341,7 @@ public class GitHubAppService {
      *
      * @throws GitHubApiException if GitHub returns a non-2xx status — notably 404 when either ref
      *     is not found, which the caller distinguishes from any other failure via {@link
-     *     GitHubApiException#getStatus()}, the same convention {@code PullRequestStateService}
-     *     already relies on
+     *     GitHubApiException#getStatus()}
      * @throws RuntimeException if the response body cannot be parsed, or if the call never produced
      *     a status at all (timeout, DNS failure, reset connection)
      */

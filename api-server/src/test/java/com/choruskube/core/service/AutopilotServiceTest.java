@@ -135,9 +135,6 @@ class AutopilotServiceTest {
 
     private final UUID autopilotId = UUID.randomUUID();
 
-    /** The failing resource the safety valve resolves its scope from — see {@link AutopilotResolver#forResource}. */
-    private final UUID gitRepoId = UUID.randomUUID();
-
     /** The lease columns, emulated so the tests exercise the real acquire/renew/release conditions. */
     private String leaseOwner;
 
@@ -535,107 +532,6 @@ class AutopilotServiceTest {
     }
 
     // -----------------------------------------------------------------------------------
-    // 3b — the safety valve
-    // -----------------------------------------------------------------------------------
-
-    @Test
-    void disengageForExternalFailure_stopsItAndRecordsTheReason() {
-        String reason = "GitHub returned 401 for org/backend-api#42 — check the GitHub credential";
-
-        newService().disengageForExternalFailure("git_repo", gitRepoId, reason);
-
-        assertThat(autopilot.isEngaged()).isFalse();
-        assertThat(autopilot.getDisengagedReason()).isEqualTo(reason);
-        verify(eventPublisher).publishAutopilotChanged(eq(autopilotId), any());
-    }
-
-    /**
-     * The reason the valve is a separate path from the breaker. One credential failure plus two
-     * unrelated failed runs must not add up to three, or the Autopilot disengages with a reason
-     * naming the wrong cause and a human fixes the wrong thing.
-     */
-    @Test
-    void disengageForExternalFailure_leavesTheRunFailureBreakerAlone() {
-        autopilot.setConsecutiveFailures(1);
-
-        newService().disengageForExternalFailure("git_repo", gitRepoId, "GitHub returned 404 for org/backend-api#42");
-
-        assertThat(autopilot.getConsecutiveFailures())
-                .as("the breaker counts run outcomes, and no run failed here")
-                .isEqualTo(1);
-        verify(autopilotRepo, never()).addFailures(any(), anyInt(), any());
-        assertThat(autopilot.getDisengagedReason()).doesNotContain("consecutive failures");
-    }
-
-    /**
-     * The valve runs on a timer thread, so it must resolve its scope from the failing resource and
-     * never from the caller's.
-     *
-     * <p>Downstream, {@code forCurrentScope()} on that thread either throws for want of a tenant
-     * context or answers with whatever scope the timer defaulted to — and the second is worse than
-     * the first: one organisation's Autopilot stopped over a repository belonging to another. Core
-     * cannot show either, because both resolutions return the same single row here. So the
-     * assertion is on which one was asked.
-     */
-    @Test
-    void disengageForExternalFailure_resolvesScopeFromTheResource_neverFromTheCaller() {
-        RecordingResolver resolver = engaged(autopilotId);
-        AutopilotService service = newService(Duration.ofMinutes(5), resolver);
-
-        service.disengageForExternalFailure("git_repo", gitRepoId, "GitHub returned 401 for org/backend-api#42");
-
-        assertThat(resolver.resourcesAsked)
-                .as("scope comes from the row that failed")
-                .containsExactly("git_repo:" + gitRepoId);
-        assertThat(resolver.requestScopedCalls)
-                .as("a request-scoped resolution on a timer thread is the defect, not the fix")
-                .isZero();
-        assertThat(autopilot.isEngaged()).isFalse();
-    }
-
-    @Test
-    void disengageForExternalFailure_withNoRowConfigured_isANoOp() {
-        autopilot = null;
-
-        newService().disengageForExternalFailure("git_repo", gitRepoId, "GitHub returned 401 for org/backend-api#42");
-
-        verify(autopilotRepo, never()).insertDefaults(any());
-        verify(autopilotRepo, never()).disengageIfEngagedWithReason(any(), any(), any());
-        verifyNoInteractions(eventPublisher);
-    }
-
-    /**
-     * The reconciler observes the same broken credential every two minutes. Without the statement's
-     * guard each pass would overwrite the reason and publish a STOMP event, so the panel would keep
-     * announcing a stop that happened an hour ago.
-     */
-    @Test
-    void disengageForExternalFailure_whenAlreadyDisengaged_writesNothingAndPublishesNothing() {
-        autopilot.setEngaged(false);
-        autopilot.setDisengagedReason("Disengaged after 3 consecutive failures — the last failure was: boom");
-
-        newService().disengageForExternalFailure("git_repo", gitRepoId, "GitHub returned 401 for org/backend-api#42");
-
-        assertThat(autopilot.getDisengagedReason())
-                .as("the first reason is the one the human is already reading")
-                .contains("3 consecutive failures");
-        verifyNoInteractions(eventPublisher);
-    }
-
-    @Test
-    void disengageForExternalFailure_thenEngage_clearsTheReason() {
-        AutopilotService service = newService();
-        service.disengageForExternalFailure("git_repo", gitRepoId, "GitHub returned 401 for org/backend-api#42");
-
-        service.engage();
-
-        assertThat(autopilot.isEngaged()).isTrue();
-        assertThat(autopilot.getDisengagedReason())
-                .as("a human who has fixed the credential must not be left with a fault banner")
-                .isNull();
-    }
-
-    // -----------------------------------------------------------------------------------
     // 4 — the tick lease and the phase boundaries
     // -----------------------------------------------------------------------------------
 
@@ -868,16 +764,15 @@ class AutopilotServiceTest {
     /**
      * The tick may only resolve through the timer-safe half of the seam.
      *
-     * <p>The companion to {@link #disengageForExternalFailure_resolvesScopeFromTheResource_neverFromTheCaller()},
-     * and the same defect: {@code forCurrentScope()} reads request-scoped tenant state, and a
-     * scheduler thread has none. Downstream that either throws — an installation whose Autopilot
+     * <p>{@code forCurrentScope()} reads request-scoped tenant state, and a scheduler thread has
+     * none. Downstream that either throws — an installation whose Autopilot
      * simply stops ticking, with a stack trace nobody is watching for — or resolves to whatever
      * scope the timer defaulted to and passes over one organisation's Autopilot on every other
      * organisation's behalf.
      *
      * <p>{@code tick()} is clean today. It is asserted anyway because nothing else would notice: in
      * core both resolutions answer with the same row, so the wrong one is invisible in every other
-     * test in this file, and the valve reached for it exactly once already.
+     * test in this file.
      */
     @Test
     void tick_resolvesOnlyThroughTheTimerSafeHalfOfTheSeam() {
@@ -892,7 +787,7 @@ class AutopilotServiceTest {
                 .as("neither forCurrentScope nor getOrCreateForCurrentScope may be reached from a timer thread")
                 .isZero();
         assertThat(resolver.resourcesAsked)
-                .as("the tick already holds its ids; forResource is the valve's route, not its")
+                .as("the tick already holds its ids; it never resolves one from a resource")
                 .isEmpty();
     }
 
@@ -1896,16 +1791,6 @@ class AutopilotServiceTest {
         }));
         when(autopilotRepo.disengageWithReason(any(), any(), any())).thenAnswer(invocation -> {
             if (invocation.getArgument(0) == null || autopilot == null) {
-                return 0;
-            }
-            autopilot.setEngaged(false);
-            autopilot.setDisengagedReason(invocation.getArgument(1));
-            return 1;
-        });
-        // The guard is emulated, not assumed: whether this statement matches is exactly what stops
-        // the safety valve overwriting a reason and re-publishing on every reconciler pass.
-        when(autopilotRepo.disengageIfEngagedWithReason(any(), any(), any())).thenAnswer(invocation -> {
-            if (invocation.getArgument(0) == null || autopilot == null || !autopilot.isEngaged()) {
                 return 0;
             }
             autopilot.setEngaged(false);

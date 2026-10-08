@@ -114,9 +114,8 @@ class SingleTenantAutopilotResolverTest {
 
     @Test
     void forResource_neverCreatesTheRow() {
-        // Its caller is the safety valve, on a reconciler thread. An installation that never
-        // configured an Autopilot must not acquire a disengaged one complaining about a repository
-        // it does not automate.
+        // A lookup on a timer thread must not create a row: an installation that never configured
+        // an Autopilot would acquire one it never opted into.
         when(autopilotRepo.findAll()).thenReturn(List.of());
 
         newResolver().forResource("git_repo", UUID.randomUUID());

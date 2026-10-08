@@ -67,9 +67,8 @@ import org.springframework.test.web.servlet.ResultActions;
  *
  * <p>Because it commits, every row it creates is removed by hand in {@code @AfterEach} via {@link
  * CommittedFixtureCleaner} — otherwise {@code rereviewDecision_neverTouchesGitHubOrTheCredential}
- * leaves its pull requests permanently unmerged and due, and the next class to scan for unmerged
- * rows against the shared container (such as {@code PullRequestStateServiceIntegrationTest})
- * reads them too.
+ * leaves its pull requests permanently unmerged in the shared container, where every later class
+ * that counts pull requests reads them too.
  */
 @AutoConfigureMockMvc
 class PullRequestMergeIntegrationTest extends BaseTest {

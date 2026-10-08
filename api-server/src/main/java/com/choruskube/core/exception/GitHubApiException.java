@@ -2,21 +2,19 @@ package com.choruskube.core.exception;
 
 /**
  * Thrown when the GitHub API answers with a status the caller did not ask for. The status is a
- * field rather than only a fragment of the message, because {@code PullRequestStateService} has to
- * tell a revoked credential or a deleted repository (401/403/404) apart from a rate limit or an
- * outage (429/5xx): the first kind needs a human and disengages the Autopilot, the second is simply
- * retried on the next tick. Interpolating the status into a message and parsing it back out is not
- * a classification a compiler can check.
+ * field rather than only a fragment of the message, because callers have to tell a revoked
+ * credential or a deleted repository (401/403/404) apart from a rate limit or an outage (429/5xx):
+ * the first kind needs a human, the second is worth retrying. Interpolating the status into a
+ * message and parsing it back out is not a classification a compiler can check.
  *
  * <p><strong>The message never carries the response body.</strong> GitHub echoes parts of the
  * request in some error payloads, the {@code Authorization} header among them, and this message
- * travels to the log and — through the Autopilot's {@code disengagedReason} — to a UI panel. The
+ * travels to the log and to a UI panel. The
  * status, the {@code owner/repo} slug and the pull request number are all a human needs to act, and
  * none of them is a secret.
  *
- * <p>No {@code GlobalExceptionHandler} mapping, deliberately. It is raised inside a scheduled
- * reconciler that handles it, and — since pull request merging was added — also inside {@code
- * PullRequestMergeService} on the approval request thread, which always wraps the failure into
+ * <p>No {@code GlobalExceptionHandler} mapping, deliberately. Its callers handle it themselves —
+ * {@code PullRequestMergeService}, on the approval request thread, always wraps the failure into
  * {@link PullRequestMergeException} before it can reach a controller. The handler's generic
  * {@code RuntimeException} → 500 is still the right answer for the case where one somehow escapes
  * anyway. {@link GitHubMergeRefusedException#getReason()} is the one sanctioned extract from this
@@ -49,9 +47,8 @@ public class GitHubApiException extends RuntimeException implements GitHubRateLi
     /**
      * For a call that operates on a branch ref rather than a pull request — {@code compareCommits}
      * and {@code deleteRef} — where there is no PR number to report. {@code getPrNumber()} answers
-     * {@code -1} for these, which is safe: it is unread outside {@code RunPullRequestService}'s and
-     * {@code PullRequestStateService}'s PR-specific call sites, neither of which this exception
-     * reaches.
+     * {@code -1} for these, which is safe: it is unread outside {@code RunPullRequestService}'s
+     * PR-specific call sites, which this exception never reaches.
      */
     public GitHubApiException(int status, String ownerRepo, GitHubRateLimitHints rateLimitHints) {
         super("GitHub returned " + status + " for " + ownerRepo);

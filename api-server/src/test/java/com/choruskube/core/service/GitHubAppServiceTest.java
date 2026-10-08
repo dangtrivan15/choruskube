@@ -438,8 +438,7 @@ class GitHubAppServiceTest {
     /**
      * A 404 (branch or base not found) has to arrive with the real status intact — it's what lets
      * {@code BranchCleanupService} tell "gone" apart from any other failure via {@link
-     * GitHubApiException#getStatus()}, the same convention {@code PullRequestStateService} already
-     * relies on.
+     * GitHubApiException#getStatus()}.
      */
     @Test
     void compareCommits_404_throwsWithTheRealStatus() throws Exception {
