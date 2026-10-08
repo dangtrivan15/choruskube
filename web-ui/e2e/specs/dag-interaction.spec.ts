@@ -232,18 +232,22 @@ test.describe("DAG Interaction", () => {
       timeout: 15_000,
     });
 
-    // Panel open by default — the empty state is visible since no node is selected.
-    await expect(runMonitorPage.nodeDetailEmpty).toBeVisible();
+    // Select a node explicitly so the panel's content is deterministic — on
+    // this tier, desktop auto-focus may otherwise have already selected a
+    // running node by the time the page loads, racing an "empty state"
+    // assertion made before any click.
+    await runMonitorPage.dagNodes.first().click();
+    await expect(runMonitorPage.detailPanel).toBeVisible();
     await expect(runMonitorPage.sidebarCollapseButton).toBeVisible();
 
     // Collapse the panel
     await runMonitorPage.sidebarCollapseButton.click();
-    await expect(runMonitorPage.nodeDetailEmpty).not.toBeVisible();
+    await expect(runMonitorPage.detailPanel).not.toBeVisible();
     await expect(runMonitorPage.sidebarExpandButton).toBeVisible();
 
     // Expand the panel again
     await runMonitorPage.sidebarExpandButton.click();
-    await expect(runMonitorPage.nodeDetailEmpty).toBeVisible();
+    await expect(runMonitorPage.detailPanel).toBeVisible();
     await expect(runMonitorPage.sidebarCollapseButton).toBeVisible();
   });
 });
