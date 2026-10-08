@@ -46,6 +46,7 @@ public class WorkloadService {
     private final String apiServerUrl;
     private final WorkloadNamespaceResolver namespaceResolver;
     private final WorkloadRegistryCredentialResolver registryCredentialResolver;
+    private final WorkloadMemoryCeilingPolicy memoryCeilingPolicy;
 
     public WorkloadService(
             NodeExecutionRepository execRepo,
@@ -58,7 +59,8 @@ public class WorkloadService {
             AiCredentialResolver aiCredentialResolver,
             @Qualifier("executorApiServerUrl") String apiServerUrl,
             ObjectProvider<WorkloadNamespaceResolver> namespaceResolverProvider,
-            ObjectProvider<WorkloadRegistryCredentialResolver> registryCredentialResolverProvider) {
+            ObjectProvider<WorkloadRegistryCredentialResolver> registryCredentialResolverProvider,
+            ObjectProvider<WorkloadMemoryCeilingPolicy> memoryCeilingPolicyProvider) {
         this.execRepo = execRepo;
         this.eventPublisher = eventPublisher;
         this.runRepo = runRepo;
@@ -71,6 +73,7 @@ public class WorkloadService {
         this.namespaceResolver = namespaceResolverProvider.getIfAvailable(NoWorkloadNamespaceResolver::new);
         this.registryCredentialResolver =
                 registryCredentialResolverProvider.getIfAvailable(NoRegistryCredentialResolver::new);
+        this.memoryCeilingPolicy = memoryCeilingPolicyProvider.getIfAvailable(ExemptMemoryCeilingPolicy::new);
     }
 
     /**
@@ -102,6 +105,7 @@ public class WorkloadService {
                 params.dindImage(),
                 params.agentMemoryRequest(),
                 params.dindMemoryRequest(),
+                memoryCeilingExempt(runId),
                 claudeOAuthToken,
                 githubTokenUrl,
                 resolveRegistryCredentialsOrNull(runId),
@@ -120,6 +124,19 @@ public class WorkloadService {
         } catch (RuntimeException e) {
             log.debug("No workload namespace resolved for run {}; launching namespace-less: {}", runId, e.toString());
             return null;
+        }
+    }
+
+    /**
+     * Whether the run's memory requests may exceed the deployment's limits, degrading to {@code false}
+     * when the policy throws: an unresolvable run must never lift the ceiling.
+     */
+    private boolean memoryCeilingExempt(UUID runId) {
+        try {
+            return memoryCeilingPolicy.exempt(runId);
+        } catch (RuntimeException e) {
+            log.debug("No memory-ceiling exemption resolved for run {}; capping: {}", runId, e.toString());
+            return false;
         }
     }
 

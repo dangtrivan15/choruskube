@@ -381,22 +381,25 @@ func TestExecuteAINodeFromSnapshot_CallsExecutor_ForwardsDindImage(t *testing.T)
 
 // The project's memory requests reach the executor as request-only overrides: the agent's through
 // AgentResources (limits left empty so the deployment default applies), the sidecar's through
-// DindMemoryRequest. No request set -> no override at all, so the deployment default sizes the pod.
+// DindMemoryRequest, with the ceiling exemption alongside. No request set -> no override at all, so
+// the deployment default sizes the pod.
 func TestExecuteAINodeFromSnapshot_CallsExecutor_ForwardsMemoryRequests(t *testing.T) {
 	cases := []struct {
-		name      string
-		prep      workload.PrepareResponse
-		wantAgent *executor.AgentResources
-		wantDind  string
+		name       string
+		prep       workload.PrepareResponse
+		wantAgent  *executor.AgentResources
+		wantDind   string
+		wantExempt bool
 	}{
 		{
-			name:      "both set",
-			prep:      workload.PrepareResponse{Image: "a", AgentMemoryRequest: "1792Mi", DindMemoryRequest: "256Mi"},
-			wantAgent: &executor.AgentResources{MemoryRequest: "1792Mi"},
-			wantDind:  "256Mi",
+			name:       "both set, exempt",
+			prep:       workload.PrepareResponse{Image: "a", AgentMemoryRequest: "1792Mi", DindMemoryRequest: "256Mi", MemoryCeilingExempt: true},
+			wantAgent:  &executor.AgentResources{MemoryRequest: "1792Mi"},
+			wantDind:   "256Mi",
+			wantExempt: true,
 		},
 		{
-			name:      "neither set",
+			name:      "neither set, capped",
 			prep:      workload.PrepareResponse{Image: "a"},
 			wantAgent: nil,
 			wantDind:  "",
@@ -431,6 +434,7 @@ func TestExecuteAINodeFromSnapshot_CallsExecutor_ForwardsMemoryRequests(t *testi
 
 			assert.Equal(t, tc.wantAgent, executedParams.AgentResources)
 			assert.Equal(t, tc.wantDind, executedParams.DindMemoryRequest)
+			assert.Equal(t, tc.wantExempt, executedParams.MemoryCeilingExempt)
 		})
 	}
 }

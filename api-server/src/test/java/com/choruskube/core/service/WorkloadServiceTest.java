@@ -9,6 +9,7 @@ import com.choruskube.core.dto.CompleteWorkloadRequest;
 import com.choruskube.core.dto.CreateWorkloadRequest;
 import com.choruskube.core.dto.PrepareWorkloadResponse;
 import com.choruskube.core.exception.NotFoundException;
+import com.choruskube.core.executor.WorkloadMemoryCeilingPolicy;
 import com.choruskube.core.executor.WorkloadNamespaceResolver;
 import com.choruskube.core.executor.WorkloadRegistryCredentialResolver;
 import com.choruskube.core.model.NodeExecution;
@@ -69,7 +70,15 @@ class WorkloadServiceTest {
                 mock(ObjectProvider.class);
         when(registryCredentialResolverProvider.getIfAvailable(any())).thenReturn(registryCredentialResolver);
 
-        service = new WorkloadService(
+        service = serviceWith(
+                namespaceResolverProvider, registryCredentialResolverProvider, noCeilingPolicyRegisteredProvider());
+    }
+
+    private WorkloadService serviceWith(
+            ObjectProvider<WorkloadNamespaceResolver> namespaceResolverProvider,
+            ObjectProvider<WorkloadRegistryCredentialResolver> registryCredentialResolverProvider,
+            ObjectProvider<WorkloadMemoryCeilingPolicy> memoryCeilingPolicyProvider) {
+        return new WorkloadService(
                 execRepo,
                 eventPublisher,
                 runRepo,
@@ -80,7 +89,8 @@ class WorkloadServiceTest {
                 aiCredentialResolver,
                 API_SERVER_URL,
                 namespaceResolverProvider,
-                registryCredentialResolverProvider);
+                registryCredentialResolverProvider,
+                memoryCeilingPolicyProvider);
     }
 
     /**
@@ -96,6 +106,25 @@ class WorkloadServiceTest {
             java.util.function.Supplier<WorkloadNamespaceResolver> fallback = invocation.getArgument(0);
             return fallback.get();
         });
+        return provider;
+    }
+
+    /** As {@link #noNamespaceBeanRegisteredProvider()}, for the memory-ceiling seam's real default. */
+    @SuppressWarnings("unchecked")
+    private static ObjectProvider<WorkloadMemoryCeilingPolicy> noCeilingPolicyRegisteredProvider() {
+        ObjectProvider<WorkloadMemoryCeilingPolicy> provider = mock(ObjectProvider.class);
+        when(provider.getIfAvailable(any())).thenAnswer(invocation -> {
+            java.util.function.Supplier<WorkloadMemoryCeilingPolicy> fallback = invocation.getArgument(0);
+            return fallback.get();
+        });
+        return provider;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static ObjectProvider<WorkloadMemoryCeilingPolicy> ceilingPolicyProvider(
+            WorkloadMemoryCeilingPolicy policy) {
+        ObjectProvider<WorkloadMemoryCeilingPolicy> provider = mock(ObjectProvider.class);
+        when(provider.getIfAvailable(any())).thenReturn(policy);
         return provider;
     }
 
@@ -219,7 +248,8 @@ class WorkloadServiceTest {
                 aiCredentialResolver,
                 API_SERVER_URL,
                 noNamespaceBeanRegisteredProvider(),
-                noCredentialBeanRegisteredProvider());
+                noCredentialBeanRegisteredProvider(),
+                noCeilingPolicyRegisteredProvider());
 
         var response = serviceWithoutNamespaceBean.prepareWorkload(
                 runId, nodeExecId, new CreateWorkloadRequest(templateNodeId, Map.of()));
@@ -286,7 +316,8 @@ class WorkloadServiceTest {
                 aiCredentialResolver,
                 API_SERVER_URL,
                 noNamespaceBeanRegisteredProvider(),
-                noCredentialBeanRegisteredProvider());
+                noCredentialBeanRegisteredProvider(),
+                noCeilingPolicyRegisteredProvider());
 
         var response = serviceWithoutCredentialBean.prepareWorkload(
                 runId, nodeExecId, new CreateWorkloadRequest(templateNodeId, Map.of()));
@@ -741,6 +772,60 @@ class WorkloadServiceTest {
         assertEquals("registry.example/foo-dind:latest", response.dindImage());
         assertEquals("1792Mi", response.agentMemoryRequest());
         assertEquals("512Mi", response.dindMemoryRequest());
+        assertTrue(response.memoryCeilingExempt(), "with no policy bean, a single-tenant run is exempt");
+    }
+
+    /**
+     * A deployment's policy decides the exemption, and a policy that throws caps the run: an
+     * unresolvable run must never lift the ceiling.
+     */
+    @Test
+    void prepareWorkload_memoryCeilingExemptFollowsPolicyAndCapsWhenItThrows() {
+        UUID runId = UUID.randomUUID();
+        UUID nodeExecId = UUID.randomUUID();
+        UUID templateNodeId = UUID.randomUUID();
+
+        var nodeExec = new NodeExecution();
+        nodeExec.setId(nodeExecId);
+        nodeExec.setWorkflowRunId(runId);
+        nodeExec.setTemplateNodeId(templateNodeId);
+        nodeExec.setStatus(NodeExecutionStatus.pending);
+        var workflowRun = new WorkflowRun();
+        workflowRun.setId(runId);
+        workflowRun.setGraphTemplateId(UUID.randomUUID());
+        workflowRun.setInputs("{}");
+        String snapshotJson = """
+                {
+                  "nodes": [{
+                    "template_node_id": "%s",
+                    "label": "Node",
+                    "executor_type": "ai",
+                    "image": "test:latest",
+                    "secrets": [],
+                    "is_entrypoint": true
+                  }],
+                  "edges": [],
+                  "inputs": {},
+                  "agent_memory_request": "8Gi"
+                }
+                """.formatted(templateNodeId);
+        when(execRepo.findById(nodeExecId)).thenReturn(Optional.of(nodeExec));
+        when(runRepo.findById(runId)).thenReturn(Optional.of(workflowRun));
+        when(snapshotBuilder.buildSnapshotForRun(workflowRun)).thenReturn(snapshotJson);
+        when(aiCredentialResolver.resolveOauthToken(runId)).thenReturn("token");
+        var request = new CreateWorkloadRequest(templateNodeId, Map.of());
+
+        WorkloadService capping = serviceWith(
+                noNamespaceBeanRegisteredProvider(),
+                noCredentialBeanRegisteredProvider(),
+                ceilingPolicyProvider(id -> false));
+        assertFalse(capping.prepareWorkload(runId, nodeExecId, request).memoryCeilingExempt());
+
+        WorkloadService throwing = serviceWith(
+                noNamespaceBeanRegisteredProvider(), noCredentialBeanRegisteredProvider(), ceilingPolicyProvider(id -> {
+                    throw new IllegalStateException("no ownership row");
+                }));
+        assertFalse(throwing.prepareWorkload(runId, nodeExecId, request).memoryCeilingExempt());
     }
 
     @Test

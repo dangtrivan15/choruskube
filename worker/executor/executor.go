@@ -64,14 +64,20 @@ type ExecutionParams struct {
 	// execution. Nil uses the deployment default (the K8s executor's Config).
 	AgentResources *AgentResources
 	// DindMemoryRequest overrides the dind sidecar's memory request (a Kubernetes quantity) for
-	// this one execution; its limit stays the template's. Empty keeps the template's request. The
-	// Docker executor ignores this.
+	// this one execution. Empty keeps the template's request and limit. The Docker executor
+	// ignores this.
 	DindMemoryRequest string
+	// MemoryCeilingExempt lets this execution's memory requests exceed the deployment's limits:
+	// the K8s executor then derives each limit from its request (never below the deployment's).
+	// False caps them, so on a shared data plane one project cannot reserve a whole node.
+	MemoryCeilingExempt bool
 }
 
 // AgentResources sets the agent container's CPU/memory requests and limits. Values are
 // Kubernetes quantity strings (e.g. "200m", "1Gi"); an empty field falls back to the
-// executor's corresponding Config default. The Docker executor ignores this.
+// executor's corresponding Config default, except an empty MemoryLimit beside a MemoryRequest on
+// a MemoryCeilingExempt execution, which the K8s executor derives from that request. The Docker
+// executor ignores this.
 type AgentResources struct {
 	CPURequest    string
 	MemoryRequest string

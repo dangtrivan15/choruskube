@@ -59,6 +59,7 @@ class WorkerWorkloadControllerTest {
                 null,
                 "1792Mi",
                 "256Mi",
+                true,
                 "oauth-token",
                 "http://api/github-token",
                 null,
@@ -75,6 +76,7 @@ class WorkerWorkloadControllerTest {
                 // The Worker decodes these by name (worker/workload/client.go PrepareResponse).
                 .andExpect(jsonPath("$.agentMemoryRequest").value("1792Mi"))
                 .andExpect(jsonPath("$.dindMemoryRequest").value("256Mi"))
+                .andExpect(jsonPath("$.memoryCeilingExempt").value(true))
                 .andExpect(jsonPath("$.serviceAccount").value("choruskube-agent"));
 
         verify(authorizer).requireMayActOn("ckw_abc", runId);

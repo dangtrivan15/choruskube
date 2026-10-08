@@ -192,7 +192,7 @@ func TestPrepareWorkload(t *testing.T) {
 // would silently drop the per-project sizing, so pin the wire names.
 func TestPrepareWorkload_DecodesMemoryRequestsByWireName(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"image":"a","agentMemoryRequest":"4Gi","dindMemoryRequest":"3Gi"}`))
+		_, _ = w.Write([]byte(`{"image":"a","agentMemoryRequest":"4Gi","dindMemoryRequest":"3Gi","memoryCeilingExempt":true}`))
 	}))
 	defer server.Close()
 
@@ -202,6 +202,22 @@ func TestPrepareWorkload_DecodesMemoryRequestsByWireName(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "4Gi", got.AgentMemoryRequest)
 	assert.Equal(t, "3Gi", got.DindMemoryRequest)
+	assert.True(t, got.MemoryCeilingExempt)
+}
+
+// An API server that predates the exemption sends no such field; that must decode as capped, so a
+// version skew can never lift the ceiling.
+func TestPrepareWorkload_AbsentCeilingExemptionDecodesAsCapped(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"image":"a","agentMemoryRequest":"4Gi"}`))
+	}))
+	defer server.Close()
+
+	got, err := NewClient(server.URL, func() string { return "c" }, nil).PrepareWorkload(context.Background(), PrepareParams{
+		RunID: uuid.New(), NodeExecID: uuid.New(), TemplateNodeID: uuid.New(),
+	})
+	require.NoError(t, err)
+	assert.False(t, got.MemoryCeilingExempt)
 }
 
 func TestCompleteWorkload(t *testing.T) {

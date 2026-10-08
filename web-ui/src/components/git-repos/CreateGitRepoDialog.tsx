@@ -152,7 +152,7 @@ export default function CreateGitRepoDialog({ open, onOpenChange }: Props) {
               placeholder="deployment default"
             />
             <p className="text-xs text-muted-foreground">
-              Memory reserved for the agent container, e.g. 1792Mi. The limit stays the deployment's.
+              Memory reserved for the agent container, e.g. 1792Mi. Its limit is 1.4× this, never below the deployment's limit. A deployment that caps requests allows at most its own limit.
             </p>
           </div>
 
@@ -194,6 +194,9 @@ export default function CreateGitRepoDialog({ open, onOpenChange }: Props) {
                 onChange={(e) => setDindMemoryRequest(e.target.value)}
                 placeholder="deployment default"
               />
+              <p className="text-xs text-muted-foreground">
+                Memory reserved for the dind sidecar, e.g. 2Gi. Its limit is 1.4× this, never below the deployment's limit. A deployment that caps requests allows at most its own limit.
+              </p>
             </div>
           )}
 
