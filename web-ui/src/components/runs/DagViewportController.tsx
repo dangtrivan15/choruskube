@@ -1,5 +1,11 @@
 import { useEffect, useRef, type RefObject } from "react";
-import { useReactFlow, useNodesInitialized, useStore, type Rect as FlowRect } from "@xyflow/react";
+import {
+  useReactFlow,
+  useStore,
+  useStoreApi,
+  type ReactFlowState,
+  type Rect as FlowRect,
+} from "@xyflow/react";
 import { computeInitialViewport, type Rect } from "@/lib/dagViewport";
 
 interface DagViewportControllerProps {
@@ -9,15 +15,29 @@ interface DagViewportControllerProps {
   resetKey: string;
   focusNodeId: string | null;
   compact: boolean;
-  /** Owned by the caller (RunDag) so its `onMove`/`Controls` handlers and this controller
-   * agree on one "has the user moved the view" flag, and so RunDag can reset it on `resetKey` change. */
+  /** Set by the caller's `onMove`/`Controls` handlers; this controller clears it whenever
+   * `resetKey` changes, in the same effect that re-applies, so a stale `true` from the
+   * previous run can never suppress the new run's first apply. */
   userMovedRef: RefObject<boolean>;
-  /** Called once per `resetKey`, the first time the viewport is actually applied. */
-  onApplied: () => void;
+  /** Called with `resetKey` the first time a viewport is applied for that key. */
+  onApplied: (resetKey: string) => void;
 }
 
 function toRect(r: FlowRect): Rect {
   return { x: r.x, y: r.y, w: r.width, h: r.height };
+}
+
+/**
+ * Read from the store's internal nodes rather than `useNodesInitialized()`: that flag is derived
+ * from the caller's node objects, which never receive `measured` when `<ReactFlow nodes>` is
+ * controlled without an `onNodesChange` (RunDag's setup), so it would stay `false` forever.
+ */
+function allNodesMeasured(s: ReactFlowState): boolean {
+  if (s.nodeLookup.size === 0) return false;
+  for (const node of s.nodeLookup.values()) {
+    if (!node.measured.width || !node.measured.height) return false;
+  }
+  return true;
 }
 
 const RESIZE_DEBOUNCE_MS = 100;
@@ -36,47 +56,61 @@ export default function DagViewportController({
   onApplied,
 }: DagViewportControllerProps) {
   const reactFlow = useReactFlow();
-  const nodesInitialized = useNodesInitialized();
+  const store = useStoreApi();
+  const nodesMeasured = useStore(allNodesMeasured);
   const width = useStore((s) => s.width);
   const height = useStore((s) => s.height);
 
-  const appliedOnceForKeyRef = useRef<string | null>(null);
+  const lastResetKeyRef = useRef<string | null>(null);
+  const appliedForKeyRef = useRef<string | null>(null);
   const resizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Reads the store at call time, not the render-time values: the effect below can run in the
+  // commit that hands React Flow new node objects, before they are re-measured.
   function apply() {
     if (userMovedRef.current) return;
-    if (width <= 0 || height <= 0) return;
+    const state = store.getState();
+    if (state.width <= 0 || state.height <= 0 || !allNodesMeasured(state)) return;
 
-    const nodeIds = reactFlow.getNodes().map((n) => n.id);
-    if (nodeIds.length === 0) return;
-
+    const nodeIds = [...state.nodeLookup.keys()];
     const graph = toRect(reactFlow.getNodesBounds(nodeIds));
-    const focus = focusNodeId ? toRect(reactFlow.getNodesBounds([focusNodeId])) : null;
-    const viewport = computeInitialViewport({ width, height, graph, focus, compact });
+    const focus =
+      focusNodeId && state.nodeLookup.has(focusNodeId)
+        ? toRect(reactFlow.getNodesBounds([focusNodeId]))
+        : null;
+    const viewport = computeInitialViewport({
+      width: state.width,
+      height: state.height,
+      graph,
+      focus,
+      compact,
+    });
     if (!viewport) return;
 
     reactFlow.setViewport(viewport);
-    if (appliedOnceForKeyRef.current !== resetKey) {
-      appliedOnceForKeyRef.current = resetKey;
-      onApplied();
+    if (appliedForKeyRef.current !== resetKey) {
+      appliedForKeyRef.current = resetKey;
+      onApplied(resetKey);
     }
   }
 
   // Apply as soon as this resetKey's nodes are measured (a fresh run, or a topology change).
   // Not debounced — there's nothing to coalesce on first paint.
   useEffect(() => {
-    if (!nodesInitialized) return;
+    if (lastResetKeyRef.current !== resetKey) {
+      lastResetKeyRef.current = resetKey;
+      userMovedRef.current = false;
+    }
+    if (!nodesMeasured) return;
     apply();
-    // `apply` closes over props/state that already appear in this dependency list (directly
-    // or via the refs it reads); re-declaring it as a dependency would re-run this effect on
-    // every render instead of only when one of these actually changes.
+    // `apply` reads everything else from the store or from refs at call time.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodesInitialized, resetKey, focusNodeId, compact]);
+  }, [nodesMeasured, resetKey, focusNodeId, compact]);
 
   // Re-apply on container resize, debounced so a drag-resize of the docked panel doesn't
   // recompute on every intermediate frame.
   useEffect(() => {
-    if (!nodesInitialized) return;
+    if (!nodesMeasured) return;
     if (resizeTimeoutRef.current) clearTimeout(resizeTimeoutRef.current);
     resizeTimeoutRef.current = setTimeout(apply, RESIZE_DEBOUNCE_MS);
     return () => {

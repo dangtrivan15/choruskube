@@ -3,22 +3,29 @@ import { render } from "@testing-library/react";
 import type { RefObject } from "react";
 import DagViewportController from "../DagViewportController";
 
-let mockWidth = 1000;
-let mockHeight = 600;
-let mockNodesInitialized = true;
+interface MockInternalNode {
+  measured: { width?: number; height?: number };
+}
+
+// The store shape the controller reads, both through `useStore` selectors (to re-render) and
+// `useStoreApi().getState()` (at apply time). `nodeLookup` holds React Flow's *internal* nodes,
+// whose `measured` is what React Flow fills in — unlike the caller's node objects.
+const mockState = {
+  width: 1000,
+  height: 600,
+  nodeLookup: new Map<string, MockInternalNode>(),
+};
 const setViewport = vi.fn();
-const getNodes = vi.fn(() => [{ id: "a" }, { id: "b" }]);
 const getNodesBounds = vi.fn(() => ({ x: 0, y: 0, width: 400, height: 200 }));
 
+function measuredNodes(...ids: string[]): Map<string, MockInternalNode> {
+  return new Map(ids.map((id) => [id, { measured: { width: 160, height: 60 } }]));
+}
+
 vi.mock("@xyflow/react", () => ({
-  useReactFlow: () => ({
-    getNodes,
-    getNodesBounds,
-    setViewport,
-  }),
-  useNodesInitialized: () => mockNodesInitialized,
-  useStore: (selector: (s: { width: number; height: number }) => unknown) =>
-    selector({ width: mockWidth, height: mockHeight }),
+  useReactFlow: () => ({ getNodesBounds, setViewport }),
+  useStoreApi: () => ({ getState: () => mockState }),
+  useStore: (selector: (s: typeof mockState) => unknown) => selector(mockState),
 }));
 
 interface RenderControllerProps {
@@ -26,7 +33,7 @@ interface RenderControllerProps {
   focusNodeId?: string | null;
   compact?: boolean;
   userMovedRef?: RefObject<boolean>;
-  onApplied?: () => void;
+  onApplied?: (resetKey: string) => void;
 }
 
 function renderController(props: RenderControllerProps = {}) {
@@ -46,10 +53,9 @@ function renderController(props: RenderControllerProps = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockWidth = 1000;
-  mockHeight = 600;
-  mockNodesInitialized = true;
-  getNodes.mockReturnValue([{ id: "a" }, { id: "b" }]);
+  mockState.width = 1000;
+  mockState.height = 600;
+  mockState.nodeLookup = measuredNodes("a", "b");
   getNodesBounds.mockReturnValue({ x: 0, y: 0, width: 400, height: 200 });
   vi.useFakeTimers();
 });
@@ -64,13 +70,38 @@ describe("DagViewportController", () => {
 
     expect(setViewport).toHaveBeenCalledTimes(1);
     expect(onApplied).toHaveBeenCalledTimes(1);
+    expect(onApplied).toHaveBeenCalledWith("run-1#topo-1");
+  });
+
+  it("applies nothing until every node is measured, then applies when they are", () => {
+    mockState.nodeLookup = new Map([
+      ["a", { measured: { width: 160, height: 60 } }],
+      ["b", { measured: {} }],
+    ]);
+    const { rerender, userMovedRef, onApplied } = renderController();
+    expect(setViewport).not.toHaveBeenCalled();
+    expect(onApplied).not.toHaveBeenCalled();
+
+    mockState.nodeLookup = measuredNodes("a", "b");
+    rerender(
+      <DagViewportController
+        resetKey="run-1#topo-1"
+        focusNodeId={null}
+        compact={false}
+        userMovedRef={userMovedRef}
+        onApplied={onApplied}
+      />,
+    );
+
+    expect(setViewport).toHaveBeenCalledTimes(1);
+    expect(onApplied).toHaveBeenCalledTimes(1);
   });
 
   it("re-applies on a pane-size change (debounced) while the user hasn't moved the view", () => {
     const { rerender, userMovedRef, onApplied } = renderController();
     expect(setViewport).toHaveBeenCalledTimes(1);
 
-    mockWidth = 1200;
+    mockState.width = 1200;
     rerender(
       <DagViewportController
         resetKey="run-1#topo-1"
@@ -92,7 +123,7 @@ describe("DagViewportController", () => {
     expect(setViewport).toHaveBeenCalledTimes(1);
 
     userMovedRef.current = true;
-    mockWidth = 1200;
+    mockState.width = 1200;
     rerender(
       <DagViewportController
         resetKey="run-1#topo-1"
@@ -124,10 +155,38 @@ describe("DagViewportController", () => {
 
     expect(setViewport).toHaveBeenCalledTimes(2);
     expect(onApplied).toHaveBeenCalledTimes(2);
+    expect(onApplied).toHaveBeenLastCalledWith("run-2#topo-1");
+  });
+
+  it("a new resetKey clears a user move left over from the previous run and applies", () => {
+    const { rerender, userMovedRef, onApplied } = renderController({ resetKey: "run-1#topo-1" });
+    expect(setViewport).toHaveBeenCalledTimes(1);
+
+    userMovedRef.current = true;
+    rerender(
+      <DagViewportController
+        resetKey="run-2#topo-1"
+        focusNodeId={null}
+        compact={false}
+        userMovedRef={userMovedRef}
+        onApplied={onApplied}
+      />,
+    );
+
+    expect(userMovedRef.current).toBe(false);
+    expect(setViewport).toHaveBeenCalledTimes(2);
+  });
+
+  it("falls back to no focus when the focus node is not on the canvas", () => {
+    renderController({ focusNodeId: "missing", compact: true });
+
+    expect(getNodesBounds).toHaveBeenCalledTimes(1);
+    expect(getNodesBounds).toHaveBeenCalledWith(["a", "b"]);
+    expect(setViewport).toHaveBeenCalledTimes(1);
   });
 
   it("applies nothing and never calls onApplied for a zero-size pane", () => {
-    mockWidth = 0;
+    mockState.width = 0;
     const { onApplied } = renderController();
 
     expect(setViewport).not.toHaveBeenCalled();

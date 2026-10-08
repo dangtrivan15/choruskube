@@ -328,19 +328,15 @@ export default function RunDag({
   );
   const onPaneClick = useCallback(() => onNodeSelect(null), [onNodeSelect]);
 
-  // Tracks whether the user has moved the view — by gesture, wheel, or a zoom/fit control —
-  // since the viewport controller last reset. Read by the controller (stop re-applying once
-  // true) and reset here whenever the reset key changes (a different run, or a layout change).
+  // Whether the user has moved the view — by gesture, wheel, or a zoom/fit control — since the
+  // viewport controller last reset it (the controller clears it whenever `resetKey` changes).
   const userMovedRef = useRef(false);
   const resetKey = `${viewportKey}#${topologyKey}`;
-  useEffect(() => {
-    userMovedRef.current = false;
-  }, [resetKey]);
 
-  const [viewportReady, setViewportReady] = useState(false);
-  useEffect(() => {
-    setViewportReady(false);
-  }, [resetKey]);
+  // Compared against the current key rather than reset by an effect: this component's effects
+  // run after the controller's, so a reset here would overwrite the controller's same-commit apply.
+  const [appliedViewportKey, setAppliedViewportKey] = useState<string | null>(null);
+  const viewportReady = appliedViewportKey === resetKey;
 
   const onMove: OnMove = useCallback(
     (event) => {
@@ -387,7 +383,7 @@ export default function RunDag({
           focusNodeId={focusNodeId}
           compact={compact}
           userMovedRef={userMovedRef}
-          onApplied={() => setViewportReady(true)}
+          onApplied={setAppliedViewportKey}
         />
         <Controls
           showInteractive={false}
