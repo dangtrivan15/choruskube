@@ -419,8 +419,8 @@ func (a *Activities) executeLocally(ctx context.Context, runID uuid.UUID, params
 			ServiceAccount: prep.ServiceAccount,
 		},
 	}
-	// Request only: the limit stays the deployment's, or for an exempt execution is derived from the
-	// request, so a burst past the project's measured peak borrows headroom instead of OOM-killing.
+	// Request only: the executor derives every memory limit from the request, so a project sized
+	// below the default also gets a smaller limit, and a capped one may not exceed the default.
 	if prep.AgentMemoryRequest != "" {
 		execParams.AgentResources = &executor.AgentResources{MemoryRequest: prep.AgentMemoryRequest}
 	}

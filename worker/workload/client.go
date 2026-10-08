@@ -226,8 +226,8 @@ type PrepareResponse struct {
 	// quantities). Empty means no override -- the deployment default sizes that container.
 	AgentMemoryRequest string `json:"agentMemoryRequest"`
 	DindMemoryRequest  string `json:"dindMemoryRequest"`
-	// MemoryCeilingExempt lets those requests exceed the deployment's limits. Absent (an older
-	// API server) decodes as false, so a version skew caps rather than uncaps.
+	// MemoryCeilingExempt lets those requests exceed the deployment's default requests. Absent (an
+	// older API server) decodes as false, so a version skew caps rather than uncaps.
 	MemoryCeilingExempt bool                 `json:"memoryCeilingExempt"`
 	ClaudeOAuthToken    string               `json:"claudeOAuthToken"`
 	GitHubTokenURL      string               `json:"githubTokenUrl"`

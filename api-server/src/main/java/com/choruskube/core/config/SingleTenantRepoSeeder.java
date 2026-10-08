@@ -25,6 +25,8 @@ public class SingleTenantRepoSeeder implements ApplicationRunner {
     private static final Logger log = LoggerFactory.getLogger(SingleTenantRepoSeeder.class);
 
     private static final String CHORUSKUBE_REPO_URL = "https://github.com/dangtrivan15/choruskube";
+    static final String AGENT_MEMORY_REQUEST = "4352Mi";
+    static final String DIND_MEMORY_REQUEST = "3328Mi";
 
     private final GitRepoRepository gitRepoRepository;
 
@@ -60,6 +62,11 @@ public class SingleTenantRepoSeeder implements ApplicationRunner {
         // shared .../reports/api-server would mean whichever finishes second silently overwrites
         // the first. One infix per repo keeps the trees disjoint.
         repo.setTestCommand("./gradlew test -Pe2e -Dtest.reports.dir=/workspace/out/reports/choruskube");
+        // The Test node's measured in-use peak + 15% (agent: Gradle and the forked test JVM; dind:
+        // the e2e compose stack). Each limit is 1.4x its request, so a smaller request starves the
+        // stack's file cache and thrashes, or OOM-kills the test JVM.
+        repo.setAgentMemoryRequest(AGENT_MEMORY_REQUEST);
+        repo.setDindMemoryRequest(DIND_MEMORY_REQUEST);
         repo.setAgentImage(agentImage);
         repo.setEnableDocker(true);
         if (dindImage != null && !dindImage.isBlank()) {

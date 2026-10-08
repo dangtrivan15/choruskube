@@ -113,9 +113,9 @@ service account, or credential itself — see
 | `K8S_AGENT_POD_TEMPLATE_NAME` | `choruskube-agent-pod-template` | ConfigMap holding the operator's agent pod template — see [Kubernetes agent pod template](#kubernetes-agent-pod-template) for which fields apply. |
 | `K8S_TEMPLATE_NAMESPACE` | `choruskube` | Namespace the pod template above is read from. |
 | `K8S_AGENT_CPU_REQUEST` | `200m` | Default agent-container CPU request; a node execution's own sizing overrides it. |
-| `K8S_AGENT_MEMORY_REQUEST` | `1Gi` | Default agent-container memory request; overridable per node. |
+| `K8S_AGENT_MEMORY_REQUEST` | `2Gi` | Default agent-container memory request; overridable per node. The memory limit is always 1.4× the request, and a capped project may not request more than this default. |
 | `K8S_AGENT_CPU_LIMIT` | `1` | Default agent-container CPU limit; overridable per node. |
-| `K8S_AGENT_MEMORY_LIMIT` | `3Gi` | Default agent-container memory limit. Also the most a capped project may request, and the floor of the limit an exempt project's request derives (1.4× the request). |
+| `K8S_AGENT_MEMORY_LIMIT` | — | Removed: the limit is derived from the request. The Worker refuses to start while it is set. |
 
 **Docker (`EXECUTOR_TYPE=docker`, the default)** — the local-stack and self-hosted-on-a-single-host path.
 
@@ -139,8 +139,11 @@ else in the template is ignored.
 Scheduling fields reach every pod because they decide which nodes may run an agent at all; the
 Docker parts stay on Docker nodes because no other agent needs the sidecar or its runtime. A field
 the template sets replaces the executor's own value outright rather than merging with it, so the
-pod gets exactly what the template says. The Worker refuses to start when the template is missing
-or malformed, and reads it once per process — restart the Worker after editing it.
+pod gets exactly what the template says. The one exception is the `dind` container's memory
+limit: the executor sets it to 1.4× the container's memory request, so the template declares only the
+request, and a template that declares the limit is rejected as malformed. The Worker refuses to start
+when the template is missing or malformed, and reads it once per process — restart the Worker after
+editing it.
 
 ## Build and test
 

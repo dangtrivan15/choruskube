@@ -51,6 +51,11 @@ func main() {
 		if err != nil {
 			log.Fatalf("create kubernetes client: %v", err)
 		}
+		// The memory limit is derived from the request now, so a still-set limit would be
+		// silently ignored while the operator believes it applies.
+		if os.Getenv("K8S_AGENT_MEMORY_LIMIT") != "" {
+			log.Fatalf("K8S_AGENT_MEMORY_LIMIT is no longer read: the agent memory limit is derived from K8S_AGENT_MEMORY_REQUEST; unset it")
+		}
 		k8sExec := k8s.NewKubernetesExecutor(clientset, k8s.Config{
 			// The single namespace this core executor launches every agent Job into and tears
 			// it down within -- a multi-tenant deployment overrides per org via WithNamespace.
@@ -62,9 +67,8 @@ func main() {
 			// executor pins no numbers of its own; these env defaults are the deployment's.
 			AgentResources: executor.AgentResources{
 				CPURequest:    envOrDefault("K8S_AGENT_CPU_REQUEST", "200m"),
-				MemoryRequest: envOrDefault("K8S_AGENT_MEMORY_REQUEST", "1Gi"),
+				MemoryRequest: envOrDefault("K8S_AGENT_MEMORY_REQUEST", "2Gi"),
 				CPULimit:      envOrDefault("K8S_AGENT_CPU_LIMIT", "1"),
-				MemoryLimit:   envOrDefault("K8S_AGENT_MEMORY_LIMIT", "3Gi"),
 			},
 		})
 		// Fail fast at boot on a missing/malformed agent pod template rather than at the first
