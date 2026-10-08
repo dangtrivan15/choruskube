@@ -82,6 +82,8 @@ class SingleTenantRepoSeederTest {
         GitRepo existing = new GitRepo();
         existing.setUrl("https://github.com/dangtrivan15/choruskube");
         existing.setAgentImage("stale-image:old");
+        existing.setAgentMemoryRequest("1Gi");
+        existing.setDindMemoryRequest("1Gi");
         when(gitRepoRepository.findByUrl(any())).thenReturn(Optional.of(existing));
 
         seeder.run(null);
@@ -92,5 +94,7 @@ class SingleTenantRepoSeederTest {
         assertThat(saved.getDefaultBranch()).isEqualTo("main");
         assertThat(saved.isEnableDocker()).isTrue();
         assertThat(saved.getAgentImage()).isEqualTo("ghcr.io/test/agent:1");
+        assertThat(saved.getAgentMemoryRequest()).isEqualTo(SingleTenantRepoSeeder.AGENT_MEMORY_REQUEST);
+        assertThat(saved.getDindMemoryRequest()).isEqualTo(SingleTenantRepoSeeder.DIND_MEMORY_REQUEST);
     }
 }

@@ -109,7 +109,7 @@ export default function RepoGroupForm({
             placeholder="deployment default"
           />
           <p className="text-xs text-muted-foreground">
-            Memory reserved for the agent container, e.g. 1792Mi. Its limit is 1.4× this, never below the deployment's limit. A deployment that caps requests allows at most its own limit.
+            Memory reserved for the agent container, e.g. 1792Mi. Its limit is 1.4× this. A deployment that caps requests allows at most its default.
           </p>
         </div>
 
@@ -155,7 +155,7 @@ export default function RepoGroupForm({
               placeholder="deployment default"
             />
             <p className="text-xs text-muted-foreground">
-              Memory reserved for the dind sidecar, e.g. 2Gi. Its limit is 1.4× this, never below the deployment's limit. A deployment that caps requests allows at most its own limit.
+              Memory reserved for the dind sidecar, e.g. 2Gi. Its limit is 1.4× this. A deployment that caps requests allows at most its default.
             </p>
           </div>
         )}

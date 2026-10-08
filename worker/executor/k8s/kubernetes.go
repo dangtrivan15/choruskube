@@ -78,8 +78,8 @@ type Config struct {
 
 	// AgentResources is the default agent-container CPU/memory, overridable per-execution via
 	// ExecutionParams.AgentResources. All fields empty runs the agent as BestEffort. The dind
-	// sidecar keeps the template's resources except a per-execution ExecutionParams.DindMemoryRequest
-	// and, when ExecutionParams.MemoryCeilingExempt, the memory limit derived from it.
+	// sidecar keeps the template's resources except a per-execution ExecutionParams.DindMemoryRequest.
+	// No memory limit is configured anywhere: each container's is derivedMemoryLimit of its request.
 	AgentResources coreexec.AgentResources
 }
 
@@ -537,21 +537,19 @@ func execLabels(params coreexec.ExecutionParams) map[string]string {
 // pinAgentContainerResources pins explicit CPU/memory on the "agent" container. Values come from
 // the per-execution override when set, else the deployment default (Config.AgentResources); this
 // package chooses no sizing and knows no node type. The namespace ships no LimitRange to supply
-// defaults, so all four (cpu/memory x requests/limits) must resolve, or none (BestEffort).
+// defaults, so the CPU request and limit and the memory request must all resolve, or none
+// (BestEffort). The memory limit is always derived from the memory request.
 func (k *KubernetesExecutor) pinAgentContainerResources(job *batchv1.Job, override *coreexec.AgentResources, ceilingExempt bool) error {
 	def := k.config.AgentResources
 	cpuRequest := resolveResource(override, func(r coreexec.AgentResources) string { return r.CPURequest }, def.CPURequest)
 	memoryRequest := resolveResource(override, func(r coreexec.AgentResources) string { return r.MemoryRequest }, def.MemoryRequest)
 	cpuLimit := resolveResource(override, func(r coreexec.AgentResources) string { return r.CPULimit }, def.CPULimit)
-	memoryLimit := resolveResource(override, func(r coreexec.AgentResources) string { return r.MemoryLimit }, def.MemoryLimit)
 	// Nothing configured: run BestEffort rather than failing.
-	if cpuRequest == "" && memoryRequest == "" && cpuLimit == "" && memoryLimit == "" {
+	if cpuRequest == "" && memoryRequest == "" && cpuLimit == "" {
 		return nil
 	}
 	// Partial config is a mistake, not an intent — fail loudly rather than ship a half-sized pod.
-	for name, val := range map[string]string{
-		"cpu request": cpuRequest, "memory request": memoryRequest, "cpu limit": cpuLimit, "memory limit": memoryLimit,
-	} {
+	for name, val := range map[string]string{"cpu request": cpuRequest, "memory request": memoryRequest, "cpu limit": cpuLimit} {
 		if val == "" {
 			return fmt.Errorf("agent %s not configured (set the deployment default or a per-execution override)", name)
 		}
@@ -559,22 +557,26 @@ func (k *KubernetesExecutor) pinAgentContainerResources(job *batchv1.Job, overri
 
 	// Values can come from a per-project setting, so a bad one fails this launch, never the process.
 	parsed := map[string]resource.Quantity{}
-	for name, val := range map[string]string{
-		"cpu request": cpuRequest, "memory request": memoryRequest, "cpu limit": cpuLimit, "memory limit": memoryLimit,
-	} {
+	for name, val := range map[string]string{"cpu request": cpuRequest, "memory request": memoryRequest, "cpu limit": cpuLimit} {
 		q, err := resource.ParseQuantity(val)
 		if err != nil {
 			return fmt.Errorf("agent %s %q: %w", name, val, err)
 		}
 		parsed[name] = q
 	}
-	// The deployment limit caps a per-execution memory request unless the caller exempts it; an
-	// exempt request with no limit of its own sizes the limit from itself instead.
-	if ceilingExempt && override != nil && override.MemoryRequest != "" && override.MemoryLimit == "" {
-		parsed["memory limit"] = derivedMemoryLimit(parsed["memory request"], parsed["memory limit"])
+	if err := requestWithinLimit("agent cpu", parsed["cpu request"], parsed["cpu limit"]); err != nil {
+		return err
 	}
-	for _, kind := range []string{"cpu", "memory"} {
-		if err := requestWithinLimit("agent "+kind, parsed[kind+" request"], parsed[kind+" limit"]); err != nil {
+	if !ceilingExempt && override != nil && override.MemoryRequest != "" {
+		var ceiling *resource.Quantity
+		if def.MemoryRequest != "" {
+			q, err := resource.ParseQuantity(def.MemoryRequest)
+			if err != nil {
+				return fmt.Errorf("agent memory request default %q: %w", def.MemoryRequest, err)
+			}
+			ceiling = &q
+		}
+		if err := requestWithinCeiling("agent memory", parsed["memory request"], ceiling); err != nil {
 			return err
 		}
 	}
@@ -591,7 +593,7 @@ func (k *KubernetesExecutor) pinAgentContainerResources(job *batchv1.Job, overri
 			},
 			Limits: corev1.ResourceList{
 				corev1.ResourceCPU:    parsed["cpu limit"],
-				corev1.ResourceMemory: parsed["memory limit"],
+				corev1.ResourceMemory: derivedMemoryLimit(parsed["memory request"]),
 			},
 		}
 		return nil
@@ -608,23 +610,31 @@ func requestWithinLimit(what string, request, limit resource.Quantity) error {
 	return nil
 }
 
-// memoryLimitHeadroomPercent sizes a limit derived from a memory request. Requests are sized from
+// requestWithinCeiling refuses a capped execution's memory request above the deployment's default
+// request, the most one project may reserve on a shared data plane. With no default (nil) there is
+// nothing to allow it against, so any request is refused rather than left unbounded.
+func requestWithinCeiling(what string, request resource.Quantity, ceiling *resource.Quantity) error {
+	if ceiling == nil {
+		return fmt.Errorf("%s request %s: the deployment sets no default request, so a capped project may not set one", what, request.String())
+	}
+	if request.Cmp(*ceiling) > 0 {
+		return fmt.Errorf("%s request %s exceeds the deployment default %s, the most a capped project may reserve", what, request.String(), ceiling.String())
+	}
+	return nil
+}
+
+// memoryLimitHeadroomPercent sizes every memory limit from its request. Requests are sized from
 // owned memory (RSS), but the limit must also hold the hot file cache: at the limit the kernel drops
 // that cache first, so a limit just above the request thrashes I/O long before any OOM kill.
 const memoryLimitHeadroomPercent = 140
 
-// derivedMemoryLimit is memoryLimitHeadroomPercent of request, rounded up to a whole Mi, but never
-// below floor (the deployment's limit): an exempt request can raise a limit, never lower one.
-func derivedMemoryLimit(request, floor resource.Quantity) resource.Quantity {
+// derivedMemoryLimit is memoryLimitHeadroomPercent of request, rounded up to a whole Mi.
+func derivedMemoryLimit(request resource.Quantity) resource.Quantity {
 	const mi = 1 << 20
 	// Scaled in Mi, not bytes: a mistyped huge request must not overflow int64 into a tiny limit.
 	requestMi := (request.Value() + mi - 1) / mi
 	scaledMi := (requestMi*memoryLimitHeadroomPercent + 99) / 100
-	derived := *resource.NewQuantity(scaledMi*mi, resource.BinarySI)
-	if derived.Cmp(floor) < 0 {
-		return floor
-	}
-	return derived
+	return *resource.NewQuantity(scaledMi*mi, resource.BinarySI)
 }
 
 // resolveResource returns the override's field when set and non-empty, else the deployment default.
@@ -682,7 +692,8 @@ func (k *KubernetesExecutor) applyTemplateScheduling(ctx context.Context, job *b
 // pod-level runtimeClassName/hostUsers, the "dind" init container (deep-copied so the cached
 // template is never mutated), and the template agent's env/volumeMounts/volumes. dindImageOverride
 // replaces the template's dind image and dindMemoryRequest its memory request, each when non-empty.
-// The template's memory limit caps that request, or, when ceilingExempt, derivedMemoryLimit raises it.
+// The template's memory request caps that request unless ceilingExempt; whichever request applies
+// sets the memory limit via derivedMemoryLimit.
 func (k *KubernetesExecutor) addDindSupport(ctx context.Context, job *batchv1.Job, dindImageOverride, dindMemoryRequest string, ceilingExempt bool) error {
 	tmpl, err := k.loadPodTemplate(ctx)
 	if err != nil {
@@ -717,10 +728,12 @@ func (k *KubernetesExecutor) addDindSupport(ctx context.Context, job *batchv1.Jo
 		if err != nil {
 			return fmt.Errorf("dind memory request %q: %w", dindMemoryRequest, err)
 		}
-		if limit, ok := dind.Resources.Limits[corev1.ResourceMemory]; ok {
-			if ceilingExempt {
-				dind.Resources.Limits[corev1.ResourceMemory] = derivedMemoryLimit(q, limit)
-			} else if err := requestWithinLimit("dind memory", q, limit); err != nil {
+		if !ceilingExempt {
+			var ceiling *resource.Quantity
+			if templateRequest, ok := dind.Resources.Requests[corev1.ResourceMemory]; ok {
+				ceiling = &templateRequest
+			}
+			if err := requestWithinCeiling("dind memory", q, ceiling); err != nil {
 				return err
 			}
 		}
@@ -728,6 +741,13 @@ func (k *KubernetesExecutor) addDindSupport(ctx context.Context, job *batchv1.Jo
 			dind.Resources.Requests = corev1.ResourceList{}
 		}
 		dind.Resources.Requests[corev1.ResourceMemory] = q
+	}
+	// A template with no memory request leaves the sidecar unlimited, as the operator wrote it.
+	if request, ok := dind.Resources.Requests[corev1.ResourceMemory]; ok {
+		if dind.Resources.Limits == nil {
+			dind.Resources.Limits = corev1.ResourceList{}
+		}
+		dind.Resources.Limits[corev1.ResourceMemory] = derivedMemoryLimit(request)
 	}
 	podSpec.InitContainers = append(podSpec.InitContainers, *dind)
 
@@ -788,6 +808,13 @@ func (k *KubernetesExecutor) loadPodTemplate(ctx context.Context) (*corev1.PodTe
 	var tmpl corev1.PodTemplate
 	if err := yaml.Unmarshal([]byte(raw), &tmpl); err != nil {
 		return nil, fmt.Errorf("unmarshal PodTemplate from wrapper ConfigMap %q: %w", name, err)
+	}
+	// A declared dind memory limit would be silently replaced by the derived one, so the operator
+	// would believe a limit that no pod runs with.
+	for _, c := range tmpl.Template.Spec.InitContainers {
+		if _, ok := c.Resources.Limits[corev1.ResourceMemory]; ok && c.Name == dindInitContainerName {
+			return nil, fmt.Errorf("PodTemplate %q: remove the %q container's memory limit; it is derived from its memory request", name, dindInitContainerName)
+		}
 	}
 
 	k.templates.mu.Lock()

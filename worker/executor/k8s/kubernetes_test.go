@@ -143,7 +143,7 @@ func TestKubernetesExecutor_Execute_ClaudeOAuthToken_InjectedForAiExecution(t *t
 
 // testAgentResources is the default sizing a real deployment supplies via Config.
 func testAgentResources() coreexec.AgentResources {
-	return coreexec.AgentResources{CPURequest: "200m", MemoryRequest: "1Gi", CPULimit: "1", MemoryLimit: "3Gi"}
+	return coreexec.AgentResources{CPURequest: "200m", MemoryRequest: "1Gi", CPULimit: "1"}
 }
 
 // The executor injects whatever credential it is handed and decides nothing from node type:
@@ -252,7 +252,7 @@ func TestKubernetesExecutor_Execute_PinsConfiguredAgentResources(t *testing.T) {
 	require.NoError(t, err)
 	res := job.Spec.Template.Spec.Containers[0].Resources
 	assert.Equal(t, "1", res.Limits.Cpu().String())
-	assert.Equal(t, "3Gi", res.Limits.Memory().String())
+	assert.Equal(t, "1434Mi", res.Limits.Memory().String(), "140% of the 1Gi default request")
 	assert.Equal(t, "200m", res.Requests.Cpu().String())
 	assert.Equal(t, "1Gi", res.Requests.Memory().String())
 }
@@ -269,7 +269,7 @@ func TestKubernetesExecutor_Execute_PerExecutionResourceOverride(t *testing.T) {
 	})
 
 	params := newTestParams()
-	params.AgentResources = &coreexec.AgentResources{CPULimit: "2", MemoryLimit: "6Gi"} // requests fall back to default
+	params.AgentResources = &coreexec.AgentResources{CPULimit: "2"} // requests fall back to default
 
 	result, err := exec.Execute(context.Background(), params)
 	require.NoError(t, err)
@@ -278,20 +278,19 @@ func TestKubernetesExecutor_Execute_PerExecutionResourceOverride(t *testing.T) {
 	require.NoError(t, err)
 	res := job.Spec.Template.Spec.Containers[0].Resources
 	assert.Equal(t, "2", res.Limits.Cpu().String())
-	assert.Equal(t, "6Gi", res.Limits.Memory().String())
 	assert.Equal(t, "200m", res.Requests.Cpu().String(), "empty override field falls back to the Config default")
+	assert.Equal(t, "1434Mi", res.Limits.Memory().String(), "derived from the default request it fell back to")
 }
 
-// An exempt per-project memory request derives the limit as 140% of itself, never below the
-// deployment's 3Gi: a small request keeps the deployment headroom, a large one gets room for its
-// file cache instead of failing the launch.
+// An exempt per-project memory request may exceed the deployment default, and its limit is 140% of
+// itself either way: there is no deployment limit to fall back to or to stay above.
 func TestKubernetesExecutor_Execute_ExemptMemoryRequest_DerivesLimit(t *testing.T) {
 	for _, tc := range []struct{ request, wantLimit string }{
-		{"1792Mi", "3Gi"},    // 2509Mi is below the deployment limit
-		{"2560Mi", "3584Mi"}, // below the deployment limit, but 140% of it is above
-		{"8Gi", "11469Mi"},   // above the deployment limit; rounded up to a whole Mi
-		{"5Gi", "7Gi"},       // an exact result is not rounded up a further Mi
-		{"100Pi", "140Pi"},   // scaling a huge request does not overflow into a tiny limit
+		{"512Mi", "717Mi"}, // below the 1Gi default; rounded up to a whole Mi
+		{"1792Mi", "2509Mi"},
+		{"8Gi", "11469Mi"}, // above the default
+		{"5Gi", "7Gi"},     // an exact result is not rounded up a further Mi
+		{"100Pi", "140Pi"}, // scaling a huge request does not overflow into a tiny limit
 	} {
 		t.Run(tc.request, func(t *testing.T) {
 			fakeClient := fake.NewSimpleClientset()
@@ -317,68 +316,46 @@ func TestKubernetesExecutor_Execute_ExemptMemoryRequest_DerivesLimit(t *testing.
 	}
 }
 
-// A capped (non-exempt) memory request keeps the deployment limit, and one above it fails before
-// any object is created, naming the cause: on a shared data plane, the deployment limit is the
-// most one project may reserve.
-func TestKubernetesExecutor_Execute_CappedMemoryRequest_KeepsDeploymentLimit(t *testing.T) {
-	newExec := func() (*fake.Clientset, *KubernetesExecutor) {
-		fakeClient := fake.NewSimpleClientset()
-		return fakeClient, NewKubernetesExecutor(fakeClient, Config{
-			Namespace:           testNamespace,
-			AgentServiceAccount: "choruskube-agent",
-			AgentResources:      testAgentResources(),
+// A capped (non-exempt) memory request may lower the deployment default but not raise it, and one
+// above it fails before any object is created, naming the cause: on a shared data plane, the
+// default is the most one project may reserve. With no default, a capped request is refused.
+func TestKubernetesExecutor_Execute_CappedMemoryRequest_CeilingIsDeploymentDefault(t *testing.T) {
+	for _, tc := range []struct {
+		name, request, wantLimit, wantErr string
+		defaults                          coreexec.AgentResources
+	}{
+		{"below the default", "768Mi", "1076Mi", "", testAgentResources()},
+		{"at the default", "1Gi", "1434Mi", "", testAgentResources()},
+		{"above the default", "1025Mi", "", "exceeds the deployment default 1Gi", testAgentResources()},
+		{"no default request", "512Mi", "", "sets no default request", coreexec.AgentResources{CPURequest: "200m", CPULimit: "1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeClient := fake.NewSimpleClientset()
+			exec := NewKubernetesExecutor(fakeClient, Config{
+				Namespace:           testNamespace,
+				AgentServiceAccount: "choruskube-agent",
+				AgentResources:      tc.defaults,
+			})
+
+			params := newTestParams()
+			params.AgentResources = &coreexec.AgentResources{MemoryRequest: tc.request}
+			result, err := exec.Execute(context.Background(), params)
+			if tc.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErr)
+				jobs, listErr := fakeClient.BatchV1().Jobs(testNamespace).List(context.Background(), metav1.ListOptions{})
+				require.NoError(t, listErr)
+				assert.Empty(t, jobs.Items, "a refused request must not create a Job")
+				return
+			}
+			require.NoError(t, err)
+			job, err := fakeClient.BatchV1().Jobs(testNamespace).Get(context.Background(), result.PodName, metav1.GetOptions{})
+			require.NoError(t, err)
+			res := job.Spec.Template.Spec.Containers[0].Resources
+			assert.Equal(t, tc.request, res.Requests.Memory().String())
+			assert.Equal(t, tc.wantLimit, res.Limits.Memory().String())
 		})
 	}
-
-	fakeClient, exec := newExec()
-	params := newTestParams()
-	params.AgentResources = &coreexec.AgentResources{MemoryRequest: "2560Mi"}
-	result, err := exec.Execute(context.Background(), params)
-	require.NoError(t, err)
-	job, err := fakeClient.BatchV1().Jobs(testNamespace).Get(context.Background(), result.PodName, metav1.GetOptions{})
-	require.NoError(t, err)
-	res := job.Spec.Template.Spec.Containers[0].Resources
-	assert.Equal(t, "2560Mi", res.Requests.Memory().String())
-	assert.Equal(t, "3Gi", res.Limits.Memory().String(), "not derived: 140% would be 3584Mi")
-
-	_, exec = newExec()
-	params = newTestParams()
-	params.AgentResources = &coreexec.AgentResources{MemoryRequest: "8Gi"}
-	_, err = exec.Execute(context.Background(), params)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "exceeds")
-}
-
-// An explicit per-execution memory limit is applied verbatim, never derived -- even when exempt --
-// so a request above it still fails before any object is created, naming the cause instead of
-// surfacing an API-server validation error.
-func TestKubernetesExecutor_Execute_ExplicitMemoryLimit_NotDerived(t *testing.T) {
-	newExec := func() (*fake.Clientset, *KubernetesExecutor) {
-		fakeClient := fake.NewSimpleClientset()
-		return fakeClient, NewKubernetesExecutor(fakeClient, Config{
-			Namespace:           testNamespace,
-			AgentServiceAccount: "choruskube-agent",
-			AgentResources:      testAgentResources(),
-		})
-	}
-
-	fakeClient, exec := newExec()
-	params := newTestParams()
-	params.AgentResources = &coreexec.AgentResources{MemoryRequest: "2Gi", MemoryLimit: "2Gi"}
-	params.MemoryCeilingExempt = true
-	result, err := exec.Execute(context.Background(), params)
-	require.NoError(t, err)
-	job, err := fakeClient.BatchV1().Jobs(testNamespace).Get(context.Background(), result.PodName, metav1.GetOptions{})
-	require.NoError(t, err)
-	assert.Equal(t, "2Gi", job.Spec.Template.Spec.Containers[0].Resources.Limits.Memory().String())
-
-	_, exec = newExec()
-	params = newTestParams()
-	params.AgentResources = &coreexec.AgentResources{MemoryRequest: "4Gi", MemoryLimit: "2Gi"}
-	params.MemoryCeilingExempt = true
-	_, err = exec.Execute(context.Background(), params)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "exceeds")
 }
 
 // An unparseable value must fail the launch with an error, never panic the Worker process.
@@ -406,7 +383,7 @@ func TestKubernetesExecutor_Execute_PartialAgentResources_Errors(t *testing.T) {
 	exec := NewKubernetesExecutor(fakeClient, Config{
 		Namespace:           testNamespace,
 		AgentServiceAccount: "choruskube-agent",
-		AgentResources:      coreexec.AgentResources{CPULimit: "1"}, // requests + memory limit left empty
+		AgentResources:      coreexec.AgentResources{CPULimit: "1"}, // requests left empty
 	})
 
 	_, err := exec.Execute(context.Background(), newTestParams())
@@ -480,7 +457,6 @@ template:
             memory: 512Mi
           limits:
             cpu: "1"
-            memory: 1Gi
     containers:
       - name: agent
         image: placeholder
@@ -522,6 +498,24 @@ func TestKubernetesExecutor_ValidatePodTemplate(t *testing.T) {
 			TemplateNamespace:    templateNamespace,
 		})
 		require.NoError(t, exec.ValidatePodTemplate(context.Background()))
+	})
+
+	t.Run("errors when the dind container declares a memory limit", func(t *testing.T) {
+		fakeClient := fake.NewSimpleClientset()
+		setupDindTemplate(t, fakeClient, templateNamespace, templateName)
+		cm, err := fakeClient.CoreV1().ConfigMaps(templateNamespace).Get(context.Background(), templateName, metav1.GetOptions{})
+		require.NoError(t, err)
+		cm.Data["template.yaml"] = strings.Replace(cm.Data["template.yaml"], `            cpu: "1"`+"\n", `            cpu: "1"`+"\n            memory: 1Gi\n", 1)
+		_, err = fakeClient.CoreV1().ConfigMaps(templateNamespace).Update(context.Background(), cm, metav1.UpdateOptions{})
+		require.NoError(t, err)
+		exec := NewKubernetesExecutor(fakeClient, Config{
+			Namespace:            testNamespace,
+			AgentPodTemplateName: templateName,
+			TemplateNamespace:    templateNamespace,
+		})
+		err = exec.ValidatePodTemplate(context.Background())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "memory limit")
 	})
 
 	t.Run("errors when the template is absent", func(t *testing.T) {
@@ -569,10 +563,10 @@ func TestKubernetesExecutor_Execute_DinD_SplicesTemplate(t *testing.T) {
 	require.Len(t, podSpec.InitContainers, 1)
 	dind := podSpec.InitContainers[0]
 	assert.Equal(t, "dind", dind.Name)
-	// The dind sidecar's resources come straight from the template, always -- the operator-supplied
-	// template is the sizing authority.
+	// The dind sidecar's resources come from the operator-supplied template, except its memory
+	// limit, which follows its memory request.
 	assert.Equal(t, "1", dind.Resources.Limits.Cpu().String())
-	assert.Equal(t, "1Gi", dind.Resources.Limits.Memory().String())
+	assert.Equal(t, "717Mi", dind.Resources.Limits.Memory().String())
 	assert.Equal(t, "500m", dind.Resources.Requests.Cpu().String())
 	assert.Equal(t, "512Mi", dind.Resources.Requests.Memory().String())
 
@@ -651,7 +645,7 @@ func TestKubernetesExecutor_Execute_DinD_MemoryRequestOverride_LeavesTemplateInt
 	require.Len(t, job.Spec.Template.Spec.InitContainers, 1)
 	dind := job.Spec.Template.Spec.InitContainers[0].Resources
 	assert.Equal(t, "768Mi", dind.Requests.Memory().String())
-	assert.Equal(t, "1076Mi", dind.Limits.Memory().String(), "140% of 768Mi, above the template's 1Gi")
+	assert.Equal(t, "1076Mi", dind.Limits.Memory().String(), "140% of 768Mi")
 	assert.Equal(t, "500m", dind.Requests.Cpu().String())
 
 	unsized := newTestParams()
@@ -663,34 +657,35 @@ func TestKubernetesExecutor_Execute_DinD_MemoryRequestOverride_LeavesTemplateInt
 	unsizedDind := job.Spec.Template.Spec.InitContainers[0].Resources
 	assert.Equal(t, "512Mi", unsizedDind.Requests.Memory().String(),
 		"an earlier launch's override must not leak into the cached template")
-	assert.Equal(t, "1Gi", unsizedDind.Limits.Memory().String(),
+	assert.Equal(t, "717Mi", unsizedDind.Limits.Memory().String(),
 		"an earlier launch's derived limit must not leak into the cached template")
 }
 
-// The dind limit follows the agent's rule against the template's 1Gi: exempt, never below it and
-// 140% of the request above it; capped, the template's limit, and a request above it fails. A
-// template with no memory limit stays unlimited rather than gaining one.
+// The dind sidecar follows the agent's rule against the template's 512Mi request: its limit is 140%
+// of whichever request applies; a capped request may not exceed the template's, and with no
+// template request a capped one is refused. With no request at all the sidecar stays unlimited.
 func TestKubernetesExecutor_Execute_DinD_MemoryRequestLimit(t *testing.T) {
 	for _, tc := range []struct {
-		name, request, wantLimit, wantErr string
-		templateLimit, exempt             bool
+		name, request, wantRequest, wantLimit, wantErr string
+		templateRequest, exempt                        bool
 	}{
-		{"exempt, below the template limit", "512Mi", "1Gi", "", true, true},
-		{"exempt, above the template limit", "2Gi", "2868Mi", "", true, true},
-		{"exempt, no template limit", "2Gi", "", "", false, true},
-		{"capped, below the template limit", "768Mi", "1Gi", "", true, false},
-		{"capped, above the template limit", "2Gi", "", "exceeds", true, false},
-		{"capped, no template limit", "2Gi", "", "", false, false},
+		{"exempt, below the template request", "256Mi", "256Mi", "359Mi", "", true, true},
+		{"exempt, above the template request", "2Gi", "2Gi", "2868Mi", "", true, true},
+		{"exempt, no template request", "2Gi", "2Gi", "2868Mi", "", false, true},
+		{"capped, below the template request", "384Mi", "384Mi", "538Mi", "", true, false},
+		{"capped, above the template request", "513Mi", "", "", "exceeds the deployment default 512Mi", true, false},
+		{"capped, no template request", "256Mi", "", "", "sets no default request", false, false},
+		{"no request anywhere", "", "", "", "", false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fakeClient := fake.NewSimpleClientset()
 			templateNamespace := "choruskube"
 			templateName := "choruskube-agent-pod-template"
 			setupDindTemplate(t, fakeClient, templateNamespace, templateName)
-			if !tc.templateLimit {
+			if !tc.templateRequest {
 				cm, err := fakeClient.CoreV1().ConfigMaps(templateNamespace).Get(context.Background(), templateName, metav1.GetOptions{})
 				require.NoError(t, err)
-				cm.Data["template.yaml"] = strings.Replace(cm.Data["template.yaml"], "            memory: 1Gi\n", "", 1)
+				cm.Data["template.yaml"] = strings.Replace(cm.Data["template.yaml"], "            memory: 512Mi\n", "", 1)
 				_, err = fakeClient.CoreV1().ConfigMaps(templateNamespace).Update(context.Background(), cm, metav1.UpdateOptions{})
 				require.NoError(t, err)
 			}
@@ -717,12 +712,14 @@ func TestKubernetesExecutor_Execute_DinD_MemoryRequestLimit(t *testing.T) {
 			job, err := fakeClient.BatchV1().Jobs(testNamespace).Get(context.Background(), result.PodName, metav1.GetOptions{})
 			require.NoError(t, err)
 			dind := job.Spec.Template.Spec.InitContainers[0].Resources
-			assert.Equal(t, tc.request, dind.Requests.Memory().String())
 			limit, ok := dind.Limits[corev1.ResourceMemory]
 			if tc.wantLimit == "" {
 				assert.False(t, ok, "no memory limit expected, got %s", limit.String())
+				_, hasRequest := dind.Requests[corev1.ResourceMemory]
+				assert.False(t, hasRequest)
 				return
 			}
+			assert.Equal(t, tc.wantRequest, dind.Requests.Memory().String())
 			require.True(t, ok)
 			assert.Equal(t, tc.wantLimit, limit.String())
 		})

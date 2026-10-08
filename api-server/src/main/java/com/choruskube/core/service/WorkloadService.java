@@ -128,7 +128,7 @@ public class WorkloadService {
     }
 
     /**
-     * Whether the run's memory requests may exceed the deployment's limits, degrading to {@code false}
+     * Whether the run's memory requests may exceed the deployment's defaults, degrading to {@code false}
      * when the policy throws: an unresolvable run must never lift the ceiling.
      */
     private boolean memoryCeilingExempt(UUID runId) {
