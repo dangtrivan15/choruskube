@@ -125,36 +125,38 @@ export default function DecisionButtons({
   const isKnown = (o: string) => Object.prototype.hasOwnProperty.call(DECISION_META, o);
 
   return (
-    <div className="flex flex-col gap-2 md:flex-row">
-      {opts.map((option) => {
-        const meta = metaFor(option);
-        const disabled = isPending || (meta.requiresFeedback && feedback.trim().length === 0);
-        const Icon = meta.icon;
-        const testId = testIdPrefix
-          ? `${testIdPrefix}-${slugForTestId(option)}-button`
-          : undefined;
+    <div className="@container">
+      <div className="flex flex-col gap-2 @md:flex-row">
+        {opts.map((option) => {
+          const meta = metaFor(option);
+          const disabled = isPending || (meta.requiresFeedback && feedback.trim().length === 0);
+          const Icon = meta.icon;
+          const testId = testIdPrefix
+            ? `${testIdPrefix}-${slugForTestId(option)}-button`
+            : undefined;
 
-        const iconNode: ReactNode = isPending ? (
-          <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-        ) : isKnown(option) ? (
-          <Icon className="mr-1.5 h-4 w-4" />
-        ) : null;
+          const iconNode: ReactNode = isPending ? (
+            <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+          ) : isKnown(option) ? (
+            <Icon className="mr-1.5 h-4 w-4" />
+          ) : null;
 
-        return (
-          <Button
-            key={option}
-            data-testid={testId}
-            variant={meta.variant}
-            className={meta.className ? `flex-1 ${meta.className}` : "flex-1"}
-            disabled={disabled}
-            onClick={() => onSubmit(option)}
-            title={meta.title}
-          >
-            {iconNode}
-            {labelFor(option, trigger)}
-          </Button>
-        );
-      })}
+          return (
+            <Button
+              key={option}
+              data-testid={testId}
+              variant={meta.variant}
+              className={meta.className ? `flex-1 ${meta.className}` : "flex-1"}
+              disabled={disabled}
+              onClick={() => onSubmit(option)}
+              title={meta.title}
+            >
+              {iconNode}
+              {labelFor(option, trigger)}
+            </Button>
+          );
+        })}
+      </div>
     </div>
   );
 }

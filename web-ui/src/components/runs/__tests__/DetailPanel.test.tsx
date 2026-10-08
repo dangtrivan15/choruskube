@@ -362,44 +362,20 @@ describe("DetailPanel", () => {
     expect(screen.queryByText("Previous Step Output")).not.toBeInTheDocument();
   });
 
-  it("renders back button when onBackToRunMeta is provided", () => {
-    const run = makeRun();
-    const onBackToRunMeta = vi.fn();
-    renderWithProviders(
-      <DetailPanel run={run} nodeId="node-1" onBackToRunMeta={onBackToRunMeta} />
-    );
-    expect(screen.getByTestId("detail-panel-back-button")).toBeInTheDocument();
-  });
-
-  it("does not render back button when onBackToRunMeta is omitted", () => {
+  it("renders the close button only when onClose is provided", () => {
     const run = makeRun();
     renderWithProviders(<DetailPanel run={run} nodeId="node-1" />);
-    expect(screen.queryByTestId("detail-panel-back-button")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("detail-panel-close-button")).not.toBeInTheDocument();
   });
 
-  it("calls onBackToRunMeta when back button is clicked", () => {
+  it("calls onClose when the close button is clicked", () => {
     const run = makeRun();
-    const onBackToRunMeta = vi.fn();
-    renderWithProviders(
-      <DetailPanel run={run} nodeId="node-1" onBackToRunMeta={onBackToRunMeta} />
-    );
-    fireEvent.click(screen.getByTestId("detail-panel-back-button"));
-    expect(onBackToRunMeta).toHaveBeenCalledTimes(1);
-  });
+    const onClose = vi.fn();
+    renderWithProviders(<DetailPanel run={run} nodeId="node-1" onClose={onClose} />);
 
-  it("clicking back button returns selectedNodeId to null (no orphaned state)", () => {
-    const run = makeRun();
-    const onBackToRunMeta = vi.fn();
-    renderWithProviders(
-      <DetailPanel run={run} nodeId="node-1" onBackToRunMeta={onBackToRunMeta} />
-    );
-
-    // Button visible before click
-    expect(screen.getByTestId("detail-panel-back-button")).toBeInTheDocument();
-
-    // Simulate clicking the back button — the callback should be invoked exactly once
-    fireEvent.click(screen.getByTestId("detail-panel-back-button"));
-    expect(onBackToRunMeta).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("detail-panel-close-button")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("detail-panel-close-button"));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("shows legacy Previous Step Output when requiredArtifacts is null and predecessor exists", () => {

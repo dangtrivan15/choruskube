@@ -1,10 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { useState } from "react";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { render } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router";
 import AppLayout from "@/components/layout/AppLayout";
+import { useFullBleedMain } from "@/components/layout/MainLayoutContext";
 import { ActivityFeedProvider } from "@/hooks/useActivityFeed";
 import type { RunSummary, PageResponse } from "@/lib/types";
 
@@ -38,19 +40,35 @@ function createQueryClient() {
   });
 }
 
-function renderAppLayout(queryClient: QueryClient) {
+function renderAppLayout(queryClient: QueryClient, extraRoute?: React.ReactNode) {
   return render(
     <QueryClientProvider client={queryClient}>
       <ActivityFeedProvider>
         <MemoryRouter initialEntries={["/runs"]}>
           <Routes>
             <Route element={<AppLayout />}>
-              <Route path="/runs" element={<div>Runs Page</div>} />
+              <Route path="/runs" element={extraRoute ?? <div>Runs Page</div>} />
             </Route>
           </Routes>
         </MemoryRouter>
       </ActivityFeedProvider>
     </QueryClientProvider>
+  );
+}
+
+/** A minimal full-bleed page, toggleable so a test can unmount it mid-test. */
+function FullBleedChild() {
+  useFullBleedMain();
+  return <div data-testid="full-bleed-child">Full bleed</div>;
+}
+
+function ToggleableFullBleedPage() {
+  const [mounted, setMounted] = useState(true);
+  return (
+    <div>
+      <button onClick={() => setMounted(false)}>Unmount</button>
+      {mounted && <FullBleedChild />}
+    </div>
   );
 }
 
@@ -201,5 +219,41 @@ describe("AppLayout", () => {
     expect(screen.queryByTestId("mobile-menu-button")).not.toBeInTheDocument();
     // Sidebar is always visible on desktop
     expect(screen.getByText("ChorusKube")).toBeInTheDocument();
+  });
+
+  // -------------------------------------------------------------------------
+  // Dynamic viewport height + full-bleed opt-in
+  // -------------------------------------------------------------------------
+
+  it("sizes the root to the dynamic viewport height", () => {
+    const { container } = renderAppLayout(queryClient);
+    expect(container.firstElementChild).toHaveClass("h-dvh");
+  });
+
+  it("pads the main area by default", () => {
+    renderAppLayout(queryClient);
+    const main = screen.getByText("Runs Page").closest("main");
+    expect(main).toHaveClass("overflow-auto");
+    expect(main?.className).toMatch(/\bp-4\b/);
+  });
+
+  it("removes padding and scroll when a page opts into full-bleed", () => {
+    renderAppLayout(queryClient, <ToggleableFullBleedPage />);
+    const main = screen.getByTestId("full-bleed-child").closest("main");
+    expect(main).toHaveClass("overflow-hidden");
+    expect(main?.className).not.toMatch(/\bp-4\b/);
+  });
+
+  it("restores the padded, scrolling main once the full-bleed page unmounts", async () => {
+    const user = userEvent.setup();
+    renderAppLayout(queryClient, <ToggleableFullBleedPage />);
+
+    const main = screen.getByTestId("full-bleed-child").closest("main");
+    expect(main).toHaveClass("overflow-hidden");
+
+    await user.click(screen.getByText("Unmount"));
+
+    expect(main).toHaveClass("overflow-auto");
+    expect(main?.className).toMatch(/\bp-4\b/);
   });
 });

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ReactFlow,
   Controls,
@@ -7,6 +7,7 @@ import {
   type Node,
   type Edge,
   type NodeMouseHandler,
+  type OnMove,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
@@ -22,10 +23,22 @@ import {
 } from "@/lib/elkLayout";
 import DagNode, { type DagNodeData } from "./DagNode";
 import DagEdge, { type DagEdgeData } from "./DagEdge";
+import DagViewportController from "./DagViewportController";
 
 interface RunDagProps {
   run: RunResponse;
   onNodeSelect: (nodeId: string | null) => void;
+  /** The currently-selected node (from the page's URL state) — reflected on the canvas via each
+   * flow node's `selected` flag, which also drives `DagNode`'s `data-selected` marker and ring. */
+  selectedNodeId?: string | null;
+  /** The node the viewport controller centres on when a readable fit can't show the whole graph. */
+  focusNodeId?: string | null;
+  /** Phone tier — caps the viewport at a readable zoom and enlarges the on-canvas zoom/fit controls. */
+  compact?: boolean;
+  /** Resets the viewport controller's "has the user moved it" state and re-applies once more —
+   * the run id, so switching to a different run (even of the same template, hence the same
+   * topology key) doesn't inherit the previous run's pan/zoom. */
+  viewportKey?: string;
 }
 
 const nodeTypes = { dag: DagNode };
@@ -136,7 +149,14 @@ function buildFallbackLayout(snapshot: GraphSnapshot): ElkLayoutResult {
   return { nodes, edges };
 }
 
-export default function RunDag({ run, onNodeSelect }: RunDagProps) {
+export default function RunDag({
+  run,
+  onNodeSelect,
+  selectedNodeId = null,
+  focusNodeId = null,
+  compact = false,
+  viewportKey = "",
+}: RunDagProps) {
   const snapshot = run.graphSnapshot;
 
   // Fed to all three layout consumers below (topologyKey, computeElkLayout, buildFallbackLayout)
@@ -204,6 +224,7 @@ export default function RunDag({ run, onNodeSelect }: RunDagProps) {
         id: sn.template_node_id,
         type: "dag",
         position: { x: pos.x, y: pos.y },
+        selected: sn.template_node_id === selectedNodeId,
         data: { label: sn.label, executorType: sn.executor_type, status, iteration: exec?.iteration ?? 0 },
       };
     });
@@ -272,6 +293,7 @@ export default function RunDag({ run, onNodeSelect }: RunDagProps) {
         id: hub.template_node_id,
         type: "dag",
         position: hubPos,
+        selected: hub.template_node_id === selectedNodeId,
         data: {
           label: hub.label,
           executorType: hub.executor_type,
@@ -298,7 +320,7 @@ export default function RunDag({ run, onNodeSelect }: RunDagProps) {
     }
 
     return { nodes: flowNodes, edges: flowEdges };
-  }, [layout, run.nodeExecutions, snapshot, laidOutSnapshot]);
+  }, [layout, run.nodeExecutions, snapshot, laidOutSnapshot, selectedNodeId]);
 
   const onNodeClick: NodeMouseHandler<Node<DagNodeData>> = useCallback(
     (_event, node) => onNodeSelect(node.id),
@@ -306,12 +328,39 @@ export default function RunDag({ run, onNodeSelect }: RunDagProps) {
   );
   const onPaneClick = useCallback(() => onNodeSelect(null), [onNodeSelect]);
 
+  // Tracks whether the user has moved the view — by gesture, wheel, or a zoom/fit control —
+  // since the viewport controller last reset. Read by the controller (stop re-applying once
+  // true) and reset here whenever the reset key changes (a different run, or a layout change).
+  const userMovedRef = useRef(false);
+  const resetKey = `${viewportKey}#${topologyKey}`;
+  useEffect(() => {
+    userMovedRef.current = false;
+  }, [resetKey]);
+
+  const [viewportReady, setViewportReady] = useState(false);
+  useEffect(() => {
+    setViewportReady(false);
+  }, [resetKey]);
+
+  const onMove: OnMove = useCallback(
+    (event) => {
+      // `event` is null for a programmatic move (including the controller's own
+      // `setViewport`) — only a real user gesture should stop further re-applies.
+      if (event) userMovedRef.current = true;
+    },
+    [],
+  );
+  const markUserMoved = useCallback(() => {
+    userMovedRef.current = true;
+  }, []);
+
   return (
     <div
       data-testid="run-dag-container"
       className="h-full w-full"
       data-elk-ready={layout && !fallback ? "true" : "false"}
       data-elk-fallback={fallback ? "true" : "false"}
+      data-viewport-ready={viewportReady ? "true" : "false"}
     >
       <style>{`
         @keyframes dagEdgeDash {
@@ -325,8 +374,7 @@ export default function RunDag({ run, onNodeSelect }: RunDagProps) {
         edgeTypes={edgeTypes}
         onNodeClick={onNodeClick}
         onPaneClick={onPaneClick}
-        fitView
-        fitViewOptions={{ padding: 0.2 }}
+        onMove={onMove}
         nodesDraggable={false}
         nodesConnectable={false}
         elementsSelectable={true}
@@ -334,7 +382,20 @@ export default function RunDag({ run, onNodeSelect }: RunDagProps) {
         maxZoom={2}
         proOptions={{ hideAttribution: true }}
       >
-        <Controls showInteractive={false} />
+        <DagViewportController
+          resetKey={resetKey}
+          focusNodeId={focusNodeId}
+          compact={compact}
+          userMovedRef={userMovedRef}
+          onApplied={() => setViewportReady(true)}
+        />
+        <Controls
+          showInteractive={false}
+          className={compact ? "[&_button]:h-9 [&_button]:w-9" : undefined}
+          onZoomIn={markUserMoved}
+          onZoomOut={markUserMoved}
+          onFitView={markUserMoved}
+        />
         <Background gap={16} size={1} />
       </ReactFlow>
     </div>

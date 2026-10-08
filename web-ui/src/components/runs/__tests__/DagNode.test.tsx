@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import { screen, within } from "@testing-library/react";
+import { screen, within, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "@/__tests__/test-utils";
 import type { NodeProps } from "@xyflow/react";
 import DagNode, { formatNodeLabel } from "../DagNode";
@@ -181,6 +182,29 @@ describe("DagNode", () => {
   it("completed does not carry the active-state pulse emphasis", () => {
     const { container } = renderDagNode({ status: "completed" });
     expect(container.querySelector(".animate-pulse")).toBeNull();
+  });
+
+  it("truncates the label and shows the formatted full label on hover", async () => {
+    const user = userEvent.setup();
+    renderDagNode({ label: "draft_spec_and_plan" });
+
+    const label = screen.getByText("Draft Spec And Plan");
+    expect(label).toHaveClass("truncate");
+
+    await user.hover(label);
+    await waitFor(() => {
+      expect(screen.getAllByText("Draft Spec And Plan").length).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  it("marks data-selected true when selected", () => {
+    renderDagNode({}, true);
+    expect(screen.getByTestId("dag-node")).toHaveAttribute("data-selected", "true");
+  });
+
+  it("marks data-selected false when not selected", () => {
+    renderDagNode({}, false);
+    expect(screen.getByTestId("dag-node")).toHaveAttribute("data-selected", "false");
   });
 });
 

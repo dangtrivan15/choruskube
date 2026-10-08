@@ -3,6 +3,7 @@ import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
 import { Bot, Terminal, User, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { statusColorTokens } from "@/lib/statusColors";
+import TruncatedText from "@/components/ui/TruncatedText";
 
 export interface DagNodeData {
   label: string;
@@ -88,6 +89,7 @@ function DagNode({ data, selected }: NodeProps<DagNodeType>) {
         data-label={data.label}
         data-active={isActive ? "true" : "false"}
         data-routing-hub={isRoutingHub ? "true" : "false"}
+        data-selected={selected ? "true" : "false"}
         className={cn(
           "relative rounded-lg border-2 px-3 py-2 transition-shadow",
           "w-[160px]",
@@ -121,7 +123,7 @@ function DagNode({ data, selected }: NodeProps<DagNodeType>) {
           <span className={cn("shrink-0", colors.text)} data-testid="dag-node-status-icon">
             <ExecutorIcon type={data.executorType} />
           </span>
-          <span className="truncate text-sm font-medium">{formatNodeLabel(data.label)}</span>
+          <TruncatedText className="text-sm font-medium">{formatNodeLabel(data.label)}</TruncatedText>
         </div>
 
         <div className="mt-1 flex items-center justify-between gap-2">

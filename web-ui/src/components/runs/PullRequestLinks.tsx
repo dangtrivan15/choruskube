@@ -3,6 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import type { RunPullRequestResponse } from "@/lib/types";
 import { pullRequestStatus, type PullRequestStatus } from "@/lib/mergeOnApproval";
 import { STATUS_TONE_CLASSES } from "@/lib/statusColors";
+import { cn } from "@/lib/utils";
 
 const STATUS_LABEL: Record<Exclude<PullRequestStatus, "unknown">, string> = {
   merged: "Merged",
@@ -18,24 +19,34 @@ const STATUS_BADGE_CLASS: Record<Exclude<PullRequestStatus, "unknown">, string> 
 
 interface PullRequestLinksProps {
   pullRequests: RunPullRequestResponse[];
+  /**
+   * `"list"` (default) is today's bordered block with a heading and companion-count
+   * footer. `"inline"` is a bare run of chips for embedding in the run summary strip,
+   * with no heading, wrapper border/padding, or footer.
+   */
+  variant?: "list" | "inline";
 }
 
-export default function PullRequestLinks({ pullRequests }: PullRequestLinksProps) {
+export default function PullRequestLinks({ pullRequests, variant = "list" }: PullRequestLinksProps) {
   if (pullRequests.length === 0) return null;
+
+  const isInline = variant === "inline";
 
   return (
     <div
-      className="flex flex-col gap-2 border-b px-4 py-3"
+      className={isInline ? "flex flex-wrap gap-1.5" : "flex flex-col gap-2 border-b px-4 py-3"}
       data-testid="pull-request-links"
     >
-      <div className="flex items-center gap-2">
-        <GitPullRequest
-          className="size-4 text-muted-foreground"
-          aria-hidden="true"
-        />
-        <h3 className="text-sm font-medium">Pull Requests</h3>
-      </div>
-      <div className="flex flex-wrap gap-2">
+      {!isInline && (
+        <div className="flex items-center gap-2">
+          <GitPullRequest
+            className="size-4 text-muted-foreground"
+            aria-hidden="true"
+          />
+          <h3 className="text-sm font-medium">Pull Requests</h3>
+        </div>
+      )}
+      <div className={isInline ? "contents" : "flex flex-wrap gap-2"}>
         {pullRequests.map((pr) => {
           const label = pr.title ?? `PR #${pr.prNumber ?? ""}`;
           const status = pullRequestStatus(pr);
@@ -52,7 +63,12 @@ export default function PullRequestLinks({ pullRequests }: PullRequestLinksProps
                   : `Open ${label} on GitHub (${STATUS_LABEL[status].toLowerCase()})`
               }
               data-testid="pull-request-link"
-              className="flex w-full min-w-0 max-w-full items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-sm transition-colors hover:bg-muted sm:w-auto sm:max-w-md"
+              className={cn(
+                "flex min-w-0 items-center gap-1.5 rounded-md border transition-colors hover:bg-muted",
+                isInline
+                  ? "max-w-xs px-2 py-1 text-xs"
+                  : "w-full max-w-full px-2.5 py-1.5 text-sm sm:w-auto sm:max-w-md",
+              )}
             >
               <Badge
                 variant="outline"
@@ -77,7 +93,7 @@ export default function PullRequestLinks({ pullRequests }: PullRequestLinksProps
           );
         })}
       </div>
-      {pullRequests.length > 1 && (
+      {!isInline && pullRequests.length > 1 && (
         <p className="text-xs text-muted-foreground">
           {pullRequests.length} companion PRs linked to this run
         </p>

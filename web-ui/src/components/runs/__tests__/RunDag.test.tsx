@@ -27,8 +27,15 @@ vi.mock("@xyflow/react", () => {
       nodeTypes,
       onNodeClick,
       onPaneClick,
+      children,
     }: {
-      nodes: { id: string; type: string; data: unknown; position: { x: number; y: number } }[];
+      nodes: {
+        id: string;
+        type: string;
+        data: unknown;
+        position: { x: number; y: number };
+        selected?: boolean;
+      }[];
       edges: {
         id: string;
         type?: string;
@@ -40,6 +47,7 @@ vi.mock("@xyflow/react", () => {
       nodeTypes: Record<string, ComponentType<{ id: string; data: unknown; selected: boolean }>>;
       onNodeClick?: (event: unknown, node: { id: string }) => void;
       onPaneClick?: () => void;
+      children?: ReactNode;
     }) => (
       <div data-testid="mock-react-flow-pane" onClick={() => onPaneClick?.()}>
         {nodes.map((n) => {
@@ -55,7 +63,7 @@ vi.mock("@xyflow/react", () => {
                 onNodeClick?.(e, n);
               }}
             >
-              <Comp id={n.id} data={n.data} selected={false} />
+              <Comp id={n.id} data={n.data} selected={n.selected ?? false} />
             </div>
           );
         })}
@@ -71,6 +79,7 @@ vi.mock("@xyflow/react", () => {
             className={["react-flow__edge", e.className].filter(Boolean).join(" ")}
           />
         ))}
+        {children}
       </div>
     ),
     Controls: () => null,
@@ -80,8 +89,18 @@ vi.mock("@xyflow/react", () => {
       <div data-testid={id ? `handle-${id}` : `handle-${type}`} />
     ),
     Position: { Top: "top", Bottom: "bottom", Left: "left", Right: "right" },
+    useReactFlow: () => ({}),
+    useNodesInitialized: () => false,
+    useStore: () => 0,
   };
 });
+
+// The controller calls hooks (`useReactFlow`, `useNodesInitialized`, `useStore`) the mock above
+// doesn't meaningfully implement, and has its own dedicated unit test — mocked here as a no-op so
+// RunDag's own tests exercise only node/edge construction and selection.
+vi.mock("../DagViewportController", () => ({
+  default: () => null,
+}));
 
 // Wraps @/lib/elkLayout's real `computeElkLayout` so tests can inspect exactly which snapshot
 // each call received (requirement: all three layout consumers — computeElkLayout,
@@ -203,11 +222,16 @@ function makeRun(overrides: Partial<RunResponse> = {}): RunResponse {
 
 function renderDag(
   snapshot: GraphSnapshot,
-  options: { nodeExecutions?: Array<Partial<NodeExecutionResponse> & { templateNodeId: string }> } = {},
+  options: {
+    nodeExecutions?: Array<Partial<NodeExecutionResponse> & { templateNodeId: string }>;
+    selectedNodeId?: string | null;
+  } = {},
 ) {
   const nodeExecutions = (options.nodeExecutions ?? []).map(makeExecution);
   const run = makeRun({ graphSnapshot: snapshot, nodeExecutions });
-  return renderWithProviders(<RunDag run={run} onNodeSelect={vi.fn()} />);
+  return renderWithProviders(
+    <RunDag run={run} onNodeSelect={vi.fn()} selectedNodeId={options.selectedNodeId} />,
+  );
 }
 
 async function waitForGraphReady() {
@@ -366,5 +390,27 @@ describe("RunDag — Supervisor rendering", () => {
     expect(Number(hubNode.dataset.x)).toBeGreaterThan(Math.max(...otherXs));
 
     consoleError.mockRestore();
+  });
+});
+
+describe("RunDag — selection", () => {
+  it("marks the selected node data-selected=\"true\" and leaves others false", async () => {
+    renderDag(snapshotWithoutSupervisor(), { selectedNodeId: CODE_REVIEW_ID });
+    await waitForGraphReady();
+
+    const selected = screen.getByTestId(`mock-node-${CODE_REVIEW_ID}`).querySelector('[data-testid="dag-node"]');
+    const other = screen.getByTestId(`mock-node-${START_ID}`).querySelector('[data-testid="dag-node"]');
+    expect(selected).toHaveAttribute("data-selected", "true");
+    expect(other).toHaveAttribute("data-selected", "false");
+  });
+
+  it("omitting selectedNodeId/focusNodeId/compact/viewportKey keeps current behaviour", async () => {
+    const { container } = renderDag(snapshotWithoutSupervisor());
+    await waitForGraphReady();
+
+    expect(screen.getAllByTestId(/^mock-node-/)).toHaveLength(2);
+    for (const node of container.querySelectorAll('[data-testid="dag-node"]')) {
+      expect(node).toHaveAttribute("data-selected", "false");
+    }
   });
 });
