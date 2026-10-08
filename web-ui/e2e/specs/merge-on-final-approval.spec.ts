@@ -70,8 +70,8 @@ test.describe("Merge on Final Approval", () => {
       const finalApproval = finalRun.nodeExecutions.find((ne) => ne.label === "final_approval");
       expect(finalApproval?.result ?? "").toContain("Pull requests merged on approval");
 
-      // UI: the run's PR list is in the run meta panel, which a selected node's detail
-      // panel replaces — so re-visit with no node selected to see the badges.
+      // UI: the run's PR list renders in the always-visible run summary now, independent
+      // of node selection — revisit fresh here to read it from a clean load.
       await page.goto(`/runs/${run.id}`);
       await expect(runMonitorPage.pullRequestStates).toHaveCount(2);
       const texts = await runMonitorPage.pullRequestStates.allTextContents();

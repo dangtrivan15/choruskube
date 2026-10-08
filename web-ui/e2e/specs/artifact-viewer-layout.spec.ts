@@ -70,10 +70,10 @@ test.describe("Artifact Viewer Layout", () => {
     const lastPillName = (await lastPill.textContent())?.trim();
     await lastPill.click();
 
-    // Scoped to the dialog: the Run Monitor page also renders "Run Info"
-    // (RunMetaPanel) and the selected node's label (DetailPanel) as their own
-    // <h2>s, so an unscoped page-wide heading locator would match 3 elements
-    // and trip Playwright's strict-mode check.
+    // Scoped to the dialog: the Run Monitor page also renders the run summary
+    // and the selected node's label (DetailPanel) as their own <h2>s, so an
+    // unscoped page-wide heading locator would match multiple elements and
+    // trip Playwright's strict-mode check.
     await expect(
       runMonitorPage.artifactViewerDialog.getByRole("heading", { level: 2 }),
     ).toContainText(lastPillName ?? "");

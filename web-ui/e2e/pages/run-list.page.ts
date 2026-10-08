@@ -60,7 +60,9 @@ export class RunListPage {
   async clickRunById(runId: string) {
     const row = this.page.locator(`[data-run-id="${runId}"]`);
     await row.click();
-    await this.page.waitForURL(`**/runs/${runId}`);
+    // A plain glob anchors at the end, so it stops matching once desktop auto-focus
+    // appends `?node=` via history.replace — tolerate an optional trailing query string.
+    await this.page.waitForURL(new RegExp(`/runs/${runId}(\\?.*)?$`));
   }
 
   async filterByStatus(status: string) {

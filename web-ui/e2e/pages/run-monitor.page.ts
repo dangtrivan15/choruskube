@@ -19,17 +19,28 @@ export class RunMonitorPage {
   readonly dagContainer: Locator;
   readonly dagNodes: Locator;
 
-  // Run meta panel (sidebar)
-  readonly runMetaPanel: Locator;
-  readonly detailPanelBackButton: Locator;
+  // Run summary (strip on tablet/desktop, mobile bar + sheets on phone)
+  readonly runSummary: Locator;
+  readonly roadmapBreadcrumb: Locator;
+  readonly mobileBar: Locator;
+  readonly runInfoOpenButton: Locator;
+  readonly runInfoSheet: Locator;
+  readonly attentionButton: Locator;
+  readonly actionsMenuTrigger: Locator;
+
+  // Sidebar / node panel
+  readonly nodeDetailEmpty: Locator;
   readonly sidebarCollapseButton: Locator;
   readonly sidebarExpandButton: Locator;
 
   // Detail panel
   readonly detailPanel: Locator;
+  readonly detailPanelClose: Locator;
   readonly detailNodeLabel: Locator;
   readonly detailStatus: Locator;
   readonly detailNodeError: Locator;
+  /** The phone/tablet bottom sheet wrapping the node detail panel. */
+  readonly nodeSheet: Locator;
 
   // Human gate elements (in detail panel)
   readonly gateFeedbackInput: Locator;
@@ -68,15 +79,24 @@ export class RunMonitorPage {
     this.dagContainer = page.getByTestId("run-dag-container");
     this.dagNodes = page.getByTestId("dag-node");
 
-    this.runMetaPanel = page.getByTestId("run-meta-panel");
-    this.detailPanelBackButton = page.getByTestId("detail-panel-back-button");
+    this.runSummary = page.getByTestId("run-summary");
+    this.roadmapBreadcrumb = page.getByTestId("roadmap-breadcrumb");
+    this.mobileBar = page.getByTestId("run-summary-mobile-bar");
+    this.runInfoOpenButton = page.getByTestId("run-info-open-button");
+    this.runInfoSheet = page.getByTestId("run-info-sheet");
+    this.attentionButton = page.getByTestId("run-attention-button");
+    this.actionsMenuTrigger = page.getByTestId("run-actions-menu-trigger");
+
+    this.nodeDetailEmpty = page.getByTestId("node-detail-empty");
     this.sidebarCollapseButton = page.getByTestId("sidebar-collapse-button");
     this.sidebarExpandButton = page.getByTestId("sidebar-expand-button");
 
     this.detailPanel = page.getByTestId("detail-panel");
+    this.detailPanelClose = page.getByTestId("detail-panel-close-button");
     this.detailNodeLabel = page.getByTestId("detail-node-label");
     this.detailStatus = page.getByTestId("detail-node-status");
     this.detailNodeError = page.getByTestId("detail-node-error");
+    this.nodeSheet = page.getByTestId("mobile-detail-overlay");
 
     this.gateFeedbackInput = page.getByTestId("gate-feedback-input");
     this.gateApproveButton = page.getByTestId("gate-approve-button");
@@ -122,6 +142,18 @@ export class RunMonitorPage {
     const node = this.page.locator(`[data-testid="dag-node"][data-label="${nodeLabel}"]`);
     await node.click();
     await expect(this.detailPanel).toBeVisible();
+    // On desktop, auto-focus may already have a (different) node's panel open before
+    // this click, so visibility alone doesn't prove the click selected this node —
+    // the label must match too. Works for the docked panel and the sheet alike:
+    // `detail-node-label` shows the raw `data-label`, same as the DAG node above.
+    await expect(this.detailNodeLabel).toHaveText(nodeLabel);
+  }
+
+  /** Waits for the DAG's initial viewport computation (fit/zoom) to have applied. */
+  async waitForViewportReady() {
+    await expect(
+      this.page.locator('[data-testid="run-dag-container"][data-viewport-ready="true"]'),
+    ).toBeVisible();
   }
 
   async expectNodeStatus(nodeLabel: string, status: string) {
@@ -192,6 +224,12 @@ export class RunMonitorPage {
   }
 
   async cancelRun() {
+    await this.cancelButton.click();
+  }
+
+  /** Cancels via the phone actions menu, where lifecycle actions live behind `run-actions-menu-trigger`. */
+  async cancelRunFromMenu() {
+    await this.actionsMenuTrigger.click();
     await this.cancelButton.click();
   }
 }
