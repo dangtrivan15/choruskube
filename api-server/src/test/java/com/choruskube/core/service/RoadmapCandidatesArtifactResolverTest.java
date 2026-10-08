@@ -5,10 +5,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.choruskube.core.dto.ResolvedArtifactEntry;
 import com.choruskube.core.dto.ResolvedArtifactGroup;
 import com.choruskube.core.dto.RoadmapCandidatesDocument;
+import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.Epic;
+import com.choruskube.core.model.NodeExecution;
+import com.choruskube.core.repository.NodeExecutionRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import jakarta.validation.Validation;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -30,6 +34,7 @@ class RoadmapCandidatesArtifactResolverTest {
     private ArtifactService artifactService;
     private RoadmapAnchorLookup anchorLookup;
     private InternalRunService internalRunService;
+    private NodeExecutionRepository nodeExecutionRepository;
     private RoadmapCandidatesArtifactResolver resolver;
 
     private final UUID runId = UUID.randomUUID();
@@ -43,13 +48,15 @@ class RoadmapCandidatesArtifactResolverTest {
         artifactService = Mockito.mock(ArtifactService.class);
         anchorLookup = Mockito.mock(RoadmapAnchorLookup.class);
         internalRunService = Mockito.mock(InternalRunService.class);
+        nodeExecutionRepository = Mockito.mock(NodeExecutionRepository.class);
         resolver = new RoadmapCandidatesArtifactResolver(
                 artifactResolutionService,
                 artifactService,
                 new ObjectMapper().registerModule(new JavaTimeModule()),
                 Validation.buildDefaultValidatorFactory().getValidator(),
                 anchorLookup,
-                internalRunService);
+                internalRunService,
+                nodeExecutionRepository);
     }
 
     private List<ResolvedArtifactGroup> requiredArtifacts() {
@@ -350,5 +357,117 @@ class RoadmapCandidatesArtifactResolverTest {
         assertThat(result.epics()).hasSize(1);
         assertThat(result.epics().get(0).title()).isEmpty();
         assertThat(result.epics().get(0).description()).isEmpty();
+    }
+
+    private final UUID implementExecId = UUID.randomUUID();
+    private final UUID codeReviewExecId = UUID.randomUUID();
+
+    private static String doc(String epicTitle) {
+        return """
+                {"epics":[{"title":"%s","description":"d","motivation":"m",
+                  "stories":[{"title":"S","description":"s","tasks":[{"title":"T","description":"t"}]}]}]}
+                """.formatted(epicTitle);
+    }
+
+    /** Final Approval's declaration order: Implement first, then Code Review. */
+    private List<ResolvedArtifactGroup> implementThenCodeReview() {
+        return List.of(
+                new ResolvedArtifactGroup(
+                        implementExecId,
+                        "implement",
+                        List.of(new ResolvedArtifactEntry("roadmap_candidates.json", "proposal", false))),
+                new ResolvedArtifactGroup(
+                        codeReviewExecId,
+                        "code_review",
+                        List.of(
+                                new ResolvedArtifactEntry("review.md", "review", true),
+                                new ResolvedArtifactEntry("roadmap_candidates.json", "proposal", false))));
+    }
+
+    private void completed(Instant implementAt, Instant codeReviewAt) {
+        NodeExecution impl = Mockito.mock(NodeExecution.class);
+        Mockito.when(impl.getId()).thenReturn(implementExecId);
+        Mockito.when(impl.getCompletedAt()).thenReturn(implementAt);
+        NodeExecution review = Mockito.mock(NodeExecution.class);
+        Mockito.when(review.getId()).thenReturn(codeReviewExecId);
+        Mockito.when(review.getCompletedAt()).thenReturn(codeReviewAt);
+        Mockito.when(nodeExecutionRepository.findAllById(Mockito.any())).thenReturn(List.of(impl, review));
+    }
+
+    private void content(UUID execId, String json) {
+        Mockito.when(artifactService.getArtifactContent(runId, execId, "roadmap_candidates.json"))
+                .thenReturn(json);
+    }
+
+    private void missing(UUID execId) {
+        Mockito.when(artifactService.getArtifactContent(runId, execId, "roadmap_candidates.json"))
+                .thenThrow(new NotFoundException("Artifact not found: roadmap_candidates.json"));
+    }
+
+    @Test
+    void newestProducerWins_codeReviewAfterImplement() {
+        completed(Instant.parse("2026-10-08T10:00:00Z"), Instant.parse("2026-10-08T11:00:00Z"));
+        content(implementExecId, doc("From Implement"));
+        content(codeReviewExecId, doc("From Code Review"));
+
+        RoadmapCandidatesDocument result = resolver.resolve(runId, implementThenCodeReview());
+
+        assertThat(result).isNotNull();
+        assertThat(result.epics().get(0).title()).isEqualTo("From Code Review");
+    }
+
+    @Test
+    void newestProducerWithoutFile_fallsBackToOlderProducer() {
+        completed(Instant.parse("2026-10-08T10:00:00Z"), Instant.parse("2026-10-08T11:00:00Z"));
+        content(implementExecId, doc("From Implement"));
+        missing(codeReviewExecId);
+
+        RoadmapCandidatesDocument result = resolver.resolve(runId, implementThenCodeReview());
+
+        assertThat(result).isNotNull();
+        assertThat(result.epics().get(0).title()).isEqualTo("From Implement");
+    }
+
+    @Test
+    void implementNewerThanCodeReview_implementWins() {
+        // A Supervisor route can re-run Implement without a Code Review after it.
+        completed(Instant.parse("2026-10-08T12:00:00Z"), Instant.parse("2026-10-08T11:00:00Z"));
+        content(implementExecId, doc("From Implement"));
+        content(codeReviewExecId, doc("From Code Review"));
+
+        RoadmapCandidatesDocument result = resolver.resolve(runId, implementThenCodeReview());
+
+        assertThat(result.epics().get(0).title()).isEqualTo("From Implement");
+    }
+
+    @Test
+    void noProducerHasFile_resolvesToNull() {
+        completed(Instant.parse("2026-10-08T10:00:00Z"), Instant.parse("2026-10-08T11:00:00Z"));
+        missing(implementExecId);
+        missing(codeReviewExecId);
+
+        assertThat(resolver.resolve(runId, implementThenCodeReview())).isNull();
+    }
+
+    @Test
+    void newestCopyMalformed_resolvesToNullWithoutFallback() {
+        completed(Instant.parse("2026-10-08T10:00:00Z"), Instant.parse("2026-10-08T11:00:00Z"));
+        content(implementExecId, doc("From Implement"));
+        content(codeReviewExecId, "{not json");
+
+        assertThat(resolver.resolve(runId, implementThenCodeReview())).isNull();
+    }
+
+    @Test
+    void unknownCompletionTime_sortsLast() {
+        completed(Instant.parse("2026-10-08T10:00:00Z"), null);
+        content(implementExecId, doc("From Implement"));
+        content(codeReviewExecId, doc("From Code Review"));
+
+        assertThat(resolver.resolve(runId, implementThenCodeReview())
+                        .epics()
+                        .get(0)
+                        .title())
+                .isEqualTo("From Implement");
     }
 }

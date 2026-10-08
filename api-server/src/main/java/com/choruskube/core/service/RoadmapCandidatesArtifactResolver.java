@@ -8,16 +8,21 @@ import com.choruskube.core.dto.CandidateTaskProposal;
 import com.choruskube.core.dto.ResolvedArtifactEntry;
 import com.choruskube.core.dto.ResolvedArtifactGroup;
 import com.choruskube.core.dto.RoadmapCandidatesDocument;
+import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.Epic;
+import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.Story;
 import com.choruskube.core.model.Task;
 import com.choruskube.core.model.enums.Priority;
+import com.choruskube.core.repository.NodeExecutionRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Validator;
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -38,6 +43,10 @@ import org.springframework.stereotype.Service;
  * by {@link RunService} (to resolve the materialization source when the reviewer submitted no
  * edits). Centralized here so the artifact-lookup and degrade-on-failure rules can't drift between
  * the two call sites.
+ *
+ * <p>When several nodes declare the artifact, the most recently completed one that actually wrote
+ * it wins: a later producer (Code Review editing Implement's proposal) replaces an earlier one, and
+ * a producer that wrote nothing leaves the earlier copy current.
  *
  * <p>Degrades to {@code null} — never throws — whenever the artifact isn't among the node's
  * resolved required artifacts, its content is missing/malformed, it fails the same Bean Validation
@@ -69,6 +78,7 @@ public class RoadmapCandidatesArtifactResolver {
     private final Validator validator;
     private final RoadmapAnchorLookup anchorLookup;
     private final InternalRunService internalRunService;
+    private final NodeExecutionRepository nodeExecutionRepository;
 
     public RoadmapCandidatesArtifactResolver(
             ArtifactResolutionService artifactResolutionService,
@@ -76,13 +86,15 @@ public class RoadmapCandidatesArtifactResolver {
             ObjectMapper objectMapper,
             Validator validator,
             RoadmapAnchorLookup anchorLookup,
-            @Lazy InternalRunService internalRunService) {
+            @Lazy InternalRunService internalRunService,
+            NodeExecutionRepository nodeExecutionRepository) {
         this.artifactResolutionService = artifactResolutionService;
         this.artifactService = artifactService;
         this.objectMapper = objectMapper;
         this.validator = validator;
         this.anchorLookup = anchorLookup;
         this.internalRunService = internalRunService;
+        this.nodeExecutionRepository = nodeExecutionRepository;
     }
 
     /** Resolves the node's required artifacts fresh, then delegates to {@link #resolve(UUID, List)}. */
@@ -98,17 +110,19 @@ public class RoadmapCandidatesArtifactResolver {
         if (requiredArtifacts == null) {
             return null;
         }
-        for (ResolvedArtifactGroup group : requiredArtifacts) {
-            if (group.nodeExecutionId() == null) {
-                continue;
-            }
-            boolean hasCandidatesFile =
-                    group.artifacts().stream().map(ResolvedArtifactEntry::name).anyMatch(ARTIFACT_FILENAME::equals);
-            if (!hasCandidatesFile) {
-                continue;
-            }
+        for (ResolvedArtifactGroup group : newestFirst(producersOf(requiredArtifacts))) {
+            String content;
             try {
-                String content = artifactService.getArtifactContent(runId, group.nodeExecutionId(), ARTIFACT_FILENAME);
+                content = artifactService.getArtifactContent(runId, group.nodeExecutionId(), ARTIFACT_FILENAME);
+            } catch (NotFoundException e) {
+                // A producer that wrote no proposal leaves an older producer's copy current.
+                continue;
+            } catch (Exception e) {
+                logger.warn("Failed to resolve {} for run {}: {}", ARTIFACT_FILENAME, runId, e.getMessage());
+                return null;
+            }
+            // Never fall back past a malformed newest copy: it replaced every older one.
+            try {
                 RoadmapCandidatesDocument document = parseDocument(content);
                 Set<ConstraintViolation<RoadmapCandidatesDocument>> violations = validator.validate(document);
                 if (!violations.isEmpty()) {
@@ -126,6 +140,33 @@ public class RoadmapCandidatesArtifactResolver {
             }
         }
         return null;
+    }
+
+    private static List<ResolvedArtifactGroup> producersOf(List<ResolvedArtifactGroup> groups) {
+        return groups.stream()
+                .filter(g -> g.nodeExecutionId() != null)
+                .filter(g ->
+                        g.artifacts().stream().map(ResolvedArtifactEntry::name).anyMatch(ARTIFACT_FILENAME::equals))
+                .toList();
+    }
+
+    /** Most recently completed first; the stable sort keeps declaration order for ties. */
+    private List<ResolvedArtifactGroup> newestFirst(List<ResolvedArtifactGroup> producers) {
+        if (producers.size() < 2) {
+            return producers;
+        }
+        Map<UUID, Instant> completedAt = new HashMap<>();
+        for (NodeExecution exec : nodeExecutionRepository.findAllById(
+                producers.stream().map(ResolvedArtifactGroup::nodeExecutionId).toList())) {
+            if (exec.getCompletedAt() != null) {
+                completedAt.put(exec.getId(), exec.getCompletedAt());
+            }
+        }
+        List<ResolvedArtifactGroup> sorted = new ArrayList<>(producers);
+        sorted.sort(Comparator.comparing(
+                (ResolvedArtifactGroup g) -> completedAt.get(g.nodeExecutionId()),
+                Comparator.nullsLast(Comparator.<Instant>reverseOrder())));
+        return sorted;
     }
 
     /**
