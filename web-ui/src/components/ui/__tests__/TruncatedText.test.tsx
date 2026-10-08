@@ -53,6 +53,17 @@ describe("TruncatedText", () => {
     });
   });
 
+  it("exposes the tooltip popup with role=tooltip for assistive tech and role-based queries", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<TruncatedText>Hover me</TruncatedText>);
+
+    await user.hover(screen.getByText("Hover me"));
+
+    await waitFor(() => {
+      expect(screen.getByRole("tooltip")).toHaveTextContent("Hover me");
+    });
+  });
+
   it("renders the given render element as the trigger, merging its own props", () => {
     renderWithProviders(
       <TruncatedText render={<Link to="/x" />}>Link text</TruncatedText>
