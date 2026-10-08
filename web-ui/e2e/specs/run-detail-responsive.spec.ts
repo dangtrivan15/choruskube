@@ -11,11 +11,14 @@ test.describe("Run detail — desktop (docked)", () => {
   test("opens on the waiting gate with no click, keeps it across a reload, and run info stays visible", async ({
     runMonitorPage,
     api,
+    workerRepo,
   }) => {
     const template = await api.getTemplateByName("e2e-human-gate");
+    // On the docked tier the strip renders only when the run has run info, so give it a project.
     const run = await api.startRun({
       graphTemplateId: template.id,
       name: uniqueName("e2e-responsive-desktop"),
+      inputs: { software_project_id: workerRepo.gitRepo.id },
     });
 
     await api.waitForNodeStatus(run.id, "review_gate", ["awaiting_human"], 60_000);
@@ -42,11 +45,14 @@ test.describe("Run detail — tablet", () => {
   test("summary strip visible, no docked panel, node opens a sheet with a close control", async ({
     runMonitorPage,
     api,
+    workerRepo,
   }) => {
     const template = await api.getTemplateByName("e2e-linear-pipeline");
+    // Nothing in this run needs attention, so the strip has content only if the run has a project.
     const run = await api.startRun({
       graphTemplateId: template.id,
       name: uniqueName("e2e-responsive-tablet"),
+      inputs: { software_project_id: workerRepo.gitRepo.id },
     });
 
     await runMonitorPage.goto(run.id);

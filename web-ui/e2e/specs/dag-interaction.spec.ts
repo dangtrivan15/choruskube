@@ -127,12 +127,15 @@ test.describe("DAG Interaction", () => {
   test("summary strip and node panel are visible together after selecting a node", async ({
     runMonitorPage,
     api,
+    workerRepo,
   }) => {
     const template = await api.getTemplateByName("e2e-linear-pipeline");
 
+    // The strip renders only when the run has something to show, so give it a software project.
     const run = await api.startRun({
       graphTemplateId: template.id,
       name: "e2e-summary-coexist-test",
+      inputs: { software_project_id: workerRepo.gitRepo.id },
     });
 
     await runMonitorPage.goto(run.id);
@@ -145,6 +148,7 @@ test.describe("DAG Interaction", () => {
     await runMonitorPage.dagNodes.first().click();
     await expect(runMonitorPage.detailPanel).toBeVisible();
     await expect(runMonitorPage.runSummary).toBeVisible();
+    await expect(runMonitorPage.runSummary.getByTestId("run-summary-software-project")).toBeVisible();
   });
 
   test("finished run shows the empty node panel", async ({
