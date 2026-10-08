@@ -47,16 +47,85 @@ class FeatureDevPromptConventionsTest {
     }
 
     @Test
-    void implementPromptTethersFutureWorkIssues() throws Exception {
-        String p = promptField("IMPLEMENT_PROMPT");
-        assertThat(p)
-                .as("an unpinned Future-work issue misfiles or leaks private context into a public repo")
-                .contains("in the repo")
+    void implementPromptRoutesFutureWorkOnlyThroughTheProposal() throws Exception {
+        String collapsed = promptField("IMPLEMENT_PROMPT").replaceAll("\\s+", " ");
+        assertThat(collapsed)
+                .as("a hand-filed issue has no Task, never closes, and duplicates the Task's own issue")
+                .contains("Never file a GitHub issue for one yourself")
+                .doesNotContain("A direct GitHub issue is still the right tool")
+                .doesNotContain("prefer this over creating a GitHub issue yourself");
+        assertThat(collapsed)
+                .as("a proposed Task's text lands verbatim in an issue in a possibly PUBLIC repo")
+                .contains("become a GitHub issue in the repo it is about")
                 .contains("visibility");
-        assertThat(p)
-                .as("a Future-work issue is orphaned unless it is labeled and linked back to its run")
-                .contains("future-work")
-                .contains("link the run's PR");
+    }
+
+    @Test
+    void implementPromptWritesUpTheSpecsProposalAndMarksAdditions() throws Exception {
+        String collapsed = promptField("IMPLEMENT_PROMPT").replaceAll("\\s+", " ");
+        assertThat(collapsed)
+                .as("an Implement-originated entry reaches the human unmarked and unreviewed")
+                .contains("placed as its \"Proposed as\" line says, and nothing else")
+                .contains("Origin: approved with the spec")
+                .contains("Origin: added during implementation")
+                .contains("(found during implementation)");
+    }
+
+    @Test
+    void codeReviewRebuildsAndReinstallsTheProposal() throws Exception {
+        String collapsed = promptField("CODE_REVIEW_PROMPT").replaceAll("\\s+", " ");
+        assertThat(collapsed)
+                .as("an iteration that skips the install hands Final Approval Implement's unreviewed copy")
+                .contains("## Roadmap proposal")
+                .contains("start from Implement's copy")
+                .contains("Never start from your own earlier copy")
+                .contains("propose-roadmap --file")
+                .contains("in EVERY iteration");
+        assertThat(collapsed)
+                .as("a proposed Task's text lands verbatim in an issue in a possibly PUBLIC repo")
+                .contains("PUBLIC repo");
+    }
+
+    @Test
+    void codeReviewInstallsAnEmptyProposalInsteadOfSkipping() throws Exception {
+        String collapsed = promptField("CODE_REVIEW_PROMPT").replaceAll("\\s+", " ");
+        assertThat(collapsed)
+                .as("skipping the install when every entry was removed lets Implement's removed entries reach the gate")
+                .contains("install your result even when it is empty")
+                .contains("{\"epics\": []}")
+                .doesNotContain("whose result is non-empty");
+    }
+
+    @Test
+    void implementWithdrawsByInstallingAnEmptyProposal() throws Exception {
+        String collapsed = promptField("IMPLEMENT_PROMPT").replaceAll("\\s+", " ");
+        assertThat(collapsed)
+                .as("a deleted file lets the gate fall back to an older copy")
+                .contains("To withdraw it, install an empty proposal")
+                .doesNotContain("deleting that file withdraws it");
+    }
+
+    @Test
+    void codeReviewEditLogIsCumulative() throws Exception {
+        String collapsed = promptField("CODE_REVIEW_PROMPT").replaceAll("\\s+", " ");
+        assertThat(collapsed)
+                .as("a per-iteration log forgets earlier removals once Implement re-submits its own copy")
+                .contains("lists every edit relative to Implement's copy, including the ones you re-applied")
+                .contains("only when your installed copy equals Implement's");
+    }
+
+    @Test
+    void everyPromptThatJudgesADeferralCarriesTheCriteria() throws Exception {
+        for (String name : new String[] {"SPEC_REVIEW_PROMPT", "IMPLEMENT_PROMPT", "CODE_REVIEW_PROMPT"}) {
+            String collapsed = promptField(name).replaceAll("\\s+", " ");
+            assertThat(collapsed)
+                    .as("%s judges deferrals; without the criteria it invents one, e.g. size", name)
+                    .contains("its own design decision with real alternatives")
+                    .contains("one that can run now")
+                    .contains("Size alone is never one")
+                    .contains("is never a Task")
+                    .contains("prefer the triggering Task's Epic");
+        }
     }
 
     @Test
@@ -72,12 +141,53 @@ class FeatureDevPromptConventionsTest {
     }
 
     @Test
-    void specPromptAsksWhetherTheRunCouldFinishAnItemBeforeDeferringIt() throws Exception {
+    void specPromptDefaultsGapsIntoTheRun() throws Exception {
         String collapsed = promptField("SPEC_AND_PLAN_PROMPT").replaceAll("\\s+", " ");
         assertThat(collapsed)
-                .as("deferral is decided when the spec is drafted; without this, finishable work is deferred")
-                .contains("ask whether this run could simply finish it")
+                .as("without an in-scope default, finishable work is deferred into a follow-up run")
+                .contains("Every gap you find is in scope unless it is clearly not")
+                .contains("Size alone is never a reason to defer")
                 .contains("name exactly what to change rather than deferring it");
+    }
+
+    @Test
+    void specPromptSeparatesOutOfScopeFromDeferral() throws Exception {
+        String collapsed = promptField("SPEC_AND_PLAN_PROMPT").replaceAll("\\s+", " ");
+        assertThat(collapsed)
+                .as("out-of-scope work tagged Future work becomes a Task that Autopilot runs")
+                .contains("An Accepted caveat creates nothing")
+                .contains("its own design decision with real alternatives")
+                .contains("a contract, schema or component this change does not otherwise touch")
+                .contains("an investigation or measurement, one that can run now")
+                .contains("Most runs defer nothing");
+    }
+
+    @Test
+    void specPromptTurnsWorkConditionsIntoDependenciesAndEventsIntoAccepted() throws Exception {
+        String collapsed = promptField("SPEC_AND_PLAN_PROMPT").replaceAll("\\s+", " ");
+        assertThat(collapsed)
+                .as("a Task standing for an event starts at once and invents work")
+                .contains("ask whether a run could do X and finish it")
+                .contains("Future work that depends on X")
+                .contains("X is an event");
+    }
+
+    @Test
+    void specPromptProposesFollowUpsWithoutWritingTheRoadmapDocument() throws Exception {
+        String collapsed = promptField("SPEC_AND_PLAN_PROMPT").replaceAll("\\s+", " ");
+        assertThat(collapsed)
+                .as("the human approves follow-ups with the spec; Implement writes the document")
+                .contains("**Proposed as:**")
+                .contains("Do not run propose-roadmap yourself");
+    }
+
+    @Test
+    void specReviewEnforcesTheDeferralBar() throws Exception {
+        String collapsed = promptField("SPEC_REVIEW_PROMPT").replaceAll("\\s+", " ");
+        assertThat(collapsed)
+                .as("a reviewer that flags absorbed gaps as scope creep pushes the drafter back to deferring")
+                .contains("closes a gap this change creates or exposes is justified, not scope creep")
+                .contains("names no deferral criterion");
     }
 
     /**

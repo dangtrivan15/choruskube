@@ -8,6 +8,8 @@ import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.NodeDefinitionRepository;
 import com.choruskube.core.repository.TemplateEdgeRepository;
 import com.choruskube.core.repository.TemplateNodeRepository;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.temporal.client.WorkflowClient;
 import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.List;
@@ -820,13 +822,13 @@ class V1TemplateSeederTest extends BaseTest {
     }
 
     @Test
-    void currentVersionIsBumpedForMergeOnFinalApproval() {
-        // v45: Final Approval merges the run's registered pull requests on approval
-        // (merge_pull_requests: squash). This is the rolling version tripwire: rewrite it and
-        // bump the literal whenever CURRENT_VERSION changes, so a template edit that forgets the
-        // bump cannot ship silently.
-        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(45);
-        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 45))
+    void currentVersionIsBumpedForDeferredWorkProposalFlow() {
+        // v46: Caveats separate out-of-scope work from deferral, the spec proposes follow-ups,
+        // and Code Review edits the proposal Final Approval reads. This is the rolling version
+        // tripwire: rewrite it and bump the literal whenever CURRENT_VERSION changes, so a
+        // template edit that forgets the bump cannot ship silently.
+        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(46);
+        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 46))
                 .isPresent();
     }
 
@@ -899,6 +901,47 @@ class V1TemplateSeederTest extends BaseTest {
         assertThat(implementNode.getRequiredInputArtifacts())
                 .contains("\"template_node_label\": \"implement\"")
                 .contains("\"roadmap_candidates.json\"");
+    }
+
+    private static boolean declares(String requiredInputArtifacts, String label, String artifact) throws Exception {
+        for (JsonNode group : new ObjectMapper().readTree(requiredInputArtifacts)) {
+            if (!label.equals(group.path("template_node_label").asText())) {
+                continue;
+            }
+            for (JsonNode a : group.path("artifacts")) {
+                if (artifact.equals(a.path("name").asText())) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    @Test
+    void codeReviewReadsImplementsProposalAndFinalApprovalReadsBothCopies() throws Exception {
+        var template = templateRepo
+                .findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION)
+                .orElseThrow();
+        var nodes = templateNodeRepo.findByGraphTemplateId(template.getId());
+        var codeReview = nodes.stream()
+                .filter(n -> "code_review".equals(n.getLabel()))
+                .findFirst()
+                .orElseThrow();
+        var finalApproval = nodes.stream()
+                .filter(n -> "final_approval".equals(n.getLabel()))
+                .findFirst()
+                .orElseThrow();
+        var codeReviewDef =
+                nodeDefRepo.findById(codeReview.getNodeDefinitionId()).orElseThrow();
+
+        assertThat(codeReviewDef.getOutputSpec()).contains("\"roadmap_candidates.json\"");
+        assertThat(declares(codeReview.getRequiredInputArtifacts(), "implement", "roadmap_candidates.json"))
+                .isTrue();
+        // Both producers are declared, so the gate can take whichever wrote last.
+        assertThat(declares(finalApproval.getRequiredInputArtifacts(), "implement", "roadmap_candidates.json"))
+                .isTrue();
+        assertThat(declares(finalApproval.getRequiredInputArtifacts(), "code_review", "roadmap_candidates.json"))
+                .isTrue();
     }
 
     @Test

@@ -39,7 +39,10 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
     // Future work in its Caveats section.
     // v45: Final Approval merges the run's registered pull requests on approval
     // (merge_pull_requests: squash).
-    static final int CURRENT_VERSION = 45;
+    // v46: Caveats separate out-of-scope work (Accepted) from deferral (Future work with a named
+    // criterion); the spec proposes follow-ups, Implement writes them up, Code Review edits them,
+    // and Final Approval reads the newest copy.
+    static final int CURRENT_VERSION = 46;
 
     private static final String TEMPLATE_NAME = "Feature Development";
 
@@ -225,22 +228,71 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             Things the spec does NOT handle. If a risk has a mitigation IN the spec,
             it is part of the design, not a caveat — drop it.
 
+            Every gap you find is in scope unless it is clearly not. Anything this
+            change needs to be correct, safe or complete goes into Part 2, not here:
+            edge cases and failure modes of what it builds, tests, docs, a defect it
+            creates or exposes, a small adjacent fix that completes it. Size alone is
+            never a reason to defer. If it is out of reach only because it needs a
+            setting or access you lack, it is a step for the human: name exactly
+            what to change rather than deferring it.
+
             For EACH caveat, use this exact block:
 
               ### Caveat N: <short title>
               - **What's not handled:** one line
               - **Disposition:** Accepted | Future work | Needs human decision
-              - **Reasoning:** why this disposition; what would trigger revisiting
+              - **Reasoning:** why this disposition; for Future work, which deferral
+                criterion it meets; for Accepted, what would trigger revisiting
+              - **Proposed as:** (Future work only) <Task title> — under <an existing
+                Epic or Story, by title and id | a new Story "<title>" in <Epic> | a
+                new Epic "<title>">; blocked by <Task title and id>, if any
 
-            "Needs human decision" is an alarm bell — use it sparingly, only when
-            the choice genuinely cannot be defaulted. Most caveats are Accepted or
-            Future work.
+            Dispositions:
+            - **Accepted** — out of scope: not asked for by the feature request and
+              not needed for this change to be correct, safe or complete.
+              Enhancements past the request, speculative measurement, and anything
+              that waits on an event (below). An Accepted caveat creates nothing.
+            - **Future work** — belongs to this change's purpose but is too
+              complicated for this run. Use it only when at least one deferral
+              criterion holds, and name which in Reasoning:
+                (a) it needs its own design decision with real alternatives, one
+                    this request did not ask you to make;
+                (b) it changes a contract, schema or component this change does not
+                    otherwise touch;
+                (c) it needs an investigation or measurement, one that can run now,
+                    before it can be designed.
+            - **Needs human decision** — an alarm bell: use it sparingly, only when
+              the choice genuinely cannot be defaulted.
 
-            Before tagging something Future work, ask whether this run could simply
-            finish it. If it is small and completes this change, plan it in Part 2 —
-            it is design, not a caveat. If it is out of reach only because it needs
-            a setting or access you lack, it is a step for the human: name exactly
-            what to change rather than deferring it.
+            Most caveats are Accepted. Most runs defer nothing.
+
+            For an item to revisit "when X happens", ask whether a run could do X and
+            finish it.
+            - Yes, X is work: Future work that depends on X. If X is already on the
+              roadmap (run get-roadmap-graph), name its Task in "blocked by"; if not,
+              propose X as well, and X must meet a deferral criterion on its own. The
+              follow-up then cannot start until X is done.
+            - No, X is an event (data grows past a size, users complain, a business
+              decision): Accepted, with X as the trigger. No Task can stand for an
+              event: a Task for it would start at once and invent work, and a blocker
+              nobody does would never clear.
+
+            Calibration:
+            - A field the change already writes next to is not recorded: Part 2.
+            - Re-check a threshold once real data passes it, and none has yet:
+              Accepted.
+            - Switch a caller to a new API once a planned migration ships: Future
+              work, blocked by the migration's Task.
+            - An opt-out nobody asked for: Accepted.
+            - A crash mid-operation strands state, and recovery needs a new lease
+              column plus a takeover rule: Future work, (a) and (b).
+
+            Place a proposed item under the triggering Task's Epic when this run has
+            one; propose a new Epic only for a genuinely separate initiative. The
+            "Proposed as" lines are this run's roadmap proposal: the human approves
+            them with the spec, and the Implement node turns them into the roadmap
+            document. Do not run propose-roadmap yourself, even if your system prompt
+            suggests it.
 
             The "Out of scope" content traditionally listed separately belongs here
             with disposition "Accepted".
@@ -409,15 +461,34 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             5. **Missing details**: failure modes without coverage in §3/§6 or §7
                (with disposition) are gaps.
             6. **Caveat hygiene**: a "Caveat" pointing to a mitigation already in
-               the spec is design, not a caveat.
+               the spec is design, not a caveat. A Future-work caveat that names no
+               deferral criterion, waits on an event, or lacks a "Proposed as" line
+               is a gap: move it to Part 2 when the change needs it, otherwise to
+               Accepted. Check each "Proposed as" placement too.
             7. **Maintainability risk**: couplings, god classes, brittle
                abstractions — per repo and at the seams.
             8. **Scope creep**: Part 2 work not justified by Part 1; Part 1
-               promises Part 2 doesn't deliver.
+               promises Part 2 doesn't deliver. Part 2 work that closes a gap this
+               change creates or exposes is justified, not scope creep.
             9. **Convention violations per repo**: package structure, naming,
                test style.
             10. **Deployment gaps**: env vars, secrets, migrations, config absent
                 from §8 or Part 2 migrations.
+
+            ## Deferral criteria (for checklist items 6 and 8)
+
+            A deferral criterion is one of:
+              (a) it needs its own design decision with real alternatives, one this
+                  request did not ask the run to make;
+              (b) it changes a contract, schema or component this change does not
+                  otherwise touch;
+              (c) it needs an investigation or measurement, one that can run now,
+                  before it can be designed.
+            Size alone is never one. An item that waits on an event (data grows past a
+            size, users complain, a business decision) rather than on work is never a
+            Task: it is Accepted. Placement: prefer the triggering Task's Epic; a new
+            Epic only for a genuinely separate initiative; never new children under any
+            other existing Epic.
 
             ## Decision tree
 
@@ -575,16 +646,12 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                 §4 Flow Diagrams  -> merge into ARCHITECTURE.md (rewritten in place, so it
                                      does NOT accumulate); this is present-tense state, not
                                      a record of this change
-              - §7 Caveats tagged "Future work" -> file a GitHub issue for each, in the repo
-                                     that caveat concerns. Resolve that repo's visibility the
-                                     same way the PR body does below and generalize or drop
-                                     anything a PUBLIC repo may not carry. Label it `future-work`
-                                     (create the label with `gh label create --force` if the repo
-                                     lacks it) and link the run's PR for that repo, opened below,
-                                     so the item stays findable and tied to what deferred it. A
-                                     proposed roadmap extension (see "Proposing deferred work to
-                                     the roadmap" below) is an acceptable home instead; either way
-                                     do not create a new docs/ surface for them
+              - §7 Caveats tagged "Future work" -> the roadmap proposal (see "Proposing
+                                     deferred work to the roadmap" below). Never file a GitHub
+                                     issue for one yourself: each proposed Task gets its own
+                                     issue when Final Approval approves it, and that issue
+                                     closes with the Task. Accepted caveats live only in the PR
+                                     body. Do not create a new docs/ surface for either
               - §1, §5, §6, §8 and Part 2 -> discard; they are execution scaffolding
             Graduate a decision only when something in this repo cites it. Do not bulk-copy
             the spec.
@@ -619,8 +686,41 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             the server rejects create-proposal, update-proposal, create-story, create-task,
             create-dependency and create-milestone.
 
-            After every repo's implementation is done, write ONE proposal for the whole run in
-            the roadmap_candidates.json shape:
+            The spec already decided what to defer, and the human approved it with the spec.
+            After every repo's implementation is done, write ONE proposal for the whole run
+            containing every §7 Caveat tagged Future work, placed as its "Proposed as" line
+            says, and nothing else except the additions below. If this run's change completed
+            a Future-work caveat after all, leave it out and say so in the PR body.
+
+            A deferral criterion is one of:
+              (a) it needs its own design decision with real alternatives, one this
+                  request did not ask the run to make;
+              (b) it changes a contract, schema or component this change does not
+                  otherwise touch;
+              (c) it needs an investigation or measurement, one that can run now,
+                  before it can be designed.
+            Size alone is never one. An item that waits on an event (data grows past a
+            size, users complain, a business decision) rather than on work is never a
+            Task: it is Accepted. Placement: prefer the triggering Task's Epic; a new
+            Epic only for a genuinely separate initiative; never new children under any
+            other existing Epic.
+
+            Additions are rare. A gap you find while implementing is in scope by default: fix
+            it in this run. Only when it meets a deferral criterion, add it to the PR
+            body's Caveats as Future work marked `(found during implementation)`, then add it to
+            the proposal. A defect outside this change that someone hits today may be added the
+            same way; drop anything else unrelated.
+
+            Start every new Task's description with one origin line, so the Final Approval
+            reviewer knows which entries need a first look:
+              Origin: approved with the spec — Caveat: <title>
+              Origin: added during implementation — <criterion>: <one line>
+
+            A new Task's title and description become a GitHub issue in the repo it is about.
+            Resolve that repo's visibility the same way the PR body does below, and generalize
+            or drop anything a PUBLIC repo may not carry.
+
+            Write the proposal in the roadmap_candidates.json shape:
               {"epics": [...], "dependencies": [{"blocking": "<key>", "blocked": "<key>"}]}
             - An entry carrying "existingId" is an item that already exists: nothing is created
               for it and its other fields are ignored. Any other entry is new and needs a title
@@ -637,20 +737,22 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
               Epic needs at least one Story and every new Story at least one Task.
             - Give an entry a "key" to use it in "dependencies". When a follow-up builds on
               this run's change, list this run's Task as {"existingId": "<Task id>", "key": "..."}
-              under its Story and make it the blocking side.
+              under its Story and make it the blocking side. When a "Proposed as" line names a
+              blocking Task elsewhere, anchor that Task the same way, under its own anchored
+              Story and Epic and with no new children, and make it the blocking side.
             - No milestones.
             - A new Task in a multi-repo project needs "repoId" naming which of this run's repos
               it is about; a single-repo project fills it in for you. The server files a matching
-              GitHub issue for every new Task automatically and closes it when the Task is done —
-              prefer this over creating a GitHub issue yourself for anything in scope above. A
-              direct GitHub issue is still the right tool for work that must survive even if this
-              run is abandoned.
+              GitHub issue for every new Task automatically and closes it when the Task is done.
 
             Install it with `propose-roadmap --file <path>`. The server validates it and the
             tool writes /workspace/out/roadmap_candidates.json. Fix every reported error and
-            re-run until it succeeds; re-running replaces the proposal, and deleting that file
-            withdraws it. If /workspace/in/implement/roadmap_candidates.json exists, it is your
-            previous attempt's proposal: re-submit it (amended as needed), or it is dropped.
+            re-run until it succeeds; re-running replaces the proposal. To withdraw it, install an
+            empty proposal, {"epics": []}; never just delete the file, or Final Approval may
+            fall back to an older copy. If /workspace/in/implement/roadmap_candidates.json
+            exists, it is your previous attempt's proposal: re-submit it (amended as needed),
+            or install an empty one to withdraw it.
+            Code Review reviews your proposal next and may edit it.
 
             ## Opening and updating pull requests
 
@@ -730,7 +832,8 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                  than reworded into a hint that one exists. If §7 is empty, or
                  nothing survives the filter, omit this section entirely. Mark
                  each Future-work Caveat you proposed to the roadmap this run
-                 as `proposed to the roadmap (pending Final Approval)`.
+                 as `proposed to the roadmap (pending Final Approval)`, and keep
+                 the `(found during implementation)` marker on any you added.
 
                  **d. ❓ Open Decisions for Reviewer** — ONLY include this
                  section if at least one Caveat is still tagged "Needs human
@@ -861,6 +964,9 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
               review notes (including "Reasoning for fixes"). Present only if
               iteration > 1. Read this carefully so you build on prior decisions
               instead of reverting them.
+            - `/workspace/in/implement/roadmap_candidates.json` — Implement's
+              latest roadmap proposal. Present only if Implement proposed one.
+              See "Roadmap proposal" below.
             - `/workspace/in/run_log.md` — accumulated history including the
               Implement node summary and any test reports.
             - `/workspace/in/<gate_label>/human_guidance.md` — present only if
@@ -994,6 +1100,61 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             minutes and adds no signal. If a change is only provable by the full
             suite, say so in `review.md` and let the Test node prove it.
 
+            ## Roadmap proposal
+
+            Implement turns the spec's Future-work caveats into a roadmap proposal; you
+            review it and own the copy Final Approval reads. Skip this section when
+            `/workspace/in/implement/roadmap_candidates.json` is absent and you have
+            nothing to add.
+
+            Rebuild it in every iteration: start from Implement's copy, then re-apply the
+            edits your previous review.md lists under "## Roadmap proposal". Never start
+            from your own earlier copy: Implement may have re-run since, and its copy is
+            always the current base.
+
+            A deferral criterion is one of:
+              (a) it needs its own design decision with real alternatives, one this
+                  request did not ask the run to make;
+              (b) it changes a contract, schema or component this change does not
+                  otherwise touch;
+              (c) it needs an investigation or measurement, one that can run now,
+                  before it can be designed.
+            Size alone is never one. An item that waits on an event (data grows past a
+            size, users complain, a business decision) rather than on work is never a
+            Task: it is Accepted. Placement: prefer the triggering Task's Epic; a new
+            Epic only for a genuinely separate initiative; never new children under any
+            other existing Epic.
+
+            Check every new Task:
+            - Its description opens with "Origin: approved with the spec — Caveat: …"
+              matching a Future-work caveat in the PR body, or with "Origin: added during
+              …" naming a deferral criterion.
+            - It is placed as above; propose-roadmap reports the structural rules.
+
+            Fix what you find:
+            - An addition that meets no deferral criterion: do the work in this review
+              when it is small, otherwise remove the entry.
+            - An entry approved with the spec: keep it, unless the change already did it;
+              then remove it.
+            - A gap you find that meets a deferral criterion: add it, its description
+              opening with "Origin: added during code review — <criterion>: <one line>".
+            - A new Task's title and description become a GitHub issue in the repo it is
+              about: for a PUBLIC repo, generalize or drop anything it may not carry.
+
+            Install the result with `propose-roadmap --file <path>` in EVERY iteration in
+            which Implement has a proposal or you add an entry, even when you changed
+            nothing. If you removed every entry, install your result even when it is
+            empty, as {"epics": []}. Final Approval reads the newest copy, so an iteration
+            that skips the install hands it Implement's unreviewed copy, removed entries
+            included. Install nothing only when Implement has no proposal and you add
+            nothing.
+
+            In review.md, add a `## Roadmap proposal` section that lists every edit
+            relative to Implement's copy, including the ones you re-applied from your
+            previous iteration (entry, change, reason). Write "No changes" only when your
+            installed copy equals Implement's. Your next iteration rebuilds from this list
+            alone, and the Final Approval reviewer reads it.
+
             ## Review checklist — fix or escalate for ANY of these in ANY repo
 
             - Code smells: long methods, deep nesting, unclear variable names
@@ -1062,6 +1223,9 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
               agent start.
             - `report-result <decision>` — Submit your decision. Decision is
               final once submitted.
+            - `propose-roadmap --file <path>` — Validate and install the roadmap
+              proposal as /workspace/out/roadmap_candidates.json (see "Roadmap
+              proposal").
             - Standard git tooling (`git add`, `git commit`, `git push origin
               HEAD`) — credentials are configured by the entrypoint.
             - `artifact get` / `artifact put` — Pull/push files from/to object storage
@@ -1155,7 +1319,8 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
 
         NodeDefinition codeReview = createNodeDef("Code Review", ExecutorType.ai, CODE_REVIEW_PROMPT, 10800);
         codeReview.setOutputSpec(
-                "{\"files\":[{\"name\":\"review.md\",\"required\":true,\"description\":\"Code review findings and approve/reject recommendation\"}]}");
+                "{\"files\":[{\"name\":\"review.md\",\"required\":true,\"description\":\"Code review findings and approve/reject recommendation\"},"
+                        + "{\"name\":\"roadmap_candidates.json\",\"required\":false,\"description\":\"Reviewed roadmap proposal for Final Approval (only when one exists)\"}]}");
         // No iteration cap: same self-detected review-conflict escalation as Spec Review
         // (see the comment above specReview).
         nodeDefRepo.save(codeReview);
@@ -1262,6 +1427,8 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
         // commits push directly there), so no object storage ownership transfer is needed.
         // The self-reference here is just the prior iteration's review.md, so a
         // re-review can build on or challenge prior reasoning without reverting.
+        // Implement's proposal is read so Code Review can rebuild and re-install it;
+        // Final Approval takes whichever of the two copies was written last.
         TemplateNode tnCodeReview = createNode(
                 template,
                 nodeDefs.get("Code Review"),
@@ -1272,7 +1439,8 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                         + "\"effort_first_iteration\": \"xhigh\", "
                         + "\"model_subsequent_iteration\": \"" + ModelIds.MODEL_SONNET + "\", "
                         + "\"effort_subsequent_iteration\": \"high\"}",
-                "[{\"template_node_label\":\"code_review\",\"artifacts\":[{\"name\":\"review.md\",\"description\":\"Prior iteration's code review notes including Reasoning for fixes (only present if iteration > 1)\",\"required\":false}]}]");
+                "[{\"template_node_label\":\"code_review\",\"artifacts\":[{\"name\":\"review.md\",\"description\":\"Prior iteration's code review notes including Reasoning for fixes (only present if iteration > 1)\",\"required\":false}]},"
+                        + "{\"template_node_label\":\"implement\",\"artifacts\":[{\"name\":\"roadmap_candidates.json\",\"description\":\"Implement's latest roadmap proposal (only present if one was proposed)\",\"required\":false}]}]");
         TemplateNode tnSupervisor =
                 createNode(template, nodeDefs.get("Supervisor"), "supervisor", false, "{\"routing_hub\": true}");
         // Terminal node (v35): `approved` has no outgoing edge — it's a
@@ -1284,7 +1452,8 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                 "final_approval",
                 false,
                 "{\"loop_group\": \"impl-review\", \"terminal_decisions\": [\"approved\"], \"materialize\": \"roadmap_extension\", \"merge_pull_requests\": \"squash\"}",
-                "[{\"template_node_label\":\"implement\",\"artifacts\":[{\"name\":\"summary.md\",\"description\":\"Implementation summary describing changes made\",\"required\":true},{\"name\":\"roadmap_candidates.json\",\"description\":\"Proposed roadmap extension (optional)\",\"required\":false}]},{\"template_node_label\":\"code_review\",\"artifacts\":[{\"name\":\"review.md\",\"description\":\"Code review findings and approve/reject recommendation\",\"required\":true}]}]");
+                "[{\"template_node_label\":\"implement\",\"artifacts\":[{\"name\":\"summary.md\",\"description\":\"Implementation summary describing changes made\",\"required\":true},{\"name\":\"roadmap_candidates.json\",\"description\":\"Proposed roadmap extension (optional)\",\"required\":false}]},"
+                        + "{\"template_node_label\":\"code_review\",\"artifacts\":[{\"name\":\"review.md\",\"description\":\"Code review findings and approve/reject recommendation\",\"required\":true},{\"name\":\"roadmap_candidates.json\",\"description\":\"Reviewed roadmap proposal (optional; the newer of this and Implement's copy is used)\",\"required\":false}]}]");
 
         // Create edges. v37: the graph is happy-path-only. Review nodes still self-loop on
         // `revised` (find AND fix in one session), but every human-escalation edge is gone —

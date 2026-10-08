@@ -57,7 +57,8 @@ class PendingGateServiceCandidateBreakdownTest {
                 objectMapper,
                 Validation.buildDefaultValidatorFactory().getValidator(),
                 Mockito.mock(RoadmapAnchorLookup.class),
-                Mockito.mock(InternalRunService.class));
+                Mockito.mock(InternalRunService.class),
+                execRepo);
 
         service = new PendingGateService(
                 execRepo,
