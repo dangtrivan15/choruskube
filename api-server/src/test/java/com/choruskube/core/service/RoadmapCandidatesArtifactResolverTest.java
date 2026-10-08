@@ -470,4 +470,17 @@ class RoadmapCandidatesArtifactResolverTest {
                         .title())
                 .isEqualTo("From Implement");
     }
+
+    @Test
+    void newestCopyEmpty_winsOverOlderNonEmptyCopy() {
+        // Code Review removing every entry installs an empty document; it must not revive Implement's.
+        completed(Instant.parse("2026-10-08T10:00:00Z"), Instant.parse("2026-10-08T11:00:00Z"));
+        content(implementExecId, doc("From Implement"));
+        content(codeReviewExecId, "{\"epics\":[]}");
+
+        RoadmapCandidatesDocument result = resolver.resolve(runId, implementThenCodeReview());
+
+        assertThat(result).isNotNull();
+        assertThat(result.epics()).isEmpty();
+    }
 }

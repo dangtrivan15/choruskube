@@ -475,6 +475,21 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             10. **Deployment gaps**: env vars, secrets, migrations, config absent
                 from §8 or Part 2 migrations.
 
+            ## Deferral criteria (for checklist items 6 and 8)
+
+            A deferral criterion is one of:
+              (a) it needs its own design decision with real alternatives, one this
+                  request did not ask the run to make;
+              (b) it changes a contract, schema or component this change does not
+                  otherwise touch;
+              (c) it needs an investigation or measurement, one that can run now,
+                  before it can be designed.
+            Size alone is never one. An item that waits on an event (data grows past a
+            size, users complain, a business decision) rather than on work is never a
+            Task: it is Accepted. Placement: prefer the triggering Task's Epic; a new
+            Epic only for a genuinely separate initiative; never new children under any
+            other existing Epic.
+
             ## Decision tree
 
             Pick exactly one of:
@@ -677,8 +692,21 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             says, and nothing else except the additions below. If this run's change completed
             a Future-work caveat after all, leave it out and say so in the PR body.
 
+            A deferral criterion is one of:
+              (a) it needs its own design decision with real alternatives, one this
+                  request did not ask the run to make;
+              (b) it changes a contract, schema or component this change does not
+                  otherwise touch;
+              (c) it needs an investigation or measurement, one that can run now,
+                  before it can be designed.
+            Size alone is never one. An item that waits on an event (data grows past a
+            size, users complain, a business decision) rather than on work is never a
+            Task: it is Accepted. Placement: prefer the triggering Task's Epic; a new
+            Epic only for a genuinely separate initiative; never new children under any
+            other existing Epic.
+
             Additions are rare. A gap you find while implementing is in scope by default: fix
-            it in this run. Only when it meets one of §7's deferral criteria, add it to the PR
+            it in this run. Only when it meets a deferral criterion, add it to the PR
             body's Caveats as Future work marked `(found during implementation)`, then add it to
             the proposal. A defect outside this change that someone hits today may be added the
             same way; drop anything else unrelated.
@@ -719,9 +747,11 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
 
             Install it with `propose-roadmap --file <path>`. The server validates it and the
             tool writes /workspace/out/roadmap_candidates.json. Fix every reported error and
-            re-run until it succeeds; re-running replaces the proposal, and deleting that file
-            withdraws it. If /workspace/in/implement/roadmap_candidates.json exists, it is your
-            previous attempt's proposal: re-submit it (amended as needed), or it is dropped.
+            re-run until it succeeds; re-running replaces the proposal. To withdraw it, install an
+            empty proposal, {"epics": []}; never just delete the file, or Final Approval may
+            fall back to an older copy. If /workspace/in/implement/roadmap_candidates.json
+            exists, it is your previous attempt's proposal: re-submit it (amended as needed),
+            or install an empty one to withdraw it.
             Code Review reviews your proposal next and may edit it.
 
             ## Opening and updating pull requests
@@ -1082,18 +1112,24 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             from your own earlier copy: Implement may have re-run since, and its copy is
             always the current base.
 
-            A deferral criterion is one of: (a) the item needs its own design decision
-            with real alternatives; (b) it changes a contract, schema or component this
-            change does not otherwise touch; (c) it needs an investigation or measurement
-            before it can be designed. An item that waits on an event, not on work, is
-            never a Task.
+            A deferral criterion is one of:
+              (a) it needs its own design decision with real alternatives, one this
+                  request did not ask the run to make;
+              (b) it changes a contract, schema or component this change does not
+                  otherwise touch;
+              (c) it needs an investigation or measurement, one that can run now,
+                  before it can be designed.
+            Size alone is never one. An item that waits on an event (data grows past a
+            size, users complain, a business decision) rather than on work is never a
+            Task: it is Accepted. Placement: prefer the triggering Task's Epic; a new
+            Epic only for a genuinely separate initiative; never new children under any
+            other existing Epic.
 
             Check every new Task:
             - Its description opens with "Origin: approved with the spec — Caveat: …"
               matching a Future-work caveat in the PR body, or with "Origin: added during
               …" naming a deferral criterion.
-            - It is placed by the placement rules; propose-roadmap reports the structural
-              ones.
+            - It is placed as above; propose-roadmap reports the structural rules.
 
             Fix what you find:
             - An addition that meets no deferral criterion: do the work in this review
@@ -1105,15 +1141,19 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             - A new Task's title and description become a GitHub issue in the repo it is
               about: for a PUBLIC repo, generalize or drop anything it may not carry.
 
-            Install the result with `propose-roadmap --file <path>` in EVERY iteration
-            whose result is non-empty, even when you changed nothing. Final Approval reads
-            the newest copy, so an iteration that skips the install hands it Implement's
-            unreviewed copy. Install nothing when Implement has no proposal and you add
+            Install the result with `propose-roadmap --file <path>` in EVERY iteration in
+            which Implement has a proposal or you add an entry, even when you changed
+            nothing. If you removed every entry, install your result even when it is
+            empty, as {"epics": []}. Final Approval reads the newest copy, so an iteration
+            that skips the install hands it Implement's unreviewed copy, removed entries
+            included. Install nothing only when Implement has no proposal and you add
             nothing.
 
-            In review.md, add a `## Roadmap proposal` section listing each edit (entry,
-            change, reason), or "No changes". Your next iteration re-applies these edits,
-            and the Final Approval reviewer reads them.
+            In review.md, add a `## Roadmap proposal` section that lists every edit
+            relative to Implement's copy, including the ones you re-applied from your
+            previous iteration (entry, change, reason). Write "No changes" only when your
+            installed copy equals Implement's. Your next iteration rebuilds from this list
+            alone, and the Final Approval reviewer reads it.
 
             ## Review checklist — fix or escalate for ANY of these in ANY repo
 

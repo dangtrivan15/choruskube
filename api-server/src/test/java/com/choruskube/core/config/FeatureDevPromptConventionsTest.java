@@ -87,6 +87,48 @@ class FeatureDevPromptConventionsTest {
     }
 
     @Test
+    void codeReviewInstallsAnEmptyProposalInsteadOfSkipping() throws Exception {
+        String collapsed = promptField("CODE_REVIEW_PROMPT").replaceAll("\\s+", " ");
+        assertThat(collapsed)
+                .as("skipping the install when every entry was removed lets Implement's removed entries reach the gate")
+                .contains("install your result even when it is empty")
+                .contains("{\"epics\": []}")
+                .doesNotContain("whose result is non-empty");
+    }
+
+    @Test
+    void implementWithdrawsByInstallingAnEmptyProposal() throws Exception {
+        String collapsed = promptField("IMPLEMENT_PROMPT").replaceAll("\\s+", " ");
+        assertThat(collapsed)
+                .as("a deleted file lets the gate fall back to an older copy")
+                .contains("To withdraw it, install an empty proposal")
+                .doesNotContain("deleting that file withdraws it");
+    }
+
+    @Test
+    void codeReviewEditLogIsCumulative() throws Exception {
+        String collapsed = promptField("CODE_REVIEW_PROMPT").replaceAll("\\s+", " ");
+        assertThat(collapsed)
+                .as("a per-iteration log forgets earlier removals once Implement re-submits its own copy")
+                .contains("lists every edit relative to Implement's copy, including the ones you re-applied")
+                .contains("only when your installed copy equals Implement's");
+    }
+
+    @Test
+    void everyPromptThatJudgesADeferralCarriesTheCriteria() throws Exception {
+        for (String name : new String[] {"SPEC_REVIEW_PROMPT", "IMPLEMENT_PROMPT", "CODE_REVIEW_PROMPT"}) {
+            String collapsed = promptField(name).replaceAll("\\s+", " ");
+            assertThat(collapsed)
+                    .as("%s judges deferrals; without the criteria it invents one, e.g. size", name)
+                    .contains("its own design decision with real alternatives")
+                    .contains("one that can run now")
+                    .contains("Size alone is never one")
+                    .contains("is never a Task")
+                    .contains("prefer the triggering Task's Epic");
+        }
+    }
+
+    @Test
     void implementPromptRepairsReferencesLeftDanglingByGraduation() throws Exception {
         assertThat(promptField("IMPLEMENT_PROMPT"))
                 .as("graduating some decisions and not others is what strands a reference")
