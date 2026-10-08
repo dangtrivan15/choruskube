@@ -934,6 +934,9 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
               review notes (including "Reasoning for fixes"). Present only if
               iteration > 1. Read this carefully so you build on prior decisions
               instead of reverting them.
+            - `/workspace/in/implement/roadmap_candidates.json` — Implement's
+              latest roadmap proposal. Present only if Implement proposed one.
+              See "Roadmap proposal" below.
             - `/workspace/in/run_log.md` — accumulated history including the
               Implement node summary and any test reports.
             - `/workspace/in/<gate_label>/human_guidance.md` — present only if
@@ -1067,6 +1070,51 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             minutes and adds no signal. If a change is only provable by the full
             suite, say so in `review.md` and let the Test node prove it.
 
+            ## Roadmap proposal
+
+            Implement turns the spec's Future-work caveats into a roadmap proposal; you
+            review it and own the copy Final Approval reads. Skip this section when
+            `/workspace/in/implement/roadmap_candidates.json` is absent and you have
+            nothing to add.
+
+            Rebuild it in every iteration: start from Implement's copy, then re-apply the
+            edits your previous review.md lists under "## Roadmap proposal". Never start
+            from your own earlier copy: Implement may have re-run since, and its copy is
+            always the current base.
+
+            A deferral criterion is one of: (a) the item needs its own design decision
+            with real alternatives; (b) it changes a contract, schema or component this
+            change does not otherwise touch; (c) it needs an investigation or measurement
+            before it can be designed. An item that waits on an event, not on work, is
+            never a Task.
+
+            Check every new Task:
+            - Its description opens with "Origin: approved with the spec — Caveat: …"
+              matching a Future-work caveat in the PR body, or with "Origin: added during
+              …" naming a deferral criterion.
+            - It is placed by the placement rules; propose-roadmap reports the structural
+              ones.
+
+            Fix what you find:
+            - An addition that meets no deferral criterion: do the work in this review
+              when it is small, otherwise remove the entry.
+            - An entry approved with the spec: keep it, unless the change already did it;
+              then remove it.
+            - A gap you find that meets a deferral criterion: add it, its description
+              opening with "Origin: added during code review — <criterion>: <one line>".
+            - A new Task's title and description become a GitHub issue in the repo it is
+              about: for a PUBLIC repo, generalize or drop anything it may not carry.
+
+            Install the result with `propose-roadmap --file <path>` in EVERY iteration
+            whose result is non-empty, even when you changed nothing. Final Approval reads
+            the newest copy, so an iteration that skips the install hands it Implement's
+            unreviewed copy. Install nothing when Implement has no proposal and you add
+            nothing.
+
+            In review.md, add a `## Roadmap proposal` section listing each edit (entry,
+            change, reason), or "No changes". Your next iteration re-applies these edits,
+            and the Final Approval reviewer reads them.
+
             ## Review checklist — fix or escalate for ANY of these in ANY repo
 
             - Code smells: long methods, deep nesting, unclear variable names
@@ -1135,6 +1183,9 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
               agent start.
             - `report-result <decision>` — Submit your decision. Decision is
               final once submitted.
+            - `propose-roadmap --file <path>` — Validate and install the roadmap
+              proposal as /workspace/out/roadmap_candidates.json (see "Roadmap
+              proposal").
             - Standard git tooling (`git add`, `git commit`, `git push origin
               HEAD`) — credentials are configured by the entrypoint.
             - `artifact get` / `artifact put` — Pull/push files from/to object storage
@@ -1228,7 +1279,8 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
 
         NodeDefinition codeReview = createNodeDef("Code Review", ExecutorType.ai, CODE_REVIEW_PROMPT, 10800);
         codeReview.setOutputSpec(
-                "{\"files\":[{\"name\":\"review.md\",\"required\":true,\"description\":\"Code review findings and approve/reject recommendation\"}]}");
+                "{\"files\":[{\"name\":\"review.md\",\"required\":true,\"description\":\"Code review findings and approve/reject recommendation\"},"
+                        + "{\"name\":\"roadmap_candidates.json\",\"required\":false,\"description\":\"Reviewed roadmap proposal for Final Approval (only when one exists)\"}]}");
         // No iteration cap: same self-detected review-conflict escalation as Spec Review
         // (see the comment above specReview).
         nodeDefRepo.save(codeReview);
@@ -1335,6 +1387,8 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
         // commits push directly there), so no object storage ownership transfer is needed.
         // The self-reference here is just the prior iteration's review.md, so a
         // re-review can build on or challenge prior reasoning without reverting.
+        // Implement's proposal is read so Code Review can rebuild and re-install it;
+        // Final Approval takes whichever of the two copies was written last.
         TemplateNode tnCodeReview = createNode(
                 template,
                 nodeDefs.get("Code Review"),
@@ -1345,7 +1399,8 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                         + "\"effort_first_iteration\": \"xhigh\", "
                         + "\"model_subsequent_iteration\": \"" + ModelIds.MODEL_SONNET + "\", "
                         + "\"effort_subsequent_iteration\": \"high\"}",
-                "[{\"template_node_label\":\"code_review\",\"artifacts\":[{\"name\":\"review.md\",\"description\":\"Prior iteration's code review notes including Reasoning for fixes (only present if iteration > 1)\",\"required\":false}]}]");
+                "[{\"template_node_label\":\"code_review\",\"artifacts\":[{\"name\":\"review.md\",\"description\":\"Prior iteration's code review notes including Reasoning for fixes (only present if iteration > 1)\",\"required\":false}]},"
+                        + "{\"template_node_label\":\"implement\",\"artifacts\":[{\"name\":\"roadmap_candidates.json\",\"description\":\"Implement's latest roadmap proposal (only present if one was proposed)\",\"required\":false}]}]");
         TemplateNode tnSupervisor =
                 createNode(template, nodeDefs.get("Supervisor"), "supervisor", false, "{\"routing_hub\": true}");
         // Terminal node (v35): `approved` has no outgoing edge — it's a
@@ -1357,7 +1412,8 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                 "final_approval",
                 false,
                 "{\"loop_group\": \"impl-review\", \"terminal_decisions\": [\"approved\"], \"materialize\": \"roadmap_extension\", \"merge_pull_requests\": \"squash\"}",
-                "[{\"template_node_label\":\"implement\",\"artifacts\":[{\"name\":\"summary.md\",\"description\":\"Implementation summary describing changes made\",\"required\":true},{\"name\":\"roadmap_candidates.json\",\"description\":\"Proposed roadmap extension (optional)\",\"required\":false}]},{\"template_node_label\":\"code_review\",\"artifacts\":[{\"name\":\"review.md\",\"description\":\"Code review findings and approve/reject recommendation\",\"required\":true}]}]");
+                "[{\"template_node_label\":\"implement\",\"artifacts\":[{\"name\":\"summary.md\",\"description\":\"Implementation summary describing changes made\",\"required\":true},{\"name\":\"roadmap_candidates.json\",\"description\":\"Proposed roadmap extension (optional)\",\"required\":false}]},"
+                        + "{\"template_node_label\":\"code_review\",\"artifacts\":[{\"name\":\"review.md\",\"description\":\"Code review findings and approve/reject recommendation\",\"required\":true},{\"name\":\"roadmap_candidates.json\",\"description\":\"Reviewed roadmap proposal (optional; the newer of this and Implement's copy is used)\",\"required\":false}]}]");
 
         // Create edges. v37: the graph is happy-path-only. Review nodes still self-loop on
         // `revised` (find AND fix in one session), but every human-escalation edge is gone —

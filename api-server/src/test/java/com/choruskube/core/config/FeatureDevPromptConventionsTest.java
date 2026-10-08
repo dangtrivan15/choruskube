@@ -72,6 +72,21 @@ class FeatureDevPromptConventionsTest {
     }
 
     @Test
+    void codeReviewRebuildsAndReinstallsTheProposal() throws Exception {
+        String collapsed = promptField("CODE_REVIEW_PROMPT").replaceAll("\\s+", " ");
+        assertThat(collapsed)
+                .as("an iteration that skips the install hands Final Approval Implement's unreviewed copy")
+                .contains("## Roadmap proposal")
+                .contains("start from Implement's copy")
+                .contains("Never start from your own earlier copy")
+                .contains("propose-roadmap --file")
+                .contains("in EVERY iteration");
+        assertThat(collapsed)
+                .as("a proposed Task's text lands verbatim in an issue in a possibly PUBLIC repo")
+                .contains("PUBLIC repo");
+    }
+
+    @Test
     void implementPromptRepairsReferencesLeftDanglingByGraduation() throws Exception {
         assertThat(promptField("IMPLEMENT_PROMPT"))
                 .as("graduating some decisions and not others is what strands a reference")
