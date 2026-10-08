@@ -1,7 +1,6 @@
 package com.choruskube.core.service;
 
 import com.choruskube.core.config.GraphIds;
-import com.choruskube.core.credential.GitHubCredentialResolver;
 import com.choruskube.core.dto.CreateRunRequest;
 import com.choruskube.core.dto.RepoRef;
 import com.choruskube.core.dto.RunResponse;
@@ -15,17 +14,14 @@ import com.choruskube.core.exception.ForbiddenException;
 import com.choruskube.core.exception.InvalidStatusTransitionException;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.Epic;
-import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.GraphTemplate;
 import com.choruskube.core.model.RepoGroup;
 import com.choruskube.core.model.RunPullRequest;
 import com.choruskube.core.model.SoftwareProject;
 import com.choruskube.core.model.Story;
 import com.choruskube.core.model.Task;
-import com.choruskube.core.model.TaskGithubIssue;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.BlockableItemType;
-import com.choruskube.core.model.enums.GithubIssueState;
 import com.choruskube.core.model.enums.Priority;
 import com.choruskube.core.model.enums.Readiness;
 import com.choruskube.core.model.enums.WorkItemStatus;
@@ -34,19 +30,15 @@ import com.choruskube.core.model.enums.WorkflowRunStatusGroups;
 import com.choruskube.core.observability.AuditDetail;
 import com.choruskube.core.observability.AuditSink;
 import com.choruskube.core.repository.EpicRepository;
-import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.RunPullRequestRepository;
 import com.choruskube.core.repository.SoftwareProjectRepository;
 import com.choruskube.core.repository.StoryRepository;
-import com.choruskube.core.repository.TaskGithubIssueRepository;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.scope.ScopeProvider;
-import com.choruskube.core.util.RepoNameUtil;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityManager;
-import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -117,10 +109,7 @@ public class DefaultTaskService implements TaskService {
     // returns the already-loaded instance with its pre-lock state.
     private final EntityManager entityManager;
     private final SoftwareProjectRefResolver softwareProjectRefResolver;
-    private final GitHubAppService gitHubAppService;
-    private final GitHubCredentialResolver gitHubCredentialResolver;
-    private final TaskGithubIssueRepository taskGithubIssueRepository;
-    private final GitRepoRepository gitRepoRepo;
+    private final TaskGithubIssueCloser issueCloser;
 
     public DefaultTaskService(
             TaskRepository repo,
@@ -141,10 +130,7 @@ public class DefaultTaskService implements TaskService {
             RunPullRequestRepository prRepo,
             EntityManager entityManager,
             SoftwareProjectRefResolver softwareProjectRefResolver,
-            GitHubAppService gitHubAppService,
-            GitHubCredentialResolver gitHubCredentialResolver,
-            TaskGithubIssueRepository taskGithubIssueRepository,
-            GitRepoRepository gitRepoRepo) {
+            TaskGithubIssueCloser issueCloser) {
         this.repo = repo;
         this.storyRepo = storyRepo;
         this.epicRepo = epicRepo;
@@ -163,10 +149,7 @@ public class DefaultTaskService implements TaskService {
         this.prRepo = prRepo;
         this.entityManager = entityManager;
         this.softwareProjectRefResolver = softwareProjectRefResolver;
-        this.gitHubAppService = gitHubAppService;
-        this.gitHubCredentialResolver = gitHubCredentialResolver;
-        this.taskGithubIssueRepository = taskGithubIssueRepository;
-        this.gitRepoRepo = gitRepoRepo;
+        this.issueCloser = issueCloser;
     }
 
     @Override
@@ -550,13 +533,6 @@ public class DefaultTaskService implements TaskService {
 
     @Override
     @Transactional
-    public TaskResponse closeForMergedPullRequests(UUID id) {
-        Task task = findOrThrow(id);
-        return completeCore(task, null);
-    }
-
-    @Override
-    @Transactional
     public TaskResponse updateStatus(UUID id, WorkItemStatus target, UUID runId, String note) {
         Task task = findOrThrow(id);
         authService.checkOrgAccess("task", id);
@@ -606,10 +582,10 @@ public class DefaultTaskService implements TaskService {
      * stale/racing caller).
      */
     private TaskResponse completeCore(Task task, UUID outcomeRunId) {
-        // Same race startCore guards against: complete() (manual), closeForMergedPullRequests()
-        // (PR-merge reconciler tick) and updateStatus(Internal)() (agent) all reach this with no
-        // shared lease, so two callers could otherwise both read in_progress, both pass the guard
-        // below, and both fire closeLinkedGithubIssue's GitHub call concurrently.
+        // Same race startCore guards against: complete() (manual), updateStatus(Internal)() (agent)
+        // and TaskSettlementService (run finish) all close Tasks with no shared lease, so two
+        // callers could otherwise both read in_progress, both pass the guard below, and both fire
+        // the linked issue's GitHub close concurrently.
         UUID id = task.getId();
         Task locked = repo.findWithLockById(id).orElseThrow(() -> new NotFoundException("Task not found: " + id));
         entityManager.refresh(locked);
@@ -634,39 +610,8 @@ public class DefaultTaskService implements TaskService {
         TaskResponse response = toResponse(saved);
         eventPublisher.publishRoadmapItemChanged(
                 "task", saved.getId(), saved.getStatus().name());
-        closeLinkedGithubIssue(saved);
+        issueCloser.close(saved.getId());
         return response;
-    }
-
-    /**
-     * Closes the GitHub issue linked to this Task, if one exists and is still open — best-effort,
-     * same as the linkage's own creation: a GitHub outage never fails the Task's completion, it
-     * just leaves the row open until the next attempt notices (there is none automatic; an operator
-     * closes it by hand). A missing or already-{@code closed} linkage row is a silent no-op.
-     */
-    private void closeLinkedGithubIssue(Task task) {
-        Optional<TaskGithubIssue> linkage = taskGithubIssueRepository.findByTaskId(task.getId());
-        if (linkage.isEmpty() || linkage.get().getState() != GithubIssueState.open) {
-            return;
-        }
-        TaskGithubIssue issue = linkage.get();
-        try {
-            GitRepo gitRepo = gitRepoRepo
-                    .findById(issue.getGitRepoId())
-                    .orElseThrow(() -> new NotFoundException("GitRepo not found: " + issue.getGitRepoId()));
-            String token = gitHubCredentialResolver.getTokenForRepo(issue.getGitRepoId());
-            gitHubAppService.closeIssue(
-                    token, RepoNameUtil.deriveOwnerRepoName(gitRepo.getUrl()), issue.getIssueNumber());
-            issue.setState(GithubIssueState.closed);
-            issue.setClosedAt(Instant.now());
-            taskGithubIssueRepository.save(issue);
-        } catch (Exception e) {
-            log.warn(
-                    "Failed to close GitHub issue #{} for Task {}: {}",
-                    issue.getIssueNumber(),
-                    task.getId(),
-                    e.getMessage());
-        }
     }
 
     /**

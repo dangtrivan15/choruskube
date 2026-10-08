@@ -22,18 +22,25 @@ public class RunEventPublisher {
         this.feedPublisher = feedPublisher;
     }
 
+    /**
+     * After commit, because a run finishing also closes its Task in the same transaction: announced
+     * early, a client refetching on this event can read the run as still open, or as finished when
+     * the finish then rolls back.
+     */
     public void publishRunStatusChanged(UUID runId, String status) {
-        RunEvent event = new RunEvent("run_status_changed", runId, null, status);
-        messagingTemplate.convertAndSend("/topic/runs/" + runId, event);
+        publishAfterCommit(() -> {
+            RunEvent event = new RunEvent("run_status_changed", runId, null, status);
+            messagingTemplate.convertAndSend("/topic/runs/" + runId, event);
 
-        if ("cancelled".equals(status) || "failed".equals(status)) {
-            feedPublisher.pendingGatesChanged(runId, event);
-        }
+            if ("cancelled".equals(status) || "failed".equals(status)) {
+                feedPublisher.pendingGatesChanged(runId, event);
+            }
 
-        if ("completed".equals(status) || "failed".equals(status) || "cancelled".equals(status)) {
-            RoadmapItemEvent bridgeEvent = new RoadmapItemEvent("run_status_changed", null, status);
-            feedPublisher.roadmapItemChanged("workflow_run", runId, bridgeEvent);
-        }
+            if ("completed".equals(status) || "failed".equals(status) || "cancelled".equals(status)) {
+                RoadmapItemEvent bridgeEvent = new RoadmapItemEvent("run_status_changed", null, status);
+                feedPublisher.roadmapItemChanged("workflow_run", runId, bridgeEvent);
+            }
+        });
     }
 
     /**

@@ -74,6 +74,7 @@ class RunServicePlacementTest {
                 null, // nodeExecutionClaimService
                 null, // escalationContextResolver
                 null, // roadmapProposalValidator
+                null,
                 null); // pullRequestMergeService - unused (merge not exercised)
     }
 

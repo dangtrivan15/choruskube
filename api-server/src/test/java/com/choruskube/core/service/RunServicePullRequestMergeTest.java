@@ -145,7 +145,8 @@ class RunServicePullRequestMergeTest {
                 nodeExecutionClaimService,
                 null, // escalationContextResolver - unused (escalation not exercised)
                 roadmapProposalValidator,
-                pullRequestMergeService);
+                pullRequestMergeService,
+                null);
     }
 
     private NodeExecution stubExec() {

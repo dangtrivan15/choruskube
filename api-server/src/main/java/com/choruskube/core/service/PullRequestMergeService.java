@@ -254,14 +254,9 @@ public class PullRequestMergeService {
             if ((result.kind() == Kind.MERGED || result.kind() == Kind.ALREADY_MERGED) && row.getMergedAt() == null) {
                 row.setMergedAt(result.mergedAt() != null ? result.mergedAt() : now);
                 row.setState(PullRequestState.closed);
-                row.setStateCheckedAt(now);
-                row.setFailureCount(0);
-                row.setUnreadableSince(null);
-                row.setUnreadableReason(null);
                 prRepo.save(row);
             } else if (result.kind() == Kind.SKIPPED_CLOSED) {
                 row.setState(PullRequestState.closed);
-                row.setStateCheckedAt(now);
                 prRepo.save(row);
             }
         }
@@ -400,9 +395,8 @@ public class PullRequestMergeService {
     }
 
     /**
-     * Whether anything in this failure's cause chain came back from GitHub saying "rate limited" —
-     * same idiom as {@code PullRequestStateService.rateLimited}, bounded for the same reason: a
-     * cause chain can be cyclic, and this runs on a request thread rather than a reconciler tick.
+     * Whether anything in this failure's cause chain came back from GitHub saying "rate limited".
+     * Bounded because a cause chain can be cyclic.
      */
     private static GitHubRateLimitHints findRateLimitHints(Throwable failure) {
         Throwable cause = failure;

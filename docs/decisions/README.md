@@ -55,6 +55,7 @@ Every entry gets a row, newest last.
 | [2026-10-08---01-derived-memory-limit.md](2026-10-08---01-derived-memory-limit.md) | 2026-10-08 | Why a per-project memory request derives its container's memory limit as `max(deployment limit, 1.4 × request)` for runs the API server exempts, and why every other run stays capped at the Worker's own deployment limit | superseded by 2026-10-08---02 |
 | [2026-10-08---02-memory-limit-always-derived.md](2026-10-08---02-memory-limit-always-derived.md) | 2026-10-08 | Why every agent and dind memory limit is 1.4× its container's request with no configured limit anywhere, and why a capped run's ceiling is the deployment's default request | current |
 | [2026-10-08---03-deferred-work-proposal-flow.md](2026-10-08---03-deferred-work-proposal-flow.md) | 2026-10-08 | Why a caveat is deferred only when complicated, a condition becomes a dependency only when it is work, every Feature Development stage may propose follow-ups, and the gate reads the newest proposal copy — amending (not superseding) two clauses of `2026-09-30---01` | current |
+| [2026-10-08---04-task-closes-with-its-run.md](2026-10-08---04-task-closes-with-its-run.md) | 2026-10-08 | Why a Task closes inside the transaction that finishes its run (idempotent, after Final Approval's merges commit) and nothing polls GitHub for merges or disengages the Autopilot over it | current |
 
 - **Entry** — the filename, linked.
 - **Date** — the date in the filename.

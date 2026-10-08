@@ -58,6 +58,7 @@ public class InternalRunService {
     private final ArtifactService artifactService;
     private final WorkItemDependencyService workItemDependencyService;
     private final MilestoneService milestoneService;
+    private final TaskSettlementService taskSettlement;
 
     @Value("${artifact.enforcement.mode:warn}")
     private String artifactEnforcementMode;
@@ -89,7 +90,8 @@ public class InternalRunService {
             WorkItemDependencyRepository dependencyRepo,
             ArtifactService artifactService,
             WorkItemDependencyService workItemDependencyService,
-            MilestoneService milestoneService) {
+            MilestoneService milestoneService,
+            TaskSettlementService taskSettlement) {
         this.runRepo = runRepo;
         this.execRepo = execRepo;
         this.logRepo = logRepo;
@@ -117,6 +119,7 @@ public class InternalRunService {
         this.artifactService = artifactService;
         this.workItemDependencyService = workItemDependencyService;
         this.milestoneService = milestoneService;
+        this.taskSettlement = taskSettlement;
     }
 
     public NodeExecutionResponse createNodeExecution(UUID runId, InternalCreateNodeExecutionRequest req) {
@@ -281,6 +284,7 @@ public class InternalRunService {
         return new RunStatusResponse(run.getStatus().name());
     }
 
+    @Transactional
     public void updateRunStatus(UUID runId, InternalUpdateRunStatusRequest req) {
         WorkflowRun run =
                 runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
@@ -294,6 +298,7 @@ public class InternalRunService {
         }
 
         runRepo.save(run);
+        taskSettlement.closeIfSettledBy(run);
         eventPublisher.publishRunStatusChanged(runId, status);
 
         if ("completed".equals(status)) {

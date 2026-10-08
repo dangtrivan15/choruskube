@@ -7,11 +7,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
-/**
- * The unconfigured case is load-bearing beyond this class: {@code PullRequestStateService} treats a
- * credential it cannot resolve as a persistent failure and disengages the Autopilot on it, and this
- * is where the exception that classification keys on is actually produced.
- */
 class EnvGitHubCredentialResolverTest {
 
     private static final String NO_APP = "";

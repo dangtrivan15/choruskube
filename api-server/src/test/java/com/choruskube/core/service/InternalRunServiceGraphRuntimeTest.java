@@ -170,6 +170,7 @@ class InternalRunServiceGraphRuntimeTest {
                 dependencyRepo,
                 null,
                 null,
+                null,
                 null);
     }
 

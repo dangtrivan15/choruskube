@@ -67,7 +67,7 @@ import org.springframework.util.Assert;
  * is run inside {@link AutopilotScopeBinder}, the boundary core declares and downstream fills in.
  */
 @Service
-public class AutopilotService implements AutopilotSafetyValve {
+public class AutopilotService {
 
     private static final Logger log = LoggerFactory.getLogger(AutopilotService.class);
 
@@ -621,8 +621,8 @@ public class AutopilotService implements AutopilotSafetyValve {
                 break;
             }
             // A throttle, not a disengage: reaching this ceiling only ever stops the loop from
-            // launching more this pass. It must never touch the failure breaker or the safety
-            // valve. 0 means unlimited, so a never-configured or explicitly-uncapped Autopilot
+            // launching more this pass. It must never touch the failure breaker. 0 means unlimited, so a
+            // never-configured or explicitly-uncapped Autopilot
             // skips the check entirely rather than comparing against a real 0-occupancy ceiling.
             int maxAwaitingHuman =
                     autopilotRepo.findMaxAwaitingHumanById(autopilotId).orElse(0);
@@ -1002,54 +1002,6 @@ public class AutopilotService implements AutopilotSafetyValve {
     }
 
     /**
-     * The safety valve: something the Autopilot depends on can no longer be observed, so it stops.
-     * Today's one caller is {@code PullRequestStateService}, which learns from GitHub that
-     * a Task's pull requests have merged — and therefore that the Task is done. If those reads fail
-     * persistently, Tasks stop closing, the dependency graph goes stale, and the Autopilot would
-     * keep dispatching work against a picture of the roadmap it can no longer trust.
-     *
-     * <p>Deliberately does <strong>not</strong> touch {@code consecutiveFailures}. That counter
-     * measures run outcomes, and mixing an external failure into it would let one credential hiccup
-     * plus two unrelated run failures trip the breaker with a reason naming the wrong cause. This
-     * disengages on the first occurrence, with a reason of its own.
-     *
-     * <p>Never creates the row. No Autopilot has ever been configured here, so there is nothing to
-     * stop, and inserting one would put an installation that never opted in into a disengaged state
-     * complaining about a repository it does not automate.
-     *
-     * <p><strong>Scope comes from the failing resource, not from the thread.</strong> Every caller
-     * is a reconciler, and {@link AutopilotResolver#forCurrentScope()} is request-scoped — reaching
-     * for it here would either throw for want of a tenant context or stop whichever Autopilot the
-     * timer thread defaulted to, over a repository belonging to somebody else. {@link
-     * AutopilotResolver#forResource} is the timer-safe resolution, and taking the resource as a
-     * parameter is what makes using it unavoidable.
-     */
-    @Override
-    @Transactional
-    public void disengageForExternalFailure(String resourceType, UUID resourceId, String reason) {
-        Optional<UUID> found = autopilotResolver.forResource(resourceType, resourceId);
-        if (found.isEmpty()) {
-            log.debug(
-                    "External failure reported on {} {} with no Autopilot configured for it; nothing to "
-                            + "disengage: {}",
-                    resourceType,
-                    resourceId,
-                    reason);
-            return;
-        }
-        UUID autopilotId = found.get();
-        // The read above supplies the id and nothing else: whether it is engaged is decided inside
-        // the statement, so a human's Engage landing between the two cannot be silently undone by a
-        // decision taken before it.
-        if (autopilotRepo.disengageIfEngagedWithReason(autopilotId, reason, Instant.now()) == 0) {
-            log.debug("Autopilot already disengaged; leaving the existing reason in place: {}", reason);
-            return;
-        }
-        log.warn("Autopilot disengaged itself: {}", reason);
-        publishCurrent(autopilotId);
-    }
-
-    /**
      * The caller's Autopilot, created at its column defaults if this scope has never configured
      * one. Callers then apply the statement they actually wanted.
      *
@@ -1238,15 +1190,10 @@ public class AutopilotService implements AutopilotSafetyValve {
     }
 
     /**
-     * Pull requests this Autopilot's own runs registered without a PR number, and so whose merge
-     * state can never be read.
-     *
-     * <p>These rows used to be selected by the state reconciler's scan, reach its refresh, and
-     * return without an exception — no stamp, no classification, nothing above a debug log — so
-     * they held a batch slot forever and starved every healthy row behind them. V17 keeps them out
-     * of the scan entirely, which fixes the starvation but would otherwise make them invisible: a
-     * Task whose PR can never be observed as merged can never close, and under {@code done ⟺
-     * merged} that is work the Autopilot will wait on indefinitely.
+     * Pull requests this Autopilot's own runs registered without a PR number. Final Approval cannot
+     * merge what it cannot address, so such a run never finishes with everything merged and its Task
+     * never closes — and under {@code done ⟺ merged} that is work the Autopilot will wait on
+     * indefinitely.
      *
      * <p>Named here rather than reaped or auto-closed for the same reason as a stale {@code
      * pending} run: the remedy is a human deciding what that pull request actually was.
@@ -1260,18 +1207,8 @@ public class AutopilotService implements AutopilotSafetyValve {
         long unresolvable = prRepo.countUnresolvableForAutopilot(autopilotId);
         if (unresolvable > 0) {
             reasons.add(unresolvable
-                    + " registered pull request(s) have no PR number, so their merge state can never be read "
-                    + "and the Task(s) behind them can never close");
-        }
-        // Deliberately a reason and not a stop. GitHub going dark on one pull request cannot make
-        // the Autopilot start work it should not — a failed read never sets merged_at, so the Task
-        // stays open and its dependents stay blocked — so the honest report is "these are stuck",
-        // not "everything is off". See PullRequestStateService.FaultResponse.
-        long blocked = prRepo.countTasksBlockedByUnreadablePullRequests(autopilotId, WorkItemStatus.done);
-        if (blocked > 0) {
-            reasons.add(blocked
-                    + " open Task(s) have a pull request GitHub can no longer be asked about, so they "
-                    + "cannot close and anything depending on them stays blocked");
+                    + " registered pull request(s) have no PR number, so they can never be merged on "
+                    + "approval and the Task(s) behind them can never close");
         }
         return List.copyOf(reasons);
     }

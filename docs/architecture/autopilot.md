@@ -34,7 +34,7 @@ Two consequences of that framing shape everything below:
 | [`V14__autopilot.sql`](../../api-server/src/main/resources/db/migration/V14__autopilot.sql) | `autopilot` table; `workflow_run.autopilot_id` (FK, `ON DELETE SET NULL`) + partial index |
 | [`V15__autopilot_settled.sql`](../../api-server/src/main/resources/db/migration/V15__autopilot_settled.sql) | `workflow_run.autopilot_settled_at` + partial index on unsettled rows |
 | [`V16__autopilot_tick_lease.sql`](../../api-server/src/main/resources/db/migration/V16__autopilot_tick_lease.sql) | `autopilot.tick_owner`, `autopilot.tick_lease_until` |
-| [`V19__run_pull_request_quarantine.sql`](../../api-server/src/main/resources/db/migration/V19__run_pull_request_quarantine.sql) | `run_pull_request.unreadable_since`, `run_pull_request.unreadable_reason` + partial index — see [the safety valve](#the-safety-valve--a-separate-stop) |
+| [`V19__run_pull_request_quarantine.sql`](../../api-server/src/main/resources/db/migration/V19__run_pull_request_quarantine.sql) | `run_pull_request.unreadable_since`, `run_pull_request.unreadable_reason` + partial index — unread since [Task closure](#task-closure--part-of-the-run-finishing) replaced the pull-request poll |
 | [`V27__autopilot_max_awaiting_human.sql`](../../api-server/src/main/resources/db/migration/V27__autopilot_max_awaiting_human.sql) | `autopilot.max_awaiting_human` |
 
 `autopilot` columns: `id`, `engaged` (default `false`), `max_parallel` (default `1`,
@@ -363,7 +363,7 @@ flowchart TD
 
 **Idempotence comes from the marker column, not from a `last_tick_at` window.**
 `awaiting_retry` is a durable *status*, not an event, so any unrelated re-save of a dead
-run (the pull-request reconciler, a node-execution update) would put it back inside such
+run (a node-execution update, for instance) would put it back inside such
 a window and count it as a fresh failure — three touches of one dead run would disengage
 the Autopilot on their own.
 
@@ -397,71 +397,41 @@ rather than in whatever enforces quotas, precisely because core callers must be 
 `catch` it to make this distinction — they cannot catch a class they do not have.
 `QuotaChecker` implementations outside this repository must throw that class.
 
-### The safety valve — a separate stop
+### Task closure — part of the run finishing
 
-[`AutopilotSafetyValve`](../../api-server/src/main/java/com/choruskube/core/service/AutopilotSafetyValve.java)
-is a one-method interface implemented by `AutopilotService` and injected wherever a
-component discovers that the world the Autopilot reasons about has gone dark. Today's one
-caller is `PullRequestStateService`: if pull-request state can no longer be read, Tasks
-stop closing and the dependency graph stops advancing.
+A Task is done when its work has merged, and the Autopilot's frontier only advances when
+Tasks close. Closing is not a separate process watching for merges. It is the last step
+of the state change that finishes the run.
+[`TaskSettlementService`](../../api-server/src/main/java/com/choruskube/core/service/TaskSettlementService.java)
+marks the Task done inside the same transaction that moves its run to a terminal status.
+Both places that do that call it: the orchestrator's status report
+(`InternalRunService.updateRunStatus`) and a human's cancel (`RunService.cancelRun`). The
+Task closes only when all of these hold:
 
-It disengages on the **first** occurrence and deliberately does **not** touch
-`consecutive_failures` — mixing an external failure into that counter would let one
-credential hiccup plus two unrelated run failures trip the breaker with a reason naming
-the wrong cause.
+- the run is the Task's latest run;
+- the Task is still `in_progress`;
+- the run registered at least one pull request, and every one has merged.
 
-#### Not every unreadable pull request is a stop
+Any other case is left alone, so a repeated report is a no-op.
 
-The valve is reached only for faults whose blast radius is the whole scope. A fault
-confined to one pull request is **quarantined** instead: the row is flagged
-(`unreadable_since`, `unreadable_reason`), the Task behind it is reported through
-`whyIdle`, and the Autopilot keeps dispatching everything the fault does not touch.
-`PullRequestStateService.FaultResponse` names the three answers — `RETRY`, `QUARANTINE`,
-`DISENGAGE` — and the classification is by blast radius, not by how alarming the status
-looks:
+Two properties of the flow make this enough on its own:
 
-| Fault | Reach | Response |
-|---|---|---|
-| 429, 5xx, timeout, reset connection, any rate limit | none — waiting fixes it | `RETRY` |
-| a PR or repository that is gone or renamed away | one pull request | `QUARANTINE` |
-| credential refused, absent, or not permitted | every repository in the scope | `DISENGAGE` |
+- **The merges are already recorded.** Final Approval merges the run's pull requests and
+  commits `merged_at` before it signals the workflow, so nothing can finish the run until
+  the merges are visible (see [2026-10-06---01](../decisions/2026-10-06---01-merge-pull-requests-on-approval.md)).
+- **There is no gap to sweep.** The finish and the closure commit together or not at all.
+  A failure closing the Task rolls the finish back, and the orchestrator retries its
+  report. The linked GitHub issue and the UI events wait for the commit, so a rolled-back
+  finish announces nothing.
 
-What makes anything short of a stop safe is that **a failed read is fail-closed**.
-`refreshOne` throws before it touches the entity, so an unread pull request keeps its
-state and its Task stays open. The Autopilot can therefore be made to start *less* than
-it might have, never something it should not have — so an unreadable pull request can
-never produce dispatch against a graph that is wrong, only against one that is behind.
+What it replaced, and why: a reconciler used to poll GitHub every two minutes for every
+unmerged pull request, close Tasks it found settled, and disengage the Autopilot when
+GitHub could not be read. Once Final Approval recorded its own merges, that poll only
+re-read pull requests that could never change anything. Its timeouts were the only thing
+disengaging the Autopilot. The full reasoning is in
+[2026-10-08---04](../decisions/2026-10-08---04-task-closes-with-its-run.md).
 
-This is also why the default direction is inverted from the original design. That design
-enumerated the transient statuses and treated every unknown one as persistent, arguing a
-false stop costs an operator one click while a false continue costs an Autopilot
-dispatching blind. The argument held while stopping was the only available response. With
-`QUARANTINE` in the set, the cheap conservative answer for an unrecognised status is to
-confine it, not to silence the organisation — a single stale row in a repository nobody
-is working in should not be able to halt an entire roadmap.
-
-The quarantine flag is cleared the moment GitHub answers again, so a repository that is
-renamed back or a credential that regains access leaves quarantine with no human touching
-the row.
-
-Stopping on the first occurrence only works if "cannot be fixed by waiting" is judged
-accurately, and one status makes that hard: GitHub answers a secondary rate limit with
-**403**, the same status as a credential that genuinely lacks access. Only the response
-headers separate them, so `retry-after` and `x-ratelimit-remaining` are read into the
-exception and consulted before the status is — as a positive signal only, so a 403 with
-no such header keeps its old persistent meaning. The headers rather than the body,
-because a GitHub error payload can echo the request's `Authorization` header and this
-text reaches a log and the `disengagedReason` panel. The same applies to minting an
-installation token, which is rate limited too and reaches the classifier wrapped. It takes the failing resource as a parameter (`resourceType`,
-`resourceId`) because every caller is on a timer thread with no request context, and it
-resolves the owning Autopilot from that resource. The `engaged = true` guard lives inside
-the UPDATE (`disengageIfEngagedWithReason`), so a reconciler that reports the same failure
-on every pass overwrites nothing and publishes once.
-
-It is a narrow interface rather than the whole service on purpose: the Autopilot's
-dependency graph is one-directional, and a reconciler holding an `AutopilotService` could
-call `tick()`, `engage()` or `update()` from a thread that has no business doing any of
-them.
+A hand merge outside Final Approval no longer closes a Task. Close such a Task by hand.
 
 ## Extension points
 
@@ -590,11 +560,11 @@ follows it: the Task's own status where there is no run, the run's status where 
 `whyIdle` is the trust-critical field. An unattended dispatcher that has stopped for a
 structural reason — at capacity, nothing ready, an Epic with no Tasks blocking everything
 downstream, a run stuck in `pending` holding a slot, a registered pull request with no
-number whose merge state can never be read — has to read differently from one that has
+number, which Final Approval can never merge — has to read differently from one that has
 silently died.
 
 The same payload is published over STOMP to **`/topic/autopilot`** on every engage,
-disengage, update, safety-valve stop, and **every tick** (including ticks that started
+disengage, update, and **every tick** (including ticks that started
 nothing — `last_tick_at` moved, and an idle Autopilot must not look like a dead one). The
 whole status is the payload rather than a bare signal, because a subscriber that responded
 to a signal by refetching would race the transaction that produced it. The web UI writes
@@ -671,7 +641,7 @@ confirm the stop worked — and the starts committed on their own connections.
 | [`AutopilotResolver.java`](../../api-server/src/main/java/com/choruskube/core/service/AutopilotResolver.java) | Which row a caller means |
 | [`AutopilotScopeBinder.java`](../../api-server/src/main/java/com/choruskube/core/service/AutopilotScopeBinder.java) | Scope boundary around one pass |
 | [`AutopilotCandidateSource.java`](../../api-server/src/main/java/com/choruskube/core/service/AutopilotCandidateSource.java) | Which Epics are in scope |
-| [`AutopilotSafetyValve.java`](../../api-server/src/main/java/com/choruskube/core/service/AutopilotSafetyValve.java) | External-failure stop |
+| [`TaskSettlementService.java`](../../api-server/src/main/java/com/choruskube/core/service/TaskSettlementService.java) | Closes a Task in the transaction that finishes its run |
 | [`DefaultTaskService.java`](../../api-server/src/main/java/com/choruskube/core/service/DefaultTaskService.java) | `start` / `startForAutopilot` / `startCore` — row lock, refresh, attribution |
 | [`EpicReadinessAssembler.java`](../../api-server/src/main/java/com/choruskube/core/service/EpicReadinessAssembler.java) | One definition of "ready", shared with the board |
 | [`TaskOrderingStrategy.java`](../../api-server/src/main/java/com/choruskube/core/service/TaskOrderingStrategy.java) | The frontier comparator |

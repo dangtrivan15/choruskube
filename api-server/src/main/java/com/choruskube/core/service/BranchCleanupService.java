@@ -116,9 +116,7 @@ public class BranchCleanupService {
     }
 
     /**
-     * The credential, with any failure narrowed at this one call site — mirrors {@code
-     * PullRequestStateService#resolveToken}, which is private and so cannot be called directly.
-     * Narrowed here rather than inside {@link GitHubCredentialResolver} because that interface is
+     * The credential, with any failure narrowed at this one call site. Narrowed here rather than inside {@link GitHubCredentialResolver} because that interface is
      * an OSS seam with implementations outside this repository.
      */
     private String resolveToken(UUID runId, String ownerRepo) {

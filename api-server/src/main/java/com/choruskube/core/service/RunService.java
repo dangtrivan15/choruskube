@@ -86,6 +86,7 @@ public class RunService {
     private final EscalationContextResolver escalationContextResolver;
     private final RoadmapProposalValidator roadmapProposalValidator;
     private final PullRequestMergeService pullRequestMergeService;
+    private final TaskSettlementService taskSettlement;
 
     @Value("${temporal.task-queue}")
     private String taskQueue;
@@ -126,7 +127,8 @@ public class RunService {
             NodeExecutionClaimService nodeExecutionClaimService,
             EscalationContextResolver escalationContextResolver,
             @Lazy RoadmapProposalValidator roadmapProposalValidator,
-            PullRequestMergeService pullRequestMergeService) {
+            PullRequestMergeService pullRequestMergeService,
+            TaskSettlementService taskSettlement) {
         this.runRepo = runRepo;
         this.execRepo = execRepo;
         this.edgeRepo = edgeRepo;
@@ -163,6 +165,7 @@ public class RunService {
         this.escalationContextResolver = escalationContextResolver;
         this.roadmapProposalValidator = roadmapProposalValidator;
         this.pullRequestMergeService = pullRequestMergeService;
+        this.taskSettlement = taskSettlement;
     }
 
     @Transactional
@@ -365,6 +368,7 @@ public class RunService {
         auditSink.record(AuditSink.RUN_RESUMED, "workflow_run", id, null);
     }
 
+    @Transactional
     public void cancelRun(UUID id) {
         WorkflowRun run = findRunOrThrow(id);
         authService.checkOrgAccess("workflow_run", id);
@@ -372,6 +376,7 @@ public class RunService {
         signalWorkflow(run, "cancel");
         run.setStatus(WorkflowRunStatus.cancelled);
         runRepo.save(run);
+        taskSettlement.closeIfSettledBy(run);
         auditSink.record(AuditSink.RUN_CANCELLED, "workflow_run", id, null);
 
         // Mark any non-terminal node executions as skipped so they don't
@@ -522,6 +527,9 @@ public class RunService {
                 if (mergeMethod.isPresent()) {
                     PullRequestMergeService.MergeOutcome outcome =
                             pullRequestMergeService.mergeAll(runId, mergeMethod.get());
+                    // Commits here, before the signal, only because this method has no transaction:
+                    // a signalled run can finish at once, and its Task closes only on merges that
+                    // are already committed (TaskSettlementService).
                     pullRequestMergeService.recordOutcome(runId, outcome);
                     assembledResult = appendNote(assembledResult, pullRequestMergeService.note(outcome));
                 }

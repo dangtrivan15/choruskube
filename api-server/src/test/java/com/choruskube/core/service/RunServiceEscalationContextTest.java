@@ -118,6 +118,7 @@ class RunServiceEscalationContextTest {
                 null, // nodeExecutionClaimService — unused (signalHumanDecision not exercised)
                 escalationContextResolver,
                 null, // roadmapProposalValidator - unused (approve-time validation not exercised)
+                null,
                 null); // pullRequestMergeService - unused (merge not exercised)
     }
 
