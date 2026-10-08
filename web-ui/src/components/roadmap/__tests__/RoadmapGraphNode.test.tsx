@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import { screen, within } from "@testing-library/react";
+import { screen, within, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "@/__tests__/test-utils";
 import type { NodeProps } from "@xyflow/react";
 import RoadmapGraphNode from "../RoadmapGraphNode";
@@ -110,5 +111,18 @@ describe("RoadmapGraphNode status coloring", () => {
   it("a ready node does not show the blocked badge", () => {
     renderNode({ readiness: "READY" });
     expect(screen.queryByTestId("roadmap-graph-node-blocked-badge")).not.toBeInTheDocument();
+  });
+
+  it("hovering the label shows the full label", async () => {
+    const user = userEvent.setup();
+    renderNode({ label: "A very long item label that would otherwise be truncated" });
+
+    await user.hover(screen.getByText("A very long item label that would otherwise be truncated"));
+
+    await waitFor(() => {
+      expect(
+        screen.getAllByText("A very long item label that would otherwise be truncated").length,
+      ).toBeGreaterThanOrEqual(2);
+    });
   });
 });

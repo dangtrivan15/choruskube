@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { statusColorTokens, STATUS_TONE_CLASSES } from "@/lib/statusColors";
 import { roadmapLevelMeta } from "@/lib/roadmapLevel";
 import PriorityBadge from "@/components/roadmap/PriorityBadge";
+import TruncatedText from "@/components/ui/TruncatedText";
 import type { Readiness } from "@/lib/types";
 
 export type RoadmapItemType = "epic" | "story" | "task";
@@ -99,7 +100,7 @@ function RoadmapGraphNode({ id, data, selected }: NodeProps<RoadmapGraphNodeType
           <span className={cn("shrink-0", colors.text)} data-testid="roadmap-graph-node-status-icon">
             <ItemTypeIcon className="size-5" />
           </span>
-          <span className="truncate text-sm font-medium">{data.label}</span>
+          <TruncatedText className="text-sm font-medium">{data.label}</TruncatedText>
           {hasChildren && (
             <button
               type="button"

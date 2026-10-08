@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import ErrorAlert from "@/components/ui/ErrorAlert";
 import StatusCallout from "@/components/ui/StatusCallout";
+import TruncatedText from "@/components/ui/TruncatedText";
 import {
   useAutopilot,
   useUpdateAutopilot,
@@ -51,12 +52,17 @@ function TaskRefList({ testId, refs, emptyLabel, linkTo = "run" }: TaskRefListPr
           key={ref.taskId}
           className="flex items-center justify-between gap-2 rounded-md border border-border px-2.5 py-1.5 text-sm"
         >
-          <Link
-            to={linkTo === "task" || !ref.runId ? `/tasks/${ref.taskId}` : `/runs/${ref.runId}`}
-            className="truncate font-medium hover:underline"
+          <TruncatedText
+            className="min-w-0 flex-1 font-medium"
+            render={
+              <Link
+                to={linkTo === "task" || !ref.runId ? `/tasks/${ref.taskId}` : `/runs/${ref.runId}`}
+                className="hover:underline"
+              />
+            }
           >
             {ref.title}
-          </Link>
+          </TruncatedText>
           <Badge variant="outline" className="shrink-0">
             {ref.status}
           </Badge>
