@@ -118,7 +118,7 @@ The entrypoint passes every clone to Claude Code as a working directory (`--add-
 
 ## Local Stack
 
-`docker-compose.yaml` is the reference environment: API server, orchestrator, worker, web UI, PostgreSQL, Temporal, and MinIO-compatible object storage. A Worker runs the Docker executor, launching agent containers as siblings on the host Docker socket, so the local stack exercises the real workload path, not a stub. Bring it up with `./scripts/up.sh` and down (wiping volumes) with `./scripts/down.sh` — see [QUICKSTART.md](QUICKSTART.md#quick-start).
+`docker-compose.yaml` is the reference environment: API server, orchestrator, worker, web UI, PostgreSQL, Temporal, and S3-compatible object storage (SeaweedFS). A Worker runs the Docker executor, launching agent containers as siblings on the host Docker socket, so the local stack exercises the real workload path, not a stub. Bring it up with `./scripts/up.sh` and down (wiping volumes) with `./scripts/down.sh` — see [QUICKSTART.md](QUICKSTART.md#quick-start).
 
 **Keep `docker-compose.yaml` in sync when touching wiring:**
 - **New API env var / secret** → supply a working default in `docker-compose.yaml` so the stack boots from a clean volume with **zero configuration** (the OSS promise: no OIDC, no GitHub App, no Claude token required just to come up)

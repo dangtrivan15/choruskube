@@ -18,7 +18,7 @@
 #   25432  postgres
 #   27233  temporal
 #   29000  object-storage API
-#   29001  object-storage console
+#   29001  object-storage filer UI
 #   29080  orchestrator
 #   28085  wiremock (admin + stub API)
 
@@ -84,38 +84,42 @@ services:
 
   # S3-compatible object storage for run artifacts.
   object-storage:
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    image: chrislusf/seaweedfs:4.37
     dns_search: .
-    mem_limit: 512m
-    command: server /data --console-address ":9001"
+    mem_limit: 256m
+    command: server -dir=/data -s3 -s3.port=9000
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      # The S3 gateway's admin identity; without one it would accept anonymous requests.
+      AWS_ACCESS_KEY_ID: objectstore-dev
+      AWS_SECRET_ACCESS_KEY: objectstore-dev-secret
     ports:
       - "29000:9000"
-      - "29001:9001"
+      - "29001:8888"
     volumes:
       - object-storage-data:/data
     networks:
       - choruskube-e2e
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9000/healthz"]
       interval: 5s
       timeout: 3s
       retries: 10
 
   object-storage-setup:
-    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
+    image: chrislusf/seaweedfs:4.37
     dns_search: .
     networks:
       - choruskube-e2e
     depends_on:
       object-storage:
         condition: service_healthy
+    # The list check is what fails the setup: weed shell exits 0 even when a command errors.
     entrypoint: >
       /bin/sh -c "
-      mc alias set local http://object-storage:9000 minioadmin minioadmin &&
-      mc mb --ignore-existing local/choruskube &&
+      echo 's3.bucket.create -name choruskube' |
+      timeout 60 weed shell -master=object-storage:9333 -filer=object-storage:8888 &&
+      echo 's3.bucket.list' |
+      timeout 60 weed shell -master=object-storage:9333 -filer=object-storage:8888 | grep -qw choruskube &&
       echo 'Object storage bucket ready'
       "
 
@@ -179,8 +183,8 @@ services:
       # FLEET_TOKEN below or registration is refused and its queue goes unpolled.
       WORKER_REGISTRATION_TOKEN: e2e-worker-registration-token
       OBJECT_STORE_ENDPOINT: http://object-storage:9000
-      OBJECT_STORE_ACCESS_KEY: minioadmin
-      OBJECT_STORE_SECRET_KEY: minioadmin
+      OBJECT_STORE_ACCESS_KEY: objectstore-dev
+      OBJECT_STORE_SECRET_KEY: objectstore-dev-secret
       OBJECT_STORE_BUCKET: choruskube
       INTERNAL_AUTH_MODE: enforce
       ARTIFACT_ENFORCEMENT_MODE: warn
@@ -264,8 +268,8 @@ services:
       TEMPORAL_NAMESPACE: default
       TEMPORAL_TASK_QUEUE: choruskube
       OBJECT_STORE_ENDPOINT: http://object-storage:9000
-      OBJECT_STORE_ACCESS_KEY: minioadmin
-      OBJECT_STORE_SECRET_KEY: minioadmin
+      OBJECT_STORE_ACCESS_KEY: objectstore-dev
+      OBJECT_STORE_SECRET_KEY: objectstore-dev-secret
       OBJECT_STORE_BUCKET: choruskube
     ports:
       - "29080:8080"

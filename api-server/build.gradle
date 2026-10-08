@@ -54,7 +54,7 @@ dependencies {
     implementation 'io.temporal:temporal-sdk:1.27.0'
 
     // S3-compatible object storage client (artifacts). AWS SDK v2 talks to any
-    // S3-compatible backend (MinIO, Ceph, Cloudflare R2, AWS S3) via an endpoint
+    // S3-compatible backend (SeaweedFS, MinIO, Ceph, Cloudflare R2, AWS S3) via an endpoint
     // override + path-style addressing — see ObjectStoreConfig.
     implementation platform('software.amazon.awssdk:bom:2.46.21')
     implementation 'software.amazon.awssdk:s3'

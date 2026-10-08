@@ -127,7 +127,7 @@ jobs:
       #
       # TESTCONTAINERS_RYUK_DISABLED skips the reaper TestContainers otherwise starts: the runner's
       # docker daemon is ephemeral and torn down with the pod, so nothing outlives the run for Ryuk
-      # to clean up. Its image is also the only thing the integration tests (Postgres, MinIO) would
+      # to clean up. Its image is also the only thing the integration tests (Postgres, SeaweedFS) would
       # still pull over the network, so disabling it keeps the whole run off the registry.
       #
       # -Dtest.reports.dir gathers every suite's reports plus the per-task timing summary under one

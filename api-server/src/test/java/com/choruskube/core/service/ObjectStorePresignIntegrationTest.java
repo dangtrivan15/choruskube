@@ -24,7 +24,7 @@ import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 
 /**
- * Integration test exercising the real AWS SDK v2 presign + object path against a live MinIO
+ * Integration test exercising the real AWS SDK v2 presign + object path against a live SeaweedFS
  * (S3-compatible) container.
  *
  * <p>Unit tests mock {@link S3Presigner}, so this is the only check that a real S3-compatible
@@ -39,18 +39,20 @@ import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 @Testcontainers
 class ObjectStorePresignIntegrationTest {
 
-    private static final String ACCESS = "minioadmin";
-    private static final String SECRET = "minioadmin";
+    private static final String ACCESS = "choruskube-it";
+    private static final String SECRET = "choruskube-it-secret";
     private static final String BUCKET = "choruskube-it";
 
     @Container
-    static final GenericContainer<?> MINIO = new GenericContainer<>(
-                    DockerImageName.parse("quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z"))
-            .withEnv("MINIO_ROOT_USER", ACCESS)
-            .withEnv("MINIO_ROOT_PASSWORD", SECRET)
-            .withCommand("server", "/data")
+    static final GenericContainer<?> OBJECT_STORE = new GenericContainer<>(
+                    DockerImageName.parse("chrislusf/seaweedfs:4.37"))
+            // The S3 gateway's admin identity; without one it would accept unsigned requests and prove
+            // nothing about the signatures this test exists to check.
+            .withEnv("AWS_ACCESS_KEY_ID", ACCESS)
+            .withEnv("AWS_SECRET_ACCESS_KEY", SECRET)
+            .withCommand("server", "-dir=/data", "-s3", "-s3.port=9000")
             .withExposedPorts(9000)
-            .waitingFor(Wait.forHttp("/minio/health/ready").forPort(9000).withStartupTimeout(Duration.ofSeconds(60)));
+            .waitingFor(Wait.forHttp("/healthz").forPort(9000).withStartupTimeout(Duration.ofSeconds(60)));
 
     private static final HttpClient HTTP = HttpClient.newHttpClient();
 
@@ -58,7 +60,7 @@ class ObjectStorePresignIntegrationTest {
     private static PresignService presignService;
 
     private static String endpoint() {
-        return "http://" + MINIO.getHost() + ":" + MINIO.getMappedPort(9000);
+        return "http://" + OBJECT_STORE.getHost() + ":" + OBJECT_STORE.getMappedPort(9000);
     }
 
     @BeforeAll
@@ -77,7 +79,7 @@ class ObjectStorePresignIntegrationTest {
     }
 
     @Test
-    void presignedPut_thenPresignedGet_roundTripsAgainstRealMinio() throws Exception {
+    void presignedPut_thenPresignedGet_roundTripsAgainstARealObjectStore() throws Exception {
         String key = "runs/it/out/hello.txt";
         byte[] body = "artifact-bytes-✓".getBytes(StandardCharsets.UTF_8);
 
@@ -89,7 +91,7 @@ class ObjectStorePresignIntegrationTest {
                         .build(),
                 HttpResponse.BodyHandlers.ofString());
         assertThat(put.statusCode())
-                .as("presigned PUT accepted by MinIO (body: %s)", put.body())
+                .as("presigned PUT accepted by the object store (body: %s)", put.body())
                 .isBetween(200, 299);
 
         // Agent-style download: GET the bytes back from a presigned GET URL.

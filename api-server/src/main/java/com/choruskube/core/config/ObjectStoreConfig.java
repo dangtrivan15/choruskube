@@ -15,7 +15,7 @@ import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 
 /**
  * Wires the S3-compatible object-store clients using the AWS SDK v2. The client talks to any
- * S3-compatible backend (MinIO, Ceph, Cloudflare R2, AWS S3) — the vendor is entirely a function
+ * S3-compatible backend (SeaweedFS, MinIO, Ceph, Cloudflare R2, AWS S3) — the vendor is entirely a function
  * of {@code objectstore.endpoint} and its credentials, not the client library.
  */
 @Configuration
