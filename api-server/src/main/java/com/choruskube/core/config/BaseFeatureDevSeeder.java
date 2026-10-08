@@ -631,16 +631,12 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                 §4 Flow Diagrams  -> merge into ARCHITECTURE.md (rewritten in place, so it
                                      does NOT accumulate); this is present-tense state, not
                                      a record of this change
-              - §7 Caveats tagged "Future work" -> file a GitHub issue for each, in the repo
-                                     that caveat concerns. Resolve that repo's visibility the
-                                     same way the PR body does below and generalize or drop
-                                     anything a PUBLIC repo may not carry. Label it `future-work`
-                                     (create the label with `gh label create --force` if the repo
-                                     lacks it) and link the run's PR for that repo, opened below,
-                                     so the item stays findable and tied to what deferred it. A
-                                     proposed roadmap extension (see "Proposing deferred work to
-                                     the roadmap" below) is an acceptable home instead; either way
-                                     do not create a new docs/ surface for them
+              - §7 Caveats tagged "Future work" -> the roadmap proposal (see "Proposing
+                                     deferred work to the roadmap" below). Never file a GitHub
+                                     issue for one yourself: each proposed Task gets its own
+                                     issue when Final Approval approves it, and that issue
+                                     closes with the Task. Accepted caveats live only in the PR
+                                     body. Do not create a new docs/ surface for either
               - §1, §5, §6, §8 and Part 2 -> discard; they are execution scaffolding
             Graduate a decision only when something in this repo cites it. Do not bulk-copy
             the spec.
@@ -675,8 +671,28 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             the server rejects create-proposal, update-proposal, create-story, create-task,
             create-dependency and create-milestone.
 
-            After every repo's implementation is done, write ONE proposal for the whole run in
-            the roadmap_candidates.json shape:
+            The spec already decided what to defer, and the human approved it with the spec.
+            After every repo's implementation is done, write ONE proposal for the whole run
+            containing every §7 Caveat tagged Future work, placed as its "Proposed as" line
+            says, and nothing else except the additions below. If this run's change completed
+            a Future-work caveat after all, leave it out and say so in the PR body.
+
+            Additions are rare. A gap you find while implementing is in scope by default: fix
+            it in this run. Only when it meets one of §7's deferral criteria, add it to the PR
+            body's Caveats as Future work marked `(found during implementation)`, then add it to
+            the proposal. A defect outside this change that someone hits today may be added the
+            same way; drop anything else unrelated.
+
+            Start every new Task's description with one origin line, so the Final Approval
+            reviewer knows which entries need a first look:
+              Origin: approved with the spec — Caveat: <title>
+              Origin: added during implementation — <criterion>: <one line>
+
+            A new Task's title and description become a GitHub issue in the repo it is about.
+            Resolve that repo's visibility the same way the PR body does below, and generalize
+            or drop anything a PUBLIC repo may not carry.
+
+            Write the proposal in the roadmap_candidates.json shape:
               {"epics": [...], "dependencies": [{"blocking": "<key>", "blocked": "<key>"}]}
             - An entry carrying "existingId" is an item that already exists: nothing is created
               for it and its other fields are ignored. Any other entry is new and needs a title
@@ -693,20 +709,20 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
               Epic needs at least one Story and every new Story at least one Task.
             - Give an entry a "key" to use it in "dependencies". When a follow-up builds on
               this run's change, list this run's Task as {"existingId": "<Task id>", "key": "..."}
-              under its Story and make it the blocking side.
+              under its Story and make it the blocking side. When a "Proposed as" line names a
+              blocking Task elsewhere, anchor that Task the same way, under its own anchored
+              Story and Epic and with no new children, and make it the blocking side.
             - No milestones.
             - A new Task in a multi-repo project needs "repoId" naming which of this run's repos
               it is about; a single-repo project fills it in for you. The server files a matching
-              GitHub issue for every new Task automatically and closes it when the Task is done —
-              prefer this over creating a GitHub issue yourself for anything in scope above. A
-              direct GitHub issue is still the right tool for work that must survive even if this
-              run is abandoned.
+              GitHub issue for every new Task automatically and closes it when the Task is done.
 
             Install it with `propose-roadmap --file <path>`. The server validates it and the
             tool writes /workspace/out/roadmap_candidates.json. Fix every reported error and
             re-run until it succeeds; re-running replaces the proposal, and deleting that file
             withdraws it. If /workspace/in/implement/roadmap_candidates.json exists, it is your
             previous attempt's proposal: re-submit it (amended as needed), or it is dropped.
+            Code Review reviews your proposal next and may edit it.
 
             ## Opening and updating pull requests
 
@@ -786,7 +802,8 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                  than reworded into a hint that one exists. If §7 is empty, or
                  nothing survives the filter, omit this section entirely. Mark
                  each Future-work Caveat you proposed to the roadmap this run
-                 as `proposed to the roadmap (pending Final Approval)`.
+                 as `proposed to the roadmap (pending Final Approval)`, and keep
+                 the `(found during implementation)` marker on any you added.
 
                  **d. ❓ Open Decisions for Reviewer** — ONLY include this
                  section if at least one Caveat is still tagged "Needs human

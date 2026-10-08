@@ -47,16 +47,28 @@ class FeatureDevPromptConventionsTest {
     }
 
     @Test
-    void implementPromptTethersFutureWorkIssues() throws Exception {
-        String p = promptField("IMPLEMENT_PROMPT");
-        assertThat(p)
-                .as("an unpinned Future-work issue misfiles or leaks private context into a public repo")
-                .contains("in the repo")
+    void implementPromptRoutesFutureWorkOnlyThroughTheProposal() throws Exception {
+        String collapsed = promptField("IMPLEMENT_PROMPT").replaceAll("\\s+", " ");
+        assertThat(collapsed)
+                .as("a hand-filed issue has no Task, never closes, and duplicates the Task's own issue")
+                .contains("Never file a GitHub issue for one yourself")
+                .doesNotContain("A direct GitHub issue is still the right tool")
+                .doesNotContain("prefer this over creating a GitHub issue yourself");
+        assertThat(collapsed)
+                .as("a proposed Task's text lands verbatim in an issue in a possibly PUBLIC repo")
+                .contains("become a GitHub issue in the repo it is about")
                 .contains("visibility");
-        assertThat(p)
-                .as("a Future-work issue is orphaned unless it is labeled and linked back to its run")
-                .contains("future-work")
-                .contains("link the run's PR");
+    }
+
+    @Test
+    void implementPromptWritesUpTheSpecsProposalAndMarksAdditions() throws Exception {
+        String collapsed = promptField("IMPLEMENT_PROMPT").replaceAll("\\s+", " ");
+        assertThat(collapsed)
+                .as("an Implement-originated entry reaches the human unmarked and unreviewed")
+                .contains("placed as its \"Proposed as\" line says, and nothing else")
+                .contains("Origin: approved with the spec")
+                .contains("Origin: added during implementation")
+                .contains("(found during implementation)");
     }
 
     @Test
