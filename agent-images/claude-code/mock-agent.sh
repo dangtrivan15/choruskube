@@ -886,7 +886,7 @@ JSON
     CONTAINER_NAMES=$(docker ps --format '{{.Names}}' 2>/dev/null || true)
     echo "Containers visible from DinD: ${CONTAINER_NAMES:-<none>}"
 
-    for svc in api-server orchestrator postgres temporal minio wiremock; do
+    for svc in api-server orchestrator postgres temporal object-storage wiremock; do
       if echo "$CONTAINER_NAMES" | grep -q "$svc"; then
         echo "FAIL: Found ChorusKube service '$svc' in docker ps — isolation broken" >&2
         exit 1
