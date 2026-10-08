@@ -72,12 +72,53 @@ class FeatureDevPromptConventionsTest {
     }
 
     @Test
-    void specPromptAsksWhetherTheRunCouldFinishAnItemBeforeDeferringIt() throws Exception {
+    void specPromptDefaultsGapsIntoTheRun() throws Exception {
         String collapsed = promptField("SPEC_AND_PLAN_PROMPT").replaceAll("\\s+", " ");
         assertThat(collapsed)
-                .as("deferral is decided when the spec is drafted; without this, finishable work is deferred")
-                .contains("ask whether this run could simply finish it")
+                .as("without an in-scope default, finishable work is deferred into a follow-up run")
+                .contains("Every gap you find is in scope unless it is clearly not")
+                .contains("Size alone is never a reason to defer")
                 .contains("name exactly what to change rather than deferring it");
+    }
+
+    @Test
+    void specPromptSeparatesOutOfScopeFromDeferral() throws Exception {
+        String collapsed = promptField("SPEC_AND_PLAN_PROMPT").replaceAll("\\s+", " ");
+        assertThat(collapsed)
+                .as("out-of-scope work tagged Future work becomes a Task that Autopilot runs")
+                .contains("An Accepted caveat creates nothing")
+                .contains("its own design decision with real alternatives")
+                .contains("a contract, schema or component this change does not otherwise touch")
+                .contains("an investigation or measurement, one that can run now")
+                .contains("Most runs defer nothing");
+    }
+
+    @Test
+    void specPromptTurnsWorkConditionsIntoDependenciesAndEventsIntoAccepted() throws Exception {
+        String collapsed = promptField("SPEC_AND_PLAN_PROMPT").replaceAll("\\s+", " ");
+        assertThat(collapsed)
+                .as("a Task standing for an event starts at once and invents work")
+                .contains("ask whether a run could do X and finish it")
+                .contains("Future work that depends on X")
+                .contains("X is an event");
+    }
+
+    @Test
+    void specPromptProposesFollowUpsWithoutWritingTheRoadmapDocument() throws Exception {
+        String collapsed = promptField("SPEC_AND_PLAN_PROMPT").replaceAll("\\s+", " ");
+        assertThat(collapsed)
+                .as("the human approves follow-ups with the spec; Implement writes the document")
+                .contains("**Proposed as:**")
+                .contains("Do not run propose-roadmap yourself");
+    }
+
+    @Test
+    void specReviewEnforcesTheDeferralBar() throws Exception {
+        String collapsed = promptField("SPEC_REVIEW_PROMPT").replaceAll("\\s+", " ");
+        assertThat(collapsed)
+                .as("a reviewer that flags absorbed gaps as scope creep pushes the drafter back to deferring")
+                .contains("closes a gap this change creates or exposes is justified, not scope creep")
+                .contains("names no deferral criterion");
     }
 
     /**

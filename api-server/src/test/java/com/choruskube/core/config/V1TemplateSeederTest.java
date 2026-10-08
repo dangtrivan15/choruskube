@@ -820,13 +820,13 @@ class V1TemplateSeederTest extends BaseTest {
     }
 
     @Test
-    void currentVersionIsBumpedForMergeOnFinalApproval() {
-        // v45: Final Approval merges the run's registered pull requests on approval
-        // (merge_pull_requests: squash). This is the rolling version tripwire: rewrite it and
-        // bump the literal whenever CURRENT_VERSION changes, so a template edit that forgets the
-        // bump cannot ship silently.
-        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(45);
-        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 45))
+    void currentVersionIsBumpedForDeferredWorkProposalFlow() {
+        // v46: Caveats separate out-of-scope work from deferral, the spec proposes follow-ups,
+        // and Code Review edits the proposal Final Approval reads. This is the rolling version
+        // tripwire: rewrite it and bump the literal whenever CURRENT_VERSION changes, so a
+        // template edit that forgets the bump cannot ship silently.
+        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(46);
+        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 46))
                 .isPresent();
     }
 

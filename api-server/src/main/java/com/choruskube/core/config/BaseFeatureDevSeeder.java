@@ -39,7 +39,10 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
     // Future work in its Caveats section.
     // v45: Final Approval merges the run's registered pull requests on approval
     // (merge_pull_requests: squash).
-    static final int CURRENT_VERSION = 45;
+    // v46: Caveats separate out-of-scope work (Accepted) from deferral (Future work with a named
+    // criterion); the spec proposes follow-ups, Implement writes them up, Code Review edits them,
+    // and Final Approval reads the newest copy.
+    static final int CURRENT_VERSION = 46;
 
     private static final String TEMPLATE_NAME = "Feature Development";
 
@@ -225,22 +228,71 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             Things the spec does NOT handle. If a risk has a mitigation IN the spec,
             it is part of the design, not a caveat — drop it.
 
+            Every gap you find is in scope unless it is clearly not. Anything this
+            change needs to be correct, safe or complete goes into Part 2, not here:
+            edge cases and failure modes of what it builds, tests, docs, a defect it
+            creates or exposes, a small adjacent fix that completes it. Size alone is
+            never a reason to defer. If it is out of reach only because it needs a
+            setting or access you lack, it is a step for the human: name exactly
+            what to change rather than deferring it.
+
             For EACH caveat, use this exact block:
 
               ### Caveat N: <short title>
               - **What's not handled:** one line
               - **Disposition:** Accepted | Future work | Needs human decision
-              - **Reasoning:** why this disposition; what would trigger revisiting
+              - **Reasoning:** why this disposition; for Future work, which deferral
+                criterion it meets; for Accepted, what would trigger revisiting
+              - **Proposed as:** (Future work only) <Task title> — under <an existing
+                Epic or Story, by title and id | a new Story "<title>" in <Epic> | a
+                new Epic "<title>">; blocked by <Task title and id>, if any
 
-            "Needs human decision" is an alarm bell — use it sparingly, only when
-            the choice genuinely cannot be defaulted. Most caveats are Accepted or
-            Future work.
+            Dispositions:
+            - **Accepted** — out of scope: not asked for by the feature request and
+              not needed for this change to be correct, safe or complete.
+              Enhancements past the request, speculative measurement, and anything
+              that waits on an event (below). An Accepted caveat creates nothing.
+            - **Future work** — belongs to this change's purpose but is too
+              complicated for this run. Use it only when at least one deferral
+              criterion holds, and name which in Reasoning:
+                (a) it needs its own design decision with real alternatives, one
+                    this request did not ask you to make;
+                (b) it changes a contract, schema or component this change does not
+                    otherwise touch;
+                (c) it needs an investigation or measurement, one that can run now,
+                    before it can be designed.
+            - **Needs human decision** — an alarm bell: use it sparingly, only when
+              the choice genuinely cannot be defaulted.
 
-            Before tagging something Future work, ask whether this run could simply
-            finish it. If it is small and completes this change, plan it in Part 2 —
-            it is design, not a caveat. If it is out of reach only because it needs
-            a setting or access you lack, it is a step for the human: name exactly
-            what to change rather than deferring it.
+            Most caveats are Accepted. Most runs defer nothing.
+
+            For an item to revisit "when X happens", ask whether a run could do X and
+            finish it.
+            - Yes, X is work: Future work that depends on X. If X is already on the
+              roadmap (run get-roadmap-graph), name its Task in "blocked by"; if not,
+              propose X as well, and X must meet a deferral criterion on its own. The
+              follow-up then cannot start until X is done.
+            - No, X is an event (data grows past a size, users complain, a business
+              decision): Accepted, with X as the trigger. No Task can stand for an
+              event: a Task for it would start at once and invent work, and a blocker
+              nobody does would never clear.
+
+            Calibration:
+            - A field the change already writes next to is not recorded: Part 2.
+            - Re-check a threshold once real data passes it, and none has yet:
+              Accepted.
+            - Switch a caller to a new API once a planned migration ships: Future
+              work, blocked by the migration's Task.
+            - An opt-out nobody asked for: Accepted.
+            - A crash mid-operation strands state, and recovery needs a new lease
+              column plus a takeover rule: Future work, (a) and (b).
+
+            Place a proposed item under the triggering Task's Epic when this run has
+            one; propose a new Epic only for a genuinely separate initiative. The
+            "Proposed as" lines are this run's roadmap proposal: the human approves
+            them with the spec, and the Implement node turns them into the roadmap
+            document. Do not run propose-roadmap yourself, even if your system prompt
+            suggests it.
 
             The "Out of scope" content traditionally listed separately belongs here
             with disposition "Accepted".
@@ -409,11 +461,15 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             5. **Missing details**: failure modes without coverage in §3/§6 or §7
                (with disposition) are gaps.
             6. **Caveat hygiene**: a "Caveat" pointing to a mitigation already in
-               the spec is design, not a caveat.
+               the spec is design, not a caveat. A Future-work caveat that names no
+               deferral criterion, waits on an event, or lacks a "Proposed as" line
+               is a gap: move it to Part 2 when the change needs it, otherwise to
+               Accepted. Check each "Proposed as" placement too.
             7. **Maintainability risk**: couplings, god classes, brittle
                abstractions — per repo and at the seams.
             8. **Scope creep**: Part 2 work not justified by Part 1; Part 1
-               promises Part 2 doesn't deliver.
+               promises Part 2 doesn't deliver. Part 2 work that closes a gap this
+               change creates or exposes is justified, not scope creep.
             9. **Convention violations per repo**: package structure, naming,
                test style.
             10. **Deployment gaps**: env vars, secrets, migrations, config absent
