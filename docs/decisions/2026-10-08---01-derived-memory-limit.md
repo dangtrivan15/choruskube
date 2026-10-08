@@ -1,4 +1,4 @@
-# A per-project memory request derives its container's memory limit
+# A per-project memory request derives its memory limit, capped unless exempt
 
 ## Status
 
@@ -29,23 +29,36 @@ Common practice for memory limits, all of which assume the request is near the r
 
 ## Decision
 
-When a project sets a memory request and nothing sets a memory limit for that container, the
-Kubernetes executor derives the limit:
+The Kubernetes executor sizes a container that a project has set a memory request for in one of
+two ways, chosen per run by the API server (`WorkloadMemoryCeilingPolicy`, carried to the Worker as
+`memoryCeilingExempt` on the prepare response):
 
-```
-limit = max(deployment limit, 1.4 × request)   rounded up to a whole Mi
-```
+| run | rule |
+|---|---|
+| **exempt** | `limit = max(deployment limit, 1.4 × request)`, rounded up to a whole Mi |
+| **capped** | `limit = deployment limit`; a request above it fails the launch before any object is created |
 
-1. **The deployment limit is a floor, not a fallback.** A request can raise a limit and never lower
-   one, so a request sized from RSS keeps the deployment's room for file cache, and a request above
-   the deployment limit launches instead of failing.
-2. **1.4×, not 1.0–1.25×.** Because requests are RSS-based, the limit must hold owned memory plus
+1. **The deployment limit is the ceiling for capped runs.** On a shared data plane a project must
+   not reserve more than the operator sized a container for: the scheduler books requests, so one
+   oversized request leaves every other tenant's pods Pending. The ceiling is the Worker's own
+   `K8S_AGENT_MEMORY_LIMIT` and its PodTemplate's dind limit — no separate setting — because only
+   the Worker can read them: a tenant may run its own data plane with its own PodTemplate, which the
+   API server never sees. On that data plane the tenant's template is the ceiling, so it needs no
+   exemption of its own.
+2. **For exempt runs the deployment limit is a floor, not a fallback.** A request can raise a limit
+   and never lower one, so a request sized from RSS keeps the deployment's room for file cache, and
+   a request above the deployment limit launches instead of failing.
+3. **1.4×, not 1.0–1.25×.** Because requests are RSS-based, the limit must hold owned memory plus
    hot cache; 1.4× sits between the limit-to-request ratios already running without thrash or OOM
    and under the common 2× production cap.
-3. **A dind PodTemplate with no memory limit stays unlimited.** Deriving one there would *add* a
-   ceiling the operator never set.
-4. **An explicit per-execution `AgentResources.MemoryLimit` is applied verbatim**, and a request
-   above it still fails the launch before any object is created.
+4. **Exempt by default, capped on doubt.** A single-tenant deployment's projects are all set by its
+   operator, so the default policy (`ExemptMemoryCeilingPolicy`) exempts every run; a multi-tenant
+   deployment supplies its own. A policy that throws caps the run, and a Worker talking to an API
+   server that predates the field decodes it as `false` — a version skew caps, never uncaps.
+5. **A dind PodTemplate with no memory limit stays unlimited** for both kinds of run: deriving one
+   would *add* a ceiling the operator never set.
+6. **An explicit per-execution `AgentResources.MemoryLimit` is applied verbatim**, and a request
+   above it still fails the launch.
 
 The ratio is `memoryLimitHeadroomPercent` in `worker/executor/k8s/kubernetes.go`; the project forms
 state the rule next to each request field.
@@ -58,5 +71,10 @@ state the rule next to each request field.
   ones it leaves no room for file cache.
 - **A separate per-project limit field.** Two numbers per container to keep consistent, for a value
   the request already determines.
-- **Validating against the limit in the API server.** The API server cannot see a Worker's limits;
-  a Worker may run in a different cluster with different defaults.
+- **Enforcing the ceiling in the API server when a project is saved.** It would fail earlier, in
+  the form, but the API server cannot see a Worker's limits: it would need its own copy of the
+  value, and could never know a tenant-run data plane's PodTemplate.
+- **A separate ceiling setting on the Worker.** One more value to keep in step with the limits it
+  bounds; the deployment limit already says how much a container was sized for.
+- **No ceiling.** Any member able to edit a project could reserve a whole node of a shared data
+  plane.

@@ -419,12 +419,13 @@ func (a *Activities) executeLocally(ctx context.Context, runID uuid.UUID, params
 			ServiceAccount: prep.ServiceAccount,
 		},
 	}
-	// Request only: the executor derives the limit from it, never below the deployment's, so a
-	// burst past the project's measured peak borrows headroom instead of being OOM-killed.
+	// Request only: the limit stays the deployment's, or for an exempt execution is derived from the
+	// request, so a burst past the project's measured peak borrows headroom instead of OOM-killing.
 	if prep.AgentMemoryRequest != "" {
 		execParams.AgentResources = &executor.AgentResources{MemoryRequest: prep.AgentMemoryRequest}
 	}
 	execParams.DindMemoryRequest = prep.DindMemoryRequest
+	execParams.MemoryCeilingExempt = prep.MemoryCeilingExempt
 	if prep.Registry != nil {
 		execParams.Credentials.Registry = &executor.RegistryCredentials{
 			Host:     prep.Registry.Host,

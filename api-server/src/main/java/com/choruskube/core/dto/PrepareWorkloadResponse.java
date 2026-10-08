@@ -7,6 +7,7 @@ public record PrepareWorkloadResponse(
         String dindImage,
         String agentMemoryRequest,
         String dindMemoryRequest,
+        boolean memoryCeilingExempt,
         String claudeOAuthToken,
         String githubTokenUrl,
         RegistryCredentialsDto registryCredentials,

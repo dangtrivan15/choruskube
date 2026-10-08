@@ -223,15 +223,17 @@ type PrepareResponse struct {
 	// means no override -- the executor falls back to its own configured default.
 	DindImage string `json:"dindImage"`
 	// AgentMemoryRequest / DindMemoryRequest are the project's memory requests (Kubernetes
-	// quantities). Empty means no override -- the deployment default sizes that container. Set,
-	// the executor derives the container's memory limit from it.
-	AgentMemoryRequest string               `json:"agentMemoryRequest"`
-	DindMemoryRequest  string               `json:"dindMemoryRequest"`
-	ClaudeOAuthToken   string               `json:"claudeOAuthToken"`
-	GitHubTokenURL     string               `json:"githubTokenUrl"`
-	Registry           *RegistryCredentials `json:"registryCredentials"`
-	Namespace          string               `json:"namespace"`
-	ServiceAccount     string               `json:"serviceAccount"`
+	// quantities). Empty means no override -- the deployment default sizes that container.
+	AgentMemoryRequest string `json:"agentMemoryRequest"`
+	DindMemoryRequest  string `json:"dindMemoryRequest"`
+	// MemoryCeilingExempt lets those requests exceed the deployment's limits. Absent (an older
+	// API server) decodes as false, so a version skew caps rather than uncaps.
+	MemoryCeilingExempt bool                 `json:"memoryCeilingExempt"`
+	ClaudeOAuthToken    string               `json:"claudeOAuthToken"`
+	GitHubTokenURL      string               `json:"githubTokenUrl"`
+	Registry            *RegistryCredentials `json:"registryCredentials"`
+	Namespace           string               `json:"namespace"`
+	ServiceAccount      string               `json:"serviceAccount"`
 }
 
 // PrepareParams contains everything needed to resolve a workload's launch inputs via the API
