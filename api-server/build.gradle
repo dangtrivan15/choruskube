@@ -162,6 +162,28 @@ tasks.named('test') {
     maxHeapSize = testMaxHeapSize.get()
     finalizedBy jacocoTestReport
 
+    // Gradle compiles in-process, so that heap stays committed beneath the test JVM for the whole run.
+    // One full GC at MaxHeapFreeRatio=10 (committed ≈ used / 0.9) returns it; Min drops to 0 first or
+    // the JVM rejects Max < Min, and both are restored so a jvmargs override survives.
+    doFirst {
+        def hs = java.lang.management.ManagementFactory.getPlatformMXBean(com.sun.management.HotSpotDiagnosticMXBean)
+        if (hs == null) {
+            return
+        }
+        def min = hs.getVMOption('MinHeapFreeRatio').value
+        def max = hs.getVMOption('MaxHeapFreeRatio').value
+        def before = Runtime.runtime.totalMemory()
+        hs.setVMOption('MinHeapFreeRatio', '0')
+        hs.setVMOption('MaxHeapFreeRatio', '10')
+        try {
+            System.gc()
+        } finally {
+            hs.setVMOption('MaxHeapFreeRatio', max)
+            hs.setVMOption('MinHeapFreeRatio', min)
+        }
+        logger.info("Returned compile-phase heap before forking tests: committed ${before >> 20}MB -> ${Runtime.runtime.totalMemory() >> 20}MB")
+    }
+
     if (apiServerReportsDir != null) {
         reports.html.outputLocation = new File(apiServerReportsDir, 'tests/test')
         reports.junitXml.outputLocation = new File(apiServerReportsDir, 'test-results/test')
