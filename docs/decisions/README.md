@@ -56,6 +56,7 @@ Every entry gets a row, newest last.
 | [2026-10-08---02-memory-limit-always-derived.md](2026-10-08---02-memory-limit-always-derived.md) | 2026-10-08 | Why every agent and dind memory limit is 1.4× its container's request with no configured limit anywhere, and why a capped run's ceiling is the deployment's default request | current |
 | [2026-10-08---03-deferred-work-proposal-flow.md](2026-10-08---03-deferred-work-proposal-flow.md) | 2026-10-08 | Why a caveat is deferred only when complicated, a condition becomes a dependency only when it is work, every Feature Development stage may propose follow-ups, and the gate reads the newest proposal copy — amending (not superseding) two clauses of `2026-09-30---01` | current |
 | [2026-10-08---04-task-closes-with-its-run.md](2026-10-08---04-task-closes-with-its-run.md) | 2026-10-08 | Why a Task closes inside the transaction that finishes its run (idempotent, after Final Approval's merges commit) and nothing polls GitHub for merges or disengages the Autopilot over it | current |
+| [2026-10-08---05-run-detail-responsive-layout.md](2026-10-08---05-run-detail-responsive-layout.md) | 2026-10-08 | Why Run detail splits into three viewport tiers with run info in a persistent summary strip (never sharing a container with node detail), URL-based node selection with once-per-run auto-focus, one shared modal bottom sheet, and a controller-computed graph viewport instead of `fitView` | current |
 
 - **Entry** — the filename, linked.
 - **Date** — the date in the filename.

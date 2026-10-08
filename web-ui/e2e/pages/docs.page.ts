@@ -38,7 +38,7 @@ export class DocsPage {
   }
 
   async getPageTitle(): Promise<string> {
-    return this.pageTitle.textContent() ?? "";
+    return (await this.pageTitle.textContent()) ?? "";
   }
 
 }
