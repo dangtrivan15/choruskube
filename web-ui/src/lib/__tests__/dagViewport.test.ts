@@ -4,7 +4,6 @@ import {
   PAD,
   MIN_ZOOM,
   FIT_MAX_ZOOM,
-  COMPACT_MIN_READABLE_ZOOM,
   COMPACT_ZOOM,
   type Rect,
 } from "../dagViewport";

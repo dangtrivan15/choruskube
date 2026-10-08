@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render } from "@testing-library/react";
-import { createRef } from "react";
+import type { RefObject } from "react";
 import DagViewportController from "../DagViewportController";
 
 let mockWidth = 1000;
@@ -21,12 +21,17 @@ vi.mock("@xyflow/react", () => ({
     selector({ width: mockWidth, height: mockHeight }),
 }));
 
-function renderController(props: Partial<Parameters<typeof DagViewportController>[0]> = {}) {
-  const userMovedRef = props.userMovedRef ?? createRef<boolean>();
-  if (userMovedRef.current === undefined || userMovedRef.current === null) {
-    (userMovedRef as React.MutableRefObject<boolean>).current = false;
-  }
-  const onApplied = (props.onApplied as ReturnType<typeof vi.fn>) ?? vi.fn();
+interface RenderControllerProps {
+  resetKey?: string;
+  focusNodeId?: string | null;
+  compact?: boolean;
+  userMovedRef?: RefObject<boolean>;
+  onApplied?: () => void;
+}
+
+function renderController(props: RenderControllerProps = {}) {
+  const userMovedRef: RefObject<boolean> = props.userMovedRef ?? { current: false };
+  const onApplied = props.onApplied ?? vi.fn();
   const utils = render(
     <DagViewportController
       resetKey={props.resetKey ?? "run-1#topo-1"}
