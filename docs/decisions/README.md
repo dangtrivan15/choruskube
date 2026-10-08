@@ -52,6 +52,7 @@ Every entry gets a row, newest last.
 | [2026-09-30---01-roadmap-extension-proposals.md](2026-09-30---01-roadmap-extension-proposals.md) | 2026-09-30 | Why deferred work becomes roadmap items only through a human-approved proposal materialized at an approval gate, how existing items are anchored into it, and why direct roadmap writes are refused wherever a workflow declares a roadmap gate | current |
 | [2026-10-06---01-merge-pull-requests-on-approval.md](2026-10-06---01-merge-pull-requests-on-approval.md) | 2026-10-06 | Why approving a merge-declaring gate merges the run's registered PRs synchronously before any decision state is written, how retries stay idempotent, and why merges precede roadmap materialization | current |
 | [2026-10-07---01-e2e-stack-memory-footprint.md](2026-10-07---01-e2e-stack-memory-footprint.md) | 2026-10-07 | Why the e2e stack packages a host-built api-server jar, orders `:web-ui:test` after `:api-server:test`, and lets the Gradle daemon return idle heap — memory priced against contract fidelity | current |
+| [2026-10-08---01-derived-memory-limit.md](2026-10-08---01-derived-memory-limit.md) | 2026-10-08 | Why a per-project memory request derives its container's memory limit as `max(deployment limit, 1.4 × request)` instead of keeping the deployment's limit and failing the launch when the request exceeds it | current |
 
 - **Entry** — the filename, linked.
 - **Date** — the date in the filename.

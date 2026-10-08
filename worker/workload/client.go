@@ -223,7 +223,8 @@ type PrepareResponse struct {
 	// means no override -- the executor falls back to its own configured default.
 	DindImage string `json:"dindImage"`
 	// AgentMemoryRequest / DindMemoryRequest are the project's memory requests (Kubernetes
-	// quantities). Empty means no override -- the deployment default sizes that container.
+	// quantities). Empty means no override -- the deployment default sizes that container. Set,
+	// the executor derives the container's memory limit from it.
 	AgentMemoryRequest string               `json:"agentMemoryRequest"`
 	DindMemoryRequest  string               `json:"dindMemoryRequest"`
 	ClaudeOAuthToken   string               `json:"claudeOAuthToken"`

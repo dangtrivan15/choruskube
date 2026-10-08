@@ -115,7 +115,7 @@ service account, or credential itself — see
 | `K8S_AGENT_CPU_REQUEST` | `200m` | Default agent-container CPU request; a node execution's own sizing overrides it. |
 | `K8S_AGENT_MEMORY_REQUEST` | `1Gi` | Default agent-container memory request; overridable per node. |
 | `K8S_AGENT_CPU_LIMIT` | `1` | Default agent-container CPU limit; overridable per node. |
-| `K8S_AGENT_MEMORY_LIMIT` | `3Gi` | Default agent-container memory limit; overridable per node. |
+| `K8S_AGENT_MEMORY_LIMIT` | `3Gi` | Default agent-container memory limit, and the floor when a per-project memory request derives one (1.4× the request). |
 
 **Docker (`EXECUTOR_TYPE=docker`, the default)** — the local-stack and self-hosted-on-a-single-host path.
 
