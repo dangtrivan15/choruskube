@@ -52,12 +52,15 @@ Edges carry an optional **condition** value (e.g., `approved`, `rejected`).
 
 **Example routing:**
 
+```mermaid
+flowchart LR
+  SD["Spec Draft"] -->|approved| IM["Implement"]
+  SD -->|rejected| RS["Revise Spec"]
+  CR["Code Review"] -->|approved| RT["Run Tests"]
+  CR -->|revised| CR
 ```
-[Spec Draft]  --"approved"--> [Implement]
-[Spec Draft]  --"rejected"--> [Revise Spec]
-[Code Review] --"approved"--> [Run Tests]
-[Code Review] --"revised"---> [Code Review]  (self-loop; reviewer iterates)
-```
+
+Code Review's `revised` edge loops back to itself: the reviewer iterates until approving.
 
 ## Template Immutability
 

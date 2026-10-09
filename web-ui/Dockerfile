@@ -23,23 +23,8 @@ RUN apk add --no-cache gettext
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY src/config.js.template /config.js.template
 
-COPY <<'EOF' /etc/nginx/conf.d/default.conf
-server {
-    listen 80;
-    root /usr/share/nginx/html;
-    index index.html;
-
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-
-    # Don't cache config.js — environment-specific
-    location = /config.js {
-        add_header Cache-Control "no-store, no-cache, must-revalidate";
-        expires -1;
-    }
-}
-EOF
+COPY nginx-default.conf /etc/nginx/conf.d/default.conf
+COPY nginx-spa-locations.conf /etc/nginx/snippets/spa-locations.conf
 
 # Same-origin proxy config, staged (not auto-loaded). When NGINX_PROXY_API=true
 # the CMD swaps it in as default.conf so the SPA can reach the API same-origin.
