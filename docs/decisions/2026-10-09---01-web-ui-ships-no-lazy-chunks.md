@@ -40,10 +40,11 @@ Measured on this change, OSS build:
   outside it, or if any emitted asset is a `.js`/`.mjs` file (the shape Vite gives a Web Worker or
   a `?url` script import — those never appear as chunks, so a chunk-only check misses them). The
   error names every offending file.
-- **The serving contract is declared once and shared by both server configs and both images.**
+- **The serving contract is declared once and shared by both server configs.**
   The SPA shell (`index.html`, every SPA route) is `Cache-Control: no-cache` so it always
   revalidates. Everything under `/assets/` is `public, max-age=31536000, immutable` and served
-  gzip-compressed; a miss under `/assets/` is a real `404`, never the shell. This is what turns
+  gzip-compressed, including to requests a reverse proxy forwards (nginx skips those by default);
+  a miss under `/assets/` is a real `404`, never the shell. This is what turns
   the increased first-load size into a net transfer saving: the `vendor` chunk is fetched once per
   browser per dependency set, compressed, and cached for a year, while today's single entry chunk
   is resent uncompressed on every deploy.
@@ -76,8 +77,8 @@ Measured on this change, OSS build:
 - **Precompress hashed assets at build time (`gzip_static`).** Measured on-the-fly gzip instead:
   it costs roughly 55 ms of CPU per `vendor` fetch, paid once per browser per `vendor` version
   because the response is then cached as immutable. Precompressing at the maximum level would
-  save roughly 0.3 MB on `vendor`, not enough to justify a second build artifact per file in every
-  image that serves it.
+  save roughly 0.3 MB on `vendor`, not enough to justify a second build artifact per file in the
+  image.
 
 ## Consequences
 
