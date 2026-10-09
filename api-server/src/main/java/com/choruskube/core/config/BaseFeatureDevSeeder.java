@@ -42,7 +42,10 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
     // v46: Caveats separate out-of-scope work (Accepted) from deferral (Future work with a named
     // criterion); the spec proposes follow-ups, Implement writes them up, Code Review edits them,
     // and Final Approval reads the newest copy.
-    static final int CURRENT_VERSION = 46;
+    // v47: the spec opens with Context and Approach at the level of the idea, records each
+    // Technical Decision as an option table, links existing roadmap items to their app pages,
+    // and later nodes cite its sections by title.
+    static final int CURRENT_VERSION = 47;
 
     private static final String TEMPLATE_NAME = "Feature Development";
 
@@ -79,8 +82,9 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             Your output is a SINGLE document with two clearly separated parts:
 
             - Part 1: Specification — for human reviewers. A coherent cross-repo
-              narrative they use to evaluate architecture, decisions, repo
-              collaboration, real-world risks, and operational handoff.
+              narrative they use to understand the problem and the idea, then to
+              evaluate architecture, decisions, repo collaboration, real-world
+              risks, and operational handoff.
             - Part 2: Implementation Plan — for AI implementers. Per-repo, file-level,
               ordered tasks the downstream Implement node will execute.
 
@@ -94,7 +98,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
               - privacy — which content may appear in a PUBLIC repo. A public repo's slice
                 must never name a non-public repo or disclose that one exists; mark any
                 content that must be generalised before it lands there.
-              - layer — which repo each statement belongs to. Keep §3 Architecture
+              - layer — which repo each statement belongs to. Keep the Architecture section
                 organised by seam, with every bullet labelled by the repo it concerns, so a
                 slice is a filter over bullets.
               - relevance — what someone editing only that repo needs, versus what is
@@ -108,72 +112,65 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             Part 1: Specification (for human reviewers)
             ═══════════════════════════════════════════════════════════════════════
 
-            Write Part 1 as a single cross-repo narrative. Per-repo subsections do NOT
-            appear in sections 2, 3, 4, 6, 7, or 8 — those describe the system as a
-            whole. Per-repo grouping appears ONLY in section 5 (Expected Changed
-            Files), where reviewers need to scan their own repo's surface.
+            Write Part 1 as a single cross-repo narrative a reviewer reads top to
+            bottom: the idea first, then the shape, then the detail. Per-repo
+            grouping appears ONLY in Expected Changed Files, where reviewers need to
+            scan their own repo's surface; every other section describes the system
+            as a whole.
 
             Use the following EIGHT sections, in this order. Section numbers and
             titles must match exactly.
 
-            ## 1. Summary
+            ## 1. Context
 
-            One short paragraph in plain language: what the feature does for the user,
-            the user-visible outcome, and a one-line list of repos touched. No
-            decisions or rationale yet — orientation only.
+            Why this change exists, in plain words: the business need or the
+            technical gap, at the level of the idea. Start from what works today and
+            show what it cannot do, so the reader feels the gap before any solution
+            appears. Close with the user-visible outcome in one or two sentences and
+            a one-line list of repos touched. No solution yet.
 
-            ## 2. Decisions
+            ## 2. Approach
 
-            The substantive design choices a reviewer must understand to evaluate the
-            design. Cross-repo by default. Document a decision when ANY of these is
-            true:
+            The idea that closes the gap: the chain of reasoning from problem to
+            solution, and how the parts hand work to each other — still at the level
+            of the idea. Say what makes it work. Name the pattern when a real one
+            applies, together with what makes it that pattern ("the gate is an
+            outbox: it records the intent in the same transaction, and a later step
+            delivers it"). If no named pattern fits, say what it is in plain terms;
+            never invent a name to fill the slot.
 
-            - Multiple viable approaches existed and you picked one.
-            - The choice introduces a new component, abstraction, term, or interface
-              the reviewer must understand.
-            - The choice meaningfully constrains future work or other repos.
+            Include one small mermaid `flowchart` of that chain: roles and steps,
+            not files, endpoints or tables, in about ten nodes or fewer.
 
-            For EACH decision, use this exact block:
-
-              ### Decision N: <short title>
-              - **Context:** what forced a choice
-              - **Choice:** what we picked (one line)
-              - **Alternatives considered:**
-                - Option A — one-line description
-                - Option B — one-line description
-                (or "None viable" — then explain in Why this choice)
-              - **Tradeoff:** what we give up OR take on by choosing this. For
-                alternative-driven choices: the cost of not picking the runner-up.
-                For novel-component choices: the new maintenance / complexity /
-                surface area we now own.
-              - **Why this choice:** the deciding factor
-
-            Repo-local style choices (e.g., "use record vs. class") do NOT belong
-            here unless they shape an interface another repo depends on.
+            The bar for Context and Approach: strip every component, class, endpoint
+            and table name from them. If the reasoning still holds, it is at the
+            level of the idea. If it collapses, you described the implementation —
+            move that detail to Architecture. Introduce a new term only after the
+            idea it names is clear, as a label for it, never as a definition the
+            reader must take on trust.
 
             ## 3. Architecture
 
-            A single-voice description of the system, organized BY SEAM /
-            RESPONSIBILITY, NOT by repo. Each seam is a `### 3.x <Seam Name>`
-            subsection containing:
+            The concrete shape: which components do what, then how they interact at
+            runtime.
+
+            Organize the seams BY RESPONSIBILITY, NOT by repo. Each seam is a
+            `### 3.x <Seam Name>` subsection containing:
 
             - A 2–4 sentence prose description of the seam's purpose and runtime
               contract.
             - A bulleted "who does what" listing each affected repo's component and
               its role IN THIS SEAM. The same repo may appear under multiple seams.
-            - A reference back to Decisions by number when the seam embodies a chosen
-              tradeoff (e.g., "Reflects Decision 2").
+            - A reference to a Technical Decision by number when the seam embodies
+              that choice (e.g., "Reflects Decision 2").
             - OPTIONAL: a small mermaid `flowchart` showing static topology, ONLY
               when the seam involves ≥3 components OR crosses a trust boundary. Skip
               it if prose suffices.
 
-            NO code snippets, NO file paths in this section. Those belong in §5 or
-            in Part 2.
-
-            ## 4. Flow Diagrams
-
-            End-to-end runtime behavior across all affected repos, expressed as one
-            or more mermaid `sequenceDiagram` blocks. REQUIRED, not optional.
+            Close the section with one more subsection, `### 3.x Runtime Flow`,
+            numbered after the last seam: end-to-end runtime behavior across all
+            affected repos, as one or more mermaid `sequenceDiagram` blocks.
+            REQUIRED, not optional.
 
             - Always include the happy path across all participating components
               (browser/client → ingress → service → DB → back, as applicable).
@@ -192,38 +189,46 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             If a flow truly cannot be expressed as a sequence diagram, use a
             `flowchart` block with the same fence. Never emit raw graph/edge JSON.
 
-            ## 5. Expected Changed Files
+            NO code snippets, NO file paths in this section. Those belong in
+            Expected Changed Files or in Part 2.
 
-            The interface-level surface the implementation will touch, grouped BY
-            REPO. This is the ONE section where per-repo grouping is preserved —
-            reviewers need to scan their own repo's footprint. Use `### <repo-name>`
-            subheadings.
+            ## 4. Technical Decisions
 
-            For each file, use ONE LINE in this format:
+            The forks: places where at least two approaches were viable and you
+            picked one. The reader now knows the idea and the shape; this section
+            shows what else was on the table and why it lost. Record a fork when it
+            shapes the design a reviewer evaluates, or constrains future work or
+            other repos. A choice with only one viable option is not a decision: if
+            it introduces a new component or term, explain it in Architecture.
+            Repo-local style choices (e.g., "use record vs. class") do NOT belong
+            here unless they shape an interface another repo depends on.
 
-              - `<relative path>` — NEW | MODIFY | DELETE — interface-level
-                description of what changes.
+            For EACH decision, use this exact block:
 
-            A succinct declarative signature is permitted (e.g.,
-            `record(long totalRuns, long totalRepos)`); a method body is not. If
-            the description needs more than one line, you have leaked implementation
-            detail — push it to Part 2.
+              ### Decision N: <the question it settles>
 
-            ## 6. Testing Strategy
+              | Option | Gives us | Costs us |
+              |---|---|---|
+              | ✅ **A. <chosen option>** | <one phrase> | <one phrase> |
+              | B. <alternative> | <one phrase> | <one phrase> |
 
-            Describe WHAT FLOWS AND BEHAVIORS will be tested, not which files or
-            test methods will be added. Audience is the human reviewer assessing
-            coverage, not the agent writing the tests.
+              **Decided by:** <the one factor that tipped it, in one line>
 
-            - E2E: user-facing flows that must work after the change.
-            - Integration: cross-component contracts (API shape, headers, status
-              codes, error semantics).
-            - Behavioral: failure modes, fallbacks, edge conditions.
-            - Negative / security: explicitly state what should be rejected.
+            - Title the decision as the question it settles ("Where does the retry
+              state live?"), not as its answer.
+            - One row per viable option, at least two. The chosen option is the
+              first row, marked ✅ and bold. Do not pad the table with an option
+              nobody would pick.
+            - Each cell is one phrase. No code, file paths or pipe characters inside
+              a cell: they break the table.
+            - "Costs us" is honest on every row, the chosen one included. A chosen
+              row that costs nothing means its tradeoff has not been found yet.
+            - "Decided by" names the deciding factor; it does not restate the
+              chosen row.
+            - If the question needs setup its title cannot carry, add one sentence
+              between the title and the table.
 
-            Files and test method names go in Part 2, not here.
-
-            ## 7. Caveats
+            ## 5. Caveats
 
             Things the spec does NOT handle. If a risk has a mitigation IN the spec,
             it is part of the design, not a caveat — drop it.
@@ -244,8 +249,9 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
               - **Reasoning:** why this disposition; for Future work, which deferral
                 criterion it meets; for Accepted, what would trigger revisiting
               - **Proposed as:** (Future work only) <Task title> — under <an existing
-                Epic or Story, by title and id | a new Story "<title>" in <Epic> | a
-                new Epic "<title>">; blocked by <Task title and id>, if any
+                Epic or Story, linked | a new Story "<title>" in <Epic, linked> | a
+                new Epic "<title>">; blocked by <a Task: linked when it exists, by
+                title when this spec proposes it>, if any
 
             Dispositions:
             - **Accepted** — out of scope: not asked for by the feature request and
@@ -269,7 +275,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             For an item to revisit "when X happens", ask whether a run could do X and
             finish it.
             - Yes, X is work: Future work that depends on X. If X is already on the
-              roadmap (run get-roadmap-graph), name its Task in "blocked by"; if not,
+              roadmap (run get-roadmap-graph), link its Task in "blocked by"; if not,
               propose X as well, and X must meet a deferral criterion on its own. The
               follow-up then cannot start until X is done.
             - No, X is an event (data grows past a size, users complain, a business
@@ -294,8 +300,53 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             document. Do not run propose-roadmap yourself, even if your system prompt
             suggests it.
 
+            Link every roadmap item that already exists to its page in the app, as
+            `[<title>](<path>)`, using the ids get-roadmap-graph returns:
+              Epic   /roadmap/epics/<epicId>
+              Story  /roadmap/epics/<epicId>/stories/<storyId>
+              Task   /tasks/<taskId>
+            An item this spec proposes has no id until Final Approval creates it:
+            name it by title, and link the existing Epic or Story it goes under.
+
+            When a caveat's reason is that another ticket handles it, link that
+            ticket in Reasoning, or name the Task this spec proposes for it. Never
+            write "handled separately" or "tracked elsewhere" without saying where.
+            If no ticket exists and this spec proposes none, nothing else handles
+            it: decide its disposition by the rules above.
+
             The "Out of scope" content traditionally listed separately belongs here
             with disposition "Accepted".
+
+            ## 6. Expected Changed Files
+
+            The interface-level surface the implementation will touch, grouped BY
+            REPO. This is the ONE section where per-repo grouping is preserved —
+            reviewers need to scan their own repo's footprint. Use `### <repo-name>`
+            subheadings.
+
+            For each file, use ONE LINE in this format:
+
+              - `<relative path>` — NEW | MODIFY | DELETE — interface-level
+                description of what changes.
+
+            A succinct declarative signature is permitted (e.g.,
+            `record(long totalRuns, long totalRepos)`); a method body is not. If
+            the description needs more than one line, you have leaked implementation
+            detail — push it to Part 2.
+
+            ## 7. Testing Strategy
+
+            Describe WHAT FLOWS AND BEHAVIORS will be tested, not which files or
+            test methods will be added. Audience is the human reviewer assessing
+            coverage, not the agent writing the tests.
+
+            - E2E: user-facing flows that must work after the change.
+            - Integration: cross-component contracts (API shape, headers, status
+              codes, error semantics).
+            - Behavioral: failure modes, fallbacks, edge conditions.
+            - Negative / security: explicitly state what should be rejected.
+
+            Files and test method names go in Part 2, not here.
 
             ## 8. Manual Operations
 
@@ -331,7 +382,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
               exactly across repos.
             - **File-level test cases per repo:** for each test file, what it
               covers. This is where file/method-level test detail lives — NOT
-              in §6.
+              in Testing Strategy.
             - **Migrations:** exact SQL or schema changes per repo, if applicable.
               If none, say "None" and explain why.
             - **Verification commands:** a small table of (command, repo) that the
@@ -345,13 +396,18 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
 
             - Every Caveat is something the spec does NOT handle. If you can point
               to a section that handles it, it's design, not a caveat.
-            - §3 contains no per-repo subsections. §5 contains nothing but per-repo
-              one-line file lists. They have inverted structures by design.
+            - Context and Approach still read correctly with every component, class,
+              endpoint and table name stripped out.
+            - Architecture contains no per-repo subsections. Expected Changed Files
+              contains nothing but per-repo one-line file lists. They have inverted
+              structures by design.
+            - Every Technical Decision is a table with at least two viable options
+              and exactly one ✅ row, followed by its "Decided by" line.
             - All diagrams are inside ```mermaid fences. No raw graph/edge JSON.
             - Part 1 contains no code bodies. Part 2 contains no design rationale.
             - A typical feature spec runs 200–500 lines. If yours is much longer,
-              Part 2 has likely leaked into Part 1, or §7 contains "risks" that are
-              actually handled in the design.
+              Part 2 has likely leaked into Part 1, or Caveats contains "risks" that
+              are actually handled in the design.
 
             If the feature request is vague or underspecified, make reasonable
             assumptions based on the codebases and document them as Caveats with
@@ -439,32 +495,42 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
 
             The spec follows a fixed structure:
 
-              Part 1: §1 Summary, §2 Decisions, §3 Architecture, §4 Flow Diagrams,
-              §5 Expected Changed Files, §6 Testing Strategy, §7 Caveats,
-              §8 Manual Operations
+              Part 1, eight numbered sections: Context, Approach, Architecture
+              (seams, then Runtime Flow), Technical Decisions, Caveats, Expected
+              Changed Files, Testing Strategy, Manual Operations
               Part 2: Implementation Plan (task ordering, cross-repo sync points,
               file-level test cases, migrations, verification commands)
 
             ## What to check
 
-            1. **Format conformance**: §1–§8 + Part 2 in order with exact titles;
-               §3 organized by seam/responsibility (NOT per-repo); §5 is per-repo,
-               one line per file, no method bodies; mermaid diagrams in ```mermaid
-               fences; Decision blocks have all five fields; Caveat blocks have a
-               Disposition tag; §8 has the Local/Production table.
-            2. **Internal consistency**: Part 2 file changes match §5; migrations
-               match §2/§3; §6 testing strategy matches Part 2 file-level tests.
+            1. **Format conformance**: the eight Part 1 sections + Part 2 in order
+               with exact titles; Architecture organized by seam/responsibility
+               (NOT per-repo) and closing with a Runtime Flow subsection that holds
+               a sequence diagram; Expected Changed Files is per-repo, one line per
+               file, no method bodies; mermaid diagrams in ```mermaid fences; each
+               Technical Decision is titled as a question and is an
+               Option / Gives us / Costs us table with at least two rows, exactly
+               one ✅ row, and a "Decided by" line; Caveat blocks have a
+               Disposition tag; Manual Operations has the Local/Production table.
+            2. **Internal consistency**: Part 2 file changes match Expected Changed
+               Files; migrations match Architecture and Technical Decisions;
+               Testing Strategy matches Part 2 file-level tests.
             3. **Cross-repo contract coherence**: shared surfaces defined
                identically on both sides (method/path/body/response).
-            4. **Decision soundness**: Tradeoffs honest (not all-upsides);
-               Why-this-choice not just a restatement.
-            5. **Missing details**: failure modes without coverage in §3/§6 or §7
-               (with disposition) are gaps.
+            4. **Decision soundness**: "Costs us" honest on every row, the chosen
+               one included; no rejected option is a strawman nobody would pick;
+               "Decided by" names the deciding factor rather than restating the
+               chosen row.
+            5. **Missing details**: failure modes without coverage in Architecture,
+               Testing Strategy or Caveats (with disposition) are gaps.
             6. **Caveat hygiene**: a "Caveat" pointing to a mitigation already in
                the spec is design, not a caveat. A Future-work caveat that names no
                deferral criterion, waits on an event, or lacks a "Proposed as" line
                is a gap: move it to Part 2 when the change needs it, otherwise to
-               Accepted. Check each "Proposed as" placement too.
+               Accepted. Check each "Proposed as" placement too. A caveat whose
+               reason is that another ticket handles it must link that ticket, or
+               name the Task this spec proposes; every existing roadmap item the
+               spec mentions is linked to its page in the app.
             7. **Maintainability risk**: couplings, god classes, brittle
                abstractions — per repo and at the seams.
             8. **Scope creep**: Part 2 work not justified by Part 1; Part 1
@@ -473,7 +539,12 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             9. **Convention violations per repo**: package structure, naming,
                test style.
             10. **Deployment gaps**: env vars, secrets, migrations, config absent
-                from §8 or Part 2 migrations.
+                from Manual Operations or Part 2 migrations.
+            11. **Idea level**: Context and Approach still read correctly with
+                every component, class, endpoint and table name stripped out.
+                Implementation detail found there moves to Architecture. Approach
+                names a pattern only when one really applies, and says what makes
+                it that pattern.
 
             ## Deferral criteria (for checklist items 6 and 8)
 
@@ -555,16 +626,17 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
 
             The drafting node produced a single document with two parts:
 
-            - Part 1 (Specification, sections §1–§8) — context, decisions,
-              architecture, caveats, manual operations. READ FIRST to understand
-              intent and constraints.
+            - Part 1 (Specification, eight numbered sections) — context, approach,
+              architecture, technical decisions, caveats, changed files, testing
+              strategy, manual operations. READ FIRST to understand intent and
+              constraints.
             - Part 2 (Implementation Plan) — your actionable task list with file
               changes, ordering, cross-repo sync points, file-level test cases,
               migrations, and verification commands. EXECUTE Part 2 step by step;
               refer back to Part 1 whenever Part 2 is ambiguous about intent.
 
             If Part 2 conflicts with Part 1 (e.g., a file path in Part 2 doesn't
-            match §5 Expected Changed Files, or a migration contradicts §2
+            match Expected Changed Files, or a migration contradicts Technical
             Decisions), follow Part 1's intent and document the discrepancy in
             your summary.
 
@@ -641,18 +713,22 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
 
             When a decision earns a durable home, route the spec's content by whether it
             accumulates:
-              - §2 Decisions      -> docs/decisions/  (accumulates; entries are immutable)
-              - §3 Architecture,
-                §4 Flow Diagrams  -> merge into ARCHITECTURE.md (rewritten in place, so it
-                                     does NOT accumulate); this is present-tense state, not
-                                     a record of this change
-              - §7 Caveats tagged "Future work" -> the roadmap proposal (see "Proposing
-                                     deferred work to the roadmap" below). Never file a GitHub
-                                     issue for one yourself: each proposed Task gets its own
-                                     issue when Final Approval approves it, and that issue
-                                     closes with the Task. Accepted caveats live only in the PR
-                                     body. Do not create a new docs/ surface for either
-              - §1, §5, §6, §8 and Part 2 -> discard; they are execution scaffolding
+              - Technical Decisions -> docs/decisions/  (accumulates; entries are immutable)
+              - Architecture, with its
+                Runtime Flow        -> merge into ARCHITECTURE.md (rewritten in place, so it
+                                       does NOT accumulate); this is present-tense state, not
+                                       a record of this change
+              - Caveats tagged "Future work" -> the roadmap proposal (see "Proposing
+                                       deferred work to the roadmap" below). Never file a GitHub
+                                       issue for one yourself: each proposed Task gets its own
+                                       issue when Final Approval approves it, and that issue
+                                       closes with the Task. Accepted caveats live only in the PR
+                                       body. Do not create a new docs/ surface for either
+              - Context, Approach   -> discard; they tell the story of this change, and
+                                       whatever in them lasts is already in Architecture or
+                                       a decision
+              - Expected Changed Files, Testing Strategy, Manual Operations and Part 2
+                                    -> discard; they are execution scaffolding
             Graduate a decision only when something in this repo cites it. Do not bulk-copy
             the spec.
 
@@ -688,7 +764,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
 
             The spec already decided what to defer, and the human approved it with the spec.
             After every repo's implementation is done, write ONE proposal for the whole run
-            containing every §7 Caveat tagged Future work, placed as its "Proposed as" line
+            containing every Caveat tagged Future work, placed as its "Proposed as" line
             says, and nothing else except the additions below. If this run's change completed
             a Future-work caveat after all, leave it out and say so in the PR body.
 
@@ -716,9 +792,14 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
               Origin: approved with the spec — Caveat: <title>
               Origin: added during implementation — <criterion>: <one line>
 
+            The spec links an existing roadmap item to its page in the app, and the item's
+            id is the last segment of that link: use it as the item's "existingId".
+
             A new Task's title and description become a GitHub issue in the repo it is about.
             Resolve that repo's visibility the same way the PR body does below, and generalize
-            or drop anything a PUBLIC repo may not carry.
+            or drop anything a PUBLIC repo may not carry. Write each app link from the spec
+            (a path starting /roadmap/ or /tasks/) as its plain title: those paths open only
+            inside ChorusKube.
 
             Write the proposal in the roadmap_candidates.json shape:
               {"epics": [...], "dependencies": [{"blocking": "<key>", "blocked": "<key>"}]}
@@ -805,31 +886,34 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                  within this repo alone; do not explain it by reference to
                  another repo.
 
-                 **b. ⚠️ Manual Operations Required** — from section §8 of the
-                 specification (the Local/Production table AND the "Notes for
-                 production rollout" block), under a top-level
+                 **b. ⚠️ Manual Operations Required** — from the specification's
+                 Manual Operations section (the Local/Production table AND the
+                 "Notes for production rollout" block), under a top-level
                  `## ⚠️ Manual Operations Required` heading.
-                   - For a NON-PUBLIC repo: copy §8 verbatim.
+                   - For a NON-PUBLIC repo: copy that section verbatim.
                    - For a PUBLIC repo: include ONLY the operations that apply
                      to this repo, rewritten to remove other-repo names,
                      internal hosts, cluster/namespace detail, and internal
                      paths. Drop rows that describe work in a non-public repo
                      entirely — do not replace them with a placeholder row that
                      implies one exists.
-                   - If §8 is empty, absent, or nothing survives the filter,
-                     write `_No manual operations required for this change._`
+                   - If that section is empty, absent, or nothing survives the
+                     filter, write `_No manual operations required for this change._`
                      instead.
 
                  **c. Caveats & Known Limitations** — under a top-level
                  `## Caveats & Known Limitations` heading, list each Caveat from
-                 §7 of the specification: title and Disposition tag, "What's
-                 not handled" line, "Reasoning" line. §7 is cross-repo content
-                 like §8, so the same visibility rule applies: NON-PUBLIC repo
+                 the specification's Caveats section: title and Disposition tag,
+                 "What's not handled" line, "Reasoning" line, each app link
+                 written as its plain title. Caveats are
+                 cross-repo content like Manual Operations, so the same
+                 visibility rule applies: NON-PUBLIC repo
                  gets every Caveat; PUBLIC repo gets only the Caveats that
                  concern it, generalized to remove other-repo names and
                  infrastructure detail, with any Caveat that exists only
                  because a non-public repo is involved dropped entirely rather
-                 than reworded into a hint that one exists. If §7 is empty, or
+                 than reworded into a hint that one exists. If the Caveats
+                 section is empty, or
                  nothing survives the filter, omit this section entirely. Mark
                  each Future-work Caveat you proposed to the roadmap this run
                  as `proposed to the roadmap (pending Final Approval)`, and keep
@@ -842,7 +926,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                  question in one sentence, list the options the spec laid out
                  (if any), and make clear that merging implies accepting the
                  default behavior described in the Caveat's Reasoning. Inherits
-                 §7's visibility filter. Omit entirely if none remain.
+                 the Caveats visibility filter. Omit entirely if none remain.
 
                  **e. Companion PRs placeholder** — a single line:
                  `_Companion PRs: (linked after all PRs are created)_`. OMIT
@@ -1059,11 +1143,13 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                   concise summary of this repo's portion of the fix. PR body,
                   in this exact order: **a. Summary** of what you fixed in
                   this repo (generalized, no cross-repo references, if
-                  PUBLIC); **b. ⚠️ Manual Operations Required** from spec §8
-                  (verbatim for NON-PUBLIC, filtered/generalized for PUBLIC,
-                  or `_No manual operations required for this change._` if
-                  none survive); **c. Caveats & Known Limitations** from spec
-                  §7 (same visibility filtering — NON-PUBLIC gets every
+                  PUBLIC); **b. ⚠️ Manual Operations Required** from the Manual
+                  Operations section of the specification (verbatim for
+                  NON-PUBLIC, filtered/generalized for PUBLIC, or
+                  `_No manual operations required for this change._` if none
+                  survive); **c. Caveats & Known Limitations** from the Caveats
+                  section of the specification, each app link written as its plain
+                  title (same visibility filtering — NON-PUBLIC gets every
                   Caveat, PUBLIC gets only the ones that concern it with any
                   non-public-only Caveat dropped entirely, omit the section
                   if empty); **d. ❓ Open Decisions for Reviewer**, only if a
@@ -1139,7 +1225,9 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             - A gap you find that meets a deferral criterion: add it, its description
               opening with "Origin: added during code review — <criterion>: <one line>".
             - A new Task's title and description become a GitHub issue in the repo it is
-              about: for a PUBLIC repo, generalize or drop anything it may not carry.
+              about: for a PUBLIC repo, generalize or drop anything it may not carry. Write
+              each app link from the spec (a path starting /roadmap/ or /tasks/) as its
+              plain title.
 
             Install the result with `propose-roadmap --file <path>` in EVERY iteration in
             which Implement has a proposal or you add an entry, even when you changed

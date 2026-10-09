@@ -564,8 +564,8 @@ class V1TemplateSeederTest extends BaseTest {
     void specDraftPromptDeclaresEightSectionStructure() {
         // The drafting prompt must enumerate the eight Part 1 sections + Part 2
         // by title so the agent produces the expected, human-reviewable structure
-        // (Summary / Decisions / Architecture / Flow Diagrams / Expected Changed
-        // Files / Testing Strategy / Caveats / Manual Operations).
+        // (Context / Approach / Architecture / Technical Decisions / Caveats /
+        // Expected Changed Files / Testing Strategy / Manual Operations).
         var template = templateRepo
                 .findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION)
                 .orElseThrow();
@@ -578,15 +578,19 @@ class V1TemplateSeederTest extends BaseTest {
         var draftDef = nodeDefRepo.findById(draftNode.getNodeDefinitionId()).orElseThrow();
 
         assertThat(draftDef.getPromptTemplate())
-                .contains("## 1. Summary")
-                .contains("## 2. Decisions")
+                .contains("## 1. Context")
+                .contains("## 2. Approach")
                 .contains("## 3. Architecture")
-                .contains("## 4. Flow Diagrams")
-                .contains("## 5. Expected Changed Files")
-                .contains("## 6. Testing Strategy")
-                .contains("## 7. Caveats")
+                .contains("## 4. Technical Decisions")
+                .contains("## 5. Caveats")
+                .contains("## 6. Expected Changed Files")
+                .contains("## 7. Testing Strategy")
                 .contains("## 8. Manual Operations")
                 .contains("Part 2: Implementation Plan")
+                .as("The runtime sequence diagram lives inside Architecture, not in its own section")
+                .contains("### 3.x Runtime Flow")
+                .contains("sequenceDiagram")
+                .doesNotContain("Flow Diagrams")
                 .as("Diagram fence guidance must be present so the artifact viewer can render mermaid")
                 .contains("```mermaid");
     }
@@ -611,7 +615,8 @@ class V1TemplateSeederTest extends BaseTest {
         assertThat(specReviewDef.getPromptTemplate())
                 .contains("Format conformance")
                 .contains("Caveat hygiene")
-                .contains("Decision soundness");
+                .contains("Decision soundness")
+                .contains("Idea level");
     }
 
     @Test
@@ -822,13 +827,14 @@ class V1TemplateSeederTest extends BaseTest {
     }
 
     @Test
-    void currentVersionIsBumpedForDeferredWorkProposalFlow() {
-        // v46: Caveats separate out-of-scope work from deferral, the spec proposes follow-ups,
-        // and Code Review edits the proposal Final Approval reads. This is the rolling version
+    void currentVersionIsBumpedForIdeaFirstSpecFormat() {
+        // v47: the spec opens with Context and Approach, records decisions as option tables,
+        // links existing roadmap items to their app pages, and later nodes cite its sections by
+        // title. This is the rolling version
         // tripwire: rewrite it and bump the literal whenever CURRENT_VERSION changes, so a
         // template edit that forgets the bump cannot ship silently.
-        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(46);
-        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 46))
+        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(47);
+        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 47))
                 .isPresent();
     }
 

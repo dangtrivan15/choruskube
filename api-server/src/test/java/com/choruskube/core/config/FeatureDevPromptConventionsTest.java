@@ -38,6 +38,7 @@ class FeatureDevPromptConventionsTest {
     void implementPromptRoutesSpecSectionsByMutability() throws Exception {
         String p = promptField("IMPLEMENT_PROMPT");
         assertThat(p).contains("docs/decisions/").contains("ARCHITECTURE.md");
+        assertThat(p).contains("Technical Decisions -> docs/decisions/");
         assertThat(p)
                 .as("architecture must merge in place, or docs/ grows once per run")
                 .contains("rewritten in place");
@@ -188,6 +189,63 @@ class FeatureDevPromptConventionsTest {
                 .as("a reviewer that flags absorbed gaps as scope creep pushes the drafter back to deferring")
                 .contains("closes a gap this change creates or exposes is justified, not scope creep")
                 .contains("names no deferral criterion");
+    }
+
+    @Test
+    void specPromptOpensAtTheLevelOfTheIdea() throws Exception {
+        String collapsed = promptField("SPEC_AND_PLAN_PROMPT").replaceAll("\\s+", " ");
+        assertThat(collapsed)
+                .as("without a checkable bar, the opening sections drift back into implementation detail")
+                .contains("strip every component, class, endpoint and table name")
+                .contains("If the reasoning still holds, it is at the level of the idea")
+                .as("an invented pattern name misleads the reader more than plain words")
+                .contains("never invent a name to fill the slot");
+    }
+
+    @Test
+    void specPromptRecordsEachDecisionAsAnOptionTable() throws Exception {
+        String collapsed = promptField("SPEC_AND_PLAN_PROMPT").replaceAll("\\s+", " ");
+        assertThat(collapsed)
+                .contains("| Option | Gives us | Costs us |")
+                .contains("**Decided by:**")
+                .as("a one-option table is a description posing as a decision")
+                .contains("One row per viable option, at least two")
+                .contains("A choice with only one viable option is not a decision");
+    }
+
+    @Test
+    void specPromptLinksExistingRoadmapItemsToTheirAppPages() throws Exception {
+        String collapsed = promptField("SPEC_AND_PLAN_PROMPT").replaceAll("\\s+", " ");
+        assertThat(collapsed)
+                .contains("/roadmap/epics/<epicId>")
+                .contains("/roadmap/epics/<epicId>/stories/<storyId>")
+                .contains("/tasks/<taskId>")
+                .as("an unnamed 'other ticket' leaves the reviewer unable to check the work is covered")
+                .contains("Never write \"handled separately\" or \"tracked elsewhere\" without saying where");
+        assertThat(promptField("SPEC_REVIEW_PROMPT").replaceAll("\\s+", " ")).contains("must link that ticket");
+    }
+
+    @Test
+    void appLinksBecomePlainTitlesWhenTextLeavesTheApp() throws Exception {
+        for (String name : new String[] {"IMPLEMENT_PROMPT", "CODE_REVIEW_PROMPT"}) {
+            assertThat(promptField(name).replaceAll("\\s+", " "))
+                    .as("%s: a root-relative app path in a PR body or issue resolves against github.com", name)
+                    .contains("app link")
+                    .contains("as its plain title");
+        }
+        assertThat(promptField("IMPLEMENT_PROMPT").replaceAll("\\s+", " "))
+                .as("the proposal anchors existing items by id, which the spec now carries only inside links")
+                .contains("the last segment of that link");
+    }
+
+    @Test
+    void noPromptCitesTheSpecBySectionNumber() throws Exception {
+        for (String name :
+                new String[] {"SPEC_AND_PLAN_PROMPT", "SPEC_REVIEW_PROMPT", "IMPLEMENT_PROMPT", "CODE_REVIEW_PROMPT"}) {
+            assertThat(promptField(name))
+                    .as("%s: a stale section number silently routes the wrong section into PR bodies", name)
+                    .doesNotContainPattern("§\\s*[0-9]");
+        }
     }
 
     /**
