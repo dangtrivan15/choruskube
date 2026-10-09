@@ -158,4 +158,18 @@ describe("StoryBoardCard", () => {
     await waitFor(() => expect(screen.getByTestId("story-board-card-task")).toBeInTheDocument());
     expect(mockApi.get).toHaveBeenCalledTimes(1);
   });
+
+  it("hovering the title shows the full title", async () => {
+    const user = userEvent.setup();
+    const story = makeStory({ title: "A very long story title that would otherwise be truncated" });
+    renderWithProviders(<StoryBoardCard story={story} />);
+
+    await user.hover(screen.getByTestId("story-board-card-title"));
+
+    await waitFor(() => {
+      expect(
+        screen.getAllByText("A very long story title that would otherwise be truncated").length,
+      ).toBeGreaterThanOrEqual(2);
+    });
+  });
 });

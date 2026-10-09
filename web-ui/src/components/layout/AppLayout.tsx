@@ -18,6 +18,7 @@ import {
   type KeyboardShortcutHandlers,
 } from "@/hooks/useKeyboardShortcuts";
 import ResizeHandle from "@/components/ui/ResizeHandle";
+import { MainLayoutProvider } from "./MainLayoutContext";
 import { useAuth } from "@/components/AuthProvider";
 import { useExtensions } from "@/ExtensionsContext";
 import type { Command } from "@/lib/commands";
@@ -45,6 +46,8 @@ export default function AppLayout() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [feedOpen, setFeedOpen] = useState(false);
+  const [fullBleed, setFullBleed] = useState(false);
+  const mainLayoutValue = useMemo(() => ({ setFullBleed }), []);
 
   const openPalette = useCallback(() => {
     setShortcutsOpen(false);
@@ -119,7 +122,7 @@ export default function AppLayout() {
 
   return (
     <div
-      className={`flex h-screen flex-col text-foreground md:flex-row${sidebar.isDragging ? " select-none" : ""}`}
+      className={`flex h-dvh flex-col text-foreground md:flex-row${sidebar.isDragging ? " select-none" : ""}`}
     >
       {isMobile ? (
         <>
@@ -146,21 +149,27 @@ export default function AppLayout() {
           />
         </>
       )}
-      <div className="relative flex flex-1 flex-col overflow-hidden">
-        {!isMobile && (
-          <header className="relative flex h-12 items-center justify-end gap-2 border-b px-4">
-            <ActivityFeedButton onClick={() => setFeedOpen((o) => !o)} />
-            <ThemeToggle />
-          </header>
-        )}
-        <ActivityFeedPanel
-          open={feedOpen}
-          onClose={() => setFeedOpen(false)}
-        />
-        <main className="flex-1 overflow-auto p-4 md:p-6">
-          <Outlet />
-        </main>
-      </div>
+      <MainLayoutProvider value={mainLayoutValue}>
+        <div className="relative flex flex-1 flex-col overflow-hidden">
+          {!isMobile && (
+            <header className="relative flex h-12 items-center justify-end gap-2 border-b px-4">
+              <ActivityFeedButton onClick={() => setFeedOpen((o) => !o)} />
+              <ThemeToggle />
+            </header>
+          )}
+          <ActivityFeedPanel
+            open={feedOpen}
+            onClose={() => setFeedOpen(false)}
+          />
+          <main
+            className={
+              fullBleed ? "flex-1 min-h-0 overflow-hidden" : "flex-1 overflow-auto p-4 md:p-6"
+            }
+          >
+            <Outlet />
+          </main>
+        </div>
+      </MainLayoutProvider>
 
       <CommandPalette
         open={paletteOpen}

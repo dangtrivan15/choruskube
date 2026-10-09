@@ -11,7 +11,7 @@ import RoadmapGraphDetailPanel, {
 } from "@/components/roadmap/RoadmapGraphDetailPanel";
 import RoadmapViewControls from "@/components/roadmap/RoadmapViewControls";
 import { clampFocusToStory } from "@/lib/roadmapFocus";
-import { Button } from "@/components/ui/button";
+import BottomSheet from "@/components/ui/BottomSheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import PageHeader from "@/components/layout/PageHeader";
 import type { RoadmapGraphSnapshot } from "@/lib/types";
@@ -123,17 +123,17 @@ export default function RoadmapGraphPage() {
         )}
       </div>
 
-      {selected && isMobile && (
-        <div
+      {isMobile && (
+        <BottomSheet
+          open={!!selected}
+          onOpenChange={(open) => {
+            if (!open) setSelectedId(null);
+          }}
+          title={selected?.item.title ?? "Detail"}
+          hideTitle
           data-testid="roadmap-graph-mobile-detail-overlay"
-          className="fixed inset-x-0 bottom-0 z-40 flex h-[85vh] flex-col rounded-t-xl border-t bg-background shadow-lg"
         >
-          <div className="flex items-center justify-end border-b px-4 py-2">
-            <Button variant="ghost" size="icon-sm" onClick={() => setSelectedId(null)} aria-label="Close detail panel">
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
-          <div className="flex-1 overflow-y-auto overflow-x-hidden">
+          {selected && (
             <RoadmapGraphDetailPanel
               detail={selected}
               epicId={snapshot.epic.id}
@@ -141,8 +141,8 @@ export default function RoadmapGraphPage() {
               blockableItems={blockableItems}
               externalBlockers={snapshot.externalBlockers}
             />
-          </div>
-        </div>
+          )}
+        </BottomSheet>
       )}
     </div>
   );

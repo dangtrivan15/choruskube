@@ -126,7 +126,7 @@ test.describe("Run Lifecycle", () => {
       // already proven by roadmap.spec.ts / roadmap-graph.spec.ts), then start
       // the run from the Task rather than a manual/template run — this proves
       // task_context actually reaches the run detail page end
-      // to end, not just the RunMetaPanel unit tests.
+      // to end, not just the RunSummary unit tests.
       const uniqueTitle = uniqueName("E2E Breadcrumb");
       const epic = await api.createEpic({
         title: uniqueTitle,
@@ -150,10 +150,11 @@ test.describe("Run Lifecycle", () => {
       // the run detail page, no UI click-through or status polling needed.
       await runMonitorPage.goto(started.latestRunId!);
 
-      const breadcrumb = runMonitorPage.page.getByTestId("run-meta-panel-breadcrumb");
+      const breadcrumb = runMonitorPage.roadmapBreadcrumb;
       await expect(breadcrumb).toBeVisible();
       await expect(breadcrumb).toContainText(uniqueTitle);
       await expect(breadcrumb).toContainText(storyTitle);
+      await expect(breadcrumb).toContainText("Breadcrumb task");
 
       // No cleanup here (unlike roadmap.spec.ts / roadmap-graph.spec.ts fixtures):
       // starting the Task above has already moved it out of "backlog", and
@@ -162,6 +163,58 @@ test.describe("Run Lifecycle", () => {
       // are still in backlog") — that's intentional, to preserve run history. The
       // `uniqueTitle` / `storyTitle` uniqueName() suffixes keep this fixture from
       // colliding with other runs of this spec, so leaving it behind is safe.
+    });
+
+    test("long Epic/Story titles keep the breadcrumb on one line, with the full title on hover", async ({
+      runMonitorPage,
+      api,
+      workerRepo,
+    }) => {
+      // ~120 chars each — long enough that naive word-wrapping would push the
+      // breadcrumb to multiple lines if truncation weren't working.
+      const longEpicTitle = uniqueName(
+        "E2E Breadcrumb Epic With A Very Long Title That Would Wrap Onto Several Lines Without Truncation Applied Here Today",
+      );
+      const longStoryTitle = uniqueName(
+        "E2E Breadcrumb Story With An Equally Long Title That Would Also Wrap Onto Several Lines Without Truncation Logic",
+      );
+      const epic = await api.createEpic({
+        title: longEpicTitle,
+        description: "Testing breadcrumb truncation",
+        softwareProjectId: workerRepo.gitRepo.id,
+      });
+      const story = await api.createStory(epic.id, {
+        title: longStoryTitle,
+        description: "desc",
+      });
+      const task = await api.createTask(story.id, {
+        title: "Breadcrumb truncation task",
+        description: "desc",
+      });
+
+      const started = await api.startTask(task.id);
+      expect(started.latestRunId).not.toBeNull();
+
+      await runMonitorPage.goto(started.latestRunId!);
+
+      const breadcrumb = runMonitorPage.roadmapBreadcrumb;
+      await expect(breadcrumb).toBeVisible();
+      const box = await breadcrumb.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.height).toBeLessThanOrEqual(32);
+
+      // A STOMP live-update re-render can move the hovered element out from under an
+      // already-resting cursor before the tooltip assertion observes it (see
+      // e2e/PARALLELISM.md's hover-under-concurrency section) — toPass() re-hovers on
+      // each attempt rather than trusting a single hover-then-assert.
+      await expect(async () => {
+        await runMonitorPage.page.getByTestId("roadmap-breadcrumb-epic").hover();
+        await expect(runMonitorPage.page.getByRole("tooltip")).toContainText(longEpicTitle);
+      }).toPass({ timeout: 15_000 });
+
+      // Same reasoning as the breadcrumb test above: the Task has left "backlog", so
+      // deleting the Epic is intentionally refused. uniqueName() keeps this from
+      // colliding with other runs of this spec.
     });
 
     test("DAG visualization renders nodes", async ({ runMonitorPage, api }) => {

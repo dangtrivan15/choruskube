@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { screen } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "@/__tests__/test-utils";
 import TaskBoardCard from "@/components/roadmap/TaskBoardCard";
 import type { TaskResponse } from "@/lib/types";
@@ -64,5 +65,19 @@ describe("TaskBoardCard", () => {
   it("renders the Medium priority badge for a Task with no explicit priority override", () => {
     renderWithProviders(<TaskBoardCard task={makeTask({ priority: "medium" })} />);
     expect(screen.getByTestId("task-board-card-priority-badge")).toHaveTextContent("Medium");
+  });
+
+  it("hovering the title shows the full title", async () => {
+    const user = userEvent.setup();
+    const task = makeTask({ title: "A very long task title that would otherwise be truncated" });
+    renderWithProviders(<TaskBoardCard task={task} />);
+
+    await user.hover(screen.getByTestId("task-board-card-title"));
+
+    await waitFor(() => {
+      expect(
+        screen.getAllByText("A very long task title that would otherwise be truncated").length,
+      ).toBeGreaterThanOrEqual(2);
+    });
   });
 });

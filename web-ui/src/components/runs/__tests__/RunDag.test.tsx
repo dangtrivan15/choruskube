@@ -27,8 +27,15 @@ vi.mock("@xyflow/react", () => {
       nodeTypes,
       onNodeClick,
       onPaneClick,
+      children,
     }: {
-      nodes: { id: string; type: string; data: unknown; position: { x: number; y: number } }[];
+      nodes: {
+        id: string;
+        type: string;
+        data: unknown;
+        position: { x: number; y: number };
+        selected?: boolean;
+      }[];
       edges: {
         id: string;
         type?: string;
@@ -40,6 +47,7 @@ vi.mock("@xyflow/react", () => {
       nodeTypes: Record<string, ComponentType<{ id: string; data: unknown; selected: boolean }>>;
       onNodeClick?: (event: unknown, node: { id: string }) => void;
       onPaneClick?: () => void;
+      children?: ReactNode;
     }) => (
       <div data-testid="mock-react-flow-pane" onClick={() => onPaneClick?.()}>
         {nodes.map((n) => {
@@ -55,7 +63,7 @@ vi.mock("@xyflow/react", () => {
                 onNodeClick?.(e, n);
               }}
             >
-              <Comp id={n.id} data={n.data} selected={false} />
+              <Comp id={n.id} data={n.data} selected={n.selected ?? false} />
             </div>
           );
         })}
@@ -71,6 +79,7 @@ vi.mock("@xyflow/react", () => {
             className={["react-flow__edge", e.className].filter(Boolean).join(" ")}
           />
         ))}
+        {children}
       </div>
     ),
     Controls: () => null,
@@ -81,6 +90,26 @@ vi.mock("@xyflow/react", () => {
     ),
     Position: { Top: "top", Bottom: "bottom", Left: "left", Right: "right" },
   };
+});
+
+// The controller reads React Flow's store, which the mock above doesn't provide, and has its own
+// unit test. This stub only reports an apply for every key it is given, so RunDag's tests can
+// check how it turns that into `data-viewport-ready`.
+vi.mock("../DagViewportController", async () => {
+  const { useEffect } = await import("react");
+  function StubViewportController({
+    resetKey,
+    onApplied,
+  }: {
+    resetKey: string;
+    onApplied: (key: string) => void;
+  }) {
+    // Once per key, like the real controller — not again whenever `onApplied` changes identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    useEffect(() => onApplied(resetKey), [resetKey]);
+    return null;
+  }
+  return { default: StubViewportController };
 });
 
 // Wraps @/lib/elkLayout's real `computeElkLayout` so tests can inspect exactly which snapshot
@@ -203,11 +232,16 @@ function makeRun(overrides: Partial<RunResponse> = {}): RunResponse {
 
 function renderDag(
   snapshot: GraphSnapshot,
-  options: { nodeExecutions?: Array<Partial<NodeExecutionResponse> & { templateNodeId: string }> } = {},
+  options: {
+    nodeExecutions?: Array<Partial<NodeExecutionResponse> & { templateNodeId: string }>;
+    selectedNodeId?: string | null;
+  } = {},
 ) {
   const nodeExecutions = (options.nodeExecutions ?? []).map(makeExecution);
   const run = makeRun({ graphSnapshot: snapshot, nodeExecutions });
-  return renderWithProviders(<RunDag run={run} onNodeSelect={vi.fn()} />);
+  return renderWithProviders(
+    <RunDag run={run} onNodeSelect={vi.fn()} selectedNodeId={options.selectedNodeId} />,
+  );
 }
 
 async function waitForGraphReady() {
@@ -366,5 +400,46 @@ describe("RunDag — Supervisor rendering", () => {
     expect(Number(hubNode.dataset.x)).toBeGreaterThan(Math.max(...otherXs));
 
     consoleError.mockRestore();
+  });
+});
+
+describe("RunDag — selection", () => {
+  it("marks the selected node data-selected=\"true\" and leaves others false", async () => {
+    renderDag(snapshotWithoutSupervisor(), { selectedNodeId: CODE_REVIEW_ID });
+    await waitForGraphReady();
+
+    const selected = screen.getByTestId(`mock-node-${CODE_REVIEW_ID}`).querySelector('[data-testid="dag-node"]');
+    const other = screen.getByTestId(`mock-node-${START_ID}`).querySelector('[data-testid="dag-node"]');
+    expect(selected).toHaveAttribute("data-selected", "true");
+    expect(other).toHaveAttribute("data-selected", "false");
+  });
+
+  it("omitting selectedNodeId/focusNodeId/compact/viewportKey keeps current behaviour", async () => {
+    const { container } = renderDag(snapshotWithoutSupervisor());
+    await waitForGraphReady();
+
+    expect(screen.getAllByTestId(/^mock-node-/)).toHaveLength(2);
+    for (const node of container.querySelectorAll('[data-testid="dag-node"]')) {
+      expect(node).toHaveAttribute("data-selected", "false");
+    }
+  });
+});
+
+describe("RunDag — viewport readiness", () => {
+  it("stays ready when another run of the same template is shown and the controller applies for it", async () => {
+    const snapshot = snapshotWithoutSupervisor();
+    const { rerender } = renderWithProviders(
+      <RunDag run={makeRun({ id: "run-1", graphSnapshot: snapshot })} onNodeSelect={vi.fn()} viewportKey="run-1" />,
+    );
+    await waitForGraphReady();
+    const container = screen.getByTestId("run-dag-container");
+    expect(container).toHaveAttribute("data-viewport-ready", "true");
+
+    // Same topology, so the controller applies in the same commit that changes the key; a
+    // readiness reset scheduled from RunDag's own effect would land after it and stick at false.
+    rerender(
+      <RunDag run={makeRun({ id: "run-2", graphSnapshot: snapshot })} onNodeSelect={vi.fn()} viewportKey="run-2" />,
+    );
+    await waitFor(() => expect(container).toHaveAttribute("data-viewport-ready", "true"));
   });
 });

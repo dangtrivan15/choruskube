@@ -7,6 +7,7 @@ import { parseFocusParams, focusToSearchParamsInit } from "@/lib/roadmapFocus";
 import RoadmapTimeline from "@/components/roadmap/RoadmapTimeline";
 import RoadmapTimelineDetailPanel from "@/components/roadmap/RoadmapTimelineDetailPanel";
 import RoadmapViewControls from "@/components/roadmap/RoadmapViewControls";
+import BottomSheet from "@/components/ui/BottomSheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import PageHeader from "@/components/layout/PageHeader";
 
@@ -99,16 +100,23 @@ export default function RoadmapTimelinePage() {
         )}
       </div>
 
-      {/* Mobile: bottom-sheet overlay, mirroring RoadmapGraphPage's mobile detail overlay. */}
-      {isMobile && focusedEpic && (
-        <div
+      {/* Mobile: bottom-sheet overlay, mirroring RoadmapGraphPage's mobile detail overlay. The
+          panel renders its own close button, so the sheet's built-in one is suppressed. */}
+      {isMobile && (
+        <BottomSheet
+          open={!!focusedEpic}
+          onOpenChange={(open) => {
+            if (!open) handleClosePanel();
+          }}
+          title={(focusedStory ?? focusedEpic)?.title ?? "Detail"}
+          hideTitle
+          showClose={false}
           data-testid="roadmap-timeline-mobile-detail-overlay"
-          className="fixed inset-x-0 bottom-0 z-40 flex h-[85vh] flex-col rounded-t-xl border-t bg-background shadow-lg"
         >
-          <div className="flex-1 overflow-y-auto overflow-x-hidden">
+          {focusedEpic && (
             <RoadmapTimelineDetailPanel epic={focusedEpic} story={focusedStory} onClose={handleClosePanel} />
-          </div>
-        </div>
+          )}
+        </BottomSheet>
       )}
     </div>
   );

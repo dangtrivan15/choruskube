@@ -32,6 +32,15 @@
 The **Runs** page shows all workflow runs with their current status, start time, template name,
 and linked repository. Click any row to open the **Run Monitor**.
 
+### The Run Summary
+
+A summary strip under the run header shows the feature request (collapsed to its first line,
+expandable inline or in a dialog), the software project, the Epic › Story › Task chain (each
+segment truncated to one line, with the full title on hover or keyboard focus), and any linked
+pull requests. It stays visible no matter which node you have selected. On a phone it collapses
+to a one-line bar with a **Run info** button that opens the same information in a sheet, plus a
+**Review …** (or **Failed: …**) button whenever a node needs you.
+
 ### Run Monitor: DAG View
 
 The Run Monitor renders the workflow graph as a live DAG. Each node shows:
@@ -39,6 +48,11 @@ The Run Monitor renders the workflow graph as a live DAG. Each node shows:
 - Its **name** and **type** (AI agent, human gate, script, etc.)
 - Its **current status** (see color legend below)
 - A **spinner** animation when the node is actively executing
+
+Opening a run on a laptop or desktop selects the node that needs you — a waiting gate, then a
+failed node, then a running one — the first time you open it; selecting a different node updates
+the page's URL, so a copied link reopens the same node. On a phone the graph starts at a
+readable zoom centred on that node instead of shrinking the whole graph to fit.
 
 ### Node Status Colors
 
@@ -51,19 +65,19 @@ The Run Monitor renders the workflow graph as a live DAG. Each node shows:
 | ⬜ Grey | Pending | Not yet started |
 | ⬛ Dark | Skipped | Branch not taken due to routing conditions |
 
-### The Log Panel
+### The Node Detail Panel
 
-Click any node in the DAG to open its **Log Panel** on the right side of the screen. The panel:
+Click any node in the DAG to open its detail panel — docked beside the graph on a laptop or
+desktop, or a bottom sheet on a phone or tablet. The panel:
 
-- Streams logs in real time while the node is running
-- Shows the full log history after the node completes
+- Streams logs in real time while the node is running, and shows the full log history after it completes
 - Supports log-level filtering (INFO, WARN, ERROR)
-- Displays the node's reported decision value when the run finishes
+- Lists files the agent wrote to `/workspace/out/` — click any artifact to download it or preview its content inline
+- Surfaces gate actions (Approve/Reject and the rest) inline for a node awaiting your decision
 
-### The Artifact Browser
-
-Switch to the **Artifacts** tab in the node detail panel to browse files written by the agent to
-`/workspace/out/`. Click any artifact to download it or preview its content inline.
+Closing the panel (or, on a phone, dismissing the sheet) returns you to an empty state that still
+lists any node needing attention or currently running, so you're never looking at a blank panel
+while something is happening.
 
 ## Responding to Human Gates
 
@@ -81,8 +95,7 @@ See [Human Gates](human-gates) for a detailed walkthrough.
 To cancel an in-progress run:
 
 1. Open the **Run Monitor** for the target run.
-2. Click the **Cancel** button in the top-right corner of the monitor.
-3. Confirm the cancellation in the dialog.
+2. Click **Cancel** in the run header, or, on a phone, open the **⋯** menu and choose **Cancel**.
 
 Cancellation signals the Temporal workflow to stop. Running node executions are terminated; completed
 node results are preserved. Cancelled runs cannot be resumed.

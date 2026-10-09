@@ -15,8 +15,9 @@ vi.mock("@/hooks/useRoadmapSubscription", () => ({
   useRoadmapSubscription: vi.fn(),
 }));
 
+let mockIsMobile = false;
 vi.mock("@/hooks/useMobileBreakpoint", () => ({
-  useMobileBreakpoint: () => false,
+  useMobileBreakpoint: () => mockIsMobile,
 }));
 
 vi.mock("@/lib/api", () => ({
@@ -73,6 +74,7 @@ vi.mock("@/components/roadmap/RoadmapGraph", async (importOriginal) => {
 
 beforeEach(() => {
   mockUseRoadmapGraph.mockReset();
+  mockIsMobile = false;
 });
 
 function makeEpic(overrides: Partial<EpicResponse> = {}): EpicResponse {
@@ -171,6 +173,20 @@ describe("RoadmapGraphPage", () => {
 
     await user.click(screen.getByTestId("roadmap-graph-detail-close"));
     expect(screen.queryByTestId("roadmap-detail-panel")).not.toBeInTheDocument();
+  });
+
+  it("on mobile, opens the detail panel inside the bottom-sheet overlay", async () => {
+    const user = userEvent.setup();
+    mockIsMobile = true;
+    mockUseRoadmapGraph.mockReturnValue({ data: makeSnapshot(), isLoading: false });
+    renderWithProviders(<RoadmapGraphPage />);
+
+    expect(screen.queryByTestId("roadmap-graph-mobile-detail-overlay")).not.toBeInTheDocument();
+
+    await user.click(screen.getByTestId("mock-select-task-1"));
+
+    const overlay = screen.getByTestId("roadmap-graph-mobile-detail-overlay");
+    expect(overlay.querySelector('[data-testid="roadmap-detail-panel"]')).not.toBeNull();
   });
 
   it("keeps the open detail panel in sync with a refreshed snapshot instead of showing stale data", async () => {

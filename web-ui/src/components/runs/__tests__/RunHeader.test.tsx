@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { screen } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "@/__tests__/test-utils";
 import RunHeader from "../RunHeader";
@@ -13,6 +13,7 @@ const mockRenameMutate = vi.fn();
 let pauseIsPending = false;
 let resumeIsPending = false;
 let cancelIsPending = false;
+let mockCanOperate = true;
 
 vi.mock("@/hooks/useRuns", () => ({
   usePauseRun: vi.fn(() => ({
@@ -31,6 +32,15 @@ vi.mock("@/hooks/useRuns", () => ({
     mutate: mockRenameMutate,
     isPending: false,
   })),
+}));
+
+vi.mock("@/hooks/usePermission", () => ({
+  usePermission: () => ({
+    canRead: true,
+    canOperate: mockCanOperate,
+    canAdmin: true,
+    platformAdmin: true,
+  }),
 }));
 
 function makeRun(overrides: Partial<RunResponse> = {}): RunResponse {
@@ -62,6 +72,7 @@ describe("RunHeader", () => {
     pauseIsPending = false;
     resumeIsPending = false;
     cancelIsPending = false;
+    mockCanOperate = true;
   });
 
   // --- Template name & ID ---
@@ -278,5 +289,85 @@ describe("RunHeader", () => {
     expect(screen.queryByText("Pause")).not.toBeInTheDocument();
     expect(screen.queryByText("Resume")).not.toBeInTheDocument();
     expect(screen.queryByText("Cancel")).not.toBeInTheDocument();
+  });
+
+  // --- compact (phone) layout ---
+
+  describe("compact", () => {
+    it("renders the actions menu trigger", () => {
+      renderWithProviders(<RunHeader run={makeRun({ status: "running" })} compact />);
+      expect(screen.getByTestId("run-actions-menu-trigger")).toBeInTheDocument();
+    });
+
+    it("opening the menu shows Pause and Cancel when running", async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<RunHeader run={makeRun({ status: "running" })} compact />);
+
+      await user.click(screen.getByTestId("run-actions-menu-trigger"));
+
+      expect(screen.getByTestId("run-pause-button")).toBeInTheDocument();
+      expect(screen.getByTestId("run-cancel-button")).toBeInTheDocument();
+      expect(screen.queryByTestId("run-resume-button")).not.toBeInTheDocument();
+    });
+
+    it("opening the menu shows Resume and Cancel when paused", async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<RunHeader run={makeRun({ status: "paused" })} compact />);
+
+      await user.click(screen.getByTestId("run-actions-menu-trigger"));
+
+      expect(screen.getByTestId("run-resume-button")).toBeInTheDocument();
+      expect(screen.getByTestId("run-cancel-button")).toBeInTheDocument();
+      expect(screen.queryByTestId("run-pause-button")).not.toBeInTheDocument();
+    });
+
+    it("clicking Pause in the menu calls the mutation", async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<RunHeader run={makeRun({ status: "running" })} compact />);
+
+      await user.click(screen.getByTestId("run-actions-menu-trigger"));
+      await user.click(screen.getByTestId("run-pause-button"));
+
+      expect(mockPauseMutate).toHaveBeenCalled();
+    });
+
+    it("clicking Cancel in the menu calls the mutation", async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<RunHeader run={makeRun({ status: "running" })} compact />);
+
+      await user.click(screen.getByTestId("run-actions-menu-trigger"));
+      await user.click(screen.getByTestId("run-cancel-button"));
+
+      expect(mockCancelMutate).toHaveBeenCalled();
+    });
+
+    it("choosing Rename enters edit mode, and the rename input ends up focused", async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<RunHeader run={makeRun({ name: "Old Name", status: "running" })} compact />);
+
+      await user.click(screen.getByTestId("run-actions-menu-trigger"));
+      await user.click(screen.getByTestId("run-rename-menu-item"));
+
+      const input = await screen.findByDisplayValue("Old Name");
+      await waitFor(() => expect(input).toHaveFocus());
+    });
+
+    it("a terminal run's menu holds Rename alone (no Pause/Resume/Cancel)", async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<RunHeader run={makeRun({ status: "completed" })} compact />);
+
+      await user.click(screen.getByTestId("run-actions-menu-trigger"));
+
+      expect(screen.getByTestId("run-rename-menu-item")).toBeInTheDocument();
+      expect(screen.queryByTestId("run-pause-button")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("run-resume-button")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("run-cancel-button")).not.toBeInTheDocument();
+    });
+
+    it("renders no menu trigger when the user lacks operate permission", () => {
+      mockCanOperate = false;
+      renderWithProviders(<RunHeader run={makeRun({ status: "running" })} compact />);
+      expect(screen.queryByTestId("run-actions-menu-trigger")).not.toBeInTheDocument();
+    });
   });
 });

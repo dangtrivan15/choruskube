@@ -124,15 +124,18 @@ test.describe("DAG Interaction", () => {
     expect(nodeCount).toBeGreaterThanOrEqual(5);
   });
 
-  test("sidebar shows run metadata before node selection", async ({
+  test("summary strip and node panel are visible together after selecting a node", async ({
     runMonitorPage,
     api,
+    workerRepo,
   }) => {
     const template = await api.getTemplateByName("e2e-linear-pipeline");
 
+    // The strip renders only when the run has something to show, so give it a software project.
     const run = await api.startRun({
       graphTemplateId: template.id,
-      name: "e2e-sidebar-run-meta-test",
+      name: "e2e-summary-coexist-test",
+      inputs: { software_project_id: workerRepo.gitRepo.id },
     });
 
     await runMonitorPage.goto(run.id);
@@ -140,12 +143,39 @@ test.describe("DAG Interaction", () => {
       timeout: 15_000,
     });
 
-    // Sidebar should show run meta panel before any node is selected
-    await expect(runMonitorPage.runMetaPanel).toBeVisible();
+    // Run info is never hidden by node selection any more — this is the core
+    // premise of the summary-strip redesign.
+    await runMonitorPage.dagNodes.first().click();
+    await expect(runMonitorPage.detailPanel).toBeVisible();
+    await expect(runMonitorPage.runSummary).toBeVisible();
+    await expect(runMonitorPage.runSummary.getByTestId("run-summary-software-project")).toBeVisible();
+  });
+
+  test("finished run shows the empty node panel", async ({
+    runMonitorPage,
+    api,
+  }) => {
+    const template = await api.getTemplateByName("e2e-linear-pipeline");
+
+    const run = await api.startRun({
+      graphTemplateId: template.id,
+      name: "e2e-empty-panel-test",
+    });
+
+    // A clean completed run has nothing needing attention, so nothing is
+    // auto-focused — the panel shows the empty state, not a node.
+    await api.waitForRunStatus(run.id, ["completed"], 120_000);
+
+    await runMonitorPage.goto(run.id);
+    await expect(runMonitorPage.dagNodes.first()).toBeVisible({
+      timeout: 15_000,
+    });
+
+    await expect(runMonitorPage.nodeDetailEmpty).toBeVisible();
     await expect(runMonitorPage.detailPanel).not.toBeVisible();
   });
 
-  test("sidebar switches to node metadata on node click", async ({
+  test("close button clears selection and the ?node param", async ({
     runMonitorPage,
     api,
   }) => {
@@ -153,7 +183,7 @@ test.describe("DAG Interaction", () => {
 
     const run = await api.startRun({
       graphTemplateId: template.id,
-      name: "e2e-sidebar-node-click-test",
+      name: "e2e-close-button-test",
     });
 
     await runMonitorPage.goto(run.id);
@@ -161,40 +191,13 @@ test.describe("DAG Interaction", () => {
       timeout: 15_000,
     });
 
-    // Click first DAG node
-    await runMonitorPage.dagNodes.first().click();
-
-    // Detail panel should be visible with back button
-    await expect(runMonitorPage.detailPanel).toBeVisible();
-    await expect(runMonitorPage.runMetaPanel).not.toBeVisible();
-    await expect(runMonitorPage.detailPanelBackButton).toBeVisible();
-  });
-
-  test("back button returns sidebar to run metadata", async ({
-    runMonitorPage,
-    api,
-  }) => {
-    const template = await api.getTemplateByName("e2e-linear-pipeline");
-
-    const run = await api.startRun({
-      graphTemplateId: template.id,
-      name: "e2e-sidebar-back-button-test",
-    });
-
-    await runMonitorPage.goto(run.id);
-    await expect(runMonitorPage.dagNodes.first()).toBeVisible({
-      timeout: 15_000,
-    });
-
-    // Click a node to switch to DetailPanel
     await runMonitorPage.dagNodes.first().click();
     await expect(runMonitorPage.detailPanel).toBeVisible();
-    await expect(runMonitorPage.detailPanelBackButton).toBeVisible();
+    await expect(runMonitorPage.page).toHaveURL(/[?&]node=/);
 
-    // Click back button to return to RunMetaPanel
-    await runMonitorPage.detailPanelBackButton.click();
-    await expect(runMonitorPage.runMetaPanel).toBeVisible();
+    await runMonitorPage.detailPanelClose.click();
     await expect(runMonitorPage.detailPanel).not.toBeVisible();
+    await expect(runMonitorPage.page).not.toHaveURL(/[?&]node=/);
   });
 
   test("minimap is absent from the DAG canvas", async ({
@@ -217,34 +220,7 @@ test.describe("DAG Interaction", () => {
     await expect(runMonitorPage.page.locator(".react-flow__minimap")).not.toBeAttached();
   });
 
-  test("mobile viewport retains top-strip run metadata; no persistent sidebar", async ({
-    page,
-    api,
-  }) => {
-    // Set mobile viewport
-    await page.setViewportSize({ width: 390, height: 844 });
-
-    const template = await api.getTemplateByName("e2e-linear-pipeline");
-
-    const run = await api.startRun({
-      graphTemplateId: template.id,
-      name: "e2e-mobile-meta-bar-test",
-    });
-
-    // Navigate directly — don't use runMonitorPage since it was created with the default viewport
-    await page.goto(`/runs/${run.id}`);
-    await expect(page.getByTestId("run-header-title")).toBeVisible({ timeout: 15_000 });
-
-    // No persistent sidebar (run-meta-panel) on mobile
-    await expect(page.getByTestId("run-meta-panel")).not.toBeAttached();
-
-    // The mobile top-strip run meta bar should be present in the DOM
-    // (may not have content if no promptText/task, but the component structure is there)
-    // Assert the DAG is visible to confirm page loaded correctly
-    await expect(page.getByTestId("run-dag-container")).toBeVisible();
-  });
-
-  test("sidebar is collapsible and restores on expand", async ({
+  test("panel collapses and expands", async ({
     runMonitorPage,
     api,
   }) => {
@@ -260,18 +236,22 @@ test.describe("DAG Interaction", () => {
       timeout: 15_000,
     });
 
-    // Sidebar open by default — run meta panel visible
-    await expect(runMonitorPage.runMetaPanel).toBeVisible();
+    // Select a node explicitly so the panel's content is deterministic — on
+    // this tier, desktop auto-focus may otherwise have already selected a
+    // running node by the time the page loads, racing an "empty state"
+    // assertion made before any click.
+    await runMonitorPage.dagNodes.first().click();
+    await expect(runMonitorPage.detailPanel).toBeVisible();
     await expect(runMonitorPage.sidebarCollapseButton).toBeVisible();
 
-    // Collapse the sidebar
+    // Collapse the panel
     await runMonitorPage.sidebarCollapseButton.click();
-    await expect(runMonitorPage.runMetaPanel).not.toBeVisible();
+    await expect(runMonitorPage.detailPanel).not.toBeVisible();
     await expect(runMonitorPage.sidebarExpandButton).toBeVisible();
 
-    // Expand the sidebar again
+    // Expand the panel again
     await runMonitorPage.sidebarExpandButton.click();
-    await expect(runMonitorPage.runMetaPanel).toBeVisible();
+    await expect(runMonitorPage.detailPanel).toBeVisible();
     await expect(runMonitorPage.sidebarCollapseButton).toBeVisible();
   });
 });

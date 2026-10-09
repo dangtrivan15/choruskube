@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import RunStatusBadge from "@/components/runs/RunStatusBadge";
 import PriorityBadge from "@/components/roadmap/PriorityBadge";
 import { roadmapLevelMeta } from "@/lib/roadmapLevel";
+import TruncatedText from "@/components/ui/TruncatedText";
 import { cn } from "@/lib/utils";
 
 const levelMeta = roadmapLevelMeta("task");
@@ -60,18 +61,23 @@ export default function TaskBoardCard({ task }: Props) {
       <CardHeader className="gap-1 p-3 pb-2">
         <span className="flex min-w-0 items-center gap-1.5">
           <levelMeta.Icon className={cn("size-3.5 shrink-0", levelMeta.textClass)} />
-          <Link
-            to={`/tasks/${task.id}`}
-            data-testid="task-board-card-title"
-            className="min-w-0 truncate text-sm font-medium hover:underline"
-            // Keeps the title out of the card's drag surface — see EpicBoardCard's title for
-            // why a link inside a dnd-kit draggable must not be droppable-on (dnd-kit's click
-            // suppression stops propagation but never the `<a>`'s default navigation).
-            draggable={false}
-            onPointerDown={(e) => e.stopPropagation()}
+          <TruncatedText
+            className="min-w-0 font-medium"
+            render={
+              <Link
+                to={`/tasks/${task.id}`}
+                data-testid="task-board-card-title"
+                className="text-sm hover:underline"
+                // Keeps the title out of the card's drag surface — see EpicBoardCard's title for
+                // why a link inside a dnd-kit draggable must not be droppable-on (dnd-kit's click
+                // suppression stops propagation but never the `<a>`'s default navigation).
+                draggable={false}
+                onPointerDown={(e) => e.stopPropagation()}
+              />
+            }
           >
             {task.title}
-          </Link>
+          </TruncatedText>
         </span>
         <span data-testid="task-board-card-status" className="flex flex-wrap items-center gap-1.5">
           {statusBadge(task.status)}

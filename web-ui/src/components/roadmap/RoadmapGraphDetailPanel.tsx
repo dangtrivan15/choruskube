@@ -261,9 +261,9 @@ function BlockingDependenciesSection({
 
 /**
  * Roadmap Graph View detail panel — shown when a node (Epic/Story/Task) is
- * clicked in RoadmapGraph. Mirrors RunMonitorPage's DetailPanel/RunMetaPanel
- * split conceptually, but a single component covers all three item types
- * since they share the same status + description shape.
+ * clicked in RoadmapGraph. Mirrors RunMonitorPage's node detail panel
+ * conceptually, but a single component covers all three item types since
+ * they share the same status + description shape.
  */
 export default function RoadmapGraphDetailPanel({
   detail,

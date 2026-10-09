@@ -175,4 +175,27 @@ describe("PullRequestLinks", () => {
     const link = screen.getByRole("link", { name: /add user auth/i });
     expect(link).toHaveAttribute("aria-label", "Open feat: add user auth on GitHub (open)");
   });
+
+  describe("inline variant", () => {
+    it("has no heading or companion-count footer", () => {
+      const prs = [makePr({ title: "feat: A" }), makePr({ title: "feat: B" })];
+      renderWithProviders(<PullRequestLinks pullRequests={prs} variant="inline" />);
+
+      expect(screen.queryByText("Pull Requests")).not.toBeInTheDocument();
+      expect(screen.queryByText(/companion PRs/)).not.toBeInTheDocument();
+    });
+
+    it("keeps every link's test id, href and rel", () => {
+      const pr = makePr({
+        title: "feat: add user auth",
+        prUrl: "https://github.com/org/backend/pull/42",
+      });
+      renderWithProviders(<PullRequestLinks pullRequests={[pr]} variant="inline" />);
+
+      const link = screen.getByTestId("pull-request-link");
+      expect(link).toHaveAttribute("href", "https://github.com/org/backend/pull/42");
+      expect(link).toHaveAttribute("rel", "noopener noreferrer");
+      expect(link).toHaveClass("max-w-xs");
+    });
+  });
 });

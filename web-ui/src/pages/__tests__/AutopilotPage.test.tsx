@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { screen, within } from "@testing-library/react";
+import { screen, within, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "@/__tests__/test-utils";
 import AutopilotPage from "@/pages/AutopilotPage";
@@ -159,6 +159,26 @@ describe("AutopilotPage", () => {
     const needsAttention = screen.getByTestId("autopilot-needs-attention");
     expect(needsAttention).toHaveTextContent("Failed task");
     expect(needsAttention).toHaveTextContent("awaiting_retry");
+  });
+
+  it("hovering a long task reference shows its full title", async () => {
+    const user = userEvent.setup();
+    const longTitle = "A very long task reference title that would otherwise be truncated";
+    mockUseAutopilot.mockReturnValue({
+      data: makeStatus({
+        nextUp: [taskRef({ taskId: "t-1", title: longTitle, status: "ready" })],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderWithProviders(<AutopilotPage />);
+
+    await user.hover(screen.getByText(longTitle));
+
+    await waitFor(() => {
+      expect(screen.getAllByText(longTitle).length).toBeGreaterThanOrEqual(2);
+    });
   });
 
   it("names held Tasks and links them to the Task rather than the finished run", () => {

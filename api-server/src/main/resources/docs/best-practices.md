@@ -61,8 +61,8 @@ in the Start Run dialog. Starting a run against an unprovisioned repo will fail 
 ### 8. Review PR Diffs Before Approving a Gate
 
 When an AI agent opens a Pull Request and the workflow pauses at a gate, open the PR link in
-GitHub and review the diff before approving. The Run Monitor shows the PR link in the node detail
-panel. Do not approve based solely on the agent's summary. On a gate configured to merge pull
+GitHub and review the diff before approving. The PR links appear in the run summary at the top of
+the Run Monitor. Do not approve based solely on the agent's summary. On a gate configured to merge pull
 requests (Feature Development's Final Approval), approving merges every registered PR, so review
 the diffs first — there is no separate confirmation step after you click Approve.
 

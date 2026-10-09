@@ -1,27 +1,53 @@
-import { useState } from "react";
-import { useParams } from "react-router";
-import { X, ChevronLeft, ChevronRight } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useParams, useSearchParams } from "react-router";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useRun } from "@/hooks/useRuns";
 import { useRunSubscription } from "@/hooks/useRunSubscription";
 import { useResizable } from "@/hooks/useResizable";
 import { useMobileBreakpoint } from "@/hooks/useMobileBreakpoint";
+import { useMediaQuery, DOCKED_PANEL_QUERY } from "@/hooks/useMediaQuery";
+import { useFullBleedMain } from "@/components/layout/MainLayoutContext";
 import RunHeader from "@/components/runs/RunHeader";
-import RunMetaBar from "@/components/runs/RunMetaBar";
-import PullRequestLinks from "@/components/runs/PullRequestLinks";
+import { RunSummaryStrip, RunSummaryMobileBar, RunSummaryDetails } from "@/components/runs/RunSummary";
+import type { AttentionNodeRef } from "@/components/runs/RunSummary";
 import RunDag from "@/components/runs/RunDag";
 import DetailPanel from "@/components/runs/DetailPanel";
-import RunMetaPanel from "@/components/runs/RunMetaPanel";
+import NodeDetailEmptyState from "@/components/runs/NodeDetailEmptyState";
+import BottomSheet from "@/components/ui/BottomSheet";
 import ResizeHandle from "@/components/ui/ResizeHandle";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { classifyActiveNodes, pickFocusNode, attentionKind } from "@/lib/runFocus";
+import { formatNodeLabel } from "@/components/runs/DagNode";
+import type { RunResponse } from "@/lib/types";
+
+/** The `?node=` value, valid only when it names a node in the run's current snapshot. */
+function resolveSelectedNodeId(run: RunResponse | undefined, raw: string | null): string | null {
+  if (!raw || !run?.graphSnapshot) return null;
+  return run.graphSnapshot.nodes.some((n) => n.template_node_id === raw) ? raw : null;
+}
+
+function buildAttentionNode(run: RunResponse): AttentionNodeRef | null {
+  const node = classifyActiveNodes(run).attention[0];
+  if (!node) return null;
+  const kind = attentionKind(run, node.template_node_id);
+  if (!kind) return null;
+  return { templateNodeId: node.template_node_id, label: node.label, kind };
+}
 
 export default function RunMonitorPage() {
   const { id } = useParams<{ id: string }>();
   const { data: run, isLoading } = useRun(id!);
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [sidebarVisible, setSidebarVisible] = useState(true);
-  const isMobile = useMobileBreakpoint();
   useRunSubscription(id);
+  useFullBleedMain();
+
+  const isMobile = useMobileBreakpoint();
+  const isDocked = useMediaQuery(DOCKED_PANEL_QUERY);
+
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selectedNodeId = resolveSelectedNodeId(run, searchParams.get("node"));
+
+  const [sidebarVisible, setSidebarVisible] = useState(true);
+  const [infoOpen, setInfoOpen] = useState(false);
 
   const detailPanel = useResizable({
     side: "left",
@@ -31,10 +57,29 @@ export default function RunMonitorPage() {
     storageKey: "detail-panel-width",
   });
 
-  const handleNodeSelect = (nodeId: string | null) => {
-    setSelectedNodeId(nodeId);
+  function select(nodeId: string | null) {
+    const next = new URLSearchParams(searchParams);
+    if (nodeId) next.set("node", nodeId);
+    else next.delete("node");
+    setSearchParams(next, { replace: true });
     if (nodeId !== null) setSidebarVisible(true);
-  };
+  }
+
+  const focusNodeId = useMemo(() => (run ? pickFocusNode(run) : null), [run]);
+  const attentionNode = useMemo(() => (run ? buildAttentionNode(run) : null), [run]);
+
+  // Applies at most once per run id, on the docked tier only: a reload or a live update never
+  // re-triggers it, and deselecting afterward doesn't bring it back without reloading.
+  const autoFocusedRunIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!run) return;
+    if (autoFocusedRunIdRef.current === run.id) return;
+    autoFocusedRunIdRef.current = run.id;
+    if (isDocked && selectedNodeId === null && focusNodeId) select(focusNodeId);
+    // `select` is re-created every render (it closes over `searchParams`); the ref guard, not
+    // the dependency list, is what keeps this to once per run id.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [run?.id, isDocked, selectedNodeId, focusNodeId]);
 
   if (isLoading) {
     return (
@@ -46,18 +91,37 @@ export default function RunMonitorPage() {
   }
   if (!run) return <div data-testid="run-not-found" className="p-4 text-muted-foreground">Run not found</div>;
 
+  const selectedNodeSnapshot = selectedNodeId
+    ? run.graphSnapshot?.nodes.find((n) => n.template_node_id === selectedNodeId)
+    : undefined;
+
   return (
     <div className={`flex h-full flex-col${detailPanel.isDragging ? " select-none" : ""}`}>
-      <RunHeader run={run} />
-      {isMobile && <RunMetaBar run={run} />}
-      {isMobile && (run.pullRequests?.length ?? 0) > 0 && (
-        <PullRequestLinks pullRequests={run.pullRequests} />
+      <RunHeader run={run} compact={isMobile} />
+      {isMobile ? (
+        <RunSummaryMobileBar
+          run={run}
+          attentionNode={attentionNode}
+          onOpenInfo={() => setInfoOpen(true)}
+          onSelectNode={select}
+        />
+      ) : (
+        <RunSummaryStrip run={run} attentionNode={isDocked ? undefined : attentionNode} onSelectNode={select} />
       )}
-      <div className="relative flex flex-1 overflow-hidden">
-        <div className="flex-1">
-          <RunDag run={run} onNodeSelect={handleNodeSelect} />
+
+      <div className="relative flex min-h-0 flex-1 overflow-hidden">
+        <div className="min-w-0 flex-1">
+          <RunDag
+            run={run}
+            onNodeSelect={select}
+            selectedNodeId={selectedNodeId}
+            focusNodeId={focusNodeId}
+            compact={isMobile}
+            viewportKey={run.id}
+          />
         </div>
-        {!isMobile && (
+
+        {isDocked && (
           <>
             {sidebarVisible ? (
               <>
@@ -70,7 +134,6 @@ export default function RunMonitorPage() {
                   style={{ width: detailPanel.width }}
                   className="shrink-0 border-l overflow-y-auto overflow-x-hidden flex flex-col"
                 >
-                  {/* Sidebar header with collapse toggle */}
                   <div className="flex justify-end px-2 py-1 border-b shrink-0">
                     <button
                       onClick={() => setSidebarVisible(false)}
@@ -81,22 +144,16 @@ export default function RunMonitorPage() {
                       <ChevronRight className="h-4 w-4" />
                     </button>
                   </div>
-                  {/* Panel content */}
                   <div className="flex-1 overflow-y-auto overflow-x-hidden">
                     {selectedNodeId ? (
-                      <DetailPanel
-                        run={run}
-                        nodeId={selectedNodeId}
-                        onBackToRunMeta={() => setSelectedNodeId(null)}
-                      />
+                      <DetailPanel run={run} nodeId={selectedNodeId} onClose={() => select(null)} />
                     ) : (
-                      <RunMetaPanel run={run} />
+                      <NodeDetailEmptyState run={run} onSelectNode={select} />
                     )}
                   </div>
                 </div>
               </>
             ) : (
-              /* Thin expand strip when sidebar is collapsed */
               <div className="shrink-0 border-l flex flex-col items-center pt-2">
                 <button
                   onClick={() => setSidebarVisible(true)}
@@ -110,32 +167,33 @@ export default function RunMonitorPage() {
             )}
           </>
         )}
-        {/* Transparent overlay prevents React Flow from stealing pointer events during drag */}
-        {detailPanel.isDragging && (
-          <div className="absolute inset-0 z-20" />
-        )}
+
+        {detailPanel.isDragging && <div className="absolute inset-0 z-20" />}
       </div>
 
-      {/* Mobile detail panel overlay */}
-      {selectedNodeId && isMobile && (
-        <div
+      {!isDocked && (
+        <BottomSheet
+          open={!!selectedNodeId}
+          onOpenChange={(open) => {
+            if (!open) select(null);
+          }}
+          title={selectedNodeSnapshot ? formatNodeLabel(selectedNodeSnapshot.label) : "Node details"}
+          hideTitle
           data-testid="mobile-detail-overlay"
-          className="fixed inset-x-0 bottom-0 z-40 flex h-[85vh] flex-col rounded-t-xl border-t bg-background shadow-lg"
         >
-          <div className="flex items-center justify-end border-b px-4 py-2">
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => setSelectedNodeId(null)}
-              aria-label="Close detail panel"
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
-          <div className="flex-1 overflow-y-auto overflow-x-hidden">
-            <DetailPanel run={run} nodeId={selectedNodeId} />
-          </div>
-        </div>
+          {selectedNodeId && <DetailPanel run={run} nodeId={selectedNodeId} />}
+        </BottomSheet>
+      )}
+
+      {isMobile && (
+        <BottomSheet
+          open={infoOpen}
+          onOpenChange={setInfoOpen}
+          title="Run info"
+          data-testid="run-info-sheet"
+        >
+          <RunSummaryDetails run={run} />
+        </BottomSheet>
       )}
     </div>
   );

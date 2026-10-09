@@ -274,4 +274,18 @@ describe("EpicBoardCard", () => {
     expect(card).toHaveAttribute("aria-roledescription", "draggable");
     expect(card).toHaveAttribute("tabindex", "0");
   });
+
+  it("hovering the title shows the full title", async () => {
+    const user = userEvent.setup();
+    const epic = makeEpic({ title: "A very long epic title that would otherwise be truncated" });
+    renderWithProviders(<EpicBoardCard epic={epic} />);
+
+    await user.hover(screen.getByTestId("epic-board-card-title"));
+
+    await waitFor(() => {
+      expect(
+        screen.getAllByText("A very long epic title that would otherwise be truncated").length,
+      ).toBeGreaterThanOrEqual(2);
+    });
+  });
 });

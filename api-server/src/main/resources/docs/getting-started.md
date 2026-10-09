@@ -72,8 +72,8 @@ Once all nodes complete:
 
 1. Return to the **Runs** page and click the completed run.
 2. In the **Run Monitor**, each node shows its final status.
-3. If an AI agent opened a Pull Request, the PR link appears in the node detail panel.
-4. Browse output artifacts in the **Artifact Browser** tab.
+3. If an AI agent opened a Pull Request, the PR link appears in the run summary at the top of the Run Monitor.
+4. Browse output artifacts in the node detail panel.
 
 ## Navigating the Interface
 
