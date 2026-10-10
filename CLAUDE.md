@@ -172,8 +172,8 @@ Enforced by `scripts/check-comment-refs.sh`, which runs as part of the root `./g
 
 ## Design Decisions
 
-- **Consult `docs/decisions/` before changing architecture, contracts, or security boundaries** — each entry records why the code is shaped the way it is. `docs/decisions/README.md` is the index and the full convention.
-- **Record a decision that graduates.** When a change makes an architectural or security choice a later reader could not recover from the code alone, add an entry — naming, immutability, and supersession rules are in `docs/decisions/README.md` — and update its index row. Run-scoped specs stay with the run; only durable decisions graduate here.
+- **Consult `docs/decisions/` before changing architecture, contracts, or security boundaries** — each entry records why the code is shaped the way it is, and its `**Status:**` line says whether it still holds. `docs/decisions/README.md` is the full convention.
+- **Record a decision that graduates.** When a change makes an architectural or security choice a later reader could not recover from the code alone, add an entry — naming, immutability, and supersession rules are in `docs/decisions/README.md`; superseding an entry rewrites its status line. Run-scoped specs stay with the run; only durable decisions graduate here.
 
 ## Documentation Conventions
 

@@ -1,8 +1,6 @@
 # Approving a merge-declaring gate merges the run's registered pull requests synchronously, before any decision state is written
 
-## Status
-
-current
+**Status:** current
 
 ## Context
 

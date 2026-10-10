@@ -262,28 +262,35 @@ class FeatureDevPromptConventionsTest {
         }
     }
 
-    /**
-     * BaseFeatureDevSeeder is exempt from scripts/check-comment-refs.sh as a whole file, because
-     * its prompt strings define the spec format the ordinals belong to. This test is the only
-     * thing standing in for the guard inside that exemption, so it checks the shapes a citation
-     * actually takes rather than one of them.
-     */
     @Test
-    void implementPromptRequiresAnIndexRowPerGraduatedEntry() throws Exception {
-        // Marking a superseded entry is not enough on its own: a run that supersedes
-        // nothing must still register, or the index stays empty and the supersession
-        // check below it has nothing to read.
+    void implementPromptNamesDecisionFilesWithoutASequenceNumber() throws Exception {
         assertThat(promptField("IMPLEMENT_PROMPT"))
-                .contains("docs/decisions/README.md")
-                .contains("its own row")
-                .contains("newest last");
+                .as("parallel runs each take the next free number, and git merges the duplicates silently")
+                .contains("docs/decisions/YYYY-MM-DD-<slug>.md")
+                .doesNotContain("---NN");
+    }
+
+    @Test
+    void implementPromptPutsAStatusLineInEveryGraduatedEntry() throws Exception {
+        // Marking a superseded entry is not enough on its own: a run that supersedes
+        // nothing must still write its status line, or the supersession check has
+        // nothing to read.
+        assertThat(promptField("IMPLEMENT_PROMPT"))
+                .contains("Directly under the entry's title")
+                .contains("`**Status:** current`");
+        assertThat(promptField("IMPLEMENT_PROMPT").replaceAll("\\s+", " "))
+                .as("an index every run appends a row to conflicts between any two open pull requests")
+                .contains("Keep no index of entries")
+                .doesNotContain("its own row")
+                .doesNotContain("newest last");
     }
 
     @Test
     void implementPromptKeepsGraduatedEntriesImmutable() throws Exception {
-        assertThat(promptField("IMPLEMENT_PROMPT"))
-                .as("a reversal adds an entry and marks the old one; it never edits it")
-                .contains("do not edit it")
+        assertThat(promptField("IMPLEMENT_PROMPT").replaceAll("\\s+", " "))
+                .as("a reversal adds an entry and rewrites the old one's status line; it never edits its body")
+                .contains("do not edit its body")
+                .contains("rewrite only the old entry's status line")
                 .contains("superseded by");
     }
 
@@ -315,6 +322,12 @@ class FeatureDevPromptConventionsTest {
         assertThat(section).doesNotContainPattern("\\{[a-zA-Z_][a-zA-Z0-9_.]*\\}");
     }
 
+    /**
+     * BaseFeatureDevSeeder is exempt from scripts/check-comment-refs.sh as a whole file, because
+     * its prompt strings define the spec format the ordinals belong to. This test is the only
+     * thing standing in for the guard inside that exemption, so it checks the shapes a citation
+     * actually takes rather than one of them.
+     */
     @Test
     void noPromptCitesAPastRunsSpec() throws Exception {
         for (String name :

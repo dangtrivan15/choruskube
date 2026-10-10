@@ -1,8 +1,6 @@
 # The e2e suite fits a memory-constrained Test-node agent
 
-## Status
-
-current
+**Status:** current
 
 ## Context
 

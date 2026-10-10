@@ -1,8 +1,6 @@
 # The e2e stack packages a host-built api-server jar and staggers its memory peaks
 
-## Status
-
-current — amends (does not supersede)
+**Status:** current — amends (does not supersede)
 [2026-09-21---01-e2e-memory-fits-constrained-test-node.md](2026-09-21---01-e2e-memory-fits-constrained-test-node.md),
 whose heap bound and per-service caps stay in force.
 

@@ -1,8 +1,6 @@
 # The web UI ships all of its JavaScript up front, in one `vendor` chunk, and the build fails if anything would load lazily
 
-## Status
-
-current
+**Status:** current
 
 ## Context
 

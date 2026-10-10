@@ -1,8 +1,6 @@
 # Every memory limit is 1.4× its request; the default request is the ceiling
 
-## Status
-
-current — supersedes [2026-10-08---01-derived-memory-limit.md](2026-10-08---01-derived-memory-limit.md)
+**Status:** current — supersedes [2026-10-08---01-derived-memory-limit.md](2026-10-08---01-derived-memory-limit.md)
 
 ## Context
 
