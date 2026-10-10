@@ -203,6 +203,20 @@ class FeatureDevPromptConventionsTest {
     }
 
     @Test
+    void specPromptLetsMarkdownCarryTheShapeOfTheContent() throws Exception {
+        String collapsed = promptField("SPEC_AND_PLAN_PROMPT").replaceAll("\\s+", " ");
+        assertThat(collapsed)
+                .as("paragraph after paragraph of prose hides lists, comparisons and steps a reviewer scans for")
+                .contains("let markdown carry the structure the content already has")
+                .contains("a table holds items compared across the same attributes")
+                .contains("> [!WARNING]")
+                .as("bullets drop the connectives that carry a chain of reasoning")
+                .contains("Keep prose where the sentences form a chain of reasoning")
+                .as("a fact told once per section reads as verbosity, however it is formatted")
+                .contains("State each fact once");
+    }
+
+    @Test
     void specPromptRecordsEachDecisionAsAnOptionTable() throws Exception {
         String collapsed = promptField("SPEC_AND_PLAN_PROMPT").replaceAll("\\s+", " ");
         assertThat(collapsed)

@@ -19,6 +19,16 @@ Welcome to ChorusKube...
 ...
 ```
 
+## Callouts
+
+Use GitHub alert syntax for a point the reader must not miss. The marker sits alone on the
+quote's first line; the kinds are `NOTE`, `TIP`, `IMPORTANT`, `WARNING` and `CAUTION`:
+
+```markdown
+> [!WARNING]
+> Approving this gate merges every registered pull request.
+```
+
 ## File Naming
 
 - File names must match the `slug` field in `index.json`

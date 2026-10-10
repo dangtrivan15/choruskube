@@ -45,7 +45,9 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
     // v47: the spec opens with Context and Approach at the level of the idea, records each
     // Technical Decision as an option table, links existing roadmap items to their app pages,
     // and later nodes cite its sections by title.
-    static final int CURRENT_VERSION = 47;
+    // v48: the spec lets markdown (lists, tables, GitHub alerts) carry the shape of its content
+    // and states each fact once.
+    static final int CURRENT_VERSION = 48;
 
     private static final String TEMPLATE_NAME = "Feature Development";
 
@@ -117,6 +119,22 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             grouping appears ONLY in Expected Changed Files, where reviewers need to
             scan their own repo's surface; every other section describes the system
             as a whole.
+
+            Reviewers scan before they read, so let markdown carry the structure the
+            content already has; which element fits is your call. A list holds
+            parallel items, a numbered list holds steps whose order matters, a table
+            holds items compared across the same attributes, bold marks a term where
+            it is named, and a GitHub alert (`> [!NOTE]`, `> [!IMPORTANT]` or
+            `> [!WARNING]`, the marker alone on the quote's first line) marks a point
+            a reviewer must not miss. Keep prose where the sentences form a chain of
+            reasoning: the "so" and "because" between them carry the idea, and
+            splitting them into bullets loses it. Keep those paragraphs to a few
+            sentences each. Structure is for content that has that shape — a table
+            forced onto a chain, or a highlight on every paragraph, reads worse than
+            the prose it replaced.
+
+            State each fact once. A later section builds on what an earlier one
+            established and refers back to it rather than retelling it.
 
             Use the following EIGHT sections, in this order. Section numbers and
             titles must match exactly.

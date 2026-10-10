@@ -11,6 +11,7 @@ export class DocsPage {
   readonly pageContent: Locator;
   // data-testid locator — follows constructor-level convention of using getByTestId().
   readonly mermaidDiagrams: Locator;
+  readonly alerts: Locator;
   // Inline markdown links have no data-testid; page.locator() targets specific href values.
   readonly internalLink: Locator;
   readonly externalLink: Locator;
@@ -22,6 +23,7 @@ export class DocsPage {
     this.pageTitle       = page.getByTestId("docs-page-title");
     this.pageContent     = page.getByTestId("docs-page-content");
     this.mermaidDiagrams = page.getByTestId("mermaid-diagram");
+    this.alerts          = page.getByTestId("markdown-alert");
     this.internalLink    = page.locator('a[href="/docs/features"]');
     this.externalLink    = page.locator('a[href^="https://github.com"]');
   }
