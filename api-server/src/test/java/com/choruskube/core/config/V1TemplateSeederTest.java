@@ -827,14 +827,13 @@ class V1TemplateSeederTest extends BaseTest {
     }
 
     @Test
-    void currentVersionIsBumpedForIdeaFirstSpecFormat() {
-        // v47: the spec opens with Context and Approach, records decisions as option tables,
-        // links existing roadmap items to their app pages, and later nodes cite its sections by
-        // title. This is the rolling version
+    void currentVersionIsBumpedForStructuredSpecText() {
+        // v48: the spec lets markdown (lists, tables, GitHub alerts) carry the shape of its
+        // content and states each fact once. This is the rolling version
         // tripwire: rewrite it and bump the literal whenever CURRENT_VERSION changes, so a
         // template edit that forgets the bump cannot ship silently.
-        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(47);
-        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 47))
+        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(48);
+        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 48))
                 .isPresent();
     }
 

@@ -61,6 +61,20 @@ test.describe("Documentation", () => {
     await expect(diagram).toContainText("Reviewer");
   });
 
+  // The "Best Practices" doc carries one `> [!WARNING]` alert, on merge-on-approval gates.
+  test("renders a GitHub alert as a tone callout, not a quote", async ({ docsPage }) => {
+    await docsPage.goto();
+    await docsPage.selectDoc("Best Practices");
+
+    await expect(docsPage.alerts).toHaveCount(1);
+    const alert = docsPage.alerts.first();
+    await expect(alert).toHaveAttribute("data-tone", "warning");
+    await expect(alert).toContainText("Warning");
+    await expect(alert).toContainText("merges every registered PR");
+    await expect(alert).not.toContainText("[!WARNING]");
+    await expect(docsPage.pageContent.locator("blockquote")).toHaveCount(0);
+  });
+
   // 6b — Internal links navigate via pushState without triggering a popup.
   test("internal link navigates via pushState without page reload", async ({ docsPage, page }) => {
     await docsPage.goto();

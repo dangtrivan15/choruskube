@@ -637,4 +637,68 @@ describe("MarkdownViewer", () => {
     expect(link).toHaveAttribute("href", "mailto:admin@example.com");
     expect(link).not.toHaveAttribute("href", "/docs/mailto:admin@example.com");
   });
+
+  describe("GitHub alerts", () => {
+    it.each([
+      ["NOTE", "Note", "info"],
+      ["TIP", "Tip", "success"],
+      ["IMPORTANT", "Important", "accent"],
+      ["WARNING", "Warning", "warning"],
+      ["CAUTION", "Caution", "error"],
+    ])("renders > [!%s] as a %s callout with the %s tone", (marker, title, tone) => {
+      renderWithProviders(<MarkdownViewer content={`> [!${marker}]\n> Alert body`} />);
+      const alert = screen.getByTestId("markdown-alert");
+      expect(alert).toHaveAttribute("data-tone", tone);
+      expect(alert).toHaveTextContent(title);
+      expect(alert).toHaveTextContent("Alert body");
+      expect(alert).not.toHaveTextContent(`[!${marker}]`);
+      expect(alert.closest("blockquote")).toBeNull();
+    });
+
+    it("renders the body in normal ink, not the muted italic quote style", () => {
+      renderWithProviders(<MarkdownViewer content={"> [!NOTE]\n> Alert body"} />);
+      const alert = screen.getByTestId("markdown-alert");
+      expect(alert.className).not.toMatch(/\bitalic\b/);
+      expect(alert.className).not.toMatch(/\btext-muted-foreground\b/);
+    });
+
+    it("accepts a lowercase marker", () => {
+      renderWithProviders(<MarkdownViewer content={"> [!warning]\n> Alert body"} />);
+      expect(screen.getByTestId("markdown-alert")).toHaveAttribute("data-tone", "warning");
+    });
+
+    it("keeps every paragraph and inline format after a marker on its own paragraph", () => {
+      renderWithProviders(
+        <MarkdownViewer content={"> [!IMPORTANT]\n>\n> First **bold** part\n>\n> Second part"} />
+      );
+      const alert = screen.getByTestId("markdown-alert");
+      expect(screen.getByText("bold").tagName).toBe("STRONG");
+      expect(alert).toHaveTextContent("Second part");
+      // Title + two body paragraphs: the marker's own paragraph must not survive as an empty <p>.
+      expect(alert.querySelectorAll("p")).toHaveLength(3);
+    });
+
+    it("accepts a marker ended by a hard line break", () => {
+      renderWithProviders(<MarkdownViewer content={"> [!TIP]  \n> Alert body"} />);
+      const alert = screen.getByTestId("markdown-alert");
+      expect(alert).toHaveTextContent("Alert body");
+      expect(alert.querySelector("br")).toBeNull();
+    });
+
+    it("leaves a marker followed by text on the same line as a plain quote", () => {
+      renderWithProviders(<MarkdownViewer content="> [!NOTE] same line" />);
+      expect(screen.queryByTestId("markdown-alert")).toBeNull();
+      expect(screen.getByText("[!NOTE] same line").closest("blockquote")).toBeInTheDocument();
+    });
+
+    it("leaves an unknown alert kind as a plain quote", () => {
+      renderWithProviders(<MarkdownViewer content={"> [!DANGER]\n> body"} />);
+      expect(screen.queryByTestId("markdown-alert")).toBeNull();
+    });
+
+    it("leaves an alert nested inside a list as a plain quote, as GitHub does", () => {
+      renderWithProviders(<MarkdownViewer content={"- > [!NOTE]\n  > nested"} />);
+      expect(screen.queryByTestId("markdown-alert")).toBeNull();
+    });
+  });
 });

@@ -3,8 +3,12 @@ import { Link } from "react-router";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import mermaid from "mermaid";
+import { AlertTriangle, Info, Lightbulb, MessageSquareWarning, OctagonAlert, type LucideIcon } from "lucide-react";
+import StatusCallout from "@/components/ui/StatusCallout";
 import { artifactUrl } from "@/lib/api";
+import { isAlertKind, remarkAlerts, type AlertKind } from "@/lib/markdownAlerts";
 import { escapeMermaidSemicolons, quoteSequenceParticipantAliases } from "@/lib/mermaid";
+import type { StatusTone } from "@/lib/statusColors";
 
 mermaid.initialize({
   startOnLoad: false,
@@ -16,6 +20,16 @@ mermaid.initialize({
   // effects — see web-ui/node_modules/mermaid/dist/mermaid.esm.mjs:1485,1504.
   suppressErrorRendering: true,
 });
+
+const REMARK_PLUGINS = [remarkGfm, remarkAlerts];
+
+const ALERT_STYLES: Record<AlertKind, { title: string; tone: StatusTone; icon: LucideIcon }> = {
+  note: { title: "Note", tone: "info", icon: Info },
+  tip: { title: "Tip", tone: "success", icon: Lightbulb },
+  important: { title: "Important", tone: "accent", icon: MessageSquareWarning },
+  warning: { title: "Warning", tone: "warning", icon: AlertTriangle },
+  caution: { title: "Caution", tone: "error", icon: OctagonAlert },
+};
 
 interface ArtifactContext {
   runId: string;
@@ -174,6 +188,7 @@ function RawToggleButton({ showRaw, onToggle }: { showRaw: boolean; onToggle: ()
  * Inline markdown viewer that renders inside existing content blocks.
  *
  * - Uses react-markdown + remark-gfm for safe, XSS-free rendering.
+ * - GitHub alerts (`> [!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]`, `[!CAUTION]`) render as tone callouts.
  * - Styles applied via Tailwind classes on component overrides (no @tailwindcss/typography).
  * - Includes a Raw / Rendered toggle button in the top-right corner (both "card" and "prose" modes).
  * - Images are rendered inline with graceful fallback on load errors.
@@ -213,7 +228,7 @@ function MarkdownViewerInner({ content, maxHeight = "max-h-48", artifactContext,
           <pre className="whitespace-pre-wrap text-sm">{content}</pre>
         ) : (
           <div className="prose-content">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+            <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={markdownComponents}>
               {strippedContent}
             </ReactMarkdown>
           </div>
@@ -237,7 +252,7 @@ function MarkdownViewerInner({ content, maxHeight = "max-h-48", artifactContext,
           className={`${maxHeight} overflow-auto rounded-md border bg-muted/30 p-3 pr-16 text-xs`}
         >
           <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
+            remarkPlugins={REMARK_PLUGINS}
             components={markdownComponents}
           >
             {strippedContent}
@@ -275,11 +290,28 @@ function buildMarkdownComponents(
 
     // Block elements
     p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
-    blockquote: ({ children }) => (
-      <blockquote className="mb-2 border-l-2 border-muted-foreground/30 pl-3 italic text-muted-foreground">
-        {children}
-      </blockquote>
-    ),
+    blockquote: ({ node, children }) => {
+      const kind = node?.properties?.dataAlert;
+      if (isAlertKind(kind)) {
+        const { title, tone, icon } = ALERT_STYLES[kind];
+        return (
+          <StatusCallout
+            tone={tone}
+            title={title}
+            icon={icon}
+            data-testid="markdown-alert"
+            className={`mb-2 text-[length:inherit] last:mb-0 ${isProse ? "" : "p-2"}`}
+          >
+            {children}
+          </StatusCallout>
+        );
+      }
+      return (
+        <blockquote className="mb-2 border-l-2 border-muted-foreground/30 pl-3 italic text-muted-foreground">
+          {children}
+        </blockquote>
+      );
+    },
     hr: () => <hr className="my-3 border-border" />,
 
     // Lists — prose uses wider indentation for visual hierarchy; card uses compact.
