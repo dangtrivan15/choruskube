@@ -1,8 +1,6 @@
 # Redundant, non-color severity encoding for execution logs, and always-fetch log retrieval
 
-## Status
-
-current
+**Status:** current
 
 ## Context
 

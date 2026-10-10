@@ -1,8 +1,6 @@
 # A per-project memory request derives its memory limit, capped unless exempt
 
-## Status
-
-current
+**Status:** superseded by [2026-10-08---02](2026-10-08---02-memory-limit-always-derived.md)
 
 ## Context
 

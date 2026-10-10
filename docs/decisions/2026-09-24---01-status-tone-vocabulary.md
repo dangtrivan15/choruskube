@@ -1,8 +1,6 @@
 # A shared status-tone vocabulary, sentence-ink rule, and toast bridge
 
-## Status
-
-current
+**Status:** current
 
 ## Context
 

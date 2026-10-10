@@ -1,8 +1,6 @@
 # The Run detail page gets three layout tiers, URL-based node selection, and one shared bottom sheet
 
-## Status
-
-current
+**Status:** current
 
 ## Context
 

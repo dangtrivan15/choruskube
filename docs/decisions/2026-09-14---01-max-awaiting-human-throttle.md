@@ -1,8 +1,6 @@
 # `max_awaiting_human` is a second ceiling that reuses the slot-counter seam and only ever throttles
 
-## Status
-
-current
+**Status:** current
 
 ## Context
 

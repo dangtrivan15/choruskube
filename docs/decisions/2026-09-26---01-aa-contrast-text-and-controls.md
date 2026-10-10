@@ -1,8 +1,6 @@
 # App text and controls meet WCAG AA contrast in both themes
 
-## Status
-
-current
+**Status:** current
 
 ## Context
 

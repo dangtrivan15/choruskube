@@ -1,8 +1,6 @@
 # Agent workloads get Docker images from a pre-warmed (optionally custom) DinD sidecar, not an injected registry mirror
 
-## Status
-
-current
+**Status:** superseded by [2026-09-13---01](2026-09-13---01-remove-dormant-registry-mirror-seam.md)
 
 ## Context
 

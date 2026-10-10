@@ -1,8 +1,6 @@
 # First-visit theme follows the OS color-scheme; a saved preference stays authoritative
 
-## Status
-
-current
+**Status:** current
 
 ## Context
 
