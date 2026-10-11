@@ -494,6 +494,70 @@ class GraphValidationServiceTest {
         assertThat(result.errors()).isEmpty();
     }
 
+    private static final String RECHECK_ALWAYS =
+            "{\"terminal_decisions\":[\"approved\"],\"drift_recheck\":{\"route\":\"rereview\",\"stamp\":\"always\"}}";
+
+    @Test
+    void driftRecheckWithRouteEdgeAndApprovedIsValid() {
+        UUID entry = UUID.randomUUID();
+        UUID gate = UUID.randomUUID();
+
+        var gateNode = makeNode(gate, "gate", false);
+        gateNode.setConfigOverrides(RECHECK_ALWAYS);
+        var nodes = List.of(makeNode(entry, "entry", true), gateNode);
+        var edges = List.of(makeEdge(entry, gate, null), makeEdge(gate, entry, "rereview"));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.errors()).isEmpty();
+        assertThat(result.valid()).isTrue();
+    }
+
+    @Test
+    void driftRecheckRouteWithoutEdgeIsRejected() {
+        UUID entry = UUID.randomUUID();
+        UUID gate = UUID.randomUUID();
+
+        var gateNode = makeNode(gate, "gate", false);
+        gateNode.setConfigOverrides(RECHECK_ALWAYS);
+        var nodes = List.of(makeNode(entry, "entry", true), gateNode);
+        var edges = List.of(makeEdge(entry, gate, null));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isFalse();
+        assertThat(result.errors()).anyMatch(e -> e.contains("gate") && e.contains("drift_recheck route 'rereview'"));
+    }
+
+    @Test
+    void driftRecheckUnknownStampIsRejected() {
+        UUID entry = UUID.randomUUID();
+        UUID gate = UUID.randomUUID();
+
+        var gateNode = makeNode(gate, "gate", false);
+        gateNode.setConfigOverrides(
+                "{\"terminal_decisions\":[\"approved\"],\"drift_recheck\":{\"route\":\"rereview\",\"stamp\":\"sometimes\"}}");
+        var nodes = List.of(makeNode(entry, "entry", true), gateNode);
+        var edges = List.of(makeEdge(entry, gate, null), makeEdge(gate, entry, "rereview"));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isFalse();
+        assertThat(result.errors()).anyMatch(e -> e.contains("unknown drift_recheck stamp 'sometimes'"));
+    }
+
+    @Test
+    void driftRecheckWithoutApprovedIsRejected() {
+        UUID entry = UUID.randomUUID();
+        UUID gate = UUID.randomUUID();
+
+        var gateNode = makeNode(gate, "gate", false);
+        gateNode.setConfigOverrides("{\"drift_recheck\":{\"route\":\"rereview\",\"stamp\":\"always\"}}");
+        var nodes = List.of(makeNode(entry, "entry", true), gateNode);
+        var edges = List.of(makeEdge(entry, gate, null), makeEdge(gate, entry, "rereview"));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isFalse();
+        assertThat(result.errors()).anyMatch(e -> e.contains("declares drift_recheck but has no 'approved' decision"));
+    }
+
     private TemplateNode makeNode(UUID id, String label, boolean entrypoint) {
         var node = new TemplateNode();
         node.setId(id);

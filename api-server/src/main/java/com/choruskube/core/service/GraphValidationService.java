@@ -1,6 +1,7 @@
 package com.choruskube.core.service;
 
 import com.choruskube.core.dto.ValidationResponse;
+import com.choruskube.core.model.DriftRecheckConfig;
 import com.choruskube.core.model.TemplateEdge;
 import com.choruskube.core.model.TemplateNode;
 import com.choruskube.core.model.enums.PullRequestMergeMethod;
@@ -161,6 +162,30 @@ public class GraphValidationService {
             }
         }
 
+        // A stale approval is held by firing `route`; a route the gate cannot fire would leave the
+        // approval neither applied nor held.
+        for (TemplateNode node : nodes) {
+            JsonNode recheck = readConfigNode(node, DriftRecheckConfig.CONFIG_KEY);
+            if (recheck == null) {
+                continue;
+            }
+            String route = recheck.path("route").asText("");
+            String stamp = recheck.path("stamp").asText("");
+            if (route.isBlank()) {
+                errors.add("Node '" + node.getLabel() + "' declares drift_recheck without a route");
+            } else if (!hasOutgoingCondition(node, edges, route)) {
+                errors.add("Node '" + node.getLabel() + "' declares drift_recheck route '" + route
+                        + "' but has no outgoing '" + route + "' edge");
+            }
+            if (DriftRecheckConfig.StampMode.fromValue(stamp).isEmpty()) {
+                errors.add("Node '" + node.getLabel() + "' has unknown drift_recheck stamp '" + stamp
+                        + "' (expected always or if_unchanged)");
+            }
+            if (!declaresApprovedDecision(node, edges)) {
+                errors.add("Node '" + node.getLabel() + "' declares drift_recheck but has no 'approved' decision");
+            }
+        }
+
         for (TemplateNode node : nodes) {
             validateConfigOverrides(node, errors);
         }
@@ -263,6 +288,25 @@ public class GraphValidationService {
             // Malformed config_overrides JSON is already surfaced by validateConfigOverrides.
         }
         return Optional.empty();
+    }
+
+    private JsonNode readConfigNode(TemplateNode node, String key) {
+        String overridesStr = node.getConfigOverrides();
+        if (overridesStr == null || overridesStr.isBlank()) {
+            return null;
+        }
+        try {
+            JsonNode value = objectMapper.readTree(overridesStr).get(key);
+            return value == null || value.isNull() ? null : value;
+        } catch (Exception e) {
+            return null; // malformed JSON is already reported by validateConfigOverrides
+        }
+    }
+
+    private boolean hasOutgoingCondition(TemplateNode node, List<TemplateEdge> edges, String condition) {
+        return edges.stream()
+                .anyMatch(
+                        e -> e.getSourceNodeId().equals(node.getId()) && condition.equalsIgnoreCase(e.getCondition()));
     }
 
     /**
