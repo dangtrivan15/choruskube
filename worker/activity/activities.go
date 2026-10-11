@@ -33,6 +33,7 @@ type workloadClient interface {
 	PrepareWorkload(ctx context.Context, params workload.PrepareParams) (*workload.PrepareResponse, error)
 	CompleteWorkload(ctx context.Context, params workload.CompleteParams) error
 	WriteExecutionLog(ctx context.Context, runID, nodeExecID uuid.UUID, level, message string)
+	GetNodeExecution(ctx context.Context, runID, nodeExecID uuid.UUID) (*workload.NodeExecution, error)
 }
 
 var _ workloadClient = (*workload.Client)(nil)

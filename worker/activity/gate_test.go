@@ -22,6 +22,7 @@ import (
 
 	"github.com/dangtrivan15/choruskube/worker/credential"
 	"github.com/dangtrivan15/choruskube/worker/github"
+	"github.com/dangtrivan15/choruskube/worker/workload"
 )
 
 const gateToken = "ghs_gate_test_token"
@@ -208,10 +209,24 @@ type gateRig struct {
 	gh     *gateGitHub
 	prov   *fakeGateProvider
 	run    uuid.UUID
+	gate   uuid.UUID
 	beats  []gateProgress
 	onBeat func()
 	// resume is what an earlier attempt's last heartbeat left behind; nil means a first attempt.
 	resume *gateProgress
+	// gateStatus answers each read of the gate's execution; nil reads it as finalizing.
+	gateStatus  func() (string, error)
+	gateReads   []uuid.UUID
+	gateReadsMu sync.Mutex
+}
+
+// finalizingGate is a workload client whose every read finds the gate still finalizing.
+func finalizingGate() *mockWorkloadClient {
+	return &mockWorkloadClient{
+		getNodeExecFn: func(_ context.Context, _, id uuid.UUID) (*workload.NodeExecution, error) {
+			return &workload.NodeExecution{ID: id, Status: "finalizing"}, nil
+		},
+	}
 }
 
 // newGateRig stubs the SDK's heartbeat calls, which panic outside a running activity.
@@ -242,11 +257,34 @@ func newGateRig(t *testing.T) *gateRig {
 
 func newGateBase(t *testing.T) *gateRig {
 	t.Helper()
-	rig := &gateRig{run: stubbedRun(t), gh: newGateGitHub(t), prov: &fakeGateProvider{}}
-	rig.acts = &Activities{}
+	rig := &gateRig{run: stubbedRun(t), gate: uuid.New(), gh: newGateGitHub(t), prov: &fakeGateProvider{}}
+	rig.acts = &Activities{client: &mockWorkloadClient{
+		getNodeExecFn: func(_ context.Context, runID, id uuid.UUID) (*workload.NodeExecution, error) {
+			if runID != rig.run {
+				t.Errorf("gate read for run %s, want %s", runID, rig.run)
+			}
+			rig.gateReadsMu.Lock()
+			rig.gateReads = append(rig.gateReads, id)
+			rig.gateReadsMu.Unlock()
+			if rig.gateStatus == nil {
+				return &workload.NodeExecution{ID: id, Status: "finalizing"}, nil
+			}
+			status, err := rig.gateStatus()
+			if err != nil {
+				return nil, err
+			}
+			return &workload.NodeExecution{ID: id, Status: status}, nil
+		},
+	}}
 	rig.acts.SetCredentials(rig.prov)
 	rig.acts.SetGitHub(github.New(rig.gh.srv.URL))
 	return rig
+}
+
+func (r *gateRig) reads() []uuid.UUID {
+	r.gateReadsMu.Lock()
+	defer r.gateReadsMu.Unlock()
+	return append([]uuid.UUID(nil), r.gateReads...)
 }
 
 func (r *gateRig) beatNames() []string {
@@ -258,7 +296,7 @@ func (r *gateRig) beatNames() []string {
 }
 
 func (r *gateRig) params(compares []GateCompare, prs []GatePR) GateGitHubParams {
-	return GateGitHubParams{RunID: r.run, Compares: compares, PRs: prs, MergeMethod: "squash"}
+	return GateGitHubParams{RunID: r.run, NodeExecutionID: r.gate, Compares: compares, PRs: prs, MergeMethod: "squash"}
 }
 
 func (r *gateRig) exec(t *testing.T, compares []GateCompare, prs []GatePR) (GateGitHubResult, error) {
@@ -838,6 +876,72 @@ func TestRunGateGitHubSteps_CancelledMidMergeIsNotReReadOrRefused(t *testing.T) 
 	assert.Equal(t, 1, rig.gh.count(http.MethodGet, prPath(pr)), "a cancelled call is not worth a re-read")
 }
 
+func TestRunGateGitHubSteps_StopsBeforeTheNextMergeOnceTheGateIsNoLongerFinalizing(t *testing.T) {
+	rig := newGateRig(t)
+	first, second := gatePR("acme/web", 1), gatePR("acme/api", 2)
+	rig.gh.pr(first, openPR("head-one"))
+	rig.gh.pr(second, openPR("head-two"))
+	rig.gh.merge(first, mergeOK("merge-one"))
+	rig.gh.merge(second, mergeOK("merge-two"))
+	// The run is cancelled once the first pull request has merged; its gate is then skipped.
+	rig.gateStatus = func() (string, error) {
+		if len(rig.gh.puts()) > 0 {
+			return "skipped", nil
+		}
+		return "finalizing", nil
+	}
+
+	_, err := rig.exec(t, nil, []GatePR{first, second})
+
+	require.Error(t, err)
+	var app *temporal.ApplicationError
+	require.ErrorAs(t, err, &app)
+	assert.True(t, app.NonRetryable(), "a gate that left finalizing never comes back to it")
+	assert.Contains(t, err.Error(), "the gate is no longer finalizing")
+	assert.Equal(t, []string{"PUT " + mergePath(first)}, putPaths(rig.gh), "the second pull request is never merged")
+	assert.Equal(t, []uuid.UUID{rig.gate, rig.gate}, rig.reads(), "the gate is read before each merge")
+}
+
+func TestRunGateGitHubSteps_AGateThatCannotBeReadIsNotMergedAndIsRetried(t *testing.T) {
+	rig := newGateRig(t)
+	pr := gatePR("acme/web", 1)
+	rig.gh.pr(pr, openPR("head-one"))
+	rig.gateStatus = func() (string, error) { return "", errors.New("api request failed: connection refused") }
+
+	_, err := rig.exec(t, nil, []GatePR{pr})
+
+	require.Error(t, err)
+	var app *temporal.ApplicationError
+	assert.False(t, errors.As(err, &app) && app.NonRetryable(), "a failed read may heal, so Temporal retries")
+	assert.Empty(t, rig.gh.puts(), "nothing merges without the check")
+}
+
+func TestRunGateGitHubSteps_AMissingGateExecutionIsRefusedUpFront(t *testing.T) {
+	rig := newGateRig(t)
+	p := rig.params([]GateCompare{gateCompare("acme/web")}, []GatePR{gatePR("acme/web", 1)})
+	p.NodeExecutionID = uuid.Nil
+
+	_, err := rig.acts.RunGateGitHubSteps(context.Background(), p)
+
+	require.Error(t, err)
+	var app *temporal.ApplicationError
+	require.ErrorAs(t, err, &app)
+	assert.True(t, app.NonRetryable())
+	assert.Empty(t, rig.prov.calls)
+	assert.Empty(t, rig.gh.sequence())
+}
+
+func TestRunGateGitHubSteps_ComparesAloneNeedNoGateRead(t *testing.T) {
+	rig := newGateRig(t)
+	web := gateCompare("acme/web")
+	rig.gh.compare(web, 0)
+
+	_, err := rig.exec(t, []GateCompare{web}, nil)
+
+	require.NoError(t, err)
+	assert.Empty(t, rig.reads())
+}
+
 func TestRunGateGitHubSteps_RunIDMustMatchWorkflow(t *testing.T) {
 	rig := newGateRig(t)
 	web := gateCompare("acme/web")
@@ -915,8 +1019,9 @@ func TestRunGateGitHubSteps_ErrorsWhenNoCredentialsOrClientAreConfigured(t *test
 	run := stubbedRun(t)
 
 	_, err := (&Activities{}).RunGateGitHubSteps(context.Background(), GateGitHubParams{
-		RunID:    run,
-		Compares: []GateCompare{gateCompare("acme/web")},
+		RunID:           run,
+		NodeExecutionID: uuid.New(),
+		Compares:        []GateCompare{gateCompare("acme/web")},
 	})
 
 	require.Error(t, err)
@@ -996,7 +1101,7 @@ func TestRunGateGitHubSteps_AttemptThatNeverReachedMergingStillRechecks(t *testi
 func TestRunGateGitHubSteps_RetryAfterPartialMergeResumesMergingInsteadOfRechecking(t *testing.T) {
 	run := stubbedRun(t)
 	gh := newGateGitHub(t)
-	acts := &Activities{}
+	acts := &Activities{client: finalizingGate()}
 	acts.SetCredentials(&fakeGateProvider{})
 	acts.SetGitHub(github.New(gh.srv.URL))
 	web := gateCompare("acme/web")
@@ -1041,7 +1146,9 @@ func TestRunGateGitHubSteps_RetryAfterPartialMergeResumesMergingInsteadOfRecheck
 		}
 		mergeOK("merge-two")(w, r)
 	})
-	params := GateGitHubParams{RunID: run, Compares: []GateCompare{web}, PRs: []GatePR{first, second}, MergeMethod: "squash"}
+	params := GateGitHubParams{
+		RunID: run, NodeExecutionID: uuid.New(), Compares: []GateCompare{web}, PRs: []GatePR{first, second}, MergeMethod: "squash",
+	}
 	var suite testsuite.WorkflowTestSuite
 
 	attempt1 := suite.NewTestActivityEnvironment()
@@ -1100,8 +1207,8 @@ func TestGateTypesCarryTheWireNamesTheOrchestratorCopies(t *testing.T) {
 		names(keys(GateCompare{GitRepoID: id})))
 	assert.ElementsMatch(t, []string{"rowId", "ownerRepo", "number", "label", "prUrl"},
 		names(keys(GatePR{RowID: id})))
-	assert.ElementsMatch(t, []string{"runId", "compares", "prs", "mergeMethod"},
-		names(keys(GateGitHubParams{RunID: id})))
+	assert.ElementsMatch(t, []string{"runId", "nodeExecutionId", "compares", "prs", "mergeMethod"},
+		names(keys(GateGitHubParams{RunID: id, NodeExecutionID: id})))
 	assert.ElementsMatch(t, []string{"gitRepoId", "aheadBy", "baseGone"},
 		names(keys(GateCompareResult{GitRepoID: id})))
 	assert.ElementsMatch(t, []string{"rowId", "kind", "mergedAt", "mergeSha"},
@@ -1118,7 +1225,7 @@ func TestGateTypesCarryTheWireNamesTheOrchestratorCopies(t *testing.T) {
 func TestRunGateGitHubSteps_IsRegisteredUnderItsNameAndSurvivesTheDataConverter(t *testing.T) {
 	run := stubbedRun(t)
 	gh := newGateGitHub(t)
-	acts := &Activities{}
+	acts := &Activities{client: finalizingGate()}
 	acts.SetCredentials(&fakeGateProvider{})
 	acts.SetGitHub(github.New(gh.srv.URL))
 	web := gateCompare("acme/web")
@@ -1130,8 +1237,9 @@ func TestRunGateGitHubSteps_IsRegisteredUnderItsNameAndSurvivesTheDataConverter(
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestActivityEnvironment()
 	Register(env, acts)
-	val, err := env.ExecuteActivity("RunGateGitHubSteps",
-		GateGitHubParams{RunID: run, Compares: []GateCompare{web}, PRs: []GatePR{pr}, MergeMethod: "merge"})
+	val, err := env.ExecuteActivity("RunGateGitHubSteps", GateGitHubParams{
+		RunID: run, NodeExecutionID: uuid.New(), Compares: []GateCompare{web}, PRs: []GatePR{pr}, MergeMethod: "merge",
+	})
 
 	require.NoError(t, err)
 	var res GateGitHubResult

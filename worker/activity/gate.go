@@ -43,11 +43,13 @@ type GatePR struct {
 	PRURL     string    `json:"prUrl"`
 }
 
+// GateGitHubParams.NodeExecutionID is the gate's execution, read before every merge.
 type GateGitHubParams struct {
-	RunID       uuid.UUID     `json:"runId"`
-	Compares    []GateCompare `json:"compares"`
-	PRs         []GatePR      `json:"prs"`
-	MergeMethod string        `json:"mergeMethod"`
+	RunID           uuid.UUID     `json:"runId"`
+	NodeExecutionID uuid.UUID     `json:"nodeExecutionId"`
+	Compares        []GateCompare `json:"compares"`
+	PRs             []GatePR      `json:"prs"`
+	MergeMethod     string        `json:"mergeMethod"`
 }
 
 type GateCompareResult struct {
@@ -77,6 +79,9 @@ type GateGitHubResult struct {
 // recordHeartbeat is the SDK's RecordHeartbeat behind a seam, which panics outside a running
 // activity. Reassigned only from _test.go, and never from a test calling t.Parallel.
 var recordHeartbeat = temporalactivity.RecordHeartbeat
+
+// gateFinalizing is the gate execution's status while its approval is being finalized.
+const gateFinalizing = "finalizing"
 
 const (
 	gatePhaseCompare = "compare"
@@ -110,6 +115,10 @@ func (a *Activities) RunGateGitHubSteps(ctx context.Context, p GateGitHubParams)
 	if err := bindGateRun(ctx, p.RunID); err != nil {
 		return res, err
 	}
+	if p.NodeExecutionID == uuid.Nil {
+		return res, temporal.NewNonRetryableApplicationError(
+			"gate steps without the gate's execution, which every merge is checked against", "GateExecution", nil)
+	}
 	if len(p.Compares) == 0 && len(p.PRs) == 0 {
 		return res, nil
 	}
@@ -120,6 +129,9 @@ func (a *Activities) RunGateGitHubSteps(ctx context.Context, p GateGitHubParams)
 	if a.credentials == nil || a.gh == nil {
 		return res, errors.New("this Worker has no GitHub credentials or client configured")
 	}
+	if len(p.PRs) > 0 && a.client == nil {
+		return res, errors.New("this Worker has no API client to check the gate before merging")
+	}
 	tok, err := a.credentials.GitHubToken(ctx, p.RunID)
 	if err != nil {
 		return res, fmt.Errorf("obtain GitHub token for run %s: %w", p.RunID, err)
@@ -127,7 +139,9 @@ func (a *Activities) RunGateGitHubSteps(ctx context.Context, p GateGitHubParams)
 	if strings.TrimSpace(tok.Value) == "" {
 		return res, errors.New("credential provider returned a blank GitHub token")
 	}
-	s := &gateSteps{gh: a.gh, token: tok.Value, method: p.MergeMethod}
+	s := &gateSteps{
+		gh: a.gh, token: tok.Value, method: p.MergeMethod, api: a.client, runID: p.RunID, gateExecID: p.NodeExecutionID,
+	}
 
 	saved, resumed := savedProgress(ctx)
 	if resumed && saved.Phase == gatePhaseMerge {
@@ -186,9 +200,12 @@ func bindGateRun(ctx context.Context, runID uuid.UUID) error {
 func validMergeMethod(m string) bool { return m == "merge" || m == "squash" || m == "rebase" }
 
 type gateSteps struct {
-	gh     *github.Client
-	token  string
-	method string
+	gh         *github.Client
+	token      string
+	method     string
+	api        workloadClient
+	runID      uuid.UUID
+	gateExecID uuid.UUID
 	// merging is set on a retry that resumed in the merge phase: every later heartbeat keeps
 	// that phase, or a second failure before the first merge would send the next retry to re-compare.
 	merging bool
@@ -315,6 +332,9 @@ func (s *gateSteps) merge(ctx context.Context, queue []queuedMerge, res *GateGit
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		if err := s.gateStillFinalizing(ctx); err != nil {
+			return err
+		}
 		sha, err := s.gh.Merge(ctx, s.token, item.pr.OwnerRepo, item.pr.Number, s.method, item.head)
 		if err == nil {
 			res.Merges = append(res.Merges,
@@ -344,6 +364,22 @@ func (s *gateSteps) merge(ctx context.Context, queue []queuedMerge, res *GateGit
 		}
 		res.Refused = fmt.Sprintf("Merged: %s. Could not merge %s: %s", merged, item.label, reason)
 		return nil
+	}
+	return nil
+}
+
+// gateStillFinalizing stops the merges once the gate has left finalizing, as a cancelled run's
+// does: the cancel reaches this activity only on a throttled heartbeat, and each merge made after
+// it lands on GitHub with no record on the run.
+func (s *gateSteps) gateStillFinalizing(ctx context.Context) error {
+	exec, err := s.api.GetNodeExecution(ctx, s.runID, s.gateExecID)
+	if err != nil {
+		return failed(ctx, "read the gate's status", err)
+	}
+	if exec.Status != gateFinalizing {
+		return temporal.NewNonRetryableApplicationError(
+			fmt.Sprintf("the gate is no longer finalizing (it is %s), so nothing more is merged", exec.Status),
+			"GateNotFinalizing", nil)
 	}
 	return nil
 }

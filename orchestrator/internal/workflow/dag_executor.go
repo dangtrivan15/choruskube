@@ -626,7 +626,10 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 					// Version-gated: a gate opened in a history recorded before this marker replays
 					// without the held-approval claim, and the API keeps sending it one final decision.
 					// finalize_mode is how the API learns which of the two protocols this gate speaks.
-					asyncFinalize := workflow.GetVersion(ctx, "async-gate-finalize", workflow.DefaultVersion, 1) >= 1
+					finalizeVersion := workflow.GetVersion(ctx, "async-gate-finalize", workflow.DefaultVersion, 1)
+					// With no Worker queue the GitHub step lands on the orchestrator's stub, which fails
+					// every attempt, so each approval would be refused.
+					asyncFinalize := finalizeVersion >= 1 && params.WorkerTaskQueue != ""
 					var finalizeMode *string
 					if asyncFinalize {
 						mode := "async"
@@ -1725,8 +1728,9 @@ func (f *gateFinalizer) claimHeld() string {
 	if err := workflow.ExecuteActivity(f.apiCtx, f.acts.ClaimHeldApproval,
 		activity.GateRef{RunID: f.runID, NodeExecutionID: f.execID},
 	).Get(f.ctx, &held); err != nil {
-		// A claim that failed after its retries left the gate waiting on a reviewer, who can
-		// approve again; failing the node instead would end a gate nobody decided.
+		// The claim may still have committed, leaving the gate finalizing past a reviewer's reach
+		// until its timeout fails the node or the run ends; either voids the approval. Failing the
+		// node here would end a gate nobody decided whenever the claim did not commit.
 		workflow.GetLogger(f.ctx).Warn("Could not claim a held approval; waiting for a decision",
 			"execID", f.execID, "err", err)
 		return ""
@@ -1766,15 +1770,20 @@ func (f *gateFinalizer) finalize(approvalID string) (nodeCompletion, finalizeOut
 	}
 
 	var gh activity.GateGitHubResult
-	if err := workflow.ExecuteActivity(f.gitHubCtx, f.acts.RunGateGitHubSteps, activity.GateGitHubParams{
-		RunID: f.runID, Compares: plan.Compares, PRs: plan.PRs, MergeMethod: plan.MergeMethod,
-	}).Get(f.ctx, &gh); err != nil {
-		if f.ctx.Err() != nil {
-			return nodeCompletion{}, finalizeAbandoned
+	// Scheduled with nothing to do, the step would still make the approval wait on a live Worker,
+	// and refuse it when none picks the step up.
+	if len(plan.Compares) > 0 || len(plan.PRs) > 0 {
+		if err := workflow.ExecuteActivity(f.gitHubCtx, f.acts.RunGateGitHubSteps, activity.GateGitHubParams{
+			RunID: f.runID, NodeExecutionID: f.execID, Compares: plan.Compares, PRs: plan.PRs,
+			MergeMethod: plan.MergeMethod,
+		}).Get(f.ctx, &gh); err != nil {
+			if f.ctx.Err() != nil {
+				return nodeCompletion{}, finalizeAbandoned
+			}
+			workflow.GetLogger(f.ctx).Warn("GitHub step failed; refusing the approval",
+				"execID", f.execID, "approvalID", approvalID, "err", err)
+			return f.refuse(ref, gitHubStepRefusal(err), nil)
 		}
-		workflow.GetLogger(f.ctx).Warn("GitHub step failed; refusing the approval",
-			"execID", f.execID, "approvalID", approvalID, "err", err)
-		return f.refuse(ref, gitHubStepRefusal(err), nil)
 	}
 	switch {
 	case gh.Refused != "":

@@ -107,7 +107,7 @@ func (s *DAGExecutorTestSuite) expectPlan(g gateRun, approvalID string, plan act
 func (s *DAGExecutorTestSuite) expectGitHubSteps(g gateRun, plan activity.GatePlan, result activity.GateGitHubResult) {
 	s.env.OnActivity("RunGateGitHubSteps", mock.Anything, mock.MatchedBy(func(p activity.GateGitHubParams) bool {
 		return reflect.DeepEqual(p, activity.GateGitHubParams{
-			RunID: g.runID, Compares: plan.Compares, PRs: plan.PRs, MergeMethod: plan.MergeMethod,
+			RunID: g.runID, NodeExecutionID: g.exec, Compares: plan.Compares, PRs: plan.PRs, MergeMethod: plan.MergeMethod,
 		})
 	})).Return(result, nil).Once()
 }
@@ -296,6 +296,53 @@ func (s *DAGExecutorTestSuite) TestHumanGateFinalizePlanHoldSkipsTheWorker() {
 
 	s.assertCompleted()
 	s.env.AssertActivityNotCalled(s.T(), "RunGateGitHubSteps", mock.Anything, mock.Anything)
+}
+
+// TestHumanGateFinalizeWithNothingForGitHubSkipsTheWorker: a plan with no compare and no pull
+// request, as a roadmap-only gate's, completes without waiting on a Worker.
+func (s *DAGExecutorTestSuite) TestHumanGateFinalizeWithNothingForGitHubSkipsTheWorker() {
+	g := s.newGateRun(3600)
+
+	s.expectGateOpened(g, asyncMode)
+	s.expectGateCompleted(g, "roadmap written", "{}")
+	s.anyOtherStatusWrite()
+	s.expectPlan(g, "s1", activity.GatePlan{
+		Outcome: activity.GatePlanProceed, Compares: []activity.GateCompare{}, PRs: []activity.GatePR{},
+	})
+	s.env.OnActivity("CompleteGateFinalize", mock.Anything, mock.MatchedBy(func(p activity.GateCompleteParams) bool {
+		return p.GateApprovalRef == g.approval("s1") && len(p.Merges) == 0
+	})).Return(activity.GateStepResult{
+		Outcome: activity.GateStepCompleted, Result: "roadmap written", AttachmentRefs: "{}",
+	}, nil).Once()
+	s.decisionReads(g, "approved")
+	s.signalGate(g, 0, "approved", "s1")
+
+	s.runGate(g)
+
+	s.assertCompleted()
+	s.env.AssertActivityNotCalled(s.T(), "RunGateGitHubSteps", mock.Anything, mock.Anything)
+}
+
+// TestHumanGateWithoutAWorkerQueueStaysSynchronous: a run with no Worker queue has nothing to run
+// the GitHub step, so its gates open on the synchronous protocol; the version is still recorded.
+func (s *DAGExecutorTestSuite) TestHumanGateWithoutAWorkerQueueStaysSynchronous() {
+	g := s.newGateRun(3600)
+	s.env.OnGetVersion("async-gate-finalize", workflow.DefaultVersion, 1).Return(workflow.Version(1)).Once()
+
+	s.expectGateOpened(g, nil)
+	s.expectGateCompleted(g, "reviewer feedback", "{}")
+	s.anyOtherStatusWrite()
+	s.env.OnActivity("SetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.SetNodeDecisionParams) bool {
+		return p.NodeExecutionID == g.exec && p.Decision == "approved"
+	})).Return(nil).Once()
+	s.decisionReads(g, "approved")
+	s.signalGate(g, 0, "approved", "")
+
+	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{RunID: g.runID, GraphVersion: 1})
+
+	s.assertCompleted()
+	s.env.AssertActivityNotCalled(s.T(), "ClaimHeldApproval", mock.Anything, mock.Anything)
+	s.env.AssertActivityNotCalled(s.T(), "PlanGateFinalize", mock.Anything, mock.Anything)
 }
 
 // TestHumanGateFinalizeRefusedThenReapproved: a refused approval sends the gate back to waiting

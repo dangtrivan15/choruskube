@@ -41,11 +41,13 @@ type GatePR struct {
 	PRURL     string    `json:"prUrl"`
 }
 
+// GateGitHubParams.NodeExecutionID is the gate's execution, read before every merge.
 type GateGitHubParams struct {
-	RunID       uuid.UUID     `json:"runId"`
-	Compares    []GateCompare `json:"compares"`
-	PRs         []GatePR      `json:"prs"`
-	MergeMethod string        `json:"mergeMethod"`
+	RunID           uuid.UUID     `json:"runId"`
+	NodeExecutionID uuid.UUID     `json:"nodeExecutionId"`
+	Compares        []GateCompare `json:"compares"`
+	PRs             []GatePR      `json:"prs"`
+	MergeMethod     string        `json:"mergeMethod"`
 }
 
 type GateCompareResult struct {

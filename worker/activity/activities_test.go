@@ -111,10 +111,11 @@ var _ executor.Executor = (*mockExecutor)(nil)
 // like CleanupWorkload/GetWorkloadLogs above: it is a best-effort, fire-and-forget call made on
 // every execution, so it defaults to a no-op and only tests asserting on it set writeLogFn.
 type mockWorkloadClient struct {
-	createFn   func(ctx context.Context, p workload.CreateWorkloadParams) (*workload.CreateWorkloadResponse, error)
-	prepareFn  func(ctx context.Context, p workload.PrepareParams) (*workload.PrepareResponse, error)
-	completeFn func(ctx context.Context, p workload.CompleteParams) error
-	writeLogFn func(ctx context.Context, runID, nodeExecID uuid.UUID, level, message string)
+	createFn      func(ctx context.Context, p workload.CreateWorkloadParams) (*workload.CreateWorkloadResponse, error)
+	prepareFn     func(ctx context.Context, p workload.PrepareParams) (*workload.PrepareResponse, error)
+	completeFn    func(ctx context.Context, p workload.CompleteParams) error
+	writeLogFn    func(ctx context.Context, runID, nodeExecID uuid.UUID, level, message string)
+	getNodeExecFn func(ctx context.Context, runID, nodeExecID uuid.UUID) (*workload.NodeExecution, error)
 }
 
 func (m *mockWorkloadClient) CreateWorkload(ctx context.Context, p workload.CreateWorkloadParams) (*workload.CreateWorkloadResponse, error) {
@@ -131,6 +132,9 @@ func (m *mockWorkloadClient) PrepareWorkload(ctx context.Context, p workload.Pre
 }
 func (m *mockWorkloadClient) CompleteWorkload(ctx context.Context, p workload.CompleteParams) error {
 	return m.completeFn(ctx, p)
+}
+func (m *mockWorkloadClient) GetNodeExecution(ctx context.Context, runID, nodeExecID uuid.UUID) (*workload.NodeExecution, error) {
+	return m.getNodeExecFn(ctx, runID, nodeExecID)
 }
 func (m *mockWorkloadClient) WriteExecutionLog(ctx context.Context, runID, nodeExecID uuid.UUID, level, message string) {
 	if m.writeLogFn != nil {
