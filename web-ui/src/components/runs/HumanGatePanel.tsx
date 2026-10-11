@@ -299,7 +299,7 @@ export default function HumanGatePanel({
 
               <FileUploadZone onFilesChange={setAttachmentFiles} disabled={signalMutation.isPending} />
 
-              <HeldApprovalNotice stamp={latestStampFor(stamps, nodeLabel)} />
+              <HeldApprovalNotice stamp={latestStampFor(stamps, nodeLabel)} nodeExecId={nodeExecId} />
 
               {mergeOnApproval && (
                 <MergeOnApprovalNotice

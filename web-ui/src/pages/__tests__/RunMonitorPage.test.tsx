@@ -172,6 +172,7 @@ function makeStamp(status: GateStampResponse["status"]): GateStampResponse {
     maxRecheckRounds: 2,
     voidReason: null,
     supersededByReviewer: false,
+    parkedNodeExecutionId: null,
     createdAt: "2026-10-11T00:00:00Z",
     updatedAt: "2026-10-11T00:00:00Z",
   };
@@ -230,6 +231,14 @@ describe("RunMonitorPage", () => {
       renderPage();
 
       expect(screen.getByTestId("run-summary-held-approval")).toHaveTextContent("round 1 of 2");
+    });
+
+    it("shows no held-approval chip once the run has ended", () => {
+      mockRun = makeRun({ status: "cancelled", graphSnapshot: makeSnapshot([{ id: "a" }]) });
+      mockGateStamps = [makeStamp("pending")];
+      renderPage();
+
+      expect(screen.queryByTestId("run-summary-held-approval")).not.toBeInTheDocument();
     });
 
     it("shows no held-approval chip when no stamp is pending", () => {

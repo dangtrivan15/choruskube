@@ -13,7 +13,16 @@ export function latestStampFor(stamps: GateStampResponse[] | undefined, gateLabe
   return forGate.length ? forGate[forGate.length - 1] : null;
 }
 
-/** The pending stamp anywhere in the run — what the run summary chip shows. */
-export function pendingStamp(stamps: GateStampResponse[] | undefined): GateStampResponse | null {
+const ENDED_RUN_STATUSES = new Set(["completed", "failed", "cancelled"]);
+
+/**
+ * The pending stamp anywhere in the run — what the run summary chip shows. None once the run has
+ * ended: the server voids it shortly after, and an ended run gets no further event to refresh on.
+ */
+export function pendingStamp(
+  stamps: GateStampResponse[] | undefined,
+  runStatus?: string,
+): GateStampResponse | null {
+  if (runStatus && ENDED_RUN_STATUSES.has(runStatus)) return null;
   return (stamps ?? []).find((s) => s.status === "pending") ?? null;
 }

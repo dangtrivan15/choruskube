@@ -12,6 +12,7 @@ function makeStamp(overrides: Partial<GateStampResponse> = {}): GateStampRespons
     maxRecheckRounds: 2,
     voidReason: null,
     supersededByReviewer: false,
+    parkedNodeExecutionId: null,
     createdAt: "2026-10-11T00:00:00Z",
     updatedAt: "2026-10-11T00:00:00Z",
     ...overrides,
@@ -72,6 +73,14 @@ describe("pendingStamp", () => {
 
   it("returns null when no stamp is pending", () => {
     expect(pendingStamp([makeStamp({ status: "consumed" }), makeStamp({ status: "voided" })])).toBeNull();
+  });
+
+  it("returns null once the run has ended", () => {
+    const pending = makeStamp({ status: "pending" });
+    expect(pendingStamp([pending], "cancelled")).toBeNull();
+    expect(pendingStamp([pending], "failed")).toBeNull();
+    expect(pendingStamp([pending], "completed")).toBeNull();
+    expect(pendingStamp([pending], "running")).toBe(pending);
   });
 
   it("returns the pending stamp from any gate", () => {

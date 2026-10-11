@@ -1393,6 +1393,8 @@ export interface GateStampResponse {
   maxRecheckRounds: number;
   voidReason: string | null;
   supersededByReviewer: boolean;
+  /** The gate execution that was awaiting a decision when this stamp was voided, if any. */
+  parkedNodeExecutionId: string | null;
   createdAt: string;
   updatedAt: string;
 }

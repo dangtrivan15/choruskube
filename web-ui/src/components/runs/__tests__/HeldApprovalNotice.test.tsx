@@ -13,6 +13,7 @@ function makeStamp(overrides: Partial<GateStampResponse> = {}): GateStampRespons
     maxRecheckRounds: 2,
     voidReason: null,
     supersededByReviewer: false,
+    parkedNodeExecutionId: null,
     createdAt: "2026-10-11T00:00:00Z",
     updatedAt: "2026-10-11T00:00:00Z",
     ...overrides,
@@ -21,12 +22,12 @@ function makeStamp(overrides: Partial<GateStampResponse> = {}): GateStampRespons
 
 describe("HeldApprovalNotice", () => {
   it("renders nothing without a stamp", () => {
-    const { container } = render(<HeldApprovalNotice stamp={null} />);
+    const { container } = render(<HeldApprovalNotice nodeExecId="exec-2" stamp={null} />);
     expect(container.firstChild).toBeNull();
   });
 
   it("shows a pending approval with its re-check round", () => {
-    render(<HeldApprovalNotice stamp={makeStamp({ recheckRounds: 1, maxRecheckRounds: 2 })} />);
+    render(<HeldApprovalNotice nodeExecId="exec-2" stamp={makeStamp({ recheckRounds: 1, maxRecheckRounds: 2 })} />);
     const notice = screen.getByTestId("gate-held-notice");
     expect(notice).toHaveTextContent("Your approval is held");
     expect(notice).toHaveTextContent("round 1 of 2");
@@ -35,7 +36,12 @@ describe("HeldApprovalNotice", () => {
   it("shows why a voided approval was not applied", () => {
     render(
       <HeldApprovalNotice
-        stamp={makeStamp({ status: "voided", voidReason: "The re-check ran out of rounds." })}
+        nodeExecId="exec-2"
+        stamp={makeStamp({
+          status: "voided",
+          voidReason: "The re-check ran out of rounds.",
+          parkedNodeExecutionId: "exec-2",
+        })}
       />,
     );
     const notice = screen.getByTestId("gate-held-voided-notice");
@@ -47,6 +53,7 @@ describe("HeldApprovalNotice", () => {
   it("renders nothing when a reviewer's own decision replaced the held approval", () => {
     const { container } = render(
       <HeldApprovalNotice
+        nodeExecId="exec-2"
         stamp={makeStamp({ status: "voided", supersededByReviewer: true, voidReason: "A reviewer decided." })}
       />,
     );
@@ -54,7 +61,27 @@ describe("HeldApprovalNotice", () => {
   });
 
   it("renders nothing once the held approval was applied", () => {
-    const { container } = render(<HeldApprovalNotice stamp={makeStamp({ status: "consumed" })} />);
+    const { container } = render(<HeldApprovalNotice nodeExecId="exec-2" stamp={makeStamp({ status: "consumed" })} />);
     expect(container.firstChild).toBeNull();
+  });
+
+  it("does not repeat a voided approval on a later visit to the gate", () => {
+    const { container } = render(
+      <HeldApprovalNotice
+        nodeExecId="exec-3"
+        stamp={makeStamp({ status: "voided", voidReason: "Ran out of rounds.", parkedNodeExecutionId: "exec-2" })}
+      />,
+    );
+    expect(container.firstChild).toBeNull();
+  });
+
+  it("says so when a voided approval recorded no reason", () => {
+    render(
+      <HeldApprovalNotice
+        nodeExecId="exec-2"
+        stamp={makeStamp({ status: "voided", voidReason: null, parkedNodeExecutionId: "exec-2" })}
+      />,
+    );
+    expect(screen.getByTestId("gate-held-voided-notice")).toHaveTextContent("No reason was recorded.");
   });
 });

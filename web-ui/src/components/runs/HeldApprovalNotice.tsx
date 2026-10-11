@@ -3,10 +3,12 @@ import type { GateStampResponse } from "@/lib/types";
 
 interface HeldApprovalNoticeProps {
   stamp: GateStampResponse | null;
+  /** The gate execution on screen: a voided stamp is news only at the execution it was voided at. */
+  nodeExecId: string;
 }
 
 /** Shown in a gate's panel: a held approval waiting to re-apply, or why one was not applied. */
-export default function HeldApprovalNotice({ stamp }: HeldApprovalNoticeProps) {
+export default function HeldApprovalNotice({ stamp, nodeExecId }: HeldApprovalNoticeProps) {
   if (!stamp) return null;
   if (stamp.status === "pending") {
     return (
@@ -16,10 +18,10 @@ export default function HeldApprovalNotice({ stamp }: HeldApprovalNoticeProps) {
       </StatusCallout>
     );
   }
-  if (stamp.status === "voided" && !stamp.supersededByReviewer) {
+  if (stamp.status === "voided" && !stamp.supersededByReviewer && stamp.parkedNodeExecutionId === nodeExecId) {
     return (
       <StatusCallout tone="warning" data-testid="gate-held-voided-notice">
-        A held approval was not applied: {stamp.voidReason} Decide again.
+        A held approval was not applied: {stamp.voidReason ?? "No reason was recorded."} Decide again.
       </StatusCallout>
     );
   }

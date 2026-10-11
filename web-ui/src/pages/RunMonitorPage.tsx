@@ -94,7 +94,7 @@ export default function RunMonitorPage() {
   }
   if (!run) return <div data-testid="run-not-found" className="p-4 text-muted-foreground">Run not found</div>;
 
-  const heldApproval = pendingStamp(gateStamps);
+  const heldApproval = pendingStamp(gateStamps, run.status);
   const selectedNodeSnapshot = selectedNodeId
     ? run.graphSnapshot?.nodes.find((n) => n.template_node_id === selectedNodeId)
     : undefined;
