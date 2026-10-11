@@ -1,0 +1,15 @@
+# pre-merge-commit is what runs on a merge without conflicts, which is how a duplicate decision
+# number arrives: two branches each add a file under a different name, so git merges both.
+default_install_hook_types: [pre-commit, pre-merge-commit]
+default_stages: [pre-commit]
+repos:
+  # Decision records: a misnamed entry, or a date and number that two parallel branches both took
+  - repo: local
+    hooks:
+      - id: decision-numbers
+        name: Decision records have a unique date and number
+        entry: scripts/check-decision-numbers.sh
+        language: script
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit, pre-merge-commit]

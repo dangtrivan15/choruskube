@@ -19,15 +19,14 @@ entries written in different timezones still sort in the order they were written
 already on the base branch, so the superseding entry always sorts after the one it replaces.
 
 `NN` is the next free number for that date on the base branch. Runs land in parallel, so another open branch can take
-the same number, and git merges the two files without a word because their names differ. After merging the base
-branch into yours, check that no two entries share a date and number:
+the same number, and git merges the two files without a word because their names differ.
+[scripts/check-decision-numbers.sh](../../scripts/check-decision-numbers.sh) finds an entry not named this way, or two
+that share a date and number. The `decision-numbers` pre-commit hook runs it on every commit and on a merge without
+conflicts, and stops either one. Where hooks don't run — a merge on GitHub, an agent's commit — run it after merging
+the base branch.
 
-```sh
-ls docs/decisions | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}---[0-9]{2}-' | cut -c1-15 | sort | uniq -d
-```
-
-If it prints a stem, keep the entry already on the base branch, because it is merged and cited. Move yours to the next
-free number for that date with `git mv`, and update every reference to its old filename.
+When it finds two entries with one number, keep the entry already on the base branch, because it is merged and
+cited. Move yours to the next free number for that date with `git mv`, and update every reference to its old filename.
 
 Cite an entry by filename. Never by an ordinal from the spec it came from: those numbers
 are scoped to one run and mean something different in the next one.

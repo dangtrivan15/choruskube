@@ -200,3 +200,6 @@ git commit -s -m "your message"
 
 The `-s` flag adds a `Signed-off-by: Your Name <your@email>` line. Commits
 without a sign-off will not be accepted.
+
+Run `pre-commit install` once per clone to enable the commit hooks, which stop
+a misnamed or duplicate [decision record](docs/decisions/README.md#files).
