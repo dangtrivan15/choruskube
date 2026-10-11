@@ -135,6 +135,82 @@ if [ -n "$GITHUB_TOKEN_URL" ]; then
   echo "Git credentials configured"
 fi
 
+# --- Rebase-on-clone: put each run branch on the latest default branch, and record it ---
+# The approval gate compares the recorded commit with the default branch before merging, so a
+# repo recorded wrongly is re-checked or merged untested. Clones run in parallel subshells, so
+# each writes its own files and finish_repo_bases assembles them after the wait.
+REPO_BASE_DIR="${REPO_BASE_DIR:-/tmp/choruskube-repo-bases}"
+export REPO_BASE_DIR
+
+# $1 repo name, $2 clone path, $3 run branch ("" for none), $4 git repo id ("" when unknown)
+rebase_onto_default() {
+  local name="$1" path="$2" branch="$3" repo_id="$4"
+  local default_branch outcome="clean" base_sha="" conflicted=""
+  mkdir -p "$REPO_BASE_DIR"
+  default_branch=$(git -C "$path" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)
+  default_branch="${default_branch#origin/}"
+  [ -n "$default_branch" ] || default_branch=main
+
+  if [ -z "$branch" ]; then
+    base_sha=$(git -C "$path" rev-parse HEAD 2>/dev/null || true)
+    [ -n "$base_sha" ] || outcome=unavailable
+  elif ! git -C "$path" fetch --quiet --depth=200 origin "$default_branch" >/dev/null 2>&1; then
+    echo "WARNING: could not fetch origin/$default_branch for $name; continuing on stale base" >&2
+    outcome=unavailable
+  else
+    # Absent from origin on the run's first push; fetching it separately keeps that from
+    # failing the default branch's fetch too.
+    git -C "$path" fetch --quiet --depth=200 origin "$branch" >/dev/null 2>&1 || true
+    if git -C "$path" rebase --quiet "origin/$default_branch" >/dev/null 2>&1; then
+      base_sha=$(git -C "$path" rev-parse "origin/$default_branch" 2>/dev/null || true)
+    else
+      outcome=conflict
+      conflicted=$(git -C "$path" diff --name-only --diff-filter=U 2>/dev/null || true)
+      echo "WARNING: rebase onto origin/$default_branch conflicted for $name; continuing on stale base" >&2
+      git -C "$path" rebase --abort >/dev/null 2>&1 || true
+    fi
+  fi
+
+  if [ -n "$repo_id" ]; then
+    jq -n --arg id "$repo_id" --arg outcome "$outcome" --arg sha "$base_sha" --arg files "$conflicted" \
+      '{gitRepoId: $id, outcome: $outcome, baseSha: (if $sha == "" then null else $sha end),
+        conflictedFiles: ($files | split("\n") | map(select(length > 0)))}' \
+      > "$REPO_BASE_DIR/$name.json" || true
+  fi
+  if [ "$outcome" = "conflict" ]; then
+    {
+      echo "- \`$name\` (default branch \`$default_branch\`): rebasing conflicted in:"
+      printf '%s\n' "$conflicted" | sed '/^$/d; s/^/  - /'
+    } > "$REPO_BASE_DIR/$name.status.md"
+  elif [ "$outcome" = "unavailable" ] && [ -n "$branch" ]; then
+    echo "- \`$name\`: could not fetch \`origin/$default_branch\`" > "$REPO_BASE_DIR/$name.status.md"
+  fi
+  return 0
+}
+
+# Writes /workspace/in/rebase_status.md when any repo could not be rebased, then records bases.
+finish_repo_bases() {
+  local fragments="" f
+  for f in "$REPO_BASE_DIR"/*.status.md; do
+    [ -e "$f" ] || continue
+    fragments="${fragments}$(cat "$f")
+"
+  done
+  if [ -n "$fragments" ]; then
+    mkdir -p "$WORKSPACE_IN"
+    {
+      echo "# Rebase onto the default branch did not complete"
+      echo
+      echo "The entrypoint tried to rebase this run's branch onto the latest default branch and could"
+      echo "not, so your checkout is still on the old base. Rebase it yourself, resolve any conflicts as"
+      echo "part of this pass, and push with \`git push --force-with-lease origin HEAD\`."
+      echo
+      printf '%s' "$fragments"
+    } > "$WORKSPACE_IN/rebase_status.md"
+  fi
+  record-base || true
+}
+
 # --- Step 3: Clone repo(s) if configured ---
 REPOS_JSON=$(jq -r '.repos // empty' /workspace/config.json)
 
@@ -148,26 +224,15 @@ if [ -n "$REPOS_JSON" ] && [ "$REPOS_JSON" != "null" ]; then
     repo_name=$(echo "$repo" | jq -r '.name')
     repo_branch=$(echo "$repo" | jq -r '.working_branch // empty')
     repo_path=$(echo "$repo" | jq -r '.local_path')
+    repo_id=$(echo "$repo" | jq -r '.id // empty')
 
     (
       echo "Cloning $repo_name: $repo_url -> $repo_path"
       git clone --depth 1 --no-single-branch "$repo_url" "$repo_path"
       if [ -n "$repo_branch" ]; then
-        cd "$repo_path"
-        git checkout "$repo_branch" 2>/dev/null || git checkout -b "$repo_branch"
-        # Best-effort rebase onto origin/main so safety-net commits reach run
-        # branches cut from an older base. Depth 200 covers typical branch
-        # lifetimes; on conflict, abort and continue on the stale base rather than break the run.
-        if git fetch --depth=200 origin main "$repo_branch" 2>/dev/null; then
-          if ! git rebase origin/main; then
-            echo "WARNING: rebase onto origin/main failed for $repo_name; continuing on stale base" >&2
-            git rebase --abort 2>/dev/null || true
-          fi
-        else
-          echo "WARNING: could not fetch origin/main for $repo_name; continuing on stale base" >&2
-        fi
-        cd /workspace
+        git -C "$repo_path" checkout "$repo_branch" 2>/dev/null || git -C "$repo_path" checkout -b "$repo_branch"
       fi
+      rebase_onto_default "$repo_name" "$repo_path" "$repo_branch" "$repo_id"
       echo "Cloned $repo_name"
     ) &
     PIDS+=($!)
@@ -182,6 +247,7 @@ if [ -n "$REPOS_JSON" ] && [ "$REPOS_JSON" != "null" ]; then
     echo "ERROR: One or more repository clones failed" >&2
     exit 1
   fi
+  finish_repo_bases
 
   echo "Multi-repo workspace ready. $(echo "$REPOS_JSON" | jq length) repos cloned."
 
@@ -207,19 +273,10 @@ elif [ -n "$REPO_URL" ]; then
   echo "Cloning $REPO_URL..."
   git clone --depth 1 --no-single-branch "$REPO_URL" /workspace/repo/
   if [ -n "$WORKING_BRANCH" ]; then
-    cd /workspace/repo
-    git checkout "$WORKING_BRANCH" 2>/dev/null || git checkout -b "$WORKING_BRANCH"
-    # See multi-repo path above for rationale.
-    if git fetch --depth=200 origin main "$WORKING_BRANCH" 2>/dev/null; then
-      if ! git rebase origin/main; then
-        echo "WARNING: rebase onto origin/main failed; continuing on stale base" >&2
-        git rebase --abort 2>/dev/null || true
-      fi
-    else
-      echo "WARNING: could not fetch origin/main; continuing on stale base" >&2
-    fi
-    cd /workspace
+    git -C /workspace/repo checkout "$WORKING_BRANCH" 2>/dev/null || git -C /workspace/repo checkout -b "$WORKING_BRANCH"
   fi
+  rebase_onto_default "$(basename "$REPO_URL" .git)" /workspace/repo "$WORKING_BRANCH" ""
+  finish_repo_bases
   echo "Repo ready at /workspace/repo/"
 fi
 
@@ -946,7 +1003,8 @@ preserve_repo_work() {
       exit 0
     fi
 
-    if git push origin "HEAD:$repo_branch" >/dev/null 2>&1; then
+    # The clone may have rebased the branch onto a newer default branch; a plain push is then rejected.
+    if git push --force-with-lease origin "HEAD:$repo_branch" >/dev/null 2>&1; then
       echo "- $repo_name: pushed $repo_branch @ $head_sha"
     else
       echo "WARNING: could not push $repo_branch for $repo_name; the work stays in this pod" >&2

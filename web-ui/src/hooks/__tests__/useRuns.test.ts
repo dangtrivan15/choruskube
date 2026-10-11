@@ -403,6 +403,36 @@ describe("useRuns hooks", () => {
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["pending-gates"] });
     });
 
+    it("toasts 'Decision submitted' when the decision is signaled", async () => {
+      mockApi.post.mockResolvedValueOnce({ outcome: "signaled", staleRepos: [] });
+      const { wrapper } = createTestHookWrapper();
+
+      const { result } = renderHook(() => useSignalNode("run-1"), { wrapper });
+
+      result.current.mutate({ nodeExecId: "exec-1", decision: "approved", feedback: "" });
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(showMutationToast).toHaveBeenCalledWith("Decision submitted", "success");
+    });
+
+    it("toasts that the approval is held, naming the stale repos, when the server holds it", async () => {
+      mockApi.post.mockResolvedValueOnce({
+        outcome: "held_for_recheck",
+        staleRepos: [{ repo: "acme/app", detail: "2 commits behind main" }],
+      });
+      const { wrapper } = createTestHookWrapper();
+
+      const { result } = renderHook(() => useSignalNode("run-1"), { wrapper });
+
+      result.current.mutate({ nodeExecId: "exec-1", decision: "approved", feedback: "" });
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(showMutationToast).toHaveBeenCalledWith(
+        expect.stringMatching(/Approval held.*acme\/app/),
+        "success",
+      );
+    });
+
     it("calls api.postForm first then api.post with attachmentRefs when files provided", async () => {
       const attachmentRefs = '{"evidence.png":"org/runs/uuid/gate-attachments/exec-1/evidence.png"}';
       mockApi.postForm.mockResolvedValueOnce({ attachmentRefs });

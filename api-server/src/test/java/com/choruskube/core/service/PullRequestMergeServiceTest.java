@@ -254,6 +254,41 @@ class PullRequestMergeServiceTest {
     }
 
     @Test
+    void heldApprovalId_isRecordedInTheAuditDetail() throws Exception {
+        RunPullRequest first = pr(1, Instant.parse("2026-01-01T00:00:00Z"));
+        when(prRepo.findByWorkflowRunId(runId)).thenReturn(List.of(first));
+        stubRepo();
+        when(credentialResolver.getTokenForRun(runId)).thenReturn("token");
+        when(gitHubAppService.fetchPullRequestDetail("token", "org/repo", 1))
+                .thenReturn(detail("open", false, false, true, "sha1", "main"));
+        when(gitHubAppService.mergePullRequest("token", "org/repo", 1, "squash", "sha1"))
+                .thenReturn("mergesha1");
+        UUID heldApprovalId = UUID.randomUUID();
+
+        service().mergeAll(runId, PullRequestMergeMethod.squash, heldApprovalId);
+
+        JsonNode audit = objectMapper.readTree(capturedAuditDetail());
+        assertThat(audit.get("heldApprovalId").asText()).isEqualTo(heldApprovalId.toString());
+    }
+
+    @Test
+    void reviewerApproval_auditsNoHeldApprovalId() throws Exception {
+        RunPullRequest first = pr(1, Instant.parse("2026-01-01T00:00:00Z"));
+        when(prRepo.findByWorkflowRunId(runId)).thenReturn(List.of(first));
+        stubRepo();
+        when(credentialResolver.getTokenForRun(runId)).thenReturn("token");
+        when(gitHubAppService.fetchPullRequestDetail("token", "org/repo", 1))
+                .thenReturn(detail("open", false, false, true, "sha1", "main"));
+        when(gitHubAppService.mergePullRequest("token", "org/repo", 1, "squash", "sha1"))
+                .thenReturn("mergesha1");
+
+        service().mergeAll(runId, PullRequestMergeMethod.squash);
+
+        assertThat(objectMapper.readTree(capturedAuditDetail()).has("heldApprovalId"))
+                .isFalse();
+    }
+
+    @Test
     void unknownMergeability_stillAttemptsTheMerge() {
         RunPullRequest pr = pr(1, Instant.parse("2026-01-01T00:00:00Z"));
         when(prRepo.findByWorkflowRunId(runId)).thenReturn(List.of(pr));

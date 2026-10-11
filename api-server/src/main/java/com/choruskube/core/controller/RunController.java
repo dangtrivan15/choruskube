@@ -84,10 +84,9 @@ public class RunController {
 
     @PreAuthorize("@orgSecurity.canOperate()")
     @PostMapping("/{id}/nodes/{nodeExecId}/signal")
-    public ResponseEntity<Void> signal(
+    public SignalResponse signal(
             @PathVariable UUID id, @PathVariable UUID nodeExecId, @Valid @RequestBody SignalRequest request) {
-        runService.signalHumanDecision(id, nodeExecId, request);
-        return ResponseEntity.ok().build();
+        return runService.signalHumanDecision(id, nodeExecId, request);
     }
 
     @PreAuthorize("@orgSecurity.canRead()")

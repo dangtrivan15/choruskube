@@ -1377,6 +1377,28 @@ export interface AttachmentRefsResponse {
   attachmentRefs: string; // JSON string, e.g. "{\"file.pdf\":\"org/runs/.../file.pdf\"}"
 }
 
+/** `POST /runs/{id}/nodes/{exec}/signal` response. */
+export interface SignalResponse {
+  outcome: "signaled" | "held_for_recheck";
+  staleRepos: { repo: string; detail: string }[];
+}
+
+/** An approval held while its run re-checks against a moved default branch. */
+export interface GateStampResponse {
+  id: string;
+  gateTemplateNodeId: string;
+  gateLabel: string;
+  status: "pending" | "consumed" | "voided";
+  recheckRounds: number;
+  maxRecheckRounds: number;
+  voidReason: string | null;
+  supersededByReviewer: boolean;
+  /** The gate execution that was awaiting a decision when this stamp was voided, if any. */
+  parkedNodeExecutionId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface StagingRefsResponse {
   stagingRefs: string; // JSON string, e.g. "{\"doc.txt\":\"org/staging/uuid/doc.txt\"}"
 }

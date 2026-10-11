@@ -3,6 +3,7 @@ import { useParams, useSearchParams } from "react-router";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useRun } from "@/hooks/useRuns";
 import { useRunSubscription } from "@/hooks/useRunSubscription";
+import { useGateStamps } from "@/hooks/useGateStamps";
 import { useResizable } from "@/hooks/useResizable";
 import { useMobileBreakpoint } from "@/hooks/useMobileBreakpoint";
 import { useMediaQuery, DOCKED_PANEL_QUERY } from "@/hooks/useMediaQuery";
@@ -17,6 +18,7 @@ import BottomSheet from "@/components/ui/BottomSheet";
 import ResizeHandle from "@/components/ui/ResizeHandle";
 import { Skeleton } from "@/components/ui/skeleton";
 import { classifyActiveNodes, pickFocusNode, attentionKind } from "@/lib/runFocus";
+import { pendingStamp } from "@/lib/gateStamps";
 import { formatNodeLabel } from "@/components/runs/DagNode";
 import type { RunResponse } from "@/lib/types";
 
@@ -37,6 +39,7 @@ function buildAttentionNode(run: RunResponse): AttentionNodeRef | null {
 export default function RunMonitorPage() {
   const { id } = useParams<{ id: string }>();
   const { data: run, isLoading } = useRun(id!);
+  const { data: gateStamps } = useGateStamps(run?.id ?? "");
   useRunSubscription(id);
   useFullBleedMain();
 
@@ -91,6 +94,7 @@ export default function RunMonitorPage() {
   }
   if (!run) return <div data-testid="run-not-found" className="p-4 text-muted-foreground">Run not found</div>;
 
+  const heldApproval = pendingStamp(gateStamps, run.status);
   const selectedNodeSnapshot = selectedNodeId
     ? run.graphSnapshot?.nodes.find((n) => n.template_node_id === selectedNodeId)
     : undefined;
@@ -102,11 +106,17 @@ export default function RunMonitorPage() {
         <RunSummaryMobileBar
           run={run}
           attentionNode={attentionNode}
+          heldApproval={heldApproval}
           onOpenInfo={() => setInfoOpen(true)}
           onSelectNode={select}
         />
       ) : (
-        <RunSummaryStrip run={run} attentionNode={isDocked ? undefined : attentionNode} onSelectNode={select} />
+        <RunSummaryStrip
+          run={run}
+          attentionNode={isDocked ? undefined : attentionNode}
+          onSelectNode={select}
+          heldApproval={heldApproval}
+        />
       )}
 
       <div className="relative flex min-h-0 flex-1 overflow-hidden">

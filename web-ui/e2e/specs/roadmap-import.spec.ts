@@ -1,6 +1,7 @@
 import type { Page } from "@playwright/test";
 import { test, expect } from "../fixtures";
 import { uniqueName } from "../helpers/api-client";
+import { clickOption } from "../helpers/select";
 
 /** Single-repo SoftwareProjects are labelled by their repo's last two path segments. */
 function projectLabel(url: string): string {
@@ -11,7 +12,7 @@ async function openImportDialog(page: Page, projectName: string, document: unkno
   await page.getByTestId("import-roadmap-button").click();
   await expect(page.getByTestId("import-roadmap-dialog")).toBeVisible();
   await page.getByTestId("import-roadmap-project").click();
-  await page.getByRole("option", { name: projectName, exact: true }).click();
+  await clickOption(page.getByRole("option", { name: projectName, exact: true }));
   await page.getByTestId("import-roadmap-json").fill(JSON.stringify(document, null, 2));
 }
 

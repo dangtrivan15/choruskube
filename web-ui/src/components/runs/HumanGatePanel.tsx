@@ -2,6 +2,7 @@ import { useState } from "react";
 import FileUploadZone from "./FileUploadZone";
 import { ChevronDown, ChevronRight, Maximize2 } from "lucide-react";
 import { useSignalNode } from "@/hooks/useRuns";
+import { useGateStamps } from "@/hooks/useGateStamps";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
@@ -17,7 +18,9 @@ import RoadmapCandidateReview from "./RoadmapCandidateReview";
 import EscalationGatePanel from "./EscalationGatePanel";
 import TriggerBanner from "./TriggerBanner";
 import MergeOnApprovalNotice from "./MergeOnApprovalNotice";
+import HeldApprovalNotice from "./HeldApprovalNotice";
 import { parseGateTrigger, isEscalationGate } from "@/lib/decisions";
+import { latestStampFor } from "@/lib/gateStamps";
 import type {
   ResolvedArtifactGroup,
   RoadmapCandidatesDocument,
@@ -92,6 +95,7 @@ export default function HumanGatePanel({
     candidateBreakdown ?? { milestones: [], epics: [], dependencies: [] }
   );
   const signalMutation = useSignalNode(runId);
+  const { data: stamps } = useGateStamps(runId);
   const { canOperate } = usePermission();
 
   const trigger = parseGateTrigger(triggerDecision);
@@ -294,6 +298,8 @@ export default function HumanGatePanel({
               </div>
 
               <FileUploadZone onFilesChange={setAttachmentFiles} disabled={signalMutation.isPending} />
+
+              <HeldApprovalNotice stamp={latestStampFor(stamps, nodeLabel)} nodeExecId={nodeExecId} />
 
               {mergeOnApproval && (
                 <MergeOnApprovalNotice

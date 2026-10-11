@@ -9,8 +9,9 @@ import PullRequestLinks from "./PullRequestLinks";
 import PromptViewerDialog from "./PromptViewerDialog";
 import { formatNodeLabel } from "./DagNode";
 import { firstLinePreview } from "@/lib/textPreview";
+import { cn } from "@/lib/utils";
 import { roadmapLevelMeta } from "@/lib/roadmapLevel";
-import type { RunResponse } from "@/lib/types";
+import type { GateStampResponse, RunResponse } from "@/lib/types";
 
 const EXPANDED_STORAGE_KEY = "run-summary-expanded";
 
@@ -58,22 +59,32 @@ function attentionButtonLabel(attentionNode: AttentionNodeRef): string {
   return attentionNode.kind === "awaiting_human" ? `Review ${label}` : `Failed: ${label}`;
 }
 
+function HeldApprovalChip({ stamp, className }: { stamp: GateStampResponse; className?: string }) {
+  const text = `Approval held — re-checking against main (round ${stamp.recheckRounds} of ${stamp.maxRecheckRounds})`;
+  return (
+    <span data-testid="run-summary-held-approval" title={text} className={cn("text-xs text-muted-foreground", className)}>
+      {text}
+    </span>
+  );
+}
+
 interface RunSummaryStripProps {
   run: RunResponse;
   attentionNode?: AttentionNodeRef | null;
   onSelectNode?: (nodeId: string) => void;
+  heldApproval?: GateStampResponse | null;
 }
 
 /** Tablet/desktop summary strip under the run header — request preview, project, roadmap
  * chain and PR links, always visible alongside the selected node's detail. */
-export function RunSummaryStrip({ run, attentionNode, onSelectNode }: RunSummaryStripProps) {
+export function RunSummaryStrip({ run, attentionNode, onSelectNode, heldApproval }: RunSummaryStripProps) {
   const [expanded, setExpanded] = useState(readStoredExpanded);
   const [promptDialogOpen, setPromptDialogOpen] = useState(false);
 
   const hasMetadata = hasRunMetadata(run);
   const hasAttentionButton = !!attentionNode && !!onSelectNode;
 
-  if (!hasMetadata && !hasAttentionButton) return null;
+  if (!hasMetadata && !hasAttentionButton && !heldApproval) return null;
 
   function toggleExpanded() {
     setExpanded((prev) => {
@@ -99,6 +110,7 @@ export function RunSummaryStrip({ run, attentionNode, onSelectNode }: RunSummary
           </div>
         )}
         <PullRequestLinks pullRequests={run.pullRequests} variant="inline" />
+        {heldApproval && <HeldApprovalChip stamp={heldApproval} />}
         {hasAttentionButton && (
           <Button
             data-testid="run-attention-button"
@@ -156,13 +168,20 @@ export function RunSummaryStrip({ run, attentionNode, onSelectNode }: RunSummary
 interface RunSummaryMobileBarProps {
   run: RunResponse;
   attentionNode?: AttentionNodeRef | null;
+  heldApproval?: GateStampResponse | null;
   onOpenInfo: () => void;
   onSelectNode: (nodeId: string) => void;
 }
 
 /** Phone one-line bar: a "Run info" sheet opener, a short context label, and (when a gate is
  * waiting or a node failed) the "Review …"/"Failed: …" shortcut. */
-export function RunSummaryMobileBar({ run, attentionNode, onOpenInfo, onSelectNode }: RunSummaryMobileBarProps) {
+export function RunSummaryMobileBar({
+  run,
+  attentionNode,
+  heldApproval,
+  onOpenInfo,
+  onSelectNode,
+}: RunSummaryMobileBarProps) {
   const taskMeta = run.task ? roadmapLevelMeta("task") : null;
 
   return (
@@ -183,6 +202,7 @@ export function RunSummaryMobileBar({ run, attentionNode, onOpenInfo, onSelectNo
           <TruncatedText className="min-w-0">{firstLinePreview(run.promptText)}</TruncatedText>
         ) : null}
       </div>
+      {heldApproval && <HeldApprovalChip stamp={heldApproval} className="min-w-0 shrink truncate" />}
       {attentionNode && (
         <Button
           data-testid="run-attention-button"

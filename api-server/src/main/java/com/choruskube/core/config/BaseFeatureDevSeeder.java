@@ -51,7 +51,10 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
     // under the title, and appends no index row.
     // v50: the entry keeps v49's status line and missing index row, but is named
     // YYYY-MM-DD---NN-<slug>.md again, dated by the UTC date it is written.
-    static final int CURRENT_VERSION = 50;
+    // v51: Approve Spec & Plan and Final Approval re-check the run against current main when
+    // approved (drift_recheck); pushes use --force-with-lease; reviews escalate drift from what
+    // merged.
+    static final int CURRENT_VERSION = 51;
 
     private static final String TEMPLATE_NAME = "Feature Development";
 
@@ -610,6 +613,10 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
               preserve the decomposition (which components, repos, boundaries) and the
               architecture (sync vs async, data flow shape, ownership). If a fix would change
               either, escalate rather than apply.
+            - the default branch moved, and reconciling the spec with what merged would change
+              its decomposition or architecture, or reverse a decision a merged run made
+              (`review_conflict`; `alternative_proposal` if a different architecture is now
+              better) — cite the merged run's pull request.
 
             Still write `spec_and_plan.md` verbatim when you escalate — no partial fixes.
 
@@ -697,7 +704,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             - Write tests for the changes (the deterministic Test node downstream
               of Code Review will run them — do NOT run the full test suite yourself)
             - Commit all changes on the working branch
-            - Push the branch to origin
+            - Push the branch to origin with `git push --force-with-lease origin HEAD`
             - Do NOT run `gh pr create` from inside this per-repo subagent. PR
               creation happens once, afterward, in the "Opening and updating
               pull requests" section below, after every repo's implementation
@@ -870,6 +877,17 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             exists, it is your previous attempt's proposal: re-submit it (amended as needed),
             or install an empty one to withdraw it.
             Code Review reviews your proposal next and may edit it.
+
+            ## Rebased branches
+
+            The entrypoint rebases this run's branch onto the latest default branch when it
+            clones, so once main has moved a plain `git push` is rejected. Always push with
+            `git push --force-with-lease origin HEAD`; the lease still refuses to overwrite
+            commits you have not fetched.
+
+            If `/workspace/in/rebase_status.md` exists, read it before anything else: the
+            entrypoint could not rebase some repo, and your checkout there is still on the old
+            base. Rebase it yourself and resolve the conflicts as part of this pass.
 
             ## Opening and updating pull requests
 
@@ -1050,10 +1068,24 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             escalate to the Supervisor. Convergence is expected to happen
             through genuine resolution, not through running out of attempts.
 
-            Note: by the time code reaches you, the spec is already approved.
-            Architectural alternatives are NOT in scope here — if you find the
-            implementation is structurally irrecoverable within the current spec,
-            escalate (`uncertainty`). Do NOT propose to discard the spec.
+            Note: by the time code reaches you, the spec is already approved — do not
+            re-litigate its design choices. If the implementation is structurally
+            irrecoverable within the current spec, escalate (`uncertainty`). Propose that the
+            spec no longer holds only when something outside this run invalidates it: main
+            moved and a merged run changed what the spec relies on, or made a decision this
+            spec contradicts. Escalate (`review_conflict`) and cite the merged run and what
+            changed.
+
+            ## Rebased branches
+
+            The entrypoint rebases this run's branch onto the latest default branch when it
+            clones, so once main has moved a plain `git push` is rejected. Always push with
+            `git push --force-with-lease origin HEAD`; the lease still refuses to overwrite
+            commits you have not fetched.
+
+            If `/workspace/in/rebase_status.md` exists, read it before anything else: the
+            entrypoint could not rebase some repo, and your checkout there is still on the old
+            base. Rebase it yourself and resolve the conflicts as part of this pass.
 
             ## Review lenses
 
@@ -1129,7 +1161,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             **Code fixes go to git, not to object storage.** When you apply a fix, edit
             the code in `/workspace/repo/...`, verify it as scoped below, then
             `git add` → `git commit -m "review: <what you fixed>"` →
-            `git push origin HEAD`. The branch state is the source of truth —
+            `git push --force-with-lease origin HEAD`. The branch state is the source of truth —
             any PR opened or kept current against it (see "Keeping pull
             requests current" below) reflects these commits automatically via
             GitHub. Do NOT write code to `/workspace/out/`.
@@ -1311,7 +1343,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
               `/workspace/out/review.md` confirming approval (per-repo summary).
 
             - **`revised`** — Flaws found AND fixable. Apply the fixes via
-              `git commit` + `git push origin HEAD` on the working branch.
+              `git commit` + `git push --force-with-lease origin HEAD` on the working branch.
               Write `/workspace/out/review.md` documenting both what you
               found and a "Reasoning for fixes" section explaining WHY each
               fix was chosen and which commit(s) implement it. The
@@ -1324,6 +1356,9 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
 
             - your fix would reverse a prior iteration's decision (`review_conflict`) — cite the
               prior commit SHA(s) in `escalation.md`;
+            - main moved, and reconciling this branch with what merged would change the approved
+              spec's decomposition or architecture, or reverse a decision a merged run made
+              (`review_conflict`) — cite the merged run's pull request and what changed;
             - the flaw is real but no candidate fix is clearly correct, or the implementation is
               structurally irrecoverable within the approved spec (`uncertainty`);
             - the tests are valid but the environment produces inconsistent failures with no
@@ -1331,7 +1366,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
               you cannot, so do not work around it in the repo.
 
             Do not push speculative commits when you escalate. The spec is already approved by
-            this point — do not propose discarding it.
+            this point — do not re-litigate its design choices outside the merged-run case above.
 
             ## Reasoning requirement
 
@@ -1350,8 +1385,8 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             - `propose-roadmap --file <path>` — Validate and install the roadmap
               proposal as /workspace/out/roadmap_candidates.json (see "Roadmap
               proposal").
-            - Standard git tooling (`git add`, `git commit`, `git push origin
-              HEAD`) — credentials are configured by the entrypoint.
+            - Standard git tooling (`git add`, `git commit`, `git push --force-with-lease
+              origin HEAD`) — credentials are configured by the entrypoint.
             - `artifact get` / `artifact put` — Pull/push files from/to object storage
               (used for review.md, not for code).
 
@@ -1525,7 +1560,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                 nodeDefs.get("Approve Spec & Plan"),
                 "approve_spec_and_plan",
                 false,
-                "{\"loop_group\": \"spec-review\"}",
+                "{\"loop_group\": \"spec-review\", \"drift_recheck\": {\"route\": \"rereview\", \"stamp\": \"if_unchanged\"}}",
                 "[{\"template_node_label\":\"spec_review\",\"artifacts\":[{\"name\":\"spec_and_plan.md\",\"description\":\"The reviewed (and possibly revised) spec to approve\",\"required\":true},{\"name\":\"spec_review.md\",\"description\":\"reviewer notes\",\"required\":true}]}]");
 
         // Implement reads spec_and_plan.md from Spec Review (ownership transfer),
@@ -1575,7 +1610,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                 nodeDefs.get("Final Approval"),
                 "final_approval",
                 false,
-                "{\"loop_group\": \"impl-review\", \"terminal_decisions\": [\"approved\"], \"materialize\": \"roadmap_extension\", \"merge_pull_requests\": \"squash\"}",
+                "{\"loop_group\": \"impl-review\", \"terminal_decisions\": [\"approved\"], \"materialize\": \"roadmap_extension\", \"merge_pull_requests\": \"squash\", \"drift_recheck\": {\"route\": \"rereview\", \"stamp\": \"always\"}}",
                 "[{\"template_node_label\":\"implement\",\"artifacts\":[{\"name\":\"summary.md\",\"description\":\"Implementation summary describing changes made\",\"required\":true},{\"name\":\"roadmap_candidates.json\",\"description\":\"Proposed roadmap extension (optional)\",\"required\":false}]},"
                         + "{\"template_node_label\":\"code_review\",\"artifacts\":[{\"name\":\"review.md\",\"description\":\"Code review findings and approve/reject recommendation\",\"required\":true},{\"name\":\"roadmap_candidates.json\",\"description\":\"Reviewed roadmap proposal (optional; the newer of this and Implement's copy is used)\",\"required\":false}]}]");
 

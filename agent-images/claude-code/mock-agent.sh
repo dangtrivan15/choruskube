@@ -16,6 +16,9 @@
 #   gate_approve     Submit "approved" decision via API (for human-type nodes)
 #   gate_reject      Submit "rejected" decision via API (for human-type nodes)
 #   multi_repo_pr    Register PRs for all repos in a multi-repo run
+#   drift_recheck    First pass registers a PR per repo and records a base the E2E
+#                    compare stub calls behind main, so an approval gate with
+#                    drift_recheck holds; later passes keep the entrypoint's real base
 #   check_prs_gate   Drives the real check-prs/register-pr CLI contract end to end
 #                    (PR completion gate): the FIRST repo in this
 #                    run's config.json repos[] is left unchanged but pushed at parity
@@ -120,7 +123,7 @@
 #                             downloads — "<source_node_label>/<filename>". Applies to every
 #                             scenario, so any template declaring requiredInputArtifacts can
 #                             prove the declaration actually reached disk.
-#   --pr-number <n>           'multi_repo_pr' only: register every repo's PR under this fixed
+#   --pr-number <n>           'multi_repo_pr'/'drift_recheck': register every repo's PR under this fixed
 #                             number instead of a random one, so a template can pin which
 #                             WireMock PR-read/merge stub fixture (keyed by PR number) its run
 #                             exercises. Default: unset — multi_repo_pr's existing random
@@ -398,6 +401,31 @@ case "$SCENARIO" in
     exit 0
     ;;
 
+  drift_recheck)
+    # First pass: report a base WireMock's compare stub calls behind main, and register the PR.
+    # Later passes keep the base the entrypoint recorded, which the stubs call current.
+    echo "Mock agent: drift_recheck scenario"
+    iteration=$(get_iteration)
+    REPOS_JSON=$(jq -r '.repos // empty' /workspace/config.json 2>/dev/null || true)
+    if [ "$iteration" -le 1 ] && [ -n "$REPOS_JSON" ] && [ "$REPOS_JSON" != "null" ]; then
+      mkdir -p "${REPO_BASE_DIR:-/tmp/choruskube-repo-bases}"
+      while IFS= read -r repo; do
+        repo_id=$(echo "$repo" | jq -r '.id')
+        repo_name=$(echo "$repo" | jq -r '.name')
+        repo_url=$(echo "$repo" | jq -r '.url')
+        pr_number="${PR_NUMBER:-$((RANDOM % 1000 + 1))}"
+        register-pr --repo-id "$repo_id" --pr-url "${repo_url}/pull/${pr_number}" \
+          --pr-number "$pr_number" --title "feat: drift recheck (${repo_name})" --repo-name "$repo_name"
+        jq -n --arg id "$repo_id" \
+          '{gitRepoId: $id, outcome: "clean", baseSha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", conflictedFiles: []}' \
+          > "${REPO_BASE_DIR:-/tmp/choruskube-repo-bases}/${repo_name}.json"
+      done < <(echo "$REPOS_JSON" | jq -c '.[]')
+      record-base
+    fi
+    write_artifact "result.txt" "drift_recheck: pass ${iteration}"
+    exit 0
+    ;;
+
   check_prs_gate)
     # Exercises the check-prs/register-pr CLI contract end to end (PR completion
     # gate), the same way multi_repo_pr exercises register-pr's
@@ -442,7 +470,7 @@ case "$SCENARIO" in
         echo "[check_prs_gate] $repo_name: left unchanged, pushing the run branch at parity with the default branch"
         (
           cd "$repo_dir"
-          git push origin HEAD
+          git push --force-with-lease origin HEAD
         ) || { echo "ERROR: check_prs_gate: git push failed for $repo_name" >&2; exit 1; }
         repo_index=$((repo_index + 1))
         continue
@@ -454,7 +482,7 @@ case "$SCENARIO" in
         echo "check_prs_gate marker $(date -u +%Y-%m-%dT%H:%M:%SZ)" > .check-prs-gate-marker
         git add .check-prs-gate-marker
         git commit -q -m "mock-agent: check_prs_gate marker" --allow-empty
-        git push origin HEAD
+        git push --force-with-lease origin HEAD
       ) || { echo "ERROR: check_prs_gate: git push failed for $repo_name" >&2; exit 1; }
 
       pr_number=$((RANDOM % 1000 + 1))
@@ -999,13 +1027,13 @@ JSON
   "")
     echo "ERROR: No scenario specified" >&2
     echo "Usage: mock-agent.sh <scenario> [options]" >&2
-    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, multi_repo_pr, check_prs_gate, roadmap_status_update, roadmap_status_update_env_default, roadmap_status_update_missing_task_id, roadmap_candidates, roadmap_imperative_links, roadmap_extension, single_repo_claude_md, dind_isolation, dind_network_connectivity, many_artifacts, rate_limited" >&2
+    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, multi_repo_pr, drift_recheck, check_prs_gate, roadmap_status_update, roadmap_status_update_env_default, roadmap_status_update_missing_task_id, roadmap_candidates, roadmap_imperative_links, roadmap_extension, single_repo_claude_md, dind_isolation, dind_network_connectivity, many_artifacts, rate_limited" >&2
     exit 1
     ;;
 
   *)
     echo "ERROR: Unknown scenario '$SCENARIO'" >&2
-    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, multi_repo_pr, check_prs_gate, roadmap_status_update, roadmap_status_update_env_default, roadmap_status_update_missing_task_id, roadmap_candidates, roadmap_imperative_links, roadmap_extension, single_repo_claude_md, dind_isolation, dind_network_connectivity, many_artifacts, rate_limited" >&2
+    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, multi_repo_pr, drift_recheck, check_prs_gate, roadmap_status_update, roadmap_status_update_env_default, roadmap_status_update_missing_task_id, roadmap_candidates, roadmap_imperative_links, roadmap_extension, single_repo_claude_md, dind_isolation, dind_network_connectivity, many_artifacts, rate_limited" >&2
     exit 1
     ;;
 esac

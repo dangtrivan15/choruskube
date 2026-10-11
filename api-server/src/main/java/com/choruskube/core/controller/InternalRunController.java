@@ -6,6 +6,7 @@ import com.choruskube.core.service.ArtifactResolutionService;
 import com.choruskube.core.service.BranchCleanupService;
 import com.choruskube.core.service.InternalRoadmapProposalService;
 import com.choruskube.core.service.InternalRunService;
+import com.choruskube.core.service.NodeExecutionRepoBaseService;
 import com.choruskube.core.service.NodePlacementChecker;
 import com.choruskube.core.service.RunPullRequestService;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -29,6 +30,7 @@ public class InternalRunController {
     private final BranchCleanupService branchCleanupService;
     private final Optional<NodePlacementChecker> placementChecker;
     private final InternalRoadmapProposalService roadmapProposalService;
+    private final NodeExecutionRepoBaseService repoBaseService;
 
     public InternalRunController(
             InternalRunService service,
@@ -37,7 +39,8 @@ public class InternalRunController {
             ArtifactResolutionService artifactResolutionService,
             BranchCleanupService branchCleanupService,
             Optional<NodePlacementChecker> placementChecker,
-            InternalRoadmapProposalService roadmapProposalService) {
+            InternalRoadmapProposalService roadmapProposalService,
+            NodeExecutionRepoBaseService repoBaseService) {
         this.service = service;
         this.gitHubCredentialResolver = gitHubCredentialResolver;
         this.runPullRequestService = runPullRequestService;
@@ -45,6 +48,7 @@ public class InternalRunController {
         this.branchCleanupService = branchCleanupService;
         this.placementChecker = placementChecker;
         this.roadmapProposalService = roadmapProposalService;
+        this.repoBaseService = repoBaseService;
     }
 
     @PostMapping("/{runId}/node-executions")
@@ -307,6 +311,15 @@ public class InternalRunController {
             @PathVariable UUID nodeExecId,
             @Valid @RequestBody CreateRunPullRequestRequest request) {
         return runPullRequestService.createPullRequest(runId, nodeExecId, request);
+    }
+
+    @PostMapping("/{runId}/node-executions/{nodeExecId}/repo-bases")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void recordRepoBases(
+            @PathVariable UUID runId,
+            @PathVariable UUID nodeExecId,
+            @Valid @RequestBody RecordRepoBasesRequest request) {
+        repoBaseService.record(runId, nodeExecId, request);
     }
 
     @GetMapping("/{runId}/pull-requests")

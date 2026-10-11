@@ -146,7 +146,9 @@ class RunServicePullRequestMergeTest {
                 null, // escalationContextResolver - unused (escalation not exercised)
                 roadmapProposalValidator,
                 pullRequestMergeService,
-                null);
+                null,
+                null,
+                org.mockito.Mockito.mock(GateRecheckService.class));
     }
 
     private NodeExecution stubExec() {
@@ -195,7 +197,7 @@ class RunServicePullRequestMergeTest {
         stubExec();
         stubRun(MERGE_GATE_CONFIG);
         var outcome = sampleOutcome();
-        when(pullRequestMergeService.mergeAll(runId, PullRequestMergeMethod.squash))
+        when(pullRequestMergeService.mergeAll(runId, PullRequestMergeMethod.squash, null))
                 .thenReturn(outcome);
         when(pullRequestMergeService.note(outcome))
                 .thenReturn("Pull requests merged on approval (squash): org/repo#1.");
@@ -203,7 +205,7 @@ class RunServicePullRequestMergeTest {
         service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, null));
 
         InOrder inOrder = inOrder(pullRequestMergeService, workflowStub);
-        inOrder.verify(pullRequestMergeService).mergeAll(runId, PullRequestMergeMethod.squash);
+        inOrder.verify(pullRequestMergeService).mergeAll(runId, PullRequestMergeMethod.squash, null);
         inOrder.verify(pullRequestMergeService).recordOutcome(runId, outcome);
         inOrder.verify(workflowStub).signal(eq("human-decision-" + nodeExecId), any());
     }
@@ -213,7 +215,7 @@ class RunServicePullRequestMergeTest {
         stubExec();
         stubRun(MERGE_GATE_CONFIG);
         var outcome = sampleOutcome();
-        when(pullRequestMergeService.mergeAll(runId, PullRequestMergeMethod.squash))
+        when(pullRequestMergeService.mergeAll(runId, PullRequestMergeMethod.squash, null))
                 .thenReturn(outcome);
         when(pullRequestMergeService.note(outcome))
                 .thenReturn("Pull requests merged on approval (squash): org/repo#1.");
@@ -229,7 +231,7 @@ class RunServicePullRequestMergeTest {
     void mergeException_releasesClaim_rethrows_andNeverCallsMaterializerOrSignal() {
         stubExec();
         stubRun(MERGE_GATE_CONFIG);
-        when(pullRequestMergeService.mergeAll(runId, PullRequestMergeMethod.squash))
+        when(pullRequestMergeService.mergeAll(runId, PullRequestMergeMethod.squash, null))
                 .thenThrow(new PullRequestMergeException("Approval needs every pull request to be mergeable"));
 
         assertThatThrownBy(() ->
@@ -290,7 +292,7 @@ class RunServicePullRequestMergeTest {
         when(roadmapProposalValidator.summarize(edited))
                 .thenReturn(new RoadmapProposalValidator.Summary(0, 0, 1, 0, 0));
         var outcome = sampleOutcome();
-        when(pullRequestMergeService.mergeAll(runId, PullRequestMergeMethod.squash))
+        when(pullRequestMergeService.mergeAll(runId, PullRequestMergeMethod.squash, null))
                 .thenReturn(outcome);
         when(roadmapCandidateMaterializer.materialize(runId, edited, RoadmapMaterializeMode.roadmap_extension))
                 .thenReturn(new MaterializationSummary(
@@ -303,7 +305,7 @@ class RunServicePullRequestMergeTest {
         InOrder inOrder =
                 inOrder(roadmapProposalValidator, pullRequestMergeService, roadmapCandidateMaterializer, workflowStub);
         inOrder.verify(roadmapProposalValidator).validate(any(), any(), any(), any());
-        inOrder.verify(pullRequestMergeService).mergeAll(runId, PullRequestMergeMethod.squash);
+        inOrder.verify(pullRequestMergeService).mergeAll(runId, PullRequestMergeMethod.squash, null);
         inOrder.verify(pullRequestMergeService).recordOutcome(runId, outcome);
         inOrder.verify(roadmapCandidateMaterializer)
                 .materialize(runId, edited, RoadmapMaterializeMode.roadmap_extension);
@@ -315,7 +317,7 @@ class RunServicePullRequestMergeTest {
         stubExec();
         stubRun(MERGE_GATE_CONFIG);
         var outcome = sampleOutcome();
-        when(pullRequestMergeService.mergeAll(runId, PullRequestMergeMethod.squash))
+        when(pullRequestMergeService.mergeAll(runId, PullRequestMergeMethod.squash, null))
                 .thenReturn(outcome);
         doThrow(new RuntimeException("temporal unavailable"))
                 .when(workflowStub)

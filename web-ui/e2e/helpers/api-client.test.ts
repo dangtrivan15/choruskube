@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { uniqueName } from "./api-client";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { TestApiClient, uniqueName } from "./api-client";
 
 // `uniqueName` normally derives its worker index from Playwright's own
 // `test.info().parallelIndex`, which is unavailable here — this suite runs under
@@ -40,5 +40,27 @@ describe("uniqueName", () => {
   it("includes the prefix verbatim so failures remain readable", () => {
     const name = uniqueName("My Readable Prefix", 0);
     expect(name.startsWith("My Readable Prefix")).toBe(true);
+  });
+});
+
+describe("TestApiClient.getGateStamps", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("reads the run's gate stamps from the gate-stamps endpoint", async () => {
+    const stamps = [{ id: "stamp-1", status: "consumed", recheckRounds: 1 }];
+    const fetchMock = vi.fn(async (url: string) =>
+      url.includes("/openid-connect/token")
+        ? new Response("", { status: 401 })
+        : new Response(JSON.stringify(stamps), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new TestApiClient("http://api.test", "http://auth.test");
+    const result = await client.getGateStamps("run-1");
+
+    expect(result).toEqual(stamps);
+    expect(fetchMock).toHaveBeenCalledWith("http://api.test/api/v1/runs/run-1/gate-stamps", expect.anything());
   });
 });

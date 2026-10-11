@@ -104,11 +104,14 @@ public class E2eTestDataSeeder implements ApplicationRunner {
     private static final String GRAPH_ID_MERGE_ON_APPROVAL = "e2e-merge-on-approval";
     private static final String GRAPH_ID_MERGE_ON_APPROVAL_BLOCKED = "e2e-merge-on-approval-blocked";
 
-    // Bumped to 8 so the two new merge_on_approval templates get seeded — run()
+    // drift_recheck: a stale approval is held, re-checked and re-applied — drift-recheck-at-approval.spec.ts.
+    private static final String GRAPH_ID_DRIFT_RECHECK = "e2e-drift-recheck";
+
+    // Bumped to 9 so the drift_recheck template gets seeded — run()
     // early-returns when a template at the current VERSION already exists, so an edit
     // without a bump is a no-op against any environment whose database survived the
     // previous boot.
-    private static final int VERSION = 8;
+    private static final int VERSION = 9;
 
     private static final String E2E_REPO_URL = "https://github.com/e2e-test/mock-repo";
     private static final String E2E_SECONDARY_REPO_URL = "https://github.com/e2e-test/mock-frontend";
@@ -205,6 +208,7 @@ public class E2eTestDataSeeder implements ApplicationRunner {
         seedRoadmapExtensionGate(mockSuccess, mockGate);
 
         seedMergeOnApprovalGates(mockSuccess, mockGate);
+        seedDriftRecheckGate(mockSuccess, mockGate);
 
         seedManyArtifacts(mockSuccess);
 
@@ -214,7 +218,7 @@ public class E2eTestDataSeeder implements ApplicationRunner {
 
         seedRoadmapImperativeLinks(mockSuccess);
 
-        log.info("E2eTestDataSeeder: seeded 3 git repos, 1 repo group, 11 node definitions, and 18 E2E templates");
+        log.info("E2eTestDataSeeder: seeded 3 git repos, 1 repo group, 11 node definitions, and 19 E2E templates");
     }
 
     private void seedDemoRepoGroup() {
@@ -629,6 +633,35 @@ public class E2eTestDataSeeder implements ApplicationRunner {
         seedMergeOnApprovalGate(mockSuccess, mockGate, GRAPH_ID_MERGE_ON_APPROVAL, "e2e-merge-on-approval", 7001);
         seedMergeOnApprovalGate(
                 mockSuccess, mockGate, GRAPH_ID_MERGE_ON_APPROVAL_BLOCKED, "e2e-merge-on-approval-blocked", 7405);
+    }
+
+    // --- Drift re-check: open_pr -> final_approval (merge + drift_recheck) ---
+    //
+    // open_pr runs mock-agent.sh's "drift_recheck" scenario: its first pass reports a base the
+    // compare stub calls behind main, so approving holds the approval and routes back to open_pr;
+    // its second pass keeps the real base, and the held approval re-applies and merges PR 7001.
+    private void seedDriftRecheckGate(NodeDefinition mockSuccess, NodeDefinition mockGate) {
+        GraphTemplate t = new GraphTemplate();
+        t.setGraphId(GRAPH_ID_DRIFT_RECHECK);
+        t.setVersion(VERSION);
+        t.setName("e2e-drift-recheck");
+        t.setDescription("E2E test: a stale approval is held, re-checked and re-applied (fixture PR 7001)");
+        t.setInputSchema(
+                "[{\"name\":\"software_project_id\",\"label\":\"Software Project\",\"type\":\"software_project_id\",\"required\":true}]");
+        t.setSystem(false);
+        t = templateRepo.save(t);
+
+        TemplateNode openPr = createNode(t, mockSuccess, "open_pr", true, cmd("drift_recheck --pr-number 7001"));
+        TemplateNode gate = createNode(
+                t,
+                mockGate,
+                "final_approval",
+                false,
+                "{\"terminal_decisions\":[\"approved\"],\"merge_pull_requests\":\"squash\","
+                        + "\"drift_recheck\":{\"route\":\"rereview\",\"stamp\":\"always\"}}",
+                "[{\"template_node_label\":\"open_pr\",\"artifacts\":[{\"name\":\"result.txt\",\"description\":\"Mock result\"}]}]");
+        createEdge(t, openPr, gate, null);
+        createEdge(t, gate, openPr, "rereview");
     }
 
     private void seedMergeOnApprovalGate(

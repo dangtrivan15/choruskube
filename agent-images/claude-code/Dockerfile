@@ -69,6 +69,7 @@ COPY check-decision /usr/local/bin/check-decision
 COPY list-decisions /usr/local/bin/list-decisions
 COPY send-heartbeat /usr/local/bin/send-heartbeat
 COPY send-callback /usr/local/bin/send-callback
+COPY record-base /usr/local/bin/record-base
 COPY artifact /usr/local/bin/artifact
 COPY create-proposal /usr/local/bin/create-proposal
 COPY list-proposals /usr/local/bin/list-proposals
@@ -91,6 +92,7 @@ RUN chmod +x /usr/local/bin/report-result \
     /usr/local/bin/list-decisions \
     /usr/local/bin/send-heartbeat \
     /usr/local/bin/send-callback \
+    /usr/local/bin/record-base \
     /usr/local/bin/artifact \
     /usr/local/bin/create-proposal \
     /usr/local/bin/list-proposals \

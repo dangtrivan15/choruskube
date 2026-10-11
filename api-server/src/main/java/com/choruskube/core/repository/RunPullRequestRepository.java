@@ -1,6 +1,8 @@
 package com.choruskube.core.repository;
 
 import com.choruskube.core.model.RunPullRequest;
+import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -28,4 +30,12 @@ public interface RunPullRequestRepository extends JpaRepository<RunPullRequest, 
               AND p.mergedAt IS NULL AND p.prNumber IS NULL
             """)
     long countUnresolvableForAutopilot(UUID autopilotId);
+
+    /** Pull requests other runs merged on these repos after {@code since}, oldest first. */
+    @Query("""
+            SELECT p FROM RunPullRequest p
+            WHERE p.gitRepoId IN :gitRepoIds AND p.mergedAt > :since AND p.workflowRunId <> :runId
+            ORDER BY p.mergedAt
+            """)
+    List<RunPullRequest> findMergedByOtherRunsSince(Collection<UUID> gitRepoIds, Instant since, UUID runId);
 }

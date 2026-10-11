@@ -75,7 +75,10 @@ class RunServicePlacementTest {
                 null, // escalationContextResolver
                 null, // roadmapProposalValidator
                 null,
-                null); // pullRequestMergeService - unused (merge not exercised)
+                null,
+                null,
+                org.mockito.Mockito.mock(
+                        GateRecheckService.class)); // pullRequestMergeService - unused (merge not exercised)
     }
 
     /**

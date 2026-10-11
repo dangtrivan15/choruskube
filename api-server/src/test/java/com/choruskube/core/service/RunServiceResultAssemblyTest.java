@@ -120,7 +120,10 @@ class RunServiceResultAssemblyTest {
                 null, // escalationContextResolver - unused (escalation not exercised)
                 null, // roadmapProposalValidator - unused (approve-time validation not exercised)
                 null,
-                null); // pullRequestMergeService - unused (merge not exercised)
+                null,
+                null,
+                org.mockito.Mockito.mock(
+                        GateRecheckService.class)); // pullRequestMergeService - unused (merge not exercised)
     }
 
     private NodeExecution stubExec() {

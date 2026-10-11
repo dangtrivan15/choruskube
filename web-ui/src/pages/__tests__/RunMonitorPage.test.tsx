@@ -6,7 +6,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Routes, Route } from "react-router";
 import { ActivityFeedProvider } from "@/hooks/useActivityFeed";
 import { createTestQueryClient } from "@/__tests__/test-utils";
-import type { GraphSnapshot, NodeExecutionResponse, RunResponse } from "@/lib/types";
+import type { GateStampResponse, GraphSnapshot, NodeExecutionResponse, RunResponse } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
 // Tier control — a single mock backs both `useMediaQuery` (read directly by
@@ -68,6 +68,7 @@ const mockSignalMutate = vi.fn();
 
 let mockRun: RunResponse | undefined;
 let mockIsLoading = false;
+let mockGateStamps: GateStampResponse[] = [];
 
 vi.mock("@/hooks/useRuns", () => ({
   useRun: () => ({ data: mockRun, isLoading: mockIsLoading }),
@@ -78,6 +79,10 @@ vi.mock("@/hooks/useRuns", () => ({
   useSignalNode: () => ({ mutate: mockSignalMutate, isPending: false }),
   useRetryNode: () => ({ mutate: vi.fn(), isPending: false }),
   useReviewHistory: () => ({ data: [], isLoading: false }),
+}));
+
+vi.mock("@/hooks/useGateStamps", () => ({
+  useGateStamps: () => ({ data: mockGateStamps }),
 }));
 
 vi.mock("@/hooks/useRunSubscription", () => ({
@@ -157,6 +162,22 @@ function makeRun(overrides: Partial<RunResponse> = {}): RunResponse {
   };
 }
 
+function makeStamp(status: GateStampResponse["status"]): GateStampResponse {
+  return {
+    id: `stamp-${status}`,
+    gateTemplateNodeId: "gate",
+    gateLabel: "final_approval",
+    status,
+    recheckRounds: 1,
+    maxRecheckRounds: 2,
+    voidReason: null,
+    supersededByReviewer: false,
+    parkedNodeExecutionId: null,
+    createdAt: "2026-10-11T00:00:00Z",
+    updatedAt: "2026-10-11T00:00:00Z",
+  };
+}
+
 function renderPage(initialPath = "/runs/run-1") {
   const queryClient = createTestQueryClient();
   return render(
@@ -177,6 +198,7 @@ beforeEach(() => {
   mockTier = "desktop";
   mockRun = undefined;
   mockIsLoading = false;
+  mockGateStamps = [];
 });
 
 describe("RunMonitorPage", () => {
@@ -201,6 +223,30 @@ describe("RunMonitorPage", () => {
 
       expect(screen.getByTestId("run-summary")).toBeInTheDocument();
       expect(screen.getByTestId("node-detail-empty")).toBeInTheDocument();
+    });
+
+    it("shows the run's pending held approval in the strip", () => {
+      mockRun = makeRun({ graphSnapshot: makeSnapshot([{ id: "a" }]) });
+      mockGateStamps = [makeStamp("consumed"), makeStamp("pending")];
+      renderPage();
+
+      expect(screen.getByTestId("run-summary-held-approval")).toHaveTextContent("round 1 of 2");
+    });
+
+    it("shows no held-approval chip once the run has ended", () => {
+      mockRun = makeRun({ status: "cancelled", graphSnapshot: makeSnapshot([{ id: "a" }]) });
+      mockGateStamps = [makeStamp("pending")];
+      renderPage();
+
+      expect(screen.queryByTestId("run-summary-held-approval")).not.toBeInTheDocument();
+    });
+
+    it("shows no held-approval chip when no stamp is pending", () => {
+      mockRun = makeRun({ graphSnapshot: makeSnapshot([{ id: "a" }]) });
+      mockGateStamps = [makeStamp("consumed")];
+      renderPage();
+
+      expect(screen.queryByTestId("run-summary-held-approval")).not.toBeInTheDocument();
     });
 
     it("a valid ?node= selects that node and shows the detail panel", () => {
@@ -330,6 +376,14 @@ describe("RunMonitorPage", () => {
   describe("phone tier", () => {
     beforeEach(() => {
       mockTier = "phone";
+    });
+
+    it("shows the run's pending held approval in the mobile bar", () => {
+      mockRun = makeRun({ graphSnapshot: makeSnapshot([{ id: "a" }]) });
+      mockGateStamps = [makeStamp("pending")];
+      renderPage();
+
+      expect(screen.getByTestId("run-summary-held-approval")).toHaveTextContent("round 1 of 2");
     });
 
     it("renders the mobile bar, not the strip or docked panel", () => {

@@ -1,5 +1,6 @@
 import { test, expect, seededRepos } from "../fixtures";
 import { uniqueName } from "../helpers/api-client";
+import { clickOption } from "../helpers/select";
 
 /**
  * RepoGroup-launched run end-to-end flow.
@@ -164,7 +165,7 @@ test.describe("Repo Groups (UI) launches a run via software_project_id", () => {
     ).toBe(true);
 
     // 11. Pick the newly-created group.
-    await page.getByRole("option", { name: groupName }).click();
+    await clickOption(page.getByRole("option", { name: groupName }));
 
     // 12. Fill the feature_request textarea.
     await page.locator("#input-feature_request").fill(featureRequest);

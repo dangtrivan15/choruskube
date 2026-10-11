@@ -1,6 +1,6 @@
 # Approving a merge-declaring gate merges the run's registered pull requests synchronously, before any decision state is written
 
-**Status:** current
+**Status:** current; its in-request merging is superseded, for gates declaring drift_recheck, by [2026-10-11---01-approval-rechecks-against-current-main](2026-10-11---01-approval-rechecks-against-current-main.md)
 
 ## Context
 
