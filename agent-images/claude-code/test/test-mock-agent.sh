@@ -415,6 +415,14 @@ grep -q "pass 2" "$DR_OUT/result.txt" 2>/dev/null \
   && ok "drift_recheck later pass writes its result artifact" \
   || fail "drift_recheck later pass writes its result artifact"
 
+# --- Pushes mirror the real agent's contract ---
+# The entrypoint may rebase a run branch before the scenario runs; a plain push is then rejected.
+if grep -nE '^[[:space:]]*git push' "$MOCK_AGENT" | grep -v -- '--force-with-lease' >/dev/null; then
+  fail "every mock push uses --force-with-lease"
+else
+  ok "every mock push uses --force-with-lease"
+fi
+
 # --- Summary ---
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

@@ -470,7 +470,7 @@ case "$SCENARIO" in
         echo "[check_prs_gate] $repo_name: left unchanged, pushing the run branch at parity with the default branch"
         (
           cd "$repo_dir"
-          git push origin HEAD
+          git push --force-with-lease origin HEAD
         ) || { echo "ERROR: check_prs_gate: git push failed for $repo_name" >&2; exit 1; }
         repo_index=$((repo_index + 1))
         continue
@@ -482,7 +482,7 @@ case "$SCENARIO" in
         echo "check_prs_gate marker $(date -u +%Y-%m-%dT%H:%M:%SZ)" > .check-prs-gate-marker
         git add .check-prs-gate-marker
         git commit -q -m "mock-agent: check_prs_gate marker" --allow-empty
-        git push origin HEAD
+        git push --force-with-lease origin HEAD
       ) || { echo "ERROR: check_prs_gate: git push failed for $repo_name" >&2; exit 1; }
 
       pr_number=$((RANDOM % 1000 + 1))
