@@ -104,6 +104,23 @@ class GateStampRepositoryTest extends BaseTest {
     }
 
     @Test
+    void finalizingAndPendingForOneGate_isRejected() {
+        stampRepo.saveAndFlush(stamp(GateStampStatus.finalizing));
+        assertThatThrownBy(() -> stampRepo.saveAndFlush(stamp(GateStampStatus.pending)))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void finalizingStatus_roundTripsOnNodeExecution() {
+        gateExec.setStatus(NodeExecutionStatus.finalizing);
+        gateExec.setFinalizeMode("async");
+        execRepo.saveAndFlush(gateExec);
+        NodeExecution reloaded = execRepo.findById(gateExec.getId()).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(NodeExecutionStatus.finalizing);
+        assertThat(reloaded.getFinalizeMode()).isEqualTo("async");
+    }
+
+    @Test
     void pendingAlongsideVoided_isAllowed() {
         stampRepo.saveAndFlush(stamp(GateStampStatus.voided));
         stampRepo.saveAndFlush(stamp(GateStampStatus.pending));

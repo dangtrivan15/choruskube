@@ -164,6 +164,7 @@ public class InternalRunService {
         if (req.podName() != null) exec.setPodName(req.podName());
         if (req.jobSecretHash() != null) exec.setJobSecretHash(req.jobSecretHash());
         if (req.errorMessage() != null) exec.setErrorMessage(req.errorMessage());
+        if (req.finalizeMode() != null) exec.setFinalizeMode(req.finalizeMode());
 
         String status = req.status();
         Instant now = Instant.now();
@@ -552,6 +553,7 @@ public class InternalRunService {
     public NodeExecutionResponse getNodeExecution(UUID runId, UUID nodeExecId) {
         NodeExecution exec = execRepo.findById(nodeExecId)
                 .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
+        NodeExecutionUtil.requireInRun(exec, runId);
         return toNodeExecResponse(exec);
     }
 

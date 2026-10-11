@@ -59,6 +59,9 @@ public class GateStamp {
     @Column(name = "parked_node_execution_id")
     private UUID parkedNodeExecutionId;
 
+    @Column(name = "materialized_at")
+    private Instant materializedAt;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -197,5 +200,13 @@ public class GateStamp {
 
     public void setParkedNodeExecutionId(UUID parkedNodeExecutionId) {
         this.parkedNodeExecutionId = parkedNodeExecutionId;
+    }
+
+    public Instant getMaterializedAt() {
+        return materializedAt;
+    }
+
+    public void setMaterializedAt(Instant materializedAt) {
+        this.materializedAt = materializedAt;
     }
 }

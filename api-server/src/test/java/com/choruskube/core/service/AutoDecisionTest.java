@@ -125,7 +125,7 @@ class AutoDecisionTest {
         NodeExecution exec = stubExec();
         stubRunWithUnconditionalEdges();
 
-        var req = new InternalUpdateNodeExecutionRequest("completed", "AI output", null, null, null, null);
+        var req = new InternalUpdateNodeExecutionRequest("completed", "AI output", null, null, null, null, null);
         service.updateNodeExecutionStatus(runId, nodeExecId, req);
 
         assertThat(exec.getDecision()).isEqualTo("no_decision");
@@ -136,7 +136,7 @@ class AutoDecisionTest {
         NodeExecution exec = stubExec();
         stubRunWithConditionalEdges();
 
-        var req = new InternalUpdateNodeExecutionRequest("completed", "AI output", null, null, null, null);
+        var req = new InternalUpdateNodeExecutionRequest("completed", "AI output", null, null, null, null, null);
         service.updateNodeExecutionStatus(runId, nodeExecId, req);
 
         assertThat(exec.getDecision()).isNull();
@@ -152,7 +152,7 @@ class AutoDecisionTest {
         run.setId(runId);
         when(runRepo.findById(runId)).thenReturn(Optional.of(run));
 
-        var req = new InternalUpdateNodeExecutionRequest("running", null, null, null, null, null);
+        var req = new InternalUpdateNodeExecutionRequest("running", null, null, null, null, null, null);
         service.updateNodeExecutionStatus(runId, nodeExecId, req);
 
         assertThat(exec.getDecision()).isNull();

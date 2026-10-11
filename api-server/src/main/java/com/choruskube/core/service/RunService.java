@@ -392,8 +392,11 @@ public class RunService {
         // linger on the approvals page. This is necessary because the
         // Temporal workflow may have already completed or been cancelled
         // externally, in which case the orchestrator's cleanup never runs.
-        Set<NodeExecutionStatus> activeStatuses =
-                Set.of(NodeExecutionStatus.pending, NodeExecutionStatus.running, NodeExecutionStatus.awaiting_human);
+        Set<NodeExecutionStatus> activeStatuses = Set.of(
+                NodeExecutionStatus.pending,
+                NodeExecutionStatus.running,
+                NodeExecutionStatus.awaiting_human,
+                NodeExecutionStatus.finalizing);
         for (NodeExecution exec : execRepo.findByWorkflowRunId(id)) {
             if (activeStatuses.contains(exec.getStatus())) {
                 exec.setStatus(NodeExecutionStatus.skipped);

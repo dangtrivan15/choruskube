@@ -104,6 +104,7 @@ public class RunEventPublisher {
         messagingTemplate.convertAndSend("/topic/runs/" + runId, event);
 
         if ("awaiting_human".equals(status)
+                || "finalizing".equals(status)
                 || "completed".equals(status)
                 || "failed".equals(status)
                 || "signaled".equals(status)) {
