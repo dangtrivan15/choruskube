@@ -12,6 +12,9 @@ import { useRetryNode } from "@/hooks/useRuns";
 import Authorized from "@/components/Authorized";
 import ExecutionLogs from "./ExecutionLogs";
 import HumanGatePanel from "./HumanGatePanel";
+import FinalizingPanel from "./FinalizingPanel";
+import { useGateStamps } from "@/hooks/useGateStamps";
+import { latestStampFor } from "@/lib/gateStamps";
 import { mergeMethodOf } from "@/lib/mergeOnApproval";
 import ArtifactBrowser from "./ArtifactBrowser";
 import ResultViewerDialog from "./ResultViewerDialog";
@@ -117,6 +120,7 @@ function StatusIcon({ status }: { status: string }) {
     case "failed":
       return <AlertCircle className={cn("h-4 w-4", STATUS_TONE_CLASSES.error.text)} />;
     case "running":
+    case "finalizing":
       return <Clock className={cn("h-4 w-4 animate-pulse", STATUS_TONE_CLASSES.info.text)} />;
     default:
       return <Info className="h-4 w-4 text-muted-foreground" />;
@@ -124,6 +128,11 @@ function StatusIcon({ status }: { status: string }) {
 }
 
 /* ---------- Sub-panels ---------- */
+
+function FinalizingGate({ runId, gateLabel }: { runId: string; gateLabel: string }) {
+  const { data: stamps } = useGateStamps(runId);
+  return <FinalizingPanel stamp={latestStampFor(stamps, gateLabel)} />;
+}
 
 function PendingNodeInfo({ node }: { node: SnapshotNode }) {
   return (
@@ -431,6 +440,8 @@ export default function DetailPanel({ run, nodeId, onClose }: DetailPanelProps) 
             }
           />
         )}
+
+        {status === "finalizing" && <FinalizingGate runId={run.id} gateLabel={snapshotNode.label} />}
 
         {status === "running" && latestExec && (
           <div className="space-y-4">

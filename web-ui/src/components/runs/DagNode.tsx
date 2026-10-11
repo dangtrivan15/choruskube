@@ -40,7 +40,7 @@ function getStatusColors(status: string) {
   };
 }
 
-const ACTIVE_STATUSES = new Set(["running", "awaiting_human"]);
+const ACTIVE_STATUSES = new Set(["running", "finalizing", "awaiting_human"]);
 
 function ExecutorIcon({ type }: { type: string }) {
   switch (type) {

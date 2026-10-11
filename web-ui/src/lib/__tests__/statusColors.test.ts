@@ -213,6 +213,7 @@ describe("statusTone", () => {
     ["completed", "success"],
     ["failed", "error"],
     ["running", "info"],
+    ["finalizing", "info"],
     ["awaiting_human", "warning"],
     ["awaiting_retry", "warning"],
     ["paused", "accent"],
@@ -223,6 +224,10 @@ describe("statusTone", () => {
 
   it.each(CASES)("%s -> %s", (status, tone) => {
     expect(statusTone(status)).toBe(tone);
+  });
+
+  it("finalizing carries the same tone as running", () => {
+    expect(statusTone("finalizing")).toBe(statusTone("running"));
   });
 });
 
@@ -261,6 +266,7 @@ describe("statusBadgeClass matches the tone table for every run status", () => {
     "completed",
     "failed",
     "running",
+    "finalizing",
     "awaiting_human",
     "awaiting_retry",
     "paused",

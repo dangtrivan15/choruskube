@@ -18,6 +18,11 @@ describe("getEdgeColor", () => {
     expect(getEdgeColor("failed")).toBe("#eb6f92");
   });
 
+  it("colors a finalizing edge target the way it colors a running one", () => {
+    expect(getEdgeColor("finalizing")).toBe(getEdgeColor("running"));
+    expect(getEdgeColor("finalizing")).toBe("#31748f");
+  });
+
   it("returns neutral color for unknown statuses", () => {
     expect(getEdgeColor("unknown")).toBe("#908caa");
   });

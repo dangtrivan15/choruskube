@@ -1379,7 +1379,7 @@ export interface AttachmentRefsResponse {
 
 /** `POST /runs/{id}/nodes/{exec}/signal` response. */
 export interface SignalResponse {
-  outcome: "signaled" | "held_for_recheck";
+  outcome: "signaled" | "held_for_recheck" | "finalizing";
   staleRepos: { repo: string; detail: string }[];
 }
 
@@ -1388,7 +1388,7 @@ export interface GateStampResponse {
   id: string;
   gateTemplateNodeId: string;
   gateLabel: string;
-  status: "pending" | "consumed" | "voided";
+  status: "pending" | "finalizing" | "consumed" | "voided";
   recheckRounds: number;
   maxRecheckRounds: number;
   voidReason: string | null;
