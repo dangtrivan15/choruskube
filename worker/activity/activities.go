@@ -56,7 +56,7 @@ type Activities struct {
 	APIServerURL string
 
 	// credentials overrides the agent credentials prepare returns when it supplies them; nil
-	// leaves prepare's in place.
+	// leaves prepare's in place and fails every gate GitHub step, which has no other token source.
 	credentials credential.Provider
 	gh          *github.Client
 }
@@ -68,6 +68,17 @@ func (a *Activities) SetCredentials(p credential.Provider) { a.credentials = p }
 // SetGitHub sets the client for GitHub calls made on the Worker. Call it before registering the
 // Activities with a Temporal worker.
 func (a *Activities) SetGitHub(c *github.Client) { a.gh = c }
+
+// Registrar is the part of a Temporal worker that registers activities.
+type Registrar interface {
+	RegisterActivityWithOptions(a interface{}, options temporalactivity.RegisterOptions)
+}
+
+// Register registers every activity method of a under its method name. The setters above are
+// exported but are not activities, and the SDK panics at Worker start on a method it cannot run.
+func Register(r Registrar, a *Activities) {
+	r.RegisterActivityWithOptions(a, temporalactivity.RegisterOptions{SkipInvalidStructFunctions: true})
+}
 
 // New returns Activities that delegate workload creation to the API server (legacy mode). Set
 // CallbackURL and APIServerURL on the result before registering it with a Temporal worker.

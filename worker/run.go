@@ -372,7 +372,7 @@ func (s *fleetSupervisor) serve(f Fleet) error {
 	// replay-deterministic and stay on the side that deploys them — so polling for
 	// workflow tasks would claim work it cannot execute.
 	w := tworker.New(c, f.TaskQueue, tworker.Options{DisableWorkflowWorker: true})
-	w.RegisterActivity(s.acts)
+	activity.Register(w, s.acts)
 	if err := w.Start(); err != nil {
 		c.Close()
 		return fmt.Errorf("start worker for fleet %s: %w", f.TaskQueue, err)
