@@ -2,6 +2,7 @@ package com.choruskube.core.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -136,6 +137,24 @@ public class UploadService {
             refs.put(safeName, objectKey);
         }
         return objectMapper.writeValueAsString(refs);
+    }
+
+    /** Stores {@code content} as a gate attachment, keyed like {@link #uploadGateFiles}. */
+    public String uploadGateText(String orgSlug, UUID runId, UUID nodeExecId, String filename, String content) {
+        String safeName = sanitiseFilename(filename);
+        String objectKey = orgSlug + "/runs/" + runId + "/gate-attachments/" + nodeExecId + "/" + safeName;
+        s3Client.putObject(
+                PutObjectRequest.builder()
+                        .bucket(bucket)
+                        .key(objectKey)
+                        .contentType("text/markdown")
+                        .build(),
+                RequestBody.fromString(content, StandardCharsets.UTF_8));
+        try {
+            return objectMapper.writeValueAsString(Map.of(safeName, objectKey));
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to serialise attachment refs", e);
+        }
     }
 
     /**
