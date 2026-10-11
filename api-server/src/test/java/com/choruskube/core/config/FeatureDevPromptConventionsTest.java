@@ -336,6 +336,42 @@ class FeatureDevPromptConventionsTest {
      * actually takes rather than one of them.
      */
     @Test
+    void pushesUseALease() throws Exception {
+        for (String name : new String[] {"IMPLEMENT_PROMPT", "CODE_REVIEW_PROMPT"}) {
+            assertThat(promptField(name)).as(name).contains("git push --force-with-lease origin HEAD");
+        }
+        assertThat(promptField("CODE_REVIEW_PROMPT").replaceAll("\\s+", " "))
+                .as("a rebased branch rejects a plain push")
+                .doesNotContain("git push origin HEAD");
+    }
+
+    @Test
+    void branchNodesReadTheRebaseStatus() throws Exception {
+        for (String name : new String[] {"IMPLEMENT_PROMPT", "CODE_REVIEW_PROMPT"}) {
+            assertThat(promptField(name)).as(name).contains("/workspace/in/rebase_status.md");
+        }
+    }
+
+    @Test
+    void codeReviewMayQuestionTheSpecOnlyForWhatMerged() throws Exception {
+        String prompt = promptField("CODE_REVIEW_PROMPT").replaceAll("\\s+", " ");
+        assertThat(prompt)
+                .doesNotContain("do not propose discarding it")
+                .doesNotContain("Do NOT propose to discard the spec")
+                .contains("do not re-litigate its design choices")
+                .contains("main moved and a merged run changed what the spec relies on");
+    }
+
+    @Test
+    void bothReviewsEscalateDriftFromWhatMerged() throws Exception {
+        for (String name : new String[] {"SPEC_REVIEW_PROMPT", "CODE_REVIEW_PROMPT"}) {
+            assertThat(promptField(name).replaceAll("\\s+", " "))
+                    .as(name)
+                    .contains("reverse a decision a merged run made");
+        }
+    }
+
+    @Test
     void noPromptCitesAPastRunsSpec() throws Exception {
         for (String name :
                 new String[] {"SPEC_AND_PLAN_PROMPT", "SPEC_REVIEW_PROMPT", "IMPLEMENT_PROMPT", "CODE_REVIEW_PROMPT"}) {

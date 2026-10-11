@@ -827,14 +827,38 @@ class V1TemplateSeederTest extends BaseTest {
     }
 
     @Test
-    void currentVersionIsBumpedForNumberedDecisionFiles() {
-        // v50: Implement names a decision entry YYYY-MM-DD---NN-<slug>.md again, dated by the
-        // UTC date it is written, keeping v49's status line and missing index row. This is the
-        // rolling version tripwire: rewrite it and bump the literal whenever CURRENT_VERSION
-        // changes, so a template edit that forgets the bump cannot ship silently.
-        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(50);
-        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 50))
+    void currentVersionIsBumpedForDriftRecheck() {
+        // v51: both approval gates re-check the run against current main when approved
+        // (drift_recheck). This is the rolling version tripwire: rewrite it and bump the literal
+        // whenever CURRENT_VERSION changes, so a template edit that forgets the bump cannot ship
+        // silently.
+        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(51);
+        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 51))
                 .isPresent();
+    }
+
+    @Test
+    void approvalGatesDeclareDriftRecheck() {
+        var template = templateRepo
+                .findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, BaseFeatureDevSeeder.CURRENT_VERSION)
+                .orElseThrow();
+        var nodes = templateNodeRepo.findByGraphTemplateId(template.getId());
+        var approveSpec = nodes.stream()
+                .filter(n -> "approve_spec_and_plan".equals(n.getLabel()))
+                .findFirst()
+                .orElseThrow();
+        var finalApproval = nodes.stream()
+                .filter(n -> "final_approval".equals(n.getLabel()))
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(approveSpec.getConfigOverrides())
+                .contains("\"loop_group\"")
+                .contains("\"drift_recheck\": {\"route\": \"rereview\", \"stamp\": \"if_unchanged\"}");
+        assertThat(finalApproval.getConfigOverrides())
+                .contains("\"loop_group\"")
+                .contains("\"merge_pull_requests\": \"squash\"")
+                .contains("\"drift_recheck\": {\"route\": \"rereview\", \"stamp\": \"always\"}");
     }
 
     @Test
