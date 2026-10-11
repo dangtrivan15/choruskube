@@ -139,6 +139,7 @@ type UpdateNodeExecutionParams struct {
 	PodName       *string
 	JobSecretHash *string
 	ErrorMessage  *string
+	FinalizeMode  *string
 }
 
 type CreateReviewHistoryParams struct {

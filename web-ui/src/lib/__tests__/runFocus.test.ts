@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { classifyActiveNodes, pickFocusNode } from "../runFocus";
+import { attentionKind, classifyActiveNodes, pickFocusNode } from "../runFocus";
 import type { GraphSnapshot, NodeExecutionResponse, RunResponse } from "@/lib/types";
 
 function makeExecution(
@@ -166,6 +166,22 @@ describe("classifyActiveNodes / pickFocusNode", () => {
       ],
     });
 
+    expect(pickFocusNode(run)).toBe("b");
+  });
+
+  it("treats a finalizing gate as in progress, not as awaiting a human", () => {
+    const run = makeRun({
+      graphSnapshot: makeSnapshot(["a", "b"]),
+      nodeExecutions: [
+        makeExecution({ templateNodeId: "a", status: "completed" }),
+        makeExecution({ templateNodeId: "b", status: "finalizing" }),
+      ],
+    });
+
+    const { attention, running } = classifyActiveNodes(run);
+    expect(attention).toEqual([]);
+    expect(running.map((n) => n.template_node_id)).toEqual(["b"]);
+    expect(attentionKind(run, "b")).toBeNull();
     expect(pickFocusNode(run)).toBe("b");
   });
 });

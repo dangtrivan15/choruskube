@@ -25,6 +25,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -99,6 +100,11 @@ public class PullRequestMergeService {
         }
     }
 
+    public record MergePlan(
+            PullRequestMergeMethod method, List<Result> alreadyMerged, List<PrRef> toInspect, List<String> blockers) {}
+
+    public record WorkerPrResult(UUID rowId, Kind kind, Instant mergedAt, String mergeSha) {}
+
     private record ToMerge(PrRef pr, String headSha) {}
 
     private record ResolvedRef(PrRef ref, String blocker) {
@@ -123,39 +129,16 @@ public class PullRequestMergeService {
 
     /** {@code heldApprovalId}: the held gate approval this merge completes, for the audit trail; null otherwise. */
     public MergeOutcome mergeAll(UUID runId, PullRequestMergeMethod method, UUID heldApprovalId) {
-        List<RunPullRequest> rows = prRepo.findByWorkflowRunId(runId).stream()
-                .sorted(Comparator.comparing(RunPullRequest::getCreatedAt).thenComparing(RunPullRequest::getId))
-                .toList();
-        if (rows.isEmpty()) {
-            return new MergeOutcome(method, List.of());
+        MergePlan plan = planMerge(runId, method);
+        if (plan.toInspect().isEmpty() && plan.blockers().isEmpty()) {
+            return new MergeOutcome(method, plan.alreadyMerged());
         }
-
-        List<Result> allResults = new ArrayList<>();
-        List<RunPullRequest> remaining = new ArrayList<>();
-        for (RunPullRequest row : rows) {
-            // A merge on GitHub cannot be undone, so a row the database already records as merged
-            // — by an earlier attempt or by the reconciler — needs no GitHub call at all.
-            if (row.getMergedAt() != null) {
-                allResults.add(new Result(refOrFallback(row), Kind.ALREADY_MERGED, row.getMergedAt(), null));
-            } else {
-                remaining.add(row);
-            }
-        }
-        if (remaining.isEmpty()) {
-            return new MergeOutcome(method, allResults);
-        }
-
+        List<Result> allResults = new ArrayList<>(plan.alreadyMerged());
         String token = resolveToken(runId);
 
-        List<String> blockers = new ArrayList<>();
+        List<String> blockers = new ArrayList<>(plan.blockers());
         List<ToMerge> toMergeList = new ArrayList<>();
-        for (RunPullRequest row : remaining) {
-            ResolvedRef resolved = resolveRef(row);
-            if (resolved.blocker() != null) {
-                blockers.add(resolved.blocker());
-                continue;
-            }
-            PrRef ref = resolved.ref();
+        for (PrRef ref : plan.toInspect()) {
             try {
                 GitHubAppService.PullRequestDetail detail =
                         gitHubAppService.fetchPullRequestDetail(token, ref.ownerRepo(), ref.number());
@@ -213,6 +196,60 @@ public class PullRequestMergeService {
             audit(runId, method, thisAttemptMerged, null, heldApprovalId);
         }
         return new MergeOutcome(method, allResults);
+    }
+
+    /** Makes no GitHub call and resolves no credential, so a row recorded as merged never costs one. */
+    public MergePlan planMerge(UUID runId, PullRequestMergeMethod method) {
+        List<RunPullRequest> rows = prRepo.findByWorkflowRunId(runId).stream()
+                .sorted(Comparator.comparing(RunPullRequest::getCreatedAt).thenComparing(RunPullRequest::getId))
+                .toList();
+        List<Result> alreadyMerged = new ArrayList<>();
+        List<PrRef> toInspect = new ArrayList<>();
+        List<String> blockers = new ArrayList<>();
+        for (RunPullRequest row : rows) {
+            // A merge on GitHub cannot be undone, so a row the database already records as merged
+            // — by an earlier attempt or by the reconciler — needs no GitHub call at all.
+            if (row.getMergedAt() != null) {
+                alreadyMerged.add(new Result(refOrFallback(row), Kind.ALREADY_MERGED, row.getMergedAt(), null));
+                continue;
+            }
+            ResolvedRef resolved = resolveRef(row);
+            if (resolved.blocker() != null) {
+                blockers.add(resolved.blocker());
+            } else {
+                toInspect.add(resolved.ref());
+            }
+        }
+        return new MergePlan(method, alreadyMerged, toInspect, blockers);
+    }
+
+    /**
+     * The result half of {@link #mergeAll}, for merges a Worker performed: joins its answers to
+     * the plan's rows by id and audits the pull requests it merged. An answer for a row the plan
+     * never listed is dropped, so a stray id cannot mark an unrelated row merged.
+     */
+    public MergeOutcome outcomeOf(UUID runId, MergePlan plan, List<WorkerPrResult> results, UUID heldApprovalId) {
+        Map<UUID, PrRef> inspected =
+                plan.toInspect().stream().collect(Collectors.toMap(PrRef::rowId, Function.identity(), (a, b) -> a));
+        List<Result> allResults = new ArrayList<>(plan.alreadyMerged());
+        List<Result> merged = new ArrayList<>();
+        for (WorkerPrResult worker : results) {
+            PrRef ref = inspected.get(worker.rowId());
+            if (ref == null) {
+                log.warn(
+                        "Run {}: dropping a Worker result for pull request row {}, which was not planned",
+                        runId,
+                        worker.rowId());
+                continue;
+            }
+            Result result = new Result(ref, worker.kind(), worker.mergedAt(), worker.mergeSha());
+            allResults.add(result);
+            if (worker.kind() == Kind.MERGED) {
+                merged.add(result);
+            }
+        }
+        audit(runId, plan.method(), merged, null, heldApprovalId);
+        return new MergeOutcome(plan.method(), allResults);
     }
 
     /**

@@ -1,6 +1,7 @@
 const statusToToken: Record<string, string> = {
   completed: "--status-success",
   running: "--status-info",
+  finalizing: "--status-info",
   awaiting_human: "--status-warning",
   failed: "--status-error",
   paused: "--status-accent",

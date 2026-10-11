@@ -128,8 +128,9 @@ class RunServiceSoftwareProjectDisplayTest {
                 null,
                 null,
                 null,
+                org.mockito.Mockito.mock(GateRecheckService.class),
                 org.mockito.Mockito.mock(
-                        GateRecheckService.class)); // pullRequestMergeService - unused (merge not exercised)
+                        GateFinalizeService.class)); // pullRequestMergeService - unused (merge not exercised)
     }
 
     // -------------------------------------------------------------------------

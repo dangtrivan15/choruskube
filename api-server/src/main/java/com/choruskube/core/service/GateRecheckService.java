@@ -13,15 +13,18 @@ import com.choruskube.core.repository.GateStampRepository;
 import com.choruskube.core.repository.NodeExecutionRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Lifecycle of an approval held while its run re-checks against a moved default branch: held, then
- * consumed (re-applied) or voided (left to a human, with the reason shown).
+ * Lifecycle of a gate approval: finalizing (the run's workflow is carrying it out), held while its
+ * run re-checks against a moved default branch, then consumed (applied) or voided (left to a human,
+ * with the reason shown).
  */
 @Service
 public class GateRecheckService {
@@ -31,10 +34,12 @@ public class GateRecheckService {
             + "given before it no longer applies.";
     static final String REVISED =
             "The spec was revised during the re-check, so it is no longer the spec that was approved.";
-    static final String RUN_ENDED = "The run ended before the re-check finished.";
+    static final String RUN_ENDED = "The run ended before the approval was finalized.";
+    static final String GATE_FAILED = "The gate failed while finalizing the approval.";
 
     private static final List<WorkflowRunStatus> ENDED =
             List.of(WorkflowRunStatus.completed, WorkflowRunStatus.failed, WorkflowRunStatus.cancelled);
+    private static final List<GateStampStatus> LIVE = List.of(GateStampStatus.pending, GateStampStatus.finalizing);
 
     private final GateStampRepository stampRepo;
     private final NodeExecutionRepository execRepo;
@@ -73,6 +78,52 @@ public class GateRecheckService {
         return stampRepo.save(stamp);
     }
 
+    /** An approval the run's workflow is carrying out, recorded at the click. */
+    @Transactional
+    public GateStamp begin(
+            UUID runId,
+            NodeExecution gate,
+            String gateLabel,
+            StampMode mode,
+            String feedback,
+            String attachmentRefs,
+            RoadmapCandidatesDocument approvedCandidates) {
+        GateStamp stamp = new GateStamp();
+        stamp.setWorkflowRunId(runId);
+        stamp.setGateTemplateNodeId(gate.getTemplateNodeId());
+        stamp.setGateLabel(gateLabel);
+        stamp.setStampedNodeExecutionId(gate.getId());
+        stamp.setStampMode(mode);
+        stamp.setFeedback(feedback);
+        stamp.setAttachmentRefs(attachmentRefs);
+        stamp.setApprovedCandidates(approvedCandidates == null ? null : write(approvedCandidates));
+        stamp.setRecheckRounds(0);
+        stamp.setStatus(GateStampStatus.finalizing);
+        return stampRepo.save(stamp);
+    }
+
+    @Transactional
+    public Optional<GateStamp> claimHeld(UUID runId, UUID gateTemplateNodeId) {
+        return stampRepo
+                .findByWorkflowRunIdAndGateTemplateNodeIdAndStatus(runId, gateTemplateNodeId, GateStampStatus.pending)
+                .stream()
+                .findFirst()
+                .map(s -> {
+                    s.setStatus(GateStampStatus.finalizing);
+                    return stampRepo.save(s);
+                });
+    }
+
+    @Transactional
+    public GateStamp holdFromFinalizing(UUID stampId) {
+        GateStamp stamp = stampRepo
+                .findByIdAndStatus(stampId, GateStampStatus.finalizing)
+                .orElseThrow(() -> new NotFoundException("No approval being finalized: " + stampId));
+        stamp.setStatus(GateStampStatus.pending);
+        stamp.setRecheckRounds(stamp.getRecheckRounds() + 1);
+        return stampRepo.save(stamp);
+    }
+
     @Transactional
     public GateStamp holdAgain(UUID stampId) {
         GateStamp stamp = stampRepo
@@ -84,7 +135,7 @@ public class GateRecheckService {
 
     @Transactional
     public void consume(UUID stampId) {
-        stampRepo.findByIdAndStatus(stampId, GateStampStatus.pending).ifPresent(s -> {
+        stampRepo.findByIdAndStatusIn(stampId, LIVE).ifPresent(s -> {
             s.setStatus(GateStampStatus.consumed);
             stampRepo.save(s);
         });
@@ -93,10 +144,7 @@ public class GateRecheckService {
     /** {@code parkedAt}: the gate execution left awaiting a human, so the UI shows why only there. */
     @Transactional
     public void voidStamp(UUID stampId, String reason, UUID parkedAt) {
-        stampRepo.findByIdAndStatus(stampId, GateStampStatus.pending).ifPresent(s -> {
-            s.setParkedNodeExecutionId(parkedAt);
-            markVoided(s, reason);
-        });
+        stampRepo.findByIdAndStatusIn(stampId, LIVE).ifPresent(s -> voidParked(s, reason, parkedAt));
     }
 
     @Transactional
@@ -113,8 +161,63 @@ public class GateRecheckService {
         return orphaned.size();
     }
 
+    /** Voids every approval of the run that is held or being finalized; a repeat call finds none. */
+    @Transactional
+    public int voidLiveForRun(UUID runId, String reason) {
+        List<GateStamp> live = stampRepo.findByWorkflowRunIdAndStatusIn(runId, LIVE);
+        live.forEach(s -> markVoided(s, reason));
+        return live.size();
+    }
+
+    /**
+     * Voids the approvals live at a gate execution that has failed, and any the same gate is
+     * finalizing: a held approval claimed at a reopened gate stays stamped at the execution that
+     * held it. A repeat call finds none.
+     */
+    @Transactional
+    public int voidForFailedGate(UUID runId, UUID gateTemplateNodeId, UUID gateExecId) {
+        Map<UUID, GateStamp> live = new LinkedHashMap<>();
+        stampRepo.findByStampedNodeExecutionIdAndStatusIn(gateExecId, LIVE).forEach(s -> live.put(s.getId(), s));
+        stampRepo
+                .findByWorkflowRunIdAndGateTemplateNodeIdAndStatus(
+                        runId, gateTemplateNodeId, GateStampStatus.finalizing)
+                .forEach(s -> live.putIfAbsent(s.getId(), s));
+        live.values().forEach(s -> voidParked(s, GATE_FAILED, gateExecId));
+        return live.size();
+    }
+
+    /**
+     * Voids this gate's live approvals stamped at an execution other than the one now being
+     * approved: a failed gate that was retried left them, and they would collide with the new one.
+     */
+    @Transactional
+    public int voidLeftBehind(UUID runId, UUID gateTemplateNodeId, UUID currentGateExecId) {
+        List<GateStamp> left =
+                stampRepo.findByWorkflowRunIdAndGateTemplateNodeIdAndStatusIn(runId, gateTemplateNodeId, LIVE).stream()
+                        .filter(s -> !currentGateExecId.equals(s.getStampedNodeExecutionId()))
+                        .toList();
+        left.forEach(s -> voidParked(s, GATE_FAILED, s.getStampedNodeExecutionId()));
+        return left.size();
+    }
+
     public Optional<GateStamp> findPending(UUID stampId) {
         return stampRepo.findByIdAndStatus(stampId, GateStampStatus.pending);
+    }
+
+    /** The approval held for this gate's re-check, if any. */
+    public Optional<GateStamp> findHeldFor(UUID runId, UUID gateTemplateNodeId) {
+        return stampRepo
+                .findByWorkflowRunIdAndGateTemplateNodeIdAndStatus(runId, gateTemplateNodeId, GateStampStatus.pending)
+                .stream()
+                .findFirst();
+    }
+
+    public Optional<GateStamp> findFinalizingFor(UUID runId, UUID gateTemplateNodeId) {
+        return stampRepo
+                .findByWorkflowRunIdAndGateTemplateNodeIdAndStatus(
+                        runId, gateTemplateNodeId, GateStampStatus.finalizing)
+                .stream()
+                .findFirst();
     }
 
     public List<GateStamp> findReadyToReapply() {
@@ -182,6 +285,11 @@ public class GateRecheckService {
             }
         }
         return null;
+    }
+
+    private void voidParked(GateStamp stamp, String reason, UUID parkedAt) {
+        stamp.setParkedNodeExecutionId(parkedAt);
+        markVoided(stamp, reason);
     }
 
     private void markVoided(GateStamp stamp, String reason) {

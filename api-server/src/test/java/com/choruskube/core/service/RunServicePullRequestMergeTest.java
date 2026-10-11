@@ -148,7 +148,8 @@ class RunServicePullRequestMergeTest {
                 pullRequestMergeService,
                 null,
                 null,
-                org.mockito.Mockito.mock(GateRecheckService.class));
+                org.mockito.Mockito.mock(GateRecheckService.class),
+                org.mockito.Mockito.mock(GateFinalizeService.class));
     }
 
     private NodeExecution stubExec() {

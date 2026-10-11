@@ -70,6 +70,9 @@ public class NodeExecution {
     @Column(name = "label")
     private String label;
 
+    @Column(name = "finalize_mode")
+    private String finalizeMode;
+
     @Column(name = "loop_group")
     private String loopGroup;
 
@@ -220,5 +223,13 @@ public class NodeExecution {
 
     public void setTraversedEdgeIds(UUID[] traversedEdgeIds) {
         this.traversedEdgeIds = traversedEdgeIds;
+    }
+
+    public String getFinalizeMode() {
+        return finalizeMode;
+    }
+
+    public void setFinalizeMode(String finalizeMode) {
+        this.finalizeMode = finalizeMode;
     }
 }

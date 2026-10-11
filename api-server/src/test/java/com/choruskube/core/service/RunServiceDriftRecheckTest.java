@@ -172,7 +172,8 @@ class RunServiceDriftRecheckTest {
                 pullRequestMergeService,
                 null,
                 gateDriftCheck,
-                gateRecheck);
+                gateRecheck,
+                org.mockito.Mockito.mock(GateFinalizeService.class));
     }
 
     private NodeExecution stubExec() {

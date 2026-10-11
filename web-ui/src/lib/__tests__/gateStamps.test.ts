@@ -28,6 +28,10 @@ describe("decisionToastMessage", () => {
     expect(decisionToastMessage({ outcome: "signaled", staleRepos: [] })).toBe("Decision submitted");
   });
 
+  it("says the approval is being finalized when the server accepted it for finalizing", () => {
+    expect(decisionToastMessage({ outcome: "finalizing", staleRepos: [] })).toBe("Finalizing your approval…");
+  });
+
   it("names every stale repo when the approval is held", () => {
     const message = decisionToastMessage({
       outcome: "held_for_recheck",

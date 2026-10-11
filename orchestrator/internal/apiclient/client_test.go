@@ -5,13 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.temporal.io/sdk/temporal"
 
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/state"
 )
@@ -385,4 +388,375 @@ func TestGetInputArtifactsEmptyManifest(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, manifest.Artifacts)
 	assert.Empty(t, manifest.Required)
+}
+
+func TestUpdateNodeExecution_SendsFinalizeModeOnlyWhenSet(t *testing.T) {
+	async := "async"
+	cases := []struct {
+		name string
+		mode *string
+		want map[string]any
+	}{
+		{"set", &async, map[string]any{"status": "awaiting_human", "finalizeMode": "async"}},
+		{"nil", nil, map[string]any{"status": "awaiting_human"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+				var got map[string]any
+				require.NoError(t, json.NewDecoder(r.Body).Decode(&got))
+				assert.Equal(t, tc.want, got)
+				w.WriteHeader(http.StatusOK)
+			})
+			err := client.UpdateNodeExecution(context.Background(), uuid.New(), uuid.New(), state.UpdateNodeExecutionParams{
+				Status:       "awaiting_human",
+				FinalizeMode: tc.mode,
+			})
+			require.NoError(t, err)
+		})
+	}
+}
+
+// --- Gate finalize ---
+
+func gateFinalizePath(runID, execID uuid.UUID, rest string) string {
+	return fmt.Sprintf("/internal/runs/%s/node-executions/%s/gate-finalize%s", runID, execID, rest)
+}
+
+func TestClaimHeldApproval(t *testing.T) {
+	runID, execID, approvalID := uuid.New(), uuid.New(), uuid.New()
+
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"a held approval", fmt.Sprintf(`{"approvalId":"%s"}`, approvalID), approvalID.String()},
+		{"none held", `{"approvalId":null}`, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, http.MethodPost, r.Method)
+				assert.Equal(t, gateFinalizePath(runID, execID, "/held"), r.URL.Path)
+				assert.Equal(t, "Bearer orchestrator-secret", r.Header.Get("Authorization"))
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+			client := NewAuthenticatedClient(server.URL, "orchestrator-secret")
+
+			got, err := client.ClaimHeldApproval(context.Background(), runID, execID)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestPlanGateFinalize_MapsComparesAndPullRequests(t *testing.T) {
+	runID, execID, approvalID := uuid.New(), uuid.New(), uuid.New()
+	repoID, rowID := uuid.New(), uuid.New()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, gateFinalizePath(runID, execID, "/"+approvalID.String()+"/plan"), r.URL.Path)
+		assert.Equal(t, "Bearer orchestrator-secret", r.Header.Get("Authorization"))
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, `{
+			"outcome": "proceed",
+			"reason": null,
+			"compares": [{"gitRepoId": "%s", "ownerRepo": "acme/api", "branch": "main", "baseSha": "abc123"}],
+			"prs": [{"rowId": "%s", "ownerRepo": "acme/api", "number": 42, "label": "api", "prUrl": "https://github.com/acme/api/pull/42"}],
+			"mergeMethod": "squash"
+		}`, repoID, rowID)
+	}))
+	defer server.Close()
+	client := NewAuthenticatedClient(server.URL, "orchestrator-secret")
+
+	plan, err := client.PlanGateFinalize(context.Background(), runID, execID, approvalID)
+	require.NoError(t, err)
+	assert.Equal(t, GatePlanResponse{
+		Outcome:     "proceed",
+		Compares:    []GateCompareItem{{GitRepoID: repoID, OwnerRepo: "acme/api", Branch: "main", BaseSha: "abc123"}},
+		PRs:         []GatePRItem{{RowID: rowID, OwnerRepo: "acme/api", Number: 42, Label: "api", PRURL: "https://github.com/acme/api/pull/42"}},
+		MergeMethod: "squash",
+	}, plan)
+}
+
+func TestPlanGateFinalize_HoldCarriesNoWork(t *testing.T) {
+	_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"outcome":"hold","reason":"main moved","compares":[],"prs":[],"mergeMethod":null}`))
+	})
+
+	plan, err := client.PlanGateFinalize(context.Background(), uuid.New(), uuid.New(), uuid.New())
+	require.NoError(t, err)
+	assert.Equal(t, "hold", plan.Outcome)
+	assert.Equal(t, "main moved", plan.Reason)
+	assert.Empty(t, plan.Compares)
+	assert.Empty(t, plan.PRs)
+	assert.Equal(t, "", plan.MergeMethod)
+}
+
+func TestHoldGateApproval(t *testing.T) {
+	runID, execID, approvalID, repoID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, gateFinalizePath(runID, execID, "/"+approvalID.String()+"/hold"), r.URL.Path)
+		assert.Equal(t, "Bearer orchestrator-secret", r.Header.Get("Authorization"))
+		var got map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&got))
+		assert.Equal(t, map[string]any{
+			"compares": []any{map[string]any{"gitRepoId": repoID.String(), "aheadBy": float64(3), "baseGone": false}},
+		}, got)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"outcome":"held","result":"main moved; re-planning","attachmentRefs":"{\"guidance\":\"k\"}","reason":null}`))
+	}))
+	defer server.Close()
+	client := NewAuthenticatedClient(server.URL, "orchestrator-secret")
+
+	res, err := client.HoldGateApproval(context.Background(), runID, execID, approvalID,
+		[]GateCompareResultItem{{GitRepoID: repoID, AheadBy: 3}})
+	require.NoError(t, err)
+	assert.Equal(t, GateStepResponse{
+		Outcome:        "held",
+		Result:         "main moved; re-planning",
+		AttachmentRefs: `{"guidance":"k"}`,
+	}, res)
+}
+
+func TestHoldGateApproval_NoComparesSendsAnEmptyList(t *testing.T) {
+	_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"compares":[]}`, string(body))
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"outcome":"refused","reason":"round cap"}`))
+	})
+
+	res, err := client.HoldGateApproval(context.Background(), uuid.New(), uuid.New(), uuid.New(), nil)
+	require.NoError(t, err)
+	assert.Equal(t, GateStepResponse{Outcome: "refused", Reason: "round cap"}, res)
+}
+
+func TestCompleteGateFinalize(t *testing.T) {
+	runID, execID, approvalID := uuid.New(), uuid.New(), uuid.New()
+	merged, skipped := uuid.New(), uuid.New()
+	at := time.Date(2026, 10, 11, 9, 30, 0, 0, time.UTC)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, gateFinalizePath(runID, execID, "/"+approvalID.String()+"/complete"), r.URL.Path)
+		assert.Equal(t, "Bearer orchestrator-secret", r.Header.Get("Authorization"))
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		assert.JSONEq(t, fmt.Sprintf(`{"merges":[
+			{"rowId":"%s","kind":"MERGED","mergedAt":"2026-10-11T09:30:00Z","mergeSha":"deadbeef"},
+			{"rowId":"%s","kind":"SKIPPED_CLOSED"}
+		]}`, merged, skipped), string(body))
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"outcome":"completed","result":"approved and merged","attachmentRefs":"{}","reason":null}`))
+	}))
+	defer server.Close()
+	client := NewAuthenticatedClient(server.URL, "orchestrator-secret")
+
+	res, err := client.CompleteGateFinalize(context.Background(), runID, execID, approvalID, []GatePRResultItem{
+		{RowID: merged, Kind: "MERGED", MergedAt: &at, MergeSha: "deadbeef"},
+		{RowID: skipped, Kind: "SKIPPED_CLOSED"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, GateStepResponse{Outcome: "completed", Result: "approved and merged", AttachmentRefs: "{}"}, res)
+}
+
+func TestRefuseGateApproval(t *testing.T) {
+	runID, execID, approvalID, rowID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+
+	cases := []struct {
+		name   string
+		merges []GatePRResultItem
+		want   string
+	}{
+		{"with the merges already made", []GatePRResultItem{{RowID: rowID, Kind: "ALREADY_MERGED"}},
+			fmt.Sprintf(`{"reason":"checks failed","merges":[{"rowId":"%s","kind":"ALREADY_MERGED"}]}`, rowID)},
+		{"with none", nil, `{"reason":"checks failed"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, http.MethodPost, r.Method)
+				assert.Equal(t, gateFinalizePath(runID, execID, "/"+approvalID.String()+"/refuse"), r.URL.Path)
+				assert.Equal(t, "Bearer orchestrator-secret", r.Header.Get("Authorization"))
+				body, err := io.ReadAll(r.Body)
+				require.NoError(t, err)
+				assert.JSONEq(t, tc.want, string(body))
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			defer server.Close()
+			client := NewAuthenticatedClient(server.URL, "orchestrator-secret")
+
+			require.NoError(t, client.RefuseGateApproval(context.Background(), runID, execID, approvalID, "checks failed", tc.merges))
+		})
+	}
+}
+
+// gateFinalizeCalls runs every gate-finalize client method against client, so one table can pin
+// the error classes of all five.
+func gateFinalizeCalls(ctx context.Context, client *Client) map[string]func() error {
+	run, exec, approval := uuid.New(), uuid.New(), uuid.New()
+	return map[string]func() error{
+		"held": func() error { _, err := client.ClaimHeldApproval(ctx, run, exec); return err },
+		"plan": func() error { _, err := client.PlanGateFinalize(ctx, run, exec, approval); return err },
+		"hold": func() error { _, err := client.HoldGateApproval(ctx, run, exec, approval, nil); return err },
+		"complete": func() error {
+			_, err := client.CompleteGateFinalize(ctx, run, exec, approval, nil)
+			return err
+		},
+		"refuse": func() error { return client.RefuseGateApproval(ctx, run, exec, approval, "no", nil) },
+	}
+}
+
+// The Temporal SDK classifies an activity error by its concrete type, not by errors.As, so a
+// rejection must come back as the *ApplicationError itself: wrapped, it would be retried.
+func TestGateFinalize_RejectionsAreNonRetryable(t *testing.T) {
+	for _, status := range []int{http.StatusBadRequest, http.StatusNotFound, http.StatusConflict} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(status)
+				w.Write([]byte("rejected"))
+			})
+			for name, call := range gateFinalizeCalls(context.Background(), client) {
+				t.Run(name, func(t *testing.T) {
+					err := call()
+					appErr, ok := err.(*temporal.ApplicationError)
+					require.Truef(t, ok, "want the *ApplicationError itself, got %T: %v", err, err)
+					assert.True(t, appErr.NonRetryable())
+					assert.Equal(t, GateFinalizeRejectedType, appErr.Type())
+					assert.Contains(t, appErr.Error(), fmt.Sprint(status))
+					assert.Contains(t, appErr.Error(), "rejected")
+
+					var apiErr *APIError
+					require.True(t, errors.As(err, &apiErr), "the cause keeps the status for callers")
+					assert.Equal(t, status, apiErr.StatusCode)
+				})
+			}
+		})
+	}
+}
+
+func TestGateFinalize_ServerAndNetworkFailuresStayRetryable(t *testing.T) {
+	for _, status := range []int{http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(status)
+			})
+			for name, call := range gateFinalizeCalls(context.Background(), client) {
+				t.Run(name, func(t *testing.T) {
+					err := call()
+					require.Error(t, err)
+					var appErr *temporal.ApplicationError
+					assert.False(t, errors.As(err, &appErr), "retryable errors must not be application errors")
+					var apiErr *APIError
+					require.True(t, errors.As(err, &apiErr))
+					assert.Equal(t, status, apiErr.StatusCode)
+				})
+			}
+		})
+	}
+
+	t.Run("network", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+		client := NewClient(server.URL)
+		server.Close()
+		for name, call := range gateFinalizeCalls(context.Background(), client) {
+			t.Run(name, func(t *testing.T) {
+				err := call()
+				require.Error(t, err)
+				var appErr *temporal.ApplicationError
+				assert.False(t, errors.As(err, &appErr))
+				var apiErr *APIError
+				assert.False(t, errors.As(err, &apiErr))
+			})
+		}
+	})
+}
+
+// Only the gate-finalize endpoints carry the ruling; any other call keeps its retry class.
+func TestGateFinalize_OtherEndpointsKeepTheirRetryClass(t *testing.T) {
+	_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+	})
+	_, err := client.GetGraphRuntime(context.Background(), uuid.New())
+	require.Error(t, err)
+	var appErr *temporal.ApplicationError
+	assert.False(t, errors.As(err, &appErr))
+}
+
+// A gate step can legitimately outlast the client's default timeout (a large roadmap write), so
+// the activity's own deadline must be the only bound on it. The default client's timeout is
+// shrunk here so the test need not wait the real 30 seconds.
+func TestGateFinalize_IsNotCutShortByTheDefaultClientTimeout(t *testing.T) {
+	const handlerTime = 300 * time.Millisecond
+	_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-time.After(handlerTime):
+		case <-r.Context().Done():
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{}`))
+	})
+	client.httpClient.Timeout = handlerTime / 6
+
+	for name, call := range gateFinalizeCalls(context.Background(), client) {
+		t.Run(name, func(t *testing.T) {
+			require.NoError(t, call())
+		})
+	}
+
+	t.Run("every other call keeps the default timeout", func(t *testing.T) {
+		_, err := client.GetGraphRuntime(context.Background(), uuid.New())
+		require.Error(t, err)
+		var netErr interface{ Timeout() bool }
+		require.True(t, errors.As(err, &netErr) && netErr.Timeout(), "want the client timeout, got %v", err)
+	})
+}
+
+func TestGateFinalize_TheContextStillBoundsTheCall(t *testing.T) {
+	release := make(chan struct{})
+	_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		// The server only notices a client that hung up once the request body is read, so a
+		// handler that never reads it would outlive the call and block server.Close.
+		_, _ = io.Copy(io.Discard, r.Body)
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	})
+	t.Cleanup(func() { close(release) })
+
+	t.Run("deadline", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+		for name, call := range gateFinalizeCalls(ctx, client) {
+			t.Run(name, func(t *testing.T) {
+				start := time.Now()
+				err := call()
+				require.ErrorIs(t, err, context.DeadlineExceeded)
+				assert.Less(t, time.Since(start), 5*time.Second)
+				var appErr *temporal.ApplicationError
+				assert.False(t, errors.As(err, &appErr), "an expired deadline is retryable")
+			})
+		}
+	})
+
+	t.Run("cancelled", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		for name, call := range gateFinalizeCalls(ctx, client) {
+			t.Run(name, func(t *testing.T) {
+				require.ErrorIs(t, call(), context.Canceled)
+			})
+		}
+	})
 }

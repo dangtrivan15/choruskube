@@ -2,6 +2,7 @@ import type { GateStampResponse, SignalResponse } from "@/lib/types";
 
 /** The toast for a submitted decision: a held approval says why it is not applied yet. */
 export function decisionToastMessage(response: SignalResponse | undefined): string {
+  if (response?.outcome === "finalizing") return "Finalizing your approval…";
   if (response?.outcome !== "held_for_recheck") return "Decision submitted";
   const repos = response.staleRepos.map((r) => r.repo).join(", ");
   return `Approval held: main moved on ${repos || "this run's repos"} since it was tested. Re-checking against current main; it proceeds automatically when that passes.`;

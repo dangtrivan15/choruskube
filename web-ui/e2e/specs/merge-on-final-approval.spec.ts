@@ -129,15 +129,19 @@ test.describe("Merge on Final Approval", () => {
       await runMonitorPage.selectNode("final_approval");
       await runMonitorPage.approveGate("Approving — exercising the refused-merge path.");
 
-      const errorToast = page
-        .locator('[data-sonner-toast][data-type="error"]')
-        .filter({ hasText: "At least 1 approving review is required by reviewers with write access." });
-      await expect(errorToast).toBeVisible();
+      // The toast proves the approve request returned with the node finalizing; without it the
+      // wait below passes on the pre-approval awaiting_human and asserts nothing.
+      await expect(
+        page.locator("[data-sonner-toast]").filter({ hasText: "Finalizing your approval…" }),
+      ).toBeVisible();
 
-      // Approve-time merge failure releases the claim: nothing is persisted and the
-      // node stays awaiting a decision. Poll briefly rather than a single read, since
-      // the release happens asynchronously to the toast rendering.
-      await api.waitForNodeStatus(run.id, "final_approval", ["awaiting_human"], 5_000, 500);
+      // The Worker's merge is refused, so the gate reopens and shows GitHub's reason on the
+      // voided approval; nothing is persisted.
+      await api.waitForNodeStatus(run.id, "final_approval", ["awaiting_human"], 60_000);
+      await expect(page.getByTestId("gate-held-voided-notice")).toContainText(
+        "At least 1 approving review is required",
+      );
+
       const stillRunning = await api.getRun(run.id);
       expect(stillRunning.status).not.toBe("completed");
       const pullRequests = (

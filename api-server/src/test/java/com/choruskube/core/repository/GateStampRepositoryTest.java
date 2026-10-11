@@ -104,6 +104,23 @@ class GateStampRepositoryTest extends BaseTest {
     }
 
     @Test
+    void finalizingAndPendingForOneGate_isRejected() {
+        stampRepo.saveAndFlush(stamp(GateStampStatus.finalizing));
+        assertThatThrownBy(() -> stampRepo.saveAndFlush(stamp(GateStampStatus.pending)))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void finalizingStatus_roundTripsOnNodeExecution() {
+        gateExec.setStatus(NodeExecutionStatus.finalizing);
+        gateExec.setFinalizeMode("async");
+        execRepo.saveAndFlush(gateExec);
+        NodeExecution reloaded = execRepo.findById(gateExec.getId()).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(NodeExecutionStatus.finalizing);
+        assertThat(reloaded.getFinalizeMode()).isEqualTo("async");
+    }
+
+    @Test
     void pendingAlongsideVoided_isAllowed() {
         stampRepo.saveAndFlush(stamp(GateStampStatus.voided));
         stampRepo.saveAndFlush(stamp(GateStampStatus.pending));
@@ -124,6 +141,16 @@ class GateStampRepositoryTest extends BaseTest {
         assertThat(stampRepo.findPendingWithGateIn(GateStampStatus.pending, NodeExecutionStatus.awaiting_human))
                 .extracting(GateStamp::getId)
                 .containsExactly(stamp.getId());
+    }
+
+    @Test
+    void readyToReapply_skipsAsyncGates() {
+        stampRepo.saveAndFlush(stamp(GateStampStatus.pending));
+        gateExec.setFinalizeMode("async");
+        execRepo.saveAndFlush(gateExec);
+
+        assertThat(stampRepo.findPendingWithGateIn(GateStampStatus.pending, NodeExecutionStatus.awaiting_human))
+                .isEmpty();
     }
 
     @Test

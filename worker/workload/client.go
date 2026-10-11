@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -290,6 +291,25 @@ func (c *Client) CompleteWorkload(ctx context.Context, params CompleteParams) er
 		return fmt.Errorf("complete workload: %w", err)
 	}
 	return nil
+}
+
+// GitHubToken asks the API server for the GitHub token its resolver supplies for a run. The
+// response body is never quoted in an error: on success it is the token.
+func (c *Client) GitHubToken(ctx context.Context, runID uuid.UUID) (string, error) {
+	resp, err := c.doJSON(ctx, http.MethodGet, fmt.Sprintf("/worker/runs/%s/github-token", runID), nil)
+	if err != nil {
+		return "", fmt.Errorf("get github token: %w", err)
+	}
+	var result struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return "", errors.New("get github token: response is not the expected JSON")
+	}
+	if result.Token == "" {
+		return "", errors.New("get github token: response carries no token")
+	}
+	return result.Token, nil
 }
 
 // GetWorkloadLogs returns recent log output from the agent container.

@@ -49,3 +49,27 @@ func TestPendingCache_ConcurrentAccess(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestPendingCache_RunOfParsesTheWorkflowID(t *testing.T) {
+	c := NewPendingCache()
+	exec, run := uuid.New(), uuid.New()
+	c.Put(exec, PendingCompletion{WorkflowID: WorkflowID(run)})
+
+	got, ok := c.RunOf(exec)
+
+	assert.True(t, ok)
+	assert.Equal(t, run, got)
+}
+
+func TestPendingCache_RunOfMissesWhenNothingIsCachedOrTheIDIsNotARuns(t *testing.T) {
+	c := NewPendingCache()
+	exec := uuid.New()
+
+	_, ok := c.RunOf(exec)
+	assert.False(t, ok, "an unknown execution has no binding to report")
+
+	c.Put(exec, PendingCompletion{WorkflowID: "something-else"})
+	got, ok := c.RunOf(exec)
+	assert.False(t, ok, "a workflow id that is not a run's must not be read as a zero run")
+	assert.Equal(t, uuid.Nil, got)
+}

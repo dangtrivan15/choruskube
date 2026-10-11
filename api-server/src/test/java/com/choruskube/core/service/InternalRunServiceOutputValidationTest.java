@@ -68,6 +68,7 @@ class InternalRunServiceOutputValidationTest {
                 artifactService,
                 null,
                 null,
+                null,
                 null);
     }
 
@@ -94,7 +95,7 @@ class InternalRunServiceOutputValidationTest {
         NodeExecution exec = stubExec(execId);
         exec.setDecision("rejected");
 
-        var req = new InternalUpdateNodeExecutionRequest("completed", null, null, null, null, null);
+        var req = new InternalUpdateNodeExecutionRequest("completed", null, null, null, null, null, null);
 
         assertThatThrownBy(() -> service.updateNodeExecutionStatus(UUID.randomUUID(), execId, req))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -107,7 +108,7 @@ class InternalRunServiceOutputValidationTest {
         NodeExecution exec = stubExec(execId);
         exec.setDecision("rejected");
 
-        var req = new InternalUpdateNodeExecutionRequest("completed", "   ", null, null, null, null);
+        var req = new InternalUpdateNodeExecutionRequest("completed", "   ", null, null, null, null, null);
 
         assertThatThrownBy(() -> service.updateNodeExecutionStatus(UUID.randomUUID(), execId, req))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -120,7 +121,7 @@ class InternalRunServiceOutputValidationTest {
         NodeExecution exec = stubExec(execId);
         exec.setDecision("rejected");
 
-        var req = new InternalUpdateNodeExecutionRequest("completed", "", null, null, null, null);
+        var req = new InternalUpdateNodeExecutionRequest("completed", "", null, null, null, null, null);
 
         assertThatThrownBy(() -> service.updateNodeExecutionStatus(UUID.randomUUID(), execId, req))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -134,7 +135,7 @@ class InternalRunServiceOutputValidationTest {
         exec.setDecision("approved");
         Mockito.when(execRepo.save(Mockito.any())).thenReturn(exec);
 
-        var req = new InternalUpdateNodeExecutionRequest("completed", "", null, null, null, null);
+        var req = new InternalUpdateNodeExecutionRequest("completed", "", null, null, null, null, null);
 
         assertThatCode(() -> service.updateNodeExecutionStatus(exec.getWorkflowRunId(), execId, req))
                 .doesNotThrowAnyException();
@@ -146,7 +147,8 @@ class InternalRunServiceOutputValidationTest {
         NodeExecution exec = stubExec(execId);
         Mockito.when(execRepo.save(Mockito.any())).thenReturn(exec);
 
-        var req = new InternalUpdateNodeExecutionRequest("completed", "AI generated output", null, null, null, null);
+        var req = new InternalUpdateNodeExecutionRequest(
+                "completed", "AI generated output", null, null, null, null, null);
 
         assertThatCode(() -> service.updateNodeExecutionStatus(exec.getWorkflowRunId(), execId, req))
                 .doesNotThrowAnyException();
@@ -158,7 +160,8 @@ class InternalRunServiceOutputValidationTest {
         NodeExecution exec = stubExec(execId);
         Mockito.when(execRepo.save(Mockito.any())).thenReturn(exec);
 
-        var req = new InternalUpdateNodeExecutionRequest("failed", "", null, null, null, "Claude produced no result");
+        var req = new InternalUpdateNodeExecutionRequest(
+                "failed", "", null, null, null, "Claude produced no result", null);
 
         assertThatCode(() -> service.updateNodeExecutionStatus(exec.getWorkflowRunId(), execId, req))
                 .doesNotThrowAnyException();
@@ -179,7 +182,7 @@ class InternalRunServiceOutputValidationTest {
         Mockito.when(nodeDefinitionRepo.findById(tn.getNodeDefinitionId())).thenReturn(Optional.of(nd));
 
         // artifactRefs is null → missing artifacts, but warn mode should not throw
-        var req = new InternalUpdateNodeExecutionRequest("completed", "AI output", null, null, null, null);
+        var req = new InternalUpdateNodeExecutionRequest("completed", "AI output", null, null, null, null, null);
 
         assertThatCode(() -> service.updateNodeExecutionStatus(exec.getWorkflowRunId(), execId, req))
                 .doesNotThrowAnyException();
@@ -205,7 +208,7 @@ class InternalRunServiceOutputValidationTest {
         field.set(service, "enforce");
 
         // artifactRefs is null → missing artifacts → enforce mode throws
-        var req = new InternalUpdateNodeExecutionRequest("completed", "AI output", null, null, null, null);
+        var req = new InternalUpdateNodeExecutionRequest("completed", "AI output", null, null, null, null, null);
 
         assertThatThrownBy(() -> service.updateNodeExecutionStatus(exec.getWorkflowRunId(), execId, req))
                 .isInstanceOf(ResponseStatusException.class);
@@ -217,7 +220,7 @@ class InternalRunServiceOutputValidationTest {
         NodeExecution exec = stubExec(execId);
         Mockito.when(execRepo.save(Mockito.any())).thenReturn(exec);
 
-        var req = new InternalUpdateNodeExecutionRequest("paused", null, null, null, null, null);
+        var req = new InternalUpdateNodeExecutionRequest("paused", null, null, null, null, null, null);
 
         // Use exec.getWorkflowRunId() so that the runRepo.findById() mock (set up in
         // stubExec) resolves correctly — passing a freshly-created UUID would cause
@@ -240,7 +243,7 @@ class InternalRunServiceOutputValidationTest {
         Mockito.when(artifactService.listArtifactNamesInternal(ARTIFACT_REFS))
                 .thenReturn(java.util.List.of("review.md"));
 
-        var req = new InternalUpdateNodeExecutionRequest("completed", "done", ARTIFACT_REFS, null, null, null);
+        var req = new InternalUpdateNodeExecutionRequest("completed", "done", ARTIFACT_REFS, null, null, null, null);
 
         assertThatThrownBy(() -> service.updateNodeExecutionStatus(exec.getWorkflowRunId(), execId, req))
                 .isInstanceOf(ResponseStatusException.class)
@@ -256,7 +259,7 @@ class InternalRunServiceOutputValidationTest {
         Mockito.when(artifactService.listArtifactNamesInternal(ARTIFACT_REFS))
                 .thenReturn(java.util.List.of("review.md", "escalation.md"));
 
-        var req = new InternalUpdateNodeExecutionRequest("completed", "done", ARTIFACT_REFS, null, null, null);
+        var req = new InternalUpdateNodeExecutionRequest("completed", "done", ARTIFACT_REFS, null, null, null, null);
 
         assertThatCode(() -> service.updateNodeExecutionStatus(exec.getWorkflowRunId(), execId, req))
                 .doesNotThrowAnyException();
@@ -283,7 +286,7 @@ class InternalRunServiceOutputValidationTest {
         Mockito.when(artifactService.listArtifactNamesInternal(ARTIFACT_REFS))
                 .thenReturn(java.util.List.of("escalation.md"));
 
-        var req = new InternalUpdateNodeExecutionRequest("completed", "done", ARTIFACT_REFS, null, null, null);
+        var req = new InternalUpdateNodeExecutionRequest("completed", "done", ARTIFACT_REFS, null, null, null, null);
 
         assertThatCode(() -> service.updateNodeExecutionStatus(exec.getWorkflowRunId(), execId, req))
                 .doesNotThrowAnyException();
@@ -298,7 +301,7 @@ class InternalRunServiceOutputValidationTest {
         Mockito.when(artifactService.listArtifactNamesInternal(ARTIFACT_REFS))
                 .thenThrow(new RuntimeException("Failed to list artifacts from object storage"));
 
-        var req = new InternalUpdateNodeExecutionRequest("completed", "done", ARTIFACT_REFS, null, null, null);
+        var req = new InternalUpdateNodeExecutionRequest("completed", "done", ARTIFACT_REFS, null, null, null, null);
 
         assertThatThrownBy(() -> service.updateNodeExecutionStatus(exec.getWorkflowRunId(), execId, req))
                 .isInstanceOfSatisfying(ResponseStatusException.class, ex -> {
@@ -314,7 +317,7 @@ class InternalRunServiceOutputValidationTest {
         exec.setDecision("approved");
         Mockito.when(execRepo.save(Mockito.any())).thenReturn(exec);
 
-        var req = new InternalUpdateNodeExecutionRequest("completed", "done", ARTIFACT_REFS, null, null, null);
+        var req = new InternalUpdateNodeExecutionRequest("completed", "done", ARTIFACT_REFS, null, null, null, null);
 
         assertThatCode(() -> service.updateNodeExecutionStatus(exec.getWorkflowRunId(), execId, req))
                 .doesNotThrowAnyException();
@@ -335,7 +338,7 @@ class InternalRunServiceOutputValidationTest {
         nd.setOutputSpec("{\"files\":[]}");
         Mockito.when(nodeDefinitionRepo.findById(tn.getNodeDefinitionId())).thenReturn(Optional.of(nd));
 
-        var req = new InternalUpdateNodeExecutionRequest("completed", "AI output", null, null, null, null);
+        var req = new InternalUpdateNodeExecutionRequest("completed", "AI output", null, null, null, null, null);
 
         assertThatCode(() -> service.updateNodeExecutionStatus(exec.getWorkflowRunId(), execId, req))
                 .doesNotThrowAnyException();

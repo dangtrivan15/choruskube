@@ -5,6 +5,7 @@ public enum NodeExecutionStatus {
     running,
     paused,
     awaiting_human,
+    finalizing,
     completed,
     failed,
     skipped,

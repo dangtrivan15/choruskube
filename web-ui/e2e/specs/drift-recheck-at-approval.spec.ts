@@ -4,8 +4,9 @@ import type { RunPullRequestResponse } from "../../src/lib/types";
 
 /**
  * The "e2e-drift-recheck" template (E2eTestDataSeeder): open_pr's first pass reports a base the
- * WireMock compare stub calls behind main, so approving final_approval is held and routed back to
- * open_pr; its second pass is current, and the held approval re-applies itself and merges PR 7001.
+ * WireMock compare stub calls behind main, so approving final_approval finalizes on the Worker,
+ * is held and routed back to open_pr; its second pass is current, and the held approval
+ * re-applies itself and merges PR 7001.
  */
 test.describe("Drift re-check at approval", () => {
   test("a stale approval is held, re-checked and re-applied", async ({ runMonitorPage, page, api }) => {
@@ -39,7 +40,9 @@ test.describe("Drift re-check at approval", () => {
       await runMonitorPage.selectNode("final_approval");
       await runMonitorPage.approveGate("Approving — exercising the drift re-check path.");
 
-      await expect(page.locator("[data-sonner-toast]").filter({ hasText: "Approval held" })).toBeVisible();
+      await expect(
+        page.locator("[data-sonner-toast]").filter({ hasText: "Finalizing your approval…" }),
+      ).toBeVisible();
 
       const finished = await api.waitForRunStatus(run.id, ["completed"], 150_000);
       expect(finished.status).toBe("completed");

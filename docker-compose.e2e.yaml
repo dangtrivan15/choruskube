@@ -320,6 +320,10 @@ services:
       DOCKER_HOST: unix:///var/run/docker.sock
       DOCKER_NETWORK: choruskube-e2e
       DOCKER_STAGING_DIR: *agent-staging-dir
+      # test-only: the Worker's own GitHub calls (gate compare/merge) reach WireMock, not api.github.com.
+      GITHUB_API_URL: http://wiremock:8080
+      # The default, stated: the api-server hands the Worker each run's GitHub token, so no credential files.
+      CREDENTIAL_SOURCE: control-plane
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - type: bind
@@ -333,6 +337,8 @@ services:
       api-server:
         condition: service_healthy
       temporal:
+        condition: service_healthy
+      wiremock:
         condition: service_healthy
     # Registration is a single boot-time call with no in-process retry; a losing race against the
     # api-server finishing its seeding (health is not coupled to it) self-corrects on restart.

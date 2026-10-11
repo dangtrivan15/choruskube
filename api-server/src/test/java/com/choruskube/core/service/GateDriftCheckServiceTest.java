@@ -2,11 +2,13 @@ package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.choruskube.core.credential.GitHubCredentialResolver;
@@ -22,14 +24,19 @@ import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.NodeExecutionRepoBaseRepository;
 import com.choruskube.core.repository.NodeExecutionRepository;
 import com.choruskube.core.repository.RunPullRequestRepository;
+import com.choruskube.core.service.GateDriftCheckService.CompareInput;
+import com.choruskube.core.service.GateDriftCheckService.CompareResult;
 import com.choruskube.core.service.GateDriftCheckService.DriftCheck;
+import com.choruskube.core.service.GateDriftCheckService.DriftInputs;
 import com.choruskube.core.service.GateDriftCheckService.Reason;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -298,19 +305,126 @@ class GateDriftCheckServiceTest {
                 .contains("review_conflict");
     }
 
+    @Test
+    void gather_splitsKnownStaleFromReposToCompare() throws Exception {
+        UUID cleanRepoId = UUID.randomUUID();
+        GitRepo cleanRepo = new GitRepo();
+        cleanRepo.setId(cleanRepoId);
+        cleanRepo.setUrl("https://github.com/acme/lib");
+        when(gitRepoRepo.findById(cleanRepoId)).thenReturn(Optional.of(cleanRepo));
+        when(baseRepo.findByNodeExecutionId(predecessor.getId()))
+                .thenReturn(List.of(
+                        base(repoId, "conflict", null, "[\"src/a.java\"]", null),
+                        base(cleanRepoId, "clean", "def5678abc", "[]", "trunk")));
+
+        DriftInputs inputs = service.gather(runId, gateNodeId, snapshot(repoId, cleanRepoId));
+
+        assertThat(inputs.predecessor()).isSameAs(predecessor);
+        assertThat(inputs.known()).singleElement().satisfies(r -> {
+            assertThat(r.reason()).isEqualTo(Reason.CONFLICT);
+            assertThat(r.gitRepoId()).isEqualTo(repoId);
+            assertThat(r.conflictedFiles()).containsExactly("src/a.java");
+        });
+        assertThat(inputs.toCompare())
+                .containsExactly(new CompareInput(cleanRepoId, "acme/lib", "trunk", "def5678abc"));
+        verifyNoInteractions(gitHubAppService, credentialResolver);
+    }
+
+    @Test
+    void classify_mapsCompareResults() {
+        UUID moved = UUID.randomUUID();
+        UUID current = UUID.randomUUID();
+        UUID gone = UUID.randomUUID();
+        UUID missing = UUID.randomUUID();
+        DriftInputs inputs = new DriftInputs(
+                predecessor,
+                List.of(),
+                List.of(
+                        new CompareInput(moved, "acme/a", "main", "sha-a"),
+                        new CompareInput(current, "acme/b", "main", "sha-b"),
+                        new CompareInput(gone, "acme/c", "main", "sha-c"),
+                        new CompareInput(missing, "acme/d", "main", "sha-d")));
+
+        DriftCheck check = service.classify(
+                inputs,
+                List.of(
+                        new CompareResult(moved, 2, false),
+                        new CompareResult(current, 0, false),
+                        new CompareResult(gone, 0, true)));
+
+        assertThat(check.predecessor()).isSameAs(predecessor);
+        assertThat(check.repos())
+                .extracting(GateDriftCheckService.RepoDrift::gitRepoId, GateDriftCheckService.RepoDrift::reason)
+                .containsExactlyInAnyOrder(
+                        tuple(moved, Reason.MAIN_MOVED),
+                        tuple(current, Reason.CURRENT),
+                        tuple(gone, Reason.BASE_GONE),
+                        tuple(missing, Reason.UNAVAILABLE));
+        assertThat(check.repos().stream()
+                        .filter(r -> r.gitRepoId().equals(moved))
+                        .findFirst())
+                .hasValueSatisfying(r -> {
+                    assertThat(r.aheadBy()).isEqualTo(2);
+                    assertThat(r.baseSha()).isEqualTo("sha-a");
+                    assertThat(r.ownerRepo()).isEqualTo("acme/a");
+                });
+    }
+
+    @Test
+    void classify_keepsKnownStaleReposAlongsideComparedOnes() {
+        UUID compared = UUID.randomUUID();
+        GateDriftCheckService.RepoDrift known =
+                new GateDriftCheckService.RepoDrift(repoId, "acme/app", "main", Reason.NO_RECORD, null, 0, List.of());
+        DriftInputs inputs = new DriftInputs(
+                predecessor, List.of(known), List.of(new CompareInput(compared, "acme/b", "main", "sha-b")));
+
+        DriftCheck check = service.classify(inputs, List.of(new CompareResult(compared, 0, false)));
+
+        assertThat(check.repos())
+                .extracting(GateDriftCheckService.RepoDrift::reason)
+                .containsExactlyInAnyOrder(Reason.NO_RECORD, Reason.CURRENT);
+        assertThat(check.staleRepos()).containsExactly(known);
+    }
+
+    @Test
+    void check_mintsNoTokenWhenNothingNeedsComparing() throws Exception {
+        recordBase("conflict", null, "[]");
+
+        service.check(runId, gateNodeId, snapshot(true));
+
+        verify(credentialResolver, never()).getTokenForRun(any());
+    }
+
     private void recordBase(String outcome, String sha, String files) {
         recordBase(outcome, sha, files, null);
     }
 
     private void recordBase(String outcome, String sha, String files, String defaultBranch) {
+        when(baseRepo.findByNodeExecutionId(predecessor.getId()))
+                .thenReturn(List.of(base(repoId, outcome, sha, files, defaultBranch)));
+    }
+
+    private NodeExecutionRepoBase base(UUID gitRepoId, String outcome, String sha, String files, String defaultBranch) {
         NodeExecutionRepoBase base = new NodeExecutionRepoBase();
         base.setNodeExecutionId(predecessor.getId());
-        base.setGitRepoId(repoId);
+        base.setGitRepoId(gitRepoId);
         base.setOutcome(outcome);
         base.setBaseSha(sha);
         base.setDefaultBranch(defaultBranch);
         base.setConflictedFiles(files);
-        when(baseRepo.findByNodeExecutionId(predecessor.getId())).thenReturn(List.of(base));
+        return base;
+    }
+
+    private JsonNode snapshot(UUID... repoIds) throws Exception {
+        String repos = Arrays.stream(repoIds)
+                .map(id -> "{\"id\":\"" + id + "\",\"url\":\"https://github.com/acme/x\",\"name\":\"x\"}")
+                .collect(Collectors.joining(",", "[", "]"));
+        return objectMapper.readTree("""
+                {"nodes":[
+                  {"template_node_id":"%s","label":"test","executor_type":"script"},
+                  {"template_node_id":"%s","label":"final_approval","executor_type":"human"}],
+                 "edges":[],
+                 "repos":%s}""".formatted(testNodeId, gateNodeId, repos));
     }
 
     private NodeExecution execution(UUID templateNodeId, Instant startedAt, Instant completedAt) {

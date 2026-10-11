@@ -31,6 +31,19 @@ type DAGExecutorTestSuite struct {
 	// placementError makes the shared stub fail transport-wise instead of answering, the
 	// other way the gate can end a run.
 	placementError error
+	// heldApproval backs the shared ClaimHeldApproval stub (default: none held), for the same
+	// registration-order reason as placementDecision. Every gate opened on the current
+	// version asks for one, so every human-gate test needs the stub.
+	heldApproval string
+	claimsMu     sync.Mutex
+	claims       []activity.GateRef
+}
+
+// claimedRefs returns every gate ClaimHeldApproval was asked about, in order.
+func (s *DAGExecutorTestSuite) claimedRefs() []activity.GateRef {
+	s.claimsMu.Lock()
+	defer s.claimsMu.Unlock()
+	return append([]activity.GateRef(nil), s.claims...)
 }
 
 func (s *DAGExecutorTestSuite) SetupTest() {
@@ -43,6 +56,16 @@ func (s *DAGExecutorTestSuite) SetupTest() {
 	s.env.OnActivity("CheckNodePlacement", mock.Anything, mock.Anything).
 		Return(func(_ context.Context, _ activity.CheckNodePlacementParams) (activity.CheckNodePlacementResult, error) {
 			return s.placementDecision, s.placementError
+		}).Maybe()
+
+	s.heldApproval = ""
+	s.claims = nil
+	s.env.OnActivity("ClaimHeldApproval", mock.Anything, mock.Anything).
+		Return(func(_ context.Context, ref activity.GateRef) (string, error) {
+			s.claimsMu.Lock()
+			defer s.claimsMu.Unlock()
+			s.claims = append(s.claims, ref)
+			return s.heldApproval, nil
 		}).Maybe()
 }
 

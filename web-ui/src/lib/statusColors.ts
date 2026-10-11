@@ -120,6 +120,7 @@ export function statusTone(status: string): StatusTone {
     case "failed":
       return "error";
     case "running":
+    case "finalizing":
       return "info";
     case "awaiting_human":
     case "awaiting_retry":

@@ -2,11 +2,13 @@ package workflow
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 
@@ -621,10 +623,24 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 					// Human node — handle via workflow-level signal
 					tracker.status = "awaiting_human"
 
+					// Version-gated: a gate opened in a history recorded before this marker replays
+					// without the held-approval claim, and the API keeps sending it one final decision.
+					// finalize_mode is how the API learns which of the two protocols this gate speaks.
+					finalizeVersion := workflow.GetVersion(ctx, "async-gate-finalize", workflow.DefaultVersion, 1)
+					// With no Worker queue the GitHub step lands on the orchestrator's stub, which fails
+					// every attempt, so each approval would be refused.
+					asyncFinalize := finalizeVersion >= 1 && params.WorkerTaskQueue != ""
+					var finalizeMode *string
+					if asyncFinalize {
+						mode := "async"
+						finalizeMode = &mode
+					}
+
 					// Update DB status
 					workflow.ExecuteActivity(dbCtx, activities.UpdateNodeExecutionStatus,
 						activity.UpdateNodeExecStatusParams{
 							RunID: params.RunID, NodeExecutionID: tracker.execID, Status: "awaiting_human",
+							FinalizeMode: finalizeMode,
 						},
 					).Get(ctx, nil)
 					workflow.ExecuteActivity(dbCtx, activities.UpdateWorkflowRunStatus,
@@ -648,7 +664,8 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 					}
 					humanCh := workflow.GetSignalChannel(ctx, SignalHumanDecisionPrefix+execID.String())
 					workflow.Go(ctx, func(gCtx workflow.Context) {
-						waitForHumanDecision(gCtx, dbCtx, humanCh, completionCh, activities, params.RunID, execID, nodeID, timeoutSecs)
+						waitForHumanDecision(gCtx, dbCtx, humanCh, completionCh, activities, params.RunID, execID, nodeID, timeoutSecs,
+							asyncFinalize, params.WorkerTaskQueue)
 					})
 				}
 
@@ -1534,7 +1551,9 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 	return nil
 }
 
-// waitForHumanDecision blocks on the human-decision signal channel for a specific node
+// waitForHumanDecision blocks on the human-decision signal channel for a specific node. A gate
+// opened with asyncFinalize also finalizes approvals that carry an approval id, and waits again
+// when the API refuses one.
 func waitForHumanDecision(
 	ctx workflow.Context,
 	dbCtx workflow.Context,
@@ -1545,20 +1564,53 @@ func waitForHumanDecision(
 	execID uuid.UUID,
 	nodeID uuid.UUID,
 	timeoutSecs int,
+	asyncFinalize bool,
+	workerTaskQueue string,
 ) {
-	timerCtx, timerCancel := workflow.WithCancel(ctx)
-	defer timerCancel()
+	var finalizer *gateFinalizer
+	if asyncFinalize {
+		finalizer = newGateFinalizer(ctx, acts, runID, execID, nodeID, workerTaskQueue)
+		if held := finalizer.claimHeld(); held != "" && finalizer.settle(held, completionCh) {
+			return
+		}
+	}
 
-	timeoutFuture := workflow.NewTimer(timerCtx, time.Duration(timeoutSecs)*time.Second)
+	for {
+		// A fresh timer per wait, stopped before any finalize: a refused approval gets the full
+		// timeout again, and a slow merge cannot time the gate out.
+		timerCtx, timerCancel := workflow.WithCancel(ctx)
+		timeoutFuture := workflow.NewTimer(timerCtx, time.Duration(timeoutSecs)*time.Second)
 
-	selector := workflow.NewSelector(ctx)
-
-	// Listen for human decision on per-node channel
-	selector.AddReceive(humanCh, func(ch workflow.ReceiveChannel, more bool) {
 		var signal HumanDecisionSignal
-		ch.Receive(ctx, &signal)
-
+		received, timedOut := false, false
+		selector := workflow.NewSelector(ctx)
+		selector.AddReceive(humanCh, func(ch workflow.ReceiveChannel, more bool) {
+			ch.Receive(ctx, &signal)
+			received = true
+		})
+		selector.AddFuture(timeoutFuture, func(f workflow.Future) {
+			timedOut = f.Get(ctx, nil) == nil
+		})
+		selector.Select(ctx)
 		timerCancel()
+
+		if !received {
+			if timedOut {
+				completionCh.Send(ctx, nodeCompletion{
+					nodeID: nodeID,
+					err:    fmt.Errorf("human gate timed out after %ds", timeoutSecs),
+				})
+			}
+			// Otherwise the workflow was cancelled; going on would persist an empty decision.
+			return
+		}
+
+		if finalizer != nil && signal.ApprovalID != "" {
+			if finalizer.settle(signal.ApprovalID, completionCh) {
+				return
+			}
+			continue
+		}
 
 		// Persist decision to DB — must succeed before completion so
 		// the edge-routing activity (GetNodeDecision) finds it.
@@ -1585,20 +1637,228 @@ func waitForHumanDecision(
 			result:       signal.Feedback,
 			artifactRefs: attachmentRefs,
 		})
-	})
+		return
+	}
+}
 
-	// Listen for timeout
-	selector.AddFuture(timeoutFuture, func(f workflow.Future) {
-		err := f.Get(ctx, nil)
-		if err == nil {
-			completionCh.Send(ctx, nodeCompletion{
-				nodeID: nodeID,
-				err:    fmt.Errorf("human gate timed out after %ds", timeoutSecs),
-			})
+// gateAPIActivityOptions are for the gate-finalize steps the API server answers.
+func gateAPIActivityOptions() workflow.ActivityOptions {
+	return workflow.ActivityOptions{
+		StartToCloseTimeout: time.Minute,
+		RetryPolicy: &temporal.RetryPolicy{
+			InitialInterval:    2 * time.Second,
+			BackoffCoefficient: 2,
+			MaximumInterval:    time.Minute,
+			MaximumAttempts:    5,
+		},
+	}
+}
+
+// gateCompleteActivityOptions: completing may file many roadmap issues. Cut off sooner, a retry
+// overlaps the attempt still writing and completes the gate without its roadmap note.
+func gateCompleteActivityOptions() workflow.ActivityOptions {
+	opts := gateAPIActivityOptions()
+	opts.StartToCloseTimeout = 5 * time.Minute
+	return opts
+}
+
+// gateGitHubActivityOptions route the GitHub step to the run's Worker, which holds the run's
+// GitHub credentials; on any other queue every attempt fails. Without ScheduleToStartTimeout, a
+// Fleet with no live Worker leaves the gate finalizing for good, past any reviewer's reach.
+func gateGitHubActivityOptions(workerTaskQueue string) workflow.ActivityOptions {
+	return workflow.ActivityOptions{
+		TaskQueue:              workerTaskQueue,
+		ScheduleToStartTimeout: 10 * time.Minute,
+		StartToCloseTimeout:    10 * time.Minute,
+		HeartbeatTimeout:       time.Minute,
+		RetryPolicy: &temporal.RetryPolicy{
+			InitialInterval:    5 * time.Second,
+			BackoffCoefficient: 2,
+			MaximumInterval:    time.Minute,
+			MaximumAttempts:    5,
+		},
+	}
+}
+
+// gateFinalizer finalizes approvals of one asynchronous gate: the API plans, the Worker runs the
+// GitHub step, and the API completes, holds or refuses. Every database write stays on the API.
+type gateFinalizer struct {
+	ctx         workflow.Context
+	apiCtx      workflow.Context
+	completeCtx workflow.Context
+	gitHubCtx   workflow.Context
+	acts        *activity.Activities
+	runID       uuid.UUID
+	execID      uuid.UUID
+	nodeID      uuid.UUID
+}
+
+func newGateFinalizer(
+	ctx workflow.Context, acts *activity.Activities, runID, execID, nodeID uuid.UUID, workerTaskQueue string,
+) *gateFinalizer {
+	return &gateFinalizer{
+		ctx:         ctx,
+		apiCtx:      workflow.WithActivityOptions(ctx, gateAPIActivityOptions()),
+		completeCtx: workflow.WithActivityOptions(ctx, gateCompleteActivityOptions()),
+		gitHubCtx:   workflow.WithActivityOptions(ctx, gateGitHubActivityOptions(workerTaskQueue)),
+		acts:        acts,
+		runID:       runID,
+		execID:      execID,
+		nodeID:      nodeID,
+	}
+}
+
+// finalizeOutcome is what a finalize leaves the gate's wait to do.
+type finalizeOutcome int
+
+const (
+	// finalizeEnded: send the completion; the gate is done, or its node failed.
+	finalizeEnded finalizeOutcome = iota
+	// finalizeRefused: the API sent the gate back to awaiting_human; wait for the next decision.
+	finalizeRefused
+	// finalizeAbandoned: the workflow was cancelled mid-finalize, and the run's end voids the
+	// approval on the API. Refusing or completing now would only fail on the cancelled context.
+	finalizeAbandoned
+)
+
+// claimHeld returns the approval held for this gate, which the API has claimed for finalizing,
+// or "" when there is none.
+func (f *gateFinalizer) claimHeld() string {
+	var held string
+	if err := workflow.ExecuteActivity(f.apiCtx, f.acts.ClaimHeldApproval,
+		activity.GateRef{RunID: f.runID, NodeExecutionID: f.execID},
+	).Get(f.ctx, &held); err != nil {
+		// The claim may still have committed, leaving the gate finalizing past a reviewer's reach
+		// until its timeout fails the node or the run ends; either voids the approval. Failing the
+		// node here would end a gate nobody decided whenever the claim did not commit.
+		workflow.GetLogger(f.ctx).Warn("Could not claim a held approval; waiting for a decision",
+			"execID", f.execID, "err", err)
+		return ""
+	}
+	return held
+}
+
+// settle finalizes one approval and reports whether the gate's wait is over.
+func (f *gateFinalizer) settle(approvalID string, completionCh workflow.Channel) bool {
+	completion, outcome := f.finalize(approvalID)
+	switch outcome {
+	case finalizeEnded:
+		completionCh.Send(f.ctx, completion)
+		return true
+	case finalizeAbandoned:
+		return true
+	default:
+		return false
+	}
+}
+
+func (f *gateFinalizer) finalize(approvalID string) (nodeCompletion, finalizeOutcome) {
+	ref := activity.GateApprovalRef{RunID: f.runID, NodeExecutionID: f.execID, ApprovalID: approvalID}
+
+	var plan activity.GatePlan
+	if err := workflow.ExecuteActivity(f.apiCtx, f.acts.PlanGateFinalize, ref).Get(f.ctx, &plan); err != nil {
+		return f.stepFailed(err)
+	}
+	switch plan.Outcome {
+	case activity.GatePlanRefused:
+		return f.refuse(ref, plan.Reason, nil)
+	case activity.GatePlanHold:
+		return f.hold(ref, nil)
+	case activity.GatePlanProceed:
+	default:
+		return f.stepFailed(fmt.Errorf("plan answered %q", plan.Outcome))
+	}
+
+	var gh activity.GateGitHubResult
+	// Scheduled with nothing to do, the step would still make the approval wait on a live Worker,
+	// and refuse it when none picks the step up.
+	if len(plan.Compares) > 0 || len(plan.PRs) > 0 {
+		if err := workflow.ExecuteActivity(f.gitHubCtx, f.acts.RunGateGitHubSteps, activity.GateGitHubParams{
+			RunID: f.runID, NodeExecutionID: f.execID, Compares: plan.Compares, PRs: plan.PRs,
+			MergeMethod: plan.MergeMethod,
+		}).Get(f.ctx, &gh); err != nil {
+			if f.ctx.Err() != nil {
+				return nodeCompletion{}, finalizeAbandoned
+			}
+			workflow.GetLogger(f.ctx).Warn("GitHub step failed; refusing the approval",
+				"execID", f.execID, "approvalID", approvalID, "err", err)
+			return f.refuse(ref, gitHubStepRefusal(err), nil)
 		}
-	})
+	}
+	switch {
+	case gh.Refused != "":
+		// The merges made before the refusal are recorded by the API before it voids the approval.
+		return f.refuse(ref, gh.Refused, gh.Merges)
+	case gh.Stale:
+		return f.hold(ref, gh.Compares)
+	}
 
-	selector.Select(ctx)
+	var done activity.GateStepResult
+	if err := workflow.ExecuteActivity(f.completeCtx, f.acts.CompleteGateFinalize,
+		activity.GateCompleteParams{GateApprovalRef: ref, Merges: gh.Merges},
+	).Get(f.ctx, &done); err != nil {
+		return f.stepFailed(err)
+	}
+	if done.Outcome != activity.GateStepCompleted {
+		return f.stepFailed(fmt.Errorf("complete answered %q", done.Outcome))
+	}
+	return f.ended(done), finalizeEnded
+}
+
+func (f *gateFinalizer) hold(ref activity.GateApprovalRef, compares []activity.GateCompareResult) (nodeCompletion, finalizeOutcome) {
+	var held activity.GateStepResult
+	if err := workflow.ExecuteActivity(f.apiCtx, f.acts.HoldGateApproval,
+		activity.GateHoldParams{GateApprovalRef: ref, Compares: compares},
+	).Get(f.ctx, &held); err != nil {
+		return f.stepFailed(err)
+	}
+	switch held.Outcome {
+	case activity.GateStepHeld:
+		return f.ended(held), finalizeEnded
+	case activity.GateStepRefused:
+		// Past the re-check cap the API refused the approval itself and reopened the gate.
+		return nodeCompletion{}, finalizeRefused
+	default:
+		return f.stepFailed(fmt.Errorf("hold answered %q", held.Outcome))
+	}
+}
+
+func (f *gateFinalizer) refuse(ref activity.GateApprovalRef, reason string, merges []activity.GatePRResult) (nodeCompletion, finalizeOutcome) {
+	if err := workflow.ExecuteActivity(f.apiCtx, f.acts.RefuseGateApproval,
+		activity.GateRefuseParams{GateApprovalRef: ref, Reason: reason, Merges: merges},
+	).Get(f.ctx, nil); err != nil {
+		return f.stepFailed(err)
+	}
+	return nodeCompletion{}, finalizeRefused
+}
+
+// stepFailed fails the node: the gate is left finalizing on the API, where no reviewer can decide it.
+func (f *gateFinalizer) stepFailed(err error) (nodeCompletion, finalizeOutcome) {
+	if f.ctx.Err() != nil {
+		return nodeCompletion{}, finalizeAbandoned
+	}
+	return nodeCompletion{nodeID: f.nodeID, err: fmt.Errorf("finalize approval: %w", err)}, finalizeEnded
+}
+
+func (f *gateFinalizer) ended(r activity.GateStepResult) nodeCompletion {
+	refs := r.AttachmentRefs
+	if refs == "" {
+		refs = "{}"
+	}
+	return nodeCompletion{nodeID: f.nodeID, result: r.Result, artifactRefs: refs}
+}
+
+// gitHubStepRefusal is the reason the reviewer reads on the gate. It names only the failure's
+// class: the Worker's error text can carry internal URLs and addresses.
+func gitHubStepRefusal(err error) string {
+	var timeoutErr *temporal.TimeoutError
+	if !errors.As(err, &timeoutErr) {
+		return "Finalizing could not reach GitHub: the GitHub step kept failing. Approve again to retry."
+	}
+	if timeoutErr.TimeoutType() == enumspb.TIMEOUT_TYPE_SCHEDULE_TO_START {
+		return "Finalizing could not start: no Worker picked up the GitHub step."
+	}
+	return "Finalizing could not reach GitHub: the GitHub step did not finish in time."
 }
 
 // buildPromptVariables builds the flat variable map for prompt template resolution.

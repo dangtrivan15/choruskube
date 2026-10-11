@@ -3,7 +3,9 @@ import { screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "@/__tests__/test-utils";
 import DetailPanel from "../DetailPanel";
-import type { RunResponse } from "@/lib/types";
+import type { GateStampResponse, RunResponse } from "@/lib/types";
+
+let mockGateStamps: GateStampResponse[] = [];
 
 vi.mock("@/hooks/useRuns", () => ({
   useSignalNode: vi.fn(() => ({
@@ -21,7 +23,7 @@ vi.mock("@/hooks/useRuns", () => ({
 }));
 
 vi.mock("@/hooks/useGateStamps", () => ({
-  useGateStamps: vi.fn(() => ({ data: [] })),
+  useGateStamps: vi.fn(() => ({ data: mockGateStamps })),
 }));
 
 vi.mock("@/hooks/useArtifacts", () => ({
@@ -106,6 +108,7 @@ function makeRun(overrides: Partial<RunResponse> = {}): RunResponse {
 describe("DetailPanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGateStamps = [];
   });
 
   it("renders the node label in the header", () => {
@@ -506,6 +509,66 @@ describe("DetailPanel", () => {
 
     expect(screen.getByTestId("gate-approve-button")).toBeInTheDocument();
     expect(screen.getByTestId("gate-reject-button")).toBeInTheDocument();
+  });
+
+  describe("a gate that is finalizing its approval", () => {
+    function makeFinalizingRun(): RunResponse {
+      const base = makeRun();
+      return makeRun({
+        graphSnapshot: {
+          nodes: [
+            {
+              template_node_id: "node-1",
+              label: "final_approval",
+              executor_type: "human",
+              is_entrypoint: false,
+              decision_options: ["approved", "rejected"],
+            },
+          ],
+          edges: [],
+        },
+        nodeExecutions: [{ ...base.nodeExecutions[0], status: "finalizing" }],
+      });
+    }
+
+    it("renders the finalizing panel and no decision buttons", () => {
+      renderWithProviders(<DetailPanel run={makeFinalizingRun()} nodeId="node-1" />);
+
+      expect(screen.getByTestId("gate-finalizing")).toBeInTheDocument();
+      expect(screen.getByTestId("detail-node-status")).toHaveTextContent("finalizing");
+      expect(screen.queryByTestId("gate-approve-button")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("gate-reject-button")).not.toBeInTheDocument();
+      expect(screen.queryByText("Awaiting Review")).not.toBeInTheDocument();
+    });
+
+    it("marks the header with the in-progress icon, as for a running node", () => {
+      renderWithProviders(<DetailPanel run={makeFinalizingRun()} nodeId="node-1" />);
+
+      const header = screen.getByTestId("detail-node-label").closest("div.border-b");
+      expect(header?.querySelector("svg.animate-pulse")).not.toBeNull();
+    });
+
+    it("shows the round of the gate's latest stamp, not another gate's", () => {
+      const stamp = (overrides: Partial<GateStampResponse>): GateStampResponse => ({
+        id: "stamp-1",
+        gateTemplateNodeId: "node-1",
+        gateLabel: "final_approval",
+        status: "finalizing",
+        recheckRounds: 1,
+        maxRecheckRounds: 2,
+        voidReason: null,
+        supersededByReviewer: false,
+        parkedNodeExecutionId: null,
+        createdAt: "2026-10-11T00:00:00Z",
+        updatedAt: "2026-10-11T00:00:00Z",
+        ...overrides,
+      });
+      mockGateStamps = [stamp({}), stamp({ id: "stamp-2", gateLabel: "other_gate", recheckRounds: 2 })];
+
+      renderWithProviders(<DetailPanel run={makeFinalizingRun()} nodeId="node-1" />);
+
+      expect(screen.getByTestId("gate-finalizing")).toHaveTextContent("Re-check round 1 of 2.");
+    });
   });
 
   it("renders an Effort badge carrying the node's effort value", () => {

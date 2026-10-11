@@ -80,6 +80,9 @@ would only return what you configured.
 | `WORKER_CAPABILITIES` | no | `key=value,key=value` pairs this Worker reports about its own infrastructure at registration. Default empty. A server that records required capabilities on a Fleet refuses a Worker that does not report them. |
 | `EXECUTOR_TYPE` | no | `docker` (default) or `k8s` — which executor this process builds at startup. Any other value fails startup. |
 | `WORKER_CALLBACK_PORT` | no | Port the callback server listens on for agent completion/heartbeat callbacks. Default `9090`. |
+| `CREDENTIAL_SOURCE` | no | `control-plane` (default) or `local` — where GitHub and agent credentials come from; see [Credentials](#credentials). `local` is for a single tenant's own Fleet only. Any other value fails startup. |
+| `CREDENTIALS_DIR` | no | Folder the `local` source reads. Default `/etc/choruskube/credentials`. |
+| `GITHUB_API_URL` | no | GitHub API root for the Worker's own GitHub calls. Default `https://api.github.com`. |
 
 `TEMPORAL_TLS_DISABLED` is opt-in so a deployment against a TLS Temporal cannot lose TLS by
 omission. It is only needed when a Fleet carries a credential: the Temporal SDK turns TLS on
@@ -95,6 +98,35 @@ this deployment every Worker presents the same `WORKER_REGISTRATION_TOKEN`, whet
 handed it back or the operator configured it directly, so it is one shared value, not a per-Worker
 one. A server that mints a credential per registration returns it in the registration response and
 the Worker presents that instead.
+
+## Credentials
+
+An agent pod fetches its GitHub token from the Worker that launched it
+(`GET /api/v1/github-token` on the callback port, authenticated with the pod's own job secret and
+refused unless the execution belongs to the run it names), so the Worker decides where the token
+comes from.
+
+- **`control-plane`** (default) asks the api-server for each run's token. The api-server resolves
+  it per organization, which is what a Worker serving several tenants needs.
+- **`local`** reads one set of credentials from `CREDENTIALS_DIR` and mints GitHub App tokens
+  itself. It has no notion of a tenant, so every run on the Worker gets the same credentials:
+  use it only for a Worker that serves a single tenant's own Fleet.
+
+`local` reads these files on every use, so a rotated secret needs no restart. Anything the
+folder does not hold falls back to the environment, and the folder wins: a GitHub credential of
+either kind in the folder beats any in the environment, so a stray variable cannot override a
+mounted secret.
+
+| File under `CREDENTIALS_DIR` | Environment fallback | Purpose |
+|------------------------------|----------------------|---------|
+| `github-pat` | `GITHUB_PAT` | A personal access token, used as is. Wins over a GitHub App. |
+| `github-app/app-id`, `github-app/installation-id`, `github-app/private-key.pem` | `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID`, `GITHUB_APP_PRIVATE_KEY_PATH` (a path to the PEM) | A GitHub App; the Worker mints installation tokens and reuses one until 5 minutes before it expires. All three are required. |
+| `claude-oauth-token` | `CLAUDE_CODE_OAUTH_TOKEN` | Replaces the Claude token the api-server returns for the agent pod. |
+| `registry/host`, `registry/username`, `registry/password` | `REGISTRY_HOST`, `REGISTRY_USERNAME`, `REGISTRY_PASSWORD` | Replaces the registry login the api-server returns. All three are required. |
+
+If the folder or environment supplies either the Claude token or a registry login, the Worker
+uses its values for both and drops whatever the api-server returned for the other. Supplying
+neither leaves the api-server's credentials in place.
 
 ## Executor configuration
 

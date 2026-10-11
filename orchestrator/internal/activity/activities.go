@@ -402,6 +402,7 @@ type UpdateNodeExecStatusParams struct {
 	Result          *string
 	ErrorMessage    *string
 	ArtifactRefs    *string // NEW: nil → field omitted from PUT body; set for completed human gate nodes
+	FinalizeMode    *string // nil → field omitted, leaving the node's finalize mode as it is
 }
 
 func (a *Activities) UpdateNodeExecutionStatus(ctx context.Context, params UpdateNodeExecStatusParams) error {
@@ -413,6 +414,7 @@ func (a *Activities) UpdateNodeExecutionStatus(ctx context.Context, params Updat
 		Result:       params.Result,
 		ErrorMessage: params.ErrorMessage,
 		ArtifactRefs: params.ArtifactRefs, // NEW
+		FinalizeMode: params.FinalizeMode,
 	})
 }
 

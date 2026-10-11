@@ -1,6 +1,6 @@
 import type { RunResponse, NodeExecutionResponse, SnapshotNode } from "@/lib/types";
 
-/** Nodes needing attention (awaiting-human first, then failed) and nodes currently running. */
+/** Nodes needing attention (awaiting-human first, then failed) and nodes in progress (running or finalizing). */
 export interface ActiveNodeClassification {
   attention: SnapshotNode[];
   running: SnapshotNode[];
@@ -42,7 +42,7 @@ export function classifyActiveNodes(run: RunResponse): ActiveNodeClassification 
     const status = latest.get(node.template_node_id)?.status;
     if (status === "awaiting_human") awaitingHuman.push(node);
     else if (status === "failed") failed.push(node);
-    else if (status === "running") running.push(node);
+    else if (status === "running" || status === "finalizing") running.push(node);
   }
 
   return { attention: [...awaitingHuman, ...failed], running };

@@ -174,6 +174,12 @@ describe("DagNode", () => {
     expect(container.querySelector(".animate-pulse")).not.toBeNull();
   });
 
+  it("finalizing carries the active-state pulse emphasis and reads as a word", () => {
+    const { container } = renderDagNode({ status: "finalizing" });
+    expect(container.querySelector(".animate-pulse")).not.toBeNull();
+    expect(within(container).getByText("finalizing")).toBeInTheDocument();
+  });
+
   it("pending does not carry the active-state pulse emphasis", () => {
     const { container } = renderDagNode({ status: "pending" });
     expect(container.querySelector(".animate-pulse")).toBeNull();
