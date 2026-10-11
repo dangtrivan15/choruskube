@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 
@@ -1659,12 +1660,14 @@ func gateCompleteActivityOptions() workflow.ActivityOptions {
 }
 
 // gateGitHubActivityOptions route the GitHub step to the run's Worker, which holds the run's
-// GitHub credentials; on any other queue every attempt fails.
+// GitHub credentials; on any other queue every attempt fails. Without ScheduleToStartTimeout, a
+// Fleet with no live Worker leaves the gate finalizing for good, past any reviewer's reach.
 func gateGitHubActivityOptions(workerTaskQueue string) workflow.ActivityOptions {
 	return workflow.ActivityOptions{
-		TaskQueue:           workerTaskQueue,
-		StartToCloseTimeout: 10 * time.Minute,
-		HeartbeatTimeout:    time.Minute,
+		TaskQueue:              workerTaskQueue,
+		ScheduleToStartTimeout: 10 * time.Minute,
+		StartToCloseTimeout:    10 * time.Minute,
+		HeartbeatTimeout:       time.Minute,
 		RetryPolicy: &temporal.RetryPolicy{
 			InitialInterval:    5 * time.Second,
 			BackoffCoefficient: 2,
@@ -1769,7 +1772,9 @@ func (f *gateFinalizer) finalize(approvalID string) (nodeCompletion, finalizeOut
 		if f.ctx.Err() != nil {
 			return nodeCompletion{}, finalizeAbandoned
 		}
-		return f.refuse(ref, "Finalizing could not reach GitHub: "+gitHubStepFailure(err), nil)
+		workflow.GetLogger(f.ctx).Warn("GitHub step failed; refusing the approval",
+			"execID", f.execID, "approvalID", approvalID, "err", err)
+		return f.refuse(ref, gitHubStepRefusal(err), nil)
 	}
 	switch {
 	case gh.Refused != "":
@@ -1834,22 +1839,17 @@ func (f *gateFinalizer) ended(r activity.GateStepResult) nodeCompletion {
 	return nodeCompletion{nodeID: f.nodeID, result: r.Result, artifactRefs: refs}
 }
 
-// gitHubStepFailure is the Worker's own message. The reviewer reads it on the gate, and the
-// activity error around it names the Worker's host.
-func gitHubStepFailure(err error) string {
+// gitHubStepRefusal is the reason the reviewer reads on the gate. It names only the failure's
+// class: the Worker's error text can carry internal URLs and addresses.
+func gitHubStepRefusal(err error) string {
 	var timeoutErr *temporal.TimeoutError
-	var appErr *temporal.ApplicationError
-	var actErr *temporal.ActivityError
-	switch {
-	case errors.As(err, &timeoutErr):
-		return timeoutErr.Message()
-	case errors.As(err, &appErr):
-		return appErr.Message()
-	case errors.As(err, &actErr) && actErr.Unwrap() != nil:
-		return actErr.Unwrap().Error()
-	default:
-		return err.Error()
+	if !errors.As(err, &timeoutErr) {
+		return "Finalizing could not reach GitHub: the GitHub step kept failing. Approve again to retry."
 	}
+	if timeoutErr.TimeoutType() == enumspb.TIMEOUT_TYPE_SCHEDULE_TO_START {
+		return "Finalizing could not start: no Worker picked up the GitHub step."
+	}
+	return "Finalizing could not reach GitHub: the GitHub step did not finish in time."
 }
 
 // buildPromptVariables builds the flat variable map for prompt template resolution.

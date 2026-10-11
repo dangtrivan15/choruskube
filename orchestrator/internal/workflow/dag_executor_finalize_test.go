@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
+	enumspb "go.temporal.io/api/enums/v1"
 	temporalactivity "go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/temporal"
@@ -370,10 +371,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateFinalizeWorkerFailureRefuses() {
 	s.expectPlan(g, "s1", plan)
 	s.env.OnActivity("RunGateGitHubSteps", mock.Anything, mock.Anything).
 		Return(activity.GateGitHubResult{}, errors.New("github is unreachable"))
-	// The Worker's message, without the activity envelope that names the Worker's host.
-	s.expectRefuse(g, "s1", func(r string) bool {
-		return r == "Finalizing could not reach GitHub: github is unreachable"
-	}, nil)
+	s.expectRefuse(g, "s1", func(r string) bool { return r == gitHubKeptFailing }, nil)
 	s.env.OnActivity("SetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.SetNodeDecisionParams) bool {
 		return p.NodeExecutionID == g.exec && p.Decision == "rereview"
 	})).Return(nil).Once()
@@ -386,6 +384,67 @@ func (s *DAGExecutorTestSuite) TestHumanGateFinalizeWorkerFailureRefuses() {
 	s.env.AssertActivityNotCalled(s.T(), "CompleteGateFinalize", mock.Anything, mock.Anything)
 	_, at := starts.of("RunGateGitHubSteps")
 	s.assertBackoff(at, 5*time.Second, 10*time.Second, 20*time.Second, 40*time.Second)
+}
+
+const (
+	gitHubKeptFailing = "Finalizing could not reach GitHub: the GitHub step kept failing. Approve again to retry."
+	gitHubTooSlow     = "Finalizing could not reach GitHub: the GitHub step did not finish in time."
+	gitHubNoWorker    = "Finalizing could not start: no Worker picked up the GitHub step."
+)
+
+// refusesOnGitHubStepError runs an approval whose GitHub step fails with workerErr on every
+// attempt and checks the reason the reviewer is shown, then closes the gate with a rereview.
+func (s *DAGExecutorTestSuite) refusesOnGitHubStepError(workerErr error, attempts int, wantReason string) {
+	g := s.newGateRun(3600)
+	plan, _ := onePRPlan()
+	var reason string
+	s.recordStarts(func(info *temporalactivity.Info) {
+		if info.ActivityType.Name == "RefuseGateApproval" {
+			s.signalGate(g, time.Minute, "rereview", "")
+		}
+	})
+
+	s.expectGateOpened(g, asyncMode)
+	s.expectGateCompleted(g, "reviewer feedback", "{}")
+	s.anyOtherStatusWrite()
+	s.expectPlan(g, "s1", plan)
+	s.env.OnActivity("RunGateGitHubSteps", mock.Anything, mock.Anything).Return(activity.GateGitHubResult{}, workerErr)
+	s.env.OnActivity("RefuseGateApproval", mock.Anything, mock.MatchedBy(func(p activity.GateRefuseParams) bool {
+		return p.GateApprovalRef == g.approval("s1")
+	})).Return(func(_ context.Context, p activity.GateRefuseParams) error {
+		reason = p.Reason
+		return nil
+	}).Once()
+	s.env.OnActivity("SetNodeDecision", mock.Anything, mock.Anything).Return(nil).Once()
+	s.decisionReads(g, "rereview")
+	s.signalGate(g, 0, "approved", "s1")
+
+	s.runGate(g)
+
+	s.assertCompleted()
+	s.env.AssertActivityNumberOfCalls(s.T(), "RunGateGitHubSteps", attempts)
+	s.Equal(wantReason, reason)
+}
+
+// TestHumanGateFinalizeRefusalReasonLeavesOutWorkerDetails: the Worker's error text can name
+// internal URLs and addresses, so the reason a reviewer reads names only the failure's class.
+func (s *DAGExecutorTestSuite) TestHumanGateFinalizeRefusalReasonLeavesOutWorkerDetails() {
+	s.refusesOnGitHubStepError(errors.New(`fetch github token: api request failed: `+
+		`Get "http://api.example.test:8080/worker/runs/r1/github-token": dial tcp 192.0.2.10:8080: connect: connection refused`),
+		5, gitHubKeptFailing)
+}
+
+// TestHumanGateFinalizeWorkerNeverPickedUpRefuses: with no Worker polling the run's queue, the
+// GitHub step times out waiting to start, is not retried, and the approval is refused.
+func (s *DAGExecutorTestSuite) TestHumanGateFinalizeWorkerNeverPickedUpRefuses() {
+	s.Equal(10*time.Minute, gateGitHubActivityOptions(finalizeWorkerQueue).ScheduleToStartTimeout)
+	s.refusesOnGitHubStepError(temporal.NewTimeoutError(enumspb.TIMEOUT_TYPE_SCHEDULE_TO_START, nil), 1, gitHubNoWorker)
+}
+
+// TestHumanGateFinalizeWorkerTooSlowRefuses: a GitHub step that keeps missing its heartbeat is
+// retried, then refused as too slow.
+func (s *DAGExecutorTestSuite) TestHumanGateFinalizeWorkerTooSlowRefuses() {
+	s.refusesOnGitHubStepError(temporal.NewTimeoutError(enumspb.TIMEOUT_TYPE_HEARTBEAT, nil), 5, gitHubTooSlow)
 }
 
 // TestHumanGateFinalizeWorkerRefusalRecordsItsMerges: a Worker refusal after a partial merge
