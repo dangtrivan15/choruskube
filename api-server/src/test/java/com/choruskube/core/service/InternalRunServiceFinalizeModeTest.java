@@ -5,14 +5,19 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.choruskube.core.BaseTest;
 import com.choruskube.core.dto.InternalUpdateNodeExecutionRequest;
+import com.choruskube.core.dto.InternalUpdateRunStatusRequest;
 import com.choruskube.core.exception.NotFoundException;
+import com.choruskube.core.model.DriftRecheckConfig.StampMode;
+import com.choruskube.core.model.GateStamp;
 import com.choruskube.core.model.GraphTemplate;
 import com.choruskube.core.model.NodeDefinition;
 import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.TemplateNode;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.ExecutorType;
+import com.choruskube.core.model.enums.GateStampStatus;
 import com.choruskube.core.model.enums.NodeExecutionStatus;
+import com.choruskube.core.repository.GateStampRepository;
 import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.NodeDefinitionRepository;
 import com.choruskube.core.repository.NodeExecutionRepository;
@@ -23,6 +28,8 @@ import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
@@ -32,6 +39,12 @@ class InternalRunServiceFinalizeModeTest extends BaseTest {
 
     @Autowired
     private InternalRunService internalRunService;
+
+    @Autowired
+    private GateRecheckService gateRecheck;
+
+    @Autowired
+    private GateStampRepository stampRepo;
 
     @Autowired
     private WorkflowRunRepository runRepo;
@@ -55,6 +68,7 @@ class InternalRunServiceFinalizeModeTest extends BaseTest {
     private WorkflowClient workflowClient;
 
     private WorkflowRun run;
+    private TemplateNode templateNode;
     private NodeExecution gateExec;
 
     @BeforeEach
@@ -74,7 +88,7 @@ class InternalRunServiceFinalizeModeTest extends BaseTest {
         nodeDef.setSecrets("[]");
         nodeDef = nodeDefRepo.save(nodeDef);
 
-        TemplateNode templateNode = new TemplateNode();
+        templateNode = new TemplateNode();
         templateNode.setGraphTemplateId(template.getId());
         templateNode.setNodeDefinitionId(nodeDef.getId());
         templateNode.setLabel("final_approval");
@@ -126,5 +140,51 @@ class InternalRunServiceFinalizeModeTest extends BaseTest {
 
         assertThatThrownBy(() -> internalRunService.getNodeExecution(otherRunId, gateExec.getId()))
                 .isInstanceOf(NotFoundException.class);
+    }
+
+    @Test
+    void cancelWhileFinalizing_voidsApproval() {
+        GateStamp stamp =
+                gateRecheck.begin(run.getId(), gateExec, "final_approval", StampMode.always, null, null, null);
+
+        internalRunService.updateRunStatus(run.getId(), new InternalUpdateRunStatusRequest("cancelled"));
+
+        GateStamp reloaded = stampRepo.findById(stamp.getId()).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(GateStampStatus.voided);
+        assertThat(reloaded.getVoidReason()).isEqualTo("The run ended before the approval was finalized.");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"completed", "failed", "cancelled"})
+    void runEnd_voidsHeldApproval(String terminalStatus) {
+        GateStamp stamp = gateRecheck.hold(run.getId(), gateExec, "final_approval", StampMode.always, null, null, null);
+
+        internalRunService.updateRunStatus(run.getId(), new InternalUpdateRunStatusRequest(terminalStatus));
+
+        GateStamp reloaded = stampRepo.findById(stamp.getId()).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(GateStampStatus.voided);
+        assertThat(reloaded.getVoidReason()).isEqualTo("The run ended before the approval was finalized.");
+    }
+
+    @Test
+    void runEnd_isIdempotentAndToleratesARunWithNoApprovals() {
+        internalRunService.updateRunStatus(run.getId(), new InternalUpdateRunStatusRequest("failed"));
+
+        GateStamp stamp =
+                gateRecheck.begin(run.getId(), gateExec, "final_approval", StampMode.always, null, null, null);
+        internalRunService.updateRunStatus(run.getId(), new InternalUpdateRunStatusRequest("cancelled"));
+        internalRunService.updateRunStatus(run.getId(), new InternalUpdateRunStatusRequest("cancelled"));
+
+        assertThat(stampRepo.findById(stamp.getId()).orElseThrow().getStatus()).isEqualTo(GateStampStatus.voided);
+    }
+
+    @Test
+    void statusUpdateShortOfTheEnd_leavesApprovalsAlone() {
+        GateStamp stamp =
+                gateRecheck.begin(run.getId(), gateExec, "final_approval", StampMode.always, null, null, null);
+
+        internalRunService.updateRunStatus(run.getId(), new InternalUpdateRunStatusRequest("awaiting_human"));
+
+        assertThat(stampRepo.findById(stamp.getId()).orElseThrow().getStatus()).isEqualTo(GateStampStatus.finalizing);
     }
 }

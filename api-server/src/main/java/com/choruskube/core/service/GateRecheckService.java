@@ -32,7 +32,7 @@ public class GateRecheckService {
             + "given before it no longer applies.";
     static final String REVISED =
             "The spec was revised during the re-check, so it is no longer the spec that was approved.";
-    static final String RUN_ENDED = "The run ended before the re-check finished.";
+    static final String RUN_ENDED = "The run ended before the approval was finalized.";
 
     private static final List<WorkflowRunStatus> ENDED =
             List.of(WorkflowRunStatus.completed, WorkflowRunStatus.failed, WorkflowRunStatus.cancelled);
@@ -159,6 +159,14 @@ public class GateRecheckService {
         List<GateStamp> orphaned = stampRepo.findPendingOnRunsIn(GateStampStatus.pending, ENDED);
         orphaned.forEach(s -> markVoided(s, RUN_ENDED));
         return orphaned.size();
+    }
+
+    /** Voids every approval of the run that is held or being finalized; a repeat call finds none. */
+    @Transactional
+    public int voidLiveForRun(UUID runId, String reason) {
+        List<GateStamp> live = stampRepo.findByWorkflowRunIdAndStatusIn(runId, LIVE);
+        live.forEach(s -> markVoided(s, reason));
+        return live.size();
     }
 
     public Optional<GateStamp> findPending(UUID stampId) {

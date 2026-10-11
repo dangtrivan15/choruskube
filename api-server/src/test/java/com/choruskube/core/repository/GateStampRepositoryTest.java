@@ -144,6 +144,16 @@ class GateStampRepositoryTest extends BaseTest {
     }
 
     @Test
+    void readyToReapply_skipsAsyncGates() {
+        stampRepo.saveAndFlush(stamp(GateStampStatus.pending));
+        gateExec.setFinalizeMode("async");
+        execRepo.saveAndFlush(gateExec);
+
+        assertThat(stampRepo.findPendingWithGateIn(GateStampStatus.pending, NodeExecutionStatus.awaiting_human))
+                .isEmpty();
+    }
+
+    @Test
     void repoBase_isUniquePerExecutionAndRepo() {
         UUID repoId = UUID.randomUUID();
         baseRepo.saveAndFlush(base(repoId));

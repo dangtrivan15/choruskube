@@ -390,6 +390,7 @@ public class RunService {
         signalWorkflow(run, "cancel");
         run.setStatus(WorkflowRunStatus.cancelled);
         runRepo.save(run);
+        gateRecheck.voidLiveForRun(id, GateRecheckService.RUN_ENDED);
         taskSettlement.closeIfSettledBy(run);
         auditSink.record(AuditSink.RUN_CANCELLED, "workflow_run", id, null);
 

@@ -68,6 +68,7 @@ class InternalRunServiceOutputValidationTest {
                 artifactService,
                 null,
                 null,
+                null,
                 null);
     }
 

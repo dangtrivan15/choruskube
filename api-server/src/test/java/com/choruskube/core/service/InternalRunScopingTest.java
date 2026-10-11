@@ -148,6 +148,7 @@ class InternalRunScopingTest {
                 null, // artifactService
                 null, // workItemDependencyService
                 null,
+                null,
                 null); // milestoneService
     }
 }

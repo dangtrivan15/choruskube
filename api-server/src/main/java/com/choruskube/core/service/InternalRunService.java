@@ -59,6 +59,7 @@ public class InternalRunService {
     private final WorkItemDependencyService workItemDependencyService;
     private final MilestoneService milestoneService;
     private final TaskSettlementService taskSettlement;
+    private final GateRecheckService gateRecheck;
 
     @Value("${artifact.enforcement.mode:warn}")
     private String artifactEnforcementMode;
@@ -91,7 +92,8 @@ public class InternalRunService {
             ArtifactService artifactService,
             WorkItemDependencyService workItemDependencyService,
             MilestoneService milestoneService,
-            TaskSettlementService taskSettlement) {
+            TaskSettlementService taskSettlement,
+            GateRecheckService gateRecheck) {
         this.runRepo = runRepo;
         this.execRepo = execRepo;
         this.logRepo = logRepo;
@@ -120,6 +122,7 @@ public class InternalRunService {
         this.workItemDependencyService = workItemDependencyService;
         this.milestoneService = milestoneService;
         this.taskSettlement = taskSettlement;
+        this.gateRecheck = gateRecheck;
     }
 
     public NodeExecutionResponse createNodeExecution(UUID runId, InternalCreateNodeExecutionRequest req) {
@@ -299,6 +302,9 @@ public class InternalRunService {
         }
 
         runRepo.save(run);
+        if ("completed".equals(status) || "failed".equals(status) || "cancelled".equals(status)) {
+            gateRecheck.voidLiveForRun(runId, GateRecheckService.RUN_ENDED);
+        }
         taskSettlement.closeIfSettledBy(run);
         eventPublisher.publishRunStatusChanged(runId, status);
 

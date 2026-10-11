@@ -28,6 +28,8 @@ public interface GateStampRepository extends JpaRepository<GateStamp, UUID> {
     List<GateStamp> findByWorkflowRunIdAndGateTemplateNodeIdAndStatus(
             UUID workflowRunId, UUID gateTemplateNodeId, GateStampStatus status);
 
+    List<GateStamp> findByWorkflowRunIdAndStatusIn(UUID workflowRunId, Collection<GateStampStatus> statuses);
+
     List<GateStamp> findByWorkflowRunIdOrderByCreatedAtAsc(UUID workflowRunId);
 
     @Query("""
@@ -36,7 +38,8 @@ public interface GateStampRepository extends JpaRepository<GateStamp, UUID> {
               AND EXISTS (SELECT e.id FROM NodeExecution e
                           WHERE e.workflowRunId = s.workflowRunId
                             AND e.templateNodeId = s.gateTemplateNodeId
-                            AND e.status = :awaiting)
+                            AND e.status = :awaiting
+                            AND e.finalizeMode IS NULL)
             """)
     List<GateStamp> findPendingWithGateIn(GateStampStatus pending, NodeExecutionStatus awaiting);
 

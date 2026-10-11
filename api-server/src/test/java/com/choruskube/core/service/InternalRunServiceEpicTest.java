@@ -125,6 +125,7 @@ class InternalRunServiceEpicTest {
                 null,
                 workItemDependencyService,
                 milestoneService,
+                null,
                 null);
     }
 

@@ -75,6 +75,7 @@ class AutoDecisionTest {
                 null,
                 null,
                 null,
+                null,
                 null);
     }
 

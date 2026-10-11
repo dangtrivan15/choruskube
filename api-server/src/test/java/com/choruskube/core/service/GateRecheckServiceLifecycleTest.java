@@ -164,6 +164,52 @@ class GateRecheckServiceLifecycleTest extends BaseTest {
     }
 
     @Test
+    void voidLiveForRun_voidsHeldAndFinalizingApprovalsOfThatRunOnly() {
+        GateStamp held = service.hold(run.getId(), gateExec, "final_approval", StampMode.always, null, null, null);
+        TemplateNode secondNode = new TemplateNode();
+        secondNode.setGraphTemplateId(templateNode.getGraphTemplateId());
+        secondNode.setNodeDefinitionId(templateNode.getNodeDefinitionId());
+        secondNode.setLabel("second_approval");
+        secondNode.setConfigOverrides("{}");
+        secondNode = templateNodeRepo.save(secondNode);
+        NodeExecution otherGate = new NodeExecution();
+        otherGate.setWorkflowRunId(run.getId());
+        otherGate.setTemplateNodeId(secondNode.getId());
+        otherGate.setGraphVersion(1);
+        otherGate = execRepo.save(otherGate);
+        GateStamp done = service.begin(run.getId(), otherGate, "second_approval", StampMode.always, null, null, null);
+        service.consume(done.getId());
+        stampRepo.flush();
+        GateStamp finalizing =
+                service.begin(run.getId(), otherGate, "second_approval", StampMode.always, null, null, null);
+
+        WorkflowRun other = new WorkflowRun();
+        other.setGraphTemplateId(run.getGraphTemplateId());
+        other = runRepo.save(other);
+        NodeExecution otherRunGate = new NodeExecution();
+        otherRunGate.setWorkflowRunId(other.getId());
+        otherRunGate.setTemplateNodeId(templateNode.getId());
+        otherRunGate.setGraphVersion(1);
+        otherRunGate = execRepo.save(otherRunGate);
+        GateStamp elsewhere =
+                service.hold(other.getId(), otherRunGate, "final_approval", StampMode.always, null, null, null);
+
+        assertThat(service.voidLiveForRun(run.getId(), GateRecheckService.RUN_ENDED))
+                .isEqualTo(2);
+
+        assertThat(stampRepo.findById(held.getId()).orElseThrow().getStatus()).isEqualTo(GateStampStatus.voided);
+        assertThat(stampRepo.findById(held.getId()).orElseThrow().getVoidReason())
+                .isEqualTo("The run ended before the approval was finalized.");
+        assertThat(stampRepo.findById(finalizing.getId()).orElseThrow().getStatus())
+                .isEqualTo(GateStampStatus.voided);
+        assertThat(stampRepo.findById(done.getId()).orElseThrow().getStatus()).isEqualTo(GateStampStatus.consumed);
+        assertThat(stampRepo.findById(elsewhere.getId()).orElseThrow().getStatus())
+                .isEqualTo(GateStampStatus.pending);
+        assertThat(service.voidLiveForRun(run.getId(), GateRecheckService.RUN_ENDED))
+                .isZero();
+    }
+
+    @Test
     void begin_recordsAFinalizingApprovalAtRoundZero() {
         GateStamp stamp = service.begin(
                 run.getId(), gateExec, "final_approval", StampMode.if_unchanged, "ship it", "{\"a.pdf\":\"k\"}", null);
