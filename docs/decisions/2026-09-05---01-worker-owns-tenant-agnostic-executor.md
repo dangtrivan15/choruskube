@@ -1,8 +1,6 @@
 # The Worker owns a tenant-agnostic workload executor
 
-## Status
-
-current
+**Status:** current
 
 ## Context
 

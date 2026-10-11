@@ -1,8 +1,6 @@
 # Original light theme = canonical upstream Rose Pine Dawn
 
-## Status
-
-current
+**Status:** current
 
 ## Context
 

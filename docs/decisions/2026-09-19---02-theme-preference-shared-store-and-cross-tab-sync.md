@@ -1,8 +1,6 @@
 # A single in-app theme store, synced across tabs without OS live-tracking
 
-## Status
-
-current
+**Status:** current
 
 ## Context
 

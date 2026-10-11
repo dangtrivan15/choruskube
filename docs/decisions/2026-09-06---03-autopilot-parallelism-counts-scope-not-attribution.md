@@ -1,8 +1,6 @@
 # Autopilot occupancy is counted by scope, and that scope is deployment-defined
 
-## Status
-
-current
+**Status:** current
 
 ## Context
 

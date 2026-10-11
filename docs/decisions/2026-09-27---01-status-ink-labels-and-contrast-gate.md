@@ -1,8 +1,6 @@
 # Status words render in ink; tone color moves to marks, with an opaque tint utility and a three-part contrast gate
 
-## Status
-
-current
+**Status:** current
 
 ## Context
 

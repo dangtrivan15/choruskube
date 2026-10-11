@@ -1,8 +1,6 @@
 # One shared color+dash-pattern registry for roadmap dependency edges
 
-## Status
-
-current
+**Status:** current
 
 ## Context
 

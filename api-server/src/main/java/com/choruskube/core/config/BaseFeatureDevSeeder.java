@@ -47,7 +47,9 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
     // and later nodes cite its sections by title.
     // v48: the spec lets markdown (lists, tables, GitHub alerts) carry the shape of its content
     // and states each fact once.
-    static final int CURRENT_VERSION = 48;
+    // v49: Implement names a decision entry YYYY-MM-DD-<slug>.md with its status on a line
+    // under the title, and appends no index row.
+    static final int CURRENT_VERSION = 49;
 
     private static final String TEMPLATE_NAME = "Feature Development";
 
@@ -731,7 +733,8 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
 
             When a decision earns a durable home, route the spec's content by whether it
             accumulates:
-              - Technical Decisions -> docs/decisions/  (accumulates; entries are immutable)
+              - Technical Decisions -> docs/decisions/  (accumulates; an entry is immutable
+                                       except its status line)
               - Architecture, with its
                 Runtime Flow        -> merge into ARCHITECTURE.md (rewritten in place, so it
                                        does NOT accumulate); this is present-tense state, not
@@ -756,22 +759,31 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             reader cannot open is worse than no reference.
 
             These docs are derived from the spec. A run owns exactly one decisions file —
-            docs/decisions/YYYY-MM-DD---NN-<slug>.md — holding every decision that run
+            docs/decisions/YYYY-MM-DD-<slug>.md — holding every decision that run
             graduates. On a re-run, edit that same file; never create a second one. The spec
             may have changed since an earlier iteration wrote it and may now conflict with
             what is there — amend or rewrite as you judge fit. ARCHITECTURE.md is an existing
             living document; merge into it rather than adding a parallel file.
 
-            Every entry you graduate gets its own row in docs/decisions/README.md's index,
-            newest last: the filename linked, its date, one line on the question it settles,
-            and status `current`. An entry missing from that index is invisible to the next
-            run's supersession check below, so it cannot be marked stale later — the
-            directory then accumulates decisions no reader can tell are still true.
+            The filename carries no sequence number, even where older entries' names do:
+            runs land in parallel, a number each branch takes as the next free one collides
+            with another open branch's, and git merges the two files without a word.
 
-            Before graduating a decision, check that same index for an entry this run's
-            decision reverses or replaces. If one exists, do not edit it. Add your entry as
-            normal, name in it which entry it supersedes, and change the old entry's status
-            to `superseded by <your entry>`.
+            Directly under the entry's title, with a blank line on each side, write its
+            status line: `**Status:** current`. That line is where a later run marks the
+            entry superseded, and where a reader who arrives from a code comment sees
+            whether it still holds; without it, the directory accumulates decisions no
+            reader can tell are still true. Keep no index of entries beside them: a list
+            every run appends a row to conflicts between any two open pull requests that
+            each add an entry.
+
+            Before graduating a decision, read the title and status line of each existing
+            entry for one this run's decision reverses or replaces. If one exists, do not
+            edit its body. Add your entry as normal, name in it which entry it supersedes,
+            and rewrite only the old entry's status line, to
+            `**Status:** superseded by [<your entry>](<your entry>.md)` — or, when your
+            decision replaces only part of it,
+            `**Status:** current; its <part> is superseded by [<your entry>](<your entry>.md)`.
 
             ## Proposing deferred work to the roadmap
 

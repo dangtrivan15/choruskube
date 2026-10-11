@@ -1,9 +1,7 @@
 # A Task closes in the transaction that finishes its run; nothing polls GitHub for merges
 
-## Status
-
-current. Builds on [2026-10-06---01](2026-10-06---01-merge-pull-requests-on-approval.md)
-without amending it.
+**Status:** current. Builds on [2026-10-06---01](2026-10-06---01-merge-pull-requests-on-approval.md) without amending
+it.
 
 ## Context
 

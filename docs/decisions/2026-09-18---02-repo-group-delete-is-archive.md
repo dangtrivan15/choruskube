@@ -1,8 +1,6 @@
 # Deleting a RepoGroup is an archive (soft-delete), not a hard delete or a guarded refusal
 
-## Status
-
-current
+**Status:** current
 
 ## Context
 

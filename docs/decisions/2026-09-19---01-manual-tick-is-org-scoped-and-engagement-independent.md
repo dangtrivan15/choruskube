@@ -1,8 +1,6 @@
 # The manual tick is org-scoped and runs regardless of engagement
 
-## Status
-
-current
+**Status:** current
 
 ## Context
 

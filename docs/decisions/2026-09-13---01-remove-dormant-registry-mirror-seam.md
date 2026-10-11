@@ -1,8 +1,6 @@
 # The dormant registry-mirror injection seam is removed; warm DinD is the sole image-supply path
 
-## Status
-
-current
+**Status:** current
 
 ## Context
 

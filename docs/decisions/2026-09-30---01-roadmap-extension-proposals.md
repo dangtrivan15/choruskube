@@ -1,8 +1,6 @@
 # Deferred work reaches the roadmap only as a human-approved proposal, materialized at an approval gate
 
-## Status
-
-current
+**Status:** current
 
 ## Context
 

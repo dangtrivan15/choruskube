@@ -1,9 +1,7 @@
 # Deferral is decided at the spec, proposed by every stage, and read from the newest copy
 
-## Status
-
-current — amends two clauses of
-[2026-09-30---01](2026-09-30---01-roadmap-extension-proposals.md) without superseding it.
+**Status:** current — amends two clauses of [2026-09-30---01](2026-09-30---01-roadmap-extension-proposals.md) without
+superseding it.
 
 ## Context
 

@@ -1,8 +1,6 @@
 # A Worker authenticates on its own credential, scoped to the runs it may act on
 
-## Status
-
-current
+**Status:** current
 
 ## Context
 

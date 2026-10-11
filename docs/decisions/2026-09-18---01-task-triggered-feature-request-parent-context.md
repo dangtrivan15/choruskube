@@ -1,8 +1,6 @@
 # Deterministic parent (Story/Epic) context reaches the drafting agent through `feature_request`, not new run-input plumbing
 
-## Status
-
-current
+**Status:** current
 
 ## Context
 

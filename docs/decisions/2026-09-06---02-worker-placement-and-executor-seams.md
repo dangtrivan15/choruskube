@@ -1,8 +1,6 @@
 # The Worker's multi-Fleet seams ship as single-implementation interfaces, not dead code
 
-## Status
-
-current
+**Status:** current
 
 ## Context
 

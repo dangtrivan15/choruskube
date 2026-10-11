@@ -1,8 +1,6 @@
 # One chart-series style registry, a computed distinguishability gate, and a neutral reference token for "Total"
 
-## Status
-
-current
+**Status:** current
 
 ## Context
 

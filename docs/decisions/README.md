@@ -9,57 +9,43 @@ stays in the spec and goes away with it.
 
 ## Files
 
-One file per run, named `YYYY-MM-DD---NN-<slug>.md` — the date the run landed, `NN`
-ordering runs that landed on the same date, and `<slug>` naming the change. That single
-file holds every decision the run graduates; a re-run edits it rather than adding a
-second one.
+One file per run, named `YYYY-MM-DD-<slug>.md` — the date the run landed and `<slug>` naming the change. That single
+file holds every decision the run graduates; a re-run edits it rather than adding a second one. Listed by name, the
+entries run oldest first, and each title says what the entry decides.
 
-**An entry is immutable once merged.** A later decision that reverses or replaces an
-earlier one does not edit it. Write the new entry, name in it which entry it supersedes,
-and mark the old entry's index row `superseded by <new entry>`. What was believed at the
-time, and what changed it, is the whole value of the record — rewriting an entry destroys
-both.
+The name carries no sequence number, because runs land in parallel. A number each branch takes as the next free one
+collides with the number another open branch took: the two files have different names, so git merges both without a
+word, and two entries answer to the same citation. A date and a slug leave nothing to hand out. Two runs that pick the
+same name on the same date add the same path, and git never merges that silently.
+
+Entries from before this rule keep their `YYYY-MM-DD---NN-<slug>.md` names, because code and other entries cite them
+by those names.
 
 Cite an entry by filename. Never by an ordinal from the spec it came from: those numbers
 are scoped to one run and mean something different in the next one.
 
-## Index
+## Status
 
-Every entry gets a row, newest last.
+Each entry states its status on the line under its title:
 
-| Entry | Date | Decides | Status |
-|---|---|---|---|
-| [2026-08-29---01-original-rose-pine-dawn-light-theme.md](2026-08-29---01-original-rose-pine-dawn-light-theme.md) | 2026-08-29 | Which light look is the canonical "original Rose Pine" and how the core app's current light theme deviates from it | current |
-| [2026-09-05---01-worker-owns-tenant-agnostic-executor.md](2026-09-05---01-worker-owns-tenant-agnostic-executor.md) | 2026-09-05 | Which component creates workloads, and why the generic Kubernetes executor is public | current |
-| [2026-09-06---01-worker-scoped-internal-credential.md](2026-09-06---01-worker-scoped-internal-credential.md) | 2026-09-06 | Why a Worker authenticates on its own run-scoped credential instead of `ORCHESTRATOR_SECRET` | current |
-| [2026-09-06---02-worker-placement-and-executor-seams.md](2026-09-06---02-worker-placement-and-executor-seams.md) | 2026-09-06 | Why `WorkerRegistrar`, `RunPlacementResolver`, `NodePlacementChecker`, and `executor.CredentialConsumer` ship with exactly one caller and one implementation | current |
-| [2026-09-06---03-autopilot-parallelism-counts-scope-not-attribution.md](2026-09-06---03-autopilot-parallelism-counts-scope-not-attribution.md) | 2026-09-06 | Why Autopilot occupancy is counted through the `AutopilotSlotCounter` seam — attribution-scoped single-tenant, org-owned (counting members' manual runs) multi-tenant — while the failure breaker stays attribution-scoped | current |
-| [2026-09-09---01-warm-dind-image-supply-over-registry-mirror.md](2026-09-09---01-warm-dind-image-supply-over-registry-mirror.md) | 2026-09-09 | Why agent workloads get Docker images from a pre-warmed (optionally custom `dind_image`) DinD sidecar, and the registry-mirror seam defaults to none | superseded by 2026-09-13---01 |
-| [2026-09-13---01-remove-dormant-registry-mirror-seam.md](2026-09-13---01-remove-dormant-registry-mirror-seam.md) | 2026-09-13 | Why the dormant registry-mirror injection seam was removed, leaving warm/custom DinD as the sole image-supply path | current |
-| [2026-09-14---01-max-awaiting-human-throttle.md](2026-09-14---01-max-awaiting-human-throttle.md) | 2026-09-14 | Why the `max_awaiting_human` ceiling reuses `AutopilotSlotCounter` and the `Bucket.AWAITING_YOU` classification instead of adding new seams, and why reaching it only throttles the start loop rather than disengaging | current |
-| [2026-09-18---01-task-triggered-feature-request-parent-context.md](2026-09-18---01-task-triggered-feature-request-parent-context.md) | 2026-09-18 | Why deterministic parent Story/Epic context is folded into `feature_request` at task-start rather than through new run-input plumbing, and why live-roadmap discovery guidance ships in the agent entrypoint rather than the frozen prompt template | current |
-| [2026-09-18---02-repo-group-delete-is-archive.md](2026-09-18---02-repo-group-delete-is-archive.md) | 2026-09-18 | Why deleting a RepoGroup archives it (soft-delete) with only an in-flight run blocking, instead of hard-deleting behind an epic/task guard | current |
-| [2026-09-18---03-first-visit-follows-device-color-scheme.md](2026-09-18---03-first-visit-follows-device-color-scheme.md) | 2026-09-18 | Why the first-visit theme default resolves from `prefers-color-scheme` while a saved preference stays authoritative, seeded once rather than live-tracked, with the OS check duplicated across the pre-paint script and React under a sync test | current |
-| [2026-09-19---01-manual-tick-is-org-scoped-and-engagement-independent.md](2026-09-19---01-manual-tick-is-org-scoped-and-engagement-independent.md) | 2026-09-19 | Why the manual `POST /autopilot/tick` runs a distinct org-scoped pass (`tickCurrentScope`) that ignores the engaged flag and the breaker-abort, while the scheduler's `tick()` keeps its installation-wide, engagement-gated sweep | current |
-| [2026-09-19---02-theme-preference-shared-store-and-cross-tab-sync.md](2026-09-19---02-theme-preference-shared-store-and-cross-tab-sync.md) | 2026-09-19 | Why theme state moves to a single `useSyncExternalStore` store and how a chosen preference propagates across same-origin tabs (`BroadcastChannel`) and on refocus (`visibilitychange`), without adding OS live-tracking | current |
-| [2026-09-21---01-e2e-memory-fits-constrained-test-node.md](2026-09-21---01-e2e-memory-fits-constrained-test-node.md) | 2026-09-21 | Why the forked `:api-server:test` worker heap is bounded (`-Dtest.maxHeapSize`, 2560m default) and every compose service gets a `mem_limit`, so `test -Pe2e` fits a memory-constrained Test-node agent | current |
-| [2026-09-21---02-roadmap-edge-style-registry.md](2026-09-21---02-roadmap-edge-style-registry.md) | 2026-09-21 | Why every roadmap dependency-edge color/dash-pattern consumer (stroke, both marker call sites, legend swatch) reads one shared `ROADMAP_EDGE_STYLES` registry keyed by the raw `--status-*` token instead of each carrying its own literal | current |
-| [2026-09-24---01-status-tone-vocabulary.md](2026-09-24---01-status-tone-vocabulary.md) | 2026-09-24 | The six status-tone meanings, why banner/callout sentences render in the foreground color instead of the tone color, the `destructive`-vs-tone-table split, and why the toast bridge and the palette scanner are each a single shared definition | current |
-| [2026-09-25---01-log-severity-redundant-encoding.md](2026-09-25---01-log-severity-redundant-encoding.md) | 2026-09-25 | Why log severity is carried by icon shape, label weight and row accent/tint (not color alone) via a dedicated `logLevelStyles` module, and why `useNodeLogs` now always fetches a finished node's logs once and polls only when live | current |
-| [2026-09-25---02-chart-series-style-registry.md](2026-09-25---02-chart-series-style-registry.md) | 2026-09-25 | Why analytics chart series read one `CHART_SERIES_STYLES` registry whose per-theme separation is computed by a test, why "Total" gets its own neutral reference token, and why Bottlenecks takes existing chart slots instead of re-ordering them | current |
-| [2026-09-26---01-aa-contrast-text-and-controls.md](2026-09-26---01-aa-contrast-text-and-controls.md) | 2026-09-26 | The correction ladder for making light-mode text/controls meet WCAG AA while staying on-palette, the bounded canvas and solid destructive button that make it possible, and why `--destructive`/`--status-error` no longer share a hex in light | current |
-| [2026-09-27---01-status-ink-labels-and-contrast-gate.md](2026-09-27---01-status-ink-labels-and-contrast-gate.md) | 2026-09-27 | Why status/tone words render in ink with tone confined to marks, the opaque `bg-tint-*` utility replacing a translucent modifier, and the computed-gate/lexical-guard/browser-spec trio that enforces it — amending (not superseding) a clause each of `2026-09-24---01` and `2026-09-25---01` | current |
-| [2026-09-30---01-roadmap-extension-proposals.md](2026-09-30---01-roadmap-extension-proposals.md) | 2026-09-30 | Why deferred work becomes roadmap items only through a human-approved proposal materialized at an approval gate, how existing items are anchored into it, and why direct roadmap writes are refused wherever a workflow declares a roadmap gate | current |
-| [2026-10-06---01-merge-pull-requests-on-approval.md](2026-10-06---01-merge-pull-requests-on-approval.md) | 2026-10-06 | Why approving a merge-declaring gate merges the run's registered PRs synchronously before any decision state is written, how retries stay idempotent, and why merges precede roadmap materialization | current |
-| [2026-10-07---01-e2e-stack-memory-footprint.md](2026-10-07---01-e2e-stack-memory-footprint.md) | 2026-10-07 | Why the e2e stack packages a host-built api-server jar, orders `:web-ui:test` after `:api-server:test`, and lets the Gradle daemon return idle heap — memory priced against contract fidelity | current |
-| [2026-10-08---01-derived-memory-limit.md](2026-10-08---01-derived-memory-limit.md) | 2026-10-08 | Why a per-project memory request derives its container's memory limit as `max(deployment limit, 1.4 × request)` for runs the API server exempts, and why every other run stays capped at the Worker's own deployment limit | superseded by 2026-10-08---02 |
-| [2026-10-08---02-memory-limit-always-derived.md](2026-10-08---02-memory-limit-always-derived.md) | 2026-10-08 | Why every agent and dind memory limit is 1.4× its container's request with no configured limit anywhere, and why a capped run's ceiling is the deployment's default request | current |
-| [2026-10-08---03-deferred-work-proposal-flow.md](2026-10-08---03-deferred-work-proposal-flow.md) | 2026-10-08 | Why a caveat is deferred only when complicated, a condition becomes a dependency only when it is work, every Feature Development stage may propose follow-ups, and the gate reads the newest proposal copy — amending (not superseding) two clauses of `2026-09-30---01` | current |
-| [2026-10-08---04-task-closes-with-its-run.md](2026-10-08---04-task-closes-with-its-run.md) | 2026-10-08 | Why a Task closes inside the transaction that finishes its run (idempotent, after Final Approval's merges commit) and nothing polls GitHub for merges or disengages the Autopilot over it | current |
-| [2026-10-08---05-run-detail-responsive-layout.md](2026-10-08---05-run-detail-responsive-layout.md) | 2026-10-08 | Why Run detail splits into three viewport tiers with run info in a persistent summary strip (never sharing a container with node detail), URL-based node selection with once-per-run auto-focus, one shared modal bottom sheet, and a controller-computed graph viewport instead of `fitView` | current |
-| [2026-10-09---01-web-ui-ships-no-lazy-chunks.md](2026-10-09---01-web-ui-ships-no-lazy-chunks.md) | 2026-10-09 | Why the web UI loads all of its JavaScript up front (one vendor chunk, enforced by a build guard) and serves hashed assets immutable with a 404 for a missing one, instead of lazily fetching per-diagram chunks that a deploy deletes | current |
+```markdown
+**Status:** current
+```
 
-- **Entry** — the filename, linked.
-- **Date** — the date in the filename.
-- **Decides** — one line: the question the entry settles.
-- **Status** — `current`, or `superseded by <entry>`.
+**An entry is immutable once merged, except its status line.** A later decision that reverses or replaces an earlier
+one does not edit the earlier entry's body. Write the new entry, name in it which entry it supersedes, and rewrite the
+old entry's status line to say what is superseded and by which entry: all of it
+(`**Status:** superseded by [<new entry>](<new entry>.md)`) or a part
+(`**Status:** current; its <part> is superseded by [<new entry>](<new entry>.md)`). What was believed at the time, and
+what changed it, is the whole value of the record — rewriting an entry's body destroys both.
+
+The status sits in the entry, not in a list beside it or only in the entry that supersedes it: a reader who arrives
+from a code comment sees that the entry no longer holds without a second lookup. To see every entry's status at once
+(a status that wraps shows its first line):
+
+```sh
+grep -H '^\*\*Status:\*\*' docs/decisions/2*.md | sort
+```
+
+There is no index file. A table that every run appends a row to conflicts between any two open PRs that each add an
+entry, and everything it held is in the filenames, the titles and the status lines.

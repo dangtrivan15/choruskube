@@ -827,13 +827,13 @@ class V1TemplateSeederTest extends BaseTest {
     }
 
     @Test
-    void currentVersionIsBumpedForStructuredSpecText() {
-        // v48: the spec lets markdown (lists, tables, GitHub alerts) carry the shape of its
-        // content and states each fact once. This is the rolling version
+    void currentVersionIsBumpedForDecisionStatusLines() {
+        // v49: Implement names a decision entry without a sequence number and puts its status
+        // on a line under the title instead of an index row. This is the rolling version
         // tripwire: rewrite it and bump the literal whenever CURRENT_VERSION changes, so a
         // template edit that forgets the bump cannot ship silently.
-        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(48);
-        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 48))
+        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(49);
+        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 49))
                 .isPresent();
     }
 
