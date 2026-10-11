@@ -372,6 +372,66 @@ func (s *DAGExecutorTestSuite) TestHumanGateWithSignal() {
 	s.NoError(s.env.GetWorkflowError())
 }
 
+// TestHumanGateSignalSentBeforeWaitIsReceived pins that a decision signalled once the run reads
+// awaiting_human, before the gate reaches GetSignalChannel, is buffered and received: the API
+// re-applies a held approval at exactly that moment, and dropping it strands the gate.
+func (s *DAGExecutorTestSuite) TestHumanGateSignalSentBeforeWaitIsReceived() {
+	nodeA := uuid.New()
+	execA := uuid.New()
+	runID := s.dagRunID()
+
+	snapshot := `{
+		"nodes": [
+			{"templateNodeId": "` + nodeA.String() + `", "label": "Review", "executorType": "human", "timeoutSeconds": 3600, "isEntrypoint": true}
+		],
+		"edges": []
+	}`
+
+	s.env.OnActivity("UpdateWorkflowRunStatus", mock.Anything, mock.Anything).Return(nil)
+	s.env.OnActivity("GetGraphRuntime", mock.Anything, runID).Return(snapshot, nil)
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("WriteExecutionLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("InitRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("AppendRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
+		return p.TemplateNodeID == nodeA
+	})).Return(execA, nil).Once()
+
+	s.env.OnActivity("SetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.SetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execA && p.Decision == "approved"
+	})).Return(nil).Once()
+
+	var once sync.Once
+	s.env.SetOnActivityStartedListener(func(info *temporalactivity.Info, _ context.Context, args converter.EncodedValues) {
+		if info.ActivityType.Name != "UpdateWorkflowRunStatus" {
+			return
+		}
+		var p activity.UpdateRunStatusParams
+		if err := args.Get(&p); err != nil || p.Status != "awaiting_human" {
+			return
+		}
+		once.Do(func() {
+			s.env.SignalWorkflow(SignalHumanDecisionPrefix+execA.String(), HumanDecisionSignal{
+				NodeExecutionID: execA.String(),
+				Decision:        "approved",
+				Feedback:        "held approval",
+			})
+		})
+	})
+
+	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
+		return p.NodeExecutionID == execA
+	})).Return("no_decision", nil).Once()
+
+	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
+		RunID: runID, GraphVersion: 1,
+	})
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+}
+
 // TestGraphWithLoopBackEdge verifies the happy path through a graph with back-edges.
 // Graph: A (human) → B (AI) → C (human) --approved→ D (AI)
 //
