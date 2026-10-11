@@ -9,6 +9,14 @@ import java.util.UUID;
 /** What an agent pod's clone sat on, per repo — posted once by the entrypoint after cloning. */
 public record RecordRepoBasesRequest(@NotNull @Valid List<RepoBaseReport> repos) {
 
+    /**
+     * {@code defaultBranch} stays optional: rejecting records from agent images that predate it
+     * would leave their repos unrecorded.
+     */
     public record RepoBaseReport(
-            @NotNull UUID gitRepoId, @NotBlank String outcome, String baseSha, List<String> conflictedFiles) {}
+            @NotNull UUID gitRepoId,
+            @NotBlank String outcome,
+            String baseSha,
+            String defaultBranch,
+            List<String> conflictedFiles) {}
 }

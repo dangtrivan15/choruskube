@@ -52,6 +52,8 @@ public class NodeExecutionRepoBaseService {
             row.setGitRepoId(report.gitRepoId());
             row.setOutcome(report.outcome());
             row.setBaseSha(clean ? report.baseSha() : null);
+            row.setDefaultBranch(
+                    report.defaultBranch() == null || report.defaultBranch().isBlank() ? null : report.defaultBranch());
             row.setConflictedFiles(json(report.conflictedFiles() == null ? List.of() : report.conflictedFiles()));
             baseRepo.save(row);
         }

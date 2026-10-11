@@ -22,9 +22,10 @@
 #   check_prs_gate   Drives the real check-prs/register-pr CLI contract end to end
 #                    (PR completion gate): the FIRST repo in this
 #                    run's config.json repos[] is left unchanged but pushed at parity
-#                    (`git push origin HEAD` with no commits added — entrypoint.sh's
-#                    Step 3 already checked the run branch out at the default
-#                    branch's tip, so this publishes it to origin with nothing new),
+#                    (`git push --force-with-lease origin HEAD` with no commits
+#                    added — entrypoint.sh's Step 3 already checked the run branch
+#                    out at the default branch's tip, so this publishes it to origin
+#                    with nothing new),
 #                    exercising check-prs's branch_adds_commits `ahead == 0` exemption
 #                    path rather than the branch-absent-on-origin skip path (both exit
 #                    0, but for different reasons — see Part 2's E2E coverage note).
@@ -417,7 +418,8 @@ case "$SCENARIO" in
         register-pr --repo-id "$repo_id" --pr-url "${repo_url}/pull/${pr_number}" \
           --pr-number "$pr_number" --title "feat: drift recheck (${repo_name})" --repo-name "$repo_name"
         jq -n --arg id "$repo_id" \
-          '{gitRepoId: $id, outcome: "clean", baseSha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", conflictedFiles: []}' \
+          '{gitRepoId: $id, outcome: "clean", baseSha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+            defaultBranch: "main", conflictedFiles: []}' \
           > "${REPO_BASE_DIR:-/tmp/choruskube-repo-bases}/${repo_name}.json"
       done < <(echo "$REPOS_JSON" | jq -c '.[]')
       record-base
@@ -431,9 +433,10 @@ case "$SCENARIO" in
     # gate), the same way multi_repo_pr exercises register-pr's
     # contract: real CLI calls against the live API, not faked output. The FIRST
     # repo in this run's config.json repos[] is left UNCHANGED but pushed at
-    # parity with the default branch (`git push origin HEAD` with no commits
-    # added — entrypoint.sh's Step 3 already checked the run branch out at the
-    # default branch's tip, so this publishes it to origin with nothing new): no
+    # parity with the default branch (`git push --force-with-lease origin HEAD`
+    # with no commits added — entrypoint.sh's Step 3 already checked the run
+    # branch out at the default branch's tip, so this publishes it to origin
+    # with nothing new): no
     # marker file, no register-pr call. This drives check-prs through
     # branch_adds_commits's `ahead == 0` exemption path (branch found on origin
     # via `ls-remote`, GitHub compare shows zero-ahead → exempt), distinct from
@@ -441,9 +444,9 @@ case "$SCENARIO" in
     # a repo which was never pushed at all would take — both exit 0, but for
     # different reasons (Part 2's E2E coverage gap this scenario closes). Every
     # OTHER repo (already cloned onto its working branch by entrypoint.sh's Step
-    # 3, before this scenario ever runs) pushes a marker commit to origin (`git
-    # push origin HEAD`, no `-u` — matching the real Implement/Code Review
-    # prompts' own push convention) so check-prs's `git
+    # 3, before this scenario ever runs) pushes a marker commit to origin
+    # (`git push --force-with-lease origin HEAD`, no `-u` — matching the real
+    # Implement/Code Review prompts' own push convention) so check-prs's `git
     # ls-remote` detects the repo as pushed, then registers a PR for it via the
     # real register-pr CLI (same fabricated-PR-URL convention as multi_repo_pr,
     # since there is no real `gh pr create` call here). Finally runs the real

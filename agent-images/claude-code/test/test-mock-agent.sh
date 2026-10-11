@@ -387,6 +387,9 @@ DR_BASE=$(jq -r 'select(.gitRepoId == "repo-id-1") | .baseSha' "$TESTDIR/dr_reco
 [ "$(jq -r 'select(.gitRepoId == "repo-id-1") | .outcome' "$TESTDIR/dr_recorded.json" 2>/dev/null)" = "clean" ] \
   && ok "drift_recheck first pass records a clean base through record-base" \
   || fail "drift_recheck first pass records a clean base through record-base ($DR_RUN_OUT)"
+[ "$(jq -r 'select(.gitRepoId == "repo-id-1") | .defaultBranch' "$TESTDIR/dr_recorded.json" 2>/dev/null)" = "main" ] \
+  && ok "drift_recheck first pass records the default branch the stub compares against" \
+  || fail "drift_recheck first pass records the default branch the stub compares against ($(cat "$TESTDIR/dr_recorded.json" 2>/dev/null))"
 matches_stale_stub "$DR_BASE" \
   && ok "drift_recheck's first-pass base hits the compare stub that reports main ahead" \
   || fail "drift_recheck's first-pass base hits the compare stub that reports main ahead (base='$DR_BASE' pattern='$STALE_PATTERN')"
@@ -399,7 +402,7 @@ grep -q "pass 1" "$DR_OUT/result.txt" 2>/dev/null \
 
 # --- Later pass: keeps the base the entrypoint recorded ---
 mkdir -p "$DR_BASES"
-echo '{"gitRepoId":"repo-id-1","outcome":"clean","baseSha":"0123456789abcdef0123456789abcdef01234567","conflictedFiles":[]}' \
+echo '{"gitRepoId":"repo-id-1","outcome":"clean","baseSha":"0123456789abcdef0123456789abcdef01234567","defaultBranch":"main","conflictedFiles":[]}' \
   > "$DR_BASES/mock-repo.json"
 run_drift_recheck 2
 [ "$DR_RUN_RC" -eq 0 ] && ok "drift_recheck later pass exits 0" \

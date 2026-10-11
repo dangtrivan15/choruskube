@@ -29,10 +29,11 @@ STUB
 chmod +x "$FAKE_BIN/curl"
 
 write_base() {
-  # $1 = base dir, $2 = repo name, $3 = git repo id
+  # $1 = base dir, $2 = repo name, $3 = git repo id, $4 = default branch (default: main)
   mkdir -p "$1"
-  jq -n --arg id "$3" \
-    '{gitRepoId: $id, outcome: "clean", baseSha: "0123456789abcdef0123456789abcdef01234567", conflictedFiles: []}' \
+  jq -n --arg id "$3" --arg branch "${4:-main}" \
+    '{gitRepoId: $id, outcome: "clean", baseSha: "0123456789abcdef0123456789abcdef01234567",
+      defaultBranch: $branch, conflictedFiles: []}' \
     > "$1/$2.json"
 }
 
@@ -53,7 +54,7 @@ run_record_base "$TESTDIR/empty"
 
 # --- Test 2: two recorded bases — one POST carrying both ---
 write_base "$TESTDIR/two" repo-a 11111111-1111-1111-1111-111111111111
-write_base "$TESTDIR/two" repo-b 22222222-2222-2222-2222-222222222222
+write_base "$TESTDIR/two" repo-b 22222222-2222-2222-2222-222222222222 trunk
 run_record_base "$TESTDIR/two"
 [ "$RB_RC" -eq 0 ] && ok "two base files: exits 0" || fail "two base files: exits 0 (rc=$RB_RC: $RB_OUT)"
 grep -qxF "http://api/internal/runs/run-1/node-executions/exec-1/repo-bases" "$TESTDIR/curl.args" 2>/dev/null \
@@ -69,6 +70,10 @@ grep -qxF "Authorization: Bearer s" "$TESTDIR/curl.args" 2>/dev/null \
 [ "$(jq -r '[.repos[].gitRepoId] | sort | join(",")' "$TESTDIR/curl.body" 2>/dev/null)" \
   = "11111111-1111-1111-1111-111111111111,22222222-2222-2222-2222-222222222222" ] \
   && ok "body carries each file's gitRepoId" || fail "body carries each file's gitRepoId"
+[ "$(jq -r '[.repos[] | .gitRepoId[0:1] + "=" + .defaultBranch] | sort | join(",")' "$TESTDIR/curl.body" 2>/dev/null)" \
+  = "1=main,2=trunk" ] \
+  && ok "body carries each file's defaultBranch" \
+  || fail "body carries each file's defaultBranch ($(cat "$TESTDIR/curl.body" 2>/dev/null))"
 
 # --- Test 3: the API refuses — logged, never fatal ---
 FAKE_CODE=500 run_record_base "$TESTDIR/two"
@@ -95,6 +100,23 @@ run_record_base "$TESTDIR/bad"
 [ "$RB_RC" -eq 0 ] && ok "malformed base file: exits 0" || fail "malformed base file: exits 0 (rc=$RB_RC)"
 [ ! -e "$TESTDIR/curl.args" ] && ok "malformed base file: curl not called" \
   || fail "malformed base file: curl not called"
+
+# --- Test 7: this execution's identity or secret unset — warned, never fatal, nothing posted ---
+for missing in RUN_ID NODE_EXECUTION_ID JOB_SECRET; do
+  rm -f "$TESTDIR/curl.args"
+  set +e
+  RB_OUT=$(
+    export JOB_SECRET=s RUN_ID=run-1 NODE_EXECUTION_ID=exec-1
+    unset "$missing"
+    PATH="$FAKE_BIN:$PATH" REPO_BASE_DIR="$TESTDIR/two" API_SERVER_URL=http://api bash "$RECORD_BASE" 2>&1
+  )
+  RB_RC=$?
+  set -e
+  [ "$RB_RC" -eq 0 ] && ok "$missing unset: exits 0" || fail "$missing unset: exits 0 (rc=$RB_RC: $RB_OUT)"
+  echo "$RB_OUT" | grep -q "WARNING: $missing unset" \
+    && ok "$missing unset: warns on stderr" || fail "$missing unset: warns on stderr ($RB_OUT)"
+  [ ! -e "$TESTDIR/curl.args" ] && ok "$missing unset: curl not called" || fail "$missing unset: curl not called"
+done
 
 # --- Summary ---
 echo ""

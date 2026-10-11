@@ -596,7 +596,8 @@ public class RunService {
 
                 Optional<DriftRecheckConfig> recheck = DriftRecheckConfig.fromConfigOverrides(nodeConfig);
                 if (recheck.isPresent()) {
-                    GateDriftCheckService.DriftCheck drift = gateDriftCheck.check(runId, snapshot);
+                    GateDriftCheckService.DriftCheck drift =
+                            gateDriftCheck.check(runId, exec.getTemplateNodeId(), snapshot);
                     if (drift.stale()) {
                         return holdForRecheck(run, exec, snapshot, request, heldStamp, recheck.get(), drift, source);
                     }
@@ -669,7 +670,7 @@ public class RunService {
         if (heldStamp != null && cannotBeFixedByARecheck(drift)) {
             throw new GateRecheckExhaustedException("The re-check could not tell which main commit was tested ("
                     + drift.summary() + "). The project's agent image may predate base recording, so rebuild it on "
-                    + "the current claude-code image, or a repo's default branch setting may not match its host.");
+                    + "the current claude-code image.");
         }
         int round = heldStamp == null ? 1 : heldStamp.getRecheckRounds() + 1;
         if (round > GateDriftCheckService.MAX_RECHECK_ROUNDS) {

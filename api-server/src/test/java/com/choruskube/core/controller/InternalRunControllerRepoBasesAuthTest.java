@@ -136,6 +136,25 @@ class InternalRunControllerRepoBasesAuthTest extends BaseTest {
     }
 
     @Test
+    void recordsTheDefaultBranchThePodRebasedOnto() throws Exception {
+        post(run.getId(), exec.getId(), JOB_SECRET, body("clean", "sha-1", "trunk"))
+                .andExpect(status().isNoContent());
+
+        assertThat(baseRepo.findByNodeExecutionId(exec.getId()))
+                .singleElement()
+                .satisfies(b -> assertThat(b.getDefaultBranch()).isEqualTo("trunk"));
+    }
+
+    @Test
+    void recordWithoutDefaultBranch_fromAnOlderAgentImage_isStillAccepted() throws Exception {
+        post(run.getId(), exec.getId(), JOB_SECRET, body("clean", "sha-1")).andExpect(status().isNoContent());
+
+        assertThat(baseRepo.findByNodeExecutionId(exec.getId()))
+                .singleElement()
+                .satisfies(b -> assertThat(b.getDefaultBranch()).isNull());
+    }
+
+    @Test
     void conflict_dropsAnyShaAndKeepsTheFiles() throws Exception {
         post(run.getId(), exec.getId(), JOB_SECRET, body("conflict", "ignored")).andExpect(status().isNoContent());
 
@@ -189,5 +208,11 @@ class InternalRunControllerRepoBasesAuthTest extends BaseTest {
         return "{\"repos\":[{\"gitRepoId\":\"" + gitRepo.getId() + "\",\"outcome\":\"" + outcome
                 + "\",\"baseSha\":" + (sha == null ? "null" : "\"" + sha + "\"")
                 + ",\"conflictedFiles\":[\"a.txt\"]}]}";
+    }
+
+    private String body(String outcome, String sha, String defaultBranch) {
+        return "{\"repos\":[{\"gitRepoId\":\"" + gitRepo.getId() + "\",\"outcome\":\"" + outcome
+                + "\",\"baseSha\":\"" + sha + "\",\"defaultBranch\":\"" + defaultBranch
+                + "\",\"conflictedFiles\":[]}]}";
     }
 }

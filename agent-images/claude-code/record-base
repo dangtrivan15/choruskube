@@ -10,10 +10,12 @@ REPO_BASE_DIR="${REPO_BASE_DIR:-/tmp/choruskube-repo-bases}"
 shopt -s nullglob
 files=("$REPO_BASE_DIR"/*.json)
 [ "${#files[@]}" -gt 0 ] || exit 0
-if [ -z "${API_SERVER_URL:-}" ]; then
-  echo "WARNING: API_SERVER_URL unset; not recording repo bases" >&2
-  exit 0
-fi
+for var in API_SERVER_URL RUN_ID NODE_EXECUTION_ID JOB_SECRET; do
+  if [ -z "${!var:-}" ]; then
+    echo "WARNING: $var unset; not recording repo bases" >&2
+    exit 0
+  fi
+done
 
 body=$(jq -s '{repos: .}' "${files[@]}") || { echo "WARNING: unreadable repo base files" >&2; exit 0; }
 code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \

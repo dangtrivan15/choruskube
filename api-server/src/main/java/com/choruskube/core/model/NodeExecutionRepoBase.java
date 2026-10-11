@@ -28,6 +28,9 @@ public class NodeExecutionRepoBase {
     @Column(name = "base_sha")
     private String baseSha;
 
+    @Column(name = "default_branch")
+    private String defaultBranch;
+
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "conflicted_files", columnDefinition = "jsonb", nullable = false)
     private String conflictedFiles = "[]";
@@ -79,6 +82,14 @@ public class NodeExecutionRepoBase {
 
     public void setBaseSha(String baseSha) {
         this.baseSha = baseSha;
+    }
+
+    public String getDefaultBranch() {
+        return defaultBranch;
+    }
+
+    public void setDefaultBranch(String defaultBranch) {
+        this.defaultBranch = defaultBranch;
     }
 
     public String getConflictedFiles() {

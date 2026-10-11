@@ -21,10 +21,12 @@ import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -121,9 +123,9 @@ public class GateDriftCheckService {
         this.objectMapper = objectMapper;
     }
 
-    public DriftCheck check(UUID runId, JsonNode snapshot) {
+    public DriftCheck check(UUID runId, UUID gateTemplateNodeId, JsonNode snapshot) {
         List<UUID> repoIds = repoIdsOf(snapshot);
-        NodeExecution predecessor = latestCompletedNonHuman(runId, snapshot);
+        NodeExecution predecessor = predecessorOf(runId, gateTemplateNodeId, snapshot);
         if (repoIds.isEmpty() || predecessor == null) {
             // Nothing was built against any repo yet, so there is no tested state to protect.
             return new DriftCheck(predecessor, List.of());
@@ -141,8 +143,11 @@ public class GateDriftCheckService {
                 continue;
             }
             String ownerRepo = RepoNameUtil.deriveOwnerRepoName(repo.getUrl());
-            String branch = repo.getDefaultBranch();
             NodeExecutionRepoBase base = bases.get(repoId);
+            // The branch the pod rebased onto: a stored setting that differs from the host's real
+            // default makes every compare 404, so the gate would read BASE_GONE on every approval.
+            String branch =
+                    base != null && base.getDefaultBranch() != null ? base.getDefaultBranch() : repo.getDefaultBranch();
             if (base == null) {
                 results.add(new RepoDrift(repoId, ownerRepo, branch, Reason.NO_RECORD, null, 0, List.of()));
             } else if ("conflict".equals(base.getOutcome())) {
@@ -229,19 +234,37 @@ public class GateDriftCheckService {
                 : prRepo.findMergedByOtherRunsSince(repoIds, predecessor.getStartedAt(), runId);
     }
 
-    private NodeExecution latestCompletedNonHuman(UUID runId, JsonNode snapshot) {
+    /**
+     * The latest completed non-human execution of a node with an edge into the gate, else of any
+     * node: a parallel branch finishing later would otherwise vouch for a base the gate never saw.
+     */
+    private NodeExecution predecessorOf(UUID runId, UUID gateTemplateNodeId, JsonNode snapshot) {
         Set<UUID> humanNodes = new HashSet<>();
         for (JsonNode node : snapshot.path("nodes")) {
             if ("human".equalsIgnoreCase(node.path("executor_type").asText())) {
                 humanNodes.add(UUID.fromString(node.path("template_node_id").asText()));
             }
         }
-        return execRepo.findByWorkflowRunIdAndStatus(runId, NodeExecutionStatus.completed).stream()
-                .filter(e -> e.getCompletedAt() != null && !humanNodes.contains(e.getTemplateNodeId()))
-                .max(Comparator.comparing(NodeExecution::getCompletedAt))
-                .orElse(null);
+        Set<UUID> upstream = new HashSet<>();
+        for (JsonNode edge : snapshot.path("edges")) {
+            if (gateTemplateNodeId.toString().equals(edge.path("target_node_id").asText())) {
+                upstream.add(UUID.fromString(edge.path("source_node_id").asText()));
+            }
+        }
+        List<NodeExecution> completed =
+                execRepo.findByWorkflowRunIdAndStatus(runId, NodeExecutionStatus.completed).stream()
+                        .filter(e -> e.getCompletedAt() != null && !humanNodes.contains(e.getTemplateNodeId()))
+                        .toList();
+        return latest(completed.stream().filter(e -> upstream.contains(e.getTemplateNodeId())))
+                .orElseGet(() -> latest(completed.stream()).orElse(null));
     }
 
+    private static Optional<NodeExecution> latest(Stream<NodeExecution> executions) {
+        return executions.max(Comparator.comparing(NodeExecution::getCompletedAt));
+    }
+
+    // Read live from the project, while agent pods clone the list frozen at run start: a repo
+    // added mid-run never gets a record, so the gate parks, and one removed mid-run goes unchecked.
     private static List<UUID> repoIdsOf(JsonNode snapshot) {
         List<UUID> ids = new ArrayList<>();
         for (JsonNode repo : snapshot.path("repos")) {
