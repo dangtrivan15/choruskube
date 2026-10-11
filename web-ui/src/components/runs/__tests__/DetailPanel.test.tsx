@@ -20,6 +20,10 @@ vi.mock("@/hooks/useRuns", () => ({
   })),
 }));
 
+vi.mock("@/hooks/useGateStamps", () => ({
+  useGateStamps: vi.fn(() => ({ data: [] })),
+}));
+
 vi.mock("@/hooks/useArtifacts", () => ({
   useArtifacts: vi.fn(() => ({
     data: [],

@@ -3,8 +3,10 @@ import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "@/__tests__/test-utils";
 import HumanGatePanel from "../HumanGatePanel";
+import type { GateStampResponse } from "@/lib/types";
 
 const mockMutate = vi.fn();
+let mockGateStamps: GateStampResponse[] = [];
 
 vi.mock("@/hooks/useRuns", () => ({
   useSignalNode: vi.fn(() => ({
@@ -15,6 +17,10 @@ vi.mock("@/hooks/useRuns", () => ({
     data: [],
     isLoading: false,
   })),
+}));
+
+vi.mock("@/hooks/useGateStamps", () => ({
+  useGateStamps: vi.fn(() => ({ data: mockGateStamps })),
 }));
 
 vi.mock("@/hooks/useArtifacts", () => ({
@@ -47,6 +53,7 @@ describe("HumanGatePanel", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGateStamps = [];
   });
 
   it("renders node label and iteration badge", () => {
@@ -697,6 +704,35 @@ describe("HumanGatePanel", () => {
       );
 
       expect(screen.queryByTestId("merge-on-approval-notice")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("held approval notice", () => {
+    const stamp: GateStampResponse = {
+      id: "stamp-1",
+      gateTemplateNodeId: "node-gate",
+      gateLabel: "Review Node",
+      status: "pending",
+      recheckRounds: 1,
+      maxRecheckRounds: 2,
+      voidReason: null,
+      supersededByReviewer: false,
+      createdAt: "2026-10-11T00:00:00Z",
+      updatedAt: "2026-10-11T00:00:00Z",
+    };
+
+    it("shows this gate's held approval", () => {
+      mockGateStamps = [{ ...stamp, gateLabel: defaultProps.nodeLabel }];
+      renderWithProviders(<HumanGatePanel {...defaultProps} />);
+
+      expect(screen.getByTestId("gate-held-notice")).toBeInTheDocument();
+    });
+
+    it("ignores another gate's held approval", () => {
+      mockGateStamps = [{ ...stamp, gateLabel: "approve_spec_and_plan" }];
+      renderWithProviders(<HumanGatePanel {...defaultProps} />);
+
+      expect(screen.queryByTestId("gate-held-notice")).not.toBeInTheDocument();
     });
   });
 });

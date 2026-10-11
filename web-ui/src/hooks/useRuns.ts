@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import { api, apiErrorMessage, ApiError } from "@/lib/api";
 import { showMutationToast } from "@/lib/toast-messages";
+import { decisionToastMessage } from "@/lib/gateStamps";
 import { useActivityFeed } from "./useActivityFeed";
 import type {
   RunResponse,
@@ -14,6 +15,7 @@ import type {
   StagingRefsResponse,
   AttachmentRefsResponse,
   RoadmapCandidatesDocument,
+  SignalResponse,
 } from "@/lib/types";
 
 export function useRuns(status?: string, name?: string, pagination?: PaginationParams) {
@@ -184,15 +186,15 @@ export function useSignalNode(runId: string) {
         );
         attachmentRefs = result.attachmentRefs;
       }
-      return api.post(`/runs/${runId}/nodes/${nodeExecId}/signal`, {
+      return api.post<SignalResponse | undefined>(`/runs/${runId}/nodes/${nodeExecId}/signal`, {
         decision, feedback, attachmentRefs,
         ...(editedCandidates !== undefined ? { editedCandidates } : {}),
       });
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["runs", runId] });
       queryClient.invalidateQueries({ queryKey: ["pending-gates"] });
-      addEntry(showMutationToast("Decision submitted", "success"));
+      addEntry(showMutationToast(decisionToastMessage(data), "success"));
     },
     onError: (error) => {
       addEntry(showMutationToast(apiErrorMessage(error, "Failed to submit decision"), "error"));

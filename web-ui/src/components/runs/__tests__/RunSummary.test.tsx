@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "@/__tests__/test-utils";
 import { RunSummaryStrip, RunSummaryMobileBar, RunSummaryDetails } from "../RunSummary";
 import type { AttentionNodeRef } from "../RunSummary";
-import type { RunResponse, RunTaskSummary } from "@/lib/types";
+import type { GateStampResponse, RunResponse, RunTaskSummary } from "@/lib/types";
 
 function makeRun(overrides: Partial<RunResponse> = {}): RunResponse {
   return {
@@ -53,6 +53,19 @@ const ATTENTION_FAILED: AttentionNodeRef = {
   templateNodeId: "node-2",
   label: "code_review",
   kind: "failed",
+};
+
+const HELD_APPROVAL: GateStampResponse = {
+  id: "stamp-1",
+  gateTemplateNodeId: "node-gate",
+  gateLabel: "final_approval",
+  status: "pending",
+  recheckRounds: 1,
+  maxRecheckRounds: 2,
+  voidReason: null,
+  supersededByReviewer: false,
+  createdAt: "2026-10-11T00:00:00Z",
+  updatedAt: "2026-10-11T00:00:00Z",
 };
 
 beforeEach(() => {
@@ -198,6 +211,23 @@ describe("RunSummaryStrip", () => {
     );
     expect(screen.getByTestId("run-attention-button")).toHaveTextContent("Failed: Code Review");
   });
+
+  it("shows a held approval even when there is no other metadata", () => {
+    renderWithProviders(<RunSummaryStrip run={makeRun()} heldApproval={HELD_APPROVAL} />);
+    expect(screen.getByTestId("run-summary-held-approval")).toHaveTextContent(
+      "Approval held — re-checking against main (round 1 of 2)",
+    );
+  });
+
+  it("shows no held-approval chip without one", () => {
+    renderWithProviders(
+      <RunSummaryStrip
+        run={makeRun({ softwareProject: { id: "sp-1", type: "git_repo", name: "my-repo" } })}
+        heldApproval={null}
+      />,
+    );
+    expect(screen.queryByTestId("run-summary-held-approval")).not.toBeInTheDocument();
+  });
 });
 
 describe("RunSummaryMobileBar", () => {
@@ -272,6 +302,18 @@ describe("RunSummaryMobileBar", () => {
       <RunSummaryMobileBar run={makeRun()} onOpenInfo={vi.fn()} onSelectNode={vi.fn()} />,
     );
     expect(screen.queryByTestId("run-attention-button")).not.toBeInTheDocument();
+  });
+
+  it("shows a held approval", () => {
+    renderWithProviders(
+      <RunSummaryMobileBar
+        run={makeRun()}
+        heldApproval={HELD_APPROVAL}
+        onOpenInfo={vi.fn()}
+        onSelectNode={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId("run-summary-held-approval")).toHaveTextContent("round 1 of 2");
   });
 });
 

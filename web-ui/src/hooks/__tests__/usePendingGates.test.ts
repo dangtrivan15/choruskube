@@ -148,6 +148,24 @@ describe("usePendingGates hooks", () => {
       });
     });
 
+    it("toasts that the approval is held, naming the stale repos, when the server holds it", async () => {
+      mockApi.post.mockResolvedValueOnce({
+        outcome: "held_for_recheck",
+        staleRepos: [{ repo: "acme/app", detail: "2 commits behind main" }],
+      });
+      const { wrapper } = createTestHookWrapper();
+
+      const { result } = renderHook(() => useSignalFromDashboard(), { wrapper });
+
+      result.current.mutate({ runId: "run-1", nodeExecId: "exec-1", decision: "approved", feedback: "" });
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(showMutationToast).toHaveBeenCalledWith(
+        expect.stringMatching(/Approval held.*acme\/app/),
+        "success",
+      );
+    });
+
     it("calls api.post for rejection with feedback", async () => {
       mockApi.post.mockResolvedValueOnce(undefined);
       const { wrapper } = createTestHookWrapper();
