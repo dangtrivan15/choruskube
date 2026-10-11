@@ -596,7 +596,8 @@ public class RunService {
 
                 Optional<DriftRecheckConfig> recheck = DriftRecheckConfig.fromConfigOverrides(nodeConfig);
                 if (recheck.isPresent()) {
-                    GateDriftCheckService.DriftCheck drift = gateDriftCheck.check(runId, snapshot);
+                    GateDriftCheckService.DriftCheck drift =
+                            gateDriftCheck.check(runId, exec.getTemplateNodeId(), snapshot);
                     if (drift.stale()) {
                         return holdForRecheck(run, exec, snapshot, request, heldStamp, recheck.get(), drift, source);
                     }

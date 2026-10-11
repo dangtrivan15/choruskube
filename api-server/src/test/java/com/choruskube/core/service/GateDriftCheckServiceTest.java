@@ -94,7 +94,7 @@ class GateDriftCheckServiceTest {
         when(gitHubAppService.compareCommits(TOKEN, "acme/app", "abc1234def", "main"))
                 .thenReturn(0);
 
-        DriftCheck check = service.check(runId, snapshot(true));
+        DriftCheck check = service.check(runId, gateNodeId, snapshot(true));
 
         assertThat(check.stale()).isFalse();
         assertThat(check.repos())
@@ -108,7 +108,7 @@ class GateDriftCheckServiceTest {
         when(gitHubAppService.compareCommits(TOKEN, "acme/app", "abc1234def", "main"))
                 .thenReturn(3);
 
-        DriftCheck check = service.check(runId, snapshot(true));
+        DriftCheck check = service.check(runId, gateNodeId, snapshot(true));
 
         assertThat(check.stale()).isTrue();
         assertThat(check.staleRepos()).singleElement().satisfies(r -> {
@@ -122,7 +122,7 @@ class GateDriftCheckServiceTest {
     void conflictRecord_isStaleWithFiles_andNeverCallsGitHub() throws Exception {
         recordBase("conflict", null, "[\"src/a.java\",\"db/V9__x.sql\"]");
 
-        DriftCheck check = service.check(runId, snapshot(true));
+        DriftCheck check = service.check(runId, gateNodeId, snapshot(true));
 
         assertThat(check.staleRepos()).singleElement().satisfies(r -> {
             assertThat(r.reason()).isEqualTo(Reason.CONFLICT);
@@ -134,7 +134,7 @@ class GateDriftCheckServiceTest {
     @Test
     void unavailableRecord_isStale() throws Exception {
         recordBase("unavailable", null, "[]");
-        assertThat(service.check(runId, snapshot(true)).staleRepos())
+        assertThat(service.check(runId, gateNodeId, snapshot(true)).staleRepos())
                 .extracting(GateDriftCheckService.RepoDrift::reason)
                 .containsExactly(Reason.UNAVAILABLE);
     }
@@ -142,7 +142,7 @@ class GateDriftCheckServiceTest {
     @Test
     void missingRecord_isStale() throws Exception {
         when(baseRepo.findByNodeExecutionId(predecessor.getId())).thenReturn(List.of());
-        assertThat(service.check(runId, snapshot(true)).staleRepos())
+        assertThat(service.check(runId, gateNodeId, snapshot(true)).staleRepos())
                 .extracting(GateDriftCheckService.RepoDrift::reason)
                 .containsExactly(Reason.NO_RECORD);
     }
@@ -153,7 +153,7 @@ class GateDriftCheckServiceTest {
         when(gitHubAppService.compareCommits(TOKEN, "acme/app", "abc1234def", "main"))
                 .thenThrow(new GitHubApiException(404, "acme/app", GitHubRateLimitHints.NONE));
 
-        assertThat(service.check(runId, snapshot(true)).staleRepos())
+        assertThat(service.check(runId, gateNodeId, snapshot(true)).staleRepos())
                 .extracting(GateDriftCheckService.RepoDrift::reason)
                 .containsExactly(Reason.BASE_GONE);
     }
@@ -164,7 +164,7 @@ class GateDriftCheckServiceTest {
         when(gitHubAppService.compareCommits(TOKEN, "acme/app", "abc1234def", "main"))
                 .thenThrow(new GitHubApiException(502, "acme/app", GitHubRateLimitHints.NONE));
 
-        assertThatThrownBy(() -> service.check(runId, snapshot(true)))
+        assertThatThrownBy(() -> service.check(runId, gateNodeId, snapshot(true)))
                 .isInstanceOf(GateRecheckUnavailableException.class)
                 .hasMessageContaining("acme/app")
                 .hasMessageContaining("The gate is still open");
@@ -175,7 +175,7 @@ class GateDriftCheckServiceTest {
         recordBase("clean", "abc1234def", "[]");
         when(credentialResolver.getTokenForRun(runId)).thenThrow(new IllegalStateException("no credential"));
 
-        assertThatThrownBy(() -> service.check(runId, snapshot(true)))
+        assertThatThrownBy(() -> service.check(runId, gateNodeId, snapshot(true)))
                 .isInstanceOf(GateRecheckUnavailableException.class);
     }
 
@@ -184,15 +184,48 @@ class GateDriftCheckServiceTest {
         recordBase("clean", "abc1234def", "[]");
         when(gitHubAppService.compareCommits(any(), any(), any(), any())).thenReturn(0);
 
-        DriftCheck check = service.check(runId, snapshot(true));
+        DriftCheck check = service.check(runId, gateNodeId, snapshot(true));
 
         assertThat(check.predecessor()).isSameAs(predecessor);
         verify(baseRepo).findByNodeExecutionId(predecessor.getId());
     }
 
     @Test
+    void parallelBranchFinishedLater_theGatesUpstreamNodeIsThePredecessor() throws Exception {
+        UUID offPathNodeId = UUID.randomUUID();
+        NodeExecution offPath = execution(offPathNodeId, started.plusSeconds(30), started.plusSeconds(90));
+        NodeExecution gate = execution(gateNodeId, started.plusSeconds(95), started.plusSeconds(100));
+        when(execRepo.findByWorkflowRunIdAndStatus(runId, NodeExecutionStatus.completed))
+                .thenReturn(List.of(predecessor, offPath, gate));
+        recordBase("clean", "abc1234def", "[]");
+        when(gitHubAppService.compareCommits(TOKEN, "acme/app", "abc1234def", "main"))
+                .thenReturn(2);
+
+        DriftCheck check = service.check(runId, gateNodeId, parallelSnapshot(offPathNodeId));
+
+        assertThat(check.predecessor()).isSameAs(predecessor);
+        assertThat(check.staleRepos())
+                .extracting(GateDriftCheckService.RepoDrift::reason)
+                .containsExactly(Reason.MAIN_MOVED);
+        verify(baseRepo, never()).findByNodeExecutionId(offPath.getId());
+    }
+
+    @Test
+    void noUpstreamNodeCompleted_fallsBackToTheLatestCompletedNonHumanExecution() throws Exception {
+        UUID offPathNodeId = UUID.randomUUID();
+        NodeExecution offPath = execution(offPathNodeId, started.plusSeconds(30), started.plusSeconds(90));
+        when(execRepo.findByWorkflowRunIdAndStatus(runId, NodeExecutionStatus.completed))
+                .thenReturn(List.of(offPath));
+        when(baseRepo.findByNodeExecutionId(offPath.getId())).thenReturn(List.of());
+
+        DriftCheck check = service.check(runId, gateNodeId, parallelSnapshot(offPathNodeId));
+
+        assertThat(check.predecessor()).isSameAs(offPath);
+    }
+
+    @Test
     void noRepos_isCurrent() throws Exception {
-        assertThat(service.check(runId, snapshot(false)).stale()).isFalse();
+        assertThat(service.check(runId, gateNodeId, snapshot(false)).stale()).isFalse();
         verify(credentialResolver, never()).getTokenForRun(any());
     }
 
@@ -200,7 +233,7 @@ class GateDriftCheckServiceTest {
     void noPredecessor_isCurrent() throws Exception {
         when(execRepo.findByWorkflowRunIdAndStatus(runId, NodeExecutionStatus.completed))
                 .thenReturn(List.of());
-        assertThat(service.check(runId, snapshot(true)).stale()).isFalse();
+        assertThat(service.check(runId, gateNodeId, snapshot(true)).stale()).isFalse();
     }
 
     @Test
@@ -213,7 +246,7 @@ class GateDriftCheckServiceTest {
         merged.setTitle("Rename widget");
         when(prRepo.findMergedByOtherRunsSince(List.of(repoId), started, runId)).thenReturn(List.of(merged));
 
-        String guidance = service.guidance(runId, service.check(runId, snapshot(true)), 1);
+        String guidance = service.guidance(runId, service.check(runId, gateNodeId, snapshot(true)), 1);
 
         assertThat(guidance)
                 .contains("`acme/app`: 3 commits behind main")
@@ -254,5 +287,18 @@ class GateDriftCheckServiceTest {
                   {"template_node_id":"%s","label":"final_approval","executor_type":"human"}],
                  "edges":[],
                  "repos":%s}""".formatted(testNodeId, gateNodeId, repos));
+    }
+
+    /** {@code test} feeds the gate; {@code docs} runs on a parallel branch that ends elsewhere. */
+    private JsonNode parallelSnapshot(UUID offPathNodeId) throws Exception {
+        return objectMapper.readTree("""
+                {"nodes":[
+                  {"template_node_id":"%1$s","label":"test","executor_type":"script"},
+                  {"template_node_id":"%2$s","label":"docs","executor_type":"ai"},
+                  {"template_node_id":"%3$s","label":"final_approval","executor_type":"human"}],
+                 "edges":[
+                  {"source_node_id":"%1$s","target_node_id":"%3$s","condition":"passed"},
+                  {"source_node_id":"%3$s","target_node_id":"%1$s","condition":"rereview"}],
+                 "repos":[{"id":"%4$s","url":"https://github.com/acme/app","name":"app"}]}""".formatted(testNodeId, offPathNodeId, gateNodeId, repoId));
     }
 }

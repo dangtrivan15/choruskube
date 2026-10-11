@@ -271,7 +271,7 @@ class RunServiceDriftRecheckTest {
     void freshRecheckGate_mergesAndSignalsApproved() {
         stubExec();
         stubRun(RECHECK_GATE);
-        when(gateDriftCheck.check(eq(runId), any())).thenReturn(fresh());
+        when(gateDriftCheck.check(eq(runId), eq(templateNodeId), any())).thenReturn(fresh());
         when(pullRequestMergeService.mergeAll(runId, PullRequestMergeMethod.squash, null))
                 .thenReturn(sampleOutcome());
 
@@ -287,7 +287,7 @@ class RunServiceDriftRecheckTest {
     void staleRecheckGate_holdsRoutesWithGuidanceAndMergesNothing() {
         stubExec();
         stubRun(RECHECK_GATE);
-        when(gateDriftCheck.check(eq(runId), any())).thenReturn(stale());
+        when(gateDriftCheck.check(eq(runId), eq(templateNodeId), any())).thenReturn(stale());
         when(gateRecheck.hold(
                         eq(runId),
                         any(),
@@ -333,7 +333,7 @@ class RunServiceDriftRecheckTest {
     void recheckUnavailable_releasesClaimAndHoldsNothing() {
         stubExec();
         stubRun(RECHECK_GATE);
-        when(gateDriftCheck.check(eq(runId), any()))
+        when(gateDriftCheck.check(eq(runId), eq(templateNodeId), any()))
                 .thenThrow(
                         new GateRecheckUnavailableException("acme/app", new RuntimeException("GitHub returned 502")));
 
@@ -362,7 +362,7 @@ class RunServiceDriftRecheckTest {
         stubExec();
         stubRun(RECHECK_GATE);
         stubHeld();
-        when(gateDriftCheck.check(eq(runId), any())).thenReturn(fresh());
+        when(gateDriftCheck.check(eq(runId), eq(templateNodeId), any())).thenReturn(fresh());
         when(pullRequestMergeService.mergeAll(runId, PullRequestMergeMethod.squash, stamp.getId()))
                 .thenReturn(sampleOutcome());
 
@@ -379,7 +379,7 @@ class RunServiceDriftRecheckTest {
         stubExec();
         stubRun(RECHECK_GATE);
         stubHeld();
-        when(gateDriftCheck.check(eq(runId), any())).thenReturn(stale());
+        when(gateDriftCheck.check(eq(runId), eq(templateNodeId), any())).thenReturn(stale());
         when(gateRecheck.holdAgain(stamp.getId())).thenReturn(stamp);
 
         service.applyHeldApproval(stamp.getId());
@@ -396,7 +396,7 @@ class RunServiceDriftRecheckTest {
         stubExec();
         stubRun(RECHECK_GATE);
         stubHeld();
-        when(gateDriftCheck.check(eq(runId), any())).thenReturn(stale());
+        when(gateDriftCheck.check(eq(runId), eq(templateNodeId), any())).thenReturn(stale());
 
         service.applyHeldApproval(stamp.getId());
 
@@ -440,7 +440,7 @@ class RunServiceDriftRecheckTest {
         stubExec();
         stubRun(RECHECK_GATE);
         stubHeld();
-        when(gateDriftCheck.check(eq(runId), any())).thenReturn(fresh());
+        when(gateDriftCheck.check(eq(runId), eq(templateNodeId), any())).thenReturn(fresh());
         when(pullRequestMergeService.mergeAll(runId, PullRequestMergeMethod.squash, stamp.getId()))
                 .thenThrow(new PullRequestMergeException("acme/app#1 has merge conflicts with main"));
 
@@ -470,7 +470,7 @@ class RunServiceDriftRecheckTest {
                 .thenReturn(List.of());
         when(roadmapProposalValidator.summarize(approved))
                 .thenReturn(new RoadmapProposalValidator.Summary(0, 0, 0, 0, 0));
-        when(gateDriftCheck.check(eq(runId), any())).thenReturn(fresh());
+        when(gateDriftCheck.check(eq(runId), eq(templateNodeId), any())).thenReturn(fresh());
         when(pullRequestMergeService.mergeAll(runId, PullRequestMergeMethod.squash, stamp.getId()))
                 .thenReturn(sampleOutcome());
 
@@ -490,7 +490,7 @@ class RunServiceDriftRecheckTest {
     void staleRecheckGate_writesTheStampBeforeSignalling() {
         stubExec();
         stubRun(RECHECK_GATE);
-        when(gateDriftCheck.check(eq(runId), any())).thenReturn(stale());
+        when(gateDriftCheck.check(eq(runId), eq(templateNodeId), any())).thenReturn(stale());
         when(gateRecheck.hold(any(), any(), any(), any(), any(), any(), any())).thenReturn(stamp);
 
         service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, null));
@@ -504,7 +504,7 @@ class RunServiceDriftRecheckTest {
     void staleRecheckGate_signalFails_voidsTheNewStampAndReleasesTheClaim() {
         stubExec();
         stubRun(RECHECK_GATE);
-        when(gateDriftCheck.check(eq(runId), any())).thenReturn(stale());
+        when(gateDriftCheck.check(eq(runId), eq(templateNodeId), any())).thenReturn(stale());
         when(gateRecheck.hold(any(), any(), any(), any(), any(), any(), any())).thenReturn(stamp);
         doThrow(new IllegalStateException("temporal down")).when(workflowStub).signal(anyString(), any());
 
@@ -522,7 +522,7 @@ class RunServiceDriftRecheckTest {
         stubExec();
         stubRun(RECHECK_GATE);
         stubHeld();
-        when(gateDriftCheck.check(eq(runId), any())).thenReturn(fresh());
+        when(gateDriftCheck.check(eq(runId), eq(templateNodeId), any())).thenReturn(fresh());
         when(pullRequestMergeService.mergeAll(runId, PullRequestMergeMethod.squash, stamp.getId()))
                 .thenReturn(sampleOutcome());
         doThrow(new IllegalStateException("db blip")).when(gateRecheck).consume(stamp.getId());
@@ -541,7 +541,7 @@ class RunServiceDriftRecheckTest {
         stubExec();
         stubRun(RECHECK_GATE);
         stubHeld();
-        when(gateDriftCheck.check(eq(runId), any())).thenReturn(fresh());
+        when(gateDriftCheck.check(eq(runId), eq(templateNodeId), any())).thenReturn(fresh());
         when(pullRequestMergeService.mergeAll(runId, PullRequestMergeMethod.squash, stamp.getId()))
                 .thenReturn(sampleOutcome());
 
@@ -555,7 +555,7 @@ class RunServiceDriftRecheckTest {
         stubExec();
         stubRun(RECHECK_GATE);
         stubHeld();
-        when(gateDriftCheck.check(eq(runId), any())).thenReturn(unrecorded());
+        when(gateDriftCheck.check(eq(runId), eq(templateNodeId), any())).thenReturn(unrecorded());
 
         service.applyHeldApproval(stamp.getId());
 
@@ -568,7 +568,7 @@ class RunServiceDriftRecheckTest {
     void reviewerApproval_unrecordedRepos_stillGetsOneRecheck() {
         stubExec();
         stubRun(RECHECK_GATE);
-        when(gateDriftCheck.check(eq(runId), any())).thenReturn(unrecorded());
+        when(gateDriftCheck.check(eq(runId), eq(templateNodeId), any())).thenReturn(unrecorded());
         when(gateRecheck.hold(any(), any(), any(), any(), any(), any(), any())).thenReturn(stamp);
 
         SignalResponse response =
