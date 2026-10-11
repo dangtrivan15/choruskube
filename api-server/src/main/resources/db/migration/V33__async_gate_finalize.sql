@@ -6,6 +6,7 @@ ALTER TYPE node_execution_status ADD VALUE IF NOT EXISTS 'finalizing';
 ALTER TABLE public.node_execution ADD COLUMN finalize_mode TEXT;
 
 ALTER TABLE public.gate_stamp ADD COLUMN materialized_at TIMESTAMPTZ;
+ALTER TABLE public.gate_stamp ADD COLUMN materialization_note TEXT;
 ALTER TABLE public.gate_stamp DROP CONSTRAINT IF EXISTS gate_stamp_status_check;
 ALTER TABLE public.gate_stamp ADD CONSTRAINT gate_stamp_status_check
     CHECK (status IN ('pending', 'consumed', 'voided', 'finalizing'));

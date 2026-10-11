@@ -50,7 +50,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.util.Assert;
 
 /**
  * Finishes an approval on a gate whose workflow drives it in steps ({@code finalize_mode = 'async'}).
@@ -320,10 +322,15 @@ public class GateFinalizeService {
     }
 
     /**
-     * Records the Worker's merges, writes the approved roadmap once, and records the gate's {@code
-     * approved} decision and result. A repeat after success returns the stored result.
+     * Records the Worker's merges, writes the approved roadmap at most once, and records the gate's
+     * {@code approved} decision and result. A repeat after success returns the stored result.
      */
     public StepResult complete(UUID runId, UUID gateExecId, UUID approvalId, List<PrResultItem> merges) {
+        // Each step commits on its own: inside a caller's transaction the claim would not commit
+        // before the roadmap write, and a rejected write would roll the whole approval back.
+        Assert.state(
+                !TransactionSynchronizationManager.isActualTransactionActive(),
+                "Completing a gate approval must run outside a transaction");
         NodeExecution gate = requireGate(runId, gateExecId);
         GateStamp stamp = approval(runId, gate, approvalId);
         List<WorkerPrResult> results = toWorkerResults(merges);
@@ -343,6 +350,15 @@ public class GateFinalizeService {
         String approved = runService.validateDecisionAgainstEdges(snapshot, gate.getTemplateNodeId(), "approved");
         String mergeNote = outcome == null ? null : merge.note(outcome);
 
+        if (plan != null && plan.runnable() && Boolean.TRUE.equals(tx.execute(s -> claimMaterialization(approvalId)))) {
+            String note = materialize(runId, plan);
+            tx.executeWithoutResult(s -> {
+                GateStamp locked = lock(approvalId);
+                locked.setMaterializationNote(note);
+                stampRepo.save(locked);
+            });
+        }
+
         return tx.execute(status -> {
             GateStamp locked = lock(approvalId);
             if (locked.getStatus() == GateStampStatus.consumed) {
@@ -352,20 +368,7 @@ public class GateFinalizeService {
                 throw new ConflictException(
                         "Approval " + approvalId + " is " + locked.getStatus() + ", not finalizing");
             }
-            String roadmapNote = null;
-            if (plan != null && plan.runnable() && locked.getMaterializedAt() == null) {
-                roadmapNote = runService.materializeAndNote(runId, plan);
-                // A failed write inside marks the transaction rollback-only; committing the rest
-                // would report a roadmap that was never written.
-                if (status.isRollbackOnly()) {
-                    throw new IllegalStateException(
-                            "Writing the approved roadmap failed, so nothing was written: " + roadmapNote);
-                }
-                locked.setMaterializedAt(clock.instant());
-                stampRepo.save(locked);
-            } else if (plan != null && !plan.runnable()) {
-                roadmapNote = plan.fixedNote();
-            }
+            String roadmapNote = plan != null && !plan.runnable() ? plan.fixedNote() : locked.getMaterializationNote();
             String result = RunService.appendNote(
                     RunService.appendNote(withFeedback(gate.getResult(), locked.getFeedback()), mergeNote),
                     roadmapNote);
@@ -435,6 +438,34 @@ public class GateFinalizeService {
         if (stamp.getStatus() != GateStampStatus.finalizing || gate.getStatus() != NodeExecutionStatus.finalizing) {
             throw new ConflictException("Approval " + stamp.getId() + " is " + stamp.getStatus() + " and gate "
                     + gate.getId() + " is " + gate.getStatus() + "; neither can be finalized");
+        }
+    }
+
+    /**
+     * Commits {@code materialized_at} before anything is written: a retry, or an attempt
+     * overlapping this one, then skips the write instead of creating the roadmap twice.
+     */
+    private boolean claimMaterialization(UUID approvalId) {
+        GateStamp locked = lock(approvalId);
+        if (locked.getStatus() != GateStampStatus.finalizing || locked.getMaterializedAt() != null) {
+            return false;
+        }
+        locked.setMaterializedAt(clock.instant());
+        stampRepo.save(locked);
+        return true;
+    }
+
+    /**
+     * Runs with no surrounding transaction, so each roadmap write commits on its own and a write
+     * the write path rejects is skipped and noted rather than rolling back the rest.
+     */
+    private String materialize(UUID runId, RunService.MaterializationPlan plan) {
+        try {
+            return runService.materializeAndNote(runId, plan);
+        } catch (RuntimeException e) {
+            // Already claimed, so no retry writes it again; the note is the reviewer's only trace.
+            log.error("Writing the approved roadmap of run {} stopped partway: {}", runId, e.getMessage(), e);
+            return "Writing the approved roadmap stopped partway, so some items may be missing: " + e.getMessage();
         }
     }
 

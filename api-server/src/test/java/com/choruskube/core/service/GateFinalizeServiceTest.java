@@ -75,6 +75,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.SimpleTransactionStatus;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * The steps that finish an approval on an asynchronous gate: the click that claims and records it,
@@ -671,6 +672,7 @@ class GateFinalizeServiceTest {
         order.verify(runService).materializeAndNote(eq(runId), any());
         order.verify(gateRecheck).consume(approvalId);
         assertThat(stamp.getMaterializedAt()).isEqualTo(NOW);
+        assertThat(stamp.getMaterializationNote()).startsWith("Roadmap extension approved: created 1 Epics");
         assertThat(gate.getDecision()).isEqualTo("approved");
         assertThat(gate.getResult()).isEqualTo(result.result());
         assertThat(gate.getArtifactRefs()).isEqualTo(REFS);
@@ -691,33 +693,111 @@ class GateFinalizeServiceTest {
     }
 
     @Test
-    void complete_stampAlreadyMaterialized_neverMaterializesAgain() {
+    void complete_stampAlreadyMaterialized_neverMaterializesAgain_andReusesItsNote() {
+        RoadmapCandidatesDocument doc = new RoadmapCandidatesDocument(null, List.of(), null);
+        stubMergeAndMaterialize(doc);
+        stamp.setMaterializedAt(NOW.minusSeconds(5));
+        stamp.setMaterializationNote("Roadmap extension approved: created 2 Epics (stored)");
+
+        StepResult result = service.complete(runId, gateExecId, approvalId, mergedRow());
+
+        assertThat(result.outcome()).isEqualTo(GateFinalizeService.COMPLETED);
+        assertThat(result.result()).endsWith("\n\nRoadmap extension approved: created 2 Epics (stored)");
+        verify(runService, never()).materializeAndNote(any(), any());
+        verify(runService, never()).prepareMaterialization(any(), any(), any());
+        verify(gateRecheck).consume(approvalId);
+    }
+
+    @Test
+    void complete_claimedButNeverNoted_completesWithoutARoadmapNote() {
         RoadmapCandidatesDocument doc = new RoadmapCandidatesDocument(null, List.of(), null);
         stubMergeAndMaterialize(doc);
         stamp.setMaterializedAt(NOW.minusSeconds(5));
 
         StepResult result = service.complete(runId, gateExecId, approvalId, mergedRow());
 
-        assertThat(result.outcome()).isEqualTo(GateFinalizeService.COMPLETED);
+        assertThat(result.result())
+                .isEqualTo("Tests passed\n\n## Reviewer Feedback\n\nship it\n\n"
+                        + "Pull requests merged on approval (squash): acme/app#7.");
         verify(runService, never()).materializeAndNote(any(), any());
         verify(gateRecheck).consume(approvalId);
     }
 
     @Test
-    void complete_aFailedRoadmapWrite_failsTheStepWithoutConsuming() {
+    void complete_writesTheRoadmapOutsideAnyTransaction_afterCommittingTheClaim() {
         RoadmapCandidatesDocument doc = new RoadmapCandidatesDocument(null, List.of(), null);
         stubMergeAndMaterialize(doc);
+        int[] open = {0};
+        int[] committed = {0};
+        when(txManager.getTransaction(any())).thenAnswer(inv -> {
+            open[0]++;
+            return txStatus;
+        });
+        doAnswer(inv -> {
+                    open[0]--;
+                    committed[0]++;
+                    return null;
+                })
+                .when(txManager)
+                .commit(any());
         when(runService.materializeAndNote(eq(runId), any())).thenAnswer(inv -> {
-            txStatus.setRollbackOnly();
-            return "Roadmap extension approved: created 0 Epics\nSkipped: Failed to materialize candidate Epic 'x'";
+            assertThat(open[0]).as("transactions open around the roadmap write").isZero();
+            assertThat(committed[0]).as("the claim committed first").isEqualTo(1);
+            assertThat(stamp.getMaterializedAt()).isEqualTo(NOW);
+            return "Roadmap extension approved: created 1 Epics";
         });
 
-        assertThatThrownBy(() -> service.complete(runId, gateExecId, approvalId, mergedRow()))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("Failed to materialize candidate Epic 'x'");
+        StepResult result = service.complete(runId, gateExecId, approvalId, mergedRow());
 
-        verify(gateRecheck, never()).consume(any());
-        verify(merge).recordOutcome(eq(runId), any());
+        assertThat(result.result()).endsWith("Roadmap extension approved: created 1 Epics");
+        verify(runService).materializeAndNote(eq(runId), any());
+        assertThat(open[0]).isZero();
+    }
+
+    @Test
+    void complete_anOverlappingAttemptClaimedFirst_writesNothing() {
+        RoadmapCandidatesDocument doc = new RoadmapCandidatesDocument(null, List.of(), null);
+        stubMergeAndMaterialize(doc);
+        when(runService.prepareMaterialization(runId, RoadmapMaterializeMode.roadmap_extension, doc))
+                .thenAnswer(inv -> {
+                    stamp.setMaterializedAt(NOW.minusSeconds(1));
+                    stamp.setMaterializationNote("written by the other attempt");
+                    return RunService.MaterializationPlan.runnable(RoadmapMaterializeMode.roadmap_extension, doc);
+                });
+
+        StepResult result = service.complete(runId, gateExecId, approvalId, mergedRow());
+
+        assertThat(result.result()).endsWith("written by the other attempt");
+        assertThat(stamp.getMaterializedAt()).isEqualTo(NOW.minusSeconds(1));
+        verify(runService, never()).materializeAndNote(any(), any());
+    }
+
+    @Test
+    void complete_aRoadmapWriteThatStopsPartway_stillCompletes_andSaysSo() {
+        RoadmapCandidatesDocument doc = new RoadmapCandidatesDocument(null, List.of(), null);
+        stubMergeAndMaterialize(doc);
+        when(runService.materializeAndNote(eq(runId), any())).thenThrow(new IllegalStateException("connection lost"));
+
+        StepResult result = service.complete(runId, gateExecId, approvalId, mergedRow());
+
+        assertThat(result.outcome()).isEqualTo(GateFinalizeService.COMPLETED);
+        assertThat(result.result()).contains("stopped partway").contains("connection lost");
+        assertThat(stamp.getMaterializedAt()).isEqualTo(NOW);
+        assertThat(stamp.getMaterializationNote()).contains("connection lost");
+        verify(gateRecheck).consume(approvalId);
+    }
+
+    @Test
+    void complete_insideACallersTransaction_isRefused() {
+        TransactionSynchronizationManager.setActualTransactionActive(true);
+        try {
+            assertThatThrownBy(() -> service.complete(runId, gateExecId, approvalId, mergedRow()))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("outside a transaction");
+        } finally {
+            TransactionSynchronizationManager.setActualTransactionActive(false);
+        }
+        verify(merge, never()).recordOutcome(any(), any());
     }
 
     @Test

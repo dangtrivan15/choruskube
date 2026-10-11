@@ -62,6 +62,10 @@ public class GateStamp {
     @Column(name = "materialized_at")
     private Instant materializedAt;
 
+    /** The roadmap write's result note; null while it runs, or if it never finished. */
+    @Column(name = "materialization_note")
+    private String materializationNote;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -208,5 +212,13 @@ public class GateStamp {
 
     public void setMaterializedAt(Instant materializedAt) {
         this.materializedAt = materializedAt;
+    }
+
+    public String getMaterializationNote() {
+        return materializationNote;
+    }
+
+    public void setMaterializationNote(String materializationNote) {
+        this.materializationNote = materializationNote;
     }
 }

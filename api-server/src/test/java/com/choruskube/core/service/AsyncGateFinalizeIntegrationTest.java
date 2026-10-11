@@ -260,6 +260,58 @@ class AsyncGateFinalizeIntegrationTest extends BaseTest {
     }
 
     @Test
+    void complete_anEdgeTheWritePathRejects_isSkippedAndNoted_andTheRestIsWrittenOnce() throws Exception {
+        when(credentialResolver.getTokenForRepo(repoId)).thenReturn("issue-token");
+        when(gitHubAppService.createIssue(eq("issue-token"), eq(ownerRepo), any(), any()))
+                .thenReturn(new GitHubAppService.CreatedIssue(7, "https://github.com/" + ownerRepo + "/issues/7"));
+        // GATE strictness leaves dependency checks to the write path, which rejects the repeat.
+        String document = "{\"epics\":[{\"title\":\"Edge case\",\"stories\":[{\"title\":\"Slice\",\"tasks\":["
+                + "{\"title\":\"Build it\",\"key\":\"t1\"},{\"title\":\"Ship it\",\"key\":\"t2\"}]}]}],"
+                + "\"dependencies\":[{\"blocking\":\"t1\",\"blocked\":\"t2\"},{\"blocking\":\"t1\",\"blocked\":\"t2\"}]}";
+
+        mockMvc.perform(post("/api/v1/runs/{id}/nodes/{exec}/signal", runId, gateExec.getId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"decision\":\"approved\",\"editedCandidates\":" + document + "}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.outcome").value("finalizing"));
+        UUID approvalId =
+                stampRepo.findByWorkflowRunIdOrderByCreatedAtAsc(runId).get(0).getId();
+        mockMvc.perform(post(STEPS + "/{approval}/plan", runId, gateExec.getId(), approvalId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.outcome").value("proceed"));
+
+        String first = mockMvc.perform(post(STEPS + "/{approval}/complete", runId, gateExec.getId(), approvalId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"merges\":[]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.outcome").value("completed"))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        assertThat(first)
+                .contains("created 1 Epics, 1 Stories, 2 Tasks and 1 dependency edges (1 skipped)")
+                .contains("Skipped: Failed to materialize dependency edge 't1' -> 't2'")
+                .contains("This dependency edge already exists");
+        assertThat(roadmapCounts()).containsExactly(1, 2, 1);
+        GateStamp consumed = stampRepo.findById(approvalId).orElseThrow();
+        assertThat(consumed.getStatus()).isEqualTo(GateStampStatus.consumed);
+        assertThat(consumed.getMaterializationNote()).contains("This dependency edge already exists");
+
+        String second = mockMvc.perform(post(STEPS + "/{approval}/complete", runId, gateExec.getId(), approvalId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"merges\":[]}"))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        assertThat(second).isEqualTo(first);
+        assertThat(roadmapCounts()).containsExactly(1, 2, 1);
+        verify(gitHubAppService, times(2)).createIssue(any(), any(), any(), any());
+    }
+
+    @Test
     void refusedPlan_returnsGateToWaiting_withReasonOnTheApproval() throws Exception {
         pullRequest(null, "https://github.com/" + ownerRepo + "/tree/some-branch");
 
@@ -427,6 +479,19 @@ class AsyncGateFinalizeIntegrationTest extends BaseTest {
         stamp.setRecheckRounds(1);
         stamp.setStatus(GateStampStatus.pending);
         return stampRepo.save(stamp);
+    }
+
+    /** Epics, Tasks and dependency edges written under this test's project. */
+    private List<Integer> roadmapCounts() {
+        String tasks = "SELECT t.id FROM task t JOIN story s ON t.story_id = s.id JOIN epic e ON s.epic_id = e.id"
+                + " WHERE e.software_project_id = ?";
+        return List.of(
+                jdbc.queryForObject("SELECT count(*) FROM epic WHERE software_project_id = ?", Integer.class, repoId),
+                jdbc.queryForObject("SELECT count(*) FROM (" + tasks + ") x", Integer.class, repoId),
+                jdbc.queryForObject(
+                        "SELECT count(*) FROM work_item_dependency WHERE blocking_item_id IN (" + tasks + ")",
+                        Integer.class,
+                        repoId));
     }
 
     private RunPullRequest pullRequest(Integer number, String url) {
