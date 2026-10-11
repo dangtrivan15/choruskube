@@ -9,17 +9,24 @@ stays in the spec and goes away with it.
 
 ## Files
 
-One file per run, named `YYYY-MM-DD-<slug>.md` — the date the run landed and `<slug>` naming the change. That single
-file holds every decision the run graduates; a re-run edits it rather than adding a second one. Listed by name, the
-entries run oldest first, and each title says what the entry decides.
+One file per run, named `YYYY-MM-DD---NN-<slug>.md` — the UTC date the entry is written, `NN` ordering the entries
+written on that date from `01`, and `<slug>` naming the change. That single file holds every decision the run
+graduates; a re-run edits it rather than adding a second one. Listed by name, the entries run in the order they were
+written, and each title says what the entry decides.
 
-The name carries no sequence number, because runs land in parallel. A number each branch takes as the next free one
-collides with the number another open branch took: the two files have different names, so git merges both without a
-word, and two entries answer to the same citation. A date and a slug leave nothing to hand out. Two runs that pick the
-same name on the same date add the same path, and git never merges that silently.
+The date is the one the writer knows: the date a run lands is not known when its entry is written. It is UTC so that
+entries written in different timezones still sort in the order they were written. An entry can only supersede one
+already on the base branch, so the superseding entry always sorts after the one it replaces.
 
-Entries from before this rule keep their `YYYY-MM-DD---NN-<slug>.md` names, because code and other entries cite them
-by those names.
+`NN` is the next free number for that date on the base branch. Runs land in parallel, so another open branch can take
+the same number, and git merges the two files without a word because their names differ.
+[scripts/check-decision-numbers.sh](../../scripts/check-decision-numbers.sh) finds an entry not named this way, or two
+that share a date and number. The `decision-numbers` pre-commit hook runs it on every commit and on a merge without
+conflicts, and stops either one. Where hooks don't run — a merge on GitHub, an agent's commit — run it after merging
+the base branch.
+
+When it finds two entries with one number, keep the entry already on the base branch, because it is merged and
+cited. Move yours to the next free number for that date with `git mv`, and update every reference to its old filename.
 
 Cite an entry by filename. Never by an ordinal from the spec it came from: those numbers
 are scoped to one run and mean something different in the next one.
