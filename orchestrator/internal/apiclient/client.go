@@ -21,6 +21,8 @@ type Client struct {
 	baseURL     string
 	bearerToken string // Optional Bearer token for authentication
 	httpClient  *http.Client
+	// untimedClient has no client-side timeout, for calls bounded by the caller's ctx deadline.
+	untimedClient *http.Client
 }
 
 func NewClient(baseURL string) *Client {
@@ -29,6 +31,7 @@ func NewClient(baseURL string) *Client {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
+		untimedClient: &http.Client{},
 	}
 }
 
@@ -40,6 +43,7 @@ func NewAuthenticatedClient(baseURL, bearerToken string) *Client {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
+		untimedClient: &http.Client{},
 	}
 }
 
@@ -54,8 +58,8 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("api error %d: %s", e.StatusCode, e.Body)
 }
 
-func (c *Client) do(req *http.Request) ([]byte, error) {
-	resp, err := c.httpClient.Do(req)
+func (c *Client) do(hc *http.Client, req *http.Request) ([]byte, error) {
+	resp, err := hc.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("api request failed: %w", err)
 	}
@@ -71,6 +75,10 @@ func (c *Client) do(req *http.Request) ([]byte, error) {
 }
 
 func (c *Client) doJSON(ctx context.Context, method, path string, reqBody interface{}) ([]byte, error) {
+	return c.doJSONWith(ctx, c.httpClient, method, path, reqBody)
+}
+
+func (c *Client) doJSONWith(ctx context.Context, hc *http.Client, method, path string, reqBody interface{}) ([]byte, error) {
 	var bodyReader io.Reader
 	if reqBody != nil {
 		data, err := json.Marshal(reqBody)
@@ -89,7 +97,7 @@ func (c *Client) doJSON(ctx context.Context, method, path string, reqBody interf
 	if c.bearerToken != "" {
 		req.Header.Set("Authorization", "Bearer "+c.bearerToken)
 	}
-	return c.do(req)
+	return c.do(hc, req)
 }
 
 // --- Node Execution ---
@@ -573,9 +581,11 @@ const GateFinalizeRejectedType = "GateFinalizeRejected"
 // doGateFinalize posts to a gate-finalize endpoint. A 400, 404 or 409 is the API refusing the
 // request itself, so a retry gets the same answer: it comes back as the *ApplicationError itself,
 // because the SDK reads an error's retry class from its concrete type and a wrapped one retries.
+// ctx's deadline is the only time bound: complete can write a roadmap for longer than the
+// default client's timeout, and a cut-off retry would race the write it interrupted.
 func (c *Client) doGateFinalize(ctx context.Context, op string, runID, execID uuid.UUID, rest string, reqBody any) ([]byte, error) {
 	path := fmt.Sprintf("/internal/runs/%s/node-executions/%s/gate-finalize%s", runID, execID, rest)
-	resp, err := c.doJSON(ctx, http.MethodPost, path, reqBody)
+	resp, err := c.doJSONWith(ctx, c.untimedClient, http.MethodPost, path, reqBody)
 	if err == nil {
 		return resp, nil
 	}

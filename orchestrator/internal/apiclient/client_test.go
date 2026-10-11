@@ -602,9 +602,8 @@ func TestRefuseGateApproval(t *testing.T) {
 
 // gateFinalizeCalls runs every gate-finalize client method against client, so one table can pin
 // the error classes of all five.
-func gateFinalizeCalls(client *Client) map[string]func() error {
+func gateFinalizeCalls(ctx context.Context, client *Client) map[string]func() error {
 	run, exec, approval := uuid.New(), uuid.New(), uuid.New()
-	ctx := context.Background()
 	return map[string]func() error{
 		"held": func() error { _, err := client.ClaimHeldApproval(ctx, run, exec); return err },
 		"plan": func() error { _, err := client.PlanGateFinalize(ctx, run, exec, approval); return err },
@@ -626,7 +625,7 @@ func TestGateFinalize_RejectionsAreNonRetryable(t *testing.T) {
 				w.WriteHeader(status)
 				w.Write([]byte("rejected"))
 			})
-			for name, call := range gateFinalizeCalls(client) {
+			for name, call := range gateFinalizeCalls(context.Background(), client) {
 				t.Run(name, func(t *testing.T) {
 					err := call()
 					appErr, ok := err.(*temporal.ApplicationError)
@@ -651,7 +650,7 @@ func TestGateFinalize_ServerAndNetworkFailuresStayRetryable(t *testing.T) {
 			_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(status)
 			})
-			for name, call := range gateFinalizeCalls(client) {
+			for name, call := range gateFinalizeCalls(context.Background(), client) {
 				t.Run(name, func(t *testing.T) {
 					err := call()
 					require.Error(t, err)
@@ -669,7 +668,7 @@ func TestGateFinalize_ServerAndNetworkFailuresStayRetryable(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 		client := NewClient(server.URL)
 		server.Close()
-		for name, call := range gateFinalizeCalls(client) {
+		for name, call := range gateFinalizeCalls(context.Background(), client) {
 			t.Run(name, func(t *testing.T) {
 				err := call()
 				require.Error(t, err)
@@ -691,4 +690,65 @@ func TestGateFinalize_OtherEndpointsKeepTheirRetryClass(t *testing.T) {
 	require.Error(t, err)
 	var appErr *temporal.ApplicationError
 	assert.False(t, errors.As(err, &appErr))
+}
+
+// A gate step can legitimately outlast the client's default timeout (a large roadmap write), so
+// the activity's own deadline must be the only bound on it. The default client's timeout is
+// shrunk here so the test need not wait the real 30 seconds.
+func TestGateFinalize_IsNotCutShortByTheDefaultClientTimeout(t *testing.T) {
+	const handlerTime = 300 * time.Millisecond
+	_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-time.After(handlerTime):
+		case <-r.Context().Done():
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{}`))
+	})
+	client.httpClient.Timeout = handlerTime / 6
+
+	for name, call := range gateFinalizeCalls(context.Background(), client) {
+		t.Run(name, func(t *testing.T) {
+			require.NoError(t, call())
+		})
+	}
+
+	t.Run("every other call keeps the default timeout", func(t *testing.T) {
+		_, err := client.GetGraphRuntime(context.Background(), uuid.New())
+		require.Error(t, err)
+		var netErr interface{ Timeout() bool }
+		require.True(t, errors.As(err, &netErr) && netErr.Timeout(), "want the client timeout, got %v", err)
+	})
+}
+
+func TestGateFinalize_TheContextStillBoundsTheCall(t *testing.T) {
+	_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	})
+
+	t.Run("deadline", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+		for name, call := range gateFinalizeCalls(ctx, client) {
+			t.Run(name, func(t *testing.T) {
+				start := time.Now()
+				err := call()
+				require.ErrorIs(t, err, context.DeadlineExceeded)
+				assert.Less(t, time.Since(start), 5*time.Second)
+				var appErr *temporal.ApplicationError
+				assert.False(t, errors.As(err, &appErr), "an expired deadline is retryable")
+			})
+		}
+	})
+
+	t.Run("cancelled", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		for name, call := range gateFinalizeCalls(ctx, client) {
+			t.Run(name, func(t *testing.T) {
+				require.ErrorIs(t, call(), context.Canceled)
+			})
+		}
+	})
 }
