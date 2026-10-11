@@ -61,11 +61,12 @@ type GatePRResult struct {
 	RowID    uuid.UUID  `json:"rowId"`
 	Kind     string     `json:"kind"`
 	MergedAt *time.Time `json:"mergedAt,omitempty"`
-	MergeSha string     `json:"mergeSha"`
+	MergeSha string     `json:"mergeSha,omitempty"`
 }
 
 // GateGitHubResult carries one outcome. Stale: nothing was merged. Refused: a person must act,
-// and Merges holds only what already merged. Otherwise Merges covers every pull request.
+// and Merges holds what merged, was found merged, or was found closed. Otherwise Merges covers
+// every pull request.
 type GateGitHubResult struct {
 	Compares []GateCompareResult `json:"compares"`
 	Stale    bool                `json:"stale"`
@@ -76,6 +77,30 @@ type GateGitHubResult struct {
 // recordHeartbeat is the SDK's RecordHeartbeat behind a seam, which panics outside a running
 // activity. Reassigned only from _test.go, and never from a test calling t.Parallel.
 var recordHeartbeat = temporalactivity.RecordHeartbeat
+
+const (
+	gatePhaseCompare = "compare"
+	gatePhaseInspect = "inspect"
+	gatePhaseMerge   = "merge"
+)
+
+// gateProgress is what every heartbeat saves for a retry. A retry that finds Phase merge skips the
+// compares: the merges an earlier attempt made are on main by then and would read as drift.
+type gateProgress struct {
+	Phase    string              `json:"phase"`
+	Index    int                 `json:"index"`
+	Compares []GateCompareResult `json:"compares,omitempty"`
+}
+
+// savedProgress is the previous attempt's last heartbeat; one that cannot be read counts as none,
+// which re-runs the compares. A seam like recordHeartbeat, for the same reason.
+var savedProgress = func(ctx context.Context) (gateProgress, bool) {
+	var p gateProgress
+	if !temporalactivity.HasHeartbeatDetails(ctx) || temporalactivity.GetHeartbeatDetails(ctx, &p) != nil {
+		return gateProgress{}, false
+	}
+	return p, true
+}
 
 // RunGateGitHubSteps re-checks each repo's base, then inspects and merges the pull requests. A
 // failure a person must act on is Refused; one that may heal is an error for Temporal to retry,
@@ -104,20 +129,31 @@ func (a *Activities) RunGateGitHubSteps(ctx context.Context, p GateGitHubParams)
 	}
 	s := &gateSteps{gh: a.gh, token: tok.Value, method: p.MergeMethod}
 
-	if err := s.compare(ctx, p.Compares, &res); err != nil || res.Stale || res.Refused != "" {
+	if saved, ok := savedProgress(ctx); ok && saved.Phase == gatePhaseMerge {
+		s.merging = true
+		res.Compares = append(res.Compares, saved.Compares...)
+	} else if err := s.compare(ctx, p.Compares, &res); err != nil || res.Stale || res.Refused != "" {
 		return res, err
 	}
-	queue, blockers, err := s.inspect(ctx, p.PRs, &res)
+	s.passed = res.Compares
+	in, err := s.inspect(ctx, p.PRs, &res)
 	if err != nil {
 		return res, err
 	}
-	if len(blockers) > 0 {
-		res.Merges = []GatePRResult{}
-		res.Refused = "Approval needs every pull request to be mergeable; nothing was merged. " +
-			strings.Join(blockers, "; ")
+	if len(in.blockers) > 0 {
+		res.Refused = refusalBeforeMerging(in)
 		return res, nil
 	}
-	return res, s.merge(ctx, queue, &res)
+	return res, s.merge(ctx, in.queue, &res)
+}
+
+func refusalBeforeMerging(in inspection) string {
+	text := "Approval needs every pull request to be mergeable; nothing was merged. "
+	if len(in.alreadyMerged) > 0 {
+		text = "Approval needs every pull request to be mergeable; nothing more was merged. Already merged: " +
+			strings.Join(in.alreadyMerged, ", ") + ". "
+	}
+	return text + strings.Join(in.blockers, "; ")
 }
 
 // bindGateRun refuses a run id the workflow's own id contradicts: the params travel through the
@@ -141,6 +177,23 @@ type gateSteps struct {
 	gh     *github.Client
 	token  string
 	method string
+	// merging is set on a retry that resumed in the merge phase: every later heartbeat keeps
+	// that phase, or a second failure before the first merge would send the next retry to re-compare.
+	merging bool
+	passed  []GateCompareResult
+}
+
+func (s *gateSteps) beat(ctx context.Context, phase string, i int) {
+	if s.merging {
+		phase = gatePhaseMerge
+	}
+	recordHeartbeat(ctx, gateProgress{Phase: phase, Index: i, Compares: s.passed})
+}
+
+type inspection struct {
+	queue         []queuedMerge
+	blockers      []string
+	alreadyMerged []string
 }
 
 type queuedMerge struct {
@@ -153,7 +206,7 @@ type queuedMerge struct {
 // moved would ship a change nobody tested against the new main.
 func (s *gateSteps) compare(ctx context.Context, compares []GateCompare, res *GateGitHubResult) error {
 	for i, c := range compares {
-		recordHeartbeat(ctx, i)
+		s.beat(ctx, gatePhaseCompare, i)
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -182,21 +235,22 @@ func (s *gateSteps) compare(ctx context.Context, compares []GateCompare, res *Ga
 
 // inspect reads every pull request before anything merges, so one that cannot merge refuses the
 // whole approval instead of leaving the repos half-merged.
-func (s *gateSteps) inspect(ctx context.Context, prs []GatePR, res *GateGitHubResult) (queue []queuedMerge, blockers []string, err error) {
+func (s *gateSteps) inspect(ctx context.Context, prs []GatePR, res *GateGitHubResult) (inspection, error) {
+	var in inspection
 	for i, pr := range prs {
-		recordHeartbeat(ctx, i)
+		s.beat(ctx, gatePhaseInspect, i)
 		if err := ctx.Err(); err != nil {
-			return nil, nil, err
+			return inspection{}, err
 		}
 		label := prLabel(pr)
 		detail, err := s.gh.PullRequest(ctx, s.token, pr.OwnerRepo, pr.Number)
 		if err != nil {
 			reason, refused := readRefusal(err, pr.OwnerRepo, label)
 			if !refused {
-				return nil, nil, failed(ctx, "inspect "+label, err)
+				return inspection{}, failed(ctx, "inspect "+label, err)
 			}
-			if !slices.Contains(blockers, reason) {
-				blockers = append(blockers, reason)
+			if !slices.Contains(in.blockers, reason) {
+				in.blockers = append(in.blockers, reason)
 			}
 			continue
 		}
@@ -204,18 +258,19 @@ func (s *gateSteps) inspect(ctx context.Context, prs []GatePR, res *GateGitHubRe
 		case detail.Merged:
 			res.Merges = append(res.Merges,
 				GatePRResult{RowID: pr.RowID, Kind: GatePRAlreadyMerged, MergedAt: utcOrNow(detail.MergedAt)})
+			in.alreadyMerged = append(in.alreadyMerged, label)
 		case detail.State == "closed":
 			res.Merges = append(res.Merges, GatePRResult{RowID: pr.RowID, Kind: GatePRSkippedClosed})
 		case detail.Draft:
-			blockers = append(blockers, label+" is a draft — mark it ready for review or merge it by hand")
+			in.blockers = append(in.blockers, label+" is a draft — mark it ready for review or merge it by hand")
 		// A nil Mergeable is GitHub still computing it, and the merge call refuses a real conflict.
 		case detail.Mergeable != nil && !*detail.Mergeable:
-			blockers = append(blockers, label+" has merge conflicts with "+detail.BaseRef)
+			in.blockers = append(in.blockers, label+" has merge conflicts with "+detail.BaseRef)
 		default:
-			queue = append(queue, queuedMerge{pr: pr, label: label, head: detail.HeadSHA})
+			in.queue = append(in.queue, queuedMerge{pr: pr, label: label, head: detail.HeadSHA})
 		}
 	}
-	return queue, blockers, nil
+	return in, nil
 }
 
 // merge merges in order, each pinned to the head inspected, and stops at the first refusal. A
@@ -223,7 +278,7 @@ func (s *gateSteps) inspect(ctx context.Context, prs []GatePR, res *GateGitHubRe
 func (s *gateSteps) merge(ctx context.Context, queue []queuedMerge, res *GateGitHubResult) error {
 	var mergedNow []string
 	for i, item := range queue {
-		recordHeartbeat(ctx, i)
+		s.beat(ctx, gatePhaseMerge, i)
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -234,6 +289,9 @@ func (s *gateSteps) merge(ctx context.Context, queue []queuedMerge, res *GateGit
 			mergedNow = append(mergedNow, item.label)
 			continue
 		}
+		// A merge call that hit the client timeout plus a slow re-read can outlast the heartbeat
+		// timeout, and Temporal would then start a concurrent retry mid-merge.
+		s.beat(ctx, gatePhaseMerge, i)
 		recovered, ok := s.reReadAsMerged(ctx, item.pr)
 		if cerr := ctx.Err(); cerr != nil {
 			return cerr

@@ -15,6 +15,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	temporalactivity "go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 
@@ -206,25 +208,53 @@ type gateRig struct {
 	gh     *gateGitHub
 	prov   *fakeGateProvider
 	run    uuid.UUID
-	beats  []int
+	beats  []gateProgress
 	onBeat func()
+	// resume is what an earlier attempt's last heartbeat left behind; nil means a first attempt.
+	resume *gateProgress
 }
 
+// newGateRig stubs the SDK's heartbeat calls, which panic outside a running activity.
 func newGateRig(t *testing.T) *gateRig {
+	t.Helper()
+	rig := newGateBase(t)
+	originalBeat, originalSaved := recordHeartbeat, savedProgress
+	recordHeartbeat = func(_ context.Context, details ...interface{}) {
+		p, ok := details[0].(gateProgress)
+		if !ok {
+			t.Errorf("heartbeat details are a %T, want gateProgress", details[0])
+			return
+		}
+		rig.beats = append(rig.beats, p)
+		if rig.onBeat != nil {
+			rig.onBeat()
+		}
+	}
+	savedProgress = func(context.Context) (gateProgress, bool) {
+		if rig.resume == nil {
+			return gateProgress{}, false
+		}
+		return *rig.resume, true
+	}
+	t.Cleanup(func() { recordHeartbeat, savedProgress = originalBeat, originalSaved })
+	return rig
+}
+
+func newGateBase(t *testing.T) *gateRig {
 	t.Helper()
 	rig := &gateRig{run: stubbedRun(t), gh: newGateGitHub(t), prov: &fakeGateProvider{}}
 	rig.acts = &Activities{}
 	rig.acts.SetCredentials(rig.prov)
 	rig.acts.SetGitHub(github.New(rig.gh.srv.URL))
-	original := recordHeartbeat
-	recordHeartbeat = func(_ context.Context, details ...interface{}) {
-		rig.beats = append(rig.beats, details[0].(int))
-		if rig.onBeat != nil {
-			rig.onBeat()
-		}
-	}
-	t.Cleanup(func() { recordHeartbeat = original })
 	return rig
+}
+
+func (r *gateRig) beatNames() []string {
+	var out []string
+	for _, b := range r.beats {
+		out = append(out, fmt.Sprintf("%s:%d", b.Phase, b.Index))
+	}
+	return out
 }
 
 func (r *gateRig) params(compares []GateCompare, prs []GatePR) GateGitHubParams {
@@ -404,7 +434,37 @@ func TestRunGateGitHubSteps_DraftOrConflictRefusesBeforeMergingAnything(t *testi
 	assert.Contains(t, res.Refused, "acme/web#2 is a draft")
 	assert.Contains(t, res.Refused, "acme/api#3 has merge conflicts with release")
 	assert.NotContains(t, res.Refused, "acme/web#1")
-	assert.Empty(t, res.Merges, "a refused inspection reports no merges")
+	assert.NotContains(t, res.Refused, "Already merged")
+	assert.Equal(t, []GatePRResult{{RowID: closed.RowID, Kind: GatePRSkippedClosed}}, res.Merges)
+	assert.Empty(t, rig.gh.puts())
+}
+
+func TestRunGateGitHubSteps_RefusalBeforeMergingKeepsWhatInspectionFoundAlreadyDone(t *testing.T) {
+	rig := newGateRig(t)
+	done, draft, closed := gatePR("acme/web", 1), gatePR("acme/web", 2), gatePR("acme/api", 3)
+	m := openPR("head-one")
+	m.State, m.Merged, m.MergedAt = "closed", true, "2026-10-10T12:00:00Z"
+	rig.gh.pr(done, m)
+	d := openPR("head-two")
+	d.Draft = true
+	rig.gh.pr(draft, d)
+	c := openPR("head-three")
+	c.State = "closed"
+	rig.gh.pr(closed, c)
+
+	res, err := rig.exec(t, nil, []GatePR{done, draft, closed})
+
+	require.NoError(t, err)
+	require.Len(t, res.Merges, 2)
+	assert.Equal(t, GatePRAlreadyMerged, res.Merges[0].Kind)
+	assert.Equal(t, done.RowID, res.Merges[0].RowID)
+	require.NotNil(t, res.Merges[0].MergedAt)
+	assert.True(t, res.Merges[0].MergedAt.Equal(time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)))
+	assert.Equal(t, GatePRSkippedClosed, res.Merges[1].Kind)
+	assert.Equal(t, closed.RowID, res.Merges[1].RowID)
+	assert.Contains(t, res.Refused, "acme/web#2 is a draft")
+	assert.Contains(t, res.Refused, "Already merged: acme/web#1")
+	assert.NotContains(t, res.Refused, "nothing was merged", "one pull request is already merged")
 	assert.Empty(t, rig.gh.puts())
 }
 
@@ -734,7 +794,7 @@ func TestRunGateGitHubSteps_ErrorsWhenNoCredentialsOrClientAreConfigured(t *test
 	require.Error(t, err)
 }
 
-func TestRunGateGitHubSteps_HeartbeatsOncePerCallWithItsIndex(t *testing.T) {
+func TestRunGateGitHubSteps_HeartbeatsEachCallWithItsPhaseAndIndex(t *testing.T) {
 	rig := newGateRig(t)
 	web := gateCompare("acme/web")
 	first, second := gatePR("acme/web", 1), gatePR("acme/api", 2)
@@ -747,7 +807,145 @@ func TestRunGateGitHubSteps_HeartbeatsOncePerCallWithItsIndex(t *testing.T) {
 	_, err := rig.exec(t, []GateCompare{web}, []GatePR{first, second})
 
 	require.NoError(t, err)
-	assert.Equal(t, []int{0, 0, 1, 0, 1}, rig.beats)
+	assert.Equal(t, []string{"compare:0", "inspect:0", "inspect:1", "merge:0", "merge:1"}, rig.beatNames())
+	assert.Equal(t, []GateCompareResult{{GitRepoID: web.GitRepoID}}, rig.beats[3].Compares,
+		"the compares that passed ride along once merging has begun")
+}
+
+func TestRunGateGitHubSteps_HeartbeatsBeforeTheReReadSoASlowOneCannotTimeOutTheAttempt(t *testing.T) {
+	rig := newGateRig(t)
+	pr := gatePR("acme/web", 1)
+	rig.gh.pr(pr, openPR("head-one"))
+	rig.gh.merge(pr, statusReply(http.StatusBadGateway))
+	var requestsAtBeat []int
+	rig.onBeat = func() { requestsAtBeat = append(requestsAtBeat, len(rig.gh.sequence())) }
+
+	_, err := rig.exec(t, nil, []GatePR{pr})
+
+	require.Error(t, err)
+	assert.Equal(t, []string{"inspect:0", "merge:0", "merge:0"}, rig.beatNames())
+	assert.Equal(t, []int{0, 1, 2}, requestsAtBeat, "the last beat lands after the merge call and before the re-read")
+}
+
+func TestRunGateGitHubSteps_ResumedAttemptSkipsComparesAndKeepsTheMergePhaseInEveryBeat(t *testing.T) {
+	rig := newGateRig(t)
+	web := gateCompare("acme/web")
+	pr := gatePR("acme/web", 1)
+	earlier := []GateCompareResult{{GitRepoID: web.GitRepoID}}
+	rig.resume = &gateProgress{Phase: gatePhaseMerge, Index: 1, Compares: earlier}
+	rig.gh.pr(pr, openPR("head-one"))
+	rig.gh.merge(pr, mergeOK("merge-one"))
+
+	res, err := rig.exec(t, []GateCompare{web}, []GatePR{pr})
+
+	require.NoError(t, err)
+	assert.False(t, res.Stale)
+	assert.Equal(t, earlier, res.Compares)
+	assert.Equal(t, []string{"GET " + prPath(pr), "PUT " + mergePath(pr)}, rig.gh.sequence(), "no compare is made")
+	assert.Equal(t, []string{"merge:0", "merge:0"}, rig.beatNames(),
+		"a second failure before merging must still resume, so the phase never steps back")
+}
+
+func TestRunGateGitHubSteps_AttemptThatNeverReachedMergingStillRechecks(t *testing.T) {
+	for _, phase := range []string{gatePhaseCompare, gatePhaseInspect} {
+		t.Run(phase, func(t *testing.T) {
+			rig := newGateRig(t)
+			web := gateCompare("acme/web")
+			rig.resume = &gateProgress{Phase: phase}
+			rig.gh.compare(web, 2)
+
+			res, err := rig.exec(t, []GateCompare{web}, []GatePR{gatePR("acme/web", 1)})
+
+			require.NoError(t, err)
+			assert.True(t, res.Stale)
+			assert.Equal(t, []string{"GET " + comparePath(web)}, rig.gh.sequence())
+		})
+	}
+}
+
+func TestRunGateGitHubSteps_RetryAfterPartialMergeResumesMergingInsteadOfRechecking(t *testing.T) {
+	run := stubbedRun(t)
+	gh := newGateGitHub(t)
+	acts := &Activities{}
+	acts.SetCredentials(&fakeGateProvider{})
+	acts.SetGitHub(github.New(gh.srv.URL))
+	web := gateCompare("acme/web")
+	first, second := gatePR("acme/web", 1), gatePR("acme/web", 2)
+
+	// Once the first pull request lands, main contains it, so a compare now reads as drift.
+	var mu sync.Mutex
+	firstLanded, secondPuts := false, 0
+	gh.route(http.MethodGet, comparePath(web), func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		ahead := 0
+		if firstLanded {
+			ahead = 1
+		}
+		mu.Unlock()
+		jsonReply(http.StatusOK, map[string]any{"ahead_by": ahead})(w, r)
+	})
+	gh.route(http.MethodGet, prPath(first), func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		s := openPR("head-one")
+		if firstLanded {
+			s.State, s.Merged, s.MergedAt = "closed", true, "2026-10-10T12:00:00Z"
+		}
+		mu.Unlock()
+		jsonReply(http.StatusOK, s.wire())(w, r)
+	})
+	gh.merge(first, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		firstLanded = true
+		mu.Unlock()
+		mergeOK("merge-one")(w, r)
+	})
+	gh.pr(second, openPR("head-two"))
+	gh.merge(second, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		secondPuts++
+		n := secondPuts
+		mu.Unlock()
+		if n == 1 {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		mergeOK("merge-two")(w, r)
+	})
+	params := GateGitHubParams{RunID: run, Compares: []GateCompare{web}, PRs: []GatePR{first, second}, MergeMethod: "squash"}
+	var suite testsuite.WorkflowTestSuite
+
+	attempt1 := suite.NewTestActivityEnvironment()
+	Register(attempt1, acts)
+	var lastBeat converter.EncodedValues
+	attempt1.SetOnActivityHeartbeatListener(func(_ *temporalactivity.Info, details converter.EncodedValues) {
+		lastBeat = details
+	})
+	_, err := attempt1.ExecuteActivity("RunGateGitHubSteps", params)
+	require.Error(t, err, "the 502 on the second pull request fails the attempt")
+	require.NotNil(t, lastBeat, "a failed attempt flushes its last heartbeat for the retry")
+	var progress gateProgress
+	require.NoError(t, lastBeat.Get(&progress))
+	require.Equal(t, gatePhaseMerge, progress.Phase)
+
+	attempt2 := suite.NewTestActivityEnvironment()
+	Register(attempt2, acts)
+	attempt2.SetHeartbeatDetails(progress)
+	val, err := attempt2.ExecuteActivity("RunGateGitHubSteps", params)
+
+	require.NoError(t, err)
+	var res GateGitHubResult
+	require.NoError(t, val.Get(&res))
+	assert.False(t, res.Stale, "the merge the first attempt made is not drift")
+	assert.Empty(t, res.Refused)
+	assert.Equal(t, []GateCompareResult{{GitRepoID: web.GitRepoID}}, res.Compares)
+	require.Len(t, res.Merges, 2)
+	assert.Equal(t, GatePRAlreadyMerged, res.Merges[0].Kind)
+	assert.Equal(t, first.RowID, res.Merges[0].RowID)
+	assert.Equal(t, GatePRMerged, res.Merges[1].Kind)
+	assert.Equal(t, second.RowID, res.Merges[1].RowID)
+	assert.Equal(t, "merge-two", res.Merges[1].MergeSha)
+	assert.Equal(t, 1, gh.count(http.MethodGet, comparePath(web)), "only the first attempt compares")
+	assert.Equal(t, 1, gh.count(http.MethodPut, mergePath(first)), "the first pull request is never merged twice")
 }
 
 func TestGateTypesCarryTheWireNamesTheOrchestratorCopies(t *testing.T) {
@@ -777,9 +975,9 @@ func TestGateTypesCarryTheWireNamesTheOrchestratorCopies(t *testing.T) {
 	assert.ElementsMatch(t, []string{"gitRepoId", "aheadBy", "baseGone"},
 		names(keys(GateCompareResult{GitRepoID: id})))
 	assert.ElementsMatch(t, []string{"rowId", "kind", "mergedAt", "mergeSha"},
-		names(keys(GatePRResult{RowID: id, MergedAt: &at})))
-	assert.ElementsMatch(t, []string{"rowId", "kind", "mergeSha"},
-		names(keys(GatePRResult{RowID: id})), "mergedAt is omitted when there is none")
+		names(keys(GatePRResult{RowID: id, MergedAt: &at, MergeSha: "abc"})))
+	assert.ElementsMatch(t, []string{"rowId", "kind"},
+		names(keys(GatePRResult{RowID: id})), "mergedAt and mergeSha are omitted when there are none")
 	assert.ElementsMatch(t, []string{"compares", "stale", "merges", "refused"},
 		names(keys(GateGitHubResult{})))
 	assert.Equal(t, "MERGED", GatePRMerged)
