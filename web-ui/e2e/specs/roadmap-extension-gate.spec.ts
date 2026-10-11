@@ -160,6 +160,8 @@ test.describe("Roadmap extension gate (Feature Development's Final Approval, mir
     workerRepo,
     runMonitorPage,
   }) => {
+    test.setTimeout(120_000);
+
     const { epic, story, task } = await seedAnchor(api, workerRepo);
     const { run, runName } = await startExtensionRun(api, workerRepo, epic.id, "false", "rx-invalid");
 

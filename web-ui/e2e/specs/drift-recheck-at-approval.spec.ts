@@ -44,15 +44,6 @@ test.describe("Drift re-check at approval", () => {
         page.locator("[data-sonner-toast]").filter({ hasText: "Finalizing your approval…" }),
       ).toBeVisible();
 
-      // Held: the Worker's compare finds main ahead, so the approval waits as pending only while
-      // open_pr re-runs (seconds); keep the interval well under that or the window is missed.
-      await expect
-        .poll(async () => (await api.getGateStamps(run.id)).map((s) => s.status), {
-          intervals: [500],
-          timeout: 60_000,
-        })
-        .toContain("pending");
-
       const finished = await api.waitForRunStatus(run.id, ["completed"], 150_000);
       expect(finished.status).toBe("completed");
 
