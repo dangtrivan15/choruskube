@@ -4,6 +4,19 @@
       "priority": 1,
       "request": {
         "method": "GET",
+        "urlPathPattern": "/repos/[^/]+/[^/]+/compare/deadbeef[0-9a-f]{32}\\.\\.\\..+",
+        "headers": { "Authorization": { "contains": "Bearer " } }
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "body": "{\"ahead_by\":2,\"status\":\"behind\"}"
+      }
+    },
+    {
+      "priority": 1,
+      "request": {
+        "method": "GET",
         "urlPathPattern": "/repos/[^/]+/mock-frontend/compare/.+",
         "headers": {
           "Authorization": { "contains": "Bearer " }

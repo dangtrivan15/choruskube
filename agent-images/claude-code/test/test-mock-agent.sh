@@ -332,6 +332,89 @@ set -e
   && ok "a config.json with no session_id parks again (not a one-shot toggle)" \
   || fail "a config.json with no session_id parks again (not a one-shot toggle)"
 
+# --- drift_recheck: a stale base on the first pass only ---
+# The approval gate holds an approval when GitHub's compare says main moved past the
+# recorded base. The E2E stack's WireMock calls a base behind main only when it matches
+# the stale-base stub, so the mock's first-pass base must match that stub's pattern, and
+# the base the entrypoint records on later passes must not. Run as a real subprocess
+# with register-pr/record-base stubbed on PATH, same as rate_limited above.
+DR_BIN="$TESTDIR/dr_bin"
+DR_CONFIG="$TESTDIR/dr_config.json"
+DR_OUT="$TESTDIR/dr_out"
+DR_BASES="$TESTDIR/dr_bases"
+DR_MOCK="$TESTDIR/mock-agent_drift_recheck.sh"
+COMPARE_STUBS="$(dirname "${BASH_SOURCE[0]}")/../../../e2e/wiremock-stubs/github-compare.json"
+mkdir -p "$DR_BIN"
+cat > "$DR_BIN/register-pr" <<STUB
+#!/bin/bash
+echo "\$*" >> "$TESTDIR/dr_register.log"
+STUB
+cat > "$DR_BIN/record-base" <<STUB
+#!/bin/bash
+cat "\$REPO_BASE_DIR"/*.json > "$TESTDIR/dr_recorded.json"
+STUB
+chmod +x "$DR_BIN/register-pr" "$DR_BIN/record-base"
+sed -e "s#/workspace/config.json#$DR_CONFIG#g" -e "s#/workspace/out#$DR_OUT#g" \
+  "$MOCK_AGENT" > "$DR_MOCK"
+
+run_drift_recheck() {
+  # $1 = iteration. Leaves combined output in DR_RUN_OUT and the exit status in DR_RUN_RC.
+  jq -n --argjson it "$1" \
+    '{iteration: $it, repos: [{id: "repo-id-1", name: "mock-repo",
+      url: "https://github.com/e2e-test/mock-repo", local_path: "/unused"}]}' > "$DR_CONFIG"
+  rm -f "$TESTDIR/dr_register.log" "$TESTDIR/dr_recorded.json"
+  set +e
+  DR_RUN_OUT=$(PATH="$DR_BIN:$PATH" REPO_BASE_DIR="$DR_BASES" bash "$DR_MOCK" drift_recheck --pr-number 7001 2>&1)
+  DR_RUN_RC=$?
+  set -e
+}
+
+# The stale-base stub's own pattern, matched the way WireMock matches a whole path.
+STALE_PATTERN=$(jq -r '.mappings[] | select(.response.body | contains("\"behind\"")) | .request.urlPathPattern' \
+  "$COMPARE_STUBS" 2>/dev/null || true)
+matches_stale_stub() {
+  [ -n "$STALE_PATTERN" ] && printf '%s\n' "/repos/e2e-test/mock-repo/compare/$1...main" | grep -Eq "^(${STALE_PATTERN})\$"
+}
+
+# --- First pass: registers the PR and records a base the compare stub calls stale ---
+run_drift_recheck 1
+[ "$DR_RUN_RC" -eq 0 ] && ok "drift_recheck first pass exits 0" \
+  || fail "drift_recheck first pass exits 0 ($DR_RUN_OUT)"
+grep -q -- "--repo-id repo-id-1 .*--pr-number 7001" "$TESTDIR/dr_register.log" 2>/dev/null \
+  && ok "drift_recheck first pass registers the fixture PR" \
+  || fail "drift_recheck first pass registers the fixture PR ($(cat "$TESTDIR/dr_register.log" 2>/dev/null))"
+DR_BASE=$(jq -r 'select(.gitRepoId == "repo-id-1") | .baseSha' "$TESTDIR/dr_recorded.json" 2>/dev/null || true)
+[ "$(jq -r 'select(.gitRepoId == "repo-id-1") | .outcome' "$TESTDIR/dr_recorded.json" 2>/dev/null)" = "clean" ] \
+  && ok "drift_recheck first pass records a clean base through record-base" \
+  || fail "drift_recheck first pass records a clean base through record-base ($DR_RUN_OUT)"
+matches_stale_stub "$DR_BASE" \
+  && ok "drift_recheck's first-pass base hits the compare stub that reports main ahead" \
+  || fail "drift_recheck's first-pass base hits the compare stub that reports main ahead (base='$DR_BASE' pattern='$STALE_PATTERN')"
+matches_stale_stub "0123456789abcdef0123456789abcdef01234567" \
+  && fail "the stale-base compare stub also catches an ordinary recorded base" \
+  || ok "the stale-base compare stub leaves an ordinary recorded base current"
+grep -q "pass 1" "$DR_OUT/result.txt" 2>/dev/null \
+  && ok "drift_recheck first pass writes its result artifact" \
+  || fail "drift_recheck first pass writes its result artifact"
+
+# --- Later pass: keeps the base the entrypoint recorded ---
+mkdir -p "$DR_BASES"
+echo '{"gitRepoId":"repo-id-1","outcome":"clean","baseSha":"0123456789abcdef0123456789abcdef01234567","conflictedFiles":[]}' \
+  > "$DR_BASES/mock-repo.json"
+run_drift_recheck 2
+[ "$DR_RUN_RC" -eq 0 ] && ok "drift_recheck later pass exits 0" \
+  || fail "drift_recheck later pass exits 0 ($DR_RUN_OUT)"
+[ ! -e "$TESTDIR/dr_register.log" ] && ok "drift_recheck later pass registers no second PR" \
+  || fail "drift_recheck later pass registers no second PR"
+[ ! -e "$TESTDIR/dr_recorded.json" ] && ok "drift_recheck later pass does not re-record a base" \
+  || fail "drift_recheck later pass does not re-record a base"
+[ "$(jq -r .baseSha "$DR_BASES/mock-repo.json")" = "0123456789abcdef0123456789abcdef01234567" ] \
+  && ok "drift_recheck later pass leaves the entrypoint's record alone" \
+  || fail "drift_recheck later pass leaves the entrypoint's record alone"
+grep -q "pass 2" "$DR_OUT/result.txt" 2>/dev/null \
+  && ok "drift_recheck later pass writes its result artifact" \
+  || fail "drift_recheck later pass writes its result artifact"
+
 # --- Summary ---
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
