@@ -517,6 +517,28 @@ set -e
 [ "$(git -C "$TESTDIR/single-repo.git" rev-parse "$SN_BRANCH")" = "$(git -C "$TESTDIR/single-repo" rev-parse HEAD)" ] \
   && ok "single-repo mode pushes the working branch" || fail "single-repo mode pushes the working branch"
 
+# 21f: a branch the clone rebased no longer fast-forwards origin's copy, and must still be
+# pushed — a plain push is rejected, so the retry would lose the work.
+sn_setup_repo repo-f "$SN_BRANCH"
+echo "first" > "$TESTDIR/repo-f/feature.txt"
+git -C "$TESTDIR/repo-f" add -A
+git -C "$TESTDIR/repo-f" commit -q -m first
+git -C "$TESTDIR/repo-f" push -q origin "HEAD:$SN_BRANCH"
+git -C "$TESTDIR/repo-f" commit -q --amend -m "first, rewritten as a rebase would"
+echo "more work" > "$TESTDIR/repo-f/more.txt"
+SN_REPOS_F=$(jq -nc --arg p "$TESTDIR/repo-f" --arg br "$SN_BRANCH" \
+  '[{name:"repo-f",local_path:$p,working_branch:$br}]')
+sn_build_harness "$SN_REPOS_F" "" "" > "$TESTDIR/safety_diverged.sh"
+set +e
+SN_OUT_F=$(bash "$TESTDIR/safety_diverged.sh" 2>&1)
+SN_RC_F=$?
+set -e
+[ "$SN_RC_F" -eq 0 ] && ok "diverged branch: safety net exits clean" \
+  || fail "diverged branch: safety net exits clean ($SN_OUT_F)"
+[ "$(git -C "$TESTDIR/repo-f.git" rev-parse "$SN_BRANCH")" = "$(git -C "$TESTDIR/repo-f" rev-parse HEAD)" ] \
+  && ok "diverged branch: the rewritten branch reaches origin" \
+  || fail "diverged branch: the rewritten branch reaches origin ($SN_OUT_F)"
+
 # --- Test 22: per-node turn/retry budget — configured values win, absent keeps 100/3 ---
 # The read and the defaults sit in two different parts of entrypoint.sh (config parsing at
 # the top, the assignment inside the AI branch), and a value read at the top is worthless
