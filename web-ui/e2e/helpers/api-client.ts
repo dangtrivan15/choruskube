@@ -17,6 +17,7 @@ import type {
   Readiness,
   AutopilotStatus,
   EpicDependencyResponse,
+  GateStampResponse,
 } from "../../src/lib/types";
 
 // E2e-mode defaults (2xxxx range). Local-mode runs on 1xxxx — override via
@@ -404,6 +405,10 @@ export class TestApiClient {
 
   async getRun(id: string): Promise<WorkflowRun> {
     return this.get(`/api/v1/runs/${id}`);
+  }
+
+  async getGateStamps(runId: string): Promise<GateStampResponse[]> {
+    return this.get(`/api/v1/runs/${runId}/gate-stamps`);
   }
 
   async startRun(body: {
