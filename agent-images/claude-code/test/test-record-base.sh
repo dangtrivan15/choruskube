@@ -101,6 +101,23 @@ run_record_base "$TESTDIR/bad"
 [ ! -e "$TESTDIR/curl.args" ] && ok "malformed base file: curl not called" \
   || fail "malformed base file: curl not called"
 
+# --- Test 7: this execution's identity or secret unset — warned, never fatal, nothing posted ---
+for missing in RUN_ID NODE_EXECUTION_ID JOB_SECRET; do
+  rm -f "$TESTDIR/curl.args"
+  set +e
+  RB_OUT=$(
+    export JOB_SECRET=s RUN_ID=run-1 NODE_EXECUTION_ID=exec-1
+    unset "$missing"
+    PATH="$FAKE_BIN:$PATH" REPO_BASE_DIR="$TESTDIR/two" API_SERVER_URL=http://api bash "$RECORD_BASE" 2>&1
+  )
+  RB_RC=$?
+  set -e
+  [ "$RB_RC" -eq 0 ] && ok "$missing unset: exits 0" || fail "$missing unset: exits 0 (rc=$RB_RC: $RB_OUT)"
+  echo "$RB_OUT" | grep -q "WARNING: $missing unset" \
+    && ok "$missing unset: warns on stderr" || fail "$missing unset: warns on stderr ($RB_OUT)"
+  [ ! -e "$TESTDIR/curl.args" ] && ok "$missing unset: curl not called" || fail "$missing unset: curl not called"
+done
+
 # --- Summary ---
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
