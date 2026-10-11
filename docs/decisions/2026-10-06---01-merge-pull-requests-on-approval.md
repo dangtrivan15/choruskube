@@ -1,6 +1,6 @@
 # Approving a merge-declaring gate merges the run's registered pull requests synchronously, before any decision state is written
 
-**Status:** current; its in-request merging is superseded, for gates declaring drift_recheck, by [2026-10-11---01-approval-rechecks-against-current-main](2026-10-11---01-approval-rechecks-against-current-main.md)
+**Status:** current; its in-request merging is superseded, for gates declaring drift_recheck, by [2026-10-11---01-approval-rechecks-against-current-main](2026-10-11---01-approval-rechecks-against-current-main.md), and for every gate opened by workflow code that finalizes approvals itself, by [2026-10-11---02-async-gate-finalize-on-the-worker](2026-10-11---02-async-gate-finalize-on-the-worker.md)
 
 ## Context
 
