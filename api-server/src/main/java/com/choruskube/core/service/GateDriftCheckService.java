@@ -98,6 +98,12 @@ public class GateDriftCheckService {
         }
     }
 
+    public record CompareInput(UUID gitRepoId, String ownerRepo, String branch, String baseSha) {}
+
+    public record DriftInputs(NodeExecution predecessor, List<RepoDrift> known, List<CompareInput> toCompare) {}
+
+    public record CompareResult(UUID gitRepoId, int aheadBy, boolean baseGone) {}
+
     private final NodeExecutionRepository execRepo;
     private final NodeExecutionRepoBaseRepository baseRepo;
     private final GitRepoRepository gitRepoRepo;
@@ -124,16 +130,30 @@ public class GateDriftCheckService {
     }
 
     public DriftCheck check(UUID runId, UUID gateTemplateNodeId, JsonNode snapshot) {
+        DriftInputs inputs = gather(runId, gateTemplateNodeId, snapshot);
+        List<CompareResult> results = new ArrayList<>();
+        String token = null;
+        for (CompareInput input : inputs.toCompare()) {
+            if (token == null) {
+                token = token(runId, input.ownerRepo());
+            }
+            results.add(compareOne(token, input));
+        }
+        return classify(inputs, results);
+    }
+
+    /** Makes no GitHub call and mints no token: a Worker runs the compares this leaves in {@code toCompare}. */
+    public DriftInputs gather(UUID runId, UUID gateTemplateNodeId, JsonNode snapshot) {
         List<UUID> repoIds = repoIdsOf(snapshot);
         NodeExecution predecessor = predecessorOf(runId, gateTemplateNodeId, snapshot);
         if (repoIds.isEmpty() || predecessor == null) {
             // Nothing was built against any repo yet, so there is no tested state to protect.
-            return new DriftCheck(predecessor, List.of());
+            return new DriftInputs(predecessor, List.of(), List.of());
         }
         Map<UUID, NodeExecutionRepoBase> bases = baseRepo.findByNodeExecutionId(predecessor.getId()).stream()
                 .collect(Collectors.toMap(NodeExecutionRepoBase::getGitRepoId, Function.identity(), (a, b) -> a));
-        String token = null;
-        List<RepoDrift> results = new ArrayList<>();
+        List<RepoDrift> known = new ArrayList<>();
+        List<CompareInput> toCompare = new ArrayList<>();
         for (UUID repoId : repoIds) {
             GitRepo repo = gitRepoRepo.findById(repoId).orElse(null);
             if (repo == null) {
@@ -149,19 +169,30 @@ public class GateDriftCheckService {
             String branch =
                     base != null && base.getDefaultBranch() != null ? base.getDefaultBranch() : repo.getDefaultBranch();
             if (base == null) {
-                results.add(new RepoDrift(repoId, ownerRepo, branch, Reason.NO_RECORD, null, 0, List.of()));
+                known.add(new RepoDrift(repoId, ownerRepo, branch, Reason.NO_RECORD, null, 0, List.of()));
             } else if ("conflict".equals(base.getOutcome())) {
-                results.add(new RepoDrift(repoId, ownerRepo, branch, Reason.CONFLICT, null, 0, files(base)));
+                known.add(new RepoDrift(repoId, ownerRepo, branch, Reason.CONFLICT, null, 0, files(base)));
             } else if ("unavailable".equals(base.getOutcome()) || base.getBaseSha() == null) {
-                results.add(new RepoDrift(repoId, ownerRepo, branch, Reason.UNAVAILABLE, null, 0, List.of()));
+                known.add(new RepoDrift(repoId, ownerRepo, branch, Reason.UNAVAILABLE, null, 0, List.of()));
             } else {
-                if (token == null) {
-                    token = token(runId, ownerRepo);
-                }
-                results.add(compare(token, repoId, ownerRepo, branch, base.getBaseSha()));
+                toCompare.add(new CompareInput(repoId, ownerRepo, branch, base.getBaseSha()));
             }
         }
-        return new DriftCheck(predecessor, results);
+        return new DriftInputs(predecessor, known, toCompare);
+    }
+
+    /**
+     * Folds compare answers into the drift verdict. A repo with no answer reads UNAVAILABLE, never
+     * CURRENT, so a lost compare costs one re-check instead of a merge nobody tested.
+     */
+    public DriftCheck classify(DriftInputs inputs, List<CompareResult> results) {
+        Map<UUID, CompareResult> byRepo =
+                results.stream().collect(Collectors.toMap(CompareResult::gitRepoId, Function.identity(), (a, b) -> a));
+        List<RepoDrift> repos = new ArrayList<>(inputs.known());
+        for (CompareInput input : inputs.toCompare()) {
+            repos.add(driftOf(input, byRepo.get(input.gitRepoId())));
+        }
+        return new DriftCheck(inputs.predecessor(), repos);
     }
 
     /** The {@code human_guidance.md} the routed-to node reads when an approval is held. */
@@ -199,18 +230,30 @@ public class GateDriftCheckService {
         return sb.toString();
     }
 
-    private RepoDrift compare(String token, UUID repoId, String ownerRepo, String branch, String baseSha) {
+    private static RepoDrift driftOf(CompareInput in, CompareResult result) {
+        if (result == null) {
+            return new RepoDrift(in.gitRepoId(), in.ownerRepo(), in.branch(), Reason.UNAVAILABLE, null, 0, List.of());
+        }
+        if (result.baseGone()) {
+            return new RepoDrift(
+                    in.gitRepoId(), in.ownerRepo(), in.branch(), Reason.BASE_GONE, in.baseSha(), 0, List.of());
+        }
+        Reason reason = result.aheadBy() > 0 ? Reason.MAIN_MOVED : Reason.CURRENT;
+        return new RepoDrift(
+                in.gitRepoId(), in.ownerRepo(), in.branch(), reason, in.baseSha(), result.aheadBy(), List.of());
+    }
+
+    private CompareResult compareOne(String token, CompareInput input) {
         try {
-            int ahead = gitHubAppService.compareCommits(token, ownerRepo, baseSha, branch);
-            Reason reason = ahead > 0 ? Reason.MAIN_MOVED : Reason.CURRENT;
-            return new RepoDrift(repoId, ownerRepo, branch, reason, baseSha, ahead, List.of());
+            int ahead = gitHubAppService.compareCommits(token, input.ownerRepo(), input.baseSha(), input.branch());
+            return new CompareResult(input.gitRepoId(), ahead, false);
         } catch (GitHubApiException e) {
             if (e.getStatus() == 404) {
-                return new RepoDrift(repoId, ownerRepo, branch, Reason.BASE_GONE, baseSha, 0, List.of());
+                return new CompareResult(input.gitRepoId(), 0, true);
             }
-            throw new GateRecheckUnavailableException(ownerRepo, e);
+            throw new GateRecheckUnavailableException(input.ownerRepo(), e);
         } catch (RuntimeException e) {
-            throw new GateRecheckUnavailableException(ownerRepo, e);
+            throw new GateRecheckUnavailableException(input.ownerRepo(), e);
         }
     }
 

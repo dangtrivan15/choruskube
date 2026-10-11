@@ -2,6 +2,7 @@ package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
@@ -551,6 +552,118 @@ class PullRequestMergeServiceTest {
                         alreadyRef, PullRequestMergeService.Kind.ALREADY_MERGED, clock.instant(), null)));
 
         assertThat(service().note(outcome)).startsWith("Pull requests merged on approval (squash): none.");
+    }
+
+    @Test
+    void planMerge_readsNoGitHub_andListsBlockers() {
+        RunPullRequest merged = pr(1, Instant.parse("2026-01-01T00:00:00Z"));
+        merged.setMergedAt(Instant.parse("2026-01-02T00:00:00Z"));
+        RunPullRequest unresolvable = pr(2, Instant.parse("2026-01-02T00:00:00Z"));
+        unresolvable.setPrNumber(null);
+        unresolvable.setPrUrl("https://example.com/not-a-pull-request");
+        RunPullRequest open = pr(3, Instant.parse("2026-01-03T00:00:00Z"));
+        when(prRepo.findByWorkflowRunId(runId)).thenReturn(List.of(open, unresolvable, merged));
+        stubRepo();
+
+        var plan = service().planMerge(runId, PullRequestMergeMethod.squash);
+
+        assertThat(plan.method()).isEqualTo(PullRequestMergeMethod.squash);
+        assertThat(plan.alreadyMerged()).singleElement().satisfies(r -> {
+            assertThat(r.kind()).isEqualTo(PullRequestMergeService.Kind.ALREADY_MERGED);
+            assertThat(r.pr().rowId()).isEqualTo(merged.getId());
+            assertThat(r.mergedAt()).isEqualTo(merged.getMergedAt());
+        });
+        assertThat(plan.blockers())
+                .singleElement()
+                .asString()
+                .contains("https://example.com/not-a-pull-request")
+                .contains("cannot determine its repository or number");
+        assertThat(plan.toInspect()).singleElement().satisfies(ref -> {
+            assertThat(ref.rowId()).isEqualTo(open.getId());
+            assertThat(ref.ownerRepo()).isEqualTo("org/repo");
+            assertThat(ref.number()).isEqualTo(3);
+        });
+        verifyNoInteractions(gitHubAppService, credentialResolver, auditSink);
+    }
+
+    @Test
+    void outcomeOf_auditsOnlyWhatTheWorkerMerged() throws Exception {
+        var alreadyRef = new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#1", "u1", "org/repo", 1);
+        var mergedRef = new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#2", "u2", "org/repo", 2);
+        var raceRef = new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#3", "u3", "org/repo", 3);
+        var plan = new PullRequestMergeService.MergePlan(
+                PullRequestMergeMethod.squash,
+                List.of(new PullRequestMergeService.Result(
+                        alreadyRef, PullRequestMergeService.Kind.ALREADY_MERGED, clock.instant(), null)),
+                List.of(mergedRef, raceRef),
+                List.of());
+        Instant mergedAt = Instant.parse("2026-10-06T11:00:00Z");
+        UUID heldApprovalId = UUID.randomUUID();
+
+        var outcome = service()
+                .outcomeOf(
+                        runId,
+                        plan,
+                        List.of(
+                                new PullRequestMergeService.WorkerPrResult(
+                                        mergedRef.rowId(), PullRequestMergeService.Kind.MERGED, mergedAt, "mergesha2"),
+                                new PullRequestMergeService.WorkerPrResult(
+                                        raceRef.rowId(), PullRequestMergeService.Kind.ALREADY_MERGED, mergedAt, null)),
+                        heldApprovalId);
+
+        assertThat(outcome.method()).isEqualTo(PullRequestMergeMethod.squash);
+        assertThat(outcome.results())
+                .extracting(r -> r.pr().rowId(), PullRequestMergeService.Result::kind)
+                .containsExactlyInAnyOrder(
+                        tuple(alreadyRef.rowId(), PullRequestMergeService.Kind.ALREADY_MERGED),
+                        tuple(mergedRef.rowId(), PullRequestMergeService.Kind.MERGED),
+                        tuple(raceRef.rowId(), PullRequestMergeService.Kind.ALREADY_MERGED));
+        JsonNode audit = objectMapper.readTree(capturedAuditDetail());
+        assertThat(audit.get("method").asText()).isEqualTo("squash");
+        assertThat(audit.get("heldApprovalId").asText()).isEqualTo(heldApprovalId.toString());
+        assertThat(audit.get("refusedPullRequest").isNull()).isTrue();
+        assertThat(audit.get("pullRequests")).hasSize(1);
+        assertThat(audit.get("pullRequests").get(0).get("prUrl").asText()).isEqualTo("u2");
+        assertThat(audit.get("pullRequests").get(0).get("mergeSha").asText()).isEqualTo("mergesha2");
+    }
+
+    @Test
+    void outcomeOf_recordsNoAuditWhenTheWorkerMergedNothing() {
+        var ref = new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#1", "u1", "org/repo", 1);
+        var plan = new PullRequestMergeService.MergePlan(
+                PullRequestMergeMethod.squash, List.of(), List.of(ref), List.of());
+
+        var outcome = service()
+                .outcomeOf(
+                        runId,
+                        plan,
+                        List.of(new PullRequestMergeService.WorkerPrResult(
+                                ref.rowId(), PullRequestMergeService.Kind.SKIPPED_CLOSED, null, null)),
+                        null);
+
+        assertThat(outcome.results()).singleElement().satisfies(r -> {
+            assertThat(r.kind()).isEqualTo(PullRequestMergeService.Kind.SKIPPED_CLOSED);
+            assertThat(r.pr()).isEqualTo(ref);
+        });
+        verifyNoInteractions(auditSink);
+    }
+
+    @Test
+    void outcomeOf_ignoresAResultForARowThePlanNeverListed() {
+        var ref = new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#1", "u1", "org/repo", 1);
+        var plan = new PullRequestMergeService.MergePlan(
+                PullRequestMergeMethod.squash, List.of(), List.of(ref), List.of());
+
+        var outcome = service()
+                .outcomeOf(
+                        runId,
+                        plan,
+                        List.of(new PullRequestMergeService.WorkerPrResult(
+                                UUID.randomUUID(), PullRequestMergeService.Kind.MERGED, clock.instant(), "sha")),
+                        null);
+
+        assertThat(outcome.isEmpty()).isTrue();
+        verifyNoInteractions(auditSink);
     }
 
     // --- helpers ---
