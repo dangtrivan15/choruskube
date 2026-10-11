@@ -3,9 +3,10 @@
 # The canonical single-user, no-auth stack. Boots from a clean volume with ZERO
 # configuration: no OIDC provider, no GitHub App, no Claude token required just
 # to come up. The api-server runs in single-tenant mode (`AUTH_ENABLED=false` →
-# /api/v1/** is open and scoped to the system org) and owns the Docker workload
-# executor (`EXECUTOR_TYPE=docker`), spawning agent containers on the host Docker
-# daemon (DooD via the mounted socket).
+# /api/v1/** is open and scoped to the system org). The orchestrator drives each
+# run and hands every agent/script node to the worker, which owns the Docker
+# workload executor (`EXECUTOR_TYPE=docker`), spawning agent containers on the
+# host Docker daemon (DooD via the mounted socket).
 #
 # Usage:
 #   ./scripts/up.sh            # build & start, wait until healthy
@@ -24,9 +25,9 @@
 
 name: choruskube
 
-# Docker-out-of-Docker staging dir, defined once and reused for both the api-server env var and
-# the bind mount below. It MUST be mounted at an identical path on host and container so the bind
-# source the api-server hands the host daemon (for the sibling agent) resolves to the same bytes.
+# Docker-out-of-Docker staging dir, defined once and reused for both the worker env var and the
+# bind mount below. It MUST be mounted at an identical path on host and container so the bind
+# source the worker hands the host daemon (for the sibling agent) resolves to the same bytes.
 x-agent-staging-dir: &agent-staging-dir /tmp/choruskube-staging
 
 networks:
@@ -137,6 +138,13 @@ services:
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_NAMESPACE: default
       TEMPORAL_TASK_QUEUE: choruskube
+      # Must differ from TEMPORAL_TASK_QUEUE: the orchestrator also polls that queue and fails every
+      # agent/script step it picks up. Runs are placed on this queue and the registering worker is
+      # told to poll it.
+      TEMPORAL_WORKER_TASK_QUEUE: choruskube-worker
+      # Must equal the worker's FLEET_TOKEN, or /worker/register is refused and no node ever runs.
+      # Local-dev default; set your own in .env for any shared deployment.
+      WORKER_REGISTRATION_TOKEN: ${WORKER_REGISTRATION_TOKEN:-choruskube-local-worker-token}
       OBJECT_STORE_ENDPOINT: http://object-storage:9000
       OBJECT_STORE_ACCESS_KEY: objectstore-dev
       OBJECT_STORE_SECRET_KEY: objectstore-dev-secret
@@ -146,14 +154,6 @@ services:
       # Single-tenant OSS mode: no OIDC provider. /api/v1/** is open and every
       # request is scoped to the seeded system org (see NoAuthConfigurer + TenantFilter).
       AUTH_ENABLED: "false"
-      # A Worker runs the Docker executor and spawns agent containers via DooD.
-      EXECUTOR_TYPE: docker
-      DOCKER_HOST: unix:///var/run/docker.sock
-      DOCKER_NETWORK: choruskube
-      # Docker-out-of-Docker staging: the Worker stages config.json / credentials that the
-      # sibling agent container bind-mounts. The host daemon resolves the bind source against the
-      # HOST filesystem, so this dir is mounted at an IDENTICAL path on host and container (below).
-      AGENT_STAGING_DIR: *agent-staging-dir
       API_SERVER_URL: http://api-server:8080
       ORCHESTRATOR_SECRET_HASH: fcb34c11ecbf6914ad43903e539ade6901f864d9772c36e63a78c2488cd0958a
       # DEFAULT_AGENT_IMAGE / CHORUSKUBE_REPO_AGENT_IMAGE are intentionally UNSET —
@@ -161,8 +161,8 @@ services:
       # (registry.choruskube.com/claude-code:latest and .../choruskube-dev:latest), so the
       # stack pulls the public agent images with zero configuration.
       #
-      # Optional — export to run real AI agent nodes; blank is skipped at boot
-      # (SystemOrgSeeder), and non-AI/script nodes never need it.
+      # Optional — export to run real AI agent nodes. Blank still boots; each AI node then
+      # fails at launch (EnvAiCredentialResolver), and script nodes never need it.
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
       # local-dev default — 32-byte base64 AES-256-GCM key for org GitHub creds at
       # rest. Override with your own key in any real/shared deployment.
@@ -170,7 +170,7 @@ services:
       # Optional GitHub credentials for the system org — needed only to push / open
       # PRs against a target repo. All blank-default → the stack boots with zero
       # config. Set them via ./scripts/setup.sh. The GitHub App takes precedence
-      # over GITHUB_PAT if both are configured (see SystemOrgSeeder).
+      # over GITHUB_PAT if both are configured (see EnvGitHubCredentialResolver).
       GITHUB_PAT: ${GITHUB_PAT:-}
       GITHUB_APP_ID: ${GITHUB_APP_ID:-}
       GITHUB_APP_INSTALLATION_ID: ${GITHUB_APP_INSTALLATION_ID:-}
@@ -184,18 +184,10 @@ services:
     networks:
       - choruskube
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
       # Holds the GitHub App private-key PEM when the App credential is used
       # (written by ./scripts/setup.sh). Empty/absent for the PAT and no-credential
       # cases; Docker auto-creates the dir, so a clean `docker compose up` still boots.
       - ./.secrets:/run/secrets:ro
-      # DooD staging dir (same anchor as AGENT_STAGING_DIR above) — long-form bind so the anchor
-      # can fill both source and target; create_host_path makes the host dir on first up.
-      - type: bind
-        source: *agent-staging-dir
-        target: *agent-staging-dir
-        bind:
-          create_host_path: true
     depends_on:
       postgres:
         condition: service_healthy
@@ -240,6 +232,55 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+
+  # Runs every agent/script node: the orchestrator dispatches them to the worker task queue, which
+  # nothing else serves, so without this service every such node fails.
+  worker:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile
+    dns_search: .
+    environment:
+      API_SERVER_URL: http://api-server:8080
+      # Must equal the api-server's WORKER_REGISTRATION_TOKEN or /worker/register is refused. Being
+      # set selects registration: the api-server answers with the queue to poll.
+      FLEET_TOKEN: ${WORKER_REGISTRATION_TOKEN:-choruskube-local-worker-token}
+      WORKER_CAPABILITIES: docker=true
+      TEMPORAL_ADDRESS: temporal:7233
+      # This Temporal serves plaintext gRPC, and the SDK turns TLS on whenever a credential is present.
+      TEMPORAL_TLS_DISABLED: "true"
+      # Agents report results here; it must resolve from the agent containers on DOCKER_NETWORK.
+      CALLBACK_URL: http://worker:9090/api/v1/callback
+      # Agents join DOCKER_NETWORK to reach api-server, object-storage and the callback above.
+      EXECUTOR_TYPE: docker
+      DOCKER_HOST: unix:///var/run/docker.sock
+      DOCKER_NETWORK: choruskube
+      DOCKER_STAGING_DIR: *agent-staging-dir
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - type: bind
+        source: *agent-staging-dir
+        target: *agent-staging-dir
+        bind:
+          create_host_path: true
+    networks:
+      - choruskube
+    depends_on:
+      api-server:
+        condition: service_healthy
+      temporal:
+        condition: service_healthy
+    # Registration is a single boot-time call with no in-process retry; a first attempt that loses
+    # a race with the api-server exits and self-corrects on restart.
+    restart: on-failure:5
+    # No HTTP check: the worker exposes nothing outside the network, and a refused registration
+    # exits the process, so a live process is the signal.
+    healthcheck:
+      test: ["CMD", "pgrep", "worker"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
   web-ui:
     build:

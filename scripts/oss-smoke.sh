@@ -5,11 +5,11 @@
 # throwaway dummy Claude token (no real token, no real Claude call, no PR):
 #   1. health-check the booted stack,
 #   2. drive ONE seeded feature-dev run (no auth — AUTH_ENABLED=false),
-#   3. assert the api-server (EXECUTOR_TYPE=docker) pulls & spawns an agent
+#   3. assert the worker (EXECUTOR_TYPE=docker) pulls & spawns an agent
 #      container FROM a published image (registry.choruskube.com/*).
 #
-# The api-server resolves the org's Claude token BEFORE spawning an AI node's
-# container (WorkloadService → SingleTenantDockerExecutor), so SOME token must be
+# The worker has the api-server resolve the run's Claude token BEFORE spawning an
+# AI node's container (WorkloadService.prepareWorkload), so SOME token must be
 # configured at boot for the agent container to spawn at all. This smoke uses a
 # THROWAWAY dummy: the published agent image is pulled & started (the guard),
 # then the real agent fails auth harmlessly — no real Claude call, no PR. The
@@ -56,11 +56,9 @@ echo "  PASS  api /graph-templates reachable (no auth)"
 
 # --- 1b. Ensure the DinD sidecar image is present -----------------------------
 # The seeded system-org GitRepo is enableDocker=true, so the executor starts a
-# DinD sidecar (docker:29-dind) before the agent container — and it does NOT
-# pull that image (SingleTenantDockerExecutor.startDindSidecar createContainer's it
-# directly). Pre-pull it on the host daemon (the one the api-server spawns on)
-# so the sidecar — and then the published agent container — can start.
-# NB: this is a real OSS first-run gap worth fixing in the executor later.
+# DinD sidecar (docker:29-dind) before the agent container. Its own pull of that
+# image is best-effort and bounded at 120s, so pre-pull it on the host daemon
+# (the one the worker spawns on) rather than race a cold download.
 echo "=== Pre-pulling DinD sidecar image (docker:29-dind) ==="
 docker pull docker:29-dind >/dev/null && echo "  ok" || echo "  WARN: dind pull failed (may already be present)"
 
