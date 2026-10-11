@@ -188,8 +188,20 @@ public class InternalRunService {
 
         // Validates the run exists.
         runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
+        if ("failed".equals(status)) {
+            voidApprovalOfFailedGate(nodeExecId);
+        }
         eventPublisher.publishNodeStatusChanged(runId, nodeExecId, status);
         return toNodeExecResponse(exec);
+    }
+
+    /** Left live, a failed gate's approval blocks approving the retried gate: one live approval per gate. */
+    private void voidApprovalOfFailedGate(UUID nodeExecId) {
+        try {
+            gateRecheck.voidForFailedGate(nodeExecId);
+        } catch (RuntimeException e) {
+            log.error("Could not void the approval of failed node execution {}: {}", nodeExecId, e.getMessage(), e);
+        }
     }
 
     private void enforceOutputSpec(NodeExecution exec, String artifactRefs) {

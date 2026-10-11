@@ -33,6 +33,7 @@ public class GateRecheckService {
     static final String REVISED =
             "The spec was revised during the re-check, so it is no longer the spec that was approved.";
     static final String RUN_ENDED = "The run ended before the approval was finalized.";
+    static final String GATE_FAILED = "The gate failed while finalizing the approval.";
 
     private static final List<WorkflowRunStatus> ENDED =
             List.of(WorkflowRunStatus.completed, WorkflowRunStatus.failed, WorkflowRunStatus.cancelled);
@@ -141,10 +142,7 @@ public class GateRecheckService {
     /** {@code parkedAt}: the gate execution left awaiting a human, so the UI shows why only there. */
     @Transactional
     public void voidStamp(UUID stampId, String reason, UUID parkedAt) {
-        stampRepo.findByIdAndStatusIn(stampId, LIVE).ifPresent(s -> {
-            s.setParkedNodeExecutionId(parkedAt);
-            markVoided(s, reason);
-        });
+        stampRepo.findByIdAndStatusIn(stampId, LIVE).ifPresent(s -> voidParked(s, reason, parkedAt));
     }
 
     @Transactional
@@ -167,6 +165,28 @@ public class GateRecheckService {
         List<GateStamp> live = stampRepo.findByWorkflowRunIdAndStatusIn(runId, LIVE);
         live.forEach(s -> markVoided(s, reason));
         return live.size();
+    }
+
+    /** Voids the approvals live at a gate execution that has failed; a repeat call finds none. */
+    @Transactional
+    public int voidForFailedGate(UUID gateExecId) {
+        List<GateStamp> live = stampRepo.findByStampedNodeExecutionIdAndStatusIn(gateExecId, LIVE);
+        live.forEach(s -> voidParked(s, GATE_FAILED, gateExecId));
+        return live.size();
+    }
+
+    /**
+     * Voids this gate's live approvals stamped at an execution other than the one now being
+     * approved: a failed gate that was retried left them, and they would collide with the new one.
+     */
+    @Transactional
+    public int voidLeftBehind(UUID runId, UUID gateTemplateNodeId, UUID currentGateExecId) {
+        List<GateStamp> left =
+                stampRepo.findByWorkflowRunIdAndGateTemplateNodeIdAndStatusIn(runId, gateTemplateNodeId, LIVE).stream()
+                        .filter(s -> !currentGateExecId.equals(s.getStampedNodeExecutionId()))
+                        .toList();
+        left.forEach(s -> voidParked(s, GATE_FAILED, s.getStampedNodeExecutionId()));
+        return left.size();
     }
 
     public Optional<GateStamp> findPending(UUID stampId) {
@@ -254,6 +274,11 @@ public class GateRecheckService {
             }
         }
         return null;
+    }
+
+    private void voidParked(GateStamp stamp, String reason, UUID parkedAt) {
+        stamp.setParkedNodeExecutionId(parkedAt);
+        markVoided(stamp, reason);
     }
 
     private void markVoided(GateStamp stamp, String reason) {

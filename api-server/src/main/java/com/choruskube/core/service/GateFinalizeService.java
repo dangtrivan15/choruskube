@@ -145,6 +145,7 @@ public class GateFinalizeService {
                         "Cannot approve: the gate is not awaiting a decision (already deciding or decided)");
             }
             gateRecheck.voidPendingFor(runId, gate.getTemplateNodeId(), GateRecheckService.REVIEWER_DECIDED);
+            gateRecheck.voidLeftBehind(runId, gate.getTemplateNodeId(), gate.getId());
             // Hibernate flushes inserts before updates, and only one live approval per gate may exist.
             stampRepo.flush();
             return gateRecheck.begin(

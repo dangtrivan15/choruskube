@@ -187,4 +187,84 @@ class InternalRunServiceFinalizeModeTest extends BaseTest {
 
         assertThat(stampRepo.findById(stamp.getId()).orElseThrow().getStatus()).isEqualTo(GateStampStatus.finalizing);
     }
+
+    @Test
+    void gateFailure_voidsItsFinalizingApproval_onceOnly() {
+        gateExec.setFinalizeMode("async");
+        gateExec.setStatus(NodeExecutionStatus.finalizing);
+        gateExec = execRepo.save(gateExec);
+        GateStamp stamp =
+                gateRecheck.begin(run.getId(), gateExec, "final_approval", StampMode.always, null, null, null);
+
+        internalRunService.updateNodeExecutionStatus(run.getId(), gateExec.getId(), failed());
+
+        GateStamp voided = stampRepo.findById(stamp.getId()).orElseThrow();
+        assertThat(voided.getStatus()).isEqualTo(GateStampStatus.voided);
+        assertThat(voided.getVoidReason()).isEqualTo("The gate failed while finalizing the approval.");
+        assertThat(voided.getParkedNodeExecutionId()).isEqualTo(gateExec.getId());
+
+        voided.setVoidReason("kept");
+        stampRepo.save(voided);
+        internalRunService.updateNodeExecutionStatus(run.getId(), gateExec.getId(), failed());
+
+        GateStamp again = stampRepo.findById(stamp.getId()).orElseThrow();
+        assertThat(again.getStatus()).isEqualTo(GateStampStatus.voided);
+        assertThat(again.getVoidReason()).isEqualTo("kept");
+    }
+
+    @Test
+    void gateFailure_voidsItsHeldApproval() {
+        GateStamp held = gateRecheck.hold(run.getId(), gateExec, "final_approval", StampMode.always, null, null, null);
+
+        internalRunService.updateNodeExecutionStatus(run.getId(), gateExec.getId(), failed());
+
+        GateStamp voided = stampRepo.findById(held.getId()).orElseThrow();
+        assertThat(voided.getStatus()).isEqualTo(GateStampStatus.voided);
+        assertThat(voided.getVoidReason()).isEqualTo("The gate failed while finalizing the approval.");
+    }
+
+    @Test
+    void failureOfAnExecutionWithNoApproval_leavesAnotherGatesApprovalAlone() {
+        TemplateNode otherNode = new TemplateNode();
+        otherNode.setGraphTemplateId(templateNode.getGraphTemplateId());
+        otherNode.setNodeDefinitionId(templateNode.getNodeDefinitionId());
+        otherNode.setLabel("other_gate");
+        otherNode.setConfigOverrides("{}");
+        otherNode = templateNodeRepo.save(otherNode);
+        NodeExecution otherGate = new NodeExecution();
+        otherGate.setWorkflowRunId(run.getId());
+        otherGate.setTemplateNodeId(otherNode.getId());
+        otherGate.setGraphVersion(1);
+        otherGate.setFinalizeMode("async");
+        otherGate.setStatus(NodeExecutionStatus.finalizing);
+        otherGate = execRepo.save(otherGate);
+        GateStamp otherStamp =
+                gateRecheck.begin(run.getId(), otherGate, "other_gate", StampMode.always, null, null, null);
+
+        internalRunService.updateNodeExecutionStatus(run.getId(), gateExec.getId(), failed());
+
+        GateStamp untouched = stampRepo.findById(otherStamp.getId()).orElseThrow();
+        assertThat(untouched.getStatus()).isEqualTo(GateStampStatus.finalizing);
+        assertThat(untouched.getVoidReason()).isNull();
+    }
+
+    @Test
+    void nonFailureStatusUpdate_leavesTheGatesApprovalAlone() {
+        gateExec.setFinalizeMode("async");
+        gateExec.setStatus(NodeExecutionStatus.finalizing);
+        gateExec = execRepo.save(gateExec);
+        GateStamp stamp =
+                gateRecheck.begin(run.getId(), gateExec, "final_approval", StampMode.always, null, null, null);
+
+        internalRunService.updateNodeExecutionStatus(
+                run.getId(),
+                gateExec.getId(),
+                new InternalUpdateNodeExecutionRequest("running", null, null, null, null, null, null));
+
+        assertThat(stampRepo.findById(stamp.getId()).orElseThrow().getStatus()).isEqualTo(GateStampStatus.finalizing);
+    }
+
+    private static InternalUpdateNodeExecutionRequest failed() {
+        return new InternalUpdateNodeExecutionRequest("failed", null, null, null, null, "boom", null);
+    }
 }

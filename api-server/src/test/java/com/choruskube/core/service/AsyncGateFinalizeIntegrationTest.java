@@ -18,6 +18,7 @@ import com.choruskube.core.BaseTest;
 import com.choruskube.core.CommittedFixtureCleaner;
 import com.choruskube.core.config.GraphIds;
 import com.choruskube.core.credential.GitHubCredentialResolver;
+import com.choruskube.core.dto.InternalUpdateNodeExecutionRequest;
 import com.choruskube.core.model.DriftRecheckConfig.StampMode;
 import com.choruskube.core.model.Epic;
 import com.choruskube.core.model.GateStamp;
@@ -92,6 +93,9 @@ class AsyncGateFinalizeIntegrationTest extends BaseTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private InternalRunService internalRunService;
 
     @Autowired
     private GraphTemplateRepository templateRepo;
@@ -404,6 +408,54 @@ class AsyncGateFinalizeIntegrationTest extends BaseTest {
     }
 
     @Test
+    void approve_afterTheGateFailedAndWasRetried_voidsTheFailedGatesApproval() throws Exception {
+        approve(gateExec);
+        GateStamp first =
+                stampRepo.findByWorkflowRunIdOrderByCreatedAtAsc(runId).get(0);
+        assertThat(first.getStatus()).isEqualTo(GateStampStatus.finalizing);
+
+        internalRunService.updateNodeExecutionStatus(
+                runId,
+                gateExec.getId(),
+                new InternalUpdateNodeExecutionRequest("failed", null, null, null, null, "step failed", null));
+
+        GateStamp released = stampRepo.findById(first.getId()).orElseThrow();
+        assertThat(released.getStatus()).isEqualTo(GateStampStatus.voided);
+        assertThat(released.getVoidReason()).isEqualTo("The gate failed while finalizing the approval.");
+
+        NodeExecution retried = asyncGate(NodeExecutionStatus.awaiting_human, 2);
+        approve(retried);
+
+        assertThat(execRepo.findById(retried.getId()).orElseThrow().getStatus())
+                .isEqualTo(NodeExecutionStatus.finalizing);
+        assertThat(stampRepo.findByWorkflowRunIdOrderByCreatedAtAsc(runId))
+                .filteredOn(s -> s.getStatus() == GateStampStatus.finalizing)
+                .singleElement()
+                .extracting(GateStamp::getStampedNodeExecutionId)
+                .isEqualTo(retried.getId());
+    }
+
+    @Test
+    void approve_whileAnEarlierExecutionsApprovalIsStillFinalizing_voidsItAndProceeds() throws Exception {
+        GateStamp stale = stampRepo.save(stampAt(gateExec, GateStampStatus.finalizing));
+        gateExec.setStatus(NodeExecutionStatus.failed);
+        execRepo.save(gateExec);
+        NodeExecution retried = asyncGate(NodeExecutionStatus.awaiting_human, 2);
+
+        approve(retried);
+
+        GateStamp voided = stampRepo.findById(stale.getId()).orElseThrow();
+        assertThat(voided.getStatus()).isEqualTo(GateStampStatus.voided);
+        assertThat(voided.getVoidReason()).isEqualTo("The gate failed while finalizing the approval.");
+        assertThat(voided.getParkedNodeExecutionId()).isEqualTo(gateExec.getId());
+        assertThat(stampRepo.findByWorkflowRunIdOrderByCreatedAtAsc(runId))
+                .filteredOn(s -> s.getStatus() == GateStampStatus.finalizing)
+                .singleElement()
+                .extracting(GateStamp::getStampedNodeExecutionId)
+                .isEqualTo(retried.getId());
+    }
+
+    @Test
     void anApprovalOfAnotherRun_isNotFound() throws Exception {
         mockMvc.perform(post("/api/v1/runs/{id}/nodes/{exec}/signal", runId, gateExec.getId())
                         .contentType(MediaType.APPLICATION_JSON)
@@ -469,7 +521,19 @@ class AsyncGateFinalizeIntegrationTest extends BaseTest {
         return execRepo.save(gateExec);
     }
 
+    private void approve(NodeExecution gate) throws Exception {
+        mockMvc.perform(post("/api/v1/runs/{id}/nodes/{exec}/signal", runId, gate.getId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"decision\":\"approved\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.outcome").value("finalizing"));
+    }
+
     private GateStamp pendingStampAt(NodeExecution stampedAt) {
+        return stampRepo.save(stampAt(stampedAt, GateStampStatus.pending));
+    }
+
+    private GateStamp stampAt(NodeExecution stampedAt, GateStampStatus status) {
         GateStamp stamp = new GateStamp();
         stamp.setWorkflowRunId(runId);
         stamp.setGateTemplateNodeId(finalApproval.getId());
@@ -477,8 +541,8 @@ class AsyncGateFinalizeIntegrationTest extends BaseTest {
         stamp.setStampedNodeExecutionId(stampedAt.getId());
         stamp.setStampMode(StampMode.always);
         stamp.setRecheckRounds(1);
-        stamp.setStatus(GateStampStatus.pending);
-        return stampRepo.save(stamp);
+        stamp.setStatus(status);
+        return stamp;
     }
 
     /** Epics, Tasks and dependency edges written under this test's project. */

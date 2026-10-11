@@ -333,6 +333,23 @@ class GateFinalizeServiceTest {
         verify(runService, never()).signalGate(any(), any(), any(), any(), any(), any());
     }
 
+    @Test
+    void requestApproval_voidsWhatAnEarlierExecutionLeftBehind_afterReplacingAHeldApproval_beforeRecording() {
+        gate.setStatus(NodeExecutionStatus.awaiting_human);
+        when(claims.compareAndSetStatus(gateExecId, NodeExecutionStatus.awaiting_human, NodeExecutionStatus.finalizing))
+                .thenReturn(1);
+        when(gateRecheck.begin(any(), any(), any(), any(), any(), any(), any())).thenReturn(stamp);
+
+        service.requestApproval(
+                run, gate, new SignalRequest("approved", null, null, null), runService.readSnapshot(run), null, null);
+
+        InOrder order = inOrder(gateRecheck, stampRepo);
+        order.verify(gateRecheck).voidPendingFor(runId, templateNodeId, GateRecheckService.REVIEWER_DECIDED);
+        order.verify(gateRecheck).voidLeftBehind(runId, templateNodeId, gateExecId);
+        order.verify(stampRepo).flush();
+        order.verify(gateRecheck).begin(any(), any(), any(), any(), any(), any(), any());
+    }
+
     // ── a held approval, re-applied as its gate opens ─────────────────────────────
 
     @Test

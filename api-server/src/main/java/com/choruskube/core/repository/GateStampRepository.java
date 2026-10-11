@@ -28,6 +28,12 @@ public interface GateStampRepository extends JpaRepository<GateStamp, UUID> {
     List<GateStamp> findByWorkflowRunIdAndGateTemplateNodeIdAndStatus(
             UUID workflowRunId, UUID gateTemplateNodeId, GateStampStatus status);
 
+    List<GateStamp> findByStampedNodeExecutionIdAndStatusIn(
+            UUID stampedNodeExecutionId, Collection<GateStampStatus> statuses);
+
+    List<GateStamp> findByWorkflowRunIdAndGateTemplateNodeIdAndStatusIn(
+            UUID workflowRunId, UUID gateTemplateNodeId, Collection<GateStampStatus> statuses);
+
     List<GateStamp> findByWorkflowRunIdAndStatusIn(UUID workflowRunId, Collection<GateStampStatus> statuses);
 
     List<GateStamp> findByWorkflowRunIdOrderByCreatedAtAsc(UUID workflowRunId);
