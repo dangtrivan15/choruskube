@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"time"
 
 	"github.com/google/uuid"
+	"go.temporal.io/sdk/temporal"
 
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/state"
 )
@@ -155,6 +157,7 @@ type updateNodeExecRequest struct {
 	PodName       *string `json:"podName,omitempty"`
 	JobSecretHash *string `json:"jobSecretHash,omitempty"`
 	ErrorMessage  *string `json:"errorMessage,omitempty"`
+	FinalizeMode  *string `json:"finalizeMode,omitempty"`
 }
 
 func (c *Client) UpdateNodeExecution(ctx context.Context, runID, execID uuid.UUID, params state.UpdateNodeExecutionParams) error {
@@ -165,6 +168,7 @@ func (c *Client) UpdateNodeExecution(ctx context.Context, runID, execID uuid.UUI
 		PodName:       params.PodName,
 		JobSecretHash: params.JobSecretHash,
 		ErrorMessage:  params.ErrorMessage,
+		FinalizeMode:  params.FinalizeMode,
 	}
 	_, err := c.doJSON(ctx, http.MethodPut, fmt.Sprintf("/internal/runs/%s/node-executions/%s/status", runID, execID), body)
 	if err != nil {
@@ -558,4 +562,149 @@ func (c *Client) ListNamespaces(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("unmarshal namespaces: %w", err)
 	}
 	return result.Namespaces, nil
+}
+
+// --- Gate finalize ---
+
+// GateFinalizeRejectedType is the application error type of a gate-finalize call the API
+// answered with a 400, 404 or 409.
+const GateFinalizeRejectedType = "GateFinalizeRejected"
+
+// doGateFinalize posts to a gate-finalize endpoint. A 400, 404 or 409 is the API refusing the
+// request itself, so a retry gets the same answer: it comes back as the *ApplicationError itself,
+// because the SDK reads an error's retry class from its concrete type and a wrapped one retries.
+func (c *Client) doGateFinalize(ctx context.Context, op string, runID, execID uuid.UUID, rest string, reqBody any) ([]byte, error) {
+	path := fmt.Sprintf("/internal/runs/%s/node-executions/%s/gate-finalize%s", runID, execID, rest)
+	resp, err := c.doJSON(ctx, http.MethodPost, path, reqBody)
+	if err == nil {
+		return resp, nil
+	}
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.StatusCode {
+		case http.StatusBadRequest, http.StatusNotFound, http.StatusConflict:
+			return nil, temporal.NewNonRetryableApplicationError(op, GateFinalizeRejectedType, err)
+		}
+	}
+	return nil, fmt.Errorf("%s: %w", op, err)
+}
+
+// The Gate*Item and Gate*Response types are the api-server's GateFinalizeDtos, field for field.
+type GateCompareItem struct {
+	GitRepoID uuid.UUID `json:"gitRepoId"`
+	OwnerRepo string    `json:"ownerRepo"`
+	Branch    string    `json:"branch"`
+	BaseSha   string    `json:"baseSha"`
+}
+
+type GatePRItem struct {
+	RowID     uuid.UUID `json:"rowId"`
+	OwnerRepo string    `json:"ownerRepo"`
+	Number    int       `json:"number"`
+	Label     string    `json:"label"`
+	PRURL     string    `json:"prUrl"`
+}
+
+type GateCompareResultItem struct {
+	GitRepoID uuid.UUID `json:"gitRepoId"`
+	AheadBy   int       `json:"aheadBy"`
+	BaseGone  bool      `json:"baseGone"`
+}
+
+type GatePRResultItem struct {
+	RowID    uuid.UUID  `json:"rowId"`
+	Kind     string     `json:"kind"`
+	MergedAt *time.Time `json:"mergedAt,omitempty"`
+	MergeSha string     `json:"mergeSha,omitempty"`
+}
+
+// GatePlanResponse.Outcome is proceed, hold or refused. A null Reason or MergeMethod decodes to "".
+type GatePlanResponse struct {
+	Outcome     string            `json:"outcome"`
+	Reason      string            `json:"reason"`
+	Compares    []GateCompareItem `json:"compares"`
+	PRs         []GatePRItem      `json:"prs"`
+	MergeMethod string            `json:"mergeMethod"`
+}
+
+// GateStepResponse.Outcome is completed, held or refused; null fields decode to "".
+type GateStepResponse struct {
+	Outcome        string `json:"outcome"`
+	Result         string `json:"result"`
+	AttachmentRefs string `json:"attachmentRefs"`
+	Reason         string `json:"reason"`
+}
+
+// ClaimHeldApproval takes the gate's held approval for finalizing and returns its id, or "" when
+// none applies.
+func (c *Client) ClaimHeldApproval(ctx context.Context, runID, execID uuid.UUID) (string, error) {
+	resp, err := c.doGateFinalize(ctx, "claim held approval", runID, execID, "/held", nil)
+	if err != nil {
+		return "", err
+	}
+	var result struct {
+		ApprovalID *uuid.UUID `json:"approvalId"`
+	}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return "", fmt.Errorf("unmarshal held approval: %w", err)
+	}
+	if result.ApprovalID == nil {
+		return "", nil
+	}
+	return result.ApprovalID.String(), nil
+}
+
+func (c *Client) PlanGateFinalize(ctx context.Context, runID, execID, approvalID uuid.UUID) (GatePlanResponse, error) {
+	resp, err := c.doGateFinalize(ctx, "plan gate finalize", runID, execID, "/"+approvalID.String()+"/plan", nil)
+	if err != nil {
+		return GatePlanResponse{}, err
+	}
+	var result GatePlanResponse
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return GatePlanResponse{}, fmt.Errorf("unmarshal gate finalize plan: %w", err)
+	}
+	return result, nil
+}
+
+func (c *Client) HoldGateApproval(ctx context.Context, runID, execID, approvalID uuid.UUID, compares []GateCompareResultItem) (GateStepResponse, error) {
+	if compares == nil {
+		compares = []GateCompareResultItem{}
+	}
+	body := struct {
+		Compares []GateCompareResultItem `json:"compares"`
+	}{Compares: compares}
+	return c.gateStep(ctx, "hold gate approval", runID, execID, "/"+approvalID.String()+"/hold", body)
+}
+
+func (c *Client) CompleteGateFinalize(ctx context.Context, runID, execID, approvalID uuid.UUID, merges []GatePRResultItem) (GateStepResponse, error) {
+	if merges == nil {
+		merges = []GatePRResultItem{}
+	}
+	body := struct {
+		Merges []GatePRResultItem `json:"merges"`
+	}{Merges: merges}
+	return c.gateStep(ctx, "complete gate finalize", runID, execID, "/"+approvalID.String()+"/complete", body)
+}
+
+func (c *Client) gateStep(ctx context.Context, op string, runID, execID uuid.UUID, rest string, body any) (GateStepResponse, error) {
+	resp, err := c.doGateFinalize(ctx, op, runID, execID, rest, body)
+	if err != nil {
+		return GateStepResponse{}, err
+	}
+	var result GateStepResponse
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return GateStepResponse{}, fmt.Errorf("unmarshal %s response: %w", op, err)
+	}
+	return result, nil
+}
+
+// RefuseGateApproval records the merges the Worker already made, then voids the approval and
+// returns the gate to awaiting_human.
+func (c *Client) RefuseGateApproval(ctx context.Context, runID, execID, approvalID uuid.UUID, reason string, merges []GatePRResultItem) error {
+	body := struct {
+		Reason string             `json:"reason"`
+		Merges []GatePRResultItem `json:"merges,omitempty"`
+	}{Reason: reason, Merges: merges}
+	_, err := c.doGateFinalize(ctx, "refuse gate approval", runID, execID, "/"+approvalID.String()+"/refuse", body)
+	return err
 }

@@ -19,6 +19,8 @@ type HumanDecisionSignal struct {
 	Decision        string `json:"decision"` // "approved" or "rejected"
 	Feedback        string `json:"feedback"`
 	AttachmentRefs  string `json:"attachmentRefs,omitempty"` // NEW: gate attachment object storage refs
+	// ApprovalID is set only when the approval is finalized in steps; empty is a final decision.
+	ApprovalID string `json:"approvalId,omitempty"`
 }
 
 const (
