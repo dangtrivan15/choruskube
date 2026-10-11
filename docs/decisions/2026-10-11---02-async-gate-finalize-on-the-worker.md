@@ -22,15 +22,17 @@ writes.
 reviewer approves
       |
       v
-API: gate AWAITING_HUMAN -> FINALIZING (one atomic update), record the approval,
-     signal the workflow, reply "finalizing"
+API: validate the roadmap (invalid -> 400, nothing claimed); gate AWAITING_HUMAN ->
+     FINALIZING (one atomic update), record the approval, signal the workflow,
+     reply "finalizing"
       |
       v   the workflow drives the rest, one event at a time
-plan (API): validate the roadmap; list the repos to compare and the PRs to merge
+plan (API): validate the roadmap again; list the repos to compare and the PRs to merge
       |        roadmap invalid -> refuse     stale reason already known -> hold
+      |        nothing to compare or merge -> complete, no Worker step
       v
 GitHub steps (Worker): compare each base with main; if current, inspect every PR
-      |                and merge in order
+      |                and merge in order, reading the gate before each merge
       |
       +-- merged ----------> complete (API): record merges, write the roadmap once,
       |                      the gate completes and the run continues
@@ -40,11 +42,13 @@ GitHub steps (Worker): compare each base with main; if current, inspect every PR
                              approval, gate back to AWAITING_HUMAN with the reason
 ```
 
-**Approval is asynchronous, through a `finalizing` status.** The approve request makes one
-atomic `awaiting_human -> finalizing` update, records the approval, signals the run's workflow
-and replies. A second click on a finalizing gate gets "already deciding", so two clicks can never
-both start a finalize. Decisions that need no GitHub work (`rereview`, `redraft`, `route:*`) and
-gates that declare nothing to finalize signal as final, as before.
+**Approval is asynchronous, through a `finalizing` status.** The approve request validates the
+reviewer's roadmap document first, so an invalid edit is a 400 with nothing claimed and the edits
+still on screen; a refusal after the claim would reopen the gate with the server's document. It
+then makes one atomic `awaiting_human -> finalizing` update, records the approval, signals the
+run's workflow and replies. A second click on a finalizing gate gets "already deciding", so two
+clicks can never both start a finalize. Decisions that need no GitHub work (`rereview`, `redraft`,
+`route:*`) and gates that declare nothing to finalize signal as final, as before.
 
 **The workflow finalizes in steps; the API decides and writes, the Worker only calls GitHub.**
 Every database write stays on the API, and results travel through the workflow. This follows
@@ -70,25 +74,34 @@ before the API had its secret hash. The API's token route stays for pods an olde
 launched.
 
 **A refused finalize returns the gate to waiting, with the reason.** A merge GitHub refuses
-(draft, conflict, branch protection), an invalid roadmap document, a step that exhausts its
-retries and a held approval past its round cap all void the approval with the reason and
-reopen the gate, and the gate's timeout restarts in full. The node is never failed: every one of
-these is something a person can fix, and failing the node would turn it into a retry. Merges the
-Worker made before refusing are recorded before the approval is voided, because a merge cannot be
-undone and an unrecorded one leaves the pull request unmerged here and its audit event lost.
+(draft, conflict, branch protection), an invalid roadmap document the plan step catches, a Worker
+step that fails after its retries or that no Worker picks up, and a held approval past its round
+cap all void the approval with the reason and reopen the gate, and the gate's timeout restarts in
+full. Each of these is something a person can fix, and failing the node would turn it into a
+retry. Merges the Worker made before refusing are recorded before the approval is voided, because
+a merge cannot be undone and an unrecorded one leaves the pull request unmerged here and its audit
+event lost.
+
+**An API step that fails fails the node.** Plan, hold, complete and refuse are the API's own
+steps. One that still errors after its retries, or that the API rejects outright with a 4xx,
+fails the gate's node instead of refusing, since refusing is itself an API step. The node's
+`failed` status write then voids the approval the gate was finalizing, so a retried gate can be
+approved again.
 
 **A held approval is re-applied by the workflow, not by a timer.** When a gate opens, the
 workflow claims a still-held approval before it waits for a signal. The claim is one atomic step
 inside the workflow's single event stream, so no window exists for a reviewer to race it. A
-reviewer's non-approve decision voids a held approval in the same transaction as the gate's status
-write, a run's end voids its live approvals, and a gate that fails while finalizing releases its
+reviewer's non-approve decision claims the gate, then voids a held approval in a transaction of its
+own before it signals; if the signal fails, the gate is released but the held approval stays
+voided. A run's end voids its live approvals, and a gate that fails while finalizing releases its
 approval, so a retried gate can be approved again instead of hitting the one-live-approval-per-gate
 constraint.
 
 **The protocol is chosen per gate, with `finalize_mode`.** A gate opened by the new workflow code
 writes `async` on its node execution; a gate opened before the deploy has null, and its workflow
 history waits for a final decision signal, so it keeps the synchronous path and
-`GateStampReconciler`. The new workflow code is behind a version marker for the same reason.
+`GateStampReconciler`. The new workflow code is behind a version marker for the same reason. A run
+with no Worker task queue also opens its gates as null, since nothing could run its GitHub step.
 
 **The roadmap is written at most once per approval.** Under the row lock, finalizing sets
 `materialized_at` and commits; it then writes the roadmap with no surrounding transaction and
@@ -105,14 +118,19 @@ reads stale, so the cost is one extra re-check round, never an unchecked merge. 
 Worker was killed mid-merge resumes from its heartbeat rather than comparing against its own
 merges.
 
+**A merge happens only while the gate is finalizing.** The Worker reads the gate's execution
+before every merge and stops the step, without retry, once it has left `finalizing`, as a
+cancelled run's gate does. A cancel otherwise reaches the step only on a throttled heartbeat, up to
+about 48 seconds later. A read that fails is retried; nothing merges without it.
+
 **Retry rules follow what a retry can change.** An API answer of 400, 404 or 409 repeats
 identically, so it is not retried; 5xx and network errors are. GitHub's refusals are a result,
 never an error, so they are never retried. Completing gets a 5 minute budget where the other API
 steps get 60 seconds, because writing a large roadmap files many issues, and an overlapping retry
-would complete the gate without the roadmap note. A Worker step no Worker picks up is bounded, so
-a missing Worker refuses the approval instead of leaving the gate finalizing. The refusal reason a
-reviewer sees is GitHub's scrubbed message or a fixed text, never a raw error chain that could
-carry an internal URL.
+would complete the gate without the roadmap note. A Worker step no Worker picks up is bounded, so a
+missing Worker refuses the approval instead of leaving the gate finalizing; a plan with nothing to
+compare or merge skips the Worker step altogether. The refusal reason a reviewer sees is GitHub's
+scrubbed message or a fixed text, never a raw error chain that could carry an internal URL.
 
 ## Supersedes
 
@@ -138,9 +156,15 @@ carry an internal URL.
   API already hands to agent pods. Under Local it is the customer's own.
 - **The approval record keeps the name `gate_stamp`** though it now starts at the click and
   covers every approval.
-- **Known gap: a pull request merged at the instant of a cancel is not recorded.** The Worker
-  step's result is discarded when the run is cancelled, so a pull request that step merged is not
-  recorded on the cancelled run, though GitHub still shows it merged.
+- **Known gap: merges around a cancel are not recorded.** After a cancel the Worker merges at
+  most the pull request it is merging at that moment. The step's result is discarded with the
+  cancelled workflow, so neither that merge nor any the step made before the cancel is recorded
+  on the cancelled run, though GitHub shows them merged.
+- **An approval needs a live Worker within 10 minutes.** A GitHub step no Worker picks up within
+  that bound refuses the approval with a reason saying so. A gate with nothing to compare or merge
+  does not wait on a Worker.
+- **Runs without a Worker task queue keep the synchronous path.** A run started before Worker task
+  queues existed opens its gates with null `finalize_mode`, so it approves as before the change.
 - **Known gap: no replay fixture.** Old gate histories were replayed against the new workflow
   code locally, but no recorded history is committed, so the repo has no test that replays one.
 - **To remove later:** `GateStampReconciler` once no gate with null `finalize_mode` can be open,
