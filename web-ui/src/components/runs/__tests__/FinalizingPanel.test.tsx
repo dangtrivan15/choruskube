@@ -21,11 +21,13 @@ function makeStamp(overrides: Partial<GateStampResponse> = {}): GateStampRespons
 }
 
 describe("FinalizingPanel", () => {
-  it("describes the finalizing steps without a stamp", () => {
+  it("describes the finalizing steps without claiming ones the gate may not have", () => {
     render(<FinalizingPanel stamp={null} />);
     const panel = screen.getByTestId("gate-finalizing");
-    expect(panel).toHaveTextContent("Finalizing the approval");
-    expect(panel).toHaveTextContent("checking against current main and merging the pull requests");
+    expect(panel).toHaveTextContent(
+      "Finalizing the approval in the background: re-checking, merging and writing the roadmap as this gate requires.",
+    );
+    expect(panel).not.toHaveTextContent("merging the pull requests");
     expect(panel).not.toHaveTextContent("Re-check round");
     expect(panel).toHaveAttribute("data-tone", "info");
   });

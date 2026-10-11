@@ -154,11 +154,10 @@ test.describe("Roadmap extension gate (Feature Development's Final Approval, mir
     expect(graph.dependencies).toEqual([]);
   });
 
-  test("an edit that violates the addressable invariant is refused with the server's reason on the reopened gate, then approved", async ({
+  test("an edit that violates the addressable invariant is rejected with the server's reason, then fixed and approved", async ({
     page,
     api,
     workerRepo,
-    runMonitorPage,
   }) => {
     test.setTimeout(120_000);
 
@@ -172,36 +171,38 @@ test.describe("Roadmap extension gate (Feature Development's Final Approval, mir
     // The anchor Epic's proposed stories are, in order: [0] the existing anchor Story
     // (existingId), [1] the mock agent's own new "Mock Deferred Story" — addStory appends
     // after both, so the story this test adds lands at index 2.
+    const invalidTitle = uniqueName("Invalid No-Task Story");
     await gatePage.addStory(card, 0);
-    await gatePage.fillNewStoryTitle(card, uniqueName("Invalid No-Task Story"), 0, 2);
+    await gatePage.fillNewStoryTitle(card, invalidTitle, 0, 2);
     await gatePage.approve(card);
 
-    // The proposal is validated while the approval finalizes, so the reason arrives on the
-    // reopened gate, not as an error toast. The toast keeps the wait below from passing on the
-    // pre-approval awaiting_human.
-    await expect(
-      page.locator("[data-sonner-toast]").filter({ hasText: "Finalizing your approval…" }),
-    ).toBeVisible();
-    await api.waitForNodeStatus(run.id, "final_approval", ["awaiting_human"], 60_000);
+    // The proposal is validated before the approval claims the gate, so the reason comes back
+    // on the click and the reviewer's edits stay on the card to fix.
+    const errorToast = page
+      .locator('[data-sonner-toast][data-type="error"]')
+      .filter({ hasText: "a new story needs at least one task" });
+    await expect(errorToast).toBeVisible();
+    await expect(gatePage.storyTitleInput(card, 0, 2)).toHaveValue(invalidTitle);
 
-    await runMonitorPage.goto(run.id);
-    await runMonitorPage.selectNode("final_approval");
-    await expect(page.getByTestId("gate-held-voided-notice")).toContainText(
-      "a new story needs at least one task",
-    );
-
-    // Nothing is materialized and the node stays awaiting a decision.
+    // Nothing is claimed or materialized: the node stays awaiting a decision.
+    await api.waitForNodeStatus(run.id, "final_approval", ["awaiting_human"], 15_000, 1_000);
     const untouched = await api.getGraph(epic.id);
     expect(untouched.stories.map((s) => s.id)).toEqual([story.id]);
     expect(untouched.tasks.map((t) => t.id)).toEqual([task.id]);
 
-    // A fresh Approvals page carries the server's proposal, without the refused edit.
-    await gatePage.goto();
-    const reopened = await gatePage.waitForGateCard(runName);
-    await gatePage.approve(reopened);
+    await gatePage.removeStory(card, 0, 2);
+    await gatePage.approve(card);
 
+    await expect(
+      page.locator("[data-sonner-toast]").filter({ hasText: "Finalizing your approval…" }),
+    ).toBeVisible();
     const finished = await api.waitForRunStatus(run.id, ["completed"], 60_000);
     expect(finished.status).toBe("completed");
+
+    // The corrected proposal is the one written: the mock agent's story, not the rejected one.
+    const storyTitles = (await api.getGraph(epic.id)).stories.map((s) => s.title);
+    expect(storyTitles).toContain("Mock Deferred Story");
+    expect(storyTitles).not.toContain(invalidTitle);
   });
 
   test("include_new_epic also materializes a wholly new top-level Epic alongside the anchor's own extension", async ({
