@@ -417,7 +417,8 @@ case "$SCENARIO" in
         register-pr --repo-id "$repo_id" --pr-url "${repo_url}/pull/${pr_number}" \
           --pr-number "$pr_number" --title "feat: drift recheck (${repo_name})" --repo-name "$repo_name"
         jq -n --arg id "$repo_id" \
-          '{gitRepoId: $id, outcome: "clean", baseSha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", conflictedFiles: []}' \
+          '{gitRepoId: $id, outcome: "clean", baseSha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+            defaultBranch: "main", conflictedFiles: []}' \
           > "${REPO_BASE_DIR:-/tmp/choruskube-repo-bases}/${repo_name}.json"
       done < <(echo "$REPOS_JSON" | jq -c '.[]')
       record-base

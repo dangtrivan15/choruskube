@@ -172,9 +172,11 @@ rebase_onto_default() {
   fi
 
   if [ -n "$repo_id" ]; then
+    # The gate compares against defaultBranch, so it must name the branch base_sha came from.
     jq -n --arg id "$repo_id" --arg outcome "$outcome" --arg sha "$base_sha" --arg files "$conflicted" \
+      --arg branch "$default_branch" \
       '{gitRepoId: $id, outcome: $outcome, baseSha: (if $sha == "" then null else $sha end),
-        conflictedFiles: ($files | split("\n") | map(select(length > 0)))}' \
+        defaultBranch: $branch, conflictedFiles: ($files | split("\n") | map(select(length > 0)))}' \
       > "$REPO_BASE_DIR/$name.json" || true
   fi
   if [ "$outcome" = "conflict" ]; then

@@ -559,7 +559,9 @@ class RunServiceDriftRecheckTest {
 
         service.applyHeldApproval(stamp.getId());
 
-        verify(gateRecheck).voidStamp(eq(stamp.getId()), contains("agent image"), eq(nodeExecId));
+        ArgumentCaptor<String> reason = ArgumentCaptor.forClass(String.class);
+        verify(gateRecheck).voidStamp(eq(stamp.getId()), reason.capture(), eq(nodeExecId));
+        assertThat(reason.getValue()).contains("agent image").doesNotContain("default branch setting");
         verify(gateRecheck, never()).holdAgain(any());
         verify(workflowStub, never()).signal(anyString(), any());
     }

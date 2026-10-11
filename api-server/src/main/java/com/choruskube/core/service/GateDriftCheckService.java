@@ -143,8 +143,11 @@ public class GateDriftCheckService {
                 continue;
             }
             String ownerRepo = RepoNameUtil.deriveOwnerRepoName(repo.getUrl());
-            String branch = repo.getDefaultBranch();
             NodeExecutionRepoBase base = bases.get(repoId);
+            // The branch the pod rebased onto: a stored setting that differs from the host's real
+            // default makes every compare 404, so the gate would read BASE_GONE on every approval.
+            String branch =
+                    base != null && base.getDefaultBranch() != null ? base.getDefaultBranch() : repo.getDefaultBranch();
             if (base == null) {
                 results.add(new RepoDrift(repoId, ownerRepo, branch, Reason.NO_RECORD, null, 0, List.of()));
             } else if ("conflict".equals(base.getOutcome())) {

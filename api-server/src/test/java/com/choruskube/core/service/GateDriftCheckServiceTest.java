@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -180,6 +181,47 @@ class GateDriftCheckServiceTest {
     }
 
     @Test
+    void recordedDefaultBranch_isComparedEvenWhenTheRepoSettingSaysOtherwise() throws Exception {
+        recordBase("clean", "abc1234def", "[]", "trunk");
+        when(gitHubAppService.compareCommits(TOKEN, "acme/app", "abc1234def", "trunk"))
+                .thenReturn(2);
+
+        DriftCheck check = service.check(runId, gateNodeId, snapshot(true));
+
+        assertThat(check.staleRepos()).singleElement().satisfies(r -> {
+            assertThat(r.reason()).isEqualTo(Reason.MAIN_MOVED);
+            assertThat(r.defaultBranch()).isEqualTo("trunk");
+            assertThat(r.summary()).contains("2 commits behind trunk");
+        });
+        verify(gitHubAppService, never()).compareCommits(anyString(), anyString(), anyString(), eq("main"));
+    }
+
+    @Test
+    void noRecordedDefaultBranch_fallsBackToTheRepoSetting() throws Exception {
+        GitRepo repo = gitRepoRepo.findById(repoId).orElseThrow();
+        repo.setDefaultBranch("develop");
+        recordBase("clean", "abc1234def", "[]", null);
+        when(gitHubAppService.compareCommits(TOKEN, "acme/app", "abc1234def", "develop"))
+                .thenReturn(1);
+
+        DriftCheck check = service.check(runId, gateNodeId, snapshot(true));
+
+        assertThat(check.staleRepos()).singleElement().satisfies(r -> {
+            assertThat(r.reason()).isEqualTo(Reason.MAIN_MOVED);
+            assertThat(r.defaultBranch()).isEqualTo("develop");
+        });
+    }
+
+    @Test
+    void conflictRecord_namesTheBranchThePodRebasedOnto() throws Exception {
+        recordBase("conflict", null, "[\"src/a.java\"]", "trunk");
+
+        assertThat(service.check(runId, gateNodeId, snapshot(true)).staleRepos())
+                .singleElement()
+                .satisfies(r -> assertThat(r.summary()).isEqualTo("rebasing onto trunk conflicted in src/a.java"));
+    }
+
+    @Test
     void humanExecutionCompletedLater_isNotThePredecessor() throws Exception {
         recordBase("clean", "abc1234def", "[]");
         when(gitHubAppService.compareCommits(any(), any(), any(), any())).thenReturn(0);
@@ -257,11 +299,16 @@ class GateDriftCheckServiceTest {
     }
 
     private void recordBase(String outcome, String sha, String files) {
+        recordBase(outcome, sha, files, null);
+    }
+
+    private void recordBase(String outcome, String sha, String files, String defaultBranch) {
         NodeExecutionRepoBase base = new NodeExecutionRepoBase();
         base.setNodeExecutionId(predecessor.getId());
         base.setGitRepoId(repoId);
         base.setOutcome(outcome);
         base.setBaseSha(sha);
+        base.setDefaultBranch(defaultBranch);
         base.setConflictedFiles(files);
         when(baseRepo.findByNodeExecutionId(predecessor.getId())).thenReturn(List.of(base));
     }

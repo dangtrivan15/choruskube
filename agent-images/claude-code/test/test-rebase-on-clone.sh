@@ -115,6 +115,9 @@ EOF
   && ok "no branch: baseSha is origin's main" || fail "no branch: baseSha is origin's main"
 [ "$(base_field "$C1" nobranch .gitRepoId)" = "id-1" ] \
   && ok "no branch: record carries the git repo id" || fail "no branch: record carries the git repo id"
+[ "$(base_field "$C1" nobranch .defaultBranch)" = "main" ] \
+  && ok "no branch: record names the default branch" \
+  || fail "no branch: record names the default branch ($(base_field "$C1" nobranch .))"
 [ ! -e "$C1/in/rebase_status.md" ] \
   && ok "no branch: no rebase status for the agent" || fail "no branch: no rebase status for the agent"
 
@@ -215,6 +218,9 @@ TRUNK_TIP=$(git -C "$TESTDIR/trunkrepo.git" rev-parse trunk)
   || fail "default branch trunk: outcome clean ($(base_field "$C5" trunkrepo .))"
 [ "$(base_field "$C5" trunkrepo .baseSha)" = "$TRUNK_TIP" ] \
   && ok "default branch trunk: baseSha is the trunk tip" || fail "default branch trunk: baseSha is the trunk tip"
+[ "$(base_field "$C5" trunkrepo .defaultBranch)" = "trunk" ] \
+  && ok "default branch trunk: record names trunk as the branch compared" \
+  || fail "default branch trunk: record names trunk as the branch compared ($(base_field "$C5" trunkrepo .))"
 [ "$(git -C "$C5/work" rev-parse HEAD^)" = "$TRUNK_TIP" ] \
   && ok "default branch trunk: rebased onto trunk" || fail "default branch trunk: rebased onto trunk"
 
@@ -233,6 +239,9 @@ EOF
   && ok "fetch fails: outcome unavailable" || fail "fetch fails: outcome unavailable ($(base_field "$C6" unreachable .))"
 [ "$(base_field "$C6" unreachable .baseSha)" = "null" ] \
   && ok "fetch fails: baseSha null" || fail "fetch fails: baseSha null"
+[ "$(base_field "$C6" unreachable .defaultBranch)" = "main" ] \
+  && ok "fetch fails: record names the branch it tried" \
+  || fail "fetch fails: record names the branch it tried ($(base_field "$C6" unreachable .))"
 grep -q "could not fetch" "$C6/bases/unreachable.status.md" 2>/dev/null \
   && ok "fetch fails: status fragment says could not fetch" \
   || fail "fetch fails: status fragment says could not fetch"
