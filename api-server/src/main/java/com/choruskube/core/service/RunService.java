@@ -497,7 +497,11 @@ public class RunService {
             return;
         }
         try {
-            decideGate(run, gate, new SignalRequest("approved", stamp.getFeedback(), null, null), stamp);
+            decideGate(
+                    run,
+                    gate,
+                    new SignalRequest("approved", stamp.getFeedback(), stamp.getAttachmentRefs(), null),
+                    stamp);
         } catch (GateClaimConflictException e) {
             logger.info(
                     "Held approval {} lost the claim on gate {}; the decision that won stands", stampId, gate.getId());
@@ -507,7 +511,7 @@ public class RunService {
     }
 
     private void parkHeldApproval(GateStamp stamp, NodeExecution gate, String reason) {
-        gateRecheck.voidStamp(stamp.getId(), reason);
+        gateRecheck.voidStamp(stamp.getId(), reason, gate.getId());
         logger.info("Held approval {} for run {} not applied: {}", stamp.getId(), stamp.getWorkflowRunId(), reason);
         eventPublisher.publishNodeStatusChanged(
                 stamp.getWorkflowRunId(), gate.getId(), NodeExecutionStatus.awaiting_human.name());
@@ -616,16 +620,34 @@ public class RunService {
             }
 
             signalGate(run, nodeExecId, validatedDecision, assembledResult, request.attachmentRefs());
-            if (heldStamp != null) {
-                gateRecheck.consume(heldStamp.getId());
-            }
-
-            eventPublisher.publishNodeStatusChanged(runId, nodeExecId, "signaled");
-            return SignalResponse.signaled();
         } catch (RuntimeException e) {
             nodeExecutionClaimService.compareAndSetStatus(
                     nodeExecId, NodeExecutionStatus.running, NodeExecutionStatus.awaiting_human);
             throw e;
+        }
+        afterSignal(runId, nodeExecId, () -> {
+            if (heldStamp != null) {
+                gateRecheck.consume(heldStamp.getId());
+            }
+        });
+        return SignalResponse.signaled();
+    }
+
+    /**
+     * Bookkeeping after a decision was delivered. A failure is logged and never thrown: releasing
+     * the claim or reporting an error now would misstate a decision the workflow already received.
+     */
+    private void afterSignal(UUID runId, UUID nodeExecId, Runnable bookkeeping) {
+        try {
+            bookkeeping.run();
+        } catch (RuntimeException e) {
+            logger.error(
+                    "Bookkeeping after signalling gate {} of run {} failed: {}", nodeExecId, runId, e.getMessage(), e);
+        }
+        try {
+            eventPublisher.publishNodeStatusChanged(runId, nodeExecId, "signaled");
+        } catch (RuntimeException e) {
+            logger.warn("Could not publish the signal of gate {} of run {}: {}", nodeExecId, runId, e.getMessage());
         }
     }
 
@@ -644,6 +666,11 @@ public class RunService {
             GateDriftCheckService.DriftCheck drift,
             RoadmapCandidatesDocument approvedCandidates) {
         UUID runId = run.getId();
+        if (heldStamp != null && cannotBeFixedByARecheck(drift)) {
+            throw new GateRecheckExhaustedException("The re-check could not tell which main commit was tested ("
+                    + drift.summary() + "). The project's agent image may predate base recording, so rebuild it on "
+                    + "the current claude-code image, or a repo's default branch setting may not match its host.");
+        }
         int round = heldStamp == null ? 1 : heldStamp.getRecheckRounds() + 1;
         if (round > GateDriftCheckService.MAX_RECHECK_ROUNDS) {
             throw new GateRecheckExhaustedException("The default branch moved again after "
@@ -662,10 +689,7 @@ public class RunService {
         } catch (RuntimeException e) {
             throw new IllegalStateException("Could not store the re-check guidance for run " + runId, e);
         }
-        String note = "Approval held for a re-check against current main (round " + round + " of "
-                + GateDriftCheckService.MAX_RECHECK_ROUNDS + "): " + drift.summary() + ".";
-        signalGate(run, exec.getId(), route, appendNote(exec.getResult(), note), guidanceRefs);
-
+        // Written before the signal: once the re-check starts, nothing else would remember the approval.
         GateStamp stamp = heldStamp == null
                 ? gateRecheck.hold(
                         runId,
@@ -673,11 +697,36 @@ public class RunService {
                         nodeLabel(snapshot, exec.getTemplateNodeId()),
                         recheck.stamp(),
                         request.feedback(),
+                        request.attachmentRefs(),
                         approvedCandidates)
                 : gateRecheck.holdAgain(heldStamp.getId());
-        auditHeld(runId, stamp, drift);
-        eventPublisher.publishNodeStatusChanged(runId, exec.getId(), "signaled");
+        String note = "Approval held for a re-check against current main (round " + round + " of "
+                + GateDriftCheckService.MAX_RECHECK_ROUNDS + "): " + drift.summary() + ".";
+        try {
+            signalGate(run, exec.getId(), route, appendNote(exec.getResult(), note), guidanceRefs);
+        } catch (RuntimeException e) {
+            if (heldStamp == null) {
+                voidQuietly(stamp, "Starting the re-check failed: " + e.getMessage(), exec.getId());
+            }
+            throw e;
+        }
+        afterSignal(runId, exec.getId(), () -> auditHeld(runId, stamp, drift));
         return SignalResponse.held(drift);
+    }
+
+    /** Stale only for want of a record a re-check would not produce either: the pods record nothing. */
+    private static boolean cannotBeFixedByARecheck(GateDriftCheckService.DriftCheck drift) {
+        return drift.staleRepos().stream()
+                .allMatch(r -> r.reason() == GateDriftCheckService.Reason.NO_RECORD
+                        || r.reason() == GateDriftCheckService.Reason.BASE_GONE);
+    }
+
+    private void voidQuietly(GateStamp stamp, String reason, UUID gateExecId) {
+        try {
+            gateRecheck.voidStamp(stamp.getId(), reason, gateExecId);
+        } catch (RuntimeException e) {
+            logger.error("Could not void held approval {}: {}", stamp.getId(), e.getMessage(), e);
+        }
     }
 
     private void signalGate(WorkflowRun run, UUID nodeExecId, String decision, String result, String attachmentRefs) {

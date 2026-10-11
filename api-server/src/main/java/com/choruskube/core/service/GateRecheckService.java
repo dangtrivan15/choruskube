@@ -59,6 +59,7 @@ public class GateRecheckService {
             String gateLabel,
             StampMode mode,
             String feedback,
+            String attachmentRefs,
             RoadmapCandidatesDocument approvedCandidates) {
         GateStamp stamp = new GateStamp();
         stamp.setWorkflowRunId(runId);
@@ -67,6 +68,7 @@ public class GateRecheckService {
         stamp.setStampedNodeExecutionId(gate.getId());
         stamp.setStampMode(mode);
         stamp.setFeedback(feedback);
+        stamp.setAttachmentRefs(attachmentRefs);
         stamp.setApprovedCandidates(approvedCandidates == null ? null : write(approvedCandidates));
         return stampRepo.save(stamp);
     }
@@ -88,9 +90,13 @@ public class GateRecheckService {
         });
     }
 
+    /** {@code parkedAt}: the gate execution left awaiting a human, so the UI shows why only there. */
     @Transactional
-    public void voidStamp(UUID stampId, String reason) {
-        stampRepo.findByIdAndStatus(stampId, GateStampStatus.pending).ifPresent(s -> markVoided(s, reason));
+    public void voidStamp(UUID stampId, String reason, UUID parkedAt) {
+        stampRepo.findByIdAndStatus(stampId, GateStampStatus.pending).ifPresent(s -> {
+            s.setParkedNodeExecutionId(parkedAt);
+            markVoided(s, reason);
+        });
     }
 
     @Transactional

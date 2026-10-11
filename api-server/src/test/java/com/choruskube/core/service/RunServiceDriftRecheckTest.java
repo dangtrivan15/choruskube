@@ -33,6 +33,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -279,7 +280,7 @@ class RunServiceDriftRecheckTest {
 
         assertThat(response.outcome()).isEqualTo(SignalResponse.SIGNALED);
         assertThat(signalled()).contains("approved");
-        verify(gateRecheck, never()).hold(any(), any(), any(), any(), any(), any());
+        verify(gateRecheck, never()).hold(any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -287,11 +288,18 @@ class RunServiceDriftRecheckTest {
         stubExec();
         stubRun(RECHECK_GATE);
         when(gateDriftCheck.check(eq(runId), any())).thenReturn(stale());
-        when(gateRecheck.hold(eq(runId), any(), eq("final_approval"), eq(StampMode.always), eq("ship it"), isNull()))
+        when(gateRecheck.hold(
+                        eq(runId),
+                        any(),
+                        eq("final_approval"),
+                        eq(StampMode.always),
+                        eq("ship it"),
+                        eq("{\"spec.pdf\":\"k2\"}"),
+                        isNull()))
                 .thenReturn(stamp);
 
-        SignalResponse response =
-                service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", "ship it", null, null));
+        SignalResponse response = service.signalHumanDecision(
+                runId, nodeExecId, new SignalRequest("approved", "ship it", "{\"spec.pdf\":\"k2\"}", null));
 
         assertThat(response.outcome()).isEqualTo(SignalResponse.HELD_FOR_RECHECK);
         assertThat(response.staleRepos())
@@ -335,7 +343,7 @@ class RunServiceDriftRecheckTest {
 
         verify(nodeExecutionClaimService)
                 .compareAndSetStatus(nodeExecId, NodeExecutionStatus.running, NodeExecutionStatus.awaiting_human);
-        verify(gateRecheck, never()).hold(any(), any(), any(), any(), any(), any());
+        verify(gateRecheck, never()).hold(any(), any(), any(), any(), any(), any(), any());
         verify(workflowStub, never()).signal(anyString(), any());
     }
 
@@ -379,7 +387,7 @@ class RunServiceDriftRecheckTest {
         verify(gateDriftCheck).guidance(eq(runId), any(), eq(2));
         verify(gateRecheck).holdAgain(stamp.getId());
         assertThat(signalled()).contains("rereview");
-        verify(gateRecheck, never()).voidStamp(any(), any());
+        verify(gateRecheck, never()).voidStamp(any(), any(), any());
     }
 
     @Test
@@ -392,7 +400,7 @@ class RunServiceDriftRecheckTest {
 
         service.applyHeldApproval(stamp.getId());
 
-        verify(gateRecheck).voidStamp(eq(stamp.getId()), contains("2 re-check rounds"));
+        verify(gateRecheck).voidStamp(eq(stamp.getId()), contains("2 re-check rounds"), eq(nodeExecId));
         verify(workflowStub, never()).signal(anyString(), any());
         verify(nodeExecutionClaimService)
                 .compareAndSetStatus(nodeExecId, NodeExecutionStatus.running, NodeExecutionStatus.awaiting_human);
@@ -407,7 +415,7 @@ class RunServiceDriftRecheckTest {
 
         service.applyHeldApproval(stamp.getId());
 
-        verify(gateRecheck).voidStamp(stamp.getId(), "escalated");
+        verify(gateRecheck).voidStamp(stamp.getId(), "escalated", nodeExecId);
         verify(nodeExecutionClaimService, never()).compareAndSetStatus(any(), any(), any());
     }
 
@@ -422,7 +430,7 @@ class RunServiceDriftRecheckTest {
 
         service.applyHeldApproval(stamp.getId());
 
-        verify(gateRecheck, never()).voidStamp(any(), any());
+        verify(gateRecheck, never()).voidStamp(any(), any(), any());
         verifyNoInteractions(pullRequestMergeService);
         verify(workflowStub, never()).signal(anyString(), any());
     }
@@ -438,7 +446,7 @@ class RunServiceDriftRecheckTest {
 
         service.applyHeldApproval(stamp.getId());
 
-        verify(gateRecheck).voidStamp(eq(stamp.getId()), contains("merge conflicts"));
+        verify(gateRecheck).voidStamp(eq(stamp.getId()), contains("merge conflicts"), eq(nodeExecId));
         verify(gateRecheck, never()).consume(any());
     }
 
@@ -471,5 +479,101 @@ class RunServiceDriftRecheckTest {
         verify(roadmapCandidatesArtifactResolver, never()).resolve(any(UUID.class), any(UUID.class));
         verify(roadmapProposalValidator).validate(eq(runId), same(approved), any(), any());
         verify(gateRecheck).consume(stamp.getId());
+    }
+
+    private DriftCheck unrecorded() {
+        return new DriftCheck(
+                null, List.of(new RepoDrift(repoId, "acme/app", "main", Reason.NO_RECORD, null, 0, List.of())));
+    }
+
+    @Test
+    void staleRecheckGate_writesTheStampBeforeSignalling() {
+        stubExec();
+        stubRun(RECHECK_GATE);
+        when(gateDriftCheck.check(eq(runId), any())).thenReturn(stale());
+        when(gateRecheck.hold(any(), any(), any(), any(), any(), any(), any())).thenReturn(stamp);
+
+        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, null));
+
+        InOrder order = inOrder(gateRecheck, workflowStub);
+        order.verify(gateRecheck).hold(any(), any(), any(), any(), any(), any(), any());
+        order.verify(workflowStub).signal(eq("human-decision-" + nodeExecId), any());
+    }
+
+    @Test
+    void staleRecheckGate_signalFails_voidsTheNewStampAndReleasesTheClaim() {
+        stubExec();
+        stubRun(RECHECK_GATE);
+        when(gateDriftCheck.check(eq(runId), any())).thenReturn(stale());
+        when(gateRecheck.hold(any(), any(), any(), any(), any(), any(), any())).thenReturn(stamp);
+        doThrow(new IllegalStateException("temporal down")).when(workflowStub).signal(anyString(), any());
+
+        assertThatThrownBy(() ->
+                        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, null)))
+                .hasMessageContaining("temporal down");
+
+        verify(gateRecheck).voidStamp(eq(stamp.getId()), contains("temporal down"), eq(nodeExecId));
+        verify(nodeExecutionClaimService)
+                .compareAndSetStatus(nodeExecId, NodeExecutionStatus.running, NodeExecutionStatus.awaiting_human);
+    }
+
+    @Test
+    void heldApproval_bookkeepingFailsAfterTheSignal_keepsTheClaimAndDoesNotPark() {
+        stubExec();
+        stubRun(RECHECK_GATE);
+        stubHeld();
+        when(gateDriftCheck.check(eq(runId), any())).thenReturn(fresh());
+        when(pullRequestMergeService.mergeAll(runId, PullRequestMergeMethod.squash, stamp.getId()))
+                .thenReturn(sampleOutcome());
+        doThrow(new IllegalStateException("db blip")).when(gateRecheck).consume(stamp.getId());
+
+        service.applyHeldApproval(stamp.getId());
+
+        assertThat(signalled()).contains("approved");
+        verify(nodeExecutionClaimService, never())
+                .compareAndSetStatus(nodeExecId, NodeExecutionStatus.running, NodeExecutionStatus.awaiting_human);
+        verify(gateRecheck, never()).voidStamp(any(), any(), any());
+    }
+
+    @Test
+    void heldApproval_isReappliedWithTheReviewersAttachments() {
+        stamp.setAttachmentRefs("{\"spec.pdf\":\"k2\"}");
+        stubExec();
+        stubRun(RECHECK_GATE);
+        stubHeld();
+        when(gateDriftCheck.check(eq(runId), any())).thenReturn(fresh());
+        when(pullRequestMergeService.mergeAll(runId, PullRequestMergeMethod.squash, stamp.getId()))
+                .thenReturn(sampleOutcome());
+
+        service.applyHeldApproval(stamp.getId());
+
+        assertThat(signalled()).contains("spec.pdf");
+    }
+
+    @Test
+    void heldApproval_reposStillUnrecordedAfterARecheck_parksWithAnActionableReason() {
+        stubExec();
+        stubRun(RECHECK_GATE);
+        stubHeld();
+        when(gateDriftCheck.check(eq(runId), any())).thenReturn(unrecorded());
+
+        service.applyHeldApproval(stamp.getId());
+
+        verify(gateRecheck).voidStamp(eq(stamp.getId()), contains("agent image"), eq(nodeExecId));
+        verify(gateRecheck, never()).holdAgain(any());
+        verify(workflowStub, never()).signal(anyString(), any());
+    }
+
+    @Test
+    void reviewerApproval_unrecordedRepos_stillGetsOneRecheck() {
+        stubExec();
+        stubRun(RECHECK_GATE);
+        when(gateDriftCheck.check(eq(runId), any())).thenReturn(unrecorded());
+        when(gateRecheck.hold(any(), any(), any(), any(), any(), any(), any())).thenReturn(stamp);
+
+        SignalResponse response =
+                service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, null));
+
+        assertThat(response.outcome()).isEqualTo(SignalResponse.HELD_FOR_RECHECK);
     }
 }

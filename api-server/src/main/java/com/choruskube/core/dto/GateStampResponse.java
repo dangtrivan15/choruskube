@@ -16,6 +16,7 @@ public record GateStampResponse(
         int maxRecheckRounds,
         String voidReason,
         boolean supersededByReviewer,
+        UUID parkedNodeExecutionId,
         Instant createdAt,
         Instant updatedAt) {
 
@@ -29,6 +30,7 @@ public record GateStampResponse(
                 GateDriftCheckService.MAX_RECHECK_ROUNDS,
                 s.getVoidReason(),
                 GateRecheckService.REVIEWER_DECIDED.equals(s.getVoidReason()),
+                s.getParkedNodeExecutionId(),
                 s.getCreatedAt(),
                 s.getUpdatedAt());
     }

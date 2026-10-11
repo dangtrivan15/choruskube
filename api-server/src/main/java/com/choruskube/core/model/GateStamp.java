@@ -34,6 +34,10 @@ public class GateStamp {
     private String feedback;
 
     @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "attachment_refs", columnDefinition = "jsonb")
+    private String attachmentRefs;
+
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "approved_candidates", columnDefinition = "jsonb")
     private String approvedCandidates;
 
@@ -50,6 +54,10 @@ public class GateStamp {
 
     @Column(name = "void_reason")
     private String voidReason;
+
+    /** The gate execution that was awaiting a decision when this stamp was voided, if it was. */
+    @Column(name = "parked_node_execution_id")
+    private UUID parkedNodeExecutionId;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
@@ -173,5 +181,21 @@ public class GateStamp {
 
     public void setUpdatedAt(Instant updatedAt) {
         this.updatedAt = updatedAt;
+    }
+
+    public String getAttachmentRefs() {
+        return attachmentRefs;
+    }
+
+    public void setAttachmentRefs(String attachmentRefs) {
+        this.attachmentRefs = attachmentRefs;
+    }
+
+    public UUID getParkedNodeExecutionId() {
+        return parkedNodeExecutionId;
+    }
+
+    public void setParkedNodeExecutionId(UUID parkedNodeExecutionId) {
+        this.parkedNodeExecutionId = parkedNodeExecutionId;
     }
 }

@@ -19,11 +19,13 @@ CREATE TABLE public.gate_stamp (
     gate_label TEXT NOT NULL,
     stamped_node_execution_id UUID NOT NULL REFERENCES public.node_execution(id) ON DELETE CASCADE,
     feedback TEXT,
+    attachment_refs JSONB,
     approved_candidates JSONB,
     stamp_mode TEXT NOT NULL CHECK (stamp_mode IN ('always', 'if_unchanged')),
     recheck_rounds INTEGER NOT NULL DEFAULT 1,
     status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'consumed', 'voided')),
     void_reason TEXT,
+    parked_node_execution_id UUID,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
