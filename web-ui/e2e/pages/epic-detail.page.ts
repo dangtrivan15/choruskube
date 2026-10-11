@@ -1,4 +1,5 @@
 import { type Page, type Locator, expect } from "@playwright/test";
+import { clickOption } from "../helpers/select";
 
 /**
  * Page object for an Epic's detail page (/roadmap/epics/:epicId), covering its
@@ -64,6 +65,6 @@ export class EpicDetailPage {
 
   private async pickEpic(select: Locator, epicTitle: string) {
     await select.click();
-    await this.page.getByRole("option", { name: epicTitle }).click();
+    await clickOption(this.page.getByRole("option", { name: epicTitle }));
   }
 }

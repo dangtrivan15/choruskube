@@ -1,4 +1,5 @@
 import { type Page, type Locator, expect } from "@playwright/test";
+import { clickOption } from "../helpers/select";
 import { RoadmapViewControls } from "./roadmap-view-controls.page";
 
 /**
@@ -383,9 +384,7 @@ export class RoadmapPage {
    */
   async selectSoftwareProjectInCreateDialog(projectName: string) {
     await this.createSoftwareProjectSelect.click();
-    await this.page
-      .getByRole("option", { name: projectName, exact: true })
-      .click();
+    await clickOption(this.page.getByRole("option", { name: projectName, exact: true }));
   }
 
   async createStory(epicTitle: string, title: string, description: string) {

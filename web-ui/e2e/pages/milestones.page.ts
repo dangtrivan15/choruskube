@@ -1,4 +1,5 @@
 import { type Page, type Locator, expect } from "@playwright/test";
+import { clickOption } from "../helpers/select";
 
 /**
  * Page object for the Milestone management surface (`/roadmap/milestones`) — list, create,
@@ -89,7 +90,7 @@ export class MilestonesPage {
    */
   async selectSoftwareProjectInCreateDialog(projectName: string) {
     await this.createSoftwareProjectSelect.click();
-    await this.page.getByRole("option", { name: projectName, exact: true }).click();
+    await clickOption(this.page.getByRole("option", { name: projectName, exact: true }));
   }
 
   async createMilestone(
