@@ -49,7 +49,9 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
     // and states each fact once.
     // v49: Implement names a decision entry YYYY-MM-DD-<slug>.md with its status on a line
     // under the title, and appends no index row.
-    static final int CURRENT_VERSION = 49;
+    // v50: the entry keeps v49's status line and missing index row, but is named
+    // YYYY-MM-DD---NN-<slug>.md again, dated by the UTC date it is written.
+    static final int CURRENT_VERSION = 50;
 
     private static final String TEMPLATE_NAME = "Feature Development";
 
@@ -759,15 +761,19 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             reader cannot open is worse than no reference.
 
             These docs are derived from the spec. A run owns exactly one decisions file —
-            docs/decisions/YYYY-MM-DD-<slug>.md — holding every decision that run
-            graduates. On a re-run, edit that same file; never create a second one. The spec
-            may have changed since an earlier iteration wrote it and may now conflict with
-            what is there — amend or rewrite as you judge fit. ARCHITECTURE.md is an existing
-            living document; merge into it rather than adding a parallel file.
+            docs/decisions/YYYY-MM-DD---NN-<slug>.md — holding every decision that run
+            graduates. Date it by the UTC date you write it, and take as NN the next free
+            number for that date on the base branch (`01` if there is none). On a re-run,
+            edit that same file; never create a second one. The spec may have changed since
+            an earlier iteration wrote it and may now conflict with what is there — amend
+            or rewrite as you judge fit. ARCHITECTURE.md is an existing living document;
+            merge into it rather than adding a parallel file.
 
-            The filename carries no sequence number, even where older entries' names do:
-            runs land in parallel, a number each branch takes as the next free one collides
-            with another open branch's, and git merges the two files without a word.
+            Parallel runs can take the same number, and git merges both files without a
+            word because their names differ. Before you push, check the base branch as it
+            is then: if it already holds an entry with your date and number, keep that one,
+            because it is merged and cited. Move yours to the next free number for that
+            date with `git mv`, and update every reference to its old filename.
 
             Directly under the entry's title, with a blank line on each side, write its
             status line: `**Status:** current`. That line is where a later run marks the

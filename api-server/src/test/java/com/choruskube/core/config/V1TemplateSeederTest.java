@@ -827,13 +827,13 @@ class V1TemplateSeederTest extends BaseTest {
     }
 
     @Test
-    void currentVersionIsBumpedForDecisionStatusLines() {
-        // v49: Implement names a decision entry without a sequence number and puts its status
-        // on a line under the title instead of an index row. This is the rolling version
-        // tripwire: rewrite it and bump the literal whenever CURRENT_VERSION changes, so a
-        // template edit that forgets the bump cannot ship silently.
-        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(49);
-        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 49))
+    void currentVersionIsBumpedForNumberedDecisionFiles() {
+        // v50: Implement names a decision entry YYYY-MM-DD---NN-<slug>.md again, dated by the
+        // UTC date it is written, keeping v49's status line and missing index row. This is the
+        // rolling version tripwire: rewrite it and bump the literal whenever CURRENT_VERSION
+        // changes, so a template edit that forgets the bump cannot ship silently.
+        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(50);
+        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 50))
                 .isPresent();
     }
 

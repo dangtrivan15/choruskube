@@ -263,11 +263,18 @@ class FeatureDevPromptConventionsTest {
     }
 
     @Test
-    void implementPromptNamesDecisionFilesWithoutASequenceNumber() throws Exception {
-        assertThat(promptField("IMPLEMENT_PROMPT"))
-                .as("parallel runs each take the next free number, and git merges the duplicates silently")
-                .contains("docs/decisions/YYYY-MM-DD-<slug>.md")
-                .doesNotContain("---NN");
+    void implementPromptNumbersDecisionFilesByTheirUtcWriteDate() throws Exception {
+        String collapsed = promptField("IMPLEMENT_PROMPT").replaceAll("\\s+", " ");
+        assertThat(collapsed)
+                .as("NN orders the entries written on one date; the landing date is unknown when writing")
+                .contains("docs/decisions/YYYY-MM-DD---NN-<slug>.md")
+                .contains("Date it by the UTC date you write it")
+                .contains("the next free number for that date on the base branch (`01` if there is none)")
+                .doesNotContain("docs/decisions/YYYY-MM-DD-<slug>.md");
+        assertThat(collapsed)
+                .as("two branches can take the same number, and git merges both files silently")
+                .contains("if it already holds an entry with your date and number, keep that one")
+                .contains("with `git mv`, and update every reference to its old filename");
     }
 
     @Test
