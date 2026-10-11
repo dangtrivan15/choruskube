@@ -129,16 +129,28 @@ func (a *Activities) RunGateGitHubSteps(ctx context.Context, p GateGitHubParams)
 	}
 	s := &gateSteps{gh: a.gh, token: tok.Value, method: p.MergeMethod}
 
-	if saved, ok := savedProgress(ctx); ok && saved.Phase == gatePhaseMerge {
+	saved, resumed := savedProgress(ctx)
+	if resumed && saved.Phase == gatePhaseMerge {
 		s.merging = true
 		res.Compares = append(res.Compares, saved.Compares...)
-	} else if err := s.compare(ctx, p.Compares, &res); err != nil || res.Stale || res.Refused != "" {
-		return res, err
+		s.passed = res.Compares
 	}
-	s.passed = res.Compares
 	in, err := s.inspect(ctx, p.PRs, &res)
 	if err != nil {
 		return res, err
+	}
+	if !s.merging {
+		if err := s.compare(ctx, p.Compares, in, &res); err != nil {
+			return res, err
+		}
+		if res.Stale {
+			res.Merges = []GatePRResult{}
+			return res, nil
+		}
+		if res.Refused != "" {
+			return res, nil
+		}
+		s.passed = res.Compares
 	}
 	if len(in.blockers) > 0 {
 		res.Refused = refusalBeforeMerging(in)
@@ -194,6 +206,16 @@ type inspection struct {
 	queue         []queuedMerge
 	blockers      []string
 	alreadyMerged []string
+	repos         map[string]*repoPRs
+}
+
+type repoPRs struct{ total, merged int }
+
+// fullyMerged is true only for a repo with pull requests that all merged. A repo with none, or
+// with any unmerged, must still be compared, or an unchecked merge could follow.
+func (in inspection) fullyMerged(ownerRepo string) bool {
+	r := in.repos[ownerRepo]
+	return r != nil && r.merged == r.total
 }
 
 type queuedMerge struct {
@@ -204,8 +226,14 @@ type queuedMerge struct {
 
 // compare records every repo's drift, and stops at the first refusal. Merging a repo whose main
 // moved would ship a change nobody tested against the new main.
-func (s *gateSteps) compare(ctx context.Context, compares []GateCompare, res *GateGitHubResult) error {
+func (s *gateSteps) compare(ctx context.Context, compares []GateCompare, in inspection, res *GateGitHubResult) error {
 	for i, c := range compares {
+		if in.fullyMerged(c.OwnerRepo) {
+			// Main carries this repo's own merges, which a compare would read as drift. A zero
+			// result keeps the repo from reading as unavailable should another repo hold the run.
+			res.Compares = append(res.Compares, GateCompareResult{GitRepoID: c.GitRepoID})
+			continue
+		}
 		s.beat(ctx, gatePhaseCompare, i)
 		if err := ctx.Err(); err != nil {
 			return err
@@ -236,13 +264,17 @@ func (s *gateSteps) compare(ctx context.Context, compares []GateCompare, res *Ga
 // inspect reads every pull request before anything merges, so one that cannot merge refuses the
 // whole approval instead of leaving the repos half-merged.
 func (s *gateSteps) inspect(ctx context.Context, prs []GatePR, res *GateGitHubResult) (inspection, error) {
-	var in inspection
+	in := inspection{repos: map[string]*repoPRs{}}
 	for i, pr := range prs {
 		s.beat(ctx, gatePhaseInspect, i)
 		if err := ctx.Err(); err != nil {
 			return inspection{}, err
 		}
 		label := prLabel(pr)
+		if in.repos[pr.OwnerRepo] == nil {
+			in.repos[pr.OwnerRepo] = &repoPRs{}
+		}
+		in.repos[pr.OwnerRepo].total++
 		detail, err := s.gh.PullRequest(ctx, s.token, pr.OwnerRepo, pr.Number)
 		if err != nil {
 			reason, refused := readRefusal(err, pr.OwnerRepo, label)
@@ -259,6 +291,7 @@ func (s *gateSteps) inspect(ctx context.Context, prs []GatePR, res *GateGitHubRe
 			res.Merges = append(res.Merges,
 				GatePRResult{RowID: pr.RowID, Kind: GatePRAlreadyMerged, MergedAt: utcOrNow(detail.MergedAt)})
 			in.alreadyMerged = append(in.alreadyMerged, label)
+			in.repos[pr.OwnerRepo].merged++
 		case detail.State == "closed":
 			res.Merges = append(res.Merges, GatePRResult{RowID: pr.RowID, Kind: GatePRSkippedClosed})
 		case detail.Draft:

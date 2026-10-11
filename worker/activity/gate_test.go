@@ -269,10 +269,12 @@ func (r *gateRig) exec(t *testing.T, compares []GateCompare, prs []GatePR) (Gate
 func TestRunGateGitHubSteps_StaleCompareReturnsStaleAndMergesNothing(t *testing.T) {
 	rig := newGateRig(t)
 	web, api := gateCompare("acme/web"), gateCompare("acme/api")
+	pr := gatePR("acme/web", 7)
+	rig.gh.pr(pr, openPR("head-one"))
 	rig.gh.compare(web, 2)
 	rig.gh.compare(api, 0)
 
-	res, err := rig.exec(t, []GateCompare{web, api}, []GatePR{gatePR("acme/web", 7)})
+	res, err := rig.exec(t, []GateCompare{web, api}, []GatePR{pr})
 
 	require.NoError(t, err)
 	assert.True(t, res.Stale)
@@ -282,17 +284,19 @@ func TestRunGateGitHubSteps_StaleCompareReturnsStaleAndMergesNothing(t *testing.
 	}, res.Compares)
 	assert.Empty(t, res.Merges)
 	assert.Empty(t, res.Refused)
-	assert.Equal(t, []string{"GET " + comparePath(web), "GET " + comparePath(api)}, rig.gh.sequence(),
-		"every compare runs, and no pull request is touched")
+	assert.Equal(t, []string{"GET " + prPath(pr), "GET " + comparePath(web), "GET " + comparePath(api)},
+		rig.gh.sequence(), "every pull request is read, every compare runs, and nothing is merged")
 }
 
 func TestRunGateGitHubSteps_Compare404IsBaseGoneAndStale(t *testing.T) {
 	rig := newGateRig(t)
 	web, api := gateCompare("acme/web"), gateCompare("acme/api")
+	pr := gatePR("acme/web", 7)
+	rig.gh.pr(pr, openPR("head-one"))
 	rig.gh.route(http.MethodGet, comparePath(web), statusReply(http.StatusNotFound))
 	rig.gh.compare(api, 0)
 
-	res, err := rig.exec(t, []GateCompare{web, api}, []GatePR{gatePR("acme/web", 7)})
+	res, err := rig.exec(t, []GateCompare{web, api}, []GatePR{pr})
 
 	require.NoError(t, err)
 	assert.True(t, res.Stale)
@@ -333,16 +337,138 @@ func TestRunGateGitHubSteps_CurrentMergesInOrderPinnedToInspectedHead(t *testing
 		assert.WithinDuration(t, time.Now(), *res.Merges[i].MergedAt, time.Minute)
 	}
 	assert.Equal(t, []string{
-		"GET " + comparePath(web),
 		"GET " + prPath(first),
 		"GET " + prPath(second),
+		"GET " + comparePath(web),
 		"PUT " + mergePath(first),
 		"PUT " + mergePath(second),
-	}, rig.gh.sequence(), "every pull request is inspected before the first merge")
+	}, rig.gh.sequence(), "every pull request is inspected, then compared, before the first merge")
 	puts := rig.gh.puts()
 	require.Len(t, puts, 2)
 	assert.JSONEq(t, `{"merge_method":"squash","sha":"head-one"}`, puts[0].body)
 	assert.JSONEq(t, `{"merge_method":"squash","sha":"head-two"}`, puts[1].body)
+}
+
+func mergedPR(head string) prState {
+	s := openPR(head)
+	s.State, s.Merged, s.MergedAt = "closed", true, "2026-10-10T12:00:00Z"
+	return s
+}
+
+func TestRunGateGitHubSteps_FullyMergedRepoIsNotComparedButARepoWithOpenWorkIs(t *testing.T) {
+	rig := newGateRig(t)
+	repoA, repoB := gateCompare("acme/web"), gateCompare("acme/api")
+	done, open := gatePR("acme/web", 1), gatePR("acme/api", 2)
+	rig.gh.pr(done, mergedPR("head-one"))
+	rig.gh.pr(open, openPR("head-two"))
+	rig.gh.compare(repoB, 1)
+
+	res, err := rig.exec(t, []GateCompare{repoA, repoB}, []GatePR{done, open})
+
+	require.NoError(t, err)
+	assert.True(t, res.Stale)
+	assert.Empty(t, res.Merges, "a stale outcome reports no merges")
+	assert.Equal(t, []GateCompareResult{
+		{GitRepoID: repoA.GitRepoID},
+		{GitRepoID: repoB.GitRepoID, AheadBy: 1},
+	}, res.Compares, "every planned repo has a result, so none reads as unavailable")
+	assert.Equal(t, []string{"GET " + prPath(done), "GET " + prPath(open), "GET " + comparePath(repoB)},
+		rig.gh.sequence(), "repo A is not compared, repo B is")
+	assert.Empty(t, rig.gh.puts())
+}
+
+func TestRunGateGitHubSteps_FullyMergedRepoIsSkippedAndTheRestIsMerged(t *testing.T) {
+	rig := newGateRig(t)
+	repoA, repoB := gateCompare("acme/web"), gateCompare("acme/api")
+	done, open := gatePR("acme/web", 1), gatePR("acme/api", 2)
+	rig.gh.pr(done, mergedPR("head-one"))
+	rig.gh.pr(open, openPR("head-two"))
+	rig.gh.compare(repoB, 0)
+	rig.gh.merge(open, mergeOK("merge-two"))
+
+	res, err := rig.exec(t, []GateCompare{repoA, repoB}, []GatePR{done, open})
+
+	require.NoError(t, err)
+	assert.False(t, res.Stale)
+	assert.Empty(t, res.Refused)
+	assert.Equal(t, []GateCompareResult{{GitRepoID: repoA.GitRepoID}, {GitRepoID: repoB.GitRepoID}}, res.Compares)
+	require.Len(t, res.Merges, 2)
+	assert.Equal(t, GatePRAlreadyMerged, res.Merges[0].Kind)
+	assert.Equal(t, done.RowID, res.Merges[0].RowID)
+	assert.Equal(t, GatePRMerged, res.Merges[1].Kind)
+	assert.Equal(t, open.RowID, res.Merges[1].RowID)
+	assert.Equal(t, 0, rig.gh.count(http.MethodGet, comparePath(repoA)), "repo A has nothing left to protect")
+	assert.Equal(t, 1, rig.gh.count(http.MethodGet, comparePath(repoB)))
+}
+
+// With no heartbeat to say the compares already passed, a repo that still has an unmerged pull
+// request is compared even though its other one merged: the compare may read its own merge as
+// drift, which costs a re-check round, never an unchecked merge.
+func TestRunGateGitHubSteps_RepoWithAnyUnmergedPrIsComparedEvenWhenAnotherIsMerged(t *testing.T) {
+	rig := newGateRig(t)
+	web := gateCompare("acme/web")
+	done, rest := gatePR("acme/web", 1), gatePR("acme/web", 2)
+	rig.gh.pr(done, mergedPR("head-one"))
+	rig.gh.pr(rest, openPR("head-two"))
+	rig.gh.compare(web, 1)
+
+	res, err := rig.exec(t, []GateCompare{web}, []GatePR{done, rest})
+
+	require.NoError(t, err)
+	assert.True(t, res.Stale)
+	assert.Equal(t, []GateCompareResult{{GitRepoID: web.GitRepoID, AheadBy: 1}}, res.Compares)
+	assert.Empty(t, res.Merges)
+	assert.Empty(t, rig.gh.puts())
+	assert.Equal(t, 1, rig.gh.count(http.MethodGet, comparePath(web)))
+}
+
+func TestRunGateGitHubSteps_RepoWithNoPullRequestIsAlwaysCompared(t *testing.T) {
+	rig := newGateRig(t)
+	repoA, repoC := gateCompare("acme/web"), gateCompare("acme/docs")
+	done := gatePR("acme/web", 1)
+	rig.gh.pr(done, mergedPR("head-one"))
+	rig.gh.compare(repoC, 3)
+
+	res, err := rig.exec(t, []GateCompare{repoA, repoC}, []GatePR{done})
+
+	require.NoError(t, err)
+	assert.True(t, res.Stale, "nothing is merged in the repo with no pull request, so nothing excuses its compare")
+	assert.Equal(t, 1, rig.gh.count(http.MethodGet, comparePath(repoC)))
+	assert.Equal(t, 0, rig.gh.count(http.MethodGet, comparePath(repoA)))
+}
+
+func TestRunGateGitHubSteps_ClosedUnmergedPrDoesNotExcuseItsReposCompare(t *testing.T) {
+	rig := newGateRig(t)
+	web := gateCompare("acme/web")
+	done, closed := gatePR("acme/web", 1), gatePR("acme/web", 2)
+	rig.gh.pr(done, mergedPR("head-one"))
+	c := openPR("head-two")
+	c.State = "closed"
+	rig.gh.pr(closed, c)
+	rig.gh.compare(web, 0)
+
+	res, err := rig.exec(t, []GateCompare{web}, []GatePR{done, closed})
+
+	require.NoError(t, err)
+	assert.False(t, res.Stale)
+	assert.Equal(t, 1, rig.gh.count(http.MethodGet, comparePath(web)))
+}
+
+func TestRunGateGitHubSteps_MovedMainOutranksAnUnmergeablePr(t *testing.T) {
+	rig := newGateRig(t)
+	web := gateCompare("acme/web")
+	pr := gatePR("acme/web", 1)
+	d := openPR("head-one")
+	d.Draft = true
+	rig.gh.pr(pr, d)
+	rig.gh.compare(web, 1)
+
+	res, err := rig.exec(t, []GateCompare{web}, []GatePR{pr})
+
+	require.NoError(t, err)
+	assert.True(t, res.Stale, "a rebase may well fix what looks unmergeable against the old main")
+	assert.Empty(t, res.Refused)
+	assert.Empty(t, res.Merges)
 }
 
 func TestRunGateGitHubSteps_AlreadyMergedPrIsReportedNotMergedAgain(t *testing.T) {
@@ -576,13 +702,14 @@ func TestRunGateGitHubSteps_TransientGitHubErrorIsReturnedAsErrorForRetry(t *tes
 		wire   func(rig *gateRig, web GateCompare, pr GatePR)
 	}{
 		{"502 on compare", http.StatusBadGateway, func(rig *gateRig, web GateCompare, pr GatePR) {
+			rig.gh.pr(pr, openPR("head-one"))
 			rig.gh.route(http.MethodGet, comparePath(web), statusReply(http.StatusBadGateway))
 		}},
 		{"429 on compare", http.StatusTooManyRequests, func(rig *gateRig, web GateCompare, pr GatePR) {
+			rig.gh.pr(pr, openPR("head-one"))
 			rig.gh.route(http.MethodGet, comparePath(web), statusReply(http.StatusTooManyRequests))
 		}},
 		{"503 reading a pull request", http.StatusServiceUnavailable, func(rig *gateRig, web GateCompare, pr GatePR) {
-			rig.gh.compare(web, 0)
 			rig.gh.route(http.MethodGet, prPath(pr), statusReply(http.StatusServiceUnavailable))
 		}},
 		{"502 merging, still unmerged on re-read", http.StatusBadGateway, func(rig *gateRig, web GateCompare, pr GatePR) {
@@ -626,10 +753,11 @@ func TestRunGateGitHubSteps_CredentialRefusedOnCompareIsRefusedNotAnError(t *tes
 	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
 			rig := newGateRig(t)
-			web := gateCompare("acme/web")
+			web, pr := gateCompare("acme/web"), gatePR("acme/web", 1)
+			rig.gh.pr(pr, openPR("head-one"))
 			rig.gh.route(http.MethodGet, comparePath(web), statusReply(status))
 
-			res, err := rig.exec(t, []GateCompare{web}, []GatePR{gatePR("acme/web", 1)})
+			res, err := rig.exec(t, []GateCompare{web}, []GatePR{pr})
 
 			require.NoError(t, err)
 			assert.Equal(t, "the GitHub credential cannot access acme/web", res.Refused)
@@ -807,7 +935,7 @@ func TestRunGateGitHubSteps_HeartbeatsEachCallWithItsPhaseAndIndex(t *testing.T)
 	_, err := rig.exec(t, []GateCompare{web}, []GatePR{first, second})
 
 	require.NoError(t, err)
-	assert.Equal(t, []string{"compare:0", "inspect:0", "inspect:1", "merge:0", "merge:1"}, rig.beatNames())
+	assert.Equal(t, []string{"inspect:0", "inspect:1", "compare:0", "merge:0", "merge:1"}, rig.beatNames())
 	assert.Equal(t, []GateCompareResult{{GitRepoID: web.GitRepoID}}, rig.beats[3].Compares,
 		"the compares that passed ride along once merging has begun")
 }
@@ -851,14 +979,16 @@ func TestRunGateGitHubSteps_AttemptThatNeverReachedMergingStillRechecks(t *testi
 		t.Run(phase, func(t *testing.T) {
 			rig := newGateRig(t)
 			web := gateCompare("acme/web")
+			pr := gatePR("acme/web", 1)
 			rig.resume = &gateProgress{Phase: phase}
+			rig.gh.pr(pr, openPR("head-one"))
 			rig.gh.compare(web, 2)
 
-			res, err := rig.exec(t, []GateCompare{web}, []GatePR{gatePR("acme/web", 1)})
+			res, err := rig.exec(t, []GateCompare{web}, []GatePR{pr})
 
 			require.NoError(t, err)
 			assert.True(t, res.Stale)
-			assert.Equal(t, []string{"GET " + comparePath(web)}, rig.gh.sequence())
+			assert.Equal(t, []string{"GET " + prPath(pr), "GET " + comparePath(web)}, rig.gh.sequence())
 		})
 	}
 }
