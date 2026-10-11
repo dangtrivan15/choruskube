@@ -1,4 +1,5 @@
 import { type Page, type Locator, expect } from "@playwright/test";
+import { clickOption } from "../helpers/select";
 import { RoadmapViewControls } from "./roadmap-view-controls.page";
 
 /**
@@ -153,7 +154,7 @@ export class RoadmapGraphPage {
    */
   async addCrossEpicBlocker(targetEpicTitle: string, blockerItemTitle: string) {
     await this.crossEpicTargetSelect.click();
-    await this.page.getByRole("option", { name: targetEpicTitle }).click();
+    await clickOption(this.page.getByRole("option", { name: targetEpicTitle }));
     await this.crossEpicItemSelect.click();
     await this.page.getByRole("option", { name: blockerItemTitle }).click();
     await this.crossEpicSubmit.click();
