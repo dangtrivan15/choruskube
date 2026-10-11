@@ -723,9 +723,17 @@ func TestGateFinalize_IsNotCutShortByTheDefaultClientTimeout(t *testing.T) {
 }
 
 func TestGateFinalize_TheContextStillBoundsTheCall(t *testing.T) {
+	release := make(chan struct{})
 	_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		<-r.Context().Done()
+		// The server only notices a client that hung up once the request body is read, so a
+		// handler that never reads it would outlive the call and block server.Close.
+		_, _ = io.Copy(io.Discard, r.Body)
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
 	})
+	t.Cleanup(func() { close(release) })
 
 	t.Run("deadline", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
