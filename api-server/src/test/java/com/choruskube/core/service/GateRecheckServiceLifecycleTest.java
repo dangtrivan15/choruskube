@@ -1,8 +1,10 @@
 package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.choruskube.core.BaseTest;
+import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.DriftRecheckConfig.StampMode;
 import com.choruskube.core.model.GateStamp;
 import com.choruskube.core.model.GraphTemplate;
@@ -159,6 +161,60 @@ class GateRecheckServiceLifecycleTest extends BaseTest {
         assertThat(stampRepo.findById(orphan.getId()).orElseThrow().getVoidReason())
                 .isEqualTo(GateRecheckService.RUN_ENDED);
         assertThat(service.findPending(live.getId())).isPresent();
+    }
+
+    @Test
+    void begin_recordsAFinalizingApprovalAtRoundZero() {
+        GateStamp stamp = service.begin(
+                run.getId(), gateExec, "final_approval", StampMode.if_unchanged, "ship it", "{\"a.pdf\":\"k\"}", null);
+
+        GateStamp reloaded = stampRepo.findById(stamp.getId()).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(GateStampStatus.finalizing);
+        assertThat(reloaded.getRecheckRounds()).isZero();
+        assertThat(reloaded.getStampMode()).isEqualTo(StampMode.if_unchanged);
+        assertThat(reloaded.getStampedNodeExecutionId()).isEqualTo(gateExec.getId());
+        assertThat(reloaded.getMaterializedAt()).isNull();
+        assertThat(service.findFinalizingFor(run.getId(), templateNode.getId()))
+                .map(GateStamp::getId)
+                .contains(stamp.getId());
+        assertThat(service.findHeldFor(run.getId(), templateNode.getId())).isEmpty();
+    }
+
+    @Test
+    void holdFromFinalizing_thenClaimHeld_roundTripsAndCountsARound() {
+        GateStamp stamp = service.begin(run.getId(), gateExec, "final_approval", StampMode.always, null, null, null);
+
+        GateStamp held = service.holdFromFinalizing(stamp.getId());
+        assertThat(held.getStatus()).isEqualTo(GateStampStatus.pending);
+        assertThat(held.getRecheckRounds()).isEqualTo(1);
+        assertThat(service.findHeldFor(run.getId(), templateNode.getId()))
+                .map(GateStamp::getId)
+                .contains(stamp.getId());
+
+        GateStamp claimed = service.claimHeld(run.getId(), templateNode.getId()).orElseThrow();
+        assertThat(claimed.getId()).isEqualTo(stamp.getId());
+        assertThat(claimed.getStatus()).isEqualTo(GateStampStatus.finalizing);
+        assertThat(service.claimHeld(run.getId(), templateNode.getId())).isEmpty();
+    }
+
+    @Test
+    void holdFromFinalizing_refusesAnApprovalThatIsNotFinalizing() {
+        GateStamp stamp = service.hold(run.getId(), gateExec, "final_approval", StampMode.always, null, null, null);
+
+        assertThatThrownBy(() -> service.holdFromFinalizing(stamp.getId())).isInstanceOf(NotFoundException.class);
+    }
+
+    @Test
+    void voidAndConsume_actOnAFinalizingApproval() {
+        GateStamp voided = service.begin(run.getId(), gateExec, "final_approval", StampMode.always, null, null, null);
+        service.voidStamp(voided.getId(), "refused", gateExec.getId());
+        stampRepo.flush();
+        assertThat(stampRepo.findById(voided.getId()).orElseThrow().getStatus()).isEqualTo(GateStampStatus.voided);
+
+        GateStamp consumed = service.begin(run.getId(), gateExec, "final_approval", StampMode.always, null, null, null);
+        service.consume(consumed.getId());
+        assertThat(stampRepo.findById(consumed.getId()).orElseThrow().getStatus())
+                .isEqualTo(GateStampStatus.consumed);
     }
 
     @Test

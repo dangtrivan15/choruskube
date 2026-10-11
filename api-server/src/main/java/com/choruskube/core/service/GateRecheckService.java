@@ -20,8 +20,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Lifecycle of an approval held while its run re-checks against a moved default branch: held, then
- * consumed (re-applied) or voided (left to a human, with the reason shown).
+ * Lifecycle of a gate approval: finalizing (the run's workflow is carrying it out), held while its
+ * run re-checks against a moved default branch, then consumed (applied) or voided (left to a human,
+ * with the reason shown).
  */
 @Service
 public class GateRecheckService {
@@ -35,6 +36,7 @@ public class GateRecheckService {
 
     private static final List<WorkflowRunStatus> ENDED =
             List.of(WorkflowRunStatus.completed, WorkflowRunStatus.failed, WorkflowRunStatus.cancelled);
+    private static final List<GateStampStatus> LIVE = List.of(GateStampStatus.pending, GateStampStatus.finalizing);
 
     private final GateStampRepository stampRepo;
     private final NodeExecutionRepository execRepo;
@@ -73,6 +75,52 @@ public class GateRecheckService {
         return stampRepo.save(stamp);
     }
 
+    /** An approval the run's workflow is carrying out, recorded at the click. */
+    @Transactional
+    public GateStamp begin(
+            UUID runId,
+            NodeExecution gate,
+            String gateLabel,
+            StampMode mode,
+            String feedback,
+            String attachmentRefs,
+            RoadmapCandidatesDocument approvedCandidates) {
+        GateStamp stamp = new GateStamp();
+        stamp.setWorkflowRunId(runId);
+        stamp.setGateTemplateNodeId(gate.getTemplateNodeId());
+        stamp.setGateLabel(gateLabel);
+        stamp.setStampedNodeExecutionId(gate.getId());
+        stamp.setStampMode(mode);
+        stamp.setFeedback(feedback);
+        stamp.setAttachmentRefs(attachmentRefs);
+        stamp.setApprovedCandidates(approvedCandidates == null ? null : write(approvedCandidates));
+        stamp.setRecheckRounds(0);
+        stamp.setStatus(GateStampStatus.finalizing);
+        return stampRepo.save(stamp);
+    }
+
+    @Transactional
+    public Optional<GateStamp> claimHeld(UUID runId, UUID gateTemplateNodeId) {
+        return stampRepo
+                .findByWorkflowRunIdAndGateTemplateNodeIdAndStatus(runId, gateTemplateNodeId, GateStampStatus.pending)
+                .stream()
+                .findFirst()
+                .map(s -> {
+                    s.setStatus(GateStampStatus.finalizing);
+                    return stampRepo.save(s);
+                });
+    }
+
+    @Transactional
+    public GateStamp holdFromFinalizing(UUID stampId) {
+        GateStamp stamp = stampRepo
+                .findByIdAndStatus(stampId, GateStampStatus.finalizing)
+                .orElseThrow(() -> new NotFoundException("No approval being finalized: " + stampId));
+        stamp.setStatus(GateStampStatus.pending);
+        stamp.setRecheckRounds(stamp.getRecheckRounds() + 1);
+        return stampRepo.save(stamp);
+    }
+
     @Transactional
     public GateStamp holdAgain(UUID stampId) {
         GateStamp stamp = stampRepo
@@ -84,7 +132,7 @@ public class GateRecheckService {
 
     @Transactional
     public void consume(UUID stampId) {
-        stampRepo.findByIdAndStatus(stampId, GateStampStatus.pending).ifPresent(s -> {
+        stampRepo.findByIdAndStatusIn(stampId, LIVE).ifPresent(s -> {
             s.setStatus(GateStampStatus.consumed);
             stampRepo.save(s);
         });
@@ -93,7 +141,7 @@ public class GateRecheckService {
     /** {@code parkedAt}: the gate execution left awaiting a human, so the UI shows why only there. */
     @Transactional
     public void voidStamp(UUID stampId, String reason, UUID parkedAt) {
-        stampRepo.findByIdAndStatus(stampId, GateStampStatus.pending).ifPresent(s -> {
+        stampRepo.findByIdAndStatusIn(stampId, LIVE).ifPresent(s -> {
             s.setParkedNodeExecutionId(parkedAt);
             markVoided(s, reason);
         });
@@ -115,6 +163,22 @@ public class GateRecheckService {
 
     public Optional<GateStamp> findPending(UUID stampId) {
         return stampRepo.findByIdAndStatus(stampId, GateStampStatus.pending);
+    }
+
+    /** The approval held for this gate's re-check, if any. */
+    public Optional<GateStamp> findHeldFor(UUID runId, UUID gateTemplateNodeId) {
+        return stampRepo
+                .findByWorkflowRunIdAndGateTemplateNodeIdAndStatus(runId, gateTemplateNodeId, GateStampStatus.pending)
+                .stream()
+                .findFirst();
+    }
+
+    public Optional<GateStamp> findFinalizingFor(UUID runId, UUID gateTemplateNodeId) {
+        return stampRepo
+                .findByWorkflowRunIdAndGateTemplateNodeIdAndStatus(
+                        runId, gateTemplateNodeId, GateStampStatus.finalizing)
+                .stream()
+                .findFirst();
     }
 
     public List<GateStamp> findReadyToReapply() {
