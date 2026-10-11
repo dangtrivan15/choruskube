@@ -14,7 +14,9 @@ import (
 
 	"github.com/dangtrivan15/choruskube/worker/activity"
 	"github.com/dangtrivan15/choruskube/worker/callback"
+	credprov "github.com/dangtrivan15/choruskube/worker/credential"
 	"github.com/dangtrivan15/choruskube/worker/executor"
+	"github.com/dangtrivan15/choruskube/worker/github"
 	"github.com/dangtrivan15/choruskube/worker/workload"
 )
 
@@ -28,6 +30,31 @@ func wireExecutorCredential(exec executor.Executor, get func() string) {
 		cc.SetAPIServerCredential(get)
 	}
 }
+
+// newCredentialProvider picks where this process gets its credentials; anything but the local
+// source asks the API server.
+func newCredentialProvider(cfg Config, tokens credprov.TokenClient) credprov.Provider {
+	if cfg.CredentialSource == CredentialSourceLocal {
+		return credprov.NewLocal(cfg.CredentialsDir, github.New(cfg.GitHubAPIURL), time.Now)
+	}
+	return credprov.NewControlPlane(tokens)
+}
+
+// runBinding tells the pod token route which run an execution belongs to: from the pending cache
+// while this process remembers launching it, from the API server after a restart.
+type runBinding struct {
+	pending *activity.PendingCache
+	api     *workload.Client
+}
+
+func (b runBinding) RunOf(execID uuid.UUID) (uuid.UUID, bool) { return b.pending.RunOf(execID) }
+
+func (b runBinding) ExecutionInRun(ctx context.Context, runID, execID uuid.UUID) error {
+	_, err := b.api.GetNodeExecution(ctx, runID, execID)
+	return err
+}
+
+var _ callback.RunBinding = runBinding{}
 
 // resolveAddress picks where to reach Temporal for one Fleet.
 func resolveAddress(f Fleet, cfg Config) string {
@@ -496,6 +523,9 @@ func Run(ctx context.Context, cfg Config) error {
 	// package's 30s-timeout default; http.DefaultClient has no timeout and must not be used.
 	acts.CallbackURL = cfg.CallbackURL
 	acts.APIServerURL = cfg.APIServerURL
+	provider := newCredentialProvider(cfg, wc)
+	acts.SetCredentials(provider)
+	acts.SetGitHub(github.New(cfg.GitHubAPIURL))
 
 	tokens := newTokenCache(fleets)
 
@@ -517,7 +547,8 @@ func Run(ctx context.Context, cfg Config) error {
 		sc := &statusBridge{pending: acts.Pending, workloadClients: sup}
 		cbHandler := callback.NewHandler(hashCache, cfg.Executor, completer, sc)
 		hbHandler := callback.NewHeartbeatHandler(hashCache, cfg.Executor, completer)
-		cbServer := callback.NewServer(cfg.CallbackPort, cbHandler, hbHandler)
+		tokenHandler := callback.NewGitHubTokenHandler(hashCache, cfg.Executor, runBinding{pending: acts.Pending, api: wc}, provider)
+		cbServer := callback.NewServer(cfg.CallbackPort, cbHandler, hbHandler, tokenHandler)
 		if err := cbServer.Listen(); err != nil {
 			return fmt.Errorf("callback server: %w", err)
 		}

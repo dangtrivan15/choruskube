@@ -297,3 +297,51 @@ func TestWriteExecutionLog(t *testing.T) {
 	assert.Equal(t, "info", received.Level)
 	assert.Equal(t, "hello world", received.Message)
 }
+
+func TestGitHubTokenSendsAuthAndReturnsTheToken(t *testing.T) {
+	runID := uuid.New()
+	var gotMethod, gotAuth, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotAuth, gotPath = r.Method, r.Header.Get("Authorization"), r.URL.Path
+		_, _ = w.Write([]byte(`{"token":"ghs_abc"}`))
+	}))
+	defer srv.Close()
+
+	tok, err := NewClient(srv.URL, func() string { return "ckw_worker" }, srv.Client()).GitHubToken(context.Background(), runID)
+
+	require.NoError(t, err)
+	assert.Equal(t, "ghs_abc", tok)
+	assert.Equal(t, http.MethodGet, gotMethod)
+	assert.Equal(t, "Bearer ckw_worker", gotAuth)
+	assert.Equal(t, "/worker/runs/"+runID.String()+"/github-token", gotPath)
+}
+
+func TestGitHubTokenSurfacesAPIFailures(t *testing.T) {
+	for _, status := range []int{http.StatusForbidden, http.StatusServiceUnavailable} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(`{"error":"resolver failed"}`))
+		}))
+
+		_, err := NewClient(srv.URL, func() string { return "s" }, srv.Client()).GitHubToken(context.Background(), uuid.New())
+		srv.Close()
+
+		var apiErr *APIError
+		require.ErrorAs(t, err, &apiErr, "status %d", status)
+		assert.Equal(t, status, apiErr.StatusCode)
+	}
+}
+
+func TestGitHubTokenRejectsAMissingToken(t *testing.T) {
+	for _, body := range []string{`{}`, `{"token":""}`, `not json`} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(body))
+		}))
+
+		tok, err := NewClient(srv.URL, func() string { return "s" }, srv.Client()).GitHubToken(context.Background(), uuid.New())
+		srv.Close()
+
+		require.Error(t, err, body)
+		assert.Empty(t, tok)
+	}
+}

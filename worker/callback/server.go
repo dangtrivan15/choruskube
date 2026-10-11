@@ -20,12 +20,16 @@ type Server struct {
 	ln         net.Listener
 }
 
-// NewServer builds a Server listening on port, routing /api/v1/callback and /api/v1/heartbeat to
-// handler and heartbeat respectively.
-func NewServer(port int, handler *Handler, heartbeat *HeartbeatHandler) *Server {
+// NewServer builds a Server listening on port, routing /api/v1/callback, /api/v1/heartbeat and
+// /api/v1/github-token to handler, heartbeat and githubToken respectively. A nil githubToken
+// leaves that route unserved.
+func NewServer(port int, handler *Handler, heartbeat *HeartbeatHandler, githubToken http.Handler) *Server {
 	mux := http.NewServeMux()
 	mux.Handle("/api/v1/callback", handler)
 	mux.Handle("/api/v1/heartbeat", heartbeat)
+	if githubToken != nil {
+		mux.Handle("/api/v1/github-token", githubToken)
+	}
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})

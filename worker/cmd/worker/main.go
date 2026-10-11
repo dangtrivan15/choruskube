@@ -33,6 +33,14 @@ func main() {
 		TemporalTLSDisabled: os.Getenv("TEMPORAL_TLS_DISABLED") == "true",
 	}
 
+	credentialSource, err := credentialSourceOf(os.Getenv("CREDENTIAL_SOURCE"))
+	if err != nil {
+		log.Fatalf("invalid CREDENTIAL_SOURCE: %v", err)
+	}
+	cfg.CredentialSource = credentialSource
+	cfg.CredentialsDir = os.Getenv("CREDENTIALS_DIR")
+	cfg.GitHubAPIURL = os.Getenv("GITHUB_API_URL")
+
 	// This binary always runs workloads itself -- it never delegates to the API server's legacy
 	// creation path -- so an Executor it cannot construct is fatal.
 	executorType, err := executorTypeOf(os.Getenv("EXECUTOR_TYPE"))
@@ -155,6 +163,21 @@ func executorTypeOf(raw string) (string, error) {
 		return raw, nil
 	default:
 		return "", fmt.Errorf("unknown EXECUTOR_TYPE %q: must be \"docker\" or \"k8s\"", raw)
+	}
+}
+
+// credentialSourceOf validates CREDENTIAL_SOURCE, defaulting an unset value to the control plane:
+// a typo must fail startup, since falling back would send a Worker meant to hold its own
+// credentials to the API server for them.
+func credentialSourceOf(raw string) (string, error) {
+	switch raw {
+	case "":
+		return worker.CredentialSourceControlPlane, nil
+	case worker.CredentialSourceControlPlane, worker.CredentialSourceLocal:
+		return raw, nil
+	default:
+		return "", fmt.Errorf("unknown CREDENTIAL_SOURCE %q: must be %q or %q",
+			raw, worker.CredentialSourceControlPlane, worker.CredentialSourceLocal)
 	}
 }
 

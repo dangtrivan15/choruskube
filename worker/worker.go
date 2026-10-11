@@ -9,6 +9,7 @@ package worker
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/dangtrivan15/choruskube/worker/executor"
 )
@@ -74,7 +75,27 @@ type Config struct {
 	// asking the API server to (the legacy path -- see activity.New vs activity.NewWithExecutor).
 	// nil keeps the legacy delegation mode.
 	Executor executor.Executor
+	// CredentialSource is CredentialSourceControlPlane (the default) or CredentialSourceLocal.
+	// Local is for a Worker serving a single tenant's own Fleet: it reads one set of credentials
+	// for every run it executes.
+	CredentialSource string
+	// CredentialsDir is the folder the local source reads credentials from. Unused by the
+	// control-plane source.
+	CredentialsDir string
+	// GitHubAPIURL is the GitHub API root for the Worker's own GitHub calls, including minting
+	// App tokens in the local source.
+	GitHubAPIURL string
 }
+
+const (
+	// CredentialSourceControlPlane asks the API server for each run's GitHub token.
+	CredentialSourceControlPlane = "control-plane"
+	// CredentialSourceLocal reads credentials from CredentialsDir, falling back to the environment.
+	CredentialSourceLocal = "local"
+
+	defaultCredentialsDir = "/etc/choruskube/credentials"
+	defaultGitHubAPIURL   = "https://api.github.com"
+)
 
 // Validate reports the first missing required field. Run calls it; callers building a
 // Config from flags or env may call it earlier to fail before any connection is made.
@@ -88,6 +109,8 @@ func (c Config) Validate() error {
 		return errors.New("CallbackURL is required")
 	case c.Provider == nil:
 		return errors.New("Provider is required")
+	case c.CredentialSource != "" && c.CredentialSource != CredentialSourceControlPlane && c.CredentialSource != CredentialSourceLocal:
+		return fmt.Errorf("CredentialSource %q is not %q or %q", c.CredentialSource, CredentialSourceControlPlane, CredentialSourceLocal)
 	}
 	return nil
 }
@@ -101,6 +124,15 @@ const defaultCallbackPort = 9090
 func (c Config) withDefaults() Config {
 	if c.CallbackPort == 0 {
 		c.CallbackPort = defaultCallbackPort
+	}
+	if c.CredentialSource == "" {
+		c.CredentialSource = CredentialSourceControlPlane
+	}
+	if c.CredentialsDir == "" {
+		c.CredentialsDir = defaultCredentialsDir
+	}
+	if c.GitHubAPIURL == "" {
+		c.GitHubAPIURL = defaultGitHubAPIURL
 	}
 	return c
 }

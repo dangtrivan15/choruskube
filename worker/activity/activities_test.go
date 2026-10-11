@@ -17,6 +17,7 @@ import (
 	"go.temporal.io/sdk/workflow"
 
 	"github.com/dangtrivan15/choruskube/worker/callback"
+	"github.com/dangtrivan15/choruskube/worker/credential"
 	"github.com/dangtrivan15/choruskube/worker/executor"
 	"github.com/dangtrivan15/choruskube/worker/workload"
 )
@@ -2188,4 +2189,195 @@ func TestExecuteAINodeFromSnapshotParams_JSONRoundTrip(t *testing.T) {
 		t.Fatalf("unmarshal golden: %v", err)
 	}
 	assert.Equal(t, original, fromGolden)
+}
+
+// fakeCredentials is a credential.Provider whose agent credentials a test dictates.
+type fakeCredentials struct {
+	agent    credential.Agent
+	ok       bool
+	err      error
+	gotRunID uuid.UUID
+}
+
+func (f *fakeCredentials) GitHubToken(context.Context, uuid.UUID) (credential.Token, error) {
+	return credential.Token{}, nil
+}
+
+func (f *fakeCredentials) AgentCredentials(_ context.Context, runID uuid.UUID) (credential.Agent, bool, error) {
+	f.gotRunID = runID
+	return f.agent, f.ok, f.err
+}
+
+// launchWithCredentials runs one local execution against a prepare response that carries the
+// API server's own agent credentials, and returns what the executor was handed.
+func launchWithCredentials(t *testing.T, provider credential.Provider) (executor.ExecutionParams, uuid.UUID, error) {
+	t.Helper()
+	runID := stubbedRun(t)
+	var executed executor.ExecutionParams
+	mockExec := &mockExecutor{
+		executeFn: func(_ context.Context, params executor.ExecutionParams) (executor.ExecutionResult, error) {
+			executed = params
+			return executor.ExecutionResult{PodName: "agent-abc", JobSecretHash: "hash123"}, nil
+		},
+	}
+	mockClient := &mockWorkloadClient{
+		prepareFn: func(context.Context, workload.PrepareParams) (*workload.PrepareResponse, error) {
+			return &workload.PrepareResponse{
+				Image:            "ghcr.io/test/agent:latest",
+				ClaudeOAuthToken: "tok_from_api",
+				Registry:         &workload.RegistryCredentials{Host: "api.registry", Username: "api-user", Password: "api-pass"},
+			}, nil
+		},
+		completeFn: func(context.Context, workload.CompleteParams) error { return nil },
+	}
+	acts := NewWithExecutor(mockClient, mockExec, callback.NewHashCache())
+	acts.CallbackURL = "http://worker:9090/api/v1/callback"
+	acts.APIServerURL = "http://api-server.invalid"
+	if provider != nil {
+		acts.SetCredentials(provider)
+	}
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+		Identity: Identity{NodeExecutionID: uuid.New(), RunID: runID, TemplateNodeID: uuid.New()},
+		Node:     Node{ExecutorType: "ai", PromptTemplate: "irrelevant"},
+	})
+	return executed, runID, err
+}
+
+func TestExecuteLocally_ProviderAgentCredentialsOverridePrepare(t *testing.T) {
+	provider := &fakeCredentials{ok: true, agent: credential.Agent{
+		ClaudeOAuthToken: "tok_from_provider",
+		Registry:         &credential.Registry{Host: "local.registry", Username: "local-user", Password: "local-pass"},
+	}}
+
+	executed, runID, err := launchWithCredentials(t, provider)
+
+	requirePending(t, err)
+	assert.Equal(t, runID, provider.gotRunID)
+	assert.Equal(t, "tok_from_provider", executed.Credentials.ClaudeOAuthToken)
+	assert.Equal(t, &executor.RegistryCredentials{Host: "local.registry", Username: "local-user", Password: "local-pass"}, executed.Credentials.Registry)
+}
+
+func TestExecuteLocally_ProviderWithoutRegistryDropsPreparesRegistry(t *testing.T) {
+	provider := &fakeCredentials{ok: true, agent: credential.Agent{ClaudeOAuthToken: "tok_from_provider"}}
+
+	executed, _, err := launchWithCredentials(t, provider)
+
+	requirePending(t, err)
+	assert.Equal(t, "tok_from_provider", executed.Credentials.ClaudeOAuthToken)
+	assert.Nil(t, executed.Credentials.Registry, "a provider that supplies agent credentials is authoritative for the registry too")
+}
+
+func TestExecuteLocally_ProviderSupplyingNothingKeepsPrepare(t *testing.T) {
+	executed, _, err := launchWithCredentials(t, &fakeCredentials{ok: false})
+
+	requirePending(t, err)
+	assert.Equal(t, "tok_from_api", executed.Credentials.ClaudeOAuthToken)
+	assert.Equal(t, &executor.RegistryCredentials{Host: "api.registry", Username: "api-user", Password: "api-pass"}, executed.Credentials.Registry)
+}
+
+func TestExecuteLocally_NoProviderKeepsPrepare(t *testing.T) {
+	executed, _, err := launchWithCredentials(t, nil)
+
+	requirePending(t, err)
+	assert.Equal(t, "tok_from_api", executed.Credentials.ClaudeOAuthToken)
+}
+
+func TestExecuteLocally_ProviderErrorFailsBeforeLaunch(t *testing.T) {
+	boom := errors.New("registry/password is missing")
+	launched := false
+	runID := stubbedRun(t)
+	mockExec := &mockExecutor{
+		executeFn: func(context.Context, executor.ExecutionParams) (executor.ExecutionResult, error) {
+			launched = true
+			return executor.ExecutionResult{}, nil
+		},
+	}
+	mockClient := &mockWorkloadClient{
+		prepareFn: func(context.Context, workload.PrepareParams) (*workload.PrepareResponse, error) {
+			return &workload.PrepareResponse{Image: "img"}, nil
+		},
+	}
+	acts := NewWithExecutor(mockClient, mockExec, callback.NewHashCache())
+	acts.CallbackURL = "http://worker:9090/api/v1/callback"
+	acts.APIServerURL = "http://api-server.invalid"
+	acts.SetCredentials(&fakeCredentials{err: boom})
+
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+		Identity: Identity{NodeExecutionID: uuid.New(), RunID: runID, TemplateNodeID: uuid.New()},
+		Node:     Node{ExecutorType: "ai", PromptTemplate: "irrelevant"},
+	})
+
+	assert.ErrorIs(t, err, boom)
+	assert.False(t, launched, "a pod must not start with credentials the operator meant to replace")
+}
+
+// A pod fetches its GitHub token from the Worker that launched it, so config.json carries the
+// Worker's own address (CallbackURL without the callback path), the run, and the execution.
+func TestExecuteLocally_GitHubTokenURLPointsAtTheWorker(t *testing.T) {
+	nodeExecID := uuid.New()
+	runID := stubbedRun(t)
+	var prepared workload.PrepareParams
+	var executed executor.ExecutionParams
+	mockExec := &mockExecutor{
+		executeFn: func(_ context.Context, params executor.ExecutionParams) (executor.ExecutionResult, error) {
+			executed = params
+			return executor.ExecutionResult{PodName: "agent-abc", JobSecretHash: "hash123"}, nil
+		},
+	}
+	mockClient := &mockWorkloadClient{
+		prepareFn: func(_ context.Context, p workload.PrepareParams) (*workload.PrepareResponse, error) {
+			prepared = p
+			return &workload.PrepareResponse{
+				Image:          "img",
+				GitHubTokenURL: "http://api-server.invalid/internal/runs/x/node-executions/y/github-token",
+			}, nil
+		},
+		completeFn: func(context.Context, workload.CompleteParams) error { return nil },
+	}
+	acts := NewWithExecutor(mockClient, mockExec, callback.NewHashCache())
+	acts.CallbackURL = "http://worker:9090/api/v1/callback"
+	acts.APIServerURL = "http://api-server.invalid"
+
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+		Identity: Identity{NodeExecutionID: nodeExecID, RunID: runID, TemplateNodeID: uuid.New()},
+		Node:     Node{ExecutorType: "ai", PromptTemplate: "irrelevant"},
+	})
+	requirePending(t, err)
+
+	want := "http://worker:9090/api/v1/github-token?run_id=" + runID.String() + "&execution_id=" + nodeExecID.String()
+	assert.Equal(t, want, prepared.ConfigJSON["github_token_url"])
+	assert.Equal(t, want, executed.ConfigJSON["github_token_url"])
+	assert.Equal(t, want, executed.Credentials.GitHubTokenURL, "the API server's own token URL must not survive next to the Worker's")
+}
+
+func TestGitHubTokenURL_CallbackBaseVariants(t *testing.T) {
+	run, exec := uuid.New(), uuid.New()
+	suffix := "/api/v1/github-token?run_id=" + run.String() + "&execution_id=" + exec.String()
+	for name, tc := range map[string]struct{ callback, want string }{
+		"standard":           {"http://worker:9090/api/v1/callback", "http://worker:9090" + suffix},
+		"trailing slash":     {"http://worker:9090/api/v1/callback/", "http://worker:9090" + suffix},
+		"behind a path":      {"https://edge.example.test/worker/api/v1/callback", "https://edge.example.test/worker" + suffix},
+		"no callback suffix": {"http://worker:9090", "http://worker:9090" + suffix},
+		"bare with slash":    {"http://worker:9090/", "http://worker:9090" + suffix},
+	} {
+		assert.Equal(t, tc.want, workerGitHubTokenURL(tc.callback, run, exec), name)
+	}
+}
+
+// Without a local executor the Worker serves no pod routes, so the API server stays the
+// pod's token source.
+func TestExecuteAINodeFromSnapshot_DelegatedModeKeepsTheAPIServerTokenURL(t *testing.T) {
+	var received map[string]interface{}
+	acts := newTestActivities(t, &received)
+	runID := stubbedRun(t)
+	nodeExecID := uuid.New()
+
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+		Identity: Identity{NodeExecutionID: nodeExecID, RunID: runID, TemplateNodeID: uuid.New()},
+		Node:     Node{ExecutorType: "ai", PromptTemplate: "irrelevant"},
+	})
+	requirePending(t, err)
+
+	assert.Equal(t, acts.APIServerURL+"/internal/runs/"+runID.String()+"/node-executions/"+nodeExecID.String()+"/github-token",
+		received["github_token_url"])
 }

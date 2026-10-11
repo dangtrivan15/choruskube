@@ -45,6 +45,21 @@ func (c *PendingCache) Get(executionID uuid.UUID) (PendingCompletion, bool) {
 	return p, ok
 }
 
+// RunOf returns the run executionID belongs to, read from the workflow id its pending entry
+// captured. A miss means nothing is known about the execution; callers must not treat it as a
+// match for any run.
+func (c *PendingCache) RunOf(executionID uuid.UUID) (uuid.UUID, bool) {
+	p, ok := c.Get(executionID)
+	if !ok {
+		return uuid.Nil, false
+	}
+	runID, err := runIDFromWorkflowID(p.WorkflowID)
+	if err != nil {
+		return uuid.Nil, false
+	}
+	return runID, true
+}
+
 // Remove drops the cached entry for executionID.
 func (c *PendingCache) Remove(executionID uuid.UUID) {
 	c.mu.Lock()

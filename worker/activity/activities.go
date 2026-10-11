@@ -15,7 +15,9 @@ import (
 	temporalactivity "go.temporal.io/sdk/activity"
 
 	"github.com/dangtrivan15/choruskube/worker/callback"
+	"github.com/dangtrivan15/choruskube/worker/credential"
 	"github.com/dangtrivan15/choruskube/worker/executor"
+	"github.com/dangtrivan15/choruskube/worker/github"
 	"github.com/dangtrivan15/choruskube/worker/workload"
 )
 
@@ -52,7 +54,20 @@ type Activities struct {
 	// APIServerURL is embedded in agent config as the base of github_token_url. Empty would make
 	// that a relative path the agent cannot call, so ExecuteAINodeFromSnapshot rejects it up front.
 	APIServerURL string
+
+	// credentials overrides the agent credentials prepare returns when it supplies them; nil
+	// leaves prepare's in place.
+	credentials credential.Provider
+	gh          *github.Client
 }
+
+// SetCredentials sets where agent credentials may come from instead of prepare. Call it before
+// registering the Activities with a Temporal worker.
+func (a *Activities) SetCredentials(p credential.Provider) { a.credentials = p }
+
+// SetGitHub sets the client for GitHub calls made on the Worker. Call it before registering the
+// Activities with a Temporal worker.
+func (a *Activities) SetGitHub(c *github.Client) { a.gh = c }
 
 // New returns Activities that delegate workload creation to the API server (legacy mode). Set
 // CallbackURL and APIServerURL on the result before registering it with a Temporal worker.
@@ -285,8 +300,7 @@ func (a *Activities) buildConfigJSON(params ExecuteAINodeFromSnapshotParams, res
 	if params.Node.Command != "" {
 		configJSON["command"] = params.Node.Command
 	}
-	configJSON["github_token_url"] = fmt.Sprintf("%s/internal/runs/%s/node-executions/%s/github-token",
-		a.APIServerURL, params.Identity.RunID, params.Identity.NodeExecutionID)
+	configJSON["github_token_url"] = a.githubTokenURL(params.Identity.RunID, params.Identity.NodeExecutionID)
 	baseRunLogPath := fmt.Sprintf("runs/%s/run_log.md", params.Identity.RunID)
 	runLogPath := prefixPath(params.OrgSlug, baseRunLogPath)
 	configJSON["run_log_path"] = runLogPath
@@ -362,6 +376,22 @@ func (a *Activities) buildConfigJSON(params ExecuteAINodeFromSnapshotParams, res
 	return configJSON
 }
 
+// githubTokenURL is where a pod fetches its GitHub token. A Worker that launches pods itself
+// serves that route; with no local executor nothing listens on the callback address for it, so
+// the API server stays the source.
+func (a *Activities) githubTokenURL(runID, nodeExecID uuid.UUID) string {
+	if a.executor == nil {
+		return fmt.Sprintf("%s/internal/runs/%s/node-executions/%s/github-token", a.APIServerURL, runID, nodeExecID)
+	}
+	return workerGitHubTokenURL(a.CallbackURL, runID, nodeExecID)
+}
+
+// workerGitHubTokenURL addresses the token route on the same host the pod already calls back to.
+func workerGitHubTokenURL(callbackURL string, runID, nodeExecID uuid.UUID) string {
+	base := strings.TrimSuffix(strings.TrimRight(callbackURL, "/"), "/api/v1/callback")
+	return fmt.Sprintf("%s/api/v1/github-token?run_id=%s&execution_id=%s", base, runID, nodeExecID)
+}
+
 // executeDelegated is the legacy path (a.executor == nil): the API server resolves
 // infrastructure details from configJSON and launches the container itself.
 func (a *Activities) executeDelegated(ctx context.Context, params ExecuteAINodeFromSnapshotParams, configJSON map[string]interface{}) (CallbackResult, error) {
@@ -399,20 +429,41 @@ func (a *Activities) executeLocally(ctx context.Context, runID uuid.UUID, params
 		return CallbackResult{}, fmt.Errorf("generate job secret: %w", err)
 	}
 
+	creds := executor.NodeCredentials{
+		GitHubTokenURL:   a.githubTokenURL(runID, params.Identity.NodeExecutionID),
+		ClaudeOAuthToken: prep.ClaudeOAuthToken,
+	}
+	if prep.Registry != nil {
+		creds.Registry = &executor.RegistryCredentials{
+			Host:     prep.Registry.Host,
+			Username: prep.Registry.Username,
+			Password: prep.Registry.Password,
+		}
+	}
+	// Before anything launches: a pod must not start on prepare's credentials when the operator
+	// configured this Worker to replace them.
+	if a.credentials != nil {
+		agent, ok, err := a.credentials.AgentCredentials(ctx, runID)
+		if err != nil {
+			return CallbackResult{}, fmt.Errorf("agent credentials: %w", err)
+		}
+		if ok {
+			creds.ClaudeOAuthToken = agent.ClaudeOAuthToken
+			creds.Registry = toExecRegistry(agent.Registry)
+		}
+	}
+
 	execParams := executor.ExecutionParams{
 		RunID:           runID,
 		NodeExecutionID: params.Identity.NodeExecutionID,
 		NodeID:          params.Identity.TemplateNodeID,
 		Image:           prep.Image,
 		JobSecret:       secret,
-		Credentials: executor.NodeCredentials{
-			GitHubTokenURL:   prep.GitHubTokenURL,
-			ClaudeOAuthToken: prep.ClaudeOAuthToken,
-		},
-		ConfigJSON:   configJSON,
-		CallbackURL:  a.CallbackURL,
-		EnableDocker: prep.EnableDocker,
-		DindImage:    prep.DindImage,
+		Credentials:     creds,
+		ConfigJSON:      configJSON,
+		CallbackURL:     a.CallbackURL,
+		EnableDocker:    prep.EnableDocker,
+		DindImage:       prep.DindImage,
 		// The namespace a workload launches into is bound to the executor instance, not passed
 		// per call; the single-tenant core executor uses its one Config.Namespace.
 		Identity: executor.ExecutionIdentity{
@@ -426,13 +477,6 @@ func (a *Activities) executeLocally(ctx context.Context, runID uuid.UUID, params
 	}
 	execParams.DindMemoryRequest = prep.DindMemoryRequest
 	execParams.MemoryCeilingExempt = prep.MemoryCeilingExempt
-	if prep.Registry != nil {
-		execParams.Credentials.Registry = &executor.RegistryCredentials{
-			Host:     prep.Registry.Host,
-			Username: prep.Registry.Username,
-			Password: prep.Registry.Password,
-		}
-	}
 
 	result, err := a.executor.Execute(ctx, execParams)
 	if err != nil {
@@ -467,6 +511,13 @@ func (a *Activities) executeLocally(ctx context.Context, runID uuid.UUID, params
 		fmt.Sprintf("Agent launched: %s", result.PodName))
 
 	return CallbackResult{}, temporalactivity.ErrResultPending
+}
+
+func toExecRegistry(r *credential.Registry) *executor.RegistryCredentials {
+	if r == nil {
+		return nil
+	}
+	return &executor.RegistryCredentials{Host: r.Host, Username: r.Username, Password: r.Password}
 }
 
 // --- Activity: DeleteAgentJob ---
