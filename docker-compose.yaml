@@ -164,9 +164,6 @@ services:
       # Optional — export to run real AI agent nodes. Blank still boots; each AI node then
       # fails at launch (EnvAiCredentialResolver), and script nodes never need it.
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
-      # local-dev default — 32-byte base64 AES-256-GCM key for org GitHub creds at
-      # rest. Override with your own key in any real/shared deployment.
-      GITHUB_CREDENTIAL_ENCRYPTION_KEY: bMbAenxH2uTi5t+N0pN7CUxZ3g94FxCIVZniqRy2SdM=
       # Optional GitHub credentials for the system org — needed only to push / open
       # PRs against a target repo. All blank-default → the stack boots with zero
       # config. Set them via ./scripts/setup.sh. The GitHub App takes precedence
