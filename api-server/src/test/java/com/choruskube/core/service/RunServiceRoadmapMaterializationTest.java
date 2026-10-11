@@ -141,7 +141,10 @@ class RunServiceRoadmapMaterializationTest {
                 null, // escalationContextResolver - unused (escalation not exercised)
                 roadmapProposalValidator,
                 null,
-                null); // pullRequestMergeService - unused (merge not exercised)
+                null,
+                null,
+                org.mockito.Mockito.mock(
+                        GateRecheckService.class)); // pullRequestMergeService - unused (merge not exercised)
     }
 
     private NodeExecution stubExec() {

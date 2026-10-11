@@ -119,7 +119,10 @@ class RunServiceCandidateBreakdownTest {
                 null, // escalationContextResolver — unused; see RunServiceEscalationContextTest
                 null, // roadmapProposalValidator — unused (approve-time validation not exercised)
                 null,
-                null); // pullRequestMergeService - unused (merge not exercised)
+                null,
+                null,
+                org.mockito.Mockito.mock(
+                        GateRecheckService.class)); // pullRequestMergeService - unused (merge not exercised)
     }
 
     private WorkflowRun stubRun() {

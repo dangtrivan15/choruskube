@@ -118,6 +118,11 @@ public class PullRequestMergeService {
      * the moment any row cannot be merged; nothing about the decision has been written by then.
      */
     public MergeOutcome mergeAll(UUID runId, PullRequestMergeMethod method) {
+        return mergeAll(runId, method, null);
+    }
+
+    /** {@code heldApprovalId}: the held gate approval this merge completes, for the audit trail; null otherwise. */
+    public MergeOutcome mergeAll(UUID runId, PullRequestMergeMethod method, UUID heldApprovalId) {
         List<RunPullRequest> rows = prRepo.findByWorkflowRunId(runId).stream()
                 .sorted(Comparator.comparing(RunPullRequest::getCreatedAt).thenComparing(RunPullRequest::getId))
                 .toList();
@@ -197,7 +202,7 @@ public class PullRequestMergeService {
                 String mergedLabels = thisAttemptMerged.isEmpty()
                         ? "none"
                         : thisAttemptMerged.stream().map(r -> r.pr().label()).collect(Collectors.joining(", "));
-                audit(runId, method, thisAttemptMerged, item.pr().prUrl());
+                audit(runId, method, thisAttemptMerged, item.pr().prUrl(), heldApprovalId);
                 throw new PullRequestMergeException("Merged: " + mergedLabels + ". Could not merge "
                         + item.pr().label() + ": " + reason
                         + ". The gate is still open — resolve it on GitHub (or merge it by hand) and approve again.");
@@ -205,7 +210,7 @@ public class PullRequestMergeService {
         }
 
         if (!thisAttemptMerged.isEmpty()) {
-            audit(runId, method, thisAttemptMerged, null);
+            audit(runId, method, thisAttemptMerged, null, heldApprovalId);
         }
         return new MergeOutcome(method, allResults);
     }
@@ -420,13 +425,22 @@ public class PullRequestMergeService {
      * is never left unaudited. A failure writing it is logged and never changes the merge outcome:
      * the merge it describes has already happened on GitHub.
      */
-    private void audit(UUID runId, PullRequestMergeMethod method, List<Result> mergedThisAttempt, String refusedPrUrl) {
+    private void audit(
+            UUID runId,
+            PullRequestMergeMethod method,
+            List<Result> mergedThisAttempt,
+            String refusedPrUrl,
+            UUID heldApprovalId) {
         if (mergedThisAttempt.isEmpty()) {
             return;
         }
         try {
             ObjectNode json = objectMapper.createObjectNode();
             json.put("method", method.name());
+            if (heldApprovalId != null) {
+                // Links this merge to the gate_approval_held event whose re-check it completed.
+                json.put("heldApprovalId", heldApprovalId.toString());
+            }
             if (refusedPrUrl != null) {
                 json.put("refusedPullRequest", refusedPrUrl);
             } else {
