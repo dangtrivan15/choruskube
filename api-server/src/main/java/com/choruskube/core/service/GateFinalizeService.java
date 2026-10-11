@@ -72,6 +72,11 @@ public class GateFinalizeService {
 
     static final String GUIDANCE_FILE = "human_guidance.md";
 
+    // Shown on the gate, so they carry no exception text: that can name internal hosts.
+    static final String START_FAILED = "Could not start finalizing the approval. Approve again to retry.";
+    static final String MATERIALIZATION_STOPPED =
+            "Writing the approved roadmap stopped partway, so some items may be missing.";
+
     private static final Logger log = LoggerFactory.getLogger(GateFinalizeService.class);
 
     private final WorkflowRunRepository runRepo;
@@ -155,7 +160,8 @@ public class GateFinalizeService {
             runService.signalGate(
                     run, gate.getId(), "approved", request.feedback(), request.attachmentRefs(), stamp.getId());
         } catch (RuntimeException e) {
-            release(runId, gate.getId(), stamp.getId(), "Could not start finalizing: " + e.getMessage());
+            log.error("Could not signal the approval of gate {} of run {}: {}", gate.getId(), runId, e.getMessage(), e);
+            release(runId, gate.getId(), stamp.getId(), START_FAILED);
             throw e;
         }
         publish(runId, gate.getId(), NodeExecutionStatus.finalizing);
@@ -466,7 +472,7 @@ public class GateFinalizeService {
         } catch (RuntimeException e) {
             // Already claimed, so no retry writes it again; the note is the reviewer's only trace.
             log.error("Writing the approved roadmap of run {} stopped partway: {}", runId, e.getMessage(), e);
-            return "Writing the approved roadmap stopped partway, so some items may be missing: " + e.getMessage();
+            return MATERIALIZATION_STOPPED;
         }
     }
 

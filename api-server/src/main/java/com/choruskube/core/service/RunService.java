@@ -544,6 +544,11 @@ public class RunService {
                         : request.editedCandidates() != null
                                 ? request.editedCandidates()
                                 : roadmapCandidatesArtifactResolver.resolve(runId, exec.getTemplateNodeId());
+                // Rejected here, the reviewer's edits stay on screen to fix; refused after the claim,
+                // the gate reopens with the server's document and the edits are lost.
+                if (mode.isPresent()) {
+                    requireValidRoadmap(runId, mode.get(), doc);
+                }
                 return gateFinalize.requestApproval(
                         run,
                         exec,
@@ -885,14 +890,7 @@ public class RunService {
                             : null);
         }
 
-        // A structural violation in the (possibly reviewer-edited) document blocks approval
-        // outright rather than silently creating a partial tree. The caller's surrounding catch
-        // releases the node's claim.
-        List<String> violations =
-                roadmapProposalValidator.validate(runId, source, mode, RoadmapProposalValidator.Strictness.GATE);
-        if (!violations.isEmpty()) {
-            throw new ValidationException(violations);
-        }
+        requireValidRoadmap(runId, mode, source);
 
         if (mode == RoadmapMaterializeMode.roadmap_extension) {
             RoadmapProposalValidator.Summary preview = roadmapProposalValidator.summarize(source);
@@ -907,6 +905,21 @@ public class RunService {
         }
 
         return MaterializationPlan.runnable(mode, source);
+    }
+
+    /**
+     * Rejects a roadmap document with a structural violation, so approval is blocked outright
+     * rather than silently creating a partial tree. A null document has nothing to validate.
+     */
+    void requireValidRoadmap(UUID runId, RoadmapMaterializeMode mode, RoadmapCandidatesDocument source) {
+        if (source == null) {
+            return;
+        }
+        List<String> violations =
+                roadmapProposalValidator.validate(runId, source, mode, RoadmapProposalValidator.Strictness.GATE);
+        if (!violations.isEmpty()) {
+            throw new ValidationException(violations);
+        }
     }
 
     /** Performs a runnable plan's materialization and builds its result note. Not idempotent. */

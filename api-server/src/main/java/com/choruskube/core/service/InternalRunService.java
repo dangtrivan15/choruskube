@@ -152,6 +152,13 @@ public class InternalRunService {
         NodeExecution exec = execRepo.findById(nodeExecId)
                 .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
 
+        // A retried gate-open write can land after a reviewer's approval claimed the gate. Applied,
+        // it reopens a finalizing gate, and the finalize steps then fail the node.
+        if ("awaiting_human".equals(req.status()) && exec.getStatus() == NodeExecutionStatus.finalizing) {
+            log.info("Ignoring awaiting_human for node execution {} of run {}: it is finalizing", nodeExecId, runId);
+            return toNodeExecResponse(exec);
+        }
+
         // Defense-in-depth: reject completed status with empty result only on rejection,
         // where the AI node must provide a reason. Human nodes approved without feedback
         // legitimately have no result text.
@@ -189,18 +196,18 @@ public class InternalRunService {
         // Validates the run exists.
         runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
         if ("failed".equals(status)) {
-            voidApprovalOfFailedGate(nodeExecId);
+            voidApprovalOfFailedGate(exec);
         }
         eventPublisher.publishNodeStatusChanged(runId, nodeExecId, status);
         return toNodeExecResponse(exec);
     }
 
     /** Left live, a failed gate's approval blocks approving the retried gate: one live approval per gate. */
-    private void voidApprovalOfFailedGate(UUID nodeExecId) {
+    private void voidApprovalOfFailedGate(NodeExecution failed) {
         try {
-            gateRecheck.voidForFailedGate(nodeExecId);
+            gateRecheck.voidForFailedGate(failed.getWorkflowRunId(), failed.getTemplateNodeId(), failed.getId());
         } catch (RuntimeException e) {
-            log.error("Could not void the approval of failed node execution {}: {}", nodeExecId, e.getMessage(), e);
+            log.error("Could not void the approval of failed node execution {}: {}", failed.getId(), e.getMessage(), e);
         }
     }
 

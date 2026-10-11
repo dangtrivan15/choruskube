@@ -1,6 +1,7 @@
 package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -261,6 +262,22 @@ class AsyncGateFinalizeIntegrationTest extends BaseTest {
                 .isEqualTo(consumed.getMaterializedAt());
         verify(auditSink, times(1)).record(eq(AuditSink.PULL_REQUESTS_MERGED), eq("workflow_run"), eq(runId), any());
         verify(gitHubAppService, times(1)).createIssue(any(), any(), any(), any());
+    }
+
+    @Test
+    void approve_withAnInvalidRoadmapEdit_isRejected_andClaimsNothing() throws Exception {
+        mockMvc.perform(post("/api/v1/runs/{id}/nodes/{exec}/signal", runId, gateExec.getId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"decision\":\"approved\",\"feedback\":\"ship it\","
+                                + "\"editedCandidates\":{\"epics\":[{\"title\":\"Async follow-up\","
+                                + "\"stories\":[{\"title\":\"No tasks yet\",\"tasks\":[]}]}]}}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0]").value(containsString("a new story needs at least one task")));
+
+        assertThat(execRepo.findById(gateExec.getId()).orElseThrow().getStatus())
+                .isEqualTo(NodeExecutionStatus.awaiting_human);
+        assertThat(stampRepo.findByWorkflowRunIdOrderByCreatedAtAsc(runId)).isEmpty();
+        verifyNoInteractions(stub);
     }
 
     @Test

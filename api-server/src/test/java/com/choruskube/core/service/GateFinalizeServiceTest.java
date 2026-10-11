@@ -308,7 +308,12 @@ class GateFinalizeServiceTest {
                         null))
                 .hasMessageContaining("temporal unavailable");
 
-        verify(gateRecheck).voidStamp(eq(approvalId), contains("Could not start finalizing"), eq(gateExecId));
+        // The reason is shown on the gate, so the exception's text stays in the log.
+        verify(gateRecheck)
+                .voidStamp(
+                        eq(approvalId),
+                        eq("Could not start finalizing the approval. Approve again to retry."),
+                        eq(gateExecId));
         verify(claims)
                 .compareAndSetStatus(gateExecId, NodeExecutionStatus.finalizing, NodeExecutionStatus.awaiting_human);
         verify(events, never()).publishNodeStatusChanged(runId, gateExecId, "finalizing");
@@ -798,9 +803,10 @@ class GateFinalizeServiceTest {
         StepResult result = service.complete(runId, gateExecId, approvalId, mergedRow());
 
         assertThat(result.outcome()).isEqualTo(GateFinalizeService.COMPLETED);
-        assertThat(result.result()).contains("stopped partway").contains("connection lost");
+        assertThat(result.result()).contains("stopped partway").doesNotContain("connection lost");
         assertThat(stamp.getMaterializedAt()).isEqualTo(NOW);
-        assertThat(stamp.getMaterializationNote()).contains("connection lost");
+        assertThat(stamp.getMaterializationNote())
+                .isEqualTo("Writing the approved roadmap stopped partway, so some items may be missing.");
         verify(gateRecheck).consume(approvalId);
     }
 

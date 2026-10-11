@@ -13,7 +13,9 @@ import com.choruskube.core.repository.GateStampRepository;
 import com.choruskube.core.repository.NodeExecutionRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
@@ -167,11 +169,20 @@ public class GateRecheckService {
         return live.size();
     }
 
-    /** Voids the approvals live at a gate execution that has failed; a repeat call finds none. */
+    /**
+     * Voids the approvals live at a gate execution that has failed, and any the same gate is
+     * finalizing: a held approval claimed at a reopened gate stays stamped at the execution that
+     * held it. A repeat call finds none.
+     */
     @Transactional
-    public int voidForFailedGate(UUID gateExecId) {
-        List<GateStamp> live = stampRepo.findByStampedNodeExecutionIdAndStatusIn(gateExecId, LIVE);
-        live.forEach(s -> voidParked(s, GATE_FAILED, gateExecId));
+    public int voidForFailedGate(UUID runId, UUID gateTemplateNodeId, UUID gateExecId) {
+        Map<UUID, GateStamp> live = new LinkedHashMap<>();
+        stampRepo.findByStampedNodeExecutionIdAndStatusIn(gateExecId, LIVE).forEach(s -> live.put(s.getId(), s));
+        stampRepo
+                .findByWorkflowRunIdAndGateTemplateNodeIdAndStatus(
+                        runId, gateTemplateNodeId, GateStampStatus.finalizing)
+                .forEach(s -> live.putIfAbsent(s.getId(), s));
+        live.values().forEach(s -> voidParked(s, GATE_FAILED, gateExecId));
         return live.size();
     }
 

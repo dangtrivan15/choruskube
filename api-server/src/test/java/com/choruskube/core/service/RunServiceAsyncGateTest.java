@@ -16,11 +16,13 @@ import com.choruskube.core.dto.RoadmapCandidatesDocument;
 import com.choruskube.core.dto.SignalRequest;
 import com.choruskube.core.dto.SignalResponse;
 import com.choruskube.core.exception.BadRequestException;
+import com.choruskube.core.exception.ValidationException;
 import com.choruskube.core.model.DriftRecheckConfig;
 import com.choruskube.core.model.DriftRecheckConfig.StampMode;
 import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.NodeExecutionStatus;
+import com.choruskube.core.model.enums.RoadmapMaterializeMode;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.observability.AuditSink;
 import com.choruskube.core.repository.*;
@@ -90,6 +92,9 @@ class RunServiceAsyncGateTest {
     @Mock
     private GateFinalizeService gateFinalize;
 
+    @Mock
+    private RoadmapProposalValidator roadmapProposalValidator;
+
     private RunService service;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final UUID runId = UUID.randomUUID();
@@ -140,7 +145,7 @@ class RunServiceAsyncGateTest {
                 roadmapCandidatesArtifactResolver,
                 nodeExecutionClaimService,
                 null,
-                null,
+                roadmapProposalValidator,
                 pullRequestMergeService,
                 null,
                 gateDriftCheck,
@@ -211,6 +216,25 @@ class RunServiceAsyncGateTest {
         service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, null));
 
         verify(gateFinalize).requestApproval(any(), any(), any(), any(), any(), eq(analyzed));
+    }
+
+    @Test
+    void asyncApproval_withAnInvalidRoadmapEdit_isRejectedBeforeAnyClaim() {
+        stubRun(RECHECK_AND_MATERIALIZE_GATE);
+        RoadmapCandidatesDocument edited = new RoadmapCandidatesDocument(null, List.of(), null);
+        when(roadmapProposalValidator.validate(
+                        runId,
+                        edited,
+                        RoadmapMaterializeMode.roadmap_extension,
+                        RoadmapProposalValidator.Strictness.GATE))
+                .thenReturn(List.of("a new story needs at least one task"));
+
+        assertThatThrownBy(() -> service.signalHumanDecision(
+                        runId, nodeExecId, new SignalRequest("approved", "ship it", null, edited)))
+                .isInstanceOfSatisfying(ValidationException.class, e -> assertThat(e.getErrors())
+                        .containsExactly("a new story needs at least one task"));
+
+        verifyNoInteractions(gateFinalize, nodeExecutionClaimService, workflowStub);
     }
 
     @Test

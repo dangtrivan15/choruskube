@@ -224,6 +224,52 @@ class InternalRunServiceFinalizeModeTest extends BaseTest {
     }
 
     @Test
+    void reopenedGateFailure_voidsTheHeldApprovalItClaimed() {
+        gateExec.setStatus(NodeExecutionStatus.completed);
+        gateExec = execRepo.save(gateExec);
+        GateStamp claimed =
+                gateRecheck.begin(run.getId(), gateExec, "final_approval", StampMode.always, null, null, null);
+        NodeExecution reopened = reopenedGate(NodeExecutionStatus.finalizing);
+
+        internalRunService.updateNodeExecutionStatus(run.getId(), reopened.getId(), failed());
+
+        GateStamp voided = stampRepo.findById(claimed.getId()).orElseThrow();
+        assertThat(voided.getStatus()).isEqualTo(GateStampStatus.voided);
+        assertThat(voided.getVoidReason()).isEqualTo("The gate failed while finalizing the approval.");
+        assertThat(voided.getParkedNodeExecutionId()).isEqualTo(reopened.getId());
+    }
+
+    @Test
+    void reopenedGateFailure_leavesAnApprovalHeldAtAnEarlierExecutionHeld() {
+        gateExec.setStatus(NodeExecutionStatus.completed);
+        gateExec = execRepo.save(gateExec);
+        GateStamp held = gateRecheck.hold(run.getId(), gateExec, "final_approval", StampMode.always, null, null, null);
+        NodeExecution reopened = reopenedGate(NodeExecutionStatus.awaiting_human);
+
+        internalRunService.updateNodeExecutionStatus(run.getId(), reopened.getId(), failed());
+
+        assertThat(stampRepo.findById(held.getId()).orElseThrow().getStatus()).isEqualTo(GateStampStatus.pending);
+    }
+
+    @Test
+    void gateOpenWriteRetriedAfterTheReviewerApproved_leavesTheGateFinalizing() {
+        gateExec.setFinalizeMode("async");
+        gateExec.setStatus(NodeExecutionStatus.finalizing);
+        gateExec = execRepo.save(gateExec);
+        GateStamp stamp =
+                gateRecheck.begin(run.getId(), gateExec, "final_approval", StampMode.always, null, null, null);
+
+        internalRunService.updateNodeExecutionStatus(
+                run.getId(),
+                gateExec.getId(),
+                new InternalUpdateNodeExecutionRequest("awaiting_human", null, null, null, null, null, "async"));
+
+        assertThat(execRepo.findById(gateExec.getId()).orElseThrow().getStatus())
+                .isEqualTo(NodeExecutionStatus.finalizing);
+        assertThat(stampRepo.findById(stamp.getId()).orElseThrow().getStatus()).isEqualTo(GateStampStatus.finalizing);
+    }
+
+    @Test
     void failureOfAnExecutionWithNoApproval_leavesAnotherGatesApprovalAlone() {
         TemplateNode otherNode = new TemplateNode();
         otherNode.setGraphTemplateId(templateNode.getGraphTemplateId());
@@ -262,6 +308,17 @@ class InternalRunServiceFinalizeModeTest extends BaseTest {
                 new InternalUpdateNodeExecutionRequest("running", null, null, null, null, null, null));
 
         assertThat(stampRepo.findById(stamp.getId()).orElseThrow().getStatus()).isEqualTo(GateStampStatus.finalizing);
+    }
+
+    private NodeExecution reopenedGate(NodeExecutionStatus status) {
+        NodeExecution reopened = new NodeExecution();
+        reopened.setWorkflowRunId(run.getId());
+        reopened.setTemplateNodeId(templateNode.getId());
+        reopened.setGraphVersion(1);
+        reopened.setIteration(2);
+        reopened.setFinalizeMode("async");
+        reopened.setStatus(status);
+        return execRepo.save(reopened);
     }
 
     private static InternalUpdateNodeExecutionRequest failed() {
