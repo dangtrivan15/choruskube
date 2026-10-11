@@ -53,6 +53,9 @@ main can move again afterwards.
 
 **A held approval is voided, and the gate is left to a human, when any of these happens:**
 - main moves again after 2 re-check rounds;
+- after a re-check, it is still not known which commit was tested, because the pods record nothing
+  or a repo's base is missing from main. A further round could not fix that, so the reason says to
+  rebuild the agent image or fix the default-branch setting;
 - the run visits the Supervisor;
 - under `stamp: if_unchanged`, the routed-to node revises what was approved;
 - applying it fails;
