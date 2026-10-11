@@ -2,7 +2,7 @@
 # scripts/build-agent-images.sh — Build the ChorusKube agent images locally.
 #
 # The agent images are NOT Docker Compose services — they are pulled by the
-# api-server's workload executor at run time to launch agent pods. The published
+# worker's workload executor at run time to launch agent containers. The published
 # images are currently amd64-only, so on other architectures (e.g. arm64 dev
 # hosts) we build them locally and natively here. The executor is local-first:
 # once these images exist locally it uses them without re-pulling.
@@ -25,14 +25,15 @@ DIND_IMAGE="${DIND_IMAGE:-docker:29-dind}"
 echo "=== Building base agent image: $AGENT_IMAGE ==="
 docker build -t "$AGENT_IMAGE" "$IMAGES_DIR/claude-code"
 
-# The dev image's Gradle warmup layer reads the api-server's build files via
-# `COPY --from=api-server`, which resolves against a NAMED BUILD CONTEXT rather than
-# a build stage or a build-arg. Without --build-context, Docker falls back to treating
-# `api-server` as an image reference and fails on `docker.io/library/api-server:latest`.
+# Every `COPY --from=<name>` in the dev Dockerfile needs a matching --build-context:
+# without one, Docker treats <name> as an image and fails on docker.io/library/<name>.
 echo "=== Building dev agent image: $DEV_IMAGE (BASE_AGENT_IMAGE=$AGENT_IMAGE) ==="
 docker build \
     --build-arg "BASE_AGENT_IMAGE=$AGENT_IMAGE" \
     --build-context "api-server=$REPO_ROOT/api-server" \
+    --build-context "orchestrator=$REPO_ROOT/orchestrator" \
+    --build-context "worker=$REPO_ROOT/worker" \
+    --build-context "web-ui=$REPO_ROOT/web-ui" \
     -t "$DEV_IMAGE" \
     "$IMAGES_DIR/choruskube-dev"
 
