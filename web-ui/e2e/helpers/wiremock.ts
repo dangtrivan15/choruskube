@@ -13,8 +13,11 @@ export interface WireMockLoggedRequest {
   headers: Record<string, string>;
 }
 
+// `/requests/find`'s entries are flat LoggedRequest objects (url/method/headers at the top
+// level) — unlike `/requests` (all serve events), which nests the same fields under a `request`
+// key. Reading a nested `.request` here silently made every `headers` lookup empty.
 interface WireMockFindRequestsResponse {
-  requests?: { request?: { url?: string; method?: string; headers?: Record<string, string> } }[];
+  requests?: { url?: string; method?: string; headers?: Record<string, string> }[];
 }
 
 /**
@@ -37,9 +40,9 @@ export async function findWireMockRequests(filter: {
   }
   const body = (await res.json()) as WireMockFindRequestsResponse;
   return (body.requests ?? []).map((r) => ({
-    url: r.request?.url ?? "",
-    method: r.request?.method ?? "",
-    headers: r.request?.headers ?? {},
+    url: r.url ?? "",
+    method: r.method ?? "",
+    headers: r.headers ?? {},
   }));
 }
 
