@@ -6,6 +6,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.choruskube.core.BaseTest;
 import com.choruskube.core.model.*;
 import com.choruskube.core.model.enums.ExecutorType;
+import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.temporal.client.WorkflowClient;
@@ -227,6 +228,36 @@ public class InternalAuthFilterTest extends BaseTest {
     @Test
     void noAuth_deniesCleanupBranchesEndpoint() throws Exception {
         mockMvc.perform(post("/internal/runs/" + run.getId() + "/cleanup-branches"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error").value("Missing or invalid Authorization header"));
+    }
+
+    // ── branch cleanup plan: orchestrator-only, by construction ───────────────────
+    //
+    // /internal/runs/{runId}/branch-cleanup-plan carries no node-executions/{execId} segment
+    // either, for the same reason as cleanup-branches above.
+
+    @Test
+    void orchestratorToken_canAccessBranchCleanupPlanEndpoint() throws Exception {
+        run.setStatus(WorkflowRunStatus.completed);
+        run = runRepo.save(run);
+
+        mockMvc.perform(get("/internal/runs/" + run.getId() + "/branch-cleanup-plan")
+                        .header("Authorization", "Bearer " + ORCHESTRATOR_SECRET))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.repos").isArray());
+    }
+
+    @Test
+    void agentToken_deniesBranchCleanupPlanEndpoint() throws Exception {
+        mockMvc.perform(get("/internal/runs/" + run.getId() + "/branch-cleanup-plan")
+                        .header("Authorization", "Bearer test-agent-job-secret"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void noAuth_deniesBranchCleanupPlanEndpoint() throws Exception {
+        mockMvc.perform(get("/internal/runs/" + run.getId() + "/branch-cleanup-plan"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.error").value("Missing or invalid Authorization header"));
     }

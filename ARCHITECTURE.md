@@ -74,6 +74,12 @@ one Fleet are extension seams core declares but does not implement — see
 The orchestrator drives the graph; the **Worker** creates and owns the agent workloads;
 the **api-server** owns state and credentials and talks to the data stores.
 
+Once a run completes, the orchestrator asks the api-server which repos the run touched and
+each one's default branch, then dispatches a cleanup step to the run's own Worker, which
+deletes each repo's run branch that is not ahead of its default branch, using its own
+credential source rather than one the api-server holds. See
+[docs/decisions/2026-10-13---01-branch-cleanup-on-the-worker.md](docs/decisions/2026-10-13---01-branch-cleanup-on-the-worker.md).
+
 ## Task-triggered runs
 
 A Feature Development run can be started from a roadmap **Task** — the leaf of the
@@ -215,7 +221,7 @@ locally and to self-host.
 |-----------|-------|----------------|
 | **api-server** | Java / Spring Boot | Source of truth for state; resolves per-run credentials and records Worker-reported execution state; REST API; STOMP/WebSocket broadcasts. |
 | **orchestrator** | Go + Temporal | Drives the graph; dispatches each node as a Temporal activity for a Worker to execute. |
-| **worker** | Go + Temporal | Runs executors (Docker, Kubernetes) and the agent callback server; receives work from Fleets. |
+| **worker** | Go + Temporal | Runs executors (Docker, Kubernetes) and the agent callback server; receives work from Fleets; makes the run's GitHub calls (gate merges, run-branch cleanup). |
 | **web-ui** | React + Vite | Graph visualization, live run monitoring, human-approval gates; subscribes to WebSocket events. |
 | **agent images** | container images | The containers a node runs in — the AI agent (Claude Code) and a fuller dev image built on top of it. |
 

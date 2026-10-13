@@ -125,6 +125,64 @@ func TestGetGraphRuntime(t *testing.T) {
 	assert.Equal(t, snapshot, result)
 }
 
+func TestGetBranchCleanupPlan_DecodesTheJavaShapedBody(t *testing.T) {
+	runID := uuid.New()
+	repoID := uuid.New()
+
+	_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodGet, r.Method)
+		assert.Equal(t, "/internal/runs/"+runID.String()+"/branch-cleanup-plan", r.URL.Path)
+		fmt.Fprintf(w, `{"repos":[{"gitRepoId":"%s","ownerRepo":"acme/api","defaultBranch":"main"}]}`, repoID)
+	})
+
+	plan, err := client.GetBranchCleanupPlan(context.Background(), runID)
+	require.NoError(t, err)
+	assert.Equal(t, BranchCleanupPlanResponse{
+		Repos: []BranchCleanupPlanRepo{{GitRepoID: repoID, OwnerRepo: "acme/api", DefaultBranch: "main"}},
+	}, plan)
+}
+
+// Mirrors TestGateFinalize_RejectionsAreNonRetryable for the branch-cleanup-plan endpoint, which
+// classifies its own rejections independently (BranchCleanupPlanRejectedType, not
+// GateFinalizeRejectedType) because it is not one of the gate-finalize routes.
+func TestGetBranchCleanupPlan_RejectionsAreNonRetryable(t *testing.T) {
+	for _, status := range []int{http.StatusBadRequest, http.StatusNotFound, http.StatusConflict} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(status)
+				w.Write([]byte("rejected"))
+			})
+
+			_, err := client.GetBranchCleanupPlan(context.Background(), uuid.New())
+
+			appErr, ok := err.(*temporal.ApplicationError)
+			require.Truef(t, ok, "want the *ApplicationError itself, got %T: %v", err, err)
+			assert.True(t, appErr.NonRetryable())
+			assert.Equal(t, BranchCleanupPlanRejectedType, appErr.Type())
+
+			var apiErr *APIError
+			require.True(t, errors.As(err, &apiErr))
+			assert.Equal(t, status, apiErr.StatusCode)
+		})
+	}
+}
+
+func TestGetBranchCleanupPlan_ServerAndNetworkFailuresStayRetryable(t *testing.T) {
+	for _, status := range []int{http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(status)
+			})
+
+			_, err := client.GetBranchCleanupPlan(context.Background(), uuid.New())
+
+			require.Error(t, err)
+			var appErr *temporal.ApplicationError
+			assert.False(t, errors.As(err, &appErr), "retryable errors must not be application errors")
+		})
+	}
+}
+
 func TestWriteExecutionLog(t *testing.T) {
 	runID := uuid.New()
 	execID := uuid.New()

@@ -28,6 +28,7 @@ func requireGitHubHeaders(t *testing.T, r *http.Request, token string) {
 	assert.Equal(t, "Bearer "+token, r.Header.Get("Authorization"))
 	assert.Equal(t, "application/vnd.github+json", r.Header.Get("Accept"))
 	assert.Equal(t, "2022-11-28", r.Header.Get("X-GitHub-Api-Version"))
+	assert.Equal(t, "choruskube-worker", r.Header.Get("User-Agent"))
 }
 
 func TestCompareReturnsAheadBy(t *testing.T) {
@@ -90,6 +91,69 @@ func TestCompareRejectsRefsThatWouldChangeThePath(t *testing.T) {
 		})
 	}
 	assert.False(t, called, "an unsafe path must never reach the server")
+}
+
+func TestDeleteRefSendsDeleteToTheRefPath(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodDelete, r.Method)
+		assert.Equal(t, "", r.Header.Get("Content-Type"))
+		requireGitHubHeaders(t, r, "t")
+		assert.Regexp(t, `^/repos/acme/app/git/refs/heads/choruskube-run-[0-9a-f-]+$`, r.URL.EscapedPath())
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	err := c.DeleteRef(context.Background(), "t", "acme/app", "heads/choruskube-run-11111111-1111-1111-1111-111111111111")
+
+	require.NoError(t, err)
+}
+
+func TestDeleteRefKeepsSlashesInRefAndEscapesTheRest(t *testing.T) {
+	var escaped string
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		escaped = r.URL.EscapedPath()
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	err := c.DeleteRef(context.Background(), "t", "acme/app", "heads/feature/a b#1?x")
+
+	require.NoError(t, err)
+	assert.Equal(t, "/repos/acme/app/git/refs/heads/feature/a%20b%231%3Fx", escaped)
+}
+
+func TestDeleteRefRejectsRefsThatWouldChangeThePath(t *testing.T) {
+	called := false
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) { called = true })
+
+	for _, tc := range []struct{ name, ref string }{
+		{"dot-dot", "heads/../main"},
+		{"empty segment", "heads//x"},
+		{"empty", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := c.DeleteRef(context.Background(), "t", "acme/app", tc.ref)
+			require.Error(t, err)
+		})
+	}
+	assert.False(t, called, "an unsafe ref must never reach the server")
+}
+
+func TestDeleteRefNonSuccessIsAPIErrorThatNeverEchoesTheBody(t *testing.T) {
+	for _, status := range []int{404, 422, 500} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(status)
+				_, _ = io.WriteString(w, `{"message":"boom","request":{"Authorization":"Bearer secret-token"}}`)
+			})
+
+			err := c.DeleteRef(context.Background(), "secret-token", "acme/app", "heads/choruskube-run-x")
+
+			var apiErr *APIError
+			require.ErrorAs(t, err, &apiErr)
+			assert.Equal(t, status, apiErr.Status)
+			assert.NotContains(t, err.Error(), "secret-token")
+			assert.NotContains(t, err.Error(), "boom")
+		})
+	}
 }
 
 func TestPullRequestParsesFields(t *testing.T) {

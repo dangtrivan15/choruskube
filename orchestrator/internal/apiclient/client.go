@@ -282,14 +282,57 @@ func (c *Client) GetGraphRuntime(ctx context.Context, runID uuid.UUID) (string, 
 }
 
 // CleanupBranches asks the API server to best-effort delete this run's per-repo run branch for
-// every repo whose branch is not ahead of its default branch. Called once a run reaches
-// "completed"; failures are the caller's to log and ignore, never to fail the run over.
+// every repo whose branch is not ahead of its default branch.
+//
+// Deprecated: serves only workflow histories recorded before the branch-cleanup-on-worker version
+// marker. Every run that reaches cleanup after that marker calls GetBranchCleanupPlan instead and
+// lets the Worker do the GitHub compare and delete itself.
 func (c *Client) CleanupBranches(ctx context.Context, runID uuid.UUID) error {
 	_, err := c.doJSON(ctx, http.MethodPost, fmt.Sprintf("/internal/runs/%s/cleanup-branches", runID), nil)
 	if err != nil {
 		return fmt.Errorf("cleanup branches: %w", err)
 	}
 	return nil
+}
+
+// BranchCleanupPlanRejectedType is the application error type of a branch-cleanup-plan call the
+// API answered with a 400, 404 or 409.
+const BranchCleanupPlanRejectedType = "BranchCleanupPlanRejected"
+
+// BranchCleanupPlanRepo is one repo in a run's branch-cleanup plan, field for field the same as
+// the API server's BranchCleanupPlanResponse.Repo and the Worker's BranchCleanupRepo.
+type BranchCleanupPlanRepo struct {
+	GitRepoID     uuid.UUID `json:"gitRepoId"`
+	OwnerRepo     string    `json:"ownerRepo"`
+	DefaultBranch string    `json:"defaultBranch"`
+}
+
+// BranchCleanupPlanResponse mirrors the API server's BranchCleanupPlanResponse.
+type BranchCleanupPlanResponse struct {
+	Repos []BranchCleanupPlanRepo `json:"repos"`
+}
+
+// GetBranchCleanupPlan reads which repos a completed run touched, and each one's owner/repo slug
+// and default branch, for the workflow to carry to the Worker's cleanup step. Makes no GitHub
+// call and resolves no credential; the API answers only for a run whose status is "completed".
+func (c *Client) GetBranchCleanupPlan(ctx context.Context, runID uuid.UUID) (BranchCleanupPlanResponse, error) {
+	resp, err := c.doJSON(ctx, http.MethodGet, fmt.Sprintf("/internal/runs/%s/branch-cleanup-plan", runID), nil)
+	if err != nil {
+		var apiErr *APIError
+		if errors.As(err, &apiErr) {
+			switch apiErr.StatusCode {
+			case http.StatusBadRequest, http.StatusNotFound, http.StatusConflict:
+				return BranchCleanupPlanResponse{},
+					temporal.NewNonRetryableApplicationError("branch cleanup plan", BranchCleanupPlanRejectedType, err)
+			}
+		}
+		return BranchCleanupPlanResponse{}, fmt.Errorf("get branch cleanup plan: %w", err)
+	}
+	var plan BranchCleanupPlanResponse
+	if err := json.Unmarshal(resp, &plan); err != nil {
+		return BranchCleanupPlanResponse{}, fmt.Errorf("unmarshal branch cleanup plan: %w", err)
+	}
+	return plan, nil
 }
 
 // --- Execution Log ---

@@ -351,13 +351,26 @@ public class InternalRunController {
     }
 
     /**
-     * Best-effort deletion of the run's per-repo run branch, once the run has reached {@code
-     * completed} (called by the orchestrator's Step 6 completion seam — see {@code
-     * DAGExecutorWorkflow}). Run-level, not node-execution-scoped, so {@code InternalAuthFilter}'s
-     * agent {@code JOB_SECRET} matching — which only authorizes paths carrying a caller's own {@code
-     * node-executions/{execId}} segment — never matches this path; only the orchestrator's {@code
-     * ORCHESTRATOR_SECRET} does.
+     * The branch-cleanup plan for a completed run: each repo's id, {@code owner/repo} slug and
+     * default branch, for the orchestrator to carry to the Worker. Run-level, not
+     * node-execution-scoped, so {@code InternalAuthFilter}'s agent {@code JOB_SECRET} matching —
+     * which only authorizes paths carrying a caller's own {@code node-executions/{execId}} segment
+     * — never matches this path; only the orchestrator's {@code ORCHESTRATOR_SECRET} does.
      */
+    @GetMapping("/{runId}/branch-cleanup-plan")
+    public BranchCleanupPlanResponse branchCleanupPlan(@PathVariable UUID runId) {
+        return branchCleanupService.plan(runId);
+    }
+
+    /**
+     * @deprecated legacy path: serves only workflow histories recorded before the {@code
+     *     branch-cleanup-on-worker} version marker, which {@link #branchCleanupPlan} and the
+     *     Worker's own cleanup activity now serve instead. Run-level, not node-execution-scoped, so
+     *     {@code InternalAuthFilter}'s agent {@code JOB_SECRET} matching — which only authorizes
+     *     paths carrying a caller's own {@code node-executions/{execId}} segment — never matches
+     *     this path; only the orchestrator's {@code ORCHESTRATOR_SECRET} does.
+     */
+    @Deprecated
     @PostMapping("/{runId}/cleanup-branches")
     public ResponseEntity<BranchCleanupResponse> cleanupBranches(@PathVariable UUID runId) {
         return ResponseEntity.ok(branchCleanupService.cleanupBranches(runId));

@@ -380,6 +380,11 @@ public class GitHubAppService {
      * delete succeeded (2xx) and when the ref was already gone (404/422): both leave the ref absent,
      * which is all {@code BranchCleanupService} cares about.
      *
+     * <p>Legacy: its only caller is {@code BranchCleanupService#cleanupBranches}, which itself
+     * serves only workflow histories recorded before the {@code branch-cleanup-on-worker} version
+     * marker. The Worker's own GitHub client deletes a ref for every run that reaches cleanup
+     * after that marker.
+     *
      * @throws GitHubApiException on any other non-2xx status, carrying the real status code
      * @throws RuntimeException if the call never produced a status at all
      */
