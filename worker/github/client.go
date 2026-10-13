@@ -106,7 +106,7 @@ func (c *Client) Compare(ctx context.Context, token, ownerRepo, base, head strin
 }
 
 // DeleteRef deletes a ref, for example "heads/choruskube-run-<runID>". 204 returns nil; any other
-// status returns an *APIError without reading the body, which can echo the request.
+// status returns an *APIError that never keeps the body, which can echo the request.
 func (c *Client) DeleteRef(ctx context.Context, token, ownerRepo, ref string) error {
 	repo, err := repoPath(ownerRepo)
 	if err != nil {

@@ -78,13 +78,12 @@ func (a *Activities) CleanupRunBranches(ctx context.Context, p BranchCleanupPara
 		return res, errors.New("credential provider returned a blank GitHub token")
 	}
 
-	branch := runBranchPrefix + p.RunID.String()
 	counts := map[string]int{}
 	for _, repo := range p.Repos {
 		if err := ctx.Err(); err != nil {
 			return res, err
 		}
-		outcome, err := a.cleanupOneBranch(ctx, tok.Value, repo, branch)
+		outcome, err := a.cleanupOneBranch(ctx, tok.Value, p.RunID, repo)
 		if err != nil {
 			return res, err
 		}
@@ -92,10 +91,6 @@ func (a *Activities) CleanupRunBranches(ctx context.Context, p BranchCleanupPara
 			GitRepoID: repo.GitRepoID, OwnerRepo: repo.OwnerRepo, Outcome: outcome,
 		})
 		counts[outcome]++
-		if outcome == BranchCleanupSkippedError {
-			slog.Warn("run branch cleanup skipped a repo",
-				"run_id", p.RunID, "repo", repo.OwnerRepo)
-		}
 	}
 	slog.Info("run branch cleanup", "run_id", p.RunID,
 		"deleted", counts[BranchCleanupDeleted], "kept_ahead", counts[BranchCleanupKeptAhead],
@@ -103,44 +98,58 @@ func (a *Activities) CleanupRunBranches(ctx context.Context, p BranchCleanupPara
 	return res, nil
 }
 
-// cleanupOneBranch returns a non-nil error only for a cancelled context: that fails the whole
-// step so Temporal retries it, since a partial attempt's deletions would otherwise be undetectable
-// from a second attempt's NOT_FOUND reads. Every other fault becomes an outcome, never an error.
-func (a *Activities) cleanupOneBranch(ctx context.Context, token string, repo BranchCleanupRepo, branch string) (string, error) {
+// cleanupOneBranch returns a non-nil error only once ctx is done, which fails the step for
+// Temporal to retry; turned into an outcome instead, every remaining repo would read
+// SKIPPED_ERROR and the step would end without a retry.
+func (a *Activities) cleanupOneBranch(ctx context.Context, token string, runID uuid.UUID, repo BranchCleanupRepo) (string, error) {
+	branch := runBranchPrefix + runID.String()
+	skip := func(cause error) (string, error) {
+		warnSkipped(runID, repo, cause)
+		return BranchCleanupSkippedError, nil
+	}
+	fault := func(call string, err error) (string, error) {
+		if cerr := ctx.Err(); cerr != nil {
+			return "", cerr
+		}
+		if isNotFound(err) {
+			return BranchCleanupNotFound, nil
+		}
+		return skip(fmt.Errorf("%s: %w", call, err))
+	}
+
 	defaultBranch := strings.TrimSpace(repo.DefaultBranch)
 	if defaultBranch == "" || defaultBranch == branch {
-		return BranchCleanupSkippedError, nil
+		return skip(fmt.Errorf("planned default branch %q is blank or is the run branch", repo.DefaultBranch))
 	}
 
 	recordHeartbeat(ctx)
 	ahead, err := a.gh.Compare(ctx, token, repo.OwnerRepo, defaultBranch, branch)
 	switch {
 	case err != nil:
-		if cerr := ctx.Err(); cerr != nil {
-			return "", cerr
-		}
-		if isNotFound(err) {
-			return BranchCleanupNotFound, nil
-		}
-		return BranchCleanupSkippedError, nil
+		return fault("compare", err)
 	case ahead > 0:
 		return BranchCleanupKeptAhead, nil
 	case ahead < 0:
 		// GitHub never sends a negative ahead_by, so this is a malformed answer, not "not ahead".
-		return BranchCleanupSkippedError, nil
+		return skip(fmt.Errorf("compare answered ahead_by %d", ahead))
 	}
 
 	recordHeartbeat(ctx)
 	if err := a.gh.DeleteRef(ctx, token, repo.OwnerRepo, "heads/"+branch); err != nil {
-		if cerr := ctx.Err(); cerr != nil {
-			return "", cerr
-		}
-		if isNotFound(err) {
-			return BranchCleanupNotFound, nil
-		}
-		return BranchCleanupSkippedError, nil
+		return fault("delete", err)
 	}
 	return BranchCleanupDeleted, nil
+}
+
+// warnSkipped logs why a repo's branch was kept. cause must never carry the token; the github
+// client's errors hold neither it nor a response body.
+func warnSkipped(runID uuid.UUID, repo BranchCleanupRepo, cause error) {
+	attrs := []any{"run_id", runID, "repo", repo.OwnerRepo, "error", cause}
+	var apiErr *github.APIError
+	if errors.As(cause, &apiErr) {
+		attrs = append(attrs, "status", apiErr.Status)
+	}
+	slog.Warn("run branch cleanup skipped a repo", attrs...)
 }
 
 func isNotFound(err error) bool {

@@ -179,8 +179,25 @@ func TestGetBranchCleanupPlan_ServerAndNetworkFailuresStayRetryable(t *testing.T
 			require.Error(t, err)
 			var appErr *temporal.ApplicationError
 			assert.False(t, errors.As(err, &appErr), "retryable errors must not be application errors")
+			var apiErr *APIError
+			require.True(t, errors.As(err, &apiErr))
+			assert.Equal(t, status, apiErr.StatusCode)
 		})
 	}
+
+	t.Run("network", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+		client := NewClient(server.URL)
+		server.Close()
+
+		_, err := client.GetBranchCleanupPlan(context.Background(), uuid.New())
+
+		require.Error(t, err)
+		var appErr *temporal.ApplicationError
+		assert.False(t, errors.As(err, &appErr))
+		var apiErr *APIError
+		assert.False(t, errors.As(err, &apiErr))
+	})
 }
 
 func TestWriteExecutionLog(t *testing.T) {

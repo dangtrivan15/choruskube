@@ -183,9 +183,7 @@ func refusalBeforeMerging(in inspection) string {
 }
 
 // bindRun refuses a run id the workflow's own id contradicts: the params travel through the
-// workflow, but the activity must only ever act on, and fetch credentials for, its own run. op
-// names the activity in the error message (e.g. "gate steps", "branch cleanup"); errType is the
-// ApplicationError's Type, which a caller can match on.
+// workflow, but the activity must only ever act on, and fetch credentials for, its own run.
 func bindRun(ctx context.Context, runID uuid.UUID, op, errType string) error {
 	bound, err := runIDOf(ctx)
 	if err != nil {

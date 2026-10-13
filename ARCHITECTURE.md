@@ -76,8 +76,9 @@ the **api-server** owns state and credentials and talks to the data stores.
 
 Once a run completes, the orchestrator asks the api-server which repos the run touched and
 each one's default branch, then dispatches a cleanup step to the run's own Worker, which
-deletes each repo's run branch that is not ahead of its default branch, using its own
-credential source rather than one the api-server holds. See
+deletes each repo's run branch that is not ahead of its default branch. The Worker makes
+those GitHub calls itself, with the run's token from its own credential source; the
+api-server makes none. See
 [docs/decisions/2026-10-13---01-branch-cleanup-on-the-worker.md](docs/decisions/2026-10-13---01-branch-cleanup-on-the-worker.md).
 
 ## Task-triggered runs

@@ -1594,7 +1594,7 @@ func cleanupRunBranches(
 
 // branchCleanupActivityOptions routes the cleanup step to the run's Worker, which holds the run's
 // GitHub credentials; on any other queue every attempt fails. Without ScheduleToStartTimeout, a
-// Fleet with no live Worker leaves the branches kept for good rather than ending the step.
+// Fleet with no live Worker holds the completed run's workflow open for good.
 func branchCleanupActivityOptions(workerTaskQueue string) workflow.ActivityOptions {
 	return workflow.ActivityOptions{
 		TaskQueue:              workerTaskQueue,

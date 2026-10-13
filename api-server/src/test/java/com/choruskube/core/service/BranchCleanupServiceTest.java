@@ -15,6 +15,7 @@ import com.choruskube.core.exception.ConflictException;
 import com.choruskube.core.exception.GitHubApiException;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.GitRepo;
+import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.GitRepoRepository;
 import java.util.List;
 import java.util.Map;
@@ -23,6 +24,8 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -275,12 +278,14 @@ class BranchCleanupServiceTest {
                 .isEqualTo(healthyRepoId));
     }
 
-    @Test
-    void plan_refusesARunThatIsNotCompleted() {
+    @ParameterizedTest
+    @EnumSource(value = WorkflowRunStatus.class, mode = EnumSource.Mode.EXCLUDE, names = "completed")
+    void plan_refusesARunThatIsNotCompleted(WorkflowRunStatus status) {
         UUID runId = UUID.randomUUID();
-        when(internalRunService.getRunStatus(runId)).thenReturn(new RunStatusResponse("running"));
+        when(internalRunService.getRunStatus(runId)).thenReturn(new RunStatusResponse(status.name()));
 
         assertThatThrownBy(() -> service.plan(runId)).isInstanceOf(ConflictException.class);
+        verify(internalRunService, never()).getGraphRuntimeSnapshot(any());
     }
 
     @Test

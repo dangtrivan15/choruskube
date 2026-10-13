@@ -1,9 +1,12 @@
 package activity
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -12,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 
 	"github.com/dangtrivan15/choruskube/worker/credential"
@@ -93,6 +97,19 @@ func (g *branchCleanupGitHub) compareMalformed(ownerRepo, defaultBranch, runBran
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(body))
+	})
+}
+
+// compareDropsConnection answers with no HTTP response at all, so the client sees a transport
+// error rather than a status.
+func (g *branchCleanupGitHub) compareDropsConnection(ownerRepo, defaultBranch, runBranch string) {
+	g.route(http.MethodGet, g.comparePath(ownerRepo, defaultBranch, runBranch), func(w http.ResponseWriter, r *http.Request) {
+		conn, _, err := http.NewResponseController(w).Hijack()
+		if err != nil {
+			g.t.Errorf("hijack: %v", err)
+			return
+		}
+		_ = conn.Close()
 	})
 }
 
@@ -187,6 +204,7 @@ func TestCleanupRunBranches_CompareFaultsAreSkippedAndTheNextRepoStillRuns(t *te
 		"403":               {func(g *branchCleanupGitHub, o, d, b string) { g.compareStatus(o, d, b, http.StatusForbidden) }},
 		"no ahead_by":       {func(g *branchCleanupGitHub, o, d, b string) { g.compareMalformed(o, d, b, `{"status":"ahead"}`) }},
 		"negative ahead_by": {func(g *branchCleanupGitHub, o, d, b string) { g.compareMalformed(o, d, b, `{"ahead_by":-1}`) }},
+		"transport error":   {func(g *branchCleanupGitHub, o, d, b string) { g.compareDropsConnection(o, d, b) }},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newBranchCleanupRig(t)
@@ -258,6 +276,10 @@ func TestCleanupRunBranches_RefusesAnotherRunsID(t *testing.T) {
 	_, err := r.acts.CleanupRunBranches(context.Background(), BranchCleanupParams{RunID: uuid.New(), Repos: []BranchCleanupRepo{repo}})
 
 	require.Error(t, err)
+	var appErr *temporal.ApplicationError
+	require.ErrorAs(t, err, &appErr)
+	assert.Equal(t, "BranchCleanupRunBinding", appErr.Type())
+	assert.True(t, appErr.NonRetryable(), "a retry cannot make another run's id this workflow's own")
 	assert.Contains(t, err.Error(), "requested by the workflow of run")
 	assert.Zero(t, len(r.prov.calls), "a run's workflow must not fetch another run's token")
 	assert.Empty(t, r.gh.seen)
@@ -281,6 +303,11 @@ func TestCleanupRunBranches_TokenFailureIsRetryableAndCallsNoGitHub(t *testing.T
 	_, err := r.acts.CleanupRunBranches(context.Background(), BranchCleanupParams{RunID: r.run, Repos: []BranchCleanupRepo{repo}})
 
 	require.Error(t, err)
+	var appErr *temporal.ApplicationError
+	if errors.As(err, &appErr) {
+		assert.False(t, appErr.NonRetryable(), "a token failure may heal, so Temporal must retry it")
+	}
+	assert.ErrorIs(t, err, r.prov.err)
 	assert.Empty(t, r.gh.seen)
 }
 
@@ -384,6 +411,41 @@ func TestCleanupRunBranches_IsRegisteredByName(t *testing.T) {
 	Register(env, r.acts)
 
 	repo := BranchCleanupRepo{GitRepoID: uuid.New(), OwnerRepo: "acme/app", DefaultBranch: "main"}
-	_, err := env.ExecuteActivity("CleanupRunBranches", BranchCleanupParams{RunID: r.run, Repos: []BranchCleanupRepo{repo}})
+	val, err := env.ExecuteActivity("CleanupRunBranches", BranchCleanupParams{RunID: r.run, Repos: []BranchCleanupRepo{repo}})
 	require.NoError(t, err)
+	var res BranchCleanupResult
+	require.NoError(t, val.Get(&res))
+	assert.Equal(t, BranchCleanupDeleted, outcomeFor(res, repo.GitRepoID))
+}
+
+// captureLogs points the default slog logger at a buffer for the rest of the test.
+func captureLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	original := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(original) })
+	return &buf
+}
+
+func TestCleanupRunBranches_SkipWarningNamesTheCauseButNeverTheTokenOrBody(t *testing.T) {
+	r := newBranchCleanupRig(t)
+	logs := captureLogs(t)
+	repo := r.repo("acme/app", "main")
+	r.gh.route(http.MethodGet, r.gh.comparePath(repo.OwnerRepo, repo.DefaultBranch, r.branch()),
+		func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = io.WriteString(w, `{"message":"upstream boom","echo":"Bearer `+gateToken+`"}`)
+		})
+
+	res, err := r.acts.CleanupRunBranches(context.Background(), BranchCleanupParams{RunID: r.run, Repos: []BranchCleanupRepo{repo}})
+
+	require.NoError(t, err)
+	assert.Equal(t, BranchCleanupSkippedError, outcomeFor(res, repo.GitRepoID))
+	out := logs.String()
+	assert.Contains(t, out, "run branch cleanup skipped a repo")
+	assert.Contains(t, out, "repo=acme/app")
+	assert.Contains(t, out, "status=502")
+	assert.NotContains(t, out, gateToken)
+	assert.NotContains(t, out, "upstream boom")
 }

@@ -63,7 +63,7 @@ test.describe("run-branch cleanup", () => {
       const deletePath = `/repos/e2e-test/mock-repo/git/refs/heads/${runBranch}`;
       const comparePattern = `/repos/e2e-test/mock-frontend/compare/.+\\.\\.\\.${runBranch}`;
 
-      // Both calls are made fire-and-forget from Step 6 after the run is already "completed",
+      // The workflow makes both calls only after it has written the run's "completed" status,
       // so poll for them rather than assuming they have already landed by the time the run's
       // own status flips.
       await expect(async () => {

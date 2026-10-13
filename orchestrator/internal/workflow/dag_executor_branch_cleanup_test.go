@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -12,8 +13,9 @@ import (
 )
 
 // branchCleanupRun stubs a one-AI-node run that completes successfully, so Step 6's cleanup is
-// reachable. Callers add their own stub for whichever cleanup activities the test exercises.
-func (s *DAGExecutorTestSuite) branchCleanupRun() (uuid.UUID, uuid.UUID) {
+// reachable, and returns the run id and a reader of the run statuses written, in order. Callers
+// add their own stub for whichever cleanup activities the test exercises.
+func (s *DAGExecutorTestSuite) branchCleanupRun() (uuid.UUID, func() []string) {
 	nodeA := uuid.New()
 	execA := uuid.New()
 	runID := s.dagRunID()
@@ -25,7 +27,14 @@ func (s *DAGExecutorTestSuite) branchCleanupRun() (uuid.UUID, uuid.UUID) {
 		"edges": []
 	}`
 
-	s.env.OnActivity("UpdateWorkflowRunStatus", mock.Anything, mock.Anything).Return(nil)
+	var mu sync.Mutex
+	var statuses []string
+	s.env.OnActivity("UpdateWorkflowRunStatus", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			mu.Lock()
+			defer mu.Unlock()
+			statuses = append(statuses, args.Get(1).(activity.UpdateRunStatusParams).Status)
+		}).Return(nil)
 	s.env.OnActivity("GetGraphRuntime", mock.Anything, runID).Return(snapshot, nil)
 	s.env.OnActivity("WriteExecutionLog", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.env.OnActivity("InitRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
@@ -42,7 +51,11 @@ func (s *DAGExecutorTestSuite) branchCleanupRun() (uuid.UUID, uuid.UUID) {
 	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.Anything).
 		Return(activity.CallbackResult{}, nil)
 
-	return runID, nodeA
+	return runID, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), statuses...)
+	}
 }
 
 // TestBranchCleanupRunsOnTheWorkerQueue proves the plan runs on the workflow's own queue and the
@@ -140,11 +153,10 @@ func (s *DAGExecutorTestSuite) TestBranchCleanupPlanErrorStillCompletes() {
 }
 
 // TestBranchCleanupWorkerErrorStillCompletes: a Worker-step failure is tolerated the same way —
-// the workflow's own error is nil, and the run's final status write (already stubbed to
-// "completed" by branchCleanupRun, which is this single-node graph's only possible outcome)
-// happened before cleanup ran and is unaffected by its failure.
+// the workflow's own error is nil, the run's last status write is "completed", and no status
+// write follows the cleanup step that failed.
 func (s *DAGExecutorTestSuite) TestBranchCleanupWorkerErrorStillCompletes() {
-	runID, _ := s.branchCleanupRun()
+	runID, statuses := s.branchCleanupRun()
 	starts := s.recordStarts(nil)
 	plan := activity.BranchCleanupPlan{Repos: []activity.BranchCleanupRepo{
 		{GitRepoID: uuid.New(), OwnerRepo: "acme/app", DefaultBranch: "main"},
@@ -161,12 +173,23 @@ func (s *DAGExecutorTestSuite) TestBranchCleanupWorkerErrorStillCompletes() {
 
 	s.True(s.env.IsWorkflowCompleted())
 	s.NoError(s.env.GetWorkflowError())
-	statusInfos, statusAt := starts.of("UpdateWorkflowRunStatus")
-	cleanupInfos, cleanupAt := starts.of("CleanupRunBranches")
-	s.Require().NotEmpty(statusInfos)
-	s.Require().NotEmpty(cleanupInfos)
-	s.True(statusAt[len(statusAt)-1].Before(cleanupAt[0]) || statusAt[len(statusAt)-1].Equal(cleanupAt[0]),
-		"the run's final status write happens before the Worker cleanup step runs")
+	written := statuses()
+	s.Require().NotEmpty(written)
+	s.Equal("completed", written[len(written)-1])
+	s.NotContains(written, "failed")
+
+	seq := starts.sequence()
+	lastStatusWrite, firstCleanup := -1, -1
+	for i, name := range seq {
+		if name == "UpdateWorkflowRunStatus" {
+			lastStatusWrite = i
+		}
+		if name == "CleanupRunBranches" && firstCleanup < 0 {
+			firstCleanup = i
+		}
+	}
+	s.Require().GreaterOrEqual(firstCleanup, 0, "the Worker step must have run: %v", seq)
+	s.Less(lastStatusWrite, firstCleanup, "no run status write may follow the cleanup step: %v", seq)
 }
 
 // TestBranchCleanupWithoutAWorkerQueueKeepsBranches: on the new version, a run with no Worker

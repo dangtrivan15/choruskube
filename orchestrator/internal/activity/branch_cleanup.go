@@ -15,9 +15,8 @@ const (
 	BranchCleanupSkippedError = "SKIPPED_ERROR"
 )
 
-// The Worker's branch-cleanup types, copied field for field, carrying the same comment as the
-// gate types above: Temporal's JSON converter makes these tags the wire contract, so a rename on
-// one side blanks fields silently instead of failing.
+// The Worker's branch-cleanup types, copied field for field. Temporal's JSON converter makes
+// these tags the wire contract, so a rename on one side blanks fields silently instead of failing.
 
 // BranchCleanupRepo is one repo the Worker should compare and, if not ahead, delete the run
 // branch for.
