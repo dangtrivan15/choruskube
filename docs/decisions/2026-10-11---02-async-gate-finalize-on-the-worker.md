@@ -1,6 +1,6 @@
 # A gate approval finalizes asynchronously: the workflow drives it, and the Worker does the GitHub steps
 
-**Status:** current
+**Status:** current; the data-plane credential rule it applies is recorded on its own in [2026-10-13---01](2026-10-13---01-data-plane-credential-rule.md)
 
 ## Context
 
