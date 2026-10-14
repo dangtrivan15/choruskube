@@ -1,6 +1,6 @@
 # The Worker owns a tenant-agnostic workload executor
 
-**Status:** current; its API server resolving every Worker's credentials in `prepare` is superseded, for a Worker that holds its own, by [2026-10-13---01](2026-10-13---01-data-plane-credential-rule.md)
+**Status:** current; its API server resolving every Worker's credentials in `prepare` is superseded, for a Worker that holds its own, by [2026-10-13---02](2026-10-13---02-data-plane-credential-rule.md)
 
 ## Context
 

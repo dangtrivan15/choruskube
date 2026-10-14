@@ -112,7 +112,7 @@ comes from.
   itself. It has no notion of a tenant, so every run on the Worker gets the same credentials:
   use it only for a Worker that serves a single tenant's own Fleet.
 
-Why the mode is declared rather than detected, and why `local` must never serve more than one tenant: [2026-10-13---01](../docs/decisions/2026-10-13---01-data-plane-credential-rule.md).
+Why the mode is declared rather than detected, and why `local` must never serve more than one tenant: [2026-10-13---02](../docs/decisions/2026-10-13---02-data-plane-credential-rule.md).
 
 `local` reads these files on every use, so a rotated secret needs no restart. Anything the
 folder does not hold falls back to the environment, and the folder wins: a GitHub credential of

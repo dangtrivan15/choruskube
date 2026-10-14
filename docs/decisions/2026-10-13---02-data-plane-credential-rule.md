@@ -26,10 +26,12 @@ that holds no credentials (`control-plane`, below), the control plane brokers th
 includes minting the Worker's GitHub token.
 
 **No new control-plane GitHub call.** A change that needs GitHub adds a Worker step, as gate
-finalize did; it does not add a call to the API server. Apart from the token mint that brokering
-needs, the API server's remaining GitHub calls are the ones still to move: branch cleanup, issue
-filing, issue closing, any credential health check a deployment runs, and the synchronous gate
-path kept for gates opened before gate finalize moved to the Worker. That list only shrinks.
+finalize and [2026-10-13---01](2026-10-13---01-branch-cleanup-on-the-worker.md)'s branch cleanup
+did; it does not add a call to the API server. Apart from the token mint that brokering needs,
+the API server's remaining GitHub calls are the ones still to move — issue filing, issue closing,
+and any credential health check a deployment runs — plus the legacy routes each of those two
+moves left behind for workflow histories recorded before it: the synchronous gate path, and
+branch cleanup's own compare/delete. That list only shrinks.
 
 **A Worker declares one of two credential modes with `CREDENTIAL_SOURCE`.**
 - *`control-plane`*: the Worker holds no GitHub, Claude or registry credential of its own. It
@@ -69,8 +71,8 @@ may withhold more than this, never less.
 
 - **Already true:** the Worker reads its mode from `CREDENTIAL_SOURCE`, treats an unset value as
   `control-plane` and fails startup on any other value; a `local` Worker mints its own GitHub App
-  tokens; a gate's GitHub steps and the agent's GitHub token come from the Worker's
-  `credential.Provider`.
+  tokens; a gate's GitHub steps, a completed run's branch-cleanup compare/delete, and the agent's
+  GitHub token all come from the Worker's `credential.Provider`.
 - **Known gap: `prepare` still sends credentials to every Worker.** The API server is not yet told
   a Worker's mode, so it returns the Claude token and registry login to a `local` Worker too, and
   a `local` Worker that holds neither uses them. It also fails an AI node when the API server has
