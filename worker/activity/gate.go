@@ -112,7 +112,7 @@ var savedProgress = func(ctx context.Context) (gateProgress, bool) {
 // and a retry reports what already merged as ALREADY_MERGED.
 func (a *Activities) RunGateGitHubSteps(ctx context.Context, p GateGitHubParams) (GateGitHubResult, error) {
 	res := GateGitHubResult{Compares: []GateCompareResult{}, Merges: []GatePRResult{}}
-	if err := bindGateRun(ctx, p.RunID); err != nil {
+	if err := bindRun(ctx, p.RunID, "gate steps", "GateRunBinding"); err != nil {
 		return res, err
 	}
 	if p.NodeExecutionID == uuid.Nil {
@@ -182,17 +182,17 @@ func refusalBeforeMerging(in inspection) string {
 	return text + strings.Join(in.blockers, "; ")
 }
 
-// bindGateRun refuses a run id the workflow's own id contradicts: the params travel through the
+// bindRun refuses a run id the workflow's own id contradicts: the params travel through the
 // workflow, but the activity must only ever act on, and fetch credentials for, its own run.
-func bindGateRun(ctx context.Context, runID uuid.UUID) error {
+func bindRun(ctx context.Context, runID uuid.UUID, op, errType string) error {
 	bound, err := runIDOf(ctx)
 	if err != nil {
-		return temporal.NewNonRetryableApplicationError("gate steps outside a run's workflow", "GateRunBinding", err)
+		return temporal.NewNonRetryableApplicationError(op+" outside a run's workflow", errType, err)
 	}
 	if bound != runID {
 		return temporal.NewNonRetryableApplicationError(
-			fmt.Sprintf("gate steps for run %s requested by the workflow of run %s", runID, bound),
-			"GateRunBinding", nil)
+			fmt.Sprintf("%s for run %s requested by the workflow of run %s", op, runID, bound),
+			errType, nil)
 	}
 	return nil
 }

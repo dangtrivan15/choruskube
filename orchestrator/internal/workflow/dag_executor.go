@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	enumspb "go.temporal.io/api/enums/v1"
+	"go.temporal.io/sdk/log"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 
@@ -1537,18 +1538,76 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 	).Get(ctx, nil)
 
 	// Best-effort, fail-safe: once the run has genuinely completed (never on failed/cancelled),
-	// ask the API server to delete each repo's run branch if it is not ahead of that repo's
-	// default branch. Any failure here must never change finalStatus or fail the workflow — the
-	// same tolerate-and-log shape as DeleteAgentJob above.
+	// delete each repo's run branch if it is not ahead of that repo's default branch. Any
+	// failure here must never change finalStatus or fail the workflow — the same
+	// tolerate-and-log shape as DeleteAgentJob above.
 	if finalStatus == "completed" {
-		if cleanErr := workflow.ExecuteActivity(dbCtx, activities.DeleteStaleBranches,
-			activity.DeleteStaleBranchesParams{RunID: params.RunID}).Get(ctx, nil); cleanErr != nil {
-			logger.Warn("stale branch cleanup failed", "runID", params.RunID, "error", cleanErr)
-		}
+		cleanupRunBranches(ctx, dbCtx, logger, activities, params)
 	}
 
 	logger.Info("DAG executor finished", "runID", params.RunID, "status", finalStatus)
 	return nil
+}
+
+// cleanupRunBranches picks the branch-cleanup path by history. Version-gated because this
+// changes which activities a run's history calls at cleanup: replaying a history recorded before
+// the marker against the new path would raise a non-determinism error. With the marker, a repo's
+// branch is deleted by the Worker that served the run, with that Worker's own credential, instead
+// of by this control plane; without a Worker task queue, cleanup is skipped and the branches are
+// kept, since the API's own cleanup route is reachable only from pre-marker histories.
+func cleanupRunBranches(
+	ctx, dbCtx workflow.Context, logger log.Logger, activities *activity.Activities, params DAGExecutorParams,
+) {
+	if workflow.GetVersion(ctx, "branch-cleanup-on-worker", workflow.DefaultVersion, 1) == workflow.DefaultVersion {
+		if cleanErr := workflow.ExecuteActivity(dbCtx, activities.DeleteStaleBranches,
+			activity.DeleteStaleBranchesParams{RunID: params.RunID}).Get(ctx, nil); cleanErr != nil {
+			logger.Warn("stale branch cleanup failed", "runID", params.RunID, "error", cleanErr)
+		}
+		return
+	}
+	if params.WorkerTaskQueue == "" {
+		logger.Warn("no Worker task queue; run branches are kept", "runID", params.RunID)
+		return
+	}
+
+	var plan activity.BranchCleanupPlan
+	if err := workflow.ExecuteActivity(dbCtx, activities.PlanBranchCleanup,
+		activity.BranchCleanupPlanParams{RunID: params.RunID}).Get(ctx, &plan); err != nil {
+		logger.Warn("branch cleanup plan failed", "runID", params.RunID, "error", err)
+		return
+	}
+	if len(plan.Repos) == 0 {
+		return
+	}
+
+	var res activity.BranchCleanupResult
+	if err := workflow.ExecuteActivity(
+		workflow.WithActivityOptions(ctx, branchCleanupActivityOptions(params.WorkerTaskQueue)),
+		activities.CleanupRunBranches,
+		activity.BranchCleanupParams{RunID: params.RunID, Repos: plan.Repos},
+	).Get(ctx, &res); err != nil {
+		logger.Warn("run branch cleanup failed", "runID", params.RunID, "error", err)
+		return
+	}
+	logger.Info("run branch cleanup finished", "runID", params.RunID, "outcomes", res.Outcomes)
+}
+
+// branchCleanupActivityOptions routes the cleanup step to the run's Worker, which holds the run's
+// GitHub credentials; on any other queue every attempt fails. Without ScheduleToStartTimeout, a
+// Fleet with no live Worker holds the completed run's workflow open for good.
+func branchCleanupActivityOptions(workerTaskQueue string) workflow.ActivityOptions {
+	return workflow.ActivityOptions{
+		TaskQueue:              workerTaskQueue,
+		ScheduleToStartTimeout: 10 * time.Minute,
+		StartToCloseTimeout:    10 * time.Minute,
+		HeartbeatTimeout:       time.Minute,
+		RetryPolicy: &temporal.RetryPolicy{
+			InitialInterval:    5 * time.Second,
+			BackoffCoefficient: 2,
+			MaximumInterval:    time.Minute,
+			MaximumAttempts:    3,
+		},
+	}
 }
 
 // waitForHumanDecision blocks on the human-decision signal channel for a specific node. A gate

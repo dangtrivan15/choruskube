@@ -49,6 +49,8 @@ func (s *DAGExecutorTestSuite) newGateRun(timeoutSecs int) gateRun {
 	s.env.OnActivity("AppendRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.env.OnActivity("SetTraversedEdges", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.env.OnActivity("DeleteStaleBranches", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.env.OnActivity("PlanBranchCleanup", mock.Anything, mock.Anything).Return(activity.BranchCleanupPlan{}, nil).Maybe()
+	s.env.OnActivity("CleanupRunBranches", mock.Anything, mock.Anything).Return(activity.BranchCleanupResult{}, nil).Maybe()
 	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
 		return p.TemplateNodeID == g.node
 	})).Return(g.exec, nil).Once()
@@ -634,6 +636,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateRunCancelledWhileFinalizing() {
 func (s *DAGExecutorTestSuite) TestHumanGateOldVersionKeepsFinalSignal() {
 	g := s.newGateRun(3600)
 	s.env.OnGetVersion("async-gate-finalize", workflow.DefaultVersion, 1).Return(workflow.DefaultVersion)
+	s.env.OnGetVersion("branch-cleanup-on-worker", workflow.DefaultVersion, 1).Return(workflow.DefaultVersion)
 	starts := s.recordStarts(nil)
 
 	s.expectGateOpened(g, nil)

@@ -1,5 +1,6 @@
 // Package github is a small stdlib-only GitHub REST client for the Worker: the compare, pull
-// request and merge calls a gate needs, and GitHub App installation-token minting.
+// request and merge calls a gate needs, ref deletion for run-branch cleanup, and GitHub App
+// installation-token minting.
 package github
 
 import (
@@ -20,6 +21,9 @@ const (
 	apiVersion     = "2022-11-28"
 	maxReasonChars = 300
 	maxBodyBytes   = 32 << 20
+	// userAgent identifies the Worker as the caller in GitHub's logs and, in e2e, in WireMock's
+	// request journal, which is how a test tells the Worker's GitHub calls apart from the API server's.
+	userAgent = "choruskube-worker"
 )
 
 // Client talks to one GitHub API root. The caller supplies a token per call, so a Client holds no
@@ -99,6 +103,27 @@ func (c *Client) Compare(ctx context.Context, token, ownerRepo, base, head strin
 		return 0, fmt.Errorf("compare response for %s has no ahead_by", ownerRepo)
 	}
 	return *wire.AheadBy, nil
+}
+
+// DeleteRef deletes a ref, for example "heads/choruskube-run-<runID>". 204 returns nil; any other
+// status returns an *APIError that never keeps the body, which can echo the request.
+func (c *Client) DeleteRef(ctx context.Context, token, ownerRepo, ref string) error {
+	repo, err := repoPath(ownerRepo)
+	if err != nil {
+		return err
+	}
+	escapedRef, err := escapePath(ref)
+	if err != nil {
+		return err
+	}
+	resp, err := c.send(ctx, http.MethodDelete, "/repos/"+repo+"/git/refs/"+escapedRef, token, nil)
+	if err != nil {
+		return err
+	}
+	if resp.status != http.StatusNoContent {
+		return &APIError{Status: resp.status, OwnerRepo: ownerRepo}
+	}
+	return nil
 }
 
 // PullRequest is a pull request's state as GitHub reports it. Mergeable is nil while GitHub has
@@ -232,6 +257,7 @@ func (c *Client) send(ctx context.Context, method, path, bearer string, payload 
 	req.Header.Set("Authorization", "Bearer "+bearer)
 	req.Header.Set("Accept", acceptHeader)
 	req.Header.Set("X-GitHub-Api-Version", apiVersion)
+	req.Header.Set("User-Agent", userAgent)
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

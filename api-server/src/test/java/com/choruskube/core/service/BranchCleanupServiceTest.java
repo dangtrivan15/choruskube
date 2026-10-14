@@ -7,10 +7,15 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 import com.choruskube.core.credential.GitHubCredentialResolver;
+import com.choruskube.core.dto.BranchCleanupPlanResponse;
 import com.choruskube.core.dto.BranchCleanupResponse;
 import com.choruskube.core.dto.GraphRuntimeSnapshotResponse;
+import com.choruskube.core.dto.RunStatusResponse;
+import com.choruskube.core.exception.ConflictException;
 import com.choruskube.core.exception.GitHubApiException;
+import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.GitRepo;
+import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.GitRepoRepository;
 import java.util.List;
 import java.util.Map;
@@ -19,6 +24,8 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -221,5 +228,86 @@ class BranchCleanupServiceTest {
         BranchCleanupResponse response = service.cleanupBranches(runId);
 
         assertThat(response.results()).isEmpty();
+    }
+
+    @Test
+    void plan_listsEachRunRepoWithOwnerRepoAndDefaultBranch() {
+        UUID runId = UUID.randomUUID();
+        UUID repoId = UUID.randomUUID();
+        GitRepo repo = repo(repoId, "https://github.com/org/backend-api.git", "main", "org/backend-api");
+        when(internalRunService.getRunStatus(runId)).thenReturn(new RunStatusResponse("completed"));
+        when(internalRunService.getGraphRuntimeSnapshot(runId)).thenReturn(snapshotOf(repo));
+        when(gitRepoRepo.findById(repoId)).thenReturn(Optional.of(repo));
+
+        BranchCleanupPlanResponse plan = service.plan(runId);
+
+        assertThat(plan.repos()).singleElement().satisfies(r -> {
+            assertThat(r.gitRepoId()).isEqualTo(repoId);
+            assertThat(r.ownerRepo()).isEqualTo("org/backend-api");
+            assertThat(r.defaultBranch()).isEqualTo("main");
+        });
+    }
+
+    @Test
+    void plan_skipsUnparseableMissingAndSluglessRepos() {
+        UUID runId = UUID.randomUUID();
+        UUID missingRepoId = UUID.randomUUID();
+        UUID sluglessRepoId = UUID.randomUUID();
+        UUID healthyRepoId = UUID.randomUUID();
+        GitRepo missingRepo = repo(missingRepoId, "https://github.com/org/gone.git", "main", "org/gone");
+        GitRepo sluglessRepo = repo(sluglessRepoId, "", "main", "slugless");
+        GitRepo healthyRepo = repo(healthyRepoId, "https://github.com/org/web-ui.git", "main", "org/web-ui");
+        List<GraphRuntimeSnapshotResponse.RuntimeRepo> runtimeRepos = List.of(
+                new GraphRuntimeSnapshotResponse.RuntimeRepo("not-a-uuid", "https://x/y.git", "y", null, null),
+                new GraphRuntimeSnapshotResponse.RuntimeRepo(
+                        missingRepoId.toString(), missingRepo.getUrl(), missingRepo.getName(), null, null),
+                new GraphRuntimeSnapshotResponse.RuntimeRepo(
+                        sluglessRepoId.toString(), sluglessRepo.getUrl(), sluglessRepo.getName(), null, null),
+                new GraphRuntimeSnapshotResponse.RuntimeRepo(
+                        healthyRepoId.toString(), healthyRepo.getUrl(), healthyRepo.getName(), null, null));
+        when(internalRunService.getRunStatus(runId)).thenReturn(new RunStatusResponse("completed"));
+        when(internalRunService.getGraphRuntimeSnapshot(runId))
+                .thenReturn(new GraphRuntimeSnapshotResponse(List.of(), List.of(), Map.of(), runtimeRepos, null));
+        when(gitRepoRepo.findById(missingRepoId)).thenReturn(Optional.empty());
+        when(gitRepoRepo.findById(sluglessRepoId)).thenReturn(Optional.of(sluglessRepo));
+        when(gitRepoRepo.findById(healthyRepoId)).thenReturn(Optional.of(healthyRepo));
+
+        BranchCleanupPlanResponse plan = service.plan(runId);
+
+        assertThat(plan.repos()).singleElement().satisfies(r -> assertThat(r.gitRepoId())
+                .isEqualTo(healthyRepoId));
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = WorkflowRunStatus.class, mode = EnumSource.Mode.EXCLUDE, names = "completed")
+    void plan_refusesARunThatIsNotCompleted(WorkflowRunStatus status) {
+        UUID runId = UUID.randomUUID();
+        when(internalRunService.getRunStatus(runId)).thenReturn(new RunStatusResponse(status.name()));
+
+        assertThatThrownBy(() -> service.plan(runId)).isInstanceOf(ConflictException.class);
+        verify(internalRunService, never()).getGraphRuntimeSnapshot(any());
+    }
+
+    @Test
+    void plan_unknownRunIsNotFound() {
+        UUID runId = UUID.randomUUID();
+        when(internalRunService.getRunStatus(runId))
+                .thenThrow(new NotFoundException("Workflow run not found: " + runId));
+
+        assertThatThrownBy(() -> service.plan(runId)).isInstanceOf(NotFoundException.class);
+    }
+
+    @Test
+    void plan_makesNoGitHubCallAndResolvesNoCredential() {
+        UUID runId = UUID.randomUUID();
+        UUID repoId = UUID.randomUUID();
+        GitRepo repo = repo(repoId, "https://github.com/org/backend-api.git", "main", "org/backend-api");
+        when(internalRunService.getRunStatus(runId)).thenReturn(new RunStatusResponse("completed"));
+        when(internalRunService.getGraphRuntimeSnapshot(runId)).thenReturn(snapshotOf(repo));
+        when(gitRepoRepo.findById(repoId)).thenReturn(Optional.of(repo));
+
+        service.plan(runId);
+
+        verifyNoInteractions(gitHubAppService, credentialResolver);
     }
 }

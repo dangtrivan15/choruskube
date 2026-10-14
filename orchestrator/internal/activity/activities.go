@@ -489,6 +489,9 @@ type DeleteStaleBranchesParams struct {
 	RunID uuid.UUID
 }
 
+// DeleteStaleBranches serves only workflow histories recorded before the branch-cleanup-on-worker
+// version marker. Every run that reaches cleanup after that marker calls PlanBranchCleanup and
+// CleanupRunBranches instead.
 func (a *Activities) DeleteStaleBranches(ctx context.Context, params DeleteStaleBranchesParams) error {
 	if err := guardRun(ctx, params.RunID); err != nil {
 		return err

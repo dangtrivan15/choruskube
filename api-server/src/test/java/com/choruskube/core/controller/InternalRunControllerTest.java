@@ -12,6 +12,7 @@ import com.choruskube.core.dto.MilestoneResponse;
 import com.choruskube.core.model.*;
 import com.choruskube.core.model.enums.ExecutorType;
 import com.choruskube.core.model.enums.NodeExecutionStatus;
+import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.*;
 import com.choruskube.core.service.EpicService;
 import com.choruskube.core.service.MilestoneService;
@@ -1133,6 +1134,36 @@ public class InternalRunControllerTest extends BaseTest {
     // configures internal.auth.mode=enforce with a real orchestrator-secret-hash — this class's
     // fixtures run with no configured hash (auth filter passes everything through), so it is the
     // right place to prove the endpoint's own functional shape instead.
+
+    @Test
+    void branchCleanupPlan_returnsReposForACompletedRun() throws Exception {
+        run.setStatus(WorkflowRunStatus.completed);
+        run = runRepo.save(run);
+
+        mockMvc.perform(get("/internal/runs/" + run.getId() + "/branch-cleanup-plan"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.repos").isArray())
+                .andExpect(jsonPath("$.repos.length()").value(1))
+                .andExpect(
+                        jsonPath("$.repos[0].gitRepoId").value(gitRepo.getId().toString()))
+                .andExpect(jsonPath("$.repos[0].ownerRepo").value(gitRepo.getName()))
+                .andExpect(jsonPath("$.repos[0].defaultBranch").value(gitRepo.getDefaultBranch()));
+    }
+
+    @Test
+    void branchCleanupPlan_isConflictForARunningRun() throws Exception {
+        run.setStatus(WorkflowRunStatus.running);
+        run = runRepo.save(run);
+
+        mockMvc.perform(get("/internal/runs/" + run.getId() + "/branch-cleanup-plan"))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    void branchCleanupPlan_isNotFoundForAnUnknownRun() throws Exception {
+        mockMvc.perform(get("/internal/runs/" + UUID.randomUUID() + "/branch-cleanup-plan"))
+                .andExpect(status().isNotFound());
+    }
 
     @Test
     void cleanupBranches_returns200WithASummaryPerRepo() throws Exception {

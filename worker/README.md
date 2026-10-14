@@ -82,7 +82,7 @@ would only return what you configured.
 | `WORKER_CALLBACK_PORT` | no | Port the callback server listens on for agent completion/heartbeat callbacks. Default `9090`. |
 | `CREDENTIAL_SOURCE` | no | `control-plane` (default) or `local` — where GitHub and agent credentials come from; see [Credentials](#credentials). `local` is for a single tenant's own Fleet only. Any other value fails startup. |
 | `CREDENTIALS_DIR` | no | Folder the `local` source reads. Default `/etc/choruskube/credentials`. |
-| `GITHUB_API_URL` | no | GitHub API root for the Worker's own GitHub calls. Default `https://api.github.com`. |
+| `GITHUB_API_URL` | no | GitHub API root for the Worker's own GitHub calls (gate compares and merges, run-branch cleanup). Default `https://api.github.com`. |
 
 `TEMPORAL_TLS_DISABLED` is opt-in so a deployment against a TLS Temporal cannot lose TLS by
 omission. It is only needed when a Fleet carries a credential: the Temporal SDK turns TLS on
@@ -116,6 +116,11 @@ comes from.
 folder does not hold falls back to the environment, and the folder wins: a GitHub credential of
 either kind in the folder beats any in the environment, so a stray variable cannot override a
 mounted secret.
+
+The Worker also uses the run's own token itself, not only to hand to the agent pod: to merge a
+gate's pull requests, and to delete a completed run's branch once it is confirmed not ahead of
+its repo's default branch. Either call needs Contents read/write on the repository. Every GitHub
+request the Worker makes identifies itself with `User-Agent: choruskube-worker`.
 
 | File under `CREDENTIALS_DIR` | Environment fallback | Purpose |
 |------------------------------|----------------------|---------|
