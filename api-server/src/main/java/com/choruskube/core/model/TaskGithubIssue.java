@@ -15,9 +15,10 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
 /**
- * Links a Task created by roadmap-extension materialization to the GitHub issue the server filed
- * for it — one row per Task ({@code task_id} unique), so {@code DefaultTaskService} can find and
- * close the issue the moment the Task reaches {@code done}.
+ * Links a Task created by roadmap-extension materialization to the GitHub issue filed for it, by
+ * the run's Worker or, on the one-step path, by the API — one row per Task ({@code task_id}
+ * unique), so {@code DefaultTaskService} can find and close the issue the moment the Task reaches
+ * {@code done}.
  */
 @Entity
 @Table(name = "task_github_issue")

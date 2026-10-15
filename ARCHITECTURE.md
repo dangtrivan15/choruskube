@@ -140,11 +140,13 @@ violation (for example, a Story a reviewer added with no Task) is rejected with 
 reasons, and the gate stays open for another edit. Nothing is created on a rejected
 approval.
 
-A Task created this way in `roadmap_extension` mode also gets a matching GitHub issue,
-filed by the server (not the agent) right after the Task is created, and closed
-automatically once the Task reaches `done`. Issue filing and closing are both
-best-effort: a failure is recorded alongside the gate's result rather than blocking
-Task creation or completion.
+A Task created this way in `roadmap_extension` mode also gets a matching GitHub issue.
+The run's Worker files it during the gate's finalize, after the roadmap write has
+created the Task — not the agent, and not inline with that write. A retry finds an
+issue it already opened by the task key hidden in the issue body, so filing is safe to
+repeat. The issue closes automatically once the Task reaches `done`. Filing and closing
+are both best-effort: a failure is recorded alongside the gate's result — naming any
+Task that has no issue — rather than blocking Task creation or completion.
 
 ## Merging pull requests on approval
 
@@ -222,7 +224,7 @@ locally and to self-host.
 |-----------|-------|----------------|
 | **api-server** | Java / Spring Boot | Source of truth for state; resolves per-run credentials and records Worker-reported execution state; REST API; STOMP/WebSocket broadcasts. |
 | **orchestrator** | Go + Temporal | Drives the graph; dispatches each node as a Temporal activity for a Worker to execute. |
-| **worker** | Go + Temporal | Runs executors (Docker, Kubernetes) and the agent callback server; receives work from Fleets; makes the run's GitHub calls (gate merges, run-branch cleanup). |
+| **worker** | Go + Temporal | Runs executors (Docker, Kubernetes) and the agent callback server; receives work from Fleets; makes the run's GitHub calls (gate merges, run-branch cleanup, roadmap issue filing). |
 | **web-ui** | React + Vite | Graph visualization, live run monitoring, human-approval gates; subscribes to WebSocket events. |
 | **agent images** | container images | The containers a node runs in — the AI agent (Claude Code) and a fuller dev image built on top of it. |
 

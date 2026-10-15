@@ -2,6 +2,7 @@ import { test, expect } from "../fixtures";
 import { RoadmapCandidateGatePage } from "../pages/roadmap-candidate-gate.page";
 import { uniqueName, type TestApiClient, type Epic, type Story, type Task } from "../helpers/api-client";
 import type { WorkerRepoFixture } from "../fixtures";
+import { findWireMockRequests, headerOf } from "../helpers/wiremock";
 
 // Exercises Feature Development's roadmap-extension gate: an Implement-equivalent node
 // proposes new Stories/Tasks anchored under an existing Epic (plus, optionally, a wholly
@@ -121,6 +122,19 @@ test.describe("Roadmap extension gate (Feature Development's Final Approval, mir
     // No stray Epic: the anchor is the only Epic this run's project touches.
     const epicsAfter = await api.listEpicsForProject(workerRepo.gitRepo.id);
     expect(epicsAfter.map((e) => e.id).sort()).toEqual(epicsBefore.map((e) => e.id).sort());
+
+    // The run's Worker files each new task's GitHub issue during finalize, not the API server.
+    const finishedRun = await api.getRun(run.id);
+    const finalApproval = finishedRun.nodeExecutions.find((ne) => ne.label === "final_approval");
+    expect(finalApproval?.result).toContain("GitHub issues: filed 2 of 2.");
+
+    const keyedCreates = await findWireMockRequests({
+      method: "POST",
+      urlPathPattern: "/repos/[^/]+/[^/]+/issues",
+      bodyContains: "choruskube-task:" + followUpTask!.id,
+    });
+    expect(keyedCreates).toHaveLength(1);
+    expect(headerOf(keyedCreates[0], "User-Agent")).toBe("choruskube-worker");
   });
 
   test("removing the anchor from the proposal before approving creates nothing", async ({

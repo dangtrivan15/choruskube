@@ -41,6 +41,7 @@ import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.NodeExecutionRepoBaseRepository;
 import com.choruskube.core.repository.NodeExecutionRepository;
 import com.choruskube.core.repository.RunPullRequestRepository;
+import com.choruskube.core.repository.TaskGithubIssueRepository;
 import com.choruskube.core.repository.TemplateNodeRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.util.RepoNameUtil;
@@ -52,6 +53,7 @@ import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -124,6 +126,9 @@ class AsyncGateFinalizeIntegrationTest extends BaseTest {
 
     @Autowired
     private EpicRepository epicRepo;
+
+    @Autowired
+    private TaskGithubIssueRepository taskGithubIssueRepo;
 
     @Autowired
     private JdbcTemplate jdbc;
@@ -262,6 +267,88 @@ class AsyncGateFinalizeIntegrationTest extends BaseTest {
                 .isEqualTo(consumed.getMaterializedAt());
         verify(auditSink, times(1)).record(eq(AuditSink.PULL_REQUESTS_MERGED), eq("workflow_run"), eq(runId), any());
         verify(gitHubAppService, times(1)).createIssue(any(), any(), any(), any());
+    }
+
+    @Test
+    void approve_thenPlanMaterializeComplete_linksIssues_andCallsNoGitHub() throws Exception {
+        RunPullRequest pr = pullRequest(21, "https://github.com/" + ownerRepo + "/pull/21");
+
+        mockMvc.perform(post("/api/v1/runs/{id}/nodes/{exec}/signal", runId, gateExec.getId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"decision\":\"approved\",\"feedback\":\"ship it\","
+                                + "\"editedCandidates\":{\"epics\":[{\"title\":\"Split follow-up\",\"stories\":[{\"title\":\"First slice\","
+                                + "\"tasks\":[{\"title\":\"Do the thing\"}]}]}]}}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.outcome").value("finalizing"));
+        UUID approvalId =
+                stampRepo.findByWorkflowRunIdOrderByCreatedAtAsc(runId).get(0).getId();
+
+        mockMvc.perform(post(STEPS + "/{approval}/plan", runId, gateExec.getId(), approvalId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.outcome").value("proceed"))
+                .andExpect(jsonPath("$.writesRoadmap").value(true));
+
+        String merged = "{\"merges\":[{\"rowId\":\"" + pr.getId()
+                + "\",\"kind\":\"MERGED\",\"mergedAt\":\"2026-10-11T10:00:00Z\",\"mergeSha\":\"m1\"}]}";
+        String materializeBody = mockMvc.perform(
+                        post(STEPS + "/{approval}/materialize", runId, gateExec.getId(), approvalId)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(merged))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        List<Map<String, Object>> issues = JsonPath.read(materializeBody, "$.issues");
+        assertThat(issues).hasSize(1);
+        String taskId = (String) issues.get(0).get("taskId");
+        assertThat(issues.get(0).get("gitRepoId")).isEqualTo(repoId.toString());
+        assertThat(issues.get(0).get("ownerRepo")).isEqualTo(ownerRepo);
+        assertThat(stampRepo.findById(approvalId).orElseThrow().getIssueRequests())
+                .isNotNull();
+        verifyNoInteractions(gitHubAppService, credentialResolver);
+
+        String completeBody = "{\"merges\":[{\"rowId\":\"" + pr.getId()
+                + "\",\"kind\":\"MERGED\",\"mergedAt\":\"2026-10-11T10:00:00Z\",\"mergeSha\":\"m1\"}],"
+                + "\"issues\":[{\"taskId\":\"" + taskId + "\",\"number\":1,\"url\":\"https://github.com/" + ownerRepo
+                + "/issues/1\"}]}";
+        String completed = mockMvc.perform(post(STEPS + "/{approval}/complete", runId, gateExec.getId(), approvalId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(completeBody))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.outcome").value("completed"))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        assertThat(completed)
+                .contains("Pull requests merged on approval (squash): " + ownerRepo + "#21.")
+                .doesNotContain("Already merged")
+                .contains("Roadmap extension approved: created 1 Epics, 1 Stories, 1 Tasks")
+                .contains("GitHub issues: filed 1 of 1.");
+        assertThat(taskGithubIssueRepo.findAll())
+                .filteredOn(i -> i.getTaskId().toString().equals(taskId))
+                .singleElement()
+                .satisfies(i -> {
+                    assertThat(i.getIssueNumber()).isEqualTo(1);
+                    assertThat(i.getGitRepoId()).isEqualTo(repoId);
+                });
+        verify(auditSink, times(1)).record(eq(AuditSink.PULL_REQUESTS_MERGED), eq("workflow_run"), eq(runId), any());
+        verifyNoInteractions(gitHubAppService, credentialResolver);
+
+        String repeatComplete = mockMvc.perform(
+                        post(STEPS + "/{approval}/complete", runId, gateExec.getId(), approvalId)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(completeBody))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        assertThat(repeatComplete).isEqualTo(completed);
+        assertThat(taskGithubIssueRepo.findAll())
+                .filteredOn(i -> i.getTaskId().toString().equals(taskId))
+                .hasSize(1);
     }
 
     @Test

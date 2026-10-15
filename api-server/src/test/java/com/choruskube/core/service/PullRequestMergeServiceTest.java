@@ -666,6 +666,64 @@ class PullRequestMergeServiceTest {
         verifyNoInteractions(auditSink);
     }
 
+    @Test
+    void outcomeOf_rowRecordedByAnEarlierStep_keepsWorkersKind_auditsOnce() {
+        var alreadyRef = new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#1", "u1", "org/repo", 1);
+        var plan = new PullRequestMergeService.MergePlan(
+                PullRequestMergeMethod.squash,
+                List.of(new PullRequestMergeService.Result(
+                        alreadyRef, PullRequestMergeService.Kind.ALREADY_MERGED, clock.instant(), null)),
+                List.of(),
+                List.of());
+        Instant mergedAt = Instant.parse("2026-10-06T11:00:00Z");
+
+        var outcome = service()
+                .outcomeOf(
+                        runId,
+                        plan,
+                        List.of(new PullRequestMergeService.WorkerPrResult(
+                                alreadyRef.rowId(), PullRequestMergeService.Kind.MERGED, mergedAt, "worker-sha")),
+                        null);
+
+        // The write step already recorded this row merged, so the Worker's own report for it
+        // replaces the ALREADY_MERGED placeholder, but it must never be audited a second time.
+        assertThat(outcome.results()).singleElement().satisfies(r -> {
+            assertThat(r.pr()).isEqualTo(alreadyRef);
+            assertThat(r.kind()).isEqualTo(PullRequestMergeService.Kind.MERGED);
+            assertThat(r.mergedAt()).isEqualTo(mergedAt);
+            assertThat(r.mergeSha()).isEqualTo("worker-sha");
+        });
+        verifyNoInteractions(auditSink);
+    }
+
+    @Test
+    void outcomeOf_unplannedRow_stillDropped() {
+        var alreadyRef = new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#1", "u1", "org/repo", 1);
+        var inspectedRef = new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#2", "u2", "org/repo", 2);
+        var plan = new PullRequestMergeService.MergePlan(
+                PullRequestMergeMethod.squash,
+                List.of(new PullRequestMergeService.Result(
+                        alreadyRef, PullRequestMergeService.Kind.ALREADY_MERGED, clock.instant(), null)),
+                List.of(inspectedRef),
+                List.of());
+
+        var outcome = service()
+                .outcomeOf(
+                        runId,
+                        plan,
+                        List.of(new PullRequestMergeService.WorkerPrResult(
+                                UUID.randomUUID(), PullRequestMergeService.Kind.MERGED, clock.instant(), "sha")),
+                        null);
+
+        // The stray result names neither a toInspect row nor an alreadyMerged one, so it is
+        // dropped and the alreadyMerged row still comes through untouched.
+        assertThat(outcome.results()).singleElement().satisfies(r -> {
+            assertThat(r.pr()).isEqualTo(alreadyRef);
+            assertThat(r.kind()).isEqualTo(PullRequestMergeService.Kind.ALREADY_MERGED);
+        });
+        verifyNoInteractions(auditSink);
+    }
+
     // --- helpers ---
 
     private String capturedAuditDetail() {

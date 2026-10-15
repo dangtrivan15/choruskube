@@ -18,6 +18,9 @@ import static org.mockito.Mockito.when;
 import com.choruskube.core.dto.GateFinalizeDtos.CompareItem;
 import com.choruskube.core.dto.GateFinalizeDtos.CompareResultItem;
 import com.choruskube.core.dto.GateFinalizeDtos.HeldClaim;
+import com.choruskube.core.dto.GateFinalizeDtos.IssueRequest;
+import com.choruskube.core.dto.GateFinalizeDtos.IssueResultItem;
+import com.choruskube.core.dto.GateFinalizeDtos.MaterializeResponse;
 import com.choruskube.core.dto.GateFinalizeDtos.PlanResponse;
 import com.choruskube.core.dto.GateFinalizeDtos.PrItem;
 import com.choruskube.core.dto.GateFinalizeDtos.PrResultItem;
@@ -25,6 +28,7 @@ import com.choruskube.core.dto.GateFinalizeDtos.StepResult;
 import com.choruskube.core.dto.RoadmapCandidatesDocument;
 import com.choruskube.core.dto.SignalRequest;
 import com.choruskube.core.dto.SignalResponse;
+import com.choruskube.core.dto.TaskIssueTarget;
 import com.choruskube.core.exception.BadRequestException;
 import com.choruskube.core.exception.ConflictException;
 import com.choruskube.core.exception.GateClaimConflictException;
@@ -34,6 +38,7 @@ import com.choruskube.core.model.DriftRecheckConfig;
 import com.choruskube.core.model.DriftRecheckConfig.StampMode;
 import com.choruskube.core.model.GateStamp;
 import com.choruskube.core.model.NodeExecution;
+import com.choruskube.core.model.TaskGithubIssue;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.GateStampStatus;
 import com.choruskube.core.model.enums.NodeExecutionStatus;
@@ -43,6 +48,8 @@ import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.observability.AuditSink;
 import com.choruskube.core.repository.GateStampRepository;
 import com.choruskube.core.repository.NodeExecutionRepository;
+import com.choruskube.core.repository.TaskGithubIssueRepository;
+import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.service.GateDriftCheckService.CompareInput;
 import com.choruskube.core.service.GateDriftCheckService.CompareResult;
@@ -98,6 +105,12 @@ class GateFinalizeServiceTest {
 
     @Mock
     private GateStampRepository stampRepo;
+
+    @Mock
+    private TaskRepository taskRepo;
+
+    @Mock
+    private TaskGithubIssueRepository taskGithubIssueRepo;
 
     @Mock
     private RunService runService;
@@ -160,6 +173,8 @@ class GateFinalizeServiceTest {
                 runRepo,
                 execRepo,
                 stampRepo,
+                taskRepo,
+                taskGithubIssueRepo,
                 runService,
                 gateRecheck,
                 drift,
@@ -538,6 +553,188 @@ class GateFinalizeServiceTest {
         assertThatThrownBy(() -> service.plan(runId, gateExecId, approvalId)).isInstanceOf(NotFoundException.class);
     }
 
+    @Test
+    void plan_roadmapGate_declaresWritesRoadmap() {
+        snapshot(MATERIALIZE_GATE);
+        RoadmapCandidatesDocument doc = new RoadmapCandidatesDocument(null, List.of(), null);
+        when(gateRecheck.approvedCandidates(stamp)).thenReturn(doc);
+        when(runService.prepareMaterialization(runId, RoadmapMaterializeMode.roadmap_extension, doc))
+                .thenReturn(RunService.MaterializationPlan.runnable(RoadmapMaterializeMode.roadmap_extension, doc));
+
+        PlanResponse plan = service.plan(runId, gateExecId, approvalId);
+
+        assertThat(plan.outcome()).isEqualTo(GateFinalizeService.PROCEED);
+        assertThat(plan.writesRoadmap()).isTrue();
+    }
+
+    @Test
+    void plan_nothingToCreate_doesNotDeclare() {
+        snapshot(MATERIALIZE_GATE);
+        RoadmapCandidatesDocument doc = new RoadmapCandidatesDocument(null, List.of(), null);
+        when(gateRecheck.approvedCandidates(stamp)).thenReturn(doc);
+        when(runService.prepareMaterialization(runId, RoadmapMaterializeMode.roadmap_extension, doc))
+                .thenReturn(RunService.MaterializationPlan.fixedNote("Roadmap proposal: nothing to create"));
+
+        PlanResponse plan = service.plan(runId, gateExecId, approvalId);
+
+        assertThat(plan.outcome()).isEqualTo(GateFinalizeService.PROCEED);
+        assertThat(plan.writesRoadmap()).isFalse();
+    }
+
+    // ── materialize ─────────────────────────────────────────────────────────────
+
+    @Test
+    void materialize_recordsMerges_claimsOnce_returnsRequests_neverFilesOnTheApi() {
+        RoadmapCandidatesDocument doc = new RoadmapCandidatesDocument(null, List.of(), null);
+        stubMergeAndMaterialize(doc);
+        UUID taskId = UUID.randomUUID();
+        UUID targetRepoId = UUID.randomUUID();
+        when(runService.materializeForWorker(eq(runId), any()))
+                .thenReturn(new RunService.MaterializationOutcome(
+                        "Roadmap extension approved: created 1 Epics",
+                        List.of(new TaskIssueTarget(taskId, targetRepoId, "acme/app", "Task 1", "body"))));
+
+        MaterializeResponse response = service.materialize(runId, gateExecId, approvalId, mergedRow());
+
+        assertThat(response.since()).isEqualTo(NOW);
+        assertThat(response.issues())
+                .containsExactly(new IssueRequest(taskId, targetRepoId, "acme/app", "Task 1", "body"));
+        verify(merge).recordOutcome(eq(runId), any());
+        verify(runService).materializeForWorker(eq(runId), any());
+        verify(runService, never()).materializeAndNote(any(), any());
+        assertThat(stamp.getMaterializedAt()).isEqualTo(NOW);
+        assertThat(stamp.getMaterializationNote()).isEqualTo("Roadmap extension approved: created 1 Epics");
+    }
+
+    @Test
+    void materialize_repeat_returnsStoredRequests_writesNothing() {
+        RoadmapCandidatesDocument doc = new RoadmapCandidatesDocument(null, List.of(), null);
+        stubMergeAndMaterialize(doc);
+        when(runService.materializeForWorker(eq(runId), any()))
+                .thenReturn(new RunService.MaterializationOutcome(
+                        "note",
+                        List.of(new TaskIssueTarget(
+                                UUID.randomUUID(), UUID.randomUUID(), "acme/app", "Task 1", "body"))));
+
+        MaterializeResponse first = service.materialize(runId, gateExecId, approvalId, mergedRow());
+        MaterializeResponse second = service.materialize(runId, gateExecId, approvalId, mergedRow());
+
+        assertThat(second).isEqualTo(first);
+        verify(runService, times(1)).materializeForWorker(eq(runId), any());
+    }
+
+    @Test
+    void materialize_claimedButNothingStored_returnsStoppedNoteAndNoIssues() {
+        RoadmapCandidatesDocument doc = new RoadmapCandidatesDocument(null, List.of(), null);
+        stubMergeAndMaterialize(doc);
+        stamp.setMaterializedAt(NOW.minusSeconds(5));
+
+        MaterializeResponse response = service.materialize(runId, gateExecId, approvalId, mergedRow());
+
+        assertThat(response.since()).isEqualTo(NOW.minusSeconds(5));
+        assertThat(response.issues()).isEmpty();
+        assertThat(stamp.getMaterializationNote())
+                .isEqualTo("Writing the approved roadmap stopped partway, so some items may be missing.");
+        verify(runService, never()).materializeForWorker(any(), any());
+    }
+
+    @Test
+    void materialize_gateWithoutRoadmap_storesEmpty() {
+        snapshot(MERGE_GATE);
+        MergePlan plan = mergePlan();
+        when(merge.planMerge(runId, PullRequestMergeMethod.squash)).thenReturn(plan);
+        MergeOutcome outcome = new MergeOutcome(
+                PullRequestMergeMethod.squash,
+                List.of(new PullRequestMergeService.Result(prRef(), Kind.MERGED, NOW, "m1")));
+        when(merge.outcomeOf(runId, plan, List.of(new WorkerPrResult(rowId, Kind.MERGED, NOW, "m1")), approvalId))
+                .thenReturn(outcome);
+
+        MaterializeResponse response = service.materialize(runId, gateExecId, approvalId, mergedRow());
+
+        assertThat(response.since()).isNull();
+        assertThat(response.issues()).isEmpty();
+        assertThat(stamp.getMaterializationNote()).isNull();
+        assertThat(stamp.getIssueRequests()).isEqualTo("[]");
+        verify(runService, never()).prepareMaterialization(any(), any(), any());
+    }
+
+    @Test
+    void materialize_notFinalizing_conflicts() {
+        stubMergeAndMaterialize(null);
+        stamp.setStatus(GateStampStatus.voided);
+
+        assertThatThrownBy(() -> service.materialize(runId, gateExecId, approvalId, mergedRow()))
+                .isInstanceOf(ConflictException.class);
+
+        verify(merge).recordOutcome(eq(runId), any());
+        verify(runService, never()).materializeForWorker(any(), any());
+    }
+
+    @Test
+    void materialize_losingStoreOnce_returnsTheWinnersRequests() throws Exception {
+        RoadmapCandidatesDocument doc = new RoadmapCandidatesDocument(null, List.of(), null);
+        stubMergeAndMaterialize(doc);
+        UUID winnerTaskId = UUID.randomUUID();
+        UUID winnerRepoId = UUID.randomUUID();
+        String winnerJson = objectMapper.writeValueAsString(
+                List.of(new IssueRequest(winnerTaskId, winnerRepoId, "acme/app", "Winner", "b")));
+        when(runService.materializeForWorker(eq(runId), any())).thenAnswer(inv -> {
+            // Simulates another overlapping attempt finishing and storing first, between this
+            // attempt's claim and its own store-once.
+            stamp.setMaterializationNote("written by the other attempt");
+            stamp.setIssueRequests(winnerJson);
+            return new RunService.MaterializationOutcome(
+                    "ignored",
+                    List.of(new TaskIssueTarget(UUID.randomUUID(), UUID.randomUUID(), "acme/app", "Mine", "b")));
+        });
+
+        MaterializeResponse response = service.materialize(runId, gateExecId, approvalId, mergedRow());
+
+        assertThat(response.issues())
+                .containsExactly(new IssueRequest(winnerTaskId, winnerRepoId, "acme/app", "Winner", "b"));
+        assertThat(stamp.getMaterializationNote()).isEqualTo("written by the other attempt");
+    }
+
+    @Test
+    void materialize_longBody_isCutToGitHubsLimit() {
+        RoadmapCandidatesDocument doc = new RoadmapCandidatesDocument(null, List.of(), null);
+        stubMergeAndMaterialize(doc);
+        String longBody = "x".repeat(70_000);
+        UUID taskId = UUID.randomUUID();
+        UUID targetRepoId = UUID.randomUUID();
+        when(runService.materializeForWorker(eq(runId), any()))
+                .thenReturn(new RunService.MaterializationOutcome(
+                        "note", List.of(new TaskIssueTarget(taskId, targetRepoId, "acme/app", "Task 1", longBody))));
+
+        MaterializeResponse response = service.materialize(runId, gateExecId, approvalId, mergedRow());
+
+        assertThat(response.issues()).singleElement().satisfies(issue -> {
+            assertThat(issue.body()).hasSize(65_000);
+            assertThat(issue.body()).isEqualTo(longBody.substring(0, 65_000));
+        });
+    }
+
+    @Test
+    void materialize_overTheHandoverBudget_returnsALeadingRun_storesAll() throws Exception {
+        RoadmapCandidatesDocument doc = new RoadmapCandidatesDocument(null, List.of(), null);
+        stubMergeAndMaterialize(doc);
+        List<TaskIssueTarget> targets = new ArrayList<>();
+        for (int i = 0; i < 2000; i++) {
+            targets.add(
+                    new TaskIssueTarget(UUID.randomUUID(), UUID.randomUUID(), "acme/app", "Task " + i, "x".repeat(50)));
+        }
+        when(runService.materializeForWorker(eq(runId), any()))
+                .thenReturn(new RunService.MaterializationOutcome("note", targets));
+
+        MaterializeResponse response = service.materialize(runId, gateExecId, approvalId, mergedRow());
+
+        assertThat(response.issues()).isNotEmpty();
+        assertThat(response.issues().size()).isLessThan(targets.size());
+        List<IssueRequest> stored = objectMapper.readValue(
+                stamp.getIssueRequests(), new com.fasterxml.jackson.core.type.TypeReference<List<IssueRequest>>() {});
+        assertThat(stored).hasSize(targets.size());
+    }
+
     // ── hold ────────────────────────────────────────────────────────────────────
 
     @Test
@@ -680,7 +877,7 @@ class GateFinalizeServiceTest {
         RoadmapCandidatesDocument doc = new RoadmapCandidatesDocument(null, List.of(), null);
         stubMergeAndMaterialize(doc);
 
-        StepResult result = service.complete(runId, gateExecId, approvalId, mergedRow());
+        StepResult result = service.complete(runId, gateExecId, approvalId, mergedRow(), List.of());
 
         assertThat(result.outcome()).isEqualTo(GateFinalizeService.COMPLETED);
         assertThat(result.result())
@@ -705,8 +902,8 @@ class GateFinalizeServiceTest {
         RoadmapCandidatesDocument doc = new RoadmapCandidatesDocument(null, List.of(), null);
         stubMergeAndMaterialize(doc);
 
-        StepResult first = service.complete(runId, gateExecId, approvalId, mergedRow());
-        StepResult second = service.complete(runId, gateExecId, approvalId, mergedRow());
+        StepResult first = service.complete(runId, gateExecId, approvalId, mergedRow(), List.of());
+        StepResult second = service.complete(runId, gateExecId, approvalId, mergedRow(), List.of());
 
         assertThat(second).isEqualTo(first);
         verify(runService, times(1)).materializeAndNote(eq(runId), any());
@@ -721,7 +918,7 @@ class GateFinalizeServiceTest {
         stamp.setMaterializedAt(NOW.minusSeconds(5));
         stamp.setMaterializationNote("Roadmap extension approved: created 2 Epics (stored)");
 
-        StepResult result = service.complete(runId, gateExecId, approvalId, mergedRow());
+        StepResult result = service.complete(runId, gateExecId, approvalId, mergedRow(), List.of());
 
         assertThat(result.outcome()).isEqualTo(GateFinalizeService.COMPLETED);
         assertThat(result.result()).endsWith("\n\nRoadmap extension approved: created 2 Epics (stored)");
@@ -736,7 +933,7 @@ class GateFinalizeServiceTest {
         stubMergeAndMaterialize(doc);
         stamp.setMaterializedAt(NOW.minusSeconds(5));
 
-        StepResult result = service.complete(runId, gateExecId, approvalId, mergedRow());
+        StepResult result = service.complete(runId, gateExecId, approvalId, mergedRow(), List.of());
 
         assertThat(result.result())
                 .isEqualTo("Tests passed\n\n## Reviewer Feedback\n\nship it\n\n"
@@ -769,7 +966,7 @@ class GateFinalizeServiceTest {
             return "Roadmap extension approved: created 1 Epics";
         });
 
-        StepResult result = service.complete(runId, gateExecId, approvalId, mergedRow());
+        StepResult result = service.complete(runId, gateExecId, approvalId, mergedRow(), List.of());
 
         assertThat(result.result()).endsWith("Roadmap extension approved: created 1 Epics");
         verify(runService).materializeAndNote(eq(runId), any());
@@ -787,7 +984,7 @@ class GateFinalizeServiceTest {
                     return RunService.MaterializationPlan.runnable(RoadmapMaterializeMode.roadmap_extension, doc);
                 });
 
-        StepResult result = service.complete(runId, gateExecId, approvalId, mergedRow());
+        StepResult result = service.complete(runId, gateExecId, approvalId, mergedRow(), List.of());
 
         assertThat(result.result()).endsWith("written by the other attempt");
         assertThat(stamp.getMaterializedAt()).isEqualTo(NOW.minusSeconds(1));
@@ -800,7 +997,7 @@ class GateFinalizeServiceTest {
         stubMergeAndMaterialize(doc);
         when(runService.materializeAndNote(eq(runId), any())).thenThrow(new IllegalStateException("connection lost"));
 
-        StepResult result = service.complete(runId, gateExecId, approvalId, mergedRow());
+        StepResult result = service.complete(runId, gateExecId, approvalId, mergedRow(), List.of());
 
         assertThat(result.outcome()).isEqualTo(GateFinalizeService.COMPLETED);
         assertThat(result.result()).contains("stopped partway").doesNotContain("connection lost");
@@ -814,7 +1011,7 @@ class GateFinalizeServiceTest {
     void complete_insideACallersTransaction_isRefused() {
         TransactionSynchronizationManager.setActualTransactionActive(true);
         try {
-            assertThatThrownBy(() -> service.complete(runId, gateExecId, approvalId, mergedRow()))
+            assertThatThrownBy(() -> service.complete(runId, gateExecId, approvalId, mergedRow(), List.of()))
                     .isInstanceOf(IllegalStateException.class)
                     .hasMessageContaining("outside a transaction");
         } finally {
@@ -830,7 +1027,7 @@ class GateFinalizeServiceTest {
         List<PrResultItem> twice = new ArrayList<>(mergedRow());
         twice.add(new PrResultItem(rowId, "MERGED", NOW, "m1"));
 
-        service.complete(runId, gateExecId, approvalId, twice);
+        service.complete(runId, gateExecId, approvalId, twice, List.of());
 
         verify(merge)
                 .outcomeOf(
@@ -845,7 +1042,11 @@ class GateFinalizeServiceTest {
         stubMergeAndMaterialize(null);
 
         assertThatThrownBy(() -> service.complete(
-                        runId, gateExecId, approvalId, List.of(new PrResultItem(rowId, "SQUASHED", NOW, "m1"))))
+                        runId,
+                        gateExecId,
+                        approvalId,
+                        List.of(new PrResultItem(rowId, "SQUASHED", NOW, "m1")),
+                        List.of()))
                 .isInstanceOf(BadRequestException.class)
                 .hasMessageContaining("SQUASHED");
 
@@ -857,7 +1058,7 @@ class GateFinalizeServiceTest {
     void complete_approvalOfAnotherGate_isNotFound() {
         stamp.setGateTemplateNodeId(UUID.randomUUID());
 
-        assertThatThrownBy(() -> service.complete(runId, gateExecId, approvalId, mergedRow()))
+        assertThatThrownBy(() -> service.complete(runId, gateExecId, approvalId, mergedRow(), List.of()))
                 .isInstanceOf(NotFoundException.class);
 
         verify(merge, never()).recordOutcome(any(), any());
@@ -868,12 +1069,179 @@ class GateFinalizeServiceTest {
         stubMergeAndMaterialize(null);
         stamp.setStatus(GateStampStatus.voided);
 
-        assertThatThrownBy(() -> service.complete(runId, gateExecId, approvalId, mergedRow()))
+        assertThatThrownBy(() -> service.complete(runId, gateExecId, approvalId, mergedRow(), List.of()))
                 .isInstanceOf(ConflictException.class);
 
         verify(merge).recordOutcome(eq(runId), any());
         verify(gateRecheck, never()).consume(any());
         verify(runService, never()).materializeAndNote(any(), any());
+    }
+
+    @Test
+    void complete_oneStep_unchanged_filesOnTheApi() {
+        RoadmapCandidatesDocument doc = new RoadmapCandidatesDocument(null, List.of(), null);
+        stubMergeAndMaterialize(doc);
+
+        StepResult result = service.complete(
+                runId,
+                gateExecId,
+                approvalId,
+                mergedRow(),
+                List.of(new IssueResultItem(UUID.randomUUID(), 1, "https://github.com/acme/app/issues/1", null)));
+
+        assertThat(result.outcome()).isEqualTo(GateFinalizeService.COMPLETED);
+        verify(runService).materializeAndNote(eq(runId), any());
+        verify(taskGithubIssueRepo, never()).save(any());
+    }
+
+    // ── complete, the split protocol ─────────────────────────────────────────────
+
+    private void consumesOnCall() {
+        doAnswer(inv -> {
+                    stamp.setStatus(GateStampStatus.consumed);
+                    return null;
+                })
+                .when(gateRecheck)
+                .consume(approvalId);
+    }
+
+    @Test
+    void complete_split_linksFiledIssues_notesUnfiled() throws Exception {
+        snapshot(MATERIALIZE_GATE);
+        UUID taskA = UUID.randomUUID();
+        UUID taskB = UUID.randomUUID();
+        UUID splitRepoId = UUID.randomUUID();
+        stamp.setMaterializationNote("Roadmap extension approved: created 1 Epics, 1 Stories, 2 Tasks and 0 "
+                + "dependency edges (0 skipped)");
+        stamp.setIssueRequests(objectMapper.writeValueAsString(List.of(
+                new IssueRequest(taskA, splitRepoId, "acme/app", "Task A", "body a"),
+                new IssueRequest(taskB, splitRepoId, "acme/app", "Task B", "body b"))));
+        when(taskRepo.existsById(taskA)).thenReturn(true);
+        when(taskRepo.existsById(taskB)).thenReturn(true);
+        when(taskGithubIssueRepo.findByTaskId(any())).thenReturn(Optional.empty());
+        consumesOnCall();
+        List<IssueResultItem> issues = List.of(
+                new IssueResultItem(taskA, 10, "https://github.com/acme/app/issues/10", null),
+                new IssueResultItem(taskB, null, null, "rate limited"));
+
+        StepResult result = service.complete(runId, gateExecId, approvalId, List.of(), issues);
+
+        assertThat(result.outcome()).isEqualTo(GateFinalizeService.COMPLETED);
+        assertThat(result.result())
+                .contains("GitHub issues: filed 1 of 2.")
+                .contains("Not filed: \"Task B\" (rate limited)");
+        ArgumentCaptor<TaskGithubIssue> captor = ArgumentCaptor.forClass(TaskGithubIssue.class);
+        verify(taskGithubIssueRepo).save(captor.capture());
+        assertThat(captor.getValue().getTaskId()).isEqualTo(taskA);
+        assertThat(captor.getValue().getGitRepoId()).isEqualTo(splitRepoId);
+        assertThat(captor.getValue().getIssueNumber()).isEqualTo(10);
+        verify(runService, never()).prepareMaterialization(any(), any(), any());
+    }
+
+    @Test
+    void complete_split_heldBackRequest_isNotedTooLarge() throws Exception {
+        snapshot(MATERIALIZE_GATE);
+        UUID smallTaskId = UUID.randomUUID();
+        UUID bigTaskId = UUID.randomUUID();
+        UUID splitRepoId = UUID.randomUUID();
+        // One request small enough to be handed over, one whose body alone exceeds the budget.
+        stamp.setIssueRequests(objectMapper.writeValueAsString(List.of(
+                new IssueRequest(smallTaskId, splitRepoId, "acme/app", "Small", "s"),
+                new IssueRequest(bigTaskId, splitRepoId, "acme/app", "Big", "x".repeat(300_000)))));
+        consumesOnCall();
+
+        StepResult result = service.complete(runId, gateExecId, approvalId, List.of(), List.of());
+
+        assertThat(result.result())
+                .contains("\"Big\" (too large to hand to the Worker)")
+                .contains("\"Small\" (no result from the Worker)");
+        verify(taskGithubIssueRepo, never()).save(any());
+    }
+
+    @Test
+    void complete_split_ignoresUnrequestedTask_andInvalidUrl() throws Exception {
+        snapshot(MATERIALIZE_GATE);
+        UUID taskA = UUID.randomUUID();
+        UUID splitRepoId = UUID.randomUUID();
+        stamp.setIssueRequests(objectMapper.writeValueAsString(
+                List.of(new IssueRequest(taskA, splitRepoId, "acme/app", "Task A", "body"))));
+        when(taskRepo.existsById(taskA)).thenReturn(true);
+        when(taskGithubIssueRepo.findByTaskId(taskA)).thenReturn(Optional.empty());
+        consumesOnCall();
+        List<IssueResultItem> issues = List.of(
+                new IssueResultItem(UUID.randomUUID(), 1, "https://github.com/acme/app/issues/1", null),
+                new IssueResultItem(taskA, 1, "ftp://not-http", null));
+
+        StepResult result = service.complete(runId, gateExecId, approvalId, List.of(), issues);
+
+        assertThat(result.result())
+                .contains("GitHub issues: filed 0 of 1.")
+                .contains("\"Task A\" (the Worker's result could not be linked)");
+        verify(taskGithubIssueRepo, never()).save(any());
+    }
+
+    @Test
+    void complete_split_capsFailureText_andSummarizesUnfiledPastFive() throws Exception {
+        snapshot(MATERIALIZE_GATE);
+        UUID splitRepoId = UUID.randomUUID();
+        List<IssueRequest> requests = new ArrayList<>();
+        List<IssueResultItem> issues = new ArrayList<>();
+        for (int i = 1; i <= 7; i++) {
+            UUID taskId = UUID.randomUUID();
+            requests.add(new IssueRequest(taskId, splitRepoId, "acme/app", "Task " + i, "body"));
+            issues.add(new IssueResultItem(taskId, null, null, i == 1 ? "x".repeat(400) : "refused"));
+        }
+        stamp.setIssueRequests(objectMapper.writeValueAsString(requests));
+        consumesOnCall();
+
+        StepResult result = service.complete(runId, gateExecId, approvalId, List.of(), issues);
+
+        assertThat(result.result())
+                .contains("GitHub issues: filed 0 of 7.")
+                .contains("\"Task 1\" (" + "x".repeat(300) + ")")
+                .doesNotContain("x".repeat(301))
+                .contains("\"Task 5\" (refused); and 2 more")
+                .doesNotContain("Task 6");
+        verify(taskGithubIssueRepo, never()).save(any());
+    }
+
+    @Test
+    void complete_split_repeat_linksOnce() throws Exception {
+        snapshot(MATERIALIZE_GATE);
+        UUID taskA = UUID.randomUUID();
+        UUID splitRepoId = UUID.randomUUID();
+        stamp.setIssueRequests(objectMapper.writeValueAsString(
+                List.of(new IssueRequest(taskA, splitRepoId, "acme/app", "Task A", "body"))));
+        when(taskRepo.existsById(taskA)).thenReturn(true);
+        when(taskGithubIssueRepo.findByTaskId(taskA)).thenReturn(Optional.empty());
+        consumesOnCall();
+        List<IssueResultItem> issues =
+                List.of(new IssueResultItem(taskA, 5, "https://github.com/acme/app/issues/5", null));
+
+        StepResult first = service.complete(runId, gateExecId, approvalId, List.of(), issues);
+        StepResult second = service.complete(runId, gateExecId, approvalId, List.of(), issues);
+
+        assertThat(second).isEqualTo(first);
+        verify(taskGithubIssueRepo, times(1)).save(any());
+    }
+
+    @Test
+    void complete_split_deletedTask_isSkipped() throws Exception {
+        snapshot(MATERIALIZE_GATE);
+        UUID taskA = UUID.randomUUID();
+        UUID splitRepoId = UUID.randomUUID();
+        stamp.setIssueRequests(objectMapper.writeValueAsString(
+                List.of(new IssueRequest(taskA, splitRepoId, "acme/app", "Task A", "body"))));
+        when(taskRepo.existsById(taskA)).thenReturn(false); // the Task was deleted meanwhile
+        consumesOnCall();
+        List<IssueResultItem> issues =
+                List.of(new IssueResultItem(taskA, 5, "https://github.com/acme/app/issues/5", null));
+
+        StepResult result = service.complete(runId, gateExecId, approvalId, List.of(), issues);
+
+        assertThat(result.outcome()).isEqualTo(GateFinalizeService.COMPLETED);
+        assertThat(result.result()).contains("\"Task A\" (the Worker's result could not be linked)");
+        verify(taskGithubIssueRepo, never()).save(any());
     }
 
     // ── refuse ──────────────────────────────────────────────────────────────────

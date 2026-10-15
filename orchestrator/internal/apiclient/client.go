@@ -671,13 +671,33 @@ type GatePRResultItem struct {
 	MergeSha string     `json:"mergeSha,omitempty"`
 }
 
-// GatePlanResponse.Outcome is proceed, hold or refused. A null Reason or MergeMethod decodes to "".
+// GateIssueItem mirrors the api-server's IssueRequest, decoded from a materialize response.
+type GateIssueItem struct {
+	TaskID    uuid.UUID `json:"taskId"`
+	GitRepoID uuid.UUID `json:"gitRepoId"`
+	OwnerRepo string    `json:"ownerRepo"`
+	Title     string    `json:"title"`
+	Body      string    `json:"body"`
+}
+
+// GateIssueResultItem mirrors the api-server's IssueResultItem, encoded into a complete request.
+type GateIssueResultItem struct {
+	TaskID  uuid.UUID `json:"taskId"`
+	Number  int       `json:"number,omitempty"`
+	URL     string    `json:"url,omitempty"`
+	Failure string    `json:"failure,omitempty"`
+}
+
+// GatePlanResponse.Outcome is proceed, hold or refused. A null Reason or MergeMethod decodes to
+// "". WritesRoadmap decodes to false when absent, which is what an API older than the split
+// write step sends.
 type GatePlanResponse struct {
-	Outcome     string            `json:"outcome"`
-	Reason      string            `json:"reason"`
-	Compares    []GateCompareItem `json:"compares"`
-	PRs         []GatePRItem      `json:"prs"`
-	MergeMethod string            `json:"mergeMethod"`
+	Outcome       string            `json:"outcome"`
+	Reason        string            `json:"reason"`
+	Compares      []GateCompareItem `json:"compares"`
+	PRs           []GatePRItem      `json:"prs"`
+	MergeMethod   string            `json:"mergeMethod"`
+	WritesRoadmap bool              `json:"writesRoadmap"`
 }
 
 // GateStepResponse.Outcome is completed, held or refused; null fields decode to "".
@@ -686,6 +706,13 @@ type GateStepResponse struct {
 	Result         string `json:"result"`
 	AttachmentRefs string `json:"attachmentRefs"`
 	Reason         string `json:"reason"`
+}
+
+// GateMaterializeResponse.Since is the write step's claim time; Issues are the issue requests it
+// wants the run's Worker to file.
+type GateMaterializeResponse struct {
+	Since  time.Time       `json:"since"`
+	Issues []GateIssueItem `json:"issues"`
 }
 
 // ClaimHeldApproval takes the gate's held approval for finalizing and returns its id, or "" when
@@ -729,14 +756,42 @@ func (c *Client) HoldGateApproval(ctx context.Context, runID, execID, approvalID
 	return c.gateStep(ctx, "hold gate approval", runID, execID, "/"+approvalID.String()+"/hold", body)
 }
 
-func (c *Client) CompleteGateFinalize(ctx context.Context, runID, execID, approvalID uuid.UUID, merges []GatePRResultItem) (GateStepResponse, error) {
+func (c *Client) CompleteGateFinalize(
+	ctx context.Context, runID, execID, approvalID uuid.UUID, merges []GatePRResultItem, issues []GateIssueResultItem,
+) (GateStepResponse, error) {
+	if merges == nil {
+		merges = []GatePRResultItem{}
+	}
+	if issues == nil {
+		issues = []GateIssueResultItem{}
+	}
+	body := struct {
+		Merges []GatePRResultItem    `json:"merges"`
+		Issues []GateIssueResultItem `json:"issues"`
+	}{Merges: merges, Issues: issues}
+	return c.gateStep(ctx, "complete gate finalize", runID, execID, "/"+approvalID.String()+"/complete", body)
+}
+
+// MaterializeGateApproval runs the roadmap write step. Merges is sent as an empty list, never
+// null, the same as every other gate-finalize body.
+func (c *Client) MaterializeGateApproval(
+	ctx context.Context, runID, execID, approvalID uuid.UUID, merges []GatePRResultItem,
+) (GateMaterializeResponse, error) {
 	if merges == nil {
 		merges = []GatePRResultItem{}
 	}
 	body := struct {
 		Merges []GatePRResultItem `json:"merges"`
 	}{Merges: merges}
-	return c.gateStep(ctx, "complete gate finalize", runID, execID, "/"+approvalID.String()+"/complete", body)
+	resp, err := c.doGateFinalize(ctx, "materialize gate approval", runID, execID, "/"+approvalID.String()+"/materialize", body)
+	if err != nil {
+		return GateMaterializeResponse{}, err
+	}
+	var result GateMaterializeResponse
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return GateMaterializeResponse{}, fmt.Errorf("unmarshal materialize gate approval response: %w", err)
+	}
+	return result, nil
 }
 
 func (c *Client) gateStep(ctx context.Context, op string, runID, execID uuid.UUID, rest string, body any) (GateStepResponse, error) {

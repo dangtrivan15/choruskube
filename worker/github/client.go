@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -51,6 +52,9 @@ func New(baseURL string) *Client {
 type APIError struct {
 	Status    int
 	OwnerRepo string
+	// RateLimited is true when Status reflects GitHub throttling the caller rather than refusing
+	// the request outright; a caller retries this after backing off instead of giving up on it.
+	RateLimited bool
 }
 
 func (e *APIError) Error() string {
@@ -60,15 +64,149 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("GitHub API returned HTTP %d for %s", e.Status, e.OwnerRepo)
 }
 
-// RefusedError is GitHub declining a merge (405, 409 or 422). Reason is GitHub's message field
-// only, with the token scrubbed and capped at 300 characters.
+// RefusedError is GitHub declining a request (merge: 405, 409 or 422; issue listing or creation:
+// 403, 404, 410 or 422). Reason is GitHub's message field only, with the token scrubbed and capped
+// at 300 characters.
 type RefusedError struct {
 	Status int
 	Reason string
+	// Op names what was refused, for example "merge" or "request"; empty reads as "merge" so a
+	// caller built before this field existed keeps its exact wording.
+	Op string
 }
 
 func (e *RefusedError) Error() string {
-	return fmt.Sprintf("merge refused (HTTP %d): %s", e.Status, e.Reason)
+	op := e.Op
+	if op == "" {
+		op = "merge"
+	}
+	return fmt.Sprintf("%s refused (HTTP %d): %s", op, e.Status, e.Reason)
+}
+
+// isRateLimited tells a GitHub rate limit from a refusal: 403 carries both meanings, and reading a
+// throttled request as "no permission" would stop retrying something that heals on its own.
+func isRateLimited(status int, h http.Header) bool {
+	switch {
+	case status == http.StatusTooManyRequests:
+		return true
+	case status != http.StatusForbidden:
+		return false
+	case h.Get("Retry-After") != "":
+		return true
+	default:
+		return h.Get("X-RateLimit-Remaining") == "0"
+	}
+}
+
+// classify turns a non-success response into *RefusedError when status is one of refusalStatuses
+// and it is not actually a rate limit (403 is both), or *APIError otherwise, so a caller can tell
+// "a person must act" from "retry me".
+func classify(resp response, ownerRepo, token string, refusalStatuses ...int) error {
+	rateLimited := isRateLimited(resp.status, resp.header)
+	if !rateLimited {
+		for _, s := range refusalStatuses {
+			if resp.status == s {
+				return &RefusedError{
+					Status: resp.status,
+					Reason: refusalReason(resp.body, resp.status, token, "request"),
+					Op:     "request",
+				}
+			}
+		}
+	}
+	return &APIError{Status: resp.status, OwnerRepo: ownerRepo, RateLimited: rateLimited}
+}
+
+// Issue is a GitHub issue as read back for the lookup phase of filing one: Body carries the hidden
+// task-key comment a retry searches for.
+type Issue struct {
+	Number  int
+	HTMLURL string
+	Body    string
+}
+
+// IssuesSince lists ownerRepo's issues, open or closed, updated since the given time, through the
+// plain listing rather than search, whose index lags a just-created issue. Pull requests, which
+// the same endpoint returns, are skipped. onPage, when given, is called once per page fetched.
+func (c *Client) IssuesSince(ctx context.Context, token, ownerRepo string, since time.Time, onPage ...func(page int)) ([]Issue, error) {
+	repo, err := repoPath(ownerRepo)
+	if err != nil {
+		return nil, err
+	}
+	var issues []Issue
+	for page := 1; ; page++ {
+		q := url.Values{}
+		q.Set("state", "all")
+		q.Set("since", since.UTC().Format(time.RFC3339))
+		q.Set("per_page", "100")
+		q.Set("page", strconv.Itoa(page))
+		resp, err := c.send(ctx, http.MethodGet, "/repos/"+repo+"/issues?"+q.Encode(), token, nil)
+		if err != nil {
+			return nil, err
+		}
+		if resp.status != http.StatusOK {
+			return nil, classify(resp, ownerRepo, token, http.StatusForbidden, http.StatusNotFound, http.StatusGone)
+		}
+		var wire []struct {
+			Number      int             `json:"number"`
+			HTMLURL     string          `json:"html_url"`
+			Body        *string         `json:"body"`
+			PullRequest json.RawMessage `json:"pull_request"`
+		}
+		if err := json.Unmarshal(resp.body, &wire); err != nil {
+			return nil, fmt.Errorf("decode issues for %s: %w", ownerRepo, err)
+		}
+		for _, w := range wire {
+			// GitHub's issues endpoint also returns pull requests; only those carry this key.
+			if len(w.PullRequest) > 0 {
+				continue
+			}
+			body := ""
+			if w.Body != nil {
+				body = *w.Body
+			}
+			issues = append(issues, Issue{Number: w.Number, HTMLURL: w.HTMLURL, Body: body})
+		}
+		for _, cb := range onPage {
+			cb(page)
+		}
+		if len(wire) < 100 {
+			break
+		}
+	}
+	return issues, nil
+}
+
+// CreateIssue opens a new issue. A refusal (no permission, archived or missing repo, validation
+// failure) returns *RefusedError; anything else, including a rate limit, returns *APIError.
+func (c *Client) CreateIssue(ctx context.Context, token, ownerRepo, title, body string) (Issue, error) {
+	repo, err := repoPath(ownerRepo)
+	if err != nil {
+		return Issue{}, err
+	}
+	payload, err := json.Marshal(struct {
+		Title string `json:"title"`
+		Body  string `json:"body"`
+	}{Title: title, Body: body})
+	if err != nil {
+		return Issue{}, fmt.Errorf("encode issue request for %s: %w", ownerRepo, err)
+	}
+	resp, err := c.send(ctx, http.MethodPost, "/repos/"+repo+"/issues", token, payload)
+	if err != nil {
+		return Issue{}, err
+	}
+	if resp.status != http.StatusCreated {
+		return Issue{}, classify(resp, ownerRepo, token,
+			http.StatusForbidden, http.StatusNotFound, http.StatusGone, http.StatusUnprocessableEntity)
+	}
+	var wire struct {
+		Number  int    `json:"number"`
+		HTMLURL string `json:"html_url"`
+	}
+	if err := json.Unmarshal(resp.body, &wire); err != nil {
+		return Issue{}, fmt.Errorf("decode created issue for %s: %w", ownerRepo, err)
+	}
+	return Issue{Number: wire.Number, HTMLURL: wire.HTMLURL}, nil
 }
 
 // Compare returns how many commits head is ahead of base.
@@ -213,7 +351,7 @@ func (c *Client) Merge(ctx context.Context, token, ownerRepo string, number int,
 		}
 		return wire.SHA, nil
 	case http.StatusMethodNotAllowed, http.StatusConflict, http.StatusUnprocessableEntity:
-		return "", &RefusedError{Status: resp.status, Reason: refusalReason(resp.body, resp.status, token)}
+		return "", &RefusedError{Status: resp.status, Reason: refusalReason(resp.body, resp.status, token, "merge")}
 	default:
 		return "", &APIError{Status: resp.status, OwnerRepo: ownerRepo}
 	}
@@ -221,13 +359,15 @@ func (c *Client) Merge(ctx context.Context, token, ownerRepo string, number int,
 
 // refusalReason keeps GitHub's message field and nothing else of the body, which can echo the
 // request. The token is scrubbed before the cap so a cut through it cannot leave a prefix behind.
-func refusalReason(body []byte, status int, token string) string {
+// op names what was refused, for example "merge" or "request", and appears only in the fallback
+// used when GitHub's own response carries no message.
+func refusalReason(body []byte, status int, token, op string) string {
 	var wire struct {
 		Message *string `json:"message"`
 	}
 	_ = json.Unmarshal(body, &wire)
 	if wire.Message == nil || strings.TrimSpace(*wire.Message) == "" {
-		return fmt.Sprintf("GitHub refused the merge (HTTP %d)", status)
+		return fmt.Sprintf("GitHub refused the %s (HTTP %d)", op, status)
 	}
 	reason := *wire.Message
 	if strings.TrimSpace(token) != "" {
@@ -241,6 +381,7 @@ func refusalReason(body []byte, status int, token string) string {
 
 type response struct {
 	status int
+	header http.Header
 	body   []byte
 }
 
@@ -273,7 +414,7 @@ func (c *Client) send(ctx context.Context, method, path, bearer string, payload 
 	if len(raw) > maxBodyBytes {
 		return response{}, errors.New("GitHub response exceeds the size limit")
 	}
-	return response{status: resp.StatusCode, body: raw}, nil
+	return response{status: resp.StatusCode, header: resp.Header, body: raw}, nil
 }
 
 // repoPath validates an owner/repo slug and escapes it for a URL path.
@@ -282,6 +423,13 @@ func repoPath(ownerRepo string) (string, error) {
 		return "", fmt.Errorf("%q is not an owner/repo slug", ownerRepo)
 	}
 	return escapePath(ownerRepo)
+}
+
+// ValidOwnerRepo reports whether ownerRepo is a slug this client's calls accept, so a caller can
+// reject one before spending a GitHub call on it.
+func ValidOwnerRepo(ownerRepo string) bool {
+	_, err := repoPath(ownerRepo)
+	return err == nil
 }
 
 // escapePath escapes each "/"-separated segment, keeping the slashes GitHub accepts in ref names.

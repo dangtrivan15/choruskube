@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -415,4 +417,203 @@ func TestPullRequestWithoutAHeadShaIsAnError(t *testing.T) {
 	_, err := c.PullRequest(context.Background(), "t", "acme/app", 7)
 
 	require.Error(t, err)
+}
+
+func issueWire(number int) string {
+	return fmt.Sprintf(`{"number":%d,"html_url":"https://github.com/acme/app/issues/%d","body":"body %d"}`, number, number, number)
+}
+
+func TestIssuesSinceSendsTheQueryGitHubExpects(t *testing.T) {
+	var gotPath, gotQuery string
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotQuery = r.URL.RawQuery
+		requireGitHubHeaders(t, r, "t")
+		_, _ = io.WriteString(w, "[]")
+	})
+	since := time.Date(2026, 10, 14, 9, 30, 0, 0, time.FixedZone("x", 3600))
+
+	_, err := c.IssuesSince(context.Background(), "t", "acme/app", since)
+
+	require.NoError(t, err)
+	assert.Equal(t, "/repos/acme/app/issues", gotPath)
+	q, err := url.ParseQuery(gotQuery)
+	require.NoError(t, err)
+	assert.Equal(t, "all", q.Get("state"))
+	assert.Equal(t, "100", q.Get("per_page"))
+	assert.Equal(t, "1", q.Get("page"))
+	assert.Equal(t, "2026-10-14T08:30:00Z", q.Get("since"), "since is converted to UTC before formatting")
+}
+
+func TestIssuesSincePaginatesUntilAShortPage(t *testing.T) {
+	var pages []string
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		pages = append(pages, r.URL.Query().Get("page"))
+		if r.URL.Query().Get("page") == "1" {
+			items := make([]string, 100)
+			for i := range items {
+				items[i] = issueWire(i + 1)
+			}
+			_, _ = io.WriteString(w, "["+strings.Join(items, ",")+"]")
+			return
+		}
+		_, _ = io.WriteString(w, "["+issueWire(101)+","+issueWire(102)+"]")
+	})
+	var heartbeats []int
+	onPage := func(page int) { heartbeats = append(heartbeats, page) }
+
+	issues, err := c.IssuesSince(context.Background(), "t", "acme/app", time.Now(), onPage)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"1", "2"}, pages, "a full first page is followed by a second request")
+	assert.Len(t, issues, 102)
+	assert.Equal(t, []int{1, 2}, heartbeats, "onPage is called once per page fetched")
+}
+
+func TestIssuesSinceSkipsPullRequestsAndReadsNullBodyAsEmpty(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `[
+			{"number":1,"html_url":"https://github.com/acme/app/issues/1","body":null},
+			{"number":2,"html_url":"https://github.com/acme/app/pull/2","body":"has a PR","pull_request":{"url":"x"}}
+		]`)
+	})
+
+	issues, err := c.IssuesSince(context.Background(), "t", "acme/app", time.Now())
+
+	require.NoError(t, err)
+	require.Len(t, issues, 1, "the pull request is skipped")
+	assert.Equal(t, 1, issues[0].Number)
+	assert.Equal(t, "", issues[0].Body, "a null body reads as empty, not the literal \"null\"")
+}
+
+func TestIssuesSinceRefusalStatusesReturnAScrubbedRefusedErrorNeverMentioningMerge(t *testing.T) {
+	for _, status := range []int{http.StatusNotFound, http.StatusGone, http.StatusForbidden} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(status)
+			})
+
+			_, err := c.IssuesSince(context.Background(), "t", "acme/app", time.Now())
+
+			var refused *RefusedError
+			require.ErrorAs(t, err, &refused)
+			assert.Equal(t, status, refused.Status)
+			assert.NotContains(t, refused.Reason, "merge")
+			assert.Contains(t, refused.Reason, fmt.Sprintf("HTTP %d", status))
+		})
+	}
+}
+
+func TestIssuesSinceForbiddenWithRateLimitSignalsIsAPIErrorNotRefused(t *testing.T) {
+	cases := []struct {
+		name    string
+		headers map[string]string
+	}{
+		{"Retry-After", map[string]string{"Retry-After": "30"}},
+		{"X-RateLimit-Remaining zero", map[string]string{"X-RateLimit-Remaining": "0"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				for k, v := range tc.headers {
+					w.Header().Set(k, v)
+				}
+				w.WriteHeader(http.StatusForbidden)
+			})
+
+			_, err := c.IssuesSince(context.Background(), "t", "acme/app", time.Now())
+
+			var apiErr *APIError
+			require.ErrorAs(t, err, &apiErr)
+			assert.True(t, apiErr.RateLimited)
+			var refused *RefusedError
+			assert.False(t, errors.As(err, &refused), "a rate limit is retried, not refused")
+		})
+	}
+}
+
+func TestIssuesSince429IsRateLimited(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+
+	_, err := c.IssuesSince(context.Background(), "t", "acme/app", time.Now())
+
+	var apiErr *APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.True(t, apiErr.RateLimited)
+}
+
+func TestCreateIssueSendsTitleAndBodyAndDecodesTheCreatedIssue(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "/repos/acme/app/issues", r.URL.Path)
+		requireGitHubHeaders(t, r, "t")
+		var body map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		assert.Equal(t, map[string]any{"title": "a title", "body": "a body"}, body)
+		w.WriteHeader(http.StatusCreated)
+		_, _ = io.WriteString(w, `{"number":42,"html_url":"https://github.com/acme/app/issues/42"}`)
+	})
+
+	iss, err := c.CreateIssue(context.Background(), "t", "acme/app", "a title", "a body")
+
+	require.NoError(t, err)
+	assert.Equal(t, 42, iss.Number)
+	assert.Equal(t, "https://github.com/acme/app/issues/42", iss.HTMLURL)
+}
+
+func TestCreateIssueRefusalStatusesNeverMentionMerge(t *testing.T) {
+	for _, status := range []int{http.StatusNotFound, http.StatusGone, http.StatusUnprocessableEntity, http.StatusForbidden} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(status)
+			})
+
+			_, err := c.CreateIssue(context.Background(), "t", "acme/app", "t", "b")
+
+			var refused *RefusedError
+			require.ErrorAs(t, err, &refused)
+			assert.Equal(t, status, refused.Status)
+			assert.NotContains(t, refused.Reason, "merge")
+			assert.NotContains(t, err.Error(), "merge")
+		})
+	}
+}
+
+func TestCreateIssueForbiddenWithRateLimitSignalsIsAPIErrorNotRefused(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "60")
+		w.WriteHeader(http.StatusForbidden)
+	})
+
+	_, err := c.CreateIssue(context.Background(), "t", "acme/app", "t", "b")
+
+	var apiErr *APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.True(t, apiErr.RateLimited)
+}
+
+func TestCreateIssue429IsRateLimited(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+
+	_, err := c.CreateIssue(context.Background(), "t", "acme/app", "t", "b")
+
+	var apiErr *APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.True(t, apiErr.RateLimited)
+}
+
+func TestCreateIssueOtherStatusIsAPIError(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+
+	_, err := c.CreateIssue(context.Background(), "t", "acme/app", "t", "b")
+
+	var apiErr *APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, 500, apiErr.Status)
 }

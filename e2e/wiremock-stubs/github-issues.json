@@ -1,0 +1,34 @@
+{
+  "mappings": [
+    {
+      "priority": 5,
+      "request": {
+        "method": "GET",
+        "urlPathPattern": "/repos/[^/]+/[^/]+/issues",
+        "headers": {
+          "Authorization": { "contains": "Bearer " }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "body": "[]"
+      }
+    },
+    {
+      "priority": 5,
+      "request": {
+        "method": "POST",
+        "urlPathPattern": "/repos/[^/]+/[^/]+/issues",
+        "headers": {
+          "Authorization": { "contains": "Bearer " }
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": { "Content-Type": "application/json" },
+        "body": "{\"number\":4242,\"html_url\":\"https://github.com/e2e-test/mock-repo/issues/4242\"}"
+      }
+    }
+  ]
+}

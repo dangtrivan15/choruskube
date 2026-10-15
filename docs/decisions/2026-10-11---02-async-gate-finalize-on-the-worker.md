@@ -1,6 +1,6 @@
 # A gate approval finalizes asynchronously: the workflow drives it, and the Worker does the GitHub steps
 
-**Status:** current; the data-plane credential rule it applies is recorded on its own in [2026-10-13---02](2026-10-13---02-data-plane-credential-rule.md)
+**Status:** current; the data-plane credential rule it applies is recorded on its own in [2026-10-13---02](2026-10-13---02-data-plane-credential-rule.md); its roadmap write and issue filing inside complete, and its rule that a gate with nothing to compare or merge never waits on a Worker, are superseded, for gates whose plan declares writesRoadmap, by [2026-10-15---01-roadmap-issues-filed-on-the-worker](2026-10-15---01-roadmap-issues-filed-on-the-worker.md)
 
 ## Context
 
