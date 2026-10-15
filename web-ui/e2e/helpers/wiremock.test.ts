@@ -52,6 +52,24 @@ describe("findWireMockRequests", () => {
 
     await expect(findWireMockRequests({ method: "GET", url: "/x" })).rejects.toThrow(/HTTP 500/);
   });
+
+  it("translates bodyContains into WireMock's bodyPatterns query shape", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ requests: [] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await findWireMockRequests({
+      method: "POST",
+      urlPathPattern: "/repos/[^/]+/[^/]+/issues",
+      bodyContains: "choruskube-task:abc",
+    });
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(init.body as string)).toEqual({
+      method: "POST",
+      urlPathPattern: "/repos/[^/]+/[^/]+/issues",
+      bodyPatterns: [{ contains: "choruskube-task:abc" }],
+    });
+  });
 });
 
 describe("headerOf", () => {

@@ -21,19 +21,28 @@ interface WireMockFindRequestsResponse {
 }
 
 /**
- * Queries WireMock's `/__admin/requests/find` with filter (a method plus `url` or
- * `urlPattern`), returning the matching requests in the shape this helper's callers assert on.
+ * Queries WireMock's `/__admin/requests/find` with filter (a method plus `url`, `urlPattern`
+ * or `urlPathPattern`, and optionally `bodyContains` to match on a request body substring —
+ * e.g. a task's hidden issue key), returning the matching requests in the shape this helper's
+ * callers assert on.
  */
 export async function findWireMockRequests(filter: {
   method: string;
   url?: string;
   urlPattern?: string;
+  urlPathPattern?: string;
+  bodyContains?: string;
 }): Promise<WireMockLoggedRequest[]> {
+  const { bodyContains, ...rest } = filter;
+  const query = {
+    ...rest,
+    ...(bodyContains !== undefined ? { bodyPatterns: [{ contains: bodyContains }] } : {}),
+  };
   const base = process.env.E2E_WIREMOCK_URL ?? DEFAULT_WIREMOCK_URL;
   const res = await fetch(`${base}/__admin/requests/find`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(filter),
+    body: JSON.stringify(query),
   });
   if (!res.ok) {
     throw new Error(`WireMock request journal query failed: HTTP ${res.status}`);
