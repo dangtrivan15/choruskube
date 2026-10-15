@@ -82,7 +82,7 @@ would only return what you configured.
 | `WORKER_CALLBACK_PORT` | no | Port the callback server listens on for agent completion/heartbeat callbacks. Default `9090`. |
 | `CREDENTIAL_SOURCE` | no | `control-plane` (default) or `local` — where GitHub and agent credentials come from; see [Credentials](#credentials). `local` is for a single tenant's own Fleet only. Any other value fails startup. |
 | `CREDENTIALS_DIR` | no | Folder the `local` source reads. Default `/etc/choruskube/credentials`. |
-| `GITHUB_API_URL` | no | GitHub API root for the Worker's own GitHub calls (gate compares and merges, run-branch cleanup). Default `https://api.github.com`. |
+| `GITHUB_API_URL` | no | GitHub API root for the Worker's own GitHub calls (gate compares and merges, run-branch cleanup, roadmap issue filing). Default `https://api.github.com`. |
 
 `TEMPORAL_TLS_DISABLED` is opt-in so a deployment against a TLS Temporal cannot lose TLS by
 omission. It is only needed when a Fleet carries a credential: the Temporal SDK turns TLS on
@@ -120,9 +120,13 @@ either kind in the folder beats any in the environment, so a stray variable cann
 mounted secret.
 
 The Worker also uses the run's own token itself, not only to hand to the agent pod: to merge a
-gate's pull requests, and to delete a completed run's branch once it is confirmed not ahead of
-its repo's default branch. Either call needs Contents read/write on the repository. Every GitHub
-request the Worker makes identifies itself with `User-Agent: choruskube-worker`.
+gate's pull requests, to delete a completed run's branch once it is confirmed not ahead of its
+repo's default branch, and to file the GitHub issues a gate's approved roadmap extension asks for
+(an issue per new task, deduplicated by a hidden key so a retried step never files one twice). The
+merge and branch-deletion calls need Contents read/write on the repository; filing issues needs
+Issues read/write — a `local` credential must carry it too, since the Worker files with whatever
+credential it was given regardless of mode. Every GitHub request the Worker makes identifies itself
+with `User-Agent: choruskube-worker`.
 
 | File under `CREDENTIALS_DIR` | Environment fallback | Purpose |
 |------------------------------|----------------------|---------|
