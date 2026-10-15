@@ -629,7 +629,7 @@ func TestCompleteGateFinalize(t *testing.T) {
 		assert.JSONEq(t, fmt.Sprintf(`{"merges":[
 			{"rowId":"%s","kind":"MERGED","mergedAt":"2026-10-11T09:30:00Z","mergeSha":"deadbeef"},
 			{"rowId":"%s","kind":"SKIPPED_CLOSED"}
-		]}`, merged, skipped), string(body))
+		], "issues":[]}`, merged, skipped), string(body))
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"outcome":"completed","result":"approved and merged","attachmentRefs":"{}","reason":null}`))
 	}))
@@ -639,9 +639,91 @@ func TestCompleteGateFinalize(t *testing.T) {
 	res, err := client.CompleteGateFinalize(context.Background(), runID, execID, approvalID, []GatePRResultItem{
 		{RowID: merged, Kind: "MERGED", MergedAt: &at, MergeSha: "deadbeef"},
 		{RowID: skipped, Kind: "SKIPPED_CLOSED"},
-	})
+	}, nil)
 	require.NoError(t, err)
 	assert.Equal(t, GateStepResponse{Outcome: "completed", Result: "approved and merged", AttachmentRefs: "{}"}, res)
+}
+
+// TestCompleteGateFinalize_SendsIssueResults: the split path's per-task results are sent through
+// unchanged, and an empty Issues still encodes as [], never null.
+func TestCompleteGateFinalize_SendsIssueResults(t *testing.T) {
+	runID, execID, approvalID, taskID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+
+	_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		assert.JSONEq(t, fmt.Sprintf(
+			`{"merges":[],"issues":[{"taskId":"%s","number":1,"url":"https://github.com/acme/api/issues/1"}]}`, taskID),
+			string(body))
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"outcome":"completed","result":"done","attachmentRefs":"{}","reason":null}`))
+	})
+
+	_, err := client.CompleteGateFinalize(context.Background(), runID, execID, approvalID, nil,
+		[]GateIssueResultItem{{TaskID: taskID, Number: 1, URL: "https://github.com/acme/api/issues/1"}})
+	require.NoError(t, err)
+}
+
+func TestMaterializeGateApproval_SendsTheMergesAndDecodesTheIssues(t *testing.T) {
+	runID, execID, approvalID, rowID, taskID, repoID := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	since := time.Date(2026, 10, 14, 9, 0, 0, 0, time.UTC)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, gateFinalizePath(runID, execID, "/"+approvalID.String()+"/materialize"), r.URL.Path)
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		assert.JSONEq(t, fmt.Sprintf(`{"merges":[{"rowId":"%s","kind":"MERGED"}]}`, rowID), string(body))
+		fmt.Fprintf(w, `{
+			"since": "2026-10-14T09:00:00Z",
+			"issues": [{"taskId":"%s","gitRepoId":"%s","ownerRepo":"acme/api","title":"t","body":"b"}]
+		}`, taskID, repoID)
+	}))
+	defer server.Close()
+	client := NewAuthenticatedClient(server.URL, "orchestrator-secret")
+
+	res, err := client.MaterializeGateApproval(context.Background(), runID, execID, approvalID,
+		[]GatePRResultItem{{RowID: rowID, Kind: "MERGED"}})
+	require.NoError(t, err)
+	assert.Equal(t, GateMaterializeResponse{
+		Since:  since,
+		Issues: []GateIssueItem{{TaskID: taskID, GitRepoID: repoID, OwnerRepo: "acme/api", Title: "t", Body: "b"}},
+	}, res)
+}
+
+func TestMaterializeGateApproval_NoMergesSendsAnEmptyList(t *testing.T) {
+	_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"merges":[]}`, string(body))
+		w.Write([]byte(`{"since":"2026-10-14T09:00:00Z","issues":[]}`))
+	})
+
+	res, err := client.MaterializeGateApproval(context.Background(), uuid.New(), uuid.New(), uuid.New(), nil)
+	require.NoError(t, err)
+	assert.Empty(t, res.Issues)
+}
+
+// TestPlanGateFinalize_WritesRoadmapDecodesFalseWhenAbsent: an API that predates the split write
+// step omits the field, and the zero value is what keeps the workflow on one-step complete.
+func TestPlanGateFinalize_WritesRoadmapDecodesFalseWhenAbsent(t *testing.T) {
+	_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"outcome":"proceed","reason":null,"compares":[],"prs":[],"mergeMethod":null}`))
+	})
+
+	plan, err := client.PlanGateFinalize(context.Background(), uuid.New(), uuid.New(), uuid.New())
+	require.NoError(t, err)
+	assert.False(t, plan.WritesRoadmap)
+}
+
+func TestPlanGateFinalize_DecodesWritesRoadmap(t *testing.T) {
+	_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"outcome":"proceed","reason":null,"compares":[],"prs":[],"mergeMethod":null,"writesRoadmap":true}`))
+	})
+
+	plan, err := client.PlanGateFinalize(context.Background(), uuid.New(), uuid.New(), uuid.New())
+	require.NoError(t, err)
+	assert.True(t, plan.WritesRoadmap)
 }
 
 func TestRefuseGateApproval(t *testing.T) {
@@ -684,7 +766,11 @@ func gateFinalizeCalls(ctx context.Context, client *Client) map[string]func() er
 		"plan": func() error { _, err := client.PlanGateFinalize(ctx, run, exec, approval); return err },
 		"hold": func() error { _, err := client.HoldGateApproval(ctx, run, exec, approval, nil); return err },
 		"complete": func() error {
-			_, err := client.CompleteGateFinalize(ctx, run, exec, approval, nil)
+			_, err := client.CompleteGateFinalize(ctx, run, exec, approval, nil, nil)
+			return err
+		},
+		"materialize": func() error {
+			_, err := client.MaterializeGateApproval(ctx, run, exec, approval, nil)
 			return err
 		},
 		"refuse": func() error { return client.RefuseGateApproval(ctx, run, exec, approval, "no", nil) },

@@ -1713,8 +1713,9 @@ func gateAPIActivityOptions() workflow.ActivityOptions {
 	}
 }
 
-// gateCompleteActivityOptions: completing may file many roadmap issues. Cut off sooner, a retry
-// overlaps the attempt still writing and completes the gate without its roadmap note.
+// gateCompleteActivityOptions: the same 5-minute budget covers completing, writing a roadmap of
+// many tasks, and the one-step legacy path's own filing. Cut off sooner, a retry overlaps the
+// attempt still writing and completes the gate without its roadmap note.
 func gateCompleteActivityOptions() workflow.ActivityOptions {
 	opts := gateAPIActivityOptions()
 	opts.StartToCloseTimeout = 5 * time.Minute
@@ -1811,6 +1812,11 @@ func (f *gateFinalizer) settle(approvalID string, completionCh workflow.Channel)
 	}
 }
 
+// gateIssuesOnWorkerChange gates the roadmap-write-then-issue-filing branch. Called only inside
+// the plan.WritesRoadmap check below: a history that reached that point before this marker
+// existed must keep replaying the one-step complete it already recorded.
+const gateIssuesOnWorkerChange = "gate-issues-on-worker"
+
 func (f *gateFinalizer) finalize(approvalID string) (nodeCompletion, finalizeOutcome) {
 	ref := activity.GateApprovalRef{RunID: f.runID, NodeExecutionID: f.execID, ApprovalID: approvalID}
 
@@ -1852,9 +1858,59 @@ func (f *gateFinalizer) finalize(approvalID string) (nodeCompletion, finalizeOut
 		return f.hold(ref, gh.Compares)
 	}
 
+	// GetVersion is called only here: a history that passed this point before the marker existed
+	// recorded the one-step complete below and must keep replaying that command on every retry.
+	if plan.WritesRoadmap && workflow.GetVersion(f.ctx, gateIssuesOnWorkerChange, workflow.DefaultVersion, 1) >= 1 {
+		return f.writeFileComplete(ref, gh.Merges)
+	}
+
 	var done activity.GateStepResult
 	if err := workflow.ExecuteActivity(f.completeCtx, f.acts.CompleteGateFinalize,
 		activity.GateCompleteParams{GateApprovalRef: ref, Merges: gh.Merges},
+	).Get(f.ctx, &done); err != nil {
+		return f.stepFailed(err)
+	}
+	if done.Outcome != activity.GateStepCompleted {
+		return f.stepFailed(fmt.Errorf("complete answered %q", done.Outcome))
+	}
+	return f.ended(done), finalizeEnded
+}
+
+// writeFileComplete runs the split finalize path: the API writes the roadmap once and names the
+// issues it wants filed, the run's Worker files them, and the API completes with the results.
+// Filing is best-effort -- a failure here never refuses or fails the node, since the roadmap is
+// already written and nothing would be undone by holding the gate.
+func (f *gateFinalizer) writeFileComplete(ref activity.GateApprovalRef, merges []activity.GatePRResult) (nodeCompletion, finalizeOutcome) {
+	var m activity.GateMaterialized
+	if err := workflow.ExecuteActivity(f.completeCtx, f.acts.MaterializeGateApproval,
+		activity.GateMaterializeParams{GateApprovalRef: ref, Merges: merges},
+	).Get(f.ctx, &m); err != nil {
+		return f.stepFailed(err)
+	}
+
+	issues := make([]activity.GateIssueResult, 0, len(m.Issues))
+	if len(m.Issues) > 0 {
+		var filed activity.GateIssuesResult
+		if err := workflow.ExecuteActivity(f.gitHubCtx, f.acts.FileGateIssues, activity.GateIssueParams{
+			RunID: f.runID, NodeExecutionID: f.execID, Since: m.Since, Issues: m.Issues,
+		}).Get(f.ctx, &filed); err != nil {
+			if f.ctx.Err() != nil {
+				return nodeCompletion{}, finalizeAbandoned
+			}
+			workflow.GetLogger(f.ctx).Warn("Issue step failed; completing with every task unfiled",
+				"execID", f.execID, "approvalID", ref.ApprovalID, "err", err)
+			reason := issueStepFailure(err)
+			for _, want := range m.Issues {
+				issues = append(issues, activity.GateIssueResult{TaskID: want.TaskID, Failure: reason})
+			}
+		} else {
+			issues = filed.Issues
+		}
+	}
+
+	var done activity.GateStepResult
+	if err := workflow.ExecuteActivity(f.completeCtx, f.acts.CompleteGateFinalize,
+		activity.GateCompleteParams{GateApprovalRef: ref, Merges: merges, Issues: issues},
 	).Get(f.ctx, &done); err != nil {
 		return f.stepFailed(err)
 	}
@@ -1918,6 +1974,19 @@ func gitHubStepRefusal(err error) string {
 		return "Finalizing could not start: no Worker picked up the GitHub step."
 	}
 	return "Finalizing could not reach GitHub: the GitHub step did not finish in time."
+}
+
+// issueStepFailure is the per-task reason recorded when the issue step itself could not run. It
+// names only the failure's class, never err's text, which can carry the run's GitHub token.
+func issueStepFailure(err error) string {
+	var timeoutErr *temporal.TimeoutError
+	if !errors.As(err, &timeoutErr) {
+		return "the issue step kept failing"
+	}
+	if timeoutErr.TimeoutType() == enumspb.TIMEOUT_TYPE_SCHEDULE_TO_START {
+		return "no Worker picked up the issue step"
+	}
+	return "the issue step did not finish in time"
 }
 
 // buildPromptVariables builds the flat variable map for prompt template resolution.

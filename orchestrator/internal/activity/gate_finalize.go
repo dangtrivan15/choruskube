@@ -99,13 +99,48 @@ type GateApprovalRef struct {
 }
 
 // GatePlan.Outcome is GatePlanProceed, GatePlanHold or GatePlanRefused. Compares, PRs and
-// MergeMethod are the work to hand the Worker, and only a proceed carries any.
+// MergeMethod are the work to hand the Worker, and only a proceed carries any. WritesRoadmap is
+// false on an API that predates the split write step, which keeps the workflow on one-step complete.
 type GatePlan struct {
-	Outcome     string        `json:"outcome"`
-	Reason      string        `json:"reason"`
-	Compares    []GateCompare `json:"compares"`
-	PRs         []GatePR      `json:"prs"`
-	MergeMethod string        `json:"mergeMethod"`
+	Outcome       string        `json:"outcome"`
+	Reason        string        `json:"reason"`
+	Compares      []GateCompare `json:"compares"`
+	PRs           []GatePR      `json:"prs"`
+	MergeMethod   string        `json:"mergeMethod"`
+	WritesRoadmap bool          `json:"writesRoadmap"`
+}
+
+// GateIssue is one GitHub issue the roadmap write step asks the run's Worker to file, copied
+// field for field from the Worker's mirror of the same name.
+type GateIssue struct {
+	TaskID    uuid.UUID `json:"taskId"`
+	GitRepoID uuid.UUID `json:"gitRepoId"`
+	OwnerRepo string    `json:"ownerRepo"`
+	Title     string    `json:"title"`
+	Body      string    `json:"body"`
+}
+
+// GateIssueResult.Failure is set, and Number/URL left zero, when that issue was not filed.
+type GateIssueResult struct {
+	TaskID  uuid.UUID `json:"taskId"`
+	Number  int       `json:"number,omitempty"`
+	URL     string    `json:"url,omitempty"`
+	Failure string    `json:"failure,omitempty"`
+}
+
+// GateIssueParams is the Worker's issue step input, copied field for field from its mirror.
+// Since is the roadmap write's claim time: the Worker lists issues updated from that moment to
+// find one a retry already filed.
+type GateIssueParams struct {
+	RunID           uuid.UUID   `json:"runId"`
+	NodeExecutionID uuid.UUID   `json:"nodeExecutionId"`
+	Since           time.Time   `json:"since"`
+	Issues          []GateIssue `json:"issues"`
+}
+
+// GateIssuesResult is the Worker's issue step output, copied field for field from its mirror.
+type GateIssuesResult struct {
+	Issues []GateIssueResult `json:"issues"`
 }
 
 // GateStepResult.Outcome is GateStepCompleted, GateStepHeld or GateStepRefused; Reason explains
@@ -122,9 +157,25 @@ type GateHoldParams struct {
 	Compares []GateCompareResult `json:"compares"`
 }
 
+// GateCompleteParams.Issues is the issue step's per-task result, empty when nothing was requested.
 type GateCompleteParams struct {
 	GateApprovalRef
+	Merges []GatePRResult    `json:"merges"`
+	Issues []GateIssueResult `json:"issues"`
+}
+
+// GateMaterializeParams.Merges are the merges the Worker already made, recorded by the write
+// step before it writes the roadmap.
+type GateMaterializeParams struct {
+	GateApprovalRef
 	Merges []GatePRResult `json:"merges"`
+}
+
+// GateMaterialized.Since is the write step's claim time, passed to the issue step so a retry's
+// listing starts from the same moment. Issues is empty when the gate writes no roadmap.
+type GateMaterialized struct {
+	Since  time.Time   `json:"since"`
+	Issues []GateIssue `json:"issues"`
 }
 
 // GateRefuseParams.Merges are the merges the Worker made before it refused; the API records them
@@ -168,11 +219,12 @@ func (a *Activities) PlanGateFinalize(ctx context.Context, p GateApprovalRef) (G
 		return GatePlan{}, err
 	}
 	plan := GatePlan{
-		Outcome:     resp.Outcome,
-		Reason:      resp.Reason,
-		Compares:    make([]GateCompare, len(resp.Compares)),
-		PRs:         make([]GatePR, len(resp.PRs)),
-		MergeMethod: resp.MergeMethod,
+		Outcome:       resp.Outcome,
+		Reason:        resp.Reason,
+		Compares:      make([]GateCompare, len(resp.Compares)),
+		PRs:           make([]GatePR, len(resp.PRs)),
+		MergeMethod:   resp.MergeMethod,
+		WritesRoadmap: resp.WritesRoadmap,
 	}
 	for i, c := range resp.Compares {
 		plan.Compares[i] = GateCompare(c)
@@ -210,11 +262,39 @@ func (a *Activities) CompleteGateFinalize(ctx context.Context, p GateCompletePar
 	if err != nil {
 		return GateStepResult{}, err
 	}
-	resp, err := a.client.CompleteGateFinalize(ctx, p.RunID, p.NodeExecutionID, approvalID, prResultItems(p.Merges))
+	resp, err := a.client.CompleteGateFinalize(
+		ctx, p.RunID, p.NodeExecutionID, approvalID, prResultItems(p.Merges), issueResultItems(p.Issues))
 	if err != nil {
 		return GateStepResult{}, err
 	}
 	return GateStepResult(resp), nil
+}
+
+// MaterializeGateApproval runs the roadmap write step: it records the Worker's merges, writes the
+// roadmap once, and returns the issues it wants the Worker to file.
+func (a *Activities) MaterializeGateApproval(ctx context.Context, p GateMaterializeParams) (GateMaterialized, error) {
+	if err := guardRun(ctx, p.RunID); err != nil {
+		return GateMaterialized{}, err
+	}
+	approvalID, err := parseApprovalID(p.ApprovalID)
+	if err != nil {
+		return GateMaterialized{}, err
+	}
+	resp, err := a.client.MaterializeGateApproval(ctx, p.RunID, p.NodeExecutionID, approvalID, prResultItems(p.Merges))
+	if err != nil {
+		return GateMaterialized{}, err
+	}
+	issues := make([]GateIssue, len(resp.Issues))
+	for i, iss := range resp.Issues {
+		issues[i] = GateIssue(iss)
+	}
+	return GateMaterialized{Since: resp.Since, Issues: issues}, nil
+}
+
+// FileGateIssues is dispatched to the Worker's task queue and never runs here, exactly like
+// RunGateGitHubSteps: the orchestrator registers only this stub so the workflow can name it.
+func (a *Activities) FileGateIssues(_ context.Context, _ GateIssueParams) (GateIssuesResult, error) {
+	return GateIssuesResult{}, fmt.Errorf("activity dispatched to Worker task queue, not the orchestrator")
 }
 
 func (a *Activities) RefuseGateApproval(ctx context.Context, p GateRefuseParams) error {
@@ -226,6 +306,14 @@ func (a *Activities) RefuseGateApproval(ctx context.Context, p GateRefuseParams)
 		return err
 	}
 	return a.client.RefuseGateApproval(ctx, p.RunID, p.NodeExecutionID, approvalID, p.Reason, prResultItems(p.Merges))
+}
+
+func issueResultItems(issues []GateIssueResult) []apiclient.GateIssueResultItem {
+	items := make([]apiclient.GateIssueResultItem, len(issues))
+	for i, iss := range issues {
+		items[i] = apiclient.GateIssueResultItem(iss)
+	}
+	return items
 }
 
 func prResultItems(merges []GatePRResult) []apiclient.GatePRResultItem {

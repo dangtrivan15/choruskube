@@ -120,6 +120,20 @@ func (s *DAGExecutorTestSuite) expectComplete(g gateRun, approvalID string, merg
 	})).Return(result, nil).Once()
 }
 
+func (s *DAGExecutorTestSuite) expectMaterialize(g gateRun, approvalID string, merges []activity.GatePRResult, result activity.GateMaterialized) {
+	s.env.OnActivity("MaterializeGateApproval", mock.Anything, mock.MatchedBy(func(p activity.GateMaterializeParams) bool {
+		return p.GateApprovalRef == g.approval(approvalID) && reflect.DeepEqual(p.Merges, merges)
+	})).Return(result, nil).Once()
+}
+
+func (s *DAGExecutorTestSuite) expectCompleteWithIssues(
+	g gateRun, approvalID string, merges []activity.GatePRResult, issues []activity.GateIssueResult, result activity.GateStepResult,
+) {
+	s.env.OnActivity("CompleteGateFinalize", mock.Anything, mock.MatchedBy(func(p activity.GateCompleteParams) bool {
+		return p.GateApprovalRef == g.approval(approvalID) && reflect.DeepEqual(p.Merges, merges) && reflect.DeepEqual(p.Issues, issues)
+	})).Return(result, nil).Once()
+}
+
 func (s *DAGExecutorTestSuite) expectRefuse(g gateRun, approvalID string, reason func(string) bool, merges []activity.GatePRResult) {
 	s.env.OnActivity("RefuseGateApproval", mock.Anything, mock.MatchedBy(func(p activity.GateRefuseParams) bool {
 		return p.GateApprovalRef == g.approval(approvalID) && reason(p.Reason) && reflect.DeepEqual(p.Merges, merges)
@@ -679,6 +693,225 @@ func (s *DAGExecutorTestSuite) TestHumanGateSignalWithoutApprovalIdOnAsyncGate_i
 
 	s.assertCompleted()
 	s.env.AssertActivityNotCalled(s.T(), "PlanGateFinalize", mock.Anything, mock.Anything)
+}
+
+// --- Split finalize: the API writes the roadmap, the Worker files the issues it asked for ---
+
+// roadmapIssue returns a plan that proceeds with nothing to merge but writes a roadmap, and the
+// one task-issue request the write step hands back.
+func roadmapIssue() (activity.GatePlan, time.Time, activity.GateIssue) {
+	since := time.Date(2026, 10, 14, 9, 0, 0, 0, time.UTC)
+	issue := activity.GateIssue{TaskID: uuid.New(), GitRepoID: uuid.New(), OwnerRepo: "acme/app", Title: "Add logging", Body: "body"}
+	return activity.GatePlan{Outcome: activity.GatePlanProceed, WritesRoadmap: true}, since, issue
+}
+
+// TestHumanGateFinalizeWritesRoadmapThenFilesIssuesOnTheWorker: a plan that writes a roadmap runs
+// the write step on the orchestrator queue, files the requested issue on the run's Worker queue
+// with the GitHub step's options, and completes with the Worker's per-task result.
+func (s *DAGExecutorTestSuite) TestHumanGateFinalizeWritesRoadmapThenFilesIssuesOnTheWorker() {
+	g := s.newGateRun(3600)
+	plan, since, issue := roadmapIssue()
+	filed := activity.GateIssueResult{TaskID: issue.TaskID, Number: 1, URL: "https://github.com/acme/app/issues/1"}
+	starts := s.recordStarts(nil)
+
+	s.expectGateOpened(g, asyncMode)
+	s.expectCompleteWithIssues(g, "s1", nil, []activity.GateIssueResult{filed}, activity.GateStepResult{
+		Outcome: activity.GateStepCompleted, Result: "done", AttachmentRefs: "{}",
+	})
+	s.anyOtherStatusWrite()
+	s.expectPlan(g, "s1", plan)
+	s.expectMaterialize(g, "s1", nil, activity.GateMaterialized{Since: since, Issues: []activity.GateIssue{issue}})
+	s.env.OnActivity("FileGateIssues", mock.Anything, mock.MatchedBy(func(p activity.GateIssueParams) bool {
+		return p.RunID == g.runID && p.NodeExecutionID == g.exec && p.Since.Equal(since) &&
+			reflect.DeepEqual(p.Issues, []activity.GateIssue{issue})
+	})).Return(activity.GateIssuesResult{Issues: []activity.GateIssueResult{filed}}, nil).Once()
+	s.decisionReads(g, "no_decision")
+	s.signalGate(g, 0, "approved", "s1")
+
+	s.runGate(g)
+
+	s.assertCompleted()
+	materialize, _ := starts.of("MaterializeGateApproval")
+	s.Require().Len(materialize, 1)
+	s.Equal(5*time.Minute, materialize[0].StartToCloseTimeout)
+	s.NotEqual(finalizeWorkerQueue, materialize[0].TaskQueue)
+	fileIssues, _ := starts.of("FileGateIssues")
+	s.Require().Len(fileIssues, 1)
+	s.Equal(finalizeWorkerQueue, fileIssues[0].TaskQueue)
+	s.Equal(10*time.Minute, fileIssues[0].StartToCloseTimeout)
+	s.Equal(time.Minute, fileIssues[0].HeartbeatTimeout)
+}
+
+// TestHumanGateFinalizeNoIssuesSkipsTheWorkerIssueStep: a write step that asks for no issues
+// completes without ever scheduling the Worker's issue step.
+func (s *DAGExecutorTestSuite) TestHumanGateFinalizeNoIssuesSkipsTheWorkerIssueStep() {
+	g := s.newGateRun(3600)
+	plan, since, _ := roadmapIssue()
+
+	s.expectGateOpened(g, asyncMode)
+	s.expectCompleteWithIssues(g, "s1", nil, []activity.GateIssueResult{}, activity.GateStepResult{
+		Outcome: activity.GateStepCompleted, Result: "roadmap written", AttachmentRefs: "{}",
+	})
+	s.anyOtherStatusWrite()
+	s.expectPlan(g, "s1", plan)
+	s.expectMaterialize(g, "s1", nil, activity.GateMaterialized{Since: since, Issues: []activity.GateIssue{}})
+	s.decisionReads(g, "approved")
+	s.signalGate(g, 0, "approved", "s1")
+
+	s.runGate(g)
+
+	s.assertCompleted()
+	s.env.AssertActivityNotCalled(s.T(), "FileGateIssues", mock.Anything, mock.Anything)
+}
+
+// TestHumanGateFinalizeIssueStepNeverPickedUpStillCompletes: with no Worker polling the run's
+// queue, the issue step times out waiting to start and the gate still completes, with every
+// requested task recorded as not filed for a fixed reason.
+func (s *DAGExecutorTestSuite) TestHumanGateFinalizeIssueStepNeverPickedUpStillCompletes() {
+	g := s.newGateRun(3600)
+	plan, since, issue := roadmapIssue()
+
+	s.expectGateOpened(g, asyncMode)
+	s.expectCompleteWithIssues(g, "s1", nil,
+		[]activity.GateIssueResult{{TaskID: issue.TaskID, Failure: "no Worker picked up the issue step"}},
+		activity.GateStepResult{Outcome: activity.GateStepCompleted, Result: "done", AttachmentRefs: "{}"})
+	s.anyOtherStatusWrite()
+	s.expectPlan(g, "s1", plan)
+	s.expectMaterialize(g, "s1", nil, activity.GateMaterialized{Since: since, Issues: []activity.GateIssue{issue}})
+	s.env.OnActivity("FileGateIssues", mock.Anything, mock.Anything).
+		Return(activity.GateIssuesResult{}, temporal.NewTimeoutError(enumspb.TIMEOUT_TYPE_SCHEDULE_TO_START, nil))
+	s.decisionReads(g, "no_decision")
+	s.signalGate(g, 0, "approved", "s1")
+
+	s.runGate(g)
+
+	s.assertCompleted()
+	s.env.AssertActivityNumberOfCalls(s.T(), "FileGateIssues", 1)
+}
+
+// TestHumanGateFinalizeIssueStepKeepsFailingStillCompletes: an issue step that exhausts its
+// retries still completes the gate, with every requested task recorded as not filed.
+func (s *DAGExecutorTestSuite) TestHumanGateFinalizeIssueStepKeepsFailingStillCompletes() {
+	g := s.newGateRun(3600)
+	plan, since, issue := roadmapIssue()
+	starts := s.recordStarts(nil)
+
+	s.expectGateOpened(g, asyncMode)
+	s.expectCompleteWithIssues(g, "s1", nil,
+		[]activity.GateIssueResult{{TaskID: issue.TaskID, Failure: "the issue step kept failing"}},
+		activity.GateStepResult{Outcome: activity.GateStepCompleted, Result: "done", AttachmentRefs: "{}"})
+	s.anyOtherStatusWrite()
+	s.expectPlan(g, "s1", plan)
+	s.expectMaterialize(g, "s1", nil, activity.GateMaterialized{Since: since, Issues: []activity.GateIssue{issue}})
+	s.env.OnActivity("FileGateIssues", mock.Anything, mock.Anything).
+		Return(activity.GateIssuesResult{}, errors.New("github is unreachable"))
+	s.decisionReads(g, "no_decision")
+	s.signalGate(g, 0, "approved", "s1")
+
+	s.runGate(g)
+
+	s.assertCompleted()
+	_, at := starts.of("FileGateIssues")
+	s.assertBackoff(at, 5*time.Second, 10*time.Second, 20*time.Second, 40*time.Second)
+}
+
+// TestHumanGateFinalizePlanWithoutWritesRoadmapKeepsOneStepComplete: a plan that does not declare
+// writesRoadmap never runs the write or issue steps, even on a version that supports them.
+func (s *DAGExecutorTestSuite) TestHumanGateFinalizePlanWithoutWritesRoadmapKeepsOneStepComplete() {
+	g := s.newGateRun(3600)
+
+	s.expectGateOpened(g, asyncMode)
+	s.expectGateCompleted(g, "roadmap written", "{}")
+	s.anyOtherStatusWrite()
+	s.expectPlan(g, "s1", activity.GatePlan{Outcome: activity.GatePlanProceed})
+	s.env.OnActivity("CompleteGateFinalize", mock.Anything, mock.MatchedBy(func(p activity.GateCompleteParams) bool {
+		return p.GateApprovalRef == g.approval("s1") && len(p.Merges) == 0 && len(p.Issues) == 0
+	})).Return(activity.GateStepResult{
+		Outcome: activity.GateStepCompleted, Result: "roadmap written", AttachmentRefs: "{}",
+	}, nil).Once()
+	s.decisionReads(g, "approved")
+	s.signalGate(g, 0, "approved", "s1")
+
+	s.runGate(g)
+
+	s.assertCompleted()
+	s.env.AssertActivityNotCalled(s.T(), "MaterializeGateApproval", mock.Anything, mock.Anything)
+	s.env.AssertActivityNotCalled(s.T(), "FileGateIssues", mock.Anything, mock.Anything)
+}
+
+// TestHumanGateFinalizeOldVersionKeepsOneStepComplete: a history recorded before the version
+// marker keeps the one-step complete even when the plan now declares writesRoadmap.
+func (s *DAGExecutorTestSuite) TestHumanGateFinalizeOldVersionKeepsOneStepComplete() {
+	g := s.newGateRun(3600)
+	s.env.OnGetVersion(gateIssuesOnWorkerChange, workflow.DefaultVersion, 1).Return(workflow.DefaultVersion)
+
+	s.expectGateOpened(g, asyncMode)
+	s.expectGateCompleted(g, "roadmap written", "{}")
+	s.anyOtherStatusWrite()
+	s.expectPlan(g, "s1", activity.GatePlan{Outcome: activity.GatePlanProceed, WritesRoadmap: true})
+	s.env.OnActivity("CompleteGateFinalize", mock.Anything, mock.MatchedBy(func(p activity.GateCompleteParams) bool {
+		return p.GateApprovalRef == g.approval("s1") && len(p.Merges) == 0 && len(p.Issues) == 0
+	})).Return(activity.GateStepResult{
+		Outcome: activity.GateStepCompleted, Result: "roadmap written", AttachmentRefs: "{}",
+	}, nil).Once()
+	s.decisionReads(g, "approved")
+	s.signalGate(g, 0, "approved", "s1")
+
+	s.runGate(g)
+
+	s.assertCompleted()
+	s.env.AssertActivityNotCalled(s.T(), "MaterializeGateApproval", mock.Anything, mock.Anything)
+	s.env.AssertActivityNotCalled(s.T(), "FileGateIssues", mock.Anything, mock.Anything)
+}
+
+// TestHumanGateFinalizeRejectedMaterializeFailsTheNode: an API step the API rejects outright
+// fails the node once, instead of retrying or sending the gate back to waiting.
+func (s *DAGExecutorTestSuite) TestHumanGateFinalizeRejectedMaterializeFailsTheNode() {
+	g := s.newGateRun(3600)
+	plan, _, _ := roadmapIssue()
+
+	s.expectGateOpened(g, asyncMode)
+	s.expectGateFailed(g, "finalize approval")
+	s.anyOtherStatusWrite()
+	s.expectPlan(g, "s1", plan)
+	s.env.OnActivity("MaterializeGateApproval", mock.Anything, mock.Anything).Return(activity.GateMaterialized{},
+		temporal.NewNonRetryableApplicationError("materialize: 409 approval is not finalizing", "GateFinalizeRejected", nil))
+	s.signalGate(g, 0, "approved", "s1")
+
+	s.runGate(g)
+
+	s.assertCompleted()
+	s.env.AssertActivityNumberOfCalls(s.T(), "MaterializeGateApproval", 1)
+	s.env.AssertActivityNotCalled(s.T(), "FileGateIssues", mock.Anything, mock.Anything)
+	s.env.AssertActivityNotCalled(s.T(), "CompleteGateFinalize", mock.Anything, mock.Anything)
+}
+
+// TestHumanGateFinalizeCancelledDuringIssueStepAbandons: cancelling the run mid-issue-step ends
+// the gate's wait without completing the approval; the run's end voids it on the API.
+func (s *DAGExecutorTestSuite) TestHumanGateFinalizeCancelledDuringIssueStepAbandons() {
+	g := s.newGateRun(3600)
+	plan, since, issue := roadmapIssue()
+	s.recordStarts(func(info *temporalactivity.Info) {
+		if info.ActivityType.Name == "FileGateIssues" {
+			s.env.RegisterDelayedCallback(func() { s.env.SignalWorkflow(SignalCancel, nil) }, time.Minute)
+		}
+	})
+
+	s.expectGateOpened(g, asyncMode)
+	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.MatchedBy(func(p activity.UpdateNodeExecStatusParams) bool {
+		return p.NodeExecutionID == g.exec && p.Status == "skipped"
+	})).Return(nil).Once()
+	s.anyOtherStatusWrite()
+	s.expectPlan(g, "s1", plan)
+	s.expectMaterialize(g, "s1", nil, activity.GateMaterialized{Since: since, Issues: []activity.GateIssue{issue}})
+	s.env.OnActivity("FileGateIssues", mock.Anything, mock.Anything).
+		Return(activity.GateIssuesResult{}, nil).After(time.Hour)
+	s.signalGate(g, 0, "approved", "s1")
+
+	s.runGate(g)
+
+	s.assertCompleted()
+	s.env.AssertActivityNotCalled(s.T(), "CompleteGateFinalize", mock.Anything, mock.Anything)
 }
 
 // gateWaitAlone runs one asynchronous gate's wait outside DAGExecutorWorkflow, whose loop has no
