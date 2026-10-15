@@ -15,6 +15,7 @@ import com.choruskube.core.dto.MaterializationSummary;
 import com.choruskube.core.dto.MilestoneResponse;
 import com.choruskube.core.dto.RoadmapCandidatesDocument;
 import com.choruskube.core.dto.StoryResponse;
+import com.choruskube.core.dto.TaskIssueTarget;
 import com.choruskube.core.dto.TaskResponse;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.TaskGithubIssue;
@@ -101,14 +102,14 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
 
     @Override
     public MaterializationSummary materialize(
-            UUID runId, RoadmapCandidatesDocument document, RoadmapMaterializeMode mode) {
-        return materialize(
-                new RunWriter(internalRunService, runId), document, mode == RoadmapMaterializeMode.roadmap_extension);
+            UUID runId, RoadmapCandidatesDocument document, RoadmapMaterializeMode mode, IssueFiling filing) {
+        IssueFiling effectiveFiling = mode == RoadmapMaterializeMode.roadmap_extension ? filing : null;
+        return materialize(new RunWriter(internalRunService, runId), document, effectiveFiling);
     }
 
     @Override
     public MaterializationSummary materialize(RoadmapItemWriter writer, RoadmapCandidatesDocument document) {
-        return materialize(writer, document, false);
+        return materialize(writer, document, null);
     }
 
     /** The gate path: JOB_SECRET-safe writes, each scoped to the run's own project and org. */
@@ -140,34 +141,41 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
         }
     }
 
+    /** {@code filing}: null means this mode never files a GitHub issue — {@code candidates} mode or an import. */
     private MaterializationSummary materialize(
-            RoadmapItemWriter writer, RoadmapCandidatesDocument document, boolean fileGithubIssues) {
+            RoadmapItemWriter writer, RoadmapCandidatesDocument document, IssueFiling filing) {
         List<UUID> createdEpicIds = new ArrayList<>();
         List<UUID> createdStoryIds = new ArrayList<>();
         List<UUID> createdTaskIds = new ArrayList<>();
         List<UUID> createdMilestoneIds = new ArrayList<>();
         List<String> errors = new ArrayList<>();
+        List<TaskIssueTarget> issueTargets = new ArrayList<>();
 
         if (document == null) {
             return new MaterializationSummary(
-                    createdEpicIds, createdStoryIds, createdTaskIds, createdMilestoneIds, 0, errors);
+                    createdEpicIds, createdStoryIds, createdTaskIds, createdMilestoneIds, 0, errors, issueTargets);
         }
 
         Map<String, UUID> milestoneIdByKey = new HashMap<>();
         materializeMilestones(writer, document.milestones(), createdMilestoneIds, milestoneIdByKey, errors);
 
         Map<String, ItemRef> itemByKey = new HashMap<>();
+        // Resolved once per materialization, not once per Task: ON_API's fileGithubIssue keeps its
+        // own per-task resolution below, so only BY_WORKER's issueTarget needs this.
+        RepoResolution repoResolution = filing == IssueFiling.BY_WORKER ? resolveReposOnce(writer) : null;
         List<CandidateEpicProposal> epics = document.epics();
         if (epics != null) {
             for (CandidateEpicProposal candidate : epics) {
                 materializeEpic(
                         writer,
                         candidate,
-                        fileGithubIssues,
+                        filing,
+                        repoResolution,
                         createdEpicIds,
                         createdStoryIds,
                         createdTaskIds,
                         errors,
+                        issueTargets,
                         milestoneIdByKey,
                         itemByKey);
             }
@@ -176,7 +184,24 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
         int createdDependencyCount = materializeDependencies(writer, document.dependencies(), itemByKey, errors);
 
         return new MaterializationSummary(
-                createdEpicIds, createdStoryIds, createdTaskIds, createdMilestoneIds, createdDependencyCount, errors);
+                createdEpicIds,
+                createdStoryIds,
+                createdTaskIds,
+                createdMilestoneIds,
+                createdDependencyCount,
+                errors,
+                issueTargets);
+    }
+
+    /** Either the resolved repos, or the failure resolving them — carried per-task so each failed Task names itself. */
+    private record RepoResolution(List<GitRepo> repos, RuntimeException failure) {}
+
+    private RepoResolution resolveReposOnce(RoadmapItemWriter writer) {
+        try {
+            return new RepoResolution(internalRunService.resolveRepos(writer.softwareProjectId()), null);
+        } catch (RuntimeException e) {
+            return new RepoResolution(null, e);
+        }
     }
 
     /**
@@ -259,11 +284,13 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
     private void materializeEpic(
             RoadmapItemWriter writer,
             CandidateEpicProposal candidate,
-            boolean fileGithubIssues,
+            IssueFiling filing,
+            RepoResolution repoResolution,
             List<UUID> createdEpicIds,
             List<UUID> createdStoryIds,
             List<UUID> createdTaskIds,
             List<String> errors,
+            List<TaskIssueTarget> issueTargets,
             Map<String, UUID> milestoneIdByKey,
             Map<String, ItemRef> itemByKey) {
         if (candidate == null) {
@@ -309,10 +336,12 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
                             writer,
                             epicId,
                             story,
-                            fileGithubIssues,
+                            filing,
+                            repoResolution,
                             createdStoryIds,
                             createdTaskIds,
                             errors,
+                            issueTargets,
                             itemByKey);
                 } catch (Exception e) {
                     String storyTitle = story != null ? story.title() : "<null>";
@@ -330,10 +359,12 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
             RoadmapItemWriter writer,
             UUID epicId,
             CandidateStoryProposal story,
-            boolean fileGithubIssues,
+            IssueFiling filing,
+            RepoResolution repoResolution,
             List<UUID> createdStoryIds,
             List<UUID> createdTaskIds,
             List<String> errors,
+            List<TaskIssueTarget> issueTargets,
             Map<String, ItemRef> itemByKey) {
         UUID storyId;
         if (story.existingId() != null) {
@@ -353,7 +384,17 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
         List<CandidateTaskProposal> tasks = story.tasks();
         if (tasks != null) {
             for (CandidateTaskProposal task : tasks) {
-                materializeTask(writer, epicId, storyId, task, fileGithubIssues, createdTaskIds, errors, itemByKey);
+                materializeTask(
+                        writer,
+                        epicId,
+                        storyId,
+                        task,
+                        filing,
+                        repoResolution,
+                        createdTaskIds,
+                        errors,
+                        issueTargets,
+                        itemByKey);
             }
         }
     }
@@ -363,9 +404,11 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
             UUID epicId,
             UUID storyId,
             CandidateTaskProposal task,
-            boolean fileGithubIssues,
+            IssueFiling filing,
+            RepoResolution repoResolution,
             List<UUID> createdTaskIds,
             List<String> errors,
+            List<TaskIssueTarget> issueTargets,
             Map<String, ItemRef> itemByKey) {
         if (task.existingId() != null) {
             if (task.key() != null) {
@@ -382,8 +425,36 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
         if (task.key() != null) {
             itemByKey.put(task.key(), new ItemRef(BlockableItemType.task, createdTask.id()));
         }
-        if (fileGithubIssues) {
+        if (filing == IssueFiling.ON_API) {
             fileGithubIssue(writer, createdTask, task.repoId(), errors);
+        } else if (filing == IssueFiling.BY_WORKER) {
+            issueTarget(repoResolution, createdTask, task.repoId(), errors, issueTargets);
+        }
+    }
+
+    /**
+     * Resolves a newly-created Task's repo/title/body for the run's Worker to file, mirroring
+     * {@link #fileGithubIssue}'s resolution but never calling {@code GitHubAppService} or {@code
+     * GitHubCredentialResolver} — the Worker holds the credential, not the API.
+     */
+    private void issueTarget(
+            RepoResolution repoResolution,
+            TaskResponse createdTask,
+            UUID candidateRepoId,
+            List<String> errors,
+            List<TaskIssueTarget> issueTargets) {
+        try {
+            if (repoResolution.failure() != null) {
+                throw repoResolution.failure();
+            }
+            GitRepo repo = resolveRepoForTask(repoResolution.repos(), candidateRepoId);
+            String ownerRepo = RepoNameUtil.deriveOwnerRepoName(repo.getUrl());
+            issueTargets.add(new TaskIssueTarget(
+                    createdTask.id(), repo.getId(), ownerRepo, createdTask.title(), createdTask.description()));
+        } catch (Exception e) {
+            String message = "Failed to file GitHub issue for Task '" + createdTask.title() + "': " + e.getMessage();
+            logger.warn(message, e);
+            errors.add(message);
         }
     }
 

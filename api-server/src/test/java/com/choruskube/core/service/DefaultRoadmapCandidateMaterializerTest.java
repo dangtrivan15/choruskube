@@ -20,6 +20,7 @@ import com.choruskube.core.dto.MaterializationSummary;
 import com.choruskube.core.dto.MilestoneResponse;
 import com.choruskube.core.dto.RoadmapCandidatesDocument;
 import com.choruskube.core.dto.StoryResponse;
+import com.choruskube.core.dto.TaskIssueTarget;
 import com.choruskube.core.dto.TaskResponse;
 import com.choruskube.core.exception.DependencyCycleException;
 import com.choruskube.core.model.GitRepo;
@@ -787,6 +788,123 @@ class DefaultRoadmapCandidateMaterializerTest {
 
         materialize(materializer, runId, document(null, List.of(candidate), null));
 
+        verifyNoInteractions(gitHubAppService, gitHubCredentialResolver, taskGithubIssueRepository);
+    }
+
+    // -----------------------------------------------------------------------
+    // BY_WORKER filing (roadmap_extension mode only)
+    // -----------------------------------------------------------------------
+
+    @Test
+    void byWorker_newTask_collectsTarget_neverCallsGitHub_noLinkage() {
+        UUID epicId = UUID.randomUUID();
+        UUID storyId = UUID.randomUUID();
+        UUID taskId = UUID.randomUUID();
+        GitRepo repo = repo("https://github.com/acme/widgets");
+        stubOneNewTask(epicId, storyId, taskId);
+        when(internalRunService.resolveSoftwareProjectId(runId)).thenReturn(softwareProjectId);
+        when(internalRunService.resolveRepos(softwareProjectId)).thenReturn(List.of(repo));
+
+        CandidateEpicProposal candidate = epic(
+                "Bulk Import",
+                null,
+                List.of(story("Story 1", List.of(task("Task 1", null, null)), null, null)),
+                null,
+                null);
+
+        MaterializationSummary summary = materializer.materialize(
+                runId,
+                document(null, List.of(candidate), null),
+                RoadmapMaterializeMode.roadmap_extension,
+                RoadmapCandidateMaterializer.IssueFiling.BY_WORKER);
+
+        assertThat(summary.errors()).isEmpty();
+        assertThat(summary.issueTargets())
+                .containsExactly(new TaskIssueTarget(taskId, repo.getId(), "acme/widgets", "Task 1", "t-desc"));
+        verifyNoInteractions(gitHubAppService, gitHubCredentialResolver, taskGithubIssueRepository);
+    }
+
+    @Test
+    void byWorker_multiRepo_targetsTheTasksRepoId() {
+        UUID epicId = UUID.randomUUID();
+        UUID storyId = UUID.randomUUID();
+        UUID taskId = UUID.randomUUID();
+        GitRepo backend = repo("https://github.com/acme/backend");
+        GitRepo frontend = repo("https://github.com/acme/frontend");
+        stubOneNewTask(epicId, storyId, taskId);
+        when(internalRunService.resolveSoftwareProjectId(runId)).thenReturn(softwareProjectId);
+        when(internalRunService.resolveRepos(softwareProjectId)).thenReturn(List.of(backend, frontend));
+
+        CandidateEpicProposal candidate = epic(
+                "Bulk Import",
+                null,
+                List.of(story("Story 1", List.of(task("Task 1", null, null, frontend.getId())), null, null)),
+                null,
+                null);
+
+        MaterializationSummary summary = materializer.materialize(
+                runId,
+                document(null, List.of(candidate), null),
+                RoadmapMaterializeMode.roadmap_extension,
+                RoadmapCandidateMaterializer.IssueFiling.BY_WORKER);
+
+        assertThat(summary.errors()).isEmpty();
+        assertThat(summary.issueTargets())
+                .containsExactly(new TaskIssueTarget(taskId, frontend.getId(), "acme/frontend", "Task 1", "t-desc"));
+        verifyNoInteractions(gitHubAppService, gitHubCredentialResolver, taskGithubIssueRepository);
+    }
+
+    @Test
+    void byWorker_multiRepoNoRepoId_recordsError_noTarget() {
+        UUID epicId = UUID.randomUUID();
+        UUID storyId = UUID.randomUUID();
+        UUID taskId = UUID.randomUUID();
+        stubOneNewTask(epicId, storyId, taskId);
+        when(internalRunService.resolveSoftwareProjectId(runId)).thenReturn(softwareProjectId);
+        when(internalRunService.resolveRepos(softwareProjectId))
+                .thenReturn(List.of(repo("https://github.com/acme/backend"), repo("https://github.com/acme/frontend")));
+
+        CandidateEpicProposal candidate = epic(
+                "Bulk Import",
+                null,
+                List.of(story("Story 1", List.of(task("Task 1", null, null)), null, null)),
+                null,
+                null);
+
+        MaterializationSummary summary = materializer.materialize(
+                runId,
+                document(null, List.of(candidate), null),
+                RoadmapMaterializeMode.roadmap_extension,
+                RoadmapCandidateMaterializer.IssueFiling.BY_WORKER);
+
+        assertThat(summary.createdTaskIds()).containsExactly(taskId);
+        assertThat(summary.issueTargets()).isEmpty();
+        assertThat(summary.errors()).singleElement().asString().contains("no repoId was given");
+        verifyNoInteractions(gitHubAppService, gitHubCredentialResolver, taskGithubIssueRepository);
+    }
+
+    @Test
+    void byWorker_candidatesMode_collectsNothing() {
+        UUID epicId = UUID.randomUUID();
+        UUID storyId = UUID.randomUUID();
+        UUID taskId = UUID.randomUUID();
+        stubOneNewTask(epicId, storyId, taskId);
+
+        CandidateEpicProposal candidate = epic(
+                "Bulk Import",
+                null,
+                List.of(story("Story 1", List.of(task("Task 1", null, null)), null, null)),
+                null,
+                null);
+
+        MaterializationSummary summary = materializer.materialize(
+                runId,
+                document(null, List.of(candidate), null),
+                RoadmapMaterializeMode.roadmap_candidates,
+                RoadmapCandidateMaterializer.IssueFiling.BY_WORKER);
+
+        assertThat(summary.issueTargets()).isEmpty();
+        verify(internalRunService, never()).resolveRepos(any());
         verifyNoInteractions(gitHubAppService, gitHubCredentialResolver, taskGithubIssueRepository);
     }
 

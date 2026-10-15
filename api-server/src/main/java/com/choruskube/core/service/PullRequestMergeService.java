@@ -22,6 +22,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -226,28 +227,39 @@ public class PullRequestMergeService {
     /**
      * The result half of {@link #mergeAll}, for merges a Worker performed: joins its answers to
      * the plan's rows by id and audits the pull requests it merged. An answer for a row the plan
-     * never listed is dropped, so a stray id cannot mark an unrelated row merged.
+     * never listed is dropped, so a stray id cannot mark an unrelated row merged. A row the plan
+     * already lists as {@code alreadyMerged} — recorded by an earlier write step — keeps the
+     * Worker's own kind for display but is never added to the audited list, so the merge an
+     * earlier step already audited is not audited a second time.
      */
     public MergeOutcome outcomeOf(UUID runId, MergePlan plan, List<WorkerPrResult> results, UUID heldApprovalId) {
         Map<UUID, PrRef> inspected =
                 plan.toInspect().stream().collect(Collectors.toMap(PrRef::rowId, Function.identity(), (a, b) -> a));
-        List<Result> allResults = new ArrayList<>(plan.alreadyMerged());
+        Map<UUID, Result> alreadyMerged = plan.alreadyMerged().stream()
+                .collect(Collectors.toMap(r -> r.pr().rowId(), Function.identity(), (a, b) -> a, LinkedHashMap::new));
+        List<Result> allResults = new ArrayList<>();
         List<Result> merged = new ArrayList<>();
         for (WorkerPrResult worker : results) {
             PrRef ref = inspected.get(worker.rowId());
-            if (ref == null) {
-                log.warn(
-                        "Run {}: dropping a Worker result for pull request row {}, which was not planned",
-                        runId,
-                        worker.rowId());
+            if (ref != null) {
+                Result result = new Result(ref, worker.kind(), worker.mergedAt(), worker.mergeSha());
+                allResults.add(result);
+                if (worker.kind() == Kind.MERGED) {
+                    merged.add(result);
+                }
                 continue;
             }
-            Result result = new Result(ref, worker.kind(), worker.mergedAt(), worker.mergeSha());
-            allResults.add(result);
-            if (worker.kind() == Kind.MERGED) {
-                merged.add(result);
+            Result priorRow = alreadyMerged.remove(worker.rowId());
+            if (priorRow != null) {
+                allResults.add(new Result(priorRow.pr(), worker.kind(), worker.mergedAt(), worker.mergeSha()));
+                continue;
             }
+            log.warn(
+                    "Run {}: dropping a Worker result for pull request row {}, which was not planned",
+                    runId,
+                    worker.rowId());
         }
+        allResults.addAll(alreadyMerged.values());
         audit(runId, plan.method(), merged, null, heldApprovalId);
         return new MergeOutcome(plan.method(), allResults);
     }

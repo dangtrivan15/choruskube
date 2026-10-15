@@ -3,6 +3,8 @@ package com.choruskube.core.controller;
 import com.choruskube.core.dto.GateFinalizeDtos.CompleteRequest;
 import com.choruskube.core.dto.GateFinalizeDtos.HeldClaim;
 import com.choruskube.core.dto.GateFinalizeDtos.HoldRequest;
+import com.choruskube.core.dto.GateFinalizeDtos.MaterializeRequest;
+import com.choruskube.core.dto.GateFinalizeDtos.MaterializeResponse;
 import com.choruskube.core.dto.GateFinalizeDtos.PlanResponse;
 import com.choruskube.core.dto.GateFinalizeDtos.RefuseRequest;
 import com.choruskube.core.dto.GateFinalizeDtos.StepResult;
@@ -59,6 +61,19 @@ public class InternalGateFinalizeController {
                 () -> service.hold(runId, execId, approvalId, orEmpty(request == null ? null : request.compares())));
     }
 
+    @PostMapping("/{approvalId}/materialize")
+    public MaterializeResponse materialize(
+            @PathVariable UUID runId,
+            @PathVariable UUID execId,
+            @PathVariable UUID approvalId,
+            @RequestBody(required = false) MaterializeRequest request) {
+        return inScope(
+                runId,
+                execId,
+                () -> service.materialize(
+                        runId, execId, approvalId, orEmpty(request == null ? null : request.merges())));
+    }
+
     @PostMapping("/{approvalId}/complete")
     public StepResult complete(
             @PathVariable UUID runId,
@@ -68,7 +83,12 @@ public class InternalGateFinalizeController {
         return inScope(
                 runId,
                 execId,
-                () -> service.complete(runId, execId, approvalId, orEmpty(request == null ? null : request.merges())));
+                () -> service.complete(
+                        runId,
+                        execId,
+                        approvalId,
+                        orEmpty(request == null ? null : request.merges()),
+                        orEmpty(request == null ? null : request.issues())));
     }
 
     @PostMapping("/{approvalId}/refuse")

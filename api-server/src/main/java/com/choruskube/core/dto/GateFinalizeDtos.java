@@ -16,9 +16,18 @@ public final class GateFinalizeDtos {
     /** {@code approvalId} is null when no held approval applies to the gate. */
     public record HeldClaim(UUID approvalId) {}
 
-    /** {@code outcome}: {@code proceed}, {@code hold} or {@code refused} (with {@code reason}). */
+    /**
+     * {@code outcome}: {@code proceed}, {@code hold} or {@code refused} (with {@code reason}).
+     * {@code writesRoadmap} is the orchestrator's capability signal for the split write-then-file
+     * protocol; an older API omits it, which the orchestrator decodes as {@code false}.
+     */
     public record PlanResponse(
-            String outcome, String reason, List<CompareItem> compares, List<PrItem> prs, String mergeMethod) {}
+            String outcome,
+            String reason,
+            List<CompareItem> compares,
+            List<PrItem> prs,
+            String mergeMethod,
+            boolean writesRoadmap) {}
 
     public record CompareItem(UUID gitRepoId, String ownerRepo, String branch, String baseSha) {}
 
@@ -28,7 +37,18 @@ public final class GateFinalizeDtos {
 
     public record CompareResultItem(UUID gitRepoId, int aheadBy, boolean baseGone) {}
 
-    public record CompleteRequest(List<PrResultItem> merges) {}
+    public record CompleteRequest(List<PrResultItem> merges, List<IssueResultItem> issues) {}
+
+    public record MaterializeRequest(List<PrResultItem> merges) {}
+
+    /** {@code since}: the write step's claim time, the lower bound the Worker lists issues from. */
+    public record MaterializeResponse(Instant since, List<IssueRequest> issues) {}
+
+    /** One GitHub issue the write step asks the Worker to file for a newly-created Task. */
+    public record IssueRequest(UUID taskId, UUID gitRepoId, String ownerRepo, String title, String body) {}
+
+    /** {@code failure} is set, instead of {@code number}/{@code url}, when the Worker could not file it. */
+    public record IssueResultItem(UUID taskId, Integer number, String url, String failure) {}
 
     /** {@code kind}: {@code MERGED}, {@code ALREADY_MERGED} or {@code SKIPPED_CLOSED}; anything else is a 400. */
     public record PrResultItem(UUID rowId, String kind, Instant mergedAt, String mergeSha) {}

@@ -925,7 +925,24 @@ public class RunService {
     /** Performs a runnable plan's materialization and builds its result note. Not idempotent. */
     String materializeAndNote(UUID runId, MaterializationPlan plan) {
         MaterializationSummary summary = roadmapCandidateMaterializer.materialize(runId, plan.source(), plan.mode());
-        String note = plan.mode() == RoadmapMaterializeMode.roadmap_candidates
+        return noteFor(plan.mode(), summary);
+    }
+
+    /** The write step's result: the same note text {@link #materializeAndNote} builds, plus what to hand the Worker. */
+    record MaterializationOutcome(String note, List<TaskIssueTarget> issueTargets) {}
+
+    /**
+     * The split-protocol write step: materializes with {@link RoadmapCandidateMaterializer.IssueFiling#BY_WORKER},
+     * so no GitHub call happens here — the returned targets are what the run's Worker must file.
+     */
+    MaterializationOutcome materializeForWorker(UUID runId, MaterializationPlan plan) {
+        MaterializationSummary summary = roadmapCandidateMaterializer.materialize(
+                runId, plan.source(), plan.mode(), RoadmapCandidateMaterializer.IssueFiling.BY_WORKER);
+        return new MaterializationOutcome(noteFor(plan.mode(), summary), summary.issueTargets());
+    }
+
+    private static String noteFor(RoadmapMaterializeMode mode, MaterializationSummary summary) {
+        String note = mode == RoadmapMaterializeMode.roadmap_candidates
                 ? "Materialized " + summary.materializedCount() + " Epics ("
                         + summary.createdStoryIds().size() + " Stories, "
                         + summary.createdTaskIds().size() + " Tasks, "

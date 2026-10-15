@@ -66,6 +66,11 @@ public class GateStamp {
     @Column(name = "materialization_note")
     private String materializationNote;
 
+    /** The issues the roadmap write asked the Worker to file; null until that step runs. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "issue_requests", columnDefinition = "jsonb")
+    private String issueRequests;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -220,5 +225,13 @@ public class GateStamp {
 
     public void setMaterializationNote(String materializationNote) {
         this.materializationNote = materializationNote;
+    }
+
+    public String getIssueRequests() {
+        return issueRequests;
+    }
+
+    public void setIssueRequests(String issueRequests) {
+        this.issueRequests = issueRequests;
     }
 }
