@@ -51,8 +51,8 @@ type GateIssuesResult struct {
 }
 
 const (
-	// maxIssueBodyRunes leaves room for the key appended after it; GitHub's own issue body limit
-	// is far larger, so this only bounds what the Worker sends, not what GitHub would accept.
+	// maxIssueBodyRunes sits under GitHub's 65,536-character body limit by enough to fit the key
+	// appended after it; a body over the limit is refused, and the task left without an issue.
 	maxIssueBodyRunes  = 65000
 	maxIssueTitleRunes = 256
 	// issueLookupSkew covers clock skew between the write step's claim and GitHub's own clock, so
@@ -167,7 +167,6 @@ func (f *issueFiler) run(ctx context.Context, p GateIssueParams) (GateIssuesResu
 		repoTasks[repo] = append(repoTasks[repo], id)
 	}
 
-	found := map[uuid.UUID]github.Issue{}
 	since := p.Since.Add(-issueLookupSkew)
 	for _, repo := range repoOrder {
 		issues, err := f.gh.IssuesSince(ctx, f.token, repo, since, func(page int) {
@@ -186,13 +185,13 @@ func (f *issueFiler) run(ctx context.Context, p GateIssueParams) (GateIssuesResu
 			}
 			return GateIssuesResult{}, fmt.Errorf("list issues for %s: %w", repo, err)
 		}
-		for _, iss := range issues {
-			id, ok := taskKeyIn(iss.Body)
-			if !ok {
-				continue
-			}
-			if existing, have := found[id]; !have || iss.Number < existing.Number {
-				found[id] = iss
+		// Matched only against this repo's own tasks: a key quoted in another repo's issue would
+		// link that repo's issue number here, and closing the task closes it. Recorded at once, so
+		// a later failure on the last attempt cannot report an issue that exists as unfiled.
+		found := lowestKeyedIssues(issues)
+		for _, id := range repoTasks[repo] {
+			if iss, ok := found[id]; ok {
+				outcome[id] = GateIssueResult{TaskID: id, Number: iss.Number, URL: iss.HTMLURL}
 			}
 		}
 	}
@@ -202,10 +201,6 @@ func (f *issueFiler) run(ctx context.Context, p GateIssueParams) (GateIssuesResu
 			continue
 		}
 		recordHeartbeat(ctx, issueHeartbeat{Phase: "file", Index: i})
-		if iss, ok := found[id]; ok {
-			outcome[id] = GateIssueResult{TaskID: id, Number: iss.Number, URL: iss.HTMLURL}
-			continue
-		}
 		item := byTask[id]
 		iss, err := f.gh.CreateIssue(ctx, f.token, item.OwnerRepo,
 			truncateRunes(item.Title, maxIssueTitleRunes), issueBody(item.Body, id))
@@ -225,6 +220,22 @@ func (f *issueFiler) run(ctx context.Context, p GateIssueParams) (GateIssuesResu
 	}
 
 	return orderedIssueResult(order, outcome), nil
+}
+
+// lowestKeyedIssues maps each task key in one repo's listing to the lowest-numbered issue carrying
+// it: the original, since an issue that later quotes the key has a higher number.
+func lowestKeyedIssues(issues []github.Issue) map[uuid.UUID]github.Issue {
+	found := map[uuid.UUID]github.Issue{}
+	for _, iss := range issues {
+		id, ok := taskKeyIn(iss.Body)
+		if !ok {
+			continue
+		}
+		if existing, have := found[id]; !have || iss.Number < existing.Number {
+			found[id] = iss
+		}
+	}
+	return found
 }
 
 // dedupeGateIssues keeps the first occurrence of each task id, and the order requests first named it.

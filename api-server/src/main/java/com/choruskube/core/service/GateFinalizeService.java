@@ -661,6 +661,9 @@ public class GateFinalizeService {
         if (result != null && result.failure() != null) {
             return capAt(result.failure(), ISSUE_FAILURE_MAX_CHARS);
         }
+        if (result != null) {
+            return "the Worker's result could not be linked";
+        }
         return handedOverTaskIds.contains(request.taskId())
                 ? "no result from the Worker"
                 : "too large to hand to the Worker";

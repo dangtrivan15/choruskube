@@ -1174,7 +1174,34 @@ class GateFinalizeServiceTest {
 
         StepResult result = service.complete(runId, gateExecId, approvalId, List.of(), issues);
 
-        assertThat(result.result()).contains("GitHub issues: filed 0 of 1.");
+        assertThat(result.result())
+                .contains("GitHub issues: filed 0 of 1.")
+                .contains("\"Task A\" (the Worker's result could not be linked)");
+        verify(taskGithubIssueRepo, never()).save(any());
+    }
+
+    @Test
+    void complete_split_capsFailureText_andSummarizesUnfiledPastFive() throws Exception {
+        snapshot(MATERIALIZE_GATE);
+        UUID splitRepoId = UUID.randomUUID();
+        List<IssueRequest> requests = new ArrayList<>();
+        List<IssueResultItem> issues = new ArrayList<>();
+        for (int i = 1; i <= 7; i++) {
+            UUID taskId = UUID.randomUUID();
+            requests.add(new IssueRequest(taskId, splitRepoId, "acme/app", "Task " + i, "body"));
+            issues.add(new IssueResultItem(taskId, null, null, i == 1 ? "x".repeat(400) : "refused"));
+        }
+        stamp.setIssueRequests(objectMapper.writeValueAsString(requests));
+        consumesOnCall();
+
+        StepResult result = service.complete(runId, gateExecId, approvalId, List.of(), issues);
+
+        assertThat(result.result())
+                .contains("GitHub issues: filed 0 of 7.")
+                .contains("\"Task 1\" (" + "x".repeat(300) + ")")
+                .doesNotContain("x".repeat(301))
+                .contains("\"Task 5\" (refused); and 2 more")
+                .doesNotContain("Task 6");
         verify(taskGithubIssueRepo, never()).save(any());
     }
 
@@ -1213,6 +1240,7 @@ class GateFinalizeServiceTest {
         StepResult result = service.complete(runId, gateExecId, approvalId, List.of(), issues);
 
         assertThat(result.outcome()).isEqualTo(GateFinalizeService.COMPLETED);
+        assertThat(result.result()).contains("\"Task A\" (the Worker's result could not be linked)");
         verify(taskGithubIssueRepo, never()).save(any());
     }
 

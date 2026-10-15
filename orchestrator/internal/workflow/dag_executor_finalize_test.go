@@ -7,9 +7,11 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	enumspb "go.temporal.io/api/enums/v1"
 	temporalactivity "go.temporal.io/sdk/activity"
@@ -972,4 +974,35 @@ func (s *DAGExecutorTestSuite) TestHumanGateCancelledWorkflowWhileWaitingSendsNo
 	s.NoError(s.env.GetWorkflowResult(&sent))
 	s.False(sent, "a cancelled wait sent a completion")
 	s.env.AssertActivityNotCalled(s.T(), "SetNodeDecision", mock.Anything, mock.Anything)
+}
+
+// TestIssueStepFailure_NamesOnlyTheFailureClass: each class gets its fixed text, and the error's
+// own text, which can carry the run's GitHub token, never reaches the gate's note.
+func TestIssueStepFailure_NamesOnlyTheFailureClass(t *testing.T) {
+	const secret = "ghs_secret_in_the_error"
+	cases := map[string]struct {
+		err  error
+		want string
+	}{
+		"never picked up": {
+			temporal.NewTimeoutError(enumspb.TIMEOUT_TYPE_SCHEDULE_TO_START, errors.New(secret)),
+			"no Worker picked up the issue step",
+		},
+		"heartbeat timeout": {
+			temporal.NewTimeoutError(enumspb.TIMEOUT_TYPE_HEARTBEAT, errors.New(secret)),
+			"the issue step did not finish in time",
+		},
+		"start to close timeout": {
+			temporal.NewTimeoutError(enumspb.TIMEOUT_TYPE_START_TO_CLOSE, errors.New(secret)),
+			"the issue step did not finish in time",
+		},
+		"anything else": {errors.New(secret), "the issue step kept failing"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := issueStepFailure(c.err)
+			assert.Equal(t, c.want, got)
+			assert.NotContains(t, got, secret)
+		})
+	}
 }

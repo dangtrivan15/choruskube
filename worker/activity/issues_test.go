@@ -309,6 +309,60 @@ func TestFileGateIssues_LastAttemptReturnsPartialResultsWithANilError(t *testing
 	assert.Equal(t, "GitHub kept failing", res.Issues[1].Failure)
 }
 
+func TestFileGateIssues_LastAttemptLookupFailureStillReportsIssuesAlreadyFound(t *testing.T) {
+	acts, stub, _, run := newIssueActivities(t)
+	stubIssueHeartbeats(t)
+	original := lastAttempt
+	lastAttempt = func(context.Context) bool { return true }
+	t.Cleanup(func() { lastAttempt = original })
+	a, b := uuid.New(), uuid.New()
+	stub.seedIssue("acme/app", github.Issue{
+		Number: 7, HTMLURL: "https://github.com/acme/app/issues/7", Body: "a\n\n" + issueKey(a),
+	})
+	stub.failList("acme/other", http.StatusBadGateway)
+	p := GateIssueParams{
+		RunID: run, NodeExecutionID: uuid.New(), Since: time.Now(),
+		Issues: []GateIssue{
+			{TaskID: a, GitRepoID: uuid.New(), OwnerRepo: "acme/app", Title: "A", Body: "a"},
+			{TaskID: b, GitRepoID: uuid.New(), OwnerRepo: "acme/other", Title: "B", Body: "b"},
+		},
+	}
+
+	res, err := acts.FileGateIssues(context.Background(), p)
+
+	require.NoError(t, err)
+	require.Len(t, res.Issues, 2)
+	assert.Equal(t, 7, res.Issues[0].Number, "an issue an earlier attempt filed is still reported, not marked failed")
+	assert.Empty(t, res.Issues[0].Failure)
+	assert.Equal(t, "GitHub kept failing", res.Issues[1].Failure)
+	assert.Zero(t, stub.created["acme/app"])
+}
+
+func TestFileGateIssues_AKeyQuotedInAnotherReposIssueIsNotMatched(t *testing.T) {
+	acts, stub, _, run := newIssueActivities(t)
+	stubIssueHeartbeats(t)
+	a, b := uuid.New(), uuid.New()
+	stub.seedIssue("acme/other", github.Issue{
+		Number: 3, HTMLURL: "https://github.com/acme/other/issues/3", Body: "quoting " + issueKey(a),
+	})
+	p := GateIssueParams{
+		RunID: run, NodeExecutionID: uuid.New(), Since: time.Now(),
+		Issues: []GateIssue{
+			{TaskID: a, GitRepoID: uuid.New(), OwnerRepo: "acme/app", Title: "A", Body: "a"},
+			{TaskID: b, GitRepoID: uuid.New(), OwnerRepo: "acme/other", Title: "B", Body: "b"},
+		},
+	}
+
+	res, err := acts.FileGateIssues(context.Background(), p)
+
+	require.NoError(t, err)
+	require.Len(t, res.Issues, 2)
+	assert.Equal(t, a, res.Issues[0].TaskID)
+	assert.Contains(t, res.Issues[0].URL, "/acme/app/", "A's issue is filed in its own repo")
+	assert.NotEqual(t, 3, res.Issues[0].Number)
+	assert.Equal(t, 1, stub.created["acme/app"])
+}
+
 func TestFileGateIssues_FailureTextsContainNeitherTheTokenNorAnyURL(t *testing.T) {
 	acts, stub, _, run := newIssueActivities(t)
 	stubIssueHeartbeats(t)

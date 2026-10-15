@@ -1812,9 +1812,7 @@ func (f *gateFinalizer) settle(approvalID string, completionCh workflow.Channel)
 	}
 }
 
-// gateIssuesOnWorkerChange gates the roadmap-write-then-issue-filing branch. Called only inside
-// the plan.WritesRoadmap check below: a history that reached that point before this marker
-// existed must keep replaying the one-step complete it already recorded.
+// gateIssuesOnWorkerChange is the version marker of the roadmap-write-then-issue-filing branch.
 const gateIssuesOnWorkerChange = "gate-issues-on-worker"
 
 func (f *gateFinalizer) finalize(approvalID string) (nodeCompletion, finalizeOutcome) {

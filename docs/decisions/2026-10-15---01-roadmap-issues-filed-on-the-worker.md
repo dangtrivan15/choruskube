@@ -32,10 +32,10 @@ reviewer approves, gate finalizes (as today, through plan)
       v
 plan (API): as before, plus declares whether this gate writes a roadmap
       |
-      v   only when the plan declares a roadmap write
+      v
 GitHub step (Worker): re-check and merge, as before (skipped if nothing to merge)
       |
-      v
+      v   only when the plan declares a roadmap write; otherwise complete as before
 roadmap write step (API): claim once; write the roadmap with no GitHub call;
      store the gate's note and the issue requests on the approval; hand the
      claim time and the requests to the workflow
@@ -72,8 +72,8 @@ anything.
 **The split is declared by the plan step, not assumed.** An older control plane's plan says nothing
 about writing a roadmap in two steps, so the workflow keeps the one-step completion it already had;
 a workflow history already past the branch point when a deploy lands also keeps the commands it was
-recorded with. Either protocol produces the same gate note and the same linked issues — only where
-the GitHub call happens changes.
+recorded with. Either protocol writes the roadmap once and links each filed issue to its Task; the
+split one also adds a `GitHub issues: filed N of M.` line to the gate's note.
 
 ## Supersedes
 
@@ -83,8 +83,8 @@ the GitHub call happens changes.
   filing the new Tasks' issues still needs the Worker.
 - From [2026-10-13---02](2026-10-13---02-data-plane-credential-rule.md), the listing of issue
   filing among the control plane's remaining GitHub calls still to move. For a gate whose plan
-  declares a roadmap write, that move is now done; the call sites it lists for the one-step path
-  (see Rejected, below) are what remains.
+  declares a roadmap write, that move is now done; the one-step path (see Consequences, below)
+  still files from the control plane.
 
 ## Consequences
 
@@ -126,6 +126,9 @@ the GitHub call happens changes.
 - **Keep the issues-to-file list only on the workflow, never on the approval record.** A repeated
   write step would have nothing to return, and the write step's whole point is that a repeat
   returns the same result instead of writing — or filing — again.
+- **Store the issues to file as pending link rows with no issue number yet.** One table would
+  hold an issue's whole life, but every reader of issue links would then have to skip pending
+  rows, and two of its required columns would have to become optional.
 - **Keep the gate finalizing until the Worker files every issue.** With the roadmap already
   written, holding the gate open protects nothing it hasn't already committed to, and blocks the
   run on a side effect whenever no live Worker is reachable or GitHub is down.

@@ -125,9 +125,9 @@ type Issue struct {
 	Body    string
 }
 
-// IssuesSince lists ownerRepo's issues updated since the given time, oldest listing semantics
-// aside (GitHub's issues endpoint also returns pull requests, which are skipped here). onPage, when
-// given, is called once per page fetched, so a caller can heartbeat a long listing.
+// IssuesSince lists ownerRepo's issues, open or closed, updated since the given time, through the
+// plain listing rather than search, whose index lags a just-created issue. Pull requests, which
+// the same endpoint returns, are skipped. onPage, when given, is called once per page fetched.
 func (c *Client) IssuesSince(ctx context.Context, token, ownerRepo string, since time.Time, onPage ...func(page int)) ([]Issue, error) {
 	repo, err := repoPath(ownerRepo)
 	if err != nil {
