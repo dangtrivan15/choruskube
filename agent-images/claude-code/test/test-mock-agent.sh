@@ -51,10 +51,10 @@ echo "step 1 output" > "$IN_OK/step_1/step-1-done"
 run_expect_harness "$IN_OK" "step_1/step-1-done"
 [ "$EXPECT_RC" -eq 0 ] && ok "present non-empty input artifact passes" \
   || fail "present non-empty input artifact passes ($EXPECT_OUT)"
-echo "$EXPECT_OUT" | grep -q "Input artifact present: $IN_OK/step_1/step-1-done" \
+grep -q "Input artifact present: $IN_OK/step_1/step-1-done" <<< "$EXPECT_OUT" \
   && ok "present input artifact logs one confirmation line" \
   || fail "present input artifact logs one confirmation line ($EXPECT_OUT)"
-echo "$EXPECT_OUT" | grep -q "SCENARIO_REACHED" \
+grep -q "SCENARIO_REACHED" <<< "$EXPECT_OUT" \
   && ok "assertions pass through to the scenario dispatch" \
   || fail "assertions pass through to the scenario dispatch"
 
@@ -68,13 +68,13 @@ echo "some other file" > "$IN_MISSING/step_1/unrelated.txt"
 run_expect_harness "$IN_MISSING" "step_1/step-1-done"
 [ "$EXPECT_RC" -ne 0 ] && ok "missing input artifact exits non-zero" \
   || fail "missing input artifact exits non-zero"
-echo "$EXPECT_OUT" | grep -q "expected input artifact not found: $IN_MISSING/step_1/step-1-done" \
+grep -q "expected input artifact not found: $IN_MISSING/step_1/step-1-done" <<< "$EXPECT_OUT" \
   && ok "missing input artifact names the path it looked for" \
   || fail "missing input artifact names the path it looked for ($EXPECT_OUT)"
-echo "$EXPECT_OUT" | grep -q "unrelated.txt" \
+grep -q "unrelated.txt" <<< "$EXPECT_OUT" \
   && ok "missing input artifact lists what did arrive" \
   || fail "missing input artifact lists what did arrive ($EXPECT_OUT)"
-echo "$EXPECT_OUT" | grep -q "SCENARIO_REACHED" \
+grep -q "SCENARIO_REACHED" <<< "$EXPECT_OUT" \
   && fail "missing input artifact still ran the scenario" \
   || ok "missing input artifact aborts before the scenario runs"
 
@@ -87,7 +87,7 @@ mkdir -p "$IN_EMPTY/step_1"
 run_expect_harness "$IN_EMPTY" "step_1/step-1-done"
 [ "$EXPECT_RC" -ne 0 ] && ok "empty input artifact exits non-zero" \
   || fail "empty input artifact exits non-zero"
-echo "$EXPECT_OUT" | grep -q "expected input artifact is empty: $IN_EMPTY/step_1/step-1-done" \
+grep -q "expected input artifact is empty: $IN_EMPTY/step_1/step-1-done" <<< "$EXPECT_OUT" \
   && ok "empty input artifact is reported as empty, not missing" \
   || fail "empty input artifact is reported as empty, not missing ($EXPECT_OUT)"
 
@@ -95,7 +95,7 @@ echo "$EXPECT_OUT" | grep -q "expected input artifact is empty: $IN_EMPTY/step_1
 run_expect_harness "$TESTDIR/in_absent" "step_1/step-1-done"
 [ "$EXPECT_RC" -ne 0 ] && ok "absent input directory exits non-zero" \
   || fail "absent input directory exits non-zero"
-echo "$EXPECT_OUT" | grep -q "No such directory: $TESTDIR/in_absent" \
+grep -q "No such directory: $TESTDIR/in_absent" <<< "$EXPECT_OUT" \
   && ok "absent input directory is named in the error" \
   || fail "absent input directory is named in the error ($EXPECT_OUT)"
 
@@ -117,7 +117,7 @@ rm "$IN_MULTI/step_2/step-2-done"
 run_expect_harness "$IN_MULTI" "step_1/step-1-done" "step_2/step-2-done"
 [ "$EXPECT_RC" -ne 0 ] && ok "a later --expect-input is checked too" \
   || fail "a later --expect-input is checked too"
-echo "$EXPECT_OUT" | grep -q "step_2/step-2-done" \
+grep -q "step_2/step-2-done" <<< "$EXPECT_OUT" \
   && ok "the failing path is the one named in the error" \
   || fail "the failing path is the one named in the error ($EXPECT_OUT)"
 
@@ -128,10 +128,10 @@ echo "$EXPECT_OUT" | grep -q "step_2/step-2-done" \
 run_expect_harness "$TESTDIR/in_absent"
 [ "$EXPECT_RC" -eq 0 ] && ok "no --expect-input flags is a clean no-op" \
   || fail "no --expect-input flags is a clean no-op ($EXPECT_OUT)"
-echo "$EXPECT_OUT" | grep -q "SCENARIO_REACHED" \
+grep -q "SCENARIO_REACHED" <<< "$EXPECT_OUT" \
   && ok "no-op case still reaches the scenario dispatch" \
   || fail "no-op case still reaches the scenario dispatch ($EXPECT_OUT)"
-echo "$EXPECT_OUT" | grep -q "Input artifact present:" \
+grep -q "Input artifact present:" <<< "$EXPECT_OUT" \
   && fail "no-op case logged a confirmation for nothing" \
   || ok "no-op case logs no confirmation lines"
 
@@ -304,7 +304,7 @@ RESUME_RC=$?
 set -e
 [ "$RESUME_RC" -eq 0 ] && ok "resumed rate_limited exits 0" \
   || fail "resumed rate_limited exits 0 (exit $RESUME_RC: $RESUME_OUT)"
-if [ -n "$SESSION_ID" ] && echo "$RESUME_OUT" | grep -qF "$SESSION_ID"; then
+if [ -n "$SESSION_ID" ] && grep -qF "$SESSION_ID" <<< "$RESUME_OUT"; then
   ok "resumed iteration acknowledges the parked session id"
 else
   fail "resumed iteration acknowledges the parked session id (session_id='$SESSION_ID' out=$RESUME_OUT)"
@@ -373,7 +373,7 @@ run_drift_recheck() {
 STALE_PATTERN=$(jq -r '.mappings[] | select(.response.body | contains("\"behind\"")) | .request.urlPathPattern' \
   "$COMPARE_STUBS" 2>/dev/null || true)
 matches_stale_stub() {
-  [ -n "$STALE_PATTERN" ] && printf '%s\n' "/repos/e2e-test/mock-repo/compare/$1...main" | grep -Eq "^(${STALE_PATTERN})\$"
+  [ -n "$STALE_PATTERN" ] && grep -Eq "^(${STALE_PATTERN})\$" <<< "/repos/e2e-test/mock-repo/compare/$1...main"
 }
 
 # --- First pass: registers the PR and records a base the compare stub calls stale ---

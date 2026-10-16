@@ -78,10 +78,10 @@ RUN_ID="run-xyz"
 FULL_PROMPT="Run ID: ${RUN_ID}
 
 ${PROMPT}"
-echo "$FULL_PROMPT" | grep -q "Run ID: run-xyz" && ok "Run ID in full_prompt" || fail "Run ID in full_prompt"
+grep -q "Run ID: run-xyz" <<< "$FULL_PROMPT" && ok "Run ID in full_prompt" || fail "Run ID in full_prompt"
 # System prompt should NOT contain the run ID
 SYSTEM_PROMPT="## Autonomous Operation"
-echo "$SYSTEM_PROMPT" | grep -qv "Run ID:" && ok "Run ID absent from system_prompt" || fail "Run ID absent from system_prompt"
+grep -qv "Run ID:" <<< "$SYSTEM_PROMPT" && ok "Run ID absent from system_prompt" || fail "Run ID absent from system_prompt"
 
 # --- Test 5: Single-repo CLAUDE.md loading ---
 REPO="$TESTDIR/repo"
@@ -93,7 +93,7 @@ if [ -f "$REPO/CLAUDE.md" ]; then
 
 $(cat "$REPO/CLAUDE.md")"
 fi
-echo "$SYSTEM_PROMPT" | grep -q "Project Conventions" && ok "single-repo CLAUDE.md loaded" || fail "single-repo CLAUDE.md loaded"
+grep -q "Project Conventions" <<< "$SYSTEM_PROMPT" && ok "single-repo CLAUDE.md loaded" || fail "single-repo CLAUDE.md loaded"
 
 # --- Test 6: Single-repo CLAUDE.md absent — no error ---
 REPO2="$TESTDIR/repo2"
@@ -235,11 +235,11 @@ grep -q "propose-roadmap" "$ENTRYPOINT" \
 # Companion structural assertion: the ids/propose-roadmap addition landed inside the
 # same TASK_ID-guarded block as the rest of the Triggering Task narration, not after it.
 TASK_BLOCK=$(awk '/if \[ -n "\$TASK_ID" \]/{flag=1} flag && /^fi$/{print; exit} flag' "$ENTRYPOINT")
-echo "$TASK_BLOCK" | grep -q "propose-roadmap" \
+grep -q "propose-roadmap" <<< "$TASK_BLOCK" \
   && ok "propose-roadmap pointer stays inside the TASK_ID guard" || fail "propose-roadmap pointer stays inside the TASK_ID guard"
-echo "$TASK_BLOCK" | grep -qF 'Story id: ${STORY_ID}' \
+grep -qF 'Story id: ${STORY_ID}' <<< "$TASK_BLOCK" \
   && ok "Triggering Task ids include the Story id" || fail "Triggering Task ids include the Story id"
-echo "$TASK_BLOCK" | grep -qF 'Epic id: ${EPIC_ID}' \
+grep -qF 'Epic id: ${EPIC_ID}' <<< "$TASK_BLOCK" \
   && ok "Triggering Task ids include the Epic id" || fail "Triggering Task ids include the Epic id"
 
 # --- Test 15: --effort reaches run_claude()'s argv construction (structural) ---
@@ -304,7 +304,7 @@ EOF
 set +e
 EFFORT_OUTPUT=$(env -u JOB_SECRET bash "$ENTRYPOINT_COPY" 2>&1)
 set -e
-echo "$EFFORT_OUTPUT" | grep -q "JOB_SECRET environment variable not set" \
+grep -q "JOB_SECRET environment variable not set" <<< "$EFFORT_OUTPUT" \
   && ok "unknown effort value runs past the effort read" \
   || fail "unknown effort value runs past the effort read"
 
@@ -345,7 +345,7 @@ set -e
 [ -f "$IA_IN_A/spec_review/spec_and_plan.md" ] \
   && ok "nested input artifact key creates its parent directory" \
   || fail "nested input artifact key creates its parent directory"
-echo "$IA_OUT_A" | grep -q "Optional input artifact absent" \
+grep -q "Optional input artifact absent" <<< "$IA_OUT_A" \
   && ok "absent optional input artifact is logged" || fail "absent optional input artifact is logged"
 
 # 19b: an absent REQUIRED artifact stops the pod with a clear error
@@ -357,7 +357,7 @@ IA_RC_B=$?
 set -e
 [ "$IA_RC_B" -ne 0 ] && ok "absent required input artifact exits non-zero" \
   || fail "absent required input artifact exits non-zero"
-echo "$IA_OUT_B" | grep -q "required input artifact missing" \
+grep -q "required input artifact missing" <<< "$IA_OUT_B" \
   && ok "absent required input artifact logs a clear error" \
   || fail "absent required input artifact logs a clear error"
 
@@ -434,15 +434,15 @@ set -e
   && ok "dirty repo's commit reaches origin" || fail "dirty repo's commit reaches origin"
 [ "$(git -C "$TESTDIR/repo-b" rev-list --count HEAD)" = "1" ] \
   && ok "clean repo gets no empty commit" || fail "clean repo gets no empty commit"
-echo "$SN_OUT_A" | grep -q "repo-a: pushed $SN_BRANCH @ $(git -C "$TESTDIR/repo-a" rev-parse --short HEAD)" \
+grep -q "repo-a: pushed $SN_BRANCH @ $(git -C "$TESTDIR/repo-a" rev-parse --short HEAD)" <<< "$SN_OUT_A" \
   && ok "result names the branch and short SHA pushed per repo" \
   || fail "result names the branch and short SHA pushed per repo"
-echo "$SN_OUT_A" | grep -q "repo-b:" \
+grep -q "repo-b:" <<< "$SN_OUT_A" \
   && ok "every repo in a multi-repo run is reported" || fail "every repo in a multi-repo run is reported"
-echo "$SN_OUT_A" | grep -q "error_max_turns" \
+grep -q "error_max_turns" <<< "$SN_OUT_A" \
   && ok "failure result carries the original error message" \
   || fail "failure result carries the original error message"
-echo "$SN_OUT_A" | grep -q "FINAL_STATUS:failed" \
+grep -q "FINAL_STATUS:failed" <<< "$SN_OUT_A" \
   && ok "safety net leaves RESULT_STATUS failed" || fail "safety net leaves RESULT_STATUS failed"
 
 # 21b: a second failure on the same branch pushes nothing new
@@ -456,7 +456,7 @@ set -e
   || fail "safety net is re-runnable on an already-pushed branch ($SN_OUT_B)"
 [ "$(git -C "$TESTDIR/repo-a" rev-list --count HEAD)" = "2" ] \
   && ok "re-run adds no further commit" || fail "re-run adds no further commit"
-echo "$SN_OUT_B" | grep -q "repo-a: nothing new to push" \
+grep -q "repo-a: nothing new to push" <<< "$SN_OUT_B" \
   && ok "re-run reports nothing new to push" || fail "re-run reports nothing new to push"
 
 # 21c: a push that fails must neither crash the pod nor mask the original error
@@ -472,14 +472,14 @@ SN_RC_C=$?
 set -e
 [ "$SN_RC_C" -eq 0 ] && ok "unreachable origin does not crash the safety net" \
   || fail "unreachable origin does not crash the safety net ($SN_OUT_C)"
-echo "$SN_OUT_C" | grep -q "error_max_turns" \
+grep -q "error_max_turns" <<< "$SN_OUT_C" \
   && ok "push failure does not mask the original error" || fail "push failure does not mask the original error"
-echo "$SN_OUT_C" | grep -q "FINAL_STATUS:failed" \
+grep -q "FINAL_STATUS:failed" <<< "$SN_OUT_C" \
   && ok "push failure leaves RESULT_STATUS failed" || fail "push failure leaves RESULT_STATUS failed"
 [ "$(git -C "$TESTDIR/repo-c" rev-list --count HEAD)" = "2" ] \
   && ok "work is still committed locally when the push fails" \
   || fail "work is still committed locally when the push fails"
-echo "$SN_OUT_C" | grep -q "push failed" \
+grep -q "push failed" <<< "$SN_OUT_C" \
   && ok "failed push is reported in the result" || fail "failed push is reported in the result"
 
 # 21d: a node with no run branch is left alone — its HEAD is the default branch
@@ -500,7 +500,7 @@ set -e
 [ "$(git -C "$TESTDIR/repo-d.git" rev-parse main)" = "$SN_MAIN_BEFORE" ] \
   && ok "no run branch — origin's default branch is untouched" \
   || fail "no run branch — origin's default branch is untouched"
-echo "$SN_OUT_D" | grep -q "no repository work to preserve" \
+grep -q "no repository work to preserve" <<< "$SN_OUT_D" \
   && ok "empty preserve summary reported explicitly" || fail "empty preserve summary reported explicitly"
 
 # 21e: single-repo mode uses the /workspace/repo clone and $WORKING_BRANCH
@@ -606,9 +606,9 @@ assert_budget_rejected() {
   # $1 = label, $2 = config.json body, $3 = substring the error must name
   run_budget_guard "$2"
   [ "$BUDGET_RC" -ne 0 ] && ok "$1 exits non-zero" || fail "$1 exits non-zero"
-  echo "$BUDGET_ERR" | grep -qF "$3" \
+  grep -qF "$3" <<< "$BUDGET_ERR" \
     && ok "$1 logs a clear error" || fail "$1 logs a clear error ($BUDGET_ERR)"
-  echo "$BUDGET_ERR" | grep -q "Claude Code exited" \
+  grep -q "Claude Code exited" <<< "$BUDGET_ERR" \
     && fail "$1 reached a claude invocation" || ok "$1 fires before any run_claude()/claude invocation"
 }
 
@@ -672,7 +672,7 @@ grep -qF -- 'report-result --withdraw' "$ENTRYPOINT" \
 # only the last thing checked. PR verification carried this append-don't-overwrite rule while
 # it was last; the escalation gate inherited the position, so it has to inherit the rule.
 ESC_BLOCK=$(awk '/# --- Escalation artifact enforcement ---/,/^fi$/' "$ENTRYPOINT")
-echo "$ESC_BLOCK" | grep -qF 'additionally' \
+grep -qF 'additionally' <<< "$ESC_BLOCK" \
   && ok "the escalation gate appends to an earlier phase's ERROR_MESSAGE instead of overwriting it" \
   || fail "the escalation gate appends to an earlier phase's ERROR_MESSAGE instead of overwriting it"
 
@@ -759,7 +759,7 @@ build_script_result_harness "$SR_DIR_A" \
   "mkdir -p \"$SR_DIR_A\" && printf 'verdict: pass' > \"$SR_DIR_A/test_report.md\"" \
   > "$TESTDIR/script_result_index.sh"
 SR_OUT_A=$(bash "$TESTDIR/script_result_index.sh")
-echo "$SR_OUT_A" | grep -qF 'RESULT_IS:Read test_report.md first' \
+grep -qF 'RESULT_IS:Read test_report.md first' <<< "$SR_OUT_A" \
   && ok "RESULT points at the index when the command writes one" \
   || fail "RESULT points at the index when the command writes one ($SR_OUT_A)"
 [ -f "$SR_DIR_A/test_output.txt" ] \
@@ -771,7 +771,7 @@ SR_DIR_B="$TESTDIR/script_result_noindex"
 build_script_result_harness "$SR_DIR_B" "printf 'plain command output'" \
   > "$TESTDIR/script_result_noindex.sh"
 SR_OUT_B=$(bash "$TESTDIR/script_result_noindex.sh")
-echo "$SR_OUT_B" | grep -qF 'RESULT_IS:Read test_output.txt for full script output' \
+grep -qF 'RESULT_IS:Read test_output.txt for full script output' <<< "$SR_OUT_B" \
   && ok "RESULT falls back to raw output when no index was written" \
   || fail "RESULT falls back to raw output when no index was written ($SR_OUT_B)"
 [ -f "$SR_DIR_B/test_output.txt" ] \

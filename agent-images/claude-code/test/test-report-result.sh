@@ -51,13 +51,13 @@ run_report_result() {
 CURL_STUB_BODY='{"decision":"approved"}' run_report_result approved
 [ "$RC" -eq 0 ] && ok "submit: exits 0" || fail "submit: exits 0 (got $RC: $OUT)"
 grep -qF -- "-X PUT" "$ARGV_LOG" && ok "submit: uses PUT" || fail "submit: uses PUT (argv: $(cat "$ARGV_LOG"))"
-echo "$OUT" | grep -qF "approved" && ok "submit: names the decision" || fail "submit: names the decision (got: $OUT)"
+grep -qF "approved" <<< "$OUT" && ok "submit: names the decision" || fail "submit: names the decision (got: $OUT)"
 
 # --- Test 2: --withdraw retracts via DELETE and names what was withdrawn ---
 CURL_STUB_BODY='{"decision":"escalate"}' run_report_result --withdraw
 [ "$RC" -eq 0 ] && ok "withdraw: exits 0" || fail "withdraw: exits 0 (got $RC: $OUT)"
 grep -qF -- "-X DELETE" "$ARGV_LOG" && ok "withdraw: uses DELETE" || fail "withdraw: uses DELETE (argv: $(cat "$ARGV_LOG"))"
-echo "$OUT" | grep -qF "escalate" && ok "withdraw: names the withdrawn decision" || fail "withdraw: names the withdrawn decision (got: $OUT)"
+grep -qF "escalate" <<< "$OUT" && ok "withdraw: names the withdrawn decision" || fail "withdraw: names the withdrawn decision (got: $OUT)"
 
 # --- Test 3: --withdraw with nothing outstanding is a success, not an error. The
 # agent is told to withdraw when it resolves a blocker itself; making it check first
@@ -68,7 +68,7 @@ CURL_STUB_BODY='{}' run_report_result --withdraw
 # --- Test 4: a non-200 from the API server fails loudly ---
 CURL_STUB_HTTP_CODE=400 CURL_STUB_BODY='{"detail":"Invalid decision"}' run_report_result bogus
 [ "$RC" -eq 1 ] && ok "API rejects the decision: exits 1" || fail "API rejects the decision: exits 1 (got $RC)"
-echo "$OUT" | grep -qF "Invalid decision" && ok "API rejects the decision: surfaces the body" || fail "API rejects the decision: surfaces the body (got: $OUT)"
+grep -qF "Invalid decision" <<< "$OUT" && ok "API rejects the decision: surfaces the body" || fail "API rejects the decision: surfaces the body (got: $OUT)"
 
 # --- Test 5: a non-200 on withdrawal fails loudly too ---
 CURL_STUB_HTTP_CODE=404 CURL_STUB_BODY='{"detail":"Node execution not found"}' run_report_result --withdraw
@@ -78,7 +78,7 @@ CURL_STUB_HTTP_CODE=404 CURL_STUB_BODY='{"detail":"Node execution not found"}' r
 run_report_result
 [ "$RC" -eq 1 ] && ok "no argument: exits 1" || fail "no argument: exits 1 (got $RC)"
 [ ! -s "$ARGV_LOG" ] && ok "no argument: makes no HTTP call" || fail "no argument: makes no HTTP call"
-echo "$OUT" | grep -qF "Usage:" && ok "no argument: prints usage" || fail "no argument: prints usage (got: $OUT)"
+grep -qF "Usage:" <<< "$OUT" && ok "no argument: prints usage" || fail "no argument: prints usage (got: $OUT)"
 
 # --- Test 7: REPORT_RESULT_URL unset — fails loudly before any HTTP call, on both paths ---
 for ARG in approved --withdraw; do
@@ -88,7 +88,7 @@ for ARG in approved --withdraw; do
     RC=$?
     set -e
     [ "$RC" -eq 1 ] && ok "missing REPORT_RESULT_URL ($ARG): exits 1" || fail "missing REPORT_RESULT_URL ($ARG): exits 1 (got $RC)"
-    echo "$OUT" | grep -qF "REPORT_RESULT_URL not set" \
+    grep -qF "REPORT_RESULT_URL not set" <<< "$OUT" \
         && ok "missing REPORT_RESULT_URL ($ARG): clear diagnostic" || fail "missing REPORT_RESULT_URL ($ARG): clear diagnostic (got: $OUT)"
 done
 

@@ -48,7 +48,7 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 
 # --- 1. Health checks ---------------------------------------------------------
 echo "=== OSS stack health ==="
-curl -sf "$API_URL/actuator/health" | grep -q UP || fail "api-server not healthy"
+grep -q UP <<< "$(curl -sf "$API_URL/actuator/health")" || fail "api-server not healthy"
 echo "  PASS  api-server health"
 # /api/v1/** is open in single-tenant mode (no 401).
 templates_open_probe "$API_URL" || fail "api /graph-templates not reachable (auth open?)"

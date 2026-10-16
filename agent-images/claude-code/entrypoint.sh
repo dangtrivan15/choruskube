@@ -105,7 +105,7 @@ while IFS= read -r key; do
   mkdir -p "$(dirname "$DEST")"
   if artifact get "$MINIO_PATH" "$DEST" 2>/dev/null; then
     echo "Pulled input artifact: $key from $MINIO_PATH"
-  elif printf '%s\n' "$REQUIRED_KEYS" | grep -qxF "$key"; then
+  elif grep -qxF "$key" <<< "$REQUIRED_KEYS"; then
     echo "ERROR: required input artifact missing: $key ($MINIO_PATH)" >&2
     exit 1
   else

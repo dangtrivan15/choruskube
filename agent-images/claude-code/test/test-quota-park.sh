@@ -486,7 +486,7 @@ run_park_scenario() {
   rc=$?
   set -e
 
-  if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q '^PARK_BLOCK_SENTINEL$'; then
+  if [ "$rc" -eq 0 ] && grep -q '^PARK_BLOCK_SENTINEL$' <<< "$out"; then
     ok "park block survives: $scenario"
   else
     fail "park block survives: $scenario (exit=$rc, output: $out)"
@@ -553,8 +553,8 @@ run_park_scenario no_projects_dir empty
 # fails obscurely a pod later. The park must still happen; the anomaly must be
 # named at park time.
 run_park_scenario multi_dirs nonempty
-if printf '%s' "$PARK_SCENARIO_OUT" | grep -q 'Claude project directories found' \
-    && printf '%s' "$PARK_SCENARIO_OUT" | grep -q 'proj2'; then
+if grep -q 'Claude project directories found' <<< "$PARK_SCENARIO_OUT" \
+    && grep -q 'proj2' <<< "$PARK_SCENARIO_OUT"; then
   ok "multiple project directories are named in a warning"
 else
   fail "multiple project directories are named in a warning (got: $PARK_SCENARIO_OUT)"
@@ -564,8 +564,8 @@ fi
 # same shell -- without being exported into the environment of the `artifact`
 # and `curl` children the block spawns straight afterwards.
 run_park_scenario token_scope nonempty
-if printf '%s' "$PARK_SCENARIO_OUT" | grep -q '^FUNC_SEES:gh-token$' \
-    && printf '%s' "$PARK_SCENARIO_OUT" | grep -q '^CHILD_SEES:<unset>$'; then
+if grep -q '^FUNC_SEES:gh-token$' <<< "$PARK_SCENARIO_OUT" \
+    && grep -q '^CHILD_SEES:<unset>$' <<< "$PARK_SCENARIO_OUT"; then
   ok "the redaction token reaches the function but not its child processes"
 else
   fail "the redaction token reaches the function but not its child processes (got: $PARK_SCENARIO_OUT)"
@@ -604,7 +604,7 @@ build_config_read_harness "$RESUME_CONFIG" > "$TESTDIR/config_read.sh"
 set +e
 CONFIG_READ_OUT=$(bash "$TESTDIR/config_read.sh" 2>&1)
 set -e
-if echo "$CONFIG_READ_OUT" | grep -qF "ID:sess-789" && echo "$CONFIG_READ_OUT" | grep -qF "PATH:acme/runs/r1/e1/session/sess-789.jsonl"; then
+if grep -qF "ID:sess-789" <<< "$CONFIG_READ_OUT" && grep -qF "PATH:acme/runs/r1/e1/session/sess-789.jsonl" <<< "$CONFIG_READ_OUT"; then
   ok "session_id and session_artifact_path parse from config (behavioral)"
 else
   fail "session_id and session_artifact_path parse from config (behavioral) (got: $CONFIG_READ_OUT)"
@@ -618,7 +618,7 @@ build_config_read_harness "$RESUME_CONFIG_ABSENT" > "$TESTDIR/config_read_absent
 set +e
 CONFIG_READ_ABSENT_OUT=$(bash "$TESTDIR/config_read_absent.sh" 2>&1)
 set -e
-if echo "$CONFIG_READ_ABSENT_OUT" | grep -qx "ID:" && echo "$CONFIG_READ_ABSENT_OUT" | grep -qx "PATH:"; then
+if grep -qx "ID:" <<< "$CONFIG_READ_ABSENT_OUT" && grep -qx "PATH:" <<< "$CONFIG_READ_ABSENT_OUT"; then
   ok "absent session fields read blank, not null (behavioral)"
 else
   fail "absent session fields read blank, not null (behavioral) (got: $CONFIG_READ_ABSENT_OUT)"
@@ -760,8 +760,8 @@ run_resume_scenario() {
 
 # 38a: no session parked for this run -- the block must be a complete no-op.
 OUT_NOT_CONFIGURED=$(run_resume_scenario not_configured)
-if echo "$OUT_NOT_CONFIGURED" | grep -q "RESUME_BLOCK_SENTINEL" \
-    && ! echo "$OUT_NOT_CONFIGURED" | grep -q "^artifact "; then
+if grep -q "RESUME_BLOCK_SENTINEL" <<< "$OUT_NOT_CONFIGURED" \
+    && ! grep -q "^artifact " <<< "$OUT_NOT_CONFIGURED"; then
   ok "resume block: no-op when nothing is parked"
 else
   fail "resume block: no-op when nothing is parked (got: $OUT_NOT_CONFIGURED)"
@@ -773,13 +773,13 @@ fi
 # real pod's log shows exactly where the file landed.
 OUT_SUCCESS=$(run_resume_scenario restore_success)
 EXPECT_DEST="resume_home_restore_success/.claude/projects/-workspace-repo/sess-resume-2.jsonl"
-if echo "$OUT_SUCCESS" | grep -q "RESUME_BLOCK_SENTINEL" \
-    && echo "$OUT_SUCCESS" | grep -qF "artifact get acme/runs/r1/e1/session/sess-resume-2.jsonl" \
-    && echo "$OUT_SUCCESS" | grep -qF "$EXPECT_DEST" \
-    && echo "$OUT_SUCCESS" | grep -qF "Restored parked session sess-resume-2 -> " \
-    && echo "$OUT_SUCCESS" | grep -qF "artifact put /tmp/empty_session acme/runs/r1/e1/session/sess-resume-2.jsonl" \
-    && echo "$OUT_SUCCESS" | grep -qF "SIZE:0" \
-    && echo "$OUT_SUCCESS" | grep -q '^RESUME_SESSION_ID_RESULT:sess-resume-2$'; then
+if grep -q "RESUME_BLOCK_SENTINEL" <<< "$OUT_SUCCESS" \
+    && grep -qF "artifact get acme/runs/r1/e1/session/sess-resume-2.jsonl" <<< "$OUT_SUCCESS" \
+    && grep -qF "$EXPECT_DEST" <<< "$OUT_SUCCESS" \
+    && grep -qF "Restored parked session sess-resume-2 -> " <<< "$OUT_SUCCESS" \
+    && grep -qF "artifact put /tmp/empty_session acme/runs/r1/e1/session/sess-resume-2.jsonl" <<< "$OUT_SUCCESS" \
+    && grep -qF "SIZE:0" <<< "$OUT_SUCCESS" \
+    && grep -q '^RESUME_SESSION_ID_RESULT:sess-resume-2$' <<< "$OUT_SUCCESS"; then
   ok "resume block: successful restore lands at the right path, echoes it, and clears the object with zero bytes"
 else
   fail "resume block: successful restore lands at the right path, echoes it, and clears the object with zero bytes (got: $OUT_SUCCESS)"
@@ -791,7 +791,7 @@ fi
 # is deliberately just a suffix (portable across whatever $TESTDIR mktemp
 # picked), so build the exact full path here for an exact-line check.
 FULL_EXPECTED_TRANSCRIPT="$TESTDIR/resume_home_restore_success/.claude/projects/-workspace-repo/sess-resume-2.jsonl"
-if echo "$OUT_SUCCESS" | grep -qF "Restored parked session sess-resume-2 -> $FULL_EXPECTED_TRANSCRIPT"; then
+if grep -qF "Restored parked session sess-resume-2 -> $FULL_EXPECTED_TRANSCRIPT" <<< "$OUT_SUCCESS"; then
   ok "resume block: the restored transcript path is echoed on its own line"
 else
   fail "resume block: the restored transcript path is echoed on its own line (got: $OUT_SUCCESS)"
@@ -801,9 +801,9 @@ fi
 # object must NOT be touched (nothing to clear -- restore never happened), and the
 # block must survive under set -euo pipefail rather than aborting the pod.
 OUT_GET_FAILS=$(run_resume_scenario get_fails)
-if echo "$OUT_GET_FAILS" | grep -q "RESUME_BLOCK_SENTINEL" \
-    && echo "$OUT_GET_FAILS" | grep -q '^RESUME_SESSION_ID_RESULT:$' \
-    && ! echo "$OUT_GET_FAILS" | grep -q "^artifact put"; then
+if grep -q "RESUME_BLOCK_SENTINEL" <<< "$OUT_GET_FAILS" \
+    && grep -q '^RESUME_SESSION_ID_RESULT:$' <<< "$OUT_GET_FAILS" \
+    && ! grep -q "^artifact put" <<< "$OUT_GET_FAILS"; then
   ok "resume block: failed restore falls back and never attempts to clear the object"
 else
   fail "resume block: failed restore falls back and never attempts to clear the object (got: $OUT_GET_FAILS)"
@@ -814,7 +814,7 @@ fi
 # carries no URL either -- so discarding its stderr threw away the whole
 # diagnosis of a silently degrading restore. Asserted as an exact substring of
 # the warning line, not merely as "the text appears somewhere in the output".
-if echo "$OUT_GET_FAILS" | grep -qF "could not restore the parked session; starting fresh (Access denied: path outside allowed scope)"; then
+if grep -qF "could not restore the parked session; starting fresh (Access denied: path outside allowed scope)" <<< "$OUT_GET_FAILS"; then
   ok "resume block: the restore warning carries artifact's own diagnostic"
 else
   fail "resume block: the restore warning carries artifact's own diagnostic (got: $OUT_GET_FAILS)"
@@ -824,9 +824,9 @@ fi
 # resume (losing the clear costs a lingering parked object, not the node), and the
 # block must survive.
 OUT_PUT_FAILS=$(run_resume_scenario put_fails)
-if echo "$OUT_PUT_FAILS" | grep -q "RESUME_BLOCK_SENTINEL" \
-    && echo "$OUT_PUT_FAILS" | grep -q '^RESUME_SESSION_ID_RESULT:sess-resume-2$' \
-    && echo "$OUT_PUT_FAILS" | grep -qF "SIZE:0"; then
+if grep -q "RESUME_BLOCK_SENTINEL" <<< "$OUT_PUT_FAILS" \
+    && grep -q '^RESUME_SESSION_ID_RESULT:sess-resume-2$' <<< "$OUT_PUT_FAILS" \
+    && grep -qF "SIZE:0" <<< "$OUT_PUT_FAILS"; then
   ok "resume block: a failed consume-once clear still lets the node resume"
 else
   fail "resume block: a failed consume-once clear still lets the node resume (got: $OUT_PUT_FAILS)"
@@ -842,9 +842,9 @@ fi
 # and `artifact` is never called at all (the mkdir failure short-circuits the
 # `&&` before the fetch is even attempted).
 OUT_MKDIR_FAILS=$(run_resume_scenario mkdir_fails)
-if echo "$OUT_MKDIR_FAILS" | grep -q "RESUME_BLOCK_SENTINEL" \
-    && echo "$OUT_MKDIR_FAILS" | grep -q '^RESUME_SESSION_ID_RESULT:$' \
-    && ! echo "$OUT_MKDIR_FAILS" | grep -q "^artifact "; then
+if grep -q "RESUME_BLOCK_SENTINEL" <<< "$OUT_MKDIR_FAILS" \
+    && grep -q '^RESUME_SESSION_ID_RESULT:$' <<< "$OUT_MKDIR_FAILS" \
+    && ! grep -q "^artifact " <<< "$OUT_MKDIR_FAILS"; then
   ok "resume block: a failed mkdir degrades to a fresh run without calling artifact"
 else
   fail "resume block: a failed mkdir degrades to a fresh run without calling artifact (got: $OUT_MKDIR_FAILS)"
@@ -909,7 +909,7 @@ run_fallthrough() {
 FT_A=$(run_fallthrough script 'RESULT="Read test_output.txt for full script output"')
 FT_A_CAPTURE="$TESTDIR/fallthrough_script.json"
 if [ "${FT_A%%|*}" -eq 0 ] \
-    && printf '%s' "$FT_A" | grep -q 'FALLTHROUGH_SENTINEL' \
+    && grep -q 'FALLTHROUGH_SENTINEL' <<< "$FT_A" \
     && [ -s "$FT_A_CAPTURE" ] \
     && jq -e '(.status == "completed") and (.resume_at == null) and (.session_id == null) and (.session_artifact_path == null)' \
       "$FT_A_CAPTURE" >/dev/null 2>&1; then
@@ -925,7 +925,7 @@ RESULT_STATUS="failed"
 ERROR_MESSAGE="Could not fetch valid decisions for this node"')
 FT_B_CAPTURE="$TESTDIR/fallthrough_skipped.json"
 if [ "${FT_B%%|*}" -eq 0 ] \
-    && printf '%s' "$FT_B" | grep -q 'FALLTHROUGH_SENTINEL' \
+    && grep -q 'FALLTHROUGH_SENTINEL' <<< "$FT_B" \
     && [ -s "$FT_B_CAPTURE" ] \
     && jq -e '(.status == "failed") and (.resume_at == null) and (.session_id == null)' \
       "$FT_B_CAPTURE" >/dev/null 2>&1; then
@@ -1027,15 +1027,15 @@ set -e
 # required file never appears, so without the re-evaluation the loop makes two
 # calls (attempts 2 and 3); with it, exactly one.
 if [ "$LOOP_RC" -eq 0 ] \
-    && echo "$LOOP_OUT" | grep -q '^LOOP_SENTINEL$' \
-    && echo "$LOOP_OUT" | grep -q '^RUN_CLAUDE_CALLS:1$'; then
+    && grep -q '^LOOP_SENTINEL$' <<< "$LOOP_OUT" \
+    && grep -q '^RUN_CLAUDE_CALLS:1$' <<< "$LOOP_OUT"; then
   ok "an in-loop quota hit stops the retry loop after one attempt"
 else
   fail "an in-loop quota hit stops the retry loop after one attempt (rc=$LOOP_RC, got: $LOOP_OUT)"
 fi
 
 # 40b: the park is armed, so the quota-park block downstream will actually park.
-if echo "$LOOP_OUT" | grep -qE '^QUOTA_RESET_AT_RESULT:[0-9]+$'; then
+if grep -qE '^QUOTA_RESET_AT_RESULT:[0-9]+$' <<< "$LOOP_OUT"; then
   ok "an in-loop quota hit sets the reset instant"
 else
   fail "an in-loop quota hit sets the reset instant (got: $LOOP_OUT)"
@@ -1045,9 +1045,9 @@ fi
 # the half a purely count-based assertion would miss -- and RESULT_STATUS must
 # be "failed" here, because that is what runs the failure safety net (committing
 # and pushing the pod's work) before the park block flips it to rate_limited.
-if echo "$LOOP_OUT" | grep -q '^ERROR_MESSAGE_RESULT:Claude quota exhausted' \
-    && ! echo "$LOOP_OUT" | grep -q 'Required output files not produced' \
-    && echo "$LOOP_OUT" | grep -q '^RESULT_STATUS_RESULT:failed$'; then
+if grep -q '^ERROR_MESSAGE_RESULT:Claude quota exhausted' <<< "$LOOP_OUT" \
+    && ! grep -q 'Required output files not produced' <<< "$LOOP_OUT" \
+    && grep -q '^RESULT_STATUS_RESULT:failed$' <<< "$LOOP_OUT"; then
   ok "an in-loop quota hit reports the quota, not the missing-artifact diagnostic"
 else
   fail "an in-loop quota hit reports the quota, not the missing-artifact diagnostic (got: $LOOP_OUT)"
