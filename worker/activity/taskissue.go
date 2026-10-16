@@ -76,9 +76,10 @@ func (a *Activities) CloseTaskIssue(ctx context.Context, p TaskIssueCloseParams)
 	case p.RunID == uuid.Nil:
 		return TaskIssueCloseResult{}, temporal.NewNonRetryableApplicationError(
 			"TaskIssueCloseParams without a run id, which the GitHub token is keyed by", "TaskIssueCloseParams", nil)
-	case strings.TrimSpace(p.OwnerRepo) == "":
+	case !github.ValidOwnerRepo(p.OwnerRepo):
 		return TaskIssueCloseResult{}, temporal.NewNonRetryableApplicationError(
-			"TaskIssueCloseParams without an owner/repo", "TaskIssueCloseParams", nil)
+			fmt.Sprintf("TaskIssueCloseParams with %q, which is not an owner/repo slug", p.OwnerRepo),
+			"TaskIssueCloseParams", nil)
 	case p.IssueNumber <= 0:
 		return TaskIssueCloseResult{}, temporal.NewNonRetryableApplicationError(
 			fmt.Sprintf("TaskIssueCloseParams with issue number %d, which is not positive", p.IssueNumber),

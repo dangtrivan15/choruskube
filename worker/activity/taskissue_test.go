@@ -274,6 +274,9 @@ func TestCloseTaskIssue_InvalidParamsAreNotRetried(t *testing.T) {
 	for name, mutate := range map[string]func(p *TaskIssueCloseParams){
 		"nil run id":       func(p *TaskIssueCloseParams) { p.RunID = uuid.Nil },
 		"blank owner/repo": func(p *TaskIssueCloseParams) { p.OwnerRepo = "  " },
+		"no owner":         func(p *TaskIssueCloseParams) { p.OwnerRepo = "app" },
+		"too many slashes": func(p *TaskIssueCloseParams) { p.OwnerRepo = "acme/app/x" },
+		"dot segment":      func(p *TaskIssueCloseParams) { p.OwnerRepo = "acme/.." },
 		"issue 0":          func(p *TaskIssueCloseParams) { p.IssueNumber = 0 },
 		"negative issue":   func(p *TaskIssueCloseParams) { p.IssueNumber = -3 },
 	} {

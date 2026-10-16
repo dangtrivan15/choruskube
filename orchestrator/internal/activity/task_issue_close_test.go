@@ -177,14 +177,15 @@ func TestCloseTaskIssueParamsDecodesTheAPIServersInput(t *testing.T) {
 // same literals, compared as strings.
 func TestTaskIssueCloseWireTypesMarshalToTheWorkersJSON(t *testing.T) {
 	params, err := json.Marshal(TaskIssueCloseParams{
-		TaskID:      uuid.MustParse("0b0e6f43-6b0a-4a8e-9f4e-2f6a1c9d1a01"),
-		RunID:       uuid.MustParse("5c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f"),
-		OwnerRepo:   "acme/api",
+		TaskID:      uuid.MustParse("11111111-1111-1111-1111-111111111111"),
+		RunID:       uuid.MustParse("22222222-2222-2222-2222-222222222222"),
+		OwnerRepo:   "o/r",
 		IssueNumber: 42,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, `{"taskId":"0b0e6f43-6b0a-4a8e-9f4e-2f6a1c9d1a01",`+
-		`"runId":"5c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f","ownerRepo":"acme/api","issueNumber":42}`, string(params))
+	assert.Equal(t,
+		`{"taskId":"11111111-1111-1111-1111-111111111111","runId":"22222222-2222-2222-2222-222222222222","ownerRepo":"o/r","issueNumber":42}`,
+		string(params))
 
 	closed, err := json.Marshal(TaskIssueCloseResult{Outcome: TaskIssueClosed})
 	require.NoError(t, err)

@@ -8,8 +8,8 @@ import { findWireMockRequests, headerOf } from "../helpers/wiremock";
  * Task gets its issue through the roadmap-extension gate, then a person completes it. Under the
  * `control-plane` credential source the API server and the Worker send the same bearer token, so
  * only the Worker's fixed `User-Agent: choruskube-worker` (worker/github/client.go), read back
- * from WireMock's request journal, tells them apart. The request body is pinned by the Worker
- * client's unit test; the close stub answers only a `state: closed` body.
+ * from WireMock's request journal, tells them apart. The journal query counts only closes whose
+ * body sets `state: closed`, the one body the close stub answers.
  */
 
 /** Matches `RepoNameUtil.deriveOwnerRepoName`: the URL's last two path segments, minus `.git`. */
@@ -80,6 +80,7 @@ test.describe("Task issue close", () => {
     const thisRepoCloses = {
       method: "PATCH",
       urlPathPattern: `/repos/${escapeRegex(ownerRepo)}/issues/[0-9]+`,
+      bodyContains: '"state":"closed"',
     };
     const before = (await findWireMockRequests(thisRepoCloses)).length;
 
