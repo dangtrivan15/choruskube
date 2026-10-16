@@ -200,6 +200,82 @@ func TestGetBranchCleanupPlan_ServerAndNetworkFailuresStayRetryable(t *testing.T
 	})
 }
 
+func TestMarkTaskIssueClosed_PostsTheIssueNumberWithTheOrchestratorSecret(t *testing.T) {
+	taskID := uuid.New()
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "/internal/tasks/"+taskID.String()+"/github-issue/closed", r.URL.Path)
+		assert.Equal(t, "Bearer orchestrator-secret", r.Header.Get("Authorization"))
+		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
+		raw, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"issueNumber":42}`, string(raw))
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(server.Close)
+	client := NewAuthenticatedClient(server.URL, "orchestrator-secret")
+
+	require.NoError(t, client.MarkTaskIssueClosed(context.Background(), taskID, 42))
+	assert.Equal(t, 1, calls)
+}
+
+func TestMarkTaskIssueClosed_RejectionsAreNonRetryable(t *testing.T) {
+	for _, status := range []int{http.StatusBadRequest, http.StatusNotFound, http.StatusConflict} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(status)
+				w.Write([]byte("rejected"))
+			})
+
+			err := client.MarkTaskIssueClosed(context.Background(), uuid.New(), 7)
+
+			appErr, ok := err.(*temporal.ApplicationError)
+			require.Truef(t, ok, "want the *ApplicationError itself, got %T: %v", err, err)
+			assert.True(t, appErr.NonRetryable())
+			assert.Equal(t, TaskIssueRejectedType, appErr.Type())
+
+			var apiErr *APIError
+			require.True(t, errors.As(err, &apiErr))
+			assert.Equal(t, status, apiErr.StatusCode)
+		})
+	}
+}
+
+func TestMarkTaskIssueClosed_ServerAndNetworkFailuresStayRetryable(t *testing.T) {
+	for _, status := range []int{http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(status)
+			})
+
+			err := client.MarkTaskIssueClosed(context.Background(), uuid.New(), 7)
+
+			require.Error(t, err)
+			var appErr *temporal.ApplicationError
+			assert.False(t, errors.As(err, &appErr), "retryable errors must not be application errors")
+			var apiErr *APIError
+			require.True(t, errors.As(err, &apiErr))
+			assert.Equal(t, status, apiErr.StatusCode)
+		})
+	}
+
+	t.Run("network", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+		client := NewClient(server.URL)
+		server.Close()
+
+		err := client.MarkTaskIssueClosed(context.Background(), uuid.New(), 7)
+
+		require.Error(t, err)
+		var appErr *temporal.ApplicationError
+		assert.False(t, errors.As(err, &appErr))
+		var apiErr *APIError
+		assert.False(t, errors.As(err, &apiErr))
+	})
+}
+
 func TestWriteExecutionLog(t *testing.T) {
 	runID := uuid.New()
 	execID := uuid.New()

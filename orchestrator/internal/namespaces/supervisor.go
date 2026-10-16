@@ -54,6 +54,7 @@ func (s *Supervisor) Serve(ns string) error {
 	}
 	w := tworker.New(c, workflow.TaskQueue, tworker.Options{})
 	w.RegisterWorkflow(workflow.DAGExecutorWorkflow)
+	w.RegisterWorkflow(workflow.CloseTaskIssueWorkflow)
 	w.RegisterActivity(s.acts)
 	if err := w.Start(); err != nil {
 		c.Close()

@@ -335,6 +335,33 @@ func (c *Client) GetBranchCleanupPlan(ctx context.Context, runID uuid.UUID) (Bra
 	return plan, nil
 }
 
+// --- Task issue close ---
+
+// TaskIssueRejectedType is the application error type of a mark-task-issue-closed call the API
+// answered with a 400, 404 or 409.
+const TaskIssueRejectedType = "TaskIssueRejected"
+
+// MarkTaskIssueClosed records that the Worker closed a Task's linked GitHub issue. A 400, 404 or
+// 409 comes back as the *ApplicationError itself: the SDK reads an error's retry class from its
+// concrete type, so a wrapped rejection would be retried.
+func (c *Client) MarkTaskIssueClosed(ctx context.Context, taskID uuid.UUID, issueNumber int) error {
+	body := struct {
+		IssueNumber int `json:"issueNumber"`
+	}{IssueNumber: issueNumber}
+	_, err := c.doJSON(ctx, http.MethodPost, fmt.Sprintf("/internal/tasks/%s/github-issue/closed", taskID), body)
+	if err == nil {
+		return nil
+	}
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.StatusCode {
+		case http.StatusBadRequest, http.StatusNotFound, http.StatusConflict:
+			return temporal.NewNonRetryableApplicationError("mark task issue closed", TaskIssueRejectedType, err)
+		}
+	}
+	return fmt.Errorf("mark task issue closed: %w", err)
+}
+
 // --- Execution Log ---
 
 func (c *Client) WriteExecutionLog(ctx context.Context, runID, nodeExecID uuid.UUID, level, message string) error {
