@@ -1,6 +1,6 @@
 # The control plane decides; the data plane holds credentials and makes the calls that need them
 
-**Status:** current; its listing of issue filing among the control-plane's remaining GitHub calls is superseded, for gates whose plan declares writesRoadmap, by [2026-10-15---01-roadmap-issues-filed-on-the-worker](2026-10-15---01-roadmap-issues-filed-on-the-worker.md)
+**Status:** current; its listing of issue filing among the control-plane's remaining GitHub calls is superseded, for gates whose plan declares writesRoadmap, by [2026-10-15---01-roadmap-issues-filed-on-the-worker](2026-10-15---01-roadmap-issues-filed-on-the-worker.md); its listing of issue closing is superseded by [2026-10-16---01-task-issue-close-on-the-worker](2026-10-16---01-task-issue-close-on-the-worker.md)
 
 ## Context
 

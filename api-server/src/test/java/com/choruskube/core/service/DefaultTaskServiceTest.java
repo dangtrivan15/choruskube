@@ -500,26 +500,28 @@ public class DefaultTaskServiceTest extends BaseTest {
                 .hasMessageContaining("pull/1");
     }
 
-    // ── GitHub issue linkage: completeCore closes a linked open issue ──────────────────
+    // ── GitHub issue linkage: the close is a workflow started after commit ──────────────
+    //
+    // This class is @Transactional, so afterCommit never fires here; TaskIssueCloseIntegrationTest
+    // covers the start itself. These pin that completion never calls GitHub from the server.
 
     @Test
-    void complete_withOpenLinkedIssue_closesIssueAndUpdatesRow() {
+    void complete_withOpenLinkedIssue_completesWithoutCallingGitHub() {
         GitRepo r = makeRepo("https://github.com/acme/task-issue-linked.git");
         StoryResponse story = makeStory(r.getId());
         TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
         TaskResponse started = service.start(task.id());
         markRunTerminal(started.latestRunId(), WorkflowRunStatus.completed);
         TaskGithubIssue linkage = makeLinkage(task.id(), r.getId(), 7, GithubIssueState.open);
-        Mockito.when(gitHubCredentialResolver.getTokenForRepo(r.getId())).thenReturn("tok");
 
         TaskResponse completed = service.complete(task.id());
 
         assertThat(completed.status()).isEqualTo("done");
-        Mockito.verify(gitHubAppService).closeIssue("tok", "acme/task-issue-linked", 7);
+        Mockito.verifyNoInteractions(gitHubAppService);
+        Mockito.verify(gitHubCredentialResolver, Mockito.never()).getTokenForRepo(ArgumentMatchers.any());
         TaskGithubIssue reloaded =
                 taskGithubIssueRepository.findById(linkage.getId()).orElseThrow();
-        assertThat(reloaded.getState()).isEqualTo(GithubIssueState.closed);
-        assertThat(reloaded.getClosedAt()).isNotNull();
+        assertThat(reloaded.getState()).isEqualTo(GithubIssueState.open);
     }
 
     @Test
@@ -534,10 +536,11 @@ public class DefaultTaskServiceTest extends BaseTest {
 
         assertThat(completed.status()).isEqualTo("done");
         Mockito.verifyNoInteractions(gitHubAppService);
+        Mockito.verify(gitHubCredentialResolver, Mockito.never()).getTokenForRepo(ArgumentMatchers.any());
     }
 
     @Test
-    void complete_withAlreadyClosedLinkedIssue_doesNotCallGitHubAgain() {
+    void complete_withAlreadyClosedLinkedIssue_doesNotCallGitHub() {
         GitRepo r = makeRepo("https://github.com/acme/task-issue-already-closed.git");
         StoryResponse story = makeStory(r.getId());
         TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
@@ -549,27 +552,7 @@ public class DefaultTaskServiceTest extends BaseTest {
 
         assertThat(completed.status()).isEqualTo("done");
         Mockito.verifyNoInteractions(gitHubAppService);
-    }
-
-    @Test
-    void complete_closeIssueThrows_taskStillCompletes() {
-        GitRepo r = makeRepo("https://github.com/acme/task-issue-close-fails.git");
-        StoryResponse story = makeStory(r.getId());
-        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
-        TaskResponse started = service.start(task.id());
-        markRunTerminal(started.latestRunId(), WorkflowRunStatus.completed);
-        TaskGithubIssue linkage = makeLinkage(task.id(), r.getId(), 11, GithubIssueState.open);
-        Mockito.when(gitHubCredentialResolver.getTokenForRepo(r.getId())).thenReturn("tok");
-        Mockito.doThrow(new RuntimeException("github is down"))
-                .when(gitHubAppService)
-                .closeIssue(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt());
-
-        TaskResponse completed = service.complete(task.id());
-
-        assertThat(completed.status()).isEqualTo("done");
-        TaskGithubIssue reloaded =
-                taskGithubIssueRepository.findById(linkage.getId()).orElseThrow();
-        assertThat(reloaded.getState()).isEqualTo(GithubIssueState.open);
+        Mockito.verify(gitHubCredentialResolver, Mockito.never()).getTokenForRepo(ArgumentMatchers.any());
     }
 
     private TaskGithubIssue makeLinkage(UUID taskId, UUID gitRepoId, int issueNumber, GithubIssueState state) {

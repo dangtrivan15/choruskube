@@ -584,8 +584,8 @@ public class DefaultTaskService implements TaskService {
     private TaskResponse completeCore(Task task, UUID outcomeRunId) {
         // Same race startCore guards against: complete() (manual), updateStatus(Internal)() (agent)
         // and TaskSettlementService (run finish) all close Tasks with no shared lease, so two
-        // callers could otherwise both read in_progress, both pass the guard below, and both fire
-        // the linked issue's GitHub close concurrently.
+        // callers could otherwise both read in_progress, both pass the guard below, and both start
+        // the linked issue's close.
         UUID id = task.getId();
         Task locked = repo.findWithLockById(id).orElseThrow(() -> new NotFoundException("Task not found: " + id));
         entityManager.refresh(locked);
@@ -610,7 +610,7 @@ public class DefaultTaskService implements TaskService {
         TaskResponse response = toResponse(saved);
         eventPublisher.publishRoadmapItemChanged(
                 "task", saved.getId(), saved.getStatus().name());
-        issueCloser.close(saved.getId());
+        issueCloser.closeAfterCommit(saved.getId(), mostRecent.getId());
         return response;
     }
 

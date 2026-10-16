@@ -250,10 +250,10 @@ public class DefaultTaskServiceAutopilotTest extends BaseTest {
     /**
      * {@code completeCore} locks the Task row the same way {@code startCore} does, closing the
      * identical race for its own external side effect: two callers racing past an unlocked
-     * {@code in_progress} check would otherwise both call GitHub to close the same linked issue.
+     * {@code in_progress} check would otherwise both start the linked issue's close.
      */
     @Test
-    void concurrentComplete_closesLinkedGithubIssueExactlyOnce() throws Exception {
+    void concurrentComplete_startsTheIssueCloseExactlyOnce() throws Exception {
         GitRepo r = makeRepo("complete-race");
         StoryResponse story = makeStory(r.getId());
         TaskResponse task = service.create(story.id(), new TaskRequest("Contended", "D"));
@@ -262,7 +262,6 @@ public class DefaultTaskServiceAutopilotTest extends BaseTest {
         run.setStatus(WorkflowRunStatus.completed);
         runRepo.saveAndFlush(run);
         makeLinkage(task.id(), r.getId(), 42, GithubIssueState.open);
-        Mockito.when(gitHubCredentialResolver.getTokenForRepo(r.getId())).thenReturn("tok");
 
         CyclicBarrier startLine = new CyclicBarrier(2);
         ExecutorService pool = Executors.newFixedThreadPool(2);
@@ -285,8 +284,9 @@ public class DefaultTaskServiceAutopilotTest extends BaseTest {
         assertThat(outcomes.stream().filter(Objects::nonNull).toList())
                 .as("the loser is rejected by the status guard, not by a database error")
                 .allMatch(ConflictException.class::isInstance);
-        Mockito.verify(gitHubAppService, Mockito.times(1))
-                .closeIssue(Mockito.anyString(), Mockito.anyString(), Mockito.eq(42));
+        Mockito.verify(workflowClient, Mockito.times(1))
+                .newUntypedWorkflowStub(
+                        ArgumentMatchers.eq("CloseTaskIssueWorkflow"), ArgumentMatchers.any(WorkflowOptions.class));
     }
 
     private TaskGithubIssue makeLinkage(UUID taskId, UUID gitRepoId, int issueNumber, GithubIssueState state) {

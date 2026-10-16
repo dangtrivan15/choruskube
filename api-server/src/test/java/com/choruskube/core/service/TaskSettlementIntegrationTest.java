@@ -3,19 +3,20 @@ package com.choruskube.core.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.choruskube.core.BaseTest;
 import com.choruskube.core.CommittedFixtureCleaner;
 import com.choruskube.core.config.WorkflowClientRegistry;
 import com.choruskube.core.credential.GitHubCredentialResolver;
+import com.choruskube.core.dto.CloseTaskIssueWorkflowInput;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
 import com.choruskube.core.dto.InternalUpdateRunStatusRequest;
@@ -28,7 +29,6 @@ import com.choruskube.core.model.RunPullRequest;
 import com.choruskube.core.model.Task;
 import com.choruskube.core.model.TaskGithubIssue;
 import com.choruskube.core.model.WorkflowRun;
-import com.choruskube.core.model.enums.GithubIssueState;
 import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.GitRepoRepository;
@@ -39,6 +39,7 @@ import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.util.RepoNameUtil;
 import io.temporal.client.WorkflowClient;
+import io.temporal.client.WorkflowOptions;
 import io.temporal.client.WorkflowStub;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -47,6 +48,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -115,6 +117,8 @@ public class TaskSettlementIntegrationTest extends BaseTest {
     private WorkflowClientRegistry workflowClientRegistry;
 
     private CommittedFixtureCleaner cleaner;
+    private WorkflowClient workflowClient;
+    private WorkflowStub issueCloseStub;
     private final List<UUID> graphTemplateIds = new ArrayList<>();
     private GitRepo repo;
     private UUID graphTemplateId;
@@ -122,10 +126,12 @@ public class TaskSettlementIntegrationTest extends BaseTest {
     @BeforeEach
     void setUp() {
         cleaner = new CommittedFixtureCleaner(jdbc);
-        WorkflowClient client = mock(WorkflowClient.class);
-        when(client.newUntypedWorkflowStub(any())).thenReturn(mock(WorkflowStub.class));
-        when(workflowClientRegistry.clientFor(any())).thenReturn(client);
-        when(gitHubCredentialResolver.getTokenForRepo(any())).thenReturn("t0ken");
+        workflowClient = mock(WorkflowClient.class);
+        issueCloseStub = mock(WorkflowStub.class);
+        when(workflowClient.newUntypedWorkflowStub(any())).thenReturn(mock(WorkflowStub.class));
+        when(workflowClient.newUntypedWorkflowStub(eq("CloseTaskIssueWorkflow"), any(WorkflowOptions.class)))
+                .thenReturn(issueCloseStub);
+        when(workflowClientRegistry.clientFor(any())).thenReturn(workflowClient);
 
         repo = makeRepo();
         GraphTemplate template = new GraphTemplate();
@@ -252,7 +258,7 @@ public class TaskSettlementIntegrationTest extends BaseTest {
         assertThat(runRepo.findById(run.getId()).orElseThrow().getStatus()).isEqualTo(WorkflowRunStatus.cancelled);
     }
 
-    /** The GitHub call waits for the commit: it must not hold the run's transaction open. */
+    /** The close starts after the commit, naming the run whose finish settled the Task. */
     @Test
     void theLinkedGithubIssue_closesAfterTheCommit() {
         UUID taskId = inProgressTask();
@@ -267,14 +273,21 @@ public class TaskSettlementIntegrationTest extends BaseTest {
 
         finish(run, "completed");
 
-        verify(gitHubAppService).closeIssue("t0ken", repo.getName(), 42);
-        assertThat(taskGithubIssueRepo.findByTaskId(taskId).orElseThrow().getState())
-                .isEqualTo(GithubIssueState.closed);
+        ArgumentCaptor<Object> input = ArgumentCaptor.forClass(Object.class);
+        verify(issueCloseStub, times(1)).start(input.capture());
+        assertThat(input.getValue()).isInstanceOfSatisfying(CloseTaskIssueWorkflowInput.class, in -> {
+            assertThat(in.taskId()).isEqualTo(taskId);
+            assertThat(in.runId()).isEqualTo(run.getId());
+            assertThat(in.ownerRepo()).isEqualTo(repo.getName());
+            assertThat(in.issueNumber()).isEqualTo(42);
+        });
+        verifyNoInteractions(gitHubAppService);
+        verify(gitHubCredentialResolver, never()).getTokenForRepo(any());
     }
 
     /**
-     * Fails after the Task is already marked done, so only deferring the GitHub call to after commit
-     * keeps it from closing the issue of a finish that is then rolled back.
+     * Fails after the Task is already marked done, so only deferring the start to after commit keeps
+     * it from closing the issue of a finish that is then rolled back.
      */
     @Test
     void aRolledBackFinish_neverClosesTheLinkedGithubIssue() {
@@ -293,7 +306,9 @@ public class TaskSettlementIntegrationTest extends BaseTest {
 
         assertThatThrownBy(() -> finish(run, "completed")).isInstanceOf(IllegalStateException.class);
 
-        verify(gitHubAppService, never()).closeIssue(anyString(), anyString(), anyInt());
+        verify(workflowClient, never())
+                .newUntypedWorkflowStub(eq("CloseTaskIssueWorkflow"), any(WorkflowOptions.class));
+        verify(issueCloseStub, never()).start(any());
     }
 
     @Test

@@ -1,0 +1,22 @@
+{
+  "mappings": [
+    {
+      "priority": 5,
+      "request": {
+        "method": "PATCH",
+        "urlPathPattern": "/repos/[^/]+/[^/]+/issues/[0-9]+",
+        "headers": {
+          "Authorization": { "contains": "Bearer " }
+        },
+        "bodyPatterns": [
+          { "matchesJsonPath": "$[?(@.state == 'closed')]" }
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "body": "{\"number\":4242,\"state\":\"closed\"}"
+      }
+    }
+  ]
+}

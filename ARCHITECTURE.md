@@ -144,9 +144,12 @@ A Task created this way in `roadmap_extension` mode also gets a matching GitHub 
 The run's Worker files it during the gate's finalize, after the roadmap write has
 created the Task — not the agent, and not inline with that write. A retry finds an
 issue it already opened by the task key hidden in the issue body, so filing is safe to
-repeat. The issue closes automatically once the Task reaches `done`. Filing and closing
-are both best-effort: a failure is recorded alongside the gate's result — naming any
-Task that has no issue — rather than blocking Task creation or completion.
+repeat. When the Task reaches `done`, the server starts a short workflow once the
+completion commits: the run's own Worker closes the issue with its own credential,
+waiting for a live Worker if none is currently polling, and the server then records the
+result. Filing and closing are both best-effort: a filing failure is recorded alongside
+the gate's result — naming any Task that has no issue — rather than blocking Task
+creation, and a close that fails is logged and never blocks completion.
 
 ## Merging pull requests on approval
 

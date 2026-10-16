@@ -617,3 +617,92 @@ func TestCreateIssueOtherStatusIsAPIError(t *testing.T) {
 	require.ErrorAs(t, err, &apiErr)
 	assert.Equal(t, 500, apiErr.Status)
 }
+
+func TestCloseIssueSendsAPatchSettingStateClosed(t *testing.T) {
+	called := false
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		assert.Equal(t, http.MethodPatch, r.Method)
+		assert.Equal(t, "/repos/acme/app/issues/42", r.URL.EscapedPath())
+		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
+		requireGitHubHeaders(t, r, "t")
+		raw, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"state":"closed"}`, string(raw))
+		_, _ = io.WriteString(w, `{"number":42,"state":"closed"}`)
+	})
+
+	err := c.CloseIssue(context.Background(), "t", "acme/app", 42)
+
+	require.NoError(t, err)
+	assert.True(t, called)
+}
+
+func TestCloseIssueAnyTwoHundredIsSuccess(t *testing.T) {
+	for _, status := range []int{http.StatusOK, http.StatusAccepted, http.StatusNoContent} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(status) })
+
+			require.NoError(t, c.CloseIssue(context.Background(), "t", "acme/app", 7))
+		})
+	}
+}
+
+func TestCloseIssueNonSuccessIsAPIErrorThatNeverEchoesTheBody(t *testing.T) {
+	for _, status := range []int{http.StatusNotFound, http.StatusForbidden, http.StatusInternalServerError} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(status)
+				_, _ = io.WriteString(w, `{"message":"boom","request":{"Authorization":"Bearer secret-token"}}`)
+			})
+
+			err := c.CloseIssue(context.Background(), "secret-token", "acme/app", 42)
+
+			var apiErr *APIError
+			require.ErrorAs(t, err, &apiErr)
+			assert.Equal(t, status, apiErr.Status)
+			assert.Equal(t, "acme/app", apiErr.OwnerRepo)
+			assert.NotContains(t, err.Error(), "secret-token")
+			assert.NotContains(t, err.Error(), "boom")
+		})
+	}
+}
+
+func TestCloseIssueRedirectIsAPIErrorNotFollowed(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/acme/app/issues/42" {
+			t.Errorf("redirect was followed to %s", r.URL.Path)
+		}
+		http.Redirect(w, r, "/repositories/1/issues/42", http.StatusMovedPermanently)
+	})
+
+	err := c.CloseIssue(context.Background(), "t", "acme/app", 42)
+
+	var apiErr *APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, http.StatusMovedPermanently, apiErr.Status)
+}
+
+func TestCloseIssueRejectsAnInvalidSlugWithoutARequest(t *testing.T) {
+	called := false
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) { called = true })
+
+	for _, ownerRepo := range []string{"acme", "a/b/c", "acme/..", "../app", "", "acme/"} {
+		t.Run(ownerRepo, func(t *testing.T) {
+			require.Error(t, c.CloseIssue(context.Background(), "t", ownerRepo, 42))
+		})
+	}
+	assert.False(t, called, "an invalid slug must never reach the server")
+}
+
+func TestCloseIssueRejectsANonPositiveNumberWithoutARequest(t *testing.T) {
+	called := false
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) { called = true })
+
+	for _, number := range []int{0, -1} {
+		t.Run(fmt.Sprint(number), func(t *testing.T) {
+			require.Error(t, c.CloseIssue(context.Background(), "t", "acme/app", number))
+		})
+	}
+	assert.False(t, called, "a non-positive issue number must never reach the server")
+}

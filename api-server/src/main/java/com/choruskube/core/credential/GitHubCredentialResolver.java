@@ -8,9 +8,8 @@ public interface GitHubCredentialResolver {
     String getTokenForRun(UUID runId);
 
     /**
-     * Resolve a usable GitHub token for this repo directly — for callers with no run in hand, e.g.
-     * closing a linked issue when a Task reaches {@code done} outside any specific run's signal
-     * path.
+     * Resolve a usable GitHub token for this repo directly — for a caller with no run in hand:
+     * filing the GitHub issue for a newly created Task.
      */
     String getTokenForRepo(UUID gitRepoId);
 }

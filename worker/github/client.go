@@ -1,6 +1,6 @@
 // Package github is a small stdlib-only GitHub REST client for the Worker: the compare, pull
-// request and merge calls a gate needs, ref deletion for run-branch cleanup, and GitHub App
-// installation-token minting.
+// request and merge calls a gate needs, ref deletion for run-branch cleanup, issue filing and
+// closing, and GitHub App installation-token minting.
 package github
 
 import (
@@ -207,6 +207,32 @@ func (c *Client) CreateIssue(ctx context.Context, token, ownerRepo, title, body 
 		return Issue{}, fmt.Errorf("decode created issue for %s: %w", ownerRepo, err)
 	}
 	return Issue{Number: wire.Number, HTMLURL: wire.HTMLURL}, nil
+}
+
+// CloseIssue sets an issue's state to closed. Any 2xx returns nil; any other status, a transferred
+// issue's unfollowed redirect included, returns an *APIError that never keeps the body.
+func (c *Client) CloseIssue(ctx context.Context, token, ownerRepo string, number int) error {
+	repo, err := repoPath(ownerRepo)
+	if err != nil {
+		return err
+	}
+	if number <= 0 {
+		return fmt.Errorf("issue number %d for %s is not positive", number, ownerRepo)
+	}
+	payload, err := json.Marshal(struct {
+		State string `json:"state"`
+	}{State: "closed"})
+	if err != nil {
+		return fmt.Errorf("encode issue close request for %s#%d: %w", ownerRepo, number, err)
+	}
+	resp, err := c.send(ctx, http.MethodPatch, fmt.Sprintf("/repos/%s/issues/%d", repo, number), token, payload)
+	if err != nil {
+		return err
+	}
+	if resp.status < 200 || resp.status > 299 {
+		return &APIError{Status: resp.status, OwnerRepo: ownerRepo}
+	}
+	return nil
 }
 
 // Compare returns how many commits head is ahead of base.
