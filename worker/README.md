@@ -82,7 +82,7 @@ would only return what you configured.
 | `WORKER_CALLBACK_PORT` | no | Port the callback server listens on for agent completion/heartbeat callbacks. Default `9090`. |
 | `CREDENTIAL_SOURCE` | no | `control-plane` (default) or `local` — where GitHub and agent credentials come from; see [Credentials](#credentials). `local` is for a single tenant's own Fleet only. Any other value fails startup. |
 | `CREDENTIALS_DIR` | no | Folder the `local` source reads. Default `/etc/choruskube/credentials`. |
-| `GITHUB_API_URL` | no | GitHub API root for the Worker's own GitHub calls (gate compares and merges, run-branch cleanup, roadmap issue filing). Default `https://api.github.com`. |
+| `GITHUB_API_URL` | no | GitHub API root for the Worker's own GitHub calls (gate compares and merges, run-branch cleanup, roadmap issue filing and closing). Default `https://api.github.com`. |
 
 `TEMPORAL_TLS_DISABLED` is opt-in so a deployment against a TLS Temporal cannot lose TLS by
 omission. It is only needed when a Fleet carries a credential: the Temporal SDK turns TLS on
@@ -138,6 +138,18 @@ with `User-Agent: choruskube-worker`.
 If the folder or environment supplies either the Claude token or a registry login, the Worker
 uses its values for both and drops whatever the api-server returned for the other. Supplying
 neither leaves the api-server's credentials in place.
+
+### GitHub work outside a run
+
+`CloseTaskIssue` closes a done Task's linked GitHub issue. It runs on the Fleet's own task queue,
+but for a workflow whose id names a Task (`choruskube-task-issue-close-<taskId>`) rather than a
+run (`choruskube-run-<runId>`). It still fetches its GitHub token keyed by the Task's latest run
+id, so every workload call still names its run in the path. Closing needs Issues write, as filing
+does.
+
+No deadline bounds how long the step waits for a live Worker to pick it up; retries are bounded
+only once one runs it. GitHub's non-retryable answers — 404, 403, 410 or 422, for example — end the
+step without retry, and the issue stays open.
 
 ## Executor configuration
 
