@@ -240,8 +240,8 @@ val agentScriptTest = tasks.register<Exec>("agentScriptTest") {
     )
 }
 
-// The unit suites are the fast gate: a unit regression should fail in seconds rather than
-// after Keycloak/Temporal/object storage have spun up. mustRunAfter (not dependsOn) keeps
+// The unit suites run before the e2e chain but do not gate it: org.gradle.continue=true runs the
+// chain after a unit failure too, so one run reports both. mustRunAfter (not dependsOn) keeps
 // the e2e tasks individually invokable — the constraint simply disappears when the unit
 // tasks are not in the graph.
 val unitStage = listOf(":api-server:test", ":orchestrator:test", ":worker:test", ":web-ui:test", agentScriptTest)
