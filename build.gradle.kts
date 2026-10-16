@@ -272,9 +272,8 @@ val e2eStackUp = tasks.register<Exec>("e2eStackUp") {
     // :e2eSmoke would be skipped the moment an earlier phase failed, leaking containers —
     // exactly the case where teardown matters most. A Gradle finalizer runs once its
     // finalized task has completed, INCLUDING when that task failed and the build is already
-    // aborting. Attaching it to :e2eStackUp therefore fires teardown in precisely the right
-    // set of runs: whenever the stack was started (even if starting it failed half-way, which
-    // still leaves containers behind), and never when :e2eImages failed before it.
+    // aborting. Attaching it to :e2eStackUp therefore fires teardown whenever the stack was
+    // started, even if starting it failed half-way, which still leaves containers behind.
     if (!e2eNoTeardown) {
         finalizedBy(e2eDown)
     } else {
@@ -328,13 +327,27 @@ val e2ePlaywright = tasks.register<Exec>("e2ePlaywright") {
     commandLine(args)
 }
 
+val e2eChain = listOf(e2eImages, e2eStackUp, e2eSmoke, e2eSeed, e2ePlaywright)
+
+// mustRunAfter orders the phases but does not stop them: org.gradle.continue=true runs every task
+// that does not dependOn the failed one, so without this a failed e2eStackUp still runs all of
+// Playwright against no stack, and its failures read as regressions.
+e2eChain.forEachIndexed { i, phase ->
+    val earlier = e2eChain.take(i)
+    phase.configure {
+        onlyIf("every earlier e2e phase in this build succeeded") {
+            earlier.none { prev -> prev.get().state.let { s -> s.executed && (s.failure != null || s.skipped) } }
+        }
+    }
+}
+
 // Ordering between the phases is expressed on the tasks themselves (mustRunAfter above), so
 // this aggregate only has to name them. Teardown is reached through :e2eStackUp's finalizer,
 // which is why it is not listed here.
 tasks.register("e2eTest") {
     description = "Run the full e2e chain: images -> stack up -> smoke -> seed -> playwright"
     group = "verification"
-    dependsOn(e2eImages, e2eStackUp, e2eSmoke, e2eSeed, e2ePlaywright)
+    dependsOn(e2eChain)
 }
 
 // ---------------------------------------------------------------------------------------
