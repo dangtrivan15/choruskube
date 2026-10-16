@@ -30,7 +30,7 @@ compose_e2e() { docker compose -f "$REPO_ROOT/docker-compose.e2e.yaml" "$@"; }
 wait_for_health() {
   local url="$1" attempts="${2:-60}" delay="${3:-2}" match="${4:-UP}"
   for _ in $(seq 1 "$attempts"); do
-    if curl -sf "$url" 2>/dev/null | grep -q "$match"; then return 0; fi
+    if grep -q "$match" <<< "$(curl -sf "$url" 2>/dev/null)"; then return 0; fi
     sleep "$delay"
   done
   return 1

@@ -68,7 +68,7 @@ BIN5="$TESTDIR/bin5"; PULLED5="$TESTDIR/pulled5.log"
 make_docker_stub "$BIN5" "$PULLED5"
 printf 'busybox:latest\npostgres:17-alpine\n' > "$TESTDIR/list5.txt"
 SUMMARY=$(PATH="$BIN5:$PATH" STACK_LIST="$TESTDIR/list5.txt" OUT="$TESTDIR/stack5.tar" bash "$SCRIPT")
-echo "$SUMMARY" | grep -q "saved 2 images" \
+grep -q "saved 2 images" <<< "$SUMMARY" \
   && ok "summary line reports the image count" || fail "summary line reports the image count (got: $SUMMARY)"
 
 # --- Summary ---

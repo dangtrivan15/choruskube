@@ -38,7 +38,7 @@ make_docker_stub "$BIN1" 0 0
 mkdir -p "$TESTDIR/preload1"; : > "$TESTDIR/preload1/stack.tar"
 OUT1=$(PATH="$BIN1:$PATH" PRELOAD_DIR="$TESTDIR/preload1" \
   bash -c 'source "'"$ENTRYPOINT"'" --preload-only 2>&1')
-echo "$OUT1" | grep -q "preload: loaded" \
+grep -q "preload: loaded" <<< "$OUT1" \
   && ok "archive present + daemon reachable + load succeeds: loads" \
   || fail "archive present + daemon reachable + load succeeds: loads (got: $OUT1)"
 
@@ -46,7 +46,7 @@ echo "$OUT1" | grep -q "preload: loaded" \
 mkdir -p "$TESTDIR/preload2"  # empty: contains no *.tar
 OUT2=$(PATH="$BIN1:$PATH" PRELOAD_DIR="$TESTDIR/preload2" \
   bash -c 'source "'"$ENTRYPOINT"'" --preload-only 2>&1')
-echo "$OUT2" | grep -q "preload: none" \
+grep -q "preload: none" <<< "$OUT2" \
   && ok "archive absent: no-op" \
   || fail "archive absent: no-op (got: $OUT2)"
 
@@ -63,7 +63,7 @@ RC3=$?
 set -e
 [ "$RC3" -ne 0 ] && ok "docker load fails: entrypoint exits non-zero" \
   || fail "docker load fails: entrypoint exits non-zero (got rc=$RC3)"
-echo "$OUT3" | grep -q "preload: FATAL" \
+grep -q "preload: FATAL" <<< "$OUT3" \
   && ok "docker load fails: FATAL message on stderr" \
   || fail "docker load fails: FATAL message on stderr (got: $OUT3)"
 
@@ -86,7 +86,7 @@ RC4=$?
 set -e
 [ "$RC4" -ne 0 ] && ok "daemon never reachable: entrypoint exits non-zero" \
   || fail "daemon never reachable: entrypoint exits non-zero (got rc=$RC4)"
-echo "$OUT4" | grep -q "preload: FATAL" \
+grep -q "preload: FATAL" <<< "$OUT4" \
   && ok "daemon never reachable: FATAL message on stderr" \
   || fail "daemon never reachable: FATAL message on stderr (got: $OUT4)"
 

@@ -293,7 +293,7 @@ R8="$S8/workspace/out/reports/widget"
 [ ! -d "$R8/web-ui" ] && ok "web-ui originals removed" || fail "web-ui originals removed"
 [ -f "$R8/timings.tsv" ] && ok "loose files left unarchived" || fail "loose files left unarchived"
 [ -f "$R8/test-output.log" ] && ok "output log left unarchived" || fail "output log left unarchived"
-tar -tzf "$R8/api-server.tar.gz" | grep -q "jacoco/html/c1.html" \
+grep -q "jacoco/html/c1.html" <<< "$(tar -tzf "$R8/api-server.tar.gz")" \
     && ok "archive preserves the nested report tree" || fail "archive preserves nested tree"
 FILECOUNT=$(find "$S8/workspace/out" -type f | wc -l | tr -d ' ')
 [ "$FILECOUNT" -le 8 ] && ok "artifact count collapsed (got $FILECOUNT)" \
@@ -412,13 +412,13 @@ set -e
 REPORT11="$S11/workspace/out/test_report.md"
 ALPHA_SECTION=$(sed -n '/^## alpha/,/^## beta/p' "$REPORT11")
 BETA_SECTION=$(sed -n '/^## beta/,$p' "$REPORT11")
-printf '%s' "$ALPHA_SECTION" | grep -qF "Archiving notes" \
+grep -qF "Archiving notes" <<< "$ALPHA_SECTION" \
     && ok "multi-repo bleed: alpha's own section records its archiving note" \
     || fail "multi-repo bleed: alpha's own section records its archiving note"
-printf '%s' "$BETA_SECTION" | grep -qF "clean.tar.gz" \
+grep -qF "clean.tar.gz" <<< "$BETA_SECTION" \
     && ok "multi-repo bleed: beta's own archiving still succeeds" \
     || fail "multi-repo bleed: beta's own archiving still succeeds"
-printf '%s' "$BETA_SECTION" | grep -qF "broken" \
+grep -qF "broken" <<< "$BETA_SECTION" \
     && fail "multi-repo bleed: beta's section must NOT carry alpha's note" \
     || ok "multi-repo bleed: beta's section must NOT carry alpha's note"
 

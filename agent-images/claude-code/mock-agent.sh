@@ -583,7 +583,7 @@ case "$SCENARIO" in
       echo "$ERROR_OUTPUT" >&2
       exit 1
     fi
-    if ! echo "$ERROR_OUTPUT" | grep -q "no task id available"; then
+    if ! grep -q "no task id available" <<< "$ERROR_OUTPUT"; then
       echo "ERROR: update-task-status failed as expected (exit $EXIT_CODE) but without the 'no task id available' message:" >&2
       echo "$ERROR_OUTPUT" >&2
       exit 1
@@ -765,7 +765,7 @@ JSON
       echo "ERROR: create-proposal unexpectedly succeeded in a gated run" >&2
       exit 1
     fi
-    echo "$CREATE_OUTPUT" | grep -q "propose-roadmap" \
+    grep -q "propose-roadmap" <<< "$CREATE_OUTPUT" \
       || { echo "ERROR: create-proposal's refusal did not mention propose-roadmap: $CREATE_OUTPUT" >&2; exit 1; }
     echo "Confirmed: create-proposal is refused, and points at propose-roadmap"
 
@@ -918,7 +918,7 @@ JSON
     echo "Containers visible from DinD: ${CONTAINER_NAMES:-<none>}"
 
     for svc in api-server orchestrator postgres temporal object-storage wiremock; do
-      if echo "$CONTAINER_NAMES" | grep -q "$svc"; then
+      if grep -q "$svc" <<< "$CONTAINER_NAMES"; then
         echo "FAIL: Found ChorusKube service '$svc' in docker ps — isolation broken" >&2
         exit 1
       fi

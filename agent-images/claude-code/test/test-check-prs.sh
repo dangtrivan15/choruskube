@@ -198,7 +198,7 @@ REPOS4=$(printf '[{"id":"repo-4","name":"svc4","local_path":"%s"}]' "$WORK4")
 COPY=$(make_check_prs_copy "$REPOS4")
 CURL_STUB_BODY='[]' run_check_prs "$COPY"
 [ "$RC" -eq 1 ] && ok "repo pushed, no PR registered: exits 1" || fail "repo pushed, no PR registered: exits 1 (got $RC)"
-echo "$OUT" | grep -qF "svc4: no PR registered" \
+grep -qF "svc4: no PR registered" <<< "$OUT" \
     && ok "repo pushed, no PR registered: names the repo" || fail "repo pushed, no PR registered: names the repo (got: $OUT)"
 
 # --- Test 5: multi-repo — one registered, one missing — only the missing one is
@@ -211,9 +211,9 @@ REPOS5=$(printf '[{"id":"repo-5a","name":"svc5a","local_path":"%s"},{"id":"repo-
 COPY=$(make_check_prs_copy "$REPOS5")
 CURL_STUB_BODY='[{"gitRepoId":"repo-5a","prUrl":"https://github.com/org/svc5a/pull/1"}]' run_check_prs "$COPY"
 [ "$RC" -eq 1 ] && ok "multi-repo partial registration: exits 1" || fail "multi-repo partial registration: exits 1 (got $RC)"
-echo "$OUT" | grep -qF "svc5b: no PR registered" \
+grep -qF "svc5b: no PR registered" <<< "$OUT" \
     && ok "multi-repo partial registration: names only the missing repo" || fail "multi-repo partial registration: names only the missing repo (got: $OUT)"
-echo "$OUT" | grep -qF "svc5a: no PR registered" \
+grep -qF "svc5a: no PR registered" <<< "$OUT" \
     && fail "multi-repo partial registration: false-positives the registered repo" || ok "multi-repo partial registration: does not false-positive the registered repo"
 
 # --- Test 6: curl transport failure (e.g. DNS/connect/timeout) — exits 1 loudly,
@@ -225,7 +225,7 @@ REPOS6=$(printf '[{"id":"repo-6","name":"svc6","local_path":"%s"}]' "$WORK6")
 COPY=$(make_check_prs_copy "$REPOS6")
 CURL_STUB_EXIT=7 run_check_prs "$COPY"
 [ "$RC" -eq 1 ] && ok "curl transport failure: exits 1 (not a silent set -e death)" || fail "curl transport failure: exits 1 (got $RC)"
-echo "$OUT" | grep -qF "could not reach" \
+grep -qF "could not reach" <<< "$OUT" \
     && ok "curl transport failure: loud diagnostic" || fail "curl transport failure: loud diagnostic (got: $OUT)"
 
 # --- Test 7: API server reachable but returns a non-200 (e.g. 500) — exits 1 loudly ---
@@ -235,7 +235,7 @@ REPOS7=$(printf '[{"id":"repo-7","name":"svc7","local_path":"%s"}]' "$WORK7")
 COPY=$(make_check_prs_copy "$REPOS7")
 CURL_STUB_HTTP_CODE=500 CURL_STUB_BODY='{"error":"boom"}' run_check_prs "$COPY"
 [ "$RC" -eq 1 ] && ok "API HTTP 500: exits 1" || fail "API HTTP 500: exits 1 (got $RC)"
-echo "$OUT" | grep -qF "HTTP 500" \
+grep -qF "HTTP 500" <<< "$OUT" \
     && ok "API HTTP 500: names the status code" || fail "API HTTP 500: names the status code (got: $OUT)"
 
 # --- Test 8: origin unreachable entirely (git ls-remote fails, not just "ref not
@@ -256,7 +256,7 @@ REPOS8=$(printf '[{"id":"repo-8","name":"svc8","local_path":"%s"}]' "$WORK8")
 COPY=$(make_check_prs_copy "$REPOS8")
 run_check_prs "$COPY"
 [ "$RC" -eq 1 ] && ok "unreachable origin: exits 1" || fail "unreachable origin: exits 1 (got $RC)"
-echo "$OUT" | grep -qF "could not reach origin" \
+grep -qF "could not reach origin" <<< "$OUT" \
     && ok "unreachable origin: loud diagnostic, distinct from 'not pushed'" || fail "unreachable origin: loud diagnostic (got: $OUT)"
 
 # --- Test 9: required env vars missing — fails loudly before any git/curl call ---
@@ -266,7 +266,7 @@ OUT=$(env -u API_SERVER_URL RUN_ID="r" NODE_EXECUTION_ID="n" JOB_SECRET="s" bash
 RC=$?
 set -e
 [ "$RC" -eq 1 ] && ok "missing API_SERVER_URL: exits 1" || fail "missing API_SERVER_URL: exits 1 (got $RC)"
-echo "$OUT" | grep -qF "API_SERVER_URL not set" \
+grep -qF "API_SERVER_URL not set" <<< "$OUT" \
     && ok "missing API_SERVER_URL: clear diagnostic" || fail "missing API_SERVER_URL: clear diagnostic (got: $OUT)"
 
 # --- Test 10: run branch pushed at parity with the default branch — exits 0.
@@ -279,7 +279,7 @@ REPOS10=$(printf '[{"id":"repo-10","name":"svc10","local_path":"%s"}]' "$WORK10"
 COPY=$(make_check_prs_copy "$REPOS10")
 CURL_STUB_BODY='[]' run_check_prs "$COPY"
 [ "$RC" -eq 0 ] && ok "run branch at parity with default: exits 0" || fail "run branch at parity with default: exits 0 (got $RC: $OUT)"
-echo "$OUT" | grep -qF "svc10: no PR registered" \
+grep -qF "svc10: no PR registered" <<< "$OUT" \
     && fail "run branch at parity with default: must not demand a PR" || ok "run branch at parity with default: does not demand a PR"
 
 # --- Test 11: run branch pushed but behind the default branch — exits 0, same
@@ -291,7 +291,7 @@ REPOS11=$(printf '[{"id":"repo-11","name":"svc11","local_path":"%s"}]' "$WORK11"
 COPY=$(make_check_prs_copy "$REPOS11")
 CURL_STUB_BODY='[]' run_check_prs "$COPY"
 [ "$RC" -eq 0 ] && ok "run branch behind default: exits 0" || fail "run branch behind default: exits 0 (got $RC: $OUT)"
-echo "$OUT" | grep -qF "svc11: no PR registered" \
+grep -qF "svc11: no PR registered" <<< "$OUT" \
     && fail "run branch behind default: must not demand a PR" || ok "run branch behind default: does not demand a PR"
 
 # --- Test 12: run branch pushed with a commit the default branch lacks — still
@@ -303,7 +303,7 @@ REPOS12=$(printf '[{"id":"repo-12","name":"svc12","local_path":"%s"}]' "$WORK12"
 COPY=$(make_check_prs_copy "$REPOS12")
 CURL_STUB_BODY='[]' run_check_prs "$COPY"
 [ "$RC" -eq 1 ] && ok "run branch ahead of default, no PR: exits 1" || fail "run branch ahead of default, no PR: exits 1 (got $RC: $OUT)"
-echo "$OUT" | grep -qF "svc12: no PR registered" \
+grep -qF "svc12: no PR registered" <<< "$OUT" \
     && ok "run branch ahead of default, no PR: names the repo" || fail "run branch ahead of default, no PR: names the repo (got: $OUT)"
 
 # --- Test 13: run branch ahead of the default branch and its PR is registered —

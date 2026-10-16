@@ -78,13 +78,13 @@ grep -qxF "Authorization: Bearer s" "$TESTDIR/curl.args" 2>/dev/null \
 # --- Test 3: the API refuses — logged, never fatal ---
 FAKE_CODE=500 run_record_base "$TESTDIR/two"
 [ "$RB_RC" -eq 0 ] && ok "HTTP 500: exits 0" || fail "HTTP 500: exits 0 (rc=$RB_RC)"
-echo "$RB_OUT" | grep -q "re-check" \
+grep -q "re-check" <<< "$RB_OUT" \
   && ok "HTTP 500: warns that the gate will re-check" || fail "HTTP 500: warns that the gate will re-check ($RB_OUT)"
 
 # --- Test 4: curl itself fails (no status at all) — logged, never fatal ---
 FAKE_CURL_EXIT=7 run_record_base "$TESTDIR/two"
 [ "$RB_RC" -eq 0 ] && ok "curl failure: exits 0" || fail "curl failure: exits 0 (rc=$RB_RC)"
-echo "$RB_OUT" | grep -q "HTTP 000" \
+grep -q "HTTP 000" <<< "$RB_OUT" \
   && ok "curl failure: reported as HTTP 000" || fail "curl failure: reported as HTTP 000 ($RB_OUT)"
 
 # --- Test 5: API_SERVER_URL unset — nothing to post to ---
@@ -113,7 +113,7 @@ for missing in RUN_ID NODE_EXECUTION_ID JOB_SECRET; do
   RB_RC=$?
   set -e
   [ "$RB_RC" -eq 0 ] && ok "$missing unset: exits 0" || fail "$missing unset: exits 0 (rc=$RB_RC: $RB_OUT)"
-  echo "$RB_OUT" | grep -q "WARNING: $missing unset" \
+  grep -q "WARNING: $missing unset" <<< "$RB_OUT" \
     && ok "$missing unset: warns on stderr" || fail "$missing unset: warns on stderr ($RB_OUT)"
   [ ! -e "$TESTDIR/curl.args" ] && ok "$missing unset: curl not called" || fail "$missing unset: curl not called"
 done
