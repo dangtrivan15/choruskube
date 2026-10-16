@@ -530,28 +530,6 @@ class GitHubAppServiceTest {
         }
     }
 
-    @Test
-    void closeIssue_ok_succeeds() throws Exception {
-        try (Stub github = Stub.serving(200, "{\"number\":42,\"state\":\"closed\"}")) {
-            github.service().closeIssue("t0ken", "org/backend-api", 42);
-
-            assertThat(github.captured().method).isEqualTo("PATCH");
-            assertThat(github.captured().path).isEqualTo("/repos/org/backend-api/issues/42");
-        }
-    }
-
-    @Test
-    void closeIssue_nonTwoxx_throwsGitHubApiException() throws Exception {
-        try (Stub github = Stub.serving(404, "{\"message\":\"Not Found\"}")) {
-            GitHubAppService service = github.service();
-
-            assertThatThrownBy(() -> service.closeIssue("t0ken", "org/backend-api", 42))
-                    .isInstanceOf(GitHubApiException.class)
-                    .satisfies(thrown -> assertThat(((GitHubApiException) thrown).getStatus())
-                            .isEqualTo(404));
-        }
-    }
-
     /** What one request to the stub actually looked like — set exactly once, before the response. */
     private static final class CapturedRequest {
         volatile String method;

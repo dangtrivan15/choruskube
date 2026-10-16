@@ -15,13 +15,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
-import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Closes a Task as part of the state change that finishes its run. Final Approval merges a run's
@@ -44,7 +39,6 @@ public class TaskSettlementService {
     private final EntityManager entityManager;
     private final RunEventPublisher eventPublisher;
     private final TaskGithubIssueCloser issueCloser;
-    private final TransactionTemplate requiresNewTx;
 
     public TaskSettlementService(
             TaskRepository taskRepo,
@@ -52,16 +46,13 @@ public class TaskSettlementService {
             RunPullRequestRepository prRepo,
             EntityManager entityManager,
             RunEventPublisher eventPublisher,
-            TaskGithubIssueCloser issueCloser,
-            PlatformTransactionManager txManager) {
+            TaskGithubIssueCloser issueCloser) {
         this.taskRepo = taskRepo;
         this.runRepo = runRepo;
         this.prRepo = prRepo;
         this.entityManager = entityManager;
         this.eventPublisher = eventPublisher;
         this.issueCloser = issueCloser;
-        this.requiresNewTx = new TransactionTemplate(txManager);
-        this.requiresNewTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     /**
@@ -107,7 +98,7 @@ public class TaskSettlementService {
         taskRepo.save(task);
         eventPublisher.publishRoadmapItemChanged(
                 "task", task.getId(), task.getStatus().name());
-        closeLinkedIssueAfterCommit(task.getId());
+        issueCloser.closeAfterCommit(task.getId(), run.getId());
         log.info("Closed Task {} — run {} finished with every pull request merged", task.getId(), run.getId());
         return true;
     }
@@ -117,20 +108,5 @@ public class TaskSettlementService {
                 .findFirst()
                 .map(latest -> latest.getId().equals(runId))
                 .orElse(false);
-    }
-
-    /**
-     * A GitHub call, so never inside the finish: it would hold the run and Task rows locked for as
-     * long as GitHub takes, and it would close the issue of a finish that then rolled back. {@code
-     * REQUIRES_NEW} because a write from {@code afterCommit} otherwise joins the transaction that has
-     * already committed and is silently never saved.
-     */
-    private void closeLinkedIssueAfterCommit(UUID taskId) {
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override
-            public void afterCommit() {
-                requiresNewTx.executeWithoutResult(status -> issueCloser.close(taskId));
-            }
-        });
     }
 }

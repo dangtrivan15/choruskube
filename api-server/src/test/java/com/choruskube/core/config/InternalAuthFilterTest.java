@@ -261,4 +261,37 @@ public class InternalAuthFilterTest extends BaseTest {
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.error").value("Missing or invalid Authorization header"));
     }
+
+    // ── Task issue close record: orchestrator-only, by construction ───────────────
+    //
+    // /internal/tasks/{taskId}/github-issue/closed has no node-executions/{execId} segment, so a
+    // job secret — even one valid for a real execution — can never authorize it.
+
+    @Test
+    void orchestratorToken_passesTaskIssueClosedEndpoint() throws Exception {
+        // No linkage for this Task, so the controller answers 404 — proof the filter let it through.
+        mockMvc.perform(post("/internal/tasks/" + java.util.UUID.randomUUID() + "/github-issue/closed")
+                        .header("Authorization", "Bearer " + ORCHESTRATOR_SECRET)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"issueNumber\":7}"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void agentToken_deniesTaskIssueClosedEndpoint() throws Exception {
+        mockMvc.perform(post("/internal/tasks/" + java.util.UUID.randomUUID() + "/github-issue/closed")
+                        .header("Authorization", "Bearer test-agent-job-secret")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"issueNumber\":7}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void noAuth_deniesTaskIssueClosedEndpoint() throws Exception {
+        mockMvc.perform(post("/internal/tasks/" + java.util.UUID.randomUUID() + "/github-issue/closed")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"issueNumber\":7}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error").value("Missing or invalid Authorization header"));
+    }
 }

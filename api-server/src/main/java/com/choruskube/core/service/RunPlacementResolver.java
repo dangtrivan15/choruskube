@@ -23,6 +23,9 @@ public interface RunPlacementResolver {
      * Decides where this run executes and records the choice so it cannot move later. Runs
      * inside the caller's transaction.
      *
+     * <p>May be asked about a run that has already ended, for work done on its behalf; it must then
+     * answer with the placement it recorded, never choose again.
+     *
      * @throws com.choruskube.core.exception.BadRequestException if the run cannot be placed
      */
     RunPlacement placeFor(UUID runId);
