@@ -1,18 +1,22 @@
 package com.choruskube.core.controller;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.choruskube.core.BaseTest;
+import com.choruskube.core.service.WorkerCredentialSources;
 import io.temporal.client.WorkflowClient;
 import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.net.URI;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -35,17 +39,37 @@ import org.springframework.test.web.servlet.MockMvc;
         })
 class WorkerRegistrationControllerTest extends BaseTest {
 
+    private static final String TOKEN = "ckf_self_hosted_secret";
+
     private static final String BODY =
-            "{\"hostname\":\"oss-worker-1\",\"instanceId\":\"11111111-1111-1111-1111-111111111111\"}";
+            "{\"hostname\":\"oss-worker-1\",\"instanceId\":\"11111111-1111-1111-1111-111111111111\","
+                    + "\"credentialSource\":\"control-plane\"}";
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private WorkerCredentialSources credentialSources;
+
+    @Autowired
+    private JdbcTemplate jdbc;
 
     @MockitoBean
     private WorkflowServiceStubs workflowServiceStubs;
 
     @MockitoBean
     private WorkflowClient workflowClient;
+
+    /** This table is shared across the whole suite's single database, not reset between tests by Spring. */
+    @BeforeEach
+    void clearCredentialSourceTable() {
+        jdbc.update("DELETE FROM single_fleet_credential_source");
+    }
+
+    private static String bodyWithCredentialSource(String instanceId, String credentialSource) {
+        return "{\"hostname\":\"oss-worker-1\",\"instanceId\":\"" + instanceId + "\",\"credentialSource\":\""
+                + credentialSource + "\"}";
+    }
 
     @Test
     void register_configuredToken_returnsTheOneFleetThisServerHas() throws Exception {
@@ -117,5 +141,80 @@ class WorkerRegistrationControllerTest extends BaseTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(BODY))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void register_local_returns200AndIsAnsweredAsHoldingOwnCredentials() throws Exception {
+        mockMvc.perform(post("/worker/register")
+                        .header("Authorization", "Bearer " + TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(bodyWithCredentialSource("11111111-1111-1111-1111-111111111111", "local")))
+                .andExpect(status().isOk());
+
+        assertThat(credentialSources.holdsOwnCredentials(TOKEN)).isTrue();
+    }
+
+    @Test
+    void register_controlPlane_returns200AndIsAnsweredAsNotHoldingOwnCredentials() throws Exception {
+        mockMvc.perform(post("/worker/register")
+                        .header("Authorization", "Bearer " + TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(bodyWithCredentialSource("22222222-2222-2222-2222-222222222222", "control-plane")))
+                .andExpect(status().isOk());
+
+        assertThat(credentialSources.holdsOwnCredentials(TOKEN)).isFalse();
+    }
+
+    /** A Worker binary built before this field existed cannot register at all; there is no default. */
+    @Test
+    void register_missingCredentialSource_returns400AndLeavesAnyExistingRowUnchanged() throws Exception {
+        mockMvc.perform(post("/worker/register")
+                        .header("Authorization", "Bearer " + TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(bodyWithCredentialSource("33333333-3333-3333-3333-333333333333", "local")))
+                .andExpect(status().isOk());
+
+        String legacyBody = "{\"hostname\":\"oss-worker-1\",\"instanceId\":\"33333333-3333-3333-3333-333333333333\"}";
+        mockMvc.perform(post("/worker/register")
+                        .header("Authorization", "Bearer " + TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(legacyBody))
+                .andExpect(status().isBadRequest());
+
+        assertThat(credentialSources.holdsOwnCredentials(TOKEN)).isTrue();
+    }
+
+    @Test
+    void register_unrecognizedCredentialSource_returns400AndLeavesAnyExistingRowUnchanged() throws Exception {
+        mockMvc.perform(post("/worker/register")
+                        .header("Authorization", "Bearer " + TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(bodyWithCredentialSource("44444444-4444-4444-4444-444444444444", "control-plane")))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/worker/register")
+                        .header("Authorization", "Bearer " + TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(bodyWithCredentialSource("44444444-4444-4444-4444-444444444444", "bogus")))
+                .andExpect(status().isBadRequest());
+
+        assertThat(credentialSources.holdsOwnCredentials(TOKEN)).isFalse();
+    }
+
+    /** All Workers share one token on this server, so the latest declaration is the one recorded. */
+    @Test
+    void register_localThenControlPlane_leavesTheFinalStoredStateAsControlPlane() throws Exception {
+        mockMvc.perform(post("/worker/register")
+                        .header("Authorization", "Bearer " + TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(bodyWithCredentialSource("55555555-5555-5555-5555-555555555555", "local")))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/worker/register")
+                        .header("Authorization", "Bearer " + TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(bodyWithCredentialSource("66666666-6666-6666-6666-666666666666", "control-plane")))
+                .andExpect(status().isOk());
+
+        assertThat(credentialSources.holdsOwnCredentials(TOKEN)).isFalse();
     }
 }
