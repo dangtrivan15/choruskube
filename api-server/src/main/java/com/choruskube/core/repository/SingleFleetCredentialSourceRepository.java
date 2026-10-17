@@ -11,9 +11,9 @@ import org.springframework.transaction.annotation.Transactional;
 public interface SingleFleetCredentialSourceRepository extends JpaRepository<SingleFleetCredentialSource, String> {
 
     /**
-     * Upserts the declared source for {@code digest}. The {@code WHERE} clause makes a
-     * same-value re-registration a no-op write rather than a no-op statement — it still runs,
-     * just affects 0 rows, which is fine since nothing here reads the row count.
+     * Upserts the declared source for {@code digest}. Workers re-register every minute, so the
+     * {@code WHERE} clause skips the write when the source is unchanged; the returned count is 0
+     * then, and is not a failure signal.
      */
     @Modifying
     @Transactional

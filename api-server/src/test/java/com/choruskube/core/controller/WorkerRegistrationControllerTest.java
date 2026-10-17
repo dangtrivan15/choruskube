@@ -189,7 +189,7 @@ class WorkerRegistrationControllerTest extends BaseTest {
         mockMvc.perform(post("/worker/register")
                         .header("Authorization", "Bearer " + TOKEN)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(bodyWithCredentialSource("44444444-4444-4444-4444-444444444444", "control-plane")))
+                        .content(bodyWithCredentialSource("44444444-4444-4444-4444-444444444444", "local")))
                 .andExpect(status().isOk());
 
         mockMvc.perform(post("/worker/register")
@@ -198,7 +198,9 @@ class WorkerRegistrationControllerTest extends BaseTest {
                         .content(bodyWithCredentialSource("44444444-4444-4444-4444-444444444444", "bogus")))
                 .andExpect(status().isBadRequest());
 
-        assertThat(credentialSources.holdsOwnCredentials(TOKEN)).isFalse();
+        // Seeded with local, not control-plane: control-plane is also the no-row answer, so only
+        // local proves the refused declaration neither replaced nor cleared the record.
+        assertThat(credentialSources.holdsOwnCredentials(TOKEN)).isTrue();
     }
 
     /** All Workers share one token on this server, so the latest declaration is the one recorded. */

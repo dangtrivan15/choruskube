@@ -10,8 +10,8 @@ import java.util.UUID;
 
 /**
  * The one declared credential mode for a shared Worker registration token, keyed by the token's
- * digest. {@link #instanceId} and {@link #declaredAt} record which Worker most recently declared
- * it and when, for operator visibility — the mode itself is the only field other code reads.
+ * digest. {@link #instanceId} and {@link #declaredAt} name the Worker whose declaration last
+ * changed the mode, and when — a re-registration repeating it leaves them as they were.
  */
 @Entity
 @Table(name = "single_fleet_credential_source")

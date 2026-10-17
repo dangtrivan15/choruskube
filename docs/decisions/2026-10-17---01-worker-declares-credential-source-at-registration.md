@@ -53,8 +53,8 @@ the override replaces.
 - **Runtime detection** — for example, inferring `local` from which files exist, or inferring
   `control-plane` from which calls a Worker happens to make. A wrong guess is indistinguishable
   from a correct one until it already matters.
-- **Keeping the answer only in process memory.** It would not survive a restart, and the
-  question is asked by a different process (the API server) than the one that knows the answer.
+- **Keeping the answer only in the API server's memory.** It would not survive an API server
+  restart: until every Worker re-registered, a `local` Worker would be answered `control-plane`.
 - **Configuring the mode from the API side instead of asking the Worker.** That is a second
   declaration of a fact only the Worker actually knows about itself, and the two can disagree.
 - **Treating an absent value as `control-plane` by default.** A tolerant default is the right
