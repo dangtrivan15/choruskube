@@ -42,6 +42,12 @@ var ErrNoFleetConfigured = errors.New("no fleet configured: set FleetToken, or N
 // never granted -- registering with nobody, so there is no record of it and nothing to revoke.
 var ErrBlankFleetToken = errors.New("FleetToken is present but empty")
 
+// ErrLocalCredentialsNeedRegistration reports a CredentialSource of CredentialSourceLocal
+// selected alongside the static path. The static path never talks to the API server, so there is
+// no call on which to report that choice; only the registration path can declare it.
+var ErrLocalCredentialsNeedRegistration = errors.New(
+	"CREDENTIAL_SOURCE=local needs FLEET_TOKEN to be set: the static path never tells the API server anything")
+
 // FleetSource is how a process is told which Fleet it serves. Exactly one of the two ways is
 // selected, registration first: a Fleet token is a claim on a Fleet the server chooses, so it
 // must win over locally configured coordinates that could name a different one.
@@ -65,6 +71,10 @@ type FleetSource struct {
 	// honest default: a server that requires none accepts it, and one that requires some
 	// refuses at registration rather than failing later as work it cannot execute.
 	Capabilities map[string]string
+	// CredentialSource is the CredentialSource this Worker resolved to, reported at every
+	// registration call. CredentialSourceLocal requires the registration path: the static path
+	// has no call on which to report it, so the API server could never learn it.
+	CredentialSource string
 }
 
 // Provider returns the FleetProvider this source selects, or ErrNoFleetConfigured if it selects
@@ -75,8 +85,11 @@ func (s FleetSource) Provider(hc *http.Client) (FleetProvider, error) {
 		if s.FleetToken == "" {
 			return nil, ErrBlankFleetToken
 		}
-		return NewTokenFleetProvider(s.APIServerURL, s.FleetToken, s.Capabilities, hc), nil
+		return NewTokenFleetProvider(s.APIServerURL, s.FleetToken, s.Capabilities, s.CredentialSource, hc), nil
 	case s.Namespace != "" && s.TaskQueue != "":
+		if s.CredentialSource == CredentialSourceLocal {
+			return nil, ErrLocalCredentialsNeedRegistration
+		}
 		return NewStaticFleetProvider(s.Namespace, s.TaskQueue, s.InternalToken), nil
 	default:
 		return nil, ErrNoFleetConfigured

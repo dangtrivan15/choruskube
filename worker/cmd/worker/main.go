@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -132,10 +133,14 @@ func main() {
 		TaskQueue:     os.Getenv("TEMPORAL_TASK_QUEUE"),
 		// Only the static path needs this: the registration path is handed a credential, or
 		// falls back to the Fleet token it registered with.
-		InternalToken: os.Getenv("WORKER_INTERNAL_TOKEN"),
-		Capabilities:  capabilities,
+		InternalToken:    os.Getenv("WORKER_INTERNAL_TOKEN"),
+		Capabilities:     capabilities,
+		CredentialSource: cfg.CredentialSource,
 	}.Provider(nil)
 	if err != nil {
+		if errors.Is(err, worker.ErrLocalCredentialsNeedRegistration) {
+			log.Fatalf("%v", err)
+		}
 		log.Fatalf("%v: set FLEET_TOKEN to register with the API server, "+
 			"or TEMPORAL_NAMESPACE, TEMPORAL_TASK_QUEUE and WORKER_INTERNAL_TOKEN to serve one "+
 			"Fleet without registering", err)

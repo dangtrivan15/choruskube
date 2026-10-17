@@ -1,5 +1,6 @@
 package com.choruskube.core.dto;
 
+import com.choruskube.core.model.WorkerCredentialSource;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import java.util.Map;
@@ -14,6 +15,19 @@ import java.util.UUID;
  *     Pod Security Admission level, available RuntimeClasses, Kubernetes version. A registrar that
  *     records required capabilities can reject a Worker that cannot provide them before a run
  *     starts, rather than failing later as a Pending pod with an opaque scheduling error.
+ * @param credentialSource which credential mode the Worker runs in. Required: this is a hard
+ *     cutover, so a missing, blank, or unrecognized value is refused with no default rather than
+ *     assuming either mode on the Worker's behalf.
  */
 public record WorkerRegisterRequest(
-        @NotBlank String hostname, @NotNull UUID instanceId, Map<String, String> capabilities) {}
+        @NotBlank String hostname,
+        @NotNull UUID instanceId,
+        Map<String, String> capabilities,
+        WorkerCredentialSource credentialSource) {
+
+    public WorkerRegisterRequest {
+        if (credentialSource == null) {
+            throw new IllegalArgumentException("credentialSource is required");
+        }
+    }
+}

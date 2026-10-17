@@ -32,21 +32,28 @@ type TokenFleetProvider struct {
 	// registration call, including renewals -- never nil, so the wire body carries "{}" rather
 	// than "null" for a Worker that reports none.
 	capabilities map[string]string
+	// credentialSource is the CredentialSource this Worker resolved to, reported at every
+	// registration call so the API server can tell the two modes apart.
+	credentialSource string
 }
 
-func NewTokenFleetProvider(apiServerURL, fleetToken string, capabilities map[string]string, hc *http.Client) *TokenFleetProvider {
+func NewTokenFleetProvider(apiServerURL, fleetToken string, capabilities map[string]string, credentialSource string, hc *http.Client) *TokenFleetProvider {
 	if hc == nil {
 		hc = &http.Client{Timeout: 30 * time.Second}
 	}
 	if capabilities == nil {
 		capabilities = map[string]string{}
 	}
+	if credentialSource == "" {
+		credentialSource = CredentialSourceControlPlane
+	}
 	return &TokenFleetProvider{
-		baseURL:      strings.TrimRight(apiServerURL, "/"),
-		token:        fleetToken,
-		hc:           hc,
-		instanceID:   uuid.NewString(),
-		capabilities: capabilities,
+		baseURL:          strings.TrimRight(apiServerURL, "/"),
+		token:            fleetToken,
+		hc:               hc,
+		instanceID:       uuid.NewString(),
+		capabilities:     capabilities,
+		credentialSource: credentialSource,
 	}
 }
 
@@ -73,9 +80,10 @@ func (p *TokenFleetProvider) Fleets(ctx context.Context) (Registration, error) {
 		return Registration{}, fmt.Errorf("read hostname: %w", err)
 	}
 	body, err := json.Marshal(map[string]any{
-		"hostname":     hostname,
-		"instanceId":   p.instanceID,
-		"capabilities": p.capabilities,
+		"hostname":         hostname,
+		"instanceId":       p.instanceID,
+		"capabilities":     p.capabilities,
+		"credentialSource": p.credentialSource,
 	})
 	if err != nil {
 		return Registration{}, fmt.Errorf("encode registration: %w", err)

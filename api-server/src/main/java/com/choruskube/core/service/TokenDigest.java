@@ -3,11 +3,13 @@ package com.choruskube.core.service;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 
 /**
- * SHA-256 digest of a Worker credential, shared by {@link SingleFleetWorkerRegistrar} and {@link
- * SingleFleetWorkerAuthorizer} so the hashing scheme and the comparison it requires have exactly
- * one place to change.
+ * SHA-256 digest of a Worker credential, shared by {@link SingleFleetWorkerRegistrar}, {@link
+ * SingleFleetWorkerAuthorizer}, and {@link SingleFleetWorkerCredentialSourceResolver} (by way of
+ * {@link #hex}, which keys {@link com.choruskube.core.repository.SingleFleetCredentialSourceRepository})
+ * so the hashing scheme and the comparison it requires have exactly one place to change.
  */
 final class TokenDigest {
 
@@ -20,6 +22,11 @@ final class TokenDigest {
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 not available", e);
         }
+    }
+
+    /** Hex form of {@link #of}, for storing a digest as a lookup key rather than comparing it in memory. */
+    static String hex(String token) {
+        return HexFormat.of().formatHex(of(token));
     }
 
     /**
