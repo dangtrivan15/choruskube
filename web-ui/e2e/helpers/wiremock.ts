@@ -11,13 +11,15 @@ export interface WireMockLoggedRequest {
   url: string;
   method: string;
   headers: Record<string, string>;
+  /** The raw request body, `""` for a request that carried none (e.g. a GET). */
+  body: string;
 }
 
-// `/requests/find`'s entries are flat LoggedRequest objects (url/method/headers at the top
+// `/requests/find`'s entries are flat LoggedRequest objects (url/method/headers/body at the top
 // level) — unlike `/requests` (all serve events), which nests the same fields under a `request`
 // key. Reading a nested `.request` here silently made every `headers` lookup empty.
 interface WireMockFindRequestsResponse {
-  requests?: { url?: string; method?: string; headers?: Record<string, string> }[];
+  requests?: { url?: string; method?: string; headers?: Record<string, string>; body?: string }[];
 }
 
 /**
@@ -52,6 +54,7 @@ export async function findWireMockRequests(filter: {
     url: r.url ?? "",
     method: r.method ?? "",
     headers: r.headers ?? {},
+    body: r.body ?? "",
   }));
 }
 
