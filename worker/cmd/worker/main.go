@@ -5,7 +5,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -138,9 +137,6 @@ func main() {
 		CredentialSource: cfg.CredentialSource,
 	}.Provider(nil)
 	if err != nil {
-		if errors.Is(err, worker.ErrLocalCredentialsNeedRegistration) {
-			log.Fatalf("%v", err)
-		}
 		log.Fatalf("%v: set FLEET_TOKEN to register with the API server, "+
 			"or TEMPORAL_NAMESPACE, TEMPORAL_TASK_QUEUE and WORKER_INTERNAL_TOKEN to serve one "+
 			"Fleet without registering", err)
@@ -171,15 +167,16 @@ func executorTypeOf(raw string) (string, error) {
 	}
 }
 
-// credentialSourceOf validates CREDENTIAL_SOURCE, defaulting an unset value to the control plane:
-// a typo must fail startup, since falling back would send a Worker meant to hold its own
-// credentials to the API server for them.
+// credentialSourceOf validates CREDENTIAL_SOURCE. It is required and has no default: which mode
+// a Worker runs in is a fact about its deployment, and guessing it wrong in either direction would
+// send a Worker meant to hold its own credentials to the API server for them, or the reverse.
 func credentialSourceOf(raw string) (string, error) {
 	switch raw {
-	case "":
-		return worker.CredentialSourceControlPlane, nil
 	case worker.CredentialSourceControlPlane, worker.CredentialSourceLocal:
 		return raw, nil
+	case "":
+		return "", fmt.Errorf("CREDENTIAL_SOURCE is required: must be %q or %q",
+			worker.CredentialSourceControlPlane, worker.CredentialSourceLocal)
 	default:
 		return "", fmt.Errorf("unknown CREDENTIAL_SOURCE %q: must be %q or %q",
 			raw, worker.CredentialSourceControlPlane, worker.CredentialSourceLocal)

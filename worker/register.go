@@ -44,9 +44,6 @@ func NewTokenFleetProvider(apiServerURL, fleetToken string, capabilities map[str
 	if capabilities == nil {
 		capabilities = map[string]string{}
 	}
-	if credentialSource == "" {
-		credentialSource = CredentialSourceControlPlane
-	}
 	return &TokenFleetProvider{
 		baseURL:          strings.TrimRight(apiServerURL, "/"),
 		token:            fleetToken,

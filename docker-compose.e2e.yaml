@@ -321,7 +321,7 @@ services:
       DOCKER_STAGING_DIR: *agent-staging-dir
       # test-only: the Worker's own GitHub calls (gate compare/merge, run-branch cleanup, roadmap issue filing, and closing a done Task's issue) reach WireMock, not api.github.com.
       GITHUB_API_URL: http://wiremock:8080
-      # The default, stated: the api-server hands the Worker each run's GitHub token, so no credential files.
+      # Required, no default: the api-server hands the Worker each run's GitHub token, so no credential files.
       CREDENTIAL_SOURCE: control-plane
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock

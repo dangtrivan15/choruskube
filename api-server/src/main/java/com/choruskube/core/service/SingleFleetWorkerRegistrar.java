@@ -3,11 +3,6 @@ package com.choruskube.core.service;
 import com.choruskube.core.dto.WorkerRegisterRequest;
 import com.choruskube.core.dto.WorkerRegisterResponse;
 import com.choruskube.core.exception.ForbiddenException;
-import com.choruskube.core.model.SingleFleetCredentialSource;
-import com.choruskube.core.repository.SingleFleetCredentialSourceRepository;
-import java.util.Optional;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * The default {@link WorkerRegistrar}: this server has exactly one Fleet, and it is the Temporal
@@ -20,10 +15,11 @@ import org.slf4j.LoggerFactory;
  *
  * <p>No Worker record is kept, so the response echoes the {@code instanceId} the Worker generated
  * rather than inventing an id nothing can later resolve. Revoking one Worker is therefore not
- * possible here; rotating {@code worker.registration.token} stops all of them. One thing is kept,
- * per the shared token rather than per Worker: {@code request.credentialSource()}, recorded by
- * {@link SingleFleetCredentialSourceRepository} so a later {@code /worker/**} call can be
- * answered with the mode its credential declared.
+ * possible here; rotating {@code worker.registration.token} stops all of them. {@code
+ * request.credentialSource()} is validated by {@link WorkerRegisterRequest} before this class
+ * ever sees it, but is otherwise unused here: this server serves exactly one Fleet, so which mode
+ * it runs is a fact about the deployment, not something to learn from whichever Worker happens to
+ * register, and there is nothing per-Worker to record it against.
  *
  * <p><b>Not a Spring bean.</b> {@code WorkerRegistrationController} holds it as the fallback
  * behind an {@code ObjectProvider}, the same arrangement as {@link ShufflingTickOrder}, so an
@@ -33,45 +29,25 @@ import org.slf4j.LoggerFactory;
  */
 public class SingleFleetWorkerRegistrar implements WorkerRegistrar {
 
-    private static final Logger log = LoggerFactory.getLogger(SingleFleetWorkerRegistrar.class);
-
     private final String temporalNamespace;
     private final String taskQueue;
     private final byte[] expectedTokenDigest;
-    private final SingleFleetCredentialSourceRepository credentialSourceRepository;
 
     /**
      * @param registrationToken the shared secret every Worker must present. Blank configures no
      *     Fleet a Worker may join: registration then fails closed rather than making
      *     {@code /worker/register} anonymous on a server whose operator never set it.
      */
-    public SingleFleetWorkerRegistrar(
-            String temporalNamespace,
-            String taskQueue,
-            String registrationToken,
-            SingleFleetCredentialSourceRepository credentialSourceRepository) {
+    public SingleFleetWorkerRegistrar(String temporalNamespace, String taskQueue, String registrationToken) {
         this.temporalNamespace = temporalNamespace;
         this.taskQueue = taskQueue;
         this.expectedTokenDigest =
                 (registrationToken == null || registrationToken.isBlank()) ? null : TokenDigest.of(registrationToken);
-        this.credentialSourceRepository = credentialSourceRepository;
     }
 
     @Override
     public WorkerRegisterResponse register(String fleetToken, WorkerRegisterRequest request) {
         requireConfiguredToken(fleetToken);
-        String digest = TokenDigest.hex(fleetToken);
-        Optional<SingleFleetCredentialSource> existing = credentialSourceRepository.findById(digest);
-        if (existing.isPresent() && existing.get().getCredentialSource() != request.credentialSource()) {
-            log.warn(
-                    "Worker {} declared credential source {} for a token that previously declared {}; "
-                            + "Workers sharing this token must all declare the same source, and the latest "
-                            + "declaration wins",
-                    request.instanceId(),
-                    request.credentialSource().wire(),
-                    existing.get().getCredentialSource().wire());
-        }
-        credentialSourceRepository.record(digest, request.credentialSource().wire(), request.instanceId());
         // Blank Temporal token: an OSS Temporal runs without an authorizer, and the Worker must send
         // no credential at all rather than an empty one -- the SDK enables TLS on their mere presence.
         // Blank endpoint: the Worker already knows where Temporal is; there is only one.

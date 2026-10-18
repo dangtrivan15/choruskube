@@ -1,6 +1,6 @@
 # A completed run's branches are deleted by its Worker
 
-**Status:** current
+**Status:** current; its claim that the legacy cleanup route stays until no old history is open is superseded by [2026-10-17---01-worker-declares-credential-source-at-registration](2026-10-17---01-worker-declares-credential-source-at-registration.md)
 
 ## Context
 

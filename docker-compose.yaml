@@ -243,6 +243,9 @@ services:
       # set selects registration: the api-server answers with the queue to poll.
       FLEET_TOKEN: ${WORKER_REGISTRATION_TOKEN:-choruskube-local-worker-token}
       WORKER_CAPABILITIES: docker=true
+      # No default: a Worker must declare which mode it runs in. This stack keeps the api-server
+      # brokering credentials until the OSS default flips to local on its own roadmap item.
+      CREDENTIAL_SOURCE: control-plane
       TEMPORAL_ADDRESS: temporal:7233
       # This Temporal serves plaintext gRPC, and the SDK turns TLS on whenever a credential is present.
       TEMPORAL_TLS_DISABLED: "true"

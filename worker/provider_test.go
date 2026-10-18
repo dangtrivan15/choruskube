@@ -121,19 +121,10 @@ func TestFleetSourcePassesTheCredentialSourceToRegistration(t *testing.T) {
 	}
 }
 
-func TestFleetSourceRefusesLocalOnTheStaticPath(t *testing.T) {
-	_, err := FleetSource{
-		Namespace:        "ns",
-		TaskQueue:        "q",
-		CredentialSource: CredentialSourceLocal,
-	}.Provider(nil)
-	if !errors.Is(err, ErrLocalCredentialsNeedRegistration) {
-		t.Fatalf("want ErrLocalCredentialsNeedRegistration, got %v", err)
-	}
-}
-
-func TestFleetSourceStaticPathAcceptsControlPlane(t *testing.T) {
-	for _, credentialSource := range []string{"", CredentialSourceControlPlane} {
+// The static path never calls the API server, so there is nothing left for CredentialSource to
+// report there -- with no record of it anywhere, refusing Local on this path protected nothing.
+func TestFleetSourceStaticPathAcceptsAnyCredentialSource(t *testing.T) {
+	for _, credentialSource := range []string{"", CredentialSourceControlPlane, CredentialSourceLocal} {
 		provider, err := FleetSource{
 			Namespace:        "ns",
 			TaskQueue:        "q",

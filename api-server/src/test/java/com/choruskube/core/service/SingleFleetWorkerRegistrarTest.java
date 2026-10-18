@@ -2,20 +2,12 @@ package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
 import com.choruskube.core.dto.WorkerRegisterRequest;
 import com.choruskube.core.dto.WorkerRegisterResponse;
 import com.choruskube.core.exception.ForbiddenException;
-import com.choruskube.core.model.SingleFleetCredentialSource;
 import com.choruskube.core.model.WorkerCredentialSource;
-import com.choruskube.core.repository.SingleFleetCredentialSourceRepository;
 import java.util.Map;
-import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
@@ -23,11 +15,7 @@ class SingleFleetWorkerRegistrarTest {
 
     private static final String TOKEN = "ckf_self_hosted_secret";
 
-    private final SingleFleetCredentialSourceRepository credentialSourceRepository =
-            mock(SingleFleetCredentialSourceRepository.class);
-
-    private final SingleFleetWorkerRegistrar registrar =
-            new SingleFleetWorkerRegistrar("ns-1", "queue-1", TOKEN, credentialSourceRepository);
+    private final SingleFleetWorkerRegistrar registrar = new SingleFleetWorkerRegistrar("ns-1", "queue-1", TOKEN);
 
     private static WorkerRegisterRequest request(String hostname) {
         return new WorkerRegisterRequest(hostname, UUID.randomUUID(), Map.of(), WorkerCredentialSource.CONTROL_PLANE);
@@ -100,8 +88,7 @@ class SingleFleetWorkerRegistrarTest {
      */
     @Test
     void register_whenNoTokenIsConfigured_refusesEveryWorker() {
-        SingleFleetWorkerRegistrar unconfigured =
-                new SingleFleetWorkerRegistrar("ns-1", "queue-1", "  ", credentialSourceRepository);
+        SingleFleetWorkerRegistrar unconfigured = new SingleFleetWorkerRegistrar("ns-1", "queue-1", "  ");
 
         assertThatThrownBy(() -> unconfigured.register("anything", request("host-1")))
                 .isInstanceOf(ForbiddenException.class)
@@ -120,8 +107,7 @@ class SingleFleetWorkerRegistrarTest {
      */
     @Test
     void singleFleetRegistrationMintsNoInternalCredential() {
-        WorkerRegisterResponse response = new SingleFleetWorkerRegistrar(
-                        "ns", "queue", "tok", credentialSourceRepository)
+        WorkerRegisterResponse response = new SingleFleetWorkerRegistrar("ns", "queue", "tok")
                 .register(
                         "tok",
                         new WorkerRegisterRequest(
@@ -130,34 +116,20 @@ class SingleFleetWorkerRegistrarTest {
         assertThat(response.internalToken()).isEmpty();
     }
 
+    /**
+     * {@code credentialSource} is accepted and ignored: this server has exactly one Fleet whose
+     * mode is a fact about the deployment, not something to learn from whichever Worker registers,
+     * so neither value changes what a Worker is told.
+     */
     @Test
-    void register_success_recordsTheDeclaredCredentialSourceByTheTokenDigest() {
-        WorkerRegisterRequest request =
-                new WorkerRegisterRequest("host-1", UUID.randomUUID(), Map.of(), WorkerCredentialSource.LOCAL);
+    void register_acceptsEitherDeclaredCredentialSourceWithNoDifferenceInTheResponse() {
+        WorkerRegisterResponse local = registrar.register(
+                TOKEN, new WorkerRegisterRequest("host-1", UUID.randomUUID(), Map.of(), WorkerCredentialSource.LOCAL));
+        WorkerRegisterResponse controlPlane = registrar.register(
+                TOKEN,
+                new WorkerRegisterRequest("host-2", UUID.randomUUID(), Map.of(), WorkerCredentialSource.CONTROL_PLANE));
 
-        registrar.register(TOKEN, request);
-
-        verify(credentialSourceRepository).record(TokenDigest.hex(TOKEN), "local", request.instanceId());
-    }
-
-    /** Workers sharing one token must agree; a disagreeing declaration is logged and still wins. */
-    @Test
-    void register_declarationThatDiffersFromTheRecordedOne_replacesIt() {
-        SingleFleetCredentialSource recorded = new SingleFleetCredentialSource();
-        recorded.setCredentialSource(WorkerCredentialSource.LOCAL);
-        when(credentialSourceRepository.findById(TokenDigest.hex(TOKEN))).thenReturn(Optional.of(recorded));
-        WorkerRegisterRequest request = request("host-2");
-
-        registrar.register(TOKEN, request);
-
-        verify(credentialSourceRepository).record(TokenDigest.hex(TOKEN), "control-plane", request.instanceId());
-    }
-
-    @Test
-    void register_rejectedToken_neverRecordsACredentialSource() {
-        assertThatThrownBy(() -> registrar.register("ckf_not_the_secret", request("host-1")))
-                .isInstanceOf(ForbiddenException.class);
-
-        verify(credentialSourceRepository, never()).record(any(), any(), any());
+        assertThat(local.temporalNamespace()).isEqualTo(controlPlane.temporalNamespace());
+        assertThat(local.taskQueue()).isEqualTo(controlPlane.taskQueue());
     }
 }

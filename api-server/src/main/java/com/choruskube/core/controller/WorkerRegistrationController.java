@@ -3,7 +3,6 @@ package com.choruskube.core.controller;
 import com.choruskube.core.config.WorkerAuthFilter;
 import com.choruskube.core.dto.WorkerRegisterRequest;
 import com.choruskube.core.dto.WorkerRegisterResponse;
-import com.choruskube.core.repository.SingleFleetCredentialSourceRepository;
 import com.choruskube.core.service.SingleFleetWorkerRegistrar;
 import com.choruskube.core.service.WorkerRegistrar;
 import jakarta.servlet.http.HttpServletRequest;
@@ -42,10 +41,9 @@ public class WorkerRegistrationController {
             // from the orchestrator's temporal.task-queue (the orchestrator refuses agent-step
             // activities). Falls back to temporal.task-queue when Worker and orchestrator share it.
             @Value("${temporal.worker-task-queue:${temporal.task-queue}}") String taskQueue,
-            @Value("${worker.registration.token:}") String registrationToken,
-            SingleFleetCredentialSourceRepository credentialSourceRepository) {
-        this.registrar = registrarProvider.getIfAvailable(() -> new SingleFleetWorkerRegistrar(
-                temporalNamespace, taskQueue, registrationToken, credentialSourceRepository));
+            @Value("${worker.registration.token:}") String registrationToken) {
+        this.registrar = registrarProvider.getIfAvailable(
+                () -> new SingleFleetWorkerRegistrar(temporalNamespace, taskQueue, registrationToken));
     }
 
     @PostMapping("/register")

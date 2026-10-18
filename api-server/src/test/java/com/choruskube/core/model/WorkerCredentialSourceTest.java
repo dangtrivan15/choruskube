@@ -34,19 +34,4 @@ class WorkerCredentialSourceTest {
         assertThatThrownBy(() -> WorkerCredentialSource.fromWire("detect"))
                 .isInstanceOf(IllegalArgumentException.class);
     }
-
-    @Test
-    void converter_roundTripsBothDirectionsIncludingNull() {
-        WorkerCredentialSourceConverter converter = new WorkerCredentialSourceConverter();
-
-        assertThat(converter.convertToDatabaseColumn(WorkerCredentialSource.LOCAL))
-                .isEqualTo("local");
-        assertThat(converter.convertToDatabaseColumn(WorkerCredentialSource.CONTROL_PLANE))
-                .isEqualTo("control-plane");
-        assertThat(converter.convertToDatabaseColumn(null)).isNull();
-
-        assertThat(converter.convertToEntityAttribute("local")).isEqualTo(WorkerCredentialSource.LOCAL);
-        assertThat(converter.convertToEntityAttribute("control-plane")).isEqualTo(WorkerCredentialSource.CONTROL_PLANE);
-        assertThat(converter.convertToEntityAttribute(null)).isNull();
-    }
 }

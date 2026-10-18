@@ -34,6 +34,7 @@ func TestRunSurfacesProviderFailure(t *testing.T) {
 	boom := errors.New("boom")
 	err := Run(context.Background(), Config{
 		TemporalAddress: "t:7233", APIServerURL: "http://a", CallbackURL: "http://cb", Provider: errProvider{boom},
+		CredentialSource: CredentialSourceControlPlane,
 	})
 	if !errors.Is(err, boom) {
 		t.Fatalf("want the provider's error wrapped, got %v", err)
@@ -43,6 +44,7 @@ func TestRunSurfacesProviderFailure(t *testing.T) {
 func TestRunRejectsEmptyFleetList(t *testing.T) {
 	err := Run(context.Background(), Config{
 		TemporalAddress: "t:7233", APIServerURL: "http://a", CallbackURL: "http://cb", Provider: fixedProvider{},
+		CredentialSource: CredentialSourceControlPlane,
 	})
 	if err == nil {
 		t.Fatal("want an error when no Fleet is served, got nil")

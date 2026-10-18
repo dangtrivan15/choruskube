@@ -221,7 +221,10 @@ func TestTokenFleetProviderSendsTheDeclaredCredentialSource(t *testing.T) {
 	}
 }
 
-func TestTokenFleetProviderDeclaresControlPlaneWhenUnset(t *testing.T) {
+// There is no tolerant default here: a caller that passes an unset CredentialSource gets it sent
+// exactly as blank, not silently upgraded to "control-plane". The real binary never reaches this
+// constructor with one -- main's credentialSourceOf already failed startup by then.
+func TestTokenFleetProviderSendsBlankCredentialSourceWhenUnset(t *testing.T) {
 	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
@@ -233,7 +236,7 @@ func TestTokenFleetProviderDeclaresControlPlaneWhenUnset(t *testing.T) {
 	if _, err := NewTokenFleetProvider(srv.URL, "ckf_secret", nil, "", srv.Client()).Fleets(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if gotBody["credentialSource"] != "control-plane" {
-		t.Fatalf("credentialSource = %v, want %q", gotBody["credentialSource"], "control-plane")
+	if gotBody["credentialSource"] != "" {
+		t.Fatalf("credentialSource = %v, want a blank -- no silent default", gotBody["credentialSource"])
 	}
 }

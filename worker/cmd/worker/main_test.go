@@ -26,11 +26,16 @@ func TestBuildExecutor_K8sSelected(t *testing.T) {
 }
 
 func TestCredentialSourceOf(t *testing.T) {
-	for raw, want := range map[string]string{"": "control-plane", "control-plane": "control-plane", "local": "local"} {
+	for raw, want := range map[string]string{"control-plane": "control-plane", "local": "local"} {
 		got, err := credentialSourceOf(raw)
 		require.NoError(t, err, "%q", raw)
 		assert.Equal(t, want, got)
 	}
+}
+
+func TestCredentialSourceOf_RequiresAValue(t *testing.T) {
+	_, err := credentialSourceOf("")
+	require.Error(t, err, "an unset CREDENTIAL_SOURCE must fail startup, not silently become control-plane")
 }
 
 func TestCredentialSourceOf_RejectsAnythingElse(t *testing.T) {

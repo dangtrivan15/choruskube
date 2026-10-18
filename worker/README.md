@@ -42,13 +42,11 @@ Leaving the server's side unset admits no Worker at all — registration fails c
 than leaving the endpoint anonymous on a server whose operator never set it.
 
 Every registration call also reports the Worker's resolved `CREDENTIAL_SOURCE`, so the
-api-server can answer later which mode the credential it presents is running in. The field is
+api-server can tell the two modes apart on a `/worker/**` call that cares. The field is
 required: a missing, blank, or unrecognized value is refused with no default, so a Worker
 binary built before this field existed cannot register until it is upgraded. This server has
-one shared `FLEET_TOKEN`, so every Worker presenting it must declare the same source — the
-latest declaration wins and a disagreement is logged. A static-path Worker presents that same
-shared token too and counts as `control-plane`; registering any one Worker as `control-plane`
-therefore resets a stale `local` record that no currently-running Worker still holds.
+exactly one Fleet, whose mode is a fact about the deployment rather than something to learn
+from whichever Worker registers, so it keeps no record of what any one Worker declared.
 
 Use this path when you want one place to change the answer, or when you intend to grow into a
 deployment that has more than one Fleet.
@@ -72,10 +70,9 @@ differs satisfies the startup guard — which only asks that it is set — and t
 with a 403, which is the failure the guard exists to prevent. Leaving the server's side unset
 admits no Worker on either path.
 
-This path never calls `/worker/register`, so it has no call on which to report `local`: it
-refuses to start with `CREDENTIAL_SOURCE=local`. Set `FLEET_TOKEN` instead — the same secret as
-`WORKER_INTERNAL_TOKEN` above — to run `local`; registration takes priority over these static
-settings whenever both are configured.
+This path never calls `/worker/register`, so `CREDENTIAL_SOURCE` is never reported anywhere;
+`local` here reads `CREDENTIALS_DIR` exactly as it does on the registration path. Registration
+takes priority over these static settings whenever both are configured.
 
 Use this path when the answer is already known and constant, and a round-trip to ask for it
 would only return what you configured.
@@ -94,7 +91,7 @@ would only return what you configured.
 | `WORKER_CAPABILITIES` | no | `key=value,key=value` pairs this Worker reports about its own infrastructure at registration. Default empty. A server that records required capabilities on a Fleet refuses a Worker that does not report them. |
 | `EXECUTOR_TYPE` | no | `docker` (default) or `k8s` — which executor this process builds at startup. Any other value fails startup. |
 | `WORKER_CALLBACK_PORT` | no | Port the callback server listens on for agent completion/heartbeat callbacks. Default `9090`. |
-| `CREDENTIAL_SOURCE` | no | `control-plane` (default) or `local` — where GitHub and agent credentials come from; see [Credentials](#credentials). `local` is for a single tenant's own Fleet only, and requires `FLEET_TOKEN`. Any other value fails startup. Reported at every registration call so the api-server can tell the two modes apart. |
+| `CREDENTIAL_SOURCE` | yes | `control-plane` or `local` — where GitHub and agent credentials come from; see [Credentials](#credentials). No default: a missing or unrecognized value fails startup, since guessing wrong would send a Worker meant to hold its own credentials to the API server for them, or the reverse. `local` is for a single tenant's own Fleet only. Reported at every registration call so the api-server can tell the two modes apart. |
 | `CREDENTIALS_DIR` | no | Folder the `local` source reads. Default `/etc/choruskube/credentials`. |
 | `GITHUB_API_URL` | no | GitHub API root for the Worker's own GitHub calls (gate compares and merges, run-branch cleanup, roadmap issue filing and closing). Default `https://api.github.com`. |
 
@@ -120,7 +117,7 @@ An agent pod fetches its GitHub token from the Worker that launched it
 refused unless the execution belongs to the run it names), so the Worker decides where the token
 comes from.
 
-- **`control-plane`** (default) asks the api-server for each run's token. The api-server resolves
+- **`control-plane`** asks the api-server for each run's token. The api-server resolves
   it per organization, which is what a Worker serving several tenants needs.
 - **`local`** reads one set of credentials from `CREDENTIALS_DIR` and mints GitHub App tokens
   itself. It has no notion of a tenant, so every run on the Worker gets the same credentials:
