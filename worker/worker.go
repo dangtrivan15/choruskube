@@ -75,9 +75,10 @@ type Config struct {
 	// asking the API server to (the legacy path -- see activity.New vs activity.NewWithExecutor).
 	// nil keeps the legacy delegation mode.
 	Executor executor.Executor
-	// CredentialSource is CredentialSourceControlPlane (the default) or CredentialSourceLocal.
-	// Local is for a Worker serving a single tenant's own Fleet: it reads one set of credentials
-	// for every run it executes.
+	// CredentialSource is CredentialSourceControlPlane or CredentialSourceLocal. Required, with
+	// no default: Validate rejects a blank or unknown value rather than guessing which mode a
+	// Worker runs in. Local is for a Worker serving a single tenant's own Fleet: it reads one set
+	// of credentials for every run it executes.
 	CredentialSource string
 	// CredentialsDir is the folder the local source reads credentials from. Unused by the
 	// control-plane source.
@@ -109,7 +110,9 @@ func (c Config) Validate() error {
 		return errors.New("CallbackURL is required")
 	case c.Provider == nil:
 		return errors.New("Provider is required")
-	case c.CredentialSource != "" && c.CredentialSource != CredentialSourceControlPlane && c.CredentialSource != CredentialSourceLocal:
+	case c.CredentialSource == "":
+		return errors.New("CredentialSource is required")
+	case c.CredentialSource != CredentialSourceControlPlane && c.CredentialSource != CredentialSourceLocal:
 		return fmt.Errorf("CredentialSource %q is not %q or %q", c.CredentialSource, CredentialSourceControlPlane, CredentialSourceLocal)
 	}
 	return nil
@@ -124,9 +127,6 @@ const defaultCallbackPort = 9090
 func (c Config) withDefaults() Config {
 	if c.CallbackPort == 0 {
 		c.CallbackPort = defaultCallbackPort
-	}
-	if c.CredentialSource == "" {
-		c.CredentialSource = CredentialSourceControlPlane
 	}
 	if c.CredentialsDir == "" {
 		c.CredentialsDir = defaultCredentialsDir

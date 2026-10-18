@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.choruskube.core.dto.WorkerRegisterRequest;
 import com.choruskube.core.dto.WorkerRegisterResponse;
 import com.choruskube.core.exception.ForbiddenException;
+import com.choruskube.core.model.WorkerCredentialSource;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -17,7 +18,7 @@ class SingleFleetWorkerRegistrarTest {
     private final SingleFleetWorkerRegistrar registrar = new SingleFleetWorkerRegistrar("ns-1", "queue-1", TOKEN);
 
     private static WorkerRegisterRequest request(String hostname) {
-        return new WorkerRegisterRequest(hostname, UUID.randomUUID(), Map.of());
+        return new WorkerRegisterRequest(hostname, UUID.randomUUID(), Map.of(), WorkerCredentialSource.CONTROL_PLANE);
     }
 
     @Test
@@ -107,8 +108,28 @@ class SingleFleetWorkerRegistrarTest {
     @Test
     void singleFleetRegistrationMintsNoInternalCredential() {
         WorkerRegisterResponse response = new SingleFleetWorkerRegistrar("ns", "queue", "tok")
-                .register("tok", new WorkerRegisterRequest("host", UUID.randomUUID(), Map.of()));
+                .register(
+                        "tok",
+                        new WorkerRegisterRequest(
+                                "host", UUID.randomUUID(), Map.of(), WorkerCredentialSource.CONTROL_PLANE));
 
         assertThat(response.internalToken()).isEmpty();
+    }
+
+    /**
+     * {@code credentialSource} is accepted and ignored: this server has exactly one Fleet whose
+     * mode is a fact about the deployment, not something to learn from whichever Worker registers,
+     * so neither value changes what a Worker is told.
+     */
+    @Test
+    void register_acceptsEitherDeclaredCredentialSourceWithNoDifferenceInTheResponse() {
+        WorkerRegisterResponse local = registrar.register(
+                TOKEN, new WorkerRegisterRequest("host-1", UUID.randomUUID(), Map.of(), WorkerCredentialSource.LOCAL));
+        WorkerRegisterResponse controlPlane = registrar.register(
+                TOKEN,
+                new WorkerRegisterRequest("host-2", UUID.randomUUID(), Map.of(), WorkerCredentialSource.CONTROL_PLANE));
+
+        assertThat(local.temporalNamespace()).isEqualTo(controlPlane.temporalNamespace());
+        assertThat(local.taskQueue()).isEqualTo(controlPlane.taskQueue());
     }
 }

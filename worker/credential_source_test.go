@@ -25,10 +25,11 @@ func validConfig() Config {
 	return Config{TemporalAddress: "t:7233", APIServerURL: "http://a", CallbackURL: "http://cb", Provider: stubProvider{}}
 }
 
-func TestNewCredentialProviderDefaultsToTheControlPlane(t *testing.T) {
+func TestNewCredentialProviderControlPlaneAsksTheAPI(t *testing.T) {
 	client := &stubTokenClient{token: "ghs_fromapi"}
 
-	tok, err := newCredentialProvider(Config{}.withDefaults(), client).GitHubToken(context.Background(), uuid.New())
+	tok, err := newCredentialProvider(Config{CredentialSource: CredentialSourceControlPlane}.withDefaults(), client).
+		GitHubToken(context.Background(), uuid.New())
 
 	require.NoError(t, err)
 	assert.Equal(t, "ghs_fromapi", tok.Value)
@@ -53,7 +54,7 @@ func TestNewCredentialProviderLocalReadsTheMountedFolderAndSkipsTheAPI(t *testin
 }
 
 func TestConfigValidateRejectsAnUnknownCredentialSource(t *testing.T) {
-	for _, ok := range []string{"", CredentialSourceControlPlane, CredentialSourceLocal} {
+	for _, ok := range []string{CredentialSourceControlPlane, CredentialSourceLocal} {
 		cfg := validConfig()
 		cfg.CredentialSource = ok
 		assert.NoError(t, cfg.Validate(), "%q", ok)
@@ -65,10 +66,21 @@ func TestConfigValidateRejectsAnUnknownCredentialSource(t *testing.T) {
 	assert.Contains(t, err.Error(), "CredentialSource")
 }
 
-func TestConfigWithDefaults_FillsCredentialSettings(t *testing.T) {
-	got := Config{}.withDefaults()
+// There is no tolerant default for a blank CredentialSource: guessing wrong would send a Worker
+// meant to hold its own credentials to the API server for them, or the reverse.
+func TestConfigValidateRequiresACredentialSource(t *testing.T) {
+	cfg := validConfig()
+	cfg.CredentialSource = ""
 
-	assert.Equal(t, CredentialSourceControlPlane, got.CredentialSource)
+	err := cfg.Validate()
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "CredentialSource")
+}
+
+func TestConfigWithDefaults_FillsCredentialSettings(t *testing.T) {
+	got := Config{CredentialSource: CredentialSourceLocal}.withDefaults()
+
 	assert.Equal(t, "/etc/choruskube/credentials", got.CredentialsDir)
 	assert.Equal(t, "https://api.github.com", got.GitHubAPIURL)
 }

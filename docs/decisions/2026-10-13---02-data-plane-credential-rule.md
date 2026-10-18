@@ -1,6 +1,6 @@
 # The control plane decides; the data plane holds credentials and makes the calls that need them
 
-**Status:** current; its listing of issue filing among the control-plane's remaining GitHub calls is superseded, for gates whose plan declares writesRoadmap, by [2026-10-15---01-roadmap-issues-filed-on-the-worker](2026-10-15---01-roadmap-issues-filed-on-the-worker.md); its listing of issue closing is superseded by [2026-10-16---01-task-issue-close-on-the-worker](2026-10-16---01-task-issue-close-on-the-worker.md)
+**Status:** current; its listing of issue filing among the control-plane's remaining GitHub calls is superseded, for gates whose plan declares writesRoadmap, by [2026-10-15---01-roadmap-issues-filed-on-the-worker](2026-10-15---01-roadmap-issues-filed-on-the-worker.md); its listing of issue closing is superseded by [2026-10-16---01-task-issue-close-on-the-worker](2026-10-16---01-task-issue-close-on-the-worker.md); its claim that an unset `CREDENTIAL_SOURCE` defaults to `control-plane`, and that the open-source stack stays on `control-plane` until its remaining GitHub calls move, are superseded by [2026-10-17---01-worker-declares-credential-source-at-registration](2026-10-17---01-worker-declares-credential-source-at-registration.md)
 
 ## Context
 

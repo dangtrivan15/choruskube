@@ -65,6 +65,10 @@ type FleetSource struct {
 	// honest default: a server that requires none accepts it, and one that requires some
 	// refuses at registration rather than failing later as work it cannot execute.
 	Capabilities map[string]string
+	// CredentialSource is the CredentialSource this Worker resolved to. The registration path
+	// reports it on every call; the static path never calls the API server at all, so this
+	// value only ever reaches CredentialSource on Config, never the wire.
+	CredentialSource string
 }
 
 // Provider returns the FleetProvider this source selects, or ErrNoFleetConfigured if it selects
@@ -75,7 +79,7 @@ func (s FleetSource) Provider(hc *http.Client) (FleetProvider, error) {
 		if s.FleetToken == "" {
 			return nil, ErrBlankFleetToken
 		}
-		return NewTokenFleetProvider(s.APIServerURL, s.FleetToken, s.Capabilities, hc), nil
+		return NewTokenFleetProvider(s.APIServerURL, s.FleetToken, s.Capabilities, s.CredentialSource, hc), nil
 	case s.Namespace != "" && s.TaskQueue != "":
 		return NewStaticFleetProvider(s.Namespace, s.TaskQueue, s.InternalToken), nil
 	default:

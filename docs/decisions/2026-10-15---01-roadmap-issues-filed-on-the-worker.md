@@ -1,6 +1,6 @@
 # Roadmap-extension issues are filed by the run's Worker during gate finalize, not inline with the roadmap write
 
-**Status:** current
+**Status:** current; its claim that the one-step complete is kept for an older orchestrator is superseded by [2026-10-17---01-worker-declares-credential-source-at-registration](2026-10-17---01-worker-declares-credential-source-at-registration.md)
 
 ## Context
 

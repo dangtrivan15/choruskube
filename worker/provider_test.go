@@ -2,7 +2,10 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -89,5 +92,49 @@ func TestStaticFleetProviderCarriesItsConfiguredInternalToken(t *testing.T) {
 	}
 	if reg.InternalToken != "configured" {
 		t.Fatalf("InternalToken = %q, want the configured one", reg.InternalToken)
+	}
+}
+
+func TestFleetSourcePassesTheCredentialSourceToRegistration(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"workerId":"w-1","temporalNamespace":"ns","taskQueue":"q","token":"jwt"}`))
+	}))
+	defer srv.Close()
+
+	provider, err := FleetSource{
+		APIServerURL:     srv.URL,
+		FleetToken:       "ckf_x",
+		FleetTokenSet:    true,
+		CredentialSource: "local",
+	}.Provider(srv.Client())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, err := provider.Fleets(context.Background()); err != nil {
+		t.Fatalf("unexpected error registering: %v", err)
+	}
+	if gotBody["credentialSource"] != "local" {
+		t.Fatalf("credentialSource = %v, want %q", gotBody["credentialSource"], "local")
+	}
+}
+
+// The static path never calls the API server, so there is nothing left for CredentialSource to
+// report there -- with no record of it anywhere, refusing Local on this path protected nothing.
+func TestFleetSourceStaticPathAcceptsAnyCredentialSource(t *testing.T) {
+	for _, credentialSource := range []string{"", CredentialSourceControlPlane, CredentialSourceLocal} {
+		provider, err := FleetSource{
+			Namespace:        "ns",
+			TaskQueue:        "q",
+			CredentialSource: credentialSource,
+		}.Provider(nil)
+		if err != nil {
+			t.Fatalf("credentialSource %q: unexpected error: %v", credentialSource, err)
+		}
+		if _, ok := provider.(*StaticFleetProvider); !ok {
+			t.Fatalf("credentialSource %q: want the static provider, got %T", credentialSource, provider)
+		}
 	}
 }

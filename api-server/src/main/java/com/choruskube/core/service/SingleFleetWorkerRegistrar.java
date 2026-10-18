@@ -15,7 +15,11 @@ import com.choruskube.core.exception.ForbiddenException;
  *
  * <p>No Worker record is kept, so the response echoes the {@code instanceId} the Worker generated
  * rather than inventing an id nothing can later resolve. Revoking one Worker is therefore not
- * possible here; rotating {@code worker.registration.token} stops all of them.
+ * possible here; rotating {@code worker.registration.token} stops all of them. {@code
+ * request.credentialSource()} is validated by {@link WorkerRegisterRequest} before this class
+ * ever sees it, but is otherwise unused here: this server serves exactly one Fleet, so which mode
+ * it runs is a fact about the deployment, not something to learn from whichever Worker happens to
+ * register, and there is nothing per-Worker to record it against.
  *
  * <p><b>Not a Spring bean.</b> {@code WorkerRegistrationController} holds it as the fallback
  * behind an {@code ObjectProvider}, the same arrangement as {@link ShufflingTickOrder}, so an

@@ -30,10 +30,11 @@ func closedPort(t *testing.T) string {
 // every node failing for no stated reason. Refusing to start names the cause once.
 func TestRunRefusesToStartWithoutACredential(t *testing.T) {
 	cfg := Config{
-		TemporalAddress: closedPort(t),
-		APIServerURL:    "http://api",
-		CallbackURL:     "http://cb",
-		Provider:        fixedProvider{reg: Registration{Fleets: []Fleet{{Namespace: "ns", TaskQueue: "q"}}}},
+		TemporalAddress:  closedPort(t),
+		APIServerURL:     "http://api",
+		CallbackURL:      "http://cb",
+		Provider:         fixedProvider{reg: Registration{Fleets: []Fleet{{Namespace: "ns", TaskQueue: "q"}}}},
+		CredentialSource: CredentialSourceControlPlane,
 	}
 
 	err := Run(context.Background(), cfg)
