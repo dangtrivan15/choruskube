@@ -11,9 +11,8 @@ which one a given Worker had chosen: `prepare` returned a Claude token and regis
 every Worker alike, including one that held its own and had no use for them.
 
 Closing that gap needs the Worker to say which mode it is in. It does not need the API server to
-remember that answer anywhere: which mode is correct is already a fact about the deployment —
-who runs the Fleet the Worker is joining — not something to learn from whichever Worker happens
-to register.
+remember that answer anywhere: which mode is correct is already a fact about the Fleet the
+Worker is joining, not something to learn from whichever Worker happens to register.
 
 ## Decision
 
@@ -24,12 +23,11 @@ gradual rollout: a Worker binary built before this field existed cannot register
 upgraded to send it.
 
 **The field is a consistency check, not state to store.** Which mode a Fleet's Workers must run
-is fixed by the deployment the Fleet belongs to, not chosen by registration. A deployment whose
-Fleets can belong to more than one tenant checks the declared value against what it already
-knows about the Fleet and refuses a mismatch; one that serves a single Fleet it does not own on
-anyone's behalf has nothing to check the declaration against and nothing to remember it in. This
-server is the second kind: it has exactly one Fleet, so it accepts the field once validated and
-keeps no record of what any particular Worker declared.
+is fixed by the Fleet, as the shapes below set out, not chosen at registration. A server whose
+Fleets come in more than one shape checks the declared value against the Fleet at registration,
+through its own `WorkerRegistrar`, and refuses a mismatch before it issues anything. A
+single-Fleet server like this one has one shape and no tenant notion to check against, so it
+accepts the field once validated and keeps no record of what any particular Worker declared.
 
 **The static configuration path cannot declare a mode, and no longer needs to.** It never calls
 the registration endpoint, so there was never a call on which to report anything; it used to
@@ -37,40 +35,33 @@ refuse `local` for exactly that reason. With no record anywhere for a missing de
 leave stale, that refusal protected nothing, so the static path now accepts `CREDENTIAL_SOURCE`
 unchanged, `local` included.
 
-**Which side holds credentials is a function of the deployment, never a per-Worker choice.** A
-Worker's own credential mode is always one of the two this field names, but a deployment is one
-of two shapes, and the shape — not a declaration — is what fixes the answer:
-- **A self-hosted deployment**, with no tenant but its own operator, where the Worker is expected
-  to hold its own GitHub, Claude and registry credentials (`local`). This server, and every
-  single-Fleet deployment like it, is this shape; it has no tenant notion to check a declaration
-  against.
-- **A deployment that mints and holds credentials for Fleets it does not own**, brokering on
-  behalf of a tenant that runs no infrastructure of its own (`control-plane`). This is the only
-  shape where the server legitimately holds a tenant's credentials, and the only shape with
-  something to check a Worker's declaration against: whether the Fleet it is registering against
-  is one the server owns credentials for.
+**Which side holds credentials is a function of the Fleet, never a per-Worker choice.** There
+are four deployment shapes, and the shape — not a declaration — fixes the answer:
+- **Self-hosted on Docker:** the Worker holds its own GitHub, Claude and registry credentials
+  (`local`).
+- **Self-hosted on Kubernetes:** the same (`local`).
+- **A hosted control plane's shared Fleet**, which the hosted deployment owns and runs for every
+  tenant: the control plane holds each tenant's credentials and brokers them to its Workers per
+  run (`control-plane`). This is the only shape where an API server holds credentials.
+- **A tenant's own Fleet on a hosted control plane:** the tenant runs the Worker, and the Worker
+  holds that tenant's credentials (`local`).
 
-There are no tolerant defaults in either shape, and no gradual transition between them: a change
-to which shape a Fleet is deletes the behavior it replaces rather than keeping both reachable.
-Database migrations are the one exemption, because a schema already applied cannot be rewritten
-in place.
+One hosted deployment therefore has Fleets in both modes. This server is single-Fleet and
+self-hosted, so its end state is `local`. The open-source stack still runs `control-plane`
+against this server's own configured credentials until one change switches it to `local`; that
+switch is tracked on the roadmap.
 
-**`control-plane` mode's own broker — the route a Worker calls to ask for a run's GitHub token,
-and the Worker-side provider that calls it — belongs only to the second shape above.** This
-server runs single-tenant and is the first shape, so that broker does not belong here long term;
-moving or removing it is tracked on the roadmap rather than done in this change, which only
-settles the registration field itself.
+**Moving credential work to the Worker is a hard cutoff.** Each change deletes the path it
+replaces: there are no tolerant defaults and no period in which both stay reachable. A path kept
+only so that runs recorded before a change can finish is deleted once those runs have finished
+or been terminated, not kept until nothing happens to use it. Database migrations are the one
+exemption, because a schema already applied cannot be rewritten in place.
 
-**The answer is bound to the presented credential, never to a per-request header**, for any
-deployment that does keep a record: a later `/worker/**` call is answered by looking up the
-credential it presents, the same one `WorkerAuthorizer` already authenticates, so every caller
-inside one Worker process gets one consistent answer with nothing to configure per call.
-
-**A deployment that mints a credential per Worker, and therefore can check and persist a
-declaration, supplies its own implementation of the seams this server already declares** —
-`WorkerRegistrar` here, and whatever the Fleet-aware equivalent needs — the same way other seams
-in this server are replaced by a bean. This entry only settles the single-Fleet path and the
-field's contract; it does not add the checking seam itself.
+**`control-plane` mode's broker — the route a Worker calls to ask for a run's GitHub token, and
+the Worker-side provider that calls it — serves only the hosted shared Fleet.** A self-hosted
+server has no tenant credentials to broker, so the broker does not belong in this server long
+term. Moving it out is tracked on the roadmap rather than done in this change, which only settles
+the registration field.
 
 ## Rejected
 
