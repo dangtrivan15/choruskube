@@ -348,6 +348,50 @@ public class GraphSnapshotBuilderTest extends BaseTest {
         assertThat(node.has("iteration_cap")).isFalse();
     }
 
+    @Test
+    void reposForRunMatchesTheSnapshotsRepos() throws Exception {
+        var baseTemplate = templateRepo
+                .findFirstByGraphIdOrderByVersionDesc(GraphIds.FEATURE_DEVELOPMENT)
+                .orElseThrow();
+
+        GitRepo gitRepo = new GitRepo();
+        gitRepo.setUrl("https://github.com/repos-for-run-test/repo");
+        gitRepo.setName(RepoNameUtil.deriveOwnerRepoName("https://github.com/repos-for-run-test/repo"));
+        gitRepo.setSecrets("[]");
+        gitRepo = gitRepoRepo.save(gitRepo);
+
+        WorkflowRun run = new WorkflowRun();
+        run.setGraphTemplateId(baseTemplate.getId());
+        run.setInputs("{\"feature_request\":\"test\",\"software_project_id\":\"" + gitRepo.getId() + "\"}");
+        run = runRepo.save(run);
+
+        JsonNode snapshotJson = objectMapper.readTree(snapshotBuilder.buildSnapshotForRun(run));
+        List<String> snapshotRepoIds = new ArrayList<>();
+        for (JsonNode r : snapshotJson.get("repos")) {
+            snapshotRepoIds.add(r.get("id").asText());
+        }
+
+        List<String> repoIds = snapshotBuilder.reposForRun(run).stream()
+                .map(r -> r.getId().toString())
+                .toList();
+
+        assertThat(repoIds).isEqualTo(snapshotRepoIds);
+    }
+
+    @Test
+    void reposForRunEmptyWhenRunHasNoRepo() throws Exception {
+        var baseTemplate = templateRepo
+                .findFirstByGraphIdOrderByVersionDesc(GraphIds.FEATURE_DEVELOPMENT)
+                .orElseThrow();
+
+        WorkflowRun run = new WorkflowRun();
+        run.setGraphTemplateId(baseTemplate.getId());
+        run.setInputs("{\"feature_request\":\"test\"}");
+        run = runRepo.save(run);
+
+        assertThat(snapshotBuilder.reposForRun(run)).isEmpty();
+    }
+
     private JsonNode findSnapshotNode(JsonNode snapshotJson, UUID templateNodeId) {
         for (JsonNode n : snapshotJson.get("nodes")) {
             if (n.get("template_node_id").asText().equals(templateNodeId.toString())) {

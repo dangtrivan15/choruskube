@@ -1,9 +1,11 @@
 package com.choruskube.core.service;
 
+import com.choruskube.core.credential.GitHubTokenScope;
 import com.choruskube.core.exception.GitHubApiException;
 import com.choruskube.core.exception.GitHubMergeRefusedException;
 import com.choruskube.core.exception.GitHubRateLimitHints;
 import com.choruskube.core.exception.GitHubTokenMintException;
+import com.choruskube.core.exception.GitHubTokenScopeException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nimbusds.jose.*;
@@ -16,46 +18,192 @@ import java.net.http.HttpClient;
 import java.net.http.HttpHeaders;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.security.KeyFactory;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.security.interfaces.RSAPrivateKey;
 import java.security.spec.PKCS8EncodedKeySpec;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.Date;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
+import java.util.concurrent.ConcurrentHashMap;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 @Service
 public class GitHubAppService {
 
+    /** How long an installation lookup is trusted before a mint re-fetches it. */
+    private static final Duration INSTALLATION_TTL = Duration.ofMinutes(10);
+
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
     private final String githubApiUrl;
+    private final Clock clock;
 
+    /** Keyed by {@link #fingerprint}, never by installation id alone — see the field's javadoc. */
+    private final Map<String, CachedInstallation> installationCache = new ConcurrentHashMap<>();
+
+    @Autowired
     public GitHubAppService(
             ObjectMapper objectMapper, @Value("${github.api.url:https://api.github.com}") String githubApiUrl) {
-        this.objectMapper = objectMapper;
-        this.githubApiUrl = githubApiUrl;
-        this.httpClient =
-                HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+        this(
+                objectMapper,
+                githubApiUrl,
+                HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build(),
+                Clock.systemUTC());
     }
 
-    public String generateInstallationToken(String appId, String installationId, String privateKeyPem) {
+    GitHubAppService(ObjectMapper objectMapper, String githubApiUrl, HttpClient httpClient, Clock clock) {
+        this.objectMapper = objectMapper;
+        this.githubApiUrl = githubApiUrl;
+        this.httpClient = httpClient;
+        this.clock = clock;
+    }
+
+    /** An installation's account and the permissions GitHub granted it, as read by {@link #installation}. */
+    record Installation(String account, Map<String, String> permissions) {}
+
+    private record CachedInstallation(Installation installation, Instant expiresAt) {}
+
+    /**
+     * Looks up the installation (account login, granted permissions), caching the answer for
+     * {@link #INSTALLATION_TTL} keyed by the credential fingerprint — never by installation id
+     * alone, so two different credentials that happen to name the same installation id (one per
+     * organization, in a deployment that resolves credentials per organization) never answer one
+     * organization's lookup from another's cache entry.
+     */
+    Installation installation(String appId, String installationId, String privateKeyPem, String jwt) {
+        String key = fingerprint(appId, installationId, privateKeyPem);
+        Instant now = clock.instant();
+        CachedInstallation cached = installationCache.get(key);
+        if (cached != null && cached.expiresAt().isAfter(now)) {
+            return cached.installation();
+        }
+        Installation installation = fetchInstallation(installationId, jwt);
+        installationCache.put(key, new CachedInstallation(installation, now.plus(INSTALLATION_TTL)));
+        return installation;
+    }
+
+    private void invalidateInstallation(String appId, String installationId, String privateKeyPem) {
+        installationCache.remove(fingerprint(appId, installationId, privateKeyPem));
+    }
+
+    private Installation fetchInstallation(String installationId, String jwt) {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(githubApiUrl + "/app/installations/" + installationId))
+                .header("Authorization", "Bearer " + jwt)
+                .header("Accept", "application/vnd.github+json")
+                .timeout(Duration.ofSeconds(10))
+                .GET()
+                .build();
+        try {
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() != 200) {
+                // Same reasoning as the mint's own non-201 branch: the body is never echoed into
+                // the exception, since GitHub can mirror the request (Authorization header
+                // included) into an error payload.
+                throw new GitHubTokenMintException(
+                        response.statusCode(), installationId, rateLimitHints(response.headers()));
+            }
+            JsonNode body = objectMapper.readTree(response.body());
+            String account = body.path("account").path("login").asText(null);
+            if (account == null || account.isBlank()) {
+                throw new IllegalStateException(
+                        "GitHub installation lookup for " + installationId + " returned no account login");
+            }
+            Map<String, String> permissions = new TreeMap<>();
+            body.path("permissions")
+                    .fields()
+                    .forEachRemaining(entry ->
+                            permissions.put(entry.getKey(), entry.getValue().asText()));
+            return new Installation(account, permissions);
+        } catch (IOException | InterruptedException e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            throw new RuntimeException("Failed to look up GitHub installation " + installationId, e);
+        }
+    }
+
+    /**
+     * SHA-256 over {@code appId}, {@code installationId} and the PEM bytes, each followed by a zero
+     * byte — the installation cache's key. Must stay byte-for-byte identical to the Go Worker's
+     * {@code appCredential.fingerprint()}, which this value is never compared against directly but
+     * which the same two organizations-sharing-an-installation-id hazard applies to.
+     */
+    private static String fingerprint(String appId, String installationId, String privateKeyPem) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            digest.update(appId.getBytes(StandardCharsets.UTF_8));
+            digest.update((byte) 0);
+            digest.update(installationId.getBytes(StandardCharsets.UTF_8));
+            digest.update((byte) 0);
+            digest.update(privateKeyPem.getBytes(StandardCharsets.UTF_8));
+            digest.update((byte) 0);
+            return HexFormat.of().formatHex(digest.digest());
+        } catch (NoSuchAlgorithmException e) {
+            // SHA-256 is mandated by every JDK provider; this can only mean a broken JVM install.
+            throw new IllegalStateException("SHA-256 unavailable", e);
+        }
+    }
+
+    /**
+     * Mints a token narrowed to {@code scope}: an empty {@link GitHubTokenScope#repositories()} is
+     * refused before any call, then the installation's account and grants narrow the request (see
+     * {@link GitHubTokenScope#narrowTo}) before the actual mint.
+     *
+     * @throws GitHubTokenScopeException if the scope is empty, narrows to nothing, or GitHub
+     *     answers the narrowed mint with 422 — in the last case the cached installation lookup is
+     *     dropped so the next attempt re-reads it, and the message names the requested {@code
+     *     owner/name} repositories and the account
+     */
+    public String generateInstallationToken(
+            String appId, String installationId, String privateKeyPem, GitHubTokenScope scope) {
+        if (scope.repositories().isEmpty()) {
+            throw new GitHubTokenScopeException(
+                    "No repository in this run's scope; refusing to mint an installation-wide token");
+        }
         try {
             String jwt = createSignedJwt(appId, privateKeyPem);
+            Installation installation = installation(appId, installationId, privateKeyPem, jwt);
+            GitHubTokenScope.Request narrowed = scope.narrowTo(installation.account(), installation.permissions());
+
+            String payload = objectMapper.writeValueAsString(
+                    Map.of("repositories", narrowed.repositoryNames(), "permissions", narrowed.permissions()));
 
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(githubApiUrl + "/app/installations/" + installationId + "/access_tokens"))
                     .header("Authorization", "Bearer " + jwt)
                     .header("Accept", "application/vnd.github+json")
+                    .header("Content-Type", "application/json")
                     .timeout(Duration.ofSeconds(10))
-                    .POST(HttpRequest.BodyPublishers.noBody())
+                    .POST(HttpRequest.BodyPublishers.ofString(payload))
                     .build();
 
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() == 422) {
+                invalidateInstallation(appId, installationId, privateKeyPem);
+                List<String> requested = narrowed.repositoryNames().stream()
+                        .map(name -> installation.account() + "/" + name)
+                        .sorted()
+                        .toList();
+                throw new GitHubTokenScopeException(
+                        "GitHub rejected minting a token for " + requested + " under installation account '"
+                                + installation.account()
+                                + "'; each repository must be in the App installation's repository selection"
+                                + " and every requested permission granted",
+                        new GitHubTokenMintException(422, installationId, rateLimitHints(response.headers())));
+            }
             if (response.statusCode() != 201) {
                 // The body is deliberately omitted, for the reason given on fetchPullRequest: a
                 // GitHub error payload can echo the request, Authorization header included, and
@@ -75,6 +223,40 @@ public class GitHubAppService {
             throw new RuntimeException("Interrupted while generating GitHub installation token", e);
         } catch (Exception e) {
             throw new RuntimeException("Failed to generate GitHub installation token", e);
+        }
+    }
+
+    /**
+     * Mints a metadata-only token and discards it — used by a caller that needs to prove an App
+     * credential can mint, without a run's scope to narrow by. Same status-based exceptions as
+     * {@link #generateInstallationToken}, so a caller classifying 401/403 keeps working.
+     */
+    public void verifyAppCredential(String appId, String installationId, String privateKeyPem) {
+        try {
+            String jwt = createSignedJwt(appId, privateKeyPem);
+            String payload = objectMapper.writeValueAsString(Map.of("permissions", Map.of("metadata", "read")));
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(githubApiUrl + "/app/installations/" + installationId + "/access_tokens"))
+                    .header("Authorization", "Bearer " + jwt)
+                    .header("Accept", "application/vnd.github+json")
+                    .header("Content-Type", "application/json")
+                    .timeout(Duration.ofSeconds(10))
+                    .POST(HttpRequest.BodyPublishers.ofString(payload))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() != 201) {
+                throw new GitHubTokenMintException(
+                        response.statusCode(), installationId, rateLimitHints(response.headers()));
+            }
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Interrupted while verifying GitHub App credential", e);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to verify GitHub App credential", e);
         }
     }
 

@@ -95,6 +95,24 @@ public class GraphSnapshotBuilder {
         return buildSnapshot(templateId, edges, inputs);
     }
 
+    /**
+     * The run's repositories, in the same order {@link #buildSnapshotForRun} would put them in the
+     * snapshot's {@code repos} array — shared with {@link
+     * com.choruskube.core.credential.GitHubTokenScopeResolver} so "the run's repositories" has one
+     * definition.
+     */
+    @Transactional(readOnly = true)
+    public List<GitRepo> reposForRun(WorkflowRun run) {
+        UUID templateId = run.getGraphTemplateId();
+        Map<String, Object> inputs;
+        try {
+            inputs = objectMapper.readValue(run.getInputs(), new TypeReference<>() {});
+        } catch (Exception e) {
+            inputs = Map.of();
+        }
+        return resolveGitRepos(templateId, inputs).repos();
+    }
+
     @Transactional(readOnly = true)
     public String buildSnapshot(UUID graphTemplateId, List<TemplateEdge> edges, Map<String, Object> inputs) {
         ResolvedRepos resolved = resolveGitRepos(graphTemplateId, inputs);

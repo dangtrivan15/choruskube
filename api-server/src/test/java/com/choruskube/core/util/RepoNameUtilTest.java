@@ -2,6 +2,7 @@ package com.choruskube.core.util;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class RepoNameUtilTest {
@@ -112,5 +113,99 @@ class RepoNameUtilTest {
     void deriveOwnerRepoName_returnsEmptyForNullOrBlank() {
         assertThat(RepoNameUtil.deriveOwnerRepoName(null)).isEmpty();
         assertThat(RepoNameUtil.deriveOwnerRepoName("   ")).isEmpty();
+    }
+
+    // -----------------------------------------------------------------------------------
+    // githubOwnerRepo — GitHub-only, no best-guess fallback
+    // -----------------------------------------------------------------------------------
+
+    @Test
+    void githubOwnerRepo_https() {
+        assertThat(RepoNameUtil.githubOwnerRepo("https://github.com/acme/backend-api"))
+                .isEqualTo(Optional.of("acme/backend-api"));
+    }
+
+    @Test
+    void githubOwnerRepo_httpsWithDotGit() {
+        assertThat(RepoNameUtil.githubOwnerRepo("https://github.com/acme/backend-api.git"))
+                .isEqualTo(Optional.of("acme/backend-api"));
+    }
+
+    @Test
+    void githubOwnerRepo_httpWithUserinfo() {
+        assertThat(RepoNameUtil.githubOwnerRepo("http://x-access-token:ghs_abc@github.com/acme/backend-api.git"))
+                .isEqualTo(Optional.of("acme/backend-api"));
+    }
+
+    @Test
+    void githubOwnerRepo_trailingSlash() {
+        assertThat(RepoNameUtil.githubOwnerRepo("https://github.com/acme/backend-api/"))
+                .isEqualTo(Optional.of("acme/backend-api"));
+    }
+
+    @Test
+    void githubOwnerRepo_queryString() {
+        assertThat(RepoNameUtil.githubOwnerRepo("https://github.com/acme/backend-api.git?ref=main"))
+                .isEqualTo(Optional.of("acme/backend-api"));
+    }
+
+    @Test
+    void githubOwnerRepo_fragment() {
+        assertThat(RepoNameUtil.githubOwnerRepo("https://github.com/acme/backend-api#readme"))
+                .isEqualTo(Optional.of("acme/backend-api"));
+    }
+
+    @Test
+    void githubOwnerRepo_hostIsCaseInsensitive() {
+        assertThat(RepoNameUtil.githubOwnerRepo("https://GitHub.Com/acme/backend-api"))
+                .isEqualTo(Optional.of("acme/backend-api"));
+    }
+
+    @Test
+    void githubOwnerRepo_sshUrlForm() {
+        assertThat(RepoNameUtil.githubOwnerRepo("ssh://git@github.com/acme/backend-api.git"))
+                .isEqualTo(Optional.of("acme/backend-api"));
+    }
+
+    @Test
+    void githubOwnerRepo_scpLikeForm() {
+        assertThat(RepoNameUtil.githubOwnerRepo("git@github.com:acme/backend-api.git"))
+                .isEqualTo(Optional.of("acme/backend-api"));
+    }
+
+    @Test
+    void githubOwnerRepo_scpLikeFormWithoutDotGit() {
+        assertThat(RepoNameUtil.githubOwnerRepo("git@github.com:acme/backend-api"))
+                .isEqualTo(Optional.of("acme/backend-api"));
+    }
+
+    @Test
+    void githubOwnerRepo_nonGitHubHost_isEmpty() {
+        assertThat(RepoNameUtil.githubOwnerRepo("https://gitlab.com/acme/backend-api"))
+                .isEmpty();
+    }
+
+    @Test
+    void githubOwnerRepo_githubEnterpriseServerHost_isEmpty() {
+        assertThat(RepoNameUtil.githubOwnerRepo("https://github.internal.example.com/acme/backend-api"))
+                .isEmpty();
+    }
+
+    @Test
+    void githubOwnerRepo_threeSegments_isEmpty() {
+        assertThat(RepoNameUtil.githubOwnerRepo("https://github.com/acme/group/backend-api"))
+                .isEmpty();
+    }
+
+    @Test
+    void githubOwnerRepo_notHostedOnGitHub_isEmpty() {
+        assertThat(RepoNameUtil.githubOwnerRepo("https://example.invalid/acme/backend-api"))
+                .isEmpty();
+    }
+
+    @Test
+    void githubOwnerRepo_blankOrNull_isEmpty() {
+        assertThat(RepoNameUtil.githubOwnerRepo(null)).isEmpty();
+        assertThat(RepoNameUtil.githubOwnerRepo("   ")).isEmpty();
     }
 }
