@@ -3,9 +3,12 @@ package credential
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,35 +24,61 @@ import (
 // one that lapses mid-clone.
 const refreshMargin = 5 * time.Minute
 
-// AppTokenMinter exchanges a GitHub App's private key for an installation token.
-// *github.Client satisfies it.
+// installationTTL caches an installation lookup for this long — see the shared contract in
+// GitHubAppService#installation (API server): keyed by credential fingerprint, never by
+// installation id alone.
+const installationTTL = 10 * time.Minute
+
+// ScopeClient fetches a run's GitHub token scope from the control plane — the repositories and
+// permissions the API server's scope resolver computed for it. *workload.Client satisfies it.
+type ScopeClient interface {
+	GitHubTokenScope(ctx context.Context, runID uuid.UUID) ([]string, map[string]string, error)
+}
+
+// AppTokenMinter exchanges a GitHub App's private key for an installation lookup or a narrowed
+// token. *github.Client satisfies it.
 type AppTokenMinter interface {
-	InstallationToken(ctx context.Context, appID, installationID string, privateKeyPEM []byte, now time.Time) (github.InstallationToken, error)
+	Installation(ctx context.Context, appID, installationID string, privateKeyPEM []byte, now time.Time) (github.Installation, error)
+	InstallationToken(ctx context.Context, appID, installationID string, privateKeyPEM []byte, now time.Time, req github.TokenRequest) (github.InstallationToken, error)
 }
 
 // local serves one tenant's own Fleet from files mounted into the Worker. Every value is read on
-// each call, so a rotated secret takes effect without a restart. It ignores the run: one
-// credential serves every run, which is wrong anywhere a Worker serves more than one tenant.
+// each call, so a rotated secret takes effect without a restart. It ignores the run for
+// credential selection: one credential serves every run, which is wrong anywhere a Worker serves
+// more than one tenant. An App credential's mint is still narrowed per run, via scopes.
 type local struct {
-	dir string
-	gh  AppTokenMinter
-	now func() time.Time
+	dir    string
+	gh     AppTokenMinter
+	scopes ScopeClient
+	now    func() time.Time
 
-	mu         sync.Mutex
-	cached     github.InstallationToken
-	cachedFor  [sha256.Size]byte
-	haveCached bool
+	mu            sync.Mutex
+	installations map[[sha256.Size]byte]cachedInstallation
+	tokens        map[string]github.InstallationToken
+}
+
+type cachedInstallation struct {
+	installation github.Installation
+	expiresAt    time.Time
 }
 
 // NewLocal returns a Provider that reads credentials from dir, falling back to the environment
 // for anything dir does not hold: GITHUB_PAT, GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID,
 // GITHUB_APP_PRIVATE_KEY_PATH, CLAUDE_CODE_OAUTH_TOKEN, REGISTRY_HOST, REGISTRY_USERNAME and
-// REGISTRY_PASSWORD. An empty dir means environment only.
-func NewLocal(dir string, gh AppTokenMinter, now func() time.Time) Provider {
+// REGISTRY_PASSWORD. An empty dir means environment only. scopes supplies the run scope an App
+// credential's mint is narrowed to; it is never consulted for a PAT.
+func NewLocal(dir string, gh AppTokenMinter, scopes ScopeClient, now func() time.Time) Provider {
 	if now == nil {
 		now = time.Now
 	}
-	return &local{dir: dir, gh: gh, now: now}
+	return &local{
+		dir:           dir,
+		gh:            gh,
+		scopes:        scopes,
+		now:           now,
+		installations: make(map[[sha256.Size]byte]cachedInstallation),
+		tokens:        make(map[string]github.InstallationToken),
+	}
 }
 
 type appCredential struct {
@@ -68,7 +97,7 @@ func (a appCredential) fingerprint() [sha256.Size]byte {
 	return sum
 }
 
-func (l *local) GitHubToken(ctx context.Context, _ uuid.UUID) (Token, error) {
+func (l *local) GitHubToken(ctx context.Context, runID uuid.UUID) (Token, error) {
 	// The mounted folder is the deliberate setting and the environment only a fallback, so a
 	// stray variable can never override a secret an operator mounted.
 	pat, err := l.fileValue("github-pat")
@@ -83,7 +112,7 @@ func (l *local) GitHubToken(ctx context.Context, _ uuid.UUID) (Token, error) {
 		return Token{}, err
 	}
 	if app != nil {
-		return l.mint(ctx, *app)
+		return l.mintScoped(ctx, runID, *app)
 	}
 	if pat := strings.TrimSpace(os.Getenv("GITHUB_PAT")); pat != "" {
 		return Token{Value: pat}, nil
@@ -93,7 +122,7 @@ func (l *local) GitHubToken(ctx context.Context, _ uuid.UUID) (Token, error) {
 		return Token{}, err
 	}
 	if app != nil {
-		return l.mint(ctx, *app)
+		return l.mintScoped(ctx, runID, *app)
 	}
 	return Token{}, fmt.Errorf("no GitHub credential configured: put github-pat or github-app/{app-id,installation-id,private-key.pem} "+
 		"in CREDENTIALS_DIR (%s), or set GITHUB_PAT, or GITHUB_APP_ID with GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY_PATH", l.dirLabel())
@@ -142,25 +171,97 @@ func (l *local) registry() (*Registry, error) {
 	}
 }
 
-// mint holds the lock across the exchange so concurrent pods share one token rather than each
-// minting their own against GitHub's rate limit.
-func (l *local) mint(ctx context.Context, app appCredential) (Token, error) {
+// mintScoped fetches the run's scope and, only once it is non-empty, mints against it. The scope
+// call happens on every App token request (never for a PAT, which never reaches here) because a
+// restarted Worker has no other memory of a run's repositories.
+func (l *local) mintScoped(ctx context.Context, runID uuid.UUID, app appCredential) (Token, error) {
+	if l.scopes == nil {
+		return Token{}, errors.New("no GitHub token scope source configured for an App credential")
+	}
+	repositories, permissions, err := l.scopes.GitHubTokenScope(ctx, runID)
+	if err != nil {
+		return Token{}, fmt.Errorf("fetch GitHub token scope for run %s: %w", runID, err)
+	}
+	if len(repositories) == 0 {
+		// Refused before touching either cache or GitHub: GitHub reads a missing repository
+		// list as "every repository", so a repo-less scope must never fall through to one.
+		return Token{}, fmt.Errorf("run %s has no repository in its GitHub token scope", runID)
+	}
+	return l.mint(ctx, app, repositories, permissions)
+}
+
+// mint holds the lock across the exchange so concurrent pods share one installation lookup and
+// one token per narrowed request rather than each minting its own against GitHub's rate limit.
+func (l *local) mint(ctx context.Context, app appCredential, repositories []string, permissions map[string]string) (Token, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
 	fp := app.fingerprint()
-	if l.haveCached && l.cachedFor == fp && now.Before(l.cached.ExpiresAt.Add(-refreshMargin)) {
-		return Token{Value: l.cached.Value, ExpiresAt: l.cached.ExpiresAt}, nil
-	}
-	minted, err := l.gh.InstallationToken(ctx, app.appID, app.installationID, app.pem, now)
+
+	inst, err := l.installationLocked(ctx, app, fp, now)
 	if err != nil {
+		return Token{}, fmt.Errorf("look up GitHub App installation: %w", err)
+	}
+
+	req, err := narrow(inst, repositories, permissions)
+	if err != nil {
+		return Token{}, err
+	}
+
+	l.pruneExpiredTokensLocked(now)
+	tokenKey := tokenCacheKey(fp, req)
+	if cached, ok := l.tokens[tokenKey]; ok && !cached.ExpiresAt.IsZero() && now.Before(cached.ExpiresAt.Add(-refreshMargin)) {
+		return Token{Value: cached.Value, ExpiresAt: cached.ExpiresAt}, nil
+	}
+
+	minted, err := l.gh.InstallationToken(ctx, app.appID, app.installationID, app.pem, now, req)
+	if err != nil {
+		var apiErr *github.APIError
+		if errors.As(err, &apiErr) && apiErr.Status == http.StatusUnprocessableEntity {
+			// A changed installation (repository selection or permissions) is re-read on the
+			// next attempt rather than kept stale for up to installationTTL.
+			delete(l.installations, fp)
+			return Token{}, fmt.Errorf("GitHub rejected minting a token for %v under installation account %q: %w",
+				req.Repositories, inst.Account, err)
+		}
 		return Token{}, fmt.Errorf("mint GitHub App installation token: %w", err)
 	}
 	minted.Value = strings.TrimSpace(minted.Value)
-	// Zero means the response named no lifetime; serving that from cache could outlive the token.
-	l.haveCached = !minted.ExpiresAt.IsZero()
-	l.cached, l.cachedFor = minted, fp
+	if minted.ExpiresAt.IsZero() {
+		// Zero means the response named no lifetime; serving that from cache could outlive the token.
+		delete(l.tokens, tokenKey)
+	} else {
+		l.tokens[tokenKey] = minted
+	}
 	return Token{Value: minted.Value, ExpiresAt: minted.ExpiresAt}, nil
+}
+
+func (l *local) installationLocked(ctx context.Context, app appCredential, fp [sha256.Size]byte, now time.Time) (github.Installation, error) {
+	if cached, ok := l.installations[fp]; ok && now.Before(cached.expiresAt) {
+		return cached.installation, nil
+	}
+	inst, err := l.gh.Installation(ctx, app.appID, app.installationID, app.pem, now)
+	if err != nil {
+		return github.Installation{}, err
+	}
+	l.installations[fp] = cachedInstallation{installation: inst, expiresAt: now.Add(installationTTL)}
+	return inst, nil
+}
+
+func (l *local) pruneExpiredTokensLocked(now time.Time) {
+	for key, tok := range l.tokens {
+		if !tok.ExpiresAt.IsZero() && !now.Before(tok.ExpiresAt) {
+			delete(l.tokens, key)
+		}
+	}
+}
+
+// tokenCacheKey keys a minted token by credential fingerprint plus the exact narrowed request, so
+// concurrent runs over different repository sets each keep their own token rather than evicting
+// each other. json.Marshal sorts map keys, so two equal requests always produce the same key.
+func tokenCacheKey(fp [sha256.Size]byte, req github.TokenRequest) string {
+	canonical, _ := json.Marshal(req)
+	return hex.EncodeToString(fp[:]) + "|" + string(canonical)
 }
 
 func (l *local) appFromFiles() (*appCredential, error) {

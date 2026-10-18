@@ -1,7 +1,9 @@
 // Package credential is where a Worker gets the credentials its runs need: a GitHub token for a
 // run, and optionally the Claude token and registry login its agent pods launch with.
 //
-// ControlPlane asks the API server per run. Local reads the Worker's own mounted folder.
+// ControlPlane asks the API server per run. Local reads the Worker's own mounted folder; an App
+// token it mints is narrowed to the run's GitHub token scope, fetched from the API server, while
+// a PAT is passed through unchanged.
 package credential
 
 import (

@@ -312,6 +312,24 @@ func (c *Client) GitHubToken(ctx context.Context, runID uuid.UUID) (string, erro
 	return result.Token, nil
 }
 
+// GitHubTokenScope asks the API server what a run's GitHub token should cover: its GitHub-hosted
+// repositories and the run permission list, neither a credential. The response body is never
+// quoted in an error.
+func (c *Client) GitHubTokenScope(ctx context.Context, runID uuid.UUID) ([]string, map[string]string, error) {
+	resp, err := c.doJSON(ctx, http.MethodGet, fmt.Sprintf("/worker/runs/%s/github-token-scope", runID), nil)
+	if err != nil {
+		return nil, nil, fmt.Errorf("get github token scope: %w", err)
+	}
+	var result struct {
+		Repositories []string          `json:"repositories"`
+		Permissions  map[string]string `json:"permissions"`
+	}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, nil, errors.New("get github token scope: response is not the expected JSON")
+	}
+	return result.Repositories, result.Permissions, nil
+}
+
 // GetWorkloadLogs returns recent log output from the agent container.
 func (c *Client) GetWorkloadLogs(ctx context.Context, runID, nodeExecID uuid.UUID, tailLines int) (string, error) {
 	path := workloadPath(runID, nodeExecID) + fmt.Sprintf("/logs?tailLines=%d", tailLines)
