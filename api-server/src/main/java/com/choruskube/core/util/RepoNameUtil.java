@@ -1,5 +1,6 @@
 package com.choruskube.core.util;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -93,6 +94,7 @@ public final class RepoNameUtil {
             Pattern.compile("^ssh://git@github\\.com/([^/?#]+)/([^/?#]+)$", Pattern.CASE_INSENSITIVE);
     private static final Pattern GITHUB_SCP =
             Pattern.compile("^git@github\\.com:([^/]+)/([^/]+)$", Pattern.CASE_INSENSITIVE);
+    private static final List<Pattern> GITHUB_URL_FORMS = List.of(GITHUB_HTTP, GITHUB_SCP, GITHUB_SSH_URL);
 
     /**
      * Parses {@code owner/name} from a URL only when it names a {@code github.com} repository — a
@@ -106,15 +108,11 @@ public final class RepoNameUtil {
     public static Optional<String> githubOwnerRepo(String url) {
         if (url == null || url.isBlank()) return Optional.empty();
         String trimmed = url.trim();
-        for (Pattern pattern : new Pattern[] {GITHUB_HTTP, GITHUB_SCP, GITHUB_SSH_URL}) {
+        for (Pattern pattern : GITHUB_URL_FORMS) {
             Matcher matcher = pattern.matcher(trimmed);
             if (matcher.matches()) {
-                String owner = matcher.group(1);
                 String name = stripDotGit(matcher.group(2));
-                if (owner.isEmpty() || name.isEmpty() || owner.contains("/") || name.contains("/")) {
-                    continue;
-                }
-                return Optional.of(owner + "/" + name);
+                return name.isEmpty() ? Optional.empty() : Optional.of(matcher.group(1) + "/" + name);
             }
         }
         return Optional.empty();

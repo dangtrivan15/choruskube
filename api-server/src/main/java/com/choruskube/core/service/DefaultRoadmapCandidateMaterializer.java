@@ -30,6 +30,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -448,7 +449,7 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
                 throw repoResolution.failure();
             }
             GitRepo repo = resolveRepoForTask(repoResolution.repos(), candidateRepoId);
-            java.util.Optional<String> ownerRepo = RepoNameUtil.githubOwnerRepo(repo.getUrl());
+            Optional<String> ownerRepo = RepoNameUtil.githubOwnerRepo(repo.getUrl());
             if (ownerRepo.isEmpty()) {
                 // A refused token (GitHubTokenScopeException) would fail the Worker's whole
                 // FileGateIssues step for every Task's issue, not just this one — skip here

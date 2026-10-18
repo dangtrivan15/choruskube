@@ -22,6 +22,8 @@ import java.security.interfaces.RSAPrivateKey;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.ArrayDeque;
 import java.util.Base64;
 import java.util.Deque;
@@ -604,15 +606,14 @@ class GitHubAppServiceTest {
             String token = github.service().generateInstallationToken("app-id", "67890", testPrivateKeyPem(), scope);
 
             assertThat(token).isEqualTo("ghs_test");
+            // Exact string, not JSON-equivalence: field order and sorted permission keys are part
+            // of the mint-body contract the Worker's Go client sends too.
             assertThat(github.postRequests()).singleElement().satisfies(r -> {
-                try {
-                    com.fasterxml.jackson.databind.JsonNode body = new ObjectMapper().readTree(r.body);
-                    assertThat(body.get("repositories").toString()).isEqualTo("[\"api\"]");
-                    assertThat(body.get("permissions").has("administration")).isFalse();
-                    assertThat(body.get("permissions").get("contents").asText()).isEqualTo("write");
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
-                }
+                assertThat(r.body)
+                        .isEqualTo("{\"repositories\":[\"api\"],\"permissions\":{"
+                                + "\"actions\":\"read\",\"checks\":\"read\",\"contents\":\"write\","
+                                + "\"issues\":\"write\",\"metadata\":\"read\",\"pull_requests\":\"write\","
+                                + "\"statuses\":\"read\",\"workflows\":\"write\"}}");
                 assertThat(r.authorization).startsWith("Bearer ");
             });
             assertThat(github.getRequests()).singleElement().satisfies(r -> assertThat(r.authorization)
@@ -632,6 +633,25 @@ class GitHubAppServiceTest {
 
             assertThat(github.getRequests()).hasSize(1);
             assertThat(github.postRequests()).hasSize(2);
+        }
+    }
+
+    @Test
+    void generateInstallationToken_afterTheCacheWindow_looksTheInstallationUpAgain() throws Exception {
+        try (ScopedStub github = ScopedStub.create()) {
+            MutableClock clock = new MutableClock(Instant.parse("2026-10-18T12:00:00Z"));
+            GitHubAppService service = github.service(clock);
+            GitHubTokenScope scope = GitHubTokenScope.of(List.of("acme/api"));
+            String pem = testPrivateKeyPem();
+
+            service.generateInstallationToken("app-id", "67890", pem, scope);
+            clock.advance(Duration.ofMinutes(9));
+            service.generateInstallationToken("app-id", "67890", pem, scope);
+            assertThat(github.getRequests()).hasSize(1);
+
+            clock.advance(Duration.ofMinutes(2));
+            service.generateInstallationToken("app-id", "67890", pem, scope);
+            assertThat(github.getRequests()).hasSize(2);
         }
     }
 
@@ -672,12 +692,17 @@ class GitHubAppServiceTest {
     }
 
     @Test
-    void generateInstallationToken_emptyScope_refusesBeforeAnyCall() {
-        GitHubAppService service = new GitHubAppService(new ObjectMapper(), "https://api.github.com");
-        GitHubTokenScope empty = GitHubTokenScope.of(List.of());
+    void generateInstallationToken_emptyScope_refusesBeforeAnyCall() throws Exception {
+        try (ScopedStub github = ScopedStub.create()) {
+            GitHubTokenScope empty = GitHubTokenScope.of(List.of());
 
-        assertThatThrownBy(() -> service.generateInstallationToken("app-id", "67890", "pem", empty))
-                .isInstanceOf(GitHubTokenScopeException.class);
+            assertThatThrownBy(() ->
+                            github.service().generateInstallationToken("app-id", "67890", testPrivateKeyPem(), empty))
+                    .isInstanceOf(GitHubTokenScopeException.class);
+
+            assertThat(github.getRequests()).isEmpty();
+            assertThat(github.postRequests()).isEmpty();
+        }
     }
 
     @Test
@@ -704,6 +729,20 @@ class GitHubAppServiceTest {
     }
 
     @Test
+    void verifyAppCredential_non201_throwsGitHubTokenMintExceptionNamingTheStatus() throws Exception {
+        try (ScopedStub github = ScopedStub.create()) {
+            github.queuePost(401, "{\"message\":\"Bad credentials\"}");
+
+            assertThatThrownBy(() -> github.service().verifyAppCredential("app-id", "67890", testPrivateKeyPem()))
+                    .isInstanceOf(GitHubTokenMintException.class)
+                    .hasMessageContaining("401")
+                    .satisfies(thrown -> assertThat(((GitHubTokenMintException) thrown).getStatus())
+                            .isEqualTo(401));
+            assertThat(github.getRequests()).isEmpty();
+        }
+    }
+
+    @Test
     void installationLookup_non200_throwsGitHubTokenMintException() throws Exception {
         try (ScopedStub github = ScopedStub.create()) {
             GitHubAppService service = github.service();
@@ -714,6 +753,33 @@ class GitHubAppServiceTest {
                     .isInstanceOf(GitHubTokenMintException.class)
                     .satisfies(thrown -> assertThat(((GitHubTokenMintException) thrown).getStatus())
                             .isEqualTo(401));
+        }
+    }
+
+    private static final class MutableClock extends Clock {
+        private Instant now;
+
+        MutableClock(Instant now) {
+            this.now = now;
+        }
+
+        void advance(Duration by) {
+            now = now.plus(by);
+        }
+
+        @Override
+        public Instant instant() {
+            return now;
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return ZoneOffset.UTC;
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            return this;
         }
     }
 
@@ -810,13 +876,17 @@ class GitHubAppServiceTest {
         }
 
         GitHubAppService service() {
+            return service(Clock.systemUTC());
+        }
+
+        GitHubAppService service(Clock clock) {
             return new GitHubAppService(
                     new ObjectMapper(),
                     "http://127.0.0.1:" + server.getAddress().getPort(),
                     HttpClient.newBuilder()
                             .connectTimeout(Duration.ofSeconds(5))
                             .build(),
-                    Clock.systemUTC());
+                    clock);
         }
 
         @Override

@@ -3,6 +3,7 @@ package credential
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 
@@ -15,9 +16,8 @@ import (
 var ErrNoReachableRepository = errors.New("no repository in the run's scope belongs to this GitHub App installation")
 
 // levelRank/rankLevel: read=1 < write=2 < admin=3 — how narrow caps a requested permission at
-// what the installation grants. Must match the API server's GitHubTokenScope exactly: both sides
-// implement the same narrowing rule independently (see docs/decisions for why it is not shared
-// code), and a mismatch here would let one side mint a scope the other would refuse.
+// what the installation grants. The API server's GitHubTokenScope applies the same rule; a rank
+// that differs here would mint a different token for the same run depending on who holds the key.
 var levelRank = map[string]int{"read": 1, "write": 2, "admin": 3}
 var rankLevel = map[int]string{1: "read", 2: "write", 3: "admin"}
 
@@ -52,8 +52,12 @@ func narrow(inst github.Installation, repositories []string, permissions map[str
 		}
 	}
 
+	sort.Strings(dropped)
+	if len(dropped) > 0 {
+		slog.Warn("dropped repositories not owned by the GitHub App installation account",
+			"account", inst.Account, "repositories", dropped)
+	}
 	if len(namesByLower) == 0 {
-		sort.Strings(dropped)
 		return github.TokenRequest{}, fmt.Errorf("%w: dropped %v (installation account %q)", ErrNoReachableRepository, dropped, inst.Account)
 	}
 

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -221,8 +222,16 @@ func (l *local) mint(ctx context.Context, app appCredential, repositories []stri
 			// A changed installation (repository selection or permissions) is re-read on the
 			// next attempt rather than kept stale for up to installationTTL.
 			delete(l.installations, fp)
-			return Token{}, fmt.Errorf("GitHub rejected minting a token for %v under installation account %q: %w",
-				req.Repositories, inst.Account, err)
+			// GitHub's 422 names no repository, so this message is the only place an operator
+			// learns which ones to add to the installation's selection.
+			requested := make([]string, len(req.Repositories))
+			for i, name := range req.Repositories {
+				requested[i] = inst.Account + "/" + name
+			}
+			sort.Strings(requested)
+			return Token{}, fmt.Errorf("GitHub rejected minting a token for %v under installation account %q; "+
+				"each repository must be in the App installation's repository selection and every requested "+
+				"permission granted: %w", requested, inst.Account, err)
 		}
 		return Token{}, fmt.Errorf("mint GitHub App installation token: %w", err)
 	}

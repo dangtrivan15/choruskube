@@ -130,21 +130,26 @@ func (m *fakeMinter) installationCalls() int {
 	return m.installations
 }
 
-// fakeScopes stands in for a ScopeClient — the Worker's workload client in production.
+// fakeScopes stands in for a ScopeClient — the Worker's workload client in production. byRun,
+// when set, answers per run; any other run gets repos.
 type fakeScopes struct {
 	mu    sync.Mutex
 	repos []string
+	byRun map[uuid.UUID][]string
 	perms map[string]string
 	err   error
 	calls int
 }
 
-func (s *fakeScopes) GitHubTokenScope(context.Context, uuid.UUID) ([]string, map[string]string, error) {
+func (s *fakeScopes) GitHubTokenScope(_ context.Context, runID uuid.UUID) ([]string, map[string]string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls++
 	if s.err != nil {
 		return nil, nil, s.err
+	}
+	if repos, ok := s.byRun[runID]; ok {
+		return repos, s.perms, nil
 	}
 	return s.repos, s.perms, nil
 }
@@ -454,24 +459,28 @@ func TestLocalApp_TwoRunsWithDifferentScopes_MintTwiceAndEachCachesItsOwn(t *tes
 	writeApp(t, dir, "1", "2", "pem")
 	minter := &fakeMinter{ttl: time.Hour}
 	runA, runB := uuid.New(), uuid.New()
-	scopeA := scopesOf("acme/api")
-	scopeB := scopesOf("acme/web")
-	pA := NewLocal(dir, minter, scopeA, newClock().now)
-	pB := NewLocal(dir, minter, scopeB, newClock().now)
+	scopes := &fakeScopes{
+		byRun: map[uuid.UUID][]string{runA: {"acme/api"}, runB: {"acme/web"}},
+		perms: runPermissions,
+	}
+	// One provider for both runs: interleaved requests must not evict each other's token.
+	p := NewLocal(dir, minter, scopes, newClock().now)
 
-	tokA1, err := pA.GitHubToken(context.Background(), runA)
+	tokA1, err := p.GitHubToken(context.Background(), runA)
 	require.NoError(t, err)
-	tokB1, err := pB.GitHubToken(context.Background(), runB)
+	tokB1, err := p.GitHubToken(context.Background(), runB)
 	require.NoError(t, err)
-	tokA2, err := pA.GitHubToken(context.Background(), runA)
+	tokA2, err := p.GitHubToken(context.Background(), runA)
 	require.NoError(t, err)
-	tokB2, err := pB.GitHubToken(context.Background(), runB)
+	tokB2, err := p.GitHubToken(context.Background(), runB)
 	require.NoError(t, err)
 
 	assert.Equal(t, 2, minter.calls(), "each distinct repository set mints once; the repeat is cached")
 	assert.Equal(t, tokA1, tokA2)
 	assert.Equal(t, tokB1, tokB2)
 	assert.NotEqual(t, tokA1.Value, tokB1.Value)
+	assert.ElementsMatch(t, [][]string{{"api"}, {"web"}},
+		[][]string{minter.allReqs[0].Repositories, minter.allReqs[1].Repositories})
 }
 
 func TestLocalApp_SameScopeAcrossRuns_MintsOnce(t *testing.T) {
@@ -561,6 +570,23 @@ func TestLocalApp_TwoMintsWithinTTL_OneInstallationLookup(t *testing.T) {
 	assert.Equal(t, 1, minter.installationCalls())
 }
 
+func TestLocalApp_InstallationLookupExpiresAfterItsTTL(t *testing.T) {
+	clearEnv(t)
+	dir := t.TempDir()
+	writeApp(t, dir, "1", "2", "pem")
+	clock := newClock()
+	minter := &fakeMinter{ttl: time.Hour}
+	p := NewLocal(dir, minter, scopesOf("acme/widgets"), clock.now)
+
+	_, err := p.GitHubToken(context.Background(), uuid.New())
+	require.NoError(t, err)
+	clock.advance(installationTTL + time.Second)
+	_, err = p.GitHubToken(context.Background(), uuid.New())
+	require.NoError(t, err)
+
+	assert.Equal(t, 2, minter.installationCalls(), "a lookup older than installationTTL must be re-read")
+}
+
 func TestLocalApp_422_NamesRequestedReposAndAccount_NextCallRefetchesInstallation(t *testing.T) {
 	clearEnv(t)
 	dir := t.TempDir()
@@ -571,8 +597,8 @@ func TestLocalApp_422_NamesRequestedReposAndAccount_NextCallRefetchesInstallatio
 	_, err := p.GitHubToken(context.Background(), uuid.New())
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "widgets")
-	assert.Contains(t, err.Error(), "acme")
+	assert.Contains(t, err.Error(), "[acme/widgets]")
+	assert.Contains(t, err.Error(), `"acme"`)
 	var apiErr *github.APIError
 	require.True(t, errors.As(err, &apiErr))
 	assert.Equal(t, 422, apiErr.Status)

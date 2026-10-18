@@ -45,9 +45,10 @@ resolver or the narrowing rule — there is nothing to narrow, and the setup doc
 
 - **A new Worker-facing route, `GET /worker/runs/{runId}/github-token-scope`,** authorized exactly
   like the existing run-token route, answers a run's scope with no credential and no GitHub call.
-- **Branch cleanup's planning step skips a repository GitHub does not host,** using the same
-  GitHub-only URL parser the scope resolver uses, so a run with no GitHub repository never asks a
-  Worker for a token its scope cannot grant.
+- **Branch cleanup's planning step, and roadmap issue filing's choice of issue targets, skip a
+  repository GitHub does not host,** using the same GitHub-only URL parser the scope resolver
+  uses. Either Worker step fails and retries as a whole on a refused token, so it must never be
+  handed a repository the run's scope cannot cover; a skipped issue is recorded as unfiled.
 - **The App credential health check mints a metadata-only token instead of an installation-wide
   one,** through a new credential-check method on the GitHub App client — the unscoped mint method
   it used before is removed, so every caller now mints with a scope.

@@ -22,8 +22,6 @@ func (s *stubTokenClient) GitHubToken(context.Context, uuid.UUID) (string, error
 	return s.token, nil
 }
 
-// GitHubTokenScope satisfies credprov.ScopeClient — the local source needs it for a wholly-local
-// test setup to even type-check, even though a PAT credential never calls it.
 func (s *stubTokenClient) GitHubTokenScope(context.Context, uuid.UUID) ([]string, map[string]string, error) {
 	s.scopeCalls++
 	return nil, nil, nil

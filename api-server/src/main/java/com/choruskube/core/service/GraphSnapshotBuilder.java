@@ -85,14 +85,7 @@ public class GraphSnapshotBuilder {
 
         List<TemplateEdge> edges = edgeRepo.findByGraphTemplateId(templateId);
 
-        Map<String, Object> inputs;
-        try {
-            inputs = objectMapper.readValue(run.getInputs(), new TypeReference<>() {});
-        } catch (Exception e) {
-            inputs = Map.of();
-        }
-
-        return buildSnapshot(templateId, edges, inputs);
+        return buildSnapshot(templateId, edges, parseInputs(run));
     }
 
     /**
@@ -103,14 +96,15 @@ public class GraphSnapshotBuilder {
      */
     @Transactional(readOnly = true)
     public List<GitRepo> reposForRun(WorkflowRun run) {
-        UUID templateId = run.getGraphTemplateId();
-        Map<String, Object> inputs;
+        return resolveGitRepos(run.getGraphTemplateId(), parseInputs(run)).repos();
+    }
+
+    private Map<String, Object> parseInputs(WorkflowRun run) {
         try {
-            inputs = objectMapper.readValue(run.getInputs(), new TypeReference<>() {});
+            return objectMapper.readValue(run.getInputs(), new TypeReference<>() {});
         } catch (Exception e) {
-            inputs = Map.of();
+            return Map.of();
         }
-        return resolveGitRepos(templateId, inputs).repos();
     }
 
     @Transactional(readOnly = true)

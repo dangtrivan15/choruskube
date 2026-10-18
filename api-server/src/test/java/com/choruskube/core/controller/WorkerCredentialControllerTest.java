@@ -1,5 +1,6 @@
 package com.choruskube.core.controller;
 
+import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -14,6 +15,7 @@ import com.choruskube.core.credential.GitHubCredentialResolver;
 import com.choruskube.core.credential.GitHubTokenScope;
 import com.choruskube.core.credential.GitHubTokenScopeResolver;
 import com.choruskube.core.exception.GitHubTokenScopeException;
+import com.choruskube.core.exception.NotFoundException;
 import io.temporal.client.WorkflowClient;
 import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.net.URI;
@@ -119,7 +121,7 @@ class WorkerCredentialControllerTest extends BaseTest {
 
         mockMvc.perform(get("/worker/runs/{r}/github-token-scope", runId).header("Authorization", "Bearer test-fleet"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.repositories", org.hamcrest.Matchers.contains("acme/api", "acme/web")))
+                .andExpect(jsonPath("$.repositories", contains("acme/api", "acme/web")))
                 .andExpect(jsonPath("$.permissions.contents").value("write"));
     }
 
@@ -148,7 +150,7 @@ class WorkerCredentialControllerTest extends BaseTest {
 
     @Test
     void scopeRoute_unknownRun_isNotFound() throws Exception {
-        when(scopeResolver.forRun(runId)).thenThrow(new com.choruskube.core.exception.NotFoundException("not found"));
+        when(scopeResolver.forRun(runId)).thenThrow(new NotFoundException("not found"));
 
         mockMvc.perform(get("/worker/runs/{r}/github-token-scope", runId).header("Authorization", "Bearer test-fleet"))
                 .andExpect(status().isNotFound());

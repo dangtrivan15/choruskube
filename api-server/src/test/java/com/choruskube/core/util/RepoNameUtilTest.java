@@ -204,6 +204,11 @@ class RepoNameUtilTest {
     }
 
     @Test
+    void githubOwnerRepo_bareDotGitName_isEmpty() {
+        assertThat(RepoNameUtil.githubOwnerRepo("https://github.com/acme/.git")).isEmpty();
+    }
+
+    @Test
     void githubOwnerRepo_blankOrNull_isEmpty() {
         assertThat(RepoNameUtil.githubOwnerRepo(null)).isEmpty();
         assertThat(RepoNameUtil.githubOwnerRepo("   ")).isEmpty();

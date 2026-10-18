@@ -13,7 +13,9 @@ import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.RepoGroupRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.service.RepoGroupService;
+import com.choruskube.core.util.RepoNameUtil;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -138,7 +140,7 @@ class GitHubTokenScopeResolverTest extends BaseTest {
         assertThatThrownBy(() -> resolver.forRepo(UUID.randomUUID())).isInstanceOf(NotFoundException.class);
     }
 
-    private static java.util.Optional<String> githubOwnerRepoOf(String url) {
-        return com.choruskube.core.util.RepoNameUtil.githubOwnerRepo(url);
+    private static Optional<String> githubOwnerRepoOf(String url) {
+        return RepoNameUtil.githubOwnerRepo(url);
     }
 }

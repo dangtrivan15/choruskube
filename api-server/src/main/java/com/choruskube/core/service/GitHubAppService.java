@@ -50,7 +50,7 @@ public class GitHubAppService {
     private final String githubApiUrl;
     private final Clock clock;
 
-    /** Keyed by {@link #fingerprint}, never by installation id alone — see the field's javadoc. */
+    /** Keyed by {@link #fingerprint}, never by installation id alone — see {@link #installation}. */
     private final Map<String, CachedInstallation> installationCache = new ConcurrentHashMap<>();
 
     @Autowired
@@ -137,9 +137,8 @@ public class GitHubAppService {
 
     /**
      * SHA-256 over {@code appId}, {@code installationId} and the PEM bytes, each followed by a zero
-     * byte — the installation cache's key. Must stay byte-for-byte identical to the Go Worker's
-     * {@code appCredential.fingerprint()}, which this value is never compared against directly but
-     * which the same two organizations-sharing-an-installation-id hazard applies to.
+     * byte — the installation cache's key. The PEM must stay in it: without the key, two
+     * organizations naming the same installation id would share one cache entry.
      */
     private static String fingerprint(String appId, String installationId, String privateKeyPem) {
         try {
@@ -178,19 +177,8 @@ public class GitHubAppService {
             Installation installation = installation(appId, installationId, privateKeyPem, jwt);
             GitHubTokenScope.Request narrowed = scope.narrowTo(installation.account(), installation.permissions());
 
-            String payload = objectMapper.writeValueAsString(
-                    Map.of("repositories", narrowed.repositoryNames(), "permissions", narrowed.permissions()));
-
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(githubApiUrl + "/app/installations/" + installationId + "/access_tokens"))
-                    .header("Authorization", "Bearer " + jwt)
-                    .header("Accept", "application/vnd.github+json")
-                    .header("Content-Type", "application/json")
-                    .timeout(Duration.ofSeconds(10))
-                    .POST(HttpRequest.BodyPublishers.ofString(payload))
-                    .build();
-
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = postAccessToken(
+                    installationId, jwt, new MintBody(narrowed.repositoryNames(), narrowed.permissions()));
             if (response.statusCode() == 422) {
                 invalidateInstallation(appId, installationId, privateKeyPem);
                 List<String> requested = narrowed.repositoryNames().stream()
@@ -234,18 +222,8 @@ public class GitHubAppService {
     public void verifyAppCredential(String appId, String installationId, String privateKeyPem) {
         try {
             String jwt = createSignedJwt(appId, privateKeyPem);
-            String payload = objectMapper.writeValueAsString(Map.of("permissions", Map.of("metadata", "read")));
-
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(githubApiUrl + "/app/installations/" + installationId + "/access_tokens"))
-                    .header("Authorization", "Bearer " + jwt)
-                    .header("Accept", "application/vnd.github+json")
-                    .header("Content-Type", "application/json")
-                    .timeout(Duration.ofSeconds(10))
-                    .POST(HttpRequest.BodyPublishers.ofString(payload))
-                    .build();
-
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response =
+                    postAccessToken(installationId, jwt, Map.of("permissions", Map.of("metadata", "read")));
             if (response.statusCode() != 201) {
                 throw new GitHubTokenMintException(
                         response.statusCode(), installationId, rateLimitHints(response.headers()));
@@ -258,6 +236,22 @@ public class GitHubAppService {
         } catch (Exception e) {
             throw new RuntimeException("Failed to verify GitHub App credential", e);
         }
+    }
+
+    /** A narrowed mint's body; a record so the JSON keeps one field order across JVM runs. */
+    private record MintBody(List<String> repositories, Map<String, String> permissions) {}
+
+    private HttpResponse<String> postAccessToken(String installationId, String jwt, Object body)
+            throws IOException, InterruptedException {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(githubApiUrl + "/app/installations/" + installationId + "/access_tokens"))
+                .header("Authorization", "Bearer " + jwt)
+                .header("Accept", "application/vnd.github+json")
+                .header("Content-Type", "application/json")
+                .timeout(Duration.ofSeconds(10))
+                .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(body)))
+                .build();
+        return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
     }
 
     /** A pull request's state as GitHub reports it. {@code mergedAt} is null unless merged. */

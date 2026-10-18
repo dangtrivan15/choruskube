@@ -5,14 +5,22 @@ import static org.mockito.Mockito.*;
 
 import com.choruskube.core.service.GitHubAppService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class EnvGitHubCredentialResolverTest {
 
     private static final String NO_APP = "";
 
     private final GitHubTokenScopeResolver scopeResolver = mock(GitHubTokenScopeResolver.class);
+
+    @TempDir
+    Path tempDir;
 
     @Test
     void returnsThePat_whenOnlyAPatIsConfigured() {
@@ -39,9 +47,9 @@ class EnvGitHubCredentialResolverTest {
     }
 
     @Test
-    void appBranch_passesTheRunsScopeToTheMint() {
+    void appBranch_passesTheRunsScopeToTheMint() throws IOException {
         UUID runId = UUID.randomUUID();
-        GitHubTokenScope scope = GitHubTokenScope.of(java.util.List.of("acme/api"));
+        GitHubTokenScope scope = GitHubTokenScope.of(List.of("acme/api"));
         when(scopeResolver.forRun(runId)).thenReturn(scope);
         GitHubAppService gitHubAppService = mock(GitHubAppService.class);
         when(gitHubAppService.generateInstallationToken(any(), any(), any(), eq(scope)))
@@ -54,9 +62,9 @@ class EnvGitHubCredentialResolverTest {
     }
 
     @Test
-    void appBranch_perRepo_passesTheRepoScopeToTheMint() {
+    void appBranch_perRepo_passesTheRepoScopeToTheMint() throws IOException {
         UUID repoId = UUID.randomUUID();
-        GitHubTokenScope scope = GitHubTokenScope.of(java.util.List.of("acme/api"));
+        GitHubTokenScope scope = GitHubTokenScope.of(List.of("acme/api"));
         when(scopeResolver.forRepo(repoId)).thenReturn(scope);
         GitHubAppService gitHubAppService = mock(GitHubAppService.class);
         when(gitHubAppService.generateInstallationToken(any(), any(), any(), eq(scope)))
@@ -77,15 +85,11 @@ class EnvGitHubCredentialResolverTest {
                 scopeResolver);
     }
 
-    /** A PEM path pointing at a tempfile with throwaway content — the mocked service never parses it. */
-    private EnvGitHubCredentialResolver resolverWithApp(GitHubAppService gitHubAppService) {
-        try {
-            var pemFile = java.nio.file.Files.createTempFile("test-app-key", ".pem");
-            java.nio.file.Files.writeString(pemFile, "not-a-real-pem");
-            return new EnvGitHubCredentialResolver(
-                    "", "app-id", "installation-id", pemFile.toString(), gitHubAppService, scopeResolver);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
+    /** A PEM path pointing at a throwaway file — the mocked service never parses it. */
+    private EnvGitHubCredentialResolver resolverWithApp(GitHubAppService gitHubAppService) throws IOException {
+        Path pemFile = tempDir.resolve("test-app-key.pem");
+        Files.writeString(pemFile, "not-a-real-pem");
+        return new EnvGitHubCredentialResolver(
+                "", "app-id", "installation-id", pemFile.toString(), gitHubAppService, scopeResolver);
     }
 }
