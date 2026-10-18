@@ -72,7 +72,12 @@ describe("findWireMockRequests", () => {
   });
 
   it("translates bodyContains into WireMock's bodyPatterns query shape", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ requests: [] }), { status: 200 }));
+    // Typed to match global fetch's own signature: an untyped () => ... arrow leaves
+    // `.mock.calls[0]` inferred as the empty tuple `[]`, so destructuring its second
+    // element (`init`) fails to compile.
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
+      new Response(JSON.stringify({ requests: [] }), { status: 200 }),
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     await findWireMockRequests({
@@ -82,7 +87,7 @@ describe("findWireMockRequests", () => {
     });
 
     const [, init] = fetchMock.mock.calls[0];
-    expect(JSON.parse(init.body as string)).toEqual({
+    expect(JSON.parse(init!.body as string)).toEqual({
       method: "POST",
       urlPathPattern: "/repos/[^/]+/[^/]+/issues",
       bodyPatterns: [{ contains: "choruskube-task:abc" }],
