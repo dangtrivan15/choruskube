@@ -112,6 +112,32 @@ class GitHubTokenScopeResolverTest extends BaseTest {
     }
 
     @Test
+    void forRun_everyRepoNonGitHub_returnsEmptyScope() {
+        GitRepo a = saveRepo("https://example.invalid/scope-resolver-test/repo-a-" + UUID.randomUUID());
+        GitRepo b = saveRepo("https://example.invalid/scope-resolver-test/repo-b-" + UUID.randomUUID());
+        groupId = repoGroupService
+                .createInternal(new RepoGroupRequest(
+                        "scope-resolver-" + UUID.randomUUID(),
+                        null,
+                        null,
+                        List.of(a.getId(), b.getId()),
+                        null,
+                        null,
+                        null,
+                        null))
+                .getId();
+
+        WorkflowRun run = new WorkflowRun();
+        run.setGraphTemplateId(templateId());
+        run.setInputs("{\"feature_request\":\"test\",\"software_project_id\":\"" + groupId + "\"}");
+        run = runRepo.save(run);
+
+        GitHubTokenScope scope = resolver.forRun(run.getId());
+
+        assertThat(scope.repositories()).isEmpty();
+    }
+
+    @Test
     void forRun_unknownRun_throwsNotFound() {
         assertThatThrownBy(() -> resolver.forRun(UUID.randomUUID())).isInstanceOf(NotFoundException.class);
     }
