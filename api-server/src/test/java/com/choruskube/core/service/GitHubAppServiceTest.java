@@ -2,10 +2,12 @@ package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.*;
 
+import com.choruskube.core.credential.GitHubTokenScope;
 import com.choruskube.core.exception.GitHubApiException;
 import com.choruskube.core.exception.GitHubMergeRefusedException;
 import com.choruskube.core.exception.GitHubRateLimitHints;
 import com.choruskube.core.exception.GitHubTokenMintException;
+import com.choruskube.core.exception.GitHubTokenScopeException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nimbusds.jose.JWSAlgorithm;
 import com.nimbusds.jwt.SignedJWT;
@@ -13,12 +15,21 @@ import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
+import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyPairGenerator;
 import java.security.interfaces.RSAPrivateKey;
+import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.util.ArrayDeque;
 import java.util.Base64;
+import java.util.Deque;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 import org.junit.jupiter.api.Test;
 
 class GitHubAppServiceTest {
@@ -389,8 +400,9 @@ class GitHubAppServiceTest {
     void generateInstallationToken_rateLimited_throwsATypedExceptionCarryingTheHints() throws Exception {
         try (Stub github = Stub.serving(403, "{\"message\":\"rate limited\"}", Map.of("retry-after", "30"))) {
             GitHubAppService service = github.service();
+            GitHubTokenScope scope = GitHubTokenScope.of(List.of("acme/api"));
 
-            assertThatThrownBy(() -> service.generateInstallationToken("app-id", "12345", testPrivateKeyPem()))
+            assertThatThrownBy(() -> service.generateInstallationToken("app-id", "12345", testPrivateKeyPem(), scope))
                     .isInstanceOf(GitHubTokenMintException.class)
                     .satisfies(thrown -> {
                         GitHubTokenMintException e = (GitHubTokenMintException) thrown;
@@ -568,6 +580,313 @@ class GitHubAppServiceTest {
             return new GitHubAppService(
                     new ObjectMapper(),
                     "http://127.0.0.1:" + server.getAddress().getPort());
+        }
+
+        @Override
+        public void close() {
+            server.stop(0);
+        }
+    }
+
+    // -----------------------------------------------------------------------------------
+    // generateInstallationToken(scope) / installation() / verifyAppCredential — narrowing,
+    // the installation cache, and the 422 contract.
+    // -----------------------------------------------------------------------------------
+
+    private static final String INSTALLATION_BODY = "{\"account\":{\"login\":\"acme\"},\"permissions\":{"
+            + "\"metadata\":\"read\",\"contents\":\"write\",\"pull_requests\":\"write\",\"issues\":\"write\","
+            + "\"workflows\":\"write\",\"actions\":\"read\",\"checks\":\"read\",\"statuses\":\"read\","
+            + "\"administration\":\"write\"}}";
+
+    @Test
+    void generateInstallationToken_recordedBody_isNarrowed_dropsForeignRepoAndAdministration() throws Exception {
+        try (ScopedStub github = ScopedStub.create()) {
+            GitHubTokenScope scope = GitHubTokenScope.of(List.of("acme/api", "other/tools"));
+
+            String token = github.service().generateInstallationToken("app-id", "67890", testPrivateKeyPem(), scope);
+
+            assertThat(token).isEqualTo("ghs_test");
+            // Exact string, not JSON-equivalence: field order and sorted permission keys are part
+            // of the mint-body contract the Worker's Go client sends too.
+            assertThat(github.postRequests()).singleElement().satisfies(r -> {
+                assertThat(r.body)
+                        .isEqualTo("{\"repositories\":[\"api\"],\"permissions\":{"
+                                + "\"actions\":\"read\",\"checks\":\"read\",\"contents\":\"write\","
+                                + "\"issues\":\"write\",\"metadata\":\"read\",\"pull_requests\":\"write\","
+                                + "\"statuses\":\"read\",\"workflows\":\"write\"}}");
+                assertThat(r.authorization).startsWith("Bearer ");
+            });
+            assertThat(github.getRequests()).singleElement().satisfies(r -> assertThat(r.authorization)
+                    .startsWith("Bearer "));
+        }
+    }
+
+    @Test
+    void generateInstallationToken_twoMints_shareOneInstallationLookup() throws Exception {
+        try (ScopedStub github = ScopedStub.create()) {
+            GitHubAppService service = github.service();
+            GitHubTokenScope scope = GitHubTokenScope.of(List.of("acme/api"));
+            String pem = testPrivateKeyPem();
+
+            service.generateInstallationToken("app-id", "67890", pem, scope);
+            service.generateInstallationToken("app-id", "67890", pem, scope);
+
+            assertThat(github.getRequests()).hasSize(1);
+            assertThat(github.postRequests()).hasSize(2);
+        }
+    }
+
+    @Test
+    void generateInstallationToken_afterTheCacheWindow_looksTheInstallationUpAgain() throws Exception {
+        try (ScopedStub github = ScopedStub.create()) {
+            MutableClock clock = new MutableClock(Instant.parse("2026-10-18T12:00:00Z"));
+            GitHubAppService service = github.service(clock);
+            GitHubTokenScope scope = GitHubTokenScope.of(List.of("acme/api"));
+            String pem = testPrivateKeyPem();
+
+            service.generateInstallationToken("app-id", "67890", pem, scope);
+            clock.advance(Duration.ofMinutes(9));
+            service.generateInstallationToken("app-id", "67890", pem, scope);
+            assertThat(github.getRequests()).hasSize(1);
+
+            clock.advance(Duration.ofMinutes(2));
+            service.generateInstallationToken("app-id", "67890", pem, scope);
+            assertThat(github.getRequests()).hasSize(2);
+        }
+    }
+
+    @Test
+    void generateInstallationToken_sameInstallationId_differentPem_getsItsOwnLookup() throws Exception {
+        try (ScopedStub github = ScopedStub.create()) {
+            GitHubAppService service = github.service();
+            GitHubTokenScope scope = GitHubTokenScope.of(List.of("acme/api"));
+
+            service.generateInstallationToken("app-id", "67890", testPrivateKeyPem(), scope);
+            service.generateInstallationToken("app-id", "67890", testPrivateKeyPem(), scope);
+
+            assertThat(github.getRequests()).hasSize(2);
+        }
+    }
+
+    @Test
+    void generateInstallationToken_422_dropsCacheAndNamesTheRequestedRepos_nextMintRefetches() throws Exception {
+        try (ScopedStub github = ScopedStub.create()) {
+            GitHubAppService service = github.service();
+            GitHubTokenScope scope = GitHubTokenScope.of(List.of("acme/api"));
+            String pem = testPrivateKeyPem();
+            github.queuePost(422, "{\"message\":\"Validation Failed\"}");
+
+            assertThatThrownBy(() -> service.generateInstallationToken("app-id", "67890", pem, scope))
+                    .isInstanceOf(GitHubTokenScopeException.class)
+                    .hasMessageContaining("acme/api")
+                    .hasMessageContaining("acme")
+                    .satisfies(thrown -> assertThat(thrown.getCause())
+                            .isInstanceOf(GitHubTokenMintException.class)
+                            .satisfies(cause -> assertThat(((GitHubTokenMintException) cause).getStatus())
+                                    .isEqualTo(422)));
+
+            service.generateInstallationToken("app-id", "67890", pem, scope);
+
+            assertThat(github.getRequests()).hasSize(2);
+        }
+    }
+
+    @Test
+    void generateInstallationToken_emptyScope_refusesBeforeAnyCall() throws Exception {
+        try (ScopedStub github = ScopedStub.create()) {
+            GitHubTokenScope empty = GitHubTokenScope.of(List.of());
+
+            assertThatThrownBy(() ->
+                            github.service().generateInstallationToken("app-id", "67890", testPrivateKeyPem(), empty))
+                    .isInstanceOf(GitHubTokenScopeException.class);
+
+            assertThat(github.getRequests()).isEmpty();
+            assertThat(github.postRequests()).isEmpty();
+        }
+    }
+
+    @Test
+    void generateInstallationToken_allForeignScope_throwsScopeException_makesNoPost() throws Exception {
+        try (ScopedStub github = ScopedStub.create()) {
+            GitHubAppService service = github.service();
+            GitHubTokenScope scope = GitHubTokenScope.of(List.of("other/tools"));
+
+            assertThatThrownBy(() -> service.generateInstallationToken("app-id", "67890", testPrivateKeyPem(), scope))
+                    .isInstanceOf(GitHubTokenScopeException.class);
+
+            assertThat(github.postRequests()).isEmpty();
+        }
+    }
+
+    @Test
+    void verifyAppCredential_sendsTheMetadataOnlyBody() throws Exception {
+        try (ScopedStub github = ScopedStub.create()) {
+            github.service().verifyAppCredential("app-id", "67890", testPrivateKeyPem());
+
+            assertThat(github.postRequests()).singleElement().satisfies(r -> assertThat(r.body)
+                    .isEqualToIgnoringWhitespace("{\"permissions\":{\"metadata\":\"read\"}}"));
+        }
+    }
+
+    @Test
+    void verifyAppCredential_non201_throwsGitHubTokenMintExceptionNamingTheStatus() throws Exception {
+        try (ScopedStub github = ScopedStub.create()) {
+            github.queuePost(401, "{\"message\":\"Bad credentials\"}");
+
+            assertThatThrownBy(() -> github.service().verifyAppCredential("app-id", "67890", testPrivateKeyPem()))
+                    .isInstanceOf(GitHubTokenMintException.class)
+                    .hasMessageContaining("401")
+                    .satisfies(thrown -> assertThat(((GitHubTokenMintException) thrown).getStatus())
+                            .isEqualTo(401));
+            assertThat(github.getRequests()).isEmpty();
+        }
+    }
+
+    @Test
+    void installationLookup_non200_throwsGitHubTokenMintException() throws Exception {
+        try (ScopedStub github = ScopedStub.create()) {
+            GitHubAppService service = github.service();
+            GitHubTokenScope scope = GitHubTokenScope.of(List.of("acme/api"));
+            github.queueGet(401, "{\"message\":\"Bad credentials\"}");
+
+            assertThatThrownBy(() -> service.generateInstallationToken("app-id", "67890", testPrivateKeyPem(), scope))
+                    .isInstanceOf(GitHubTokenMintException.class)
+                    .satisfies(thrown -> assertThat(((GitHubTokenMintException) thrown).getStatus())
+                            .isEqualTo(401));
+        }
+    }
+
+    private static final class MutableClock extends Clock {
+        private Instant now;
+
+        MutableClock(Instant now) {
+            this.now = now;
+        }
+
+        void advance(Duration by) {
+            now = now.plus(by);
+        }
+
+        @Override
+        public Instant instant() {
+            return now;
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return ZoneOffset.UTC;
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            return this;
+        }
+    }
+
+    /** What one request to the stub actually looked like, captured as it arrived. */
+    private static final class RoutedRequest {
+        final String method;
+        final String path;
+        final String authorization;
+        final String body;
+
+        RoutedRequest(String method, String path, String authorization, String body) {
+            this.method = method;
+            this.path = path;
+            this.authorization = authorization;
+            this.body = body;
+        }
+    }
+
+    private static final class ScopedResponse {
+        final int status;
+        final String body;
+
+        ScopedResponse(int status, String body) {
+            this.status = status;
+            this.body = body;
+        }
+    }
+
+    /**
+     * A GitHub stub that answers the installation {@code GET} and the mint {@code POST}
+     * independently, each from its own queue of canned responses (falling back to a default once
+     * the queue is drained) — needed because a mint narrows against the installation lookup, so a
+     * single-response stub can't exercise both calls with different outcomes.
+     */
+    private static final class ScopedStub implements AutoCloseable {
+        private final HttpServer server;
+        private final List<RoutedRequest> getRequests = new CopyOnWriteArrayList<>();
+        private final List<RoutedRequest> postRequests = new CopyOnWriteArrayList<>();
+        private final Deque<ScopedResponse> getQueue = new ArrayDeque<>();
+        private final Deque<ScopedResponse> postQueue = new ArrayDeque<>();
+
+        private ScopedStub() throws IOException {
+            server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+            server.createContext("/", exchange -> {
+                String method = exchange.getRequestMethod();
+                String path = exchange.getRequestURI().toString();
+                String authorization = exchange.getRequestHeaders().getFirst("Authorization");
+                String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+                RoutedRequest captured = new RoutedRequest(method, path, authorization, body);
+                ScopedResponse response;
+                synchronized (this) {
+                    if ("GET".equals(method)) {
+                        getRequests.add(captured);
+                        response =
+                                getQueue.isEmpty() ? new ScopedResponse(200, INSTALLATION_BODY) : getQueue.pollFirst();
+                    } else {
+                        postRequests.add(captured);
+                        response = postQueue.isEmpty()
+                                ? new ScopedResponse(201, "{\"token\":\"ghs_test\"}")
+                                : postQueue.pollFirst();
+                    }
+                }
+                byte[] bytes = response.body.getBytes(StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(response.status, bytes.length);
+                try (OutputStream out = exchange.getResponseBody()) {
+                    out.write(bytes);
+                }
+            });
+            server.start();
+        }
+
+        static ScopedStub create() throws IOException {
+            return new ScopedStub();
+        }
+
+        void queueGet(int status, String body) {
+            synchronized (this) {
+                getQueue.addLast(new ScopedResponse(status, body));
+            }
+        }
+
+        void queuePost(int status, String body) {
+            synchronized (this) {
+                postQueue.addLast(new ScopedResponse(status, body));
+            }
+        }
+
+        List<RoutedRequest> getRequests() {
+            return getRequests;
+        }
+
+        List<RoutedRequest> postRequests() {
+            return postRequests;
+        }
+
+        GitHubAppService service() {
+            return service(Clock.systemUTC());
+        }
+
+        GitHubAppService service(Clock clock) {
+            return new GitHubAppService(
+                    new ObjectMapper(),
+                    "http://127.0.0.1:" + server.getAddress().getPort(),
+                    HttpClient.newBuilder()
+                            .connectTimeout(Duration.ofSeconds(5))
+                            .build(),
+                    clock);
         }
 
         @Override

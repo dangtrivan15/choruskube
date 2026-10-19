@@ -30,6 +30,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -448,9 +449,19 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
                 throw repoResolution.failure();
             }
             GitRepo repo = resolveRepoForTask(repoResolution.repos(), candidateRepoId);
-            String ownerRepo = RepoNameUtil.deriveOwnerRepoName(repo.getUrl());
+            Optional<String> ownerRepo = RepoNameUtil.githubOwnerRepo(repo.getUrl());
+            if (ownerRepo.isEmpty()) {
+                // A refused token (GitHubTokenScopeException) would fail the Worker's whole
+                // FileGateIssues step for every Task's issue, not just this one — skip here
+                // instead, the way BranchCleanupService#plan skips a non-GitHub repo.
+                String message =
+                        "Task '" + createdTask.title() + "': repository is not hosted on GitHub; no issue filed.";
+                logger.warn(message);
+                errors.add(message);
+                return;
+            }
             issueTargets.add(new TaskIssueTarget(
-                    createdTask.id(), repo.getId(), ownerRepo, createdTask.title(), createdTask.description()));
+                    createdTask.id(), repo.getId(), ownerRepo.get(), createdTask.title(), createdTask.description()));
         } catch (Exception e) {
             String message = "Failed to file GitHub issue for Task '" + createdTask.title() + "': " + e.getMessage();
             logger.warn(message, e);

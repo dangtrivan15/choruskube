@@ -278,6 +278,24 @@ class BranchCleanupServiceTest {
                 .isEqualTo(healthyRepoId));
     }
 
+    @Test
+    void plan_skipsARepoNotHostedOnGitHub() {
+        UUID runId = UUID.randomUUID();
+        UUID githubRepoId = UUID.randomUUID();
+        UUID otherHostRepoId = UUID.randomUUID();
+        GitRepo githubRepo = repo(githubRepoId, "https://github.com/org/backend-api.git", "main", "org/backend-api");
+        GitRepo otherHostRepo = repo(otherHostRepoId, "https://example.invalid/org/other.git", "main", "org/other");
+        when(internalRunService.getRunStatus(runId)).thenReturn(new RunStatusResponse("completed"));
+        when(internalRunService.getGraphRuntimeSnapshot(runId)).thenReturn(snapshotOf(githubRepo, otherHostRepo));
+        when(gitRepoRepo.findById(githubRepoId)).thenReturn(Optional.of(githubRepo));
+        when(gitRepoRepo.findById(otherHostRepoId)).thenReturn(Optional.of(otherHostRepo));
+
+        BranchCleanupPlanResponse plan = service.plan(runId);
+
+        assertThat(plan.repos()).singleElement().satisfies(r -> assertThat(r.gitRepoId())
+                .isEqualTo(githubRepoId));
+    }
+
     @ParameterizedTest
     @EnumSource(value = WorkflowRunStatus.class, mode = EnumSource.Mode.EXCLUDE, names = "completed")
     void plan_refusesARunThatIsNotCompleted(WorkflowRunStatus status) {

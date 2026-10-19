@@ -2,9 +2,53 @@
   "mappings": [
     {
       "request": {
+        "method": "GET",
+        "urlPathPattern": "/app/installations/[0-9]+",
+        "headers": { "Authorization": { "matches": "Bearer .+" } }
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": {
+          "id": 67890,
+          "account": { "login": "e2e-test" },
+          "repository_selection": "all",
+          "permissions": {
+            "actions": "read",
+            "administration": "write",
+            "checks": "read",
+            "contents": "write",
+            "issues": "write",
+            "metadata": "read",
+            "pull_requests": "write",
+            "statuses": "read",
+            "workflows": "write"
+          }
+        }
+      }
+    },
+    {
+      "request": {
         "method": "POST",
         "urlPathPattern": "/app/installations/[0-9]+/access_tokens",
-        "headers": { "Authorization": { "matches": "Bearer .+" } }
+        "bodyPatterns": [
+          { "matchesJsonPath": "$.repositories[0]" },
+          { "matchesJsonPath": "$.permissions.metadata" }
+        ]
+      },
+      "response": {
+        "status": 201,
+        "headers": { "Content-Type": "application/json" },
+        "body": "{\"token\":\"ghs_stub_installation_token\",\"expires_at\":\"2099-12-31T23:59:59Z\",\"permissions\":{\"contents\":\"write\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "urlPathPattern": "/app/installations/[0-9]+/access_tokens",
+        "bodyPatterns": [
+          { "equalToJson": { "permissions": { "metadata": "read" } } }
+        ]
       },
       "response": {
         "status": 201,

@@ -12,13 +12,19 @@ import (
 )
 
 type stubTokenClient struct {
-	token string
-	calls int
+	token      string
+	calls      int
+	scopeCalls int
 }
 
 func (s *stubTokenClient) GitHubToken(context.Context, uuid.UUID) (string, error) {
 	s.calls++
 	return s.token, nil
+}
+
+func (s *stubTokenClient) GitHubTokenScope(context.Context, uuid.UUID) ([]string, map[string]string, error) {
+	s.scopeCalls++
+	return nil, nil, nil
 }
 
 func validConfig() Config {
@@ -51,6 +57,7 @@ func TestNewCredentialProviderLocalReadsTheMountedFolderAndSkipsTheAPI(t *testin
 	require.NoError(t, err)
 	assert.Equal(t, "ghp_local", tok.Value)
 	assert.Zero(t, client.calls, "local mode must never ask the API server for a GitHub token")
+	assert.Zero(t, client.scopeCalls, "a PAT credential must never trigger a scope call")
 }
 
 func TestConfigValidateRejectsAnUnknownCredentialSource(t *testing.T) {

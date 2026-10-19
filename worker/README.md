@@ -125,6 +125,14 @@ comes from.
 
 Why the mode is declared rather than detected, and why `local` must never serve more than one tenant: [2026-10-13---02](../docs/decisions/2026-10-13---02-data-plane-credential-rule.md).
 
+A `local` GitHub App token covers only the run's own GitHub repositories and the fixed run
+permission list (`contents`, `pull_requests`, `issues` and `workflows` write; `actions`, `checks`,
+`metadata` and `statuses` read) — never the whole installation. The Worker fetches the scope for
+each token request from the api-server's scope route, carrying no credential itself, and never
+hardcodes the permission list. The App's installation must be on the account that owns the run's
+repositories, with each of them in its repository selection — one outside the selection fails the
+whole mint for its run. See [2026-10-18---01](../docs/decisions/2026-10-18---01-minted-app-tokens-narrowed-to-the-run.md).
+
 `local` reads these files on every use, so a rotated secret needs no restart. Anything the
 folder does not hold falls back to the environment, and the folder wins: a GitHub credential of
 either kind in the folder beats any in the environment, so a stray variable cannot override a
@@ -141,7 +149,7 @@ with `User-Agent: choruskube-worker`.
 
 | File under `CREDENTIALS_DIR` | Environment fallback | Purpose |
 |------------------------------|----------------------|---------|
-| `github-pat` | `GITHUB_PAT` | A personal access token, used as is. Wins over a GitHub App. |
+| `github-pat` | `GITHUB_PAT` | A personal access token, used as is. Wins over a GitHub App. Cannot be narrowed; prefer a fine-grained PAT limited to the repositories runs use. |
 | `github-app/app-id`, `github-app/installation-id`, `github-app/private-key.pem` | `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID`, `GITHUB_APP_PRIVATE_KEY_PATH` (a path to the PEM) | A GitHub App; the Worker mints installation tokens and reuses one until 5 minutes before it expires. All three are required. |
 | `claude-oauth-token` | `CLAUDE_CODE_OAUTH_TOKEN` | Replaces the Claude token the api-server returns for the agent pod. |
 | `registry/host`, `registry/username`, `registry/password` | `REGISTRY_HOST`, `REGISTRY_USERNAME`, `REGISTRY_PASSWORD` | Replaces the registry login the api-server returns. All three are required. |

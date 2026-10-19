@@ -13,6 +13,7 @@ import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.util.RepoNameUtil;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -94,12 +95,12 @@ public class BranchCleanupService {
                 log.warn("Branch cleanup plan for run {} skipped missing repo {}", runId, gitRepoId);
                 continue;
             }
-            String ownerRepo = RepoNameUtil.deriveOwnerRepoName(repo.getUrl());
-            if (ownerRepo.isBlank()) {
-                log.warn("Branch cleanup plan for run {} skipped repo {} with no owner/repo slug", runId, gitRepoId);
+            Optional<String> ownerRepo = RepoNameUtil.githubOwnerRepo(repo.getUrl());
+            if (ownerRepo.isEmpty()) {
+                log.warn("Branch cleanup plan for run {} skipped repo {} not hosted on GitHub", runId, gitRepoId);
                 continue;
             }
-            repos.add(new BranchCleanupPlanResponse.Repo(gitRepoId, ownerRepo, repo.getDefaultBranch()));
+            repos.add(new BranchCleanupPlanResponse.Repo(gitRepoId, ownerRepo.get(), repo.getDefaultBranch()));
         }
         return new BranchCleanupPlanResponse(repos);
     }

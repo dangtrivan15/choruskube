@@ -23,11 +23,69 @@ type InstallationToken struct {
 	ExpiresAt time.Time
 }
 
-// InstallationToken exchanges a JWT signed with the App's private key for an installation token.
-// now is a parameter so the JWT's validity window is deterministic.
-func (c *Client) InstallationToken(ctx context.Context, appID, installationID string, privateKeyPEM []byte, now time.Time) (InstallationToken, error) {
+// Installation is an App installation's account and the permissions GitHub granted it — read
+// before a mint, so the mint can be narrowed to what that account owns and that installation
+// grants.
+type Installation struct {
+	Account     string
+	Permissions map[string]string
+}
+
+// TokenRequest is what a mint actually asks GitHub for: bare repository names (GitHub resolves
+// them against the minting installation's own account) and the permissions to carry. GitHub reads
+// an empty or missing field as "every repository" or "every granted permission" — never send one.
+type TokenRequest struct {
+	Repositories []string          `json:"repositories"`
+	Permissions  map[string]string `json:"permissions"`
+}
+
+// Installation looks up the installation identified by installationID: its account login and the
+// permissions GitHub granted it. now is a parameter so the lookup's own JWT is deterministic.
+func (c *Client) Installation(ctx context.Context, appID, installationID string, privateKeyPEM []byte, now time.Time) (Installation, error) {
+	if appID == "" || installationID == "" {
+		return Installation{}, errors.New("app id and installation id are required")
+	}
+	key, err := parseRSAPrivateKey(privateKeyPEM)
+	if err != nil {
+		return Installation{}, err
+	}
+	jwt, err := signAppJWT(appID, key, now)
+	if err != nil {
+		return Installation{}, err
+	}
+	path := "/app/installations/" + url.PathEscape(installationID)
+	resp, err := c.send(ctx, http.MethodGet, path, jwt, nil)
+	if err != nil {
+		return Installation{}, err
+	}
+	if resp.status != http.StatusOK {
+		return Installation{}, &APIError{Status: resp.status}
+	}
+	var wire struct {
+		Account struct {
+			Login string `json:"login"`
+		} `json:"account"`
+		Permissions map[string]string `json:"permissions"`
+	}
+	if err := json.Unmarshal(resp.body, &wire); err != nil {
+		return Installation{}, fmt.Errorf("decode installation response: %w", err)
+	}
+	if wire.Account.Login == "" {
+		return Installation{}, errors.New("installation response has no account login")
+	}
+	return Installation{Account: wire.Account.Login, Permissions: wire.Permissions}, nil
+}
+
+// InstallationToken exchanges a JWT signed with the App's private key for a token narrowed to
+// req. now is a parameter so the JWT's validity window is deterministic. Refuses before parsing
+// the key or making any call when req names no repository or no permission — GitHub reads either
+// as "every repository"/"every permission", which is never a safe default here.
+func (c *Client) InstallationToken(ctx context.Context, appID, installationID string, privateKeyPEM []byte, now time.Time, req TokenRequest) (InstallationToken, error) {
 	if appID == "" || installationID == "" {
 		return InstallationToken{}, errors.New("app id and installation id are required")
+	}
+	if len(req.Repositories) == 0 || len(req.Permissions) == 0 {
+		return InstallationToken{}, errors.New("token request must name at least one repository and one permission")
 	}
 	key, err := parseRSAPrivateKey(privateKeyPEM)
 	if err != nil {
@@ -37,8 +95,12 @@ func (c *Client) InstallationToken(ctx context.Context, appID, installationID st
 	if err != nil {
 		return InstallationToken{}, err
 	}
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return InstallationToken{}, fmt.Errorf("encode token request: %w", err)
+	}
 	path := "/app/installations/" + url.PathEscape(installationID) + "/access_tokens"
-	resp, err := c.send(ctx, http.MethodPost, path, jwt, nil)
+	resp, err := c.send(ctx, http.MethodPost, path, jwt, payload)
 	if err != nil {
 		return InstallationToken{}, err
 	}

@@ -76,6 +76,16 @@ requests (App: *Contents* and *Pull requests* read/write; classic PAT: `repo`) �
 the same access agents already use to push branches and open PRs — plus *Workflows*
 read/write (classic PAT: `workflow`) if a run's PRs may change `.github/workflows/`.
 
+A GitHub App token is narrowed to the run's own GitHub repositories and a fixed
+run permission list (`contents`, `pull_requests`, `issues` and `workflows` write;
+`actions`, `checks`, `metadata` and `statuses` read), each capped at what the App
+was granted — never the whole installation. The App's installation must be on the
+account that owns the repositories your runs use, with each of them in its
+repository selection: one outside the selection fails the whole mint for its run.
+A Personal Access Token cannot be narrowed this way — it carries whatever access
+its owner granted it, so prefer a fine-grained PAT limited to the repositories
+your runs use.
+
 Without any of these the stack still boots and serves the full API — only the
 steps that need them (AI nodes, repo pushes) are skipped; everything else,
 including script and human-gate nodes, runs.

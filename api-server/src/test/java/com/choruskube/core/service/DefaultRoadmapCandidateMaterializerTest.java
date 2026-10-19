@@ -884,6 +884,83 @@ class DefaultRoadmapCandidateMaterializerTest {
     }
 
     @Test
+    void byWorker_repoNotHostedOnGitHub_recordsError_noTarget_taskStillCreated() {
+        UUID epicId = UUID.randomUUID();
+        UUID storyId = UUID.randomUUID();
+        UUID taskId = UUID.randomUUID();
+        GitRepo repo = repo("https://example.invalid/acme/widgets");
+        stubOneNewTask(epicId, storyId, taskId);
+        when(internalRunService.resolveSoftwareProjectId(runId)).thenReturn(softwareProjectId);
+        when(internalRunService.resolveRepos(softwareProjectId)).thenReturn(List.of(repo));
+
+        CandidateEpicProposal candidate = epic(
+                "Bulk Import",
+                null,
+                List.of(story("Story 1", List.of(task("Task 1", null, null)), null, null)),
+                null,
+                null);
+
+        MaterializationSummary summary = materializer.materialize(
+                runId,
+                document(null, List.of(candidate), null),
+                RoadmapMaterializeMode.roadmap_extension,
+                RoadmapCandidateMaterializer.IssueFiling.BY_WORKER);
+
+        assertThat(summary.createdTaskIds()).containsExactly(taskId);
+        assertThat(summary.issueTargets()).isEmpty();
+        assertThat(summary.errors()).singleElement().asString().contains("not hosted on GitHub");
+        verifyNoInteractions(gitHubAppService, gitHubCredentialResolver, taskGithubIssueRepository);
+    }
+
+    @Test
+    void byWorker_mixedBatch_skipsNonGitHubRepoTask_stillQueuesTheGitHubRepoTask() {
+        UUID epicId = UUID.randomUUID();
+        UUID storyId = UUID.randomUUID();
+        UUID githubTaskId = UUID.randomUUID();
+        UUID otherHostTaskId = UUID.randomUUID();
+        GitRepo githubRepo = repo("https://github.com/acme/widgets");
+        GitRepo otherHostRepo = repo("https://example.invalid/acme/gadgets");
+        when(internalRunService.createEpic(eq(runId), any())).thenReturn(epicResponse(epicId));
+        when(internalRunService.createStory(eq(runId), eq(epicId), any())).thenReturn(storyResponse(storyId, epicId));
+        when(internalRunService.createTask(
+                        eq(runId), eq(epicId), eq(storyId), argThat(r -> r != null && "GitHub Task".equals(r.title()))))
+                .thenReturn(taskResponse(githubTaskId, storyId, "GitHub Task", "t-desc"));
+        when(internalRunService.createTask(
+                        eq(runId),
+                        eq(epicId),
+                        eq(storyId),
+                        argThat(r -> r != null && "Other Host Task".equals(r.title()))))
+                .thenReturn(taskResponse(otherHostTaskId, storyId, "Other Host Task", "t-desc"));
+        when(internalRunService.resolveSoftwareProjectId(runId)).thenReturn(softwareProjectId);
+        when(internalRunService.resolveRepos(softwareProjectId)).thenReturn(List.of(githubRepo, otherHostRepo));
+
+        CandidateEpicProposal candidate = epic(
+                "Bulk Import",
+                null,
+                List.of(story(
+                        "Story 1",
+                        List.of(
+                                task("GitHub Task", null, null, githubRepo.getId()),
+                                task("Other Host Task", null, null, otherHostRepo.getId())),
+                        null,
+                        null)),
+                null,
+                null);
+
+        MaterializationSummary summary = materializer.materialize(
+                runId,
+                document(null, List.of(candidate), null),
+                RoadmapMaterializeMode.roadmap_extension,
+                RoadmapCandidateMaterializer.IssueFiling.BY_WORKER);
+
+        assertThat(summary.createdTaskIds()).containsExactlyInAnyOrder(githubTaskId, otherHostTaskId);
+        assertThat(summary.issueTargets())
+                .containsExactly(
+                        new TaskIssueTarget(githubTaskId, githubRepo.getId(), "acme/widgets", "GitHub Task", "t-desc"));
+        assertThat(summary.errors()).singleElement().asString().contains("not hosted on GitHub");
+    }
+
+    @Test
     void byWorker_candidatesMode_collectsNothing() {
         UUID epicId = UUID.randomUUID();
         UUID storyId = UUID.randomUUID();

@@ -345,3 +345,65 @@ func TestGitHubTokenRejectsAMissingToken(t *testing.T) {
 		assert.Empty(t, tok)
 	}
 }
+
+func TestGitHubTokenScopeSendsAuthAndDecodesTheResponse(t *testing.T) {
+	runID := uuid.New()
+	var gotMethod, gotAuth, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotAuth, gotPath = r.Method, r.Header.Get("Authorization"), r.URL.Path
+		_, _ = w.Write([]byte(`{"repositories":["acme/api","acme/web"],"permissions":{"contents":"write"}}`))
+	}))
+	defer srv.Close()
+
+	repos, perms, err := NewClient(srv.URL, func() string { return "ckw_worker" }, srv.Client()).
+		GitHubTokenScope(context.Background(), runID)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"acme/api", "acme/web"}, repos)
+	assert.Equal(t, map[string]string{"contents": "write"}, perms)
+	assert.Equal(t, http.MethodGet, gotMethod)
+	assert.Equal(t, "Bearer ckw_worker", gotAuth)
+	assert.Equal(t, "/worker/runs/"+runID.String()+"/github-token-scope", gotPath)
+}
+
+func TestGitHubTokenScopeAllowsAnEmptyScope(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"repositories":[],"permissions":{}}`))
+	}))
+	defer srv.Close()
+
+	repos, perms, err := NewClient(srv.URL, func() string { return "s" }, srv.Client()).
+		GitHubTokenScope(context.Background(), uuid.New())
+
+	require.NoError(t, err)
+	assert.Empty(t, repos)
+	assert.Empty(t, perms)
+}
+
+func TestGitHubTokenScopeSurfacesAPIFailures(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":"run not found"}`))
+	}))
+	defer srv.Close()
+
+	_, _, err := NewClient(srv.URL, func() string { return "s" }, srv.Client()).
+		GitHubTokenScope(context.Background(), uuid.New())
+
+	var apiErr *APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, http.StatusNotFound, apiErr.StatusCode)
+}
+
+func TestGitHubTokenScopeRejectsNonJSONWithoutQuotingTheBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("not json, and SENSITIVE-BODY-CONTENT"))
+	}))
+	defer srv.Close()
+
+	_, _, err := NewClient(srv.URL, func() string { return "s" }, srv.Client()).
+		GitHubTokenScope(context.Background(), uuid.New())
+
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "SENSITIVE-BODY-CONTENT")
+}

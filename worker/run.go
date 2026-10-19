@@ -32,12 +32,16 @@ func wireExecutorCredential(exec executor.Executor, get func() string) {
 }
 
 // newCredentialProvider picks where this process gets its credentials; anything but the local
-// source asks the API server.
-func newCredentialProvider(cfg Config, tokens credprov.TokenClient) credprov.Provider {
+// source asks the API server. The local source still asks the API server for each run's GitHub
+// token scope — the repositories and permissions an App credential's mint is narrowed to.
+func newCredentialProvider(cfg Config, api interface {
+	credprov.TokenClient
+	credprov.ScopeClient
+}) credprov.Provider {
 	if cfg.CredentialSource == CredentialSourceLocal {
-		return credprov.NewLocal(cfg.CredentialsDir, github.New(cfg.GitHubAPIURL), time.Now)
+		return credprov.NewLocal(cfg.CredentialsDir, github.New(cfg.GitHubAPIURL), api, time.Now)
 	}
-	return credprov.NewControlPlane(tokens)
+	return credprov.NewControlPlane(api)
 }
 
 // runBinding tells the pod token route which run an execution belongs to: from the pending cache

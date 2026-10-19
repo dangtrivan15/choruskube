@@ -1,5 +1,10 @@
 package com.choruskube.core.util;
 
+import java.util.List;
+import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
 /**
  * Derives a display name for a git repository from its URL.
  *
@@ -78,5 +83,42 @@ public final class RepoNameUtil {
         int prevSep = Math.max(head.lastIndexOf('/'), head.lastIndexOf(':'));
         String owner = prevSep >= 0 ? head.substring(prevSep + 1) : head;
         return owner.isEmpty() ? last : owner + "/" + last;
+    }
+
+    // The trailing group deliberately admits only a bare "/", a query or a fragment — never another
+    // "/segment" — so a third path segment (a GitLab-style subgroup) fails the match entirely
+    // rather than silently keeping the first two.
+    private static final Pattern GITHUB_HTTP = Pattern.compile(
+            "^https?://(?:[^@/]+@)?github\\.com/([^/?#]+)/([^/?#]+)(?:/|\\?.*|#.*)?$", Pattern.CASE_INSENSITIVE);
+    private static final Pattern GITHUB_SSH_URL =
+            Pattern.compile("^ssh://git@github\\.com/([^/?#]+)/([^/?#]+)$", Pattern.CASE_INSENSITIVE);
+    private static final Pattern GITHUB_SCP =
+            Pattern.compile("^git@github\\.com:([^/]+)/([^/]+)$", Pattern.CASE_INSENSITIVE);
+    private static final List<Pattern> GITHUB_URL_FORMS = List.of(GITHUB_HTTP, GITHUB_SCP, GITHUB_SSH_URL);
+
+    /**
+     * Parses {@code owner/name} from a URL only when it names a {@code github.com} repository — a
+     * GitHub token is meaningless for any other host. Unlike {@link #deriveOwnerRepoName}, this
+     * never falls back to a best guess: anything that isn't recognizably GitHub, including a
+     * GitHub Enterprise Server host, returns {@link Optional#empty()}.
+     *
+     * @param url the git URL; may be null or blank
+     * @return {@code owner/name}, case preserved, or empty when the URL is not a {@code github.com} URL
+     */
+    public static Optional<String> githubOwnerRepo(String url) {
+        if (url == null || url.isBlank()) return Optional.empty();
+        String trimmed = url.trim();
+        for (Pattern pattern : GITHUB_URL_FORMS) {
+            Matcher matcher = pattern.matcher(trimmed);
+            if (matcher.matches()) {
+                String name = stripDotGit(matcher.group(2));
+                return name.isEmpty() ? Optional.empty() : Optional.of(matcher.group(1) + "/" + name);
+            }
+        }
+        return Optional.empty();
+    }
+
+    private static String stripDotGit(String segment) {
+        return segment.endsWith(".git") ? segment.substring(0, segment.length() - 4) : segment;
     }
 }

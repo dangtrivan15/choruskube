@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.*;
 
 import com.choruskube.core.BaseTest;
 import com.choruskube.core.config.GraphIds;
+import com.choruskube.core.dto.RepoGroupRequest;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.GraphTemplate;
 import com.choruskube.core.model.NodeDefinition;
@@ -13,6 +14,7 @@ import com.choruskube.core.model.enums.ExecutorType;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.NodeDefinitionRepository;
+import com.choruskube.core.repository.RepoGroupRepository;
 import com.choruskube.core.repository.TemplateNodeRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.util.RepoNameUtil;
@@ -44,6 +46,12 @@ public class GraphSnapshotBuilderTest extends BaseTest {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    private RepoGroupService repoGroupService;
+
+    @Autowired
+    private RepoGroupRepository repoGroupRepo;
 
     @Test
     void buildSnapshotForRunUsesGraphSourceTemplateId() throws Exception {
@@ -346,6 +354,62 @@ public class GraphSnapshotBuilderTest extends BaseTest {
         JsonNode node = findSnapshotNode(snapshotJson, specReview.getId());
 
         assertThat(node.has("iteration_cap")).isFalse();
+    }
+
+    @Test
+    void reposForRunMatchesTheSnapshotsRepos() throws Exception {
+        var baseTemplate = templateRepo
+                .findFirstByGraphIdOrderByVersionDesc(GraphIds.FEATURE_DEVELOPMENT)
+                .orElseThrow();
+
+        List<UUID> memberIds = new ArrayList<>();
+        for (String name : List.of("repo-b", "repo-a")) {
+            String url = "https://github.com/repos-for-run-test/" + name + "-" + UUID.randomUUID();
+            GitRepo gitRepo = new GitRepo();
+            gitRepo.setUrl(url);
+            gitRepo.setName(RepoNameUtil.deriveOwnerRepoName(url));
+            gitRepo.setSecrets("[]");
+            memberIds.add(gitRepoRepo.save(gitRepo).getId());
+        }
+        UUID projectId = repoGroupService
+                .createInternal(new RepoGroupRequest(
+                        "repos-for-run-" + UUID.randomUUID(), null, null, memberIds, null, null, null, null))
+                .getId();
+
+        try {
+            WorkflowRun run = new WorkflowRun();
+            run.setGraphTemplateId(baseTemplate.getId());
+            run.setInputs("{\"feature_request\":\"test\",\"software_project_id\":\"" + projectId + "\"}");
+            run = runRepo.save(run);
+
+            JsonNode snapshotJson = objectMapper.readTree(snapshotBuilder.buildSnapshotForRun(run));
+            List<String> snapshotRepoIds = new ArrayList<>();
+            for (JsonNode r : snapshotJson.get("repos")) {
+                snapshotRepoIds.add(r.get("id").asText());
+            }
+
+            List<String> repoIds = snapshotBuilder.reposForRun(run).stream()
+                    .map(r -> r.getId().toString())
+                    .toList();
+
+            assertThat(repoIds).hasSize(2).isEqualTo(snapshotRepoIds);
+        } finally {
+            repoGroupRepo.deleteById(projectId);
+        }
+    }
+
+    @Test
+    void reposForRunEmptyWhenRunHasNoRepo() throws Exception {
+        var baseTemplate = templateRepo
+                .findFirstByGraphIdOrderByVersionDesc(GraphIds.FEATURE_DEVELOPMENT)
+                .orElseThrow();
+
+        WorkflowRun run = new WorkflowRun();
+        run.setGraphTemplateId(baseTemplate.getId());
+        run.setInputs("{\"feature_request\":\"test\"}");
+        run = runRepo.save(run);
+
+        assertThat(snapshotBuilder.reposForRun(run)).isEmpty();
     }
 
     private JsonNode findSnapshotNode(JsonNode snapshotJson, UUID templateNodeId) {
