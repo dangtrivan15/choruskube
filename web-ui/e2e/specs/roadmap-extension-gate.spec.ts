@@ -1,7 +1,6 @@
-import { test, expect } from "../fixtures";
+import { test, expect, seededRepos } from "../fixtures";
 import { RoadmapCandidateGatePage } from "../pages/roadmap-candidate-gate.page";
 import { uniqueName, type TestApiClient, type Epic, type Story, type Task } from "../helpers/api-client";
-import type { WorkerRepoFixture } from "../fixtures";
 import { findWireMockRequests } from "../helpers/wiremock";
 
 // Exercises Feature Development's roadmap-extension gate: an Implement-equivalent node
@@ -27,17 +26,43 @@ import { findWireMockRequests } from "../helpers/wiremock";
 // display/approve/materialize mechanics, which are identical regardless of how the run
 // that produced the proposal was started.
 
+/** The owner/name GitHub resolves the seeded mock-repo under — matches seedProject()'s fixture. */
+const MOCK_REPO_OWNER_NAME = "e2e-test/mock-repo";
+
+/**
+ * A fresh RepoGroup wrapping the seeded, github.com-hosted mock-repo, unique per call.
+ *
+ * Not the `workerRepo` fixture: "e2e-roadmap-extension-gate"'s input schema declares
+ * software_project_id (GraphSnapshotBuilder#resolveGitRepos needs a schema field of that type to
+ * find a run's repos for the Worker's scoped token mint — see task-issue-close.spec.ts), so
+ * draft_extension, an AI node, now clones whatever that input resolves to. workerRepo is minted
+ * under `https://example.invalid/...` on purpose (its own fixture comment) and is never meant to
+ * be cloned — pointing this template at it would fail the clone, not exercise gate mechanics.
+ */
+async function seedProject(api: TestApiClient): Promise<string> {
+  const reposPage = await api.listGitRepos();
+  const mockRepo = seededRepos(reposPage.content).find((r) => r.url.endsWith("/mock-repo"));
+  if (!mockRepo) {
+    throw new Error("E2eTestDataSeeder must seed e2e-test/mock-repo for this spec");
+  }
+  const group = await api.createRepoGroup({
+    name: uniqueName("e2e-roadmap-extension"),
+    memberRepoIds: [mockRepo.id],
+  });
+  return group.id;
+}
+
 /** A fresh Epic → Story → Task anchor, unique per test so mock-agent.sh's --epic-id
  *  argument (and this spec's own graph assertions) never collide with another test's
- *  fixture in the same shared workerRepo project. */
+ *  fixture in the same project. */
 async function seedAnchor(
   api: TestApiClient,
-  workerRepo: WorkerRepoFixture,
+  projectId: string,
 ): Promise<{ epic: Epic; story: Story; task: Task }> {
   const epic = await api.createEpic({
     title: uniqueName("E2E Extension Anchor"),
     description: "Anchor Epic for roadmap-extension-gate E2E coverage.",
-    softwareProjectId: workerRepo.gitRepo.id,
+    softwareProjectId: projectId,
   });
   const story = await api.createStory(epic.id, {
     title: uniqueName("E2E Extension Anchor Story"),
@@ -53,7 +78,7 @@ async function seedAnchor(
 /** Starts the extension-gate run anchored to the given Epic and waits for the gate. */
 async function startExtensionRun(
   api: TestApiClient,
-  workerRepo: WorkerRepoFixture,
+  projectId: string,
   anchorEpicId: string,
   includeNewEpic: "true" | "false",
   namePrefix: string,
@@ -67,7 +92,7 @@ async function startExtensionRun(
     graphTemplateId: template.id,
     name: runName,
     inputs: {
-      software_project_id: workerRepo.gitRepo.id,
+      software_project_id: projectId,
       anchor_epic_id: anchorEpicId,
       include_new_epic: includeNewEpic,
     },
@@ -81,10 +106,10 @@ test.describe("Roadmap extension gate (Feature Development's Final Approval, mir
   test("approving materializes the extension's new Stories/Tasks and dependency edges under the anchor Epic", async ({
     page,
     api,
-    workerRepo,
   }) => {
-    const { epic, task } = await seedAnchor(api, workerRepo);
-    const { run, runName } = await startExtensionRun(api, workerRepo, epic.id, "false", "rx-approve");
+    const projectId = await seedProject(api);
+    const { epic, task } = await seedAnchor(api, projectId);
+    const { run, runName } = await startExtensionRun(api, projectId, epic.id, "false", "rx-approve");
 
     const gatePage = new RoadmapCandidateGatePage(page);
     await gatePage.goto();
@@ -95,7 +120,7 @@ test.describe("Roadmap extension gate (Feature Development's Final Approval, mir
     await expect(gatePage.existingBadges(card).first()).toBeVisible();
     await expect(gatePage.existingTitle(card, 0)).toHaveText(epic.title);
 
-    const epicsBefore = await api.listEpicsForProject(workerRepo.gitRepo.id);
+    const epicsBefore = await api.listEpicsForProject(projectId);
 
     await gatePage.approve(card);
 
@@ -120,37 +145,29 @@ test.describe("Roadmap extension gate (Feature Development's Final Approval, mir
     ).toBe(true);
 
     // No stray Epic: the anchor is the only Epic this run's project touches.
-    const epicsAfter = await api.listEpicsForProject(workerRepo.gitRepo.id);
+    const epicsAfter = await api.listEpicsForProject(projectId);
     expect(epicsAfter.map((e) => e.id).sort()).toEqual(epicsBefore.map((e) => e.id).sort());
 
-    // workerRepo is minted under a non-GitHub host on purpose (its own fixture comment), so
-    // RepoNameUtil.githubOwnerRepo finds no github.com match for either new Task and the
-    // materializer records both as unfiled rather than asking the Worker for a token this run's
-    // scope could never grant — the Worker is never asked to call GitHub at all.
-    const finishedRun = await api.getRun(run.id);
-    const finalApproval = finishedRun.nodeExecutions.find((ne) => ne.label === "final_approval");
-    expect(finalApproval?.result).toContain(
-      "Task 'Mock Follow-up Task': repository is not hosted on GitHub; no issue filed.",
-    );
-    expect(finalApproval?.result).toContain(
-      "Task 'Mock Deferred Task': repository is not hosted on GitHub; no issue filed.",
-    );
-
-    const keyedCreates = await findWireMockRequests({
-      method: "POST",
-      urlPathPattern: "/repos/[^/]+/[^/]+/issues",
-      bodyContains: "choruskube-task:" + followUpTask!.id,
-    });
-    expect(keyedCreates).toHaveLength(0);
+    // The project resolves to a real github.com repo, so the Worker's FileGateIssues activity
+    // actually files a GitHub issue for each new Task. IssueFiling's non-GitHub skip path is
+    // covered by DefaultRoadmapCandidateMaterializerTest and GitHubTokenScopeResolverTest
+    // instead — this template's software_project_id input must resolve to a repo
+    // draft_extension (an AI node) can actually clone, which rules out the workerRepo fixture
+    // (see seedProject()). The close half of this lifecycle is task-issue-close.spec.ts's job.
+    await expect(async () => {
+      const filed = await findWireMockRequests({
+        method: "POST",
+        urlPathPattern: `/repos/${MOCK_REPO_OWNER_NAME}/issues`,
+        bodyContains: "choruskube-task:" + followUpTask!.id,
+      });
+      expect(filed.length).toBeGreaterThan(0);
+    }).toPass({ timeout: 60_000 });
   });
 
-  test("removing the anchor from the proposal before approving creates nothing", async ({
-    page,
-    api,
-    workerRepo,
-  }) => {
-    const { epic, story, task } = await seedAnchor(api, workerRepo);
-    const { run, runName } = await startExtensionRun(api, workerRepo, epic.id, "false", "rx-clear");
+  test("removing the anchor from the proposal before approving creates nothing", async ({ page, api }) => {
+    const projectId = await seedProject(api);
+    const { epic, story, task } = await seedAnchor(api, projectId);
+    const { run, runName } = await startExtensionRun(api, projectId, epic.id, "false", "rx-clear");
 
     const gatePage = new RoadmapCandidateGatePage(page);
     await gatePage.goto();
@@ -178,12 +195,12 @@ test.describe("Roadmap extension gate (Feature Development's Final Approval, mir
   test("an edit that violates the addressable invariant is rejected with the server's reason, then fixed and approved", async ({
     page,
     api,
-    workerRepo,
   }) => {
     test.setTimeout(120_000);
 
-    const { epic, story, task } = await seedAnchor(api, workerRepo);
-    const { run, runName } = await startExtensionRun(api, workerRepo, epic.id, "false", "rx-invalid");
+    const projectId = await seedProject(api);
+    const { epic, story, task } = await seedAnchor(api, projectId);
+    const { run, runName } = await startExtensionRun(api, projectId, epic.id, "false", "rx-invalid");
 
     const gatePage = new RoadmapCandidateGatePage(page);
     await gatePage.goto();
@@ -229,23 +246,23 @@ test.describe("Roadmap extension gate (Feature Development's Final Approval, mir
   test("include_new_epic also materializes a wholly new top-level Epic alongside the anchor's own extension", async ({
     page,
     api,
-    workerRepo,
   }) => {
-    const { epic, task } = await seedAnchor(api, workerRepo);
-    const { run, runName } = await startExtensionRun(api, workerRepo, epic.id, "true", "rx-newepic");
+    const projectId = await seedProject(api);
+    const { epic, task } = await seedAnchor(api, projectId);
+    const { run, runName } = await startExtensionRun(api, projectId, epic.id, "true", "rx-newepic");
 
     const gatePage = new RoadmapCandidateGatePage(page);
     await gatePage.goto();
     const card = await gatePage.waitForGateCard(runName);
 
-    const epicsBefore = await api.listEpicsForProject(workerRepo.gitRepo.id);
+    const epicsBefore = await api.listEpicsForProject(projectId);
 
     await gatePage.approve(card);
 
     const finished = await api.waitForRunStatus(run.id, ["completed"], 60_000);
     expect(finished.status).toBe("completed");
 
-    const epicsAfter = await api.listEpicsForProject(workerRepo.gitRepo.id);
+    const epicsAfter = await api.listEpicsForProject(projectId);
     const beforeIds = new Set(epicsBefore.map((e) => e.id));
     const newEpics = epicsAfter.filter((e) => !beforeIds.has(e.id));
     expect(newEpics).toHaveLength(1);
@@ -274,7 +291,7 @@ test.describe("Roadmap extension gate (Feature Development's Final Approval, mir
   });
 
   // No cleanup: every test's anchor Epic (plus whatever the gate materializes onto it) is
-  // left behind in the shared workerRepo project, matching run-lifecycle.spec.ts's
+  // left behind in its own seedProject() RepoGroup, matching run-lifecycle.spec.ts's
   // "started Tasks/Epics can't be cleanly deleted anyway" convention. uniqueName() keeps
   // each test's fixtures from colliding with another's.
 });
