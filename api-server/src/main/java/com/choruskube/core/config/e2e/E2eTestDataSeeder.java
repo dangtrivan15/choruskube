@@ -593,11 +593,21 @@ public class E2eTestDataSeeder implements ApplicationRunner {
     // with zero PR rows registered, so the no-PR path (no credential, no GitHub call, approval
     // still succeeds) is exercised on the same gate shape production uses, alongside the real
     // gate-approval path (validation, anchor-aware materialization, GitHub issue linkage).
+    //
+    // Must declare software_project_id (as BaseFeatureDevSeeder's real template does):
+    // GraphSnapshotBuilder#resolveGitRepos finds a run's repos only via a schema field of that
+    // type, and the Worker's scoped mint for this gate's issue filing needs that resolution to
+    // find this run's repos rather than an empty, mint-refusing scope.
     private void seedRoadmapExtensionGate(NodeDefinition mockSuccess, NodeDefinition mockGate) {
-        GraphTemplate t = createTemplate(
-                GRAPH_ID_ROADMAP_EXTENSION_GATE,
-                "e2e-roadmap-extension-gate",
-                "E2E test: mirrors Feature Development's Final Approval roadmap-extension gate configuration");
+        GraphTemplate t = new GraphTemplate();
+        t.setGraphId(GRAPH_ID_ROADMAP_EXTENSION_GATE);
+        t.setVersion(VERSION);
+        t.setName("e2e-roadmap-extension-gate");
+        t.setDescription("E2E test: mirrors Feature Development's Final Approval roadmap-extension gate configuration");
+        t.setInputSchema(
+                "[{\"name\":\"software_project_id\",\"label\":\"Software Project\",\"type\":\"software_project_id\",\"required\":true}]");
+        t.setSystem(false);
+        t = templateRepo.save(t);
 
         TemplateNode draftExtension = createNode(
                 t,
