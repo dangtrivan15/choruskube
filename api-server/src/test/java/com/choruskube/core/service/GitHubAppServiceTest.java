@@ -64,37 +64,6 @@ class GitHubAppServiceTest {
                 .isInstanceOf(Exception.class);
     }
 
-    @Test
-    void parsePullRequest_openPr_hasNullMergedAt() {
-        var snapshot = service.parsePullRequest("{\"state\":\"open\",\"merged_at\":null}");
-
-        assertThat(snapshot.state()).isEqualTo("open");
-        assertThat(snapshot.mergedAt()).isNull();
-    }
-
-    @Test
-    void parsePullRequest_mergedPr_parsesMergedAt() {
-        var snapshot = service.parsePullRequest("{\"state\":\"closed\",\"merged_at\":\"2026-08-16T10:00:00Z\"}");
-
-        assertThat(snapshot.state()).isEqualTo("closed");
-        assertThat(snapshot.mergedAt()).isEqualTo(Instant.parse("2026-08-16T10:00:00Z"));
-    }
-
-    @Test
-    void parsePullRequest_closedUnmergedPr_hasNullMergedAt() {
-        var snapshot = service.parsePullRequest("{\"state\":\"closed\",\"merged_at\":null}");
-
-        assertThat(snapshot.state()).isEqualTo("closed");
-        assertThat(snapshot.mergedAt()).isNull();
-    }
-
-    @Test
-    void parsePullRequest_missingMergedAtField_hasNullMergedAt() {
-        var snapshot = service.parsePullRequest("{\"state\":\"open\"}");
-
-        assertThat(snapshot.mergedAt()).isNull();
-    }
-
     // -----------------------------------------------------------------------------------
     // fetchPullRequestDetail / mergePullRequest — the merge-path primitives
     // -----------------------------------------------------------------------------------
@@ -261,16 +230,6 @@ class GitHubAppServiceTest {
     // Over real HTTP — the status has to survive the client, and the body must not
     // -----------------------------------------------------------------------------------
 
-    @Test
-    void fetchPullRequest_ok_readsTheSnapshot() throws Exception {
-        try (Stub github = Stub.serving(200, "{\"state\":\"closed\",\"merged_at\":\"2026-08-16T10:00:00Z\"}")) {
-            var snapshot = github.service().fetchPullRequest("t0ken", "org/backend-api", 42);
-
-            assertThat(snapshot.state()).isEqualTo("closed");
-            assertThat(snapshot.mergedAt()).isEqualTo(Instant.parse("2026-08-16T10:00:00Z"));
-        }
-    }
-
     /**
      * The status is what the caller classifies on — a 401 disengages the Autopilot where a 503 does
      * not — so it has to arrive as a field rather than as text somebody has to parse back out.
@@ -281,13 +240,13 @@ class GitHubAppServiceTest {
      * a hypothetical one.
      */
     @Test
-    void fetchPullRequest_unauthorized_carriesTheStatusAndNeverTheBody() throws Exception {
+    void fetchPullRequestDetail_unauthorized_carriesTheStatusAndNeverTheBody() throws Exception {
         String echoingBody = "{\"message\":\"Bad credentials\","
                 + "\"request\":{\"headers\":{\"Authorization\":\"Bearer ghs_notatoken\"}}}";
         try (Stub github = Stub.serving(401, echoingBody)) {
             GitHubAppService service = github.service();
 
-            assertThatThrownBy(() -> service.fetchPullRequest("ghs_notatoken", "org/backend-api", 42))
+            assertThatThrownBy(() -> service.fetchPullRequestDetail("ghs_notatoken", "org/backend-api", 42))
                     .isInstanceOf(GitHubApiException.class)
                     .hasMessage("GitHub returned 401 for org/backend-api#42")
                     .satisfies(thrown -> {
@@ -301,11 +260,11 @@ class GitHubAppServiceTest {
     }
 
     @Test
-    void fetchPullRequest_serverError_carriesTheStatusSoTheCallerCanCallItTransient() throws Exception {
+    void fetchPullRequestDetail_serverError_carriesTheStatusSoTheCallerCanCallItTransient() throws Exception {
         try (Stub github = Stub.serving(503, "unavailable")) {
             GitHubAppService service = github.service();
 
-            assertThatThrownBy(() -> service.fetchPullRequest("t0ken", "org/backend-api", 42))
+            assertThatThrownBy(() -> service.fetchPullRequestDetail("t0ken", "org/backend-api", 42))
                     .isInstanceOf(GitHubApiException.class)
                     .satisfies(thrown -> assertThat(((GitHubApiException) thrown).getStatus())
                             .isEqualTo(503));
@@ -319,11 +278,11 @@ class GitHubAppServiceTest {
      * question is whether the client reads a header off the wire at all.
      */
     @Test
-    void fetchPullRequest_rateLimited403_carriesTheRetryAfterHeader() throws Exception {
+    void fetchPullRequestDetail_rateLimited403_carriesTheRetryAfterHeader() throws Exception {
         try (Stub github = Stub.serving(403, "{\"message\":\"rate limited\"}", Map.of("retry-after", "60"))) {
             GitHubAppService service = github.service();
 
-            assertThatThrownBy(() -> service.fetchPullRequest("t0ken", "org/backend-api", 42))
+            assertThatThrownBy(() -> service.fetchPullRequestDetail("t0ken", "org/backend-api", 42))
                     .isInstanceOf(GitHubApiException.class)
                     .satisfies(thrown -> {
                         GitHubApiException e = (GitHubApiException) thrown;
@@ -335,12 +294,12 @@ class GitHubAppServiceTest {
     }
 
     @Test
-    void fetchPullRequest_exhaustedPrimaryQuota_carriesRemainingAndReset() throws Exception {
+    void fetchPullRequestDetail_exhaustedPrimaryQuota_carriesRemainingAndReset() throws Exception {
         Map<String, String> headers = Map.of("x-ratelimit-remaining", "0", "x-ratelimit-reset", "1800000000");
         try (Stub github = Stub.serving(403, "{}", headers)) {
             GitHubAppService service = github.service();
 
-            assertThatThrownBy(() -> service.fetchPullRequest("t0ken", "org/backend-api", 42))
+            assertThatThrownBy(() -> service.fetchPullRequestDetail("t0ken", "org/backend-api", 42))
                     .satisfies(thrown -> {
                         GitHubRateLimitHints hints = ((GitHubApiException) thrown).getRateLimitHints();
                         assertThat(hints.remaining()).isZero();
@@ -356,11 +315,11 @@ class GitHubAppServiceTest {
      * escape hatch that silently retries a revoked credential forever.
      */
     @Test
-    void fetchPullRequest_forbiddenWithQuotaRemaining_doesNotLookLikeARateLimit() throws Exception {
+    void fetchPullRequestDetail_forbiddenWithQuotaRemaining_doesNotLookLikeARateLimit() throws Exception {
         try (Stub github = Stub.serving(403, "{}", Map.of("x-ratelimit-remaining", "4999"))) {
             GitHubAppService service = github.service();
 
-            assertThatThrownBy(() -> service.fetchPullRequest("t0ken", "org/backend-api", 42))
+            assertThatThrownBy(() -> service.fetchPullRequestDetail("t0ken", "org/backend-api", 42))
                     .satisfies(thrown -> assertThat(((GitHubApiException) thrown)
                                     .getRateLimitHints()
                                     .indicatesRateLimit())
@@ -374,13 +333,13 @@ class GitHubAppServiceTest {
      * was classified before any of this existed.
      */
     @Test
-    void fetchPullRequest_malformedRateLimitHeaders_areIgnoredRatherThanThrowing() throws Exception {
+    void fetchPullRequestDetail_malformedRateLimitHeaders_areIgnoredRatherThanThrowing() throws Exception {
         Map<String, String> headers =
                 Map.of("retry-after", "Fri, 01 Jan 2027 00:00:00 GMT", "x-ratelimit-remaining", "");
         try (Stub github = Stub.serving(403, "{}", headers)) {
             GitHubAppService service = github.service();
 
-            assertThatThrownBy(() -> service.fetchPullRequest("t0ken", "org/backend-api", 42))
+            assertThatThrownBy(() -> service.fetchPullRequestDetail("t0ken", "org/backend-api", 42))
                     .isInstanceOf(GitHubApiException.class)
                     .satisfies(thrown -> {
                         GitHubRateLimitHints hints = ((GitHubApiException) thrown).getRateLimitHints();
