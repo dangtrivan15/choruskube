@@ -17,8 +17,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -87,10 +87,13 @@ public final class ControlPlaneGitHubCallGuard {
         return this;
     }
 
-    /** The call sites this guard finds, as {@code <keyFormat>} strings — see the class Javadoc. */
+    /**
+     * The call sites this guard finds, each keyed {@code <caller class, less rootPackage>#<caller
+     * method> -> <guarded class simple name>#<guarded method>} — the key format an allowlist uses.
+     */
     public SortedSet<String> callSites() {
         compute();
-        return foundCallSites;
+        return Collections.unmodifiableSortedSet(foundCallSites);
     }
 
     /**
@@ -213,7 +216,6 @@ public final class ControlPlaneGitHubCallGuard {
 
         Map<String, String> aliasToOwnerMethod = computeAliases(allGuardedOwners);
 
-        Set<String> guardedFullNames = new LinkedHashSet<>();
         Map<String, GuardedMethod> guardedMethods = new LinkedHashMap<>();
         boolean changed = true;
         while (changed) {
@@ -221,11 +223,10 @@ public final class ControlPlaneGitHubCallGuard {
             for (JavaClass owner : allGuardedOwners) {
                 for (JavaMethod method : owner.getMethods()) {
                     String fullName = method.getFullName();
-                    if (guardedFullNames.contains(fullName)) {
+                    if (guardedMethods.containsKey(fullName)) {
                         continue;
                     }
-                    if (isGuardedByItsOwnCalls(method, aliasToOwnerMethod, guardedFullNames)) {
-                        guardedFullNames.add(fullName);
+                    if (isGuardedByItsOwnCalls(method, aliasToOwnerMethod, guardedMethods.keySet())) {
                         guardedMethods.put(fullName, new GuardedMethod(topLevelAncestorOf(owner), method.getName()));
                         changed = true;
                     }
@@ -310,9 +311,9 @@ public final class ControlPlaneGitHubCallGuard {
 
     /**
      * Any method with the same name and raw parameter types declared on a raw superclass or
-     * interface of a guarded owner (excluding {@link Object}) aliases that owner's method — a call
-     * resolved against the supertype (an interface call never resolves down to the implementation)
-     * counts as a call to the owner's method.
+     * interface of a guarded owner, direct or inherited (excluding {@link Object}), aliases that
+     * owner's method — a call resolved against the supertype (an interface call never resolves down
+     * to the implementation) counts as a call to the owner's method.
      */
     private static Map<String, String> computeAliases(Collection<JavaClass> guardedOwners) {
         Map<String, String> aliases = new LinkedHashMap<>();
@@ -335,10 +336,10 @@ public final class ControlPlaneGitHubCallGuard {
 
     private static List<JavaClass> rawSupertypesExcludingObject(JavaClass owner) {
         List<JavaClass> supertypes = new ArrayList<>();
-        owner.getRawSuperclass()
+        owner.getAllRawSuperclasses().stream()
                 .filter(superclass -> !superclass.getFullName().equals(Object.class.getName()))
-                .ifPresent(supertypes::add);
-        supertypes.addAll(owner.getRawInterfaces());
+                .forEach(supertypes::add);
+        supertypes.addAll(owner.getAllRawInterfaces());
         return supertypes;
     }
 

@@ -57,7 +57,8 @@ class ControlPlaneGitHubCallGuardTest {
             "Callers$Lambda#viaLambda",
             "Callers$Reference#viaReference",
             "Callers$Subtype#viaSubtype",
-            "Callers$ViaInterface#viaInterface"
+            "Callers$ViaInterface#viaInterface",
+            "Callers$ViaInheritedInterface#viaInheritedInterface"
         }) {
             allowed.put(caller + " -> FakeGitHubClient#fetch", REASON);
         }
@@ -107,14 +108,19 @@ class ControlPlaneGitHubCallGuardTest {
     }
 
     @Test
+    void callThroughInheritedInterface_counts() {
+        assertThat(guard().callSites())
+                .contains("Callers$ViaInheritedInterface#viaInheritedInterface -> FakeGitHubClient#fetch");
+    }
+
+    @Test
     void pureMethodOfGuardedClass_isNotACallSite() {
         assertThat(guard().callSites()).noneMatch(key -> key.contains("#parseOnly") || key.endsWith("#parse"));
     }
 
     @Test
     void storageOnlyMethodOfMixedService_isNotACallSite() {
-        assertThat(guard().callSites())
-                .noneMatch(key -> key.contains("#storageOnly") || key.endsWith("-> FakeCredentialService#storageOnly"));
+        assertThat(guard().callSites()).noneMatch(key -> key.contains("#storageOnly"));
     }
 
     @Test
@@ -145,7 +151,8 @@ class ControlPlaneGitHubCallGuardTest {
         badReason.put("Callers$Direct#use -> FakeGitHubClient#fetch", "no decision path in this reason");
 
         assertThatThrownBy(() -> guard().check(badReason))
-                .hasMessageContaining("Callers$Direct#use -> FakeGitHubClient#fetch");
+                .hasMessageContaining(
+                        "reason does not cite docs/decisions/: Callers$Direct#use -> FakeGitHubClient#fetch");
     }
 
     @Test
@@ -153,16 +160,18 @@ class ControlPlaneGitHubCallGuardTest {
         Map<String, String> malformed = new LinkedHashMap<>(fullAllowlist());
         malformed.put("this is not a valid key", REASON);
 
-        assertThatThrownBy(() -> guard().check(malformed)).hasMessageContaining("this is not a valid key");
+        // Not just "names the key": a well-formed-looking unknown key is also named, as stale.
+        assertThatThrownBy(() -> guard().check(malformed))
+                .hasMessageContaining("Malformed allowlist key: this is not a valid key");
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"github.api.url", "github_api_url", "api.github.com"})
+    @ValueSource(strings = {"github.api.url", "GITHUB_API_URL", "https://API.GitHub.com/repos"})
     void sourceNamingTheApiLocationOutsideGuardedClasses_failsWithFileAndLine(String token) throws IOException {
         writeSource("Leaky.java", "public class Leaky { String x = \"" + token + "\"; }");
 
         assertThatThrownBy(() -> guard().check(fullAllowlist()))
-                .hasMessageContaining("Leaky.java:")
+                .hasMessageContaining("com/choruskube/core/architecture/fixtures/Leaky.java:2")
                 .hasMessageContaining(ControlPlaneGitHubCallGuard.RULE);
     }
 

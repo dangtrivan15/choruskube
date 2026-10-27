@@ -5,7 +5,7 @@ import java.util.stream.IntStream;
 
 /**
  * One nested class per call-site shape {@code ControlPlaneGitHubCallGuardTest} exercises — direct
- * call, lambda, method reference, subtype, interface, a pure method, and a mixed guarded
+ * call, lambda, method reference, subtype, interface, inherited interface, a pure method, and a mixed guarded
  * service's storage-only vs. network method. Never executed, only imported as bytecode.
  */
 public final class Callers {
@@ -40,6 +40,12 @@ public final class Callers {
 
     public static class ViaInterface {
         public String viaInterface(ReadsPullRequests client) {
+            return client.fetch(1);
+        }
+    }
+
+    public static class ViaInheritedInterface {
+        public String viaInheritedInterface(ReadsByNumber client) {
             return client.fetch(1);
         }
     }

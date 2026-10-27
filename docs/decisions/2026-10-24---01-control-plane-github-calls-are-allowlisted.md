@@ -67,5 +67,5 @@ its own production classes without a second implementation to keep in sync.
   name.
 - **Source-text search for callers.** It misses a same-package call, a method reference, and a
   call made through an alias.
-- **One test over every code base's classes at once.** The public core would carry no guard of its
-  own, and its call sites would be listed only in a private allowlist.
+- **One test over every code base's classes at once.** This repo would carry no guard of its own,
+  and its call sites would be listed only in the allowlist of a code base built on it.
