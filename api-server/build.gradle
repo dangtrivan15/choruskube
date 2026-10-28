@@ -85,6 +85,12 @@ dependencies {
     testFixturesApi 'org.testcontainers:testcontainers:2.0.3'
     testFixturesApi 'org.testcontainers:testcontainers-postgresql:2.0.3'
 
+    // The control-plane GitHub call-site guard (test fixtures) is built on ArchUnit's bytecode
+    // import. Implementation, not Api: the guard's own public API exposes no ArchUnit type, so a
+    // downstream consumer of the test fixtures gets ArchUnit on its runtime classpath without
+    // compiling against it.
+    testFixturesImplementation 'com.tngtech.archunit:archunit:1.5.1'
+
     // Testing
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.springframework.security:spring-security-test'

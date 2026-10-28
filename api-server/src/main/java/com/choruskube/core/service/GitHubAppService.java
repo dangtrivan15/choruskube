@@ -193,7 +193,7 @@ public class GitHubAppService {
                         new GitHubTokenMintException(422, installationId, rateLimitHints(response.headers())));
             }
             if (response.statusCode() != 201) {
-                // The body is deliberately omitted, for the reason given on fetchPullRequest: a
+                // The body is deliberately omitted, for the reason given on fetchPullRequestDetail: a
                 // GitHub error payload can echo the request, Authorization header included, and
                 // this message is logged. The rate-limit headers are read instead — minting is the
                 // other path a secondary rate limit arrives on, and a bare RuntimeException here
@@ -254,52 +254,10 @@ public class GitHubAppService {
         return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
     }
 
-    /** A pull request's state as GitHub reports it. {@code mergedAt} is null unless merged. */
-    public record PullRequestSnapshot(String state, Instant mergedAt) {}
-
-    /**
-     * Reads a pull request's state. {@code ownerRepo} is the {@code owner/repo} slug — derive it
-     * with {@link com.choruskube.core.util.RepoNameUtil#deriveOwnerRepoName(String)} from the
-     * {@code GitRepo}'s URL. The caller supplies an already-resolved token, so this method stays
-     * agnostic about whether it came from a GitHub App installation or a PAT.
-     *
-     * @throws GitHubApiException if GitHub returns a non-200 status. It carries the status as a
-     *     field so a caller can tell a revoked credential from an outage; the message deliberately
-     *     omits the response body, which can echo the request's Authorization header on some
-     *     errors.
-     * @throws RuntimeException if the call never produced a status at all — a timeout, a DNS
-     *     failure, a reset connection. Deliberately NOT a {@link GitHubApiException}: there is no
-     *     status to classify, and every such failure is transient by nature.
-     */
-    public PullRequestSnapshot fetchPullRequest(String token, String ownerRepo, int prNumber) {
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(githubApiUrl + "/repos/" + ownerRepo + "/pulls/" + prNumber))
-                .header("Authorization", "Bearer " + token)
-                .header("Accept", "application/vnd.github+json")
-                .header("X-GitHub-Api-Version", "2022-11-28")
-                .timeout(Duration.ofSeconds(10))
-                .GET()
-                .build();
-        try {
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() != 200) {
-                throw new GitHubApiException(
-                        response.statusCode(), ownerRepo, prNumber, rateLimitHints(response.headers()));
-            }
-            return parsePullRequest(response.body());
-        } catch (IOException | InterruptedException e) {
-            if (e instanceof InterruptedException) {
-                Thread.currentThread().interrupt();
-            }
-            throw new RuntimeException("Failed to read " + ownerRepo + "#" + prNumber + ": " + e.getMessage(), e);
-        }
-    }
-
     /**
      * A pull request's full state for the merge path — enough to classify a row before merging.
-     * Unlike {@link PullRequestSnapshot}, which the reconciler reads on every tick, this carries the
-     * fields only {@code PullRequestMergeService} needs: a draft flag, mergeability, and the
-     * head/base refs a merge call pins to.
+     * Carries the fields only {@code PullRequestMergeService} needs: a draft flag, mergeability,
+     * and the head/base refs a merge call pins to.
      */
     public record PullRequestDetail(
             String state,
@@ -311,10 +269,19 @@ public class GitHubAppService {
             String baseRef) {}
 
     /**
-     * Reads a pull request's full detail for the merge path. Same idiom as {@link
-     * #fetchPullRequest}: a non-200 status throws {@link GitHubApiException} with the status as a
-     * field, and an I/O or interrupt failure wraps in {@link RuntimeException}. The response body is
-     * never kept beyond the fields parsed here.
+     * Reads a pull request's full detail for the merge path. {@code ownerRepo} is the {@code
+     * owner/repo} slug — derive it with {@link
+     * com.choruskube.core.util.RepoNameUtil#deriveOwnerRepoName(String)} from the {@code GitRepo}'s
+     * URL. The caller supplies an already-resolved token, so this method stays agnostic about
+     * whether it came from a GitHub App installation or a PAT.
+     *
+     * @throws GitHubApiException if GitHub returns a non-200 status. It carries the status as a
+     *     field so a caller can tell a revoked credential from an outage; the message deliberately
+     *     omits the response body, which can echo the request's Authorization header on some
+     *     errors.
+     * @throws RuntimeException if the call never produced a status at all — a timeout, a DNS
+     *     failure, a reset connection. Deliberately NOT a {@link GitHubApiException}: there is no
+     *     status to classify, and every such failure is transient by nature.
      */
     public PullRequestDetail fetchPullRequestDetail(String token, String ownerRepo, int prNumber) {
         HttpRequest request = HttpRequest.newBuilder()
@@ -405,7 +372,7 @@ public class GitHubAppService {
 
     /**
      * GitHub's {@code message} field only, capped and with the token scrubbed — everything else in
-     * a merge-refusal body is deliberately discarded, for the same reason {@link #fetchPullRequest}
+     * a merge-refusal body is deliberately discarded, for the same reason {@link #fetchPullRequestDetail}
      * never keeps a response body: GitHub can echo the request, {@code Authorization} header
      * included, and this text reaches a 409 response and the audit log.
      */
@@ -438,7 +405,7 @@ public class GitHubAppService {
 
     /**
      * Files a new issue — used by roadmap-extension materialization to give a newly-created Task a
-     * matching GitHub issue. Same idiom as {@link #fetchPullRequest}: a non-2xx status throws
+     * matching GitHub issue. Same idiom as {@link #fetchPullRequestDetail}: a non-2xx status throws
      * {@link GitHubApiException}, an I/O or interrupt failure wraps in {@link RuntimeException}.
      */
     public CreatedIssue createIssue(String token, String ownerRepo, String title, String body) {
@@ -476,7 +443,7 @@ public class GitHubAppService {
     /**
      * How many commits {@code head} is ahead of {@code base} — GitHub's {@code compare}
      * {@code ahead_by} field. {@code base}/{@code head} are branch (or ref) names, not SHAs;
-     * {@code ownerRepo} is the {@code owner/repo} slug (see {@link #fetchPullRequest} for how to
+     * {@code ownerRepo} is the {@code owner/repo} slug (see {@link #fetchPullRequestDetail} for how to
      * derive it). Used by {@code BranchCleanupService} to decide whether a run branch is safe to
      * delete: {@code ahead_by == 0} means the branch carries nothing the default branch lacks.
      *
@@ -503,7 +470,7 @@ public class GitHubAppService {
                 JsonNode body = objectMapper.readTree(response.body());
                 return body.get("ahead_by").asInt();
             } catch (Exception e) {
-                // Same reasoning as parsePullRequest: the exception's own message can quote the
+                // Same reasoning as parsePullRequestDetail: the exception's own message can quote the
                 // response body that failed to parse, so it is deliberately not interpolated here.
                 throw new RuntimeException("Failed to parse GitHub compare payload for " + ownerRepo, e);
             }
@@ -588,22 +555,6 @@ public class GitHubAppService {
         }
     }
 
-    PullRequestSnapshot parsePullRequest(String json) {
-        try {
-            JsonNode node = objectMapper.readTree(json);
-            JsonNode mergedAt = node.get("merged_at");
-            return new PullRequestSnapshot(
-                    node.path("state").asText(null),
-                    mergedAt == null || mergedAt.isNull() ? null : Instant.parse(mergedAt.asText()));
-        } catch (Exception e) {
-            // Deliberately does not interpolate the exception's message: it can quote the response
-            // content that failed to parse. Harmless for a timestamp, but this is a pattern worth
-            // not leaving around to be copied onto a field that carries something sensitive. The
-            // cause is chained, so the detail is still available to a debugger and to logs.
-            throw new RuntimeException("Failed to parse GitHub pull request payload", e);
-        }
-    }
-
     PullRequestDetail parsePullRequestDetail(String json) {
         try {
             JsonNode node = objectMapper.readTree(json);
@@ -620,7 +571,10 @@ public class GitHubAppService {
                     headNode == null ? null : headNode.path("sha").asText(null),
                     baseNode == null ? null : baseNode.path("ref").asText(null));
         } catch (Exception e) {
-            // Deliberately does not interpolate the exception's message: see parsePullRequest.
+            // Deliberately does not interpolate the exception's message: it can quote the response
+            // content that failed to parse. Harmless for a timestamp, but this is a pattern worth
+            // not leaving around to be copied onto a field that carries something sensitive. The
+            // cause is chained, so the detail is still available to a debugger and to logs.
             throw new RuntimeException("Failed to parse GitHub pull request detail payload", e);
         }
     }

@@ -153,6 +153,7 @@ The entrypoint passes every clone to Claude Code as a working directory (`--add-
 - **Templates are base-only** — no parent/child template inheritance. `git_repo_id` is a run input, not a template field. Templates are immutable seed data with no mutation endpoints
 - **GitRepo is a first-class entity** — each org gets its own Kubernetes namespace with provisioned RBAC and network policies
 - **Single-tenant identity** — there is no OIDC provider in the OSS core. `SingleTenantResolver` / `SingleTenantUserInfoProvider` resolve every request to the seeded system org; `SystemOrgSeeder` materializes it (and its credentials) at boot
+- **No new control-plane GitHub call** — a GitHub call the API server would need runs as a Worker step instead. `ControlPlaneGitHubCallsTest` fails the build on any call into a GitHub-calling method that its allowlist does not name, and on an entry whose call is gone; the list only shrinks. See `docs/decisions/2026-10-13---02-data-plane-credential-rule.md`.
 - Each component has its own Dockerfile with multi-stage builds — keep build and runtime stages separate
 
 ## Contribution Workflow

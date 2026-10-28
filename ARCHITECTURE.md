@@ -72,7 +72,7 @@ one Fleet are extension seams core declares but does not implement — see
 ```
 
 The orchestrator drives the graph; the **Worker** creates and owns the agent workloads;
-the **api-server** owns state, talks to the data stores, and holds the credentials of any Worker that does not hold its own ([why](docs/decisions/2026-10-13---02-data-plane-credential-rule.md)).
+the **api-server** owns state, talks to the data stores, and holds the credentials of any Worker that does not hold its own ([why](docs/decisions/2026-10-13---02-data-plane-credential-rule.md)). Its remaining GitHub calls are a named list that a test enforces and that only shrinks ([how](docs/decisions/2026-10-24---01-control-plane-github-calls-are-allowlisted.md)).
 
 Once a run completes, the orchestrator asks the api-server which repos the run touched and
 each one's default branch, then dispatches a cleanup step to the run's own Worker, which
