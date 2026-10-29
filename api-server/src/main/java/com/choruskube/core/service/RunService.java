@@ -228,6 +228,10 @@ public class RunService {
         // A failed check below rolls back everything — no orphan run row or ownership row is left.
         applicationEventPublisher.publishEvent(MappableCreated.of("workflow_run", run.getId()));
 
+        // Placed before the preflight so a seam deciding by where the run executes (e.g. a Fleet
+        // pin) can read that answer; a refusal below rolls the placement back with the run.
+        RunPlacement placement = placements.placeFor(run.getId());
+
         credentialPreflightChecker.checkPreflight(run.getId()); // throws InvalidCredentialException (400)
 
         String inputRefs = request.inputAttachmentRefs();
@@ -239,8 +243,6 @@ public class RunService {
                 throw new RuntimeException("Failed to move staged attachments into run scope: " + e.getMessage(), e);
             }
         }
-
-        RunPlacement placement = placements.placeFor(run.getId());
 
         String workflowId = "choruskube-run-" + run.getId();
         run.setExternalRunId(workflowId);

@@ -118,7 +118,8 @@ refused unless the execution belongs to the run it names), so the Worker decides
 comes from.
 
 - **`control-plane`** asks the api-server for each run's token. The api-server resolves
-  it per organization, which is what a Worker serving several tenants needs.
+  it per organization, which is what a Worker serving several tenants needs. It also receives the
+  agent's Claude token and registry login from prepare, which it launches with unchanged.
 - **`local`** reads one set of credentials from `CREDENTIALS_DIR` and mints GitHub App tokens
   itself. It has no notion of a tenant, so every run on the Worker gets the same credentials:
   use it only for a Worker that serves a single tenant's own Fleet.
@@ -151,12 +152,12 @@ with `User-Agent: choruskube-worker`.
 |------------------------------|----------------------|---------|
 | `github-pat` | `GITHUB_PAT` | A personal access token, used as is. Wins over a GitHub App. Cannot be narrowed; prefer a fine-grained PAT limited to the repositories runs use. |
 | `github-app/app-id`, `github-app/installation-id`, `github-app/private-key.pem` | `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID`, `GITHUB_APP_PRIVATE_KEY_PATH` (a path to the PEM) | A GitHub App; the Worker mints installation tokens and reuses one until 5 minutes before it expires. All three are required. |
-| `claude-oauth-token` | `CLAUDE_CODE_OAUTH_TOKEN` | Replaces the Claude token the api-server returns for the agent pod. |
-| `registry/host`, `registry/username`, `registry/password` | `REGISTRY_HOST`, `REGISTRY_USERNAME`, `REGISTRY_PASSWORD` | Replaces the registry login the api-server returns. All three are required. |
+| `claude-oauth-token` | `CLAUDE_CODE_OAUTH_TOKEN` | The Claude token agent pods launch with. Required for AI nodes; a `local` Worker never uses one from the api-server. |
+| `registry/host`, `registry/username`, `registry/password` | `REGISTRY_HOST`, `REGISTRY_USERNAME`, `REGISTRY_PASSWORD` | Registry login for the agent image. Optional — none means an anonymous pull; all three or none. |
 
-If the folder or environment supplies either the Claude token or a registry login, the Worker
-uses its values for both and drops whatever the api-server returned for the other. Supplying
-neither leaves the api-server's credentials in place.
+A `local` Worker launches only with what it holds; an AI node with no Claude token fails before
+launch with a message naming this folder. A `control-plane` Worker launches with what the
+api-server attaches and fails the node the same way when none is attached.
 
 ### GitHub work outside a run
 

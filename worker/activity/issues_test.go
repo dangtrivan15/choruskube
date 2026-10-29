@@ -37,8 +37,8 @@ func (p *issueProvider) GitHubToken(_ context.Context, runID uuid.UUID) (credent
 	return credential.Token{Value: issueToken}, nil
 }
 
-func (p *issueProvider) AgentCredentials(context.Context, uuid.UUID) (credential.Agent, bool, error) {
-	return credential.Agent{}, false, nil
+func (p *issueProvider) AgentCredentials(context.Context, uuid.UUID, credential.Agent, bool) (credential.Agent, error) {
+	return credential.Agent{}, nil
 }
 
 // issueStub is a stateful GitHub stand-in for the issue endpoints. It remembers what has been

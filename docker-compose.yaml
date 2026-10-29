@@ -161,8 +161,8 @@ services:
       # (registry.choruskube.com/claude-code:latest and .../choruskube-dev:latest), so the
       # stack pulls the public agent images with zero configuration.
       #
-      # Optional — export to run real AI agent nodes. Blank still boots; each AI node then
-      # fails at launch (EnvAiCredentialResolver), and script nodes never need it.
+      # Optional — export to run real AI agent nodes. Blank still boots; the Worker then
+      # fails each AI node before launch, and script nodes never need it.
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
       # Optional GitHub credentials for the system org — needed only to push / open
       # PRs against a target repo. All blank-default → the stack boots with zero

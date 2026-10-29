@@ -273,6 +273,26 @@ class RunServiceCredentialCheckTest {
         assertThatCode(() -> service.startRun(request)).doesNotThrowAnyException();
     }
 
+    /**
+     * A seam deciding by where a run executes (e.g. a Fleet pin) must see that answer already
+     * recorded when the preflight calls it — so placement has to run first, in the same
+     * transaction, not merely before the preflight throws.
+     */
+    @Test
+    void startRun_placesTheRunBeforeCredentialPreflight() {
+        stubPreCredentialPath();
+        doNothing().when(credentialPreflightChecker).checkPreflight(SAVED_RUN_ID);
+        stubPostCredentialPath();
+
+        org.mockito.InOrder order = inOrder(placements, credentialPreflightChecker);
+
+        CreateRunRequest request = new CreateRunRequest(TEMPLATE_ID, Map.of(), "test-run", null);
+        assertThatCode(() -> service.startRun(request)).doesNotThrowAnyException();
+
+        order.verify(placements).placeFor(SAVED_RUN_ID);
+        order.verify(credentialPreflightChecker).checkPreflight(SAVED_RUN_ID);
+    }
+
     @Test
     void startRun_credentialCheckCalledAfterQuotaCheck() {
         stubPreCredentialPath();

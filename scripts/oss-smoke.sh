@@ -8,8 +8,8 @@
 #   3. assert the worker (EXECUTOR_TYPE=docker) pulls & spawns an agent
 #      container FROM a published image (registry.choruskube.com/*).
 #
-# The worker has the api-server resolve the run's Claude token BEFORE spawning an
-# AI node's container (WorkloadService.prepareWorkload), so SOME token must be
+# The Worker refuses to launch an AI node without a Claude token, and on this stack the
+# api-server attaches the one it is configured with. SOME token must therefore be
 # configured at boot for the agent container to spawn at all. This smoke uses a
 # THROWAWAY dummy: the published agent image is pulled & started (the guard),
 # then the real agent fails auth harmlessly — no real Claude call, no PR. The

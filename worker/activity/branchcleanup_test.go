@@ -319,8 +319,8 @@ func (blankTokenProvider) GitHubToken(context.Context, uuid.UUID) (credential.To
 	return credential.Token{Value: "  "}, nil
 }
 
-func (blankTokenProvider) AgentCredentials(context.Context, uuid.UUID) (credential.Agent, bool, error) {
-	return credential.Agent{}, false, nil
+func (blankTokenProvider) AgentCredentials(context.Context, uuid.UUID, credential.Agent, bool) (credential.Agent, error) {
+	return credential.Agent{}, nil
 }
 
 func TestCleanupRunBranches_BlankTokenFails(t *testing.T) {

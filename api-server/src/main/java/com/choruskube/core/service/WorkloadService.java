@@ -1,6 +1,5 @@
 package com.choruskube.core.service;
 
-import com.choruskube.core.credential.AiCredentialResolver;
 import com.choruskube.core.dto.CompleteWorkloadRequest;
 import com.choruskube.core.dto.CreateWorkloadRequest;
 import com.choruskube.core.dto.PrepareWorkloadResponse;
@@ -42,10 +41,9 @@ public class WorkloadService {
     private final ObjectMapper objectMapper;
     private final String defaultAgentImage;
     private final String defaultServiceAccount;
-    private final AiCredentialResolver aiCredentialResolver;
     private final String apiServerUrl;
     private final WorkloadNamespaceResolver namespaceResolver;
-    private final WorkloadRegistryCredentialResolver registryCredentialResolver;
+    private final WorkloadAgentCredentialResolver agentCredentialResolver;
     private final WorkloadMemoryCeilingPolicy memoryCeilingPolicy;
 
     public WorkloadService(
@@ -56,10 +54,9 @@ public class WorkloadService {
             ObjectMapper objectMapper,
             @Qualifier("executorDefaultAgentImage") String defaultAgentImage,
             @Value("${executor.k8s.agent-service-account:choruskube-agent}") String defaultServiceAccount,
-            AiCredentialResolver aiCredentialResolver,
             @Qualifier("executorApiServerUrl") String apiServerUrl,
             ObjectProvider<WorkloadNamespaceResolver> namespaceResolverProvider,
-            ObjectProvider<WorkloadRegistryCredentialResolver> registryCredentialResolverProvider,
+            ObjectProvider<WorkloadAgentCredentialResolver> agentCredentialResolverProvider,
             ObjectProvider<WorkloadMemoryCeilingPolicy> memoryCeilingPolicyProvider) {
         this.execRepo = execRepo;
         this.eventPublisher = eventPublisher;
@@ -68,17 +65,19 @@ public class WorkloadService {
         this.objectMapper = objectMapper;
         this.defaultAgentImage = defaultAgentImage;
         this.defaultServiceAccount = defaultServiceAccount;
-        this.aiCredentialResolver = aiCredentialResolver;
         this.apiServerUrl = apiServerUrl;
         this.namespaceResolver = namespaceResolverProvider.getIfAvailable(NoWorkloadNamespaceResolver::new);
-        this.registryCredentialResolver =
-                registryCredentialResolverProvider.getIfAvailable(NoRegistryCredentialResolver::new);
+        // getIfAvailable, not getIfUnique: two registered resolvers must fail startup rather than
+        // silently pick one, since only one may ever decide whether to attach a tenant's credential.
+        this.agentCredentialResolver =
+                agentCredentialResolverProvider.getIfAvailable(NoWorkloadAgentCredentialResolver::new);
         this.memoryCeilingPolicy = memoryCeilingPolicyProvider.getIfAvailable(ExemptMemoryCeilingPolicy::new);
     }
 
     /**
-     * Resolves what a Worker needs to launch this workload: image, credentials, and identity. The
-     * api-server holds DB access, so it resolves these inputs rather than the Worker.
+     * Resolves what a Worker needs to launch this workload: image, identity, and whatever the
+     * deployment's {@link WorkloadAgentCredentialResolver} seam attaches — agent credentials never
+     * come from anywhere else here.
      */
     @Transactional(readOnly = true)
     public PrepareWorkloadResponse prepareWorkload(UUID runId, UUID nodeExecId, CreateWorkloadRequest req) {
@@ -91,7 +90,7 @@ public class WorkloadService {
 
         ExecutionParams params = resolveExecutionParams(nodeExecId, run, exec.getTemplateNodeId(), req);
 
-        String claudeOAuthToken = needsOauthToken(params) ? aiCredentialResolver.resolveOauthToken(runId) : null;
+        WorkloadAgentCredentials agent = agentCredentialResolver.resolve(runId, runsClaude(params));
         String githubTokenUrl =
                 apiServerUrl + "/internal/runs/" + runId + "/node-executions/" + nodeExecId + "/github-token";
 
@@ -106,9 +105,9 @@ public class WorkloadService {
                 params.agentMemoryRequest(),
                 params.dindMemoryRequest(),
                 memoryCeilingExempt(runId),
-                claudeOAuthToken,
+                agent.claudeOAuthToken(),
                 githubTokenUrl,
-                resolveRegistryCredentialsOrNull(runId),
+                agent.registryCredentials(),
                 namespace,
                 params.identity() != null ? params.identity().name() : null);
     }
@@ -141,22 +140,6 @@ public class WorkloadService {
     }
 
     /**
-     * Resolves the run's image-pull credential, degrading to {@code null} (anonymous pull) when the
-     * resolver throws — mirrors {@link #resolveNamespaceOrNull}, so a run with no tenant row still prepares.
-     */
-    private PrepareWorkloadResponse.RegistryCredentialsDto resolveRegistryCredentialsOrNull(UUID runId) {
-        try {
-            return registryCredentialResolver.resolve(runId);
-        } catch (RuntimeException e) {
-            log.debug(
-                    "No registry credential resolved for run {}; launching without a pull secret: {}",
-                    runId,
-                    e.toString());
-            return null;
-        }
-    }
-
-    /**
      * Records what a Worker launched and transitions the execution to running.
      */
     @Transactional
@@ -177,9 +160,11 @@ public class WorkloadService {
         log.info("Completed workload for execution {}: pod={}", nodeExecId, req.podName());
     }
 
-    private static boolean needsOauthToken(ExecutionParams params) {
+    // The one copy of "runs Claude" the API server holds; GraphSnapshotBuilder is in this same
+    // package so a change to the rule never has to be made twice.
+    private static boolean runsClaude(ExecutionParams params) {
         Object raw = params.configJson() != null ? params.configJson().getOrDefault("executor_type", "ai") : "ai";
-        return !"script".equalsIgnoreCase(String.valueOf(raw));
+        return GraphSnapshotBuilder.runsClaude(String.valueOf(raw));
     }
 
     private ExecutionParams resolveExecutionParams(

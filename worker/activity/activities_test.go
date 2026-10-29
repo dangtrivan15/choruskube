@@ -187,6 +187,7 @@ func TestExecuteAINodeFromSnapshot_CallsExecutor(t *testing.T) {
 	acts := NewWithExecutor(mockClient, mockExec, hashCache)
 	acts.CallbackURL = "http://worker:9090/api/v1/callback"
 	acts.APIServerURL = "http://api-server.invalid"
+	acts.SetCredentials(credential.NewControlPlane(&stubTokenClient{}))
 
 	params := ExecuteAINodeFromSnapshotParams{
 		Identity: Identity{
@@ -273,6 +274,7 @@ func TestExecuteAINodeFromSnapshot_CallsExecutor_CachesFullPendingCompletion(t *
 	acts := NewWithExecutor(mockClient, mockExec, callback.NewHashCache())
 	acts.CallbackURL = "http://worker:9090/api/v1/callback"
 	acts.APIServerURL = "http://api-server.invalid"
+	acts.SetCredentials(passThroughCredentials{})
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		Identity: Identity{
@@ -308,7 +310,8 @@ func TestExecuteAINodeFromSnapshot_CallsExecutor_ForwardsRegistryCredentials(t *
 	mockClient := &mockWorkloadClient{
 		prepareFn: func(ctx context.Context, p workload.PrepareParams) (*workload.PrepareResponse, error) {
 			return &workload.PrepareResponse{
-				Image: "ghcr.io/test/agent:latest",
+				Image:            "ghcr.io/test/agent:latest",
+				ClaudeOAuthToken: "tok_test",
 				Registry: &workload.RegistryCredentials{
 					Host:     "registry.example.com",
 					Username: "worker",
@@ -322,6 +325,7 @@ func TestExecuteAINodeFromSnapshot_CallsExecutor_ForwardsRegistryCredentials(t *
 	acts := NewWithExecutor(mockClient, mockExec, callback.NewHashCache())
 	acts.CallbackURL = "http://worker:9090/api/v1/callback"
 	acts.APIServerURL = "http://api-server.invalid"
+	acts.SetCredentials(credential.NewControlPlane(&stubTokenClient{}))
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		Identity: Identity{
@@ -367,6 +371,7 @@ func TestExecuteAINodeFromSnapshot_CallsExecutor_ForwardsDindImage(t *testing.T)
 	acts := NewWithExecutor(mockClient, mockExec, callback.NewHashCache())
 	acts.CallbackURL = "http://worker:9090/api/v1/callback"
 	acts.APIServerURL = "http://api-server.invalid"
+	acts.SetCredentials(passThroughCredentials{})
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		Identity: Identity{
@@ -430,6 +435,7 @@ func TestExecuteAINodeFromSnapshot_CallsExecutor_ForwardsMemoryRequests(t *testi
 			acts := NewWithExecutor(mockClient, mockExec, callback.NewHashCache())
 			acts.CallbackURL = "http://worker:9090/api/v1/callback"
 			acts.APIServerURL = "http://api-server.invalid"
+			acts.SetCredentials(passThroughCredentials{})
 
 			_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 				Identity: Identity{NodeExecutionID: uuid.New(), RunID: stubbedRun(t), TemplateNodeID: uuid.New()},
@@ -464,6 +470,7 @@ func TestExecuteAINodeFromSnapshot_CallsExecutor_PrepareErrorPropagates(t *testi
 	acts := NewWithExecutor(mockClient, mockExec, callback.NewHashCache())
 	acts.CallbackURL = "http://worker:9090/api/v1/callback"
 	acts.APIServerURL = "http://api-server.invalid"
+	acts.SetCredentials(passThroughCredentials{})
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		Identity: Identity{
@@ -505,6 +512,7 @@ func TestExecuteAINodeFromSnapshot_CallsExecutor_ExecuteErrorPropagates(t *testi
 	acts := NewWithExecutor(mockClient, mockExec, hashCache)
 	acts.CallbackURL = "http://worker:9090/api/v1/callback"
 	acts.APIServerURL = "http://api-server.invalid"
+	acts.SetCredentials(passThroughCredentials{})
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		Identity: Identity{
@@ -547,6 +555,7 @@ func TestExecuteAINodeFromSnapshot_CallsExecutor_CompleteErrorPropagates(t *test
 	acts := NewWithExecutor(mockClient, mockExec, hashCache)
 	acts.CallbackURL = "http://worker:9090/api/v1/callback"
 	acts.APIServerURL = "http://api-server.invalid"
+	acts.SetCredentials(passThroughCredentials{})
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		Identity: Identity{
@@ -606,6 +615,7 @@ func TestExecuteLocally_RestoresAgentLaunchedLog(t *testing.T) {
 	acts := NewWithExecutor(mockClient, mockExec, callback.NewHashCache())
 	acts.CallbackURL = "http://worker:9090/api/v1/callback"
 	acts.APIServerURL = "http://api-server.invalid"
+	acts.SetCredentials(passThroughCredentials{})
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		Identity: Identity{
@@ -657,6 +667,7 @@ func TestExecuteAINode_RestoresPromptResolvedLog(t *testing.T) {
 	acts := NewWithExecutor(mockClient, mockExec, callback.NewHashCache())
 	acts.CallbackURL = "http://worker:9090/api/v1/callback"
 	acts.APIServerURL = "http://api-server.invalid"
+	acts.SetCredentials(passThroughCredentials{})
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		Identity: Identity{
@@ -2195,26 +2206,61 @@ func TestExecuteAINodeFromSnapshotParams_JSONRoundTrip(t *testing.T) {
 	assert.Equal(t, original, fromGolden)
 }
 
-// fakeCredentials is a credential.Provider whose agent credentials a test dictates.
+// fakeCredentials is a credential.Provider whose agent credentials and error a test dictates. It
+// records what it was asked for, so a test can assert what prepare attached and whether the node
+// was asked for a Claude token.
 type fakeCredentials struct {
-	agent    credential.Agent
-	ok       bool
-	err      error
-	gotRunID uuid.UUID
+	agent credential.Agent
+	err   error
+
+	gotRunID      uuid.UUID
+	gotAttached   credential.Agent
+	gotRunsClaude bool
 }
 
 func (f *fakeCredentials) GitHubToken(context.Context, uuid.UUID) (credential.Token, error) {
 	return credential.Token{}, nil
 }
 
-func (f *fakeCredentials) AgentCredentials(_ context.Context, runID uuid.UUID) (credential.Agent, bool, error) {
+func (f *fakeCredentials) AgentCredentials(
+	_ context.Context, runID uuid.UUID, attached credential.Agent, runsClaude bool,
+) (credential.Agent, error) {
 	f.gotRunID = runID
-	return f.agent, f.ok, f.err
+	f.gotAttached = attached
+	f.gotRunsClaude = runsClaude
+	if f.err != nil {
+		return credential.Agent{}, f.err
+	}
+	return f.agent, nil
 }
 
-// launchWithCredentials runs one local execution against a prepare response that carries the
-// API server's own agent credentials, and returns what the executor was handed.
-func launchWithCredentials(t *testing.T, provider credential.Provider) (executor.ExecutionParams, uuid.UUID, error) {
+// passThroughCredentials is a credential.Provider for a test that is not about credentials: it
+// returns exactly what prepare attached, with no Claude-token check, so the test neither gains a
+// token nor exercises the check the provider contract now requires.
+type passThroughCredentials struct{}
+
+func (passThroughCredentials) GitHubToken(context.Context, uuid.UUID) (credential.Token, error) {
+	return credential.Token{}, nil
+}
+
+func (passThroughCredentials) AgentCredentials(
+	_ context.Context, _ uuid.UUID, attached credential.Agent, _ bool,
+) (credential.Agent, error) {
+	return attached, nil
+}
+
+// stubTokenClient is a credential.TokenClient a test never expects to be called: these tests
+// exercise the control-plane provider's AgentCredentials, not its GitHubToken.
+type stubTokenClient struct{}
+
+func (stubTokenClient) GitHubToken(context.Context, uuid.UUID) (string, error) {
+	return "", errors.New("stubTokenClient.GitHubToken must not be called by this test")
+}
+
+// launchWithCredentials runs one local execution of a node of executorType against a prepare
+// response that carries the API server's own agent credentials, and returns what the executor
+// was handed.
+func launchWithCredentials(t *testing.T, provider credential.Provider, executorType string) (executor.ExecutionParams, uuid.UUID, error) {
 	t.Helper()
 	runID := stubbedRun(t)
 	var executed executor.ExecutionParams
@@ -2242,18 +2288,18 @@ func launchWithCredentials(t *testing.T, provider credential.Provider) (executor
 	}
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		Identity: Identity{NodeExecutionID: uuid.New(), RunID: runID, TemplateNodeID: uuid.New()},
-		Node:     Node{ExecutorType: "ai", PromptTemplate: "irrelevant"},
+		Node:     Node{ExecutorType: executorType, PromptTemplate: "irrelevant"},
 	})
 	return executed, runID, err
 }
 
-func TestExecuteLocally_ProviderAgentCredentialsOverridePrepare(t *testing.T) {
-	provider := &fakeCredentials{ok: true, agent: credential.Agent{
+func TestExecuteLocally_LaunchesWithWhatTheProviderReturns(t *testing.T) {
+	provider := &fakeCredentials{agent: credential.Agent{
 		ClaudeOAuthToken: "tok_from_provider",
 		Registry:         &credential.Registry{Host: "local.registry", Username: "local-user", Password: "local-pass"},
 	}}
 
-	executed, runID, err := launchWithCredentials(t, provider)
+	executed, runID, err := launchWithCredentials(t, provider, "ai")
 
 	requirePending(t, err)
 	assert.Equal(t, runID, provider.gotRunID)
@@ -2261,29 +2307,75 @@ func TestExecuteLocally_ProviderAgentCredentialsOverridePrepare(t *testing.T) {
 	assert.Equal(t, &executor.RegistryCredentials{Host: "local.registry", Username: "local-user", Password: "local-pass"}, executed.Credentials.Registry)
 }
 
-func TestExecuteLocally_ProviderWithoutRegistryDropsPreparesRegistry(t *testing.T) {
-	provider := &fakeCredentials{ok: true, agent: credential.Agent{ClaudeOAuthToken: "tok_from_provider"}}
+func TestExecuteLocally_HandsPreparesCredentialsToTheProvider(t *testing.T) {
+	provider := &fakeCredentials{agent: credential.Agent{ClaudeOAuthToken: "tok_from_provider"}}
 
-	executed, _, err := launchWithCredentials(t, provider)
+	_, _, err := launchWithCredentials(t, provider, "ai")
 
 	requirePending(t, err)
-	assert.Equal(t, "tok_from_provider", executed.Credentials.ClaudeOAuthToken)
-	assert.Nil(t, executed.Credentials.Registry, "a provider that supplies agent credentials is authoritative for the registry too")
+	assert.Equal(t, "tok_from_api", provider.gotAttached.ClaudeOAuthToken)
+	assert.Equal(t, &credential.Registry{Host: "api.registry", Username: "api-user", Password: "api-pass"}, provider.gotAttached.Registry)
+	assert.True(t, provider.gotRunsClaude)
 }
 
-func TestExecuteLocally_ProviderSupplyingNothingKeepsPrepare(t *testing.T) {
-	executed, _, err := launchWithCredentials(t, &fakeCredentials{ok: false})
+func TestExecuteLocally_ScriptNodeAsksForNoClaudeToken(t *testing.T) {
+	provider := &fakeCredentials{}
+
+	_, _, err := launchWithCredentials(t, provider, "script")
 
 	requirePending(t, err)
-	assert.Equal(t, "tok_from_api", executed.Credentials.ClaudeOAuthToken)
-	assert.Equal(t, &executor.RegistryCredentials{Host: "api.registry", Username: "api-user", Password: "api-pass"}, executed.Credentials.Registry)
+	assert.False(t, provider.gotRunsClaude)
 }
 
-func TestExecuteLocally_NoProviderKeepsPrepare(t *testing.T) {
-	executed, _, err := launchWithCredentials(t, nil)
+func TestExecuteLocally_NoProviderFailsBeforeLaunch(t *testing.T) {
+	executed, _, err := launchWithCredentials(t, nil, "ai")
 
-	requirePending(t, err)
-	assert.Equal(t, "tok_from_api", executed.Credentials.ClaudeOAuthToken)
+	assert.Error(t, err)
+	assert.NotErrorIs(t, err, temporalactivity.ErrResultPending)
+	assert.Equal(t, executor.ExecutionParams{}, executed, "a pod must not launch with no credential provider configured")
+}
+
+// This is the done criterion: a local Worker with no Claude token of its own must fail a
+// Claude-running node before anything launches — non-retryably, naming where the token belongs —
+// never falling back to what prepare attached.
+func TestExecuteLocally_LocalWorkerWithoutClaudeTokenFailsTheNodeBeforeLaunch(t *testing.T) {
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
+	t.Setenv("REGISTRY_HOST", "")
+	t.Setenv("REGISTRY_USERNAME", "")
+	t.Setenv("REGISTRY_PASSWORD", "")
+	runID := stubbedRun(t)
+
+	launched := false
+	completed := false
+	mockExec := &mockExecutor{
+		executeFn: func(context.Context, executor.ExecutionParams) (executor.ExecutionResult, error) {
+			launched = true
+			return executor.ExecutionResult{}, nil
+		},
+	}
+	mockClient := &mockWorkloadClient{
+		prepareFn: func(context.Context, workload.PrepareParams) (*workload.PrepareResponse, error) {
+			return &workload.PrepareResponse{Image: "img", ClaudeOAuthToken: "tok_from_api"}, nil
+		},
+		completeFn: func(context.Context, workload.CompleteParams) error {
+			completed = true
+			return nil
+		},
+	}
+	acts := NewWithExecutor(mockClient, mockExec, callback.NewHashCache())
+	acts.CallbackURL = "http://worker:9090/api/v1/callback"
+	acts.APIServerURL = "http://api-server.invalid"
+	acts.SetCredentials(credential.NewLocal(t.TempDir(), nil, nil, nil))
+
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+		Identity: Identity{NodeExecutionID: uuid.New(), RunID: runID, TemplateNodeID: uuid.New()},
+		Node:     Node{ExecutorType: "ai", PromptTemplate: "irrelevant"},
+	})
+
+	requireNonRetryable(t, err, "NoClaudeToken")
+	assert.Contains(t, err.Error(), "CREDENTIALS_DIR")
+	assert.False(t, launched, "a pod must not launch with no Claude token of its own")
+	assert.False(t, completed, "complete must not be called when the node never launched")
 }
 
 func TestExecuteLocally_ProviderErrorFailsBeforeLaunch(t *testing.T) {
@@ -2341,6 +2433,7 @@ func TestExecuteLocally_GitHubTokenURLPointsAtTheWorker(t *testing.T) {
 	acts := NewWithExecutor(mockClient, mockExec, callback.NewHashCache())
 	acts.CallbackURL = "http://worker:9090/api/v1/callback"
 	acts.APIServerURL = "http://api-server.invalid"
+	acts.SetCredentials(passThroughCredentials{})
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		Identity: Identity{NodeExecutionID: nodeExecID, RunID: runID, TemplateNodeID: uuid.New()},

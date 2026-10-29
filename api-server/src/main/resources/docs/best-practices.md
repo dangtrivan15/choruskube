@@ -88,5 +88,5 @@ Each org stores its own `CLAUDE_CODE_OAUTH_TOKEN` (long-lived, ~1-year TTL, gene
 `claude setup-token`) encrypted in the `org_ai_credential` table. The system org's token is
 seeded from the `CLAUDE_CODE_OAUTH_TOKEN` env var on startup; non-system orgs configure it
 via Admin UI → Integrations. Executors resolve the per-org token at pod-launch time and inject
-it as `CLAUDE_CODE_OAUTH_TOKEN` into the per-execution K8s Secret. Rotate tokens via Admin UI;
-an expired or missing token causes agent pod startup to fail with an authentication error.
+it as `CLAUDE_CODE_OAUTH_TOKEN` into the per-execution K8s Secret. A missing token fails the
+AI node before its pod launches; an expired one fails the agent with an authentication error.

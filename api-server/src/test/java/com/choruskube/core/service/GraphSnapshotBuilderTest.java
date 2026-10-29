@@ -420,4 +420,85 @@ public class GraphSnapshotBuilderTest extends BaseTest {
         }
         throw new AssertionError("No snapshot node found for template_node_id=" + templateNodeId);
     }
+
+    @Test
+    void anyNodeRunsClaude_trueForAnAiNode() {
+        UUID templateId = createTemplate();
+        addNode(templateId, ExecutorType.ai, "{}");
+
+        assertThat(snapshotBuilder.anyNodeRunsClaude(templateId)).isTrue();
+    }
+
+    @Test
+    void anyNodeRunsClaude_trueForABothNode() {
+        UUID templateId = createTemplate();
+        addNode(templateId, ExecutorType.both, "{}");
+
+        assertThat(snapshotBuilder.anyNodeRunsClaude(templateId)).isTrue();
+    }
+
+    @Test
+    void anyNodeRunsClaude_falseForScriptAndHumanOnly() {
+        UUID templateId = createTemplate();
+        addNode(templateId, ExecutorType.script, "{}");
+        addNode(templateId, ExecutorType.human, "{}");
+
+        assertThat(snapshotBuilder.anyNodeRunsClaude(templateId)).isFalse();
+    }
+
+    @Test
+    void anyNodeRunsClaude_followsAnOverrideToScript() throws Exception {
+        UUID templateId = createTemplate();
+        UUID templateNodeId = addNode(templateId, ExecutorType.ai, "{\"executor_type\":\"script\"}");
+
+        assertThat(snapshotBuilder.anyNodeRunsClaude(templateId)).isFalse();
+
+        WorkflowRun run = new WorkflowRun();
+        run.setGraphTemplateId(templateId);
+        run.setInputs("{}");
+        run = runRepo.save(run);
+        JsonNode snapshotJson = objectMapper.readTree(snapshotBuilder.buildSnapshotForRun(run));
+        JsonNode node = findSnapshotNode(snapshotJson, templateNodeId);
+
+        // Same answer either way: anyNodeRunsClaude must never drift from the executor_type the
+        // snapshot hands the orchestrator for the same override.
+        assertThat(node.get("executor_type").asText()).isEqualTo("script");
+    }
+
+    @Test
+    void anyNodeRunsClaude_followsAnOverrideToAi() {
+        UUID templateId = createTemplate();
+        addNode(templateId, ExecutorType.script, "{\"executor_type\":\"ai\"}");
+
+        assertThat(snapshotBuilder.anyNodeRunsClaude(templateId)).isTrue();
+    }
+
+    private UUID createTemplate() {
+        GraphTemplate template = new GraphTemplate();
+        template.setName("runsClaude test template " + UUID.randomUUID());
+        template.setGraphId("runs-claude-test-" + UUID.randomUUID());
+        template.setVersion(1);
+        return templateRepo.save(template).getId();
+    }
+
+    private UUID addNode(UUID graphTemplateId, ExecutorType executorType, String configOverrides) {
+        NodeDefinition nodeDef = new NodeDefinition();
+        nodeDef.setName("runs-claude-test-node-" + UUID.randomUUID());
+        nodeDef.setExecutorType(executorType);
+        nodeDef.setImage("test:latest");
+        nodeDef.setPromptTemplate("test");
+        nodeDef.setSkills("[]");
+        nodeDef.setInputSpec("{}");
+        nodeDef.setOutputSpec("{}");
+        nodeDef.setSecrets("[]");
+        nodeDef = nodeDefRepo.save(nodeDef);
+
+        TemplateNode node = new TemplateNode();
+        node.setGraphTemplateId(graphTemplateId);
+        node.setNodeDefinitionId(nodeDef.getId());
+        node.setLabel("node-" + UUID.randomUUID());
+        node.setConfigOverrides(configOverrides != null ? configOverrides : "{}");
+        node.setEntrypoint(true);
+        return templateNodeRepo.save(node).getId();
+    }
 }

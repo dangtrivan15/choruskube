@@ -4,6 +4,7 @@ package activity
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	temporalactivity "go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/temporal"
 
 	"github.com/dangtrivan15/choruskube/worker/callback"
 	"github.com/dangtrivan15/choruskube/worker/credential"
@@ -56,14 +58,16 @@ type Activities struct {
 	// that a relative path the agent cannot call, so ExecuteAINodeFromSnapshot rejects it up front.
 	APIServerURL string
 
-	// credentials overrides the agent credentials prepare returns when it supplies them; nil
-	// leaves prepare's in place and fails every gate GitHub step, which has no other token source.
+	// credentials is the single authority on what an agent pod launches with — nil fails
+	// executeLocally before launch and fails every gate GitHub step, which has no other token
+	// source.
 	credentials credential.Provider
 	gh          *github.Client
 }
 
-// SetCredentials sets where agent credentials may come from instead of prepare. Call it before
-// registering the Activities with a Temporal worker.
+// SetCredentials sets the provider that decides what an agent pod launches with and where a
+// Worker's GitHub token comes from. Call it before registering the Activities with a Temporal
+// worker; executeLocally refuses to run without one.
 func (a *Activities) SetCredentials(p credential.Provider) { a.credentials = p }
 
 // SetGitHub sets the client for GitHub calls made on the Worker. Call it before registering the
@@ -424,6 +428,12 @@ func (a *Activities) executeDelegated(ctx context.Context, params ExecuteAINodeF
 // prepare, launches the workload itself through a.executor, then reports the result via
 // complete instead of asking the API server to launch it.
 func (a *Activities) executeLocally(ctx context.Context, runID uuid.UUID, params ExecuteAINodeFromSnapshotParams, configJSON map[string]interface{}) (CallbackResult, error) {
+	// Checked before prepare, not just before launch: without a provider there is no authority
+	// to decide what the pod launches with, so nothing about this node should proceed at all.
+	if a.credentials == nil {
+		return CallbackResult{}, errors.New("no credential provider set: call SetCredentials before registering the Activities")
+	}
+
 	prep, err := a.client.PrepareWorkload(ctx, workload.PrepareParams{
 		RunID:          runID,
 		NodeExecID:     params.Identity.NodeExecutionID,
@@ -441,28 +451,28 @@ func (a *Activities) executeLocally(ctx context.Context, runID uuid.UUID, params
 		return CallbackResult{}, fmt.Errorf("generate job secret: %w", err)
 	}
 
-	creds := executor.NodeCredentials{
-		GitHubTokenURL:   a.githubTokenURL(runID, params.Identity.NodeExecutionID),
-		ClaudeOAuthToken: prep.ClaudeOAuthToken,
-	}
+	attached := credential.Agent{ClaudeOAuthToken: prep.ClaudeOAuthToken}
 	if prep.Registry != nil {
-		creds.Registry = &executor.RegistryCredentials{
+		attached.Registry = &credential.Registry{
 			Host:     prep.Registry.Host,
 			Username: prep.Registry.Username,
 			Password: prep.Registry.Password,
 		}
 	}
-	// Before anything launches: a pod must not start on prepare's credentials when the operator
-	// configured this Worker to replace them.
-	if a.credentials != nil {
-		agent, ok, err := a.credentials.AgentCredentials(ctx, runID)
-		if err != nil {
-			return CallbackResult{}, fmt.Errorf("agent credentials: %w", err)
+	// The provider is the single authority on what the pod launches with: local ignores
+	// attached and uses only its own; control-plane passes attached straight through.
+	agent, err := a.credentials.AgentCredentials(ctx, runID, attached, runsClaude(params.Node.ExecutorType))
+	if err != nil {
+		if errors.Is(err, credential.ErrNoClaudeToken) {
+			return CallbackResult{}, temporal.NewNonRetryableApplicationError(err.Error(), "NoClaudeToken", err)
 		}
-		if ok {
-			creds.ClaudeOAuthToken = agent.ClaudeOAuthToken
-			creds.Registry = toExecRegistry(agent.Registry)
-		}
+		return CallbackResult{}, fmt.Errorf("agent credentials: %w", err)
+	}
+
+	creds := executor.NodeCredentials{
+		GitHubTokenURL:   a.githubTokenURL(runID, params.Identity.NodeExecutionID),
+		ClaudeOAuthToken: agent.ClaudeOAuthToken,
+		Registry:         toExecRegistry(agent.Registry),
 	}
 
 	execParams := executor.ExecutionParams{
@@ -530,6 +540,12 @@ func toExecRegistry(r *credential.Registry) *executor.RegistryCredentials {
 		return nil
 	}
 	return &executor.RegistryCredentials{Host: r.Host, Username: r.Username, Password: r.Password}
+}
+
+// runsClaude mirrors the rule prepare and the agent entrypoint already apply to this same field:
+// every executor type runs Claude except "script".
+func runsClaude(executorType string) bool {
+	return !strings.EqualFold(executorType, "script")
 }
 
 // --- Activity: DeleteAgentJob ---
