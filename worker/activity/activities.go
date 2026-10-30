@@ -542,8 +542,8 @@ func toExecRegistry(r *credential.Registry) *executor.RegistryCredentials {
 	return &executor.RegistryCredentials{Host: r.Host, Username: r.Username, Password: r.Password}
 }
 
-// runsClaude mirrors the rule prepare and the agent entrypoint already apply to this same field:
-// every executor type runs Claude except "script".
+// runsClaude must agree with the agent entrypoint, which demands a token for every executor type
+// but "script"; prepare's rule also excludes "human", a type that never reaches a launch.
 func runsClaude(executorType string) bool {
 	return !strings.EqualFold(executorType, "script")
 }

@@ -6,9 +6,9 @@
 
 [2026-10-13---02](2026-10-13---02-data-plane-credential-rule.md) named a known gap: launch
 preparation resolved the agent's Claude token and registry login itself and sent both to every
-Worker, regardless of which credentials that Worker actually held. A `local` Worker — one that
-holds its own credentials and never uses the control plane's — received them anyway and simply
-ignored them, since nothing told the API server which mode a Worker had declared. The same code
+Worker, regardless of which credentials that Worker actually held, since nothing told the API
+server which mode a Worker had declared. A `local` Worker replaced them only once it had received
+them, and one holding neither of its own quietly launched on the control plane's. The same code
 path also had the opposite failure: it refused to prepare any AI node at all when the server held
 no Claude token, even for a Worker that would never touch it. Neither behavior served a deployment
 that brokers credentials for only part of where it runs — that case needs a per-run decision,
@@ -25,7 +25,7 @@ token on its own account.
 **The default attaches nothing,** via a Null Object (`NoWorkloadAgentCredentialResolver`), because
 a server that brokers no credential for anyone has nothing to attach, and that answer needs no
 configuration. A deployment that does broker replaces the default by registering its own resolver;
-two registered at once fails startup rather than silently picking one.
+two registered at once fails startup rather than silently falling back to attaching nothing.
 
 **One seam covers both credentials**, not a Claude-token seam and a registry seam each re-deciding
 the same thing. A deployment that brokers for only some of where a run executes (for example, only
@@ -63,10 +63,10 @@ decides by where a run executes needs that decision already recorded when it is 
 first means a refusal rolls back the run and its placement together.
 
 **One shared "runs Claude" rule.** An executor type runs Claude unless it is `script` or `human`.
-The snapshot builder owns the rule — `GraphSnapshotBuilder.runsClaude(executorType)` plus
-`effectiveExecutorType`, which applies a template node's config override the same way the
-snapshot already does — so launch preparation, the orchestrator's snapshot and any credential
-check all read one definition instead of three that could disagree after a template override.
+The snapshot builder owns the rule (`GraphSnapshotBuilder.runsClaude`), and applies it per template
+(`anyNodeRunsClaude`) to each node's type after its config override, read the way the snapshot
+reads it — so launch preparation and any credential pre-flight share one definition, and it agrees
+with the executor type the snapshot hands the orchestrator even after a template override.
 
 ## Consequences
 
@@ -92,7 +92,7 @@ check all read one definition instead of three that could disagree after a templ
   credentials are brokered. The decision is per run, not per credential, and two seams can drift.
 - **Keeping preparation's throw when no Claude token is configured.** A missing token is routine
   for a deployment that brokers nothing, or for a Worker that holds its own; preparation itself has
-  no business refusing on either server's behalf.
+  no business refusing on their behalf.
 - **Requiring a registry login on every path.** The public agent image needs none, and requiring
   one would break every self-hosted install that pulls it anonymously.
 - **Recomputing a run's placement inside the pre-flight instead of placing first.** That duplicates

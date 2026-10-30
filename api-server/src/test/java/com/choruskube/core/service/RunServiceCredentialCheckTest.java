@@ -27,6 +27,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
@@ -284,7 +285,7 @@ class RunServiceCredentialCheckTest {
         doNothing().when(credentialPreflightChecker).checkPreflight(SAVED_RUN_ID);
         stubPostCredentialPath();
 
-        org.mockito.InOrder order = inOrder(placements, credentialPreflightChecker);
+        InOrder order = inOrder(placements, credentialPreflightChecker);
 
         CreateRunRequest request = new CreateRunRequest(TEMPLATE_ID, Map.of(), "test-run", null);
         assertThatCode(() -> service.startRun(request)).doesNotThrowAnyException();

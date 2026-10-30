@@ -43,10 +43,6 @@ public class GraphSnapshotBuilder {
     private final ObjectMapper objectMapper;
     private final DecisionOptionsResolver decisionOptionsResolver;
 
-    // Used only by the static effectiveExecutorType below, which has no instance to borrow the
-    // injected mapper from; the override lookup is tolerant of a parse failure either way.
-    private static final ObjectMapper OVERRIDE_MAPPER = new ObjectMapper();
-
     public GraphSnapshotBuilder(
             TemplateNodeRepository templateNodeRepo,
             NodeDefinitionRepository nodeDefRepo,
@@ -359,10 +355,10 @@ public class GraphSnapshotBuilder {
      * same value {@link #buildSnapshot} writes into the node's {@code executor_type} field — so a
      * caller deciding whether a node runs Claude never drifts from what the orchestrator was told.
      */
-    static String effectiveExecutorType(NodeDefinition nd, String configOverridesJson) {
+    private String effectiveExecutorType(NodeDefinition nd, String configOverridesJson) {
         if (configOverridesJson != null && !configOverridesJson.isBlank()) {
             try {
-                JsonNode overrides = OVERRIDE_MAPPER.readTree(configOverridesJson);
+                JsonNode overrides = objectMapper.readTree(configOverridesJson);
                 JsonNode executorTypeOverride = overrides.path("executor_type");
                 if (executorTypeOverride.isTextual()) {
                     return executorTypeOverride.asText();
@@ -381,7 +377,7 @@ public class GraphSnapshotBuilder {
 
     /**
      * Whether any node of this template runs Claude, by the rule {@link #runsClaude} applies to
-     * each node's {@link #effectiveExecutorType} — lets a credential check scope itself to AI runs
+     * each node's {@code effectiveExecutorType} — lets a credential check scope itself to AI runs
      * without building the full snapshot.
      */
     @Transactional(readOnly = true)

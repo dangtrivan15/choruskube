@@ -67,8 +67,8 @@ public class WorkloadService {
         this.defaultServiceAccount = defaultServiceAccount;
         this.apiServerUrl = apiServerUrl;
         this.namespaceResolver = namespaceResolverProvider.getIfAvailable(NoWorkloadNamespaceResolver::new);
-        // getIfAvailable, not getIfUnique: two registered resolvers must fail startup rather than
-        // silently pick one, since only one may ever decide whether to attach a tenant's credential.
+        // getIfAvailable, not getIfUnique: two registered resolvers must fail startup, where
+        // getIfUnique would silently fall back to attaching nothing.
         this.agentCredentialResolver =
                 agentCredentialResolverProvider.getIfAvailable(NoWorkloadAgentCredentialResolver::new);
         this.memoryCeilingPolicy = memoryCeilingPolicyProvider.getIfAvailable(ExemptMemoryCeilingPolicy::new);
@@ -160,8 +160,8 @@ public class WorkloadService {
         log.info("Completed workload for execution {}: pod={}", nodeExecId, req.podName());
     }
 
-    // The one copy of "runs Claude" the API server holds; GraphSnapshotBuilder is in this same
-    // package so a change to the rule never has to be made twice.
+    // Delegates to GraphSnapshotBuilder's rule so launch preparation and a run-start pre-flight
+    // never disagree on which nodes run Claude.
     private static boolean runsClaude(ExecutionParams params) {
         Object raw = params.configJson() != null ? params.configJson().getOrDefault("executor_type", "ai") : "ai";
         return GraphSnapshotBuilder.runsClaude(String.valueOf(raw));
