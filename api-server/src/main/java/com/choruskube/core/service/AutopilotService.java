@@ -573,12 +573,9 @@ public class AutopilotService {
     private Plan plan(UUID autopilotId) {
         return reads.execute(status -> {
             int maxParallel = autopilotRepo.findMaxParallelById(autopilotId).orElse(0);
-            // Occupancy is scope-wide (a person's manual runs count too); affinity reads only this
-            // Autopilot's own live runs, since "batch work where the Autopilot already has a pod" is
-            // about its own containers, not a human's.
-            List<WorkflowRun> ownLive = runRepo.findByAutopilotIdAndStatusIn(autopilotId, REPORTED_LIVE);
+            // Occupancy is scope-wide: a person's manual runs count too.
             long occupied = slotCounter.occupiedSlots(autopilotId, OCCUPIES_A_SLOT);
-            return new Plan(maxParallel - (int) occupied, computeFrontier(autopilotId, affinityEpicIds(ownLive)));
+            return new Plan(maxParallel - (int) occupied, computeFrontier(autopilotId));
         });
     }
 
@@ -749,12 +746,8 @@ public class AutopilotService {
      * Every startable Task in a candidate Epic ({@link EpicReadinessAssembler#isStartable} —
      * backlog and READY), ordered. That predicate is shared with the Epic list's
      * {@code readyItemCount}, so the board's "N ready" badge names exactly this frontier.
-     *
-     * <p>{@link TaskOrderingStrategy} deliberately leaves epic affinity out, because it depends on
-     * what is currently in flight; it is applied here as a stable partition of that comparator's
-     * output, so the relative order inside each group is untouched.
      */
-    private Frontier computeFrontier(UUID autopilotId, Set<UUID> affinityEpicIds) {
+    private Frontier computeFrontier(UUID autopilotId) {
         Map<UUID, Epic> epicsById = new HashMap<>();
         Map<UUID, Story> storiesById = new HashMap<>();
         Map<UUID, Readiness> readinessById = new HashMap<>();
@@ -762,6 +755,7 @@ public class AutopilotService {
         Map<UUID, String> emptyContainerLabels = new LinkedHashMap<>();
         List<Task> ready = new ArrayList<>();
         List<Task> inProgress = new ArrayList<>();
+        Set<UUID> startedIds = new HashSet<>();
         int backlogCount = 0;
         int totalCount = 0;
 
@@ -798,6 +792,8 @@ public class AutopilotService {
                     // denominator the why-idle report quotes), while isStartable is the authority
                     // on what actually joins the frontier.
                     if (task.getStatus() != WorkItemStatus.backlog) {
+                        startedIds.add(story.getId());
+                        startedIds.add(epicId);
                         continue;
                     }
                     backlogCount++;
@@ -811,9 +807,9 @@ public class AutopilotService {
             }
         }
 
-        ready.sort(TaskOrderingStrategy.comparator(epicsById, storiesById));
+        ready.sort(TaskOrderingStrategy.comparator(epicsById, storiesById, startedIds));
         return new Frontier(
-                applyEpicAffinity(ready, storiesById, affinityEpicIds),
+                ready,
                 backlogCount,
                 totalCount,
                 emptyContainerReasons(emptyContainerLabels, edges, readinessById),
@@ -856,53 +852,6 @@ public class AutopilotService {
                     latest.getStatus().name()));
         }
         return List.copyOf(held);
-    }
-
-    /**
-     * Moves Tasks whose Epic already has a run in flight ahead of the rest, preserving the
-     * comparator's relative order within each group. "In flight" is the same set
-     * {@code max_parallel} counts, so the term means one thing throughout.
-     */
-    private static List<Task> applyEpicAffinity(
-            List<Task> ordered, Map<UUID, Story> storiesById, Set<UUID> affinityEpicIds) {
-        if (affinityEpicIds.isEmpty()) {
-            return ordered;
-        }
-        List<Task> preferred = new ArrayList<>();
-        List<Task> rest = new ArrayList<>();
-        for (Task task : ordered) {
-            Story story = storiesById.get(task.getStoryId());
-            boolean affine = story != null && affinityEpicIds.contains(story.getEpicId());
-            (affine ? preferred : rest).add(task);
-        }
-        preferred.addAll(rest);
-        return preferred;
-    }
-
-    /** The Epics this Autopilot currently has a live agent pod in. */
-    private Set<UUID> affinityEpicIds(List<WorkflowRun> live) {
-        Set<UUID> taskIds = live.stream()
-                .filter(run -> OCCUPIES_A_SLOT.contains(run.getStatus()))
-                .map(WorkflowRun::getTaskId)
-                .filter(Objects::nonNull)
-                .collect(Collectors.toSet());
-        if (taskIds.isEmpty()) {
-            return Set.of();
-        }
-        // Two batched reads, not one per in-flight Task. This runs inside phase 2 on every tick,
-        // so a per-Task lookup here is a round trip per live agent pod, every interval, forever.
-        Set<UUID> storyIds = taskRepo.findAllById(taskIds).stream()
-                .map(Task::getStoryId)
-                .filter(Objects::nonNull)
-                .collect(Collectors.toSet());
-        if (storyIds.isEmpty()) {
-            return Set.of();
-        }
-        Set<UUID> epicIds = new HashSet<>();
-        for (Story story : storyRepo.findAllById(storyIds)) {
-            epicIds.add(story.getEpicId());
-        }
-        return epicIds;
     }
 
     /**
@@ -1048,8 +997,7 @@ public class AutopilotService {
      */
     private AutopilotStatusResponse snapshot(Autopilot autopilot) {
         List<WorkflowRun> live = runRepo.findByAutopilotIdAndStatusIn(autopilot.getId(), REPORTED_LIVE);
-        Frontier frontier =
-                autopilot.isEngaged() ? computeFrontier(autopilot.getId(), affinityEpicIds(live)) : Frontier.EMPTY;
+        Frontier frontier = autopilot.isEngaged() ? computeFrontier(autopilot.getId()) : Frontier.EMPTY;
         int inFlight = (int) slotCounter.occupiedSlots(autopilot.getId(), OCCUPIES_A_SLOT);
         int awaitingHuman = (int) slotCounter.occupiedSlots(autopilot.getId(), AWAITING_HUMAN);
         return buildStatus(autopilot, live, frontier, Set.of(), List.of(), inFlight, awaitingHuman);
@@ -1227,8 +1175,7 @@ public class AutopilotService {
                 .toList();
     }
 
-    /** One batched lookup for every Task named in the reported lists — mirrors {@link
-     * #affinityEpicIds}, which already loads its Tasks this way. */
+    /** One batched lookup for every Task named in the reported lists. */
     private Map<UUID, String> taskTitles(List<WorkflowRun> live) {
         Set<UUID> taskIds = live.stream()
                 .map(WorkflowRun::getTaskId)

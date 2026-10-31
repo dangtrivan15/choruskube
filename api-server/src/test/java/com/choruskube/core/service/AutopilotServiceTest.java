@@ -1109,15 +1109,13 @@ class AutopilotServiceTest {
     // -----------------------------------------------------------------------------------
 
     @Test
-    void tick_prefersATaskInAnEpicThatAlreadyHasAnInFlightRun() {
-        // Epic affinity, applied as a stable partition of the comparator's output
-        // because it depends on what is in flight, which the comparator cannot know.
+    void tick_aHigherPriorityEpicOutranksAnEpicWithARunInFlight() {
         EpicFixture high = epic("High", Priority.high);
         EpicFixture low = epic("Low", Priority.low);
         StoryFixture highStory = story(high);
         StoryFixture lowStory = story(low);
         Task highPriority = task(highStory, "High priority", WorkItemStatus.backlog, Readiness.READY);
-        Task affine = task(lowStory, "Same Epic as the run in flight", WorkItemStatus.backlog, Readiness.READY);
+        Task sameEpicAsRun = task(lowStory, "Same Epic as the run in flight", WorkItemStatus.backlog, Readiness.READY);
 
         Task inFlightTask = task(lowStory, "Already running", WorkItemStatus.in_progress, Readiness.READY);
         run(WorkflowRunStatus.running, inFlightTask.getId());
@@ -1125,8 +1123,27 @@ class AutopilotServiceTest {
 
         newService().tick();
 
-        verify(taskService).startForAutopilot(affine.getId(), autopilotId);
-        verify(taskService, never()).startForAutopilot(eq(highPriority.getId()), any());
+        verify(taskService).startForAutopilot(highPriority.getId(), autopilotId);
+        verify(taskService, never()).startForAutopilot(eq(sameEpicAsRun.getId()), any());
+    }
+
+    @Test
+    void tick_amongEqualPriorityEpics_continuesTheStartedOneWithNothingInFlight() {
+        // The started Epic is the newer one and has no live run, so neither creation order nor
+        // what is in flight can explain the pick — only the Epic's own progress can.
+        EpicFixture untouched = epic("Untouched", Priority.high);
+        EpicFixture started = epic("Started", Priority.high);
+        ReflectionTestUtils.setField(untouched.epic(), "createdAt", Instant.parse("2026-01-01T00:00:00Z"));
+        ReflectionTestUtils.setField(started.epic(), "createdAt", Instant.parse("2026-02-01T00:00:00Z"));
+        Task fromUntouched = task(story(untouched), "Untouched", WorkItemStatus.backlog, Readiness.READY);
+        StoryFixture startedStory = story(started);
+        task(startedStory, "Delivered", WorkItemStatus.done, Readiness.READY);
+        Task fromStarted = task(startedStory, "Next in the started Epic", WorkItemStatus.backlog, Readiness.READY);
+
+        newService().tick();
+
+        verify(taskService).startForAutopilot(fromStarted.getId(), autopilotId);
+        verify(taskService, never()).startForAutopilot(eq(fromUntouched.getId()), any());
     }
 
     // -----------------------------------------------------------------------------------
@@ -1904,22 +1921,6 @@ class AutopilotServiceTest {
         });
         when(taskRepo.findById(any())).thenAnswer(inv -> Optional.ofNullable(tasksById.get(inv.getArgument(0))));
         when(storyRepo.findById(any())).thenAnswer(inv -> Optional.ofNullable(storiesById.get(inv.getArgument(0))));
-        // Epic affinity resolves Stories in one batch rather than one query per in-flight Task, so
-        // the fixture has to answer the batch finder for the affinity assertions to mean anything.
-        when(storyRepo.findAllById(any())).thenAnswer(inv -> {
-            List<Story> found = new ArrayList<>();
-            if (inv.getArgument(0) == null) {
-                // The null call re-stubbing makes, same as insertDefaults above.
-                return found;
-            }
-            for (UUID id : (Iterable<UUID>) inv.getArgument(0)) {
-                Story story = storiesById.get(id);
-                if (story != null) {
-                    found.add(story);
-                }
-            }
-            return found;
-        });
         for (EpicFixture fixture : epics) {
             when(epicRepo.findById(fixture.epic.getId())).thenReturn(Optional.of(fixture.epic));
             when(readinessAssembler.loadEpicCandidates(fixture.epic.getId())).thenReturn(fixture.candidates());

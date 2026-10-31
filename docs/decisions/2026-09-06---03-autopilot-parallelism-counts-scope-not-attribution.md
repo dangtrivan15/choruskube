@@ -1,6 +1,6 @@
 # Autopilot occupancy is counted by scope, and that scope is deployment-defined
 
-**Status:** current
+**Status:** current; its note that epic-affinity ordering reads the Autopilot's own runs is superseded by [2026-10-31---02-autopilot-finishes-an-epic-before-the-next](2026-10-31---02-autopilot-finishes-an-epic-before-the-next.md), which removes epic affinity
 
 ## Context
 

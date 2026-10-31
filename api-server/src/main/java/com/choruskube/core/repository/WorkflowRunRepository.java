@@ -29,10 +29,9 @@ public interface WorkflowRunRepository extends JpaRepository<WorkflowRun, UUID>,
     List<WorkflowRun> findByTaskIdInOrderByCreatedAtDesc(Collection<UUID> taskIds);
 
     /**
-     * The Autopilot's live view of its own runs — slot accounting, epic affinity, and the
-     * "awaiting you" / "needs attention" lists all read from this one result. Returns entities
-     * rather than a count because the tick needs the runs themselves for the last three; the
-     * entity's {@code @SQLRestriction} keeps soft-deleted rows out.
+     * The Autopilot's live view of its own runs — the "awaiting you" / "needs attention" lists
+     * read from this one result. Returns entities rather than a count because those lists need
+     * the runs themselves; the entity's {@code @SQLRestriction} keeps soft-deleted rows out.
      */
     List<WorkflowRun> findByAutopilotIdAndStatusIn(UUID autopilotId, Collection<WorkflowRunStatus> statuses);
 
