@@ -59,6 +59,8 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
     // human's. See docs/decisions/2026-10-31---01-spec-gate-reapplies-a-revised-approval.md.
     // v53: Context and Approach draw the same mechanism before and after the change, with
     // components named and flaws and fixes numbered alike; Runtime Flow draws the end state.
+    // PR bodies follow the same shape, list operator actions only when there are some, and
+    // fold the remaining caveats into a collapsed block.
     static final int CURRENT_VERSION = 53;
 
     private static final String TEMPLATE_NAME = "Feature Development";
@@ -422,20 +424,24 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             The system-administrator handoff: actions outside the implementing
             agent's reach. Audience: a human deploying this change.
 
-            Use this exact two-column table:
+            List the actions someone must take in this table:
 
               | Action | Local (e2e) | Production |
               |---|---|---|
               | <action> | <usually "auto via compose"> | <exact step the operator runs> |
 
-            Include rows for: env vars / secrets, Ingress / DNS / networking,
-            external service configuration, post-deploy smoke verification, and any
-            other manual step. Even rows that are identical across environments
-            should appear — the table's value is making the gap legible.
+            Consider env vars / secrets, Ingress / DNS / networking, external
+            service configuration, post-deploy smoke verification, and any other
+            manual step, but give a row only to one that needs an action in at
+            least one environment. Under the table, name in one line what you
+            checked and found nothing to do for ("Checked, nothing needed: DNS,
+            external services"), so the reader can tell considered from
+            forgotten. If nothing needs an action anywhere, write that line alone,
+            without the table.
 
-            Below the table, include a free-form **"Notes for production rollout"**
+            Below that, include a free-form **"Notes for production rollout"**
             block for ordering constraints, hot-reload caveats, or rollback
-            procedure that don't fit a single row.
+            procedure that don't fit a single row. Omit it when there are none.
 
             ═══════════════════════════════════════════════════════════════════════
             Part 2: Implementation Plan (for AI implementers)
@@ -586,7 +592,8 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                Technical Decision is titled as a question and is an
                Option / Gives us / Costs us table with at least two rows, exactly
                one ✅ row, and a "Decided by" line; Caveat blocks have a
-               Disposition tag; Manual Operations has the Local/Production table.
+               Disposition tag; Manual Operations has a Local/Production row only
+               for an action, plus its "Checked, nothing needed" line.
             2. **Internal consistency**: Part 2 file changes match Expected Changed
                Files; migrations match Architecture and Technical Decisions;
                Testing Strategy matches Part 2 file-level tests.
@@ -992,61 +999,83 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                the default branch via `gh pr create`.
                - PR title: a concise summary of this repo's portion of the
                  feature.
-               - PR body, in this exact order:
+               - PR body, in this exact order. Its readers are the human who
+                 approves the merge and whoever later reaches this change from
+                 the code; the spec is not kept, so the body stands on its own,
+                 and it stays short enough to read before the diff. Every
+                 section is scoped to this repo, and a section with nothing in
+                 it is omitted: no heading, no "none" note.
 
-                 **a. Summary** — per-repo implementation summary scoped to this
-                 repo, describing what you just did. For a PUBLIC repo, describe
-                 only this repo's change and justify it on grounds that hold
-                 within this repo alone; do not explain it by reference to
-                 another repo.
+                 **a. `## Context`** — the specification's Context diagram and
+                 the numbered flaw lines this repo's change addresses.
 
-                 **b. ⚠️ Manual Operations Required** — from the specification's
-                 Manual Operations section (the Local/Production table AND the
-                 "Notes for production rollout" block), under a top-level
-                 `## ⚠️ Manual Operations Required` heading.
-                   - For a NON-PUBLIC repo: copy that section verbatim.
-                   - For a PUBLIC repo: include ONLY the operations that apply
-                     to this repo, rewritten to remove other-repo names,
-                     internal hosts, cluster/namespace detail, and internal
-                     paths. Drop rows that describe work in a non-public repo
-                     entirely — do not replace them with a placeholder row that
-                     implies one exists.
-                   - If that section is empty, absent, or nothing survives the
-                     filter, write `_No manual operations required for this change._`
-                     instead.
+                 **b. `## Approach`** — the specification's Approach diagram, the
+                 fix lines for those same numbers, and its closing paragraph
+                 trimmed to what concerns this repo. The fix lines are the
+                 summary of what changed: add no other summary and no changelog
+                 of the files.
 
-                 **c. Caveats & Known Limitations** — under a top-level
-                 `## Caveats & Known Limitations` heading, list each Caveat from
-                 the specification's Caveats section: title and Disposition tag,
-                 "What's not handled" line, "Reasoning" line, each app link
-                 written as its plain title. Caveats are
-                 cross-repo content like Manual Operations, so the same
-                 visibility rule applies: NON-PUBLIC repo
-                 gets every Caveat; PUBLIC repo gets only the Caveats that
-                 concern it, generalized to remove other-repo names and
-                 infrastructure detail, with any Caveat that exists only
-                 because a non-public repo is involved dropped entirely rather
-                 than reworded into a hint that one exists. If the Caveats
-                 section is empty, or
-                 nothing survives the filter, omit this section entirely. Mark
-                 each Future-work Caveat you proposed to the roadmap this run
-                 as `proposed to the roadmap (pending Final Approval)`, and keep
-                 the `(found during implementation)` marker on any you added.
+                 **c. `## Where to review`** — the three to seven files where
+                 this repo's change makes a decision or alters behaviour, each as
+                 `` `<path>` — <number>: <what to check there, in one phrase> ``.
+                 End with one line naming the mechanical rest (call sites,
+                 fixtures, formatting) that is safe to skim.
 
-                 **d. ❓ Open Decisions for Reviewer** — ONLY include this
-                 section if at least one Caveat is still tagged "Needs human
-                 decision". When included, render it under a top-level
-                 `## ❓ Open Decisions for Reviewer` heading: restate the open
-                 question in one sentence, list the options the spec laid out
-                 (if any), and make clear that merging implies accepting the
-                 default behavior described in the Caveat's Reasoning. Inherits
-                 the Caveats visibility filter. Omit entirely if none remain.
+                 **d. `## Test plan`** — what you ran in this repo and its
+                 result, one line per command, then one line on what CI covers
+                 that you did not run, and anything the reviewer must check by
+                 hand.
 
-                 **e. Companion PRs placeholder** — a single line:
+                 **e. `## Operator actions`** — the Production actions and
+                 rollout notes from the specification's Manual Operations that
+                 concern this repo, one bullet each: the step and when to take
+                 it. Leave out the Local column, rows with nothing to do in
+                 production, and the "Checked, nothing needed" line.
+
+                 **f. `## ❓ Open decisions`** — ONLY if at least one Caveat is
+                 still tagged "Needs human decision": restate the open question
+                 in one sentence, list the options the spec laid out (if any),
+                 and make clear that merging implies accepting the default
+                 behavior described in the Caveat's Reasoning.
+
+                 **g. Known limitations** — every other Caveat that concerns
+                 this repo, one line each, inside a collapsed block:
+
+                   <details><summary>Known limitations (N)</summary>
+
+                   - <title> — <Disposition>: <its reasoning in one clause>
+
+                   </details>
+
+                 Once the spec is gone this block is the only record of what was
+                 knowingly left out, so it keeps every such Caveat however minor.
+                 Write each app link as its plain title, mark each Future-work
+                 Caveat you proposed to the roadmap this run as `proposed to the
+                 roadmap (pending Final Approval)`, and keep the `(found during
+                 implementation)` marker on any you added.
+
+                 **h. Companion PRs placeholder** — a single line:
                  `_Companion PRs: (linked after all PRs are created)_`. OMIT
                  this placeholder entirely if this repo will have no linkable
                  companions under step 3 below (e.g. a PUBLIC repo in a run
                  whose other repos are all non-public).
+
+               - Visibility. A NON-PUBLIC repo's body carries the spec's content
+                 as it stands, numbers included, so they match the spec and the
+                 companion PRs. A PUBLIC repo's body:
+                   - Context and Approach: redraw each diagram with only
+                     components a public reader can see, or drop the diagram and
+                     keep the numbered lines. Renumber from ① with no gaps, since
+                     a gap hints at work elsewhere. Justify the change on grounds
+                     that hold within this repo alone, never by reference to
+                     another repo.
+                   - Operator actions, Open decisions and Known limitations:
+                     include ONLY the operations, decisions and Caveats that apply
+                     to this repo, rewritten to remove other-repo names, internal
+                     hosts, cluster/namespace detail and internal paths. Drop an
+                     item that describes work in, or exists only because of, a
+                     non-public repo entirely — never a placeholder that implies
+                     one exists.
 
                Record the PR URL and PR number. You may dispatch Task subagents
                to open PRs in parallel — one per repo.
@@ -1069,6 +1098,9 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                    whose repos are also PUBLIC. Never link or name a
                    non-public repo's PR from a public repo — the URL alone
                    discloses that repo's existence.
+               When the specification's rollout notes set a merge order among
+               the PRs listed, add it under the list in one line that names only
+               those PRs.
                If no companions remain listable for a public repo, omit the
                `## Companion PRs` section entirely. Do NOT write "none", "not
                applicable", or any note explaining why it is empty. PRESERVE
@@ -1083,8 +1115,8 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                  this file fully supersedes both your own prior iteration's
                  file and Code Review's for every downstream reader.
                - /workspace/out/pr_summary.md — brief summary of what was
-                 shipped. Include one-line notes if Manual Operations are
-                 required and/or if any Open Decisions for Reviewer remain.
+                 shipped. Include one-line notes if any PR carries Operator
+                 actions and/or if any Open decisions remain.
 
             Code Review runs next and will keep these PRs current as it fixes
             issues; it also opens a PR itself for any repo you didn't touch. Do
@@ -1269,25 +1301,32 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                   fails or is unclear.
                 - `gh pr create` against the default branch. PR title: a
                   concise summary of this repo's portion of the fix. PR body,
-                  in this exact order: **a. Summary** of what you fixed in
-                  this repo (generalized, no cross-repo references, if
-                  PUBLIC); **b. ⚠️ Manual Operations Required** from the Manual
-                  Operations section of the specification (verbatim for
-                  NON-PUBLIC, filtered/generalized for PUBLIC, or
-                  `_No manual operations required for this change._` if none
-                  survive); **c. Caveats & Known Limitations** from the Caveats
-                  section of the specification, each app link written as its plain
-                  title (same visibility filtering — NON-PUBLIC gets every
-                  Caveat, PUBLIC gets only the ones that concern it with any
-                  non-public-only Caveat dropped entirely, omit the section
-                  if empty); **d. ❓ Open Decisions for Reviewer**, only if a
-                  Caveat is still tagged "Needs human decision" after
-                  filtering, else omit; **e. `## Companion PRs`** populated
-                  (not a placeholder) from the sibling URLs in the known-PRs
-                  set, applying the same visibility rule (NON-PUBLIC repo's
-                  PR lists every sibling; PUBLIC repo's PR lists only PUBLIC
-                  siblings; omit the section if none survive — never a
-                  "none" note).
+                  in this exact order, scoped to this repo and short enough to
+                  read before the diff, with any empty section omitted (never
+                  a "none" note): **`## Context`** and **`## Approach`** — the
+                  specification's two diagrams with the numbered flaw and fix
+                  lines this repo's change addresses (the fix lines are the
+                  summary; no changelog); **`## Where to review`** — the three
+                  to seven files where the change decides or alters behaviour,
+                  each tagged with its number, then one line naming the
+                  mechanical rest; **`## Test plan`** — each command you ran
+                  and its result, one line each; **`## Operator actions`** —
+                  only the Production actions and rollout notes from Manual
+                  Operations that concern this repo, one bullet each;
+                  **`## ❓ Open decisions`**, only if a Caveat is still tagged
+                  "Needs human decision"; every other Caveat that concerns
+                  this repo, one line each, inside `<details><summary>Known
+                  limitations (N)</summary>` with each app link written as its
+                  plain title; **`## Companion PRs`** populated (not a
+                  placeholder) from the sibling URLs in the known-PRs set.
+                  Visibility: a NON-PUBLIC repo's PR carries the spec's
+                  content as it stands and lists every sibling. A PUBLIC
+                  repo's PR redraws the diagrams with only components a public
+                  reader can see, or keeps just the numbered lines, renumbered
+                  from ①; includes ONLY the operations, decisions and Caveats
+                  that apply to it, generalized, with any item that exists
+                  only because of a non-public repo dropped entirely; and
+                  lists only PUBLIC siblings.
                 - Register it: `register-pr --repo-id <gitRepoId> --pr-url
                   <url> --pr-number <number> --title <title> --repo-name
                   <name>` (`id` from config.json's `repos[]`).
