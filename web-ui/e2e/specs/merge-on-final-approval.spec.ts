@@ -72,20 +72,12 @@ test.describe("Merge on Final Approval", () => {
       const finalApproval = finalRun.nodeExecutions.find((ne) => ne.label === "final_approval");
       expect(finalApproval?.result ?? "").toContain("Pull requests merged on approval");
 
-      // The Worker makes the pull-request read and merge after the plan step, which trails the
-      // run's own "completed" status write, so poll rather than assume the journal already has
-      // them by the time waitForRunStatus above resolves.
-      const pullReadPattern = "/repos/.+/pulls/7001";
-      const mergePattern = "/repos/.+/pulls/7001/merge";
-      await expect(async () => {
-        const reads = await findWireMockRequests({ method: "GET", urlPattern: pullReadPattern });
-        const merges = await findWireMockRequests({ method: "PUT", urlPattern: mergePattern });
-        expect(reads.length).toBeGreaterThan(0);
-        expect(merges.length).toBeGreaterThan(0);
-      }).toPass({ timeout: 60_000 });
-
-      const reads = await findWireMockRequests({ method: "GET", urlPattern: pullReadPattern });
-      const merges = await findWireMockRequests({ method: "PUT", urlPattern: mergePattern });
+      // The Worker reads and merges before the gate completes, so the journal already has both;
+      // the journal is suite-wide, so this also holds for every other spec's PR 7001 calls.
+      const reads = await findWireMockRequests({ method: "GET", urlPattern: "/repos/.+/pulls/7001" });
+      const merges = await findWireMockRequests({ method: "PUT", urlPattern: "/repos/.+/pulls/7001/merge" });
+      expect(reads.length).toBeGreaterThan(0);
+      expect(merges.length).toBeGreaterThan(0);
       for (const req of [...reads, ...merges]) {
         expect(headerOf(req, "User-Agent")).toBe("choruskube-worker");
       }

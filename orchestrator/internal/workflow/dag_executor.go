@@ -126,9 +126,8 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 
 	var activities *activity.Activities
 
-	// Nothing else closes the run if this guard doesn't: returning an error here skips the
-	// run-status write below, and without it the run's agent steps would land on this
-	// workflow's own Temporal task queue, where every one of them fails.
+	// Without a queue every agent step would land on this workflow's own queue and fail there.
+	// The failed status is written here because returning early skips every later status write.
 	if params.WorkerTaskQueue == "" {
 		workflow.ExecuteActivity(dbCtx, activities.UpdateWorkflowRunStatus,
 			activity.UpdateRunStatusParams{RunID: params.RunID, Status: "failed"}).Get(ctx, nil)

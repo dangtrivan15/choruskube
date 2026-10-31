@@ -191,11 +191,11 @@ public class GitHubAppService {
                         new GitHubTokenMintException(422, installationId, rateLimitHints(response.headers())));
             }
             if (response.statusCode() != 201) {
-                // The body is deliberately omitted, for the reason given on createIssue: a
-                // GitHub error payload can echo the request, Authorization header included, and
-                // this message is logged. The rate-limit headers are read instead — minting is the
-                // other path a secondary rate limit arrives on, and a bare RuntimeException here
-                // used to make every such failure indistinguishable from an unreadable key.
+                // The body is deliberately omitted: a GitHub error payload can echo the request,
+                // Authorization header included, and this message is logged. The rate-limit
+                // headers are read instead — minting is the other path a secondary rate limit
+                // arrives on, and a bare RuntimeException here used to make every such failure
+                // indistinguishable from an unreadable key.
                 throw new GitHubTokenMintException(
                         response.statusCode(), installationId, rateLimitHints(response.headers()));
             }

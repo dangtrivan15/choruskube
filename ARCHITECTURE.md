@@ -162,10 +162,10 @@ On `approved`, the API validates the decision and any roadmap edit, moves the ga
 from `awaiting_human` to `finalizing`, records the approval and signals the
 workflow — no code-host call is made inside that request. The workflow then drives
 the rest of the approval one event at a time: it asks the API for a plan, and the
-Worker inspects and merges the run's registered pull requests under the same rules as
-before — inspect first, refuse the whole approval on a draft or a conflicting pull
-request, merge in registration order pinned to the head commit seen during
-inspection, and skip a pull request already closed or already merged. See
+Worker inspects and merges the run's registered pull requests — inspect first, refuse
+the whole approval on a draft or a conflicting pull request, merge in registration
+order pinned to the head commit seen during inspection, and skip a pull request
+already closed or already merged. See
 [2026-10-11---02](docs/decisions/2026-10-11---02-async-gate-finalize-on-the-worker.md)
 and [2026-10-31---03](docs/decisions/2026-10-31---03-gate-approvals-finalize-only-asynchronously.md).
 

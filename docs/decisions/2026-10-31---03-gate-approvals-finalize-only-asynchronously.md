@@ -86,8 +86,33 @@ data-plane credential rule.
 
 - **Upgrade precondition.** Before upgrading, an operator must find and cancel any open run that
   either opened a gate the old way, or may have started before every run always carried a Worker
-  task queue — the release that began always sending one (#77). Cancel such a run through the app,
+  task queue. Both queries below must return no rows. Cancel each run they list through the app,
   never by terminating its workflow directly in Temporal, so its row closes and its approvals void.
+
+  ```sql
+  -- 1. Open runs that ever opened a gate without the async marker
+  SELECT DISTINCT r.id, r.status, r.created_at
+  FROM workflow_run r
+  JOIN node_execution e  ON e.workflow_run_id = r.id
+  JOIN template_node tn  ON tn.id = e.template_node_id
+  JOIN node_definition d ON d.id = tn.node_definition_id
+  WHERE r.status IN ('pending','running','paused','awaiting_human','awaiting_retry')
+    AND d.executor_type = 'human'
+    AND e.finalize_mode IS NULL
+    AND e.status NOT IN ('pending','skipped');
+
+  -- 2. Open runs that may have started without a Worker task queue
+  SELECT id, status, created_at
+  FROM workflow_run
+  WHERE status IN ('pending','running','paused','awaiting_human','awaiting_retry')
+    AND created_at < :cutoff;
+  ```
+
+  The queue is not stored on the run, so query 2 cuts off by date: `:cutoff` is the end of the day
+  the install first ran a build containing #77, the change after which the API sends a Worker
+  task queue for every run. An install first deployed on a later build can skip query 2. Query 1
+  can also list a run whose only unmarked gate was pre-decided by a retry after it timed out (its
+  execution log reads "Human decision pre-applied"); keeping or cancelling it is equally safe.
 - **A run the precondition missed blocks its workflow task after the upgrade.** A gate opened
   before the marker fails naming the change, because Temporal's own version-removed error names
   `async-gate-finalize`; a run with no Worker task queue fails instead with a generic
@@ -105,8 +130,9 @@ data-plane credential rule.
   anything.** This is harmless, not a bug — they also hang off the token mint, which this change
   does not touch.
 - **There is still no replay-test fixture proving a pre-marker history actually fails this way.**
-  That is validated manually and by the Temporal SDK's own version-check mechanism, not by a
-  committed test.
+  The failure comes from the Temporal SDK's own version check; a unit test pins only the version
+  range the workflow asks for, and the upgrade precondition is what guarantees no such history is
+  left to replay.
 
 ## Rejected
 

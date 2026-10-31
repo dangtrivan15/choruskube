@@ -513,12 +513,9 @@ public class RunService {
                     doc);
         }
 
-        // Atomically claim the node before doing anything else. Two concurrent/duplicate
-        // submissions (double-click, two open tabs, a client retry) would otherwise both pass
-        // validation above and both independently materialize the Roadmap Provisioner candidate
-        // breakdown, silently creating duplicate Epic/Story/Task rows with nothing surfaced to the
-        // reviewer. This is a single atomic UPDATE ... WHERE status = awaiting_human — only one
-        // concurrent caller can win it; the other sees 0 rows affected and is rejected outright.
+        // Of two concurrent submissions (double-click, two open tabs, a client retry), only the one
+        // that wins this atomic UPDATE ... WHERE status = awaiting_human may signal the workflow;
+        // the other is refused rather than told a decision the workflow never acts on was applied.
         int claimed = nodeExecutionClaimService.compareAndSetStatus(
                 nodeExecId, NodeExecutionStatus.awaiting_human, NodeExecutionStatus.running);
         if (claimed == 0) {
@@ -527,9 +524,7 @@ public class RunService {
                             + "(already decided, or a concurrent request already claimed it)");
         }
 
-        // From here on, any failure (a Temporal signal failure) must release the claim back to
-        // awaiting_human so the request stays retryable — the case the claim above exists for,
-        // two concurrent/duplicate submissions racing each other, is already fully closed by it.
+        // Any failure from here releases the claim, or the gate is stranded with no decision applied.
         try {
             gateRecheck.voidPendingFor(runId, exec.getTemplateNodeId(), GateRecheckService.REVIEWER_DECIDED);
 
