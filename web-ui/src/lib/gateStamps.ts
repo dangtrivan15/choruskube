@@ -1,11 +1,9 @@
 import type { GateStampResponse, SignalResponse } from "@/lib/types";
 
-/** The toast for a submitted decision: a held approval says why it is not applied yet. */
+/** The toast for a submitted decision: `finalizing` means the workflow is still doing the gate's work. */
 export function decisionToastMessage(response: SignalResponse | undefined): string {
   if (response?.outcome === "finalizing") return "Finalizing your approval…";
-  if (response?.outcome !== "held_for_recheck") return "Decision submitted";
-  const repos = response.staleRepos.map((r) => r.repo).join(", ");
-  return `Approval held: main moved on ${repos || "this run's repos"} since it was tested. Re-checking against current main; it proceeds automatically when that passes.`;
+  return "Decision submitted";
 }
 
 /** The newest stamp for a gate, if any. Relies on the endpoint listing stamps oldest first. */
@@ -18,7 +16,7 @@ const ENDED_RUN_STATUSES = new Set(["completed", "failed", "cancelled"]);
 
 /**
  * The pending stamp anywhere in the run — what the run summary chip shows. None once the run has
- * ended: the server voids it shortly after, and an ended run gets no further event to refresh on.
+ * ended: the server voids it when the run ends, and an ended run gets no further event to refresh on.
  */
 export function pendingStamp(
   stamps: GateStampResponse[] | undefined,
