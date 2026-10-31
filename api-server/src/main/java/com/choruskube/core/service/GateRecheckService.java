@@ -8,7 +8,6 @@ import com.choruskube.core.model.GateStamp;
 import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.enums.GateStampStatus;
 import com.choruskube.core.model.enums.NodeExecutionStatus;
-import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.GateStampRepository;
 import com.choruskube.core.repository.NodeExecutionRepository;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -37,8 +36,6 @@ public class GateRecheckService {
     static final String RUN_ENDED = "The run ended before the approval was finalized.";
     static final String GATE_FAILED = "The gate failed while finalizing the approval.";
 
-    private static final List<WorkflowRunStatus> ENDED =
-            List.of(WorkflowRunStatus.completed, WorkflowRunStatus.failed, WorkflowRunStatus.cancelled);
     private static final List<GateStampStatus> LIVE = List.of(GateStampStatus.pending, GateStampStatus.finalizing);
 
     private final GateStampRepository stampRepo;
@@ -55,27 +52,6 @@ public class GateRecheckService {
         this.execRepo = execRepo;
         this.decisionOptionsResolver = decisionOptionsResolver;
         this.objectMapper = objectMapper;
-    }
-
-    @Transactional
-    public GateStamp hold(
-            UUID runId,
-            NodeExecution gate,
-            String gateLabel,
-            StampMode mode,
-            String feedback,
-            String attachmentRefs,
-            RoadmapCandidatesDocument approvedCandidates) {
-        GateStamp stamp = new GateStamp();
-        stamp.setWorkflowRunId(runId);
-        stamp.setGateTemplateNodeId(gate.getTemplateNodeId());
-        stamp.setGateLabel(gateLabel);
-        stamp.setStampedNodeExecutionId(gate.getId());
-        stamp.setStampMode(mode);
-        stamp.setFeedback(feedback);
-        stamp.setAttachmentRefs(attachmentRefs);
-        stamp.setApprovedCandidates(approvedCandidates == null ? null : write(approvedCandidates));
-        return stampRepo.save(stamp);
     }
 
     /** An approval the run's workflow is carrying out, recorded at the click. */
@@ -125,15 +101,6 @@ public class GateRecheckService {
     }
 
     @Transactional
-    public GateStamp holdAgain(UUID stampId) {
-        GateStamp stamp = stampRepo
-                .findById(stampId)
-                .orElseThrow(() -> new NotFoundException("Gate stamp not found: " + stampId));
-        stamp.setRecheckRounds(stamp.getRecheckRounds() + 1);
-        return stampRepo.save(stamp);
-    }
-
-    @Transactional
     public void consume(UUID stampId) {
         stampRepo.findByIdAndStatusIn(stampId, LIVE).ifPresent(s -> {
             s.setStatus(GateStampStatus.consumed);
@@ -152,13 +119,6 @@ public class GateRecheckService {
         stampRepo
                 .findByWorkflowRunIdAndGateTemplateNodeIdAndStatus(runId, gateTemplateNodeId, GateStampStatus.pending)
                 .forEach(s -> markVoided(s, reason));
-    }
-
-    @Transactional
-    public int voidPendingOnEndedRuns() {
-        List<GateStamp> orphaned = stampRepo.findPendingOnRunsIn(GateStampStatus.pending, ENDED);
-        orphaned.forEach(s -> markVoided(s, RUN_ENDED));
-        return orphaned.size();
     }
 
     /** Voids every approval of the run that is held or being finalized; a repeat call finds none. */
@@ -200,10 +160,6 @@ public class GateRecheckService {
         return left.size();
     }
 
-    public Optional<GateStamp> findPending(UUID stampId) {
-        return stampRepo.findByIdAndStatus(stampId, GateStampStatus.pending);
-    }
-
     /** The approval held for this gate's re-check, if any. */
     public Optional<GateStamp> findHeldFor(UUID runId, UUID gateTemplateNodeId) {
         return stampRepo
@@ -218,10 +174,6 @@ public class GateRecheckService {
                         runId, gateTemplateNodeId, GateStampStatus.finalizing)
                 .stream()
                 .findFirst();
-    }
-
-    public List<GateStamp> findReadyToReapply() {
-        return stampRepo.findPendingWithGateIn(GateStampStatus.pending, NodeExecutionStatus.awaiting_human);
     }
 
     public List<GateStamp> listForRun(UUID runId) {

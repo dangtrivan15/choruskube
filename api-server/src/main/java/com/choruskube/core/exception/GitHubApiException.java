@@ -9,52 +9,24 @@ package com.choruskube.core.exception;
  *
  * <p><strong>The message never carries the response body.</strong> GitHub echoes parts of the
  * request in some error payloads, the {@code Authorization} header among them, and this message
- * travels to the log and to a UI panel. The
- * status, the {@code owner/repo} slug and the pull request number are all a human needs to act, and
- * none of them is a secret.
+ * travels to the log and to a UI panel. The status and the {@code owner/repo} slug are all a human
+ * needs to act, and neither is a secret.
  *
- * <p>No {@code GlobalExceptionHandler} mapping, deliberately. Its callers handle it themselves —
- * {@code PullRequestMergeService}, on the approval request thread, always wraps the failure into
- * {@link PullRequestMergeException} before it can reach a controller. The handler's generic
- * {@code RuntimeException} → 500 is still the right answer for the case where one somehow escapes
- * anyway. {@link GitHubMergeRefusedException#getReason()} is the one sanctioned extract from this
- * hierarchy: GitHub's {@code message} field, already capped and scrubbed of the token.
+ * <p>No {@code GlobalExceptionHandler} mapping, deliberately. This stays an unmapped
+ * {@code RuntimeException} → 500 for the control plane's remaining callers (the token mint,
+ * {@code createIssue}, {@code compareCommits}, {@code deleteRef}), none of which reach a controller
+ * without classifying the status themselves first.
  */
 public class GitHubApiException extends RuntimeException implements GitHubRateLimited {
 
     private final int status;
     private final String ownerRepo;
-    private final int prNumber;
     private final GitHubRateLimitHints rateLimitHints;
 
-    /**
-     * For a response whose headers were not read, and for the many tests that only care about the
-     * status. Equivalent to supplying {@link GitHubRateLimitHints#NONE}, which classifies as "not a
-     * rate limit" — the safe direction, since a 403 then keeps its old persistent meaning.
-     */
-    public GitHubApiException(int status, String ownerRepo, int prNumber) {
-        this(status, ownerRepo, prNumber, GitHubRateLimitHints.NONE);
-    }
-
-    public GitHubApiException(int status, String ownerRepo, int prNumber, GitHubRateLimitHints rateLimitHints) {
-        super("GitHub returned " + status + " for " + ownerRepo + "#" + prNumber);
-        this.status = status;
-        this.ownerRepo = ownerRepo;
-        this.prNumber = prNumber;
-        this.rateLimitHints = rateLimitHints == null ? GitHubRateLimitHints.NONE : rateLimitHints;
-    }
-
-    /**
-     * For a call that operates on a branch ref rather than a pull request — {@code compareCommits}
-     * and {@code deleteRef} — where there is no PR number to report. {@code getPrNumber()} answers
-     * {@code -1} for these, which is safe: it is unread outside {@code RunPullRequestService}'s
-     * PR-specific call sites, which this exception never reaches.
-     */
     public GitHubApiException(int status, String ownerRepo, GitHubRateLimitHints rateLimitHints) {
         super("GitHub returned " + status + " for " + ownerRepo);
         this.status = status;
         this.ownerRepo = ownerRepo;
-        this.prNumber = -1;
         this.rateLimitHints = rateLimitHints == null ? GitHubRateLimitHints.NONE : rateLimitHints;
     }
 
@@ -69,9 +41,5 @@ public class GitHubApiException extends RuntimeException implements GitHubRateLi
 
     public String getOwnerRepo() {
         return ownerRepo;
-    }
-
-    public int getPrNumber() {
-        return prNumber;
     }
 }
