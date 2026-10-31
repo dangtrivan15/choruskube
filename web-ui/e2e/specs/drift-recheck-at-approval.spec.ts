@@ -65,18 +65,10 @@ test.describe("Drift re-check at approval", () => {
       expect(stamps[0].status).toBe("consumed");
       expect(stamps[0].recheckRounds).toBe(1);
 
-      // The Worker's compare call trails the run's own "completed" status write, so poll
-      // rather than assume the journal already has it by the time waitForRunStatus resolves.
-      // This User-Agent check holds for every compare in the suite — the Worker's
-      // branch-cleanup activity (see run-branch-cleanup.spec.ts) uses the same fixed string —
-      // not just the drift re-check's own compare.
-      const comparePattern = "/repos/.+/compare/.+";
-      await expect(async () => {
-        const compares = await findWireMockRequests({ method: "GET", urlPattern: comparePattern });
-        expect(compares.length).toBeGreaterThan(0);
-      }).toPass({ timeout: 60_000 });
-
-      const compares = await findWireMockRequests({ method: "GET", urlPattern: comparePattern });
+      // The re-check's compares run before the gate completes, so the journal already has them.
+      // The journal is suite-wide: this also covers the Worker's branch-cleanup compares.
+      const compares = await findWireMockRequests({ method: "GET", urlPattern: "/repos/.+/compare/.+" });
+      expect(compares.length).toBeGreaterThan(0);
       for (const req of compares) {
         expect(headerOf(req, "User-Agent")).toBe("choruskube-worker");
       }

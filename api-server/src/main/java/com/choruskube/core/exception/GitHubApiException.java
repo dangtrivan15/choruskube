@@ -12,10 +12,9 @@ package com.choruskube.core.exception;
  * travels to the log and to a UI panel. The status and the {@code owner/repo} slug are all a human
  * needs to act, and neither is a secret.
  *
- * <p>No {@code GlobalExceptionHandler} mapping, deliberately. This stays an unmapped
- * {@code RuntimeException} → 500 for the control plane's remaining callers (the token mint,
- * {@code createIssue}, {@code compareCommits}, {@code deleteRef}), none of which reach a controller
- * without classifying the status themselves first.
+ * <p>No {@code GlobalExceptionHandler} mapping, deliberately: every caller of {@code createIssue},
+ * {@code compareCommits} and {@code deleteRef} catches it itself, and one that escapes anyway is
+ * still a 500.
  */
 public class GitHubApiException extends RuntimeException implements GitHubRateLimited {
 

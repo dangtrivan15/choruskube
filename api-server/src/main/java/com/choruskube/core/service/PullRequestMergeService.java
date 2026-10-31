@@ -154,7 +154,7 @@ public class PullRequestMergeService {
                     worker.rowId());
         }
         allResults.addAll(alreadyMerged.values());
-        audit(runId, plan.method(), merged, null, heldApprovalId);
+        audit(runId, plan.method(), merged, heldApprovalId);
         return new MergeOutcome(plan.method(), allResults);
     }
 
@@ -260,17 +260,12 @@ public class PullRequestMergeService {
     }
 
     /**
-     * Records one audit event naming exactly the pull requests this attempt merged — before a
-     * refusal is thrown as well as on success — so a PR merged by an attempt that is then refused
-     * is never left unaudited. A failure writing it is logged and never changes the merge outcome:
-     * the merge it describes has already happened on GitHub.
+     * Records one audit event naming exactly the pull requests this attempt merged — whether the
+     * approval then completes or is refused — so a PR merged by an attempt that is then refused is
+     * never left unaudited. A failure writing it is logged and never changes the merge outcome: the
+     * merge it describes has already happened on GitHub.
      */
-    private void audit(
-            UUID runId,
-            PullRequestMergeMethod method,
-            List<Result> mergedThisAttempt,
-            String refusedPrUrl,
-            UUID heldApprovalId) {
+    private void audit(UUID runId, PullRequestMergeMethod method, List<Result> mergedThisAttempt, UUID heldApprovalId) {
         if (mergedThisAttempt.isEmpty()) {
             return;
         }
@@ -281,11 +276,8 @@ public class PullRequestMergeService {
                 // Links this merge to the gate_approval_held event whose re-check it completed.
                 json.put("heldApprovalId", heldApprovalId.toString());
             }
-            if (refusedPrUrl != null) {
-                json.put("refusedPullRequest", refusedPrUrl);
-            } else {
-                json.putNull("refusedPullRequest");
-            }
+            // Always null since merges moved to the Worker; kept so the event keeps the shape its readers parse.
+            json.putNull("refusedPullRequest");
             ArrayNode prs = json.putArray("pullRequests");
             for (Result r : mergedThisAttempt) {
                 ObjectNode prNode = prs.addObject();
