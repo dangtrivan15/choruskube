@@ -30,10 +30,16 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
- * Covers the deterministic-materialization contract on {@code RunService.signalHumanDecision}:
- * on an "approved" decision for a gate configured with {@code materialize: "roadmap_candidates"},
- * the reviewed breakdown is materialized via {@link RoadmapCandidateMaterializer}; otherwise
- * (rejected, or a gate without the marker) nothing is materialized at all.
+ * Covers the deterministic-materialization contract directly on {@link
+ * RunService#prepareMaterialization} and {@link RunService#materializeAndNote}: a reviewed
+ * breakdown is materialized via {@link RoadmapCandidateMaterializer} and produces the expected
+ * result note, a structural violation is rejected before anything is materialized, and an empty or
+ * missing document resolves to a fixed note without ever calling the materializer. The gate's
+ * approve-time dispatch — whether a decision reaches these methods at all, and whether it resolves
+ * an edited or an analyzer-produced document first — is {@code RunService.signalHumanDecision}'s
+ * own concern and is covered by {@code RunServiceAsyncGateTest} instead; {@link
+ * #rejectedDecision_neverMaterializes} and {@link #approvedDecisionOnNodeWithoutMaterializeMarker_neverMaterializes}
+ * keep the two cases here that never reach finalizing at all.
  */
 @ExtendWith(MockitoExtension.class)
 class RunServiceRoadmapMaterializationTest {
@@ -140,12 +146,9 @@ class RunServiceRoadmapMaterializationTest {
                 nodeExecutionClaimService,
                 null, // escalationContextResolver - unused (escalation not exercised)
                 roadmapProposalValidator,
-                null,
-                null,
-                null,
+                null, // taskSettlement
                 org.mockito.Mockito.mock(GateRecheckService.class),
-                org.mockito.Mockito.mock(
-                        GateFinalizeService.class)); // pullRequestMergeService - unused (merge not exercised)
+                org.mockito.Mockito.mock(GateFinalizeService.class));
     }
 
     private NodeExecution stubExec() {
@@ -207,49 +210,30 @@ class RunServiceRoadmapMaterializationTest {
     }
 
     @Test
-    void approvedDecisionOnMaterializeNode_materializesEditedCandidates() {
-        stubExec();
-        stubRun(MATERIALIZE_GATE_CONFIG);
+    void prepareMaterialization_runnablePlan_materializesEditedCandidates() {
         RoadmapCandidatesDocument edited = sampleCandidates();
         when(roadmapCandidateMaterializer.materialize(
                         eq(runId), eq(edited), eq(RoadmapMaterializeMode.roadmap_candidates)))
                 .thenReturn(new MaterializationSummary(
                         List.of(UUID.randomUUID()), List.of(), List.of(), List.of(), 0, List.of()));
 
-        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, edited));
+        RunService.MaterializationPlan plan =
+                service.prepareMaterialization(runId, RoadmapMaterializeMode.roadmap_candidates, edited);
+        assertThat(plan.runnable()).isTrue();
+        service.materializeAndNote(runId, plan);
 
         verify(roadmapCandidateMaterializer).materialize(runId, edited, RoadmapMaterializeMode.roadmap_candidates);
-        verifyNoInteractions(roadmapCandidatesArtifactResolver);
     }
 
     @Test
-    void approvedDecisionWithNoEditedCandidates_materializesAnalyzerArtifact() {
-        stubExec();
-        stubRun(MATERIALIZE_GATE_CONFIG);
-        RoadmapCandidatesDocument fromArtifact = sampleCandidates();
-        when(roadmapCandidatesArtifactResolver.resolve(runId, templateNodeId)).thenReturn(fromArtifact);
-        when(roadmapCandidateMaterializer.materialize(runId, fromArtifact, RoadmapMaterializeMode.roadmap_candidates))
-                .thenReturn(new MaterializationSummary(
-                        List.of(UUID.randomUUID()), List.of(), List.of(), List.of(), 0, List.of()));
-
-        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, null));
-
-        verify(roadmapCandidatesArtifactResolver).resolve(runId, templateNodeId);
-        verify(roadmapCandidateMaterializer)
-                .materialize(runId, fromArtifact, RoadmapMaterializeMode.roadmap_candidates);
-    }
-
-    @Test
-    void oneMalformedCandidateAmongSeveral_restStillMaterialize() {
-        stubExec();
-        stubRun(MATERIALIZE_GATE_CONFIG);
+    void materializeAndNote_surfacesPerCandidateFailures() {
         CandidateEpicProposal good = sampleCandidates().epics().get(0);
         CandidateEpicProposal malformed =
                 new CandidateEpicProposal(null, null, null, null, null, null, null, null, UUID.randomUUID());
         RoadmapCandidatesDocument edited = new RoadmapCandidatesDocument(null, List.of(good, malformed), null);
 
         // The materializer itself owns per-candidate best-effort behavior (see
-        // DefaultRoadmapCandidateMaterializer) — RunService just needs to pass the full
+        // DefaultRoadmapCandidateMaterializer) — materializeAndNote just needs to pass the full
         // document through and surface whatever summary comes back, unconditionally.
         when(roadmapCandidateMaterializer.materialize(runId, edited, RoadmapMaterializeMode.roadmap_candidates))
                 .thenReturn(new MaterializationSummary(
@@ -260,31 +244,32 @@ class RunServiceRoadmapMaterializationTest {
                         0,
                         List.of("Failed to materialize candidate Epic 'null': boom")));
 
-        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, edited));
+        RunService.MaterializationPlan plan =
+                service.prepareMaterialization(runId, RoadmapMaterializeMode.roadmap_candidates, edited);
+        String note = service.materializeAndNote(runId, plan);
 
         verify(roadmapCandidateMaterializer).materialize(runId, edited, RoadmapMaterializeMode.roadmap_candidates);
+        assertThat(note).contains("Skipped: Failed to materialize candidate Epic 'null': boom");
     }
 
     @Test
-    void approvedDecisionWithCandidatesEditedToEmpty_materializesEmptyDocumentInsteadOfFallingBackToArtifact() {
-        stubExec();
-        stubRun(MATERIALIZE_GATE_CONFIG);
-        // The reviewer explicitly cleared every candidate (an empty, non-null document) rather than
-        // submitting no edits at all — this must NOT fall back to the original analyzer artifact.
+    void prepareMaterialization_roadmapCandidatesMode_emptyDocumentIsStillRunnable() {
+        // An empty, non-null document (every candidate explicitly cleared) is not the "nothing
+        // submitted" case below — roadmap_candidates mode hands it to the materializer as-is.
         RoadmapCandidatesDocument empty = new RoadmapCandidatesDocument(List.of(), List.of(), List.of());
         when(roadmapCandidateMaterializer.materialize(runId, empty, RoadmapMaterializeMode.roadmap_candidates))
                 .thenReturn(new MaterializationSummary(List.of(), List.of(), List.of(), List.of(), 0, List.of()));
 
-        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, empty));
+        RunService.MaterializationPlan plan =
+                service.prepareMaterialization(runId, RoadmapMaterializeMode.roadmap_candidates, empty);
 
+        assertThat(plan.runnable()).isTrue();
+        service.materializeAndNote(runId, plan);
         verify(roadmapCandidateMaterializer).materialize(runId, empty, RoadmapMaterializeMode.roadmap_candidates);
-        verifyNoInteractions(roadmapCandidatesArtifactResolver);
     }
 
     @Test
-    void approvedDecisionOnMaterializeNode_structuralViolation_throwsAndReleasesClaim() {
-        stubExec();
-        stubRun(MATERIALIZE_GATE_CONFIG);
+    void prepareMaterialization_structuralViolation_throwsBeforeMaterializing() {
         RoadmapCandidatesDocument edited = sampleCandidates();
         when(roadmapProposalValidator.validate(
                         runId,
@@ -293,34 +278,28 @@ class RunServiceRoadmapMaterializationTest {
                         RoadmapProposalValidator.Strictness.GATE))
                 .thenReturn(List.of("epics[0]: a new epic needs at least one story"));
 
-        assertThatThrownBy(() -> service.signalHumanDecision(
-                        runId, nodeExecId, new SignalRequest("approved", null, null, edited)))
+        assertThatThrownBy(
+                        () -> service.prepareMaterialization(runId, RoadmapMaterializeMode.roadmap_candidates, edited))
                 .isInstanceOf(ValidationException.class);
 
         verifyNoInteractions(roadmapCandidateMaterializer);
-        verify(nodeExecutionClaimService)
-                .compareAndSetStatus(nodeExecId, NodeExecutionStatus.running, NodeExecutionStatus.awaiting_human);
     }
 
     @Test
-    void approvedDecisionOnExtensionGate_nothingToCreate_skipsMaterializerAndNotesNothingToCreate() {
-        stubExec();
-        stubRun("{\"terminal_decisions\":[\"approved\"],\"materialize\":\"roadmap_extension\"}");
+    void prepareMaterialization_extensionMode_nothingToCreate_skipsMaterializer() {
         RoadmapCandidatesDocument empty = new RoadmapCandidatesDocument(List.of(), List.of(), List.of());
         when(roadmapProposalValidator.summarize(empty)).thenReturn(new RoadmapProposalValidator.Summary(0, 0, 0, 0, 0));
 
-        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, empty));
+        RunService.MaterializationPlan plan =
+                service.prepareMaterialization(runId, RoadmapMaterializeMode.roadmap_extension, empty);
 
+        assertThat(plan.runnable()).isFalse();
+        assertThat(plan.fixedNote()).isEqualTo("Roadmap proposal: nothing to create");
         verifyNoInteractions(roadmapCandidateMaterializer);
-        org.mockito.ArgumentCaptor<Object> payloadCaptor = org.mockito.ArgumentCaptor.forClass(Object.class);
-        verify(workflowStub).signal(eq("human-decision-" + nodeExecId), payloadCaptor.capture());
-        assertThat(payloadCaptor.getValue().toString()).contains("Roadmap proposal: nothing to create");
     }
 
     @Test
-    void approvedDecisionOnExtensionGate_createsItems_notesExtensionApproved() {
-        stubExec();
-        stubRun("{\"terminal_decisions\":[\"approved\"],\"materialize\":\"roadmap_extension\"}");
+    void extensionMode_createsItems_notesExtensionApproved() {
         RoadmapCandidatesDocument edited = sampleCandidates();
         when(roadmapProposalValidator.summarize(edited))
                 .thenReturn(new RoadmapProposalValidator.Summary(0, 1, 1, 1, 0));
@@ -328,33 +307,27 @@ class RunServiceRoadmapMaterializationTest {
                 .thenReturn(new MaterializationSummary(
                         List.of(), List.of(UUID.randomUUID()), List.of(UUID.randomUUID()), List.of(), 0, List.of()));
 
-        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, edited));
+        RunService.MaterializationPlan plan =
+                service.prepareMaterialization(runId, RoadmapMaterializeMode.roadmap_extension, edited);
+        assertThat(plan.runnable()).isTrue();
+        String note = service.materializeAndNote(runId, plan);
 
-        org.mockito.ArgumentCaptor<Object> payloadCaptor = org.mockito.ArgumentCaptor.forClass(Object.class);
-        verify(workflowStub).signal(eq("human-decision-" + nodeExecId), payloadCaptor.capture());
-        assertThat(payloadCaptor.getValue().toString())
+        assertThat(note)
                 .contains("Roadmap extension approved: created 0 Epics, 1 Stories, 1 Tasks and 0 dependency edges");
     }
 
     @Test
-    void approvedDecisionWithNoEditsAndUnresolvableArtifact_skipsMaterializationWithoutError() {
-        stubExec();
-        stubRun(MATERIALIZE_GATE_CONFIG);
+    void prepareMaterialization_roadmapCandidatesMode_nullSource_notesSkippedWithoutError() {
         // RoadmapCandidatesArtifactResolver degrades to null (never throws) when the candidate
-        // breakdown artifact is missing or malformed — the signal must still succeed, and the
-        // gap must be visible in the result rather than silently doing nothing.
-        when(roadmapCandidatesArtifactResolver.resolve(runId, templateNodeId)).thenReturn(null);
+        // breakdown artifact is missing or malformed — the gap must be visible in the note rather
+        // than silently materializing nothing.
+        RunService.MaterializationPlan plan =
+                service.prepareMaterialization(runId, RoadmapMaterializeMode.roadmap_candidates, null);
 
-        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, null));
-
-        verify(roadmapCandidatesArtifactResolver).resolve(runId, templateNodeId);
+        assertThat(plan.runnable()).isFalse();
+        assertThat(plan.fixedNote())
+                .isEqualTo("Materialization skipped: no candidate breakdown was found for this run");
         verifyNoInteractions(roadmapCandidateMaterializer);
-        // HumanDecisionPayload is a private record internal to RunService; assert against its
-        // auto-generated toString() rather than reaching into the type directly.
-        org.mockito.ArgumentCaptor<Object> payloadCaptor = org.mockito.ArgumentCaptor.forClass(Object.class);
-        verify(workflowStub).signal(eq("human-decision-" + nodeExecId), payloadCaptor.capture());
-        assertThat(payloadCaptor.getValue().toString())
-                .contains("Materialization skipped: no candidate breakdown was found for this run");
     }
 
     @Test

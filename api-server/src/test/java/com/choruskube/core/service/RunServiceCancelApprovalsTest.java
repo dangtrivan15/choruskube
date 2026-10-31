@@ -134,7 +134,9 @@ class RunServiceCancelApprovalsTest extends BaseTest {
 
     @Test
     void cancelRun_voidsTheHeldApproval() {
-        GateStamp stamp = gateRecheck.hold(run.getId(), gateExec, "final_approval", StampMode.always, null, null, null);
+        GateStamp finalizing =
+                gateRecheck.begin(run.getId(), gateExec, "final_approval", StampMode.always, null, null, null);
+        GateStamp stamp = gateRecheck.holdFromFinalizing(finalizing.getId());
 
         runService.cancelRun(run.getId());
 

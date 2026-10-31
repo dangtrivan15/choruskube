@@ -127,7 +127,9 @@ public class HumanGateDecisionFlowTest extends BaseTest {
     void signalHumanDecision_doesNotPersistDecisionInDB() throws Exception {
         var run = createRunWithHumanGate();
 
-        // Create a node execution in awaiting_human state (simulating orchestrator behavior)
+        // Create a node execution in awaiting_human state (simulating orchestrator behavior).
+        // approve_spec_and_plan declares drift-recheck work, so an "approved" decision only
+        // proceeds here because the gate is marked async-finalizable.
         NodeExecution exec = new NodeExecution();
         exec.setWorkflowRunId(run.runId());
         exec.setTemplateNodeId(run.humanTemplateNodeId());
@@ -135,6 +137,7 @@ public class HumanGateDecisionFlowTest extends BaseTest {
         exec.setIteration(1);
         exec.setStatus(NodeExecutionStatus.awaiting_human);
         exec.setArtifactRefs("{}");
+        exec.setFinalizeMode("async");
         exec = execRepo.save(exec);
         UUID execId = exec.getId();
 
@@ -144,9 +147,10 @@ public class HumanGateDecisionFlowTest extends BaseTest {
         mockMvc.perform(post("/api/v1/runs/" + run.runId() + "/nodes/" + execId + "/signal")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(signalBody)))
-                .andExpect(status().isOk());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.outcome").value("finalizing"));
 
-        // Verify: decision is NOT persisted in DB (orchestrator does it later via SetNodeDecision)
+        // Verify: decision is NOT persisted in DB (it lands only once finalize's complete step runs)
         NodeExecution reloaded = execRepo.findById(execId).orElseThrow();
         assertThat(reloaded.getDecision())
                 .as("Decision should NOT be persisted by signalHumanDecision — orchestrator owns this now")

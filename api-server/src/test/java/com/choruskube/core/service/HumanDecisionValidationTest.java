@@ -114,12 +114,9 @@ class HumanDecisionValidationTest {
                 nodeExecutionClaimService,
                 null, // escalationContextResolver - unused (escalation not exercised)
                 null, // roadmapProposalValidator - unused (approve-time validation not exercised)
-                null,
-                null,
-                null,
+                null, // taskSettlement
                 org.mockito.Mockito.mock(GateRecheckService.class),
-                org.mockito.Mockito.mock(
-                        GateFinalizeService.class)); // pullRequestMergeService - unused (merge not exercised)
+                org.mockito.Mockito.mock(GateFinalizeService.class));
     }
 
     private NodeExecution stubExec() {
