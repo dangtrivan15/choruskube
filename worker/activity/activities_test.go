@@ -27,7 +27,17 @@ func newTestActivities(t *testing.T, captured *map[string]interface{}) *Activiti
 	t.Helper()
 	client := &mockWorkloadClient{
 		prepareFn: func(ctx context.Context, p workload.PrepareParams) (*workload.PrepareResponse, error) {
-			*captured = p.ConfigJSON
+			// Captured as JSON, the form the executor writes and the agent reads: asserting on the
+			// Go map would pass for a value that marshals to something else.
+			raw, err := json.Marshal(p.ConfigJSON)
+			if err != nil {
+				return nil, err
+			}
+			var decoded map[string]interface{}
+			if err := json.Unmarshal(raw, &decoded); err != nil {
+				return nil, err
+			}
+			*captured = decoded
 			return &workload.PrepareResponse{Image: "img"}, nil
 		},
 		completeFn: func(ctx context.Context, p workload.CompleteParams) error { return nil },
@@ -1022,11 +1032,14 @@ func TestExecuteAINodeFromSnapshot_TaskContextIncludesOpenBlockers(t *testing.T)
 	if !ok {
 		t.Fatal("task_context should be present in config.json when TaskID is set")
 	}
-	openBlockers, ok := taskContext["open_blockers"].([]map[string]interface{})
+	openBlockers, ok := taskContext["open_blockers"].([]interface{})
 	if !ok || len(openBlockers) != 1 {
 		t.Fatalf("open_blockers should have exactly one entry, got %v", taskContext["open_blockers"])
 	}
-	blocker := openBlockers[0]
+	blocker, ok := openBlockers[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("open_blockers[0] has unexpected shape: %v", openBlockers[0])
+	}
 	if blocker["item_type"] != "task" || blocker["item_id"] != blockerID.String() ||
 		blocker["title"] != "Prerequisite Task" || blocker["status"] != "in_progress" {
 		t.Fatalf("unexpected blocker contents: %v", blocker)
@@ -1097,7 +1110,7 @@ func TestExecuteAINodeFromSnapshot_IterationInConfigJson(t *testing.T) {
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), params)
 	requirePending(t, err)
 
-	if receivedConfigJSON["iteration"] != 3 {
+	if receivedConfigJSON["iteration"] != float64(3) {
 		t.Fatalf("iteration = %v, want 3", receivedConfigJSON["iteration"])
 	}
 	// Regression guard: the iteration-cap epoch machinery was removed; make sure
@@ -1566,7 +1579,7 @@ func TestConfigJSON_SupervisorEmittedOnlyWhenDeclared(t *testing.T) {
 			if !exists {
 				t.Fatal("supervisor key should be present in config.json when SupervisorLabel is set")
 			}
-			want := map[string]string{"label": tt.supervisorLabel, "name": "Supervisor"}
+			want := map[string]interface{}{"label": tt.supervisorLabel, "name": "Supervisor"}
 			if !reflect.DeepEqual(supervisor, want) {
 				t.Fatalf("supervisor = %v, want %v", supervisor, want)
 			}
