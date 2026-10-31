@@ -55,6 +55,7 @@ func (s *DAGExecutorTestSuite) TestDeniedPlacementFailsTheNodeAndSkipsDispatch()
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
 		RunID: runID, GraphVersion: 1,
+		WorkerTaskQueue: testWorkerQueue,
 	})
 
 	s.True(s.env.IsWorkflowCompleted())
@@ -105,6 +106,7 @@ func (s *DAGExecutorTestSuite) TestPlacementCheckTransportFailureFailsTheRun() {
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
 		RunID: runID, GraphVersion: 1,
+		WorkerTaskQueue: testWorkerQueue,
 	})
 
 	s.True(s.env.IsWorkflowCompleted())

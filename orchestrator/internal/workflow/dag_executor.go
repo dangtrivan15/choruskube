@@ -26,9 +26,8 @@ type DAGExecutorParams struct {
 	RunID        uuid.UUID
 	GraphVersion int
 	OrgSlug      string // Org slug for object storage path isolation; empty = legacy paths
-	// WorkerTaskQueue is where this run's agent-step activities are dispatched. Empty
-	// means the workflow's own queue, which is what a run started before this field
-	// existed recomputes on replay — so no version gate is needed here.
+	// WorkerTaskQueue is the queue for this run's Worker activities; required, and the
+	// workflow refuses a run without one.
 	WorkerTaskQueue      string
 	RunInputArtifactRefs string            // NEW: JSON string from workflow_run.input_artifact_refs; "" or "{}" = no run-level inputs
 	SingleNode           *SingleNodeParams // Deprecated: Phase 1 only
@@ -125,15 +124,23 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 	}
 	dbCtx := workflow.WithActivityOptions(ctx, dbOpts)
 
+	var activities *activity.Activities
+
+	// Nothing else closes the run if this guard doesn't: returning an error here skips the
+	// run-status write below, and without it the run's agent steps would land on this
+	// workflow's own Temporal task queue, where every one of them fails.
+	if params.WorkerTaskQueue == "" {
+		workflow.ExecuteActivity(dbCtx, activities.UpdateWorkflowRunStatus,
+			activity.UpdateRunStatusParams{RunID: params.RunID, Status: "failed"}).Get(ctx, nil)
+		return temporal.NewNonRetryableApplicationError(
+			"run has no Worker task queue", "MissingWorkerTaskQueue", nil)
+	}
+
 	// Workload activities are dispatched wherever this run's agent steps run; every other
-	// activity reads or writes app data and stays on this workflow's own queue. Leave the
-	// queue empty and Temporal uses the workflow's own — which is what a run started before
-	// WorkerTaskQueue existed recomputes on replay, so this needs no version gate.
+	// activity reads or writes app data and stays on this workflow's own queue.
 	workloadOpts := dbOpts
 	workloadOpts.TaskQueue = params.WorkerTaskQueue
 	workloadCtx := workflow.WithActivityOptions(ctx, workloadOpts)
-
-	var activities *activity.Activities
 
 	// Step 1: Mark run as running
 	if err := workflow.ExecuteActivity(dbCtx, activities.UpdateWorkflowRunStatus,
@@ -624,18 +631,12 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 					// Human node — handle via workflow-level signal
 					tracker.status = "awaiting_human"
 
-					// Version-gated: a gate opened in a history recorded before this marker replays
-					// without the held-approval claim, and the API keeps sending it one final decision.
-					// finalize_mode is how the API learns which of the two protocols this gate speaks.
-					finalizeVersion := workflow.GetVersion(ctx, "async-gate-finalize", workflow.DefaultVersion, 1)
-					// With no Worker queue the GitHub step lands on the orchestrator's stub, which fails
-					// every attempt, so each approval would be refused.
-					asyncFinalize := finalizeVersion >= 1 && params.WorkerTaskQueue != ""
-					var finalizeMode *string
-					if asyncFinalize {
-						mode := "async"
-						finalizeMode = &mode
-					}
+					// Oldest supported version is 1, so a pre-marker history fails here by name
+					// via Temporal's "removed support" error. New runs still record the marker so
+					// an older orchestrator build can still replay them.
+					workflow.GetVersion(ctx, "async-gate-finalize", 1, 1)
+					mode := asyncFinalizeMode
+					finalizeMode := &mode
 
 					// Update DB status
 					workflow.ExecuteActivity(dbCtx, activities.UpdateNodeExecutionStatus,
@@ -666,7 +667,7 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 					humanCh := workflow.GetSignalChannel(ctx, SignalHumanDecisionPrefix+execID.String())
 					workflow.Go(ctx, func(gCtx workflow.Context) {
 						waitForHumanDecision(gCtx, dbCtx, humanCh, completionCh, activities, params.RunID, execID, nodeID, timeoutSecs,
-							asyncFinalize, params.WorkerTaskQueue)
+							params.WorkerTaskQueue)
 					})
 				}
 
@@ -1553,8 +1554,7 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 // changes which activities a run's history calls at cleanup: replaying a history recorded before
 // the marker against the new path would raise a non-determinism error. With the marker, a repo's
 // branch is deleted by the Worker that served the run, with that Worker's own credential, instead
-// of by this control plane; without a Worker task queue, cleanup is skipped and the branches are
-// kept, since the API's own cleanup route is reachable only from pre-marker histories.
+// of by this control plane.
 func cleanupRunBranches(
 	ctx, dbCtx workflow.Context, logger log.Logger, activities *activity.Activities, params DAGExecutorParams,
 ) {
@@ -1563,10 +1563,6 @@ func cleanupRunBranches(
 			activity.DeleteStaleBranchesParams{RunID: params.RunID}).Get(ctx, nil); cleanErr != nil {
 			logger.Warn("stale branch cleanup failed", "runID", params.RunID, "error", cleanErr)
 		}
-		return
-	}
-	if params.WorkerTaskQueue == "" {
-		logger.Warn("no Worker task queue; run branches are kept", "runID", params.RunID)
 		return
 	}
 
@@ -1610,9 +1606,9 @@ func branchCleanupActivityOptions(workerTaskQueue string) workflow.ActivityOptio
 	}
 }
 
-// waitForHumanDecision blocks on the human-decision signal channel for a specific node. A gate
-// opened with asyncFinalize also finalizes approvals that carry an approval id, and waits again
-// when the API refuses one.
+// waitForHumanDecision blocks on the human-decision signal channel for a specific node. It
+// always finalizes approvals that carry an approval id, and waits again when the API refuses
+// one.
 func waitForHumanDecision(
 	ctx workflow.Context,
 	dbCtx workflow.Context,
@@ -1623,15 +1619,11 @@ func waitForHumanDecision(
 	execID uuid.UUID,
 	nodeID uuid.UUID,
 	timeoutSecs int,
-	asyncFinalize bool,
 	workerTaskQueue string,
 ) {
-	var finalizer *gateFinalizer
-	if asyncFinalize {
-		finalizer = newGateFinalizer(ctx, acts, runID, execID, nodeID, workerTaskQueue)
-		if held := finalizer.claimHeld(); held != "" && finalizer.settle(held, completionCh) {
-			return
-		}
+	finalizer := newGateFinalizer(ctx, acts, runID, execID, nodeID, workerTaskQueue)
+	if held := finalizer.claimHeld(); held != "" && finalizer.settle(held, completionCh) {
+		return
 	}
 
 	for {
@@ -1664,7 +1656,7 @@ func waitForHumanDecision(
 			return
 		}
 
-		if finalizer != nil && signal.ApprovalID != "" {
+		if signal.ApprovalID != "" {
 			if finalizer.settle(signal.ApprovalID, completionCh) {
 				return
 			}
@@ -1814,6 +1806,10 @@ func (f *gateFinalizer) settle(approvalID string, completionCh workflow.Channel)
 
 // gateIssuesOnWorkerChange is the version marker of the roadmap-write-then-issue-filing branch.
 const gateIssuesOnWorkerChange = "gate-issues-on-worker"
+
+// asyncFinalizeMode is the finalize_mode a human gate is opened with; the API refuses to
+// finalize an approval on a gate it did not write this marker onto.
+const asyncFinalizeMode = "async"
 
 func (f *gateFinalizer) finalize(approvalID string) (nodeCompletion, finalizeOutcome) {
 	ref := activity.GateApprovalRef{RunID: f.runID, NodeExecutionID: f.execID, ApprovalID: approvalID}
