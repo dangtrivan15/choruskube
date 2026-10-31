@@ -237,7 +237,11 @@ class FeatureDevPromptConventionsTest {
                     .as("%s: a 'nothing to do' operator section is noise", name)
                     .doesNotContain("No manual operations required for this change")
                     .as("%s: Accepted caveats have no other durable home once the spec is gone", name)
-                    .contains("<details><summary>Known limitations (N)</summary>");
+                    .contains("<details><summary>Known limitations (N)</summary>")
+                    .as("%s: caveats compare on the same attributes, so they scan as a table", name)
+                    .contains("| Caveat | Disposition | Why |")
+                    .as("%s: a pipe or code span inside a cell breaks the table", name)
+                    .contains("no code or pipe characters");
         }
         assertThat(promptField("IMPLEMENT_PROMPT").replaceAll("\\s+", " "))
                 .as("in a public PR, a gap in the numbers hints at work in a repo it must not reveal")

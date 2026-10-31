@@ -1039,20 +1039,25 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                  behavior described in the Caveat's Reasoning.
 
                  **g. Known limitations** — every other Caveat that concerns
-                 this repo, one line each, inside a collapsed block:
+                 this repo, one row each and Future work first, in a table
+                 inside a collapsed block:
 
                    <details><summary>Known limitations (N)</summary>
 
-                   - <title> — <Disposition>: <its reasoning in one clause>
+                   | Caveat | Disposition | Why |
+                   |---|---|---|
+                   | <title> | <Disposition> | <its reasoning in one phrase> |
 
                    </details>
 
-                 Once the spec is gone this block is the only record of what was
-                 knowingly left out, so it keeps every such Caveat however minor.
-                 Write each app link as its plain title, mark each Future-work
-                 Caveat you proposed to the roadmap this run as `proposed to the
-                 roadmap (pending Final Approval)`, and keep the `(found during
-                 implementation)` marker on any you added.
+                 Each cell is one phrase, with no code or pipe characters: they
+                 break the table. Once the spec is gone this block is the only
+                 record of what was knowingly left out, so it keeps every such
+                 Caveat however minor. Write each app link as its plain title. In
+                 the Disposition cell, mark each Future-work Caveat you proposed
+                 to the roadmap this run as `proposed to the roadmap (pending
+                 Final Approval)`, and keep the `(found during implementation)`
+                 marker on any you added.
 
                  **h. Companion PRs placeholder** — a single line:
                  `_Companion PRs: (linked after all PRs are created)_`. OMIT
@@ -1315,9 +1320,11 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                   Operations that concern this repo, one bullet each;
                   **`## ❓ Open decisions`**, only if a Caveat is still tagged
                   "Needs human decision"; every other Caveat that concerns
-                  this repo, one line each, inside `<details><summary>Known
-                  limitations (N)</summary>` with each app link written as its
-                  plain title; **`## Companion PRs`** populated (not a
+                  this repo as a `| Caveat | Disposition | Why |` table, Future
+                  work first, one phrase per cell with no code or pipe
+                  characters, inside `<details><summary>Known limitations
+                  (N)</summary>` with each app link written as its plain
+                  title; **`## Companion PRs`** populated (not a
                   placeholder) from the sibling URLs in the known-PRs set.
                   Visibility: a NON-PUBLIC repo's PR carries the spec's
                   content as it stands and lists every sibling. A PUBLIC
