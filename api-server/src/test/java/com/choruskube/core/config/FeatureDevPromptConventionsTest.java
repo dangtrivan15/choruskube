@@ -2,6 +2,7 @@ package com.choruskube.core.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.choruskube.core.service.GateDriftCheckService;
 import java.lang.reflect.Field;
 import org.junit.jupiter.api.Test;
 
@@ -360,6 +361,16 @@ class FeatureDevPromptConventionsTest {
                 .doesNotContain("Do NOT propose to discard the spec")
                 .contains("do not re-litigate its design choices")
                 .contains("main moved and a merged run changed what the spec relies on");
+    }
+
+    @Test
+    void specReviewKnowsARecheckApprovalReappliesUnseen() throws Exception {
+        String prompt = promptField("SPEC_REVIEW_PROMPT").replaceAll("\\s+", " ");
+        assertThat(prompt)
+                .as("the gate re-applies the held approval to a revised spec, so Spec Review must not widen it")
+                .contains("`" + GateDriftCheckService.GUIDANCE_HEADING + "`")
+                .contains("re-applied to whatever you approve without a human seeing it again")
+                .contains("Change only what reconciling the spec with what merged requires");
     }
 
     @Test

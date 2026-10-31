@@ -42,6 +42,8 @@ public class GateDriftCheckService {
 
     public static final int MAX_RECHECK_ROUNDS = 2;
 
+    public static final String GUIDANCE_HEADING = "# Re-check against current main";
+
     private static final Logger log = LoggerFactory.getLogger(GateDriftCheckService.class);
 
     public enum Reason {
@@ -197,7 +199,7 @@ public class GateDriftCheckService {
 
     /** The {@code human_guidance.md} the routed-to node reads when an approval is held. */
     public String guidance(UUID runId, DriftCheck check, int round) {
-        StringBuilder sb = new StringBuilder("# Re-check against current main\n\n")
+        StringBuilder sb = new StringBuilder(GUIDANCE_HEADING + "\n\n")
                 .append("A reviewer approved this run, but the default branch moved since it was last checked, ")
                 .append("so the approval is on hold until this re-check passes (round ")
                 .append(round)

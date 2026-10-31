@@ -827,13 +827,13 @@ class V1TemplateSeederTest extends BaseTest {
     }
 
     @Test
-    void currentVersionIsBumpedForDriftRecheck() {
-        // v51: both approval gates re-check the run against current main when approved
-        // (drift_recheck). This is the rolling version tripwire: rewrite it and bump the literal
+    void currentVersionIsBumpedForSpecGateReapplyingARevisedApproval() {
+        // v52: Approve Spec & Plan re-applies its held approval after Spec Review revises the spec
+        // (stamp: always). This is the rolling version tripwire: rewrite it and bump the literal
         // whenever CURRENT_VERSION changes, so a template edit that forgets the bump cannot ship
         // silently.
-        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(51);
-        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 51))
+        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(52);
+        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 52))
                 .isPresent();
     }
 
@@ -854,7 +854,7 @@ class V1TemplateSeederTest extends BaseTest {
 
         assertThat(approveSpec.getConfigOverrides())
                 .contains("\"loop_group\"")
-                .contains("\"drift_recheck\": {\"route\": \"rereview\", \"stamp\": \"if_unchanged\"}");
+                .contains("\"drift_recheck\": {\"route\": \"rereview\", \"stamp\": \"always\"}");
         assertThat(finalApproval.getConfigOverrides())
                 .contains("\"loop_group\"")
                 .contains("\"merge_pull_requests\": \"squash\"")
