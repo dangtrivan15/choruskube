@@ -108,9 +108,9 @@ class GitHubAppServiceTest {
     }
 
     /**
-     * Minting is the other path a rate limit arrives on, and it used to throw a bare
-     * {@code RuntimeException} with the status only interpolated into its text — indistinguishable
-     * from a private key that will not parse, so every credential failure stopped the Autopilot.
+     * A rate limit on the mint used to throw a bare {@code RuntimeException} with the status only
+     * interpolated into its text — indistinguishable from a private key that will not parse, so every
+     * credential failure stopped the Autopilot.
      */
     @Test
     void generateInstallationToken_rateLimited_throwsATypedExceptionCarryingTheHints() throws Exception {
@@ -124,6 +124,7 @@ class GitHubAppServiceTest {
                         GitHubTokenMintException e = (GitHubTokenMintException) thrown;
                         assertThat(e.getStatus()).isEqualTo(403);
                         assertThat(e.getRateLimitHints().indicatesRateLimit()).isTrue();
+                        assertThat(e.getRateLimitHints().retryAfterSeconds()).isEqualTo(30);
                         assertThat(e.getMessage()).contains("12345").doesNotContain("rate limited");
                     });
         }
@@ -303,6 +304,8 @@ class GitHubAppServiceTest {
             assertThat(github.captured().method).isEqualTo("POST");
             assertThat(github.captured().path).isEqualTo("/repos/org/backend-api/issues");
             assertThat(github.captured().authorization).isEqualTo("Bearer t0ken");
+            assertThat(new ObjectMapper().readTree(github.captured().body))
+                    .isEqualTo(new ObjectMapper().readTree("{\"title\":\"Follow-up\",\"body\":\"body text\"}"));
         }
     }
 

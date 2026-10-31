@@ -203,6 +203,7 @@ func (s *DAGExecutorTestSuite) assertBackoff(at []time.Time, want ...time.Durati
 	}
 }
 
+// The literal, not asyncFinalizeMode: a changed const must fail here, not at the API's match.
 var asyncMode = func() *string { m := "async"; return &m }()
 
 func onePRPlan() (activity.GatePlan, activity.GatePRResult) {
@@ -340,8 +341,6 @@ func (s *DAGExecutorTestSuite) TestHumanGateFinalizeWithNothingForGitHubSkipsThe
 	s.env.AssertActivityNotCalled(s.T(), "RunGateGitHubSteps", mock.Anything, mock.Anything)
 }
 
-// TestHumanGateWithoutAWorkerQueueStaysSynchronous: a run with no Worker queue has nothing to run
-// the GitHub step, so its gates open on the synchronous protocol; the version is still recorded.
 // TestHumanGateFinalizeRefusedThenReapproved: a refused approval sends the gate back to waiting
 // with a fresh full timeout, and the next approval finalizes.
 func (s *DAGExecutorTestSuite) TestHumanGateFinalizeRefusedThenReapproved() {
@@ -626,13 +625,12 @@ func (s *DAGExecutorTestSuite) TestHumanGateRunCancelledWhileFinalizing() {
 	s.env.AssertActivityNotCalled(s.T(), "CompleteGateFinalize", mock.Anything, mock.Anything)
 }
 
-// TestHumanGateOldVersionKeepsFinalSignal: a gate opened by a history recorded before the
-// version marker keeps the synchronous contract: no finalize mode, no claim, the same commands.
-// TestGateVersionCheckRefusesPreMarkerHistories pins the version range the workflow asks for: a
-// history whose gate opened before the "async-gate-finalize" marker existed must fail at the
-// call, by name, instead of drifting into a later mismatch.
+// TestGateVersionCheckRefusesPreMarkerHistories pins the version range a gate passes to GetVersion
+// for "async-gate-finalize". The SDK's own check against that range is what refuses a history
+// whose gate opened before the marker, by name at the call, instead of a later mismatch.
 func (s *DAGExecutorTestSuite) TestGateVersionCheckRefusesPreMarkerHistories() {
 	g := s.newGateRun(3600)
+	// Not .Maybe(): AfterTest's AssertExpectations is what fails a gate that skips this call.
 	s.env.OnGetVersion("async-gate-finalize", workflow.Version(1), workflow.Version(1)).Return(workflow.Version(1)).Once()
 
 	s.expectGateOpened(g)
@@ -647,11 +645,11 @@ func (s *DAGExecutorTestSuite) TestGateVersionCheckRefusesPreMarkerHistories() {
 	s.runGate(g)
 
 	s.assertCompleted()
-	s.env.AssertExpectations(s.T())
 }
 
-// TestHumanGateSignalWithoutApprovalIdOnAsyncGate_isFinal: a decision with no approval id is
-// final on an asynchronous gate too, as the API sends for everything but an approval to finalize.
+// TestHumanGateSignalWithoutApprovalIdOnAsyncGate_isFinal: a decision with no approval id, which
+// the API sends for everything but an approval to finalize, is final: it is recorded as the
+// node's decision and no finalize is planned.
 func (s *DAGExecutorTestSuite) TestHumanGateSignalWithoutApprovalIdOnAsyncGate_isFinal() {
 	g := s.newGateRun(3600)
 
@@ -889,7 +887,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateFinalizeCancelledDuringIssueStepAban
 	s.env.AssertActivityNotCalled(s.T(), "CompleteGateFinalize", mock.Anything, mock.Anything)
 }
 
-// gateWaitAlone runs one asynchronous gate's wait outside DAGExecutorWorkflow, whose loop has no
+// gateWaitAlone runs one gate's wait outside DAGExecutorWorkflow, whose loop has no
 // branch for a cancelled workflow, and reports whether the wait sent a completion.
 func gateWaitAlone(ctx workflow.Context, runID, execID, nodeID uuid.UUID) (bool, error) {
 	completionCh := workflow.NewBufferedChannel(ctx, 1)

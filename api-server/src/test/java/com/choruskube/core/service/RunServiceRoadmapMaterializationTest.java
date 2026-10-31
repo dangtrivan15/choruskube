@@ -39,13 +39,17 @@ import org.mockito.junit.jupiter.MockitoExtension;
  * an edited or an analyzer-produced document first — is {@code RunService.signalHumanDecision}'s
  * own concern and is covered by {@code RunServiceAsyncGateTest} instead; {@link
  * #rejectedDecision_neverMaterializes} and {@link #approvedDecisionOnNodeWithoutMaterializeMarker_neverMaterializes}
- * keep the two cases here that never reach finalizing at all.
+ * keep the two cases here that never hand the approval to {@link GateFinalizeService}, the only
+ * path to the materializer.
  */
 @ExtendWith(MockitoExtension.class)
 class RunServiceRoadmapMaterializationTest {
 
     @Mock
     private WorkflowRunRepository runRepo;
+
+    @Mock
+    private GateFinalizeService gateFinalize;
 
     @Mock
     private NodeExecutionRepository execRepo;
@@ -148,7 +152,7 @@ class RunServiceRoadmapMaterializationTest {
                 roadmapProposalValidator,
                 null, // taskSettlement
                 org.mockito.Mockito.mock(GateRecheckService.class),
-                org.mockito.Mockito.mock(GateFinalizeService.class));
+                gateFinalize);
     }
 
     private NodeExecution stubExec() {
@@ -337,6 +341,7 @@ class RunServiceRoadmapMaterializationTest {
 
         service.signalHumanDecision(runId, nodeExecId, new SignalRequest("rejected", null, null, sampleCandidates()));
 
+        verifyNoInteractions(gateFinalize);
         verifyNoInteractions(roadmapCandidateMaterializer);
         verifyNoInteractions(roadmapCandidatesArtifactResolver);
     }
@@ -351,6 +356,7 @@ class RunServiceRoadmapMaterializationTest {
 
         service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, sampleCandidates()));
 
+        verifyNoInteractions(gateFinalize);
         verifyNoInteractions(roadmapCandidateMaterializer);
         verifyNoInteractions(roadmapCandidatesArtifactResolver);
     }

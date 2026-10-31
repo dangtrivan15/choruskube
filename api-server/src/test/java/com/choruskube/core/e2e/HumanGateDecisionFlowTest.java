@@ -153,7 +153,7 @@ public class HumanGateDecisionFlowTest extends BaseTest {
         // Verify: decision is NOT persisted in DB (it lands only once finalize's complete step runs)
         NodeExecution reloaded = execRepo.findById(execId).orElseThrow();
         assertThat(reloaded.getDecision())
-                .as("Decision should NOT be persisted by signalHumanDecision — orchestrator owns this now")
+                .as("Decision should NOT be persisted by signalHumanDecision — finalize's complete step writes it")
                 .isNull();
 
         // Verify: the Temporal signal WAS sent with the correct payload
