@@ -54,7 +54,10 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
     // v51: Approve Spec & Plan and Final Approval re-check the run against current main when
     // approved (drift_recheck); pushes use --force-with-lease; reviews escalate drift from what
     // merged.
-    static final int CURRENT_VERSION = 51;
+    // v52: Approve Spec & Plan re-applies its held approval after Spec Review revises the spec
+    // (stamp: always), as Final Approval does; Spec Review is told its approval stands in for the
+    // human's. See docs/decisions/2026-10-31---01-spec-gate-reapplies-a-revised-approval.md.
+    static final int CURRENT_VERSION = 52;
 
     private static final String TEMPLATE_NAME = "Feature Development";
 
@@ -619,6 +622,11 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
               better) — cite the merged run's pull request.
 
             Still write `spec_and_plan.md` verbatim when you escalate — no partial fixes.
+
+            If `human_guidance.md` is the system's re-check note (it starts `# Re-check against
+            current main`), the spec is already approved, and that approval is re-applied to
+            whatever you approve without a human seeing it again. Change only what reconciling the
+            spec with what merged requires; the rules above decide when that needs a human instead.
 
             ## Reasoning requirement
 
@@ -1560,7 +1568,7 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                 nodeDefs.get("Approve Spec & Plan"),
                 "approve_spec_and_plan",
                 false,
-                "{\"loop_group\": \"spec-review\", \"drift_recheck\": {\"route\": \"rereview\", \"stamp\": \"if_unchanged\"}}",
+                "{\"loop_group\": \"spec-review\", \"drift_recheck\": {\"route\": \"rereview\", \"stamp\": \"always\"}}",
                 "[{\"template_node_label\":\"spec_review\",\"artifacts\":[{\"name\":\"spec_and_plan.md\",\"description\":\"The reviewed (and possibly revised) spec to approve\",\"required\":true},{\"name\":\"spec_review.md\",\"description\":\"reviewer notes\",\"required\":true}]}]");
 
         // Implement reads spec_and_plan.md from Spec Review (ownership transfer),
