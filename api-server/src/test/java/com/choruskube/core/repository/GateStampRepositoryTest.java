@@ -129,31 +129,6 @@ class GateStampRepositoryTest extends BaseTest {
     }
 
     @Test
-    void readyToReapply_onlyWhenTheGateIsAwaitingAgain() {
-        GateStamp stamp = stampRepo.saveAndFlush(stamp(GateStampStatus.pending));
-        gateExec.setStatus(NodeExecutionStatus.running);
-        execRepo.saveAndFlush(gateExec);
-        assertThat(stampRepo.findPendingWithGateIn(GateStampStatus.pending, NodeExecutionStatus.awaiting_human))
-                .isEmpty();
-
-        gateExec.setStatus(NodeExecutionStatus.awaiting_human);
-        execRepo.saveAndFlush(gateExec);
-        assertThat(stampRepo.findPendingWithGateIn(GateStampStatus.pending, NodeExecutionStatus.awaiting_human))
-                .extracting(GateStamp::getId)
-                .containsExactly(stamp.getId());
-    }
-
-    @Test
-    void readyToReapply_skipsAsyncGates() {
-        stampRepo.saveAndFlush(stamp(GateStampStatus.pending));
-        gateExec.setFinalizeMode("async");
-        execRepo.saveAndFlush(gateExec);
-
-        assertThat(stampRepo.findPendingWithGateIn(GateStampStatus.pending, NodeExecutionStatus.awaiting_human))
-                .isEmpty();
-    }
-
-    @Test
     void repoBase_isUniquePerExecutionAndRepo() {
         UUID repoId = UUID.randomUUID();
         baseRepo.saveAndFlush(base(repoId));

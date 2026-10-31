@@ -491,8 +491,8 @@ public class RunService {
                         "This gate was opened by a workflow that cannot finalize an approval. Cancel the run and "
                                 + "start a new one.");
             }
-            JsonNode nodeConfig = decisionOptionsResolver.findNodeConfigOverrides(
-                    snapshot.get("nodes"), exec.getTemplateNodeId());
+            JsonNode nodeConfig =
+                    decisionOptionsResolver.findNodeConfigOverrides(snapshot.get("nodes"), exec.getTemplateNodeId());
             Optional<RoadmapMaterializeMode> mode = materializeMode(snapshot, exec.getTemplateNodeId());
             RoadmapCandidatesDocument doc = mode.isEmpty()
                     ? null

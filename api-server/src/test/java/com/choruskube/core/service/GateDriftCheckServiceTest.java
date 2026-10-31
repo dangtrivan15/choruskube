@@ -1,20 +1,11 @@
 package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import com.choruskube.core.credential.GitHubCredentialResolver;
-import com.choruskube.core.exception.GateRecheckUnavailableException;
-import com.choruskube.core.exception.GitHubApiException;
-import com.choruskube.core.exception.GitHubRateLimitHints;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.NodeExecutionRepoBase;
@@ -49,8 +40,6 @@ import org.mockito.quality.Strictness;
 @MockitoSettings(strictness = Strictness.LENIENT)
 class GateDriftCheckServiceTest {
 
-    private static final String TOKEN = "drift-token";
-
     @Mock
     private NodeExecutionRepository execRepo;
 
@@ -62,12 +51,6 @@ class GateDriftCheckServiceTest {
 
     @Mock
     private RunPullRequestRepository prRepo;
-
-    @Mock
-    private GitHubCredentialResolver credentialResolver;
-
-    @Mock
-    private GitHubAppService gitHubAppService;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private GateDriftCheckService service;
@@ -81,8 +64,7 @@ class GateDriftCheckServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new GateDriftCheckService(
-                execRepo, baseRepo, gitRepoRepo, prRepo, credentialResolver, gitHubAppService, objectMapper);
+        service = new GateDriftCheckService(execRepo, baseRepo, gitRepoRepo, prRepo, objectMapper);
 
         predecessor = execution(testNodeId, started, started.plusSeconds(60));
         NodeExecution laterGate = execution(gateNodeId, started.plusSeconds(70), started.plusSeconds(80));
@@ -93,16 +75,14 @@ class GateDriftCheckServiceTest {
         repo.setId(repoId);
         repo.setUrl("https://github.com/acme/app");
         when(gitRepoRepo.findById(repoId)).thenReturn(Optional.of(repo));
-        when(credentialResolver.getTokenForRun(runId)).thenReturn(TOKEN);
     }
 
     @Test
     void current_whenCompareSaysZero() throws Exception {
         recordBase("clean", "abc1234def", "[]");
-        when(gitHubAppService.compareCommits(TOKEN, "acme/app", "abc1234def", "main"))
-                .thenReturn(0);
 
-        DriftCheck check = service.check(runId, gateNodeId, snapshot(true));
+        DriftInputs inputs = service.gather(runId, gateNodeId, snapshot(true));
+        DriftCheck check = service.classify(inputs, List.of(new CompareResult(repoId, 0, false)));
 
         assertThat(check.stale()).isFalse();
         assertThat(check.repos())
@@ -113,10 +93,9 @@ class GateDriftCheckServiceTest {
     @Test
     void mainMoved_whenAheadByPositive() throws Exception {
         recordBase("clean", "abc1234def", "[]");
-        when(gitHubAppService.compareCommits(TOKEN, "acme/app", "abc1234def", "main"))
-                .thenReturn(3);
 
-        DriftCheck check = service.check(runId, gateNodeId, snapshot(true));
+        DriftInputs inputs = service.gather(runId, gateNodeId, snapshot(true));
+        DriftCheck check = service.classify(inputs, List.of(new CompareResult(repoId, 3, false)));
 
         assertThat(check.stale()).isTrue();
         assertThat(check.staleRepos()).singleElement().satisfies(r -> {
@@ -127,22 +106,27 @@ class GateDriftCheckServiceTest {
     }
 
     @Test
-    void conflictRecord_isStaleWithFiles_andNeverCallsGitHub() throws Exception {
+    void conflictRecord_isStaleWithFiles() throws Exception {
         recordBase("conflict", null, "[\"src/a.java\",\"db/V9__x.sql\"]");
 
-        DriftCheck check = service.check(runId, gateNodeId, snapshot(true));
+        DriftInputs inputs = service.gather(runId, gateNodeId, snapshot(true));
+        DriftCheck check = service.classify(inputs, List.of());
 
         assertThat(check.staleRepos()).singleElement().satisfies(r -> {
             assertThat(r.reason()).isEqualTo(Reason.CONFLICT);
             assertThat(r.conflictedFiles()).containsExactly("src/a.java", "db/V9__x.sql");
         });
-        verify(gitHubAppService, never()).compareCommits(anyString(), anyString(), anyString(), anyString());
+        assertThat(inputs.toCompare()).isEmpty();
     }
 
     @Test
     void unavailableRecord_isStale() throws Exception {
         recordBase("unavailable", null, "[]");
-        assertThat(service.check(runId, gateNodeId, snapshot(true)).staleRepos())
+
+        DriftInputs inputs = service.gather(runId, gateNodeId, snapshot(true));
+        DriftCheck check = service.classify(inputs, List.of());
+
+        assertThat(check.staleRepos())
                 .extracting(GateDriftCheckService.RepoDrift::reason)
                 .containsExactly(Reason.UNAVAILABLE);
     }
@@ -150,57 +134,41 @@ class GateDriftCheckServiceTest {
     @Test
     void missingRecord_isStale() throws Exception {
         when(baseRepo.findByNodeExecutionId(predecessor.getId())).thenReturn(List.of());
-        assertThat(service.check(runId, gateNodeId, snapshot(true)).staleRepos())
+
+        DriftInputs inputs = service.gather(runId, gateNodeId, snapshot(true));
+        DriftCheck check = service.classify(inputs, List.of());
+
+        assertThat(check.staleRepos())
                 .extracting(GateDriftCheckService.RepoDrift::reason)
                 .containsExactly(Reason.NO_RECORD);
     }
 
     @Test
-    void compare404_isBaseGone() throws Exception {
+    void compareResult_baseGone_isClassifiedAsBaseGone() throws Exception {
         recordBase("clean", "abc1234def", "[]");
-        when(gitHubAppService.compareCommits(TOKEN, "acme/app", "abc1234def", "main"))
-                .thenThrow(new GitHubApiException(404, "acme/app", GitHubRateLimitHints.NONE));
 
-        assertThat(service.check(runId, gateNodeId, snapshot(true)).staleRepos())
+        DriftInputs inputs = service.gather(runId, gateNodeId, snapshot(true));
+        DriftCheck check = service.classify(inputs, List.of(new CompareResult(repoId, 0, true)));
+
+        assertThat(check.staleRepos())
                 .extracting(GateDriftCheckService.RepoDrift::reason)
                 .containsExactly(Reason.BASE_GONE);
     }
 
     @Test
-    void compare502_throwsUnavailable() throws Exception {
-        recordBase("clean", "abc1234def", "[]");
-        when(gitHubAppService.compareCommits(TOKEN, "acme/app", "abc1234def", "main"))
-                .thenThrow(new GitHubApiException(502, "acme/app", GitHubRateLimitHints.NONE));
-
-        assertThatThrownBy(() -> service.check(runId, gateNodeId, snapshot(true)))
-                .isInstanceOf(GateRecheckUnavailableException.class)
-                .hasMessageContaining("acme/app")
-                .hasMessageContaining("The gate is still open");
-    }
-
-    @Test
-    void credentialFailure_throwsUnavailable() throws Exception {
-        recordBase("clean", "abc1234def", "[]");
-        when(credentialResolver.getTokenForRun(runId)).thenThrow(new IllegalStateException("no credential"));
-
-        assertThatThrownBy(() -> service.check(runId, gateNodeId, snapshot(true)))
-                .isInstanceOf(GateRecheckUnavailableException.class);
-    }
-
-    @Test
     void recordedDefaultBranch_isComparedEvenWhenTheRepoSettingSaysOtherwise() throws Exception {
         recordBase("clean", "abc1234def", "[]", "trunk");
-        when(gitHubAppService.compareCommits(TOKEN, "acme/app", "abc1234def", "trunk"))
-                .thenReturn(2);
 
-        DriftCheck check = service.check(runId, gateNodeId, snapshot(true));
+        DriftInputs inputs = service.gather(runId, gateNodeId, snapshot(true));
 
+        assertThat(inputs.toCompare()).containsExactly(new CompareInput(repoId, "acme/app", "trunk", "abc1234def"));
+
+        DriftCheck check = service.classify(inputs, List.of(new CompareResult(repoId, 2, false)));
         assertThat(check.staleRepos()).singleElement().satisfies(r -> {
             assertThat(r.reason()).isEqualTo(Reason.MAIN_MOVED);
             assertThat(r.defaultBranch()).isEqualTo("trunk");
             assertThat(r.summary()).contains("2 commits behind trunk");
         });
-        verify(gitHubAppService, never()).compareCommits(anyString(), anyString(), anyString(), eq("main"));
     }
 
     @Test
@@ -208,10 +176,9 @@ class GateDriftCheckServiceTest {
         GitRepo repo = gitRepoRepo.findById(repoId).orElseThrow();
         repo.setDefaultBranch("develop");
         recordBase("clean", "abc1234def", "[]", null);
-        when(gitHubAppService.compareCommits(TOKEN, "acme/app", "abc1234def", "develop"))
-                .thenReturn(1);
 
-        DriftCheck check = service.check(runId, gateNodeId, snapshot(true));
+        DriftInputs inputs = service.gather(runId, gateNodeId, snapshot(true));
+        DriftCheck check = service.classify(inputs, List.of(new CompareResult(repoId, 1, false)));
 
         assertThat(check.staleRepos()).singleElement().satisfies(r -> {
             assertThat(r.reason()).isEqualTo(Reason.MAIN_MOVED);
@@ -223,19 +190,20 @@ class GateDriftCheckServiceTest {
     void conflictRecord_namesTheBranchThePodRebasedOnto() throws Exception {
         recordBase("conflict", null, "[\"src/a.java\"]", "trunk");
 
-        assertThat(service.check(runId, gateNodeId, snapshot(true)).staleRepos())
-                .singleElement()
-                .satisfies(r -> assertThat(r.summary()).isEqualTo("rebasing onto trunk conflicted in src/a.java"));
+        DriftInputs inputs = service.gather(runId, gateNodeId, snapshot(true));
+        DriftCheck check = service.classify(inputs, List.of());
+
+        assertThat(check.staleRepos()).singleElement().satisfies(r -> assertThat(r.summary())
+                .isEqualTo("rebasing onto trunk conflicted in src/a.java"));
     }
 
     @Test
     void humanExecutionCompletedLater_isNotThePredecessor() throws Exception {
         recordBase("clean", "abc1234def", "[]");
-        when(gitHubAppService.compareCommits(any(), any(), any(), any())).thenReturn(0);
 
-        DriftCheck check = service.check(runId, gateNodeId, snapshot(true));
+        DriftInputs inputs = service.gather(runId, gateNodeId, snapshot(true));
 
-        assertThat(check.predecessor()).isSameAs(predecessor);
+        assertThat(inputs.predecessor()).isSameAs(predecessor);
         verify(baseRepo).findByNodeExecutionId(predecessor.getId());
     }
 
@@ -247,12 +215,11 @@ class GateDriftCheckServiceTest {
         when(execRepo.findByWorkflowRunIdAndStatus(runId, NodeExecutionStatus.completed))
                 .thenReturn(List.of(predecessor, offPath, gate));
         recordBase("clean", "abc1234def", "[]");
-        when(gitHubAppService.compareCommits(TOKEN, "acme/app", "abc1234def", "main"))
-                .thenReturn(2);
 
-        DriftCheck check = service.check(runId, gateNodeId, parallelSnapshot(offPathNodeId));
+        DriftInputs inputs = service.gather(runId, gateNodeId, parallelSnapshot(offPathNodeId));
+        DriftCheck check = service.classify(inputs, List.of(new CompareResult(repoId, 2, false)));
 
-        assertThat(check.predecessor()).isSameAs(predecessor);
+        assertThat(inputs.predecessor()).isSameAs(predecessor);
         assertThat(check.staleRepos())
                 .extracting(GateDriftCheckService.RepoDrift::reason)
                 .containsExactly(Reason.MAIN_MOVED);
@@ -267,35 +234,42 @@ class GateDriftCheckServiceTest {
                 .thenReturn(List.of(offPath));
         when(baseRepo.findByNodeExecutionId(offPath.getId())).thenReturn(List.of());
 
-        DriftCheck check = service.check(runId, gateNodeId, parallelSnapshot(offPathNodeId));
+        DriftInputs inputs = service.gather(runId, gateNodeId, parallelSnapshot(offPathNodeId));
 
-        assertThat(check.predecessor()).isSameAs(offPath);
+        assertThat(inputs.predecessor()).isSameAs(offPath);
     }
 
     @Test
     void noRepos_isCurrent() throws Exception {
-        assertThat(service.check(runId, gateNodeId, snapshot(false)).stale()).isFalse();
-        verify(credentialResolver, never()).getTokenForRun(any());
+        DriftInputs inputs = service.gather(runId, gateNodeId, snapshot(false));
+        DriftCheck check = service.classify(inputs, List.of());
+
+        assertThat(check.stale()).isFalse();
     }
 
     @Test
     void noPredecessor_isCurrent() throws Exception {
         when(execRepo.findByWorkflowRunIdAndStatus(runId, NodeExecutionStatus.completed))
                 .thenReturn(List.of());
-        assertThat(service.check(runId, gateNodeId, snapshot(true)).stale()).isFalse();
+
+        DriftInputs inputs = service.gather(runId, gateNodeId, snapshot(true));
+        DriftCheck check = service.classify(inputs, List.of());
+
+        assertThat(check.stale()).isFalse();
     }
 
     @Test
     void guidance_listsStaleReposAndOtherRunsMergedPrs() throws Exception {
         recordBase("clean", "abc1234def", "[]");
-        when(gitHubAppService.compareCommits(TOKEN, "acme/app", "abc1234def", "main"))
-                .thenReturn(3);
         RunPullRequest merged = new RunPullRequest();
         merged.setPrUrl("https://github.com/acme/app/pull/9");
         merged.setTitle("Rename widget");
         when(prRepo.findMergedByOtherRunsSince(List.of(repoId), started, runId)).thenReturn(List.of(merged));
 
-        String guidance = service.guidance(runId, service.check(runId, gateNodeId, snapshot(true)), 1);
+        DriftInputs inputs = service.gather(runId, gateNodeId, snapshot(true));
+        DriftCheck check = service.classify(inputs, List.of(new CompareResult(repoId, 3, false)));
+
+        String guidance = service.guidance(runId, check, 1);
 
         assertThat(guidance)
                 .contains("`acme/app`: 3 commits behind main")
@@ -327,7 +301,6 @@ class GateDriftCheckServiceTest {
         });
         assertThat(inputs.toCompare())
                 .containsExactly(new CompareInput(cleanRepoId, "acme/lib", "trunk", "def5678abc"));
-        verifyNoInteractions(gitHubAppService, credentialResolver);
     }
 
     @Test
@@ -384,15 +357,6 @@ class GateDriftCheckServiceTest {
                 .extracting(GateDriftCheckService.RepoDrift::reason)
                 .containsExactlyInAnyOrder(Reason.NO_RECORD, Reason.CURRENT);
         assertThat(check.staleRepos()).containsExactly(known);
-    }
-
-    @Test
-    void check_mintsNoTokenWhenNothingNeedsComparing() throws Exception {
-        recordBase("conflict", null, "[]");
-
-        service.check(runId, gateNodeId, snapshot(true));
-
-        verify(credentialResolver, never()).getTokenForRun(any());
     }
 
     private void recordBase(String outcome, String sha, String files) {

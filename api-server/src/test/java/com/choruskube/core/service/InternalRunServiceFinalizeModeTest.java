@@ -157,7 +157,9 @@ class InternalRunServiceFinalizeModeTest extends BaseTest {
     @ParameterizedTest
     @ValueSource(strings = {"completed", "failed", "cancelled"})
     void runEnd_voidsHeldApproval(String terminalStatus) {
-        GateStamp stamp = gateRecheck.hold(run.getId(), gateExec, "final_approval", StampMode.always, null, null, null);
+        GateStamp stamp = gateRecheck.holdFromFinalizing(gateRecheck
+                .begin(run.getId(), gateExec, "final_approval", StampMode.always, null, null, null)
+                .getId());
 
         internalRunService.updateRunStatus(run.getId(), new InternalUpdateRunStatusRequest(terminalStatus));
 
@@ -214,7 +216,9 @@ class InternalRunServiceFinalizeModeTest extends BaseTest {
 
     @Test
     void gateFailure_voidsItsHeldApproval() {
-        GateStamp held = gateRecheck.hold(run.getId(), gateExec, "final_approval", StampMode.always, null, null, null);
+        GateStamp held = gateRecheck.holdFromFinalizing(gateRecheck
+                .begin(run.getId(), gateExec, "final_approval", StampMode.always, null, null, null)
+                .getId());
 
         internalRunService.updateNodeExecutionStatus(run.getId(), gateExec.getId(), failed());
 
@@ -243,7 +247,9 @@ class InternalRunServiceFinalizeModeTest extends BaseTest {
     void reopenedGateFailure_leavesAnApprovalHeldAtAnEarlierExecutionHeld() {
         gateExec.setStatus(NodeExecutionStatus.completed);
         gateExec = execRepo.save(gateExec);
-        GateStamp held = gateRecheck.hold(run.getId(), gateExec, "final_approval", StampMode.always, null, null, null);
+        GateStamp held = gateRecheck.holdFromFinalizing(gateRecheck
+                .begin(run.getId(), gateExec, "final_approval", StampMode.always, null, null, null)
+                .getId());
         NodeExecution reopened = reopenedGate(NodeExecutionStatus.awaiting_human);
 
         internalRunService.updateNodeExecutionStatus(run.getId(), reopened.getId(), failed());
