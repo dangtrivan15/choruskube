@@ -1,6 +1,5 @@
 package com.choruskube.core.controller;
 
-import com.choruskube.core.credential.GitHubCredentialResolver;
 import com.choruskube.core.dto.*;
 import com.choruskube.core.service.ArtifactResolutionService;
 import com.choruskube.core.service.BranchCleanupService;
@@ -12,7 +11,6 @@ import com.choruskube.core.service.RunPullRequestService;
 import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.validation.Valid;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
@@ -24,7 +22,6 @@ import org.springframework.web.bind.annotation.*;
 public class InternalRunController {
 
     private final InternalRunService service;
-    private final GitHubCredentialResolver gitHubCredentialResolver;
     private final RunPullRequestService runPullRequestService;
     private final ArtifactResolutionService artifactResolutionService;
     private final BranchCleanupService branchCleanupService;
@@ -34,7 +31,6 @@ public class InternalRunController {
 
     public InternalRunController(
             InternalRunService service,
-            GitHubCredentialResolver gitHubCredentialResolver,
             RunPullRequestService runPullRequestService,
             ArtifactResolutionService artifactResolutionService,
             BranchCleanupService branchCleanupService,
@@ -42,7 +38,6 @@ public class InternalRunController {
             InternalRoadmapProposalService roadmapProposalService,
             NodeExecutionRepoBaseService repoBaseService) {
         this.service = service;
-        this.gitHubCredentialResolver = gitHubCredentialResolver;
         this.runPullRequestService = runPullRequestService;
         this.artifactResolutionService = artifactResolutionService;
         this.branchCleanupService = branchCleanupService;
@@ -165,12 +160,6 @@ public class InternalRunController {
     @GetMapping("/{runId}/node-executions/{nodeExecId}/valid-decisions")
     public ValidDecisionsResponse getValidDecisions(@PathVariable UUID runId, @PathVariable UUID nodeExecId) {
         return new ValidDecisionsResponse(service.getValidDecisions(runId, nodeExecId));
-    }
-
-    @GetMapping("/{runId}/node-executions/{nodeExecId}/github-token")
-    public Map<String, String> getGitHubToken(@PathVariable UUID runId, @PathVariable UUID nodeExecId) {
-        service.getNodeExecution(runId, nodeExecId); // validates nodeExecId belongs to runId
-        return Map.of("token", gitHubCredentialResolver.getTokenForRun(runId));
     }
 
     /**

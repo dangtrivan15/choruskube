@@ -187,20 +187,12 @@ public class InternalAuthFilterTest extends BaseTest {
     }
 
     @Test
-    void agentToken_allowsGitHubTokenEndpoint() throws Exception {
-        // Agent token should grant access to the scoped github-token endpoint: the request must
-        // reach the resolver rather than being rejected (401/403). In the single-tenant test env no
-        // GITHUB_PAT or GitHub App is configured, so the core env resolver throws IllegalStateException
-        // (-> 500). The point is that auth passed — contrast noAuth_deniesGitHubTokenEndpoint (401).
+    void agentToken_onRemovedGitHubTokenPath_isNotFound() throws Exception {
+        // The filter still authorizes this path shape by job-secret; a 404 here proves no
+        // controller method serves a token at this address anymore.
         mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/github-token")
                         .header("Authorization", "Bearer test-agent-job-secret"))
-                .andExpect(status().is5xxServerError());
-    }
-
-    @Test
-    void noAuth_deniesGitHubTokenEndpoint() throws Exception {
-        mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/github-token"))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isNotFound());
     }
 
     // ── stale run-branch cleanup (Part 2): orchestrator-only, by construction ────────
