@@ -2,7 +2,10 @@ package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -172,6 +175,21 @@ class PullRequestMergeServiceTest {
     }
 
     @Test
+    void planMerge_listsRowsInRegistrationOrder() {
+        RunPullRequest first = pr(1, Instant.parse("2026-01-01T00:00:00Z"));
+        RunPullRequest second = pr(2, Instant.parse("2026-01-02T00:00:00Z"));
+        RunPullRequest third = pr(3, Instant.parse("2026-01-03T00:00:00Z"));
+        when(prRepo.findByWorkflowRunId(runId)).thenReturn(List.of(third, first, second));
+        stubRepo();
+
+        var plan = service().planMerge(runId, PullRequestMergeMethod.squash);
+
+        assertThat(plan.toInspect())
+                .extracting(PullRequestMergeService.PrRef::number)
+                .containsExactly(1, 2, 3);
+    }
+
+    @Test
     void planMerge_prNumberIsParsedFromUrlWhenColumnIsNull() {
         RunPullRequest pr = new RunPullRequest();
         pr.setId(UUID.randomUUID());
@@ -244,6 +262,29 @@ class PullRequestMergeServiceTest {
         assertThat(audit.get("pullRequests")).hasSize(1);
         assertThat(audit.get("pullRequests").get(0).get("prUrl").asText()).isEqualTo("u2");
         assertThat(audit.get("pullRequests").get(0).get("mergeSha").asText()).isEqualTo("mergesha2");
+    }
+
+    @Test
+    void outcomeOf_auditWriteFailure_neverChangesTheOutcome() {
+        var ref = new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#1", "u1", "org/repo", 1);
+        var plan = new PullRequestMergeService.MergePlan(
+                PullRequestMergeMethod.squash, List.of(), List.of(ref), List.of());
+        doThrow(new RuntimeException("audit store down"))
+                .when(auditSink)
+                .record(anyString(), anyString(), any(), anyString());
+
+        var outcome = service()
+                .outcomeOf(
+                        runId,
+                        plan,
+                        List.of(new PullRequestMergeService.WorkerPrResult(
+                                ref.rowId(), PullRequestMergeService.Kind.MERGED, clock.instant(), "sha")),
+                        null);
+
+        assertThat(outcome.results()).singleElement().satisfies(r -> {
+            assertThat(r.pr()).isEqualTo(ref);
+            assertThat(r.kind()).isEqualTo(PullRequestMergeService.Kind.MERGED);
+        });
     }
 
     @Test

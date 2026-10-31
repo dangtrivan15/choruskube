@@ -74,6 +74,7 @@ func (s *DAGExecutorTestSuite) TestRunWithoutAWorkerTaskQueueIsRefused() {
 	s.env.OnActivity("UpdateWorkflowRunStatus", mock.Anything, mock.MatchedBy(func(p activity.UpdateRunStatusParams) bool {
 		return p.RunID == runID && p.Status == "failed"
 	})).Return(nil).Once()
+	starts := s.recordStarts(nil)
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
 		RunID:        runID,
@@ -87,7 +88,5 @@ func (s *DAGExecutorTestSuite) TestRunWithoutAWorkerTaskQueueIsRefused() {
 	s.Require().ErrorAs(err, &appErr)
 	s.True(appErr.NonRetryable())
 	s.Equal("MissingWorkerTaskQueue", appErr.Type())
-
-	s.env.AssertActivityNotCalled(s.T(), "GetGraphRuntime", mock.Anything, mock.Anything)
-	s.env.AssertActivityNotCalled(s.T(), "InitRunLog", mock.Anything, mock.Anything)
+	s.Equal([]string{"UpdateWorkflowRunStatus"}, starts.sequence())
 }

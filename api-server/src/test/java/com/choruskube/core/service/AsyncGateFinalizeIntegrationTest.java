@@ -588,7 +588,9 @@ class AsyncGateFinalizeIntegrationTest extends BaseTest {
     }
 
     @Test
-    void rereviewDecision_neverTouchesGitHubOrTheCredential() throws Exception {
+    void rereviewDecision_signalsAFinalDecision_andMergesNothing() throws Exception {
+        RunPullRequest pr = pullRequest(12, "https://github.com/" + ownerRepo + "/pull/12");
+
         mockMvc.perform(post("/api/v1/runs/{id}/nodes/{exec}/signal", runId, gateExec.getId())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"decision\":\"rereview\"}"))
@@ -596,6 +598,11 @@ class AsyncGateFinalizeIntegrationTest extends BaseTest {
                 .andExpect(jsonPath("$.outcome").value("signaled"))
                 .andExpect(jsonPath("$.staleRepos").doesNotExist());
 
+        assertThat(execRepo.findById(gateExec.getId()).orElseThrow().getStatus())
+                .isEqualTo(NodeExecutionStatus.running);
+        assertThat(stampRepo.findByWorkflowRunIdOrderByCreatedAtAsc(runId)).isEmpty();
+        assertThat(payload()).contains("rereview").contains("approvalId=null");
+        assertThat(prRepo.findById(pr.getId()).orElseThrow().getMergedAt()).isNull();
         verifyNoInteractions(gitHubAppService, credentialResolver);
     }
 

@@ -102,7 +102,7 @@ class GateRecheckServiceLifecycleTest extends BaseTest {
     }
 
     @Test
-    void consume_onlyFromPending() {
+    void consume_leavesAVoidedApprovalVoided() {
         GateStamp stamp = service.holdFromFinalizing(
                 service.begin(run.getId(), gateExec, "final_approval", StampMode.always, null, null, null)
                         .getId());
@@ -189,6 +189,8 @@ class GateRecheckServiceLifecycleTest extends BaseTest {
         assertThat(reloaded.getStatus()).isEqualTo(GateStampStatus.finalizing);
         assertThat(reloaded.getRecheckRounds()).isZero();
         assertThat(reloaded.getStampMode()).isEqualTo(StampMode.if_unchanged);
+        assertThat(reloaded.getFeedback()).isEqualTo("ship it");
+        assertThat(reloaded.getAttachmentRefs()).isEqualTo("{\"a.pdf\":\"k\"}");
         assertThat(reloaded.getStampedNodeExecutionId()).isEqualTo(gateExec.getId());
         assertThat(reloaded.getMaterializedAt()).isNull();
         assertThat(service.findFinalizingFor(run.getId(), templateNode.getId()))
@@ -198,7 +200,7 @@ class GateRecheckServiceLifecycleTest extends BaseTest {
     }
 
     @Test
-    void holdFromFinalizing_thenClaimHeld_roundTripsAndCountsARound() {
+    void holdFromFinalizing_thenClaimHeld_roundTripsAndCountsEachRound() {
         GateStamp stamp = service.begin(run.getId(), gateExec, "final_approval", StampMode.always, null, null, null);
 
         GateStamp held = service.holdFromFinalizing(stamp.getId());
@@ -212,6 +214,8 @@ class GateRecheckServiceLifecycleTest extends BaseTest {
         assertThat(claimed.getId()).isEqualTo(stamp.getId());
         assertThat(claimed.getStatus()).isEqualTo(GateStampStatus.finalizing);
         assertThat(service.claimHeld(run.getId(), templateNode.getId())).isEmpty();
+
+        assertThat(service.holdFromFinalizing(stamp.getId()).getRecheckRounds()).isEqualTo(2);
     }
 
     @Test

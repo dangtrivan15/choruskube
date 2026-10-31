@@ -33,8 +33,8 @@ type DAGExecutorTestSuite struct {
 	// other way the gate can end a run.
 	placementError error
 	// heldApproval backs the shared ClaimHeldApproval stub (default: none held), for the same
-	// registration-order reason as placementDecision. Every gate opened on the current
-	// version asks for one, so every human-gate test needs the stub.
+	// registration-order reason as placementDecision. Every gate asks for one when it opens,
+	// so every human-gate test needs the stub.
 	heldApproval string
 	claimsMu     sync.Mutex
 	claims       []activity.GateRef
@@ -412,9 +412,9 @@ func (s *DAGExecutorTestSuite) TestHumanGateWithSignal() {
 	s.NoError(s.env.GetWorkflowError())
 }
 
-// TestHumanGateSignalSentBeforeWaitIsReceived pins that a decision signalled once the run reads
-// awaiting_human, before the gate reaches GetSignalChannel, is buffered and received: the
-// workflow claims a held approval at exactly that moment, and dropping it strands the gate.
+// TestHumanGateSignalSentBeforeWaitIsReceived: a reviewer's decision can be signalled as soon as
+// the run reads awaiting_human, before the workflow calls GetSignalChannel, so the signal must be
+// buffered; dropping it strands the gate.
 func (s *DAGExecutorTestSuite) TestHumanGateSignalSentBeforeWaitIsReceived() {
 	nodeA := uuid.New()
 	execA := uuid.New()
@@ -455,7 +455,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateSignalSentBeforeWaitIsReceived() {
 			s.env.SignalWorkflow(SignalHumanDecisionPrefix+execA.String(), HumanDecisionSignal{
 				NodeExecutionID: execA.String(),
 				Decision:        "approved",
-				Feedback:        "held approval",
+				Feedback:        "Looks good",
 			})
 		})
 	})

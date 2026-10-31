@@ -214,10 +214,10 @@ class RoadmapExtensionMaterializationIntegrationTest extends BaseTest {
     }
 
     /**
-     * Drives an approved decision all the way through {@link GateFinalizeService}'s one-step
-     * protocol (signal, then plan, then complete) — the same path the shipped gate's config
-     * (merge + drift-recheck + roadmap materialize, none of which this run's fixtures trigger)
-     * resolves to when nothing needs a Worker round trip. Returns the gate's final result note.
+     * Drives an approved decision through {@link GateFinalizeService}'s one-step protocol (signal,
+     * then plan, then complete), which writes the roadmap inside complete. These fixtures register
+     * no pull request and record no base, so the plan leaves nothing for a Worker to compare or
+     * merge. Returns the gate's final result note.
      */
     private String approveThroughFinalize(WorkflowRun run, NodeExecution exec, RoadmapCandidatesDocument edited) {
         runService.signalHumanDecision(run.getId(), exec.getId(), new SignalRequest("approved", null, null, edited));
