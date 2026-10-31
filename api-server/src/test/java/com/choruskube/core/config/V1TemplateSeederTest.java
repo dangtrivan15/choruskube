@@ -616,7 +616,7 @@ class V1TemplateSeederTest extends BaseTest {
                 .contains("Format conformance")
                 .contains("Caveat hygiene")
                 .contains("Decision soundness")
-                .contains("Idea level");
+                .contains("Before and after");
     }
 
     @Test
@@ -827,13 +827,12 @@ class V1TemplateSeederTest extends BaseTest {
     }
 
     @Test
-    void currentVersionIsBumpedForSpecGateReapplyingARevisedApproval() {
-        // v52: Approve Spec & Plan re-applies its held approval after Spec Review revises the spec
-        // (stamp: always). This is the rolling version tripwire: rewrite it and bump the literal
-        // whenever CURRENT_VERSION changes, so a template edit that forgets the bump cannot ship
-        // silently.
-        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(52);
-        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 52))
+    void currentVersionIsBumpedForBeforeAndAfterDiagrams() {
+        // v53: Context and Approach draw the same mechanism before and after the change. This is
+        // the rolling version tripwire: rewrite it and bump the literal whenever CURRENT_VERSION
+        // changes, so a template edit that forgets the bump cannot ship silently.
+        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(53);
+        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 53))
                 .isPresent();
     }
 
