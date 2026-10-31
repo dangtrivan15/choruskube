@@ -1,5 +1,6 @@
-// Package workload calls the API server's Worker workload routes — creating an agent
-// container, deleting it, and reading its logs.
+// Package workload calls the API server's Worker-facing routes: preparing and recording a
+// Worker-launched workload, node-execution reads, status and logs, and the run's GitHub
+// token/token-scope broker.
 package workload
 
 import (
@@ -26,9 +27,9 @@ type Client struct {
 }
 
 // NewClient returns a Client that authenticates every request to the API server at baseURL
-// with a Bearer token from credential. hc defaults to a 30-second-timeout client when nil:
-// CreateWorkload runs under a 30-minute activity timeout with MaximumAttempts: 1, so an unbounded
-// client would let one hung POST stall a node for 30 minutes with no retry.
+// with a Bearer token from credential. hc defaults to a 30-second-timeout client when nil: a
+// workload call made inside a long activity timeout with MaximumAttempts: 1 means an unbounded
+// client would let one hung request stall a node for the whole timeout with no retry.
 func NewClient(baseURL string, credential func() string, hc *http.Client) *Client {
 	// Fail at the wiring mistake here, rather than let the first request panic inside an activity
 	// where Temporal would retry a permanent misconfiguration.
@@ -152,57 +153,9 @@ func (c *Client) WriteExecutionLog(ctx context.Context, runID, nodeExecID uuid.U
 	})
 }
 
-type createWorkloadRequest struct {
-	TemplateNodeID uuid.UUID              `json:"templateNodeId"`
-	ConfigJSON     map[string]interface{} `json:"configJson"`
-}
-
-// CreateWorkloadResponse is the API server's response to a workload creation request.
-type CreateWorkloadResponse struct {
-	ExecutionHandle string `json:"executionHandle"`
-	JobSecretHash   string `json:"jobSecretHash"`
-}
-
-// CreateWorkloadParams contains everything needed to create a workload via the API server.
-type CreateWorkloadParams struct {
-	RunID          uuid.UUID
-	NodeExecID     uuid.UUID
-	TemplateNodeID uuid.UUID
-	ConfigJSON     map[string]interface{}
-}
-
-// CreateWorkload delegates container creation to the API server. The API server
-// resolves infrastructure details (image, namespace, secrets, docker config,
-// identity) from the stored graph snapshot and atomically creates the container.
-func (c *Client) CreateWorkload(ctx context.Context, params CreateWorkloadParams) (*CreateWorkloadResponse, error) {
-	body := createWorkloadRequest{
-		TemplateNodeID: params.TemplateNodeID,
-		ConfigJSON:     params.ConfigJSON,
-	}
-	path := workloadPath(params.RunID, params.NodeExecID)
-	resp, err := c.doJSON(ctx, http.MethodPost, path, body)
-	if err != nil {
-		return nil, fmt.Errorf("create workload: %w", err)
-	}
-	var result CreateWorkloadResponse
-	if err := json.Unmarshal(resp, &result); err != nil {
-		return nil, fmt.Errorf("unmarshal create workload response: %w", err)
-	}
-	return &result, nil
-}
-
-// CleanupWorkload removes all resources associated with a completed execution.
-func (c *Client) CleanupWorkload(ctx context.Context, runID, nodeExecID uuid.UUID) error {
-	_, err := c.doJSON(ctx, http.MethodDelete, workloadPath(runID, nodeExecID), nil)
-	if err != nil {
-		return fmt.Errorf("cleanup workload: %w", err)
-	}
-	return nil
-}
-
-// prepareWorkloadRequest mirrors createWorkloadRequest: the API server resolves EnableDocker in
-// PrepareResponse from ConfigJSON's executor_type, so prepare must send the same config a create
-// call would, not just the template node id.
+// prepareWorkloadRequest is the template node a Worker will launch and the config.json it will
+// launch with. The API server resolves EnableDocker in PrepareResponse from ConfigJSON's own
+// executor_type setting.
 type prepareWorkloadRequest struct {
 	TemplateNodeID uuid.UUID              `json:"templateNodeId"`
 	ConfigJSON     map[string]interface{} `json:"configJson"`
@@ -231,7 +184,6 @@ type PrepareResponse struct {
 	// older API server) decodes as false, so a version skew caps rather than uncaps.
 	MemoryCeilingExempt bool                 `json:"memoryCeilingExempt"`
 	ClaudeOAuthToken    string               `json:"claudeOAuthToken"`
-	GitHubTokenURL      string               `json:"githubTokenUrl"`
 	Registry            *RegistryCredentials `json:"registryCredentials"`
 	Namespace           string               `json:"namespace"`
 	ServiceAccount      string               `json:"serviceAccount"`
@@ -247,8 +199,7 @@ type PrepareParams struct {
 }
 
 // PrepareWorkload resolves everything a Worker needs to launch this workload itself — image,
-// credentials, and identity — without the API server launching the container. It is the
-// counterpart to CreateWorkload for the case where the Worker runs the container.
+// credentials, and identity.
 func (c *Client) PrepareWorkload(ctx context.Context, params PrepareParams) (*PrepareResponse, error) {
 	body := prepareWorkloadRequest{
 		TemplateNodeID: params.TemplateNodeID,
@@ -282,8 +233,7 @@ type CompleteParams struct {
 }
 
 // CompleteWorkload records the pod name and job secret hash for a workload the Worker launched
-// itself, and transitions the node execution to running. It mirrors the DB-write tail
-// CreateWorkload performs atomically when the API server is the one launching the container.
+// itself, and transitions the node execution to running.
 func (c *Client) CompleteWorkload(ctx context.Context, params CompleteParams) error {
 	body := CompleteRequest{PodName: params.PodName, JobSecretHash: params.JobSecretHash}
 	path := workloadPath(params.RunID, params.NodeExecID) + "/complete"
@@ -328,20 +278,4 @@ func (c *Client) GitHubTokenScope(ctx context.Context, runID uuid.UUID) ([]strin
 		return nil, nil, errors.New("get github token scope: response is not the expected JSON")
 	}
 	return result.Repositories, result.Permissions, nil
-}
-
-// GetWorkloadLogs returns recent log output from the agent container.
-func (c *Client) GetWorkloadLogs(ctx context.Context, runID, nodeExecID uuid.UUID, tailLines int) (string, error) {
-	path := workloadPath(runID, nodeExecID) + fmt.Sprintf("/logs?tailLines=%d", tailLines)
-	resp, err := c.doJSON(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return "", fmt.Errorf("get workload logs: %w", err)
-	}
-	var result struct {
-		Logs string `json:"logs"`
-	}
-	if err := json.Unmarshal(resp, &result); err != nil {
-		return "", fmt.Errorf("unmarshal workload logs: %w", err)
-	}
-	return result.Logs, nil
 }

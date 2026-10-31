@@ -23,6 +23,7 @@ func TestConfigValidate(t *testing.T) {
 				CallbackURL:      "http://cb",
 				Provider:         stubProvider{},
 				CredentialSource: CredentialSourceControlPlane,
+				Executor:         nopExecutor{},
 			},
 			"",
 		},
@@ -34,6 +35,17 @@ func TestConfigValidate(t *testing.T) {
 			"no credential source",
 			Config{TemporalAddress: "t:7233", APIServerURL: "http://a", CallbackURL: "http://cb", Provider: stubProvider{}},
 			"CredentialSource is required",
+		},
+		{
+			"no executor",
+			Config{
+				TemporalAddress:  "t:7233",
+				APIServerURL:     "http://a",
+				CallbackURL:      "http://cb",
+				Provider:         stubProvider{},
+				CredentialSource: CredentialSourceControlPlane,
+			},
+			"Executor is required",
 		},
 	}
 	for _, tc := range cases {
