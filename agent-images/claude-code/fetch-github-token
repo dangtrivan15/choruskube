@@ -1,11 +1,11 @@
 #!/bin/bash
-# fetch-github-token — fetch a fresh GitHub installation token from the API server.
+# fetch-github-token — fetch a fresh GitHub installation token from the Worker that launched this agent.
 #
 # Usage: fetch-github-token
 #
-# Retrieves a short-lived GitHub installation token from the ChorusKube API
-# server. The token is printed to stdout and can be used for git operations
-# or the GitHub CLI (`gh`).
+# Retrieves a short-lived GitHub installation token from the Worker that
+# launched this agent pod. The token is printed to stdout and can be used
+# for git operations or the GitHub CLI (`gh`).
 #
 # Environment:
 #   GITHUB_TOKEN_URL  — GET endpoint that returns {"token":"..."}

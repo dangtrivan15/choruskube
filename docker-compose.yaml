@@ -154,7 +154,6 @@ services:
       # Single-tenant OSS mode: no OIDC provider. /api/v1/** is open and every
       # request is scoped to the seeded system org (see NoAuthConfigurer + TenantFilter).
       AUTH_ENABLED: "false"
-      API_SERVER_URL: http://api-server:8080
       ORCHESTRATOR_SECRET_HASH: fcb34c11ecbf6914ad43903e539ade6901f864d9772c36e63a78c2488cd0958a
       # DEFAULT_AGENT_IMAGE / CHORUSKUBE_REPO_AGENT_IMAGE are intentionally UNSET —
       # they resolve to the public defaults in application.properties
