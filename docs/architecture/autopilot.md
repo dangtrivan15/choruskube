@@ -154,32 +154,41 @@ ancestor). One definition of "ready", used by the board, the manual Start button
 Autopilot alike.
 
 Ordering comes from
-[`TaskOrderingStrategy.comparator`](../../api-server/src/main/java/com/choruskube/core/service/TaskOrderingStrategy.java),
-in this exact order:
+[`TaskOrderingStrategy.comparator`](../../api-server/src/main/java/com/choruskube/core/service/TaskOrderingStrategy.java).
+It picks an Epic, then a Story inside that Epic, then a Task inside that Story, so every
+Task of the chosen Epic sorts ahead of any other Epic's, and the Autopilot finishes one
+Epic before it starts the next one of equal rank.
 
-| # | Key | Direction | Note |
-|---|---|---|---|
-| 1 | Epic priority | descending | `Priority` is declared `low, medium, high`, so every priority comparison is explicitly reversed; a null priority ranks as `medium` |
-| 2 | Story priority | descending | |
-| 3 | Story target date | ascending, **nulls last** | undated work is not urgent work (`LocalDate.MAX`) |
-| 4 | Epic target date | ascending, nulls last | after the Story's: the narrower scope is the more specific signal |
-| 5 | Task `created_at` | ascending, nulls last | |
-| 6 | Task `id` | ascending | final deterministic tiebreak |
+| Level | Keys, in order |
+|---|---|
+| Epic | priority desc → target date asc, nulls last → started first → `created_at` → `id` |
+| Story (within its Epic) | priority desc → target date asc, nulls last → started first → `created_at` → `id` |
+| Task (within its Story) | priority desc → `created_at`, nulls last → `id` |
 
-**Epic affinity is deliberately not in the comparator.** It depends on what is currently
-in flight, so `AutopilotService.applyEpicAffinity` applies it afterwards as a *stable
-partition* of the comparator's output: Tasks whose Epic already has a run occupying a
-slot move ahead, relative order preserved inside each group.
+- `Priority` is declared `low, medium, high`, so every priority comparison is explicitly
+  reversed; a null priority ranks as `medium`. Undated work is not urgent work
+  (`LocalDate.MAX`).
+- **Started** means one of the Epic's or Story's Tasks is past `backlog`. It is computed
+  from the frontier sweep's own Task rows, so it needs no run lookup, and it survives a
+  run parking on a human gate.
+- **A target date ranks above started.** The date is the user's explicit signal; started
+  is only inferred from progress.
+- **Each level ends on its own `id`, not on a Task key.** With three priority levels a
+  tie is the common case, and a tie broken by Task age interleaves Epics one Task at a
+  time. The trailing ids also make the pick deterministic across ticks and replicas,
+  which matters because `maxParallel` defaults to 1: with every prior key tied, which
+  Task is picked is the entire user-visible behaviour of a tick.
 
-Key 6 exists because `maxParallel` defaults to 1: with every prior key tied, which Task
-is picked is the entire user-visible behaviour of a tick, so it must be deterministic
-across ticks and across replicas rather than left to sort stability.
+When the chosen Epic has nothing READY — its next Task waits on a run parked at a human
+gate — the Autopilot starts the next Epic's Task rather than leaving the slot idle.
 
 Explicit priority was chosen over critical-path ordering (prefer the Task that unblocks
 the most downstream work) even though critical-path is throughput-optimal, because it
 cannot be predicted by looking at the board without mentally computing downstream
 fan-out. For something that runs unattended, predictability is worth more than a few
-percent of throughput; affinity captures most of the practical benefit anyway.
+percent of throughput; finishing one Epic at a time captures most of the practical
+benefit anyway. See
+[2026-10-31---02-autopilot-finishes-an-epic-before-the-next](../decisions/2026-10-31---02-autopilot-finishes-an-epic-before-the-next.md).
 
 ### `maxParallel` counts live agent pods only
 
