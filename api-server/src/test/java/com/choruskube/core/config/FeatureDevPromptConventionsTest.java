@@ -193,14 +193,70 @@ class FeatureDevPromptConventionsTest {
     }
 
     @Test
-    void specPromptOpensAtTheLevelOfTheIdea() throws Exception {
+    void specPromptDrawsTheMechanismBeforeAndAfter() throws Exception {
         String collapsed = promptField("SPEC_AND_PLAN_PROMPT").replaceAll("\\s+", " ");
         assertThat(collapsed)
-                .as("without a checkable bar, the opening sections drift back into implementation detail")
-                .contains("strip every component, class, endpoint and table name")
-                .contains("If the reasoning still holds, it is at the level of the idea")
-                .as("an invented pattern name misleads the reader more than plain words")
-                .contains("never invent a name to fill the slot");
+                .as("without paired numbers, a flaw can go unanswered or a fix arrive with no need shown")
+                .contains("Mark each flaw where it sits on the diagram")
+                .contains("each fix at the number of the flaw it closes")
+                .contains("Every flaw has a fix, or a Caveat")
+                .as("classDef styles only nodes, and edge classes need syntax older mermaid cannot parse")
+                .contains("a removed edge is `-.->`")
+                .as("two independently laid-out diagrams cannot be compared by eye")
+                .contains("keeping its node ids and their order")
+                .as("paraphrasing components the reviewer knows by name costs precision and length")
+                .contains("named as the codebase names them")
+                .doesNotContain("strip every component, class, endpoint and table name")
+                .as("an empty pattern slot filled with a sentence is padding")
+                .contains("never write that none fits");
+    }
+
+    @Test
+    void manualOperationsListsOnlyActions() throws Exception {
+        String collapsed = promptField("SPEC_AND_PLAN_PROMPT").replaceAll("\\s+", " ");
+        assertThat(collapsed)
+                .as("rows with nothing to do bury the few steps an operator must take")
+                .contains("give a row only to one that needs an action")
+                .doesNotContain("Even rows that are identical across environments should appear")
+                .as("without the checked line, a missing row reads the same as a forgotten one")
+                .contains("Checked, nothing needed");
+    }
+
+    @Test
+    void prBodyMirrorsTheSpecAndOmitsWhatIsEmpty() throws Exception {
+        for (String name : new String[] {"IMPLEMENT_PROMPT", "CODE_REVIEW_PROMPT"}) {
+            String collapsed = promptField(name).replaceAll("\\s+", " ");
+            assertThat(collapsed)
+                    .as("%s: the PR body follows the spec's opening so the reviewer sees one picture", name)
+                    .contains("## Context")
+                    .contains("## Approach")
+                    .contains("## Where to review")
+                    .contains("## Test plan")
+                    .as("%s: a fix-line summary plus a changelog retells the change twice", name)
+                    .contains("no changelog")
+                    .as("%s: a 'nothing to do' operator section is noise", name)
+                    .doesNotContain("No manual operations required for this change")
+                    .as("%s: Accepted caveats have no other durable home once the spec is gone", name)
+                    .contains("<details><summary>Known limitations (N)</summary>")
+                    .as("%s: caveats compare on the same attributes, so they scan as a table", name)
+                    .contains("| Caveat | Disposition | Why |")
+                    .as("%s: a pipe or code span inside a cell breaks the table", name)
+                    .contains("no code or pipe characters");
+        }
+        assertThat(promptField("IMPLEMENT_PROMPT").replaceAll("\\s+", " "))
+                .as("in a public PR, a gap in the numbers hints at work in a repo it must not reveal")
+                .contains("Renumber from ① with no gaps");
+    }
+
+    @Test
+    void runtimeFlowDrawsTheEndStateWithoutRedrawingApproach() throws Exception {
+        String collapsed = promptField("SPEC_AND_PLAN_PROMPT").replaceAll("\\s+", " ");
+        assertThat(collapsed)
+                .as("Runtime Flow is the only diagram that merges into ARCHITECTURE.md, so it stays required")
+                .contains("REQUIRED, not optional. It is the one diagram that outlives the run")
+                .as("a flaw number in ARCHITECTURE.md points at a spec the reader cannot open")
+                .contains("carry none of its flaw numbers")
+                .contains("never redraw the Approach diagram");
     }
 
     @Test

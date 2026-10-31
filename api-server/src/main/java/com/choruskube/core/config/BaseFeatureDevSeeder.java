@@ -57,7 +57,11 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
     // v52: Approve Spec & Plan re-applies its held approval after Spec Review revises the spec
     // (stamp: always), as Final Approval does; Spec Review is told its approval stands in for the
     // human's. See docs/decisions/2026-10-31---01-spec-gate-reapplies-a-revised-approval.md.
-    static final int CURRENT_VERSION = 52;
+    // v53: Context and Approach draw the same mechanism before and after the change, with
+    // components named and flaws and fixes numbered alike; Runtime Flow draws the end state.
+    // PR bodies follow the same shape, list operator actions only when there are some, and
+    // fold the remaining caveats into a collapsed block.
+    static final int CURRENT_VERSION = 53;
 
     private static final String TEMPLATE_NAME = "Feature Development";
 
@@ -151,31 +155,63 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
 
             ## 1. Context
 
-            Why this change exists, in plain words: the business need or the
-            technical gap, at the level of the idea. Start from what works today and
-            show what it cannot do, so the reader feels the gap before any solution
-            appears. Close with the user-visible outcome in one or two sentences and
-            a one-line list of repos touched. No solution yet.
+            Your reader knows the system and is about to judge a change to it. Show
+            them how the part this change touches works today, and what is wrong
+            with it, before any solution appears. One or two sentences may frame the
+            need before the diagram.
+
+            Draw that mechanism as it works today, as one mermaid `flowchart` of
+            about ten nodes or fewer. Its nodes are the components a reviewer knows
+            by name (a service, a Worker, a queue, an agent container, a user),
+            named as the codebase names them; edge labels say in words what passes
+            between them. Endpoints, classes, fields and tables belong in
+            Architecture. Draw what the change touches plus one step of context on
+            either side, at the level where today and the proposal differ: the flow
+            of calls for a change to what runs (removals included), who depends on
+            whom for a restructuring, and today's path up to where it falls short
+            for a new capability.
+
+            Mark each flaw where it sits on the diagram, as a node or edge label
+            numbered ①, ②, ③; a flaw that sits in several places carries its
+            number at each. Under the diagram, give each number one sentence: the
+            flaw, then what it costs and whom. A flaw without its cost reads as a
+            preference.
+
+            Close with the outcome in one or two sentences, for whoever the change
+            reaches (users, operators or maintainers), and a one-line list of repos
+            touched. No solution yet.
 
             ## 2. Approach
 
-            The idea that closes the gap: the chain of reasoning from problem to
-            solution, and how the parts hand work to each other — still at the level
-            of the idea. Say what makes it work. Name the pattern when a real one
-            applies, together with what makes it that pattern ("the gate is an
-            outbox: it records the intent in the same transaction, and a later step
-            delivers it"). If no named pattern fits, say what it is in plain terms;
-            never invent a name to fill the slot.
+            Redraw the Context diagram as it works after the change, keeping its
+            node ids and their order so mermaid lays both out alike and the reader
+            sees a before and an after. Mark what the change removes as dashed and
+            what it adds as heavy, using only mermaid's built-in strokes so the
+            diagram renders in every viewer and theme: a removed edge is `-.->`, an
+            added edge `==>`, and a node takes `classDef removed
+            stroke-dasharray:5 5` or `classDef added stroke-width:3px`. A changed
+            edge keeps its arrow and says the change in its label. Put each fix at
+            the number of the flaw it closes. Under the diagram, give each number
+            one sentence: what changes, and why that closes the flaw.
 
-            Include one small mermaid `flowchart` of that chain: roles and steps,
-            not files, endpoints or tables, in about ten nodes or fewer.
+            Then, in one short paragraph, say what no single number carries: the
+            principle the fixes share, what deliberately stays, and why the change
+            is safe to ship as designed — what keeps in-flight work, older
+            components and stored data correct. Name the pattern when a real one applies, together with what
+            makes it that pattern ("the gate is an outbox: it records the intent in
+            the same transaction, and a later step delivers it"). When none applies,
+            leave the slot out: never invent a name, and never write that none fits.
 
-            The bar for Context and Approach: strip every component, class, endpoint
-            and table name from them. If the reasoning still holds, it is at the
-            level of the idea. If it collapses, you described the implementation —
-            move that detail to Architecture. Introduce a new term only after the
-            idea it names is clear, as a label for it, never as a definition the
-            reader must take on trust.
+            The numbers pair the two sections. Every flaw has a fix, or a Caveat
+            that says why it stays; a fix with no flaw behind it is scope the reader
+            was never shown a need for. One fix may close several flaws: give it
+            each of their numbers. A change made only because a fix requires it (a
+            field that carried what a fix removes, a library only the removed code
+            used) rides on that fix's number rather than getting a flaw of its own.
+
+            The diagrams carry the mechanism, so the lines under them do not retell
+            it. A reviewer who reads only the two diagrams and their numbered lines
+            should know what changes and why.
 
             ## 3. Architecture
 
@@ -192,13 +228,20 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             - A reference to a Technical Decision by number when the seam embodies
               that choice (e.g., "Reflects Decision 2").
             - OPTIONAL: a small mermaid `flowchart` showing static topology, ONLY
-              when the seam involves ≥3 components OR crosses a trust boundary. Skip
+              when the seam involves ≥3 components OR crosses a trust boundary, and
+              only to zoom into the seam: never redraw the Approach diagram. Skip
               it if prose suffices.
 
             Close the section with one more subsection, `### 3.x Runtime Flow`,
             numbered after the last seam: end-to-end runtime behavior across all
             affected repos, as one or more mermaid `sequenceDiagram` blocks.
-            REQUIRED, not optional.
+            REQUIRED, not optional. It is the one diagram that outlives the run:
+            Context and Approach tell the story of this change and are dropped,
+            while Runtime Flow merges into each repo's architecture doc as the
+            present-tense design. So draw the end state one level below Approach —
+            the calls in order, who authenticates to whom, what is asynchronous —
+            rather than the Approach flowchart redrawn, and carry none of its
+            flaw numbers.
 
             - Always include the happy path across all participating components
               (browser/client → ingress → service → DB → back, as applicable).
@@ -381,20 +424,24 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             The system-administrator handoff: actions outside the implementing
             agent's reach. Audience: a human deploying this change.
 
-            Use this exact two-column table:
+            List the actions someone must take in this table:
 
               | Action | Local (e2e) | Production |
               |---|---|---|
               | <action> | <usually "auto via compose"> | <exact step the operator runs> |
 
-            Include rows for: env vars / secrets, Ingress / DNS / networking,
-            external service configuration, post-deploy smoke verification, and any
-            other manual step. Even rows that are identical across environments
-            should appear — the table's value is making the gap legible.
+            Consider env vars / secrets, Ingress / DNS / networking, external
+            service configuration, post-deploy smoke verification, and any other
+            manual step, but give a row only to one that needs an action in at
+            least one environment. Under the table, name in one line what you
+            checked and found nothing to do for ("Checked, nothing needed: DNS,
+            external services"), so the reader can tell considered from
+            forgotten. If nothing needs an action anywhere, write that line alone,
+            without the table.
 
-            Below the table, include a free-form **"Notes for production rollout"**
+            Below that, include a free-form **"Notes for production rollout"**
             block for ordering constraints, hot-reload caveats, or rollback
-            procedure that don't fit a single row.
+            procedure that don't fit a single row. Omit it when there are none.
 
             ═══════════════════════════════════════════════════════════════════════
             Part 2: Implementation Plan (for AI implementers)
@@ -424,8 +471,13 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
 
             - Every Caveat is something the spec does NOT handle. If you can point
               to a section that handles it, it's design, not a caveat.
-            - Context and Approach still read correctly with every component, class,
-              endpoint and table name stripped out.
+            - Context and Approach each hold one flowchart of the same mechanism,
+              before and after, with the same node ids. Every numbered flaw has a
+              fix at its number or a Caveat; every fix answers a flaw. Their nodes
+              are components; no endpoint, class, field or table name appears in
+              either section.
+            - Someone who reads only those two diagrams and their numbered lines
+              knows what changes and why. No later diagram redraws them.
             - Architecture contains no per-repo subsections. Expected Changed Files
               contains nothing but per-repo one-line file lists. They have inverted
               structures by design.
@@ -532,14 +584,16 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
             ## What to check
 
             1. **Format conformance**: the eight Part 1 sections + Part 2 in order
-               with exact titles; Architecture organized by seam/responsibility
+               with exact titles; Context and Approach each holding one flowchart;
+               Architecture organized by seam/responsibility
                (NOT per-repo) and closing with a Runtime Flow subsection that holds
                a sequence diagram; Expected Changed Files is per-repo, one line per
                file, no method bodies; mermaid diagrams in ```mermaid fences; each
                Technical Decision is titled as a question and is an
                Option / Gives us / Costs us table with at least two rows, exactly
                one ✅ row, and a "Decided by" line; Caveat blocks have a
-               Disposition tag; Manual Operations has the Local/Production table.
+               Disposition tag; Manual Operations has a Local/Production row only
+               for an action, plus its "Checked, nothing needed" line.
             2. **Internal consistency**: Part 2 file changes match Expected Changed
                Files; migrations match Architecture and Technical Decisions;
                Testing Strategy matches Part 2 file-level tests.
@@ -568,11 +622,16 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                test style.
             10. **Deployment gaps**: env vars, secrets, migrations, config absent
                 from Manual Operations or Part 2 migrations.
-            11. **Idea level**: Context and Approach still read correctly with
-                every component, class, endpoint and table name stripped out.
-                Implementation detail found there moves to Architecture. Approach
-                names a pattern only when one really applies, and says what makes
-                it that pattern.
+            11. **Before and after**: Context draws today's mechanism with each
+                flaw numbered on it and its cost stated; Approach redraws the same
+                nodes after the change, each fix at its flaw's number. Every flaw
+                has a fix or a Caveat, and every fix answers a flaw. Nodes are
+                components: endpoint, class, field and table names move to
+                Architecture. The lines under each diagram do not retell it.
+                Approach names a pattern only when one really applies, says what
+                makes it that pattern, and otherwise leaves the slot out.
+                Architecture's diagrams zoom in: none redraws the Approach diagram,
+                and Runtime Flow carries no flaw numbers.
 
             ## Deferral criteria (for checklist items 6 and 8)
 
@@ -940,61 +999,88 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                the default branch via `gh pr create`.
                - PR title: a concise summary of this repo's portion of the
                  feature.
-               - PR body, in this exact order:
+               - PR body, in this exact order. Its readers are the human who
+                 approves the merge and whoever later reaches this change from
+                 the code; the spec is not kept, so the body stands on its own,
+                 and it stays short enough to read before the diff. Every
+                 section is scoped to this repo, and a section with nothing in
+                 it is omitted: no heading, no "none" note.
 
-                 **a. Summary** — per-repo implementation summary scoped to this
-                 repo, describing what you just did. For a PUBLIC repo, describe
-                 only this repo's change and justify it on grounds that hold
-                 within this repo alone; do not explain it by reference to
-                 another repo.
+                 **a. `## Context`** — the specification's Context diagram and
+                 the numbered flaw lines this repo's change addresses.
 
-                 **b. ⚠️ Manual Operations Required** — from the specification's
-                 Manual Operations section (the Local/Production table AND the
-                 "Notes for production rollout" block), under a top-level
-                 `## ⚠️ Manual Operations Required` heading.
-                   - For a NON-PUBLIC repo: copy that section verbatim.
-                   - For a PUBLIC repo: include ONLY the operations that apply
-                     to this repo, rewritten to remove other-repo names,
-                     internal hosts, cluster/namespace detail, and internal
-                     paths. Drop rows that describe work in a non-public repo
-                     entirely — do not replace them with a placeholder row that
-                     implies one exists.
-                   - If that section is empty, absent, or nothing survives the
-                     filter, write `_No manual operations required for this change._`
-                     instead.
+                 **b. `## Approach`** — the specification's Approach diagram, the
+                 fix lines for those same numbers, and its closing paragraph
+                 trimmed to what concerns this repo. The fix lines are the
+                 summary of what changed: add no other summary and no changelog
+                 of the files.
 
-                 **c. Caveats & Known Limitations** — under a top-level
-                 `## Caveats & Known Limitations` heading, list each Caveat from
-                 the specification's Caveats section: title and Disposition tag,
-                 "What's not handled" line, "Reasoning" line, each app link
-                 written as its plain title. Caveats are
-                 cross-repo content like Manual Operations, so the same
-                 visibility rule applies: NON-PUBLIC repo
-                 gets every Caveat; PUBLIC repo gets only the Caveats that
-                 concern it, generalized to remove other-repo names and
-                 infrastructure detail, with any Caveat that exists only
-                 because a non-public repo is involved dropped entirely rather
-                 than reworded into a hint that one exists. If the Caveats
-                 section is empty, or
-                 nothing survives the filter, omit this section entirely. Mark
-                 each Future-work Caveat you proposed to the roadmap this run
-                 as `proposed to the roadmap (pending Final Approval)`, and keep
-                 the `(found during implementation)` marker on any you added.
+                 **c. `## Where to review`** — the three to seven files where
+                 this repo's change makes a decision or alters behaviour, each as
+                 `` `<path>` — <number>: <what to check there, in one phrase> ``.
+                 End with one line naming the mechanical rest (call sites,
+                 fixtures, formatting) that is safe to skim.
 
-                 **d. ❓ Open Decisions for Reviewer** — ONLY include this
-                 section if at least one Caveat is still tagged "Needs human
-                 decision". When included, render it under a top-level
-                 `## ❓ Open Decisions for Reviewer` heading: restate the open
-                 question in one sentence, list the options the spec laid out
-                 (if any), and make clear that merging implies accepting the
-                 default behavior described in the Caveat's Reasoning. Inherits
-                 the Caveats visibility filter. Omit entirely if none remain.
+                 **d. `## Test plan`** — what you ran in this repo and its
+                 result, one line per command, then one line on what CI covers
+                 that you did not run, and anything the reviewer must check by
+                 hand.
 
-                 **e. Companion PRs placeholder** — a single line:
+                 **e. `## Operator actions`** — the Production actions and
+                 rollout notes from the specification's Manual Operations that
+                 concern this repo, one bullet each: the step and when to take
+                 it. Leave out the Local column, rows with nothing to do in
+                 production, and the "Checked, nothing needed" line.
+
+                 **f. `## ❓ Open decisions`** — ONLY if at least one Caveat is
+                 still tagged "Needs human decision": restate the open question
+                 in one sentence, list the options the spec laid out (if any),
+                 and make clear that merging implies accepting the default
+                 behavior described in the Caveat's Reasoning.
+
+                 **g. Known limitations** — every other Caveat that concerns
+                 this repo, one row each and Future work first, in a table
+                 inside a collapsed block:
+
+                   <details><summary>Known limitations (N)</summary>
+
+                   | Caveat | Disposition | Why |
+                   |---|---|---|
+                   | <title> | <Disposition> | <its reasoning in one phrase> |
+
+                   </details>
+
+                 Each cell is one phrase, with no code or pipe characters: they
+                 break the table. Once the spec is gone this block is the only
+                 record of what was knowingly left out, so it keeps every such
+                 Caveat however minor. Write each app link as its plain title. In
+                 the Disposition cell, mark each Future-work Caveat you proposed
+                 to the roadmap this run as `proposed to the roadmap (pending
+                 Final Approval)`, and keep the `(found during implementation)`
+                 marker on any you added.
+
+                 **h. Companion PRs placeholder** — a single line:
                  `_Companion PRs: (linked after all PRs are created)_`. OMIT
                  this placeholder entirely if this repo will have no linkable
                  companions under step 3 below (e.g. a PUBLIC repo in a run
                  whose other repos are all non-public).
+
+               - Visibility. A NON-PUBLIC repo's body carries the spec's content
+                 as it stands, numbers included, so they match the spec and the
+                 companion PRs. A PUBLIC repo's body:
+                   - Context and Approach: redraw each diagram with only
+                     components a public reader can see, or drop the diagram and
+                     keep the numbered lines. Renumber from ① with no gaps, since
+                     a gap hints at work elsewhere. Justify the change on grounds
+                     that hold within this repo alone, never by reference to
+                     another repo.
+                   - Operator actions, Open decisions and Known limitations:
+                     include ONLY the operations, decisions and Caveats that apply
+                     to this repo, rewritten to remove other-repo names, internal
+                     hosts, cluster/namespace detail and internal paths. Drop an
+                     item that describes work in, or exists only because of, a
+                     non-public repo entirely — never a placeholder that implies
+                     one exists.
 
                Record the PR URL and PR number. You may dispatch Task subagents
                to open PRs in parallel — one per repo.
@@ -1017,6 +1103,9 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                    whose repos are also PUBLIC. Never link or name a
                    non-public repo's PR from a public repo — the URL alone
                    discloses that repo's existence.
+               When the specification's rollout notes set a merge order among
+               the PRs listed, add it under the list in one line that names only
+               those PRs.
                If no companions remain listable for a public repo, omit the
                `## Companion PRs` section entirely. Do NOT write "none", "not
                applicable", or any note explaining why it is empty. PRESERVE
@@ -1031,8 +1120,8 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                  this file fully supersedes both your own prior iteration's
                  file and Code Review's for every downstream reader.
                - /workspace/out/pr_summary.md — brief summary of what was
-                 shipped. Include one-line notes if Manual Operations are
-                 required and/or if any Open Decisions for Reviewer remain.
+                 shipped. Include one-line notes if any PR carries Operator
+                 actions and/or if any Open decisions remain.
 
             Code Review runs next and will keep these PRs current as it fixes
             issues; it also opens a PR itself for any repo you didn't touch. Do
@@ -1217,25 +1306,34 @@ public class BaseFeatureDevSeeder implements ApplicationRunner {
                   fails or is unclear.
                 - `gh pr create` against the default branch. PR title: a
                   concise summary of this repo's portion of the fix. PR body,
-                  in this exact order: **a. Summary** of what you fixed in
-                  this repo (generalized, no cross-repo references, if
-                  PUBLIC); **b. ⚠️ Manual Operations Required** from the Manual
-                  Operations section of the specification (verbatim for
-                  NON-PUBLIC, filtered/generalized for PUBLIC, or
-                  `_No manual operations required for this change._` if none
-                  survive); **c. Caveats & Known Limitations** from the Caveats
-                  section of the specification, each app link written as its plain
-                  title (same visibility filtering — NON-PUBLIC gets every
-                  Caveat, PUBLIC gets only the ones that concern it with any
-                  non-public-only Caveat dropped entirely, omit the section
-                  if empty); **d. ❓ Open Decisions for Reviewer**, only if a
-                  Caveat is still tagged "Needs human decision" after
-                  filtering, else omit; **e. `## Companion PRs`** populated
-                  (not a placeholder) from the sibling URLs in the known-PRs
-                  set, applying the same visibility rule (NON-PUBLIC repo's
-                  PR lists every sibling; PUBLIC repo's PR lists only PUBLIC
-                  siblings; omit the section if none survive — never a
-                  "none" note).
+                  in this exact order, scoped to this repo and short enough to
+                  read before the diff, with any empty section omitted (never
+                  a "none" note): **`## Context`** and **`## Approach`** — the
+                  specification's two diagrams with the numbered flaw and fix
+                  lines this repo's change addresses (the fix lines are the
+                  summary; no changelog); **`## Where to review`** — the three
+                  to seven files where the change decides or alters behaviour,
+                  each tagged with its number, then one line naming the
+                  mechanical rest; **`## Test plan`** — each command you ran
+                  and its result, one line each; **`## Operator actions`** —
+                  only the Production actions and rollout notes from Manual
+                  Operations that concern this repo, one bullet each;
+                  **`## ❓ Open decisions`**, only if a Caveat is still tagged
+                  "Needs human decision"; every other Caveat that concerns
+                  this repo as a `| Caveat | Disposition | Why |` table, Future
+                  work first, one phrase per cell with no code or pipe
+                  characters, inside `<details><summary>Known limitations
+                  (N)</summary>` with each app link written as its plain
+                  title; **`## Companion PRs`** populated (not a
+                  placeholder) from the sibling URLs in the known-PRs set.
+                  Visibility: a NON-PUBLIC repo's PR carries the spec's
+                  content as it stands and lists every sibling. A PUBLIC
+                  repo's PR redraws the diagrams with only components a public
+                  reader can see, or keeps just the numbered lines, renumbered
+                  from ①; includes ONLY the operations, decisions and Caveats
+                  that apply to it, generalized, with any item that exists
+                  only because of a non-public repo dropped entirely; and
+                  lists only PUBLIC siblings.
                 - Register it: `register-pr --repo-id <gitRepoId> --pr-url
                   <url> --pr-number <number> --title <title> --repo-name
                   <name>` (`id` from config.json's `repos[]`).
