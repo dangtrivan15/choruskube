@@ -33,11 +33,16 @@ type DAGExecutorTestSuite struct {
 	// other way the gate can end a run.
 	placementError error
 	// heldApproval backs the shared ClaimHeldApproval stub (default: none held), for the same
-	// registration-order reason as placementDecision. Every gate opened on the current
-	// version asks for one, so every human-gate test needs the stub.
+	// registration-order reason as placementDecision. Every gate asks for one when it opens,
+	// so every human-gate test needs the stub.
 	heldApproval string
 	claimsMu     sync.Mutex
 	claims       []activity.GateRef
+	// cleanupPlan and cleanupPlanErr back the shared PlanBranchCleanup stub (default: an empty
+	// plan, no error), for the same registration-order reason as placementDecision. Every
+	// completed run now reaches branch cleanup, so every such test needs the stub.
+	cleanupPlan    activity.BranchCleanupPlan
+	cleanupPlanErr error
 }
 
 // claimedRefs returns every gate ClaimHeldApproval was asked about, in order.
@@ -68,6 +73,13 @@ func (s *DAGExecutorTestSuite) SetupTest() {
 			s.claims = append(s.claims, ref)
 			return s.heldApproval, nil
 		}).Maybe()
+
+	s.cleanupPlan = activity.BranchCleanupPlan{}
+	s.cleanupPlanErr = nil
+	s.env.OnActivity("PlanBranchCleanup", mock.Anything, mock.Anything).
+		Return(func(_ context.Context, _ activity.BranchCleanupPlanParams) (activity.BranchCleanupPlan, error) {
+			return s.cleanupPlan, s.cleanupPlanErr
+		}).Maybe()
 }
 
 func (s *DAGExecutorTestSuite) AfterTest(suiteName, testName string) {
@@ -81,6 +93,10 @@ func TestDAGExecutorSuite(t *testing.T) {
 // Must match the unexported prefix guardRun parses in internal/activity/activities.go, or
 // every guarded activity these tests run for real is rejected like the SDK's default test id.
 const dagTestWorkflowIDPrefix = "choruskube-run-"
+
+// testWorkerQueue is every completed-run test's Worker task queue, so each one reaches branch
+// cleanup instead of being refused by the start guard.
+const testWorkerQueue = "test-worker-queue"
 
 // dagRunID points the environment's workflow id at the same run before returning it, so
 // activities these tests run for real (not stubbed via OnActivity) pass guardRun instead of
@@ -173,7 +189,7 @@ func (s *DAGExecutorTestSuite) TestLinearTwoNodeGraph() {
 	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
-		RunID: runID, GraphVersion: 1,
+		RunID: runID, GraphVersion: 1, WorkerTaskQueue: testWorkerQueue,
 	})
 
 	s.True(s.env.IsWorkflowCompleted())
@@ -266,7 +282,7 @@ func (s *DAGExecutorTestSuite) TestLinearTwoNodeGraph_TaskContextPropagatesToAll
 	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
-		RunID: runID, GraphVersion: 1,
+		RunID: runID, GraphVersion: 1, WorkerTaskQueue: testWorkerQueue,
 	})
 
 	s.True(s.env.IsWorkflowCompleted())
@@ -340,7 +356,7 @@ func (s *DAGExecutorTestSuite) TestFanOutGraph() {
 	})).Return("no_decision", nil).Once()
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
-		RunID: runID, GraphVersion: 1,
+		RunID: runID, GraphVersion: 1, WorkerTaskQueue: testWorkerQueue,
 	})
 
 	s.True(s.env.IsWorkflowCompleted())
@@ -389,16 +405,16 @@ func (s *DAGExecutorTestSuite) TestHumanGateWithSignal() {
 	})).Return("no_decision", nil).Once()
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
-		RunID: runID, GraphVersion: 1,
+		RunID: runID, GraphVersion: 1, WorkerTaskQueue: testWorkerQueue,
 	})
 
 	s.True(s.env.IsWorkflowCompleted())
 	s.NoError(s.env.GetWorkflowError())
 }
 
-// TestHumanGateSignalSentBeforeWaitIsReceived pins that a decision signalled once the run reads
-// awaiting_human, before the gate reaches GetSignalChannel, is buffered and received: the API
-// re-applies a held approval at exactly that moment, and dropping it strands the gate.
+// TestHumanGateSignalSentBeforeWaitIsReceived: a reviewer's decision can be signalled as soon as
+// the run reads awaiting_human, before the workflow calls GetSignalChannel, so the signal must be
+// buffered; dropping it strands the gate.
 func (s *DAGExecutorTestSuite) TestHumanGateSignalSentBeforeWaitIsReceived() {
 	nodeA := uuid.New()
 	execA := uuid.New()
@@ -439,7 +455,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateSignalSentBeforeWaitIsReceived() {
 			s.env.SignalWorkflow(SignalHumanDecisionPrefix+execA.String(), HumanDecisionSignal{
 				NodeExecutionID: execA.String(),
 				Decision:        "approved",
-				Feedback:        "held approval",
+				Feedback:        "Looks good",
 			})
 		})
 	})
@@ -449,7 +465,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateSignalSentBeforeWaitIsReceived() {
 	})).Return("no_decision", nil).Once()
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
-		RunID: runID, GraphVersion: 1,
+		RunID: runID, GraphVersion: 1, WorkerTaskQueue: testWorkerQueue,
 	})
 
 	s.True(s.env.IsWorkflowCompleted())
@@ -555,7 +571,7 @@ func (s *DAGExecutorTestSuite) TestGraphWithLoopBackEdge() {
 	}, 0)
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
-		RunID: runID, GraphVersion: 1,
+		RunID: runID, GraphVersion: 1, WorkerTaskQueue: testWorkerQueue,
 	})
 
 	s.True(s.env.IsWorkflowCompleted())
@@ -615,7 +631,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateSignal_AttachmentRefs() {
 	})).Return("no_decision", nil).Once()
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
-		RunID: runID, GraphVersion: 1,
+		RunID: runID, GraphVersion: 1, WorkerTaskQueue: testWorkerQueue,
 	})
 
 	s.True(s.env.IsWorkflowCompleted())
@@ -675,7 +691,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateSignal_EmptyAttachmentRefs() {
 	})).Return("no_decision", nil).Once()
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
-		RunID: runID, GraphVersion: 1,
+		RunID: runID, GraphVersion: 1, WorkerTaskQueue: testWorkerQueue,
 	})
 
 	s.True(s.env.IsWorkflowCompleted())
@@ -742,7 +758,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateTerminalDecisionCompletesRun() {
 	})).Return("approved", nil).Once()
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
-		RunID: runID, GraphVersion: 1,
+		RunID: runID, GraphVersion: 1, WorkerTaskQueue: testWorkerQueue,
 	})
 
 	s.True(s.env.IsWorkflowCompleted())
@@ -798,7 +814,7 @@ func (s *DAGExecutorTestSuite) TestRunInputArtifactRefs_PassedToAINode() {
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
 		RunID:                runID,
 		GraphVersion:         1,
-		RunInputArtifactRefs: runInputJSON,
+		RunInputArtifactRefs: runInputJSON, WorkerTaskQueue: testWorkerQueue,
 	})
 
 	s.True(s.env.IsWorkflowCompleted())
@@ -856,6 +872,7 @@ func (s *DAGExecutorTestSuite) TestRunInputArtifactRefs_EmptyOrAbsent_NoInputArt
 		RunID:                runID,
 		GraphVersion:         1,
 		RunInputArtifactRefs: "", // empty → no run-level inputs
+		WorkerTaskQueue:      testWorkerQueue,
 	})
 
 	s.True(s.env.IsWorkflowCompleted())
@@ -918,7 +935,7 @@ func (s *DAGExecutorTestSuite) TestNeedsPR_ExtractedFromConfigOverrides() {
 	})).Return("no_decision", nil).Once()
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
-		RunID: runID, GraphVersion: 1,
+		RunID: runID, GraphVersion: 1, WorkerTaskQueue: testWorkerQueue,
 	})
 
 	s.True(s.env.IsWorkflowCompleted())
@@ -972,7 +989,7 @@ func (s *DAGExecutorTestSuite) TestTimeoutCallsDeleteAgentJob() {
 	})).Return(nil).Once()
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
-		RunID: runID, GraphVersion: 1,
+		RunID: runID, GraphVersion: 1, WorkerTaskQueue: testWorkerQueue,
 	})
 
 	s.True(s.env.IsWorkflowCompleted())
@@ -1048,7 +1065,7 @@ func (s *DAGExecutorTestSuite) TestPauseDeletesRunningJobs() {
 	})).Return(nil).Once()
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
-		RunID: runID, GraphVersion: 1,
+		RunID: runID, GraphVersion: 1, WorkerTaskQueue: testWorkerQueue,
 	})
 
 	s.True(s.env.IsWorkflowCompleted())
@@ -1140,7 +1157,7 @@ func (s *DAGExecutorTestSuite) TestPauseStampsNodeAsPaused() {
 	s.pauseResumeAfterStart(execA, 100*time.Millisecond, 200*time.Millisecond)
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
-		RunID: runID, GraphVersion: 1,
+		RunID: runID, GraphVersion: 1, WorkerTaskQueue: testWorkerQueue,
 	})
 
 	s.True(s.env.IsWorkflowCompleted())
@@ -1252,7 +1269,7 @@ func (s *DAGExecutorTestSuite) TestTwoNodeGraphOnlyBPaused() {
 	s.pauseResumeAfterStart(execB1, 100*time.Millisecond, 200*time.Millisecond)
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
-		RunID: runID, GraphVersion: 1,
+		RunID: runID, GraphVersion: 1, WorkerTaskQueue: testWorkerQueue,
 	})
 
 	s.True(s.env.IsWorkflowCompleted())
@@ -1291,7 +1308,6 @@ func (s *DAGExecutorTestSuite) TestResumeBeforeHeartbeatTimeout() {
 	// with a nil *Activities receiver (registered for type discovery only), which panics.
 	s.env.OnActivity("SetTraversedEdges", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.env.OnActivity("DeleteStaleBranches", mock.Anything, mock.Anything).Return(nil).Maybe()
-	s.env.OnActivity("PlanBranchCleanup", mock.Anything, mock.Anything).Return(activity.BranchCleanupPlan{}, nil).Maybe()
 	s.env.OnActivity("CleanupRunBranches", mock.Anything, mock.Anything).Return(activity.BranchCleanupResult{}, nil).Maybe()
 
 	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
@@ -1341,7 +1357,7 @@ func (s *DAGExecutorTestSuite) TestResumeBeforeHeartbeatTimeout() {
 	s.pauseResumeAfterStart(execA, 50*time.Millisecond, 100*time.Millisecond)
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
-		RunID: runID, GraphVersion: 1,
+		RunID: runID, GraphVersion: 1, WorkerTaskQueue: testWorkerQueue,
 	})
 
 	s.True(s.env.IsWorkflowCompleted())
@@ -1434,7 +1450,7 @@ func (s *DAGExecutorTestSuite) TestRateLimitedNodeSleepsThenRequeues() {
 		return p.NodeExecutionID == execA2
 	})).Return("no_decision", nil).Once()
 
-	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{RunID: runID, GraphVersion: 1})
+	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{RunID: runID, GraphVersion: 1, WorkerTaskQueue: testWorkerQueue})
 
 	s.True(s.env.IsWorkflowCompleted())
 	s.NoError(s.env.GetWorkflowError())
@@ -1515,7 +1531,7 @@ func (s *DAGExecutorTestSuite) TestRateLimitedNodeInvalidateFailureMarksNodeFail
 		s.Fail("a node whose park bookkeeping failed must never be marked completed")
 	})
 
-	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{RunID: runID, GraphVersion: 1})
+	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{RunID: runID, GraphVersion: 1, WorkerTaskQueue: testWorkerQueue})
 
 	s.True(s.env.IsWorkflowCompleted())
 	s.NoError(s.env.GetWorkflowError())
@@ -1638,7 +1654,7 @@ func (s *DAGExecutorTestSuite) TestRateLimitedNodeParkDoesNotBlockConcurrentSibl
 	// Everything else (A's completion, B2's completion) — no timing assertion needed.
 	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
 
-	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{RunID: runID, GraphVersion: 1})
+	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{RunID: runID, GraphVersion: 1, WorkerTaskQueue: testWorkerQueue})
 
 	s.True(s.env.IsWorkflowCompleted())
 	s.NoError(s.env.GetWorkflowError())
@@ -1793,7 +1809,7 @@ func (s *DAGExecutorTestSuite) TestRateLimitedNodeCarriesForceReadyThroughRequeu
 	}, 0)
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
-		RunID: runID, GraphVersion: 1,
+		RunID: runID, GraphVersion: 1, WorkerTaskQueue: testWorkerQueue,
 	})
 
 	s.True(s.env.IsWorkflowCompleted())
@@ -1898,7 +1914,7 @@ func (s *DAGExecutorTestSuite) TestRateLimitedNodeParkedDuringPauseStillFailsExp
 	// proceeds normally once the park itself ends ~30 (virtual) minutes later.
 	s.pauseResumeAfterStart(execA, 50*time.Millisecond, 100*time.Millisecond)
 
-	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{RunID: runID, GraphVersion: 1})
+	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{RunID: runID, GraphVersion: 1, WorkerTaskQueue: testWorkerQueue})
 
 	s.True(s.env.IsWorkflowCompleted())
 	s.NoError(s.env.GetWorkflowError())
@@ -2023,7 +2039,7 @@ func (s *DAGExecutorTestSuite) TestGraphWithLoopBackEdge_Rejected() {
 	}, 0)
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
-		RunID: runID, GraphVersion: 1,
+		RunID: runID, GraphVersion: 1, WorkerTaskQueue: testWorkerQueue,
 	})
 
 	s.True(s.env.IsWorkflowCompleted())
@@ -2110,7 +2126,7 @@ func (s *DAGExecutorTestSuite) TestSelfLoopingAIReviewerIteratesThenAdvances() {
 	})).Return("no_decision", nil).Once()
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
-		RunID: runID, GraphVersion: 1,
+		RunID: runID, GraphVersion: 1, WorkerTaskQueue: testWorkerQueue,
 	})
 
 	s.True(s.env.IsWorkflowCompleted())
@@ -2203,7 +2219,7 @@ func (s *DAGExecutorTestSuite) TestModelEffortResolution_SelfLoopingReviewNode_F
 	})).Return("no_decision", nil).Once()
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
-		RunID: runID, GraphVersion: 1,
+		RunID: runID, GraphVersion: 1, WorkerTaskQueue: testWorkerQueue,
 	})
 
 	s.True(s.env.IsWorkflowCompleted())
@@ -2246,7 +2262,7 @@ func (s *DAGExecutorTestSuite) TestModelEffortResolution_NodeWithoutIterationAwa
 	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.Anything).Return("no_decision", nil).Once()
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
-		RunID: runID, GraphVersion: 1,
+		RunID: runID, GraphVersion: 1, WorkerTaskQueue: testWorkerQueue,
 	})
 
 	s.True(s.env.IsWorkflowCompleted())
@@ -2313,7 +2329,7 @@ func (s *DAGExecutorTestSuite) TestModelEffortResolution_PartialIterationKeys_Fa
 	})).Return("no_decision", nil).Once()
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
-		RunID: runID, GraphVersion: 1,
+		RunID: runID, GraphVersion: 1, WorkerTaskQueue: testWorkerQueue,
 	})
 
 	s.True(s.env.IsWorkflowCompleted())
@@ -2501,7 +2517,7 @@ func (s *DAGExecutorTestSuite) TestSupervisorRoutesPastAnUnrunPredecessor() {
 	}, 0)
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
-		RunID: runID, GraphVersion: 1,
+		RunID: runID, GraphVersion: 1, WorkerTaskQueue: testWorkerQueue,
 	})
 
 	s.True(s.env.IsWorkflowCompleted())
@@ -2678,7 +2694,7 @@ func (s *DAGExecutorTestSuite) TestForceReadyCarriesForwardThroughLateHumanDecis
 	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
-		RunID: runID, GraphVersion: 1,
+		RunID: runID, GraphVersion: 1, WorkerTaskQueue: testWorkerQueue,
 	})
 
 	s.True(s.env.IsWorkflowCompleted())
@@ -2739,7 +2755,7 @@ func (s *DAGExecutorTestSuite) TestCompletedStatusRejected_PersistsFailedStatus(
 	// Any other status write (running, awaiting_human, …) is incidental to this test.
 	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
 
-	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{RunID: runID, GraphVersion: 1})
+	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{RunID: runID, GraphVersion: 1, WorkerTaskQueue: testWorkerQueue})
 
 	s.True(s.env.IsWorkflowCompleted())
 	s.NoError(s.env.GetWorkflowError())
@@ -2789,7 +2805,7 @@ func (s *DAGExecutorTestSuite) TestCleanupActivityScheduledOnCompletionLegacy() 
 	})).Return(nil).Once()
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
-		RunID: runID, GraphVersion: 1,
+		RunID: runID, GraphVersion: 1, WorkerTaskQueue: testWorkerQueue,
 	})
 
 	s.True(s.env.IsWorkflowCompleted())
@@ -2843,7 +2859,7 @@ func (s *DAGExecutorTestSuite) TestCleanupActivityErrorDoesNotFailWorkflowLegacy
 		Return(fmt.Errorf("api error 500: internal error"))
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
-		RunID: runID, GraphVersion: 1,
+		RunID: runID, GraphVersion: 1, WorkerTaskQueue: testWorkerQueue,
 	})
 
 	s.True(s.env.IsWorkflowCompleted())
@@ -2897,8 +2913,6 @@ func (s *DAGExecutorTestSuite) TestCleanupActivityNotScheduledOnFailure() {
 	var cleanupCalled bool
 	markCleanupCalled := func(mock.Arguments) { cleanupCalled = true }
 	s.env.OnActivity("DeleteStaleBranches", mock.Anything, mock.Anything).Run(markCleanupCalled).Return(nil).Maybe()
-	s.env.OnActivity("PlanBranchCleanup", mock.Anything, mock.Anything).
-		Run(markCleanupCalled).Return(activity.BranchCleanupPlan{}, nil).Maybe()
 	s.env.OnActivity("CleanupRunBranches", mock.Anything, mock.Anything).
 		Run(markCleanupCalled).Return(activity.BranchCleanupResult{}, nil).Maybe()
 
@@ -2908,6 +2922,7 @@ func (s *DAGExecutorTestSuite) TestCleanupActivityNotScheduledOnFailure() {
 
 	s.True(s.env.IsWorkflowCompleted())
 	s.False(cleanupCalled, "no cleanup activity must be scheduled when the run ends failed")
+	s.env.AssertActivityNotCalled(s.T(), "PlanBranchCleanup", mock.Anything, mock.Anything)
 }
 
 // TestCleanupActivityNotScheduledOnCancel verifies Step 6 never schedules any cleanup activity
@@ -2957,8 +2972,6 @@ func (s *DAGExecutorTestSuite) TestCleanupActivityNotScheduledOnCancel() {
 	var cleanupCalled bool
 	markCleanupCalled := func(mock.Arguments) { cleanupCalled = true }
 	s.env.OnActivity("DeleteStaleBranches", mock.Anything, mock.Anything).Run(markCleanupCalled).Return(nil).Maybe()
-	s.env.OnActivity("PlanBranchCleanup", mock.Anything, mock.Anything).
-		Run(markCleanupCalled).Return(activity.BranchCleanupPlan{}, nil).Maybe()
 	s.env.OnActivity("CleanupRunBranches", mock.Anything, mock.Anything).
 		Run(markCleanupCalled).Return(activity.BranchCleanupResult{}, nil).Maybe()
 
@@ -2969,4 +2982,5 @@ func (s *DAGExecutorTestSuite) TestCleanupActivityNotScheduledOnCancel() {
 	s.True(s.env.IsWorkflowCompleted())
 	s.NoError(s.env.GetWorkflowError())
 	s.False(cleanupCalled, "no cleanup activity must be scheduled when the run ends cancelled")
+	s.env.AssertActivityNotCalled(s.T(), "PlanBranchCleanup", mock.Anything, mock.Anything)
 }

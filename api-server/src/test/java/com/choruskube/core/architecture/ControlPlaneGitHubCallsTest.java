@@ -39,24 +39,8 @@ class ControlPlaneGitHubCallsTest {
                             + " docs/decisions/2026-10-13---01-branch-cleanup-on-the-worker.md"),
             Map.entry(
                     "core.service.DefaultRoadmapCandidateMaterializer#fileGithubIssue -> GitHubAppService#createIssue",
-                    "One-step issue filing for the synchronous gate path and histories recorded before filing moved to"
-                            + " the Worker. docs/decisions/2026-10-15---01-roadmap-issues-filed-on-the-worker.md"),
-            Map.entry(
-                    "core.service.GateDriftCheckService#compareOne -> GitHubAppService#compareCommits",
-                    "Synchronous gate path, kept for gates opened without an asynchronous finalize mode."
-                            + " docs/decisions/2026-10-11---02-async-gate-finalize-on-the-worker.md"),
-            Map.entry(
-                    "core.service.PullRequestMergeService#mergeAll -> GitHubAppService#fetchPullRequestDetail",
-                    "Synchronous gate path, kept for gates opened without an asynchronous finalize mode."
-                            + " docs/decisions/2026-10-11---02-async-gate-finalize-on-the-worker.md"),
-            Map.entry(
-                    "core.service.PullRequestMergeService#mergeAll -> GitHubAppService#mergePullRequest",
-                    "Synchronous gate path, kept for gates opened without an asynchronous finalize mode."
-                            + " docs/decisions/2026-10-11---02-async-gate-finalize-on-the-worker.md"),
-            Map.entry(
-                    "core.service.PullRequestMergeService#reReadAsMerged -> GitHubAppService#fetchPullRequestDetail",
-                    "Synchronous gate path, kept for gates opened without an asynchronous finalize mode."
-                            + " docs/decisions/2026-10-11---02-async-gate-finalize-on-the-worker.md"));
+                    "One-step issue filing for histories recorded before filing moved to the Worker."
+                            + " docs/decisions/2026-10-15---01-roadmap-issues-filed-on-the-worker.md"));
 
     @Test
     void apiServerCallsGitHubOnlyFromTheAllowlist() {

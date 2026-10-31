@@ -1,5 +1,6 @@
 import { test, expect, seededRepos } from "../fixtures";
 import { uniqueName } from "../helpers/api-client";
+import { findWireMockRequests, headerOf } from "../helpers/wiremock";
 import type { RunPullRequestResponse } from "../../src/lib/types";
 
 /**
@@ -9,7 +10,8 @@ import type { RunPullRequestResponse } from "../../src/lib/types";
  * to a fixed PR number via --pr-number, so the gate always merges a known WireMock PR-stub
  * fixture (github-pulls.json / github-merge-pr.json) rather than a random one the stubs don't
  * recognise. PR 7001 is WireMock's always-merges-for-mock-repo fixture (already-merged for
- * mock-frontend); PR 7405 is WireMock's always-refused fixture.
+ * mock-frontend); PR 7405 is WireMock's always-refused fixture. The API server makes none of
+ * the pull-request reads or merges itself — the Worker makes them, with its own credentials.
  */
 test.describe("Merge on Final Approval", () => {
   test("approving merges open PRs and skips already-merged ones", async ({
@@ -69,6 +71,16 @@ test.describe("Merge on Final Approval", () => {
 
       const finalApproval = finalRun.nodeExecutions.find((ne) => ne.label === "final_approval");
       expect(finalApproval?.result ?? "").toContain("Pull requests merged on approval");
+
+      // The Worker reads and merges before the gate completes, so the journal already has both;
+      // the journal is suite-wide, so this also holds for every other spec's PR 7001 calls.
+      const reads = await findWireMockRequests({ method: "GET", urlPattern: "/repos/.+/pulls/7001" });
+      const merges = await findWireMockRequests({ method: "PUT", urlPattern: "/repos/.+/pulls/7001/merge" });
+      expect(reads.length).toBeGreaterThan(0);
+      expect(merges.length).toBeGreaterThan(0);
+      for (const req of [...reads, ...merges]) {
+        expect(headerOf(req, "User-Agent")).toBe("choruskube-worker");
+      }
 
       // UI: the run's PR list renders in the always-visible run summary now, independent
       // of node selection — revisit fresh here to read it from a clean load.

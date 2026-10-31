@@ -25,30 +25,11 @@ describe("decisionToastMessage", () => {
   });
 
   it("says the decision was submitted for a signaled outcome", () => {
-    expect(decisionToastMessage({ outcome: "signaled", staleRepos: [] })).toBe("Decision submitted");
+    expect(decisionToastMessage({ outcome: "signaled" })).toBe("Decision submitted");
   });
 
   it("says the approval is being finalized when the server accepted it for finalizing", () => {
-    expect(decisionToastMessage({ outcome: "finalizing", staleRepos: [] })).toBe("Finalizing your approval…");
-  });
-
-  it("names every stale repo when the approval is held", () => {
-    const message = decisionToastMessage({
-      outcome: "held_for_recheck",
-      staleRepos: [
-        { repo: "acme/app", detail: "2 commits behind main" },
-        { repo: "acme/web", detail: "1 commit behind main" },
-      ],
-    });
-    expect(message).toContain("Approval held");
-    expect(message).toContain("acme/app, acme/web");
-    expect(message).toContain("proceeds automatically");
-  });
-
-  it("still explains the hold when the server names no repo", () => {
-    const message = decisionToastMessage({ outcome: "held_for_recheck", staleRepos: [] });
-    expect(message).toContain("Approval held");
-    expect(message).toContain("this run's repos");
+    expect(decisionToastMessage({ outcome: "finalizing" })).toBe("Finalizing your approval…");
   });
 });
 

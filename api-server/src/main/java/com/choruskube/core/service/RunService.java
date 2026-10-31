@@ -5,8 +5,8 @@ import com.choruskube.core.credential.CredentialPreflightChecker;
 import com.choruskube.core.dto.*;
 import com.choruskube.core.event.MappableCreated;
 import com.choruskube.core.exception.BadRequestException;
+import com.choruskube.core.exception.ConflictException;
 import com.choruskube.core.exception.GateClaimConflictException;
-import com.choruskube.core.exception.GateRecheckExhaustedException;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.exception.ValidationException;
 import com.choruskube.core.model.*;
@@ -24,8 +24,6 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.temporal.client.WorkflowNotFoundException;
 import io.temporal.client.WorkflowOptions;
 import io.temporal.client.WorkflowStub;
@@ -90,9 +88,7 @@ public class RunService {
     private final NodeExecutionClaimService nodeExecutionClaimService;
     private final EscalationContextResolver escalationContextResolver;
     private final RoadmapProposalValidator roadmapProposalValidator;
-    private final PullRequestMergeService pullRequestMergeService;
     private final TaskSettlementService taskSettlement;
-    private final GateDriftCheckService gateDriftCheck;
     private final GateRecheckService gateRecheck;
     private final GateFinalizeService gateFinalize;
 
@@ -135,9 +131,7 @@ public class RunService {
             NodeExecutionClaimService nodeExecutionClaimService,
             EscalationContextResolver escalationContextResolver,
             @Lazy RoadmapProposalValidator roadmapProposalValidator,
-            PullRequestMergeService pullRequestMergeService,
             TaskSettlementService taskSettlement,
-            GateDriftCheckService gateDriftCheck,
             GateRecheckService gateRecheck,
             @Lazy GateFinalizeService gateFinalize) {
         this.runRepo = runRepo;
@@ -175,9 +169,7 @@ public class RunService {
         this.nodeExecutionClaimService = nodeExecutionClaimService;
         this.escalationContextResolver = escalationContextResolver;
         this.roadmapProposalValidator = roadmapProposalValidator;
-        this.pullRequestMergeService = pullRequestMergeService;
         this.taskSettlement = taskSettlement;
-        this.gateDriftCheck = gateDriftCheck;
         this.gateRecheck = gateRecheck;
         this.gateFinalize = gateFinalize;
     }
@@ -480,93 +472,50 @@ public class RunService {
                 .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
 
         NodeExecutionUtil.requireInRun(exec, runId);
-        return decideGate(run, exec, request, null);
+        return decideGate(run, exec, request);
     }
 
-    /**
-     * Re-applies an approval held for a re-check once its gate awaits a decision again. Runs with
-     * no request behind it, inside {@link RunScopeBinder}. Every way it cannot apply voids the stamp
-     * and leaves the gate to a human, except losing the claim to a reviewer, whose decision stands.
-     */
-    public void applyHeldApproval(UUID stampId) {
-        GateStamp stamp = gateRecheck.findPending(stampId).orElse(null);
-        if (stamp == null) {
-            return;
-        }
-        WorkflowRun run = findRunOrThrow(stamp.getWorkflowRunId());
-        NodeExecution gate =
-                execRepo.findByWorkflowRunIdAndStatus(run.getId(), NodeExecutionStatus.awaiting_human).stream()
-                        .filter(e -> stamp.getGateTemplateNodeId().equals(e.getTemplateNodeId()))
-                        .findFirst()
-                        .orElse(null);
-        if (gate == null) {
-            return;
-        }
-        Optional<String> reasonNotTo = gateRecheck.reasonNotToReapply(stamp, readSnapshot(run));
-        if (reasonNotTo.isPresent()) {
-            parkHeldApproval(stamp, gate, reasonNotTo.get());
-            return;
-        }
-        try {
-            decideGate(
-                    run,
-                    gate,
-                    new SignalRequest("approved", stamp.getFeedback(), stamp.getAttachmentRefs(), null),
-                    stamp);
-        } catch (GateClaimConflictException e) {
-            logger.info(
-                    "Held approval {} lost the claim on gate {}; the decision that won stands", stampId, gate.getId());
-        } catch (RuntimeException e) {
-            parkHeldApproval(stamp, gate, e.getMessage());
-        }
-    }
-
-    private void parkHeldApproval(GateStamp stamp, NodeExecution gate, String reason) {
-        gateRecheck.voidStamp(stamp.getId(), reason, gate.getId());
-        logger.info("Held approval {} for run {} not applied: {}", stamp.getId(), stamp.getWorkflowRunId(), reason);
-        eventPublisher.publishNodeStatusChanged(
-                stamp.getWorkflowRunId(), gate.getId(), NodeExecutionStatus.awaiting_human.name());
-    }
-
-    private SignalResponse decideGate(WorkflowRun run, NodeExecution exec, SignalRequest request, GateStamp heldStamp) {
+    private SignalResponse decideGate(WorkflowRun run, NodeExecution exec, SignalRequest request) {
         UUID runId = run.getId();
         UUID nodeExecId = exec.getId();
 
-        // Only a gate opened on the async protocol has a workflow that finishes an approval in steps;
-        // a gate opened before it waits for a final decision signal, so it must stay on the path below.
-        if (ASYNC_FINALIZE.equals(exec.getFinalizeMode()) && heldStamp == null) {
-            JsonNode snapshot = readSnapshot(run);
-            String decision = validateDecisionAgainstEdges(snapshot, exec.getTemplateNodeId(), request.decision());
-            if ("approved".equalsIgnoreCase(decision) && needsFinalizing(snapshot, exec.getTemplateNodeId())) {
-                JsonNode nodeConfig = decisionOptionsResolver.findNodeConfigOverrides(
-                        snapshot.get("nodes"), exec.getTemplateNodeId());
-                Optional<RoadmapMaterializeMode> mode = materializeMode(snapshot, exec.getTemplateNodeId());
-                RoadmapCandidatesDocument doc = mode.isEmpty()
-                        ? null
-                        : request.editedCandidates() != null
-                                ? request.editedCandidates()
-                                : roadmapCandidatesArtifactResolver.resolve(runId, exec.getTemplateNodeId());
-                // Rejected here, the reviewer's edits stay on screen to fix; refused after the claim,
-                // the gate reopens with the server's document and the edits are lost.
-                if (mode.isPresent()) {
-                    requireValidRoadmap(runId, mode.get(), doc);
-                }
-                return gateFinalize.requestApproval(
-                        run,
-                        exec,
-                        request,
-                        snapshot,
-                        DriftRecheckConfig.fromConfigOverrides(nodeConfig).orElse(null),
-                        doc);
+        JsonNode snapshot = readSnapshot(run);
+        String decision = validateDecisionAgainstEdges(snapshot, exec.getTemplateNodeId(), request.decision());
+
+        if ("approved".equalsIgnoreCase(decision) && needsFinalizing(snapshot, exec.getTemplateNodeId())) {
+            // A gate opened before the workflow always marked gates async has no finalizer to drive
+            // the merge, re-check or roadmap write an approval here would need; refusing it is safer
+            // than signalling "approved" without ever doing that work.
+            if (!ASYNC_FINALIZE.equals(exec.getFinalizeMode())) {
+                throw new ConflictException(
+                        "This gate was opened by a workflow that cannot finalize an approval. Cancel the run and "
+                                + "start a new one.");
             }
+            JsonNode nodeConfig =
+                    decisionOptionsResolver.findNodeConfigOverrides(snapshot.get("nodes"), exec.getTemplateNodeId());
+            Optional<RoadmapMaterializeMode> mode = materializeMode(snapshot, exec.getTemplateNodeId());
+            RoadmapCandidatesDocument doc = mode.isEmpty()
+                    ? null
+                    : request.editedCandidates() != null
+                            ? request.editedCandidates()
+                            : roadmapCandidatesArtifactResolver.resolve(runId, exec.getTemplateNodeId());
+            // Rejected here, the reviewer's edits stay on screen to fix; refused after the claim,
+            // the gate reopens with the server's document and the edits are lost.
+            if (mode.isPresent()) {
+                requireValidRoadmap(runId, mode.get(), doc);
+            }
+            return gateFinalize.requestApproval(
+                    run,
+                    exec,
+                    request,
+                    snapshot,
+                    DriftRecheckConfig.fromConfigOverrides(nodeConfig).orElse(null),
+                    doc);
         }
 
-        // Atomically claim the node before doing anything else. Two concurrent/duplicate
-        // submissions (double-click, two open tabs, a client retry) would otherwise both pass
-        // validation below and both independently materialize the Roadmap Provisioner candidate
-        // breakdown, silently creating duplicate Epic/Story/Task rows with nothing surfaced to the
-        // reviewer. This is a single atomic UPDATE ... WHERE status = awaiting_human — only one
-        // concurrent caller can win it; the other sees 0 rows affected and is rejected outright.
+        // Of two concurrent submissions (double-click, two open tabs, a client retry), only the one
+        // that wins this atomic UPDATE ... WHERE status = awaiting_human may signal the workflow;
+        // the other is refused rather than told a decision the workflow never acts on was applied.
         int claimed = nodeExecutionClaimService.compareAndSetStatus(
                 nodeExecId, NodeExecutionStatus.awaiting_human, NodeExecutionStatus.running);
         if (claimed == 0) {
@@ -575,24 +524,9 @@ public class RunService {
                             + "(already decided, or a concurrent request already claimed it)");
         }
 
-        // From here on, any failure (bad decision string, merge refusal, materialization error,
-        // Temporal signal failure) must release the claim back to awaiting_human so the request
-        // stays retryable — e.g. a typo'd decision string is a routine, expected error today and
-        // must not permanently strand the gate. Merging is safe to repeat here because it skips
-        // whatever GitHub already reports merged. This only reopens a (much narrower, pre-existing)
-        // window where a retry after materialization already succeeded but the signal itself then
-        // failed could re-materialize;
-        // the case this guard exists for — two concurrent/duplicate submissions racing each other —
-        // is fully closed by the claim above.
+        // Any failure from here releases the claim, or the gate is stranded with no decision applied.
         try {
-            JsonNode snapshot = readSnapshot(run);
-
-            String validatedDecision =
-                    validateDecisionAgainstEdges(snapshot, exec.getTemplateNodeId(), request.decision());
-
-            if (heldStamp == null) {
-                gateRecheck.voidPendingFor(runId, exec.getTemplateNodeId(), GateRecheckService.REVIEWER_DECIDED);
-            }
+            gateRecheck.voidPendingFor(runId, exec.getTemplateNodeId(), GateRecheckService.REVIEWER_DECIDED);
 
             String assembledResult = exec.getResult();
             if (request.feedback() != null && !request.feedback().isBlank()) {
@@ -603,170 +537,25 @@ public class RunService {
                 }
             }
 
-            // Deterministic materialization: on approval of a gate configured for it,
-            // turn the reviewed (possibly reviewer-edited) roadmap candidate document
-            // directly into Epic/Story/Task rows — through the same write path a human uses — in
-            // the same request that handles the decision signal, rather than via a second AI
-            // agent.
-            if ("approved".equalsIgnoreCase(validatedDecision)) {
-                JsonNode nodeConfig = decisionOptionsResolver.findNodeConfigOverrides(
-                        snapshot.get("nodes"), exec.getTemplateNodeId());
-                Optional<RoadmapMaterializeMode> mode = materializeMode(snapshot, exec.getTemplateNodeId());
-                Optional<PullRequestMergeMethod> mergeMethod = PullRequestMergeMethod.fromConfigOverrides(nodeConfig);
-
-                // Validate before merging anything: a rejected roadmap proposal must never leave
-                // pull requests merged while the gate is still open. Materialization itself (a
-                // non-idempotent write) still waits until after the merge below.
-                RoadmapCandidatesDocument source = null;
-                MaterializationPlan plan = null;
-                if (mode.isPresent()) {
-                    // A present-but-empty editedCandidates means the reviewer deliberately cleared
-                    // the breakdown (e.g. rejecting every candidate while still approving the gate
-                    // for some other reason) and must NOT fall back to the original analyzer
-                    // artifact — only a genuinely absent field (no edits submitted at all) does that.
-                    // A held approval materializes the document the reviewer approved, never a newer
-                    // copy the re-check wrote that nobody reviewed.
-                    source = heldStamp != null
-                            ? gateRecheck.approvedCandidates(heldStamp)
-                            : request.editedCandidates() != null
-                                    ? request.editedCandidates()
-                                    : roadmapCandidatesArtifactResolver.resolve(runId, exec.getTemplateNodeId());
-                    plan = prepareMaterialization(runId, mode.get(), source);
-                }
-
-                Optional<DriftRecheckConfig> recheck = DriftRecheckConfig.fromConfigOverrides(nodeConfig);
-                if (recheck.isPresent()) {
-                    GateDriftCheckService.DriftCheck drift =
-                            gateDriftCheck.check(runId, exec.getTemplateNodeId(), snapshot);
-                    if (drift.stale()) {
-                        return holdForRecheck(run, exec, snapshot, request, heldStamp, recheck.get(), drift, source);
-                    }
-                }
-
-                if (mergeMethod.isPresent()) {
-                    PullRequestMergeService.MergeOutcome outcome = pullRequestMergeService.mergeAll(
-                            runId, mergeMethod.get(), heldStamp != null ? heldStamp.getId() : null);
-                    // Commits here, before the signal, only because this method has no transaction:
-                    // a signalled run can finish at once, and its Task closes only on merges that
-                    // are already committed (TaskSettlementService).
-                    pullRequestMergeService.recordOutcome(runId, outcome);
-                    assembledResult = appendNote(assembledResult, pullRequestMergeService.note(outcome));
-                }
-
-                if (plan != null && plan.runnable()) {
-                    assembledResult = appendNote(assembledResult, materializeAndNote(runId, plan));
-                } else if (plan != null) {
-                    assembledResult = appendNote(assembledResult, plan.fixedNote());
-                }
-            }
-
-            signalGate(run, nodeExecId, validatedDecision, assembledResult, request.attachmentRefs(), null);
+            signalGate(run, nodeExecId, decision, assembledResult, request.attachmentRefs(), null);
         } catch (RuntimeException e) {
             nodeExecutionClaimService.compareAndSetStatus(
                     nodeExecId, NodeExecutionStatus.running, NodeExecutionStatus.awaiting_human);
             throw e;
         }
-        afterSignal(runId, nodeExecId, () -> {
-            if (heldStamp != null) {
-                gateRecheck.consume(heldStamp.getId());
-            }
-        });
+        afterSignal(runId, nodeExecId);
         return SignalResponse.signaled();
     }
 
     /**
-     * Bookkeeping after a decision was delivered. A failure is logged and never thrown: releasing
-     * the claim or reporting an error now would misstate a decision the workflow already received.
+     * Publishes the signal event after a decision was delivered. A failure is logged and never
+     * thrown: reporting an error now would misstate a decision the workflow already received.
      */
-    private void afterSignal(UUID runId, UUID nodeExecId, Runnable bookkeeping) {
-        try {
-            bookkeeping.run();
-        } catch (RuntimeException e) {
-            logger.error(
-                    "Bookkeeping after signalling gate {} of run {} failed: {}", nodeExecId, runId, e.getMessage(), e);
-        }
+    private void afterSignal(UUID runId, UUID nodeExecId) {
         try {
             eventPublisher.publishNodeStatusChanged(runId, nodeExecId, "signaled");
         } catch (RuntimeException e) {
             logger.warn("Could not publish the signal of gate {} of run {}: {}", nodeExecId, runId, e.getMessage());
-        }
-    }
-
-    /**
-     * Holds an approval whose run is stale: fires the gate's re-check route with system-written
-     * guidance and records the stamp, which {@code GateStampReconciler} re-applies once the gate
-     * awaits again. Nothing is merged or materialized here.
-     */
-    private SignalResponse holdForRecheck(
-            WorkflowRun run,
-            NodeExecution exec,
-            JsonNode snapshot,
-            SignalRequest request,
-            GateStamp heldStamp,
-            DriftRecheckConfig recheck,
-            GateDriftCheckService.DriftCheck drift,
-            RoadmapCandidatesDocument approvedCandidates) {
-        UUID runId = run.getId();
-        if (heldStamp != null && cannotBeFixedByARecheck(drift)) {
-            throw new GateRecheckExhaustedException("The re-check could not tell which main commit was tested ("
-                    + drift.summary() + "). The project's agent image may predate base recording, so rebuild it on "
-                    + "the current claude-code image.");
-        }
-        int round = heldStamp == null ? 1 : heldStamp.getRecheckRounds() + 1;
-        if (round > GateDriftCheckService.MAX_RECHECK_ROUNDS) {
-            throw new GateRecheckExhaustedException("The default branch moved again after "
-                    + GateDriftCheckService.MAX_RECHECK_ROUNDS + " re-check rounds: " + drift.summary()
-                    + ". Approve again to start a new re-check.");
-        }
-        String route = validateDecisionAgainstEdges(snapshot, exec.getTemplateNodeId(), recheck.route());
-        String guidanceRefs;
-        try {
-            guidanceRefs = uploadService.uploadGateText(
-                    storagePrefixResolver.storagePrefixForRun(runId),
-                    runId,
-                    exec.getId(),
-                    "human_guidance.md",
-                    gateDriftCheck.guidance(runId, drift, round));
-        } catch (RuntimeException e) {
-            throw new IllegalStateException("Could not store the re-check guidance for run " + runId, e);
-        }
-        // Written before the signal: once the re-check starts, nothing else would remember the approval.
-        GateStamp stamp = heldStamp == null
-                ? gateRecheck.hold(
-                        runId,
-                        exec,
-                        nodeLabel(snapshot, exec.getTemplateNodeId()),
-                        recheck.stamp(),
-                        request.feedback(),
-                        request.attachmentRefs(),
-                        approvedCandidates)
-                : gateRecheck.holdAgain(heldStamp.getId());
-        String note = "Approval held for a re-check against current main (round " + round + " of "
-                + GateDriftCheckService.MAX_RECHECK_ROUNDS + "): " + drift.summary() + ".";
-        try {
-            signalGate(run, exec.getId(), route, appendNote(exec.getResult(), note), guidanceRefs, null);
-        } catch (RuntimeException e) {
-            if (heldStamp == null) {
-                voidQuietly(stamp, "Starting the re-check failed: " + e.getMessage(), exec.getId());
-            }
-            throw e;
-        }
-        afterSignal(runId, exec.getId(), () -> auditHeld(runId, stamp, drift));
-        return SignalResponse.held(drift);
-    }
-
-    /** Stale only for want of a record a re-check would not produce either: the pods record nothing. */
-    static boolean cannotBeFixedByARecheck(GateDriftCheckService.DriftCheck drift) {
-        return drift.staleRepos().stream()
-                .allMatch(r -> r.reason() == GateDriftCheckService.Reason.NO_RECORD
-                        || r.reason() == GateDriftCheckService.Reason.BASE_GONE);
-    }
-
-    private void voidQuietly(GateStamp stamp, String reason, UUID gateExecId) {
-        try {
-            gateRecheck.voidStamp(stamp.getId(), reason, gateExecId);
-        } catch (RuntimeException e) {
-            logger.error("Could not void held approval {}: {}", stamp.getId(), e.getMessage(), e);
         }
     }
 
@@ -800,21 +589,6 @@ public class RunService {
             }
         }
         return templateNodeId.toString();
-    }
-
-    private void auditHeld(UUID runId, GateStamp stamp, GateDriftCheckService.DriftCheck drift) {
-        try {
-            ObjectNode json = objectMapper.createObjectNode();
-            json.put("gate", stamp.getGateLabel());
-            json.put("stampId", stamp.getId().toString());
-            json.put("round", stamp.getRecheckRounds());
-            ArrayNode repos = json.putArray("staleRepos");
-            drift.staleRepos().forEach(r -> repos.add(r.ownerRepo()));
-            auditSink.record(
-                    AuditSink.GATE_APPROVAL_HELD, "workflow_run", runId, objectMapper.writeValueAsString(json));
-        } catch (Exception e) {
-            logger.error("Could not record gate-approval-held audit event for run {}: {}", runId, e.getMessage(), e);
-        }
     }
 
     JsonNode readSnapshot(WorkflowRun run) {
@@ -859,8 +633,8 @@ public class RunService {
      * A validated-but-not-yet-performed materialization. {@code runnable()} tells the caller
      * whether to call {@link #materializeAndNote} at all: a plan built from a null source, or one
      * whose reviewed document creates nothing, resolves to {@link #fixedNote} instead, and
-     * materialization never runs for it — so merging (a step that must run first; see {@link
-     * #signalHumanDecision}) can never be followed by a roadmap write that turns out unnecessary.
+     * materialization never runs for it — so the merge {@link GateFinalizeService} always completes
+     * first can never be followed by a roadmap write that turns out unnecessary.
      */
     record MaterializationPlan(
             boolean runnable, String fixedNote, RoadmapMaterializeMode mode, RoadmapCandidatesDocument source) {
@@ -876,9 +650,10 @@ public class RunService {
     /**
      * Validates an approved roadmap gate's reviewed document and decides whether materialization
      * has anything to do — without writing anything. Split from the write itself ({@link
-     * #materializeAndNote}) so the roadmap proposal is confirmed valid before pull requests are
-     * merged, while the non-idempotent write still waits until after the merge: a retry after a
-     * merge failure must never risk creating the roadmap items twice.
+     * #materializeAndNote}) so the roadmap proposal is confirmed valid before {@link
+     * GateFinalizeService} merges any pull request, while the non-idempotent write still waits
+     * until the gate's complete step: a retry after a merge failure must never risk creating the
+     * roadmap items twice.
      */
     MaterializationPlan prepareMaterialization(
             UUID runId, RoadmapMaterializeMode mode, RoadmapCandidatesDocument source) {

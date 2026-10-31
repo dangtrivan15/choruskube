@@ -118,12 +118,9 @@ class RunServiceEscalationContextTest {
                 null, // nodeExecutionClaimService — unused (signalHumanDecision not exercised)
                 escalationContextResolver,
                 null, // roadmapProposalValidator - unused (approve-time validation not exercised)
-                null,
-                null,
-                null,
+                null, // taskSettlement
                 org.mockito.Mockito.mock(GateRecheckService.class),
-                org.mockito.Mockito.mock(
-                        GateFinalizeService.class)); // pullRequestMergeService - unused (merge not exercised)
+                org.mockito.Mockito.mock(GateFinalizeService.class));
     }
 
     private WorkflowRun stubRun() {

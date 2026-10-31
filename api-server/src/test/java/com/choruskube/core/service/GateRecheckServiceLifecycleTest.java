@@ -15,7 +15,6 @@ import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.ExecutorType;
 import com.choruskube.core.model.enums.GateStampStatus;
 import com.choruskube.core.model.enums.NodeExecutionStatus;
-import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.GateStampRepository;
 import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.NodeDefinitionRepository;
@@ -103,21 +102,10 @@ class GateRecheckServiceLifecycleTest extends BaseTest {
     }
 
     @Test
-    void holdThenHoldAgain_incrementsRounds() {
-        GateStamp stamp = service.hold(
-                run.getId(), gateExec, "final_approval", StampMode.always, "ship it", "{\"a.pdf\":\"k\"}", null);
-        assertThat(stamp.getRecheckRounds()).isEqualTo(1);
-        assertThat(stamp.getStatus()).isEqualTo(GateStampStatus.pending);
-        assertThat(stamp.getStampedNodeExecutionId()).isEqualTo(gateExec.getId());
-        assertThat(stamp.getFeedback()).isEqualTo("ship it");
-        assertThat(stamp.getAttachmentRefs()).contains("a.pdf");
-
-        assertThat(service.holdAgain(stamp.getId()).getRecheckRounds()).isEqualTo(2);
-    }
-
-    @Test
-    void consume_onlyFromPending() {
-        GateStamp stamp = service.hold(run.getId(), gateExec, "final_approval", StampMode.always, null, null, null);
+    void consume_leavesAVoidedApprovalVoided() {
+        GateStamp stamp = service.holdFromFinalizing(
+                service.begin(run.getId(), gateExec, "final_approval", StampMode.always, null, null, null)
+                        .getId());
         service.voidStamp(stamp.getId(), "because", gateExec.getId());
         service.consume(stamp.getId());
 
@@ -125,14 +113,18 @@ class GateRecheckServiceLifecycleTest extends BaseTest {
         assertThat(reloaded.getStatus()).isEqualTo(GateStampStatus.voided);
         assertThat(reloaded.getVoidReason()).isEqualTo("because");
         assertThat(reloaded.getParkedNodeExecutionId()).isEqualTo(gateExec.getId());
-        assertThat(service.findPending(stamp.getId())).isEmpty();
+        assertThat(service.findHeldFor(run.getId(), templateNode.getId())).isEmpty();
     }
 
     @Test
     void voidPendingFor_voidsOnlyThatGate() {
-        GateStamp stamp = service.hold(run.getId(), gateExec, "final_approval", StampMode.always, null, null, null);
+        GateStamp stamp = service.holdFromFinalizing(
+                service.begin(run.getId(), gateExec, "final_approval", StampMode.always, null, null, null)
+                        .getId());
         service.voidPendingFor(run.getId(), UUID.randomUUID(), GateRecheckService.REVIEWER_DECIDED);
-        assertThat(service.findPending(stamp.getId())).isPresent();
+        assertThat(service.findHeldFor(run.getId(), templateNode.getId()))
+                .map(GateStamp::getId)
+                .contains(stamp.getId());
 
         service.voidPendingFor(run.getId(), templateNode.getId(), GateRecheckService.REVIEWER_DECIDED);
         assertThat(stampRepo.findById(stamp.getId()).orElseThrow().getVoidReason())
@@ -140,32 +132,10 @@ class GateRecheckServiceLifecycleTest extends BaseTest {
     }
 
     @Test
-    void voidPendingOnEndedRuns_voidsOnlyEndedRuns() {
-        GateStamp live = service.hold(run.getId(), gateExec, "final_approval", StampMode.always, null, null, null);
-
-        WorkflowRun ended = new WorkflowRun();
-        ended.setGraphTemplateId(run.getGraphTemplateId());
-        ended.setStatus(WorkflowRunStatus.cancelled);
-        ended = runRepo.save(ended);
-        NodeExecution endedGate = new NodeExecution();
-        endedGate.setWorkflowRunId(ended.getId());
-        endedGate.setTemplateNodeId(templateNode.getId());
-        endedGate.setGraphVersion(1);
-        endedGate = execRepo.save(endedGate);
-        GateStamp orphan = service.hold(ended.getId(), endedGate, "final_approval", StampMode.always, null, null, null);
-
-        run.setStatus(WorkflowRunStatus.running);
-        runRepo.saveAndFlush(run);
-
-        assertThat(service.voidPendingOnEndedRuns()).isEqualTo(1);
-        assertThat(stampRepo.findById(orphan.getId()).orElseThrow().getVoidReason())
-                .isEqualTo(GateRecheckService.RUN_ENDED);
-        assertThat(service.findPending(live.getId())).isPresent();
-    }
-
-    @Test
     void voidLiveForRun_voidsHeldAndFinalizingApprovalsOfThatRunOnly() {
-        GateStamp held = service.hold(run.getId(), gateExec, "final_approval", StampMode.always, null, null, null);
+        GateStamp held = service.holdFromFinalizing(
+                service.begin(run.getId(), gateExec, "final_approval", StampMode.always, null, null, null)
+                        .getId());
         TemplateNode secondNode = new TemplateNode();
         secondNode.setGraphTemplateId(templateNode.getGraphTemplateId());
         secondNode.setNodeDefinitionId(templateNode.getNodeDefinitionId());
@@ -191,8 +161,9 @@ class GateRecheckServiceLifecycleTest extends BaseTest {
         otherRunGate.setTemplateNodeId(templateNode.getId());
         otherRunGate.setGraphVersion(1);
         otherRunGate = execRepo.save(otherRunGate);
-        GateStamp elsewhere =
-                service.hold(other.getId(), otherRunGate, "final_approval", StampMode.always, null, null, null);
+        GateStamp elsewhere = service.holdFromFinalizing(
+                service.begin(other.getId(), otherRunGate, "final_approval", StampMode.always, null, null, null)
+                        .getId());
 
         assertThat(service.voidLiveForRun(run.getId(), GateRecheckService.RUN_ENDED))
                 .isEqualTo(2);
@@ -218,6 +189,8 @@ class GateRecheckServiceLifecycleTest extends BaseTest {
         assertThat(reloaded.getStatus()).isEqualTo(GateStampStatus.finalizing);
         assertThat(reloaded.getRecheckRounds()).isZero();
         assertThat(reloaded.getStampMode()).isEqualTo(StampMode.if_unchanged);
+        assertThat(reloaded.getFeedback()).isEqualTo("ship it");
+        assertThat(reloaded.getAttachmentRefs()).isEqualTo("{\"a.pdf\":\"k\"}");
         assertThat(reloaded.getStampedNodeExecutionId()).isEqualTo(gateExec.getId());
         assertThat(reloaded.getMaterializedAt()).isNull();
         assertThat(service.findFinalizingFor(run.getId(), templateNode.getId()))
@@ -227,7 +200,7 @@ class GateRecheckServiceLifecycleTest extends BaseTest {
     }
 
     @Test
-    void holdFromFinalizing_thenClaimHeld_roundTripsAndCountsARound() {
+    void holdFromFinalizing_thenClaimHeld_roundTripsAndCountsEachRound() {
         GateStamp stamp = service.begin(run.getId(), gateExec, "final_approval", StampMode.always, null, null, null);
 
         GateStamp held = service.holdFromFinalizing(stamp.getId());
@@ -241,11 +214,15 @@ class GateRecheckServiceLifecycleTest extends BaseTest {
         assertThat(claimed.getId()).isEqualTo(stamp.getId());
         assertThat(claimed.getStatus()).isEqualTo(GateStampStatus.finalizing);
         assertThat(service.claimHeld(run.getId(), templateNode.getId())).isEmpty();
+
+        assertThat(service.holdFromFinalizing(stamp.getId()).getRecheckRounds()).isEqualTo(2);
     }
 
     @Test
     void holdFromFinalizing_refusesAnApprovalThatIsNotFinalizing() {
-        GateStamp stamp = service.hold(run.getId(), gateExec, "final_approval", StampMode.always, null, null, null);
+        GateStamp finalizing =
+                service.begin(run.getId(), gateExec, "final_approval", StampMode.always, null, null, null);
+        GateStamp stamp = service.holdFromFinalizing(finalizing.getId());
 
         assertThatThrownBy(() -> service.holdFromFinalizing(stamp.getId())).isInstanceOf(NotFoundException.class);
     }
@@ -261,15 +238,5 @@ class GateRecheckServiceLifecycleTest extends BaseTest {
         service.consume(consumed.getId());
         assertThat(stampRepo.findById(consumed.getId()).orElseThrow().getStatus())
                 .isEqualTo(GateStampStatus.consumed);
-    }
-
-    @Test
-    void findReadyToReapply_requiresAwaitingGate() {
-        GateStamp stamp = service.hold(run.getId(), gateExec, "final_approval", StampMode.always, null, null, null);
-        assertThat(service.findReadyToReapply()).extracting(GateStamp::getId).contains(stamp.getId());
-
-        gateExec.setStatus(NodeExecutionStatus.running);
-        execRepo.saveAndFlush(gateExec);
-        assertThat(service.findReadyToReapply()).extracting(GateStamp::getId).doesNotContain(stamp.getId());
     }
 }
