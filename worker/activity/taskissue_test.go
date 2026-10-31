@@ -83,8 +83,8 @@ func (p *localTaskIssueProvider) GitHubToken(context.Context, uuid.UUID) (creden
 	return credential.Token{Value: localTaskIssueToken}, nil
 }
 
-func (p *localTaskIssueProvider) AgentCredentials(context.Context, uuid.UUID) (credential.Agent, bool, error) {
-	return credential.Agent{}, false, nil
+func (p *localTaskIssueProvider) AgentCredentials(context.Context, uuid.UUID, credential.Agent, bool) (credential.Agent, error) {
+	return credential.Agent{}, nil
 }
 
 type taskIssueRig struct {

@@ -4,14 +4,14 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-import com.choruskube.core.credential.AiCredentialResolver;
 import com.choruskube.core.dto.CompleteWorkloadRequest;
 import com.choruskube.core.dto.CreateWorkloadRequest;
 import com.choruskube.core.dto.PrepareWorkloadResponse;
 import com.choruskube.core.exception.NotFoundException;
+import com.choruskube.core.executor.WorkloadAgentCredentialResolver;
+import com.choruskube.core.executor.WorkloadAgentCredentials;
 import com.choruskube.core.executor.WorkloadMemoryCeilingPolicy;
 import com.choruskube.core.executor.WorkloadNamespaceResolver;
-import com.choruskube.core.executor.WorkloadRegistryCredentialResolver;
 import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.NodeExecutionStatus;
@@ -45,13 +45,10 @@ class WorkloadServiceTest {
     private GraphSnapshotBuilder snapshotBuilder;
 
     @Mock
-    private AiCredentialResolver aiCredentialResolver;
+    private WorkloadAgentCredentialResolver agentCredentialResolver;
 
     @Mock
     private WorkloadNamespaceResolver namespaceResolver;
-
-    @Mock
-    private WorkloadRegistryCredentialResolver registryCredentialResolver;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -66,17 +63,16 @@ class WorkloadServiceTest {
     void setUp() {
         ObjectProvider<WorkloadNamespaceResolver> namespaceResolverProvider = mock(ObjectProvider.class);
         when(namespaceResolverProvider.getIfAvailable(any())).thenReturn(namespaceResolver);
-        ObjectProvider<WorkloadRegistryCredentialResolver> registryCredentialResolverProvider =
-                mock(ObjectProvider.class);
-        when(registryCredentialResolverProvider.getIfAvailable(any())).thenReturn(registryCredentialResolver);
+        ObjectProvider<WorkloadAgentCredentialResolver> agentCredentialResolverProvider = mock(ObjectProvider.class);
+        when(agentCredentialResolverProvider.getIfAvailable(any())).thenReturn(agentCredentialResolver);
 
         service = serviceWith(
-                namespaceResolverProvider, registryCredentialResolverProvider, noCeilingPolicyRegisteredProvider());
+                namespaceResolverProvider, agentCredentialResolverProvider, noCeilingPolicyRegisteredProvider());
     }
 
     private WorkloadService serviceWith(
             ObjectProvider<WorkloadNamespaceResolver> namespaceResolverProvider,
-            ObjectProvider<WorkloadRegistryCredentialResolver> registryCredentialResolverProvider,
+            ObjectProvider<WorkloadAgentCredentialResolver> agentCredentialResolverProvider,
             ObjectProvider<WorkloadMemoryCeilingPolicy> memoryCeilingPolicyProvider) {
         return new WorkloadService(
                 execRepo,
@@ -86,10 +82,9 @@ class WorkloadServiceTest {
                 objectMapper,
                 DEFAULT_AGENT_IMAGE,
                 DEFAULT_SERVICE_ACCOUNT,
-                aiCredentialResolver,
                 API_SERVER_URL,
                 namespaceResolverProvider,
-                registryCredentialResolverProvider,
+                agentCredentialResolverProvider,
                 memoryCeilingPolicyProvider);
     }
 
@@ -128,12 +123,12 @@ class WorkloadServiceTest {
         return provider;
     }
 
-    /** As {@link #noBeanRegisteredProvider()}, for the registry-credential seam's real default. */
+    /** As {@link #noNamespaceBeanRegisteredProvider()}, for the agent-credential seam's real default. */
     @SuppressWarnings("unchecked")
-    private static ObjectProvider<WorkloadRegistryCredentialResolver> noCredentialBeanRegisteredProvider() {
-        ObjectProvider<WorkloadRegistryCredentialResolver> provider = mock(ObjectProvider.class);
+    private static ObjectProvider<WorkloadAgentCredentialResolver> noAgentCredentialBeanRegisteredProvider() {
+        ObjectProvider<WorkloadAgentCredentialResolver> provider = mock(ObjectProvider.class);
         when(provider.getIfAvailable(any())).thenAnswer(invocation -> {
-            java.util.function.Supplier<WorkloadRegistryCredentialResolver> fallback = invocation.getArgument(0);
+            java.util.function.Supplier<WorkloadAgentCredentialResolver> fallback = invocation.getArgument(0);
             return fallback.get();
         });
         return provider;
@@ -175,7 +170,8 @@ class WorkloadServiceTest {
         when(execRepo.findById(nodeExecId)).thenReturn(Optional.of(nodeExec));
         when(runRepo.findById(runId)).thenReturn(Optional.of(workflowRun));
         when(snapshotBuilder.buildSnapshotForRun(workflowRun)).thenReturn(snapshotJson);
-        when(aiCredentialResolver.resolveOauthToken(runId)).thenReturn("oauth-secret");
+        when(agentCredentialResolver.resolve(runId, true))
+                .thenReturn(new WorkloadAgentCredentials("oauth-secret", null));
 
         var request = new CreateWorkloadRequest(templateNodeId, Map.of());
         var response = service.prepareWorkload(runId, nodeExecId, request);
@@ -235,7 +231,6 @@ class WorkloadServiceTest {
         when(execRepo.findById(nodeExecId)).thenReturn(Optional.of(nodeExec));
         when(runRepo.findById(runId)).thenReturn(Optional.of(workflowRun));
         when(snapshotBuilder.buildSnapshotForRun(workflowRun)).thenReturn(snapshotJson);
-        when(aiCredentialResolver.resolveOauthToken(runId)).thenReturn("oauth-secret");
 
         WorkloadService serviceWithoutNamespaceBean = new WorkloadService(
                 execRepo,
@@ -245,10 +240,9 @@ class WorkloadServiceTest {
                 objectMapper,
                 DEFAULT_AGENT_IMAGE,
                 DEFAULT_SERVICE_ACCOUNT,
-                aiCredentialResolver,
                 API_SERVER_URL,
                 noNamespaceBeanRegisteredProvider(),
-                noCredentialBeanRegisteredProvider(),
+                noAgentCredentialBeanRegisteredProvider(),
                 noCeilingPolicyRegisteredProvider());
 
         var response = serviceWithoutNamespaceBean.prepareWorkload(
@@ -260,15 +254,14 @@ class WorkloadServiceTest {
     }
 
     /**
-     * Anti-vacuity guard: with no {@code WorkloadRegistryCredentialResolver} bean registered,
-     * {@code prepareWorkload} must fall through to the real {@link
-     * com.choruskube.core.executor.NoRegistryCredentialResolver} (via {@code
-     * ObjectProvider.getIfAvailable}'s fallback supplier, not a test double standing in for one)
-     * and return a null {@code registryCredentials} — guarding against the field silently coming
-     * back hardcoded.
+     * This is the anti-vacuity guard for the agent-credential seam: with no {@code
+     * WorkloadAgentCredentialResolver} bean registered, {@code prepareWorkload} must fall through
+     * to the real {@link com.choruskube.core.executor.NoWorkloadAgentCredentialResolver} (via
+     * {@code ObjectProvider.getIfAvailable}'s fallback supplier, not a test double standing in for
+     * one) and return both a null token and null registry credentials, without throwing.
      */
     @Test
-    void prepareWorkload_returnsNullRegistryCredentials_withTheDefaultSeam() {
+    void prepareWorkload_withNoResolverRegistered_attachesNoAgentCredentials() {
         UUID runId = UUID.randomUUID();
         UUID nodeExecId = UUID.randomUUID();
         UUID templateNodeId = UUID.randomUUID();
@@ -303,7 +296,6 @@ class WorkloadServiceTest {
         when(execRepo.findById(nodeExecId)).thenReturn(Optional.of(nodeExec));
         when(runRepo.findById(runId)).thenReturn(Optional.of(workflowRun));
         when(snapshotBuilder.buildSnapshotForRun(workflowRun)).thenReturn(snapshotJson);
-        when(aiCredentialResolver.resolveOauthToken(runId)).thenReturn("oauth-secret");
 
         WorkloadService serviceWithoutCredentialBean = new WorkloadService(
                 execRepo,
@@ -313,20 +305,20 @@ class WorkloadServiceTest {
                 objectMapper,
                 DEFAULT_AGENT_IMAGE,
                 DEFAULT_SERVICE_ACCOUNT,
-                aiCredentialResolver,
                 API_SERVER_URL,
                 noNamespaceBeanRegisteredProvider(),
-                noCredentialBeanRegisteredProvider(),
+                noAgentCredentialBeanRegisteredProvider(),
                 noCeilingPolicyRegisteredProvider());
 
         var response = serviceWithoutCredentialBean.prepareWorkload(
                 runId, nodeExecId, new CreateWorkloadRequest(templateNodeId, Map.of()));
 
+        assertNull(response.claudeOAuthToken());
         assertNull(response.registryCredentials());
     }
 
     @Test
-    void prepareWorkload_returnsRegistryCredentials_whenResolverProvidesOne() {
+    void prepareWorkload_returnsWhatTheResolverAttaches() {
         UUID runId = UUID.randomUUID();
         UUID nodeExecId = UUID.randomUUID();
         UUID templateNodeId = UUID.randomUUID();
@@ -361,24 +353,28 @@ class WorkloadServiceTest {
         when(execRepo.findById(nodeExecId)).thenReturn(Optional.of(nodeExec));
         when(runRepo.findById(runId)).thenReturn(Optional.of(workflowRun));
         when(snapshotBuilder.buildSnapshotForRun(workflowRun)).thenReturn(snapshotJson);
-        when(aiCredentialResolver.resolveOauthToken(runId)).thenReturn("oauth-secret");
-        when(registryCredentialResolver.resolve(runId))
-                .thenReturn(new PrepareWorkloadResponse.RegistryCredentialsDto(
-                        "registry.example.test", "svc-account", "s3cr3t"));
+        when(agentCredentialResolver.resolve(runId, true))
+                .thenReturn(new WorkloadAgentCredentials(
+                        "oauth-secret",
+                        new PrepareWorkloadResponse.RegistryCredentialsDto(
+                                "registry.example.test", "svc-account", "s3cr3t")));
 
         var response = service.prepareWorkload(runId, nodeExecId, new CreateWorkloadRequest(templateNodeId, Map.of()));
 
+        assertEquals("oauth-secret", response.claudeOAuthToken());
         assertEquals(
                 new PrepareWorkloadResponse.RegistryCredentialsDto("registry.example.test", "svc-account", "s3cr3t"),
                 response.registryCredentials());
-        verify(registryCredentialResolver).resolve(runId);
+        verify(agentCredentialResolver).resolve(runId, true);
     }
 
+    /**
+     * A resolver that throws fails preparation outright — it is not degraded to an anonymous
+     * launch the way an unresolvable namespace or memory policy is, because a thrown credential
+     * lookup leaves no safe default to attach instead.
+     */
     @Test
-    void prepareWorkload_launchesWithoutPullSecret_whenCredentialResolverThrows() {
-        // A deployment-specific resolver bean may derive a tenant from the run and throw
-        // (IllegalStateException) on a run with no tenant row (e.g. an e2e run); prepareWorkload must
-        // degrade to an anonymous pull, not hard-fail every launch — mirroring the namespace guard.
+    void prepareWorkload_resolverFailure_failsPrepare() {
         UUID runId = UUID.randomUUID();
         UUID nodeExecId = UUID.randomUUID();
         UUID templateNodeId = UUID.randomUUID();
@@ -413,13 +409,11 @@ class WorkloadServiceTest {
         when(execRepo.findById(nodeExecId)).thenReturn(Optional.of(nodeExec));
         when(runRepo.findById(runId)).thenReturn(Optional.of(workflowRun));
         when(snapshotBuilder.buildSnapshotForRun(workflowRun)).thenReturn(snapshotJson);
-        when(aiCredentialResolver.resolveOauthToken(runId)).thenReturn("oauth-secret");
-        when(registryCredentialResolver.resolve(runId))
-                .thenThrow(new IllegalStateException("run has no ownership row"));
+        when(agentCredentialResolver.resolve(runId, true)).thenThrow(new IllegalStateException("resolution failed"));
 
-        var response = service.prepareWorkload(runId, nodeExecId, new CreateWorkloadRequest(templateNodeId, Map.of()));
-
-        assertNull(response.registryCredentials());
+        assertThrows(
+                IllegalStateException.class,
+                () -> service.prepareWorkload(runId, nodeExecId, new CreateWorkloadRequest(templateNodeId, Map.of())));
     }
 
     @Test
@@ -459,7 +453,8 @@ class WorkloadServiceTest {
         when(execRepo.findById(nodeExecId)).thenReturn(Optional.of(nodeExec));
         when(runRepo.findById(runId)).thenReturn(Optional.of(workflowRun));
         when(snapshotBuilder.buildSnapshotForRun(workflowRun)).thenReturn(snapshotJson);
-        when(aiCredentialResolver.resolveOauthToken(runId)).thenReturn("oauth-secret");
+        when(agentCredentialResolver.resolve(runId, true))
+                .thenReturn(new WorkloadAgentCredentials("oauth-secret", null));
         when(namespaceResolver.resolve(runId)).thenReturn("choruskube-org-acme");
 
         var response = service.prepareWorkload(runId, nodeExecId, new CreateWorkloadRequest(templateNodeId, Map.of()));
@@ -506,7 +501,8 @@ class WorkloadServiceTest {
         when(execRepo.findById(nodeExecId)).thenReturn(Optional.of(nodeExec));
         when(runRepo.findById(runId)).thenReturn(Optional.of(workflowRun));
         when(snapshotBuilder.buildSnapshotForRun(workflowRun)).thenReturn(snapshotJson);
-        when(aiCredentialResolver.resolveOauthToken(runId)).thenReturn("oauth-secret");
+        when(agentCredentialResolver.resolve(runId, true))
+                .thenReturn(new WorkloadAgentCredentials("oauth-secret", null));
         // A run with no resolvable tenant (the Docker/e2e case) — prepare must degrade to a
         // namespace-less launch, not propagate the failure and refuse to prepare the workload.
         when(namespaceResolver.resolve(runId)).thenThrow(new IllegalStateException("no ownership row"));
@@ -517,7 +513,7 @@ class WorkloadServiceTest {
     }
 
     @Test
-    void prepareWorkload_omitsOauthTokenForScriptNodes() {
+    void prepareWorkload_scriptNode_asksForNoClaudeToken() {
         UUID runId = UUID.randomUUID();
         UUID nodeExecId = UUID.randomUUID();
         UUID templateNodeId = UUID.randomUUID();
@@ -552,12 +548,58 @@ class WorkloadServiceTest {
         when(execRepo.findById(nodeExecId)).thenReturn(Optional.of(nodeExec));
         when(runRepo.findById(runId)).thenReturn(Optional.of(workflowRun));
         when(snapshotBuilder.buildSnapshotForRun(workflowRun)).thenReturn(snapshotJson);
+        when(agentCredentialResolver.resolve(runId, false)).thenReturn(WorkloadAgentCredentials.NONE);
 
         var request = new CreateWorkloadRequest(templateNodeId, Map.of("executor_type", "script"));
         var response = service.prepareWorkload(runId, nodeExecId, request);
 
         assertNull(response.claudeOAuthToken());
-        verifyNoInteractions(aiCredentialResolver);
+        verify(agentCredentialResolver).resolve(runId, false);
+    }
+
+    @Test
+    void prepareWorkload_missingExecutorType_asksForAClaudeToken() {
+        UUID runId = UUID.randomUUID();
+        UUID nodeExecId = UUID.randomUUID();
+        UUID templateNodeId = UUID.randomUUID();
+        UUID graphTemplateId = UUID.randomUUID();
+
+        var nodeExec = new NodeExecution();
+        nodeExec.setId(nodeExecId);
+        nodeExec.setWorkflowRunId(runId);
+        nodeExec.setTemplateNodeId(templateNodeId);
+        nodeExec.setStatus(NodeExecutionStatus.pending);
+
+        var workflowRun = new WorkflowRun();
+        workflowRun.setId(runId);
+        workflowRun.setGraphTemplateId(graphTemplateId);
+        workflowRun.setInputs("{}");
+
+        String snapshotJson = """
+                {
+                  "nodes": [{
+                    "template_node_id": "%s",
+                    "label": "Test Node",
+                    "executor_type": "ai",
+                    "image": "test-image:latest",
+                    "secrets": [],
+                    "is_entrypoint": true
+                  }],
+                  "edges": [],
+                  "inputs": {}
+                }
+                """.formatted(templateNodeId);
+
+        when(execRepo.findById(nodeExecId)).thenReturn(Optional.of(nodeExec));
+        when(runRepo.findById(runId)).thenReturn(Optional.of(workflowRun));
+        when(snapshotBuilder.buildSnapshotForRun(workflowRun)).thenReturn(snapshotJson);
+        when(agentCredentialResolver.resolve(runId, true)).thenReturn(new WorkloadAgentCredentials("token", null));
+
+        // No "executor_type" key in the request's configJson at all — defaults to "ai".
+        var request = new CreateWorkloadRequest(templateNodeId, Map.of());
+        service.prepareWorkload(runId, nodeExecId, request);
+
+        verify(agentCredentialResolver).resolve(runId, true);
     }
 
     @Test
@@ -609,7 +651,7 @@ class WorkloadServiceTest {
         when(execRepo.findById(nodeExecId)).thenReturn(Optional.of(nodeExec));
         when(runRepo.findById(runId)).thenReturn(Optional.of(workflowRun));
         when(snapshotBuilder.buildSnapshotForRun(workflowRun)).thenReturn(snapshotJson);
-        when(aiCredentialResolver.resolveOauthToken(runId)).thenReturn("token");
+        when(agentCredentialResolver.resolve(runId, true)).thenReturn(new WorkloadAgentCredentials("token", null));
 
         var request = new CreateWorkloadRequest(templateNodeId, Map.of());
         var response = service.prepareWorkload(runId, nodeExecId, request);
@@ -676,7 +718,7 @@ class WorkloadServiceTest {
                 NotFoundException.class,
                 () -> service.prepareWorkload(runId, nodeExecId, new CreateWorkloadRequest(null, null)));
 
-        verifyNoInteractions(runRepo, aiCredentialResolver);
+        verifyNoInteractions(runRepo, agentCredentialResolver);
     }
 
     @Test
@@ -716,7 +758,7 @@ class WorkloadServiceTest {
         when(execRepo.findById(nodeExecId)).thenReturn(Optional.of(nodeExec));
         when(runRepo.findById(runId)).thenReturn(Optional.of(workflowRun));
         when(snapshotBuilder.buildSnapshotForRun(workflowRun)).thenReturn(snapshotJson);
-        when(aiCredentialResolver.resolveOauthToken(runId)).thenReturn("token");
+        when(agentCredentialResolver.resolve(runId, true)).thenReturn(new WorkloadAgentCredentials("token", null));
 
         var request = new CreateWorkloadRequest(templateNodeId, Map.of());
         var response = service.prepareWorkload(runId, nodeExecId, request);
@@ -764,7 +806,7 @@ class WorkloadServiceTest {
         when(execRepo.findById(nodeExecId)).thenReturn(Optional.of(nodeExec));
         when(runRepo.findById(runId)).thenReturn(Optional.of(workflowRun));
         when(snapshotBuilder.buildSnapshotForRun(workflowRun)).thenReturn(snapshotJson);
-        when(aiCredentialResolver.resolveOauthToken(runId)).thenReturn("token");
+        when(agentCredentialResolver.resolve(runId, true)).thenReturn(new WorkloadAgentCredentials("token", null));
 
         var request = new CreateWorkloadRequest(templateNodeId, Map.of());
         var response = service.prepareWorkload(runId, nodeExecId, request);
@@ -812,17 +854,20 @@ class WorkloadServiceTest {
         when(execRepo.findById(nodeExecId)).thenReturn(Optional.of(nodeExec));
         when(runRepo.findById(runId)).thenReturn(Optional.of(workflowRun));
         when(snapshotBuilder.buildSnapshotForRun(workflowRun)).thenReturn(snapshotJson);
-        when(aiCredentialResolver.resolveOauthToken(runId)).thenReturn("token");
+        // Both variants below use noAgentCredentialBeanRegisteredProvider(), the real default —
+        // not the shared agentCredentialResolver mock — so there is nothing to stub on it here.
         var request = new CreateWorkloadRequest(templateNodeId, Map.of());
 
         WorkloadService capping = serviceWith(
                 noNamespaceBeanRegisteredProvider(),
-                noCredentialBeanRegisteredProvider(),
+                noAgentCredentialBeanRegisteredProvider(),
                 ceilingPolicyProvider(id -> false));
         assertFalse(capping.prepareWorkload(runId, nodeExecId, request).memoryCeilingExempt());
 
         WorkloadService throwing = serviceWith(
-                noNamespaceBeanRegisteredProvider(), noCredentialBeanRegisteredProvider(), ceilingPolicyProvider(id -> {
+                noNamespaceBeanRegisteredProvider(),
+                noAgentCredentialBeanRegisteredProvider(),
+                ceilingPolicyProvider(id -> {
                     throw new IllegalStateException("no ownership row");
                 }));
         assertFalse(throwing.prepareWorkload(runId, nodeExecId, request).memoryCeilingExempt());
@@ -864,7 +909,8 @@ class WorkloadServiceTest {
         when(execRepo.findById(nodeExecId)).thenReturn(Optional.of(nodeExec));
         when(runRepo.findById(runId)).thenReturn(Optional.of(workflowRun));
         when(snapshotBuilder.buildSnapshotForRun(workflowRun)).thenReturn(snapshotJson);
-        when(aiCredentialResolver.resolveOauthToken(runId)).thenReturn("oauth-secret");
+        when(agentCredentialResolver.resolve(runId, true))
+                .thenReturn(new WorkloadAgentCredentials("oauth-secret", null));
 
         var response = service.prepareWorkload(runId, nodeExecId, new CreateWorkloadRequest(templateNodeId, Map.of()));
 

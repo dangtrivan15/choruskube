@@ -67,7 +67,8 @@ type cachedInstallation struct {
 // for anything dir does not hold: GITHUB_PAT, GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID,
 // GITHUB_APP_PRIVATE_KEY_PATH, CLAUDE_CODE_OAUTH_TOKEN, REGISTRY_HOST, REGISTRY_USERNAME and
 // REGISTRY_PASSWORD. An empty dir means environment only. scopes supplies the run scope an App
-// credential's mint is narrowed to; it is never consulted for a PAT.
+// credential's mint is narrowed to; it is never consulted for a PAT. AgentCredentials never reads
+// what prepare attached — a Claude-running node with no Claude token of its own is an error.
 func NewLocal(dir string, gh AppTokenMinter, scopes ScopeClient, now func() time.Time) Provider {
 	if now == nil {
 		now = time.Now
@@ -129,19 +130,27 @@ func (l *local) GitHubToken(ctx context.Context, runID uuid.UUID) (Token, error)
 		"in CREDENTIALS_DIR (%s), or set GITHUB_PAT, or GITHUB_APP_ID with GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY_PATH", l.dirLabel())
 }
 
-func (l *local) AgentCredentials(context.Context, uuid.UUID) (Agent, bool, error) {
-	claude, err := l.fileOrEnv("claude-oauth-token", "CLAUDE_CODE_OAUTH_TOKEN")
-	if err != nil {
-		return Agent{}, false, err
-	}
+// AgentCredentials ignores attached: this Worker holds its own credentials and never launches on
+// what the control plane attached. A registry login is optional (nil means an anonymous pull),
+// but a Claude-running node with no Claude token of its own is an error.
+func (l *local) AgentCredentials(_ context.Context, _ uuid.UUID, _ Agent, runsClaude bool) (Agent, error) {
 	registry, err := l.registry()
 	if err != nil {
-		return Agent{}, false, err
+		return Agent{}, err
 	}
-	if claude == "" && registry == nil {
-		return Agent{}, false, nil
+	if !runsClaude {
+		return Agent{Registry: registry}, nil
 	}
-	return Agent{ClaudeOAuthToken: claude, Registry: registry}, true, nil
+	claude, err := l.fileOrEnv("claude-oauth-token", "CLAUDE_CODE_OAUTH_TOKEN")
+	if err != nil {
+		return Agent{}, err
+	}
+	if claude == "" {
+		return Agent{}, fmt.Errorf("%w: this Worker holds its own credentials (CREDENTIAL_SOURCE=local) and never uses "+
+			"the control plane's; put claude-oauth-token in CREDENTIALS_DIR (%s) or set CLAUDE_CODE_OAUTH_TOKEN",
+			ErrNoClaudeToken, l.dirLabel())
+	}
+	return Agent{ClaudeOAuthToken: claude, Registry: registry}, nil
 }
 
 func (l *local) registry() (*Registry, error) {

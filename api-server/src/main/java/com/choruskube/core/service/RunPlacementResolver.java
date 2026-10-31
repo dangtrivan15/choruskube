@@ -13,9 +13,9 @@ import java.util.UUID;
  * knows about more than one place work can run, so an unimplemented method answering "the
  * configured one" would route a run to a namespace nothing polls rather than failing to compile.
  *
- * <p>An implementation may reject a run outright by throwing; the call site sits beside the
- * credential pre-flight, so a rejection surfaces as a failed start rather than a run that stalls
- * with nothing listening.
+ * <p>An implementation may reject a run outright by throwing; this runs just before the
+ * credential pre-flight, in the same transaction, so a rejection surfaces as a failed start rather
+ * than a run that stalls with nothing listening.
  */
 public interface RunPlacementResolver {
 

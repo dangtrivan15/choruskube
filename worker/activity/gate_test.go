@@ -40,8 +40,8 @@ func (f *fakeGateProvider) GitHubToken(_ context.Context, runID uuid.UUID) (cred
 	return credential.Token{Value: gateToken}, nil
 }
 
-func (f *fakeGateProvider) AgentCredentials(context.Context, uuid.UUID) (credential.Agent, bool, error) {
-	return credential.Agent{}, false, nil
+func (f *fakeGateProvider) AgentCredentials(context.Context, uuid.UUID, credential.Agent, bool) (credential.Agent, error) {
+	return credential.Agent{}, nil
 }
 
 type gateRequest struct{ method, path, body string }

@@ -620,10 +620,9 @@ func TestLocalAgentCredentials(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "registry", "username"), "puller\n")
 	writeFile(t, filepath.Join(dir, "registry", "password"), "pull-secret\n")
 
-	agent, ok, err := NewLocal(dir, &fakeMinter{}, nil, newClock().now).AgentCredentials(context.Background(), uuid.New())
+	agent, err := NewLocal(dir, &fakeMinter{}, nil, newClock().now).AgentCredentials(context.Background(), uuid.New(), Agent{}, true)
 
 	require.NoError(t, err)
-	require.True(t, ok)
 	assert.Equal(t, "sk-ant-oat-file", agent.ClaudeOAuthToken)
 	require.NotNil(t, agent.Registry)
 	assert.Equal(t, Registry{Host: "registry.example.test", Username: "puller", Password: "pull-secret"}, *agent.Registry)
@@ -636,10 +635,9 @@ func TestLocalAgentCredentialsEnvFallback(t *testing.T) {
 	t.Setenv("REGISTRY_USERNAME", "puller")
 	t.Setenv("REGISTRY_PASSWORD", "pull-secret")
 
-	agent, ok, err := NewLocal(t.TempDir(), &fakeMinter{}, nil, newClock().now).AgentCredentials(context.Background(), uuid.New())
+	agent, err := NewLocal(t.TempDir(), &fakeMinter{}, nil, newClock().now).AgentCredentials(context.Background(), uuid.New(), Agent{}, true)
 
 	require.NoError(t, err)
-	require.True(t, ok)
 	assert.Equal(t, "sk-ant-oat-env", agent.ClaudeOAuthToken)
 	require.NotNil(t, agent.Registry)
 	assert.Equal(t, "registry.example.test", agent.Registry.Host)
@@ -650,20 +648,79 @@ func TestLocalAgentCredentialsTokenOnlyLeavesRegistryNil(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "claude-oauth-token"), "sk-ant-oat-file")
 
-	agent, ok, err := NewLocal(dir, &fakeMinter{}, nil, newClock().now).AgentCredentials(context.Background(), uuid.New())
+	agent, err := NewLocal(dir, &fakeMinter{}, nil, newClock().now).AgentCredentials(context.Background(), uuid.New(), Agent{}, true)
 
 	require.NoError(t, err)
-	require.True(t, ok)
 	assert.Nil(t, agent.Registry)
 }
 
-func TestLocalAgentCredentialsNoneConfiguredSuppliesNothing(t *testing.T) {
+// This is the done criterion: a local Worker with no Claude token of its own must fail a
+// Claude-running node, non-retryably, naming where the token belongs — never fall back to
+// whatever prepare attached.
+func TestLocalAgentCredentialsNoClaudeTokenForAClaudeNodeIsAnError(t *testing.T) {
 	clearEnv(t)
 
-	_, ok, err := NewLocal(t.TempDir(), &fakeMinter{}, nil, newClock().now).AgentCredentials(context.Background(), uuid.New())
+	_, err := NewLocal(t.TempDir(), &fakeMinter{}, nil, newClock().now).AgentCredentials(context.Background(), uuid.New(), Agent{}, true)
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrNoClaudeToken))
+	assert.True(t, strings.Contains(err.Error(), "CREDENTIALS_DIR") && strings.Contains(err.Error(), "CLAUDE_CODE_OAUTH_TOKEN"),
+		"the error must name both places the token could come from: %v", err)
+}
+
+func TestLocalAgentCredentialsIgnoresWhatPrepareAttached(t *testing.T) {
+	clearEnv(t)
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "claude-oauth-token"), "sk-ant-own")
+
+	attached := Agent{
+		ClaudeOAuthToken: "sk-ant-attached",
+		Registry:         &Registry{Host: "attached.example.test", Username: "a", Password: "b"},
+	}
+	agent, err := NewLocal(dir, &fakeMinter{}, nil, newClock().now).AgentCredentials(context.Background(), uuid.New(), attached, true)
 
 	require.NoError(t, err)
-	assert.False(t, ok, "with nothing configured the credentials prepare returned must stand")
+	assert.Equal(t, "sk-ant-own", agent.ClaudeOAuthToken)
+	assert.Nil(t, agent.Registry)
+}
+
+func TestLocalAgentCredentialsRegistryOnlyStillNeedsAClaudeToken(t *testing.T) {
+	clearEnv(t)
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "registry", "host"), "registry.example.test")
+	writeFile(t, filepath.Join(dir, "registry", "username"), "puller")
+	writeFile(t, filepath.Join(dir, "registry", "password"), "pull-secret")
+
+	_, err := NewLocal(dir, &fakeMinter{}, nil, newClock().now).AgentCredentials(context.Background(), uuid.New(), Agent{}, true)
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrNoClaudeToken))
+}
+
+func TestLocalAgentCredentialsScriptNodeGetsNoClaudeToken(t *testing.T) {
+	clearEnv(t)
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "claude-oauth-token"), "sk-ant-own")
+	writeFile(t, filepath.Join(dir, "registry", "host"), "registry.example.test")
+	writeFile(t, filepath.Join(dir, "registry", "username"), "puller")
+	writeFile(t, filepath.Join(dir, "registry", "password"), "pull-secret")
+
+	agent, err := NewLocal(dir, &fakeMinter{}, nil, newClock().now).AgentCredentials(context.Background(), uuid.New(), Agent{}, false)
+
+	require.NoError(t, err)
+	assert.Empty(t, agent.ClaudeOAuthToken)
+	require.NotNil(t, agent.Registry)
+	assert.Equal(t, "registry.example.test", agent.Registry.Host)
+}
+
+func TestLocalAgentCredentialsScriptNodeNeedsNoToken(t *testing.T) {
+	clearEnv(t)
+
+	agent, err := NewLocal(t.TempDir(), &fakeMinter{}, nil, newClock().now).AgentCredentials(context.Background(), uuid.New(), Agent{}, false)
+
+	require.NoError(t, err)
+	assert.Empty(t, agent.ClaudeOAuthToken)
+	assert.Nil(t, agent.Registry)
 }
 
 func TestLocalAgentCredentialsPartialRegistryIsAnError(t *testing.T) {
@@ -671,7 +728,7 @@ func TestLocalAgentCredentialsPartialRegistryIsAnError(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "registry", "host"), "registry.example.test")
 
-	_, _, err := NewLocal(dir, &fakeMinter{}, nil, newClock().now).AgentCredentials(context.Background(), uuid.New())
+	_, err := NewLocal(dir, &fakeMinter{}, nil, newClock().now).AgentCredentials(context.Background(), uuid.New(), Agent{}, true)
 
 	require.Error(t, err)
 	assert.True(t, strings.Contains(err.Error(), "registry/username") && strings.Contains(err.Error(), "registry/password"),

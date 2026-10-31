@@ -17,8 +17,9 @@ type controlPlane struct {
 	client TokenClient
 }
 
-// NewControlPlane returns a Provider that asks the API server for each run's GitHub token. It
-// supplies no agent credentials: workload prepare already returns them.
+// NewControlPlane returns a Provider that asks the API server for each run's GitHub token.
+// AgentCredentials passes through whatever the API server attached at prepare, rather than
+// holding any credential of its own.
 func NewControlPlane(c TokenClient) Provider {
 	return &controlPlane{client: c}
 }
@@ -34,6 +35,15 @@ func (p *controlPlane) GitHubToken(ctx context.Context, runID uuid.UUID) (Token,
 	return Token{Value: value}, nil
 }
 
-func (p *controlPlane) AgentCredentials(context.Context, uuid.UUID) (Agent, bool, error) {
-	return Agent{}, false, nil
+// AgentCredentials passes attached straight through: the API server is this Worker's credential
+// source, so a Claude-running node with nothing attached has nowhere else to get a token from.
+func (p *controlPlane) AgentCredentials(_ context.Context, runID uuid.UUID, attached Agent, runsClaude bool) (Agent, error) {
+	if runsClaude && attached.ClaudeOAuthToken == "" {
+		return Agent{}, fmt.Errorf("%w: the control plane attached none for run %s (CREDENTIAL_SOURCE=control-plane, "+
+			"so the API server supplies this Worker's credentials)", ErrNoClaudeToken, runID)
+	}
+	if !runsClaude {
+		attached.ClaudeOAuthToken = ""
+	}
+	return attached, nil
 }

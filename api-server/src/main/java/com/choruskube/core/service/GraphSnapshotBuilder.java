@@ -349,4 +349,47 @@ public class GraphSnapshotBuilder {
             snapshot.put(field, value);
         }
     }
+
+    /**
+     * The executor type a node actually runs with, after its template's config overrides — the
+     * same value {@link #buildSnapshot} writes into the node's {@code executor_type} field — so a
+     * caller deciding whether a node runs Claude never drifts from what the orchestrator was told.
+     */
+    private String effectiveExecutorType(NodeDefinition nd, String configOverridesJson) {
+        if (configOverridesJson != null && !configOverridesJson.isBlank()) {
+            try {
+                JsonNode overrides = objectMapper.readTree(configOverridesJson);
+                JsonNode executorTypeOverride = overrides.path("executor_type");
+                if (executorTypeOverride.isTextual()) {
+                    return executorTypeOverride.asText();
+                }
+            } catch (Exception e) {
+                // empty or invalid overrides — fall back to the definition's type below
+            }
+        }
+        return nd.getExecutorType().name();
+    }
+
+    /** The one "runs Claude" rule the API server holds: neither a script nor a human node. */
+    static boolean runsClaude(String executorType) {
+        return !"script".equalsIgnoreCase(executorType) && !"human".equalsIgnoreCase(executorType);
+    }
+
+    /**
+     * Whether any node of this template runs Claude, by the rule {@link #runsClaude} applies to
+     * each node's {@code effectiveExecutorType} — lets a credential check scope itself to AI runs
+     * without building the full snapshot.
+     */
+    @Transactional(readOnly = true)
+    public boolean anyNodeRunsClaude(UUID graphTemplateId) {
+        for (TemplateNode tn : templateNodeRepo.findByGraphTemplateId(graphTemplateId)) {
+            NodeDefinition nd = nodeDefRepo
+                    .findById(tn.getNodeDefinitionId())
+                    .orElseThrow(() -> new RuntimeException("NodeDefinition not found: " + tn.getNodeDefinitionId()));
+            if (runsClaude(effectiveExecutorType(nd, tn.getConfigOverrides()))) {
+                return true;
+            }
+        }
+        return false;
+    }
 }

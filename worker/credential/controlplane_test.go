@@ -49,12 +49,36 @@ func TestControlPlaneRejectsABlankToken(t *testing.T) {
 	require.Error(t, err, "a blank token handed to a pod would surface as a confusing git failure")
 }
 
-func TestControlPlaneSuppliesNoAgentCredentials(t *testing.T) {
+func TestControlPlanePassesOnWhatPrepareAttached(t *testing.T) {
 	client := &fakeTokenClient{}
+	attached := Agent{
+		ClaudeOAuthToken: "sk-ant-attached",
+		Registry:         &Registry{Host: "registry.example.test", Username: "puller", Password: "secret"},
+	}
 
-	_, ok, err := NewControlPlane(client).AgentCredentials(context.Background(), uuid.New())
+	agent, err := NewControlPlane(client).AgentCredentials(context.Background(), uuid.New(), attached, true)
 
 	require.NoError(t, err)
-	assert.False(t, ok, "prepare already returned the agent credentials")
-	assert.Zero(t, client.calls)
+	assert.Equal(t, attached, agent)
+	assert.Zero(t, client.calls, "agent credentials never need a separate API call: prepare already attached them")
+}
+
+func TestControlPlaneWithoutAnAttachedTokenFailsAClaudeNode(t *testing.T) {
+	client := &fakeTokenClient{}
+	runID := uuid.New()
+
+	_, err := NewControlPlane(client).AgentCredentials(context.Background(), runID, Agent{}, true)
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrNoClaudeToken))
+	assert.Contains(t, err.Error(), runID.String())
+}
+
+func TestControlPlaneScriptNodeNeedsNoToken(t *testing.T) {
+	client := &fakeTokenClient{}
+
+	agent, err := NewControlPlane(client).AgentCredentials(context.Background(), uuid.New(), Agent{}, false)
+
+	require.NoError(t, err)
+	assert.Empty(t, agent.ClaudeOAuthToken)
 }
