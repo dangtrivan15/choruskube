@@ -29,9 +29,6 @@ import (
 // workloadClient is the subset of *workload.Client this package calls, declared at the point of use
 // so a test can inject a fake. *workload.Client satisfies it unchanged.
 type workloadClient interface {
-	CreateWorkload(ctx context.Context, params workload.CreateWorkloadParams) (*workload.CreateWorkloadResponse, error)
-	CleanupWorkload(ctx context.Context, runID, nodeExecID uuid.UUID) error
-	GetWorkloadLogs(ctx context.Context, runID, nodeExecID uuid.UUID, tailLines int) (string, error)
 	PrepareWorkload(ctx context.Context, params workload.PrepareParams) (*workload.PrepareResponse, error)
 	CompleteWorkload(ctx context.Context, params workload.CompleteParams) error
 	WriteExecutionLog(ctx context.Context, runID, nodeExecID uuid.UUID, level, message string)
@@ -42,10 +39,7 @@ var _ workloadClient = (*workload.Client)(nil)
 
 // Activities runs agent-step activities against a workload.Client.
 type Activities struct {
-	client workloadClient
-	// executor, hashCache and pending are nil in legacy mode (constructed via New): with
-	// executor nil, ExecuteAINodeFromSnapshot delegates workload creation to the API server
-	// instead of running it locally.
+	client    workloadClient
 	executor  executor.Executor
 	hashCache *callback.HashCache
 	Pending   *PendingCache
@@ -54,8 +48,8 @@ type Activities struct {
 	// way to report back, hanging the activity until StartToClose, so ExecuteAINodeFromSnapshot
 	// rejects it up front.
 	CallbackURL string
-	// APIServerURL is embedded in agent config as the base of github_token_url. Empty would make
-	// that a relative path the agent cannot call, so ExecuteAINodeFromSnapshot rejects it up front.
+	// APIServerURL is embedded in agent config as api_server_url, the base every agent CLI script
+	// calls. Empty would make those calls relative, so ExecuteAINodeFromSnapshot rejects it up front.
 	APIServerURL string
 
 	// credentials is the single authority on what an agent pod launches with — nil fails
@@ -85,16 +79,10 @@ func Register(r Registrar, a *Activities) {
 	r.RegisterActivityWithOptions(a, temporalactivity.RegisterOptions{SkipInvalidStructFunctions: true})
 }
 
-// New returns Activities that delegate workload creation to the API server (legacy mode). Set
-// CallbackURL and APIServerURL on the result before registering it with a Temporal worker.
-func New(client *workload.Client) *Activities {
-	return &Activities{client: client, resolver: newTemplateResolver()}
-}
-
-// NewWithExecutor returns Activities that run each workload locally through exec rather than
-// delegating creation to the API server. cache is populated with each execution's job-secret hash
-// so the Worker's callback server can authenticate the agent's completion POST without a round trip.
-// Set CallbackURL and APIServerURL on the result before registering it with a Temporal worker.
+// NewWithExecutor returns Activities that run each workload locally through exec. cache is
+// populated with each execution's job-secret hash so the Worker's callback server can authenticate
+// the agent's completion POST without a round trip. Set CallbackURL and APIServerURL on the
+// result before registering it with a Temporal worker.
 func NewWithExecutor(client workloadClient, exec executor.Executor, cache *callback.HashCache) *Activities {
 	return &Activities{
 		client:    client,
@@ -276,10 +264,7 @@ func (a *Activities) ExecuteAINodeFromSnapshot(ctx context.Context, params Execu
 
 	configJSON := a.buildConfigJSON(params, resolvedPrompt)
 
-	if a.executor != nil {
-		return a.executeLocally(ctx, runID, params, configJSON)
-	}
-	return a.executeDelegated(ctx, params, configJSON)
+	return a.executeLocally(ctx, runID, params, configJSON)
 }
 
 // buildConfigJSON assembles the agent pod's config.json — everything the entrypoint reads to run
@@ -316,7 +301,7 @@ func (a *Activities) buildConfigJSON(params ExecuteAINodeFromSnapshotParams, res
 	if params.Node.Command != "" {
 		configJSON["command"] = params.Node.Command
 	}
-	configJSON["github_token_url"] = a.githubTokenURL(params.Identity.RunID, params.Identity.NodeExecutionID)
+	configJSON["github_token_url"] = workerGitHubTokenURL(a.CallbackURL, params.Identity.RunID, params.Identity.NodeExecutionID)
 	baseRunLogPath := fmt.Sprintf("runs/%s/run_log.md", params.Identity.RunID)
 	runLogPath := prefixPath(params.OrgSlug, baseRunLogPath)
 	configJSON["run_log_path"] = runLogPath
@@ -392,41 +377,14 @@ func (a *Activities) buildConfigJSON(params ExecuteAINodeFromSnapshotParams, res
 	return configJSON
 }
 
-// githubTokenURL is where a pod fetches its GitHub token. A Worker that launches pods itself
-// serves that route; with no local executor nothing listens on the callback address for it, so
-// the API server stays the source.
-func (a *Activities) githubTokenURL(runID, nodeExecID uuid.UUID) string {
-	if a.executor == nil {
-		return fmt.Sprintf("%s/internal/runs/%s/node-executions/%s/github-token", a.APIServerURL, runID, nodeExecID)
-	}
-	return workerGitHubTokenURL(a.CallbackURL, runID, nodeExecID)
-}
-
 // workerGitHubTokenURL addresses the token route on the same host the pod already calls back to.
 func workerGitHubTokenURL(callbackURL string, runID, nodeExecID uuid.UUID) string {
 	base := strings.TrimSuffix(strings.TrimRight(callbackURL, "/"), "/api/v1/callback")
 	return fmt.Sprintf("%s/api/v1/github-token?run_id=%s&execution_id=%s", base, runID, nodeExecID)
 }
 
-// executeDelegated is the legacy path (a.executor == nil): the API server resolves
-// infrastructure details from configJSON and launches the container itself.
-func (a *Activities) executeDelegated(ctx context.Context, params ExecuteAINodeFromSnapshotParams, configJSON map[string]interface{}) (CallbackResult, error) {
-	_, err := a.client.CreateWorkload(ctx, workload.CreateWorkloadParams{
-		RunID:          params.Identity.RunID,
-		NodeExecID:     params.Identity.NodeExecutionID,
-		TemplateNodeID: params.Identity.TemplateNodeID,
-		ConfigJSON:     configJSON,
-	})
-	if err != nil {
-		return CallbackResult{}, fmt.Errorf("create workload: %w", err)
-	}
-
-	return CallbackResult{}, temporalactivity.ErrResultPending
-}
-
-// executeLocally is the ported path (a.executor != nil): this Worker resolves credentials via
-// prepare, launches the workload itself through a.executor, then reports the result via
-// complete instead of asking the API server to launch it.
+// executeLocally resolves credentials via prepare, launches the workload itself through
+// a.executor, then reports the result via complete.
 func (a *Activities) executeLocally(ctx context.Context, runID uuid.UUID, params ExecuteAINodeFromSnapshotParams, configJSON map[string]interface{}) (CallbackResult, error) {
 	// Checked before prepare, not just before launch: without a provider there is no authority
 	// to decide what the pod launches with, so nothing about this node should proceed at all.
@@ -470,7 +428,6 @@ func (a *Activities) executeLocally(ctx context.Context, runID uuid.UUID, params
 	}
 
 	creds := executor.NodeCredentials{
-		GitHubTokenURL:   a.githubTokenURL(runID, params.Identity.NodeExecutionID),
 		ClaudeOAuthToken: agent.ClaudeOAuthToken,
 		Registry:         toExecRegistry(agent.Registry),
 	}
@@ -555,14 +512,7 @@ type DeleteAgentJobParams struct {
 }
 
 func (a *Activities) DeleteAgentJob(ctx context.Context, params DeleteAgentJobParams) error {
-	runID, err := runIDOf(ctx)
-	if err != nil {
-		return err
-	}
-	if a.executor != nil {
-		return a.executor.Cleanup(ctx, params.NodeExecutionID)
-	}
-	return a.client.CleanupWorkload(ctx, runID, params.NodeExecutionID)
+	return a.executor.Cleanup(ctx, params.NodeExecutionID)
 }
 
 // --- Activity: FetchPodLogs ---
@@ -577,14 +527,7 @@ func (a *Activities) FetchPodLogs(ctx context.Context, params FetchPodLogsParams
 	if tailLines <= 0 {
 		tailLines = 50
 	}
-	runID, err := runIDOf(ctx)
-	if err != nil {
-		return "", err
-	}
-	if a.executor != nil {
-		return a.executor.GetLogs(ctx, params.NodeExecutionID, tailLines)
-	}
-	return a.client.GetWorkloadLogs(ctx, runID, params.NodeExecutionID, tailLines)
+	return a.executor.GetLogs(ctx, params.NodeExecutionID, tailLines)
 }
 
 // prefixPath namespaces an object storage key by org slug, so each organization's runs live

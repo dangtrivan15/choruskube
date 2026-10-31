@@ -84,7 +84,6 @@ type AgentResources struct {
 
 // NodeCredentials are the credentials injected into a node execution's workload.
 type NodeCredentials struct {
-	GitHubTokenURL   string
 	ClaudeOAuthToken string
 	Registry         *RegistryCredentials
 }
