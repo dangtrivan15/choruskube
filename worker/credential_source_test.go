@@ -28,7 +28,10 @@ func (s *stubTokenClient) GitHubTokenScope(context.Context, uuid.UUID) ([]string
 }
 
 func validConfig() Config {
-	return Config{TemporalAddress: "t:7233", APIServerURL: "http://a", CallbackURL: "http://cb", Provider: stubProvider{}}
+	return Config{
+		TemporalAddress: "t:7233", APIServerURL: "http://a", CallbackURL: "http://cb",
+		Provider: stubProvider{}, Executor: nopExecutor{},
+	}
 }
 
 func TestNewCredentialProviderControlPlaneAsksTheAPI(t *testing.T) {

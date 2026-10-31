@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"reflect"
 	"regexp"
 	"strings"
@@ -22,31 +20,37 @@ import (
 	"github.com/dangtrivan15/choruskube/worker/workload"
 )
 
-// newTestActivities starts a stub API server that accepts CreateWorkload POSTs, capturing the
-// last request's configJson into *captured, and returns Activities wired to call it.
+// newTestActivities returns Activities wired to a mockWorkloadClient and mockExecutor, capturing
+// the last PrepareWorkload call's ConfigJSON into *captured. Exercises the real executeLocally
+// path every caller below runs through.
 func newTestActivities(t *testing.T, captured *map[string]interface{}) *Activities {
 	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/workload") {
-			var req map[string]interface{}
-			_ = json.NewDecoder(r.Body).Decode(&req)
-			if cj, ok := req["configJson"].(map[string]interface{}); ok {
-				*captured = cj
+	client := &mockWorkloadClient{
+		prepareFn: func(ctx context.Context, p workload.PrepareParams) (*workload.PrepareResponse, error) {
+			// Captured as JSON, the form the executor writes and the agent reads: asserting on the
+			// Go map would pass for a value that marshals to something else.
+			raw, err := json.Marshal(p.ConfigJSON)
+			if err != nil {
+				return nil, err
 			}
-			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"executionHandle": "agent-abc12345",
-				"jobSecretHash":   "hash123",
-			})
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-	}))
-	t.Cleanup(srv.Close)
-
-	acts := New(workload.NewClient(srv.URL, func() string { return "test-secret" }, srv.Client()))
+			var decoded map[string]interface{}
+			if err := json.Unmarshal(raw, &decoded); err != nil {
+				return nil, err
+			}
+			*captured = decoded
+			return &workload.PrepareResponse{Image: "img"}, nil
+		},
+		completeFn: func(ctx context.Context, p workload.CompleteParams) error { return nil },
+	}
+	exec := &mockExecutor{
+		executeFn: func(ctx context.Context, params executor.ExecutionParams) (executor.ExecutionResult, error) {
+			return executor.ExecutionResult{PodName: "agent-abc12345", JobSecretHash: "hash123"}, nil
+		},
+	}
+	acts := NewWithExecutor(client, exec, callback.NewHashCache())
 	acts.CallbackURL = "http://callback:9090/api/v1/callback"
-	acts.APIServerURL = srv.URL
+	acts.APIServerURL = "http://api-server.invalid"
+	acts.SetCredentials(passThroughCredentials{})
 	return acts
 }
 
@@ -107,26 +111,16 @@ var _ executor.Executor = (*mockExecutor)(nil)
 
 // mockWorkloadClient implements workloadClient with func fields, mirroring mockExecutor: a test
 // stubs only the method(s) it exercises, and an un-stubbed one it does call fails loudly (nil
-// func panic) instead of silently returning a zero value. WriteExecutionLog is the exception,
-// like CleanupWorkload/GetWorkloadLogs above: it is a best-effort, fire-and-forget call made on
-// every execution, so it defaults to a no-op and only tests asserting on it set writeLogFn.
+// func panic) instead of silently returning a zero value. WriteExecutionLog is the exception: it
+// is a best-effort, fire-and-forget call made on every execution, so it defaults to a no-op and
+// only tests asserting on it set writeLogFn.
 type mockWorkloadClient struct {
-	createFn      func(ctx context.Context, p workload.CreateWorkloadParams) (*workload.CreateWorkloadResponse, error)
 	prepareFn     func(ctx context.Context, p workload.PrepareParams) (*workload.PrepareResponse, error)
 	completeFn    func(ctx context.Context, p workload.CompleteParams) error
 	writeLogFn    func(ctx context.Context, runID, nodeExecID uuid.UUID, level, message string)
 	getNodeExecFn func(ctx context.Context, runID, nodeExecID uuid.UUID) (*workload.NodeExecution, error)
 }
 
-func (m *mockWorkloadClient) CreateWorkload(ctx context.Context, p workload.CreateWorkloadParams) (*workload.CreateWorkloadResponse, error) {
-	return m.createFn(ctx, p)
-}
-func (m *mockWorkloadClient) CleanupWorkload(ctx context.Context, runID, nodeExecID uuid.UUID) error {
-	return nil
-}
-func (m *mockWorkloadClient) GetWorkloadLogs(ctx context.Context, runID, nodeExecID uuid.UUID, tailLines int) (string, error) {
-	return "", nil
-}
 func (m *mockWorkloadClient) PrepareWorkload(ctx context.Context, p workload.PrepareParams) (*workload.PrepareResponse, error) {
 	return m.prepareFn(ctx, p)
 }
@@ -144,10 +138,9 @@ func (m *mockWorkloadClient) WriteExecutionLog(ctx context.Context, runID, nodeE
 
 var _ workloadClient = (*mockWorkloadClient)(nil)
 
-// TestExecuteAINodeFromSnapshot_CallsExecutor pins the restructured local-execution flow:
-// prepare (resolve credentials) -> generate a job secret -> executor.Execute -> cache the
-// returned hash -> complete (report the result). This is the path NewWithExecutor's Activities
-// take instead of the legacy CreateWorkload delegation.
+// TestExecuteAINodeFromSnapshot_CallsExecutor pins the local-execution flow: prepare (resolve
+// credentials) -> generate a job secret -> executor.Execute -> cache the returned hash ->
+// complete (report the result).
 func TestExecuteAINodeFromSnapshot_CallsExecutor(t *testing.T) {
 	nodeExecID := uuid.New()
 	nodeID := uuid.New()
@@ -157,7 +150,6 @@ func TestExecuteAINodeFromSnapshot_CallsExecutor(t *testing.T) {
 		Image:            "ghcr.io/test/agent:latest",
 		EnableDocker:     false,
 		ClaudeOAuthToken: "tok_test",
-		GitHubTokenURL:   "http://api-server.invalid/internal/runs/x/node-executions/y/github-token",
 		Namespace:        "org-ns",
 		ServiceAccount:   "choruskube-agent",
 	}
@@ -205,8 +197,7 @@ func TestExecuteAINodeFromSnapshot_CallsExecutor(t *testing.T) {
 	// Returns temporalactivity.ErrResultPending — the activity waits for the callback.
 	assert.ErrorIs(t, err, temporalactivity.ErrResultPending)
 
-	// prepare was called for this run/execution, carrying the same config.json the legacy
-	// path would otherwise have sent straight to CreateWorkload.
+	// prepare was called for this run/execution, carrying the config.json the Worker launches with.
 	assert.Equal(t, runID, preparedParams.RunID)
 	assert.Equal(t, nodeExecID, preparedParams.NodeExecID)
 	assert.Equal(t, nodeExecID.String(), preparedParams.ConfigJSON["node_execution_id"])
@@ -730,7 +721,7 @@ func TestExecuteAINodeFromSnapshot_CallbackAndAPIServerURLsInConfigJson(t *testi
 // that silently ships with an empty callback_url: the agent pod would launch and then have no
 // way to report back, hanging the activity until StartToClose instead of failing immediately.
 func TestExecuteAINodeFromSnapshot_FailsFastWhenCallbackURLEmpty(t *testing.T) {
-	acts := New(workload.NewClient("http://unused.invalid", func() string { return "secret" }, nil))
+	acts := NewWithExecutor(&mockWorkloadClient{}, &mockExecutor{}, callback.NewHashCache())
 	acts.APIServerURL = "http://api.invalid"
 	// CallbackURL intentionally left empty.
 
@@ -753,7 +744,7 @@ func TestExecuteAINodeFromSnapshot_FailsFastWhenCallbackURLEmpty(t *testing.T) {
 // TestExecuteAINodeFromSnapshot_FailsFastWhenAPIServerURLEmpty is the APIServerURL half of
 // TestExecuteAINodeFromSnapshot_FailsFastWhenCallbackURLEmpty.
 func TestExecuteAINodeFromSnapshot_FailsFastWhenAPIServerURLEmpty(t *testing.T) {
-	acts := New(workload.NewClient("http://unused.invalid", func() string { return "secret" }, nil))
+	acts := NewWithExecutor(&mockWorkloadClient{}, &mockExecutor{}, callback.NewHashCache())
 	acts.CallbackURL = "http://callback.invalid"
 	// APIServerURL intentionally left empty.
 
@@ -1957,68 +1948,11 @@ func TestExecuteAINodeFromSnapshot_NeedsPROmittedWhenFalse(t *testing.T) {
 	}
 }
 
-func TestFetchPodLogs_DelegatesToAPIServer(t *testing.T) {
-	execID := uuid.New()
-	runID := stubbedRun(t)
-	var gotPath string
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"logs": "(no pod found)",
-		})
-	}))
-	defer srv.Close()
-
-	acts := New(workload.NewClient(srv.URL, func() string { return "test-secret" }, srv.Client()))
-
-	logs, err := acts.FetchPodLogs(context.Background(), FetchPodLogsParams{
-		NodeExecutionID: execID,
-		TailLines:       50,
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if logs != "(no pod found)" {
-		t.Fatalf("logs = %q, want %q", logs, "(no pod found)")
-	}
-	// The run comes from the workflow, not the parameters, which carry no run id at all.
-	if want := "/worker/runs/" + runID.String() + "/node-executions/" + execID.String() + "/workload/logs"; gotPath != want {
-		t.Fatalf("path = %q, want %q", gotPath, want)
-	}
-}
-
-func TestDeleteAgentJob_DelegatesToAPIServer(t *testing.T) {
-	execID := uuid.New()
-	runID := stubbedRun(t)
-	var gotMethod, gotPath string
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotMethod, gotPath = r.Method, r.URL.Path
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	defer srv.Close()
-
-	acts := New(workload.NewClient(srv.URL, func() string { return "test-secret" }, srv.Client()))
-
-	if err := acts.DeleteAgentJob(context.Background(), DeleteAgentJobParams{NodeExecutionID: execID}); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if gotMethod != http.MethodDelete {
-		t.Fatalf("method = %q, want DELETE", gotMethod)
-	}
-	// The run comes from the workflow, not the parameters, which carry no run id at all.
-	if want := "/worker/runs/" + runID.String() + "/node-executions/" + execID.String() + "/workload"; gotPath != want {
-		t.Fatalf("path = %q, want %q", gotPath, want)
-	}
-}
-
 // TestDeleteAgentJob_ExecutorPath_CleansUpNamespaceFree pins that the local-execution path calls
 // the executor's namespace-free Cleanup directly: the executor instance is bound to its own
 // namespace, so no per-call namespace is threaded here.
 func TestDeleteAgentJob_ExecutorPath_CleansUpNamespaceFree(t *testing.T) {
 	execID := uuid.New()
-	stubbedRun(t)
 
 	var gotExecID uuid.UUID
 	cleanupCalled := false
@@ -2044,7 +1978,6 @@ func TestDeleteAgentJob_ExecutorPath_CleansUpNamespaceFree(t *testing.T) {
 // resolution.
 func TestFetchPodLogs_ExecutorPath_FetchesNamespaceFree(t *testing.T) {
 	execID := uuid.New()
-	stubbedRun(t)
 
 	var gotExecID uuid.UUID
 	var gotTail int
@@ -2423,10 +2356,7 @@ func TestExecuteLocally_GitHubTokenURLPointsAtTheWorker(t *testing.T) {
 	mockClient := &mockWorkloadClient{
 		prepareFn: func(_ context.Context, p workload.PrepareParams) (*workload.PrepareResponse, error) {
 			prepared = p
-			return &workload.PrepareResponse{
-				Image:          "img",
-				GitHubTokenURL: "http://api-server.invalid/internal/runs/x/node-executions/y/github-token",
-			}, nil
+			return &workload.PrepareResponse{Image: "img"}, nil
 		},
 		completeFn: func(context.Context, workload.CompleteParams) error { return nil },
 	}
@@ -2444,7 +2374,6 @@ func TestExecuteLocally_GitHubTokenURLPointsAtTheWorker(t *testing.T) {
 	want := "http://worker:9090/api/v1/github-token?run_id=" + runID.String() + "&execution_id=" + nodeExecID.String()
 	assert.Equal(t, want, prepared.ConfigJSON["github_token_url"])
 	assert.Equal(t, want, executed.ConfigJSON["github_token_url"])
-	assert.Equal(t, want, executed.Credentials.GitHubTokenURL, "the API server's own token URL must not survive next to the Worker's")
 }
 
 func TestGitHubTokenURL_CallbackBaseVariants(t *testing.T) {
@@ -2459,22 +2388,4 @@ func TestGitHubTokenURL_CallbackBaseVariants(t *testing.T) {
 	} {
 		assert.Equal(t, tc.want, workerGitHubTokenURL(tc.callback, run, exec), name)
 	}
-}
-
-// Without a local executor the Worker serves no pod routes, so the API server stays the
-// pod's token source.
-func TestExecuteAINodeFromSnapshot_DelegatedModeKeepsTheAPIServerTokenURL(t *testing.T) {
-	var received map[string]interface{}
-	acts := newTestActivities(t, &received)
-	runID := stubbedRun(t)
-	nodeExecID := uuid.New()
-
-	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
-		Identity: Identity{NodeExecutionID: nodeExecID, RunID: runID, TemplateNodeID: uuid.New()},
-		Node:     Node{ExecutorType: "ai", PromptTemplate: "irrelevant"},
-	})
-	requirePending(t, err)
-
-	assert.Equal(t, acts.APIServerURL+"/internal/runs/"+runID.String()+"/node-executions/"+nodeExecID.String()+"/github-token",
-		received["github_token_url"])
 }

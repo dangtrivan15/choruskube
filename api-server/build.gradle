@@ -67,10 +67,6 @@ dependencies {
     // phase, fabric8 is part of core's compile-time API surface. Runtime behaviour is unchanged.
     api 'io.fabric8:kubernetes-client:7.3.0'
 
-    // Executor: Docker (docker-java for Docker container management)
-    implementation 'com.github.docker-java:docker-java-core:3.4.1'
-    implementation 'com.github.docker-java:docker-java-transport-zerodep:3.4.1'
-
     // In-memory caching (public landing-page metrics)
     implementation 'org.springframework.boot:spring-boot-starter-cache'
     implementation 'com.github.ben-manes.caffeine:caffeine:3.1.8'

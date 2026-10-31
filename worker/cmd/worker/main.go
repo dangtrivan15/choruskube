@@ -41,8 +41,7 @@ func main() {
 	cfg.CredentialsDir = os.Getenv("CREDENTIALS_DIR")
 	cfg.GitHubAPIURL = os.Getenv("GITHUB_API_URL")
 
-	// This binary always runs workloads itself -- it never delegates to the API server's legacy
-	// creation path -- so an Executor it cannot construct is fatal.
+	// worker.Run requires an Executor, so a binary that cannot construct one must fail fast here.
 	executorType, err := executorTypeOf(os.Getenv("EXECUTOR_TYPE"))
 	if err != nil {
 		log.Fatalf("invalid EXECUTOR_TYPE: %v", err)

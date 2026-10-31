@@ -203,7 +203,6 @@ services:
       SPRING_PROFILES_ACTIVE: e2e
       # No executor/Docker wiring here: the api-server no longer runs workloads (the Worker below
       # owns the executor), so it needs neither the host Docker socket nor DooD staging.
-      API_SERVER_URL: http://api-server:8080
       ORCHESTRATOR_SECRET_HASH: fcb34c11ecbf6914ad43903e539ade6901f864d9772c36e63a78c2488cd0958a
       # E2E agent image — used by E2eTestDataSeeder (no default; must be set).
       E2E_AGENT_IMAGE: claude-code:e2e
