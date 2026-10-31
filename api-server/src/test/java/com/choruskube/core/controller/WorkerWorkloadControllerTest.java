@@ -54,17 +54,7 @@ class WorkerWorkloadControllerTest {
     @Test
     void prepareAuthorizesTheRunThenDelegates() throws Exception {
         var response = new PrepareWorkloadResponse(
-                "agent:latest",
-                true,
-                null,
-                "1792Mi",
-                "256Mi",
-                true,
-                "oauth-token",
-                "http://api/github-token",
-                null,
-                null,
-                "choruskube-agent");
+                "agent:latest", true, null, "1792Mi", "256Mi", true, "oauth-token", null, null, "choruskube-agent");
         when(workloadService.prepareWorkload(eq(runId), eq(nodeExecId), any())).thenReturn(response);
 
         mvc.perform(post(path("/prepare"))
@@ -77,7 +67,8 @@ class WorkerWorkloadControllerTest {
                 .andExpect(jsonPath("$.agentMemoryRequest").value("1792Mi"))
                 .andExpect(jsonPath("$.dindMemoryRequest").value("256Mi"))
                 .andExpect(jsonPath("$.memoryCeilingExempt").value(true))
-                .andExpect(jsonPath("$.serviceAccount").value("choruskube-agent"));
+                .andExpect(jsonPath("$.serviceAccount").value("choruskube-agent"))
+                .andExpect(jsonPath("$.githubTokenUrl").doesNotExist());
 
         verify(authorizer).requireMayActOn("ckw_abc", runId);
         verify(workloadService).prepareWorkload(eq(runId), eq(nodeExecId), any());

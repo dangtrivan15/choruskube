@@ -340,13 +340,4 @@ public class Phase4AEndToEndTest extends BaseTest {
 
         assertThat(snapshotNodeIds).isEqualTo(actualNodeIds);
     }
-
-    @Test
-    void githubTokenEndpointReturnsErrorWhenNotConfigured() throws Exception {
-        // The scoped endpoint exists but no GitHub credential is configured — expect 404
-        UUID fakeRunId = UUID.randomUUID();
-        UUID fakeExecId = UUID.randomUUID();
-        mockMvc.perform(get("/internal/runs/" + fakeRunId + "/node-executions/" + fakeExecId + "/github-token"))
-                .andExpect(status().is4xxClientError());
-    }
 }

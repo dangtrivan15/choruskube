@@ -35,6 +35,7 @@ func TestRunRefusesToStartWithoutACredential(t *testing.T) {
 		CallbackURL:      "http://cb",
 		Provider:         fixedProvider{reg: Registration{Fleets: []Fleet{{Namespace: "ns", TaskQueue: "q"}}}},
 		CredentialSource: CredentialSourceControlPlane,
+		Executor:         nopExecutor{},
 	}
 
 	err := Run(context.Background(), cfg)

@@ -20,7 +20,6 @@ class InternalRunControllerPlacementNoCheckerTest {
     void placementCheck_noChecker_allowsWithEmptyReason() {
         InternalRunController controller = new InternalRunController(
                 null, // service
-                null, // gitHubCredentialResolver
                 null, // runPullRequestService
                 null, // artifactResolutionService
                 null, // branchCleanupService

@@ -508,20 +508,13 @@ func Run(ctx context.Context, cfg Config) error {
 	credentials := newCredentialCache(reg.InternalToken)
 	wc := workload.NewClient(cfg.APIServerURL, credentials.get, nil)
 
-	// cfg.Executor set means this process runs each workload itself instead of asking the API
-	// server to; its Activities gets a HashCache so the callback server started below can
-	// verify an agent's completion POST without a network round trip to re-resolve it.
-	var acts *activity.Activities
-	var hashCache *callback.HashCache
-	if cfg.Executor != nil {
-		hashCache = callback.NewHashCache()
-		acts = activity.NewWithExecutor(wc, cfg.Executor, hashCache)
-		// Late-bound: the credential is minted at registration above and rotated by renewLoop, so
-		// an executor that calls the API server itself must read it live, never capture it here.
-		wireExecutorCredential(cfg.Executor, credentials.get)
-	} else {
-		acts = activity.New(wc)
-	}
+	// Activities gets a HashCache so the callback server started below can verify an agent's
+	// completion POST without a network round trip to re-resolve it.
+	hashCache := callback.NewHashCache()
+	acts := activity.NewWithExecutor(wc, cfg.Executor, hashCache)
+	// Late-bound: the credential is minted at registration above and rotated by renewLoop, so
+	// an executor that calls the API server itself must read it live, never capture it here.
+	wireExecutorCredential(cfg.Executor, credentials.get)
 	// Both are required: ExecuteAINodeFromSnapshot rejects an empty value rather than
 	// launching a pod that cannot report back. Passing nil for the HTTP client selects the
 	// package's 30s-timeout default; http.DefaultClient has no timeout and must not be used.
@@ -543,33 +536,28 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	defer sup.stopAll()
 
-	// The callback server only makes sense when this process launches workloads itself: the
-	// legacy delegation path (cfg.Executor == nil) reports completion through the API server's
-	// own callback route, which this Worker never serves.
-	if cfg.Executor != nil {
-		completer := newActivityCompleter(acts.Pending, sup)
-		sc := &statusBridge{pending: acts.Pending, workloadClients: sup}
-		cbHandler := callback.NewHandler(hashCache, cfg.Executor, completer, sc)
-		hbHandler := callback.NewHeartbeatHandler(hashCache, cfg.Executor, completer)
-		tokenHandler := callback.NewGitHubTokenHandler(hashCache, cfg.Executor, runBinding{pending: acts.Pending, api: wc}, provider)
-		cbServer := callback.NewServer(cfg.CallbackPort, cbHandler, hbHandler, tokenHandler)
-		if err := cbServer.Listen(); err != nil {
-			return fmt.Errorf("callback server: %w", err)
-		}
-		go func() {
-			if err := cbServer.Serve(); err != nil {
-				log.Printf("callback server failed: %v", err)
-			}
-		}()
-		// A context of its own, not ctx: ctx is already Done by the time this runs, so deriving
-		// Shutdown's deadline from it would hand Shutdown an expired context and force every
-		// in-flight callback closed instead of draining it.
-		defer func() {
-			if err := cbServer.Shutdown(context.Background()); err != nil {
-				log.Printf("callback server shutdown: %v", err)
-			}
-		}()
+	completer := newActivityCompleter(acts.Pending, sup)
+	sc := &statusBridge{pending: acts.Pending, workloadClients: sup}
+	cbHandler := callback.NewHandler(hashCache, cfg.Executor, completer, sc)
+	hbHandler := callback.NewHeartbeatHandler(hashCache, cfg.Executor, completer)
+	tokenHandler := callback.NewGitHubTokenHandler(hashCache, cfg.Executor, runBinding{pending: acts.Pending, api: wc}, provider)
+	cbServer := callback.NewServer(cfg.CallbackPort, cbHandler, hbHandler, tokenHandler)
+	if err := cbServer.Listen(); err != nil {
+		return fmt.Errorf("callback server: %w", err)
 	}
+	go func() {
+		if err := cbServer.Serve(); err != nil {
+			log.Printf("callback server failed: %v", err)
+		}
+	}()
+	// A context of its own, not ctx: ctx is already Done by the time this runs, so deriving
+	// Shutdown's deadline from it would hand Shutdown an expired context and force every
+	// in-flight callback closed instead of draining it.
+	defer func() {
+		if err := cbServer.Shutdown(context.Background()); err != nil {
+			log.Printf("callback server shutdown: %v", err)
+		}
+	}()
 
 	// A Fleet that cannot be served at startup is fatal, because it means the configured
 	// deployment is wrong (bad address, bad credential) rather than merely incomplete. The

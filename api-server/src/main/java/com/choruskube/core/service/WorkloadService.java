@@ -1,7 +1,7 @@
 package com.choruskube.core.service;
 
 import com.choruskube.core.dto.CompleteWorkloadRequest;
-import com.choruskube.core.dto.CreateWorkloadRequest;
+import com.choruskube.core.dto.PrepareWorkloadRequest;
 import com.choruskube.core.dto.PrepareWorkloadResponse;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.executor.*;
@@ -41,7 +41,6 @@ public class WorkloadService {
     private final ObjectMapper objectMapper;
     private final String defaultAgentImage;
     private final String defaultServiceAccount;
-    private final String apiServerUrl;
     private final WorkloadNamespaceResolver namespaceResolver;
     private final WorkloadAgentCredentialResolver agentCredentialResolver;
     private final WorkloadMemoryCeilingPolicy memoryCeilingPolicy;
@@ -54,7 +53,6 @@ public class WorkloadService {
             ObjectMapper objectMapper,
             @Qualifier("executorDefaultAgentImage") String defaultAgentImage,
             @Value("${executor.k8s.agent-service-account:choruskube-agent}") String defaultServiceAccount,
-            @Qualifier("executorApiServerUrl") String apiServerUrl,
             ObjectProvider<WorkloadNamespaceResolver> namespaceResolverProvider,
             ObjectProvider<WorkloadAgentCredentialResolver> agentCredentialResolverProvider,
             ObjectProvider<WorkloadMemoryCeilingPolicy> memoryCeilingPolicyProvider) {
@@ -65,7 +63,6 @@ public class WorkloadService {
         this.objectMapper = objectMapper;
         this.defaultAgentImage = defaultAgentImage;
         this.defaultServiceAccount = defaultServiceAccount;
-        this.apiServerUrl = apiServerUrl;
         this.namespaceResolver = namespaceResolverProvider.getIfAvailable(NoWorkloadNamespaceResolver::new);
         // getIfAvailable, not getIfUnique: two registered resolvers must fail startup, where
         // getIfUnique would silently fall back to attaching nothing.
@@ -80,7 +77,7 @@ public class WorkloadService {
      * come from anywhere else here.
      */
     @Transactional(readOnly = true)
-    public PrepareWorkloadResponse prepareWorkload(UUID runId, UUID nodeExecId, CreateWorkloadRequest req) {
+    public PrepareWorkloadResponse prepareWorkload(UUID runId, UUID nodeExecId, PrepareWorkloadRequest req) {
         NodeExecution exec = execRepo.findById(nodeExecId)
                 .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
         NodeExecutionUtil.requireInRun(exec, runId);
@@ -91,8 +88,6 @@ public class WorkloadService {
         ExecutionParams params = resolveExecutionParams(nodeExecId, run, exec.getTemplateNodeId(), req);
 
         WorkloadAgentCredentials agent = agentCredentialResolver.resolve(runId, runsClaude(params));
-        String githubTokenUrl =
-                apiServerUrl + "/internal/runs/" + runId + "/node-executions/" + nodeExecId + "/github-token";
 
         // Launch namespace and the teardown namespace (resolved later through this same seam by the
         // /worker node-exec GET) must agree; one resolver for both is what guarantees it.
@@ -106,7 +101,6 @@ public class WorkloadService {
                 params.dindMemoryRequest(),
                 memoryCeilingExempt(runId),
                 agent.claudeOAuthToken(),
-                githubTokenUrl,
                 agent.registryCredentials(),
                 namespace,
                 params.identity() != null ? params.identity().name() : null);
@@ -168,7 +162,7 @@ public class WorkloadService {
     }
 
     private ExecutionParams resolveExecutionParams(
-            UUID nodeExecId, WorkflowRun run, UUID templateNodeId, CreateWorkloadRequest req) {
+            UUID nodeExecId, WorkflowRun run, UUID templateNodeId, PrepareWorkloadRequest req) {
         UUID runId = run.getId();
 
         String snapshotJson;

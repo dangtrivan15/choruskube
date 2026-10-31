@@ -68,12 +68,11 @@ type Config struct {
 	// omits it fails to connect rather than leaking.
 	TemporalTLSDisabled bool
 	Provider            FleetProvider
-	// CallbackPort is the port the Worker's own callback server listens on when Executor is
-	// set. Zero defaults to defaultCallbackPort; see withDefaults.
+	// CallbackPort is the port the Worker's own callback server listens on. Zero defaults to
+	// defaultCallbackPort; see withDefaults.
 	CallbackPort int
-	// Executor, when set, makes Run launch each node execution's workload itself instead of
-	// asking the API server to (the legacy path -- see activity.New vs activity.NewWithExecutor).
-	// nil keeps the legacy delegation mode.
+	// Executor launches and manages each node execution's workload. Required: Validate
+	// rejects a nil Executor.
 	Executor executor.Executor
 	// CredentialSource is CredentialSourceControlPlane or CredentialSourceLocal. Required, with
 	// no default: Validate rejects a blank or unknown value rather than guessing which mode a
@@ -114,6 +113,8 @@ func (c Config) Validate() error {
 		return errors.New("CredentialSource is required")
 	case c.CredentialSource != CredentialSourceControlPlane && c.CredentialSource != CredentialSourceLocal:
 		return fmt.Errorf("CredentialSource %q is not %q or %q", c.CredentialSource, CredentialSourceControlPlane, CredentialSourceLocal)
+	case c.Executor == nil:
+		return errors.New("Executor is required")
 	}
 	return nil
 }

@@ -436,10 +436,6 @@ func TestAPIError_429_ReturnsTypedError(t *testing.T) {
 	assert.Contains(t, apiErr.Body, "quota_exceeded")
 }
 
-// TestCleanupWorkload_UsesRunScopedPath and TestGetWorkloadLogs_UsesRunScopedPath pin the
-// request URL to the run-scoped shape: the api-server rejects a NodeExecutionID that does not
-// belong to RunID (see api-server's WorkloadService), so the run id must actually reach it.
-
 // TestGetReviewHistory_IncludesFeedbackFields is the regression test for the bug where
 // the orchestrator's review-history decode struct silently dropped the reviewer's
 // feedback text (and status/nodeLabel) before it ever reached the {review_history}
