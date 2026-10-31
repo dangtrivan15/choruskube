@@ -616,7 +616,7 @@ class V1TemplateSeederTest extends BaseTest {
                 .contains("Format conformance")
                 .contains("Caveat hygiene")
                 .contains("Decision soundness")
-                .contains("Idea level");
+                .contains("Before and after");
     }
 
     @Test
@@ -663,12 +663,12 @@ class V1TemplateSeederTest extends BaseTest {
         assertThat(implementDef.getPromptTemplate())
                 .as("Implement must have access to the spec content to build PR bodies from it")
                 .contains("{input.draft_spec_and_plan.result}")
-                .as("PR body must surface Manual Operations under a clearly-labelled heading")
-                .contains("## ⚠️ Manual Operations Required")
+                .as("PR body must surface operator actions under a clearly-labelled heading")
+                .contains("## Operator actions")
                 .as("PR body must surface Caveats")
-                .contains("## Caveats & Known Limitations")
+                .contains("<details><summary>Known limitations (N)</summary>")
                 .as("PR body must conditionally surface any unresolved 'Needs human decision' caveats")
-                .contains("## ❓ Open Decisions for Reviewer");
+                .contains("## ❓ Open decisions");
     }
 
     @Test
@@ -711,7 +711,7 @@ class V1TemplateSeederTest extends BaseTest {
                         + " note discloses that companions were withheld")
                 .contains("Do NOT write \"none\"")
                 .as("Manual Operations must be scoped and generalized for a public repo, not copied verbatim")
-                .contains("include ONLY the operations that apply");
+                .contains("include ONLY the operations, decisions and Caveats that apply");
     }
 
     @Test
@@ -827,13 +827,12 @@ class V1TemplateSeederTest extends BaseTest {
     }
 
     @Test
-    void currentVersionIsBumpedForSpecGateReapplyingARevisedApproval() {
-        // v52: Approve Spec & Plan re-applies its held approval after Spec Review revises the spec
-        // (stamp: always). This is the rolling version tripwire: rewrite it and bump the literal
-        // whenever CURRENT_VERSION changes, so a template edit that forgets the bump cannot ship
-        // silently.
-        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(52);
-        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 52))
+    void currentVersionIsBumpedForBeforeAndAfterDiagrams() {
+        // v53: Context and Approach draw the same mechanism before and after the change. This is
+        // the rolling version tripwire: rewrite it and bump the literal whenever CURRENT_VERSION
+        // changes, so a template edit that forgets the bump cannot ship silently.
+        assertThat(BaseFeatureDevSeeder.CURRENT_VERSION).isEqualTo(53);
+        assertThat(templateRepo.findByGraphIdAndVersion(GraphIds.FEATURE_DEVELOPMENT, 53))
                 .isPresent();
     }
 
