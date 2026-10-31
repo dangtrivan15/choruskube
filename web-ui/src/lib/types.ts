@@ -1379,11 +1379,10 @@ export interface AttachmentRefsResponse {
 
 /** `POST /runs/{id}/nodes/{exec}/signal` response. */
 export interface SignalResponse {
-  outcome: "signaled" | "held_for_recheck" | "finalizing";
-  staleRepos: { repo: string; detail: string }[];
+  outcome: "signaled" | "finalizing";
 }
 
-/** An approval held while its run re-checks against a moved default branch. */
+/** A gate approval: being finalized, held for a re-check, consumed or voided. */
 export interface GateStampResponse {
   id: string;
   gateTemplateNodeId: string;

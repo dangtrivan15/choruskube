@@ -1,5 +1,6 @@
 import { test, expect, seededRepos } from "../fixtures";
 import { uniqueName } from "../helpers/api-client";
+import { findWireMockRequests, headerOf } from "../helpers/wiremock";
 import type { RunPullRequestResponse } from "../../src/lib/types";
 
 /**
@@ -63,6 +64,22 @@ test.describe("Drift re-check at approval", () => {
       expect(stamps).toHaveLength(1);
       expect(stamps[0].status).toBe("consumed");
       expect(stamps[0].recheckRounds).toBe(1);
+
+      // The Worker's compare call trails the run's own "completed" status write, so poll
+      // rather than assume the journal already has it by the time waitForRunStatus resolves.
+      // This User-Agent check holds for every compare in the suite — the Worker's
+      // branch-cleanup activity (see run-branch-cleanup.spec.ts) uses the same fixed string —
+      // not just the drift re-check's own compare.
+      const comparePattern = "/repos/.+/compare/.+";
+      await expect(async () => {
+        const compares = await findWireMockRequests({ method: "GET", urlPattern: comparePattern });
+        expect(compares.length).toBeGreaterThan(0);
+      }).toPass({ timeout: 60_000 });
+
+      const compares = await findWireMockRequests({ method: "GET", urlPattern: comparePattern });
+      for (const req of compares) {
+        expect(headerOf(req, "User-Agent")).toBe("choruskube-worker");
+      }
     } finally {
       // A failure before completion would otherwise leave the run live for other workers' specs.
       try {

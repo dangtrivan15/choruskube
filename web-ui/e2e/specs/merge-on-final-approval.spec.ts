@@ -1,5 +1,6 @@
 import { test, expect, seededRepos } from "../fixtures";
 import { uniqueName } from "../helpers/api-client";
+import { findWireMockRequests, headerOf } from "../helpers/wiremock";
 import type { RunPullRequestResponse } from "../../src/lib/types";
 
 /**
@@ -9,7 +10,8 @@ import type { RunPullRequestResponse } from "../../src/lib/types";
  * to a fixed PR number via --pr-number, so the gate always merges a known WireMock PR-stub
  * fixture (github-pulls.json / github-merge-pr.json) rather than a random one the stubs don't
  * recognise. PR 7001 is WireMock's always-merges-for-mock-repo fixture (already-merged for
- * mock-frontend); PR 7405 is WireMock's always-refused fixture.
+ * mock-frontend); PR 7405 is WireMock's always-refused fixture. The API server makes none of
+ * the pull-request reads or merges itself — the Worker makes them, with its own credentials.
  */
 test.describe("Merge on Final Approval", () => {
   test("approving merges open PRs and skips already-merged ones", async ({
@@ -69,6 +71,24 @@ test.describe("Merge on Final Approval", () => {
 
       const finalApproval = finalRun.nodeExecutions.find((ne) => ne.label === "final_approval");
       expect(finalApproval?.result ?? "").toContain("Pull requests merged on approval");
+
+      // The Worker makes the pull-request read and merge after the plan step, which trails the
+      // run's own "completed" status write, so poll rather than assume the journal already has
+      // them by the time waitForRunStatus above resolves.
+      const pullReadPattern = "/repos/.+/pulls/7001";
+      const mergePattern = "/repos/.+/pulls/7001/merge";
+      await expect(async () => {
+        const reads = await findWireMockRequests({ method: "GET", urlPattern: pullReadPattern });
+        const merges = await findWireMockRequests({ method: "PUT", urlPattern: mergePattern });
+        expect(reads.length).toBeGreaterThan(0);
+        expect(merges.length).toBeGreaterThan(0);
+      }).toPass({ timeout: 60_000 });
+
+      const reads = await findWireMockRequests({ method: "GET", urlPattern: pullReadPattern });
+      const merges = await findWireMockRequests({ method: "PUT", urlPattern: mergePattern });
+      for (const req of [...reads, ...merges]) {
+        expect(headerOf(req, "User-Agent")).toBe("choruskube-worker");
+      }
 
       // UI: the run's PR list renders in the always-visible run summary now, independent
       // of node selection — revisit fresh here to read it from a clean load.
