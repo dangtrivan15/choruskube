@@ -199,7 +199,8 @@ class AsyncGateFinalizeIntegrationTest extends BaseTest {
                                 + "\"editedCandidates\":{\"epics\":[{\"title\":\"Async follow-up\",\"stories\":[{\"title\":\"First slice\","
                                 + "\"tasks\":[{\"title\":\"Do the thing\"}]}]}]}}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.outcome").value("finalizing"));
+                .andExpect(jsonPath("$.outcome").value("finalizing"))
+                .andExpect(jsonPath("$.staleRepos").doesNotExist());
 
         assertThat(execRepo.findById(gateExec.getId()).orElseThrow().getStatus())
                 .isEqualTo(NodeExecutionStatus.finalizing);
@@ -584,6 +585,18 @@ class AsyncGateFinalizeIntegrationTest extends BaseTest {
                 .andExpect(status().isNotFound());
         mockMvc.perform(post(STEPS + "/{approval}/plan", otherRunId, gateExec.getId(), approvalId))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void rereviewDecision_neverTouchesGitHubOrTheCredential() throws Exception {
+        mockMvc.perform(post("/api/v1/runs/{id}/nodes/{exec}/signal", runId, gateExec.getId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"decision\":\"rereview\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.outcome").value("signaled"))
+                .andExpect(jsonPath("$.staleRepos").doesNotExist());
+
+        verifyNoInteractions(gitHubAppService, credentialResolver);
     }
 
     private void completedTestRun(Instant completedAt, String baseSha, int iteration) {

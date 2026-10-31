@@ -1,8 +1,5 @@
 package com.choruskube.core.service;
 
-import com.choruskube.core.credential.GitHubCredentialResolver;
-import com.choruskube.core.exception.GateRecheckUnavailableException;
-import com.choruskube.core.exception.GitHubApiException;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.NodeExecutionRepoBase;
@@ -68,7 +65,7 @@ public class GateDriftCheckService {
             return reason != Reason.CURRENT;
         }
 
-        /** Plain text, for the gate's result note and the approve response. */
+        /** Plain text, for the gate's result note and the Worker-driven plan's refusal reason. */
         public String summary() {
             return switch (reason) {
                 case CURRENT -> "current with " + defaultBranch;
@@ -110,8 +107,6 @@ public class GateDriftCheckService {
     private final NodeExecutionRepoBaseRepository baseRepo;
     private final GitRepoRepository gitRepoRepo;
     private final RunPullRequestRepository prRepo;
-    private final GitHubCredentialResolver credentialResolver;
-    private final GitHubAppService gitHubAppService;
     private final ObjectMapper objectMapper;
 
     public GateDriftCheckService(
@@ -119,29 +114,12 @@ public class GateDriftCheckService {
             NodeExecutionRepoBaseRepository baseRepo,
             GitRepoRepository gitRepoRepo,
             RunPullRequestRepository prRepo,
-            GitHubCredentialResolver credentialResolver,
-            GitHubAppService gitHubAppService,
             ObjectMapper objectMapper) {
         this.execRepo = execRepo;
         this.baseRepo = baseRepo;
         this.gitRepoRepo = gitRepoRepo;
         this.prRepo = prRepo;
-        this.credentialResolver = credentialResolver;
-        this.gitHubAppService = gitHubAppService;
         this.objectMapper = objectMapper;
-    }
-
-    public DriftCheck check(UUID runId, UUID gateTemplateNodeId, JsonNode snapshot) {
-        DriftInputs inputs = gather(runId, gateTemplateNodeId, snapshot);
-        List<CompareResult> results = new ArrayList<>();
-        String token = null;
-        for (CompareInput input : inputs.toCompare()) {
-            if (token == null) {
-                token = token(runId, input.ownerRepo());
-            }
-            results.add(compareOne(token, input));
-        }
-        return classify(inputs, results);
     }
 
     /** Makes no GitHub call and mints no token: a Worker runs the compares this leaves in {@code toCompare}. */
@@ -243,28 +221,6 @@ public class GateDriftCheckService {
         Reason reason = result.aheadBy() > 0 ? Reason.MAIN_MOVED : Reason.CURRENT;
         return new RepoDrift(
                 in.gitRepoId(), in.ownerRepo(), in.branch(), reason, in.baseSha(), result.aheadBy(), List.of());
-    }
-
-    private CompareResult compareOne(String token, CompareInput input) {
-        try {
-            int ahead = gitHubAppService.compareCommits(token, input.ownerRepo(), input.baseSha(), input.branch());
-            return new CompareResult(input.gitRepoId(), ahead, false);
-        } catch (GitHubApiException e) {
-            if (e.getStatus() == 404) {
-                return new CompareResult(input.gitRepoId(), 0, true);
-            }
-            throw new GateRecheckUnavailableException(input.ownerRepo(), e);
-        } catch (RuntimeException e) {
-            throw new GateRecheckUnavailableException(input.ownerRepo(), e);
-        }
-    }
-
-    private String token(UUID runId, String ownerRepo) {
-        try {
-            return credentialResolver.getTokenForRun(runId);
-        } catch (RuntimeException e) {
-            throw new GateRecheckUnavailableException(ownerRepo, e);
-        }
     }
 
     private List<RunPullRequest> mergedSince(UUID runId, DriftCheck check) {
