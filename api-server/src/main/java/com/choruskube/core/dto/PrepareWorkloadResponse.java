@@ -9,7 +9,6 @@ public record PrepareWorkloadResponse(
         String dindMemoryRequest,
         boolean memoryCeilingExempt,
         String claudeOAuthToken,
-        String githubTokenUrl,
         RegistryCredentialsDto registryCredentials,
         String namespace,
         String serviceAccount) {

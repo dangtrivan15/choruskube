@@ -2,7 +2,7 @@ package com.choruskube.core.controller;
 
 import com.choruskube.core.config.WorkerAuthFilter;
 import com.choruskube.core.dto.CompleteWorkloadRequest;
-import com.choruskube.core.dto.CreateWorkloadRequest;
+import com.choruskube.core.dto.PrepareWorkloadRequest;
 import com.choruskube.core.dto.PrepareWorkloadResponse;
 import com.choruskube.core.service.SingleFleetWorkerAuthorizer;
 import com.choruskube.core.service.WorkerAuthorizer;
@@ -46,7 +46,7 @@ public class WorkerWorkloadController {
             HttpServletRequest httpRequest,
             @PathVariable UUID runId,
             @PathVariable UUID nodeExecId,
-            @RequestBody CreateWorkloadRequest request) {
+            @RequestBody PrepareWorkloadRequest request) {
         String credential = credentialOf(httpRequest);
         if (credential == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
