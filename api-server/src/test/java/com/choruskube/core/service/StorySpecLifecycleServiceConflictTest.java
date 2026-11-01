@@ -316,7 +316,10 @@ class StorySpecLifecycleServiceConflictTest extends BaseTest {
         assertThat(conflict(manual).getRevisionRunId()).isNotNull();
     }
 
-    /** Review Focus: a revision that ends without a version must not be restarted on every pass. */
+    /**
+     * A revision that ends without a version keeps its conflicts assigned to it: restarting one on
+     * every pass would undo a human's cancel and retry a broken revision without end.
+     */
     @ParameterizedTest
     @EnumSource(
             value = WorkflowRunStatus.class,
@@ -340,7 +343,7 @@ class StorySpecLifecycleServiceConflictTest extends BaseTest {
         verify(runService, never()).decideGateAsSystem(any(), any(), any());
     }
 
-    /** Review Focus: deleting a Story cascades its conflicts, before a pass or in the middle of one. */
+    /** Deleting a Story cascades its conflicts, so a pass must tolerate them vanishing before or mid-pass. */
     @Test
     void processConflicts_storyDeleted_skipsWithoutError() {
         UUID deletedBefore = makeStory("conflict-deleted-before");
