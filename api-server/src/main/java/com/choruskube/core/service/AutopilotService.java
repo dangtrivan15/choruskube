@@ -744,7 +744,7 @@ public class AutopilotService {
 
     /**
      * Every startable Task in a candidate Epic ({@link EpicReadinessAssembler#isStartable} —
-     * backlog and READY), ordered. That predicate is shared with the Epic list's
+     * backlog, READY, and under a designed Story), ordered. That predicate is shared with the Epic list's
      * {@code readyItemCount}, so the board's "N ready" badge names exactly this frontier.
      */
     private Frontier computeFrontier(UUID autopilotId) {

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.tuple;
 
 import com.choruskube.core.BaseTest;
 import com.choruskube.core.CommittedFixtureCleaner;
+import com.choruskube.core.StorySpecFixtures;
 import com.choruskube.core.dto.AutopilotStatusResponse;
 import com.choruskube.core.dto.AutopilotTaskRef;
 import com.choruskube.core.dto.CreateDependencyRequest;
@@ -53,6 +54,7 @@ import org.springframework.context.PayloadApplicationEvent;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import software.amazon.awssdk.services.s3.S3Client;
 
 /**
  * The tick against real Postgres, real readiness and a real start.
@@ -112,6 +114,9 @@ public class AutopilotServiceIntegrationTest extends BaseTest {
 
     @MockitoBean
     private RunEventPublisher runEventPublisher;
+
+    @MockitoBean
+    private S3Client s3Client;
 
     /**
      * Registered per test rather than declared as a {@code @TestConfiguration} bean, and that
@@ -193,6 +198,19 @@ public class AutopilotServiceIntegrationTest extends BaseTest {
         assertThat(runs).hasSize(1);
         assertThat(runs.getFirst().getTaskId()).isEqualTo(task.id());
         assertThat(runs.getFirst().getStatus()).isEqualTo(WorkflowRunStatus.pending);
+    }
+
+    @Test
+    void tick_taskUnderAnUndesignedStory_isNeverStarted() {
+        StoryResponse story =
+                makeUndesignedStory(makeRepo("autopilot-undesigned").getId());
+        TaskResponse task = taskService.create(story.id(), new TaskRequest("Waiting on design", "D"));
+        UUID autopilotId = engage();
+
+        autopilotService.tick();
+
+        assertThat(taskService.get(task.id()).status()).isEqualTo("backlog");
+        assertThat(runsFor(autopilotId)).noneMatch(run -> task.id().equals(run.getTaskId()));
     }
 
     @Test
@@ -693,6 +711,12 @@ public class AutopilotServiceIntegrationTest extends BaseTest {
     }
 
     private StoryResponse makeStory(UUID softwareProjectId) {
+        StoryResponse story = makeUndesignedStory(softwareProjectId);
+        StorySpecFixtures.approve(jdbc, story.id());
+        return story;
+    }
+
+    private StoryResponse makeUndesignedStory(UUID softwareProjectId) {
         EpicResponse epic = epicService.create(new EpicRequest("Epic", "Epic desc", null, softwareProjectId), null);
         cleaner.trackEpic(epic.id());
         return storyService.create(epic.id(), new StoryRequest("Story", "Story desc"));

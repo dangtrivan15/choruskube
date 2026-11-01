@@ -21,6 +21,7 @@ import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -40,18 +41,21 @@ class EpicReadinessAssembler {
     private final EpicRepository epicRepo;
     private final WorkItemDependencyRepository dependencyRepo;
     private final AuthorizationService authService;
+    private final StorySpecService specService;
 
     EpicReadinessAssembler(
             StoryRepository storyRepo,
             TaskRepository taskRepo,
             EpicRepository epicRepo,
             WorkItemDependencyRepository dependencyRepo,
-            AuthorizationService authService) {
+            AuthorizationService authService,
+            StorySpecService specService) {
         this.storyRepo = storyRepo;
         this.taskRepo = taskRepo;
         this.epicRepo = epicRepo;
         this.dependencyRepo = dependencyRepo;
         this.authService = authService;
+        this.specService = specService;
     }
 
     /**
@@ -59,16 +63,23 @@ class EpicReadinessAssembler {
      * candidateIds}. {@code edges} is the raw row set the transitive walk ran over, handed back so
      * a caller needing {@link TransitiveReadinessResolver#rootCauseBlockersOf} does not have to
      * re-query it.
+     *
+     * <p>{@code readinessById} stays a statement about dependencies alone: the BLOCKED cascade and
+     * the blocker names a refused start reports are built on it. A Story whose design keeps its
+     * Tasks from starting is in {@code notDesignedReasonByStoryId} instead; a Story absent from it
+     * holds nothing back.
      */
     record Assembly(
             Map<UUID, Readiness> readinessById,
             List<DependencyEdgeResponse> dependencies,
             List<ExternalBlockerRef> externalBlockers,
-            List<WorkItemDependency> edges) {}
+            List<WorkItemDependency> edges,
+            Map<UUID, String> notDesignedReasonByStoryId) {}
 
     /**
-     * Whether {@code task} is work that can be picked up right now: still in {@code backlog} AND
-     * {@link Readiness#READY} in {@code assembly}. Both halves are load-bearing — {@link
+     * Whether {@code task} is work that can be picked up right now: still in {@code backlog},
+     * {@link Readiness#READY} in {@code assembly}, and on a Story whose design lets it start
+     * ({@link #notStartableReason}). The first two are both load-bearing — {@link
      * TransitiveReadinessResolver#computeReadiness} derives READY from "nothing upstream is still
      * open" and never consults the item's own status, so a {@code done} Task is READY too.
      *
@@ -83,7 +94,13 @@ class EpicReadinessAssembler {
      */
     static boolean isStartable(Task task, Assembly assembly) {
         return task.getStatus() == WorkItemStatus.backlog
-                && assembly.readinessById().get(task.getId()) == Readiness.READY;
+                && assembly.readinessById().get(task.getId()) == Readiness.READY
+                && notStartableReason(task, assembly).isEmpty();
+    }
+
+    /** The {@link StoryDesignReadiness} reason {@code task}'s Story holds it back for, if any. */
+    static Optional<String> notStartableReason(Task task, Assembly assembly) {
+        return Optional.ofNullable(assembly.notDesignedReasonByStoryId().get(task.getStoryId()));
     }
 
     /**
@@ -244,7 +261,27 @@ class EpicReadinessAssembler {
         // already BLOCKED, so the result does not depend on map iteration order.
         applyContainmentCascade(readinessById, parentOf);
 
-        return new Assembly(readinessById, dependencies, externalBlockers, rows);
+        return new Assembly(
+                readinessById, dependencies, externalBlockers, rows, notDesignedReasons(candidateIds, parentOf));
+    }
+
+    /**
+     * Every Story among {@code candidateIds} that may not start its Tasks, with the reason. {@code
+     * parentOf} maps a Task to its Story and a Story to its Epic, so a Story is the candidate whose
+     * parent has no parent of its own.
+     */
+    private Map<UUID, String> notDesignedReasons(Set<UUID> candidateIds, Map<UUID, UUID> parentOf) {
+        Set<UUID> storyIds = candidateIds.stream()
+                .filter(id -> parentOf.containsKey(id) && !parentOf.containsKey(parentOf.get(id)))
+                .collect(Collectors.toSet());
+        Map<UUID, Integer> versions = specService.currentVersions(storyIds);
+        Set<UUID> revising = specService.storiesWithOpenDesignRun(versions.keySet());
+        Map<UUID, String> reasons = new HashMap<>();
+        for (UUID storyId : storyIds) {
+            StoryDesignReadiness.reason(versions.containsKey(storyId), revising.contains(storyId))
+                    .ifPresent(reason -> reasons.put(storyId, reason));
+        }
+        return reasons;
     }
 
     /**

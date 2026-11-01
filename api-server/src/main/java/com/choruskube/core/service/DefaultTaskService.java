@@ -1,6 +1,7 @@
 package com.choruskube.core.service;
 
 import com.choruskube.core.config.GraphIds;
+import com.choruskube.core.config.TemplateGraphIdResolver;
 import com.choruskube.core.dto.CreateRunRequest;
 import com.choruskube.core.dto.RepoRef;
 import com.choruskube.core.dto.RunResponse;
@@ -19,6 +20,7 @@ import com.choruskube.core.model.RepoGroup;
 import com.choruskube.core.model.RunPullRequest;
 import com.choruskube.core.model.SoftwareProject;
 import com.choruskube.core.model.Story;
+import com.choruskube.core.model.StorySpecVersion;
 import com.choruskube.core.model.Task;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.BlockableItemType;
@@ -110,6 +112,9 @@ public class DefaultTaskService implements TaskService {
     private final EntityManager entityManager;
     private final SoftwareProjectRefResolver softwareProjectRefResolver;
     private final TaskGithubIssueCloser issueCloser;
+    private final StorySpecService specService;
+    private final UploadService uploadService;
+    private final TemplateGraphIdResolver graphIdResolver;
 
     public DefaultTaskService(
             TaskRepository repo,
@@ -130,7 +135,10 @@ public class DefaultTaskService implements TaskService {
             RunPullRequestRepository prRepo,
             EntityManager entityManager,
             SoftwareProjectRefResolver softwareProjectRefResolver,
-            TaskGithubIssueCloser issueCloser) {
+            TaskGithubIssueCloser issueCloser,
+            StorySpecService specService,
+            UploadService uploadService,
+            TemplateGraphIdResolver graphIdResolver) {
         this.repo = repo;
         this.storyRepo = storyRepo;
         this.epicRepo = epicRepo;
@@ -150,6 +158,9 @@ public class DefaultTaskService implements TaskService {
         this.entityManager = entityManager;
         this.softwareProjectRefResolver = softwareProjectRefResolver;
         this.issueCloser = issueCloser;
+        this.specService = specService;
+        this.uploadService = uploadService;
+        this.graphIdResolver = graphIdResolver;
     }
 
     @Override
@@ -355,31 +366,35 @@ public class DefaultTaskService implements TaskService {
         }
 
         Story story = findStoryOrThrow(locked.getStoryId());
+        // Re-read after the lock wait: a revision may have opened since the readiness check. The
+        // run records the version whose content it stages, so both come from this one row.
+        StorySpecVersion spec = requireDesignedSpec(story.getId());
         Epic epic = findEpicOrThrow(story.getEpicId());
         String featureRequest = composeFeatureRequest(locked, story, epic);
 
-        GraphTemplate featureDevTemplate = graphTemplateRepo
-                .findFirstByGraphIdOrderByVersionDesc(GraphIds.FEATURE_DEVELOPMENT)
-                .orElseThrow(() -> new NotFoundException("Feature Development template not found"));
+        GraphTemplate taskDeliveryTemplate = graphTemplateRepo
+                .findFirstByGraphIdOrderByVersionDesc(graphIdResolver.resolve(GraphIds.TASK_DELIVERY))
+                .orElseThrow(() -> new NotFoundException("Task Delivery template not found"));
 
         CreateRunRequest runRequest = new CreateRunRequest(
-                featureDevTemplate.getId(),
+                taskDeliveryTemplate.getId(),
                 Map.of(
                         "software_project_id",
                         locked.getSoftwareProjectId().toString(),
                         "feature_request",
                         featureRequest),
                 locked.getTitle(),
-                null);
+                uploadService.stageTexts(Map.of(StoryDesignService.SPEC_INPUT, spec.getContent())));
 
         // startRun performs the run-quota check itself; a second one here would be a duplicate.
         RunResponse runResponse = runService.startRun(runRequest);
 
-        // CreateRunRequest carries neither field, so both attributions are stamped on the re-fetch.
+        // CreateRunRequest carries none of these fields, so they are stamped on the re-fetch.
         WorkflowRun run = runRepo.findById(runResponse.id())
                 .orElseThrow(() -> new NotFoundException("Workflow run not found: " + runResponse.id()));
         run.setTaskId(locked.getId());
         run.setAutopilotId(autopilotId);
+        run.setStorySpecVersion(spec.getVersion());
         runRepo.save(run);
 
         locked.setStatus(WorkItemStatus.in_progress);
@@ -458,11 +473,26 @@ public class DefaultTaskService implements TaskService {
         EpicReadinessAssembler.EpicCandidates candidates = readinessAssembler.loadEpicCandidates(story.getEpicId());
         EpicReadinessAssembler.Assembly assembly = readinessAssembler.assemble(
                 candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), mode, contextId);
-        if (assembly.readinessById().get(task.getId()) != Readiness.BLOCKED) {
-            return;
+        if (assembly.readinessById().get(task.getId()) == Readiness.BLOCKED) {
+            throw new ConflictException(
+                    "Cannot start a blocked Task. Waiting on: " + describeBlockers(task, story, candidates, assembly));
         }
-        throw new ConflictException(
-                "Cannot start a blocked Task. Waiting on: " + describeBlockers(task, story, candidates, assembly));
+        Optional<String> notDesigned = EpicReadinessAssembler.notStartableReason(task, assembly);
+        if (notDesigned.isPresent()) {
+            throw new ConflictException(StoryDesignReadiness.refusal(notDesigned.get()));
+        }
+    }
+
+    /** {@link EpicReadinessAssembler#notStartableReason} for one Story, read from the database now. */
+    private StorySpecVersion requireDesignedSpec(UUID storyId) {
+        Optional<StorySpecVersion> spec = specService.current(storyId);
+        boolean revising =
+                spec.isPresent() && specService.openDesignRun(storyId).isPresent();
+        Optional<String> notDesigned = StoryDesignReadiness.reason(spec.isPresent(), revising);
+        if (notDesigned.isPresent()) {
+            throw new ConflictException(StoryDesignReadiness.refusal(notDesigned.get()));
+        }
+        return spec.get();
     }
 
     /**

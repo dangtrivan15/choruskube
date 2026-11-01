@@ -1932,7 +1932,7 @@ class AutopilotServiceTest {
                             any()))
                     // The readiness map and the edge list are shared across Epics on purpose: the
                     // service merges them anyway, and a superset changes no assertion here.
-                    .thenReturn(new EpicReadinessAssembler.Assembly(readiness, List.of(), List.of(), edges));
+                    .thenReturn(new EpicReadinessAssembler.Assembly(readiness, List.of(), List.of(), edges, Map.of()));
         }
         return new AutopilotService(
                 autopilotRepo,

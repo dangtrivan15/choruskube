@@ -16,7 +16,8 @@ import java.util.UUID;
  * exactly.
  *
  * <p>{@code readyTaskCount} is how many of this Story's Tasks can be started right now — still
- * {@code backlog} and unblocked, per {@code EpicReadinessAssembler#isStartable}. It is the Story
+ * {@code backlog}, unblocked, and under an approved spec that is not being revised, per {@code
+ * EpicReadinessAssembler#isStartable}. It is the Story
  * tier's counterpart to {@code EpicResponse#readyItemCount} and exists because {@code readiness}
  * alone cannot answer "is there work to pick up here": READY is a statement about this Story's
  * *dependencies*, so a Story whose Tasks are all finished is still READY. It is populated on
