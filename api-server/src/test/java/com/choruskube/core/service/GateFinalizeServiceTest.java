@@ -467,7 +467,7 @@ class GateFinalizeServiceTest {
         verify(gateRecheck)
                 .voidStamp(
                         held.getId(),
-                        "The Story spec is under revision (run " + revisionRunId + "); approve after it completes",
+                        "The Story spec is under revision (run " + revisionRunId + "); approve after it completes.",
                         gateExecId);
         verify(events).publishNodeStatusChanged(runId, gateExecId, "awaiting_human");
         verify(claims, never()).compareAndSetStatus(any(), any(), any());

@@ -553,7 +553,7 @@ describe("useRuns hooks", () => {
     it("shows a refused approval's plain-text reason in the decision-failure toast", async () => {
       const { wrapper } = createTestHookWrapper();
       const { ApiError: MockApiError } = await import("@/lib/api");
-      const reason = "The Story spec is under revision (run run-9); approve after it completes";
+      const reason = "The Story spec is under revision (run run-9); approve after it completes.";
       mockApi.post.mockRejectedValueOnce(new MockApiError(409, reason));
 
       const { result } = renderHook(() => useSignalNode("run-1"), { wrapper });

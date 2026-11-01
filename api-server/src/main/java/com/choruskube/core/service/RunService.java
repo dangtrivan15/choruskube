@@ -629,7 +629,7 @@ public class RunService {
 
         String reason() {
             return revisionRunId != null
-                    ? "The Story spec is under revision (run " + revisionRunId + "); approve after it completes"
+                    ? "The Story spec is under revision (run " + revisionRunId + "); approve after it completes."
                     : "The Story spec moved from v" + planned + " to v" + current.getVersion()
                             + " since this Task planned.";
         }

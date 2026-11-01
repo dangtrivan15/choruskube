@@ -211,7 +211,7 @@ class RunServiceStoryVersionRecheckTest {
         assertThatThrownBy(this::approve)
                 .isInstanceOf(ConflictException.class)
                 .hasMessage(
-                        "The Story spec is under revision (run " + revision.getId() + "); approve after it completes");
+                        "The Story spec is under revision (run " + revision.getId() + "); approve after it completes.");
 
         verify(nodeExecutionClaimService, never()).compareAndSetStatus(any(), any(), any());
         verify(workflowStub, never()).signal(anyString(), any());
