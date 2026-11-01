@@ -86,6 +86,7 @@ test.describe("Task issue close", () => {
     const graph = await api.getGraph(newEpic!.id);
     const task = graph.tasks.find((t) => t.title === "Mock New Initiative Task");
     expect(task).toBeTruthy();
+    await api.approveStorySpec(task!.storyId);
 
     const ownerRepo = ownerRepoOf(mockRepo.url);
     // Any issue number, not the filing stub's 4242, so a change to that stub keeps this passing.
@@ -98,7 +99,6 @@ test.describe("Task issue close", () => {
 
     // Cancel only once the run is "running": an earlier cancel is overwritten by the
     // orchestrator's own "running" report, and completeTask would then find the run still active.
-    await api.approveStorySpec(task!.storyId);
     const started = await api.startTask(task!.id);
     const latestRunId = started.latestRunId!;
     await api.waitForRunStatus(latestRunId, ["running"], 15_000);

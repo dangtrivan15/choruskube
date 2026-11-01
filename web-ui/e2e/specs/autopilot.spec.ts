@@ -37,6 +37,17 @@ test.describe.configure({ mode: "serial" });
 const AHEAD_OF_THE_BOARD = "high";
 
 test.describe("Autopilot", () => {
+  // A run left going parks at Final Approval under this Autopilot, filling a later test's
+  // max_awaiting_human ceiling mid-measurement. A cancel settles it without touching the breaker.
+  const storiesWithRuns: string[] = [];
+  test.afterEach(async ({ api }) => {
+    for (const storyId of storiesWithRuns.splice(0)) {
+      for (const task of await api.listTasks(storyId)) {
+        if (task.latestRunId) await api.cancelRun(task.latestRunId).catch(() => {});
+      }
+    }
+  });
+
   test.afterAll(async () => {
     // Never touches in-flight runs (AutopilotService#disengage) — just leaves the org in the
     // resting "off" state so nothing outside this file's own tick() calls can start anything.
@@ -59,6 +70,7 @@ test.describe("Autopilot", () => {
       title: uniqueName("Autopilot Frontier Story"),
       description: "desc",
     });
+    storiesWithRuns.push(story.id);
     const readyTask = await api.createTask(story.id, {
       title: uniqueName("Autopilot Ready Task"),
       description: "desc",
@@ -106,8 +118,8 @@ test.describe("Autopilot", () => {
     await expect(autopilotPage.toggle).toHaveAttribute("aria-label", "Disengage Autopilot");
     await expect(autopilotPage.inFlight).toBeVisible();
 
-    // No cleanup: readyTask is now in_progress, and DefaultEpicService#delete refuses to delete
-    // an Epic with any started descendant Task — the same accepted convention
+    // The Epic stays: readyTask is now in_progress, and DefaultEpicService#delete refuses to
+    // delete an Epic with any started descendant Task — the same accepted convention
     // task-board.spec.ts's board-drag test documents. uniqueName() keeps the leftover row from
     // colliding with anything.
   });
@@ -124,6 +136,7 @@ test.describe("Autopilot", () => {
       title: uniqueName("Autopilot Slot Story"),
       description: "desc",
     });
+    storiesWithRuns.push(story.id);
     const taskA = await api.createTask(story.id, {
       title: uniqueName("Autopilot Slot Task A"),
       description: "desc",
@@ -199,7 +212,7 @@ test.describe("Autopilot", () => {
     }
     expect(pendingStarted).toBe(true);
 
-    // No cleanup — same started-descendant-Task convention as the previous test.
+    // The Epic stays — same started-descendant-Task convention as the previous test.
   });
 
   test("max_awaiting_human throttles new starts once the backlog of parked runs is full, and starts resume once it drains", async ({
@@ -207,9 +220,9 @@ test.describe("Autopilot", () => {
     cloneableProject,
   }) => {
     test.setTimeout(300_000);
-    // Independent of max_parallel throughout: every headroom offered below is generous enough
-    // that max_parallel is never the reason a start is withheld, so a lack of a start can only be
-    // attributed to the max_awaiting_human ceiling under test.
+    // max_parallel never withholds this test's Tasks: this Epic's work sorts first, and every tick
+    // below offers it a free slot, so a lack of a start can only be attributed to the
+    // max_awaiting_human ceiling under test.
     const epic = await api.createEpic({
       title: uniqueName("Autopilot Awaiting Human Epic"),
       description: "desc",
@@ -220,6 +233,7 @@ test.describe("Autopilot", () => {
       title: uniqueName("Autopilot Awaiting Human Story"),
       description: "desc",
     });
+    storiesWithRuns.push(story.id);
     const parkedTask = await api.createTask(story.id, {
       title: uniqueName("Autopilot Awaiting Human Parked Task"),
       description: "desc",
@@ -234,10 +248,12 @@ test.describe("Autopilot", () => {
       // so it occupies the max_awaiting_human ceiling below. A manually-started run would not:
       // this stack's slot counter is attribution-scoped single-tenant (SingleTenantAutopilotSlotCounter),
       // so only runs this Autopilot itself started ever count.
+      // One slot per tick: wider headroom also starts other specs' work, which can park on a
+      // human between the ceiling snapshot below and the drain, and keep the ceiling full.
       let started: Task | undefined;
       for (let attempt = 0; attempt < 10 && !started; attempt++) {
         const status = await api.getAutopilot();
-        await api.updateAutopilot({ maxParallel: status.inFlight + 10 });
+        await api.updateAutopilot({ maxParallel: status.inFlight + 1 });
         await api.tickAutopilot();
         started = (await api.listTasks(story.id)).find(
           (t) => t.id === parkedTask.id && t.status === "in_progress",
@@ -294,9 +310,9 @@ test.describe("Autopilot", () => {
       await api.updateAutopilot({ maxAwaitingHuman: originalMaxAwaitingHuman });
     }
 
-    // No cleanup beyond the ceiling reset above — both Tasks are now started (one via a cancelled
-    // run), and DefaultEpicService#delete refuses to delete an Epic with a started descendant
-    // Task, same convention as the neighboring tests in this file.
+    // The Epic stays — both Tasks are now started (one via a cancelled run), and
+    // DefaultEpicService#delete refuses to delete an Epic with a started descendant Task, same
+    // convention as the neighboring tests in this file.
   });
 
   test("a Task stranded by a cancelled run is reported as held, and its run is badged", async ({
@@ -316,6 +332,7 @@ test.describe("Autopilot", () => {
       title: uniqueName("Autopilot Held Story"),
       description: "desc",
     });
+    storiesWithRuns.push(story.id);
     const heldTitle = uniqueName("Autopilot Held Task");
     const task = await api.createTask(story.id, { title: heldTitle, description: "desc" });
     await api.approveStorySpec(story.id);

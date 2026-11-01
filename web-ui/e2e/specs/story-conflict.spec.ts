@@ -86,6 +86,9 @@ test.describe("Story conflict", () => {
         const run = await api.getRun(runId);
         const gate = run.nodeExecutions.find((ne) => ne.label === "await_story_revision");
         expect(gate?.decision).toBe("resume");
+
+        await runMonitorPage.goto(runId);
+        await expect(page.getByTestId("run-summary-spec-version").first()).toContainText("spec v2");
       });
     } finally {
       // Left running, the resumed run would sit at Final Approval for the rest of the suite.
