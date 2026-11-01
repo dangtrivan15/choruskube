@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	temporalactivity "go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/converter"
+	"go.temporal.io/sdk/temporal"
 
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/activity"
 )
@@ -65,50 +66,15 @@ func (s *DAGExecutorTestSuite) TestAIActivityUsesWorkerTaskQueueFromInput() {
 	s.Equal("fleet-acme", seenQueue)
 }
 
-// TestAIActivityFallsBackWhenNoWorkerTaskQueue verifies that an unset
-// WorkerTaskQueue lets the SDK default the AI activity onto the
-// workflow's own task queue, matching what an in-flight workflow started
-// before this field existed would recompute on replay.
-func (s *DAGExecutorTestSuite) TestAIActivityFallsBackWhenNoWorkerTaskQueue() {
-	nodeA := uuid.New()
-	execA := uuid.New()
+// TestRunWithoutAWorkerTaskQueueIsRefused verifies that a run with no WorkerTaskQueue is marked
+// failed and the workflow ends with a non-retryable error before any other activity runs.
+func (s *DAGExecutorTestSuite) TestRunWithoutAWorkerTaskQueueIsRefused() {
 	runID := s.dagRunID()
 
-	snapshot := `{
-		"nodes": [
-			{"templateNodeId": "` + nodeA.String() + `", "label": "AI", "executorType": "ai", "timeoutSeconds": 1800, "isEntrypoint": true}
-		],
-		"edges": []
-	}`
-
-	var seenQueue string
-	s.env.SetOnActivityStartedListener(func(info *temporalactivity.Info, _ context.Context, _ converter.EncodedValues) {
-		if info.ActivityType.Name == "ExecuteAINodeFromSnapshot" {
-			seenQueue = info.TaskQueue
-		}
-	})
-
-	s.env.OnActivity("UpdateWorkflowRunStatus", mock.Anything, mock.Anything).Return(nil)
-	s.env.OnActivity("GetGraphRuntime", mock.Anything, runID).Return(snapshot, nil)
-	s.env.OnActivity("WriteExecutionLog", mock.Anything, mock.Anything).Return(nil).Maybe()
-	s.env.OnActivity("InitRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
-	s.env.OnActivity("AppendRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
-	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.Anything).Return(nil).Maybe()
-	s.env.OnActivity("LoadPredecessorInputs", mock.Anything, mock.Anything).Return(map[string]string{}, nil).Maybe()
-	s.env.OnActivity("LoadRequiredInputArtifacts", mock.Anything, mock.Anything).Return(activity.LoadRequiredInputArtifactsResult{}, nil).Maybe()
-	s.env.OnActivity("LoadReviewHistoryJSON", mock.Anything, mock.Anything).Return("[]", nil).Maybe()
-
-	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
-		return p.TemplateNodeID == nodeA
-	})).Return(execA, nil).Once()
-
-	s.env.OnActivity("ExecuteAINodeFromSnapshot", mock.Anything, mock.MatchedBy(func(p activity.ExecuteAINodeFromSnapshotParams) bool {
-		return p.Identity.TemplateNodeID == nodeA
-	})).Return(activity.CallbackResult{}, nil).Once()
-
-	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
-		return p.NodeExecutionID == execA
-	})).Return("no_decision", nil).Once()
+	s.env.OnActivity("UpdateWorkflowRunStatus", mock.Anything, mock.MatchedBy(func(p activity.UpdateRunStatusParams) bool {
+		return p.RunID == runID && p.Status == "failed"
+	})).Return(nil).Once()
+	starts := s.recordStarts(nil)
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
 		RunID:        runID,
@@ -116,6 +82,11 @@ func (s *DAGExecutorTestSuite) TestAIActivityFallsBackWhenNoWorkerTaskQueue() {
 	})
 
 	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
-	s.Equal("default-test-taskqueue", seenQueue)
+	err := s.env.GetWorkflowError()
+	s.Require().Error(err)
+	var appErr *temporal.ApplicationError
+	s.Require().ErrorAs(err, &appErr)
+	s.True(appErr.NonRetryable())
+	s.Equal("MissingWorkerTaskQueue", appErr.Type())
+	s.Equal([]string{"UpdateWorkflowRunStatus"}, starts.sequence())
 }

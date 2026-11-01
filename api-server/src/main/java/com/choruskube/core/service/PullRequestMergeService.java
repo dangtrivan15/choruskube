@@ -1,12 +1,5 @@
 package com.choruskube.core.service;
 
-import com.choruskube.core.credential.GitHubCredentialResolver;
-import com.choruskube.core.exception.GitHubApiException;
-import com.choruskube.core.exception.GitHubMergeRefusedException;
-import com.choruskube.core.exception.GitHubRateLimitHints;
-import com.choruskube.core.exception.GitHubRateLimited;
-import com.choruskube.core.exception.NotFoundException;
-import com.choruskube.core.exception.PullRequestMergeException;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.RunPullRequest;
 import com.choruskube.core.model.enums.PullRequestMergeMethod;
@@ -36,33 +29,21 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Merges a run's registered pull requests on approval of a gate configured for it, idempotently:
- * a repeat call never merges the same pull request twice, because GitHub's own merged/closed state
- * is read before anything is attempted and a row already recorded as merged needs no GitHub call
- * at all.
- *
- * <p>Two phases. {@link #mergeAll} inspects every row not already recorded as merged, refuses the
- * whole approval before merging anything if any row is a draft, has conflicts, or cannot be read —
- * these are the failures retrying cannot help with until a human acts — then merges the rest in
- * registration order, stopping at the first refusal. {@link #recordOutcome} writes the result onto
- * the tracked rows afterward, in its own transaction, once every external call has already
- * happened — so a failure recording it can only mean a retry re-reads GitHub and converges, never
- * that a merge is attempted twice.
+ * Plans merges of a run's registered pull requests for the Worker, and records what the Worker
+ * reports back — idempotently: a row already recorded as merged needs no GitHub call at all, and
+ * {@link #outcomeOf} drops any Worker result for a row a plan did not list. This service never
+ * calls the code host itself; {@link #planMerge} tells the Worker what to inspect and merge, and
+ * {@link #recordOutcome} persists its answers.
  */
 @Service
 public class PullRequestMergeService {
 
     private static final Logger log = LoggerFactory.getLogger(PullRequestMergeService.class);
 
-    /** Deep enough for any real wrapping chain, finite so a cyclic one cannot hang the request. */
-    private static final int MAX_CAUSE_DEPTH = 32;
-
     private static final Pattern PR_NUMBER_IN_URL = Pattern.compile("/pull/(\\d+)");
 
     private final RunPullRequestRepository prRepo;
     private final GitRepoRepository gitRepoRepo;
-    private final GitHubCredentialResolver credentialResolver;
-    private final GitHubAppService gitHubAppService;
     private final AuditSink auditSink;
     private final ObjectMapper objectMapper;
     private final Clock clock;
@@ -70,15 +51,11 @@ public class PullRequestMergeService {
     public PullRequestMergeService(
             RunPullRequestRepository prRepo,
             GitRepoRepository gitRepoRepo,
-            GitHubCredentialResolver credentialResolver,
-            GitHubAppService gitHubAppService,
             AuditSink auditSink,
             ObjectMapper objectMapper,
             Clock clock) {
         this.prRepo = prRepo;
         this.gitRepoRepo = gitRepoRepo;
-        this.credentialResolver = credentialResolver;
-        this.gitHubAppService = gitHubAppService;
         this.auditSink = auditSink;
         this.objectMapper = objectMapper;
         this.clock = clock;
@@ -106,8 +83,6 @@ public class PullRequestMergeService {
 
     public record WorkerPrResult(UUID rowId, Kind kind, Instant mergedAt, String mergeSha) {}
 
-    private record ToMerge(PrRef pr, String headSha) {}
-
     private record ResolvedRef(PrRef ref, String blocker) {
         static ResolvedRef of(PrRef ref) {
             return new ResolvedRef(ref, null);
@@ -116,87 +91,6 @@ public class PullRequestMergeService {
         static ResolvedRef blocked(String blocker) {
             return new ResolvedRef(null, blocker);
         }
-    }
-
-    /**
-     * Inspects, then merges, this run's registered pull requests not already recorded as merged.
-     * Returns an outcome covering every row — including rows this call never touched GitHub for —
-     * for {@link #recordOutcome} to persist. Throws {@link PullRequestMergeException} (409-mapped)
-     * the moment any row cannot be merged; nothing about the decision has been written by then.
-     */
-    public MergeOutcome mergeAll(UUID runId, PullRequestMergeMethod method) {
-        return mergeAll(runId, method, null);
-    }
-
-    /** {@code heldApprovalId}: the held gate approval this merge completes, for the audit trail; null otherwise. */
-    public MergeOutcome mergeAll(UUID runId, PullRequestMergeMethod method, UUID heldApprovalId) {
-        MergePlan plan = planMerge(runId, method);
-        if (plan.toInspect().isEmpty() && plan.blockers().isEmpty()) {
-            return new MergeOutcome(method, plan.alreadyMerged());
-        }
-        List<Result> allResults = new ArrayList<>(plan.alreadyMerged());
-        String token = resolveToken(runId);
-
-        List<String> blockers = new ArrayList<>(plan.blockers());
-        List<ToMerge> toMergeList = new ArrayList<>();
-        for (PrRef ref : plan.toInspect()) {
-            try {
-                GitHubAppService.PullRequestDetail detail =
-                        gitHubAppService.fetchPullRequestDetail(token, ref.ownerRepo(), ref.number());
-                if (detail.merged()) {
-                    Instant mergedAt = detail.mergedAt() != null ? detail.mergedAt() : clock.instant();
-                    allResults.add(new Result(ref, Kind.ALREADY_MERGED, mergedAt, null));
-                } else if ("closed".equals(detail.state())) {
-                    allResults.add(new Result(ref, Kind.SKIPPED_CLOSED, null, null));
-                } else if (detail.draft()) {
-                    blockers.add(ref.label() + " is a draft — mark it ready for review or merge it by hand");
-                } else if (Boolean.FALSE.equals(detail.mergeable())) {
-                    blockers.add(ref.label() + " has merge conflicts with " + detail.baseRef());
-                } else {
-                    toMergeList.add(new ToMerge(ref, detail.headSha()));
-                }
-            } catch (RuntimeException e) {
-                blockers.add(classifyReadFailure(e, ref.label(), ref.ownerRepo()));
-            }
-        }
-
-        if (!blockers.isEmpty()) {
-            // Nothing merged yet, so there is nothing to audit — every call above was a read.
-            throw new PullRequestMergeException("Approval needs every pull request to be mergeable; nothing was "
-                    + "merged. " + String.join("; ", blockers) + ". The gate is still open.");
-        }
-
-        List<Result> thisAttemptMerged = new ArrayList<>();
-        for (ToMerge item : toMergeList) {
-            try {
-                String mergeSha = gitHubAppService.mergePullRequest(
-                        token, item.pr().ownerRepo(), item.pr().number(), method.name(), item.headSha());
-                Result merged = new Result(item.pr(), Kind.MERGED, clock.instant(), mergeSha);
-                thisAttemptMerged.add(merged);
-                allResults.add(merged);
-            } catch (RuntimeException mergeEx) {
-                Result recovered = reReadAsMerged(token, item);
-                if (recovered != null) {
-                    thisAttemptMerged.add(recovered);
-                    allResults.add(recovered);
-                    continue;
-                }
-                String reason = classifyMergeFailure(
-                        mergeEx, item.pr().label(), item.pr().ownerRepo());
-                String mergedLabels = thisAttemptMerged.isEmpty()
-                        ? "none"
-                        : thisAttemptMerged.stream().map(r -> r.pr().label()).collect(Collectors.joining(", "));
-                audit(runId, method, thisAttemptMerged, item.pr().prUrl(), heldApprovalId);
-                throw new PullRequestMergeException("Merged: " + mergedLabels + ". Could not merge "
-                        + item.pr().label() + ": " + reason
-                        + ". The gate is still open — resolve it on GitHub (or merge it by hand) and approve again.");
-            }
-        }
-
-        if (!thisAttemptMerged.isEmpty()) {
-            audit(runId, method, thisAttemptMerged, null, heldApprovalId);
-        }
-        return new MergeOutcome(method, allResults);
     }
 
     /** Makes no GitHub call and resolves no credential, so a row recorded as merged never costs one. */
@@ -225,7 +119,7 @@ public class PullRequestMergeService {
     }
 
     /**
-     * The result half of {@link #mergeAll}, for merges a Worker performed: joins its answers to
+     * The result half of {@link #planMerge}, for merges a Worker performed: joins its answers to
      * the plan's rows by id and audits the pull requests it merged. An answer for a row the plan
      * never listed is dropped, so a stray id cannot mark an unrelated row merged. A row the plan
      * already lists as {@code alreadyMerged} — recorded by an earlier write step — keeps the
@@ -260,34 +154,13 @@ public class PullRequestMergeService {
                     worker.rowId());
         }
         allResults.addAll(alreadyMerged.values());
-        audit(runId, plan.method(), merged, null, heldApprovalId);
+        audit(runId, plan.method(), merged, heldApprovalId);
         return new MergeOutcome(plan.method(), allResults);
     }
 
     /**
-     * A failed merge call that GitHub then reports as merged — a race, or a lost response — still
-     * counts as merged by this attempt rather than as a failure, because the call most likely
-     * performed it. Returns null when the re-read itself fails or still shows it unmerged, so the
-     * caller falls back to the original failure's reason.
-     */
-    private Result reReadAsMerged(String token, ToMerge item) {
-        try {
-            GitHubAppService.PullRequestDetail detail = gitHubAppService.fetchPullRequestDetail(
-                    token, item.pr().ownerRepo(), item.pr().number());
-            if (detail.merged()) {
-                Instant mergedAt = detail.mergedAt() != null ? detail.mergedAt() : clock.instant();
-                return new Result(item.pr(), Kind.MERGED, mergedAt, null);
-            }
-        } catch (RuntimeException ignored) {
-            // The original failure's reason is what the reviewer needs; this re-read was only a
-            // chance to discover the call had actually succeeded.
-        }
-        return null;
-    }
-
-    /**
      * Persists {@code outcome} onto the tracked PR rows — {@code recordOutcome} has to happen after
-     * every external call in {@link #mergeAll} has already succeeded, so this never risks a second
+     * every external call the Worker made has already succeeded, so this never risks a second
      * merge attempt; it only ever writes what GitHub has already confirmed.
      */
     @Transactional
@@ -295,7 +168,7 @@ public class PullRequestMergeService {
         if (outcome.isEmpty()) {
             return;
         }
-        // mergeAll's rows are detached reads from an earlier call; reload inside this transaction
+        // outcome's rows are detached reads from an earlier call; reload inside this transaction
         // so the write lands on managed entities.
         List<RunPullRequest> freshRows = prRepo.findByWorkflowRunId(runId);
         Map<UUID, RunPullRequest> byId = freshRows.stream().collect(Collectors.toMap(RunPullRequest::getId, r -> r));
@@ -351,31 +224,6 @@ public class PullRequestMergeService {
     }
 
     /**
-     * The credential, resolved only when a row still needs a GitHub read — the caller already
-     * returned before this when every row was recorded as merged. Narrows whatever the resolver
-     * threw into a 409, because the raw failure can be a bare {@code IllegalStateException} that a
-     * reviewer cannot act on without the operator-facing detail it already carries.
-     */
-    private String resolveToken(UUID runId) {
-        try {
-            return credentialResolver.getTokenForRun(runId);
-        } catch (RuntimeException e) {
-            GitHubRateLimitHints hints = findRateLimitHints(e);
-            if (hints != null) {
-                log.warn("GitHub rate limited while resolving a credential for run {}: {}", runId, e.getMessage());
-                throw new PullRequestMergeException("GitHub rate limit reached while obtaining a credential — "
-                        + retryWording(hints) + ". The gate is still open.");
-            }
-            String detail = (e instanceof NotFoundException || e instanceof IllegalStateException)
-                    ? e.getMessage()
-                    : "see server logs";
-            log.warn("Could not resolve a GitHub credential for run {}: {}", runId, e.getMessage());
-            throw new PullRequestMergeException("Cannot merge this run's pull requests: no usable GitHub credential — "
-                    + detail + ". The gate is still open.");
-        }
-    }
-
-    /**
      * Resolves a row's {@code owner/repo} and pull request number, or a human-actionable blocker
      * when either cannot be determined — a missing {@code GitRepo} row, or no number on the row and
      * none extractable from the URL.
@@ -411,75 +259,13 @@ public class PullRequestMergeService {
                 row.getId(), row.getPrUrl(), row.getPrUrl(), null, row.getPrNumber() == null ? -1 : row.getPrNumber());
     }
 
-    private String classifyReadFailure(RuntimeException e, String label, String ownerRepo) {
-        GitHubRateLimitHints hints = findRateLimitHints(e);
-        if (hints != null) {
-            return "GitHub rate limit reached — " + retryWording(hints);
-        }
-        if (e instanceof GitHubApiException api) {
-            int status = api.getStatus();
-            if (status == 401 || status == 403) {
-                return "the GitHub credential cannot access " + ownerRepo;
-            }
-            if (status == 404) {
-                return label + " not found (or not visible to the credential)";
-            }
-        }
-        return "GitHub did not respond for " + label + " — retry";
-    }
-
-    private String classifyMergeFailure(RuntimeException e, String label, String ownerRepo) {
-        if (e instanceof GitHubMergeRefusedException refused) {
-            return refused.getStatus() == 409 ? "its head branch changed while merging — retry" : refused.getReason();
-        }
-        GitHubRateLimitHints hints = findRateLimitHints(e);
-        if (hints != null) {
-            return "GitHub rate limit reached — " + retryWording(hints);
-        }
-        if (e instanceof GitHubApiException api && api.getStatus() == 403) {
-            return "the GitHub credential is not allowed to merge in " + ownerRepo
-                    + " — it needs write access to contents and pull requests (and workflows, if the PR changes "
-                    + ".github/workflows/)";
-        }
-        return classifyReadFailure(e, label, ownerRepo);
-    }
-
-    private static String retryWording(GitHubRateLimitHints hints) {
-        return hints.retryAfterSeconds() != null ? "retry after " + hints.retryAfterSeconds() + "s" : "retry shortly";
-    }
-
     /**
-     * Whether anything in this failure's cause chain came back from GitHub saying "rate limited".
-     * Bounded because a cause chain can be cyclic.
+     * Records one audit event naming exactly the pull requests this attempt merged — whether the
+     * approval then completes or is refused — so a PR merged by an attempt that is then refused is
+     * never left unaudited. A failure writing it is logged and never changes the merge outcome: the
+     * merge it describes has already happened on GitHub.
      */
-    private static GitHubRateLimitHints findRateLimitHints(Throwable failure) {
-        Throwable cause = failure;
-        for (int depth = 0; cause != null && depth < MAX_CAUSE_DEPTH; depth++) {
-            if (cause instanceof GitHubRateLimited limited
-                    && limited.getRateLimitHints().indicatesRateLimit()) {
-                return limited.getRateLimitHints();
-            }
-            Throwable next = cause.getCause();
-            if (next == cause) {
-                break;
-            }
-            cause = next;
-        }
-        return null;
-    }
-
-    /**
-     * Records one audit event naming exactly the pull requests this attempt merged — before a
-     * refusal is thrown as well as on success — so a PR merged by an attempt that is then refused
-     * is never left unaudited. A failure writing it is logged and never changes the merge outcome:
-     * the merge it describes has already happened on GitHub.
-     */
-    private void audit(
-            UUID runId,
-            PullRequestMergeMethod method,
-            List<Result> mergedThisAttempt,
-            String refusedPrUrl,
-            UUID heldApprovalId) {
+    private void audit(UUID runId, PullRequestMergeMethod method, List<Result> mergedThisAttempt, UUID heldApprovalId) {
         if (mergedThisAttempt.isEmpty()) {
             return;
         }
@@ -490,11 +276,8 @@ public class PullRequestMergeService {
                 // Links this merge to the gate_approval_held event whose re-check it completed.
                 json.put("heldApprovalId", heldApprovalId.toString());
             }
-            if (refusedPrUrl != null) {
-                json.put("refusedPullRequest", refusedPrUrl);
-            } else {
-                json.putNull("refusedPullRequest");
-            }
+            // Always null since merges moved to the Worker; kept so the event keeps the shape its readers parse.
+            json.putNull("refusedPullRequest");
             ArrayNode prs = json.putArray("pullRequests");
             for (Result r : mergedThisAttempt) {
                 ObjectNode prNode = prs.addObject();

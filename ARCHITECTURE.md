@@ -158,26 +158,27 @@ Feature Development's Final Approval declares `squash`. The method only takes ef
 on the `approved` decision; graph validation rejects the key on a node with no such
 decision, and an unknown method.
 
-On `approved`, the approval request merges the run's registered pull requests
-synchronously, before any decision state is persisted: validate the decision, validate
-any roadmap proposal (no writes), merge the pull requests, record the merge outcome,
-create the roadmap items, then signal the workflow — merging runs before the
-non-retriable roadmap write because the merge step is retry-safe and that one isn't.
+On `approved`, the API validates the decision and any roadmap edit, moves the gate
+from `awaiting_human` to `finalizing`, records the approval and signals the
+workflow — no code-host call is made inside that request. The workflow then drives
+the rest of the approval one event at a time: it asks the API for a plan, and the
+Worker inspects and merges the run's registered pull requests — inspect first, refuse
+the whole approval on a draft or a conflicting pull request, merge in registration
+order pinned to the head commit seen during inspection, and skip a pull request
+already closed or already merged. See
+[2026-10-11---02](docs/decisions/2026-10-11---02-async-gate-finalize-on-the-worker.md)
+and [2026-10-31---04](docs/decisions/2026-10-31---04-gate-approvals-finalize-only-asynchronously.md).
 
-Merging is **inspect, then merge**. A row the database already records as merged is
-skipped with no GitHub call; every other row is read from GitHub first — already
-merged or closed-without-merging rows are skipped, a draft or conflicting row refuses
-the whole approval before anything is merged. Only then are the remaining rows merged,
-in registration order, each pinned to the head commit seen during inspection, stopping
-at the first refusal. GitHub's own merged/closed state is the idempotency key, so a
-retry after a partial failure merges only what still needs it, and a retry once every
-row is already merged touches neither GitHub nor a credential.
+The API records the Worker's merges and completes the gate once every pull request has
+been accounted for. A refusal — a draft, a conflict, or a GitHub-side rejection —
+reopens the gate with the refusal reason instead of completing it; a pull request
+already merged by that attempt stays recorded and merged, since a merge cannot be
+undone.
 
-A merge failure raises a 409 summarizing what merged, what blocked and why, and that
-the gate is still open; the node's claim is released so the request is retryable, and
-nothing about the decision is persisted. A merge that actually happened is always
-audited — even when that same attempt is then refused on a later pull request — since
-a merge is irreversible and is attributed to whoever's attempt performed it.
+A run found stale against the current default branch holds the approval instead of
+acting on it and routes to its own re-check; the workflow re-applies the held approval
+itself, inside its own event stream, the moment the gate reopens, so no reviewer click
+can race it.
 
 Pull request rows, Task closure and run-branch cleanup are unchanged: a merge
 timestamp written by approval takes a row out of the reconciler's unmerged scan the

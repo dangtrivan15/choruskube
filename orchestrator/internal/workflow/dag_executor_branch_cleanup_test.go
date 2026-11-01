@@ -58,6 +58,14 @@ func (s *DAGExecutorTestSuite) branchCleanupRun() (uuid.UUID, func() []string) {
 	}
 }
 
+// assertCleanupPlanned guards a test that asserts no Worker step against passing because cleanup
+// returned before it asked for a plan at all.
+func (s *DAGExecutorTestSuite) assertCleanupPlanned(runID uuid.UUID) {
+	s.env.AssertActivityCalled(s.T(), "PlanBranchCleanup", mock.Anything, mock.MatchedBy(func(p activity.BranchCleanupPlanParams) bool {
+		return p.RunID == runID
+	}))
+}
+
 // TestBranchCleanupRunsOnTheWorkerQueue proves the plan runs on the workflow's own queue and the
 // Worker step runs on the run's Worker queue with the plan's repos and the run's id, and that the
 // legacy activity is never scheduled on the new version.
@@ -68,10 +76,8 @@ func (s *DAGExecutorTestSuite) TestBranchCleanupRunsOnTheWorkerQueue() {
 	plan := activity.BranchCleanupPlan{Repos: []activity.BranchCleanupRepo{
 		{GitRepoID: repoID, OwnerRepo: "acme/app", DefaultBranch: "main"},
 	}}
+	s.cleanupPlan = plan
 
-	s.env.OnActivity("PlanBranchCleanup", mock.Anything, mock.MatchedBy(func(p activity.BranchCleanupPlanParams) bool {
-		return p.RunID == runID
-	})).Return(plan, nil).Once()
 	s.env.OnActivity("CleanupRunBranches", mock.Anything, mock.MatchedBy(func(p activity.BranchCleanupParams) bool {
 		return p.RunID == runID && len(p.Repos) == 1 && p.Repos[0] == plan.Repos[0]
 	})).Return(activity.BranchCleanupResult{}, nil).Once()
@@ -83,6 +89,7 @@ func (s *DAGExecutorTestSuite) TestBranchCleanupRunsOnTheWorkerQueue() {
 	s.True(s.env.IsWorkflowCompleted())
 	s.NoError(s.env.GetWorkflowError())
 	s.env.AssertActivityNotCalled(s.T(), "DeleteStaleBranches", mock.Anything, mock.Anything)
+	s.assertCleanupPlanned(runID)
 
 	planInfos, _ := starts.of("PlanBranchCleanup")
 	s.Require().Len(planInfos, 1)
@@ -106,7 +113,7 @@ func (s *DAGExecutorTestSuite) TestBranchCleanupWorkerStepTimeouts() {
 	plan := activity.BranchCleanupPlan{Repos: []activity.BranchCleanupRepo{
 		{GitRepoID: uuid.New(), OwnerRepo: "acme/app", DefaultBranch: "main"},
 	}}
-	s.env.OnActivity("PlanBranchCleanup", mock.Anything, mock.Anything).Return(plan, nil).Once()
+	s.cleanupPlan = plan
 	s.env.OnActivity("CleanupRunBranches", mock.Anything, mock.Anything).Return(activity.BranchCleanupResult{}, nil).Once()
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
@@ -123,9 +130,7 @@ func (s *DAGExecutorTestSuite) TestBranchCleanupWorkerStepTimeouts() {
 // TestBranchCleanupEmptyPlanSkipsTheWorker: an empty plan schedules no Worker step at all.
 func (s *DAGExecutorTestSuite) TestBranchCleanupEmptyPlanSkipsTheWorker() {
 	runID, _ := s.branchCleanupRun()
-	s.env.OnActivity("PlanBranchCleanup", mock.Anything, mock.MatchedBy(func(p activity.BranchCleanupPlanParams) bool {
-		return p.RunID == runID
-	})).Return(activity.BranchCleanupPlan{}, nil).Once()
+	// The suite's default PlanBranchCleanup stub already answers with an empty plan.
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
 		RunID: runID, GraphVersion: 1, WorkerTaskQueue: "fleet-acme",
@@ -133,6 +138,7 @@ func (s *DAGExecutorTestSuite) TestBranchCleanupEmptyPlanSkipsTheWorker() {
 
 	s.True(s.env.IsWorkflowCompleted())
 	s.NoError(s.env.GetWorkflowError())
+	s.assertCleanupPlanned(runID)
 	s.env.AssertActivityNotCalled(s.T(), "CleanupRunBranches", mock.Anything, mock.Anything)
 }
 
@@ -140,8 +146,7 @@ func (s *DAGExecutorTestSuite) TestBranchCleanupEmptyPlanSkipsTheWorker() {
 // completes without error, and schedules no Worker step.
 func (s *DAGExecutorTestSuite) TestBranchCleanupPlanErrorStillCompletes() {
 	runID, _ := s.branchCleanupRun()
-	s.env.OnActivity("PlanBranchCleanup", mock.Anything, mock.Anything).
-		Return(activity.BranchCleanupPlan{}, fmt.Errorf("api error 500: internal error"))
+	s.cleanupPlanErr = fmt.Errorf("api error 500: internal error")
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
 		RunID: runID, GraphVersion: 1, WorkerTaskQueue: "fleet-acme",
@@ -149,6 +154,7 @@ func (s *DAGExecutorTestSuite) TestBranchCleanupPlanErrorStillCompletes() {
 
 	s.True(s.env.IsWorkflowCompleted())
 	s.NoError(s.env.GetWorkflowError())
+	s.assertCleanupPlanned(runID)
 	s.env.AssertActivityNotCalled(s.T(), "CleanupRunBranches", mock.Anything, mock.Anything)
 }
 
@@ -161,7 +167,7 @@ func (s *DAGExecutorTestSuite) TestBranchCleanupWorkerErrorStillCompletes() {
 	plan := activity.BranchCleanupPlan{Repos: []activity.BranchCleanupRepo{
 		{GitRepoID: uuid.New(), OwnerRepo: "acme/app", DefaultBranch: "main"},
 	}}
-	s.env.OnActivity("PlanBranchCleanup", mock.Anything, mock.Anything).Return(plan, nil).Once()
+	s.cleanupPlan = plan
 	// No .Once(): the Worker step's own RetryPolicy (MaximumAttempts: 3) retries an erroring
 	// attempt, so this stub must stay eligible across every attempt.
 	s.env.OnActivity("CleanupRunBranches", mock.Anything, mock.Anything).
@@ -190,22 +196,6 @@ func (s *DAGExecutorTestSuite) TestBranchCleanupWorkerErrorStillCompletes() {
 	}
 	s.Require().GreaterOrEqual(firstCleanup, 0, "the Worker step must have run: %v", seq)
 	s.Less(lastStatusWrite, firstCleanup, "no run status write may follow the cleanup step: %v", seq)
-}
-
-// TestBranchCleanupWithoutAWorkerQueueKeepsBranches: on the new version, a run with no Worker
-// task queue schedules none of the three cleanup activities.
-func (s *DAGExecutorTestSuite) TestBranchCleanupWithoutAWorkerQueueKeepsBranches() {
-	runID, _ := s.branchCleanupRun()
-
-	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
-		RunID: runID, GraphVersion: 1,
-	})
-
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
-	s.env.AssertActivityNotCalled(s.T(), "DeleteStaleBranches", mock.Anything, mock.Anything)
-	s.env.AssertActivityNotCalled(s.T(), "PlanBranchCleanup", mock.Anything, mock.Anything)
-	s.env.AssertActivityNotCalled(s.T(), "CleanupRunBranches", mock.Anything, mock.Anything)
 }
 
 // TestBranchCleanupOldVersionUsesTheAPI: a history recorded before the marker calls only the

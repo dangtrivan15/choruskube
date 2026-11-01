@@ -547,7 +547,7 @@ class GateFinalizeServiceTest {
     }
 
     @Test
-    void plan_gateOnTheSynchronousPath_isNotFound() {
+    void plan_gateNotMarkedAsync_isNotFound() {
         gate.setFinalizeMode(null);
 
         assertThatThrownBy(() -> service.plan(runId, gateExecId, approvalId)).isInstanceOf(NotFoundException.class);
