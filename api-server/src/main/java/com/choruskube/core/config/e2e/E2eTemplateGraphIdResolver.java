@@ -11,8 +11,8 @@ import org.springframework.stereotype.Component;
 @Profile("e2e")
 public class E2eTemplateGraphIdResolver implements TemplateGraphIdResolver {
 
-    static final String STORY_DESIGN_COPY = "e2e-story-design";
-    static final String TASK_DELIVERY_COPY = "e2e-task-delivery";
+    public static final String STORY_DESIGN_COPY = "e2e-story-design";
+    public static final String TASK_DELIVERY_COPY = "e2e-task-delivery";
 
     private static final Map<String, String> MOCK_COPIES = Map.of(
             GraphIds.STORY_DESIGN, STORY_DESIGN_COPY,

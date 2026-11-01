@@ -27,6 +27,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+/**
+ * Templates only a Story or a Task can start (the server's `RoadmapOnlyTemplates` refuses them here
+ * with a 400): a Story Design run needs its Story to be recorded, a Task Delivery run its Story spec.
+ */
+const ROADMAP_ONLY_GRAPH_IDS = new Set(["story-design", "task-delivery", "e2e-story-design", "e2e-task-delivery"]);
+
 function GitRepoSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const { data: reposPage } = useGitRepos({ size: 100 });
   const repos = reposPage?.content;
@@ -58,7 +64,7 @@ export default function StartRunDialog() {
   const nameManuallyEdited = useRef(false);
 
   const { data: templatesPage, isLoading: templatesLoading } = useTemplates(true, undefined, { size: 100 });
-  const templates = templatesPage?.content;
+  const templates = templatesPage?.content?.filter((t) => !ROADMAP_ONLY_GRAPH_IDS.has(t.graphId));
   const startRun = useStartRun();
 
   const selectedTemplate = templates?.find((t) => t.id === selectedTemplateId);

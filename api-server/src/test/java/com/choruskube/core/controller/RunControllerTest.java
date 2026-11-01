@@ -40,6 +40,8 @@ import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.ArgumentMatchers;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -146,6 +148,34 @@ public class RunControllerTest extends BaseTest {
                 .andExpect(jsonPath("$.graphTemplateId").value(template.getId().toString()))
                 .andExpect(jsonPath("$.templateName").value("Test Template"))
                 .andExpect(jsonPath("$.status").value("pending"));
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+        "story-design, Story Design runs start from a Story",
+        "e2e-story-design, Story Design runs start from a Story",
+        "task-delivery, Task Delivery runs start from a Task",
+        "e2e-task-delivery, Task Delivery runs start from a Task"
+    })
+    void startRun_roadmapStartedTemplate_isRefused(String graphId, String reason) throws Exception {
+        GraphTemplate template = graphTemplateRepo
+                .findFirstByGraphIdOrderByVersionDesc(graphId)
+                .orElseGet(() -> {
+                    GraphTemplate copy = new GraphTemplate();
+                    copy.setName("Copy of " + graphId);
+                    copy.setGraphId(graphId);
+                    copy.setVersion(1);
+                    return graphTemplateRepo.save(copy);
+                });
+        long runsBefore = runRepo.count();
+
+        mockMvc.perform(post("/api/v1/runs")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("graphTemplateId", template.getId()))))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string(org.hamcrest.Matchers.startsWith(reason)));
+
+        assertEquals(runsBefore, runRepo.count());
     }
 
     @Test
