@@ -376,6 +376,7 @@ public class DefaultTaskService implements TaskService {
                 .findFirstByGraphIdOrderByVersionDesc(graphIdResolver.resolve(GraphIds.TASK_DELIVERY))
                 .orElseThrow(() -> new NotFoundException("Task Delivery template not found"));
 
+        String stagingRefs = uploadService.stageTexts(Map.of(StoryDesignService.SPEC_INPUT, spec.getContent()));
         CreateRunRequest runRequest = new CreateRunRequest(
                 taskDeliveryTemplate.getId(),
                 Map.of(
@@ -384,10 +385,16 @@ public class DefaultTaskService implements TaskService {
                         "feature_request",
                         featureRequest),
                 locked.getTitle(),
-                uploadService.stageTexts(Map.of(StoryDesignService.SPEC_INPUT, spec.getContent())));
+                stagingRefs);
 
         // startRun performs the run-quota check itself; a second one here would be a duplicate.
-        RunResponse runResponse = runService.startRun(runRequest);
+        RunResponse runResponse;
+        try {
+            runResponse = runService.startRun(runRequest);
+        } catch (RuntimeException e) {
+            uploadService.discardStaged(stagingRefs);
+            throw e;
+        }
 
         // CreateRunRequest carries none of these fields, so they are stamped on the re-fetch.
         WorkflowRun run = runRepo.findById(runResponse.id())

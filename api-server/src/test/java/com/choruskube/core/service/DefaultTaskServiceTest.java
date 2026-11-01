@@ -67,6 +67,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.annotation.Transactional;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.CopyObjectRequest;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 @Transactional
@@ -531,6 +533,31 @@ public class DefaultTaskServiceTest extends BaseTest {
         assertThat(stagedText("story_spec.md")).isEqualTo("# Story spec (test fixture)");
         assertThat(run.getStoryId()).isNull();
         assertThat(featureRequestOf(started)).startsWith("## Add health check");
+    }
+
+    @Test
+    void start_refusedByStartRun_discardsTheStagedSpecAndRethrows() {
+        GitRepo r = makeRepo("https://github.com/test/task-start-refused-discards-staging.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
+        RuntimeException refusal = new RuntimeException("storage down");
+        Mockito.when(s3Client.copyObject(ArgumentMatchers.any(CopyObjectRequest.class)))
+                .thenThrow(refusal);
+
+        assertThatThrownBy(() -> service.start(task.id()))
+                .hasMessageContaining("Failed to move staged attachments into run scope")
+                .hasRootCause(refusal);
+
+        ArgumentCaptor<PutObjectRequest> staged = ArgumentCaptor.forClass(PutObjectRequest.class);
+        Mockito.verify(s3Client, Mockito.atLeastOnce())
+                .putObject(staged.capture(), ArgumentMatchers.any(RequestBody.class));
+        ArgumentCaptor<DeleteObjectRequest> deleted = ArgumentCaptor.forClass(DeleteObjectRequest.class);
+        Mockito.verify(s3Client, Mockito.atLeastOnce()).deleteObject(deleted.capture());
+        assertThat(deleted.getAllValues())
+                .extracting(DeleteObjectRequest::key)
+                .containsExactlyElementsOf(staged.getAllValues().stream()
+                        .map(PutObjectRequest::key)
+                        .toList());
     }
 
     @Test
