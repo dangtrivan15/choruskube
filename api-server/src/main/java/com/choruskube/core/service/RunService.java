@@ -1002,11 +1002,17 @@ public class RunService {
     /**
      * Package-private method for review history — no org check.
      * Called from InternalRunService (same package).
+     *
+     * <p>A Story Design run's loop history spans all of its Story's runs, so a revision's reviewer
+     * sees why earlier versions were decided and does not silently reverse them.
      */
     List<ReviewHistoryResponse> getReviewHistoryInternal(UUID runId, String loopGroup) {
         List<NodeExecution> reviews;
         if (loopGroup != null && !loopGroup.isBlank()) {
-            reviews = execRepo.findByWorkflowRunIdAndLoopGroupOrderByIterationAsc(runId, loopGroup);
+            UUID storyId = runRepo.findById(runId).map(WorkflowRun::getStoryId).orElse(null);
+            reviews = storyId != null
+                    ? execRepo.findStoryLoopHistory(storyId, loopGroup)
+                    : execRepo.findByWorkflowRunIdAndLoopGroupOrderByIterationAsc(runId, loopGroup);
         } else {
             reviews = execRepo.findByWorkflowRunIdAndLoopGroupIsNotNullOrderByCompletedAtAsc(runId);
         }

@@ -56,6 +56,17 @@ public interface NodeExecutionRepository
 
     List<NodeExecution> findByWorkflowRunIdAndLoopGroupOrderByIterationAsc(UUID workflowRunId, String loopGroup);
 
+    /** A loop group's executions across every live run of the Story, run by run, oldest run first. */
+    @Query("""
+            select e from NodeExecution e, WorkflowRun r
+            where e.workflowRunId = r.id
+              and r.storyId = :storyId
+              and r.deletedAt is null
+              and e.loopGroup = :loopGroup
+            order by r.createdAt asc, r.id asc, e.iteration asc, e.startedAt asc
+            """)
+    List<NodeExecution> findStoryLoopHistory(@Param("storyId") UUID storyId, @Param("loopGroup") String loopGroup);
+
     Optional<NodeExecution> findFirstByWorkflowRunIdAndLabelAndStatusOrderByIterationDesc(
             UUID workflowRunId, String label, NodeExecutionStatus status);
 

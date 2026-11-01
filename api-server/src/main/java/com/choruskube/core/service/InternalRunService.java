@@ -867,12 +867,12 @@ public class InternalRunService {
 
     /**
      * Reads the Roadmap Graph View for the Epic that owns the calling run's own triggering Task
-     * — lets an agent fetch its dependency context with no Epic ID at
-     * all, resolving {@code run.task_id -> Task.story_id -> Story.epic_id} at request time rather
+     * (or a Story Design run's Story) — lets an agent fetch its dependency context with no Epic ID
+     * at all, resolving it through {@link #resolveTriggeringEpicId} at request time rather
      * than relying on a client-side default computed once at pod start. {@code nodeExecId} is the
      * authenticated identifier on this route — {@code InternalAuthFilter} matches the caller's
      * JOB_SECRET against it — and is verified against {@code runId} before any resolution
-     * proceeds; that resolution is then driven entirely by {@code runId}'s own {@code task_id}.
+     * proceeds; that resolution is then driven entirely by {@code runId}'s own links.
      * Mirrors {@link
      * #buildTaskContext} for the same FK chain, but throws {@link NotFoundException} on any
      * unresolved link (a 404 is the correct signal for this endpoint) instead of returning a
@@ -890,29 +890,36 @@ public class InternalRunService {
         WorkflowRun run =
                 runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
         UUID epicId = resolveTriggeringEpicId(runId)
-                .orElseThrow(() -> new NotFoundException("Run " + runId + " was not started from a Task"));
+                .orElseThrow(() -> new NotFoundException("Run " + runId + " was not started from a Task or Story"));
         UUID softwareProjectId = resolveSoftwareProjectIdFromRun(run);
         return roadmapGraphService.getGraph(epicId, runId, softwareProjectId);
     }
 
     /**
-     * Resolves the Epic that owns the run's triggering Task, following {@code run.task_id ->
-     * Task.story_id -> Story.epic_id}. Empty when the run was not started from a Task. Shared by
-     * {@link #getGraphForTriggeringTask} and {@code RoadmapProposalValidator}'s scope rules, so
-     * both agree on which Epic a task-triggered extension may anchor into.
+     * Resolves the Epic that owns the run's triggering Task ({@code run.task_id -> Task.story_id
+     * -> Story.epic_id}) or, for a Story Design run, its Story ({@code run.story_id ->
+     * Story.epic_id}). Empty when the run was started from neither. Shared by {@link
+     * #getGraphForTriggeringTask} and {@code RoadmapProposalValidator}'s scope rules, so both agree
+     * on which Epic a roadmap extension may anchor into.
      */
     @Transactional(readOnly = true)
     public Optional<UUID> resolveTriggeringEpicId(UUID runId) {
         WorkflowRun run =
                 runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
-        if (run.getTaskId() == null) {
+        Story story;
+        if (run.getTaskId() != null) {
+            Task task = taskRepo.findById(run.getTaskId())
+                    .orElseThrow(() -> new NotFoundException("Task not found: " + run.getTaskId()));
+            story = storyRepo
+                    .findById(task.getStoryId())
+                    .orElseThrow(() -> new NotFoundException("Story not found for task " + task.getId()));
+        } else if (run.getStoryId() != null) {
+            story = storyRepo
+                    .findById(run.getStoryId())
+                    .orElseThrow(() -> new NotFoundException("Story not found: " + run.getStoryId()));
+        } else {
             return Optional.empty();
         }
-        Task task = taskRepo.findById(run.getTaskId())
-                .orElseThrow(() -> new NotFoundException("Task not found: " + run.getTaskId()));
-        Story story = storyRepo
-                .findById(task.getStoryId())
-                .orElseThrow(() -> new NotFoundException("Story not found for task " + task.getId()));
         Epic epic = epicRepo.findById(story.getEpicId())
                 .orElseThrow(() -> new NotFoundException("Epic not found for story " + story.getId()));
         return Optional.of(epic.getId());

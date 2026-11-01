@@ -64,7 +64,8 @@ public class RoadmapProposalValidator {
      * person's import is a field here, so both callers share one rule walk.
      *
      * @param projectError reported once when anchors need a project the run cannot resolve
-     * @param triggeringEpicId non-null only for a task-triggered extension; enables its scope rules
+     * @param triggeringEpicId non-null only for an extension from a Task or Story Design run; enables
+     *     its scope rules
      * @param projectRepos non-null only when new Tasks must name a repo of the project
      * @param anchorsForbidden the error to report for any {@code existingId}, or null when allowed
      * @param milestonesForbidden the error to report for any milestone, or null when allowed
@@ -332,7 +333,7 @@ public class RoadmapProposalValidator {
                 }
             }
 
-            // (e): a task-triggered extension may only add new work under its own Epic — an anchor
+            // (e): a Task or Story run's extension may only add new work under its own Epic — an anchor
             // to any other existing Epic may still appear (to expose an ancestor chain's key for a
             // dependency endpoint) but must carry no new descendant.
             if (triggeringEpicId != null && isAnchor && !isTriggeringEpic && hasNewDescendant) {

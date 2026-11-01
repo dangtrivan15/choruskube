@@ -481,6 +481,21 @@ class InternalRunServiceEpicTest {
     }
 
     @Test
+    void resolveTriggeringEpicId_storyRun_returnsStoryEpic() {
+        UUID runId = UUID.randomUUID();
+        UUID storyId = UUID.randomUUID();
+        UUID epicId = UUID.randomUUID();
+        WorkflowRun run = createRun(runId, TEMPLATE_ID, "{}");
+        run.setStoryId(storyId);
+        when(runRepo.findById(runId)).thenReturn(Optional.of(run));
+        when(storyRepo.findById(storyId)).thenReturn(Optional.of(storyWithEpic(storyId, epicId)));
+        when(epicRepo.findById(epicId)).thenReturn(Optional.of(epicWithId(epicId)));
+
+        assertThat(service.resolveTriggeringEpicId(runId)).contains(epicId);
+        verifyNoInteractions(taskRepo);
+    }
+
+    @Test
     void getGraphForTriggeringTask_withNoTaskIdOnRun_throwsNotFound() {
         UUID runId = UUID.randomUUID();
         UUID nodeExecId = UUID.randomUUID();
