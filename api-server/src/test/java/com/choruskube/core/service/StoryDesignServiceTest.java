@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -33,6 +34,7 @@ import com.choruskube.core.repository.AutopilotRepository;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.NodeExecutionRepository;
+import com.choruskube.core.repository.StoryConflictRepository;
 import com.choruskube.core.repository.TemplateNodeRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.util.RepoNameUtil;
@@ -65,6 +67,8 @@ import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.http.AbortableInputStream;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.CopyObjectRequest;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
@@ -104,6 +108,9 @@ class StoryDesignServiceTest extends BaseTest {
 
     @Autowired
     private AutopilotRepository autopilotRepo;
+
+    @Autowired
+    private StoryConflictRepository conflictRepo;
 
     @Autowired
     private JdbcTemplate jdbc;
@@ -362,7 +369,7 @@ class StoryDesignServiceTest extends BaseTest {
         approveSpec(story.id());
         approveSpec(story.id());
         WorkflowRun taskRun = taskRun(task.id());
-        StoryConflict conflict = conflict(story.id(), taskRun.getId(), "The spec's cache cannot work: X.");
+        StoryConflict conflict = conflict(story.id(), taskRun, "The spec's cache cannot work: X.");
         UUID autopilotId = makeAutopilot();
 
         RunResponse started = service.startRevisionForConflicts(story.id(), List.of(conflict), autopilotId);
@@ -378,6 +385,74 @@ class StoryDesignServiceTest extends BaseTest {
                 .contains("/tasks/" + task.id())
                 .contains("The spec's cache cannot work: X.")
                 .contains("## Human guidance\n\nNone.");
+    }
+
+    @Test
+    void startRevisionForConflicts_assignsEachConflictToTheRevision() {
+        StoryResponse story = makeStory("story-revision-assigns", "Story");
+        TaskResponse first = taskService.create(story.id(), new TaskRequest("First", "D"));
+        TaskResponse second = taskService.create(story.id(), new TaskRequest("Second", "D"));
+        approveSpec(story.id());
+        approveSpec(story.id());
+        StoryConflict a = conflict(story.id(), taskRun(first.id()), "A");
+        StoryConflict b = conflict(story.id(), taskRun(second.id()), "B");
+
+        RunResponse started = service.startRevisionForConflicts(story.id(), List.of(a, b), null);
+
+        assertThat(reload(a).getRevisionRunId()).isEqualTo(started.id());
+        assertThat(reload(b).getRevisionRunId()).isEqualTo(started.id());
+    }
+
+    @Test
+    void startRevisionForConflicts_conflictOfAnotherStory_refusedBeforeStaging() {
+        StoryResponse story = makeStory("story-revision-foreign", "Story");
+        StoryResponse other = makeStory("story-revision-foreign-other", "Other");
+        TaskResponse task = taskService.create(other.id(), new TaskRequest("Task", "D"));
+        approveSpec(story.id());
+        approveSpec(other.id());
+        approveSpec(other.id());
+        StoryConflict foreign = conflict(other.id(), taskRun(task.id()), "Not this Story's");
+
+        assertThatThrownBy(() -> service.startRevisionForConflicts(story.id(), List.of(foreign), null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining(foreign.getId().toString());
+        verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
+        assertThat(designRunsOf(story.id())).isEmpty();
+    }
+
+    @Test
+    void startRevisionForConflicts_conflictAlreadyAssigned_refused() {
+        StoryResponse story = makeStory("story-revision-assigned", "Story");
+        TaskResponse task = taskService.create(story.id(), new TaskRequest("Task", "D"));
+        approveSpec(story.id());
+        approveSpec(story.id());
+        WorkflowRun taskRun = taskRun(task.id());
+        StoryConflict assigned = conflict(story.id(), taskRun, "Already covered");
+        assigned.setRevisionRunId(taskRun.getId());
+        StoryConflict stale = conflictRepo.saveAndFlush(assigned);
+
+        assertThatThrownBy(() -> service.startRevisionForConflicts(story.id(), List.of(stale), null))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(stale.getId().toString());
+    }
+
+    @Test
+    void startRevision_startRunFails_discardsStagedInputs() {
+        StoryResponse story = makeStory("story-revision-start-fails", "Story");
+        approveSpec(story.id());
+        when(s3Client.copyObject(any(CopyObjectRequest.class))).thenThrow(new RuntimeException("storage down"));
+
+        assertThatThrownBy(() -> service.startRevision(story.id(), "Guidance")).isInstanceOf(RuntimeException.class);
+
+        ArgumentCaptor<PutObjectRequest> staged = ArgumentCaptor.forClass(PutObjectRequest.class);
+        verify(s3Client, atLeastOnce()).putObject(staged.capture(), any(RequestBody.class));
+        ArgumentCaptor<DeleteObjectRequest> deleted = ArgumentCaptor.forClass(DeleteObjectRequest.class);
+        verify(s3Client, atLeastOnce()).deleteObject(deleted.capture());
+        assertThat(deleted.getAllValues())
+                .extracting(DeleteObjectRequest::key)
+                .containsExactlyInAnyOrderElementsOf(staged.getAllValues().stream()
+                        .map(PutObjectRequest::key)
+                        .toList());
     }
 
     // ---- helpers ----
@@ -446,14 +521,30 @@ class StoryDesignServiceTest extends BaseTest {
         return runRepo.saveAndFlush(run);
     }
 
-    private static StoryConflict conflict(UUID storyId, UUID taskRunId, String report) {
+    /** A persisted conflict raised by an execution of {@code taskRun} against the Story's v2. */
+    private StoryConflict conflict(UUID storyId, WorkflowRun taskRun, String report) {
+        TemplateNode node = templateNodeRepo.findByGraphTemplateId(taskRun.getGraphTemplateId()).stream()
+                .findFirst()
+                .orElseThrow();
+        NodeExecution analyze = new NodeExecution();
+        analyze.setWorkflowRunId(taskRun.getId());
+        analyze.setTemplateNodeId(node.getId());
+        analyze.setLabel("analyze");
+        analyze.setStatus(NodeExecutionStatus.completed);
+        analyze = execRepo.saveAndFlush(analyze);
         StoryConflict c = new StoryConflict();
-        c.setId(UUID.randomUUID());
         c.setStoryId(storyId);
-        c.setTaskRunId(taskRunId);
+        c.setTaskRunId(taskRun.getId());
+        c.setAnalyzeNodeExecutionId(analyze.getId());
         c.setRaisedAgainstVersion(2);
         c.setReport(report);
-        return c;
+        return conflictRepo.saveAndFlush(c);
+    }
+
+    private StoryConflict reload(StoryConflict conflict) {
+        entityManager.flush();
+        entityManager.clear();
+        return conflictRepo.findById(conflict.getId()).orElseThrow();
     }
 
     private WorkflowRun setStatus(UUID runId, WorkflowRunStatus status) {

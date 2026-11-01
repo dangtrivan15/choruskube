@@ -8,9 +8,9 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * Records approved Story Design runs as spec versions. Polling the run's {@code completed} status,
- * rather than hooking the gate's finalize paths, also covers a crash between completion and the
- * write; recording is idempotent on the run, so a concurrent pass or replica records it once.
+ * Records approved Story Design runs as spec versions, then moves Story conflicts on. Polling rather
+ * than hooking the gate's finalize paths also covers a crash between completion and the write; both
+ * steps are idempotent, so a concurrent pass or replica repeats them harmlessly.
  */
 @Component
 @ConditionalOnProperty(name = "choruskube.story-spec.enabled", havingValue = "true", matchIfMissing = true)
@@ -24,6 +24,7 @@ public class StorySpecReconciler {
         this.lifecycle = lifecycle;
     }
 
+    /** Records first, so a revision that just completed releases its conflicts in the same pass. */
     @Scheduled(fixedDelayString = "${choruskube.story-spec.interval:PT10S}")
     public void reconcile() {
         try {
@@ -33,6 +34,14 @@ public class StorySpecReconciler {
             }
         } catch (Exception e) {
             log.error("StorySpecReconciler could not record approved Story specs: {}", e.getMessage(), e);
+        }
+        try {
+            int processed = lifecycle.processConflicts();
+            if (processed > 0) {
+                log.info("StorySpecReconciler moved {} Story conflict(s) on", processed);
+            }
+        } catch (Exception e) {
+            log.error("StorySpecReconciler could not process Story conflicts: {}", e.getMessage(), e);
         }
     }
 }

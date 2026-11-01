@@ -1,5 +1,8 @@
 package com.choruskube.core.service;
 
+import com.choruskube.core.exception.NotFoundException;
+import com.choruskube.core.model.WorkflowRun;
+import com.choruskube.core.repository.WorkflowRunRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
@@ -23,14 +26,20 @@ public class UploadService {
     private final S3Client s3Client;
     private final ObjectMapper objectMapper;
     private final StoragePrefixResolver storagePrefixResolver;
+    private final WorkflowRunRepository runRepo;
 
     @Value("${objectstore.bucket}")
     private String bucket;
 
-    public UploadService(S3Client s3Client, ObjectMapper objectMapper, StoragePrefixResolver storagePrefixResolver) {
+    public UploadService(
+            S3Client s3Client,
+            ObjectMapper objectMapper,
+            StoragePrefixResolver storagePrefixResolver,
+            WorkflowRunRepository runRepo) {
         this.s3Client = s3Client;
         this.objectMapper = objectMapper;
         this.storagePrefixResolver = storagePrefixResolver;
+        this.runRepo = runRepo;
     }
 
     /**
@@ -145,6 +154,62 @@ public class UploadService {
         }
 
         return objectMapper.writeValueAsString(newRefs);
+    }
+
+    /**
+     * Replaces a run input in place. The workflow handed its pods the input keys once, at start, and
+     * each pod downloads by key, so every node that runs after this reads the new content.
+     */
+    public void overwriteRunInput(UUID runId, String fileName, String content) {
+        WorkflowRun run =
+                runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
+        String objectKey = readRefs(run.getInputArtifactRefs()).get(fileName);
+        if (objectKey == null) {
+            throw new IllegalStateException("Run " + runId + " has no input " + fileName + " to overwrite");
+        }
+        s3Client.putObject(
+                PutObjectRequest.builder()
+                        .bucket(bucket)
+                        .key(objectKey)
+                        .contentType("text/markdown")
+                        .build(),
+                RequestBody.fromString(content, StandardCharsets.UTF_8));
+    }
+
+    /**
+     * Best-effort delete of staged files no run took; never throws, since callers run it while
+     * propagating the failure that refused the run. A starter retried on every reconcile pass would
+     * otherwise leave a copy behind each time it is refused.
+     */
+    public void discardStaged(String stagingRefsJson) {
+        if (stagingRefsJson == null || stagingRefsJson.isBlank()) {
+            return;
+        }
+        Map<String, String> staged;
+        try {
+            staged = readRefs(stagingRefsJson);
+        } catch (RuntimeException e) {
+            logger.warn("Could not read the staging refs to discard: {}", e.getMessage());
+            return;
+        }
+        for (String stagingKey : staged.values()) {
+            try {
+                s3Client.deleteObject(DeleteObjectRequest.builder()
+                        .bucket(bucket)
+                        .key(stagingKey)
+                        .build());
+            } catch (Exception e) {
+                logger.warn("Failed to delete unused staging object {}: {}", stagingKey, e.getMessage());
+            }
+        }
+    }
+
+    private Map<String, String> readRefs(String refsJson) {
+        try {
+            return objectMapper.readValue(refsJson, new TypeReference<Map<String, String>>() {});
+        } catch (Exception e) {
+            throw new IllegalStateException("Malformed artifact refs", e);
+        }
     }
 
     /**

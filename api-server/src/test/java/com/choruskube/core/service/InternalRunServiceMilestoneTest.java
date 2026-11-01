@@ -95,7 +95,8 @@ class InternalRunServiceMilestoneTest {
                 null,
                 milestoneService,
                 null,
-                null);
+                null,
+                mock(StoryConflictRecorder.class));
     }
 
     @Test

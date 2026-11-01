@@ -13,6 +13,7 @@ import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 public interface WorkflowRunRepository extends JpaRepository<WorkflowRun, UUID>, JpaSpecificationExecutor<WorkflowRun> {
     List<WorkflowRun> findByStatus(WorkflowRunStatus status);
@@ -242,4 +243,13 @@ public interface WorkflowRunRepository extends JpaRepository<WorkflowRun, UUID>,
                     + "WHERE deleted_at IS NOT NULL LIMIT :batchSize",
             nativeQuery = true)
     List<TombstonedWorkflowRunRef> findTombstonedBatch(@Param("batchSize") int batchSize);
+
+    /**
+     * Column-targeted: written while the orchestrator updates the same run, a whole-entity save
+     * could write back a status it changed meanwhile.
+     */
+    @Transactional
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("UPDATE WorkflowRun r SET r.storySpecVersion = :version WHERE r.id = :id")
+    int setStorySpecVersion(@Param("id") UUID id, @Param("version") int version);
 }

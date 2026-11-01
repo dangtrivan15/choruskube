@@ -17,6 +17,7 @@ import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.EpicRepository;
 import com.choruskube.core.repository.GraphTemplateRepository;
+import com.choruskube.core.repository.StoryConflictRepository;
 import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
@@ -49,6 +50,7 @@ public class StoryDesignService {
     private final EpicRepository epicRepo;
     private final TaskRepository taskRepo;
     private final WorkflowRunRepository runRepo;
+    private final StoryConflictRepository conflictRepo;
     private final GraphTemplateRepository graphTemplateRepo;
     private final RunService runService;
     private final AuthorizationService authService;
@@ -66,6 +68,7 @@ public class StoryDesignService {
             EpicRepository epicRepo,
             TaskRepository taskRepo,
             WorkflowRunRepository runRepo,
+            StoryConflictRepository conflictRepo,
             GraphTemplateRepository graphTemplateRepo,
             RunService runService,
             AuthorizationService authService,
@@ -79,6 +82,7 @@ public class StoryDesignService {
         this.epicRepo = epicRepo;
         this.taskRepo = taskRepo;
         this.runRepo = runRepo;
+        this.conflictRepo = conflictRepo;
         this.graphTemplateRepo = graphTemplateRepo;
         this.runService = runService;
         this.authService = authService;
@@ -111,11 +115,28 @@ public class StoryDesignService {
         return start(storyId, null, new Revision(List.of(), guidance));
     }
 
-    /** System path: no caller to authorize, so off-request it must run inside the Story's org scope. */
+    /**
+     * System path: no caller to authorize, so off-request it must run inside the Story's org scope.
+     * Assigns the conflicts in the transaction that creates the run: assigned after it, a crash in
+     * between leaves them unassigned under an open revision, and they are released unanswered.
+     */
     @Transactional
     public RunResponse startRevisionForConflicts(UUID storyId, List<StoryConflict> conflicts, UUID autopilotIdOrNull) {
         requireStory(storyId);
-        return start(storyId, autopilotIdOrNull, new Revision(conflicts, null));
+        List<UUID> foreign = conflicts.stream()
+                .filter(c -> !storyId.equals(c.getStoryId()))
+                .map(StoryConflict::getId)
+                .toList();
+        if (!foreign.isEmpty()) {
+            throw new IllegalArgumentException("Conflicts " + foreign + " do not belong to Story " + storyId);
+        }
+        RunResponse started = start(storyId, autopilotIdOrNull, new Revision(conflicts, null));
+        List<UUID> ids = conflicts.stream().map(StoryConflict::getId).toList();
+        if (!ids.isEmpty() && conflictRepo.assignToRevision(ids, storyId, started.id()) != ids.size()) {
+            throw new IllegalStateException(
+                    "Conflicts " + ids + " of Story " + storyId + " are no longer all open and unassigned");
+        }
+        return started;
     }
 
     private record Revision(List<StoryConflict> conflicts, String guidance) {}
@@ -169,7 +190,13 @@ public class StoryDesignService {
             name = "Revise spec v" + spec.getVersion() + ": " + story.getTitle();
         }
 
-        RunResponse started = runService.startRun(new CreateRunRequest(template.getId(), inputs, name, stagingRefs));
+        RunResponse started;
+        try {
+            started = runService.startRun(new CreateRunRequest(template.getId(), inputs, name, stagingRefs));
+        } catch (RuntimeException e) {
+            uploadService.discardStaged(stagingRefs);
+            throw e;
+        }
 
         // Stamped on the re-fetch, not carried on CreateRunRequest: other modules call its
         // positional constructor.

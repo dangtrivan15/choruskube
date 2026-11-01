@@ -476,11 +476,22 @@ public class RunService {
     public SignalResponse signalHumanDecision(UUID runId, UUID nodeExecId, SignalRequest request) {
         WorkflowRun run = findRunOrThrow(runId);
         authService.checkOrgAccess("workflow_run", runId);
+        return decideGate(run, findGateInRun(runId, nodeExecId), request, null);
+    }
+
+    /**
+     * A decision the system makes on a run's behalf: the claim and validation a reviewer's decision
+     * gets, with no caller to authorize. Off-request it must run inside {@link RunScopeBinder}.
+     */
+    public SignalResponse decideGateAsSystem(UUID runId, UUID nodeExecId, SignalRequest request) {
+        return decideGate(findRunOrThrow(runId), findGateInRun(runId, nodeExecId), request, null);
+    }
+
+    private NodeExecution findGateInRun(UUID runId, UUID nodeExecId) {
         NodeExecution exec = execRepo.findById(nodeExecId)
                 .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
-
         NodeExecutionUtil.requireInRun(exec, runId);
-        return decideGate(run, exec, request, null);
+        return exec;
     }
 
     /**

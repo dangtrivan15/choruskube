@@ -3,6 +3,7 @@ package com.choruskube.core.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -186,32 +187,73 @@ class StorySpecLifecycleServiceTest extends BaseTest {
         WorkflowRun good = designRun(goodStory.id(), WorkflowRunStatus.completed);
         reviewExecution(good, 1, "# Good spec");
 
-        Logger logger = (Logger) LoggerFactory.getLogger(StorySpecLifecycleService.class);
-        ListAppender<ILoggingEvent> appender = new ListAppender<>();
-        appender.start();
-        logger.addAppender(appender);
-        try {
-            lifecycle.recordCompletedDesigns();
-        } finally {
-            logger.detachAppender(appender);
-        }
+        List<ILoggingEvent> events = captureLogs(() -> lifecycle.recordCompletedDesigns());
 
         assertThat(specService.current(goodStory.id()))
                 .map(StorySpecVersion::getContent)
                 .contains("# Good spec");
         assertThat(specService.current(noReviewStory.id())).isEmpty();
         assertThat(specService.current(noFileStory.id())).isEmpty();
-        assertThat(errorsNaming(appender, noReview.getId())).singleElement().satisfies(message -> assertThat(message)
+        assertThat(errorsNaming(events, noReview.getId())).singleElement().satisfies(message -> assertThat(message)
                 .contains(noReviewStory.id().toString()));
-        assertThat(errorsNaming(appender, noFile.getId())).singleElement().satisfies(message -> assertThat(message)
+        assertThat(errorsNaming(events, noFile.getId())).singleElement().satisfies(message -> assertThat(message)
                 .contains(noFileStory.id().toString()));
-        assertThat(errorsNaming(appender, good.getId())).isEmpty();
+        assertThat(errorsNaming(events, good.getId())).isEmpty();
+    }
+
+    @Test
+    void recordCompletedDesigns_announceFails_stillRecordedWithoutError() {
+        StoryResponse story = makeStory("lifecycle-announce-fails");
+        WorkflowRun run = designRun(story.id(), WorkflowRunStatus.completed);
+        reviewExecution(run, 1, "# Spec");
+        doThrow(new IllegalStateException("broker unavailable"))
+                .when(runEventPublisher)
+                .publishRoadmapItemChanged(any(), any(), any());
+
+        List<ILoggingEvent> events = captureLogs(() -> lifecycle.recordCompletedDesigns());
+
+        assertThat(specService.current(story.id()))
+                .map(StorySpecVersion::getRunId)
+                .contains(run.getId());
+        assertThat(errorsNaming(events, run.getId())).isEmpty();
+        assertThat(events)
+                .filteredOn(e -> e.getLevel() == Level.WARN)
+                .map(ILoggingEvent::getFormattedMessage)
+                .anySatisfy(m -> assertThat(m).contains(run.getId().toString()));
+    }
+
+    @Test
+    void recordCompletedDesigns_storageFailure_saysItWillBeRetried() {
+        StoryResponse story = makeStory("lifecycle-storage-down");
+        WorkflowRun run = designRun(story.id(), WorkflowRunStatus.completed);
+        reviewExecution(run, 1, "# Spec");
+        when(s3Client.getObject(any(GetObjectRequest.class))).thenThrow(new IllegalStateException("storage down"));
+
+        List<ILoggingEvent> events = captureLogs(() -> lifecycle.recordCompletedDesigns());
+
+        assertThat(specService.current(story.id())).isEmpty();
+        assertThat(errorsNaming(events, run.getId()))
+                .singleElement()
+                .satisfies(m -> assertThat(m).contains("will be retried").doesNotContain("deleted"));
     }
 
     // ---- helpers ----
 
-    private static List<String> errorsNaming(ListAppender<ILoggingEvent> appender, UUID runId) {
-        return appender.list.stream()
+    private static List<ILoggingEvent> captureLogs(Runnable work) {
+        Logger logger = (Logger) LoggerFactory.getLogger(StorySpecLifecycleService.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            work.run();
+        } finally {
+            logger.detachAppender(appender);
+        }
+        return appender.list;
+    }
+
+    private static List<String> errorsNaming(List<ILoggingEvent> events, UUID runId) {
+        return events.stream()
                 .filter(e -> e.getLevel() == Level.ERROR)
                 .map(ILoggingEvent::getFormattedMessage)
                 .filter(m -> m.contains(runId.toString()))

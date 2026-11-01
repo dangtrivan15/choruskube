@@ -60,6 +60,7 @@ public class InternalRunService {
     private final MilestoneService milestoneService;
     private final TaskSettlementService taskSettlement;
     private final GateRecheckService gateRecheck;
+    private final StoryConflictRecorder storyConflictRecorder;
 
     @Value("${artifact.enforcement.mode:warn}")
     private String artifactEnforcementMode;
@@ -93,7 +94,8 @@ public class InternalRunService {
             WorkItemDependencyService workItemDependencyService,
             MilestoneService milestoneService,
             TaskSettlementService taskSettlement,
-            GateRecheckService gateRecheck) {
+            GateRecheckService gateRecheck,
+            StoryConflictRecorder storyConflictRecorder) {
         this.runRepo = runRepo;
         this.execRepo = execRepo;
         this.logRepo = logRepo;
@@ -123,6 +125,7 @@ public class InternalRunService {
         this.milestoneService = milestoneService;
         this.taskSettlement = taskSettlement;
         this.gateRecheck = gateRecheck;
+        this.storyConflictRecorder = storyConflictRecorder;
     }
 
     public NodeExecutionResponse createNodeExecution(UUID runId, InternalCreateNodeExecutionRequest req) {
@@ -193,10 +196,13 @@ public class InternalRunService {
 
         exec = execRepo.save(exec);
 
-        // Validates the run exists.
-        runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
+        WorkflowRun run =
+                runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
         if ("failed".equals(status)) {
             voidApprovalOfFailedGate(exec);
+        }
+        if ("completed".equals(status)) {
+            storyConflictRecorder.onNodeCompleted(run, exec);
         }
         eventPublisher.publishNodeStatusChanged(runId, nodeExecId, status);
         return toNodeExecResponse(exec);

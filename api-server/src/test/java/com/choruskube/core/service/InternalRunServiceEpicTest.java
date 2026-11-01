@@ -126,7 +126,8 @@ class InternalRunServiceEpicTest {
                 workItemDependencyService,
                 milestoneService,
                 null,
-                null);
+                null,
+                mock(StoryConflictRecorder.class));
     }
 
     @Test
