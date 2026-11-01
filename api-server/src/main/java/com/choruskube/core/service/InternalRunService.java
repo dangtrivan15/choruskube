@@ -331,6 +331,7 @@ public class InternalRunService {
             gateRecheck.voidLiveForRun(runId, GateRecheckService.RUN_ENDED);
         }
         taskSettlement.closeIfSettledBy(run);
+        runService.announceEndedStoryDesign(run);
         eventPublisher.publishRunStatusChanged(runId, status);
 
         if ("completed".equals(status)) {

@@ -390,6 +390,7 @@ public class RunService {
         runRepo.save(run);
         gateRecheck.voidLiveForRun(id, GateRecheckService.RUN_ENDED);
         taskSettlement.closeIfSettledBy(run);
+        announceEndedStoryDesign(run);
         auditSink.record(AuditSink.RUN_CANCELLED, "workflow_run", id, null);
 
         // Mark any non-terminal node executions as skipped so they don't
@@ -408,6 +409,22 @@ public class RunService {
                 eventPublisher.publishNodeStatusChanged(id, exec.getId(), "skipped");
             }
         }
+    }
+
+    /**
+     * A Story's pages read "Design in progress" off its open design run, and a design run that fails
+     * or is cancelled stops being open with no Story write to announce it. A completed one is
+     * announced when its version is recorded.
+     */
+    void announceEndedStoryDesign(WorkflowRun run) {
+        if (run.getStoryId() == null
+                || (run.getStatus() != WorkflowRunStatus.failed && run.getStatus() != WorkflowRunStatus.cancelled)) {
+            return;
+        }
+        storyRepo
+                .findById(run.getStoryId())
+                .ifPresent(story -> eventPublisher.publishRoadmapItemChanged(
+                        "story", story.getId(), story.getStage().name()));
     }
 
     public void retryNode(UUID runId, UUID nodeExecId) {
