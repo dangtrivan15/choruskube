@@ -61,6 +61,7 @@ function makeRun(overrides: Partial<RunResponse> = {}): RunResponse {
     promptText: null,
     task: null,
     autopilotId: null,
+    storySpecVersion: null,
     softwareProject: null,
     ...overrides,
   };

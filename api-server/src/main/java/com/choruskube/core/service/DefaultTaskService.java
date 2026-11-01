@@ -727,7 +727,8 @@ public class DefaultTaskService implements TaskService {
                 run.getCompletedAt(),
                 run.getCreatedAt(),
                 run.getAutopilotId(),
-                projectRef));
+                projectRef,
+                run.getStorySpecVersion()));
     }
 
     private Optional<WorkflowRun> mostRecentRun(UUID taskId) {

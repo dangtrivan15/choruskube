@@ -347,7 +347,8 @@ public class RunService {
                     run.getCompletedAt(),
                     run.getCreatedAt(),
                     run.getAutopilotId(),
-                    softwareProjectByRunId.get(run.getId()));
+                    softwareProjectByRunId.get(run.getId()),
+                    run.getStorySpecVersion());
         });
     }
 
@@ -1430,7 +1431,8 @@ public class RunService {
                 promptText,
                 taskSummary,
                 run.getAutopilotId(),
-                softwareProjectRef);
+                softwareProjectRef,
+                run.getStorySpecVersion());
     }
 
     private @Nullable String extractPromptText(@Nullable GraphTemplate template, @Nullable String inputsJson) {

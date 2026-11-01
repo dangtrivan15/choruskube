@@ -25,6 +25,8 @@ export interface RunSummary {
   /** Set when the Autopilot started this run, null when a person did. */
   autopilotId: string | null;
   softwareProject: SoftwareProjectRef | null;
+  /** The Story spec version a Task Delivery run planned against; `null` on every other run. */
+  storySpecVersion: number | null;
 }
 
 export interface RunPullRequestResponse {
@@ -72,6 +74,8 @@ export interface RunResponse {
   /** Set when the Autopilot started this run, null when a person did. */
   autopilotId: string | null;
   softwareProject: SoftwareProjectRef | null;
+  /** The Story spec version a Task Delivery run planned against; `null` on every other run. */
+  storySpecVersion: number | null;
 }
 
 export interface GraphSnapshot {

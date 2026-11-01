@@ -2,6 +2,7 @@ package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 
 import com.choruskube.core.BaseTest;
 import com.choruskube.core.StorySpecFixtures;
@@ -73,6 +74,9 @@ public class DefaultTaskServiceTest extends BaseTest {
 
     @Autowired
     private TaskService service;
+
+    @Autowired
+    private RunService runService;
 
     @Autowired
     private StoryService storyService;
@@ -545,6 +549,26 @@ public class DefaultTaskServiceTest extends BaseTest {
         assertThat(runRepo.findById(started.latestRunId()).orElseThrow().getStorySpecVersion())
                 .isEqualTo(2);
         assertThat(stagedText("story_spec.md")).isEqualTo("# Story spec v2");
+    }
+
+    @Test
+    void runDtos_carryTheStorySpecVersionTheRunPlannedAgainst() {
+        GitRepo r = makeRepo("https://github.com/test/task-run-dto-spec-version.git");
+        StoryResponse story = makeStory(r.getId());
+        approve(story.id());
+        String title = "Spec v2 " + UUID.randomUUID().toString().substring(0, 8);
+        TaskResponse task = service.create(story.id(), new TaskRequest(title, "D"));
+
+        UUID runId = service.start(task.id()).latestRunId();
+
+        assertThat(service.listRuns(task.id(), PageRequest.of(0, 20)).getContent())
+                .extracting(com.choruskube.core.dto.RunSummary::storySpecVersion)
+                .containsExactly(2);
+        assertThat(runService.getRun(runId).storySpecVersion()).isEqualTo(2);
+        assertThat(runService.listRuns(null, title, PageRequest.of(0, 20)).getContent())
+                .extracting(
+                        com.choruskube.core.dto.RunSummary::id, com.choruskube.core.dto.RunSummary::storySpecVersion)
+                .containsExactly(tuple(runId, 2));
     }
 
     @Test

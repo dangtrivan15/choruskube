@@ -365,7 +365,8 @@ public class StoryDesignService {
                 r.promptText(),
                 r.task(),
                 autopilotId,
-                r.softwareProject());
+                r.softwareProject(),
+                r.storySpecVersion());
     }
 
     private void requireStory(UUID storyId) {

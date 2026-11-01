@@ -52,6 +52,7 @@ describe("buildRunCommands", () => {
     createdAt: "2025-01-01T00:00:00Z",
     autopilotId: null,
     softwareProject: null,
+    storySpecVersion: null,
   });
 
   it("returns empty array for undefined input", () => {
