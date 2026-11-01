@@ -285,6 +285,19 @@ class StorySpecVersionRepositoryTest extends BaseTest {
                 .isEqualTo("# Story spec (test fixture)");
     }
 
+    @Test
+    void storyConflictRunReferences_areIndexed() {
+        // Deleting a run checks story_conflict through both references; unindexed, each run
+        // delete scans the whole table.
+        List<String> indexDefs = jdbc.queryForList(
+                "SELECT indexdef FROM pg_indexes WHERE schemaname = current_schema() AND tablename = 'story_conflict'",
+                String.class);
+
+        assertThat(indexDefs)
+                .anySatisfy(def -> assertThat(def).endsWith("(task_run_id)"))
+                .anySatisfy(def -> assertThat(def).endsWith("(revision_run_id)"));
+    }
+
     private StoryConflict conflict(Story story, WorkflowRun taskRun, int raisedAgainst) {
         NodeExecution analyze = new NodeExecution();
         analyze.setWorkflowRunId(taskRun.getId());

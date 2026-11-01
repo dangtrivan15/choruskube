@@ -25,3 +25,5 @@ CREATE TABLE story_conflict (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     released_at TIMESTAMPTZ);
 CREATE INDEX idx_story_conflict_open ON story_conflict(story_id) WHERE released_at IS NULL;
+CREATE INDEX idx_story_conflict_task_run_id ON story_conflict(task_run_id);
+CREATE INDEX idx_story_conflict_revision_run_id ON story_conflict(revision_run_id);
