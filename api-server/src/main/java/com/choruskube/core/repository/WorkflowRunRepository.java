@@ -28,6 +28,18 @@ public interface WorkflowRunRepository extends JpaRepository<WorkflowRun, UUID>,
      */
     List<WorkflowRun> findByTaskIdInOrderByCreatedAtDesc(Collection<UUID> taskIds);
 
+    List<WorkflowRun> findByStoryIdInAndStatusInAndDeletedAtIsNull(
+            Collection<UUID> storyIds, Collection<WorkflowRunStatus> statuses);
+
+    @Query("""
+            select r from WorkflowRun r
+            where r.storyId is not null
+              and r.status = :#{T(com.choruskube.core.model.enums.WorkflowRunStatus).completed}
+              and r.deletedAt is null
+              and not exists (select 1 from StorySpecVersion v where v.runId = r.id)
+            """)
+    List<WorkflowRun> findCompletedDesignRunsWithoutVersion();
+
     /**
      * The Autopilot's live view of its own runs — the "awaiting you" / "needs attention" lists
      * read from this one result. Returns entities rather than a count because those lists need
