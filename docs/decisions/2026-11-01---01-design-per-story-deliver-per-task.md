@@ -65,9 +65,20 @@ entry per revision run).
   not used: an agent can only fetch its own run's prefix, and a row is a plain read for the UI.
 - **A reconciler writes the row, not the gate.** `StorySpecReconciler` records a version when it
   finds a Story Design run in `completed`. A run only completes after its terminal gate has
-  finalized, which is after the breakdown has materialized, so a half-created breakdown can never
-  have startable Tasks. One idempotent sweep also survives a crash between the two steps.
-  `choruskube.story-spec.enabled=false` therefore leaves every undesigned Story unstartable.
+  finalized, which is after materialization has run, so the version never precedes it: a crash
+  between the two leaves the Story with no approved spec, and none of its Tasks startable, until
+  the next sweep records it. One idempotent sweep survives that crash without a hook in each
+  finalize path. `choruskube.story-spec.enabled=false` therefore leaves every undesigned Story
+  unstartable.
+- **A stopped materialization still records its version.** That ordering is not a completeness
+  check. When materialization stops partway, the gate finalizes with a note, the run completes, and
+  the version is recorded without reading the outcome. The Tasks already created become startable
+  and the missing ones do not exist, so the human adds them by hand; the gate already shows the stop
+  as a note.
+- **Deleting a Story still works.** `workflow_run.story_id` is `ON DELETE SET NULL`, because a run
+  carries external side effects and is never cascade-deleted with its Story. `story_spec_version`
+  and `story_conflict` cascade from `story`, so removing a Story, or an organization above it in a
+  multi-tenant deployment, is not blocked by their rows.
 - **A Task run gets a copy at start,** staged as the run input `story_spec.md`, and records
   `workflow_run.story_spec_version`. Releasing a parked run overwrites that input and the column.
 
@@ -142,7 +153,7 @@ else, per unreleased conflict:
   moved past the run's, the approval becomes the `rereview` decision, with guidance naming the new
   Revisions entries and an updated `story_spec.md`; in that round the reviewer's check target is
   those entries. The check also voids a drift-held approval from the asynchronous finalize path, so
-  the reviewer's next approval reroutes.
+  the approver's next approval reroutes.
 - **It holds no stamp.** Drift on main re-applies a held approval after the re-review; a design
   change does not. The approver approves again after the re-review. This errs toward more oversight
   and avoids teaching each finalize path a second kind of drift.

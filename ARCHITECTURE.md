@@ -162,7 +162,7 @@ creation, and a close that fails is logged and never blocks completion.
 ## Merging pull requests on approval
 
 A human gate can declare `merge_pull_requests: <merge|squash|rebase>` in its config —
-Feature Development's Final Approval declares `squash`. The method only takes effect
+The Final Approval of Feature Development and of Task Delivery declares `squash`. The method only takes effect
 on the `approved` decision; graph validation rejects the key on a node with no such
 decision, and an unknown method.
 
