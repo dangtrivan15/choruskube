@@ -426,6 +426,218 @@ else
   ok "every mock push uses --force-with-lease"
 fi
 
+# --- Story Design / Task Delivery scenarios ---
+# Run as a real subprocess like drift_recheck above: config.json and /workspace/out are swapped
+# for fixture paths, $WORKSPACE_IN points at a fake input root, and report-result is a stub that
+# records the decision the scenario submitted. The environment is a script node's: the
+# entrypoint exports RUN_ID, NODE_EXECUTION_ID and API_SERVER_URL, but REPORT_RESULT_URL only
+# for AI nodes, and the real report-result refuses to run without it — as the stub does.
+SD_ROOT="$TESTDIR/sd"
+SD_BIN="$SD_ROOT/bin"
+SD_IN="$SD_ROOT/in"
+SD_OUT="$SD_ROOT/out"
+SD_CONFIG="$SD_ROOT/config.json"
+SD_DECISION="$SD_ROOT/decision"
+SD_DECISION_URL="$SD_ROOT/decision_url"
+SD_MOCK="$TESTDIR/mock-agent_sd.sh"
+mkdir -p "$SD_BIN"
+cat > "$SD_BIN/report-result" <<STUB
+#!/bin/bash
+[ -n "\${REPORT_RESULT_URL:-}" ] || { echo "ERROR: REPORT_RESULT_URL not set" >&2; exit 1; }
+printf '%s' "\$1" > "$SD_DECISION"
+printf '%s' "\$REPORT_RESULT_URL" > "$SD_DECISION_URL"
+STUB
+chmod +x "$SD_BIN/report-result"
+sed -e "s#/workspace/config.json#$SD_CONFIG#g" -e "s#/workspace/out#$SD_OUT#g" "$MOCK_AGENT" > "$SD_MOCK"
+
+run_sd() {
+  # $@ = scenario and its options. Leaves output in SD_RUN_OUT, exit status in SD_RUN_RC, and
+  # the submitted decision (empty when none) in SD_RUN_DECISION.
+  rm -rf "$SD_OUT" "$SD_DECISION" "$SD_DECISION_URL"
+  set +e
+  SD_RUN_OUT=$(env -u REPORT_RESULT_URL PATH="$SD_BIN:$PATH" WORKSPACE_IN="$SD_IN" \
+    API_SERVER_URL="http://api.test" RUN_ID="run-1" NODE_EXECUTION_ID="exec-1" \
+    bash "$SD_MOCK" "$@" 2>&1)
+  SD_RUN_RC=$?
+  set -e
+  SD_RUN_DECISION=$(cat "$SD_DECISION" 2>/dev/null || true)
+}
+
+reset_sd_inputs() {
+  rm -rf "$SD_IN"
+  mkdir -p "$SD_IN"
+  echo '{}' > "$SD_CONFIG"
+}
+
+STORY_SECTIONS='## Context
+## Approach
+## Architecture
+## Technical Decisions
+## Caveats
+## Testing Strategy
+## Manual Operations
+## Tasks
+## Revisions'
+
+# --- story_spec_draft: a first design writes the full spec with an empty Revisions log ---
+reset_sd_inputs
+run_sd story_spec_draft
+[ "$SD_RUN_RC" -eq 0 ] && ok "story_spec_draft exits 0 on a first design" \
+  || fail "story_spec_draft exits 0 on a first design ($SD_RUN_OUT)"
+[ "$(grep '^## ' "$SD_OUT/story_spec.md" 2>/dev/null)" = "$STORY_SECTIONS" ] \
+  && ok "story_spec_draft writes the nine spec sections in order" \
+  || fail "story_spec_draft writes the nine spec sections in order ($(grep '^## ' "$SD_OUT/story_spec.md" 2>/dev/null))"
+[ "$(tail -n 1 "$SD_OUT/story_spec.md" 2>/dev/null)" = "No revisions yet." ] \
+  && ok "a first design's Revisions section reads 'No revisions yet.'" \
+  || fail "a first design's Revisions section reads 'No revisions yet.'"
+[ -z "$SD_RUN_DECISION" ] && ok "story_spec_draft submits no decision (its edge is unconditional)" \
+  || fail "story_spec_draft submits no decision (got '$SD_RUN_DECISION')"
+cp "$SD_OUT/story_spec.md" "$TESTDIR/spec_v1.md" 2>/dev/null || true
+
+# --- story_spec_draft: a revision edits the staged spec and appends one Revisions entry ---
+reset_sd_inputs
+mkdir -p "$SD_IN/run_input"
+cp "$TESTDIR/spec_v1.md" "$SD_IN/run_input/story_spec.md" 2>/dev/null || true
+run_sd story_spec_draft
+TODAY=$(date -u +%F)
+[ "$SD_RUN_RC" -eq 0 ] && ok "story_spec_draft exits 0 on a revision" \
+  || fail "story_spec_draft exits 0 on a revision ($SD_RUN_OUT)"
+grep -qx "### v2 — $TODAY" "$SD_OUT/story_spec.md" 2>/dev/null \
+  && ok "the first revision adds a v2 entry dated today" \
+  || fail "the first revision adds a v2 entry dated today ($(tail -n 5 "$SD_OUT/story_spec.md" 2>/dev/null))"
+grep -qx "No revisions yet." "$SD_OUT/story_spec.md" 2>/dev/null \
+  && fail "the first revision replaces 'No revisions yet.'" \
+  || ok "the first revision replaces 'No revisions yet.'"
+V1_KEPT=$(grep -vx 'No revisions yet.' "$TESTDIR/spec_v1.md" || true)
+V1_KEPT_LINES=$(printf '%s\n' "$V1_KEPT" | wc -l | tr -d ' ')
+[ -n "$V1_KEPT" ] && [ "$(head -n "$V1_KEPT_LINES" "$SD_OUT/story_spec.md" 2>/dev/null)" = "$V1_KEPT" ] \
+  && ok "the first revision keeps every other line of the current spec, in place" \
+  || fail "the first revision keeps every other line of the current spec, in place"
+[ "$(grep '^## ' "$SD_OUT/story_spec.md" 2>/dev/null)" = "$STORY_SECTIONS" ] \
+  && ok "a revision keeps the nine spec sections in order" \
+  || fail "a revision keeps the nine spec sections in order"
+cp "$SD_OUT/story_spec.md" "$TESTDIR/spec_v2.md" 2>/dev/null || true
+
+cp "$TESTDIR/spec_v2.md" "$SD_IN/run_input/story_spec.md" 2>/dev/null || true
+run_sd story_spec_draft
+[ "$(grep '^### v[0-9]' "$SD_OUT/story_spec.md" 2>/dev/null)" = "### v2 — $TODAY
+### v3 — $TODAY" ] \
+  && ok "a second revision appends v3 after the v2 entry" \
+  || fail "a second revision appends v3 after the v2 entry ($(grep '^### v' "$SD_OUT/story_spec.md" 2>/dev/null))"
+
+# --- story_spec_review: approves the drafter's spec unchanged ---
+reset_sd_inputs
+mkdir -p "$SD_IN/draft_story_spec"
+cp "$TESTDIR/spec_v1.md" "$SD_IN/draft_story_spec/story_spec.md" 2>/dev/null || true
+run_sd story_spec_review
+[ "$SD_RUN_RC" -eq 0 ] && ok "story_spec_review exits 0" \
+  || fail "story_spec_review exits 0 ($SD_RUN_OUT)"
+cmp -s "$SD_OUT/story_spec.md" "$TESTDIR/spec_v1.md" \
+  && ok "story_spec_review writes the drafter's spec as the reviewed copy" \
+  || fail "story_spec_review writes the drafter's spec as the reviewed copy"
+grep -qx "## Roadmap proposal" "$SD_OUT/story_spec_review.md" 2>/dev/null \
+  && ok "story_spec_review writes review notes with a Roadmap proposal section" \
+  || fail "story_spec_review writes review notes with a Roadmap proposal section"
+[ "$SD_RUN_DECISION" = "approved" ] && ok "story_spec_review submits approved" \
+  || fail "story_spec_review submits approved (got '$SD_RUN_DECISION')"
+
+reset_sd_inputs
+run_sd story_spec_review
+[ "$SD_RUN_RC" -ne 0 ] && [ -z "$SD_RUN_DECISION" ] \
+  && ok "story_spec_review without a drafted spec fails before deciding" \
+  || fail "story_spec_review without a drafted spec fails before deciding (rc=$SD_RUN_RC decision='$SD_RUN_DECISION')"
+
+# --- analyze: the Task title's marker picks the decision and the files that go with it ---
+run_analyze() {
+  # $1 = iteration, $2 = Task title, $3 = prompt
+  reset_sd_inputs
+  mkdir -p "$SD_IN/run_input"
+  cp "$TESTDIR/spec_v1.md" "$SD_IN/run_input/story_spec.md" 2>/dev/null || true
+  jq -n --argjson it "$1" --arg title "$2" --arg prompt "$3" \
+    '{iteration: $it, prompt: $prompt, task_context: {task_id: "task-1", task_title: $title}}' > "$SD_CONFIG"
+  run_sd analyze
+}
+
+assert_analyze() {
+  # $1 = case name, $2 = expected decision, $3 = expected extra file ("" for none)
+  [ "$SD_RUN_RC" -eq 0 ] && ok "analyze $1: exits 0" || fail "analyze $1: exits 0 ($SD_RUN_OUT)"
+  [ "$SD_RUN_DECISION" = "$2" ] && ok "analyze $1: submits $2" \
+    || fail "analyze $1: submits $2 (got '$SD_RUN_DECISION')"
+  [ "$(head -n 1 "$SD_OUT/plan.md" 2>/dev/null)" = "Realises: Mock component, Runtime Flow, Which path does the mock take" ] \
+    && ok "analyze $1: plan.md opens with the spec's Realises headings" \
+    || fail "analyze $1: plan.md opens with the spec's Realises headings ($(head -n 1 "$SD_OUT/plan.md" 2>/dev/null))"
+  local f
+  for f in task_spec.md story_conflict.md; do
+    if [ "$f" = "$3" ]; then
+      [ -s "$SD_OUT/$f" ] && ok "analyze $1: writes $f" || fail "analyze $1: writes $f"
+    else
+      [ ! -e "$SD_OUT/$f" ] && ok "analyze $1: writes no $f" || fail "analyze $1: writes no $f"
+    fi
+  done
+}
+
+run_analyze 1 "Plain Task" ""
+assert_analyze "with no marker" planned ""
+run_analyze 1 "Task [e2e-analyze:planned]" ""
+assert_analyze "with the planned marker" planned ""
+run_analyze 1 "Task [e2e-analyze:needs_spec]" ""
+assert_analyze "with the needs_spec marker" needs_spec task_spec.md
+run_analyze 1 "Task [e2e-analyze:story_conflict]" ""
+assert_analyze "with the story_conflict marker" story_conflict story_conflict.md
+run_analyze 1 "Plain Task" "## Task [e2e-analyze:needs_spec]"
+assert_analyze "with the marker in the prompt" needs_spec task_spec.md
+run_analyze 2 "Task [e2e-analyze:story_conflict]" ""
+assert_analyze "on iteration 2" planned ""
+
+run_analyze 1 "Task [e2e-analyze:replan]" ""
+[ "$SD_RUN_RC" -ne 0 ] && [ -z "$SD_RUN_DECISION" ] \
+  && ok "analyze with an unknown marker fails before deciding" \
+  || fail "analyze with an unknown marker fails before deciding (rc=$SD_RUN_RC decision='$SD_RUN_DECISION')"
+
+run_analyze 1 "Plain Task" ""
+rm -f "$SD_IN/run_input/story_spec.md"
+run_sd analyze
+[ "$SD_RUN_RC" -ne 0 ] && [ -z "$SD_RUN_DECISION" ] \
+  && ok "analyze without the story spec fails before deciding" \
+  || fail "analyze without the story spec fails before deciding (rc=$SD_RUN_RC decision='$SD_RUN_DECISION')"
+
+# --- task_spec_review: approves the plan and Task spec unchanged ---
+reset_sd_inputs
+mkdir -p "$SD_IN/plan"
+printf 'Realises: Mock component\n\n## Task ordering\n' > "$SD_IN/plan/plan.md"
+printf '## What this adds to the Story spec\n\nA mock gap.\n' > "$SD_IN/plan/task_spec.md"
+run_sd task_spec_review
+[ "$SD_RUN_RC" -eq 0 ] && ok "task_spec_review exits 0" \
+  || fail "task_spec_review exits 0 ($SD_RUN_OUT)"
+cmp -s "$SD_OUT/plan.md" "$SD_IN/plan/plan.md" && cmp -s "$SD_OUT/task_spec.md" "$SD_IN/plan/task_spec.md" \
+  && ok "task_spec_review writes the plan and Task spec it reviewed" \
+  || fail "task_spec_review writes the plan and Task spec it reviewed"
+[ -s "$SD_OUT/task_spec_review.md" ] && ok "task_spec_review writes review notes" \
+  || fail "task_spec_review writes review notes"
+[ "$SD_RUN_DECISION" = "approved" ] && ok "task_spec_review submits approved" \
+  || fail "task_spec_review submits approved (got '$SD_RUN_DECISION')"
+# A script node's environment has no REPORT_RESULT_URL; the decision must still reach this
+# execution's own endpoint.
+[ "$(cat "$SD_DECISION_URL" 2>/dev/null)" = "http://api.test/internal/runs/run-1/node-executions/exec-1/decision" ] \
+  && ok "a script node's decision goes to its own execution's decision endpoint" \
+  || fail "a script node's decision goes to its own execution's decision endpoint (got '$(cat "$SD_DECISION_URL" 2>/dev/null)')"
+
+rm "$SD_IN/plan/task_spec.md"
+run_sd task_spec_review
+[ "$SD_RUN_RC" -ne 0 ] && [ -z "$SD_RUN_DECISION" ] \
+  && ok "task_spec_review without a Task spec fails before deciding" \
+  || fail "task_spec_review without a Task spec fails before deciding (rc=$SD_RUN_RC decision='$SD_RUN_DECISION')"
+
+# --- gate_approve --artifact: Code Review's mock writes the file Final Approval requires ---
+reset_sd_inputs
+run_sd gate_approve --artifact review.md
+[ "$SD_RUN_DECISION" = "approved" ] && [ -s "$SD_OUT/review.md" ] && [ ! -e "$SD_OUT/result.txt" ] \
+  && ok "gate_approve --artifact names the file it writes" \
+  || fail "gate_approve --artifact names the file it writes (decision='$SD_RUN_DECISION' $(ls "$SD_OUT" 2>/dev/null))"
+run_sd gate_approve
+[ -s "$SD_OUT/result.txt" ] && ok "gate_approve still writes result.txt by default" \
+  || fail "gate_approve still writes result.txt by default"
+
 # --- Summary ---
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

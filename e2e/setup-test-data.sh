@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/lib.sh"
 
-TEMPLATES=(e2e-linear-pipeline e2e-parallel-fanout e2e-human-gate e2e-conditional-routing e2e-retry-loop)
+TEMPLATES=(e2e-linear-pipeline e2e-parallel-fanout e2e-human-gate e2e-conditional-routing e2e-retry-loop e2e-story-design e2e-task-delivery)
 for t in "${TEMPLATES[@]}"; do
   if find_template "$t"; then
     echo "ok: template $t present"

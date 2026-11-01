@@ -31,7 +31,7 @@ public class BaseTaskDeliverySeeder implements ApplicationRunner {
 
     static final String TEMPLATE_NAME = "Task Delivery";
 
-    private static final String INPUT_SCHEMA = """
+    public static final String INPUT_SCHEMA = """
             [
               {"name":"software_project_id","label":"Software Project","type":"software_project_id","required":true},
               {"name":"feature_request","label":"Feature Request","type":"textarea","required":true}

@@ -19,6 +19,7 @@ import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -201,10 +202,24 @@ class BaseStoryDesignSeederTest extends BaseTest {
     void idempotentSecondRun() throws Exception {
         seeder.run(null);
         assertThat(templateRepo.findAllByGraphId(GraphIds.STORY_DESIGN)).hasSize(1);
-        assertThat(nodeDefRepo.findAll().stream()
-                        .filter(nd -> "Draft Story Spec".equals(nd.getName()))
-                        .count())
-                .isEqualTo(1);
+        assertThat(storyDesignNodeDefsNamed("Draft Story Spec")).isEqualTo(1);
+    }
+
+    /**
+     * Rows with this name, minus those another template's nodes use: the e2e copy of Story Design
+     * reuses these names. A row no template uses still counts, so a leaked re-seed is caught.
+     */
+    private long storyDesignNodeDefsNamed(String name) {
+        Set<UUID> ourTemplateIds = templateRepo.findAllByGraphId(GraphIds.STORY_DESIGN).stream()
+                .map(GraphTemplate::getId)
+                .collect(Collectors.toSet());
+        Set<UUID> usedByOtherTemplates = templateNodeRepo.findAll().stream()
+                .filter(tn -> !ourTemplateIds.contains(tn.getGraphTemplateId()))
+                .map(TemplateNode::getNodeDefinitionId)
+                .collect(Collectors.toSet());
+        return nodeDefRepo.findAll().stream()
+                .filter(nd -> name.equals(nd.getName()) && !usedByOtherTemplates.contains(nd.getId()))
+                .count();
     }
 
     /** The node labels whose group declares {@code fileName}. */

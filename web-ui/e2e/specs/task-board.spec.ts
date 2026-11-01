@@ -50,13 +50,14 @@ test.describe("Task Board", () => {
   test("drag a task card to a legal target column and confirm the move persists on reload", async ({
     taskBoardPage,
     api,
-    workerRepo,
+    cloneableProject,
   }) => {
+    test.setTimeout(300_000);
     const uniqueTitle = uniqueName("E2E Board Task");
     const epic = await api.createEpic({
       title: `Epic for ${uniqueTitle}`,
       description: "Epic for the task board E2E test",
-      softwareProjectId: workerRepo.gitRepo.id,
+      softwareProjectId: cloneableProject.id,
     });
     const story = await api.createStory(epic.id, {
       title: "Task board test story",
@@ -66,6 +67,8 @@ test.describe("Task Board", () => {
       title: uniqueTitle,
       description: "Task for the task board E2E test",
     });
+    // The drag starts the Task, which needs its Story's spec approved.
+    await api.approveStorySpec(story.id);
 
     await taskBoardPage.goto();
     await taskBoardPage.expectCardInColumn(uniqueTitle, "backlog");

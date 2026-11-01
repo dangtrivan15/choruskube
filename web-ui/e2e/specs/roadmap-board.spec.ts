@@ -70,12 +70,13 @@ test.describe("Roadmap Board", () => {
   test("'Ready to start' filter on the board shows only Epics with unblocked work", async ({
     roadmapBoardPage,
     api,
-    workerRepo,
+    cloneableProject,
   }) => {
+    test.setTimeout(300_000);
     const readyEpic = await api.createEpic({
       title: uniqueName("E2E Board Ready Filter Ready Epic"),
       description: "desc",
-      softwareProjectId: workerRepo.gitRepo.id,
+      softwareProjectId: cloneableProject.id,
     });
     const unblockedStory = await api.createStory(readyEpic.id, {
       title: "Unblocked story",
@@ -89,7 +90,7 @@ test.describe("Roadmap Board", () => {
     const blockedEpic = await api.createEpic({
       title: uniqueName("E2E Board Ready Filter Blocked Epic"),
       description: "desc",
-      softwareProjectId: workerRepo.gitRepo.id,
+      softwareProjectId: cloneableProject.id,
     });
     const blockedStory = await api.createStory(blockedEpic.id, {
       title: "Blocked story",
@@ -99,7 +100,7 @@ test.describe("Roadmap Board", () => {
     const blockerEpic = await api.createEpic({
       title: uniqueName("E2E Board Ready Filter Blocker Owner Epic"),
       description: "desc",
-      softwareProjectId: workerRepo.gitRepo.id,
+      softwareProjectId: cloneableProject.id,
     });
     const blockerStory = await api.createStory(blockerEpic.id, {
       title: "Blocker story",
@@ -111,6 +112,9 @@ test.describe("Roadmap Board", () => {
       blockedItemType: "story",
       blockedItemId: blockedStory.id,
     });
+    // Only a designed Story's Tasks count as startable. Both are designed, so the blocked Epic can
+    // drop out only for being blocked.
+    await Promise.all([api.approveStorySpec(unblockedStory.id), api.approveStorySpec(blockedStory.id)]);
 
     try {
       await roadmapBoardPage.goto();
@@ -135,18 +139,20 @@ test.describe("Roadmap Board", () => {
   test("drag a card to a new column with the 'Ready to start' toggle on, and confirm the move persists on reload", async ({
     roadmapBoardPage,
     api,
-    workerRepo,
+    cloneableProject,
   }) => {
+    test.setTimeout(300_000);
     const uniqueTitle = uniqueName("E2E Board Ready Drag Epic");
     const epic = await api.createEpic({
       title: uniqueTitle,
       description: "Epic for the ready-filtered drag E2E test",
-      softwareProjectId: workerRepo.gitRepo.id,
+      softwareProjectId: cloneableProject.id,
     });
     const story = await api.createStory(epic.id, { title: "Unblocked story", description: "desc" });
-    // Backlog work under the Story, or the Epic has nothing startable and the toggle below hides
-    // the very card this spec drags.
+    // Backlog work under a designed Story, or the Epic has nothing startable and the toggle below
+    // hides the very card this spec drags.
     await api.createTask(story.id, { title: "Unblocked task", description: "desc" });
+    await api.approveStorySpec(story.id);
 
     try {
       await roadmapBoardPage.goto();

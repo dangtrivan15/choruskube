@@ -9,14 +9,14 @@ import { uniqueName, TestApiClient, type Task } from "../helpers/api-client";
 // workers out of `backlog` on a timer nobody in this suite controls.
 //
 // That does not make `POST /tick` itself free of the same hazard: any call this file makes
-// starts every READY backlog Task on the WHOLE board, up to `maxParallel` slots, not just this
-// worker's own. In particular, a board/list spec (e.g. task-board.spec.ts's "drag a task card
-// to a legal target column" test) creates a plain, unblocked Task and asserts it sits in the
-// Backlog column before acting on it — if a tick from this file lands in that window, it can
-// silently start that Task first, and the resulting failure looks exactly like infrastructure
-// flakiness in an unrelated file. There is no way to close this from inside one spec file alone
-// (there is no scope to filter by), so the mitigations here are damage limitation, not
-// elimination:
+// starts every READY backlog Task, and designs every undesigned Story, on the WHOLE board, up to
+// `maxParallel` slots, not just this worker's own. In particular, a board/list spec (e.g.
+// task-board.spec.ts's "drag a task card to a legal target column" test) creates a plain,
+// unblocked Task and asserts it sits in the Backlog column before acting on it — if a tick from
+// this file lands in that window, it can silently start that Task first, and the resulting
+// failure looks exactly like infrastructure flakiness in an unrelated file. There is no way to
+// close this from inside one spec file alone (there is no scope to filter by), so the
+// mitigations here are damage limitation, not elimination:
 //   - `test.describe.configure({ mode: "serial" })` keeps this file's own 3 tests on one worker
 //     — Playwright's `fullyParallel: true` would otherwise schedule them onto different workers,
 //     which would race each other over the shared `maxParallel`/`engaged` state (this is a
@@ -32,6 +32,10 @@ import { uniqueName, TestApiClient, type Task } from "../helpers/api-client";
 // source — both bigger changes than this task's brief covers.
 test.describe.configure({ mode: "serial" });
 
+// A tick works the board in priority order, and other specs leave medium-priority Stories
+// undesigned: at any lower priority, a tick designs those before it reaches this file's Tasks.
+const AHEAD_OF_THE_BOARD = "high";
+
 test.describe("Autopilot", () => {
   test.afterAll(async () => {
     // Never touches in-flight runs (AutopilotService#disengage) — just leaves the org in the
@@ -41,13 +45,15 @@ test.describe("Autopilot", () => {
 
   test("tick starts only the READY Task in the frontier, leaving a blocked Task in backlog", async ({
     api,
-    workerRepo,
+    cloneableProject,
     autopilotPage,
   }) => {
+    test.setTimeout(300_000);
     const epic = await api.createEpic({
       title: uniqueName("Autopilot Frontier Epic"),
       description: "desc",
-      softwareProjectId: workerRepo.gitRepo.id,
+      softwareProjectId: cloneableProject.id,
+      priority: AHEAD_OF_THE_BOARD,
     });
     const story = await api.createStory(epic.id, {
       title: uniqueName("Autopilot Frontier Story"),
@@ -71,6 +77,7 @@ test.describe("Autopilot", () => {
       blockedItemType: "task",
       blockedItemId: blockedTask.id,
     });
+    await api.approveStorySpec(story.id);
 
     const before = await api.getAutopilot();
     // Headroom over CURRENT inFlight, not an unlimited ceiling: enough free slots that our one
@@ -105,11 +112,13 @@ test.describe("Autopilot", () => {
     // colliding with anything.
   });
 
-  test("a paused run frees its slot for the next tick", async ({ api, workerRepo }) => {
+  test("a paused run frees its slot for the next tick", async ({ api, cloneableProject }) => {
+    test.setTimeout(300_000);
     const epic = await api.createEpic({
       title: uniqueName("Autopilot Slot Epic"),
       description: "desc",
-      softwareProjectId: workerRepo.gitRepo.id,
+      softwareProjectId: cloneableProject.id,
+      priority: AHEAD_OF_THE_BOARD,
     });
     const story = await api.createStory(epic.id, {
       title: uniqueName("Autopilot Slot Story"),
@@ -128,6 +137,7 @@ test.describe("Autopilot", () => {
     // (the tie-break is `created_at` then Task id, and this test doesn't need to know
     // the answer): whichever starts is "started", the other is "pending", and the causal claim
     // this test proves — pausing started's run lets pending start — holds either way.
+    await api.approveStorySpec(story.id);
     await api.engageAutopilot();
 
     // Offer exactly ONE free slot at a time so a tick can start at most one Task globally, then
@@ -194,15 +204,17 @@ test.describe("Autopilot", () => {
 
   test("max_awaiting_human throttles new starts once the backlog of parked runs is full, and starts resume once it drains", async ({
     api,
-    workerRepo,
+    cloneableProject,
   }) => {
+    test.setTimeout(300_000);
     // Independent of max_parallel throughout: every headroom offered below is generous enough
     // that max_parallel is never the reason a start is withheld, so a lack of a start can only be
     // attributed to the max_awaiting_human ceiling under test.
     const epic = await api.createEpic({
       title: uniqueName("Autopilot Awaiting Human Epic"),
       description: "desc",
-      softwareProjectId: workerRepo.gitRepo.id,
+      softwareProjectId: cloneableProject.id,
+      priority: AHEAD_OF_THE_BOARD,
     });
     const story = await api.createStory(epic.id, {
       title: uniqueName("Autopilot Awaiting Human Story"),
@@ -213,6 +225,7 @@ test.describe("Autopilot", () => {
       description: "desc",
     });
 
+    await api.approveStorySpec(story.id);
     const originalMaxAwaitingHuman = (await api.getAutopilot()).maxAwaitingHuman ?? 0;
     await api.engageAutopilot();
 
@@ -288,14 +301,16 @@ test.describe("Autopilot", () => {
 
   test("a Task stranded by a cancelled run is reported as held, and its run is badged", async ({
     api,
-    workerRepo,
+    cloneableProject,
     autopilotPage,
     runMonitorPage,
   }) => {
+    test.setTimeout(300_000);
     const epic = await api.createEpic({
       title: uniqueName("Autopilot Held Epic"),
       description: "desc",
-      softwareProjectId: workerRepo.gitRepo.id,
+      softwareProjectId: cloneableProject.id,
+      priority: AHEAD_OF_THE_BOARD,
     });
     const story = await api.createStory(epic.id, {
       title: uniqueName("Autopilot Held Story"),
@@ -303,6 +318,7 @@ test.describe("Autopilot", () => {
     });
     const heldTitle = uniqueName("Autopilot Held Task");
     const task = await api.createTask(story.id, { title: heldTitle, description: "desc" });
+    await api.approveStorySpec(story.id);
 
     await api.engageAutopilot();
 
@@ -398,7 +414,9 @@ test.describe("Autopilot", () => {
     try {
       // This is TaskService#start's own readiness gate (ReadinessAuthMode.PUBLIC) — it never
       // touches the Autopilot singleton, so this test needs no engage/tick at all.
-      await expect(api.startTask(blockedTask.id)).rejects.toThrow(/→ 409:/);
+      // Matched on the message: a Task under an undesigned Story is refused with a 409 too, and
+      // the blocked check answers first.
+      await expect(api.startTask(blockedTask.id)).rejects.toThrow(/→ 409:.*Cannot start a blocked Task/);
 
       const tasks = await api.listTasks(story.id);
       const stillBlocked = tasks.find((t) => t.id === blockedTask.id);

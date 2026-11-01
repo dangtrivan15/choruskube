@@ -11,9 +11,12 @@ import org.springframework.stereotype.Component;
 @Profile("e2e")
 public class E2eTemplateGraphIdResolver implements TemplateGraphIdResolver {
 
+    static final String STORY_DESIGN_COPY = "e2e-story-design";
+    static final String TASK_DELIVERY_COPY = "e2e-task-delivery";
+
     private static final Map<String, String> MOCK_COPIES = Map.of(
-            GraphIds.STORY_DESIGN, "e2e-story-design",
-            GraphIds.TASK_DELIVERY, "e2e-task-delivery");
+            GraphIds.STORY_DESIGN, STORY_DESIGN_COPY,
+            GraphIds.TASK_DELIVERY, TASK_DELIVERY_COPY);
 
     @Override
     public String resolve(String graphId) {

@@ -129,8 +129,9 @@ test.describe("Run detail — phone", () => {
   test("Run info sheet shows the full feature request and the stacked, untruncated breadcrumb", async ({
     runMonitorPage,
     api,
-    workerRepo,
+    cloneableProject,
   }) => {
+    test.setTimeout(300_000);
     // ~120-char titles: long enough that the stacked view would visibly wrap/truncate
     // if it weren't the full-title rendering it's supposed to be.
     const epicTitle = uniqueName(
@@ -144,7 +145,7 @@ test.describe("Run detail — phone", () => {
     const epic = await api.createEpic({
       title: epicTitle,
       description: "Testing phone run-info sheet",
-      softwareProjectId: workerRepo.gitRepo.id,
+      softwareProjectId: cloneableProject.id,
     });
     const story = await api.createStory(epic.id, {
       title: storyTitle,
@@ -155,6 +156,7 @@ test.describe("Run detail — phone", () => {
       description: "desc",
     });
 
+    await api.approveStorySpec(story.id);
     const started = await api.startTask(task.id);
     expect(started.latestRunId).not.toBeNull();
 

@@ -50,6 +50,15 @@ export class RoadmapPage {
   readonly taskList: Locator;
   readonly taskItems: Locator;
 
+  // Story detail — the Spec panel (StorySpecPanel.tsx)
+  readonly storySpecPanel: Locator;
+  readonly storySpecEmpty: Locator;
+  readonly storySpecDesignButton: Locator;
+  readonly storySpecDesignInProgress: Locator;
+  readonly storySpecReviseButton: Locator;
+  readonly storySpecVersionSelect: Locator;
+  readonly storySpecRevisionBanner: Locator;
+
   // Task detail
   readonly taskDetailTitle: Locator;
   readonly taskDetailStatus: Locator;
@@ -59,6 +68,8 @@ export class RoadmapPage {
   readonly taskEditButton: Locator;
   readonly taskDeleteButton: Locator;
   readonly taskRunHistoryList: Locator;
+  readonly taskStartBlockedTrigger: Locator;
+  readonly taskStartBlockedTooltip: Locator;
   readonly backToStoryLink: Locator;
 
   // Create Epic dialog
@@ -155,6 +166,14 @@ export class RoadmapPage {
     this.taskList = page.getByTestId("task-list");
     this.taskItems = page.getByTestId("task-item");
 
+    this.storySpecPanel = page.getByTestId("story-spec-panel");
+    this.storySpecEmpty = page.getByTestId("story-spec-empty");
+    this.storySpecDesignButton = page.getByTestId("story-spec-design-button");
+    this.storySpecDesignInProgress = page.getByTestId("story-spec-design-in-progress");
+    this.storySpecReviseButton = page.getByTestId("story-spec-revise-button");
+    this.storySpecVersionSelect = page.getByTestId("story-spec-version-select");
+    this.storySpecRevisionBanner = page.getByTestId("story-spec-revision-banner");
+
     this.taskDetailTitle = page.getByTestId("task-detail-title");
     this.taskDetailStatus = page.getByTestId("task-detail-status");
     this.taskStartButton = page.getByTestId("task-start-button");
@@ -163,6 +182,9 @@ export class RoadmapPage {
     this.taskEditButton = page.getByTestId("task-edit-button");
     this.taskDeleteButton = page.getByTestId("task-delete-button");
     this.taskRunHistoryList = page.getByTestId("task-run-history-list");
+    // A disabled Start button takes no pointer events, so its tooltip hangs off a wrapping span.
+    this.taskStartBlockedTrigger = page.getByTestId("task-start-button-tooltip-trigger");
+    this.taskStartBlockedTooltip = page.getByTestId("task-start-blocked-tooltip");
     this.backToStoryLink = page.getByRole("link", { name: "Back to Story" });
 
     // Create Epic dialog

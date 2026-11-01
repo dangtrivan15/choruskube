@@ -79,6 +79,11 @@ Every spec that needs "a project to hang an Epic off" takes `workerRepo` and pas
 `workerRepo.gitRepo.id`. Because a worker runs one test at a time, a per-worker project is
 already full isolation for concurrent tests — no per-run project is needed.
 
+`workerRepo`'s URL is never cloneable, so a run on it fails at its first node. A spec whose
+run must get further — designing a Story (`api.approveStorySpec`), which its Tasks need before
+they can start, or driving a Task's run — takes `cloneableProject` instead: the same per-worker shape,
+a RepoGroup over the seeded `e2e-test/mock-repo` that the e2e agent image can clone.
+
 **Scoped list assertions.** `api.listEpicsForProject(id)` narrows the org-wide page to one
 software project. Any count or ID-set assertion goes through it. A materialized Epic
 inherits its run's project via `InternalRunService#createEpic(runId, …)`, so gate specs
@@ -101,7 +106,8 @@ happened to materialize its fixture first. Specs needing the seeded set specific
 ## Rules for a new spec
 
 - Name every created resource with `uniqueName()`.
-- Take `workerRepo` rather than reaching into `listGitRepos()`.
+- Take `workerRepo` rather than reaching into `listGitRepos()` — or `cloneableProject` when a
+  run on the project must get past its first node, including any Story you design.
 - Never assert an absolute count — or an ID-set diff — over an unscoped list.
 - Need the seeded repos? `seededRepos(page.content)`, never `content[0]` or `.slice(0, 2)`.
 - A hover (or any single-shot interaction) that asserts on something appearing after a delay

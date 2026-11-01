@@ -81,6 +81,18 @@
 #   many_artifacts   Write --count small output files (default: 40), for E2E fixtures
 #                    exercising the artifact viewer's many-files layout (see
 #                    ArtifactViewerDialog.tsx)
+#   story_spec_draft  Story Design's drafter: writes story_spec.md in the nine-section
+#                    shape the real drafter uses. A revision run stages the current spec
+#                    as run_input/story_spec.md, and the scenario edits that copy instead,
+#                    appending one Revisions entry
+#   story_spec_review  Story Spec Review: approves draft_story_spec/story_spec.md
+#                    unchanged, writing it back with story_spec_review.md
+#   analyze          Task Delivery's Analyze: decides on the marker
+#                    [e2e-analyze:planned|needs_spec|story_conflict] in config.json's
+#                    prompt or Task title (default planned; always planned on iteration
+#                    2+), writing plan.md plus the file that decision requires
+#   task_spec_review  Task Spec Review: approves plan/plan.md and plan/task_spec.md
+#                    unchanged, writing them back with task_spec_review.md
 #   rate_limited     Mock parity for the Claude quota park-and-resume contract
 #                    (entrypoint.sh's Step 6): reports status "rate_limited" with a
 #                    resume_at MOCK_RESUME_SECONDS out (env var, default 5 — no
@@ -95,8 +107,8 @@
 # Options:
 #   --delay <seconds>         Sleep duration for 'slow' scenario (default: 30)
 #   --succeed-after <n>       Iteration on which 'flaky' succeeds (default: 3)
-#   --artifact <name>         Write the success/slow artifact to /workspace/out/<name>
-#                             (default: result.txt). The uploaded artifact's name IS
+#   --artifact <name>         Write the success/slow/gate_approve artifact to
+#                             /workspace/out/<name> (default: result.txt). The uploaded artifact's name IS
 #                             this filename, so gate templates that declare
 #                             requiredInputArtifacts by name must match it.
 #   --decision <value>        Custom decision value for gate scenarios
@@ -257,6 +269,22 @@ get_iteration() {
   fi
 }
 
+# require_input <relpath>
+#   Exits 1 when $WORKSPACE_IN/<relpath> is missing or empty: the node it stands in for cannot do
+#   its work without that input either.
+require_input() {
+  if [ ! -s "${WORKSPACE_IN}/$1" ]; then
+    echo "ERROR: $SCENARIO needs ${WORKSPACE_IN}/$1, which is missing or empty" >&2
+    exit 1
+  fi
+}
+
+# spec_headings <story_spec.md>
+#   The spec's ### headings above "## Tasks", comma-separated: what plan.md's Realises line names.
+spec_headings() {
+  awk '/^## Tasks$/ { exit } /^### / { sub(/^### /, ""); printf "%s%s", sep, $0; sep = ", " }' "$1"
+}
+
 submit_decision() {
   local decision="$1"
 
@@ -269,7 +297,12 @@ submit_decision() {
   fi
 
   # Primary path: use the report-result CLI tool (always available inside agent pods).
-  # The entrypoint.sh sets REPORT_RESULT_URL and puts report-result on PATH.
+  # The entrypoint exports REPORT_RESULT_URL for AI nodes only, and this script runs as a script
+  # node standing in for one, so it gives report-result the URL an AI node would have.
+  if [ -z "${REPORT_RESULT_URL:-}" ] && [ -n "${API_SERVER_URL:-}" ] && [ -n "${RUN_ID:-}" ] \
+    && [ -n "${NODE_EXECUTION_ID:-}" ]; then
+    export REPORT_RESULT_URL="${API_SERVER_URL}/internal/runs/${RUN_ID}/node-executions/${NODE_EXECUTION_ID}/decision"
+  fi
   if command -v report-result &>/dev/null; then
     report-result "$decision"
     echo "Decision '$decision' submitted via report-result"
@@ -362,7 +395,7 @@ case "$SCENARIO" in
       echo "Mock agent: gate_approve scenario — submitting decision '$DECISION'"
     fi
     submit_decision "$DECISION"
-    write_artifact "result.txt" "Gate approved with decision: $DECISION"
+    write_artifact "${ARTIFACT_TEXT:-result.txt}" "Gate approved with decision: $DECISION"
     exit 0
     ;;
 
@@ -969,6 +1002,185 @@ JSON
     exit 0
     ;;
 
+  story_spec_draft)
+    echo "Mock agent: story_spec_draft scenario"
+    mkdir -p /workspace/out
+    CURRENT_SPEC="${WORKSPACE_IN}/run_input/story_spec.md"
+    # A script node's config.json carries no prompt, so the revision context never reaches this
+    # scenario; the current spec, which only a revision run stages, is what marks a revision.
+    if [ -s "$CURRENT_SPEC" ]; then
+      # A first approval leaves no entry, so its first revision is v2.
+      PRIOR_ENTRIES=$(grep -c '^### v[0-9]' "$CURRENT_SPEC" || true)
+      REVISION="v$((PRIOR_ENTRIES + 2))"
+      grep -vx 'No revisions yet.' "$CURRENT_SPEC" > /workspace/out/story_spec.md || true
+      if [ -n "$(tail -n 1 /workspace/out/story_spec.md)" ]; then
+        echo "" >> /workspace/out/story_spec.md
+      fi
+      cat >> /workspace/out/story_spec.md <<EOF
+### ${REVISION} — $(date -u +%F)
+- **Triggered by:** this run's revision context
+- **Guidance:** holds — the mock drafter changes no other section
+EOF
+      echo "Mock agent: revised the current spec with a ${REVISION} Revisions entry"
+    else
+      cat > /workspace/out/story_spec.md <<'EOF'
+## Context
+
+A mock Story spec, written by mock-agent.sh's story_spec_draft scenario.
+
+## Approach
+
+The mock design takes the one path it knows.
+
+## Architecture
+
+### Mock component
+
+The one seam this mock Story touches.
+
+### Runtime Flow
+
+The mock agent writes its files; nothing else runs.
+
+## Technical Decisions
+
+### Which path does the mock take
+
+| Option | Gives us | Costs us |
+|---|---|---|
+| ✅ The fixed path | A deterministic run | Nothing |
+| Any other path | Nothing | Determinism |
+
+Decided by: the mock agent.
+
+## Caveats
+
+None.
+
+## Testing Strategy
+
+The e2e suite drives this spec through Story Design and Task Delivery.
+
+## Manual Operations
+
+Checked, nothing needed: every environment.
+
+## Tasks
+
+None proposed: the Story's existing Tasks stand as they are.
+
+## Revisions
+
+No revisions yet.
+EOF
+      echo "Artifact written to /workspace/out/story_spec.md"
+    fi
+    exit 0
+    ;;
+
+  story_spec_review)
+    echo "Mock agent: story_spec_review scenario"
+    require_input draft_story_spec/story_spec.md
+    mkdir -p /workspace/out
+    cp "${WORKSPACE_IN}/draft_story_spec/story_spec.md" /workspace/out/story_spec.md
+    write_artifact "story_spec_review.md" "# Story spec review
+
+No flaws found: the drafted spec is approved unchanged.
+
+## Roadmap proposal
+
+None."
+    submit_decision "approved"
+    exit 0
+    ;;
+
+  analyze)
+    ITERATION=$(get_iteration)
+    echo "Mock agent: analyze scenario — iteration=$ITERATION"
+    require_input run_input/story_spec.md
+    SPEC="${WORKSPACE_IN}/run_input/story_spec.md"
+    # A script node's config.json carries no prompt template, so the Task title is where a
+    # marker reaches this scenario.
+    STEERING=$(jq -r '[.prompt // "", .task_context.task_title // ""] | join("\n")' /workspace/config.json 2>/dev/null || true)
+    MARKER_RE='\[e2e-analyze:([a-z_]+)\]'
+    DECISION="planned"
+    if [[ $STEERING =~ $MARKER_RE ]]; then
+      DECISION="${BASH_REMATCH[1]}"
+    fi
+    case "$DECISION" in
+      planned | needs_spec | story_conflict) ;;
+      *)
+        echo "ERROR: unknown analyze marker [e2e-analyze:$DECISION]" >&2
+        exit 1
+        ;;
+    esac
+    # The marker outlives a resume; deciding story_conflict again would loop the Task through
+    # Story revisions forever.
+    if [ "$ITERATION" -ge 2 ]; then
+      DECISION="planned"
+    fi
+    REALISES=$(spec_headings "$SPEC")
+
+    write_artifact "plan.md" "Realises: ${REALISES}
+
+## Task ordering
+
+1. Make the mock change.
+
+## Cross-repo sync points
+
+None
+
+## Expected Changed Files
+
+None: the mock agent changes no file.
+
+## File-level test cases
+
+None.
+
+## Migrations
+
+None
+
+## Verification commands
+
+None."
+    if [ "$DECISION" = "needs_spec" ]; then
+      write_artifact "task_spec.md" "## What this adds to the Story spec
+
+A design choice the Story spec leaves open, settled for this Task by the mock agent."
+    elif [ "$DECISION" = "story_conflict" ]; then
+      write_artifact "story_conflict.md" "## What the spec says
+
+${REALISES}, as written in the Story spec.
+
+## What the code shows
+
+Nothing that contradicts it: the mock agent raises this conflict on request.
+
+## Proposed amendment
+
+A Revisions entry; no section needs to change."
+    fi
+    submit_decision "$DECISION"
+    exit 0
+    ;;
+
+  task_spec_review)
+    echo "Mock agent: task_spec_review scenario"
+    require_input plan/plan.md
+    require_input plan/task_spec.md
+    mkdir -p /workspace/out
+    cp "${WORKSPACE_IN}/plan/plan.md" /workspace/out/plan.md
+    cp "${WORKSPACE_IN}/plan/task_spec.md" /workspace/out/task_spec.md
+    write_artifact "task_spec_review.md" "# Task spec review
+
+No flaws found: the plan and Task spec are approved unchanged."
+    submit_decision "approved"
+    exit 0
+    ;;
+
   rate_limited)
     # Parks like a real agent that hit the org's Claude quota: reports the park
     # status with a reset time MOCK_RESUME_SECONDS out (default 5s so E2E does
@@ -1030,13 +1242,13 @@ JSON
   "")
     echo "ERROR: No scenario specified" >&2
     echo "Usage: mock-agent.sh <scenario> [options]" >&2
-    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, multi_repo_pr, drift_recheck, check_prs_gate, roadmap_status_update, roadmap_status_update_env_default, roadmap_status_update_missing_task_id, roadmap_candidates, roadmap_imperative_links, roadmap_extension, single_repo_claude_md, dind_isolation, dind_network_connectivity, many_artifacts, rate_limited" >&2
+    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, multi_repo_pr, drift_recheck, check_prs_gate, roadmap_status_update, roadmap_status_update_env_default, roadmap_status_update_missing_task_id, roadmap_candidates, roadmap_imperative_links, roadmap_extension, single_repo_claude_md, dind_isolation, dind_network_connectivity, many_artifacts, story_spec_draft, story_spec_review, analyze, task_spec_review, rate_limited" >&2
     exit 1
     ;;
 
   *)
     echo "ERROR: Unknown scenario '$SCENARIO'" >&2
-    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, multi_repo_pr, drift_recheck, check_prs_gate, roadmap_status_update, roadmap_status_update_env_default, roadmap_status_update_missing_task_id, roadmap_candidates, roadmap_imperative_links, roadmap_extension, single_repo_claude_md, dind_isolation, dind_network_connectivity, many_artifacts, rate_limited" >&2
+    echo "Scenarios: success, failure, timeout, slow, flaky, gate_approve, gate_reject, multi_repo_pr, drift_recheck, check_prs_gate, roadmap_status_update, roadmap_status_update_env_default, roadmap_status_update_missing_task_id, roadmap_candidates, roadmap_imperative_links, roadmap_extension, single_repo_claude_md, dind_isolation, dind_network_connectivity, many_artifacts, story_spec_draft, story_spec_review, analyze, task_spec_review, rate_limited" >&2
     exit 1
     ;;
 esac

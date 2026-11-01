@@ -30,7 +30,7 @@ function escapeRegex(s: string): string {
 
 test.describe("Task issue close", () => {
   test("completing a Task closes its linked GitHub issue from the Worker only", async ({ page, api }) => {
-    test.setTimeout(240_000);
+    test.setTimeout(420_000);
 
     const reposPage = await api.listGitRepos();
     const mockRepo = seededRepos(reposPage.content).find((r) => r.url.endsWith("/mock-repo"));
@@ -98,6 +98,7 @@ test.describe("Task issue close", () => {
 
     // Cancel only once the run is "running": an earlier cancel is overwritten by the
     // orchestrator's own "running" report, and completeTask would then find the run still active.
+    await api.approveStorySpec(task!.storyId);
     const started = await api.startTask(task!.id);
     const latestRunId = started.latestRunId!;
     await api.waitForRunStatus(latestRunId, ["running"], 15_000);

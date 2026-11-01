@@ -31,7 +31,7 @@ public class BaseStoryDesignSeeder implements ApplicationRunner {
 
     static final String TEMPLATE_NAME = "Story Design";
 
-    private static final String INPUT_SCHEMA = """
+    public static final String INPUT_SCHEMA = """
             [
               {"name":"software_project_id","label":"Software Project","type":"software_project_id","required":true},
               {"name":"story_request","label":"Story Request","type":"textarea","required":true},
