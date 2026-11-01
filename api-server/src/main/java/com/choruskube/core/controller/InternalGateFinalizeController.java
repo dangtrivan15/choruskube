@@ -28,7 +28,7 @@ import org.springframework.web.bind.annotation.RestController;
  * Each runs in the run's tenant scope, since no request carries one.
  */
 @RestController
-@RequestMapping("/internal/runs/{runId}/node-executions/{execId}/gate-finalize")
+@RequestMapping("/internal/runs/{runId}/node-executions/{nodeExecId}/gate-finalize")
 public class InternalGateFinalizeController {
 
     private final GateFinalizeService service;
@@ -40,19 +40,20 @@ public class InternalGateFinalizeController {
     }
 
     @PostMapping("/held")
-    public HeldClaim held(@PathVariable UUID runId, @PathVariable UUID execId) {
+    public HeldClaim held(@PathVariable UUID runId, @PathVariable("nodeExecId") UUID execId) {
         return inScope(runId, execId, () -> service.claimHeld(runId, execId));
     }
 
     @PostMapping("/{approvalId}/plan")
-    public PlanResponse plan(@PathVariable UUID runId, @PathVariable UUID execId, @PathVariable UUID approvalId) {
+    public PlanResponse plan(
+            @PathVariable UUID runId, @PathVariable("nodeExecId") UUID execId, @PathVariable UUID approvalId) {
         return inScope(runId, execId, () -> service.plan(runId, execId, approvalId));
     }
 
     @PostMapping("/{approvalId}/hold")
     public StepResult hold(
             @PathVariable UUID runId,
-            @PathVariable UUID execId,
+            @PathVariable("nodeExecId") UUID execId,
             @PathVariable UUID approvalId,
             @RequestBody(required = false) HoldRequest request) {
         return inScope(
@@ -64,7 +65,7 @@ public class InternalGateFinalizeController {
     @PostMapping("/{approvalId}/materialize")
     public MaterializeResponse materialize(
             @PathVariable UUID runId,
-            @PathVariable UUID execId,
+            @PathVariable("nodeExecId") UUID execId,
             @PathVariable UUID approvalId,
             @RequestBody(required = false) MaterializeRequest request) {
         return inScope(
@@ -77,7 +78,7 @@ public class InternalGateFinalizeController {
     @PostMapping("/{approvalId}/complete")
     public StepResult complete(
             @PathVariable UUID runId,
-            @PathVariable UUID execId,
+            @PathVariable("nodeExecId") UUID execId,
             @PathVariable UUID approvalId,
             @RequestBody(required = false) CompleteRequest request) {
         return inScope(
@@ -95,7 +96,7 @@ public class InternalGateFinalizeController {
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void refuse(
             @PathVariable UUID runId,
-            @PathVariable UUID execId,
+            @PathVariable("nodeExecId") UUID execId,
             @PathVariable UUID approvalId,
             @RequestBody(required = false) RefuseRequest request) {
         inScope(runId, execId, () -> {

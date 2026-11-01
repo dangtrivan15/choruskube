@@ -57,6 +57,9 @@ public interface NodeExecutionRepository
 
     boolean existsByJobSecretHash(String jobSecretHash);
 
+    /** Backs {@link com.choruskube.core.config.RunScopeInterceptor}'s per-request membership check. */
+    boolean existsByIdAndWorkflowRunId(UUID id, UUID workflowRunId);
+
     // --- Analytics queries ---
 
     @Query(value = """

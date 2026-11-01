@@ -166,10 +166,10 @@ public class InternalRunController {
      * The create/list/update paths below are kept unchanged because the
      * agent-images/claude-code/create-proposal, list-proposals, and update-proposal CLI
      * scripts depend on these exact paths. Removing or renaming them would break deployed agent
-     * images still running an older image during a rolling upgrade. {@code nodeExecId} is not
-     * decorative on any of them: {@link InternalRoadmapProposalService#requireCallerInRun} verifies
-     * it belongs to {@code runId} before anything else runs, and the six write routes below are
-     * additionally refused when that run's workflow reviews roadmap changes at a gate.
+     * images still running an older image during a rolling upgrade. {@code RunScopeInterceptor}
+     * refuses a {@code nodeExecId} that does not belong to {@code runId} before any of these
+     * handlers run; the six write routes below are additionally refused when that run's workflow
+     * reviews roadmap changes at a gate.
      */
     @PostMapping("/{runId}/node-executions/{nodeExecId}/feature-proposals")
     @ResponseStatus(HttpStatus.CREATED)
@@ -322,16 +322,10 @@ public class InternalRunController {
      * containing its own {@code node-executions/{nodeExecId}} segment, so the run-scoped read
      * above is unreachable from inside an agent pod.
      *
-     * <p>Unlike {@link #listFeatureProposals} and the other {@code feature-proposals}/{@code
-     * tasks} routes above (which accept {@code nodeExecId} purely to satisfy that scoping pattern
-     * and otherwise ignore it), this endpoint's {@code nodeExecId} is NOT decorative: {@code
-     * runPullRequestService.getPullRequestsForNodeExecution} cross-checks that {@code nodeExecId}
-     * actually belongs to {@code runId}. {@code InternalAuthFilter} only verifies the caller's
-     * {@code JOB_SECRET} against {@code nodeExecId}'s own stored hash — it never compares the
-     * path's {@code runId} segment to that execution's actual {@code workflow_run_id} — so without
-     * this check, a valid JOB_SECRET for one run's node execution could read a different run's PR
-     * list (repo URLs, PR URLs/numbers, titles) by substituting an arbitrary {@code runId} while
-     * keeping its own {@code nodeExecId}.
+     * <p>{@code RunScopeInterceptor} refuses a {@code nodeExecId} that does not belong to {@code
+     * runId} before this handler runs; {@code
+     * runPullRequestService.getPullRequestsForNodeExecution}'s own cross-check stays as defence in
+     * depth for non-HTTP callers of the same service.
      */
     @GetMapping("/{runId}/node-executions/{nodeExecId}/pull-requests")
     public List<RunPullRequestResponse> getPullRequestsForNodeExecution(

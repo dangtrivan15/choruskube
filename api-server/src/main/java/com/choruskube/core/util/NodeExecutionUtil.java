@@ -21,10 +21,16 @@ public final class NodeExecutionUtil {
 
     public static void requireInRun(NodeExecution exec, UUID runId) {
         if (!runId.equals(exec.getWorkflowRunId())) {
-            // Deliberately identical to the "no such execution" message below, not one that names
-            // runId or the mismatch — otherwise this call site would be usable to probe whether an
-            // execution id is valid for some other run.
-            throw new NotFoundException("Node execution not found: " + exec.getId());
+            throw notFound(exec.getId());
         }
+    }
+
+    /**
+     * The one "no such execution" message, shared with {@link
+     * com.choruskube.core.config.RunScopeInterceptor} so a mismatched pair and a nonexistent id
+     * answer identically — otherwise either call site would be usable to probe which is true.
+     */
+    public static NotFoundException notFound(UUID execId) {
+        return new NotFoundException("Node execution not found: " + execId);
     }
 }

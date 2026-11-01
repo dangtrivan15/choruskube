@@ -222,20 +222,21 @@ class InternalArtifactControllerTest extends BaseTest {
     }
 
     @Test
-    void presign_crossOrgAgent_isForbidden() throws Exception {
+    void presign_otherRunInPath_isNotFound() throws Exception {
         WorkflowRun runB = new WorkflowRun();
         runB.setGraphTemplateId(run.getGraphTemplateId());
         runB = runRepo.save(runB);
 
-        // Agent from system org tries to presign a path for org-b's run
+        // The agent's own execution belongs to `run`, not runB: RunScopeInterceptor refuses the
+        // mismatched pair before the handler's own same-organisation check ever runs.
         String path = "org-b/runs/" + runB.getId() + "/some-node/out/file.txt";
 
         mockMvc.perform(get("/internal/runs/" + runB.getId() + "/node-executions/" + exec.getId() + "/presign")
                         .param("path", path)
                         .param("method", "GET")
                         .header("Authorization", "Bearer " + JOB_SECRET))
-                .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.error").value("Access denied: path outside allowed scope"));
+                .andExpect(status().isNotFound())
+                .andExpect(content().string("Node execution not found: " + exec.getId()));
     }
 
     @Test
