@@ -94,26 +94,19 @@ public final class TaskDeliveryGraph {
 
     private static final String SUPERVISOR_CONFIG = "{\"routing_hub\": true}";
 
-    // Analyze and Task Spec Review both write plan.md, and an agent cannot tell which copy is newer;
-    // the server delivers the newest producer's, and its task_spec.md only when that producer wrote one.
-    private static final String PLAN_GROUP = "{\"newest_of\": [\"" + ANALYZE + "\", \"" + TASK_SPEC_REVIEW + "\"], "
-            + "\"alias\": \"plan\", \"artifacts\": ["
-            + "{\"name\":\"plan.md\",\"description\":\"The Task plan, from whichever of Analyze and Task Spec Review ran last\",\"required\":true},"
-            + "{\"name\":\"task_spec.md\",\"description\":\"The Task spec (only present if that same node wrote one)\",\"required\":false}]}";
+    // Analyze and Task Spec Review both write plan.md and task_spec.md, and an agent cannot tell
+    // which copy is newer, so the server delivers the newest producer's; an optional task_spec.md
+    // that producer did not write is left out, so a re-plan never feeds a stale one.
+    private static final String PLAN_GROUP = planGroup(false);
 
     private static final String ANALYZE_INPUTS = "["
             + "{\"template_node_label\":\"" + ANALYZE + "\",\"artifacts\":["
             + "{\"name\":\"story_conflict.md\",\"description\":\"The conflict this Task raised on an earlier iteration (only present if it raised one)\",\"required\":false}]}]";
 
-    // The self-reference resolves to the previous iteration's outputs, which is how a fresh-session
+    // The self-reference resolves to the previous iteration's notes, which is how a fresh-session
     // review builds on its earlier reasoning instead of reverting it.
-    private static final String TASK_SPEC_REVIEW_INPUTS = "["
-            + "{\"template_node_label\":\"" + ANALYZE + "\",\"artifacts\":["
-            + "{\"name\":\"plan.md\",\"description\":\"Analyze's Task plan\",\"required\":true},"
-            + "{\"name\":\"task_spec.md\",\"description\":\"Analyze's Task spec\",\"required\":true}]},"
+    private static final String TASK_SPEC_REVIEW_INPUTS = "[" + planGroup(true) + ","
             + "{\"template_node_label\":\"" + TASK_SPEC_REVIEW + "\",\"artifacts\":["
-            + "{\"name\":\"plan.md\",\"description\":\"Prior iteration's revised Task plan (only present if iteration > 1)\",\"required\":false},"
-            + "{\"name\":\"task_spec.md\",\"description\":\"Prior iteration's revised Task spec (only present if iteration > 1)\",\"required\":false},"
             + "{\"name\":\"task_spec_review.md\",\"description\":\"Prior iteration's review notes including Reasoning for fixes (only present if iteration > 1)\",\"required\":false}]}]";
 
     private static final String APPROVE_TASK_SPEC_INPUTS = "[" + PLAN_GROUP + ","
@@ -145,6 +138,15 @@ public final class TaskDeliveryGraph {
             + "{\"name\":\"roadmap_candidates.json\",\"description\":\"Reviewed roadmap proposal (optional; the newer of this and Implement's copy is used)\",\"required\":false}]}]";
 
     private TaskDeliveryGraph() {}
+
+    private static String planGroup(boolean taskSpecRequired) {
+        return "{\"newest_of\": [\"" + ANALYZE + "\", \"" + TASK_SPEC_REVIEW + "\"], "
+                + "\"alias\": \"plan\", \"artifacts\": ["
+                + "{\"name\":\"plan.md\",\"description\":\"The Task plan, from whichever of Analyze and Task Spec Review ran last\",\"required\":true},"
+                + "{\"name\":\"task_spec.md\",\"description\":\"The Task spec from that same node"
+                + (taskSpecRequired ? "" : " (only present if it wrote one)")
+                + "\",\"required\":" + taskSpecRequired + "}]}";
+    }
 
     /** Each extra config replaces that label's top-level keys of the same name; nested objects are replaced whole. */
     public static void seed(TemplateWriter w, GraphTemplate t, Map<String, String> extraConfigByLabel) {

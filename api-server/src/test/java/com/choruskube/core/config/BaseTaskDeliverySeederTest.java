@@ -238,7 +238,14 @@ class BaseTaskDeliverySeederTest extends BaseTest {
         assertThat(outputFlags(def))
                 .containsExactlyInAnyOrderEntriesOf(
                         Map.of("plan.md", true, "task_spec.md", true, "task_spec_review.md", true));
-        assertThat(requiredArtifactsOf(review)).containsExactlyInAnyOrder("analyze/plan.md", "analyze/task_spec.md");
+        JsonNode plan = planGroupOf(review);
+        assertThat(plan)
+                .as("after a redraft, Analyze's new copy must win over the reviewer's older one")
+                .isNotNull();
+        assertThat(plan.get("newest_of")).isEqualTo(objectMapper.readTree("[\"analyze\", \"task_spec_review\"]"));
+        assertThat(artifactFlags(plan))
+                .containsExactlyInAnyOrderEntriesOf(Map.of("plan.md", true, "task_spec.md", true));
+        assertThat(requiredArtifactsOf(review)).isEmpty();
         assertThat(producersOf(review, "task_spec_review.md")).containsExactly(TaskDeliveryGraph.TASK_SPEC_REVIEW);
 
         JsonNode config = objectMapper.readTree(review.getConfigOverrides());

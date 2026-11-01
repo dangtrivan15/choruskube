@@ -19,13 +19,14 @@ final class TaskDeliveryPrompts {
 
             ## Inputs
 
-            - `/workspace/in/run_input/story_spec.md` — the story spec. Always present.
-              Read it whole: its design sections, its Tasks section (each Task with the
-              headings it realises and the Tasks it depends on) and its Revisions log,
-              which records how the spec changed after its first approval. It is the
-              authoritative copy: read it from this path rather than searching object
-              storage or the run log for it. If it is missing, the run was started
-              without a designed Story: escalate rather than plan without it.
+            - `/workspace/in/run_input/story_spec.md` — the story spec, present on every
+              run started from a Task. Read it whole: its design sections, its Tasks
+              section (each Task with the headings it realises and the Tasks it depends
+              on) and its Revisions log, which records how the spec changed after its
+              first approval. It is the authoritative copy: read it from this path rather
+              than searching object storage or the run log for it. If it is missing, the
+              run was started without a designed Story: write a one-line plan.md naming
+              the missing input, and escalate rather than plan without it.
             - Repositories are cloned under /workspace/repo/<name>/ — one subdirectory per
               repo in this run, each on its default branch as it is now. Per-repo metadata
               (including each repo's test_command) is in /workspace/config.json under the
@@ -335,16 +336,20 @@ final class TaskDeliveryPrompts {
             - `/workspace/in/await_story_revision/human_guidance.md` — the Story's spec was
               revised after you raised a conflict, and story_spec.md is now the revised
               version. The guidance names the version you raised against: read every
-              Revisions entry newer than it. One of them answers your conflict, which
+              Revisions entry newer than it, since each changes the design this Task
+              builds. Then look for what they say about your conflict, which
               `/workspace/in/analyze/story_conflict.md` holds:
-              - **amended** — plan against the amended headings.
-              - **holds** — the spec stands as written: do what the entry says this Task
-                should do instead. Raise the same conflict again only with evidence the
-                entry did not weigh, such as code that merged after it; quote the entry
-                and say what it missed.
-              The other entries newer than that version change the design this Task
-              builds too: plan against them. A human may also resume the Task with
-              guidance of their own; honor it.
+              - **amended** — an entry amends the spec for it: plan against the amended
+                headings.
+              - **holds** — an entry answers that the spec stands as written: do what it
+                says this Task should do instead. Raise the same conflict again only with
+                evidence the entry did not weigh, such as code that merged after it;
+                quote the entry and say what it missed.
+              - **no entry names your conflict** — a revision already under way when you
+                raised it answers only the conflicts it was started for. Apply the
+                decision test again against the revised spec, and raise `story_conflict`
+                again if the conflict still stands.
+              A human may also resume the Task with guidance of their own; honor it.
             - `/workspace/in/approve_task_spec/human_guidance.md` — the human sent your
               Task spec back for a redraft. Honor the guidance.
             - `/workspace/in/supervisor/human_guidance.md` — the Supervisor routed the Task
@@ -356,8 +361,9 @@ final class TaskDeliveryPrompts {
             Before you finish
             ═══════════════════════════════════════════════════════════════════════
 
-            - plan.md's first line is the Realises line, every heading on it exists in
-              story_spec.md exactly as written, and the six sections follow in order.
+            - Unless the story spec was missing, plan.md's first line is the Realises
+              line, every heading on it exists in story_spec.md exactly as written, and
+              the six sections follow in order.
             - Your decision matches your files: `needs_spec` with task_spec.md,
               `story_conflict` with story_conflict.md, `planned` and `escalate` with
               neither.
@@ -409,14 +415,16 @@ final class TaskDeliveryPrompts {
 
             ## Inputs
 
-            - `/workspace/in/analyze/plan.md` and `/workspace/in/analyze/task_spec.md` —
-              the Task plan and Task spec Analyze wrote. Always present.
-            - `/workspace/in/task_spec_review/plan.md`,
-              `/workspace/in/task_spec_review/task_spec.md` and
-              `/workspace/in/task_spec_review/task_spec_review.md` — your previous
-              iteration's Task plan, Task spec and review notes (including the "Reasoning
-              for fixes" section). Present only if iteration > 1. Read the notes carefully
-              so you build on prior decisions instead of reverting them.
+            - `/workspace/in/plan/plan.md` and `/workspace/in/plan/task_spec.md` — the
+              Task plan and Task spec you review. Always present. The server picks the
+              newest copy from Analyze and your previous iteration: on iteration 1 it is
+              Analyze's; after that it is yours, unless a human sent the Task spec back
+              for a redraft and Analyze has written a new one since.
+            - `/workspace/in/task_spec_review/task_spec_review.md` — your previous
+              iteration's review notes, including the "Reasoning for fixes" section.
+              Present only if iteration > 1. Read them carefully so you build on prior
+              decisions instead of reverting them; after a redraft, they describe the
+              copy Analyze's new one replaced.
             - `/workspace/in/run_input/story_spec.md` — the story spec: the Story's
               approved design, with its Tasks section and its Revisions log. Always
               present.
@@ -428,13 +436,6 @@ final class TaskDeliveryPrompts {
             - Repositories are cloned under `/workspace/repo/<name>/`, each on its default
               branch as it is now. You may dispatch Task subagents to examine multiple
               repos in parallel.
-
-            **Which copy you review.** On iteration 1, Analyze's. After that, the newer of
-            Analyze's and your previous iteration's: when a human sends the Task spec back
-            for a redraft, Analyze runs again and its copy replaces yours. Tell them apart
-            by /workspace/in/run_log.md, which lists node completions in order: review the
-            copy from whichever of `analyze` and `task_spec_review` completed last. Take
-            plan.md and task_spec.md from the same node.
 
             ## Review History & Conflict Check
 
@@ -463,7 +464,9 @@ final class TaskDeliveryPrompts {
             - `/workspace/out/task_spec.md` — REQUIRED. The Task spec, by the same rule.
             - `/workspace/out/task_spec_review.md` — REQUIRED. Your review notes. If you
               applied fixes, include a "Reasoning for fixes" section that explains WHY
-              each fix was chosen (not just what changed).
+              each fix was chosen (not just what changed), and add the
+              `## For the human: Story-wide choice` section whenever checklist item 2
+              calls for it.
 
             Approve Task Spec shows your plan.md and task_spec.md, and Implement builds
             from them: what you write is what the human approves.
@@ -500,8 +503,10 @@ final class TaskDeliveryPrompts {
                a later reader could not recover from the code — and every Technical
                Decision is one of them. Text that restates the story spec is a flaw:
                replace it with a reference to the heading. A choice the Story's other
-               Tasks must make the same way belongs in the story spec, not in one Task's
-               spec: escalate it.
+               Tasks must make the same way is neither a flaw nor a reason to escalate:
+               review it like any other, and name it in task_spec_review.md under
+               `## For the human: Story-wide choice`, so the human at Approve Task Spec
+               can decide whether the Story's spec should make it instead.
             3. **plan.md builds this Task on current main**:
                - Every heading on the Realises line exists in story_spec.md exactly as
                  written, and the line matches this Task's entry in the story spec's Tasks
@@ -598,8 +603,6 @@ final class TaskDeliveryPrompts {
               (`review_conflict`): quote the story spec passage with its heading, and cite
               the code as `file:line`. Only Analyze raises a Story conflict, once the
               Supervisor routes the Task back to it;
-            - a choice the Story's other Tasks must make the same way, as checklist item 2
-              describes (`alternative_proposal`);
             - the default branch moved, and reconciling the Task spec or plan.md with what
               merged would change the decomposition or architecture, or reverse a decision
               a merged run made (`review_conflict`; `alternative_proposal` if a different

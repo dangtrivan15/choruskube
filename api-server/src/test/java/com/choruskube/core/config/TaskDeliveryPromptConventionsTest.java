@@ -117,10 +117,25 @@ class TaskDeliveryPromptConventionsTest {
                 .as("a resumed Task re-plans from the Revisions entries newer than the version it raised against")
                 .contains("read every Revisions entry newer than")
                 .as("an answer of holds settles the conflict unless something the entry did not weigh changed")
-                .contains("holds")
+                .contains("**holds** — an entry answers that the spec stands as written")
                 .contains("evidence the entry did not weigh")
+                .contains("**amended** — an entry amends the spec for it")
+                .as("a conflict raised while a revision was open is released after it with no entry of its own")
+                .contains("**no entry names your conflict**")
+                .contains("Apply the decision test again against the revised spec, and raise `story_conflict`"
+                        + " again if the conflict still stands")
+                .doesNotContain("One of them answers your conflict")
                 .as("transcripts and observations do not carry over; decisions do")
                 .contains("plans from scratch against the default branch as it is now");
+    }
+
+    @Test
+    void analyzePromptEscalatesWithAStubPlanWhenTheStorySpecIsMissing() {
+        String p = collapsed(ANALYZE_PROMPT);
+        assertThat(p)
+                .as("plan.md is a required output even on escalate, and no Realises heading can exist")
+                .contains("write a one-line plan.md naming the missing input, and escalate")
+                .contains("Unless the story spec was missing, plan.md's first line is the Realises line");
     }
 
     @Test
@@ -143,17 +158,30 @@ class TaskDeliveryPromptConventionsTest {
         assertThat(TASK_SPEC_REVIEW_PROMPT).contains("{review_history}");
         assertThat(p)
                 .contains("must not contradict")
-                .contains("/workspace/in/analyze/plan.md")
-                .contains("/workspace/in/analyze/task_spec.md")
+                .as("the server picks the newest of Analyze's and the reviewer's copies; the agent never does")
+                .contains("/workspace/in/plan/plan.md")
+                .contains("/workspace/in/plan/task_spec.md")
+                .contains("The server picks the newest copy from Analyze and your previous iteration")
+                .doesNotContain("/workspace/in/analyze/")
                 .contains("/workspace/in/task_spec_review/task_spec_review.md")
                 .contains("/workspace/in/run_input/story_spec.md")
                 .contains("/workspace/out/plan.md")
                 .contains("/workspace/out/task_spec.md")
                 .contains("/workspace/out/task_spec_review.md")
-                .as("Analyze re-runs on a redraft, and its copy then replaces the reviewer's")
-                .contains("/workspace/in/run_log.md, which lists node completions in order")
                 .as("only Analyze raises a Story conflict")
                 .contains("only Analyze raises");
+    }
+
+    @Test
+    void taskSpecReviewNotesAStoryWideChoiceForTheHumanWithoutEscalating() {
+        String p = collapsed(TASK_SPEC_REVIEW_PROMPT);
+        assertThat(p)
+                .as("Analyze sends such a gap here as needs_spec; escalating it would loop on the same story spec")
+                .contains("must make the same way is neither a flaw nor a reason to escalate")
+                .contains("under `## For the human: Story-wide choice`, so the human at Approve Task Spec");
+
+        String escalation = p.substring(p.indexOf("## When to escalate"), p.indexOf("## Re-checks"));
+        assertThat(escalation).doesNotContain("must make the same way").doesNotContain("Story-wide");
     }
 
     @Test
