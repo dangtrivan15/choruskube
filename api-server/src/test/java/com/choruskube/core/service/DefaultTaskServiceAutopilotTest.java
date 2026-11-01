@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.choruskube.core.BaseTest;
 import com.choruskube.core.CommittedFixtureCleaner;
+import com.choruskube.core.StorySpecFixtures;
 import com.choruskube.core.credential.GitHubCredentialResolver;
 import com.choruskube.core.dto.CreateDependencyRequest;
 import com.choruskube.core.dto.EpicRequest;
@@ -49,6 +50,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.PlatformTransactionManager;
+import software.amazon.awssdk.services.s3.S3Client;
 
 /**
  * The Autopilot start path. Deliberately NOT {@code @Transactional}, unlike its sibling {@link
@@ -111,6 +113,9 @@ public class DefaultTaskServiceAutopilotTest extends BaseTest {
     @MockitoBean
     private GitHubCredentialResolver gitHubCredentialResolver;
 
+    @MockitoBean
+    private S3Client s3Client;
+
     @BeforeEach
     void setUp() {
         cleaner = new CommittedFixtureCleaner(jdbc);
@@ -157,11 +162,11 @@ public class DefaultTaskServiceAutopilotTest extends BaseTest {
         // resolution goes through checkOrgAccess, which reads a tenant context no timer thread has.
         GitRepo r = makeRepo("autopilot-cross-epic");
         EpicResponse blockerEpic = makeEpic(r.getId(), "Blocker Epic");
-        StoryResponse blockerStory = storyService.create(blockerEpic.id(), new StoryRequest("Blocker Story", "D"));
+        StoryResponse blockerStory = designedStory(blockerEpic.id(), "Blocker Story");
         TaskResponse blockerTask = service.create(blockerStory.id(), new TaskRequest("Blocker Task", "D"));
 
         EpicResponse epic = makeEpic(r.getId(), "Epic");
-        StoryResponse story = storyService.create(epic.id(), new StoryRequest("Story", "D"));
+        StoryResponse story = designedStory(epic.id(), "Story");
         TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
         dependencyService.create(new CreateDependencyRequest("task", blockerTask.id(), "task", task.id()));
         finishTask(blockerTask.id());
@@ -335,7 +340,13 @@ public class DefaultTaskServiceAutopilotTest extends BaseTest {
 
     private StoryResponse makeStory(UUID softwareProjectId) {
         EpicResponse epic = makeEpic(softwareProjectId, "Epic");
-        return storyService.create(epic.id(), new StoryRequest("Story", "Story desc"));
+        return designedStory(epic.id(), "Story");
+    }
+
+    private StoryResponse designedStory(UUID epicId, String title) {
+        StoryResponse story = storyService.create(epicId, new StoryRequest(title, "Story desc"));
+        StorySpecFixtures.approve(jdbc, story.id());
+        return story;
     }
 
     private EpicResponse makeEpic(UUID softwareProjectId, String title) {

@@ -64,3 +64,107 @@ describe("TestApiClient.getGateStamps", () => {
     expect(fetchMock).toHaveBeenCalledWith("http://api.test/api/v1/runs/run-1/gate-stamps", expect.anything());
   });
 });
+
+describe("TestApiClient Story spec helpers", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  type Route = (url: string, init?: RequestInit) => Response | undefined;
+
+  /** Stubs fetch with the first route that answers each request; the token endpoint is refused. */
+  function stubFetch(...routes: Route[]) {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes("/openid-connect/token")) return new Response("", { status: 401 });
+      for (const route of routes) {
+        const res = route(url, init);
+        if (res) return res;
+      }
+      throw new Error(`unexpected ${init?.method ?? "GET"} ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
+  const run = (status: string, gate?: string) => ({
+    id: "run-1",
+    status,
+    nodeExecutions: gate ? [{ id: "gate-1", label: "approve_story_spec", status: gate, iteration: 1 }] : [],
+  });
+
+  /** Answers successive calls to one URL from `responses`, repeating the last. */
+  function sequence(urlEnd: string, method: string, responses: (() => Response)[]): Route {
+    let call = 0;
+    return (url, init) => {
+      if (!url.endsWith(urlEnd) || (init?.method ?? "GET") !== method) return undefined;
+      return responses[Math.min(call++, responses.length - 1)]();
+    };
+  }
+
+  it("reads a missing spec as null", async () => {
+    stubFetch(sequence("/api/v1/stories/s-1/spec", "GET", [() => new Response("not found", { status: 404 })]));
+
+    const client = new TestApiClient("http://api.test", "http://auth.test");
+
+    expect(await client.getStorySpec("s-1")).toBeNull();
+  });
+
+  it("designs the Story, approves its gate, and waits for the recorded version", async () => {
+    const fetchMock = stubFetch(
+      sequence("/api/v1/stories/s-1/design", "POST", [() => json({ id: "run-1" }, 201)]),
+      sequence("/api/v1/runs/run-1", "GET", [
+        () => json(run("running")),
+        () => json(run("awaiting_human", "awaiting_human")),
+      ]),
+      sequence("/api/v1/runs/run-1/nodes/gate-1/signal", "POST", [() => new Response("", { status: 200 })]),
+      sequence("/api/v1/stories/s-1/spec", "GET", [
+        () => new Response("", { status: 404 }),
+        () => json({ storyId: "s-1", version: 1, content: "spec", approvedAt: "2026-11-01T00:00:00Z", runId: "run-1" }),
+      ]),
+    );
+
+    const client = new TestApiClient("http://api.test", "http://auth.test");
+    const spec = await client.approveStorySpec("s-1", 5_000, 0);
+
+    expect(spec.version).toBe(1);
+    const signal = fetchMock.mock.calls.find(([url]) => url.endsWith("/nodes/gate-1/signal"));
+    expect(JSON.parse(String(signal?.[1]?.body))).toEqual({ decision: "approved" });
+  });
+
+  it("joins the design run already open on the Story when designing is refused", async () => {
+    const fetchMock = stubFetch(
+      sequence("/api/v1/stories/s-1/design", "POST", [() => new Response("open design run", { status: 409 })]),
+      sequence("/api/v1/stories/s-1", "GET", [() => json({ id: "s-1", openDesignRunId: "run-1" })]),
+      sequence("/api/v1/runs/run-1", "GET", [() => json(run("awaiting_human", "awaiting_human"))]),
+      sequence("/api/v1/runs/run-1/nodes/gate-1/signal", "POST", [() => new Response("", { status: 200 })]),
+      sequence("/api/v1/stories/s-1/spec", "GET", [
+        () => json({ storyId: "s-1", version: 1, content: "spec", approvedAt: "2026-11-01T00:00:00Z", runId: "run-1" }),
+      ]),
+    );
+
+    const client = new TestApiClient("http://api.test", "http://auth.test");
+    await client.approveStorySpec("s-1", 5_000, 0);
+
+    expect(fetchMock.mock.calls.some(([url]) => url.endsWith("/nodes/gate-1/signal"))).toBe(true);
+  });
+
+  it("rethrows a refused design when no run is open on the Story", async () => {
+    stubFetch(
+      sequence("/api/v1/stories/s-1/design", "POST", [() => new Response("already approved", { status: 409 })]),
+      sequence("/api/v1/stories/s-1", "GET", [() => json({ id: "s-1", openDesignRunId: null })]),
+    );
+
+    const client = new TestApiClient("http://api.test", "http://auth.test");
+
+    await expect(client.approveStorySpec("s-1", 5_000, 0)).rejects.toThrow(/409: already approved/);
+  });
+
+  it("fails fast, naming the likely cause, when the design run dead-ends before its gate", async () => {
+    stubFetch(sequence("/api/v1/runs/run-1", "GET", [() => json(run("awaiting_retry"))]));
+
+    const client = new TestApiClient("http://api.test", "http://auth.test");
+
+    await expect(client.approveDesignRun("run-1", 5_000, 0)).rejects.toThrow(/cloneableProject/);
+  });
+});

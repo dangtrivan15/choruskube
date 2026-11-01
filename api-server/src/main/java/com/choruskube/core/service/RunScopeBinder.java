@@ -6,7 +6,8 @@ import java.util.UUID;
  * Runs work on a run's behalf, from a caller with no tenant of its own, in the scope it needs; core
  * binds nothing. Resolve the scope from {@code runId} alone (throw if it cannot be bound), restore
  * the thread's previous scope in a {@code finally}, let exceptions propagate, and open no
- * transaction around {@code work}: the gate-finalize steps it runs refuse to start inside one.
+ * transaction around {@code work}: the gate-finalize steps it runs refuse to start inside one, and
+ * a system gate decision must not hold one open across its workflow signal.
  */
 public interface RunScopeBinder {
 

@@ -8,6 +8,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 import com.choruskube.core.BaseTest;
+import com.choruskube.core.StorySpecFixtures;
 import com.choruskube.core.dto.CreateDependencyRequest;
 import com.choruskube.core.dto.DependencyEdgeResponse;
 import com.choruskube.core.dto.EpicRequest;
@@ -46,6 +47,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -75,6 +77,9 @@ public class DefaultStoryServiceTest extends BaseTest {
 
     @PersistenceContext
     private EntityManager entityManager;
+
+    @Autowired
+    private JdbcTemplate jdbc;
 
     @MockitoBean
     private WorkflowServiceStubs workflowServiceStubs;
@@ -215,7 +220,7 @@ public class DefaultStoryServiceTest extends BaseTest {
     @Test
     void list_readyTaskCount_countsOnlyBacklogTasks() {
         EpicResponse epic = makeEpic("https://github.com/test/story-ready-count-mixed.git");
-        StoryResponse story = service.create(epic.id(), new StoryRequest("S", "D"));
+        StoryResponse story = designedStory(epic.id());
         taskService.create(story.id(), new TaskRequest("Still open", "D"));
         markTaskDone(
                 taskService.create(story.id(), new TaskRequest("Finished", "D")).id());
@@ -236,7 +241,7 @@ public class DefaultStoryServiceTest extends BaseTest {
         // after all its work has shipped — so READY on its own would advertise a finished Story as
         // somewhere to start.
         EpicResponse epic = makeEpic("https://github.com/test/story-ready-count-all-done.git");
-        StoryResponse story = service.create(epic.id(), new StoryRequest("S", "D"));
+        StoryResponse story = designedStory(epic.id());
         markTaskDone(taskService.create(story.id(), new TaskRequest("T", "D")).id());
 
         List<StoryResponse> result = service.list(epic.id());
@@ -252,7 +257,7 @@ public class DefaultStoryServiceTest extends BaseTest {
         // Containment cascades downward, so a READY Story can still hold a Task blocked by its own
         // edge — the count has to consult per-Task readiness, not just the Story's.
         EpicResponse epic = makeEpic("https://github.com/test/story-ready-count-blocked-task.git");
-        StoryResponse story = service.create(epic.id(), new StoryRequest("S", "D"));
+        StoryResponse story = designedStory(epic.id());
         var blocker = taskService.create(story.id(), new TaskRequest("Blocker", "D"));
         var blocked = taskService.create(story.id(), new TaskRequest("Blocked", "D"));
         dependencyService.create(new CreateDependencyRequest("task", blocker.id(), "task", blocked.id()));
@@ -261,6 +266,26 @@ public class DefaultStoryServiceTest extends BaseTest {
 
         // Only the blocker itself is startable; the Task it blocks is not.
         assertThat(result)
+                .singleElement()
+                .extracting(StoryResponse::readyTaskCount)
+                .isEqualTo(1L);
+    }
+
+    @Test
+    void list_readyTaskCount_isZeroUntilTheStorysSpecIsApproved() {
+        EpicResponse epic = makeEpic("https://github.com/test/story-ready-count-undesigned.git");
+        StoryResponse story = service.create(epic.id(), new StoryRequest("S", "D"));
+        taskService.create(story.id(), new TaskRequest("Waiting on design", "D"));
+
+        assertThat(service.list(epic.id()))
+                .singleElement()
+                .extracting(StoryResponse::readyTaskCount)
+                .isEqualTo(0L);
+
+        entityManager.flush();
+        StorySpecFixtures.approve(jdbc, story.id());
+
+        assertThat(service.list(epic.id()))
                 .singleElement()
                 .extracting(StoryResponse::readyTaskCount)
                 .isEqualTo(1L);
@@ -743,6 +768,13 @@ public class DefaultStoryServiceTest extends BaseTest {
         Task t = taskRepo.findById(taskId).orElseThrow();
         t.setStatus(WorkItemStatus.done);
         taskRepo.saveAndFlush(t);
+    }
+
+    private StoryResponse designedStory(UUID epicId) {
+        StoryResponse story = service.create(epicId, new StoryRequest("S", "D"));
+        entityManager.flush();
+        StorySpecFixtures.approve(jdbc, story.id());
+        return story;
     }
 
     private EpicResponse makeEpic(String url) {

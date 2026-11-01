@@ -1,0 +1,279 @@
+package com.choruskube.core.service;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import com.choruskube.core.model.Epic;
+import com.choruskube.core.model.Story;
+import com.choruskube.core.model.Task;
+import com.choruskube.core.model.WorkItemDependency;
+import com.choruskube.core.model.WorkflowRun;
+import com.choruskube.core.model.enums.BlockableItemType;
+import com.choruskube.core.model.enums.WorkItemStatus;
+import com.choruskube.core.model.enums.WorkflowRunStatus;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
+import org.junit.jupiter.api.Test;
+
+class StoryDesignEligibilityTest {
+
+    private final Epic epic = epic();
+    private final Story story = story(epic);
+
+    /** What {@code loadEpicCandidates} reads: this Epic's own items. */
+    private final Map<UUID, String> candidateStatuses = new HashMap<>();
+
+    /** What only {@code assemble} resolves: a direct blocker that lives in another Epic. */
+    private final Map<UUID, String> externalStatuses = new HashMap<>();
+
+    private final List<WorkItemDependency> edges = new ArrayList<>();
+    private final Map<UUID, Integer> versions = new HashMap<>();
+    private final Set<UUID> openDesign = new HashSet<>();
+    private final Map<UUID, WorkflowRun> latestDesignRuns = new HashMap<>();
+    private final List<Task> tasks = new ArrayList<>();
+
+    @Test
+    void undesignedStoryWithNoTasks_isDesignable() {
+        assertThat(designable()).isTrue();
+    }
+
+    @Test
+    void storyWithABacklogTask_isDesignable() {
+        task(WorkItemStatus.done);
+        task(WorkItemStatus.backlog);
+
+        assertThat(designable()).isTrue();
+    }
+
+    @Test
+    void storyWhoseTasksAllRan_isNotDesignable() {
+        // A Task left in_progress by a finished run keeps the Story from rolling up to done.
+        task(WorkItemStatus.in_progress);
+        task(WorkItemStatus.done);
+
+        assertThat(designable()).isFalse();
+    }
+
+    @Test
+    void storyWhoseTasksAllRan_isNotReportedAsHeld() {
+        task(WorkItemStatus.in_progress);
+        latestDesignRun(WorkflowRunStatus.failed);
+
+        assertThat(holdingRun()).isEmpty();
+    }
+
+    @Test
+    void approvedVersion_isNotDesignable() {
+        versions.put(story.getId(), 1);
+
+        assertThat(designable()).isFalse();
+    }
+
+    @Test
+    void openDesignRun_isNotDesignable() {
+        openDesign.add(story.getId());
+
+        assertThat(designable()).isFalse();
+    }
+
+    @Test
+    void doneStory_isNotDesignable() {
+        candidateStatuses.put(story.getId(), WorkItemStatus.done.name());
+
+        assertThat(designable()).isFalse();
+    }
+
+    @Test
+    void rolledOutStory_isNotDesignable() {
+        story.setStage(WorkItemStatus.rolled_out);
+
+        assertThat(designable()).isFalse();
+    }
+
+    @Test
+    void blockingStoryWithApprovedSpec_isSatisfiedBeforeItsCodeLands() {
+        UUID blocker = inEpicStory(WorkItemStatus.in_progress);
+        blocks(blocker, BlockableItemType.story, story.getId(), BlockableItemType.story);
+        versions.put(blocker, 2);
+
+        assertThat(designable()).isTrue();
+    }
+
+    @Test
+    void blockingStoryWithoutSpec_blocksUntilDone() {
+        UUID blocker = inEpicStory(WorkItemStatus.in_progress);
+        blocks(blocker, BlockableItemType.story, story.getId(), BlockableItemType.story);
+
+        assertThat(designable()).isFalse();
+
+        candidateStatuses.put(blocker, WorkItemStatus.done.name());
+        assertThat(designable()).isTrue();
+    }
+
+    @Test
+    void blockingTask_isSatisfiedOnlyWhenDone_evenWithASpecOnItsId() {
+        UUID blocker = UUID.randomUUID();
+        candidateStatuses.put(blocker, WorkItemStatus.in_progress.name());
+        blocks(blocker, BlockableItemType.task, story.getId(), BlockableItemType.story);
+        versions.put(blocker, 1);
+
+        assertThat(designable()).isFalse();
+
+        candidateStatuses.put(blocker, WorkItemStatus.done.name());
+        assertThat(designable()).isTrue();
+    }
+
+    @Test
+    void blockerOfTheStorysEpic_holdsTheStoryBack() {
+        UUID blockingEpic = UUID.randomUUID();
+        externalStatuses.put(blockingEpic, WorkItemStatus.in_progress.name());
+        blocks(blockingEpic, BlockableItemType.epic, epic.getId(), BlockableItemType.epic);
+
+        assertThat(designable()).isFalse();
+
+        externalStatuses.put(blockingEpic, WorkItemStatus.done.name());
+        assertThat(designable()).isTrue();
+    }
+
+    @Test
+    void crossEpicBlockingStory_isJudgedByTheStatusTheReadinessWalkRead() {
+        UUID external = UUID.randomUUID();
+        externalStatuses.put(external, WorkItemStatus.done.name());
+        blocks(external, BlockableItemType.story, story.getId(), BlockableItemType.story);
+
+        assertThat(designable()).isTrue();
+    }
+
+    @Test
+    void blockerOfOneOfItsTasks_doesNotHoldTheDesignBack() {
+        UUID ownTask = UUID.randomUUID();
+        UUID blocker = UUID.randomUUID();
+        candidateStatuses.put(ownTask, WorkItemStatus.backlog.name());
+        candidateStatuses.put(blocker, WorkItemStatus.backlog.name());
+        blocks(blocker, BlockableItemType.task, ownTask, BlockableItemType.task);
+
+        assertThat(designable()).isTrue();
+    }
+
+    @Test
+    void anEdgeTheStoryBlocks_isNotABlockerOfIt() {
+        UUID downstream = inEpicStory(WorkItemStatus.backlog);
+        blocks(story.getId(), BlockableItemType.story, downstream, BlockableItemType.story);
+
+        assertThat(designable()).isTrue();
+    }
+
+    @Test
+    void failedLatestDesignRun_holdsTheStory() {
+        WorkflowRun failed = latestDesignRun(WorkflowRunStatus.failed);
+
+        assertThat(designable()).isFalse();
+        assertThat(holdingRun()).contains(failed);
+    }
+
+    @Test
+    void cancelledLatestDesignRun_holdsTheStory() {
+        WorkflowRun cancelled = latestDesignRun(WorkflowRunStatus.cancelled);
+
+        assertThat(designable()).isFalse();
+        assertThat(holdingRun()).contains(cancelled);
+    }
+
+    @Test
+    void openDesignRun_isNeverAHold() {
+        // Completed-but-unrecorded counts as open too, so it is not a hold either.
+        latestDesignRun(WorkflowRunStatus.completed);
+        openDesign.add(story.getId());
+
+        assertThat(holdingRun()).isEmpty();
+    }
+
+    @Test
+    void approvedOrDoneStory_isNeverHeld() {
+        latestDesignRun(WorkflowRunStatus.failed);
+        versions.put(story.getId(), 1);
+        assertThat(holdingRun()).isEmpty();
+
+        versions.clear();
+        candidateStatuses.put(story.getId(), WorkItemStatus.done.name());
+        assertThat(holdingRun()).isEmpty();
+    }
+
+    private boolean designable() {
+        EpicReadinessAssembler.EpicCandidates candidates = candidates();
+        Map<UUID, String> effective = new HashMap<>(candidateStatuses);
+        effective.putAll(externalStatuses);
+        EpicReadinessAssembler.Assembly assembly =
+                new EpicReadinessAssembler.Assembly(Map.of(), List.of(), List.of(), edges, Map.of(), effective);
+        return StoryDesignEligibility.isDesignable(story, candidates, assembly, versions, openDesign, latestDesignRuns);
+    }
+
+    private Optional<WorkflowRun> holdingRun() {
+        return StoryDesignEligibility.holdingRun(story, candidates(), versions, openDesign, latestDesignRuns);
+    }
+
+    private EpicReadinessAssembler.EpicCandidates candidates() {
+        candidateStatuses.putIfAbsent(story.getId(), WorkItemStatus.backlog.name());
+        return new EpicReadinessAssembler.EpicCandidates(
+                List.of(story),
+                Map.of(story.getId(), List.copyOf(tasks)),
+                Set.copyOf(candidateStatuses.keySet()),
+                Map.copyOf(candidateStatuses),
+                Map.of(story.getId(), epic.getId()));
+    }
+
+    private WorkflowRun latestDesignRun(WorkflowRunStatus status) {
+        WorkflowRun run = new WorkflowRun();
+        run.setId(UUID.randomUUID());
+        run.setStoryId(story.getId());
+        run.setStatus(status);
+        latestDesignRuns.put(story.getId(), run);
+        return run;
+    }
+
+    private void task(WorkItemStatus status) {
+        Task t = new Task();
+        t.setId(UUID.randomUUID());
+        t.setStoryId(story.getId());
+        t.setStatus(status);
+        tasks.add(t);
+    }
+
+    private UUID inEpicStory(WorkItemStatus status) {
+        UUID id = UUID.randomUUID();
+        candidateStatuses.put(id, status.name());
+        return id;
+    }
+
+    private void blocks(
+            UUID blockingId, BlockableItemType blockingType, UUID blockedId, BlockableItemType blockedType) {
+        WorkItemDependency edge = new WorkItemDependency();
+        edge.setId(UUID.randomUUID());
+        edge.setBlockingItemId(blockingId);
+        edge.setBlockingItemType(blockingType);
+        edge.setBlockedItemId(blockedId);
+        edge.setBlockedItemType(blockedType);
+        edges.add(edge);
+    }
+
+    private static Epic epic() {
+        Epic e = new Epic();
+        e.setId(UUID.randomUUID());
+        e.setStage(WorkItemStatus.backlog);
+        return e;
+    }
+
+    private static Story story(Epic parent) {
+        Story s = new Story();
+        s.setId(UUID.randomUUID());
+        s.setEpicId(parent.getId());
+        s.setTitle("Story");
+        s.setStage(WorkItemStatus.backlog);
+        return s;
+    }
+}

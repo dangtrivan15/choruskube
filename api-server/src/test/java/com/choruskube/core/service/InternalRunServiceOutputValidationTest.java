@@ -69,7 +69,8 @@ class InternalRunServiceOutputValidationTest {
                 null,
                 null,
                 null,
-                null);
+                null,
+                Mockito.mock(StoryConflictRecorder.class));
     }
 
     private NodeExecution stubExec(UUID id) {

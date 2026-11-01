@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
+import com.choruskube.core.repository.WorkflowRunRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -19,7 +20,8 @@ class UploadServiceGateTextTest {
     @Test
     void storesTextAsAGateAttachment_keyedLikeUploadedFiles() throws Exception {
         S3Client s3 = mock(S3Client.class);
-        UploadService service = new UploadService(s3, new ObjectMapper());
+        UploadService service = new UploadService(
+                s3, new ObjectMapper(), mock(StoragePrefixResolver.class), mock(WorkflowRunRepository.class));
         ReflectionTestUtils.setField(service, "bucket", "artifacts");
         UUID runId = UUID.randomUUID();
         UUID execId = UUID.randomUUID();

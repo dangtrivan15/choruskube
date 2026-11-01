@@ -2,6 +2,7 @@ package com.choruskube.core.service;
 
 import com.choruskube.core.dto.ValidationResponse;
 import com.choruskube.core.model.DriftRecheckConfig;
+import com.choruskube.core.model.StoryVersionRecheckConfig;
 import com.choruskube.core.model.TemplateEdge;
 import com.choruskube.core.model.TemplateNode;
 import com.choruskube.core.model.enums.PullRequestMergeMethod;
@@ -183,6 +184,29 @@ public class GraphValidationService {
             }
             if (!declaresApprovedDecision(node, edges)) {
                 errors.add("Node '" + node.getLabel() + "' declares drift_recheck but has no 'approved' decision");
+            }
+        }
+
+        // A Story spec that moved turns the approval into `route`; a route the gate cannot fire
+        // would leave the approval neither applied nor rerouted.
+        for (TemplateNode node : nodes) {
+            JsonNode recheck = readConfigNode(node, StoryVersionRecheckConfig.CONFIG_KEY);
+            if (recheck == null) {
+                continue;
+            }
+            String route = recheck.path("route").asText("");
+            if (route.isBlank()) {
+                errors.add("Node '" + node.getLabel() + "' declares story_version_recheck without a route");
+            } else if ("approved".equalsIgnoreCase(route)) {
+                errors.add("Node '" + node.getLabel() + "' declares story_version_recheck route '" + route
+                        + "', the decision it re-checks");
+            } else if (!hasOutgoingCondition(node, edges, route)) {
+                errors.add("Node '" + node.getLabel() + "' declares story_version_recheck route '" + route
+                        + "' but has no outgoing '" + route + "' edge");
+            }
+            if (!declaresApprovedDecision(node, edges)) {
+                errors.add(
+                        "Node '" + node.getLabel() + "' declares story_version_recheck but has no 'approved' decision");
             }
         }
 

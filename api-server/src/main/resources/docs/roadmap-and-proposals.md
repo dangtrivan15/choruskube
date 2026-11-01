@@ -36,11 +36,30 @@ Click a Story to open its detail view, which lists its Tasks. Click **New Task**
 same way. A Task is the leaf of the hierarchy and the only thing that can be started as a
 workflow run.
 
+## Designing a Story
+
+A Story is designed once, and each of its Tasks is then delivered against that design. Open a
+Story's detail view and click **Design** to start a **Story Design** run: an agent drafts the
+Story's spec and a breakdown into Tasks, a reviewer agent iterates on it, and you approve it at
+**Approve Story Spec**. Approving records the spec as the Story's next version and creates the
+Tasks it proposed under the Story. Existing Tasks are never edited or removed.
+
+The Story's Spec panel shows the current version, earlier versions, and a Revisions log. A Task
+that finds the spec wrong given the code as it is now sends a conflict back to the Story, and a
+revision run answers it. Click **Revise** to start a revision yourself, with guidance. Every
+revision goes through the same review and approval as the first design.
+
 ## Starting and Restarting a Task
 
-Open a Task's detail view and click **Start** to launch a workflow run scoped to the Epic's
+Open a Task's detail view and click **Start** to launch a Task Delivery run scoped to the Epic's
 Software Project. The Task moves to `in_progress` and the run appears immediately with a live
 status.
+
+**Start** is disabled, with the reason, while the Task's Story has no approved spec ("Story spec
+not approved yet") or its spec is being revised ("Story spec under revision"). The run records the
+spec version it planned against. Task Delivery begins with an **Analyze** step that plans the Task
+against the current code and decides whether it needs a Task-level spec of its own; see
+[Features](features).
 
 Every run a Task ever launches stays visible in its **Run History** list, newest first — restarting
 a Task after a failed or cancelled run does not lose the earlier attempt, it adds a new run

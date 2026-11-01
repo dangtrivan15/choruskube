@@ -30,6 +30,7 @@ import io.temporal.client.WorkflowStub;
 import jakarta.annotation.Nullable;
 import java.util.*;
 import java.util.Optional;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -91,6 +92,7 @@ public class RunService {
     private final TaskSettlementService taskSettlement;
     private final GateRecheckService gateRecheck;
     private final GateFinalizeService gateFinalize;
+    private final StorySpecService storySpecService;
 
     @Value("${temporal.task-queue}")
     private String taskQueue;
@@ -133,7 +135,8 @@ public class RunService {
             @Lazy RoadmapProposalValidator roadmapProposalValidator,
             TaskSettlementService taskSettlement,
             GateRecheckService gateRecheck,
-            @Lazy GateFinalizeService gateFinalize) {
+            @Lazy GateFinalizeService gateFinalize,
+            StorySpecService storySpecService) {
         this.runRepo = runRepo;
         this.execRepo = execRepo;
         this.edgeRepo = edgeRepo;
@@ -172,10 +175,25 @@ public class RunService {
         this.taskSettlement = taskSettlement;
         this.gateRecheck = gateRecheck;
         this.gateFinalize = gateFinalize;
+        this.storySpecService = storySpecService;
     }
 
     @Transactional
     public RunResponse startRun(CreateRunRequest request) {
+        return startRun(request, QuotaChecker::checkRunQuota);
+    }
+
+    /**
+     * {@link #startRun} without the concurrent-run cap; every other run-start limit still applies.
+     * Only for a system start that unblocks runs already holding concurrent-run slots — see
+     * {@link QuotaChecker#checkRunQuotaExceptConcurrency()}. A start a human asks for never uses it.
+     */
+    @Transactional
+    public RunResponse startRunExemptFromConcurrentQuota(CreateRunRequest request) {
+        return startRun(request, QuotaChecker::checkRunQuotaExceptConcurrency);
+    }
+
+    private RunResponse startRun(CreateRunRequest request, Consumer<QuotaChecker> runQuotaCheck) {
         GraphTemplate template = graphTemplateRepo
                 .findById(request.graphTemplateId())
                 .orElseThrow(() -> new NotFoundException("Template not found"));
@@ -209,7 +227,7 @@ public class RunService {
         // of the second save (alongside externalRunId) so the column never holds a
         // staging path the agent would later be forbidden from reading.
 
-        quotaService.ifPresent(QuotaChecker::checkRunQuota); // throws QuotaExceededException (429)
+        quotaService.ifPresent(runQuotaCheck); // throws QuotaExceededException (429)
 
         run = runRepo.save(run);
 
@@ -335,7 +353,8 @@ public class RunService {
                     run.getCompletedAt(),
                     run.getCreatedAt(),
                     run.getAutopilotId(),
-                    softwareProjectByRunId.get(run.getId()));
+                    softwareProjectByRunId.get(run.getId()),
+                    run.getStorySpecVersion());
         });
     }
 
@@ -386,6 +405,7 @@ public class RunService {
         runRepo.save(run);
         gateRecheck.voidLiveForRun(id, GateRecheckService.RUN_ENDED);
         taskSettlement.closeIfSettledBy(run);
+        announceEndedStoryDesign(run);
         auditSink.record(AuditSink.RUN_CANCELLED, "workflow_run", id, null);
 
         // Mark any non-terminal node executions as skipped so they don't
@@ -404,6 +424,22 @@ public class RunService {
                 eventPublisher.publishNodeStatusChanged(id, exec.getId(), "skipped");
             }
         }
+    }
+
+    /**
+     * A Story's pages read "Design in progress" off its open design run, and a design run that fails
+     * or is cancelled stops being open with no Story write to announce it. A completed one is
+     * announced when its version is recorded.
+     */
+    void announceEndedStoryDesign(WorkflowRun run) {
+        if (run.getStoryId() == null
+                || (run.getStatus() != WorkflowRunStatus.failed && run.getStatus() != WorkflowRunStatus.cancelled)) {
+            return;
+        }
+        storyRepo
+                .findById(run.getStoryId())
+                .ifPresent(story -> eventPublisher.publishRoadmapItemChanged(
+                        "story", story.getId(), story.getStage().name()));
     }
 
     public void retryNode(UUID runId, UUID nodeExecId) {
@@ -468,16 +504,33 @@ public class RunService {
     public SignalResponse signalHumanDecision(UUID runId, UUID nodeExecId, SignalRequest request) {
         WorkflowRun run = findRunOrThrow(runId);
         authService.checkOrgAccess("workflow_run", runId);
+        return decideGate(run, findGateInRun(runId, nodeExecId), request);
+    }
+
+    /**
+     * A decision the system makes on a run's behalf: the claim and validation a reviewer's decision
+     * gets, with no caller to authorize. Off-request it must run inside {@link RunScopeBinder}.
+     */
+    public SignalResponse decideGateAsSystem(UUID runId, UUID nodeExecId, SignalRequest request) {
+        return decideGate(findRunOrThrow(runId), findGateInRun(runId, nodeExecId), request);
+    }
+
+    private NodeExecution findGateInRun(UUID runId, UUID nodeExecId) {
         NodeExecution exec = execRepo.findById(nodeExecId)
                 .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
-
         NodeExecutionUtil.requireInRun(exec, runId);
-        return decideGate(run, exec, request);
+        return exec;
     }
 
     private SignalResponse decideGate(WorkflowRun run, NodeExecution exec, SignalRequest request) {
         UUID runId = run.getId();
         UUID nodeExecId = exec.getId();
+
+        // Ahead of the async hand-over and the claim, so a refusal leaves the gate as it was.
+        Optional<SignalResponse> rerouted = recheckStoryVersion(run, exec, request);
+        if (rerouted.isPresent()) {
+            return rerouted.get();
+        }
 
         JsonNode snapshot = readSnapshot(run);
         String decision = validateDecisionAgainstEdges(snapshot, exec.getTemplateNodeId(), request.decision());
@@ -545,6 +598,111 @@ public class RunService {
         }
         afterSignal(runId, nodeExecId);
         return SignalResponse.signaled();
+    }
+
+    /**
+     * A Task run's approval at a gate with {@code story_version_recheck}: refused while its Story's
+     * spec is under revision; when the spec moved since the run planned, turned into the gate's
+     * re-check route with the current spec and guidance naming the new Revisions entries, after
+     * which a human approves again. Empty when the approval proceeds as it is.
+     */
+    private Optional<SignalResponse> recheckStoryVersion(WorkflowRun run, NodeExecution exec, SignalRequest request) {
+        // A gate no longer awaiting is refused by the claim; writing first would replace the
+        // guidance a reviewer's decision left at this execution.
+        if (exec.getStatus() != NodeExecutionStatus.awaiting_human
+                || run.getTaskId() == null
+                || !"approved".equalsIgnoreCase(request.decision())) {
+            return Optional.empty();
+        }
+        Optional<StoryVersionStale> stale = storyVersionStale(run, exec.getTemplateNodeId(), readSnapshot(run));
+        if (stale.isEmpty()) {
+            return Optional.empty();
+        }
+        if (stale.get().revisionRunId() != null) {
+            throw new ConflictException(stale.get().reason());
+        }
+
+        UUID runId = run.getId();
+        int planned = stale.get().planned();
+        StorySpecVersion current = stale.get().current();
+        String guidance = storyVersionGuidance(planned, current.getVersion());
+        uploadService.overwriteRunInput(runId, StorySpecLifecycleService.SPEC_FILE, current.getContent());
+        String guidanceRefs = uploadService.uploadGateText(
+                storagePrefixResolver.storagePrefixForRun(runId),
+                runId,
+                exec.getId(),
+                StorySpecLifecycleService.GUIDANCE_FILE,
+                guidance);
+        SignalResponse response =
+                decideGate(run, exec, new SignalRequest(stale.get().route(), guidance, guidanceRefs, null));
+        // Recorded only once the round is under way: recorded for a round that never started, it
+        // would let the next approval skip that round. Unrecorded, the next approval re-runs it.
+        try {
+            runRepo.setStorySpecVersion(runId, current.getVersion());
+        } catch (RuntimeException e) {
+            logger.error(
+                    "Could not record Story spec v{} on run {}: {}", current.getVersion(), runId, e.getMessage(), e);
+        }
+        logger.info(
+                "Approval of gate {} of run {} became '{}': {}",
+                exec.getId(),
+                runId,
+                stale.get().route(),
+                stale.get().reason());
+        return Optional.of(response);
+    }
+
+    /**
+     * Why an approval at this gate by a Task's run must not apply as it is: set {@code
+     * revisionRunId} while the Story's spec is under revision, otherwise the spec moved from {@code
+     * planned} to {@code current}.
+     */
+    record StoryVersionStale(UUID revisionRunId, String route, int planned, StorySpecVersion current) {
+
+        String reason() {
+            return revisionRunId != null
+                    ? "The Story spec is under revision (run " + revisionRunId + "); approve after it completes."
+                    : "The Story spec moved from v" + planned + " to v" + current.getVersion()
+                            + " since this Task planned.";
+        }
+    }
+
+    /**
+     * The one story-version test every path applying an approval asks, so a held approval re-applied
+     * by the workflow is judged exactly as a human's click. Empty for a gate without {@code
+     * story_version_recheck}, a run without a Task, or a spec unchanged since the run planned.
+     */
+    Optional<StoryVersionStale> storyVersionStale(WorkflowRun run, UUID gateTemplateNodeId, JsonNode snapshot) {
+        if (run.getTaskId() == null) {
+            return Optional.empty();
+        }
+        Optional<StoryVersionRecheckConfig> recheck = StoryVersionRecheckConfig.fromConfigOverrides(
+                decisionOptionsResolver.findNodeConfigOverrides(snapshot.get("nodes"), gateTemplateNodeId));
+        if (recheck.isEmpty()) {
+            return Optional.empty();
+        }
+        UUID storyId = taskRepo.findById(run.getTaskId()).map(Task::getStoryId).orElse(null);
+        if (storyId == null) {
+            return Optional.empty();
+        }
+        String route = recheck.get().route();
+        Optional<WorkflowRun> revision = storySpecService.openDesignRun(storyId);
+        if (revision.isPresent()) {
+            return Optional.of(new StoryVersionStale(revision.get().getId(), route, 0, null));
+        }
+        Optional<StorySpecVersion> current = storySpecService.current(storyId);
+        Integer planned = run.getStorySpecVersion();
+        if (current.isEmpty() || planned == null || current.get().getVersion() <= planned) {
+            return Optional.empty();
+        }
+        return Optional.of(new StoryVersionStale(null, route, planned, current.get()));
+    }
+
+    static String storyVersionGuidance(int planned, int current) {
+        return String.format(
+                "The Story spec moved from v%d to v%d since this Task planned. Read the Revisions entries for v%d"
+                        + " through v%d in /workspace/in/run_input/story_spec.md and check this change against them.",
+                planned, current, planned + 1, current);
     }
 
     /**
@@ -777,11 +935,17 @@ public class RunService {
     /**
      * Package-private method for review history — no org check.
      * Called from InternalRunService (same package).
+     *
+     * <p>A Story Design run's loop history spans all of its Story's runs, so a revision's reviewer
+     * sees why earlier versions were decided and does not silently reverse them.
      */
     List<ReviewHistoryResponse> getReviewHistoryInternal(UUID runId, String loopGroup) {
         List<NodeExecution> reviews;
         if (loopGroup != null && !loopGroup.isBlank()) {
-            reviews = execRepo.findByWorkflowRunIdAndLoopGroupOrderByIterationAsc(runId, loopGroup);
+            UUID storyId = runRepo.findById(runId).map(WorkflowRun::getStoryId).orElse(null);
+            reviews = storyId != null
+                    ? execRepo.findStoryLoopHistory(storyId, loopGroup)
+                    : execRepo.findByWorkflowRunIdAndLoopGroupOrderByIterationAsc(runId, loopGroup);
         } else {
             reviews = execRepo.findByWorkflowRunIdAndLoopGroupIsNotNullOrderByCompletedAtAsc(runId);
         }
@@ -1068,7 +1232,8 @@ public class RunService {
                 promptText,
                 taskSummary,
                 run.getAutopilotId(),
-                softwareProjectRef);
+                softwareProjectRef,
+                run.getStorySpecVersion());
     }
 
     private @Nullable String extractPromptText(@Nullable GraphTemplate template, @Nullable String inputsJson) {

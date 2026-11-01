@@ -83,13 +83,19 @@ api-server makes none. See
 
 ## Task-triggered runs
 
-A Feature Development run can be started from a roadmap **Task** — the leaf of the
-**Epic → Story → Task** hierarchy — rather than manually. Starting a Task composes the
-run's `feature_request` input deterministically: the task-start path (`DefaultTaskService`)
-walks the Task's parent Story and grandparent Epic and folds their titles, descriptions,
-and the Epic's motivation into `feature_request`, with the Task as the lead section and a
-labelled "Parent context" section beneath it. A blank or missing parent field is omitted
-rather than rendered as an empty header, so a Task with no ancestry content degrades to a
+A **Task Delivery** run is started from a roadmap **Task** — the leaf of the
+**Epic → Story → Task** hierarchy — rather than manually. A Task is startable only once its
+Story has an approved spec: a **Story Design** run, started once per Story, produces that spec and
+the Task breakdown, and each Task's Task Delivery run plans against it. A Task that finds the
+Story spec wrong escalates to the Story, and the revision is a new Story Design run. See
+[docs/decisions/2026-11-01---01-design-per-story-deliver-per-task.md](docs/decisions/2026-11-01---01-design-per-story-deliver-per-task.md).
+Feature Development remains for runs started without a Task.
+
+Starting a Task composes the run's `feature_request` input deterministically: the task-start
+path (`DefaultTaskService`) walks the Task's parent Story and grandparent Epic and folds their
+titles, descriptions, and the Epic's motivation into `feature_request`, with the Task as the lead
+section and a labelled "Parent context" section beneath it. A blank or missing parent field is
+omitted rather than rendered as an empty header, so a Task with no ancestry content degrades to a
 Task-only prompt.
 
 This composition happens once, at start — it is a point-in-time snapshot, not a live view.
@@ -101,13 +107,15 @@ the source of truth for current state.
 ## Roadmap proposals and gates
 
 Some workflow templates include a **human-approval gate configured to review roadmap
-changes** — Feature Development's Final Approval, and the Roadmap Provisioner's own
-gate. A gate like this declares a `materialize` mode in its config:
+changes** — the Final Approval of Feature Development and of Task Delivery, Story Design's
+Approve Story Spec, and the Roadmap Provisioner's own gate. A gate like this declares a
+`materialize` mode in its config:
 
 - `roadmap_candidates` — the Roadmap Provisioner's mode: the proposal document
   describes wholly new Epic → Story → Task trees.
-- `roadmap_extension` — Feature Development's mode: the proposal may extend the
-  run's own Epic (when the run was started from a Task) with new Stories and Tasks,
+- `roadmap_extension` — the mode of Feature Development, Task Delivery and Story Design:
+  the proposal may extend the run's own Epic (when the run was started from a Task or a
+  Story) with new Stories and Tasks,
   or introduce a genuinely separate new Epic, but may not attach new items under any
   other existing Epic.
 
@@ -154,9 +162,9 @@ creation, and a close that fails is logged and never blocks completion.
 ## Merging pull requests on approval
 
 A human gate can declare `merge_pull_requests: <merge|squash|rebase>` in its config —
-Feature Development's Final Approval declares `squash`. The method only takes effect
-on the `approved` decision; graph validation rejects the key on a node with no such
-decision, and an unknown method.
+the Final Approval of Feature Development and of Task Delivery declares `squash`. The
+method only takes effect on the `approved` decision; graph validation rejects the key on
+a node with no such decision, and an unknown method.
 
 On `approved`, the API validates the decision and any roadmap edit, moves the gate
 from `awaiting_human` to `finalizing`, records the approval and signals the
@@ -179,6 +187,14 @@ A run found stale against the current default branch holds the approval instead 
 acting on it and routes to its own re-check; the workflow re-applies the held approval
 itself, inside its own event stream, the moment the gate reopens, so no reviewer click
 can race it.
+
+Task Delivery's Approve Task Spec and Final Approval also declare
+`story_version_recheck`. While the Task's Story spec is under revision an approval is
+refused; once the spec has moved past the version the run planned against, a click
+routes to the re-check with the current spec instead of finalizing, a held approval is
+voided rather than re-applied, and a plan is refused — so no Task merges against a
+Story spec it was not re-checked against. See
+[2026-11-01---01](docs/decisions/2026-11-01---01-design-per-story-deliver-per-task.md).
 
 Pull request rows, Task closure and run-branch cleanup are unchanged: a merge
 timestamp written by approval takes a row out of the reconciler's unmerged scan the

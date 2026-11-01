@@ -12,6 +12,7 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -61,10 +62,10 @@ public class ArtifactService {
      * repository lookup, no org-access check.
      *
      * <p>INTERNAL ONLY, package-private on purpose so an {@code /api/**} controller cannot reach
-     * it even by accident — use {@link #listArtifacts} there, which checks org access. The single
-     * caller is the node-completion callback path (already authenticated by {@code
-     * InternalAuthFilter} on {@code /internal/**}), which passes the execution's in-flight,
-     * not-yet-persisted {@code artifactRefs} deliberately: {@code updateNodeExecutionStatus} is
+     * it even by accident — use {@link #listArtifacts} there, which checks org access. Callers sit
+     * on {@code /internal/**}, already authenticated by {@code InternalAuthFilter}. The
+     * node-completion callback passes the execution's in-flight, not-yet-persisted {@code
+     * artifactRefs} deliberately: {@code updateNodeExecutionStatus} is
      * not {@code @Transactional} and Spring Boot runs with {@code open-in-view=false}, so an
      * execId-keyed re-fetch here would read the last-committed row instead of the mutation the
      * caller just made in memory — exactly the state the agent's completion callback is racing
@@ -76,6 +77,26 @@ public class ArtifactService {
             return List.of();
         }
         return listEntriesUnder(prefix).stream().map(ArtifactEntry::name).toList();
+    }
+
+    /**
+     * One output file's text, read from an already-known {@code artifactRefs} blob with no org check:
+     * INTERNAL ONLY, for the same callers and reasons as {@link #listArtifactNamesInternal}. Empty when
+     * the execution wrote no output or not this file; any other storage failure throws.
+     */
+    Optional<String> readArtifactTextInternal(String artifactRefs, String filename) {
+        String prefix = extractOutputPrefix(artifactRefs);
+        if (prefix == null || !isValidArtifactName(filename)) {
+            return Optional.empty();
+        }
+        try (InputStream stream = s3Client.getObject(
+                GetObjectRequest.builder().bucket(bucket).key(prefix + filename).build())) {
+            return Optional.of(new String(stream.readAllBytes(), StandardCharsets.UTF_8));
+        } catch (NoSuchKeyException e) {
+            return Optional.empty();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to fetch artifact from object storage", e);
+        }
     }
 
     /**

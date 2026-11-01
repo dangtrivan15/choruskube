@@ -273,7 +273,7 @@ public class InternalRunController {
 
     /**
      * No Epic ID in the path; the Epic is derived server-side from the calling run's own
-     * triggering Task ({@code run.task_id -> Task -> Story -> Epic}).
+     * triggering Task ({@code run.task_id -> Task -> Story -> Epic}), or a Story Design run's Story.
      */
     @GetMapping("/{runId}/node-executions/{nodeExecId}/graph")
     public RoadmapGraphSnapshot getGraphForCurrentTask(@PathVariable UUID runId, @PathVariable UUID nodeExecId) {

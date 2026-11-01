@@ -18,6 +18,8 @@ import type {
   AutopilotStatus,
   EpicDependencyResponse,
   GateStampResponse,
+  StoryConflictResponse,
+  StorySpecResponse,
 } from "../../src/lib/types";
 
 // E2e-mode defaults (2xxxx range). Local-mode runs on 1xxxx — override via
@@ -145,6 +147,9 @@ export interface Story {
   priority: string;
   targetDate: string | null;
   progress: { totalTasks: number; doneTasks: number };
+  specVersion: number | null;
+  specUnderRevision: boolean;
+  openDesignRunId: string | null;
 }
 
 export interface Task {
@@ -546,6 +551,10 @@ export class TestApiClient {
     return this.patch(`/api/v1/stories/${id}/target-date`, { targetDate });
   }
 
+  async getStory(id: string): Promise<Story> {
+    return this.get(`/api/v1/stories/${id}`);
+  }
+
   async listTasks(storyId: string): Promise<Task[]> {
     return this.get(`/api/v1/stories/${storyId}/tasks`);
   }
@@ -577,6 +586,100 @@ export class TestApiClient {
    */
   async completeTask(id: string): Promise<Task> {
     return this.patch(`/api/v1/tasks/${id}/complete`);
+  }
+
+  // ── Story specs ──────────────────────────────────────────────────
+  //
+  // A Task starts only once its Story's spec is approved. Designing runs E2eTestDataSeeder's mock
+  // copy of Story Design, whose nodes clone the Story's project — so a Story on `workerRepo`,
+  // which is never cloneable, cannot be designed: build it on the `cloneableProject` fixture.
+
+  /** Starts the Story's first Story Design run. */
+  async designStory(storyId: string): Promise<WorkflowRun> {
+    return this.post(`/api/v1/stories/${storyId}/design`);
+  }
+
+  /** The Story's current approved spec, or `null` before its first approval (the endpoint's 404). */
+  async getStorySpec(storyId: string): Promise<StorySpecResponse | null> {
+    const path = `/api/v1/stories/${storyId}/spec`;
+    const res = await fetch(`${this.baseUrl}${path}`, { headers: await this.authHeaders() });
+    if (res.status === 404) return null;
+    if (!res.ok) {
+      throw new Error(`GET ${path} → ${res.status}: ${await res.text()}`);
+    }
+    return res.json() as Promise<StorySpecResponse>;
+  }
+
+  /** Conflicts Task runs raised against the Story's spec that no revision has answered yet. */
+  async getStoryConflicts(storyId: string): Promise<StoryConflictResponse[]> {
+    return this.get(`/api/v1/stories/${storyId}/conflicts`);
+  }
+
+  /**
+   * Designs the Story and approves its spec, resolving once the server has recorded it. Joins a
+   * design run already open on the Story: an Autopilot tick from another spec may start one first.
+   */
+  async approveStorySpec(
+    storyId: string,
+    timeoutMs = 180_000,
+    pollIntervalMs = 2_000,
+  ): Promise<StorySpecResponse> {
+    let runId: string;
+    try {
+      runId = (await this.designStory(storyId)).id;
+    } catch (e) {
+      const open = (await this.getStory(storyId)).openDesignRunId;
+      if (!open) throw e;
+      runId = open;
+    }
+    await this.approveDesignRun(runId, timeoutMs, pollIntervalMs);
+    return this.waitForStorySpecVersion(storyId, 1, 60_000, pollIntervalMs);
+  }
+
+  /**
+   * Approves a Story Design run at its `approve_story_spec` gate once its draft and review have run.
+   * A run that dead-ends first fails here, rather than as a timeout that hides why.
+   */
+  async approveDesignRun(runId: string, timeoutMs = 180_000, pollIntervalMs = 2_000): Promise<void> {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      const run = await this.getRun(runId);
+      if (run.status === "completed") return;
+      if (["failed", "cancelled", "awaiting_retry"].includes(run.status)) {
+        throw new Error(
+          `Story Design run ${runId} is ${run.status} before its approval gate. A Story on a project ` +
+            "the agent cannot clone (workerRepo) fails at its first node — use cloneableProject.",
+        );
+      }
+      const gate = run.nodeExecutions.find(
+        (ne) => ne.label === "approve_story_spec" && ne.status === "awaiting_human",
+      );
+      if (gate) {
+        await this.signalNode(runId, gate.id, { decision: "approved" });
+        return;
+      }
+      await sleep(pollIntervalMs);
+    }
+    throw new Error(`Story Design run ${runId} did not reach approve_story_spec within ${timeoutMs}ms`);
+  }
+
+  /**
+   * Polls until the Story's spec is at `version` or later. An approved design run is recorded by
+   * the server's reconciler (every 10s in e2e), not by the approval itself.
+   */
+  async waitForStorySpecVersion(
+    storyId: string,
+    version: number,
+    timeoutMs = 60_000,
+    pollIntervalMs = 2_000,
+  ): Promise<StorySpecResponse> {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      const spec = await this.getStorySpec(storyId);
+      if (spec && spec.version >= version) return spec;
+      await sleep(pollIntervalMs);
+    }
+    throw new Error(`Story ${storyId}'s spec did not reach v${version} within ${timeoutMs}ms`);
   }
 
   // ── Roadmap Graph View (Part 2) ────────────────────────────────────
@@ -794,6 +897,30 @@ export class TestApiClient {
     }
     throw new Error(
       `Node "${nodeLabel}" in run ${runId} did not reach [${targetStatuses.join(", ")}] within ${timeoutMs}ms`,
+    );
+  }
+
+  /** {@link waitForNodeStatus} for one iteration of the node, e.g. a re-run after a loop-back. */
+  async waitForNodeIteration(
+    runId: string,
+    nodeLabel: string,
+    iteration: number,
+    targetStatuses: string[],
+    timeoutMs = 60_000,
+    pollIntervalMs = 2_000,
+  ): Promise<NodeExecution> {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      const run = await this.getRun(runId);
+      const exec = run.nodeExecutions.find(
+        (ne) => ne.label === nodeLabel && ne.iteration === iteration && targetStatuses.includes(ne.status),
+      );
+      if (exec) return exec;
+      await sleep(pollIntervalMs);
+    }
+    throw new Error(
+      `Node "${nodeLabel}" iteration ${iteration} in run ${runId} did not reach ` +
+        `[${targetStatuses.join(", ")}] within ${timeoutMs}ms`,
     );
   }
 }

@@ -15,7 +15,9 @@ import com.choruskube.core.repository.WorkflowRunRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -28,6 +30,7 @@ class ArtifactResolutionServiceTest {
     private NodeExecutionRepository nodeExecutionRepo;
     private WorkflowRunRepository workflowRunRepo;
     private GraphSnapshotBuilder snapshotBuilder;
+    private ArtifactService artifactService;
     private ArtifactResolutionService service;
 
     @BeforeEach
@@ -36,13 +39,15 @@ class ArtifactResolutionServiceTest {
         nodeExecutionRepo = Mockito.mock(NodeExecutionRepository.class);
         workflowRunRepo = Mockito.mock(WorkflowRunRepository.class);
         snapshotBuilder = Mockito.mock(GraphSnapshotBuilder.class);
+        artifactService = Mockito.mock(ArtifactService.class);
         service = new ArtifactResolutionService(
                 templateNodeRepo,
                 nodeExecutionRepo,
                 workflowRunRepo,
                 snapshotBuilder,
                 new ObjectMapper(),
-                new DecisionOptionsResolver());
+                new DecisionOptionsResolver(),
+                artifactService);
     }
 
     @Test
@@ -682,6 +687,233 @@ class ArtifactResolutionServiceTest {
         assertThat(manifest.artifacts()).isEmpty();
     }
 
+    @Test
+    void resolveInputArtifactManifest_humanGateWithoutLoopGroup_passesItsAttachmentsOn() {
+        // A gate outside any loop group never gets a review-history row, so production leaves its
+        // reviewerType null: Task Delivery's Await Story Revision resumes Analyze this way.
+        ManifestFixture f = new ManifestFixture();
+        f.gateWithoutReviewHistoryRoutedHere(
+                "await_story_revision",
+                "human",
+                "{\"human_guidance.md\":\"system/runs/r/gate-attachments/g2/human_guidance.md\"}");
+        f.stub();
+
+        InputArtifactManifest manifest = service.resolveInputArtifactManifest(f.runId, f.execId);
+
+        assertThat(manifest.artifacts())
+                .containsEntry(
+                        "await_story_revision/human_guidance.md",
+                        "system/runs/r/gate-attachments/g2/human_guidance.md");
+        assertThat(manifest.required()).isEmpty();
+    }
+
+    @Test
+    void resolveInputArtifactManifest_agentNodeWithoutLoopGroup_isNotAGate() {
+        ManifestFixture f = new ManifestFixture();
+        f.gateWithoutReviewHistoryRoutedHere("analyze", "ai", "{\"output\":\"system/runs/r/analyze-1/out/\"}");
+        f.stub();
+
+        InputArtifactManifest manifest = service.resolveInputArtifactManifest(f.runId, f.execId);
+
+        assertThat(manifest.artifacts()).isEmpty();
+    }
+
+    // --- resolveInputArtifactManifest: newest-producer group ---
+
+    private static final String PLAN_GROUP = "[{\"newest_of\":[\"analyze\",\"task_spec_review\"],\"alias\":\"plan\","
+            + "\"artifacts\":[{\"name\":\"plan.md\",\"required\":true},{\"name\":\"task_spec.md\"}]}]";
+
+    @Test
+    void newestOf_picksLaterCompletedProducer() {
+        ManifestFixture f = new ManifestFixture();
+        f.declare(PLAN_GROUP);
+        Instant t1 = Instant.parse("2026-11-01T10:00:00Z");
+        NodeExecution analyze = f.producer("analyze", 1, t1, "runs/r/analyze-1/out/", "plan.md");
+        NodeExecution review = f.producer(
+                "task_spec_review", 1, t1.plusSeconds(60), "runs/r/review-1/out/", "plan.md", "task_spec.md");
+        f.stub();
+
+        InputArtifactManifest manifest = service.resolveInputArtifactManifest(f.runId, f.execId);
+
+        assertThat(analyze.getCompletedAt()).isBefore(review.getCompletedAt());
+        assertThat(manifest.artifacts())
+                .containsEntry("plan/plan.md", "runs/r/review-1/out/plan.md")
+                .containsEntry("plan/task_spec.md", "runs/r/review-1/out/task_spec.md");
+        assertThat(manifest.required()).containsExactly("plan/plan.md");
+    }
+
+    @Test
+    void newestOf_reanalyzeAfterReview_picksAnalyze() {
+        ManifestFixture f = new ManifestFixture();
+        f.declare(PLAN_GROUP);
+        Instant t1 = Instant.parse("2026-11-01T10:00:00Z");
+        f.producer("analyze", 1, t1, "runs/r/analyze-1/out/", "plan.md");
+        f.producer("task_spec_review", 1, t1.plusSeconds(60), "runs/r/review-1/out/", "plan.md", "task_spec.md");
+        f.producer("analyze", 2, t1.plusSeconds(120), "runs/r/analyze-2/out/", "plan.md");
+        f.stub();
+
+        InputArtifactManifest manifest = service.resolveInputArtifactManifest(f.runId, f.execId);
+
+        assertThat(manifest.artifacts()).containsEntry("plan/plan.md", "runs/r/analyze-2/out/plan.md");
+        // Analyze iteration 2 wrote no task_spec.md, and the earlier review's copy is stale.
+        assertThat(manifest.artifacts()).doesNotContainKey("plan/task_spec.md");
+    }
+
+    @Test
+    void newestOf_noProducerRan_skipsGroup() {
+        ManifestFixture f = new ManifestFixture();
+        f.declare(PLAN_GROUP);
+        f.stub();
+
+        InputArtifactManifest manifest = service.resolveInputArtifactManifest(f.runId, f.execId);
+
+        assertThat(manifest.artifacts().keySet()).noneMatch(k -> k.startsWith("plan/"));
+        assertThat(manifest.required()).isEmpty();
+    }
+
+    @Test
+    void newestOf_completionTie_goesToDeclarationOrder() {
+        ManifestFixture f = new ManifestFixture();
+        f.declare(PLAN_GROUP);
+        Instant sameInstant = Instant.parse("2026-11-01T10:00:00Z");
+        f.producer("task_spec_review", 1, sameInstant, "runs/r/review-1/out/", "plan.md");
+        f.producer("analyze", 1, sameInstant, "runs/r/analyze-1/out/", "plan.md");
+        f.stub();
+
+        InputArtifactManifest manifest = service.resolveInputArtifactManifest(f.runId, f.execId);
+
+        assertThat(manifest.artifacts()).containsEntry("plan/plan.md", "runs/r/analyze-1/out/plan.md");
+    }
+
+    @Test
+    void newestOf_executionWithoutCompletedAt_losesToOneWithIt() {
+        ManifestFixture f = new ManifestFixture();
+        f.declare(PLAN_GROUP);
+        f.producer("analyze", 1, null, "runs/r/analyze-1/out/", "plan.md");
+        f.producer("task_spec_review", 1, Instant.parse("2026-11-01T10:00:00Z"), "runs/r/review-1/out/", "plan.md");
+        f.stub();
+
+        InputArtifactManifest manifest = service.resolveInputArtifactManifest(f.runId, f.execId);
+
+        assertThat(manifest.artifacts()).containsEntry("plan/plan.md", "runs/r/review-1/out/plan.md");
+    }
+
+    @Test
+    void newestOf_requiredEntryTheProducerDidNotWrite_staysSoThePodFailsLoudly() {
+        ManifestFixture f = new ManifestFixture();
+        f.declare(PLAN_GROUP);
+        f.producer("analyze", 1, Instant.parse("2026-11-01T10:00:00Z"), "runs/r/analyze-1/out/", "task_spec.md");
+        f.stub();
+
+        InputArtifactManifest manifest = service.resolveInputArtifactManifest(f.runId, f.execId);
+
+        assertThat(manifest.artifacts())
+                .containsEntry("plan/plan.md", "runs/r/analyze-1/out/plan.md")
+                .containsEntry("plan/task_spec.md", "runs/r/analyze-1/out/task_spec.md");
+        assertThat(manifest.required()).containsExactly("plan/plan.md");
+    }
+
+    @Test
+    void newestOf_listingFailure_fallsBackToEveryDeclaredName() {
+        ManifestFixture f = new ManifestFixture();
+        f.declare(PLAN_GROUP);
+        NodeExecution analyze =
+                f.producer("analyze", 1, Instant.parse("2026-11-01T10:00:00Z"), "runs/r/analyze-1/out/", "plan.md");
+        f.stub();
+        Mockito.when(artifactService.listArtifactNamesInternal(analyze.getArtifactRefs()))
+                .thenThrow(new RuntimeException("object storage unavailable"));
+
+        InputArtifactManifest manifest = service.resolveInputArtifactManifest(f.runId, f.execId);
+
+        assertThat(manifest.artifacts())
+                .containsKeys("plan/plan.md", "plan/task_spec.md")
+                .containsEntry("plan/task_spec.md", "runs/r/analyze-1/out/task_spec.md");
+    }
+
+    @Test
+    void plainGroups_unchanged() {
+        ManifestFixture f = new ManifestFixture();
+        f.declare("[{\"template_node_label\":\"spec_review\",\"artifacts\":"
+                + "[{\"name\":\"spec_and_plan.md\",\"required\":true},{\"name\":\"spec_review.md\"}]}]");
+        f.sourceOutputPrefix("system/runs/r/src-exec/out/");
+        f.stub();
+
+        InputArtifactManifest manifest = service.resolveInputArtifactManifest(f.runId, f.execId);
+
+        // Both names appear although nothing was listed: a label group never consults the store.
+        assertThat(manifest.artifacts())
+                .containsEntry("spec_review/spec_and_plan.md", "system/runs/r/src-exec/out/spec_and_plan.md")
+                .containsEntry("spec_review/spec_review.md", "system/runs/r/src-exec/out/spec_review.md");
+        assertThat(manifest.required()).containsExactly("spec_review/spec_and_plan.md");
+        Mockito.verifyNoInteractions(artifactService);
+    }
+
+    @Test
+    void newestOf_andLabelGroupsMix() {
+        ManifestFixture f = new ManifestFixture();
+        f.declare("[{\"template_node_label\":\"spec_review\",\"artifacts\":[{\"name\":\"spec_review.md\"}]},"
+                + "{\"newest_of\":[\"analyze\"],\"alias\":\"plan\",\"artifacts\":[{\"name\":\"plan.md\"}]}]");
+        f.sourceOutputPrefix("system/runs/r/src-exec/out/");
+        f.producer("analyze", 1, Instant.parse("2026-11-01T10:00:00Z"), "runs/r/analyze-1/out/", "plan.md");
+        f.stub();
+
+        InputArtifactManifest manifest = service.resolveInputArtifactManifest(f.runId, f.execId);
+
+        assertThat(manifest.artifacts())
+                .containsEntry("spec_review/spec_review.md", "system/runs/r/src-exec/out/spec_review.md")
+                .containsEntry("plan/plan.md", "runs/r/analyze-1/out/plan.md");
+    }
+
+    // --- resolveRequiredArtifacts: newest-producer group ---
+
+    @Test
+    void resolveRequiredArtifacts_newestOfGroupIsExposedUnderItsAlias() {
+        ManifestFixture f = new ManifestFixture();
+        f.declare(PLAN_GROUP);
+        Instant t1 = Instant.parse("2026-11-01T10:00:00Z");
+        f.producer("analyze", 1, t1, "runs/r/analyze-1/out/", "plan.md");
+        NodeExecution review = f.producer("task_spec_review", 1, t1.plusSeconds(60), "runs/r/review-1/out/", "plan.md");
+        f.stub();
+
+        List<ResolvedArtifactGroup> groups = service.resolveRequiredArtifacts(f.targetNodeId, f.runId);
+
+        assertThat(groups).hasSize(1);
+        assertThat(groups.get(0).nodeLabel()).isEqualTo("plan");
+        assertThat(groups.get(0).nodeExecutionId()).isEqualTo(review.getId());
+        assertThat(groups.get(0).artifacts()).extracting("name").containsExactly("plan.md", "task_spec.md");
+        assertThat(groups.get(0).artifacts()).extracting("required").containsExactly(true, false);
+        // The display path is a pure declaration view: it never lists object storage.
+        Mockito.verifyNoInteractions(artifactService);
+    }
+
+    @Test
+    void resolveRequiredArtifacts_newestOfGroupWithNoProducerYetHasNoExecution() {
+        ManifestFixture f = new ManifestFixture();
+        f.declare(PLAN_GROUP);
+        f.stub();
+
+        List<ResolvedArtifactGroup> groups = service.resolveRequiredArtifacts(f.targetNodeId, f.runId);
+
+        assertThat(groups).hasSize(1);
+        assertThat(groups.get(0).nodeLabel()).isEqualTo("plan");
+        assertThat(groups.get(0).nodeExecutionId()).isNull();
+    }
+
+    @Test
+    void resolveRequiredArtifacts_malformedNewestOfGroupsAreSkippedAndTheRestResolve() {
+        ManifestFixture f = new ManifestFixture();
+        f.declare("[{\"newest_of\":[\"analyze\"],\"artifacts\":[{\"name\":\"no-alias.md\"}]},"
+                + "{\"newest_of\":[],\"alias\":\"empty\",\"artifacts\":[{\"name\":\"empty.md\"}]},"
+                + "{\"newest_of\":\"analyze\",\"alias\":\"scalar\",\"artifacts\":[{\"name\":\"scalar.md\"}]},"
+                + "{\"newest_of\":[\"analyze\"],\"alias\":\"plan\",\"artifacts\":\"nope\"},"
+                + "{\"template_node_label\":\"spec_review\",\"artifacts\":[{\"name\":\"spec_review.md\"}]}]");
+        f.stub();
+
+        List<ResolvedArtifactGroup> groups = service.resolveRequiredArtifacts(f.targetNodeId, f.runId);
+
+        assertThat(groups).extracting(ResolvedArtifactGroup::nodeLabel).containsExactly("spec_review");
+    }
+
     /**
      * Builds the smallest graph that exercises the manifest resolver: one target node, one declared
      * source, and one human gate with a single inbound edge into the target.
@@ -701,6 +933,9 @@ class ArtifactResolutionServiceTest {
         final NodeExecution targetExec = new NodeExecution();
         final NodeExecution sourceExec = new NodeExecution();
         final List<NodeExecution> completed = new ArrayList<>();
+        final List<TemplateNode> extraNodes = new ArrayList<>();
+        final Map<String, TemplateNode> producerNodes = new HashMap<>();
+        final Map<UUID, String> executorTypeByNodeId = new HashMap<>();
 
         ManifestFixture() {
             targetNode.setId(targetNodeId);
@@ -732,15 +967,53 @@ class ArtifactResolutionServiceTest {
             sourceExec.setArtifactRefs("{\"output\":\"" + prefix + "\"}");
         }
 
+        /**
+         * A completed execution of the node labelled {@code label}, whose output prefix holds
+         * exactly {@code written} as far as the object store listing is concerned.
+         */
+        NodeExecution producer(String label, int iteration, Instant completedAt, String prefix, String... written) {
+            TemplateNode node = producerNodes.computeIfAbsent(label, l -> {
+                TemplateNode tn = new TemplateNode();
+                tn.setId(UUID.randomUUID());
+                tn.setGraphTemplateId(graphTemplateId);
+                tn.setLabel(l);
+                extraNodes.add(tn);
+                return tn;
+            });
+            NodeExecution exec = new NodeExecution();
+            exec.setId(UUID.randomUUID());
+            exec.setWorkflowRunId(runId);
+            exec.setTemplateNodeId(node.getId());
+            exec.setStatus(NodeExecutionStatus.completed);
+            exec.setIteration(iteration);
+            exec.setLabel(label);
+            exec.setCompletedAt(completedAt);
+            exec.setArtifactRefs("{\"output\":\"" + prefix + "\"}");
+            completed.add(exec);
+            Mockito.when(artifactService.listArtifactNamesInternal(exec.getArtifactRefs()))
+                    .thenReturn(List.of(written));
+            return exec;
+        }
+
         void gateRoutedHere(String label, String artifactRefs) {
-            addGate(label, artifactRefs, inboundEdgeId);
+            addGate(label, artifactRefs, inboundEdgeId, ReviewerType.human, "human");
         }
 
         void gateRoutedElsewhere(String label, String artifactRefs) {
-            addGate(label, artifactRefs, otherEdgeId);
+            addGate(label, artifactRefs, otherEdgeId, ReviewerType.human, "human");
         }
 
-        private void addGate(String label, String artifactRefs, UUID traversedEdgeId) {
+        /** A node outside any loop group, whose execution row production leaves without a reviewerType. */
+        void gateWithoutReviewHistoryRoutedHere(String label, String executorType, String artifactRefs) {
+            addGate(label, artifactRefs, inboundEdgeId, null, executorType);
+        }
+
+        private void addGate(
+                String label,
+                String artifactRefs,
+                UUID traversedEdgeId,
+                ReviewerType reviewerType,
+                String executorType) {
             NodeExecution gate = new NodeExecution();
             gate.setId(UUID.randomUUID());
             gate.setWorkflowRunId(runId);
@@ -748,18 +1021,26 @@ class ArtifactResolutionServiceTest {
             gate.setStatus(NodeExecutionStatus.completed);
             gate.setIteration(1);
             gate.setLabel(label);
-            gate.setReviewerType(ReviewerType.human);
+            gate.setReviewerType(reviewerType);
             gate.setArtifactRefs(artifactRefs);
             gate.setTraversedEdgeIds(new UUID[] {traversedEdgeId});
             gate.setCompletedAt(Instant.now());
             completed.add(gate);
+            executorTypeByNodeId.put(gate.getTemplateNodeId(), executorType);
         }
 
         void stub() {
             WorkflowRun run = new WorkflowRun();
             run.setId(runId);
 
-            String snapshot = "{\"edges\":[" + "{\"template_edge_id\":\""
+            StringBuilder nodes = new StringBuilder();
+            executorTypeByNodeId.forEach((nodeId, executorType) -> nodes.append(nodes.isEmpty() ? "" : ",")
+                    .append("{\"template_node_id\":\"")
+                    .append(nodeId)
+                    .append("\",\"executor_type\":\"")
+                    .append(executorType)
+                    .append("\"}"));
+            String snapshot = "{\"nodes\":[" + nodes + "],\"edges\":[" + "{\"template_edge_id\":\""
                     + inboundEdgeId + "\",\"source_node_id\":\"" + sourceNodeId + "\",\"target_node_id\":\""
                     + targetNodeId + "\"}," + "{\"template_edge_id\":\""
                     + otherEdgeId + "\",\"source_node_id\":\"" + sourceNodeId + "\",\"target_node_id\":\""
@@ -767,9 +1048,14 @@ class ArtifactResolutionServiceTest {
 
             Mockito.when(nodeExecutionRepo.findById(execId)).thenReturn(Optional.of(targetExec));
             Mockito.when(nodeExecutionRepo.findById(sourceExecId)).thenReturn(Optional.of(sourceExec));
+            for (NodeExecution done : completed) {
+                Mockito.when(nodeExecutionRepo.findById(done.getId())).thenReturn(Optional.of(done));
+            }
+            List<TemplateNode> graphNodes = new ArrayList<>(List.of(targetNode, sourceNode));
+            graphNodes.addAll(extraNodes);
             Mockito.when(templateNodeRepo.findById(targetNodeId)).thenReturn(Optional.of(targetNode));
             Mockito.when(templateNodeRepo.findByGraphTemplateId(graphTemplateId))
-                    .thenReturn(List.of(targetNode, sourceNode));
+                    .thenReturn(graphNodes);
             Mockito.when(nodeExecutionRepo.findByWorkflowRunIdAndStatus(runId, NodeExecutionStatus.completed))
                     .thenReturn(completed);
             Mockito.when(workflowRunRepo.findById(runId)).thenReturn(Optional.of(run));

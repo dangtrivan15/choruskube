@@ -13,6 +13,8 @@ const mockDeleteMutate = vi.fn();
 const mockStartMutate = vi.fn();
 const mockCompleteMutate = vi.fn();
 const mockUpdateTaskMutate = vi.fn();
+const mockDesignMutate = vi.fn();
+let mockStartTaskError: unknown = null;
 
 vi.mock("@/hooks/useTasks", () => ({
   useTask: (id: string) => mockUseTask(id),
@@ -32,7 +34,8 @@ vi.mock("@/hooks/useTasks", () => ({
   useStartTask: () => ({
     mutate: mockStartMutate,
     isPending: false,
-    isError: false,
+    isError: mockStartTaskError != null,
+    error: mockStartTaskError,
     reset: vi.fn(),
   }),
   useCompleteTask: () => ({
@@ -45,6 +48,10 @@ vi.mock("@/hooks/useTasks", () => ({
 
 vi.mock("@/hooks/useStories", () => ({
   useStory: (id: string | undefined) => mockUseStory(id),
+}));
+
+vi.mock("@/hooks/useStorySpec", () => ({
+  useDesignStory: () => ({ mutate: mockDesignMutate, isPending: false }),
 }));
 
 vi.mock("@/hooks/useTaskRuns", () => ({
@@ -78,6 +85,8 @@ beforeEach(() => {
   mockStartMutate.mockReset();
   mockCompleteMutate.mockReset();
   mockUpdateTaskMutate.mockReset();
+  mockDesignMutate.mockReset();
+  mockStartTaskError = null;
   mockUseTaskRuns.mockReturnValue({ data: undefined, isLoading: false });
   mockUseStory.mockReturnValue({ data: undefined });
   mockUseBlockingChain.mockReturnValue({ data: undefined, isLoading: false });
@@ -250,6 +259,208 @@ describe("TaskDetailPage", () => {
     });
     renderWithProviders(<TaskDetailPage />);
     expect(screen.getByTestId("task-restart-button")).toBeDisabled();
+  });
+
+  describe("when the parent Story's spec keeps the Task from starting", () => {
+    const readyChain = {
+      data: {
+        itemType: "task",
+        itemId: "task-1",
+        title: "Implement toggle switch",
+        status: "backlog",
+        readiness: "READY",
+        blockedBy: [],
+        truncated: false,
+      },
+      isLoading: false,
+    };
+
+    function parentStory(overrides: Record<string, unknown>) {
+      return {
+        data: {
+          id: "story-1",
+          epicId: "epic-1",
+          title: "Parent story",
+          specVersion: 1,
+          specUnderRevision: false,
+          openDesignRunId: null,
+          ...overrides,
+        },
+      };
+    }
+
+    beforeEach(() => {
+      mockUseBlockingChain.mockReturnValue(readyChain);
+    });
+
+    it("enables Start once the Story has an approved spec and no revision", () => {
+      mockUseTask.mockReturnValue({ data: makeTask({ status: "backlog" }), isLoading: false });
+      mockUseStory.mockReturnValue(parentStory({}));
+      renderWithProviders(<TaskDetailPage />);
+      expect(screen.getByTestId("task-start-button")).toBeEnabled();
+    });
+
+    it('disables Start with "Story spec not approved yet" while the Story has no spec', async () => {
+      const user = userEvent.setup();
+      mockUseTask.mockReturnValue({ data: makeTask({ status: "backlog" }), isLoading: false });
+      mockUseStory.mockReturnValue(parentStory({ specVersion: null }));
+      renderWithProviders(<TaskDetailPage />);
+
+      expect(screen.getByTestId("task-start-button")).toBeDisabled();
+      await user.hover(screen.getByTestId("task-start-button-tooltip-trigger"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("task-start-blocked-tooltip")).toHaveTextContent("Story spec not approved yet");
+      });
+    });
+
+    it('disables Start with "Story spec under revision" while a revision is open', async () => {
+      const user = userEvent.setup();
+      mockUseTask.mockReturnValue({ data: makeTask({ status: "backlog" }), isLoading: false });
+      mockUseStory.mockReturnValue(
+        parentStory({ specVersion: 2, specUnderRevision: true, openDesignRunId: "run-9" })
+      );
+      renderWithProviders(<TaskDetailPage />);
+
+      expect(screen.getByTestId("task-start-button")).toBeDisabled();
+      await user.hover(screen.getByTestId("task-start-button-tooltip-trigger"));
+
+      await waitFor(() => {
+        const tooltip = screen.getByTestId("task-start-blocked-tooltip");
+        expect(tooltip).toHaveTextContent("Story spec under revision");
+        expect(tooltip).not.toHaveTextContent("Blocked by");
+      });
+    });
+
+    it("also disables Restart while the Story's spec is under revision", () => {
+      mockUseTask.mockReturnValue({
+        data: makeTask({ status: "in_progress", latestRunStatus: "failed" }),
+        isLoading: false,
+      });
+      mockUseStory.mockReturnValue(
+        parentStory({ specVersion: 2, specUnderRevision: true, openDesignRunId: "run-9" })
+      );
+      renderWithProviders(<TaskDetailPage />);
+      expect(screen.getByTestId("task-restart-button")).toBeDisabled();
+    });
+
+    it("names both the spec reason and the blockers when both apply", async () => {
+      const user = userEvent.setup();
+      mockUseTask.mockReturnValue({ data: makeTask({ status: "backlog" }), isLoading: false });
+      mockUseStory.mockReturnValue(parentStory({ specVersion: null }));
+      mockUseBlockingChain.mockReturnValue({
+        data: {
+          ...readyChain.data,
+          readiness: "BLOCKED",
+          blockedBy: [
+            { itemType: "task", itemId: "task-2", title: "Wire up API client", status: "in_progress", blockedBy: [] },
+          ],
+        },
+        isLoading: false,
+      });
+      renderWithProviders(<TaskDetailPage />);
+
+      await user.hover(screen.getByTestId("task-start-button-tooltip-trigger"));
+
+      await waitFor(() => {
+        const tooltip = screen.getByTestId("task-start-blocked-tooltip");
+        expect(tooltip).toHaveTextContent("Story spec not approved yet");
+        expect(tooltip).toHaveTextContent("Wire up API client");
+      });
+    });
+
+    it("shows the server's reason when it refuses a start the page allowed", async () => {
+      const user = userEvent.setup();
+      const { ApiError } = await import("@/lib/api");
+      mockStartTaskError = new ApiError(409, "Cannot start this Task: Story spec under revision");
+      mockUseTask.mockReturnValue({ data: makeTask({ status: "backlog" }), isLoading: false });
+      mockUseStory.mockReturnValue(parentStory({}));
+      renderWithProviders(<TaskDetailPage />);
+
+      await user.click(screen.getByTestId("task-start-button"));
+
+      expect(screen.getByTestId("start-task-error")).toHaveTextContent(
+        "Cannot start this Task: Story spec under revision"
+      );
+    });
+
+    it("says inline why Start is disabled, as the button's description", () => {
+      mockUseTask.mockReturnValue({ data: makeTask({ status: "backlog" }), isLoading: false });
+      mockUseStory.mockReturnValue(parentStory({ specVersion: null }));
+      renderWithProviders(<TaskDetailPage />);
+
+      expect(screen.getByTestId("task-start-reason")).toHaveTextContent("Story spec not approved yet");
+      expect(screen.getByTestId("task-start-button")).toHaveAccessibleDescription(
+        /Story spec not approved yet/
+      );
+    });
+
+    it("offers to design the Story when its spec is not approved and no design is running", async () => {
+      const user = userEvent.setup();
+      mockUseTask.mockReturnValue({ data: makeTask({ status: "backlog" }), isLoading: false });
+      mockUseStory.mockReturnValue(parentStory({ specVersion: null }));
+      renderWithProviders(<TaskDetailPage />);
+
+      await user.click(screen.getByTestId("task-design-story-button"));
+
+      expect(mockDesignMutate).toHaveBeenCalledWith("story-1");
+    });
+
+    it("links the running design instead of offering another one", () => {
+      mockUseTask.mockReturnValue({ data: makeTask({ status: "backlog" }), isLoading: false });
+      mockUseStory.mockReturnValue(parentStory({ specVersion: null, openDesignRunId: "run-7" }));
+      renderWithProviders(<TaskDetailPage />);
+
+      expect(screen.queryByTestId("task-design-story-button")).not.toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Story Design run" })).toHaveAttribute("href", "/runs/run-7");
+    });
+
+    it("links the revision run while the spec is under revision", () => {
+      mockUseTask.mockReturnValue({ data: makeTask({ status: "backlog" }), isLoading: false });
+      mockUseStory.mockReturnValue(
+        parentStory({ specVersion: 2, specUnderRevision: true, openDesignRunId: "run-9" })
+      );
+      renderWithProviders(<TaskDetailPage />);
+
+      expect(screen.getByTestId("task-start-reason")).toHaveTextContent("Story spec under revision");
+      expect(screen.queryByTestId("task-design-story-button")).not.toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "revision run" })).toHaveAttribute("href", "/runs/run-9");
+    });
+
+    it("names the blockers inline too", () => {
+      mockUseTask.mockReturnValue({ data: makeTask({ status: "backlog" }), isLoading: false });
+      mockUseStory.mockReturnValue(parentStory({}));
+      mockUseBlockingChain.mockReturnValue({
+        data: {
+          ...readyChain.data,
+          readiness: "BLOCKED",
+          blockedBy: [
+            { itemType: "task", itemId: "task-2", title: "Wire up API client", status: "in_progress", blockedBy: [] },
+          ],
+        },
+        isLoading: false,
+      });
+      renderWithProviders(<TaskDetailPage />);
+
+      expect(screen.getByTestId("task-start-reason")).toHaveTextContent("Blocked by: Wire up API client");
+      expect(screen.queryByTestId("task-design-story-button")).not.toBeInTheDocument();
+    });
+
+    it("shows no reason while Start is enabled", () => {
+      mockUseTask.mockReturnValue({ data: makeTask({ status: "backlog" }), isLoading: false });
+      mockUseStory.mockReturnValue(parentStory({}));
+      renderWithProviders(<TaskDetailPage />);
+
+      expect(screen.queryByTestId("task-start-reason")).not.toBeInTheDocument();
+      expect(screen.getByTestId("task-start-button")).not.toHaveAttribute("aria-describedby");
+    });
+
+    it("does not hold Start back on the spec while the Story is still loading", () => {
+      mockUseTask.mockReturnValue({ data: makeTask({ status: "backlog" }), isLoading: false });
+      mockUseStory.mockReturnValue({ data: undefined });
+      renderWithProviders(<TaskDetailPage />);
+      expect(screen.getByTestId("task-start-button")).toBeEnabled();
+    });
   });
 
   it("shows a disabled Complete button while the run is not yet terminal-completed", () => {

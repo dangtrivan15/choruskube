@@ -147,8 +147,9 @@ class InternalRunScopingTest {
                 null, // dependencyRepo
                 null, // artifactService
                 null, // workItemDependencyService
-                null,
-                null,
-                null); // milestoneService
+                null, // milestoneService
+                null, // taskSettlement
+                null, // gateRecheck
+                mock(StoryConflictRecorder.class));
     }
 }

@@ -38,6 +38,7 @@ import com.choruskube.core.model.DriftRecheckConfig;
 import com.choruskube.core.model.DriftRecheckConfig.StampMode;
 import com.choruskube.core.model.GateStamp;
 import com.choruskube.core.model.NodeExecution;
+import com.choruskube.core.model.StorySpecVersion;
 import com.choruskube.core.model.TaskGithubIssue;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.GateStampStatus;
@@ -434,6 +435,76 @@ class GateFinalizeServiceTest {
         verify(events, never()).publishNodeStatusChanged(any(), any(), any());
     }
 
+    private RunService.StoryVersionStale storyUnderRevision(UUID revisionRunId) {
+        return new RunService.StoryVersionStale(revisionRunId, "rereview", 0, null);
+    }
+
+    private RunService.StoryVersionStale storyMoved(int planned, int current) {
+        StorySpecVersion spec = new StorySpecVersion();
+        spec.setVersion(current);
+        spec.setContent("# Story spec v" + current);
+        return new RunService.StoryVersionStale(null, "rereview", planned, spec);
+    }
+
+    private GateStamp stubHeldAtOpenGate() {
+        gate.setStatus(NodeExecutionStatus.awaiting_human);
+        GateStamp held = heldStamp();
+        when(gateRecheck.findHeldFor(runId, templateNodeId)).thenReturn(Optional.of(held));
+        when(gateRecheck.reasonNotToReapply(eq(held), any())).thenReturn(Optional.empty());
+        return held;
+    }
+
+    @Test
+    void claimHeld_storyUnderRevision_voidsWithTheRevisionAndReturnsEmpty() {
+        GateStamp held = stubHeldAtOpenGate();
+        UUID revisionRunId = UUID.randomUUID();
+        when(runService.storyVersionStale(eq(run), eq(templateNodeId), any()))
+                .thenReturn(Optional.of(storyUnderRevision(revisionRunId)));
+
+        HeldClaim claim = service.claimHeld(runId, gateExecId);
+
+        assertThat(claim.approvalId()).isNull();
+        verify(gateRecheck)
+                .voidStamp(
+                        held.getId(),
+                        "The Story spec is under revision (run " + revisionRunId + "); approve after it completes.",
+                        gateExecId);
+        verify(events).publishNodeStatusChanged(runId, gateExecId, "awaiting_human");
+        verify(claims, never()).compareAndSetStatus(any(), any(), any());
+        verify(gateRecheck, never()).claimHeld(any(), any());
+    }
+
+    @Test
+    void claimHeld_storyVersionMoved_voidsWithTheVersionsAndReturnsEmpty() {
+        GateStamp held = stubHeldAtOpenGate();
+        when(runService.storyVersionStale(eq(run), eq(templateNodeId), any()))
+                .thenReturn(Optional.of(storyMoved(1, 2)));
+
+        HeldClaim claim = service.claimHeld(runId, gateExecId);
+
+        assertThat(claim.approvalId()).isNull();
+        verify(gateRecheck)
+                .voidStamp(held.getId(), "The Story spec moved from v1 to v2 since this Task planned.", gateExecId);
+        verify(events).publishNodeStatusChanged(runId, gateExecId, "awaiting_human");
+        verify(claims, never()).compareAndSetStatus(any(), any(), any());
+        verify(gateRecheck, never()).claimHeld(any(), any());
+    }
+
+    @Test
+    void claimHeld_storyVersionUnchanged_stillClaims() {
+        GateStamp held = stubHeldAtOpenGate();
+        when(runService.storyVersionStale(eq(run), eq(templateNodeId), any())).thenReturn(Optional.empty());
+        when(claims.compareAndSetStatus(gateExecId, NodeExecutionStatus.awaiting_human, NodeExecutionStatus.finalizing))
+                .thenReturn(1);
+        when(gateRecheck.claimHeld(runId, templateNodeId)).thenReturn(Optional.of(held));
+
+        HeldClaim claim = service.claimHeld(runId, gateExecId);
+
+        assertThat(claim.approvalId()).isEqualTo(held.getId());
+        verify(runService).storyVersionStale(eq(run), eq(templateNodeId), any());
+        verify(gateRecheck, never()).voidStamp(any(), any(), any());
+    }
+
     @Test
     void claimHeld_retryAfterItsOwnClaim_returnsTheSameApproval() {
         GateStamp claimed = heldStamp();
@@ -530,6 +601,19 @@ class GateFinalizeServiceTest {
         assertThat(plan.outcome()).isEqualTo(GateFinalizeService.REFUSED);
         assertThat(plan.reason()).isEqualTo("Could not start finalizing: temporal unavailable");
         verify(drift, never()).gather(any(), any(), any());
+    }
+
+    @Test
+    void plan_storyVersionMoved_refusedWithItsReason() {
+        when(runService.storyVersionStale(eq(run), eq(templateNodeId), any()))
+                .thenReturn(Optional.of(storyMoved(1, 2)));
+
+        PlanResponse plan = service.plan(runId, gateExecId, approvalId);
+
+        assertThat(plan.outcome()).isEqualTo(GateFinalizeService.REFUSED);
+        assertThat(plan.reason()).isEqualTo("The Story spec moved from v1 to v2 since this Task planned.");
+        verify(drift, never()).gather(any(), any(), any());
+        verify(merge, never()).planMerge(any(), any());
     }
 
     @Test

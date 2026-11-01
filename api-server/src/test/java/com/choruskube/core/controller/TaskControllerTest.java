@@ -6,6 +6,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 import com.choruskube.core.BaseTest;
+import com.choruskube.core.StorySpecFixtures;
 import com.choruskube.core.config.OrgSecurity;
 import com.choruskube.core.dto.CreateDependencyRequest;
 import com.choruskube.core.dto.EpicRequest;
@@ -30,6 +31,8 @@ import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowOptions;
 import io.temporal.client.WorkflowStub;
 import io.temporal.serviceclient.WorkflowServiceStubs;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -39,9 +42,11 @@ import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
+import software.amazon.awssdk.services.s3.S3Client;
 
 @AutoConfigureMockMvc
 @Transactional
@@ -82,6 +87,15 @@ public class TaskControllerTest extends BaseTest {
 
     @MockitoBean
     private OrgSecurity orgSecurity;
+
+    @Autowired
+    private JdbcTemplate jdbc;
+
+    @PersistenceContext
+    private EntityManager entityManager;
+
+    @MockitoBean
+    private S3Client s3Client;
 
     @BeforeEach
     void setUp() {
@@ -349,6 +363,9 @@ public class TaskControllerTest extends BaseTest {
         r.setName(RepoNameUtil.deriveOwnerRepoName(url));
         r = gitRepoRepo.save(r);
         EpicResponse epic = epicService.create(new EpicRequest("Epic", "Epic desc", null, r.getId()), null);
-        return storyService.create(epic.id(), new StoryRequest("Story", "Story desc"));
+        StoryResponse story = storyService.create(epic.id(), new StoryRequest("Story", "Story desc"));
+        entityManager.flush();
+        StorySpecFixtures.approve(jdbc, story.id());
+        return story;
     }
 }

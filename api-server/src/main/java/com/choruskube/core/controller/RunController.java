@@ -1,6 +1,7 @@
 package com.choruskube.core.controller;
 
 import com.choruskube.core.dto.*;
+import com.choruskube.core.service.RoadmapOnlyTemplates;
 import com.choruskube.core.service.RunService;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -19,14 +20,17 @@ import org.springframework.web.bind.annotation.*;
 public class RunController {
 
     private final RunService runService;
+    private final RoadmapOnlyTemplates roadmapOnlyTemplates;
 
-    public RunController(RunService runService) {
+    public RunController(RunService runService, RoadmapOnlyTemplates roadmapOnlyTemplates) {
         this.runService = runService;
+        this.roadmapOnlyTemplates = roadmapOnlyTemplates;
     }
 
     @PreAuthorize("@orgSecurity.canOperate()")
     @PostMapping
     public ResponseEntity<RunResponse> startRun(@Valid @RequestBody CreateRunRequest request) {
+        roadmapOnlyTemplates.refuseStandaloneStart(request.graphTemplateId());
         RunResponse response = runService.startRun(request);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }

@@ -12,6 +12,7 @@ import com.choruskube.core.model.Story;
 import com.choruskube.core.model.Task;
 import com.choruskube.core.model.WorkItemDependency;
 import com.choruskube.core.model.WorkflowRun;
+import com.choruskube.core.model.enums.BlockableItemType;
 import com.choruskube.core.model.enums.Readiness;
 import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
@@ -26,7 +27,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -38,6 +38,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -51,8 +52,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.Assert;
 
 /**
- * The Autopilot: a standing controller that starts READY Tasks unattended. No
- * terminal state — an empty ready frontier means idle, not finished.
+ * The Autopilot: a standing controller that starts READY Tasks unattended, and designs each Story
+ * before it reaches that Story's Tasks. No terminal state — an empty ready frontier means idle, not
+ * finished.
  *
  * <p><strong>Which row this is acting on is never decided here.</strong> It comes from {@link
  * AutopilotResolver} — one Autopilot per installation in core, one per organisation
@@ -109,6 +111,8 @@ public class AutopilotService {
     private final AutopilotCandidateSource candidateSource;
     private final AutopilotSlotCounter slotCounter;
     private final TaskService taskService;
+    private final StoryDesignService storyDesignService;
+    private final StorySpecService specService;
     private final RunEventPublisher eventPublisher;
     private final ApplicationEventPublisher applicationEventPublisher;
     private final Duration stalePendingAfter;
@@ -150,6 +154,8 @@ public class AutopilotService {
             AutopilotCandidateSource candidateSource,
             AutopilotSlotCounter slotCounter,
             TaskService taskService,
+            StoryDesignService storyDesignService,
+            StorySpecService specService,
             RunEventPublisher eventPublisher,
             ApplicationEventPublisher applicationEventPublisher,
             PlatformTransactionManager transactionManager,
@@ -173,6 +179,8 @@ public class AutopilotService {
         this.candidateSource = candidateSource;
         this.slotCounter = slotCounter;
         this.taskService = taskService;
+        this.storyDesignService = storyDesignService;
+        this.specService = specService;
         this.eventPublisher = eventPublisher;
         this.applicationEventPublisher = applicationEventPublisher;
         this.stalePendingAfter = stalePendingAfter;
@@ -463,7 +471,7 @@ public class AutopilotService {
      */
     private void runPass(UUID autopilotId, Instant now, Trigger trigger) {
         List<String> notes = new ArrayList<>();
-        Set<UUID> startedTaskIds = new LinkedHashSet<>();
+        Set<UUID> startedIds = new LinkedHashSet<>();
         Frontier frontier = Frontier.EMPTY;
 
         Settled settled = writes.execute(status -> settle(autopilotId, now, trigger));
@@ -478,13 +486,13 @@ public class AutopilotService {
             }
             Plan plan = plan(autopilotId);
             frontier = plan.frontier();
-            if (!renewLease(autopilotId) || !start(autopilotId, plan, startedTaskIds, notes, trigger)) {
+            if (!renewLease(autopilotId) || !start(autopilotId, plan, startedIds, notes, trigger)) {
                 // Whoever holds the lease next owns the reporting too. Publishing this pass's view
                 // on top of theirs would be two writers on one live panel.
                 return;
             }
         }
-        report(autopilotId, frontier, startedTaskIds, notes);
+        report(autopilotId, frontier, startedIds, notes);
     }
 
     /**
@@ -580,8 +588,9 @@ public class AutopilotService {
     }
 
     /**
-     * Phase 3. Starts Tasks until the slots run out, the frontier empties, or something goes wrong
-     * — each start its own top-level transaction, with two re-reads in front of it.
+     * Phase 3. Starts Tasks and Story designs until the slots run out, the frontier empties, or
+     * something goes wrong — each start its own top-level transaction, with two re-reads in front of
+     * it.
      *
      * <p>The re-reads exist because phase 2's answers are already history by the time the second
      * container starts. Engagement, so a Disengage takes effect <em>during</em> a pass rather than
@@ -600,7 +609,7 @@ public class AutopilotService {
      */
     private boolean start(UUID autopilotId, Plan plan, Set<UUID> started, List<String> notes, Trigger trigger) {
         int remaining = plan.slots();
-        for (Task task : plan.frontier().readyTasks()) {
+        for (AutopilotFrontierItem item : plan.frontier().items()) {
             if (remaining <= 0) {
                 break;
             }
@@ -627,8 +636,13 @@ public class AutopilotService {
                 break;
             }
             try {
-                taskService.startForAutopilot(task.getId(), autopilotId);
-                started.add(task.getId());
+                switch (item) {
+                    case AutopilotFrontierItem.TaskItem t ->
+                        taskService.startForAutopilot(t.task().getId(), autopilotId);
+                    case AutopilotFrontierItem.DesignStoryItem d ->
+                        storyDesignService.startDesignForAutopilot(d.story().getId(), autopilotId);
+                }
+                started.add(item.id());
                 remaining--;
             } catch (QuotaExceededException e) {
                 // Back-pressure, not a fault: the work is fine and only the moment is wrong, so
@@ -637,19 +651,22 @@ public class AutopilotService {
                 log.info("Autopilot tick stopped early on a quota: {}", e.getMessage());
                 break;
             } catch (ConflictException e) {
-                // Every ConflictException out of startForAutopilot says the same thing: this Task
-                // is no longer the backlog, READY Task the frontier was swept for. Someone clicked
-                // Start, or added a dependency, or an instance that overran its lease got here
-                // first. That is the roadmap changing under a plan, not the platform failing, so
-                // it must not reach the breaker — three lost races would otherwise disengage the
-                // Autopilot for no reason at all. The next Task is unaffected, so the pass goes on.
-                notes.add("Task '" + task.getTitle() + "' was no longer startable: " + e.getMessage());
-                log.info("Autopilot skipped Task {}: {}", task.getId(), e.getMessage());
+                // Every ConflictException out of either start says the same thing: this item is no
+                // longer what the frontier was swept for — a Task left backlog or gained a blocker,
+                // a Story got a spec or a design run. Someone clicked Start or Design, or an
+                // instance that overran its lease got here first. That is the roadmap changing under
+                // a plan, not the platform failing, so it must not reach the breaker — three lost
+                // races would otherwise disengage the Autopilot for no reason at all. The next item
+                // is unaffected, so the pass goes on.
+                String described = describe(item);
+                notes.add(Character.toUpperCase(described.charAt(0)) + described.substring(1)
+                        + " was no longer startable: " + e.getMessage());
+                log.info("Autopilot skipped {} {}: {}", describe(item), item.id(), e.getMessage());
             } catch (RuntimeException e) {
                 // The start ran in its own top-level transaction, so its rollback is its own and
                 // the starts already made in this loop are committed and unaffected.
-                notes.add("Could not start Task '" + task.getTitle() + "': " + e.getMessage());
-                log.warn("Autopilot failed to start Task {}: {}", task.getId(), e.getMessage());
+                notes.add("Could not start " + describe(item) + ": " + e.getMessage());
+                log.warn("Autopilot failed to start {} {}: {}", describe(item), item.id(), e.getMessage());
                 // A manual pass still records the failure but keeps trying the rest of the frontier;
                 // only the scheduler stops itself when this failure trips the breaker.
                 if (recordFailure(autopilotId, "the last failure was: " + e.getMessage())
@@ -659,6 +676,14 @@ public class AutopilotService {
             }
         }
         return true;
+    }
+
+    private static String describe(AutopilotFrontierItem item) {
+        return switch (item) {
+            case AutopilotFrontierItem.TaskItem t -> "Task '" + t.task().getTitle() + "'";
+            case AutopilotFrontierItem.DesignStoryItem d ->
+                "the design of Story '" + d.story().getTitle() + "'";
+        };
     }
 
     /**
@@ -672,7 +697,7 @@ public class AutopilotService {
      * becomes indistinguishable from a dead one.
      *
      * <p>The frontier is reused rather than recomputed — it is a full readiness sweep, and the only
-     * thing the starts changed about it is which entries are gone, which {@code startedTaskIds}
+     * thing the starts changed about it is which entries are gone, which {@code startedIds}
      * already says. The runs are re-read, because those starts committed on their own connections.
      */
     private void report(UUID autopilotId, Frontier frontier, Set<UUID> started, List<String> notes) {
@@ -730,22 +755,63 @@ public class AutopilotService {
     /**
      * The ordered ready frontier plus the structural facts the why-idle report needs. Counts are
      * carried out of the pass because recomputing them would mean a second readiness sweep.
+     *
+     * @param waitingOnDesignCount backlog Tasks READY by their dependencies but held by their
+     *     Story's design — whether that design is in flight or not yet started
      */
     private record Frontier(
-            List<Task> readyTasks,
+            List<AutopilotFrontierItem> items,
             int backlogTaskCount,
+            int waitingOnDesignCount,
             int totalTaskCount,
             List<String> emptyContainerReasons,
-            List<AutopilotTaskRef> heldTasks) {
+            List<AutopilotTaskRef> heldTasks,
+            List<HeldStory> heldStories,
+            Map<UUID, Story> storiesById) {
 
         /** What a disengaged Autopilot reports: it will start nothing, so it has no frontier. */
-        static final Frontier EMPTY = new Frontier(List.of(), 0, 0, List.of(), List.of());
+        static final Frontier EMPTY = new Frontier(List.of(), 0, 0, 0, List.of(), List.of(), List.of(), Map.of());
+    }
+
+    /** The Story half of the frontier: designs to start, and Stories a finished design run holds. */
+    private record DesignSweep(List<AutopilotFrontierItem> designable, List<HeldStory> held) {
+
+        static final DesignSweep NONE = new DesignSweep(List.of(), List.of());
     }
 
     /**
+     * A Story whose newest design run failed or was cancelled. Reported beside held Tasks and named
+     * one by one in {@code whyIdle}: the Autopilot will not design it again, so only a human can.
+     */
+    private record HeldStory(Story story, WorkflowRun run) {
+
+        AutopilotTaskRef ref() {
+            return new AutopilotTaskRef(
+                    null,
+                    "Design: " + story.getTitle(),
+                    run.getId(),
+                    run.getStatus().name(),
+                    story.getId(),
+                    story.getEpicId(),
+                    AutopilotTaskRef.KIND_DESIGN_STORY);
+        }
+
+        String reason() {
+            String outcome = run.getStatus() == WorkflowRunStatus.failed ? "failed" : "was cancelled";
+            return "Story design run " + run.getId() + " for '" + story.getTitle() + "' " + outcome
+                    + " — design it again from the Story page or delete the run";
+        }
+    }
+
+    /** One candidate Epic as the sweep read it, kept for the design pass that follows. */
+    private record SweptEpic(
+            EpicReadinessAssembler.EpicCandidates candidates, EpicReadinessAssembler.Assembly assembly) {}
+
+    /**
      * Every startable Task in a candidate Epic ({@link EpicReadinessAssembler#isStartable} —
-     * backlog and READY), ordered. That predicate is shared with the Epic list's
-     * {@code readyItemCount}, so the board's "N ready" badge names exactly this frontier.
+     * backlog, READY, and under a designed Story), plus every designable Story ({@link
+     * StoryDesignEligibility}), ordered. The Task predicate is shared with the Epic list's {@code
+     * readyItemCount}, so the board's "N ready" badge names exactly this frontier's Tasks.
      */
     private Frontier computeFrontier(UUID autopilotId) {
         Map<UUID, Epic> epicsById = new HashMap<>();
@@ -753,10 +819,12 @@ public class AutopilotService {
         Map<UUID, Readiness> readinessById = new HashMap<>();
         List<WorkItemDependency> edges = new ArrayList<>();
         Map<UUID, String> emptyContainerLabels = new LinkedHashMap<>();
-        List<Task> ready = new ArrayList<>();
+        List<AutopilotFrontierItem> items = new ArrayList<>();
         List<Task> inProgress = new ArrayList<>();
+        List<SweptEpic> swept = new ArrayList<>();
         Set<UUID> startedIds = new HashSet<>();
         int backlogCount = 0;
+        int waitingOnDesignCount = 0;
         int totalCount = 0;
 
         for (UUID epicId : candidateSource.candidateEpicIds(autopilotId)) {
@@ -774,6 +842,7 @@ public class AutopilotService {
                     autopilotId);
             readinessById.putAll(assembly.readinessById());
             edges.addAll(assembly.edges());
+            swept.add(new SweptEpic(candidates, assembly));
 
             int tasksUnderEpic = 0;
             for (Story story : candidates.stories()) {
@@ -798,7 +867,11 @@ public class AutopilotService {
                     }
                     backlogCount++;
                     if (EpicReadinessAssembler.isStartable(task, assembly)) {
-                        ready.add(task);
+                        items.add(new AutopilotFrontierItem.TaskItem(task));
+                    } else if (assembly.readinessById().get(task.getId()) == Readiness.READY
+                            && EpicReadinessAssembler.notStartableReason(task, assembly)
+                                    .isPresent()) {
+                        waitingOnDesignCount++;
                     }
                 }
             }
@@ -806,14 +879,57 @@ public class AutopilotService {
                 emptyContainerLabels.put(epicId, "Epic '" + epic.getTitle() + "'");
             }
         }
+        DesignSweep design = sweepStoryDesign(swept, edges);
+        items.addAll(design.designable());
 
-        ready.sort(TaskOrderingStrategy.comparator(epicsById, storiesById, startedIds));
+        items.sort(TaskOrderingStrategy.itemComparator(epicsById, storiesById, startedIds));
         return new Frontier(
-                ready,
+                items,
                 backlogCount,
+                waitingOnDesignCount,
                 totalCount,
                 emptyContainerReasons(emptyContainerLabels, edges, readinessById),
-                heldTasks(inProgress));
+                heldTasks(inProgress, storiesById),
+                design.held(),
+                storiesById);
+    }
+
+    /**
+     * At most three queries for the whole sweep rather than per Epic. Versions are read for every
+     * Story that blocks something as well, since a blocker in another Epic is not among the swept
+     * Stories and its approved spec is what lets the Story it blocks be designed.
+     */
+    private DesignSweep sweepStoryDesign(List<SweptEpic> swept, List<WorkItemDependency> edges) {
+        Set<UUID> storyIds = new HashSet<>();
+        swept.forEach(epic -> epic.candidates().stories().forEach(story -> storyIds.add(story.getId())));
+        if (storyIds.isEmpty()) {
+            return DesignSweep.NONE;
+        }
+        Set<UUID> versionIds = new HashSet<>(storyIds);
+        edges.stream()
+                .filter(edge -> edge.getBlockingItemType() == BlockableItemType.story)
+                .forEach(edge -> versionIds.add(edge.getBlockingItemId()));
+        Map<UUID, Integer> versions = specService.currentVersions(versionIds);
+        Set<UUID> undesigned =
+                storyIds.stream().filter(id -> !versions.containsKey(id)).collect(Collectors.toSet());
+        Set<UUID> openDesign = undesigned.isEmpty() ? Set.of() : specService.storiesWithOpenDesignRun(undesigned);
+        Set<UUID> mayBeHeld =
+                undesigned.stream().filter(id -> !openDesign.contains(id)).collect(Collectors.toSet());
+        Map<UUID, WorkflowRun> latestRuns = mayBeHeld.isEmpty() ? Map.of() : specService.latestDesignRuns(mayBeHeld);
+
+        List<AutopilotFrontierItem> designable = new ArrayList<>();
+        List<HeldStory> held = new ArrayList<>();
+        for (SweptEpic epic : swept) {
+            for (Story story : epic.candidates().stories()) {
+                StoryDesignEligibility.holdingRun(story, epic.candidates(), versions, openDesign, latestRuns)
+                        .ifPresent(run -> held.add(new HeldStory(story, run)));
+                if (StoryDesignEligibility.isDesignable(
+                        story, epic.candidates(), epic.assembly(), versions, openDesign, latestRuns)) {
+                    designable.add(new AutopilotFrontierItem.DesignStoryItem(story));
+                }
+            }
+        }
+        return new DesignSweep(designable, List.copyOf(held));
     }
 
     /**
@@ -829,7 +945,7 @@ public class AutopilotService {
      * <p>A Task with no run at all is left out: neither re-open nor start accepts one, so naming it
      * would offer an action that cannot be taken.
      */
-    private List<AutopilotTaskRef> heldTasks(List<Task> inProgress) {
+    private List<AutopilotTaskRef> heldTasks(List<Task> inProgress, Map<UUID, Story> storiesById) {
         if (inProgress.isEmpty()) {
             return List.of();
         }
@@ -849,7 +965,10 @@ public class AutopilotService {
                     task.getId(),
                     task.getTitle(),
                     latest.getId(),
-                    latest.getStatus().name()));
+                    latest.getStatus().name(),
+                    task.getStoryId(),
+                    epicIdOf(storiesById.get(task.getStoryId())),
+                    AutopilotTaskRef.KIND_TASK));
         }
         return List.copyOf(held);
     }
@@ -1004,9 +1123,9 @@ public class AutopilotService {
     }
 
     /**
-     * @param excludedTaskIds Tasks this pass already started. They are filtered out of {@code
-     *     nextUp} rather than re-read, because the frontier they came from is phase 2's and was
-     *     swept before any of them moved out of {@code backlog}.
+     * @param excludedIds Tasks, and Stories whose design, this pass already started. They are
+     *     filtered out of {@code nextUp} rather than re-read, because the frontier they came from is
+     *     phase 2's and was swept before any of them moved.
      * @param notes findings from the tick that produced this snapshot — quota back-pressure, a
      *     failed start — which have no other route into {@code whyIdle}
      * @param inFlight scope-wide slot occupancy from {@link AutopilotSlotCounter} — counts a
@@ -1020,21 +1139,20 @@ public class AutopilotService {
             Autopilot autopilot,
             List<WorkflowRun> live,
             Frontier frontier,
-            Set<UUID> excludedTaskIds,
+            Set<UUID> excludedIds,
             List<String> notes,
             int inFlight,
             int awaitingHuman) {
         int slots = Math.max(0, autopilot.getMaxParallel() - inFlight);
 
-        List<AutopilotTaskRef> nextUp = frontier.readyTasks().stream()
-                .filter(task -> !excludedTaskIds.contains(task.getId()))
+        List<AutopilotTaskRef> nextUp = frontier.items().stream()
+                .filter(item -> !excludedIds.contains(item.id()))
                 .limit(NEXT_UP_LIMIT)
-                .map(task -> new AutopilotTaskRef(
-                        task.getId(), task.getTitle(), null, task.getStatus().name()))
+                .map(item -> nextUpRef(item, frontier.storiesById()))
                 .toList();
 
         // Both buckets are named from the same batch, rather than one findById per run per bucket.
-        Map<UUID, String> titles = taskTitles(live);
+        RunSubjects subjects = runSubjects(live);
 
         return new AutopilotStatusResponse(
                 autopilot.isEngaged(),
@@ -1045,9 +1163,12 @@ public class AutopilotService {
                 awaitingHuman,
                 nextUp,
                 whyIdle(autopilot, live, frontier, nextUp, inFlight, slots, awaitingHuman, notes),
-                refsFor(live, Bucket.AWAITING_YOU, titles),
-                refsFor(live, Bucket.NEEDS_ATTENTION, titles),
-                frontier.heldTasks(),
+                refsFor(live, Bucket.AWAITING_YOU, subjects),
+                refsFor(live, Bucket.NEEDS_ATTENTION, subjects),
+                Stream.concat(
+                                frontier.heldTasks().stream(),
+                                frontier.heldStories().stream().map(HeldStory::ref))
+                        .toList(),
                 autopilot.getConsecutiveFailures(),
                 autopilot.getDisengagedReason(),
                 autopilot.getLastTickAt());
@@ -1084,6 +1205,7 @@ public class AutopilotService {
         if (!frontier.heldTasks().isEmpty()) {
             reasons.add(heldTasksReason(frontier.heldTasks()));
         }
+        frontier.heldStories().forEach(held -> reasons.add(held.reason()));
         reasons.addAll(frontier.emptyContainerReasons());
         if (nextUp.isEmpty() && slots > 0) {
             if (frontier.totalTaskCount() == 0) {
@@ -1091,10 +1213,23 @@ public class AutopilotService {
             } else if (frontier.backlogTaskCount() == 0) {
                 reasons.add("No Tasks in backlog — every Task is started or done");
             } else {
-                reasons.add("No ready work — all " + frontier.backlogTaskCount() + " backlog Task(s) are blocked");
+                reasons.add(noReadyWorkReason(frontier.backlogTaskCount(), frontier.waitingOnDesignCount()));
             }
         }
         return List.copyOf(reasons);
+    }
+
+    /** The board shows a Task waiting on its Story's design as READY, so it is never called blocked here. */
+    private static String noReadyWorkReason(int backlog, int waitingOnDesign) {
+        int blocked = backlog - waitingOnDesign;
+        if (waitingOnDesign == 0) {
+            return "No ready work — all " + backlog + " backlog Task(s) are blocked";
+        }
+        if (blocked == 0) {
+            return "No ready work — all " + backlog + " backlog Task(s) wait on Story design";
+        }
+        return "No ready work — " + blocked + " backlog Task(s) are blocked and " + waitingOnDesign
+                + " wait on Story design";
     }
 
     /**
@@ -1161,35 +1296,93 @@ public class AutopilotService {
         return List.copyOf(reasons);
     }
 
-    private static List<AutopilotTaskRef> refsFor(
-            List<WorkflowRun> live, Bucket bucket, Map<UUID, String> titlesByTaskId) {
+    private static AutopilotTaskRef nextUpRef(AutopilotFrontierItem item, Map<UUID, Story> storiesById) {
+        return switch (item) {
+            case AutopilotFrontierItem.TaskItem(Task task) ->
+                new AutopilotTaskRef(
+                        task.getId(),
+                        task.getTitle(),
+                        null,
+                        task.getStatus().name(),
+                        task.getStoryId(),
+                        epicIdOf(storiesById.get(task.getStoryId())),
+                        AutopilotTaskRef.KIND_TASK);
+            case AutopilotFrontierItem.DesignStoryItem(Story story) ->
+                new AutopilotTaskRef(
+                        null,
+                        story.getTitle(),
+                        null,
+                        "design",
+                        story.getId(),
+                        story.getEpicId(),
+                        AutopilotTaskRef.KIND_DESIGN_STORY);
+        };
+    }
+
+    private static UUID epicIdOf(Story story) {
+        return story == null ? null : story.getEpicId();
+    }
+
+    /**
+     * The Tasks the reported runs work on and the Stories behind them, each read in one batch.
+     * Mutable maps: a run with no Task looks up a null key, which an immutable map throws on.
+     */
+    private record RunSubjects(Map<UUID, Task> tasksById, Map<UUID, Story> storiesById) {}
+
+    /**
+     * A run with a {@code story_id} and no {@code task_id} is a Story Design run — only those carry
+     * a Story — so it is named after its Story, and parked at Approve Story Spec it is the Story
+     * waiting on you.
+     */
+    private static List<AutopilotTaskRef> refsFor(List<WorkflowRun> live, Bucket bucket, RunSubjects subjects) {
         return live.stream()
                 .filter(run -> classify(run.getStatus()).bucket() == bucket)
-                .map(run -> new AutopilotTaskRef(
-                        run.getTaskId(),
-                        // Guarded rather than looked up blind: an immutable Map throws on get(null),
-                        // and a run with no Task is exactly what an empty title map is made of.
-                        run.getTaskId() == null ? null : titlesByTaskId.get(run.getTaskId()),
-                        run.getId(),
-                        run.getStatus().name()))
+                .map(run -> {
+                    if (run.getTaskId() == null && run.getStoryId() != null) {
+                        Story story = subjects.storiesById().get(run.getStoryId());
+                        return new AutopilotTaskRef(
+                                null,
+                                story == null ? null : "Design: " + story.getTitle(),
+                                run.getId(),
+                                run.getStatus().name(),
+                                run.getStoryId(),
+                                epicIdOf(story),
+                                AutopilotTaskRef.KIND_DESIGN_STORY);
+                    }
+                    Task task = subjects.tasksById().get(run.getTaskId());
+                    UUID storyId = task == null ? null : task.getStoryId();
+                    return new AutopilotTaskRef(
+                            run.getTaskId(),
+                            task == null ? null : task.getTitle(),
+                            run.getId(),
+                            run.getStatus().name(),
+                            storyId,
+                            epicIdOf(subjects.storiesById().get(storyId)),
+                            AutopilotTaskRef.KIND_TASK);
+                })
                 .toList();
     }
 
-    /** One batched lookup for every Task named in the reported lists. */
-    private Map<UUID, String> taskTitles(List<WorkflowRun> live) {
+    private RunSubjects runSubjects(List<WorkflowRun> live) {
         Set<UUID> taskIds = live.stream()
                 .map(WorkflowRun::getTaskId)
                 .filter(Objects::nonNull)
                 .collect(Collectors.toSet());
-        if (taskIds.isEmpty()) {
-            // Not Map.of(): a run with no linked Task is a legitimate lookup here, and an
-            // immutable map is the one implementation that throws on a null key rather than
-            // missing it. Both branches now tolerate one.
-            return Collections.emptyMap();
+        Set<UUID> storyIds = live.stream()
+                .filter(run -> run.getTaskId() == null)
+                .map(WorkflowRun::getStoryId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<UUID, Task> tasks = new HashMap<>();
+        if (!taskIds.isEmpty()) {
+            taskRepo.findAllById(taskIds).forEach(task -> tasks.put(task.getId(), task));
         }
-        Map<UUID, String> titles = new HashMap<>();
-        taskRepo.findAllById(taskIds).forEach(task -> titles.put(task.getId(), task.getTitle()));
-        return titles;
+        tasks.values().stream().map(Task::getStoryId).filter(Objects::nonNull).forEach(storyIds::add);
+        Map<UUID, Story> stories = new HashMap<>();
+        if (!storyIds.isEmpty()) {
+            storyRepo.findAllById(storyIds).forEach(story -> stories.put(story.getId(), story));
+        }
+        return new RunSubjects(tasks, stories);
     }
 
     /**

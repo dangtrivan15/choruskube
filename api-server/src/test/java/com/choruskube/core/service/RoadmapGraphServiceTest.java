@@ -8,6 +8,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 
 import com.choruskube.core.BaseTest;
+import com.choruskube.core.StorySpecFixtures;
 import com.choruskube.core.dto.CreateDependencyRequest;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
@@ -33,6 +34,8 @@ import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowOptions;
 import io.temporal.client.WorkflowStub;
 import io.temporal.serviceclient.WorkflowServiceStubs;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -40,8 +43,10 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentMatchers;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
+import software.amazon.awssdk.services.s3.S3Client;
 
 @Transactional
 public class RoadmapGraphServiceTest extends BaseTest {
@@ -81,6 +86,15 @@ public class RoadmapGraphServiceTest extends BaseTest {
 
     @MockitoBean
     private AuthorizationService authService;
+
+    @Autowired
+    private JdbcTemplate jdbc;
+
+    @PersistenceContext
+    private EntityManager entityManager;
+
+    @MockitoBean
+    private S3Client s3Client;
 
     @BeforeEach
     void setUp() {
@@ -680,7 +694,10 @@ public class RoadmapGraphServiceTest extends BaseTest {
     }
 
     private StoryResponse makeStory(UUID epicId, String title) {
-        return storyService.create(epicId, new StoryRequest(title, "Desc for " + title));
+        StoryResponse story = storyService.create(epicId, new StoryRequest(title, "Desc for " + title));
+        entityManager.flush();
+        StorySpecFixtures.approve(jdbc, story.id());
+        return story;
     }
 
     private TaskResponse makeTask(UUID storyId, String title) {

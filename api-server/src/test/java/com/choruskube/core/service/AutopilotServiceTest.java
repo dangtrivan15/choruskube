@@ -43,6 +43,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -125,6 +126,12 @@ class AutopilotServiceTest {
     private TaskService taskService;
 
     @Mock
+    private StoryDesignService storyDesignService;
+
+    @Mock
+    private StorySpecService specService;
+
+    @Mock
     private RunEventPublisher eventPublisher;
 
     @Mock
@@ -159,6 +166,19 @@ class AutopilotServiceTest {
 
     private final List<WorkflowRun> settleBatch = new ArrayList<>();
     private final Map<UUID, Readiness> readiness = new HashMap<>();
+    private final Map<UUID, String> notDesignedReasons = new HashMap<>();
+
+    /**
+     * Each Story's approved spec version. {@link #story} approves by default: a Task starts only
+     * under a designed Story, so every Task-centred case below needs one to mean what it says.
+     */
+    private final Map<UUID, Integer> specVersions = new HashMap<>();
+
+    private final Set<UUID> openDesignRuns = new HashSet<>();
+
+    /** Every Story Design run, live or finished, soft-deleted included — what the newest-run read sees. */
+    private final List<WorkflowRun> designRunHistory = new ArrayList<>();
+
     private final List<WorkItemDependency> edges = new ArrayList<>();
     private final Map<UUID, Task> tasksById = new LinkedHashMap<>();
     private final Map<UUID, Story> storiesById = new LinkedHashMap<>();
@@ -1261,6 +1281,36 @@ class AutopilotServiceTest {
     }
 
     @Test
+    void getStatus_whyIdle_saysTasksWaitOnStoryDesign_ratherThanBlocked() {
+        StoryFixture s = story(epic("E"));
+        task(s, "Waiting on design", WorkItemStatus.backlog, Readiness.READY);
+        designInFlight(s);
+
+        AutopilotStatusResponse status = newService().getStatus();
+
+        assertThat(status.nextUp()).isEmpty();
+        assertThat(status.whyIdle())
+                .contains("No ready work — all 1 backlog Task(s) wait on Story design")
+                .noneMatch(reason -> reason.contains("blocked"));
+    }
+
+    @Test
+    void getStatus_whyIdle_countsBlockedTasksApartFromTasksWaitingOnDesign() {
+        EpicFixture e = epic("E");
+        StoryFixture revising = story(e);
+        task(revising, "Waiting on the revision", WorkItemStatus.backlog, Readiness.READY);
+        task(revising, "Blocked under the revision", WorkItemStatus.backlog, Readiness.BLOCKED);
+        underRevision(revising);
+        StoryFixture designed = story(e);
+        task(designed, "Blocked", WorkItemStatus.backlog, Readiness.BLOCKED);
+
+        AutopilotStatusResponse status = newService().getStatus();
+
+        assertThat(status.whyIdle())
+                .contains("No ready work — 2 backlog Task(s) are blocked and 1 wait on Story design");
+    }
+
+    @Test
     void getStatus_whyIdle_saysAtCapacityWhenEverySlotIsInUse() {
         StoryFixture s = story(epic("E"));
         task(s, "Ready", WorkItemStatus.backlog, Readiness.READY);
@@ -1700,6 +1750,332 @@ class AutopilotServiceTest {
     }
 
     // -----------------------------------------------------------------------------------
+    // 10 — Story design
+    // -----------------------------------------------------------------------------------
+
+    @Test
+    void frontier_undesignedStoryInFocusedEpic_isStartedBeforeOtherEpicsTasks() {
+        // The focused Epic's next work is its Story's design, so the tick stays in that Epic
+        // rather than moving on to another Epic's ready Task.
+        StoryFixture undesigned = undesignedStory(epic("Focused", Priority.high));
+        task(undesigned, "Waits on the design", WorkItemStatus.backlog, Readiness.READY);
+        Task elsewhere =
+                task(story(epic("Other", Priority.low)), "Ready elsewhere", WorkItemStatus.backlog, Readiness.READY);
+
+        AutopilotStatusResponse published = tickAndCapturePublished();
+
+        verify(storyDesignService).startDesignForAutopilot(undesigned.story().getId(), autopilotId);
+        verify(taskService, never()).startForAutopilot(any(), any());
+        assertThat(published.nextUp())
+                .as("the design this tick started is no longer next up")
+                .extracting(AutopilotTaskRef::taskId)
+                .containsExactly(elsewhere.getId());
+    }
+
+    @Test
+    void frontier_storyWithNoTasks_isDesignable() {
+        // Its breakdown is what creates the Tasks, so waiting for one would wait forever.
+        StoryFixture empty = undesignedStory(epic("E"));
+
+        newService().tick();
+
+        verify(storyDesignService).startDesignForAutopilot(empty.story().getId(), autopilotId);
+    }
+
+    @Test
+    void frontier_blockerWithApprovedSpec_allowsDesign() {
+        // Design waits on the blocker's design, not its delivered code: its Task is still backlog.
+        EpicFixture e = epic("E");
+        StoryFixture blocker = story(e);
+        task(blocker, "Not delivered yet", WorkItemStatus.backlog, Readiness.READY);
+        StoryFixture dependent = undesignedStory(e);
+        blocks(
+                blocker.story().getId(),
+                BlockableItemType.story,
+                dependent.story().getId(),
+                BlockableItemType.story);
+        autopilot.setMaxParallel(2);
+
+        newService().tick();
+
+        verify(storyDesignService).startDesignForAutopilot(dependent.story().getId(), autopilotId);
+    }
+
+    @Test
+    void frontier_blockerWithoutSpec_blocksDesign() {
+        EpicFixture e = epic("E");
+        StoryFixture blocker = undesignedStory(e);
+        task(blocker, "Not delivered", WorkItemStatus.backlog, Readiness.READY);
+        StoryFixture dependent = undesignedStory(e);
+        blocks(
+                blocker.story().getId(),
+                BlockableItemType.story,
+                dependent.story().getId(),
+                BlockableItemType.story);
+        autopilot.setMaxParallel(2);
+
+        newService().tick();
+
+        verify(storyDesignService).startDesignForAutopilot(blocker.story().getId(), autopilotId);
+        verify(storyDesignService, never())
+                .startDesignForAutopilot(eq(dependent.story().getId()), any());
+    }
+
+    @Test
+    void frontier_storyWithOpenDesignRun_notDesignable() {
+        StoryFixture designing = story(epic("E"));
+        task(designing, "Waits on the design", WorkItemStatus.backlog, Readiness.READY);
+        designInFlight(designing);
+        designRun(WorkflowRunStatus.awaiting_human, designing.story().getId());
+
+        AutopilotStatusResponse published = tickAndCapturePublished();
+
+        verify(storyDesignService, never()).startDesignForAutopilot(any(), any());
+        verify(taskService, never()).startForAutopilot(any(), any());
+        assertThat(published.whyIdle()).contains("No ready work — all 1 backlog Task(s) wait on Story design");
+    }
+
+    @Test
+    void start_designConflict_isNoteNotFailure() {
+        // A human clicked Design first, or another instance did: the roadmap moved, the platform
+        // did not fail, and the next item still gets its start.
+        StoryFixture contended = undesignedStory(epic("High", Priority.high));
+        contended.story().setTitle("Contended");
+        Task next = task(story(epic("Low", Priority.low)), "Next", WorkItemStatus.backlog, Readiness.READY);
+        autopilot.setConsecutiveFailures(2);
+        when(storyDesignService.startDesignForAutopilot(eq(contended.story().getId()), any()))
+                .thenThrow(new ConflictException("Story already has an open design run"));
+
+        AutopilotStatusResponse published = tickAndCapturePublished();
+
+        assertThat(autopilot.getConsecutiveFailures())
+                .as("a lost race must never reach the breaker")
+                .isEqualTo(2);
+        assertThat(autopilot.isEngaged()).isTrue();
+        verify(taskService).startForAutopilot(next.getId(), autopilotId);
+        assertThat(published.whyIdle())
+                .anyMatch(reason -> reason.contains("'Contended'") && reason.contains("no longer startable"));
+    }
+
+    @Test
+    void start_designQuotaExceeded_stopsPass() {
+        StoryFixture held = undesignedStory(epic("High", Priority.high));
+        task(story(epic("Low", Priority.low)), "Next", WorkItemStatus.backlog, Readiness.READY);
+        autopilot.setMaxParallel(2);
+        when(storyDesignService.startDesignForAutopilot(eq(held.story().getId()), any()))
+                .thenThrow(new QuotaExceededException("Run quota reached"));
+
+        AutopilotStatusResponse published = tickAndCapturePublished();
+
+        assertThat(autopilot.getConsecutiveFailures()).isZero();
+        verify(taskService, never()).startForAutopilot(any(), any());
+        assertThat(published.whyIdle()).contains("Held back by a quota: Run quota reached");
+    }
+
+    @Test
+    void start_designThrows_countsAsAFailure() {
+        StoryFixture broken = undesignedStory(epic("E"));
+        when(storyDesignService.startDesignForAutopilot(eq(broken.story().getId()), any()))
+                .thenThrow(new IllegalStateException("Story Design template not found"));
+
+        newService().tick();
+
+        assertThat(autopilot.getConsecutiveFailures()).isEqualTo(1);
+    }
+
+    @Test
+    void status_nextUpListsDesignItemsWithKind() {
+        StoryFixture undesigned = undesignedStory(epic("High", Priority.high));
+        undesigned.story().setTitle("Checkout");
+        task(undesigned, "Waits on the design", WorkItemStatus.backlog, Readiness.READY);
+        StoryFixture designed = story(epic("Low", Priority.low));
+        Task ready = task(designed, "Ready", WorkItemStatus.backlog, Readiness.READY);
+
+        AutopilotStatusResponse status = newService().getStatus();
+
+        assertThat(status.nextUp())
+                .extracting(
+                        AutopilotTaskRef::taskId,
+                        AutopilotTaskRef::title,
+                        AutopilotTaskRef::runId,
+                        AutopilotTaskRef::status,
+                        AutopilotTaskRef::storyId,
+                        AutopilotTaskRef::epicId,
+                        AutopilotTaskRef::kind)
+                .containsExactly(
+                        tuple(
+                                null,
+                                "Checkout",
+                                null,
+                                "design",
+                                undesigned.story().getId(),
+                                undesigned.story().getEpicId(),
+                                "design_story"),
+                        tuple(
+                                ready.getId(),
+                                "Ready",
+                                null,
+                                "backlog",
+                                designed.story().getId(),
+                                designed.story().getEpicId(),
+                                "task"));
+    }
+
+    @Test
+    void status_awaitingYouTitlesDesignRunByStory() {
+        StoryFixture designing = story(epic("E"));
+        designing.story().setTitle("Checkout");
+        designInFlight(designing);
+        WorkflowRun specGate =
+                designRun(WorkflowRunStatus.awaiting_human, designing.story().getId());
+        StoryFixture delivering = story(epic("Other"));
+        Task parked = task(delivering, "Parked", WorkItemStatus.in_progress, Readiness.READY);
+        WorkflowRun taskGate = run(WorkflowRunStatus.awaiting_human, parked.getId());
+
+        AutopilotStatusResponse status = newService().getStatus();
+
+        assertThat(status.awaitingYou())
+                .extracting(
+                        AutopilotTaskRef::taskId,
+                        AutopilotTaskRef::title,
+                        AutopilotTaskRef::runId,
+                        AutopilotTaskRef::status,
+                        AutopilotTaskRef::storyId,
+                        AutopilotTaskRef::epicId,
+                        AutopilotTaskRef::kind)
+                .containsExactlyInAnyOrder(
+                        tuple(
+                                null,
+                                "Design: Checkout",
+                                specGate.getId(),
+                                "awaiting_human",
+                                designing.story().getId(),
+                                designing.story().getEpicId(),
+                                "design_story"),
+                        tuple(
+                                parked.getId(),
+                                "Parked",
+                                taskGate.getId(),
+                                "awaiting_human",
+                                delivering.story().getId(),
+                                delivering.story().getEpicId(),
+                                "task"));
+    }
+
+    @Test
+    void frontier_cancelledDesignRun_holdsStoryNotRestarted() {
+        // A human cancelled it; designing it again would undo that cancel on every tick.
+        StoryFixture cancelled = undesignedStory(epic("E"));
+        WorkflowRun run = pastDesignRun(cancelled, WorkflowRunStatus.cancelled, Instant.now());
+
+        AutopilotStatusResponse published = tickAndCapturePublished();
+
+        verify(storyDesignService, never()).startDesignForAutopilot(any(), any());
+        assertThat(published.nextUp()).isEmpty();
+        assertThat(published.heldTasks())
+                .extracting(AutopilotTaskRef::storyId, AutopilotTaskRef::runId, AutopilotTaskRef::kind)
+                .containsExactly(tuple(cancelled.story().getId(), run.getId(), "design_story"));
+    }
+
+    @Test
+    void frontier_failedDesignRun_holdsStory() {
+        // Retrying a broken design every tick would only feed the failure breaker.
+        StoryFixture failed = undesignedStory(epic("High", Priority.high));
+        pastDesignRun(failed, WorkflowRunStatus.failed, Instant.now());
+        Task elsewhere =
+                task(story(epic("Low", Priority.low)), "Ready elsewhere", WorkItemStatus.backlog, Readiness.READY);
+
+        newService().tick();
+
+        verify(storyDesignService, never()).startDesignForAutopilot(any(), any());
+        verify(taskService).startForAutopilot(elsewhere.getId(), autopilotId);
+        assertThat(autopilot.getConsecutiveFailures()).isZero();
+    }
+
+    @Test
+    void frontier_deletedFailedDesignRun_designableAgain() {
+        StoryFixture released = undesignedStory(epic("E"));
+        WorkflowRun failed = pastDesignRun(released, WorkflowRunStatus.failed, Instant.now());
+        failed.setDeletedAt(Instant.now());
+
+        AutopilotStatusResponse published = tickAndCapturePublished();
+
+        verify(storyDesignService).startDesignForAutopilot(released.story().getId(), autopilotId);
+        assertThat(published.heldTasks()).isEmpty();
+    }
+
+    @Test
+    void frontier_manualDesignAfterFailure_notHeld() {
+        // A person designed it again by hand: the newest run is open, so the Story is in design
+        // rather than held, and the older failure no longer speaks for it.
+        StoryFixture retried = undesignedStory(epic("E"));
+        pastDesignRun(retried, WorkflowRunStatus.failed, Instant.now().minus(Duration.ofHours(1)));
+        pastDesignRun(retried, WorkflowRunStatus.running, Instant.now());
+        designInFlight(retried);
+
+        AutopilotStatusResponse published = tickAndCapturePublished();
+
+        verify(storyDesignService, never()).startDesignForAutopilot(any(), any());
+        assertThat(published.heldTasks()).isEmpty();
+        assertThat(published.whyIdle()).noneMatch(reason -> reason.startsWith("Story design run"));
+    }
+
+    @Test
+    void status_heldStoryListedWithReason() {
+        StoryFixture held = undesignedStory(epic("E"));
+        held.story().setTitle("Checkout");
+        WorkflowRun failed = pastDesignRun(held, WorkflowRunStatus.failed, Instant.now());
+
+        AutopilotStatusResponse status = newService().getStatus();
+
+        assertThat(status.heldTasks())
+                .extracting(
+                        AutopilotTaskRef::taskId,
+                        AutopilotTaskRef::title,
+                        AutopilotTaskRef::runId,
+                        AutopilotTaskRef::status,
+                        AutopilotTaskRef::storyId,
+                        AutopilotTaskRef::epicId,
+                        AutopilotTaskRef::kind)
+                .containsExactly(tuple(
+                        null,
+                        "Design: Checkout",
+                        failed.getId(),
+                        "failed",
+                        held.story().getId(),
+                        held.story().getEpicId(),
+                        "design_story"));
+        assertThat(status.whyIdle())
+                .contains("Story design run " + failed.getId()
+                        + " for 'Checkout' failed — design it again from the Story page or delete the run");
+    }
+
+    @Test
+    void status_heldTaskCarriesItsStorysEpic() {
+        StoryFixture delivering = story(epic("E"));
+        Task stranded = task(delivering, "Stranded", WorkItemStatus.in_progress, Readiness.READY);
+        WorkflowRun cancelled = new WorkflowRun();
+        cancelled.setId(UUID.randomUUID());
+        cancelled.setStatus(WorkflowRunStatus.cancelled);
+        cancelled.setTaskId(stranded.getId());
+        when(runRepo.findByTaskIdInOrderByCreatedAtDesc(any())).thenReturn(List.of(cancelled));
+
+        AutopilotStatusResponse status = newService().getStatus();
+
+        assertThat(status.heldTasks())
+                .extracting(
+                        AutopilotTaskRef::taskId,
+                        AutopilotTaskRef::storyId,
+                        AutopilotTaskRef::epicId,
+                        AutopilotTaskRef::kind)
+                .containsExactly(tuple(
+                        stranded.getId(),
+                        delivering.story().getId(),
+                        delivering.story().getEpicId(),
+                        "task"));
+    }
+
+    // -----------------------------------------------------------------------------------
     // Harness
     // -----------------------------------------------------------------------------------
 
@@ -1921,6 +2297,45 @@ class AutopilotServiceTest {
         });
         when(taskRepo.findById(any())).thenAnswer(inv -> Optional.ofNullable(tasksById.get(inv.getArgument(0))));
         when(storyRepo.findById(any())).thenAnswer(inv -> Optional.ofNullable(storiesById.get(inv.getArgument(0))));
+        when(storyRepo.findAllById(any())).thenAnswer(invocation -> {
+            Iterable<?> ids = invocation.getArgument(0);
+            List<Story> found = new ArrayList<>();
+            if (ids != null) {
+                ids.forEach(id -> Optional.ofNullable(storiesById.get(id)).ifPresent(found::add));
+            }
+            return found;
+        });
+        when(specService.currentVersions(any())).thenAnswer(invocation -> {
+            Collection<?> ids = invocation.getArgument(0);
+            Map<UUID, Integer> found = new HashMap<>();
+            if (ids != null) {
+                ids.forEach(id -> Optional.ofNullable(specVersions.get(id)).ifPresent(v -> found.put((UUID) id, v)));
+            }
+            return found;
+        });
+        when(specService.storiesWithOpenDesignRun(any())).thenAnswer(invocation -> {
+            Collection<?> ids = invocation.getArgument(0);
+            Set<UUID> found = new HashSet<>();
+            if (ids != null) {
+                ids.stream().filter(openDesignRuns::contains).forEach(id -> found.add((UUID) id));
+            }
+            return found;
+        });
+        when(specService.latestDesignRuns(any())).thenAnswer(invocation -> {
+            Collection<?> ids = invocation.getArgument(0);
+            Map<UUID, WorkflowRun> latest = new HashMap<>();
+            if (ids != null) {
+                designRunHistory.stream()
+                        .filter(run -> ids.contains(run.getStoryId()) && run.getDeletedAt() == null)
+                        .forEach(run -> latest.merge(
+                                run.getStoryId(),
+                                run,
+                                (a, b) -> a.getCreatedAt().isAfter(b.getCreatedAt()) ? a : b));
+            }
+            return latest;
+        });
+        Map<UUID, String> statuses = new HashMap<>();
+        epics.forEach(fixture -> statuses.putAll(fixture.candidates().statusById()));
         for (EpicFixture fixture : epics) {
             when(epicRepo.findById(fixture.epic.getId())).thenReturn(Optional.of(fixture.epic));
             when(readinessAssembler.loadEpicCandidates(fixture.epic.getId())).thenReturn(fixture.candidates());
@@ -1932,7 +2347,8 @@ class AutopilotServiceTest {
                             any()))
                     // The readiness map and the edge list are shared across Epics on purpose: the
                     // service merges them anyway, and a superset changes no assertion here.
-                    .thenReturn(new EpicReadinessAssembler.Assembly(readiness, List.of(), List.of(), edges));
+                    .thenReturn(new EpicReadinessAssembler.Assembly(
+                            readiness, List.of(), List.of(), edges, notDesignedReasons, statuses));
         }
         return new AutopilotService(
                 autopilotRepo,
@@ -1948,6 +2364,8 @@ class AutopilotServiceTest {
                 candidateSource,
                 slotCounter,
                 taskService,
+                storyDesignService,
+                specService,
                 eventPublisher,
                 ownershipEvents::add,
                 transactionManager,
@@ -1984,14 +2402,23 @@ class AutopilotServiceTest {
 
         EpicReadinessAssembler.EpicCandidates candidates() {
             Set<UUID> candidateIds = new HashSet<>();
+            Map<UUID, String> statusById = new HashMap<>();
+            List<Task> allTasks = new ArrayList<>();
             candidateIds.add(epic.getId());
             stories.forEach(s -> {
+                List<Task> tasks = tasksByStoryId.getOrDefault(s.getId(), List.of());
                 candidateIds.add(s.getId());
-                tasksByStoryId.getOrDefault(s.getId(), List.of()).forEach(t -> candidateIds.add(t.getId()));
+                statusById.put(s.getId(), RollupCalculator.effectiveStatus(s.getStage(), tasks));
+                tasks.forEach(t -> {
+                    candidateIds.add(t.getId());
+                    statusById.put(t.getId(), t.getStatus().name());
+                    allTasks.add(t);
+                });
             });
-            // statusById/parentOf are the assembler's own inputs and are stubbed out with it, so
-            // they are handed back empty rather than reconstructed.
-            return new EpicReadinessAssembler.EpicCandidates(stories, tasksByStoryId, candidateIds, Map.of(), Map.of());
+            statusById.put(epic.getId(), RollupCalculator.effectiveStatus(epic.getStage(), allTasks));
+            // parentOf is only the assembler's own input, and the assembler is stubbed out.
+            return new EpicReadinessAssembler.EpicCandidates(
+                    stories, tasksByStoryId, candidateIds, statusById, Map.of());
         }
     }
 
@@ -2022,7 +2449,28 @@ class AutopilotServiceTest {
         epic.stories.add(story);
         epic.tasksByStoryId.put(story.getId(), new ArrayList<>());
         storiesById.put(story.getId(), story);
+        specVersions.put(story.getId(), 1);
         return new StoryFixture(story, epic);
+    }
+
+    /** No approved spec and no design run: a Story the Autopilot designs, whose Tasks cannot start. */
+    private StoryFixture undesignedStory(EpicFixture epic) {
+        StoryFixture fixture = story(epic);
+        specVersions.remove(fixture.story().getId());
+        notDesignedReasons.put(fixture.story().getId(), StoryDesignReadiness.NOT_APPROVED);
+        return fixture;
+    }
+
+    /** A first design in flight: neither designable again nor startable. */
+    private void designInFlight(StoryFixture fixture) {
+        specVersions.remove(fixture.story().getId());
+        openDesignRuns.add(fixture.story().getId());
+        notDesignedReasons.put(fixture.story().getId(), StoryDesignReadiness.NOT_APPROVED);
+    }
+
+    private void underRevision(StoryFixture fixture) {
+        openDesignRuns.add(fixture.story().getId());
+        notDesignedReasons.put(fixture.story().getId(), StoryDesignReadiness.UNDER_REVISION);
     }
 
     private Task task(StoryFixture story, String title, WorkItemStatus status, Readiness readinessValue) {
@@ -2035,6 +2483,25 @@ class AutopilotServiceTest {
         tasksById.put(task.getId(), task);
         readiness.put(task.getId(), readinessValue);
         return task;
+    }
+
+    /** A live Story Design run belonging to this Autopilot: a {@code story_id} and no {@code task_id}. */
+    private WorkflowRun designRun(WorkflowRunStatus status, UUID storyId) {
+        WorkflowRun run = run(status, null);
+        run.setStoryId(storyId);
+        designRunHistory.add(run);
+        return run;
+    }
+
+    /** A Story Design run in the Story's history only — finished, or a person's, so not this Autopilot's live run. */
+    private WorkflowRun pastDesignRun(StoryFixture fixture, WorkflowRunStatus status, Instant createdAt) {
+        WorkflowRun run = new WorkflowRun();
+        run.setId(UUID.randomUUID());
+        run.setStatus(status);
+        run.setStoryId(fixture.story().getId());
+        ReflectionTestUtils.setField(run, "createdAt", createdAt);
+        designRunHistory.add(run);
+        return run;
     }
 
     /** A live run belonging to this Autopilot. */
@@ -2079,11 +2546,16 @@ class AutopilotServiceTest {
     }
 
     private void blocks(UUID blockingId, BlockableItemType blockingType, UUID blockedId) {
+        blocks(blockingId, blockingType, blockedId, BlockableItemType.task);
+    }
+
+    private void blocks(
+            UUID blockingId, BlockableItemType blockingType, UUID blockedId, BlockableItemType blockedType) {
         WorkItemDependency edge = new WorkItemDependency();
         edge.setId(UUID.randomUUID());
         edge.setBlockingItemType(blockingType);
         edge.setBlockingItemId(blockingId);
-        edge.setBlockedItemType(BlockableItemType.task);
+        edge.setBlockedItemType(blockedType);
         edge.setBlockedItemId(blockedId);
         edges.add(edge);
     }

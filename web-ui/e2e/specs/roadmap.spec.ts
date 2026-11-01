@@ -173,13 +173,14 @@ test.describe("Roadmap drill-down", () => {
   test("Edit affordance is hidden on a Story with a started Task and on a Task that isn't in backlog", async ({
     roadmapPage,
     api,
-    workerRepo,
+    cloneableProject,
   }) => {
+    test.setTimeout(300_000);
     const uniqueTitle = uniqueName("E2E Edit Guard");
     const epic = await api.createEpic({
       title: uniqueTitle,
       description: "Testing the edit affordance guard",
-      softwareProjectId: workerRepo.gitRepo.id,
+      softwareProjectId: cloneableProject.id,
     });
     const story = await api.createStory(epic.id, {
       title: "Story for edit guard test",
@@ -189,6 +190,7 @@ test.describe("Roadmap drill-down", () => {
       title: uniqueName("Task for edit guard test"),
       description: "desc",
     });
+    await api.approveStorySpec(story.id);
     await api.startTask(task.id);
 
     await roadmapPage.page.goto(`/tasks/${task.id}`);
@@ -241,12 +243,13 @@ test.describe("Roadmap drill-down", () => {
   test("Story and Task list rows show a Blocked badge without opening the graph, and it clears without a manual refresh once the blocker completes", async ({
     roadmapPage,
     api,
-    workerRepo,
+    cloneableProject,
   }) => {
+    test.setTimeout(300_000);
     const epic = await api.createEpic({
       title: uniqueName("E2E List Readiness Epic"),
       description: "desc",
-      softwareProjectId: workerRepo.gitRepo.id,
+      softwareProjectId: cloneableProject.id,
     });
     const story = await api.createStory(epic.id, {
       title: uniqueName("List Readiness Story"),
@@ -289,6 +292,8 @@ test.describe("Roadmap drill-down", () => {
       blockedItemType: "story",
       blockedItemId: blockedStory.id,
     });
+    // Before the page opens, so the approval's push cannot re-render it mid-assertion.
+    await api.approveStorySpec(story.id);
 
     // Not the graph — the Epic detail page's flat Story list.
     await roadmapPage.goto();
@@ -304,8 +309,8 @@ test.describe("Roadmap drill-down", () => {
     await expect(roadmapPage.taskItemReadinessBadge(blockingTask.title)).not.toBeVisible();
 
     // Complete the blocking Task out-of-band (mirrors roadmap-graph.spec.ts's
-    // equivalent pattern — completeTask only needs a terminal run, not a real
-    // "Feature Development" template run) and confirm the Task row's badge
+    // equivalent pattern — completeTask only needs a terminal run, not a
+    // completed one) and confirm the Task row's badge
     // clears on the already-open Story detail page without a manual reload —
     // exercises the realtime push-driven update flow.
     const started = await api.startTask(blockingTask.id);
@@ -454,12 +459,13 @@ test.describe("Roadmap drill-down", () => {
   test("'Ready to start' filter on the Roadmap list shows only Epics with unblocked work", async ({
     roadmapPage,
     api,
-    workerRepo,
+    cloneableProject,
   }) => {
+    test.setTimeout(300_000);
     const readyEpic = await api.createEpic({
       title: uniqueName("E2E Ready Filter Ready Epic"),
       description: "desc",
-      softwareProjectId: workerRepo.gitRepo.id,
+      softwareProjectId: cloneableProject.id,
     });
     const unblockedStory = await api.createStory(readyEpic.id, {
       title: "Unblocked story",
@@ -473,7 +479,7 @@ test.describe("Roadmap drill-down", () => {
     const blockedEpic = await api.createEpic({
       title: uniqueName("E2E Ready Filter Blocked Epic"),
       description: "desc",
-      softwareProjectId: workerRepo.gitRepo.id,
+      softwareProjectId: cloneableProject.id,
     });
     const blockedStory = await api.createStory(blockedEpic.id, {
       title: "Blocked story",
@@ -483,7 +489,7 @@ test.describe("Roadmap drill-down", () => {
     const blockerEpic = await api.createEpic({
       title: uniqueName("E2E Ready Filter Blocker Owner Epic"),
       description: "desc",
-      softwareProjectId: workerRepo.gitRepo.id,
+      softwareProjectId: cloneableProject.id,
     });
     const blockerStory = await api.createStory(blockerEpic.id, {
       title: "Blocker story",
@@ -495,6 +501,9 @@ test.describe("Roadmap drill-down", () => {
       blockedItemType: "story",
       blockedItemId: blockedStory.id,
     });
+    // Only a designed Story's Tasks count as startable. Both are designed, so the blocked Epic can
+    // drop out only for being blocked.
+    await Promise.all([api.approveStorySpec(unblockedStory.id), api.approveStorySpec(blockedStory.id)]);
 
     await roadmapPage.goto();
     await expect(roadmapPage.epicItems.filter({ hasText: readyEpic.title })).toBeVisible();

@@ -152,7 +152,9 @@ class RunServiceRoadmapMaterializationTest {
                 roadmapProposalValidator,
                 null, // taskSettlement
                 org.mockito.Mockito.mock(GateRecheckService.class),
-                gateFinalize);
+                gateFinalize,
+                null // storySpecService
+                );
     }
 
     private NodeExecution stubExec() {

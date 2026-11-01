@@ -76,7 +76,8 @@ class AutoDecisionTest {
                 null,
                 null,
                 null,
-                null);
+                null,
+                mock(StoryConflictRecorder.class));
     }
 
     private NodeExecution stubExec() {

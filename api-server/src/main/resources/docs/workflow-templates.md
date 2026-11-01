@@ -80,8 +80,9 @@ When you click **Start Run**, the **Start Run dialog** prompts you to:
 1. **Choose a Workflow Template** — select from the list of available templates.
 2. **Select a Git Repository or Repository Group** — choose which codebase(s) the workflow operates on.
 
-Starting a run from a Task's detail view on the **Roadmap** page links the run to that Task
-automatically instead — see [Roadmap](roadmap-and-proposals).
+Starting a run from a Task's detail view on the **Roadmap** page needs no choice: it runs the Task
+Delivery template and links the run to that Task automatically — see
+[Roadmap](roadmap-and-proposals).
 
 The dialog validates that all required fields are filled before enabling the **Start** button.
 

@@ -25,6 +25,8 @@ export interface RunSummary {
   /** Set when the Autopilot started this run, null when a person did. */
   autopilotId: string | null;
   softwareProject: SoftwareProjectRef | null;
+  /** The Story spec version a Task Delivery run planned against; `null` on every other run. */
+  storySpecVersion: number | null;
 }
 
 export interface RunPullRequestResponse {
@@ -72,6 +74,8 @@ export interface RunResponse {
   /** Set when the Autopilot started this run, null when a person did. */
   autopilotId: string | null;
   softwareProject: SoftwareProjectRef | null;
+  /** The Story spec version a Task Delivery run planned against; `null` on every other run. */
+  storySpecVersion: number | null;
 }
 
 export interface GraphSnapshot {
@@ -696,6 +700,51 @@ export interface StoryResponse {
   progress: WorkItemProgress;
   createdAt: string;
   updatedAt: string;
+  /** The approved spec's current version; `null` until a Story Design run is first approved. */
+  specVersion: number | null;
+  /** A spec exists AND a design run is open on it — its Tasks cannot start until it completes. */
+  specUnderRevision: boolean;
+  /**
+   * The open Story Design run, if any. With `specVersion == null` it is the first design; with a
+   * version it is a revision (`specUnderRevision`).
+   */
+  openDesignRunId: string | null;
+}
+
+/** `GET /stories/{id}/spec` and `GET /stories/{id}/spec/versions/{v}`. */
+export interface StorySpecResponse {
+  storyId: string;
+  version: number;
+  content: string;
+  approvedAt: string;
+  /** The Story Design run that produced this version; `null` if it was recorded without one. */
+  runId: string | null;
+}
+
+/** `POST /stories/{id}/revise` body. `guidance` is required, non-blank, at most 20000 chars. */
+export interface StoryReviseRequest {
+  guidance: string;
+}
+
+/** One row of `GET /stories/{id}/spec/versions`. */
+export interface StorySpecVersionSummary {
+  version: number;
+  approvedAt: string;
+  runId: string | null;
+}
+
+/**
+ * An open conflict a Task run raised against its Story's spec (`GET /stories/{id}/conflicts`).
+ * `revisionRunId` is set once a revision run has been started to answer it.
+ */
+export interface StoryConflictResponse {
+  id: string;
+  taskRunId: string;
+  taskId: string | null;
+  taskTitle: string | null;
+  raisedAgainstVersion: number;
+  revisionRunId: string | null;
+  createdAt: string;
 }
 
 export interface StoryStageUpdateRequest {
@@ -1429,11 +1478,19 @@ export interface OrgAiCredentialResponse {
   updatedAt: string;
 }
 
+/**
+ * One item in an Autopilot status list. `kind: "design_story"` is a Story's design rather than a
+ * Task: it has no `taskId`, and `storyId` names the Story.
+ */
 export interface AutopilotTaskRef {
-  taskId: string;
+  taskId: string | null;
   title: string;
   runId: string | null;
   status: string;
+  storyId: string | null;
+  /** The Story's Epic — the Story route needs it. `null` only when the Story could not be read. */
+  epicId: string | null;
+  kind: "task" | "design_story";
 }
 
 export interface AutopilotStatus {

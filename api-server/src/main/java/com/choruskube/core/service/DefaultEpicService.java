@@ -483,7 +483,7 @@ public class DefaultEpicService implements EpicService {
      * does not have, so {@link #listInternal} passes {@link ReadinessAuthMode#INTERNAL_RUN}.
      *
      * <p>What counts is decided by {@link EpicReadinessAssembler#isStartable}, shared with the
-     * Autopilot's ready frontier: backlog Tasks that are READY. Stories and the Epic itself are
+     * Autopilot's ready frontier: backlog Tasks that are READY under a designed Story. Stories and the Epic itself are
      * containers and never counted, so this figure and {@code progress.totalTasks} are two
      * statements about the same tier.
      */

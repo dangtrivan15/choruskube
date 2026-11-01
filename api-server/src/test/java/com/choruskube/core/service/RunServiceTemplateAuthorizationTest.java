@@ -102,7 +102,9 @@ class RunServiceTemplateAuthorizationTest {
                 null, // roadmapProposalValidator - unused (approve-time validation not exercised)
                 null, // taskSettlement
                 org.mockito.Mockito.mock(GateRecheckService.class),
-                org.mockito.Mockito.mock(GateFinalizeService.class));
+                org.mockito.Mockito.mock(GateFinalizeService.class),
+                null // storySpecService
+                );
     }
 
     @Test

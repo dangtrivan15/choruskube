@@ -1,5 +1,10 @@
 package com.choruskube.core.config.e2e;
 
+import com.choruskube.core.config.BaseStoryDesignSeeder;
+import com.choruskube.core.config.BaseTaskDeliverySeeder;
+import com.choruskube.core.config.StoryDesignGraph;
+import com.choruskube.core.config.TaskDeliveryGraph;
+import com.choruskube.core.config.TemplateWriter;
 import com.choruskube.core.dto.RepoGroupRequest;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.GraphTemplate;
@@ -14,6 +19,7 @@ import com.choruskube.core.repository.TemplateEdgeRepository;
 import com.choruskube.core.repository.TemplateNodeRepository;
 import com.choruskube.core.service.RepoGroupService;
 import com.choruskube.core.util.RepoNameUtil;
+import java.util.Map;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -107,11 +113,10 @@ public class E2eTestDataSeeder implements ApplicationRunner {
     // drift_recheck: a stale approval is held, re-checked and re-applied — drift-recheck-at-approval.spec.ts.
     private static final String GRAPH_ID_DRIFT_RECHECK = "e2e-drift-recheck";
 
-    // Bumped to 9 so the drift_recheck template gets seeded — run()
-    // early-returns when a template at the current VERSION already exists, so an edit
+    // run() early-returns when a template at the current VERSION already exists, so an edit
     // without a bump is a no-op against any environment whose database survived the
     // previous boot.
-    private static final int VERSION = 9;
+    static final int VERSION = 10;
 
     private static final String E2E_REPO_URL = "https://github.com/e2e-test/mock-repo";
     private static final String E2E_SECONDARY_REPO_URL = "https://github.com/e2e-test/mock-frontend";
@@ -123,6 +128,7 @@ public class E2eTestDataSeeder implements ApplicationRunner {
     private final TemplateEdgeRepository edgeRepo;
     private final GitRepoRepository gitRepoRepo;
     private final RepoGroupService repoGroupService;
+    private final TemplateWriter writer;
 
     @Value("${E2E_AGENT_IMAGE}")
     private String agentImage;
@@ -143,6 +149,7 @@ public class E2eTestDataSeeder implements ApplicationRunner {
         this.edgeRepo = edgeRepo;
         this.gitRepoRepo = gitRepoRepo;
         this.repoGroupService = repoGroupService;
+        this.writer = new TemplateWriter(templateRepo, nodeDefRepo, templateNodeRepo, edgeRepo);
     }
 
     @Override
@@ -218,7 +225,10 @@ public class E2eTestDataSeeder implements ApplicationRunner {
 
         seedRoadmapImperativeLinks(mockSuccess);
 
-        log.info("E2eTestDataSeeder: seeded 3 git repos, 1 repo group, 11 node definitions, and 19 E2E templates");
+        seedStoryDesignCopy();
+        seedTaskDeliveryCopy();
+
+        log.info("E2eTestDataSeeder: seeded 3 git repos, 1 repo group, 23 node definitions, and 21 E2E templates");
     }
 
     private void seedDemoRepoGroup() {
@@ -810,6 +820,68 @@ public class E2eTestDataSeeder implements ApplicationRunner {
         createEdge(t, verifyAndGate, gate, null);
         createEdge(t, gate, runComplete, "approved");
         createEdge(t, gate, verifyAndGate, "rejected");
+    }
+
+    // --- Story Design and Task Delivery: the production graphs, with the mock agent in each agent node ---
+    //
+    // Server-started runs use these copies (E2eTemplateGraphIdResolver). Each keeps production's
+    // graph, input schema and prompt key, so a run resolves its Story's repos as it does for users.
+
+    private void seedStoryDesignCopy() {
+        GraphTemplate t = copyTemplate(
+                E2eTemplateGraphIdResolver.STORY_DESIGN_COPY,
+                BaseStoryDesignSeeder.INPUT_SCHEMA,
+                "story_request",
+                "E2E test: Story Design with mock-agent.sh drafting and reviewing the Story spec");
+        StoryDesignGraph.seed(
+                writer,
+                t,
+                Map.of(
+                        StoryDesignGraph.DRAFT, mockAgentNode("story_spec_draft"),
+                        StoryDesignGraph.REVIEW,
+                                mockAgentNode("story_spec_review --expect-input draft_story_spec/story_spec.md")));
+    }
+
+    // Test keeps production's run-all-tests: the seeded repos declare no test command, which it
+    // reports as a pass.
+    private void seedTaskDeliveryCopy() {
+        GraphTemplate t = copyTemplate(
+                E2eTemplateGraphIdResolver.TASK_DELIVERY_COPY,
+                BaseTaskDeliverySeeder.INPUT_SCHEMA,
+                "feature_request",
+                "E2E test: Task Delivery with mock-agent.sh in every agent node; a Task title's"
+                        + " [e2e-analyze:<decision>] marker picks Analyze's decision");
+        TaskDeliveryGraph.seed(
+                writer,
+                t,
+                Map.of(
+                        TaskDeliveryGraph.ANALYZE, mockAgentNode("analyze --expect-input run_input/story_spec.md"),
+                        TaskDeliveryGraph.TASK_SPEC_REVIEW,
+                                mockAgentNode("task_spec_review --expect-input plan/plan.md"
+                                        + " --expect-input plan/task_spec.md"),
+                        TaskDeliveryGraph.IMPLEMENT,
+                                mockAgentNode("success --artifact summary.md --expect-input plan/plan.md"),
+                        TaskDeliveryGraph.CODE_REVIEW,
+                                mockAgentNode("gate_approve --artifact review.md --expect-input plan/plan.md")));
+    }
+
+    private GraphTemplate copyTemplate(String graphId, String inputSchema, String promptInputKey, String description) {
+        GraphTemplate t = new GraphTemplate();
+        t.setGraphId(graphId);
+        t.setVersion(VERSION);
+        t.setName(graphId);
+        t.setDescription(description);
+        t.setInputSchema(inputSchema);
+        t.setPromptInputKey(promptInputKey);
+        // Every org's Task starts and Story designs resolve to this copy, and a non-system
+        // template is readable only inside the org that owns it.
+        t.setSystem(true);
+        return writer.template(t);
+    }
+
+    /** The agent node runs as a script node, so the stack launches mock-agent.sh rather than Claude. */
+    private String mockAgentNode(String args) {
+        return "{\"executor_type\": \"script\", \"command\": \"" + mockScriptPath + " " + args + "\"}";
     }
 
     // --- Helpers ---

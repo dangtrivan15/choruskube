@@ -172,7 +172,8 @@ class InternalRunServiceGraphRuntimeTest {
                 null,
                 null,
                 null,
-                null);
+                null,
+                mock(StoryConflictRecorder.class));
     }
 
     @Test

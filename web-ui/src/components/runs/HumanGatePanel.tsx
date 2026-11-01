@@ -19,6 +19,7 @@ import EscalationGatePanel from "./EscalationGatePanel";
 import TriggerBanner from "./TriggerBanner";
 import MergeOnApprovalNotice from "./MergeOnApprovalNotice";
 import HeldApprovalNotice from "./HeldApprovalNotice";
+import AwaitStoryRevisionNotice from "./AwaitStoryRevisionNotice";
 import { parseGateTrigger, isEscalationGate } from "@/lib/decisions";
 import { latestStampFor } from "@/lib/gateStamps";
 import type {
@@ -70,7 +71,13 @@ interface HumanGatePanelProps {
   escalation?: EscalationContext | null;
   /** Set when the snapshot node declares `merge_pull_requests`; renders the merge notice. */
   mergeOnApproval?: { method: MergeMethod; pullRequests: RunPullRequestResponse[] } | null;
+  /** The run's Task's Story and its Epic, for the await-story-revision notice's links. */
+  storyId?: string | null;
+  epicId?: string | null;
 }
+
+/** Task Delivery's gate that parks a run until its Story's spec is revised. */
+const AWAIT_STORY_REVISION_LABEL = "await_story_revision";
 
 export default function HumanGatePanel({
   runId,
@@ -86,6 +93,8 @@ export default function HumanGatePanel({
   decisionOptions,
   escalation,
   mergeOnApproval,
+  storyId = null,
+  epicId = null,
 }: HumanGatePanelProps) {
   const [feedback, setFeedback] = useState("");
   const [outputExpanded, setOutputExpanded] = useState(true);
@@ -163,6 +172,10 @@ export default function HumanGatePanel({
         <>
           {isV23Gate && trigger.kind !== "approved" && (
             <TriggerBanner trigger={trigger} />
+          )}
+
+          {nodeLabel === AWAIT_STORY_REVISION_LABEL && (
+            <AwaitStoryRevisionNotice runId={runId} storyId={storyId} epicId={epicId} />
           )}
 
           <Separator />

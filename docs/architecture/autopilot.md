@@ -12,9 +12,9 @@ and no terminal state: an empty ready frontier means *idle*, not *finished*, so
 approving three parked gates repopulates the frontier and the next tick resumes with no
 user action.
 
-It removes exactly one step — "pick a READY Task and press Start". It **never** approves
-a human gate, resumes a parked run, merges a pull request, or retries a failed run.
-Those stay human decisions, permanently. The goal is that human attention is the only
+It removes exactly one step — "pick a READY Task, or a Story that needs designing, and press
+Start". It **never** approves a human gate, resumes a parked run, merges a pull request, or
+retries a failed run. Those stay human decisions, permanently. The goal is that human attention is the only
 thing the system is ever waiting on.
 
 Two consequences of that framing shape everything below:
@@ -151,7 +151,12 @@ status is `backlog`, and its readiness is `READY` — where readiness is compute
 the same component the board reads through, including the containment cascade (a Task is
 BLOCKED if its own chain, its Story's chain, or its Epic's chain has an unsatisfied
 ancestor). One definition of "ready", used by the board, the manual Start button and the
-Autopilot alike.
+Autopilot alike. It includes the Story's spec: a Task whose Story has no approved spec, or has
+an open Story Design run, is not READY, with the reason `Story spec not approved yet` or
+`Story spec under revision`.
+
+The frontier also holds a second kind of item, **Design Story**. See
+[Designing Stories forward](#designing-stories-forward).
 
 Ordering comes from
 [`TaskOrderingStrategy.comparator`](../../api-server/src/main/java/com/choruskube/core/service/TaskOrderingStrategy.java).
@@ -189,6 +194,27 @@ fan-out. For something that runs unattended, predictability is worth more than a
 percent of throughput; finishing one Epic at a time captures most of the practical
 benefit anyway. See
 [2026-10-31---02-autopilot-finishes-an-epic-before-the-next](../decisions/2026-10-31---02-autopilot-finishes-an-epic-before-the-next.md).
+
+### Designing Stories forward
+
+A Task starts only once its Story has an approved spec, so the Autopilot settles a Story's
+design *before* it reaches the Story's Tasks rather than reacting when a Task turns out to be
+blocked. A Story is **designable** when it has no approved spec version, no open Story Design run,
+no Tasks or at least one backlog Task (a spec is read only by a Task still to run), and every Story
+or Epic it depends on is done *or has an approved spec*: design waits for a
+blocker's design, not its merged code, and a story conflict catches any later drift. A Story
+whose newest design run failed or was cancelled is **held**, not designable, and appears in the
+status response with a reason. Redesigning it each tick would undo a human's cancel and spend the
+failure breaker on a broken design; a human releases it by designing the Story by hand or deleting
+the run.
+
+A designable Story is ranked by the Epic, then Story, ordering above, at its Story's position and
+ahead of its own Tasks. Within the focused Epic it counts as ready work, so the tick stays in that
+Epic and designs the Story rather than moving on. A design run is stamped with the Autopilot's id and then counts like a
+Task run: it occupies a slot while active, counts toward `maxAwaitingHuman` while it waits at
+Approve Story Spec, and settles into the breaker. Those two ceilings also bound how far ahead it
+designs. A revision run started for a Task's story conflict inherits that Task run's attribution.
+See [2026-11-01---01-design-per-story-deliver-per-task](../decisions/2026-11-01---01-design-per-story-deliver-per-task.md).
 
 ### `maxParallel` counts live agent pods only
 
