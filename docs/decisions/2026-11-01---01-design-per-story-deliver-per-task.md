@@ -168,6 +168,7 @@ before it reaches the Story's Tasks, in its own Epic, Story ordering
   or Epic it depends on is done *or has an approved spec*. Design is gated on a blocker's design,
   not its merged code: the next Story's spec builds on the previous one's approved spec, and a
   story conflict catches any later drift.
+- A Story is designed only for a Task still to run: it must have no Tasks or a backlog one.
 - A design run stamped with the Autopilot's id is counted like a Task run: it occupies a slot while
   active, counts toward `max_awaiting_human` while it waits at Approve Story Spec, and settles into
   the three-failure breaker. How far ahead it designs is bounded by those two existing caps; there

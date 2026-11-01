@@ -200,7 +200,8 @@ benefit anyway. See
 A Task starts only once its Story has an approved spec, so the Autopilot settles a Story's
 design *before* it reaches the Story's Tasks rather than reacting when a Task turns out to be
 blocked. A Story is **designable** when it has no approved spec version, no open Story Design run,
-and every Story or Epic it depends on is done *or has an approved spec*: design waits for a
+no Tasks or at least one backlog Task (a spec is read only by a Task still to run), and every Story
+or Epic it depends on is done *or has an approved spec*: design waits for a
 blocker's design, not its merged code, and a story conflict catches any later drift. A Story
 whose newest design run failed or was cancelled is **held**, not designable, and appears in the
 status response with a reason. Redesigning it each tick would undo a human's cancel and spend the

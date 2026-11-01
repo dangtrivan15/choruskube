@@ -1,12 +1,14 @@
 package com.choruskube.core.service;
 
 import com.choruskube.core.model.Story;
+import com.choruskube.core.model.Task;
 import com.choruskube.core.model.WorkItemDependency;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.BlockableItemType;
 import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
 import java.util.EnumSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -79,7 +81,17 @@ final class StoryDesignEligibility {
         return !versions.containsKey(s.getId())
                 && !openDesign.contains(s.getId())
                 && s.getStage() != WorkItemStatus.rolled_out
-                && !isDone(c.statusById().get(s.getId()));
+                && !isDone(c.statusById().get(s.getId()))
+                && hasTaskToDeliver(s, c);
+    }
+
+    /**
+     * A design pays off only through a Task still to run: Tasks that already started ran without a
+     * spec, and a Story with no Tasks yet gets them from its design.
+     */
+    private static boolean hasTaskToDeliver(Story s, EpicReadinessAssembler.EpicCandidates c) {
+        List<Task> tasks = c.tasksByStoryId().getOrDefault(s.getId(), List.of());
+        return tasks.isEmpty() || tasks.stream().anyMatch(t -> t.getStatus() == WorkItemStatus.backlog);
     }
 
     /** Direct edges only: a Story's own Tasks, and its blockers' blockers, gate its delivery, not its design. */

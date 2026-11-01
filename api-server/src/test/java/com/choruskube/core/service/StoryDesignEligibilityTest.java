@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.choruskube.core.model.Epic;
 import com.choruskube.core.model.Story;
+import com.choruskube.core.model.Task;
 import com.choruskube.core.model.WorkItemDependency;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.BlockableItemType;
@@ -34,10 +35,36 @@ class StoryDesignEligibilityTest {
     private final Map<UUID, Integer> versions = new HashMap<>();
     private final Set<UUID> openDesign = new HashSet<>();
     private final Map<UUID, WorkflowRun> latestDesignRuns = new HashMap<>();
+    private final List<Task> tasks = new ArrayList<>();
 
     @Test
     void undesignedStoryWithNoTasks_isDesignable() {
         assertThat(designable()).isTrue();
+    }
+
+    @Test
+    void storyWithABacklogTask_isDesignable() {
+        task(WorkItemStatus.done);
+        task(WorkItemStatus.backlog);
+
+        assertThat(designable()).isTrue();
+    }
+
+    @Test
+    void storyWhoseTasksAllRan_isNotDesignable() {
+        // A Task left in_progress by a finished run keeps the Story from rolling up to done.
+        task(WorkItemStatus.in_progress);
+        task(WorkItemStatus.done);
+
+        assertThat(designable()).isFalse();
+    }
+
+    @Test
+    void storyWhoseTasksAllRan_isNotReportedAsHeld() {
+        task(WorkItemStatus.in_progress);
+        latestDesignRun(WorkflowRunStatus.failed);
+
+        assertThat(holdingRun()).isEmpty();
     }
 
     @Test
@@ -194,7 +221,7 @@ class StoryDesignEligibilityTest {
         candidateStatuses.putIfAbsent(story.getId(), WorkItemStatus.backlog.name());
         return new EpicReadinessAssembler.EpicCandidates(
                 List.of(story),
-                Map.of(story.getId(), List.of()),
+                Map.of(story.getId(), List.copyOf(tasks)),
                 Set.copyOf(candidateStatuses.keySet()),
                 Map.copyOf(candidateStatuses),
                 Map.of(story.getId(), epic.getId()));
@@ -207,6 +234,14 @@ class StoryDesignEligibilityTest {
         run.setStatus(status);
         latestDesignRuns.put(story.getId(), run);
         return run;
+    }
+
+    private void task(WorkItemStatus status) {
+        Task t = new Task();
+        t.setId(UUID.randomUUID());
+        t.setStoryId(story.getId());
+        t.setStatus(status);
+        tasks.add(t);
     }
 
     private UUID inEpicStory(WorkItemStatus status) {
