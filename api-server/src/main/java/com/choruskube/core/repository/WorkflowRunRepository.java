@@ -31,6 +31,23 @@ public interface WorkflowRunRepository extends JpaRepository<WorkflowRun, UUID>,
     List<WorkflowRun> findByStoryIdInAndStatusInAndDeletedAtIsNull(
             Collection<UUID> storyIds, Collection<WorkflowRunStatus> statuses);
 
+    /**
+     * A design run stays open past {@code completed} until its spec version is recorded: until
+     * then the Story shows no new version, and a start in that gap would revise a stale spec.
+     */
+    @Query("""
+            select r from WorkflowRun r
+            where r.storyId in :storyIds
+              and r.deletedAt is null
+              and (r.status in :active
+                   or (r.status = :completed
+                       and not exists (select 1 from StorySpecVersion v where v.runId = r.id)))
+            """)
+    List<WorkflowRun> findOpenDesignRuns(
+            @Param("storyIds") Collection<UUID> storyIds,
+            @Param("active") Collection<WorkflowRunStatus> active,
+            @Param("completed") WorkflowRunStatus completed);
+
     @Query("""
             select r from WorkflowRun r
             where r.storyId is not null

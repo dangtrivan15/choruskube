@@ -18,6 +18,7 @@ import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.util.RepoNameUtil;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -90,11 +91,13 @@ class StorySpecServiceTest extends BaseTest {
     }
 
     @Test
-    void openDesignRun_countsOnlyActiveRunsOfThatStory() {
+    void openDesignRun_ignoresTerminalAndRecordedRuns() {
         StoryResponse story = makeStory("spec-open-run");
         StoryResponse quiet = makeStory("spec-open-run-quiet");
-        designRun(story.id(), WorkflowRunStatus.completed);
+        UUID recorded = designRun(story.id(), WorkflowRunStatus.completed);
+        service.recordApproved(story.id(), recorded, "v1");
         designRun(quiet.id(), WorkflowRunStatus.failed);
+        designRun(quiet.id(), WorkflowRunStatus.cancelled);
         UUID open = designRun(story.id(), WorkflowRunStatus.awaiting_human);
 
         assertThat(service.openDesignRun(story.id())).map(WorkflowRun::getId).contains(open);
@@ -103,6 +106,60 @@ class StorySpecServiceTest extends BaseTest {
                 .containsExactly(story.id());
         assertThat(service.openDesignRunIds(List.of(story.id(), quiet.id())))
                 .containsExactlyEntriesOf(Map.of(story.id(), open));
+    }
+
+    @Test
+    void openDesignRun_completedButUnrecorded_countsUntilItsVersionIsRecorded() {
+        StoryResponse story = makeStory("spec-open-unrecorded");
+        UUID approved = designRun(story.id(), WorkflowRunStatus.completed);
+
+        assertThat(service.openDesignRun(story.id())).map(WorkflowRun::getId).contains(approved);
+        assertThat(service.storiesWithOpenDesignRun(List.of(story.id()))).containsExactly(story.id());
+        StorySpecService.DesignState pending =
+                service.designStates(List.of(story.id())).get(story.id());
+        assertThat(pending.specVersion()).isNull();
+        assertThat(pending.openDesignRunId()).isEqualTo(approved);
+        assertThat(pending.underRevision()).isFalse();
+
+        service.recordApproved(story.id(), approved, "v1");
+
+        assertThat(service.openDesignRun(story.id())).isEmpty();
+        assertThat(service.storiesWithOpenDesignRun(List.of(story.id()))).isEmpty();
+        StorySpecService.DesignState recorded =
+                service.designStates(List.of(story.id())).get(story.id());
+        assertThat(recorded.specVersion()).isEqualTo(1);
+        assertThat(recorded.openDesignRunId()).isNull();
+        assertThat(recorded.underRevision()).isFalse();
+    }
+
+    @Test
+    void openDesignRun_completedUnrecordedRevision_isUnderRevision() {
+        StoryResponse story = makeStory("spec-open-unrecorded-revision");
+        service.recordApproved(story.id(), designRun(story.id(), WorkflowRunStatus.completed), "v1");
+        UUID revision = designRun(story.id(), WorkflowRunStatus.completed);
+
+        StorySpecService.DesignState state =
+                service.designStates(List.of(story.id())).get(story.id());
+
+        assertThat(state.specVersion()).isEqualTo(1);
+        assertThat(state.openDesignRunId()).isEqualTo(revision);
+        assertThat(state.underRevision()).isTrue();
+        assertThat(service.openDesignRunIds(List.of(story.id())))
+                .containsExactlyEntriesOf(Map.of(story.id(), revision));
+    }
+
+    @Test
+    void openDesignRun_softDeletedUnrecordedRun_doesNotCount() {
+        StoryResponse story = makeStory("spec-open-soft-deleted");
+        UUID abandoned = designRun(story.id(), WorkflowRunStatus.completed);
+        WorkflowRun run = runRepo.findById(abandoned).orElseThrow();
+        run.setDeletedAt(Instant.now());
+        runRepo.saveAndFlush(run);
+
+        assertThat(service.openDesignRun(story.id())).isEmpty();
+        assertThat(service.storiesWithOpenDesignRun(List.of(story.id()))).isEmpty();
+        assertThat(service.designStates(List.of(story.id())).get(story.id()).openDesignRunId())
+                .isNull();
     }
 
     @Test

@@ -10,7 +10,7 @@ import com.choruskube.core.BaseTest;
 import com.choruskube.core.StorySpecFixtures;
 import com.choruskube.core.config.GraphIds;
 import com.choruskube.core.config.OrgSecurity;
-import com.choruskube.core.config.StoryDesignGraph;
+import com.choruskube.core.config.TaskDeliveryGraph;
 import com.choruskube.core.credential.GitHubCredentialResolver;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
@@ -278,6 +278,26 @@ class StorySpecControllerTest extends BaseTest {
     }
 
     @Test
+    void getStory_completedButUnrecordedRevision_staysUnderRevision() throws Exception {
+        StoryResponse story = makeStory("spec-story-unrecorded", "Story");
+        approveSpec(story.id());
+        RunResponse revision = storyDesignService.startRevision(story.id(), "Tighten it");
+        WorkflowRun run = runRepo.findById(revision.id()).orElseThrow();
+        run.setStatus(WorkflowRunStatus.completed);
+        runRepo.saveAndFlush(run);
+
+        mockMvc.perform(get("/api/v1/stories/" + story.id()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.specVersion").value(1))
+                .andExpect(jsonPath("$.specUnderRevision").value(true))
+                .andExpect(jsonPath("$.openDesignRunId").value(revision.id().toString()));
+        mockMvc.perform(post("/api/v1/stories/" + story.id() + "/revise")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("guidance", "Again"))))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
     void getStory_initialDesignOpen_isNotUnderRevision() throws Exception {
         StoryResponse story = makeStory("spec-story-initial", "Story");
         RunResponse design = storyDesignService.startDesign(story.id());
@@ -358,7 +378,7 @@ class StorySpecControllerTest extends BaseTest {
         NodeExecution analyze = new NodeExecution();
         analyze.setWorkflowRunId(taskRun.getId());
         analyze.setTemplateNodeId(anyNode.getId());
-        analyze.setLabel(StoryDesignGraph.DRAFT);
+        analyze.setLabel(TaskDeliveryGraph.ANALYZE);
         analyze.setStatus(NodeExecutionStatus.completed);
         analyze.setIteration(released ? 1 : 2);
         analyze = execRepo.saveAndFlush(analyze);

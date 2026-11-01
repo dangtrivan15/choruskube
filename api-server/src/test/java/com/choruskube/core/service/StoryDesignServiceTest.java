@@ -219,6 +219,31 @@ class StoryDesignServiceTest extends BaseTest {
     }
 
     @Test
+    void startDesign_completedButUnrecordedDesignRun_conflicts() {
+        StoryResponse story = makeStory("story-design-unrecorded", "Story");
+        RunResponse approved = service.startDesign(story.id());
+        setStatus(approved.id(), WorkflowRunStatus.completed);
+
+        assertThatThrownBy(() -> service.startDesign(story.id()))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining(approved.id().toString());
+        assertThat(designRunsOf(story.id())).hasSize(1);
+    }
+
+    @Test
+    void startRevision_completedButUnrecordedRevision_conflicts() {
+        StoryResponse story = makeStory("story-revision-unrecorded", "Story");
+        approveSpec(story.id());
+        RunResponse approved = service.startRevision(story.id(), "First");
+        setStatus(approved.id(), WorkflowRunStatus.completed);
+
+        assertThatThrownBy(() -> service.startRevision(story.id(), "Second"))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining(approved.id().toString());
+        assertThat(designRunsOf(story.id())).hasSize(1);
+    }
+
+    @Test
     void startDesign_afterFailedDesignRun_startsAgain() {
         StoryResponse story = makeStory("story-design-after-failure", "Story");
         RunResponse first = service.startDesign(story.id());

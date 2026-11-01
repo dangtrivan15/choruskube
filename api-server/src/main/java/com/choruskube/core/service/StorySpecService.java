@@ -9,6 +9,7 @@ import com.choruskube.core.model.StorySpecVersion;
 import com.choruskube.core.model.Task;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.NodeExecutionStatus;
+import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.model.enums.WorkflowRunStatusGroups;
 import com.choruskube.core.repository.NodeExecutionRepository;
 import com.choruskube.core.repository.StoryConflictRepository;
@@ -195,7 +196,9 @@ public class StorySpecService {
         if (storyIds.isEmpty()) {
             return List.of();
         }
-        return runRepo.findByStoryIdInAndStatusInAndDeletedAtIsNull(storyIds, WorkflowRunStatusGroups.ACTIVE).stream()
+        return runRepo
+                .findOpenDesignRuns(storyIds, WorkflowRunStatusGroups.ACTIVE, WorkflowRunStatus.completed)
+                .stream()
                 .filter(run -> Objects.nonNull(run.getStoryId()))
                 .sorted(Comparator.comparing(
                         WorkflowRun::getCreatedAt, Comparator.nullsLast(Comparator.reverseOrder())))

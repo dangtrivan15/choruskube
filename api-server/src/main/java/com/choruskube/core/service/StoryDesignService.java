@@ -14,6 +14,7 @@ import com.choruskube.core.model.StoryConflict;
 import com.choruskube.core.model.StorySpecVersion;
 import com.choruskube.core.model.Task;
 import com.choruskube.core.model.WorkflowRun;
+import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.EpicRepository;
 import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.StoryRepository;
@@ -137,8 +138,12 @@ public class StoryDesignService {
         }
         Optional<WorkflowRun> open = specService.openDesignRun(storyId);
         if (open.isPresent()) {
+            WorkflowRun run = open.get();
             throw new ConflictException(
-                    "Story already has an open design run: " + open.get().getId());
+                    run.getStatus() == WorkflowRunStatus.completed
+                            ? "Story's design run " + run.getId()
+                                    + " is approved but its spec version is not recorded yet"
+                            : "Story already has an open design run: " + run.getId());
         }
 
         Epic epic = epicRepo.findById(story.getEpicId())
