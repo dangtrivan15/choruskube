@@ -154,9 +154,7 @@ class RunServiceTest {
                 nodeExecutionClaimService,
                 null, // escalationContextResolver - unused (escalation not exercised)
                 null, // roadmapProposalValidator - unused (approve-time validation not exercised)
-                null,
-                null,
-                null,
+                null, // taskSettlement - unused (no terminal status transitions exercised)
                 org.mockito.Mockito.mock(GateRecheckService.class),
                 org.mockito.Mockito.mock(GateFinalizeService.class),
                 null // storySpecService
@@ -274,7 +272,7 @@ class RunServiceTest {
     }
 
     @Test
-    void signalHumanDecision_invalidDecision_releasesClaimForRetry() {
+    void signalHumanDecision_invalidDecision_isRejectedBeforeAnyClaim() {
         stubExec();
         // Only "rejected" is a valid decision for this node — "approved" will fail validation.
         stubRunWithEdges("rejected");
@@ -283,12 +281,8 @@ class RunServiceTest {
                         service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, null)))
                 .isInstanceOf(com.choruskube.core.exception.BadRequestException.class);
 
-        // The claim taken before validation must be released back to awaiting_human so a
-        // corrected resubmission isn't permanently rejected as a false-positive conflict.
-        verify(nodeExecutionClaimService)
-                .compareAndSetStatus(nodeExecId, NodeExecutionStatus.awaiting_human, NodeExecutionStatus.running);
-        verify(nodeExecutionClaimService)
-                .compareAndSetStatus(nodeExecId, NodeExecutionStatus.running, NodeExecutionStatus.awaiting_human);
+        // Decision validation runs before any claim, so a bad decision string never takes one to release.
+        verify(nodeExecutionClaimService, never()).compareAndSetStatus(any(), any(), any());
         verify(workflowStub, never()).signal(anyString(), any());
     }
 

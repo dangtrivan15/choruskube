@@ -72,9 +72,9 @@ public class InternalArtifactController {
             return ResponseEntity.status(403).body(Map.of("error", "Target run not found"));
         }
 
-        // Cross-org check: agent's run and the target run must belong to the same org. Resolved from
-        // ownership data by the active strategy (no TenantContext on this JOB_SECRET path); throws
-        // ForbiddenException (403) on mismatch under auth, no-op under always-allow.
+        // RunScopeInterceptor already pins the path's runId to this execution's run, so agentRun
+        // and targetRun are the same row; this org check is the backstop if that guard ever stops
+        // covering this route.
         authService.assertSameOrg("workflow_run", agentRun.getId(), "workflow_run", targetRun.getId());
 
         String orgSlug = storagePrefixResolver.storagePrefixForRun(agentRun.getId());

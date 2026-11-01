@@ -9,8 +9,6 @@ import com.choruskube.core.dto.SignalRequest;
 import com.choruskube.core.dto.SignalResponse;
 import com.choruskube.core.exception.ConflictException;
 import com.choruskube.core.exception.GateClaimConflictException;
-import com.choruskube.core.model.DriftRecheckConfig.StampMode;
-import com.choruskube.core.model.GateStamp;
 import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.StorySpecVersion;
 import com.choruskube.core.model.Task;
@@ -23,14 +21,12 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowStub;
-import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -68,12 +64,6 @@ class RunServiceStoryVersionRecheckTest {
 
     @Mock
     private NodeExecutionClaimService nodeExecutionClaimService;
-
-    @Mock
-    private PullRequestMergeService pullRequestMergeService;
-
-    @Mock
-    private GateDriftCheckService gateDriftCheck;
 
     @Mock
     private GateRecheckService gateRecheck;
@@ -148,9 +138,7 @@ class RunServiceStoryVersionRecheckTest {
                 nodeExecutionClaimService,
                 null, // escalationContextResolver
                 null, // roadmapProposalValidator
-                pullRequestMergeService,
                 null, // taskSettlement
-                gateDriftCheck,
                 gateRecheck,
                 gateFinalize,
                 storySpecService);
@@ -249,7 +237,7 @@ class RunServiceStoryVersionRecheckTest {
         assertThat(payload.path("feedback").asText()).contains(guidance);
         verify(uploadService).overwriteRunInput(runId, "story_spec.md", "# Story spec v3");
         verify(runRepo).setStorySpecVersion(runId, 3);
-        verifyNoInteractions(pullRequestMergeService, gateDriftCheck);
+        verifyNoInteractions(gateFinalize);
     }
 
     @Test
@@ -350,58 +338,5 @@ class RunServiceStoryVersionRecheckTest {
         verify(uploadService, never()).uploadGateText(any(), any(), any(), any(), any());
         verify(runRepo, never()).setStorySpecVersion(any(), anyInt());
         verify(workflowStub, never()).signal(anyString(), any());
-    }
-
-    private GateStamp stubHeld() {
-        GateStamp stamp = new GateStamp();
-        stamp.setId(UUID.randomUUID());
-        stamp.setWorkflowRunId(runId);
-        stamp.setGateTemplateNodeId(templateNodeId);
-        stamp.setGateLabel("final_approval");
-        stamp.setStampMode(StampMode.always);
-        stamp.setRecheckRounds(1);
-        stamp.setFeedback("ship it");
-        stamp.setCreatedAt(Instant.now());
-        when(gateRecheck.findPending(stamp.getId())).thenReturn(Optional.of(stamp));
-        NodeExecution gate = execRepo.findById(nodeExecId).orElseThrow();
-        when(execRepo.findByWorkflowRunIdAndStatus(runId, NodeExecutionStatus.awaiting_human))
-                .thenReturn(java.util.List.of(gate));
-        when(gateRecheck.reasonNotToReapply(eq(stamp), any())).thenReturn(Optional.empty());
-        return stamp;
-    }
-
-    @Test
-    void heldApproval_revisionOpen_parksWithTheRevisionAsTheReason() {
-        stubExec();
-        stubRun(STORY_RECHECK_GATE, taskId, 1);
-        currentVersion(1);
-        GateStamp stamp = stubHeld();
-        WorkflowRun revision = new WorkflowRun();
-        revision.setId(UUID.randomUUID());
-        when(storySpecService.openDesignRun(storyId)).thenReturn(Optional.of(revision));
-
-        service.applyHeldApproval(stamp.getId());
-
-        verify(gateRecheck).voidStamp(eq(stamp.getId()), contains("under revision"), eq(nodeExecId));
-        verify(nodeExecutionClaimService, never()).compareAndSetStatus(any(), any(), any());
-        verify(workflowStub, never()).signal(anyString(), any());
-    }
-
-    @Test
-    void heldApproval_versionMoved_voidsTheStampWithTheReasonAndReroutes() {
-        stubExec();
-        stubRun(STORY_RECHECK_GATE, taskId, 1);
-        currentVersion(2);
-        GateStamp stamp = stubHeld();
-
-        service.applyHeldApproval(stamp.getId());
-
-        InOrder order = inOrder(gateRecheck);
-        order.verify(gateRecheck)
-                .voidStamp(stamp.getId(), "The Story spec moved from v1 to v2 since this Task planned.", null);
-        order.verify(gateRecheck).voidPendingFor(runId, templateNodeId, GateRecheckService.REVIEWER_DECIDED);
-        assertThat(signalled().path("decision").asText()).isEqualTo("rereview");
-        verify(gateRecheck, never()).consume(any());
-        verify(runRepo).setStorySpecVersion(runId, 2);
     }
 }

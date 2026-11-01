@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -16,6 +17,7 @@ import com.choruskube.core.dto.RoadmapCandidatesDocument;
 import com.choruskube.core.dto.SignalRequest;
 import com.choruskube.core.dto.SignalResponse;
 import com.choruskube.core.exception.BadRequestException;
+import com.choruskube.core.exception.ConflictException;
 import com.choruskube.core.exception.ValidationException;
 import com.choruskube.core.model.DriftRecheckConfig;
 import com.choruskube.core.model.DriftRecheckConfig.StampMode;
@@ -35,6 +37,8 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -42,9 +46,10 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 /**
- * Which approve clicks on a gate the workflow opened with {@code finalize_mode = 'async'} are handed
- * to {@link GateFinalizeService}: only an approval the gate has finalizing work for. Every other
- * decision keeps the synchronous path and its final signal.
+ * Which approve clicks are handed to {@link GateFinalizeService}: only an approval the gate has
+ * finalizing work for, and only when the gate is marked {@code finalize_mode = 'async'} — an
+ * unmarked gate with finalizing work is refused outright. Every other decision, and an approval
+ * with nothing to finalize, claims the gate and sends a final signal instead.
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -81,12 +86,6 @@ class RunServiceAsyncGateTest {
     private GateRecheckService gateRecheck;
 
     @Mock
-    private GateDriftCheckService gateDriftCheck;
-
-    @Mock
-    private PullRequestMergeService pullRequestMergeService;
-
-    @Mock
     private AuditSink auditSink;
 
     @Mock
@@ -107,6 +106,12 @@ class RunServiceAsyncGateTest {
             + "\"materialize\":\"roadmap_extension\",\"merge_pull_requests\":\"squash\","
             + "\"drift_recheck\":{\"route\":\"rereview\",\"stamp\":\"if_unchanged\"}}";
     private static final String PLAIN_GATE = "{\"terminal_decisions\":[\"approved\"]}";
+    private static final String MERGE_ONLY_GATE =
+            "{\"terminal_decisions\":[\"approved\"],\"merge_pull_requests\":\"squash\"}";
+    private static final String RECHECK_ONLY_GATE = "{\"terminal_decisions\":[\"approved\"],"
+            + "\"drift_recheck\":{\"route\":\"rereview\",\"stamp\":\"if_unchanged\"}}";
+    private static final String MATERIALIZE_ONLY_GATE =
+            "{\"terminal_decisions\":[\"approved\"],\"materialize\":\"roadmap_extension\"}";
 
     @BeforeEach
     void setUp() {
@@ -146,9 +151,7 @@ class RunServiceAsyncGateTest {
                 nodeExecutionClaimService,
                 null,
                 roadmapProposalValidator,
-                pullRequestMergeService,
                 null,
-                gateDriftCheck,
                 gateRecheck,
                 gateFinalize,
                 null // storySpecService
@@ -206,7 +209,7 @@ class RunServiceAsyncGateTest {
                         any(),
                         eq(new DriftRecheckConfig("rereview", StampMode.if_unchanged)),
                         eq(edited));
-        verifyNoInteractions(nodeExecutionClaimService, workflowStub, pullRequestMergeService, gateDriftCheck);
+        verifyNoInteractions(nodeExecutionClaimService, workflowStub);
     }
 
     @Test
@@ -240,7 +243,7 @@ class RunServiceAsyncGateTest {
     }
 
     @Test
-    void asyncRereview_staysSynchronous_andSignalsAFinalDecisionWithoutAnApprovalId() {
+    void rereview_signalsAFinalDecisionWithoutAnApprovalId() {
         stubRun(RECHECK_AND_MATERIALIZE_GATE);
 
         SignalResponse response =
@@ -255,7 +258,7 @@ class RunServiceAsyncGateTest {
     }
 
     @Test
-    void asyncApproval_ofAPlainGate_staysSynchronous() {
+    void approval_ofAPlainGate_signalsWithoutHandingOver() {
         stubRun(PLAIN_GATE);
 
         SignalResponse response =
@@ -277,14 +280,61 @@ class RunServiceAsyncGateTest {
         verifyNoInteractions(gateFinalize, nodeExecutionClaimService);
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {MERGE_ONLY_GATE, RECHECK_ONLY_GATE, MATERIALIZE_ONLY_GATE, RECHECK_AND_MATERIALIZE_GATE})
+    void approve_unmarkedGateWithFinalizeWork_isRefused_andClaimsNothing(String nodeConfig) {
+        exec.setFinalizeMode(null);
+        stubRun(nodeConfig);
+
+        assertThatThrownBy(() ->
+                        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, null)))
+                .isExactlyInstanceOf(ConflictException.class)
+                .hasMessageContaining("cannot finalize an approval");
+
+        verifyNoInteractions(nodeExecutionClaimService, gateFinalize, gateRecheck, workflowStub);
+    }
+
     @Test
-    void synchronousGate_neverHandsOver() {
+    void approve_unmarkedPlainGate_signals() {
         exec.setFinalizeMode(null);
         stubRun(PLAIN_GATE);
 
-        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, null));
+        SignalResponse response =
+                service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, null));
 
+        assertThat(response.outcome()).isEqualTo(SignalResponse.SIGNALED);
+        verify(nodeExecutionClaimService)
+                .compareAndSetStatus(nodeExecId, NodeExecutionStatus.awaiting_human, NodeExecutionStatus.running);
         verifyNoInteractions(gateFinalize);
+        assertThat(signalled()).contains("approved");
+    }
+
+    @Test
+    void signalFailure_releasesTheClaim_andRethrows() {
+        stubRun(PLAIN_GATE);
+        RuntimeException unreachable = new RuntimeException("temporal unreachable");
+        doThrow(unreachable).when(workflowStub).signal(eq("human-decision-" + nodeExecId), any());
+
+        assertThatThrownBy(() ->
+                        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, null, null)))
+                .isSameAs(unreachable);
+
+        verify(nodeExecutionClaimService)
+                .compareAndSetStatus(nodeExecId, NodeExecutionStatus.running, NodeExecutionStatus.awaiting_human);
+        verifyNoInteractions(eventPublisher);
+    }
+
+    @Test
+    void rereview_unmarkedGate_signals() {
+        exec.setFinalizeMode(null);
+        stubRun(RECHECK_AND_MATERIALIZE_GATE);
+
+        SignalResponse response =
+                service.signalHumanDecision(runId, nodeExecId, new SignalRequest("rereview", "redo it", null, null));
+
+        assertThat(response.outcome()).isEqualTo(SignalResponse.SIGNALED);
+        verify(gateFinalize, never()).requestApproval(any(), any(), any(), any(), any(), any());
+        assertThat(signalled()).contains("rereview").contains("approvalId=null");
     }
 
     @Test

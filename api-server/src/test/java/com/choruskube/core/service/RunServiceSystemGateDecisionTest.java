@@ -14,6 +14,7 @@ import static org.mockito.Mockito.when;
 import com.choruskube.core.config.WorkflowClientRegistry;
 import com.choruskube.core.dto.SignalRequest;
 import com.choruskube.core.dto.SignalResponse;
+import com.choruskube.core.exception.BadRequestException;
 import com.choruskube.core.exception.ForbiddenException;
 import com.choruskube.core.exception.GateClaimConflictException;
 import com.choruskube.core.exception.NotFoundException;
@@ -121,8 +122,6 @@ class RunServiceSystemGateDecisionTest {
                 null,
                 null,
                 null,
-                null,
-                null,
                 gateRecheck,
                 null,
                 null // storySpecService
@@ -187,12 +186,11 @@ class RunServiceSystemGateDecisionTest {
     }
 
     @Test
-    void decideGateAsSystem_invalidDecision_releasesTheClaim() {
+    void decideGateAsSystem_invalidDecision_refusedBeforeTheClaim() {
         assertThatThrownBy(() ->
                         service.decideGateAsSystem(runId, gateId, new SignalRequest("approved", null, null, null)))
-                .isInstanceOf(RuntimeException.class);
-        verify(nodeExecutionClaimService)
-                .compareAndSetStatus(gateId, NodeExecutionStatus.running, NodeExecutionStatus.awaiting_human);
+                .isInstanceOf(BadRequestException.class);
+        verify(nodeExecutionClaimService, never()).compareAndSetStatus(any(), any(), any());
         verify(workflowStub, never()).signal(anyString(), any());
     }
 

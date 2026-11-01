@@ -74,9 +74,7 @@ class RunServicePlacementTest {
                 null, // nodeExecutionClaimService
                 null, // escalationContextResolver
                 null, // roadmapProposalValidator
-                null,
-                null,
-                null,
+                null, // taskSettlement
                 org.mockito.Mockito.mock(GateRecheckService.class),
                 org.mockito.Mockito.mock(GateFinalizeService.class),
                 null // storySpecService

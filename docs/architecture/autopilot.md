@@ -452,7 +452,7 @@ Two properties of the flow make this enough on its own:
 
 - **The merges are already recorded.** Final Approval merges the run's pull requests and
   commits `merged_at` before it signals the workflow, so nothing can finish the run until
-  the merges are visible (see [2026-10-06---01](../decisions/2026-10-06---01-merge-pull-requests-on-approval.md)).
+  the merges are visible (see [2026-10-11---02](../decisions/2026-10-11---02-async-gate-finalize-on-the-worker.md)).
 - **There is no gap to sweep.** The finish and the closure commit together or not at all.
   A failure closing the Task rolls the finish back, and the orchestrator retries its
   report. The linked GitHub issue and the UI events wait for the commit, so a rolled-back

@@ -51,7 +51,6 @@ func (s *DAGExecutorTestSuite) newGateRun(timeoutSecs int) gateRun {
 	s.env.OnActivity("AppendRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.env.OnActivity("SetTraversedEdges", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.env.OnActivity("DeleteStaleBranches", mock.Anything, mock.Anything).Return(nil).Maybe()
-	s.env.OnActivity("PlanBranchCleanup", mock.Anything, mock.Anything).Return(activity.BranchCleanupPlan{}, nil).Maybe()
 	s.env.OnActivity("CleanupRunBranches", mock.Anything, mock.Anything).Return(activity.BranchCleanupResult{}, nil).Maybe()
 	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
 		return p.TemplateNodeID == g.node
@@ -73,10 +72,10 @@ func (s *DAGExecutorTestSuite) signalGate(g gateRun, after time.Duration, decisi
 	}, after)
 }
 
-// expectGateOpened pins the awaiting_human write and the finalize mode it carries (nil: none).
-func (s *DAGExecutorTestSuite) expectGateOpened(g gateRun, mode *string) {
+// expectGateOpened pins the awaiting_human write and the async finalize mode it always carries.
+func (s *DAGExecutorTestSuite) expectGateOpened(g gateRun) {
 	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.MatchedBy(func(p activity.UpdateNodeExecStatusParams) bool {
-		return p.NodeExecutionID == g.exec && p.Status == "awaiting_human" && reflect.DeepEqual(p.FinalizeMode, mode)
+		return p.NodeExecutionID == g.exec && p.Status == "awaiting_human" && reflect.DeepEqual(p.FinalizeMode, asyncMode)
 	})).Return(nil).Once()
 }
 
@@ -204,6 +203,7 @@ func (s *DAGExecutorTestSuite) assertBackoff(at []time.Time, want ...time.Durati
 	}
 }
 
+// The literal, not asyncFinalizeMode: a changed const must fail here, not at the API's match.
 var asyncMode = func() *string { m := "async"; return &m }()
 
 func onePRPlan() (activity.GatePlan, activity.GatePRResult) {
@@ -224,7 +224,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateFinalizeCompletes() {
 	plan, merged := onePRPlan()
 	starts := s.recordStarts(nil)
 
-	s.expectGateOpened(g, asyncMode)
+	s.expectGateOpened(g)
 	s.expectGateCompleted(g, "done", `{"shot.png":"runs/x/shot.png"}`)
 	s.anyOtherStatusWrite()
 	s.expectPlan(g, "s1", plan)
@@ -270,7 +270,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateFinalizeHolds() {
 	guidance := `{"human_guidance.md":"runs/x/human_guidance.md"}`
 	starts := s.recordStarts(nil)
 
-	s.expectGateOpened(g, asyncMode)
+	s.expectGateOpened(g)
 	s.expectGateCompleted(g, "held for a re-check", guidance)
 	s.anyOtherStatusWrite()
 	s.expectPlan(g, "s1", plan)
@@ -298,7 +298,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateFinalizeHolds() {
 func (s *DAGExecutorTestSuite) TestHumanGateFinalizePlanHoldSkipsTheWorker() {
 	g := s.newGateRun(3600)
 
-	s.expectGateOpened(g, asyncMode)
+	s.expectGateOpened(g)
 	s.expectGateCompleted(g, "held: no recorded base", "{}")
 	s.anyOtherStatusWrite()
 	s.expectPlan(g, "s1", activity.GatePlan{Outcome: activity.GatePlanHold, Reason: "no recorded base"})
@@ -321,7 +321,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateFinalizePlanHoldSkipsTheWorker() {
 func (s *DAGExecutorTestSuite) TestHumanGateFinalizeWithNothingForGitHubSkipsTheWorker() {
 	g := s.newGateRun(3600)
 
-	s.expectGateOpened(g, asyncMode)
+	s.expectGateOpened(g)
 	s.expectGateCompleted(g, "roadmap written", "{}")
 	s.anyOtherStatusWrite()
 	s.expectPlan(g, "s1", activity.GatePlan{
@@ -341,28 +341,6 @@ func (s *DAGExecutorTestSuite) TestHumanGateFinalizeWithNothingForGitHubSkipsThe
 	s.env.AssertActivityNotCalled(s.T(), "RunGateGitHubSteps", mock.Anything, mock.Anything)
 }
 
-// TestHumanGateWithoutAWorkerQueueStaysSynchronous: a run with no Worker queue has nothing to run
-// the GitHub step, so its gates open on the synchronous protocol; the version is still recorded.
-func (s *DAGExecutorTestSuite) TestHumanGateWithoutAWorkerQueueStaysSynchronous() {
-	g := s.newGateRun(3600)
-	s.env.OnGetVersion("async-gate-finalize", workflow.DefaultVersion, 1).Return(workflow.Version(1)).Once()
-
-	s.expectGateOpened(g, nil)
-	s.expectGateCompleted(g, "reviewer feedback", "{}")
-	s.anyOtherStatusWrite()
-	s.env.OnActivity("SetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.SetNodeDecisionParams) bool {
-		return p.NodeExecutionID == g.exec && p.Decision == "approved"
-	})).Return(nil).Once()
-	s.decisionReads(g, "approved")
-	s.signalGate(g, 0, "approved", "")
-
-	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{RunID: g.runID, GraphVersion: 1})
-
-	s.assertCompleted()
-	s.env.AssertActivityNotCalled(s.T(), "ClaimHeldApproval", mock.Anything, mock.Anything)
-	s.env.AssertActivityNotCalled(s.T(), "PlanGateFinalize", mock.Anything, mock.Anything)
-}
-
 // TestHumanGateFinalizeRefusedThenReapproved: a refused approval sends the gate back to waiting
 // with a fresh full timeout, and the next approval finalizes.
 func (s *DAGExecutorTestSuite) TestHumanGateFinalizeRefusedThenReapproved() {
@@ -376,7 +354,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateFinalizeRefusedThenReapproved() {
 		}
 	})
 
-	s.expectGateOpened(g, asyncMode)
+	s.expectGateOpened(g)
 	s.expectGateCompleted(g, "done", "{}")
 	s.anyOtherStatusWrite()
 	s.expectPlan(g, "s1", activity.GatePlan{Outcome: activity.GatePlanRefused, Reason: "the roadmap has an empty title"})
@@ -403,7 +381,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateHeldApprovalClaimedOnOpen() {
 	plan, merged := onePRPlan()
 	s.heldApproval = "s9"
 
-	s.expectGateOpened(g, asyncMode)
+	s.expectGateOpened(g)
 	s.expectGateCompleted(g, "done", "{}")
 	s.anyOtherStatusWrite()
 	s.expectPlan(g, "s9", plan)
@@ -430,7 +408,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateFinalizeWorkerFailureRefuses() {
 		}
 	})
 
-	s.expectGateOpened(g, asyncMode)
+	s.expectGateOpened(g)
 	s.expectGateCompleted(g, "reviewer feedback", "{}")
 	s.anyOtherStatusWrite()
 	s.expectPlan(g, "s1", plan)
@@ -469,7 +447,7 @@ func (s *DAGExecutorTestSuite) refusesOnGitHubStepError(workerErr error, attempt
 		}
 	})
 
-	s.expectGateOpened(g, asyncMode)
+	s.expectGateOpened(g)
 	s.expectGateCompleted(g, "reviewer feedback", "{}")
 	s.anyOtherStatusWrite()
 	s.expectPlan(g, "s1", plan)
@@ -523,7 +501,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateFinalizeWorkerRefusalRecordsItsMerge
 		}
 	})
 
-	s.expectGateOpened(g, asyncMode)
+	s.expectGateOpened(g)
 	s.expectGateCompleted(g, "reviewer feedback", "{}")
 	s.anyOtherStatusWrite()
 	s.expectPlan(g, "s1", plan)
@@ -555,7 +533,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateFinalizeHoldRefusedAtCapWaitsAgain()
 		}
 	})
 
-	s.expectGateOpened(g, asyncMode)
+	s.expectGateOpened(g)
 	s.expectGateCompleted(g, "reviewer feedback", "{}")
 	s.anyOtherStatusWrite()
 	s.expectPlan(g, "s1", plan)
@@ -582,7 +560,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateFinalizeRejectedCompleteFailsTheNode
 	g := s.newGateRun(3600)
 	plan, merged := onePRPlan()
 
-	s.expectGateOpened(g, asyncMode)
+	s.expectGateOpened(g)
 	s.expectGateFailed(g, "finalize approval")
 	s.anyOtherStatusWrite()
 	s.expectPlan(g, "s1", plan)
@@ -604,7 +582,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateFinalizePlanErrorFailsTheNodeAfterRe
 	g := s.newGateRun(3600)
 	starts := s.recordStarts(nil)
 
-	s.expectGateOpened(g, asyncMode)
+	s.expectGateOpened(g)
 	s.expectGateFailed(g, "finalize approval")
 	s.anyOtherStatusWrite()
 	s.env.OnActivity("PlanGateFinalize", mock.Anything, mock.Anything).
@@ -630,7 +608,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateRunCancelledWhileFinalizing() {
 		}
 	})
 
-	s.expectGateOpened(g, asyncMode)
+	s.expectGateOpened(g)
 	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.MatchedBy(func(p activity.UpdateNodeExecStatusParams) bool {
 		return p.NodeExecutionID == g.exec && p.Status == "skipped"
 	})).Return(nil).Once()
@@ -647,15 +625,15 @@ func (s *DAGExecutorTestSuite) TestHumanGateRunCancelledWhileFinalizing() {
 	s.env.AssertActivityNotCalled(s.T(), "CompleteGateFinalize", mock.Anything, mock.Anything)
 }
 
-// TestHumanGateOldVersionKeepsFinalSignal: a gate opened by a history recorded before the
-// version marker keeps the synchronous contract: no finalize mode, no claim, the same commands.
-func (s *DAGExecutorTestSuite) TestHumanGateOldVersionKeepsFinalSignal() {
+// TestGateVersionCheckRefusesPreMarkerHistories pins the version range a gate passes to GetVersion
+// for "async-gate-finalize". The SDK's own check against that range is what refuses a history
+// whose gate opened before the marker, by name at the call, instead of a later mismatch.
+func (s *DAGExecutorTestSuite) TestGateVersionCheckRefusesPreMarkerHistories() {
 	g := s.newGateRun(3600)
-	s.env.OnGetVersion("async-gate-finalize", workflow.DefaultVersion, 1).Return(workflow.DefaultVersion)
-	s.env.OnGetVersion("branch-cleanup-on-worker", workflow.DefaultVersion, 1).Return(workflow.DefaultVersion)
-	starts := s.recordStarts(nil)
+	// Not .Maybe(): AfterTest's AssertExpectations is what fails a gate that skips this call.
+	s.env.OnGetVersion("async-gate-finalize", workflow.Version(1), workflow.Version(1)).Return(workflow.Version(1)).Once()
 
-	s.expectGateOpened(g, nil)
+	s.expectGateOpened(g)
 	s.expectGateCompleted(g, "reviewer feedback", "{}")
 	s.anyOtherStatusWrite()
 	s.env.OnActivity("SetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.SetNodeDecisionParams) bool {
@@ -667,22 +645,15 @@ func (s *DAGExecutorTestSuite) TestHumanGateOldVersionKeepsFinalSignal() {
 	s.runGate(g)
 
 	s.assertCompleted()
-	s.env.AssertActivityNotCalled(s.T(), "ClaimHeldApproval", mock.Anything, mock.Anything)
-	// The activity order a single approved gate produced before the version marker existed.
-	s.Equal([]string{
-		"UpdateWorkflowRunStatus", "InitRunLog", "GetGraphRuntime", "CreateNodeExecution",
-		"UpdateNodeExecutionStatus", "UpdateWorkflowRunStatus", "WriteExecutionLog",
-		"SetNodeDecision", "UpdateNodeExecutionStatus", "UpdateWorkflowRunStatus", "WriteExecutionLog",
-		"GetNodeDecision", "SetTraversedEdges", "AppendRunLog", "UpdateWorkflowRunStatus", "DeleteStaleBranches",
-	}, starts.sequence())
 }
 
-// TestHumanGateSignalWithoutApprovalIdOnAsyncGate_isFinal: a decision with no approval id is
-// final on an asynchronous gate too, as the API sends for everything but an approval to finalize.
+// TestHumanGateSignalWithoutApprovalIdOnAsyncGate_isFinal: a decision with no approval id, which
+// the API sends for everything but an approval to finalize, is final: it is recorded as the
+// node's decision and no finalize is planned.
 func (s *DAGExecutorTestSuite) TestHumanGateSignalWithoutApprovalIdOnAsyncGate_isFinal() {
 	g := s.newGateRun(3600)
 
-	s.expectGateOpened(g, asyncMode)
+	s.expectGateOpened(g)
 	s.expectGateCompleted(g, "reviewer feedback", "{}")
 	s.anyOtherStatusWrite()
 	s.env.OnActivity("SetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.SetNodeDecisionParams) bool {
@@ -716,7 +687,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateFinalizeWritesRoadmapThenFilesIssues
 	filed := activity.GateIssueResult{TaskID: issue.TaskID, Number: 1, URL: "https://github.com/acme/app/issues/1"}
 	starts := s.recordStarts(nil)
 
-	s.expectGateOpened(g, asyncMode)
+	s.expectGateOpened(g)
 	s.expectCompleteWithIssues(g, "s1", nil, []activity.GateIssueResult{filed}, activity.GateStepResult{
 		Outcome: activity.GateStepCompleted, Result: "done", AttachmentRefs: "{}",
 	})
@@ -750,7 +721,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateFinalizeNoIssuesSkipsTheWorkerIssueS
 	g := s.newGateRun(3600)
 	plan, since, _ := roadmapIssue()
 
-	s.expectGateOpened(g, asyncMode)
+	s.expectGateOpened(g)
 	s.expectCompleteWithIssues(g, "s1", nil, []activity.GateIssueResult{}, activity.GateStepResult{
 		Outcome: activity.GateStepCompleted, Result: "roadmap written", AttachmentRefs: "{}",
 	})
@@ -773,7 +744,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateFinalizeIssueStepNeverPickedUpStillC
 	g := s.newGateRun(3600)
 	plan, since, issue := roadmapIssue()
 
-	s.expectGateOpened(g, asyncMode)
+	s.expectGateOpened(g)
 	s.expectCompleteWithIssues(g, "s1", nil,
 		[]activity.GateIssueResult{{TaskID: issue.TaskID, Failure: "no Worker picked up the issue step"}},
 		activity.GateStepResult{Outcome: activity.GateStepCompleted, Result: "done", AttachmentRefs: "{}"})
@@ -798,7 +769,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateFinalizeIssueStepKeepsFailingStillCo
 	plan, since, issue := roadmapIssue()
 	starts := s.recordStarts(nil)
 
-	s.expectGateOpened(g, asyncMode)
+	s.expectGateOpened(g)
 	s.expectCompleteWithIssues(g, "s1", nil,
 		[]activity.GateIssueResult{{TaskID: issue.TaskID, Failure: "the issue step kept failing"}},
 		activity.GateStepResult{Outcome: activity.GateStepCompleted, Result: "done", AttachmentRefs: "{}"})
@@ -822,7 +793,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateFinalizeIssueStepKeepsFailingStillCo
 func (s *DAGExecutorTestSuite) TestHumanGateFinalizePlanWithoutWritesRoadmapKeepsOneStepComplete() {
 	g := s.newGateRun(3600)
 
-	s.expectGateOpened(g, asyncMode)
+	s.expectGateOpened(g)
 	s.expectGateCompleted(g, "roadmap written", "{}")
 	s.anyOtherStatusWrite()
 	s.expectPlan(g, "s1", activity.GatePlan{Outcome: activity.GatePlanProceed})
@@ -847,7 +818,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateFinalizeOldVersionKeepsOneStepComple
 	g := s.newGateRun(3600)
 	s.env.OnGetVersion(gateIssuesOnWorkerChange, workflow.DefaultVersion, 1).Return(workflow.DefaultVersion)
 
-	s.expectGateOpened(g, asyncMode)
+	s.expectGateOpened(g)
 	s.expectGateCompleted(g, "roadmap written", "{}")
 	s.anyOtherStatusWrite()
 	s.expectPlan(g, "s1", activity.GatePlan{Outcome: activity.GatePlanProceed, WritesRoadmap: true})
@@ -872,7 +843,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateFinalizeRejectedMaterializeFailsTheN
 	g := s.newGateRun(3600)
 	plan, _, _ := roadmapIssue()
 
-	s.expectGateOpened(g, asyncMode)
+	s.expectGateOpened(g)
 	s.expectGateFailed(g, "finalize approval")
 	s.anyOtherStatusWrite()
 	s.expectPlan(g, "s1", plan)
@@ -899,7 +870,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateFinalizeCancelledDuringIssueStepAban
 		}
 	})
 
-	s.expectGateOpened(g, asyncMode)
+	s.expectGateOpened(g)
 	s.env.OnActivity("UpdateNodeExecutionStatus", mock.Anything, mock.MatchedBy(func(p activity.UpdateNodeExecStatusParams) bool {
 		return p.NodeExecutionID == g.exec && p.Status == "skipped"
 	})).Return(nil).Once()
@@ -916,7 +887,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateFinalizeCancelledDuringIssueStepAban
 	s.env.AssertActivityNotCalled(s.T(), "CompleteGateFinalize", mock.Anything, mock.Anything)
 }
 
-// gateWaitAlone runs one asynchronous gate's wait outside DAGExecutorWorkflow, whose loop has no
+// gateWaitAlone runs one gate's wait outside DAGExecutorWorkflow, whose loop has no
 // branch for a cancelled workflow, and reports whether the wait sent a completion.
 func gateWaitAlone(ctx workflow.Context, runID, execID, nodeID uuid.UUID) (bool, error) {
 	completionCh := workflow.NewBufferedChannel(ctx, 1)
@@ -925,7 +896,7 @@ func gateWaitAlone(ctx workflow.Context, runID, execID, nodeID uuid.UUID) (bool,
 	var acts *activity.Activities
 	returned := false
 	workflow.Go(ctx, func(gCtx workflow.Context) {
-		waitForHumanDecision(gCtx, dbCtx, humanCh, completionCh, acts, runID, execID, nodeID, 3600, true, finalizeWorkerQueue)
+		waitForHumanDecision(gCtx, dbCtx, humanCh, completionCh, acts, runID, execID, nodeID, 3600, finalizeWorkerQueue)
 		returned = true
 	})
 	waitCtx, _ := workflow.NewDisconnectedContext(ctx)

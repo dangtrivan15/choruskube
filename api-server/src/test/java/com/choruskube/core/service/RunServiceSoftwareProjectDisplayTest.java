@@ -125,9 +125,7 @@ class RunServiceSoftwareProjectDisplayTest {
                 null, // nodeExecutionClaimService — unused (signalHumanDecision not exercised)
                 null, // escalationContextResolver — unused (escalation not exercised)
                 null, // roadmapProposalValidator - unused (approve-time validation not exercised)
-                null,
-                null,
-                null,
+                null, // taskSettlement
                 org.mockito.Mockito.mock(GateRecheckService.class),
                 org.mockito.Mockito.mock(GateFinalizeService.class),
                 null // storySpecService

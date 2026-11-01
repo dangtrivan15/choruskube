@@ -335,7 +335,7 @@ public class GateFinalizeService {
         DriftCheck check =
                 drift.classify(drift.gather(runId, gate.getTemplateNodeId(), snapshot), toCompareResults(compares));
 
-        if (stamp.getRecheckRounds() > 0 && RunService.cannotBeFixedByARecheck(check)) {
+        if (stamp.getRecheckRounds() > 0 && cannotBeFixedByARecheck(check)) {
             return refuseFromHold(
                     runId,
                     gateExecId,
@@ -889,6 +889,13 @@ public class GateFinalizeService {
 
     private static StepResult refusedStep(String reason) {
         return new StepResult(REFUSED, null, null, reason);
+    }
+
+    /** Stale only for want of a record a re-check would not produce either: the pods record nothing. */
+    private static boolean cannotBeFixedByARecheck(DriftCheck drift) {
+        return drift.staleRepos().stream()
+                .allMatch(r -> r.reason() == GateDriftCheckService.Reason.NO_RECORD
+                        || r.reason() == GateDriftCheckService.Reason.BASE_GONE);
     }
 
     private static String withFeedback(String result, String feedback) {

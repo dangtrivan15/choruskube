@@ -1,5 +1,6 @@
 import { test, expect, seededRepos } from "../fixtures";
 import { uniqueName } from "../helpers/api-client";
+import { findWireMockRequests, headerOf } from "../helpers/wiremock";
 import type { RunPullRequestResponse } from "../../src/lib/types";
 
 /**
@@ -63,6 +64,14 @@ test.describe("Drift re-check at approval", () => {
       expect(stamps).toHaveLength(1);
       expect(stamps[0].status).toBe("consumed");
       expect(stamps[0].recheckRounds).toBe(1);
+
+      // The re-check's compares run before the gate completes, so the journal already has them.
+      // The journal is suite-wide: this also covers the Worker's branch-cleanup compares.
+      const compares = await findWireMockRequests({ method: "GET", urlPattern: "/repos/.+/compare/.+" });
+      expect(compares.length).toBeGreaterThan(0);
+      for (const req of compares) {
+        expect(headerOf(req, "User-Agent")).toBe("choruskube-worker");
+      }
     } finally {
       // A failure before completion would otherwise leave the run live for other workers' specs.
       try {

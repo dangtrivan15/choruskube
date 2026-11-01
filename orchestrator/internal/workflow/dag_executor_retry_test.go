@@ -38,7 +38,6 @@ func (s *DAGExecutorTestSuite) TestHumanGateTimeout_RetryViaApproval() {
 	// panic's retries starve the run of its deadline under load.
 	s.env.OnActivity("SetTraversedEdges", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.env.OnActivity("DeleteStaleBranches", mock.Anything, mock.Anything).Return(nil).Maybe()
-	s.env.OnActivity("PlanBranchCleanup", mock.Anything, mock.Anything).Return(activity.BranchCleanupPlan{}, nil).Maybe()
 	s.env.OnActivity("CleanupRunBranches", mock.Anything, mock.Anything).Return(activity.BranchCleanupResult{}, nil).Maybe()
 
 	// First execution created
@@ -74,6 +73,7 @@ func (s *DAGExecutorTestSuite) TestHumanGateTimeout_RetryViaApproval() {
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
 		RunID: runID, GraphVersion: 1,
+		WorkerTaskQueue: testWorkerQueue,
 	})
 
 	s.True(s.env.IsWorkflowCompleted())
@@ -138,6 +138,7 @@ func (s *DAGExecutorTestSuite) TestCancelStep5ToleratesDeleteAgentJob404() {
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
 		RunID: runID, GraphVersion: 1,
+		WorkerTaskQueue: testWorkerQueue,
 	})
 
 	s.True(s.env.IsWorkflowCompleted())
@@ -189,7 +190,6 @@ func (s *DAGExecutorTestSuite) TestScriptNodeRetry_RefreshesSnapshot() {
 	// Unmocked, the nil-registered real impls panic and their retries starve the run under load.
 	s.env.OnActivity("SetTraversedEdges", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.env.OnActivity("DeleteStaleBranches", mock.Anything, mock.Anything).Return(nil).Maybe()
-	s.env.OnActivity("PlanBranchCleanup", mock.Anything, mock.Anything).Return(activity.BranchCleanupPlan{}, nil).Maybe()
 	s.env.OnActivity("CleanupRunBranches", mock.Anything, mock.Anything).Return(activity.BranchCleanupResult{}, nil).Maybe()
 	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
 		return p.NodeExecutionID == execA2
@@ -230,6 +230,7 @@ func (s *DAGExecutorTestSuite) TestScriptNodeRetry_RefreshesSnapshot() {
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
 		RunID: runID, GraphVersion: 1,
+		WorkerTaskQueue: testWorkerQueue,
 	})
 
 	s.True(s.env.IsWorkflowCompleted())
@@ -271,7 +272,6 @@ func (s *DAGExecutorTestSuite) TestModelEffortResolution_RetryNodeSignal_Preserv
 	// Unmocked, the nil-registered real impls panic and their retries starve the run under load.
 	s.env.OnActivity("SetTraversedEdges", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.env.OnActivity("DeleteStaleBranches", mock.Anything, mock.Anything).Return(nil).Maybe()
-	s.env.OnActivity("PlanBranchCleanup", mock.Anything, mock.Anything).Return(activity.BranchCleanupPlan{}, nil).Maybe()
 	s.env.OnActivity("CleanupRunBranches", mock.Anything, mock.Anything).Return(activity.BranchCleanupResult{}, nil).Maybe()
 
 	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
@@ -306,6 +306,7 @@ func (s *DAGExecutorTestSuite) TestModelEffortResolution_RetryNodeSignal_Preserv
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
 		RunID: runID, GraphVersion: 1,
+		WorkerTaskQueue: testWorkerQueue,
 	})
 
 	s.True(s.env.IsWorkflowCompleted())
@@ -345,7 +346,6 @@ func (s *DAGExecutorTestSuite) TestModelEffortResolution_PauseHeartbeatTimeoutRe
 	// Unmocked, the nil-registered real impls panic and their retries starve the run under load.
 	s.env.OnActivity("SetTraversedEdges", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.env.OnActivity("DeleteStaleBranches", mock.Anything, mock.Anything).Return(nil).Maybe()
-	s.env.OnActivity("PlanBranchCleanup", mock.Anything, mock.Anything).Return(activity.BranchCleanupPlan{}, nil).Maybe()
 	s.env.OnActivity("CleanupRunBranches", mock.Anything, mock.Anything).Return(activity.BranchCleanupResult{}, nil).Maybe()
 
 	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
@@ -388,6 +388,7 @@ func (s *DAGExecutorTestSuite) TestModelEffortResolution_PauseHeartbeatTimeoutRe
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
 		RunID: runID, GraphVersion: 1,
+		WorkerTaskQueue: testWorkerQueue,
 	})
 
 	s.True(s.env.IsWorkflowCompleted())
