@@ -5,6 +5,7 @@ import com.choruskube.core.credential.CredentialPreflightChecker;
 import com.choruskube.core.dto.*;
 import com.choruskube.core.event.MappableCreated;
 import com.choruskube.core.exception.BadRequestException;
+import com.choruskube.core.exception.ConflictException;
 import com.choruskube.core.exception.GateClaimConflictException;
 import com.choruskube.core.exception.GateRecheckExhaustedException;
 import com.choruskube.core.exception.NotFoundException;
@@ -95,6 +96,7 @@ public class RunService {
     private final GateDriftCheckService gateDriftCheck;
     private final GateRecheckService gateRecheck;
     private final GateFinalizeService gateFinalize;
+    private final StorySpecService storySpecService;
 
     @Value("${temporal.task-queue}")
     private String taskQueue;
@@ -139,7 +141,8 @@ public class RunService {
             TaskSettlementService taskSettlement,
             GateDriftCheckService gateDriftCheck,
             GateRecheckService gateRecheck,
-            @Lazy GateFinalizeService gateFinalize) {
+            @Lazy GateFinalizeService gateFinalize,
+            StorySpecService storySpecService) {
         this.runRepo = runRepo;
         this.execRepo = execRepo;
         this.edgeRepo = edgeRepo;
@@ -180,6 +183,7 @@ public class RunService {
         this.gateDriftCheck = gateDriftCheck;
         this.gateRecheck = gateRecheck;
         this.gateFinalize = gateFinalize;
+        this.storySpecService = storySpecService;
     }
 
     @Transactional
@@ -543,6 +547,12 @@ public class RunService {
         UUID runId = run.getId();
         UUID nodeExecId = exec.getId();
 
+        // Ahead of the async hand-over and the claim, so a refusal leaves the gate as it was.
+        Optional<SignalResponse> rerouted = recheckStoryVersion(run, exec, request, heldStamp);
+        if (rerouted.isPresent()) {
+            return rerouted.get();
+        }
+
         // Only a gate opened on the async protocol has a workflow that finishes an approval in steps;
         // a gate opened before it waits for a final decision signal, so it must stay on the path below.
         if (ASYNC_FINALIZE.equals(exec.getFinalizeMode()) && heldStamp == null) {
@@ -683,6 +693,83 @@ public class RunService {
             }
         });
         return SignalResponse.signaled();
+    }
+
+    /**
+     * A Task run's approval at a gate with {@code story_version_recheck}: refused while its Story's
+     * spec is under revision; when the spec moved since the run planned, turned into the gate's
+     * re-check route with the current spec and guidance naming the new Revisions entries, after
+     * which a human approves again. Empty when the approval proceeds as it is.
+     */
+    private Optional<SignalResponse> recheckStoryVersion(
+            WorkflowRun run, NodeExecution exec, SignalRequest request, GateStamp heldStamp) {
+        if (run.getTaskId() == null || !"approved".equalsIgnoreCase(request.decision())) {
+            return Optional.empty();
+        }
+        JsonNode nodeConfig = decisionOptionsResolver.findNodeConfigOverrides(
+                readSnapshot(run).get("nodes"), exec.getTemplateNodeId());
+        Optional<StoryVersionRecheckConfig> recheck = StoryVersionRecheckConfig.fromConfigOverrides(nodeConfig);
+        if (recheck.isEmpty()) {
+            return Optional.empty();
+        }
+        UUID storyId = taskRepo.findById(run.getTaskId()).map(Task::getStoryId).orElse(null);
+        if (storyId == null) {
+            return Optional.empty();
+        }
+        Optional<WorkflowRun> revision = storySpecService.openDesignRun(storyId);
+        if (revision.isPresent()) {
+            throw new ConflictException("The Story spec is under revision (run "
+                    + revision.get().getId() + "); approve after it completes");
+        }
+        Optional<StorySpecVersion> current = storySpecService.current(storyId);
+        Integer planned = run.getStorySpecVersion();
+        if (current.isEmpty() || planned == null || current.get().getVersion() <= planned) {
+            return Optional.empty();
+        }
+
+        UUID runId = run.getId();
+        int to = current.get().getVersion();
+        String guidance = storyVersionGuidance(planned, to);
+        uploadService.overwriteRunInput(
+                runId, StorySpecLifecycleService.SPEC_FILE, current.get().getContent());
+        String guidanceRefs = uploadService.uploadGateText(
+                storagePrefixResolver.storagePrefixForRun(runId),
+                runId,
+                exec.getId(),
+                StorySpecLifecycleService.GUIDANCE_FILE,
+                guidance);
+        if (heldStamp != null) {
+            // Otherwise the rerouted decision voids it as a reviewer's.
+            gateRecheck.voidStamp(
+                    heldStamp.getId(),
+                    "The Story spec moved from v" + planned + " to v" + to
+                            + ", so the approval became a re-review against it.",
+                    null);
+        }
+        SignalResponse response =
+                decideGate(run, exec, new SignalRequest(recheck.get().route(), guidance, guidanceRefs, null), null);
+        // Recorded only once the round is under way: recorded for a round that never started, it
+        // would let the next approval skip that round. Unrecorded, the next approval re-runs it.
+        try {
+            runRepo.setStorySpecVersion(runId, to);
+        } catch (RuntimeException e) {
+            logger.error("Could not record Story spec v{} on run {}: {}", to, runId, e.getMessage(), e);
+        }
+        logger.info(
+                "Approval of gate {} of run {} became '{}': the Story spec moved from v{} to v{}",
+                exec.getId(),
+                runId,
+                recheck.get().route(),
+                planned,
+                to);
+        return Optional.of(response);
+    }
+
+    static String storyVersionGuidance(int planned, int current) {
+        return String.format(
+                "The Story spec moved from v%d to v%d since this Task planned. Read the Revisions entries for v%d"
+                        + " through v%d in /workspace/in/run_input/story_spec.md and check this change against them.",
+                planned, current, planned + 1, current);
     }
 
     /**

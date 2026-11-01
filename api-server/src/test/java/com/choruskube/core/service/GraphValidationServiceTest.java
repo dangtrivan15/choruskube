@@ -575,6 +575,74 @@ class GraphValidationServiceTest {
         assertThat(result.errors()).anyMatch(e -> e.contains("declares drift_recheck but has no 'approved' decision"));
     }
 
+    private static final String STORY_RECHECK =
+            "{\"terminal_decisions\":[\"approved\"],\"story_version_recheck\":{\"route\":\"rereview\"}}";
+
+    @Test
+    void storyVersionRecheck_withRouteEdgeAndApproved_isValid() {
+        UUID entry = UUID.randomUUID();
+        UUID gate = UUID.randomUUID();
+
+        var gateNode = makeNode(gate, "gate", false);
+        gateNode.setConfigOverrides(STORY_RECHECK);
+        var nodes = List.of(makeNode(entry, "entry", true), gateNode);
+        var edges = List.of(makeEdge(entry, gate, null), makeEdge(gate, entry, "rereview"));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.errors()).isEmpty();
+        assertThat(result.valid()).isTrue();
+    }
+
+    @Test
+    void storyVersionRecheck_routeMustHaveEdge() {
+        UUID entry = UUID.randomUUID();
+        UUID gate = UUID.randomUUID();
+
+        var gateNode = makeNode(gate, "gate", false);
+        gateNode.setConfigOverrides(STORY_RECHECK);
+        var nodes = List.of(makeNode(entry, "entry", true), gateNode);
+        var edges = List.of(makeEdge(entry, gate, null));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isFalse();
+        assertThat(result.errors())
+                .contains("Node 'gate' declares story_version_recheck route 'rereview' but has no outgoing "
+                        + "'rereview' edge");
+    }
+
+    @Test
+    void storyVersionRecheck_routeMustNotBeApproved() {
+        UUID entry = UUID.randomUUID();
+        UUID gate = UUID.randomUUID();
+        UUID done = UUID.randomUUID();
+
+        var gateNode = makeNode(gate, "gate", false);
+        gateNode.setConfigOverrides("{\"story_version_recheck\":{\"route\":\"approved\"}}");
+        var nodes = List.of(makeNode(entry, "entry", true), gateNode, makeNode(done, "done", false));
+        var edges = List.of(makeEdge(entry, gate, null), makeEdge(gate, done, "approved"));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isFalse();
+        assertThat(result.errors())
+                .contains("Node 'gate' declares story_version_recheck route 'approved', the decision it re-checks");
+    }
+
+    @Test
+    void storyVersionRecheck_requiresApprovedDecision() {
+        UUID entry = UUID.randomUUID();
+        UUID gate = UUID.randomUUID();
+
+        var gateNode = makeNode(gate, "gate", false);
+        gateNode.setConfigOverrides("{\"story_version_recheck\":{\"route\":\"rereview\"}}");
+        var nodes = List.of(makeNode(entry, "entry", true), gateNode);
+        var edges = List.of(makeEdge(entry, gate, null), makeEdge(gate, entry, "rereview"));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isFalse();
+        assertThat(result.errors())
+                .contains("Node 'gate' declares story_version_recheck but has no 'approved' decision");
+    }
+
     private TemplateNode makeNode(UUID id, String label, boolean entrypoint) {
         var node = new TemplateNode();
         node.setId(id);

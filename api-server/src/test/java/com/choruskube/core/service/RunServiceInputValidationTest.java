@@ -57,8 +57,9 @@ class RunServiceInputValidationTest {
                 null,
                 null,
                 org.mockito.Mockito.mock(GateRecheckService.class),
-                org.mockito.Mockito.mock(
-                        GateFinalizeService.class)); // pullRequestMergeService - unused (merge not exercised)
+                org.mockito.Mockito.mock(GateFinalizeService.class),
+                null // storySpecService
+                ); // pullRequestMergeService - unused (merge not exercised)
     }
 
     @Test

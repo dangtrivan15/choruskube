@@ -173,7 +173,9 @@ class RunServiceDriftRecheckTest {
                 null,
                 gateDriftCheck,
                 gateRecheck,
-                org.mockito.Mockito.mock(GateFinalizeService.class));
+                org.mockito.Mockito.mock(GateFinalizeService.class),
+                null // storySpecService
+                );
     }
 
     private NodeExecution stubExec() {
