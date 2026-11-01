@@ -770,7 +770,6 @@ public class DefaultStoryServiceTest extends BaseTest {
         taskRepo.saveAndFlush(t);
     }
 
-    /** The fixture writes through JDBC, so the Story row JPA still holds must reach the database first. */
     private StoryResponse designedStory(UUID epicId) {
         StoryResponse story = service.create(epicId, new StoryRequest("S", "D"));
         entityManager.flush();

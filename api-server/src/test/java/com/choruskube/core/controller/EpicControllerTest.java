@@ -699,7 +699,6 @@ public class EpicControllerTest extends BaseTest {
         return epicRepo.findById(response.id()).orElseThrow();
     }
 
-    /** The fixture writes through JDBC, so the Story row JPA still holds must reach the database first. */
     private StoryResponse makeStory(UUID epicId, String title) {
         StoryResponse story = storyService.create(epicId, new StoryRequest(title, "D"));
         entityManager.flush();

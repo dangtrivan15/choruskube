@@ -159,6 +159,7 @@ class AutopilotServiceTest {
 
     private final List<WorkflowRun> settleBatch = new ArrayList<>();
     private final Map<UUID, Readiness> readiness = new HashMap<>();
+    private final Map<UUID, String> notDesignedReasons = new HashMap<>();
     private final List<WorkItemDependency> edges = new ArrayList<>();
     private final Map<UUID, Task> tasksById = new LinkedHashMap<>();
     private final Map<UUID, Story> storiesById = new LinkedHashMap<>();
@@ -1261,6 +1262,36 @@ class AutopilotServiceTest {
     }
 
     @Test
+    void getStatus_whyIdle_saysTasksWaitOnStoryDesign_ratherThanBlocked() {
+        StoryFixture s = story(epic("E"));
+        task(s, "Waiting on design", WorkItemStatus.backlog, Readiness.READY);
+        notDesignedReasons.put(s.story().getId(), StoryDesignReadiness.NOT_APPROVED);
+
+        AutopilotStatusResponse status = newService().getStatus();
+
+        assertThat(status.nextUp()).isEmpty();
+        assertThat(status.whyIdle())
+                .contains("No ready work — all 1 backlog Task(s) wait on Story design")
+                .noneMatch(reason -> reason.contains("blocked"));
+    }
+
+    @Test
+    void getStatus_whyIdle_countsBlockedTasksApartFromTasksWaitingOnDesign() {
+        EpicFixture e = epic("E");
+        StoryFixture revising = story(e);
+        task(revising, "Waiting on the revision", WorkItemStatus.backlog, Readiness.READY);
+        task(revising, "Blocked under the revision", WorkItemStatus.backlog, Readiness.BLOCKED);
+        notDesignedReasons.put(revising.story().getId(), StoryDesignReadiness.UNDER_REVISION);
+        StoryFixture designed = story(e);
+        task(designed, "Blocked", WorkItemStatus.backlog, Readiness.BLOCKED);
+
+        AutopilotStatusResponse status = newService().getStatus();
+
+        assertThat(status.whyIdle())
+                .contains("No ready work — 2 backlog Task(s) are blocked and 1 wait on Story design");
+    }
+
+    @Test
     void getStatus_whyIdle_saysAtCapacityWhenEverySlotIsInUse() {
         StoryFixture s = story(epic("E"));
         task(s, "Ready", WorkItemStatus.backlog, Readiness.READY);
@@ -1932,7 +1963,8 @@ class AutopilotServiceTest {
                             any()))
                     // The readiness map and the edge list are shared across Epics on purpose: the
                     // service merges them anyway, and a superset changes no assertion here.
-                    .thenReturn(new EpicReadinessAssembler.Assembly(readiness, List.of(), List.of(), edges, Map.of()));
+                    .thenReturn(new EpicReadinessAssembler.Assembly(
+                            readiness, List.of(), List.of(), edges, notDesignedReasons));
         }
         return new AutopilotService(
                 autopilotRepo,

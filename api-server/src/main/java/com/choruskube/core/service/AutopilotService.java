@@ -734,12 +734,13 @@ public class AutopilotService {
     private record Frontier(
             List<Task> readyTasks,
             int backlogTaskCount,
+            int waitingOnDesignCount,
             int totalTaskCount,
             List<String> emptyContainerReasons,
             List<AutopilotTaskRef> heldTasks) {
 
         /** What a disengaged Autopilot reports: it will start nothing, so it has no frontier. */
-        static final Frontier EMPTY = new Frontier(List.of(), 0, 0, List.of(), List.of());
+        static final Frontier EMPTY = new Frontier(List.of(), 0, 0, 0, List.of(), List.of());
     }
 
     /**
@@ -757,6 +758,7 @@ public class AutopilotService {
         List<Task> inProgress = new ArrayList<>();
         Set<UUID> startedIds = new HashSet<>();
         int backlogCount = 0;
+        int waitingOnDesignCount = 0;
         int totalCount = 0;
 
         for (UUID epicId : candidateSource.candidateEpicIds(autopilotId)) {
@@ -799,6 +801,10 @@ public class AutopilotService {
                     backlogCount++;
                     if (EpicReadinessAssembler.isStartable(task, assembly)) {
                         ready.add(task);
+                    } else if (assembly.readinessById().get(task.getId()) == Readiness.READY
+                            && EpicReadinessAssembler.notStartableReason(task, assembly)
+                                    .isPresent()) {
+                        waitingOnDesignCount++;
                     }
                 }
             }
@@ -811,6 +817,7 @@ public class AutopilotService {
         return new Frontier(
                 ready,
                 backlogCount,
+                waitingOnDesignCount,
                 totalCount,
                 emptyContainerReasons(emptyContainerLabels, edges, readinessById),
                 heldTasks(inProgress));
@@ -1091,10 +1098,23 @@ public class AutopilotService {
             } else if (frontier.backlogTaskCount() == 0) {
                 reasons.add("No Tasks in backlog — every Task is started or done");
             } else {
-                reasons.add("No ready work — all " + frontier.backlogTaskCount() + " backlog Task(s) are blocked");
+                reasons.add(noReadyWorkReason(frontier.backlogTaskCount(), frontier.waitingOnDesignCount()));
             }
         }
         return List.copyOf(reasons);
+    }
+
+    /** The board shows a Task waiting on its Story's design as READY, so it is never called blocked here. */
+    private static String noReadyWorkReason(int backlog, int waitingOnDesign) {
+        int blocked = backlog - waitingOnDesign;
+        if (waitingOnDesign == 0) {
+            return "No ready work — all " + backlog + " backlog Task(s) are blocked";
+        }
+        if (blocked == 0) {
+            return "No ready work — all " + backlog + " backlog Task(s) wait on Story design";
+        }
+        return "No ready work — " + blocked + " backlog Task(s) are blocked and " + waitingOnDesign
+                + " wait on Story design";
     }
 
     /**

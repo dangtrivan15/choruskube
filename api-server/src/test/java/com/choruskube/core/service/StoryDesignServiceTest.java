@@ -382,7 +382,6 @@ class StoryDesignServiceTest extends BaseTest {
 
     // ---- helpers ----
 
-    /** The fixture writes through JDBC, so the Story row JPA still holds must reach the database first. */
     private void approveSpec(UUID storyId) {
         entityManager.flush();
         StorySpecFixtures.approve(jdbc, storyId);

@@ -364,7 +364,6 @@ public class TaskControllerTest extends BaseTest {
         r = gitRepoRepo.save(r);
         EpicResponse epic = epicService.create(new EpicRequest("Epic", "Epic desc", null, r.getId()), null);
         StoryResponse story = storyService.create(epic.id(), new StoryRequest("Story", "Story desc"));
-        // The fixture writes through JDBC, so the Story row JPA still holds must reach the database first.
         entityManager.flush();
         StorySpecFixtures.approve(jdbc, story.id());
         return story;

@@ -618,7 +618,6 @@ public class EpicReadinessAssemblerTest extends BaseTest {
 
     private StoryResponse makeStory(UUID epicId, String title) {
         StoryResponse story = makeUndesignedStory(epicId, title);
-        // The fixture writes through JDBC, so the Story row JPA still holds must reach the database first.
         entityManager.flush();
         StorySpecFixtures.approve(jdbc, story.id());
         return story;

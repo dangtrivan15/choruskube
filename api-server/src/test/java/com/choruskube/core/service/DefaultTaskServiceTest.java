@@ -48,6 +48,7 @@ import jakarta.persistence.PersistenceContext;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -61,6 +62,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.annotation.Transactional;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
@@ -125,6 +127,9 @@ public class DefaultTaskServiceTest extends BaseTest {
 
     @MockitoBean
     private S3Client s3Client;
+
+    @MockitoSpyBean
+    private StorySpecService specService;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -469,6 +474,26 @@ public class DefaultTaskServiceTest extends BaseTest {
 
         assertThat(service.listRuns(task.id(), PageRequest.of(0, 20)).getContent())
                 .hasSize(1);
+    }
+
+    @Test
+    void start_revisionOpenedAfterTheReadinessCheck_isRefusedUnderTheLockBeforeStaging() {
+        GitRepo r = makeRepo("https://github.com/test/task-start-revision-after-readiness.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
+        designRun(story.id(), WorkflowRunStatus.running);
+        Mockito.doReturn(Set.of()).when(specService).storiesWithOpenDesignRun(ArgumentMatchers.any());
+
+        assertThatThrownBy(() -> service.start(task.id()))
+                .isInstanceOf(ConflictException.class)
+                .hasMessage("Cannot start this Task: Story spec under revision");
+
+        Mockito.verify(specService).storiesWithOpenDesignRun(ArgumentMatchers.any());
+        Mockito.verify(s3Client, Mockito.never())
+                .putObject(ArgumentMatchers.any(PutObjectRequest.class), ArgumentMatchers.any(RequestBody.class));
+        assertThat(service.listRuns(task.id(), PageRequest.of(0, 20)).getContent())
+                .isEmpty();
+        assertThat(service.get(task.id()).status()).isEqualTo("backlog");
     }
 
     @Test
@@ -1081,7 +1106,6 @@ public class DefaultTaskServiceTest extends BaseTest {
         return story;
     }
 
-    /** The fixture writes through JDBC, so the Story row JPA still holds must reach the database first. */
     private void approve(UUID storyId) {
         entityManager.flush();
         StorySpecFixtures.approve(jdbc, storyId);
