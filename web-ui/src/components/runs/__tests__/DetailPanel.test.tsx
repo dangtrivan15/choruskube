@@ -44,6 +44,10 @@ vi.mock("../ArtifactList", () => ({
   ),
 }));
 
+vi.mock("@/hooks/useStorySpec", () => ({
+  useStoryConflicts: vi.fn(() => ({ data: [] })),
+}));
+
 vi.mock("@/hooks/useExecutionLogs", () => ({
   useExecutionLogs: vi.fn(() => ({
     data: [],
@@ -124,6 +128,38 @@ describe("DetailPanel", () => {
 
     // HumanGatePanel renders Awaiting Review badge
     expect(screen.getByText("Awaiting Review")).toBeInTheDocument();
+  });
+
+  it("hands the await_story_revision gate its run's Story", () => {
+    const run = makeRun({
+      graphSnapshot: {
+        nodes: [
+          {
+            template_node_id: "node-1",
+            label: "await_story_revision",
+            executor_type: "human",
+            is_entrypoint: false,
+          },
+        ],
+        edges: [],
+      },
+      task: {
+        id: "task-1",
+        title: "Wire the payment form",
+        status: "in_progress",
+        softwareProject: null,
+        storyId: "story-1",
+        storyTitle: "Checkout",
+        epicId: "epic-1",
+        epicTitle: "Payments",
+      },
+    });
+    renderWithProviders(<DetailPanel run={run} nodeId="node-1" />);
+
+    expect(screen.getByRole("link", { name: /Open the Story/ })).toHaveAttribute(
+      "href",
+      "/roadmap/epics/epic-1/stories/story-1"
+    );
   });
 
   it("renders the merge-on-approval notice when the snapshot node declares merge_pull_requests", () => {

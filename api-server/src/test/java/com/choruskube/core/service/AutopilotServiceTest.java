@@ -1900,6 +1900,7 @@ class AutopilotServiceTest {
                         AutopilotTaskRef::runId,
                         AutopilotTaskRef::status,
                         AutopilotTaskRef::storyId,
+                        AutopilotTaskRef::epicId,
                         AutopilotTaskRef::kind)
                 .containsExactly(
                         tuple(
@@ -1908,6 +1909,7 @@ class AutopilotServiceTest {
                                 null,
                                 "design",
                                 undesigned.story().getId(),
+                                undesigned.story().getEpicId(),
                                 "design_story"),
                         tuple(
                                 ready.getId(),
@@ -1915,6 +1917,7 @@ class AutopilotServiceTest {
                                 null,
                                 "backlog",
                                 designed.story().getId(),
+                                designed.story().getEpicId(),
                                 "task"));
     }
 
@@ -1938,6 +1941,7 @@ class AutopilotServiceTest {
                         AutopilotTaskRef::runId,
                         AutopilotTaskRef::status,
                         AutopilotTaskRef::storyId,
+                        AutopilotTaskRef::epicId,
                         AutopilotTaskRef::kind)
                 .containsExactlyInAnyOrder(
                         tuple(
@@ -1946,6 +1950,7 @@ class AutopilotServiceTest {
                                 specGate.getId(),
                                 "awaiting_human",
                                 designing.story().getId(),
+                                designing.story().getEpicId(),
                                 "design_story"),
                         tuple(
                                 parked.getId(),
@@ -1953,6 +1958,7 @@ class AutopilotServiceTest {
                                 taskGate.getId(),
                                 "awaiting_human",
                                 delivering.story().getId(),
+                                delivering.story().getEpicId(),
                                 "task"));
     }
 
@@ -2029,6 +2035,7 @@ class AutopilotServiceTest {
                         AutopilotTaskRef::runId,
                         AutopilotTaskRef::status,
                         AutopilotTaskRef::storyId,
+                        AutopilotTaskRef::epicId,
                         AutopilotTaskRef::kind)
                 .containsExactly(tuple(
                         null,
@@ -2036,10 +2043,36 @@ class AutopilotServiceTest {
                         failed.getId(),
                         "failed",
                         held.story().getId(),
+                        held.story().getEpicId(),
                         "design_story"));
         assertThat(status.whyIdle())
                 .contains("Story design run " + failed.getId()
                         + " for 'Checkout' failed — design it again from the Story page or delete the run");
+    }
+
+    @Test
+    void status_heldTaskCarriesItsStorysEpic() {
+        StoryFixture delivering = story(epic("E"));
+        Task stranded = task(delivering, "Stranded", WorkItemStatus.in_progress, Readiness.READY);
+        WorkflowRun cancelled = new WorkflowRun();
+        cancelled.setId(UUID.randomUUID());
+        cancelled.setStatus(WorkflowRunStatus.cancelled);
+        cancelled.setTaskId(stranded.getId());
+        when(runRepo.findByTaskIdInOrderByCreatedAtDesc(any())).thenReturn(List.of(cancelled));
+
+        AutopilotStatusResponse status = newService().getStatus();
+
+        assertThat(status.heldTasks())
+                .extracting(
+                        AutopilotTaskRef::taskId,
+                        AutopilotTaskRef::storyId,
+                        AutopilotTaskRef::epicId,
+                        AutopilotTaskRef::kind)
+                .containsExactly(tuple(
+                        stranded.getId(),
+                        delivering.story().getId(),
+                        delivering.story().getEpicId(),
+                        "task"));
     }
 
     // -----------------------------------------------------------------------------------

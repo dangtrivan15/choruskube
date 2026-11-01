@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { ArrowLeft, Trash2, Pencil, Play, CheckCircle2, GitBranch, Layers } from "lucide-react";
 import Authorized from "@/components/Authorized";
+import { apiErrorMessage } from "@/lib/api";
 import { useTask, useDeleteTask, useStartTask, useCompleteTask } from "@/hooks/useTasks";
 import { useStory } from "@/hooks/useStories";
 import { useTaskRuns } from "@/hooks/useTaskRuns";
@@ -24,6 +25,19 @@ import TaskRunHistoryList from "@/components/roadmap/TaskRunHistoryList";
 import EditTaskDialog from "@/components/roadmap/EditTaskDialog";
 import LevelBadge from "@/components/roadmap/LevelBadge";
 import PageHeader from "@/components/layout/PageHeader";
+import type { StoryResponse } from "@/lib/types";
+
+/**
+ * The server's refusal reasons for a start, in its precedence (StoryDesignReadiness), read off the
+ * Story because neither the Task nor its blocking chain carries them. An unloaded Story holds nothing
+ * back: the server still refuses, and the start dialog shows why.
+ */
+function storySpecStartReason(story: StoryResponse | undefined): string | null {
+  if (!story) return null;
+  if (story.specVersion == null) return "Story spec not approved yet";
+  if (story.specUnderRevision) return "Story spec under revision";
+  return null;
+}
 
 function statusBadge(status: string) {
   switch (status) {
@@ -64,6 +78,8 @@ export default function TaskDetailPage() {
   // first render) so hook order stays stable, same as `useStory` above.
   const chainQuery = useBlockingChain("task", id ?? "", !!id);
   const isBlocked = chainQuery.data?.readiness === "BLOCKED";
+  const specReason = storySpecStartReason(parentStory);
+  const startDisabled = isBlocked || specReason != null;
   const deleteTask = useDeleteTask(task?.storyId ?? "");
   const startTask = useStartTask();
   const completeTask = useCompleteTask();
@@ -118,32 +134,42 @@ export default function TaskDetailPage() {
     : "/roadmap";
 
   // Shared by the Start (backlog) and Restart (in_progress + canRestart) triggers below — both
-  // hit the same `POST /tasks/{id}/start`, and the backend's `requireReady` gates both identically
-  // (DefaultTaskService.start() calls it before either a fresh start or a re-trigger), so a
-  // dependency added after the Task already started can block a Restart exactly the same way it
-  // blocks the original Start. A disabled native <button> stops receiving pointer events entirely
-  // (`disabled:pointer-events-none`), so the Tooltip's hover trigger is a wrapping <span> instead —
-  // hovering where the button visually sits still reaches the span underneath it.
+  // hit the same `POST /tasks/{id}/start`, and the backend gates both identically on readiness and
+  // on the Story's spec (DefaultTaskService.start() checks both before either a fresh start or a
+  // re-trigger), so a dependency added, or a revision opened, after the Task already started can
+  // block a Restart exactly the same way it blocks the original Start. A disabled native <button>
+  // stops receiving pointer events entirely (`disabled:pointer-events-none`), so the Tooltip's hover
+  // trigger is a wrapping <span> instead — hovering where the button visually sits still reaches
+  // the span underneath it.
   function renderStartTrigger(testId: string, label: string) {
     const button = (
-      <Button data-testid={testId} size="sm" onClick={() => setStartOpen(true)} disabled={isBlocked}>
+      <Button data-testid={testId} size="sm" onClick={() => setStartOpen(true)} disabled={startDisabled}>
         <Play className="size-4" />
         {label}
       </Button>
     );
-    if (!isBlocked) return button;
+    if (!startDisabled) return button;
     return (
       <Tooltip>
         <TooltipTrigger data-testid={`${testId}-tooltip-trigger`} render={<span className="inline-flex" />}>
           {button}
         </TooltipTrigger>
         <TooltipContent data-testid="task-start-blocked-tooltip">
-          <p className="font-medium">Blocked by</p>
-          <ul className="list-disc pl-4">
-            {(chainQuery.data?.blockedBy ?? []).map((blocker) => (
-              <li key={`${blocker.itemType}-${blocker.itemId}`}>{blocker.title}</li>
-            ))}
-          </ul>
+          {specReason && (
+            <p data-testid="task-start-spec-reason" className="font-medium">
+              {specReason}
+            </p>
+          )}
+          {isBlocked && (
+            <>
+              <p className="font-medium">Blocked by</p>
+              <ul className="list-disc pl-4">
+                {(chainQuery.data?.blockedBy ?? []).map((blocker) => (
+                  <li key={`${blocker.itemType}-${blocker.itemId}`}>{blocker.title}</li>
+                ))}
+              </ul>
+            </>
+          )}
         </TooltipContent>
       </Tooltip>
     );
@@ -282,7 +308,7 @@ export default function TaskDetailPage() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Start Feature Development</DialogTitle>
+            <DialogTitle>Start Task Delivery</DialogTitle>
             <DialogDescription>
               This will create a workflow run for &ldquo;{task.title}&rdquo; using the selected
               repository. Continue?
@@ -290,8 +316,8 @@ export default function TaskDetailPage() {
           </DialogHeader>
           <DialogFooter>
             {startTask.isError && (
-              <p className="text-sm text-destructive mr-auto">
-                Failed to start. Check that the repository is valid.
+              <p data-testid="start-task-error" className="text-sm text-destructive mr-auto">
+                {apiErrorMessage(startTask.error, "Failed to start. Check that the repository is valid.")}
               </p>
             )}
             <Button variant="ghost" onClick={() => setStartOpen(false)}>

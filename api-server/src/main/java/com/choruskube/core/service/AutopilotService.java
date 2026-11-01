@@ -766,10 +766,11 @@ public class AutopilotService {
             int totalTaskCount,
             List<String> emptyContainerReasons,
             List<AutopilotTaskRef> heldTasks,
-            List<HeldStory> heldStories) {
+            List<HeldStory> heldStories,
+            Map<UUID, Story> storiesById) {
 
         /** What a disengaged Autopilot reports: it will start nothing, so it has no frontier. */
-        static final Frontier EMPTY = new Frontier(List.of(), 0, 0, 0, List.of(), List.of(), List.of());
+        static final Frontier EMPTY = new Frontier(List.of(), 0, 0, 0, List.of(), List.of(), List.of(), Map.of());
     }
 
     /** The Story half of the frontier: designs to start, and Stories a finished design run holds. */
@@ -791,6 +792,7 @@ public class AutopilotService {
                     run.getId(),
                     run.getStatus().name(),
                     story.getId(),
+                    story.getEpicId(),
                     AutopilotTaskRef.KIND_DESIGN_STORY);
         }
 
@@ -887,8 +889,9 @@ public class AutopilotService {
                 waitingOnDesignCount,
                 totalCount,
                 emptyContainerReasons(emptyContainerLabels, edges, readinessById),
-                heldTasks(inProgress),
-                design.held());
+                heldTasks(inProgress, storiesById),
+                design.held(),
+                storiesById);
     }
 
     /**
@@ -942,7 +945,7 @@ public class AutopilotService {
      * <p>A Task with no run at all is left out: neither re-open nor start accepts one, so naming it
      * would offer an action that cannot be taken.
      */
-    private List<AutopilotTaskRef> heldTasks(List<Task> inProgress) {
+    private List<AutopilotTaskRef> heldTasks(List<Task> inProgress, Map<UUID, Story> storiesById) {
         if (inProgress.isEmpty()) {
             return List.of();
         }
@@ -964,6 +967,7 @@ public class AutopilotService {
                     latest.getId(),
                     latest.getStatus().name(),
                     task.getStoryId(),
+                    epicIdOf(storiesById.get(task.getStoryId())),
                     AutopilotTaskRef.KIND_TASK));
         }
         return List.copyOf(held);
@@ -1144,7 +1148,7 @@ public class AutopilotService {
         List<AutopilotTaskRef> nextUp = frontier.items().stream()
                 .filter(item -> !excludedIds.contains(item.id()))
                 .limit(NEXT_UP_LIMIT)
-                .map(AutopilotService::nextUpRef)
+                .map(item -> nextUpRef(item, frontier.storiesById()))
                 .toList();
 
         // Both buckets are named from the same batch, rather than one findById per run per bucket.
@@ -1292,7 +1296,7 @@ public class AutopilotService {
         return List.copyOf(reasons);
     }
 
-    private static AutopilotTaskRef nextUpRef(AutopilotFrontierItem item) {
+    private static AutopilotTaskRef nextUpRef(AutopilotFrontierItem item, Map<UUID, Story> storiesById) {
         return switch (item) {
             case AutopilotFrontierItem.TaskItem(Task task) ->
                 new AutopilotTaskRef(
@@ -1301,16 +1305,27 @@ public class AutopilotService {
                         null,
                         task.getStatus().name(),
                         task.getStoryId(),
+                        epicIdOf(storiesById.get(task.getStoryId())),
                         AutopilotTaskRef.KIND_TASK);
             case AutopilotFrontierItem.DesignStoryItem(Story story) ->
                 new AutopilotTaskRef(
-                        null, story.getTitle(), null, "design", story.getId(), AutopilotTaskRef.KIND_DESIGN_STORY);
+                        null,
+                        story.getTitle(),
+                        null,
+                        "design",
+                        story.getId(),
+                        story.getEpicId(),
+                        AutopilotTaskRef.KIND_DESIGN_STORY);
         };
     }
 
+    private static UUID epicIdOf(Story story) {
+        return story == null ? null : story.getEpicId();
+    }
+
     /**
-     * The Tasks and Stories the reported runs work on, each read in one batch. Mutable maps: a run
-     * with no Task looks up a null key, which an immutable map throws on.
+     * The Tasks the reported runs work on and the Stories behind them, each read in one batch.
+     * Mutable maps: a run with no Task looks up a null key, which an immutable map throws on.
      */
     private record RunSubjects(Map<UUID, Task> tasksById, Map<UUID, Story> storiesById) {}
 
@@ -1331,15 +1346,18 @@ public class AutopilotService {
                                 run.getId(),
                                 run.getStatus().name(),
                                 run.getStoryId(),
+                                epicIdOf(story),
                                 AutopilotTaskRef.KIND_DESIGN_STORY);
                     }
                     Task task = subjects.tasksById().get(run.getTaskId());
+                    UUID storyId = task == null ? null : task.getStoryId();
                     return new AutopilotTaskRef(
                             run.getTaskId(),
                             task == null ? null : task.getTitle(),
                             run.getId(),
                             run.getStatus().name(),
-                            task == null ? null : task.getStoryId(),
+                            storyId,
+                            epicIdOf(subjects.storiesById().get(storyId)),
                             AutopilotTaskRef.KIND_TASK);
                 })
                 .toList();
@@ -1359,6 +1377,7 @@ public class AutopilotService {
         if (!taskIds.isEmpty()) {
             taskRepo.findAllById(taskIds).forEach(task -> tasks.put(task.getId(), task));
         }
+        tasks.values().stream().map(Task::getStoryId).filter(Objects::nonNull).forEach(storyIds::add);
         Map<UUID, Story> stories = new HashMap<>();
         if (!storyIds.isEmpty()) {
             storyRepo.findAllById(storyIds).forEach(story -> stories.put(story.getId(), story));

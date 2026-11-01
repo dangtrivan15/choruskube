@@ -56,6 +56,12 @@ vi.mock("@/hooks/useTasks", () => ({
   }),
 }));
 
+vi.mock("@/components/roadmap/StorySpecPanel", () => ({
+  default: ({ story }: { story: StoryResponse }) => (
+    <section data-testid="story-spec-panel">spec panel for {story.id}</section>
+  ),
+}));
+
 vi.mock("@/hooks/useRoadmapSubscription", () => ({
   useRoadmapSubscription: vi.fn(),
 }));
@@ -90,6 +96,9 @@ function makeStory(overrides: Partial<StoryResponse> = {}): StoryResponse {
     progress: { totalTasks: 2, doneTasks: 1, startedTasks: 1 },
     createdAt: "2026-04-01T00:00:00Z",
     updatedAt: "2026-04-01T00:00:00Z",
+    specVersion: null,
+    specUnderRevision: false,
+    openDesignRunId: null,
     ...overrides,
   };
 }
@@ -123,6 +132,19 @@ describe("StoryDetailPage", () => {
     expect(screen.getByTestId("story-detail-title")).toHaveTextContent("Dark theme toggle");
     expect(screen.getByTestId("story-detail-stage")).toHaveTextContent("backlog");
     expect(screen.getByTestId("story-detail-progress")).toHaveTextContent("1/2 tasks done");
+  });
+
+  it("places the spec panel between the description and the Tasks", () => {
+    mockUseStory.mockReturnValue({ data: makeStory(), isLoading: false });
+    mockUseTasks.mockReturnValue({ data: [], isLoading: false });
+    renderWithProviders(<StoryDetailPage />);
+
+    const panel = screen.getByTestId("story-spec-panel");
+    expect(panel).toHaveTextContent("spec panel for story-1");
+    const description = screen.getByTestId("story-detail-description");
+    const tasks = screen.getByTestId("task-list");
+    expect(description.compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(panel.compareDocumentPosition(tasks) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("renders the Story LevelBadge", () => {

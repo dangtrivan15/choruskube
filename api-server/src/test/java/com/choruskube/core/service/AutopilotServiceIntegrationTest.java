@@ -305,8 +305,8 @@ public class AutopilotServiceIntegrationTest extends BaseTest {
 
         AutopilotStatusResponse status = autopilotService.getStatus();
         assertThat(status.heldTasks())
-                .extracting(AutopilotTaskRef::taskId, AutopilotTaskRef::status)
-                .containsExactly(tuple(task.id(), "cancelled"));
+                .extracting(AutopilotTaskRef::taskId, AutopilotTaskRef::status, AutopilotTaskRef::epicId)
+                .containsExactly(tuple(task.id(), "cancelled", story.epicId()));
         assertThat(status.whyIdle())
                 .as("naming the Task is the only thing that turns a silent stall into an action")
                 .anySatisfy(reason -> assertThat(reason).contains("'Stranded'"));
