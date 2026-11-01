@@ -1,6 +1,6 @@
 # Approving a stale run holds the approval, re-checks it against current main, and re-applies it
 
-**Status:** current; its in-request check and its timer-driven re-apply by `GateStampReconciler` are superseded, for gates opened by workflow code that finalizes approvals itself, by [2026-10-11---02-async-gate-finalize-on-the-worker](2026-10-11---02-async-gate-finalize-on-the-worker.md); for every gate, by [2026-10-31---03-gate-approvals-finalize-only-asynchronously](2026-10-31---03-gate-approvals-finalize-only-asynchronously.md)
+**Status:** current; its in-request check and its timer-driven re-apply by `GateStampReconciler` are superseded, for gates opened by workflow code that finalizes approvals itself, by [2026-10-11---02-async-gate-finalize-on-the-worker](2026-10-11---02-async-gate-finalize-on-the-worker.md); for every gate, by [2026-10-31---04-gate-approvals-finalize-only-asynchronously](2026-10-31---04-gate-approvals-finalize-only-asynchronously.md)
 
 ## Context
 

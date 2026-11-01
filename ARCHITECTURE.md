@@ -167,7 +167,7 @@ the whole approval on a draft or a conflicting pull request, merge in registrati
 order pinned to the head commit seen during inspection, and skip a pull request
 already closed or already merged. See
 [2026-10-11---02](docs/decisions/2026-10-11---02-async-gate-finalize-on-the-worker.md)
-and [2026-10-31---03](docs/decisions/2026-10-31---03-gate-approvals-finalize-only-asynchronously.md).
+and [2026-10-31---04](docs/decisions/2026-10-31---04-gate-approvals-finalize-only-asynchronously.md).
 
 The API records the Worker's merges and completes the gate once every pull request has
 been accounted for. A refusal — a draft, a conflict, or a GitHub-side rejection —
