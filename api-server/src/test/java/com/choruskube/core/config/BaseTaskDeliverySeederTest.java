@@ -81,11 +81,22 @@ class BaseTaskDeliverySeederTest extends BaseTest {
         return nodeDefRepo.findById(node.getNodeDefinitionId()).orElseThrow();
     }
 
+    // What VERSION 1 seeds: its prompts (shared DeliveryPrompts text included), node configs,
+    // input specs and graph. A stored version is never re-seeded, so a change here without a bump
+    // leaves existing databases on the old template: bump VERSION and update both pins together.
+    private static final int PINNED_VERSION = 1;
+    private static final String PINNED_SHA256 = "9c97ea57a025ac859b5304e4c13080a29f5b1c8ee2253092e314780f3f9631ff";
+
     @Test
-    void versionTripwire() {
-        // A prompt, graph or schema change needs a bump: a stored version is never re-seeded.
-        assertThat(BaseTaskDeliverySeeder.VERSION).isEqualTo(1);
-        assertThat(templateRepo.findByGraphIdAndVersion("task-delivery", 1)).isPresent();
+    void versionTripwire() throws Exception {
+        assertThat(SeededTemplateDigest.sha256(BaseTaskDeliverySeeder::new))
+                .as("seeded content changed: bump BaseTaskDeliverySeeder.VERSION and re-pin PINNED_SHA256 with it")
+                .isEqualTo(PINNED_SHA256);
+        assertThat(BaseTaskDeliverySeeder.VERSION)
+                .as("a VERSION bump re-pins PINNED_SHA256 to what the new version seeds")
+                .isEqualTo(PINNED_VERSION);
+        assertThat(templateRepo.findByGraphIdAndVersion("task-delivery", PINNED_VERSION))
+                .isPresent();
     }
 
     @Test

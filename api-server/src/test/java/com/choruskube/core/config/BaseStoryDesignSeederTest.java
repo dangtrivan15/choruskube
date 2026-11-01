@@ -67,11 +67,22 @@ class BaseStoryDesignSeederTest extends BaseTest {
                 .collect(Collectors.toMap(TemplateNode::getLabel, Function.identity()));
     }
 
+    // What VERSION 1 seeds: its prompts, node configs, input specs and graph. A stored version is
+    // never re-seeded, so a change here without a bump leaves existing databases on the old
+    // template: bump VERSION and update both pins together.
+    private static final int PINNED_VERSION = 1;
+    private static final String PINNED_SHA256 = "45714dcd9512aba67da98c40fb7da30a31f88fb093dc85109371bf51c2846534";
+
     @Test
-    void versionTripwire() {
-        // A prompt, graph or schema change needs a bump: a stored version is never re-seeded.
-        assertThat(BaseStoryDesignSeeder.VERSION).isEqualTo(1);
-        assertThat(templateRepo.findByGraphIdAndVersion("story-design", 1)).isPresent();
+    void versionTripwire() throws Exception {
+        assertThat(SeededTemplateDigest.sha256(BaseStoryDesignSeeder::new))
+                .as("seeded content changed: bump BaseStoryDesignSeeder.VERSION and re-pin PINNED_SHA256 with it")
+                .isEqualTo(PINNED_SHA256);
+        assertThat(BaseStoryDesignSeeder.VERSION)
+                .as("a VERSION bump re-pins PINNED_SHA256 to what the new version seeds")
+                .isEqualTo(PINNED_VERSION);
+        assertThat(templateRepo.findByGraphIdAndVersion("story-design", PINNED_VERSION))
+                .isPresent();
     }
 
     @Test

@@ -11,9 +11,9 @@ import org.junit.jupiter.api.Test;
 
 class DeliveryPromptsTest {
 
-    // Taken from BaseFeatureDevSeeder's IMPLEMENT_PROMPT and CODE_REVIEW_PROMPT at version 53, before
-    // the text moved here. A change to Feature Development's text must bump CURRENT_VERSION, and
-    // these hashes with it; a mismatch without a bump means a refactor changed what agents read.
+    // Feature Development's Implement and Code Review text at version 53, when it moved here. Text
+    // the variants share bumps every template that uses it: CURRENT_VERSION with these hashes, and
+    // Task Delivery's VERSION with the tripwire in BaseTaskDeliverySeederTest.
     static final String IMPLEMENT_SHA256 = "580e1b0918c84a3dcfb0b7e2c9f46f6886bb78f7987822aa1f95a24451f11ecf";
     static final String CODE_REVIEW_SHA256 = "c6bb741fc5ee421513af587560b3f4b7cd3fd9acd591cc1d13f0d006c490afe9";
 
