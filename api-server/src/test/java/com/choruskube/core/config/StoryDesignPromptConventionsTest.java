@@ -114,7 +114,9 @@ class StoryDesignPromptConventionsTest {
                 .as("existing Tasks are never edited or removed by the run")
                 .contains("Never edit or remove an existing Task")
                 .as("a revision must not re-create what the last approval already created")
-                .contains("already on the roadmap");
+                .contains("propose only what this revision adds")
+                .as("the human may have removed an item at the gate, or its creation was skipped")
+                .contains("propose it again only when the design still needs it");
     }
 
     @Test
@@ -137,6 +139,24 @@ class StoryDesignPromptConventionsTest {
                 .contains("prior_review_v")
                 .contains("amended")
                 .contains("holds");
+    }
+
+    @Test
+    void reviewPromptReshapesProposedTasksButNeverExistingOnes() {
+        String p = collapsed(STORY_SPEC_REVIEW_PROMPT);
+        assertThat(p)
+                .as("reshaping proposed Tasks is the reviewer's own fix")
+                .contains("Merging, splitting, adding, dropping or reordering proposed Tasks is ordinary review work")
+                .as("existing Tasks are never edited or removed by the run")
+                .contains("An existing Task is never merged, split, dropped or rewritten")
+                .contains("record the mismatch as a caveat with disposition Needs human decision");
+
+        String escalation = p.substring(p.indexOf("## When to escalate"), p.indexOf("## Reasoning requirement"));
+        assertThat(escalation)
+                .as("escalating every Task change would contradict the checklist's merge-or-reorder fix")
+                .contains("preserve the decomposition (which components, repos, boundaries)")
+                .doesNotContain("which Tasks)")
+                .contains("Changing which proposed Tasks exist is not a decomposition change");
     }
 
     @Test

@@ -404,8 +404,8 @@ final class StoryDesignPrompts {
               - **Conflict from <Task title>:** amended — <the headings changed, and
                 how> | holds — <why the spec stands, and what that Task should do
                 instead>
-              - **Guidance:** amended — <the headings changed, and how> | holds —
-                <why the spec stands>
+              - **Guidance:** (when there is some) amended — <the headings changed,
+                and how> | holds — <why the spec stands>
 
             ═══════════════════════════════════════════════════════════════════════
             Revising an approved spec
@@ -480,9 +480,12 @@ final class StoryDesignPrompts {
               under its own anchored Story and Epic, with no new children.
             - Never edit or remove an existing Task: its entry carries only "existingId"
               and "key".
-            - On a revision, everything an earlier version proposed is already on the
-              roadmap (get-roadmap-graph shows it): link it in the spec, and propose only
-              what this revision adds.
+            - On a revision, link in the spec every item an earlier version proposed that
+              get-roadmap-graph shows on the roadmap, and propose only what this revision
+              adds. An earlier proposal the roadmap lacks was removed by the human at the
+              gate or skipped when it was created: propose it again only when the design
+              still needs it, otherwise drop it from the spec, and name either in the
+              Revisions entry.
             - No milestones.
             - A new Task in a multi-repo project needs "repoId" naming which of this
               run's repos it is about; a single-repo project fills it in for you.
@@ -675,15 +678,22 @@ final class StoryDesignPrompts {
                  an entry, linked, and the spec never edits or removes one.
                - Each Task is deliverable as its own PR set: once its pull requests
                  merge, every repo builds and nothing that worked before breaks. A
-                 Task that only works together with another is a flaw: merge the two,
-                 or reorder until the first stands alone.
+                 Task that only works together with another is a flaw, fixed as the
+                 next bullet says.
+               - **Which Tasks exist.** Merging, splitting, adding, dropping or
+                 reordering proposed Tasks is ordinary review work: apply it, update
+                 the Tasks section, and rebuild the proposal. An existing Task is never
+                 merged, split, dropped or rewritten, by you or by the spec: when a fix
+                 would need that, leave the Task as it is and record the mismatch as a
+                 caveat with disposition Needs human decision, which the human settles
+                 at the gate.
                - Each Realises line names headings that exist, exactly as written.
                  Every `###` heading under Architecture and Technical Decisions is
                  realised by at least one Task.
                - Depends on forms no cycle, the entries are ordered by it, and it
                  matches the proposal's dependencies.
                - An existing Task the design does not need, or describes differently,
-                 is a caveat with disposition Needs human decision.
+                 is such a caveat.
             4. **The Revisions section**:
                - On a first design, it holds the single line `No revisions yet.`
                - On a revision, every entry of /workspace/in/run_input/story_spec.md
@@ -713,17 +723,17 @@ final class StoryDesignPrompts {
             9. **Caveat hygiene**: a "Caveat" pointing to a mitigation already in
                the spec is design, not a caveat. A Future-work caveat that names no
                deferral criterion, waits on an event, or lacks a "Proposed as" line
-               is a gap: make it a Task's work when the Story needs it, otherwise
-               Accepted. Check each "Proposed as" placement too. A caveat whose
+               is a gap: make it Task work (see item 3) when the Story needs it,
+               otherwise Accepted. Check each "Proposed as" placement too. A caveat whose
                reason is that another ticket handles it must link that ticket, or
                name the Task this spec proposes; every existing roadmap item the
                spec mentions is linked to its page in the app.
             10. **Maintainability risk**: couplings, god classes, brittle
                 abstractions — per repo and at the seams.
             11. **Scope creep**: a Task or seam the Story request does not justify;
-                something the request promises that no Task delivers. Work that
-                closes a gap the Story creates or exposes is justified, not scope
-                creep.
+                something the request promises that no Task delivers. Fix a Task the
+                way item 3 says. Work that closes a gap the Story creates or exposes is
+                justified, not scope creep.
             12. **Deployment gaps**: env vars, secrets, migrations or config the
                 design needs but Manual Operations does not cover.
             13. **Before and after**: Context draws today's mechanism with each
@@ -810,9 +820,12 @@ final class StoryDesignPrompts {
             - the flaw is real but no candidate fix is clearly correct (`uncertainty`);
             - a fundamentally different architecture would be better — do NOT apply it, propose
               it (`alternative_proposal`). Applying fixes is normal review work only while they
-              preserve the decomposition (which components, repos, boundaries, and which Tasks)
-              and the architecture (sync vs async, data flow shape, ownership). If a fix would
-              change either, escalate rather than apply.
+              preserve the decomposition (which components, repos, boundaries) and the
+              architecture (sync vs async, data flow shape, ownership). If a fix would change
+              either, escalate rather than apply. Changing which proposed Tasks exist is not a
+              decomposition change: checklist item 3 governs Tasks;
+            - a fix would move work the Story request asks for into another Story or Epic, or
+              pull another Story's work into this one (`alternative_proposal`).
 
             Still write `story_spec.md` verbatim when you escalate — no partial fixes.
 
