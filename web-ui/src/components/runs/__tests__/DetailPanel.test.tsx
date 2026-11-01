@@ -48,6 +48,10 @@ vi.mock("@/hooks/useStorySpec", () => ({
   useStoryConflicts: vi.fn(() => ({ data: [] })),
 }));
 
+vi.mock("@/hooks/useStorySubscription", () => ({
+  useStorySubscription: vi.fn(),
+}));
+
 vi.mock("@/hooks/useExecutionLogs", () => ({
   useExecutionLogs: vi.fn(() => ({
     data: [],

@@ -77,7 +77,8 @@ export default function StorySpecPanel({ story }: StorySpecPanelProps) {
           <Select
             value={String(pickedVersion ?? current.version)}
             onValueChange={(v) => {
-              if (v) setPickedVersion(Number(v));
+              // The current version is stored as null so a newer approval replaces it on screen.
+              if (v) setPickedVersion(Number(v) === current.version ? null : Number(v));
             }}
           >
             <SelectTrigger
@@ -227,6 +228,11 @@ function ReviseStoryDialog({ storyId, version, open, onOpenChange }: ReviseStory
   const [guidance, setGuidance] = useState("");
   const reviseStory = useReviseStory();
 
+  function close() {
+    onOpenChange(false);
+    reviseStory.reset();
+  }
+
   function handleSubmit() {
     if (!guidance.trim()) return;
     reviseStory.mutate(
@@ -234,7 +240,7 @@ function ReviseStoryDialog({ storyId, version, open, onOpenChange }: ReviseStory
       {
         onSuccess: () => {
           setGuidance("");
-          onOpenChange(false);
+          close();
         },
       }
     );
@@ -244,8 +250,8 @@ function ReviseStoryDialog({ storyId, version, open, onOpenChange }: ReviseStory
     <Dialog
       open={open}
       onOpenChange={(isOpen) => {
-        onOpenChange(isOpen);
-        if (!isOpen) reviseStory.reset();
+        if (isOpen) onOpenChange(true);
+        else close();
       }}
     >
       <DialogContent size="lg">
@@ -279,7 +285,7 @@ function ReviseStoryDialog({ storyId, version, open, onOpenChange }: ReviseStory
               {apiErrorMessage(reviseStory.error, "Failed to start the revision.")}
             </p>
           )}
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+          <Button variant="ghost" onClick={close}>
             Cancel
           </Button>
           <Button

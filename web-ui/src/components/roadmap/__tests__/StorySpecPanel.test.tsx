@@ -16,6 +16,7 @@ const mockUseStorySpecVersion = vi.fn();
 const mockUseStoryConflicts = vi.fn();
 const mockDesignMutate = vi.fn();
 const mockReviseMutate = vi.fn();
+const mockReviseReset = vi.fn();
 
 vi.mock("@/hooks/useStorySpec", () => ({
   useStorySpec: (id: string | undefined) => mockUseStorySpec(id),
@@ -28,7 +29,7 @@ vi.mock("@/hooks/useStorySpec", () => ({
     isPending: false,
     isError: false,
     error: null,
-    reset: vi.fn(),
+    reset: mockReviseReset,
   }),
 }));
 
@@ -185,6 +186,35 @@ describe("StorySpecPanel", () => {
         { storyId: "story-1", guidance: "Split the API section" },
         expect.anything()
       );
+    });
+
+    it("clears a refused revision's error when the dialog is cancelled", async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<StorySpecPanel story={makeStory({ specVersion: 2 })} />);
+
+      await user.click(screen.getByTestId("story-spec-revise-button"));
+      await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+      expect(mockReviseReset).toHaveBeenCalled();
+    });
+
+    it("follows a newer approval after the current version was picked", async () => {
+      const user = userEvent.setup();
+      const { rerender } = renderWithProviders(<StorySpecPanel story={makeStory({ specVersion: 2 })} />);
+
+      await user.click(screen.getByTestId("story-spec-version-select"));
+      await user.click(screen.getByTestId("story-spec-version-option-2"));
+      expect(mockUseStorySpecVersion).toHaveBeenLastCalledWith("story-1", null);
+
+      mockUseStorySpec.mockReturnValue({
+        data: makeSpec({ version: 3, content: "The third draft", runId: "design-run-3" }),
+        isLoading: false,
+        isError: false,
+      });
+      rerender(<StorySpecPanel story={makeStory({ specVersion: 3 })} />);
+
+      expect(screen.getByTestId("markdown-viewer")).toHaveTextContent("The third draft");
+      expect(screen.getByTestId("story-spec-version-select")).toHaveTextContent("v3 (current)");
     });
 
     it("keeps Revise disabled for whitespace-only guidance", async () => {

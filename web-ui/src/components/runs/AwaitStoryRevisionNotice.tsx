@@ -1,6 +1,7 @@
 import { Link } from "react-router";
 import StatusCallout from "@/components/ui/StatusCallout";
 import { useStoryConflicts } from "@/hooks/useStorySpec";
+import { useStorySubscription } from "@/hooks/useStorySubscription";
 
 interface AwaitStoryRevisionNoticeProps {
   /** The parked Task run, matched against each conflict's `taskRunId`. */
@@ -15,6 +16,9 @@ interface AwaitStoryRevisionNoticeProps {
  */
 export default function AwaitStoryRevisionNotice({ runId, storyId, epicId }: AwaitStoryRevisionNoticeProps) {
   const { data: conflicts } = useStoryConflicts(storyId ?? undefined);
+  // The Run page mounts no roadmap subscription, and the revision run is assigned after the
+  // conflict is recorded: without this the notice never learns which run took it up.
+  useStorySubscription(storyId);
   const revisionRunId = conflicts?.find((c) => c.taskRunId === runId)?.revisionRunId ?? null;
 
   return (

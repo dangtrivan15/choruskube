@@ -10,8 +10,9 @@ import type {
   StorySpecVersionSummary,
 } from "@/lib/types";
 
-// Every key sits under `["stories", id]`, so the roadmap STOMP subscription's `["stories"]`
-// invalidation refreshes them when a design run starts or a spec version is recorded.
+// Every key sits under `["stories", id]`. Roadmap pages refresh them through
+// useRoadmapSubscription's `["stories"]` invalidation; any other page reading them must mount
+// useStorySubscription, or they go stale until remounted.
 
 /** The Story's current approved spec, or `null` when it has none (the endpoint's 404). */
 export function useStorySpec(storyId: string | undefined) {
@@ -55,7 +56,10 @@ export function useStoryConflicts(storyId: string | undefined) {
   });
 }
 
-/** Starts the Story's first Story Design run. The server refuses (409) once a spec or design run exists. */
+/**
+ * Starts the Story's first Story Design run. The server refuses (409) while the Story has an
+ * approved spec or an open design run.
+ */
 export function useDesignStory() {
   const queryClient = useQueryClient();
   const { addEntry } = useActivityFeed();
