@@ -22,14 +22,10 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
 import org.springframework.web.util.ServletRequestPathUtils;
 
 /**
- * Proves {@link RunScopeInterceptor} covers every execution-scoped route it must, and that the
- * {@code InternalAuthFilter}/{@code WorkerAuthFilter} escape bypass it compensates for is closed
- * everywhere those filters are meant to apply. Mirrors {@code ControlPlaneGitHubCallGuard}'s shape:
- * a fluent builder, one {@link AssertionError} naming every violation, and its own vacuity check.
- *
- * <p>Each repo that composes {@code /internal/**} and {@code /worker/runs/**} routes runs this
- * fixture over its own {@link RequestMappingHandlerMapping} and {@link MockMvc}, so a route the
- * composing application adds is audited without anyone remembering to list it.
+ * Proves {@link RunScopeInterceptor} checks run membership on every execution-scoped route, and
+ * refuses a percent-escaped spelling of every route {@code InternalAuthFilter} or {@code
+ * WorkerAuthFilter} is meant to authenticate. An application composing these routes with its own
+ * runs this over its own {@link RequestMappingHandlerMapping}, so a route it adds is audited too.
  */
 public final class RunScopeRouteAudit {
 
@@ -102,7 +98,7 @@ public final class RunScopeRouteAudit {
         boolean anyExecWorker = false;
         boolean anyRunLevelInternal = false;
         for (Route route : rs) {
-            boolean execScoped = isExecutionScoped(route.pattern());
+            boolean execScoped = RunScopeInterceptor.isExecutionScoped(route.pattern());
             boolean isInternal = route.pattern().startsWith("/internal/");
             boolean isWorker = route.pattern().startsWith("/worker/runs/");
             anyExecInternal |= isInternal && execScoped;
@@ -120,7 +116,7 @@ public final class RunScopeRouteAudit {
         }
 
         for (Route route : rs) {
-            boolean execScoped = isExecutionScoped(route.pattern());
+            boolean execScoped = RunScopeInterceptor.isExecutionScoped(route.pattern());
             boolean isInternal = route.pattern().startsWith("/internal/");
             boolean isWorker = route.pattern().startsWith("/worker/runs/");
 
@@ -317,16 +313,6 @@ public final class RunScopeRouteAudit {
             return "/%77orker/" + path.substring("/worker/".length());
         }
         throw new IllegalStateException("Route does not start with /internal/ or /worker/: " + path);
-    }
-
-    private static boolean isExecutionScoped(String pattern) {
-        String[] s = segmentsOf(pattern);
-        return s.length >= 5
-                && (s[0].equals("internal") || s[0].equals("worker"))
-                && s[1].equals("runs")
-                && isVariable(s[2])
-                && s[3].equals("node-executions")
-                && isVariable(s[4]);
     }
 
     /** {@code pattern} split on {@code '/'}, with the leading empty element (before the first slash) dropped. */

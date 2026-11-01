@@ -2,6 +2,7 @@ package com.choruskube.core.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.hamcrest.Matchers.containsString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -316,6 +317,24 @@ class RunScopeInterceptorTest extends BaseTest {
     void runLevelWorkerRouteEscapedSpelling_isUnaffectedByTheGuard() throws Exception {
         mockMvc.perform(get(URI.create("/%77orker/runs/" + runA.getId() + "/github-token")))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void plainOptionsRequest_stillGetsSpringsAllowHeaderAnswer() throws Exception {
+        mockMvc.perform(options("/internal/runs/" + runA.getId() + "/node-executions/" + execX.getId() + "/decision")
+                        .header("Authorization", "Bearer " + ORCHESTRATOR_SECRET))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Allow", containsString("GET")));
+    }
+
+    @Test
+    void preHandle_noBestMatchingPatternAttribute_onOptions_passes() {
+        RunScopeInterceptor interceptor = new RunScopeInterceptor(mock(NodeExecutionRepository.class));
+        MockHttpServletRequest request = new MockHttpServletRequest(
+                "OPTIONS", "/internal/runs/" + runA.getId() + "/node-executions/" + execX.getId() + "/decision");
+
+        assertThat(interceptor.preHandle(request, new MockHttpServletResponse(), mock(HandlerMethod.class)))
+                .isTrue();
     }
 
     @Test

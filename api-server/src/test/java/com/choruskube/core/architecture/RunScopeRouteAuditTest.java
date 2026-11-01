@@ -163,12 +163,17 @@ class RunScopeRouteAuditTest {
 
     @Test
     void runLevelWorkerRouteServingItsEscapedSpelling_passes_becauseR2DoesNotApplyToIt() {
-        // realisticProbe never returns 400 for a run-level /worker route's escaped spelling in the
-        // first place (workerFamily && execScopedShape is false for it) — proving the point directly:
-        // R2 is never even probed for this route, so its behaviour here cannot fail the audit.
-        assertThatCode(() -> auditOver(baselineRoutes(), RunScopeRouteAuditTest::realisticProbe)
-                        .check())
-                .doesNotThrowAnyException();
+        List<String> sentPaths = new ArrayList<>();
+        Probe recording = (method, uri, bearer) -> {
+            sentPaths.add(uri.getRawPath());
+            return realisticProbe(method, uri, bearer);
+        };
+
+        // realisticProbe serves the run-level route's escaped spelling with 200, so R2 would fail
+        // if it were applied there.
+        assertThatCode(() -> auditOver(baselineRoutes(), recording).check()).doesNotThrowAnyException();
+        assertThat(sentPaths).noneMatch(p -> p.startsWith("/%77orker/") && p.endsWith("/github-token"));
+        assertThat(sentPaths).anyMatch(p -> p.startsWith("/%77orker/") && p.endsWith("/status"));
     }
 
     @Test

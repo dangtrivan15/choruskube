@@ -72,9 +72,9 @@ public class InternalArtifactController {
             return ResponseEntity.status(403).body(Map.of("error", "Target run not found"));
         }
 
-        // RunScopeInterceptor already pins the path's runId to the caller's own run, so agentRun
-        // and targetRun are always the same row; this same-organisation check is a backstop for a
-        // non-HTTP caller of the service, not something an HTTP request can actually mismatch.
+        // RunScopeInterceptor already pins the path's runId to this execution's run, so agentRun
+        // and targetRun are the same row; this org check is the backstop if that guard ever stops
+        // covering this route.
         authService.assertSameOrg("workflow_run", agentRun.getId(), "workflow_run", targetRun.getId());
 
         String orgSlug = storagePrefixResolver.storagePrefixForRun(agentRun.getId());

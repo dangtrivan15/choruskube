@@ -12,13 +12,10 @@ run. A handful of handlers added their own cross-check over time; most did not, 
 keep its own execution id, pair it with a different run's id, and have a handler trust the run id
 instead.
 
-Auditing every route also turned up a defect in how the two filters decide whether to run at all:
-both gate on `request.getRequestURI()`, the raw, still-percent-escaped path, while Spring MVC
-dispatches on the path after it decodes those escapes. A path whose first segment is spelled with
-an escape (`/%69nternal/...`) therefore never reaches either filter's authentication check, yet
-still reaches its handler — with no credential presented at all. Per-route membership checks mean
-nothing while that holds, because the caller can simply spell a run and an execution that really
-do belong together.
+A membership check is only as good as the authentication in front of it. Both filters select the
+requests they authenticate by the raw request path, while Spring MVC routes on the path after
+decoding percent-escapes, so the check is only meaningful on a path the filters and the router read
+the same way.
 
 ## Decision
 
@@ -34,7 +31,9 @@ handler binds or validates its request**, over every route matching `/internal/*
    is refused with 404 — the same body callers already get for an unknown execution — when that
    execution does not belong to that run. A route whose first five segments match this shape but
    whose variables are named anything other than `runId`/`nodeExecId` fails closed with 500, so a
-   misnamed route cannot silently skip membership checking.
+   misnamed route cannot silently skip membership checking. A dispatched handler with no matched
+   pattern fails closed the same way, except Spring's own answer to a plain `OPTIONS` request,
+   which runs no controller code.
 
 The interceptor recognises a route by its *shape*, derived from `HandlerMapping`'s matched pattern
 string at request time, not from a hand-maintained list — so it covers a route nobody has written
@@ -44,8 +43,8 @@ yet. The variable names are therefore a contract every future execution-scoped r
 must agree on which path they are each looking at. They already do for a canonical path; the only
 divergence is escape handling, and the request firewall already rejects every other
 non-canonical spelling (path parameters, doubled slashes, dot segments, encoded slashes). Refusing
-an escape at the interceptor closes the unauthenticated-bypass defect above on every `/internal`
-route — including ones that name no execution — without editing either filter.
+an escape at the interceptor makes them agree on every `/internal` route — including ones that name
+no execution — and on every execution-scoped `/worker` route, without editing either filter.
 
 **A shared route audit proves coverage**, as a public test-fixture class (`RunScopeRouteAudit`)
 one application's test runs over its own `RequestMappingHandlerMapping` and `MockMvc`. It walks
@@ -73,8 +72,8 @@ application adds later is covered without anyone remembering to list it.
 ## Consequences
 
 - **A cross-run presign, and presign for an unknown execution, now answer 404 (plain text)** where
-  they previously answered 403 (JSON) — the interceptor's uniform refusal, not the handler's own
-  check, which stays only as defence in depth for non-HTTP callers of the same service.
+  they previously answered 403 (JSON) — the interceptor's uniform refusal. The handler's own run
+  and organisation checks stay as a backstop.
 - **An unknown execution now answers 404 on input-artifacts and the placement check** (previously
   200) **and on a log write** (previously 500), because the interceptor refuses before either
   handler runs.

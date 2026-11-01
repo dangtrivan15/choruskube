@@ -4,7 +4,6 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
-/** Registers {@link RunScopeInterceptor} over every route it must see, in both repos that compose it. */
 @Configuration
 public class RunScopeWebMvcConfig implements WebMvcConfigurer {
 

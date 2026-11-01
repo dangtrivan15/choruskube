@@ -35,7 +35,7 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * Tests for decision endpoints. Authentication is now handled by InternalAuthFilter;
  * these tests run without auth configured (filter passes through). {@code RunScopeInterceptor}
- * still runs regardless of auth, so {@code RUN_ID}/{@code NODE_EXEC_ID} must be a real, seeded
+ * still runs regardless of auth, so {@code runId}/{@code nodeExecId} must be a real, seeded
  * pair rather than made-up ids.
  */
 @AutoConfigureMockMvc
@@ -72,8 +72,8 @@ public class DecisionControllerTest extends BaseTest {
     @MockitoBean
     private WorkflowClient workflowClient;
 
-    private UUID RUN_ID;
-    private UUID NODE_EXEC_ID;
+    private UUID runId;
+    private UUID nodeExecId;
 
     @BeforeEach
     void setUp() {
@@ -105,23 +105,23 @@ public class DecisionControllerTest extends BaseTest {
         WorkflowRun run = new WorkflowRun();
         run.setGraphTemplateId(template.getId());
         run = runRepo.save(run);
-        RUN_ID = run.getId();
+        runId = run.getId();
 
         NodeExecution exec = new NodeExecution();
         exec.setWorkflowRunId(run.getId());
         exec.setTemplateNodeId(templateNode.getId());
         exec.setGraphVersion(1);
         exec = execRepo.save(exec);
-        NODE_EXEC_ID = exec.getId();
+        nodeExecId = exec.getId();
     }
 
     @Test
     void submitDecision_validDecision_returns200() throws Exception {
-        when(service.submitDecision(RUN_ID, NODE_EXEC_ID, "approve")).thenReturn("approve");
+        when(service.submitDecision(runId, nodeExecId, "approve")).thenReturn("approve");
 
         Map<String, String> body = Map.of("decision", "approve");
 
-        mockMvc.perform(put("/internal/runs/" + RUN_ID + "/node-executions/" + NODE_EXEC_ID + "/decision")
+        mockMvc.perform(put("/internal/runs/" + runId + "/node-executions/" + nodeExecId + "/decision")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(body)))
                 .andExpect(status().isOk())
@@ -130,12 +130,12 @@ public class DecisionControllerTest extends BaseTest {
 
     @Test
     void submitDecision_invalidDecision_returns400() throws Exception {
-        when(service.submitDecision(RUN_ID, NODE_EXEC_ID, "bad-value"))
+        when(service.submitDecision(runId, nodeExecId, "bad-value"))
                 .thenThrow(new BadRequestException("Invalid decision: 'bad-value'. Valid options: [approve, reject]"));
 
         Map<String, String> body = Map.of("decision", "bad-value");
 
-        mockMvc.perform(put("/internal/runs/" + RUN_ID + "/node-executions/" + NODE_EXEC_ID + "/decision")
+        mockMvc.perform(put("/internal/runs/" + runId + "/node-executions/" + nodeExecId + "/decision")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(body)))
                 .andExpect(status().isBadRequest())
@@ -144,36 +144,36 @@ public class DecisionControllerTest extends BaseTest {
 
     @Test
     void getDecision_returnsDecision() throws Exception {
-        when(service.getDecision(RUN_ID, NODE_EXEC_ID)).thenReturn("approve");
+        when(service.getDecision(runId, nodeExecId)).thenReturn("approve");
 
-        mockMvc.perform(get("/internal/runs/" + RUN_ID + "/node-executions/" + NODE_EXEC_ID + "/decision"))
+        mockMvc.perform(get("/internal/runs/" + runId + "/node-executions/" + nodeExecId + "/decision"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.decision").value("approve"));
     }
 
     @Test
     void getDecision_returnsNullWhenNotSet() throws Exception {
-        when(service.getDecision(RUN_ID, NODE_EXEC_ID)).thenReturn(null);
+        when(service.getDecision(runId, nodeExecId)).thenReturn(null);
 
-        mockMvc.perform(get("/internal/runs/" + RUN_ID + "/node-executions/" + NODE_EXEC_ID + "/decision"))
+        mockMvc.perform(get("/internal/runs/" + runId + "/node-executions/" + nodeExecId + "/decision"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.decision").doesNotExist());
     }
 
     @Test
     void withdrawDecision_returnsTheWithdrawnDecision() throws Exception {
-        when(service.withdrawDecision(RUN_ID, NODE_EXEC_ID)).thenReturn("escalate");
+        when(service.withdrawDecision(runId, nodeExecId)).thenReturn("escalate");
 
-        mockMvc.perform(delete("/internal/runs/" + RUN_ID + "/node-executions/" + NODE_EXEC_ID + "/decision"))
+        mockMvc.perform(delete("/internal/runs/" + runId + "/node-executions/" + nodeExecId + "/decision"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.decision").value("escalate"));
     }
 
     @Test
     void withdrawDecision_withNothingSubmitted_returns200AndNoDecision() throws Exception {
-        when(service.withdrawDecision(RUN_ID, NODE_EXEC_ID)).thenReturn(null);
+        when(service.withdrawDecision(runId, nodeExecId)).thenReturn(null);
 
-        mockMvc.perform(delete("/internal/runs/" + RUN_ID + "/node-executions/" + NODE_EXEC_ID + "/decision"))
+        mockMvc.perform(delete("/internal/runs/" + runId + "/node-executions/" + nodeExecId + "/decision"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.decision").doesNotExist());
     }

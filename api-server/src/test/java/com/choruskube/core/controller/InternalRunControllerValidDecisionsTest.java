@@ -30,8 +30,8 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * {@code RunScopeInterceptor} runs regardless of auth configuration, so {@code RUN_ID}/{@code
- * NODE_EXEC_ID} must be a real, seeded pair rather than made-up ids.
+ * {@code RunScopeInterceptor} runs regardless of auth configuration, so {@code runId}/{@code
+ * nodeExecId} must be a real, seeded pair rather than made-up ids.
  */
 @AutoConfigureMockMvc
 @Transactional
@@ -64,8 +64,8 @@ public class InternalRunControllerValidDecisionsTest extends BaseTest {
     @MockitoBean
     private WorkflowClient workflowClient;
 
-    private UUID RUN_ID;
-    private UUID NODE_EXEC_ID;
+    private UUID runId;
+    private UUID nodeExecId;
 
     @BeforeEach
     void setUp() {
@@ -97,23 +97,22 @@ public class InternalRunControllerValidDecisionsTest extends BaseTest {
         WorkflowRun run = new WorkflowRun();
         run.setGraphTemplateId(template.getId());
         run = runRepo.save(run);
-        RUN_ID = run.getId();
+        runId = run.getId();
 
         NodeExecution exec = new NodeExecution();
         exec.setWorkflowRunId(run.getId());
         exec.setTemplateNodeId(templateNode.getId());
         exec.setGraphVersion(1);
         exec = execRepo.save(exec);
-        NODE_EXEC_ID = exec.getId();
+        nodeExecId = exec.getId();
     }
 
     @Test
     void returnsValidDecisionsAsJsonArray() throws Exception {
-        when(service.getValidDecisions(RUN_ID, NODE_EXEC_ID))
+        when(service.getValidDecisions(runId, nodeExecId))
                 .thenReturn(List.of("approved", "revised", "need_human_decision:review_conflict"));
 
-        mockMvc.perform(get(
-                        "/internal/runs/{runId}/node-executions/{nodeExecId}/valid-decisions", RUN_ID, NODE_EXEC_ID))
+        mockMvc.perform(get("/internal/runs/{runId}/node-executions/{nodeExecId}/valid-decisions", runId, nodeExecId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.decisions[0]").value("approved"))
                 .andExpect(jsonPath("$.decisions[1]").value("revised"))
@@ -122,10 +121,9 @@ public class InternalRunControllerValidDecisionsTest extends BaseTest {
 
     @Test
     void returnsEmptyArrayWhenNoConditionalEdges() throws Exception {
-        when(service.getValidDecisions(RUN_ID, NODE_EXEC_ID)).thenReturn(List.of());
+        when(service.getValidDecisions(runId, nodeExecId)).thenReturn(List.of());
 
-        mockMvc.perform(get(
-                        "/internal/runs/{runId}/node-executions/{nodeExecId}/valid-decisions", RUN_ID, NODE_EXEC_ID))
+        mockMvc.perform(get("/internal/runs/{runId}/node-executions/{nodeExecId}/valid-decisions", runId, nodeExecId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.decisions").isArray())
                 .andExpect(jsonPath("$.decisions.length()").value(0));
